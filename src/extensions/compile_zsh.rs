@@ -4468,7 +4468,29 @@ impl ZshCompiler {
                     self.emit_file_test(&left_clean);
                     return;
                 }
-                self.compile_word_str(left);
+                // c:Src/cond.c — inside `[[ … ]]` the LHS undergoes
+                // word splitting / parameter expansion but NOT
+                // filesystem globbing (glob is suppressed for cond
+                // operands). Bump dq_context_depth ONLY when the raw
+                // LHS contains glob metachars (Star / Quest /
+                // Inbrack) so the suppression doesn't disturb other
+                // expansion paths (like DQ-wrapped DQ markers that
+                // already correctly handle DQ content). Without this,
+                // `[[ a* = a* ]]` hit \"no matches found: a*\" because
+                // the LHS was glob-expanded before reaching the test
+                // runtime.
+                let left_has_unquoted_glob = !left.contains('\u{9e}')
+                    && !left.contains('\u{9d}')
+                    && (left.contains('\u{87}')
+                        || left.contains('\u{86}')
+                        || left.contains('\u{91}'));
+                if left_has_unquoted_glob {
+                    self.dq_context_depth += 1;
+                    self.compile_word_str(left);
+                    self.dq_context_depth -= 1;
+                } else {
+                    self.compile_word_str(left);
+                }
                 // For string-comparison ops (`=`, `==`, `!=`, `=~`)
                 // the RHS is a PATTERN/REGEX to match against the LHS,
                 // not a path glob to expand against the filesystem.
