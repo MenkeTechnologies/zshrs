@@ -252,3 +252,179 @@ fn entries_to_json(entries: &[(String, String)]) -> Value {
         .collect();
     Value::Object(map)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    // === entries_to_json: pair-slice serialization ===
+
+    #[test]
+    fn entries_to_json_empty_yields_empty_object() {
+        let v = entries_to_json(&[]);
+        assert!(v.is_object(), "result must be a JSON object");
+        assert_eq!(v.as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn entries_to_json_preserves_keys_and_string_values() {
+        let entries = vec![
+            ("ll".to_string(), "ls -la".to_string()),
+            ("gs".to_string(), "git status".to_string()),
+            ("..".to_string(), "cd ..".to_string()),
+        ];
+        let v = entries_to_json(&entries);
+        let obj = v.as_object().expect("object");
+        assert_eq!(obj.len(), 3);
+        assert_eq!(obj.get("ll").and_then(Value::as_str), Some("ls -la"));
+        assert_eq!(obj.get("gs").and_then(Value::as_str), Some("git status"));
+        assert_eq!(obj.get("..").and_then(Value::as_str), Some("cd .."));
+    }
+
+    #[test]
+    fn entries_to_json_all_values_are_string_type() {
+        // Wire-format invariant: every value is JSON string (not int,
+        // not array). The daemon side relies on this for `zsync pull`
+        // to know it can re-emit the value verbatim as an alias.
+        let entries = vec![
+            ("a".to_string(), "1".to_string()),
+            ("b".to_string(), "true".to_string()),
+            ("c".to_string(), "null".to_string()),
+        ];
+        let v = entries_to_json(&entries);
+        for (_, val) in v.as_object().expect("object").iter() {
+            assert!(val.is_string(), "every value must serialize as string");
+        }
+    }
+
+    #[test]
+    fn entries_to_json_handles_duplicate_keys_last_wins() {
+        // Vec<(String, String)> can legitimately carry duplicates if
+        // the upstream entries() accessor doesn't dedupe; serde_json
+        // `Map::collect` on duplicates keeps the LAST value, matching
+        // standard JSON object semantics.
+        let entries = vec![
+            ("k".to_string(), "first".to_string()),
+            ("k".to_string(), "second".to_string()),
+        ];
+        let v = entries_to_json(&entries);
+        let obj = v.as_object().expect("object");
+        assert_eq!(obj.len(), 1, "dup keys collapse to one slot");
+        assert_eq!(obj.get("k").and_then(Value::as_str), Some("second"));
+    }
+
+    #[test]
+    fn entries_to_json_empty_string_values_preserved() {
+        // `alias foo=` produces an empty value — must survive the
+        // snapshot, not get coerced to JSON null / missing key.
+        let entries = vec![("empty".to_string(), "".to_string())];
+        let v = entries_to_json(&entries);
+        assert_eq!(
+            v.as_object().unwrap().get("empty").and_then(Value::as_str),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn entries_to_json_unicode_keys_and_values() {
+        // Verify the JSON encoder handles arbitrary UTF-8 in both
+        // positions (alias names and bodies can contain anything).
+        let entries = vec![
+            ("café".to_string(), "echo 茶".to_string()),
+            ("→".to_string(), "echo ←".to_string()),
+        ];
+        let v = entries_to_json(&entries);
+        let obj = v.as_object().expect("object");
+        assert_eq!(obj.get("café").and_then(Value::as_str), Some("echo 茶"));
+        assert_eq!(obj.get("→").and_then(Value::as_str), Some("echo ←"));
+    }
+
+    // === map_to_json: iterator-based serialization ===
+
+    #[test]
+    fn map_to_json_empty_iterator_yields_empty_object() {
+        let empty: HashMap<String, String> = HashMap::new();
+        let v = map_to_json(empty.iter());
+        assert!(v.is_object());
+        assert_eq!(v.as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn map_to_json_round_trips_hashmap_entries() {
+        let mut m: HashMap<String, String> = HashMap::new();
+        m.insert("PATH".to_string(), "/usr/bin:/bin".to_string());
+        m.insert("HOME".to_string(), "/home/user".to_string());
+        m.insert("SHELL".to_string(), "/usr/bin/zsh".to_string());
+
+        let v = map_to_json(m.iter());
+        let obj = v.as_object().expect("object");
+        assert_eq!(obj.len(), 3);
+        assert_eq!(
+            obj.get("PATH").and_then(Value::as_str),
+            Some("/usr/bin:/bin")
+        );
+        assert_eq!(obj.get("HOME").and_then(Value::as_str), Some("/home/user"));
+        assert_eq!(
+            obj.get("SHELL").and_then(Value::as_str),
+            Some("/usr/bin/zsh")
+        );
+    }
+
+    #[test]
+    fn map_to_json_clones_owned_strings() {
+        // map_to_json takes references — the produced JSON must own
+        // its strings so the source map can drop without affecting it.
+        let mut m: HashMap<String, String> = HashMap::new();
+        m.insert("k".to_string(), "v".to_string());
+        let v = map_to_json(m.iter());
+        drop(m);
+        // Still usable after source drop.
+        assert_eq!(
+            v.as_object().unwrap().get("k").and_then(Value::as_str),
+            Some("v")
+        );
+    }
+
+    #[test]
+    fn map_to_json_values_serialize_as_strings_not_inferred_types() {
+        let mut m: HashMap<String, String> = HashMap::new();
+        m.insert("INT_LIKE".to_string(), "42".to_string());
+        m.insert("BOOL_LIKE".to_string(), "true".to_string());
+        m.insert("NULL_LIKE".to_string(), "null".to_string());
+        let v = map_to_json(m.iter());
+        for (_, val) in v.as_object().expect("object").iter() {
+            assert!(
+                val.is_string(),
+                "shell values are always strings on the wire"
+            );
+        }
+    }
+
+    #[test]
+    fn map_to_json_serialized_form_is_valid_json() {
+        // End-to-end check: the Value can be serialized to a string
+        // that round-trips back to an equal Value. Wire-protocol
+        // smoke test for the daemon transport.
+        let mut m: HashMap<String, String> = HashMap::new();
+        m.insert("a".to_string(), "1".to_string());
+        m.insert("b".to_string(), "two".to_string());
+
+        let v = map_to_json(m.iter());
+        let s = serde_json::to_string(&v).expect("serialize");
+        let back: Value = serde_json::from_str(&s).expect("deserialize");
+        assert_eq!(back, v);
+    }
+
+    #[test]
+    fn entries_to_json_serialized_form_is_valid_json() {
+        let entries = vec![
+            ("alpha".to_string(), "first".to_string()),
+            ("omega".to_string(), "last".to_string()),
+        ];
+        let v = entries_to_json(&entries);
+        let s = serde_json::to_string(&v).expect("serialize");
+        let back: Value = serde_json::from_str(&s).expect("deserialize");
+        assert_eq!(back, v);
+    }
+}
