@@ -1099,6 +1099,70 @@ fn completion(state: &State, params: &Value) -> Value {
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
+            LspCompletionContext::BuiltinLongFlag(ref builtin_name) => {
+                // Long-form flag completion: `zshrs --<TAB>`,
+                // `zshrs --dump-<TAB>`, etc. No letter-stacking;
+                // the typed `--xxx` is the full prefix and gets
+                // replaced atomically by the chosen flag.
+                let flags = extract_builtin_long_flags(builtin_name);
+                let bname = builtin_name.clone();
+                let cur_word: String = if let Some(l) = line {
+                    let bytes = l.as_bytes();
+                    let cap = col.min(bytes.len());
+                    let mut j = cap;
+                    while j > 0 && !matches!(bytes[j - 1], b' ' | b'\t') {
+                        j -= 1;
+                    }
+                    String::from_utf8_lossy(&bytes[j..cap]).to_string()
+                } else {
+                    "--".to_string()
+                };
+                let cur_word_chars = cur_word.chars().count() as u64;
+                let dash_col = (col as u64).saturating_sub(cur_word_chars);
+                let edit_range = json!({
+                    "start": { "line": line_no, "character": dash_col },
+                    "end":   { "line": line_no, "character": col      },
+                });
+                // Sort prefix: zshrs-specific entries (the first
+                // ZSHRS_SELF_LONG_FLAG_DOCS.len() items) get "0_",
+                // setopt mirrors get "1_". IntelliJ honors sortText
+                // before alphabetic ordering — keeps the editor /
+                // dumper / parity flags at the top of the lookup.
+                let zshrs_specific_count = ZSHRS_SELF_LONG_FLAG_DOCS.len();
+                let items: Vec<Value> = flags
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, (flag, desc))| {
+                        let bucket = if idx < zshrs_specific_count { "0" } else { "1" };
+                        let detail = if desc.is_empty() {
+                            format!("long-form flag for `{}`", bname)
+                        } else {
+                            desc.clone()
+                        };
+                        let doc_md = if desc.is_empty() {
+                            format!("**`{}`** — long-form flag for `{}`", flag, bname)
+                        } else {
+                            format!("**`{}`** — {}\n\n_long-form flag for `{}`_", flag, desc, bname)
+                        };
+                        json!({
+                            "label": flag,
+                            "kind": 14, // Constant — same as ctx_item
+                            "detail": detail,
+                            "filterText": flag,
+                            "sortText": format!("{}_{}", bucket, flag),
+                            "textEdit": {
+                                "range": edit_range,
+                                "newText": flag,
+                            },
+                            "documentation": {
+                                "kind": "markdown",
+                                "value": doc_md,
+                            },
+                        })
+                    })
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
             LspCompletionContext::Normal => {}
         }
     }
@@ -3079,6 +3143,14 @@ enum LspCompletionContext {
     /// field carries the builtin name so the dispatcher can look
     /// up the right doc body.
     BuiltinFlag(String),
+    /// Cursor right after a `--` argument to a known builtin that
+    /// publishes long-form flag docs. `zshrs --<TAB>` surfaces the
+    /// 24 zshrs-specific long flags (`--lsp`, `--dap`, `--dump-*`,
+    /// `--doctor`, parity modes) plus every setopt mirror sourced
+    /// from `OPTION_DOCS`. Distinct from `BuiltinFlag` because long
+    /// flags don't letter-stack and the replacement range covers
+    /// the entire `--xxx` typed prefix as one unit.
+    BuiltinLongFlag(String),
 }
 
 /// Find the first whitespace-delimited word at or after a list-start
@@ -3454,7 +3526,16 @@ fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
             j -= 1;
         }
         let starts_with_dash = j < cap && bytes[j] == b'-';
+        let starts_with_double_dash =
+            j + 1 < cap && bytes[j] == b'-' && bytes[j + 1] == b'-';
         let just_after_builtin = j == cap;
+        // `zshrs --<TAB>` — route to long-flag completion when the
+        // current word starts with `--` AND the command publishes
+        // long-form flag docs. Falls through to BuiltinFlag for
+        // single-dash prefixes / builtins that only have short flags.
+        if starts_with_double_dash && is_known_builtin_with_long_flag_docs(&cmd) {
+            return LspCompletionContext::BuiltinLongFlag(cmd);
+        }
         if (starts_with_dash || just_after_builtin) && is_known_builtin_with_flag_docs(&cmd) {
             return LspCompletionContext::BuiltinFlag(cmd);
         }
@@ -3552,7 +3633,11 @@ fn is_known_builtin_with_flag_docs(name: &str) -> bool {
     // so they all live in `COMPSYS_FN_NAMES`. Flag completion routes
     // through the per-fn `COMPSYS_FN_FLAG_DOCS` table.
     let is_compsys = crate::compsys::COMPSYS_FN_NAMES.contains(&name);
-    if !is_compat && !is_ext && !is_compsys {
+    // `zshrs` is the binary itself — `zshrs -<TAB>` in a script
+    // surfaces the standard zsh-compat short flags via the hand
+    // table `ZSHRS_SELF_FLAG_DOCS`.
+    let is_self = name == "zshrs" || name == "zsh";
+    if !is_compat && !is_ext && !is_compsys && !is_self {
         return false;
     }
     !extract_builtin_flags(name).is_empty()
@@ -3582,6 +3667,23 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
         if let Some(v) = g.get(name) {
             return v.clone();
         }
+    }
+    // Tier 0a (zshrs binary itself): `zshrs -<TAB>` / `zsh -<TAB>`.
+    // Hand table sourced from `zshrs --help` output. Covers the
+    // 9 standard zsh-compat short flags. Long-form `--xxx` flags
+    // (zshrs-specific dumpers, parity modes, the setopt-mirror
+    // `--errexit` etc.) are NOT included here — the completion
+    // dispatcher's `BuiltinFlag` context handles only single-dash
+    // short flags; long-flag completion is a separate concern.
+    if name == "zshrs" || name == "zsh" {
+        let out: Vec<(String, String)> = ZSHRS_SELF_FLAG_DOCS
+            .iter()
+            .map(|(f, d)| (f.to_string(), d.to_string()))
+            .collect();
+        if let Ok(mut g) = cache.lock() {
+            g.insert(name.to_string(), out.clone());
+        }
+        return out;
     }
     // Tier 0 (compsys functions): hand-curated table derived from
     // `man zshcompsys` signatures. Beats the bullet/inline scrapers
@@ -3696,6 +3798,118 @@ fn lookup_compsys_flag_docs(name: &str) -> Option<&'static [(&'static str, &'sta
         .find(|(n, _)| *n == name)
         .map(|(_, flags)| *flags)
 }
+
+/// Gate for the `BuiltinLongFlag` context. True only for the binary
+/// itself today — every other long-flag-aware command in the corpus
+/// is reached through its short-flag table.
+fn is_known_builtin_with_long_flag_docs(name: &str) -> bool {
+    matches!(name, "zshrs" | "zsh")
+}
+
+/// Long-form flag table for `zshrs --<TAB>` / `zsh --<TAB>`. Built
+/// once (lazy) from [`ZSHRS_SELF_LONG_FLAG_DOCS`] + every entry in
+/// [`crate::zsh_option_docs::OPTION_DOCS`] transformed to its
+/// invocation spelling (`AUTO_CD` → `--autocd`). Cached for the
+/// process lifetime — keystroke-rate completion can't re-build 970+
+/// entries on every press.
+fn extract_builtin_long_flags(name: &str) -> Vec<(String, String)> {
+    use std::sync::OnceLock;
+    if name != "zshrs" && name != "zsh" {
+        return Vec::new();
+    }
+    static CACHE: OnceLock<Vec<(String, String)>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let mut out: Vec<(String, String)> = ZSHRS_SELF_LONG_FLAG_DOCS
+                .iter()
+                .map(|(f, d)| (f.to_string(), d.to_string()))
+                .collect();
+            // Setopt mirrors: every OPTION_DOCS canonical entry is
+            // reachable as `--<lowercase-no-underscores>` (positive)
+            // AND `--no-<lowercase-no-underscores>` (inverse) per
+            // zsh's `--OPTION` / `--no-OPTION` invocation grammar
+            // (see `Src/main.c:parseargs`). First-line snippet for
+            // the positive form so IntelliJ rows stay single-line;
+            // inverse gets a uniform "turn off" caption.
+            for (opt_name, opt_desc) in crate::zsh_option_docs::OPTION_DOCS {
+                let lower = opt_name.to_ascii_lowercase().replace('_', "");
+                let first_line = opt_desc
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+                    .trim();
+                let short: String = first_line.chars().take(200).collect();
+                out.push((format!("--{}", lower), short));
+                out.push((
+                    format!("--no-{}", lower),
+                    format!("Turn OFF `--{}`. Inverse of the setopt option.", lower),
+                ));
+            }
+            out
+        })
+        .clone()
+}
+
+/// `zshrs -<TAB>` / `zsh -<TAB>` self-flag completions. Mirrors the
+/// "Standard zsh options" section of `zshrs --help`. Documenting these
+/// directly because the binary itself isn't in any of the builtin /
+/// ext-builtin / compsys name sets, so the bullet scraper never sees
+/// the canonical zsh `Src/main.c:parseargs` flag dispatch.
+///
+/// Long-form (`--lsp`, `--dap HOST:PORT`, `--zsh`, `--errexit`, …) is
+/// intentionally out of scope here: the completion dispatcher's
+/// `BuiltinFlag` context strips the leading `-` and stacks letters
+/// (`-fl` → suggest `-fla`, `-flb`, …). Long-flag completion needs a
+/// separate `BuiltinLongFlag` context with its own prefix model.
+const ZSHRS_SELF_FLAG_DOCS: &[(&str, &str)] = &[
+    ("-b", "End option processing, like `--`. Subsequent arguments are positional even if they start with `-`."),
+    ("-c", "Take the FIRST argument as a command string to execute. Example: `zshrs -c 'echo hi'`."),
+    ("-f", "Equivalent to `--no-rcs`: skip sourcing `.zshenv` / `.zshrc` / `.zprofile` / `.zlogin`. Use for clean-environment scripting."),
+    ("-i", "Force interactive mode even when stdin isn't a terminal (job control + prompt + line editor active)."),
+    ("-l", "Force login-shell mode: source `.zprofile` / `.zlogin` on startup and `.zlogout` on exit. Equivalent to invoking as `-zshrs`."),
+    ("-s", "Read commands from standard input. Combine with `-c CMD …` to run CMD first then drain stdin."),
+    ("-o", "Set a setopt option by name. Example: `-o errexit -o pipefail -o nounset`. Inverse: `+o OPTION` or `--no-OPTION`."),
+    ("-v", "Verbose: print each input line as it's read. Equivalent to `--verbose` / `setopt VERBOSE`."),
+    ("-x", "xtrace: print each command and its arguments before execution. Equivalent to `--xtrace` / `setopt XTRACE` / `set -x`."),
+];
+
+/// zshrs-specific long flags (everything in `zshrs --help` that ISN'T
+/// a setopt mirror — those flow in automatically from `OPTION_DOCS`).
+/// Order is "most useful first" so the lookup popup leads with the
+/// editor-integration + parity-mode flags users actually invoke from
+/// scripts and CI.
+const ZSHRS_SELF_LONG_FLAG_DOCS: &[(&str, &str)] = &[
+    // Special / informational
+    ("--help",     "Print the full usage message (every flag, dumper, parity mode) and exit 0."),
+    ("--version",  "Print the zsh version string baked into the binary and exit 0."),
+    ("--doctor",   "Full diagnostic report of shell health, caches, plugin load timings, and performance counters."),
+    // Editor / IDE integration
+    ("--lsp",      "Run the Language Server on stdio. Serves completion / hover / definition / references / rename / documentSymbol / foldingRange / semanticTokens / formatting / diagnostics. Consumed by the IntelliJ plugin, Helix, Neovim, VS Code, etc."),
+    ("--dap",      "`--dap HOST:PORT` — Debug Adapter Protocol server. Connects back to the IDE's listener at HOST:PORT and drives breakpoints / step / variables / evaluate."),
+    ("--dump-reflection", "Emit the JSON blob the IntelliJ \"zshrs\" reflection tool window consumes: builtins / keywords / options / special_vars, each tagged by category."),
+    ("--docs",     "`--docs NAME` — render the same hover card the LSP would return for NAME. Used by the IntelliJ tool window's docs popup; handy for previewing doc output from the CLI."),
+    // Parser / VM dumpers
+    ("--dump-tokens",   "`--dump-tokens FILE|-` — one TOKNAME<tab>TOKSTR line per lexer token. Use `-` to read from stdin."),
+    ("--dump-ast",      "`--dump-ast FILE|-` — parser AST as a canonical S-expression. Use `-` to read from stdin."),
+    ("--dump-wordcode", "`--dump-wordcode FILE|-` — wordcode emitter output: EPROG / WORDS / WC[i] / STRS sections matching zsh's binary cache format."),
+    ("--dump-zwc",      "`--dump-zwc ZWCFILE [FN]` — inspect a compiled .zwc cache. Without FN, list every function. With FN, dump only that function's wordcode."),
+    ("--disasm",        "Print fusevm opcodes for each compiled unit before VM run. Does NOT suppress execution — script still runs."),
+    // Parity modes (drop-in shell emulation)
+    ("--zsh",       "Identical-behaviour drop-in for `/bin/zsh`. Caches OFF, daemon OFF — every `source` re-runs the file fresh. Used as the compat-test entrypoint."),
+    ("--bash",      "Identical-behaviour drop-in for `/bin/bash`. Caches / daemon OFF; every echo / source re-fires byte-for-byte against reference bash."),
+    ("--ksh",       "Identical-behaviour drop-in for `/bin/ksh` (ksh-93). Caches / daemon OFF."),
+    ("--sh",        "Identical-behaviour drop-in for `/bin/sh` / POSIX (alias of `--posix`). Caches / daemon OFF."),
+    ("--csh",       "Identical-behaviour drop-in for `/bin/csh`. Caches / daemon OFF."),
+    ("--posix",     "Identical-behaviour drop-in for `/bin/sh` / POSIX (Bourne / dash semantics). Caches / daemon OFF."),
+    ("--emulate",   "`--emulate MODE` — generic parity alias for `--MODE` (zsh-compat: matches the `emulate zsh` / `emulate bash` etc. builtin)."),
+    ("--zsh-compat","Alias of `--zsh` (legacy spelling — kept for back-compat with older scripts / CI invocations)."),
+    // Misc invocation
+    ("--no-rcs",   "Skip sourcing `.zshenv` / `.zshrc` / `.zprofile` / `.zlogin`. Equivalent to the short `-f` flag."),
+    ("--verbose",  "Print each input line as it's read. Equivalent to short `-v` / `setopt VERBOSE`."),
+    ("--xtrace",   "Print each command and its arguments before executing. Equivalent to short `-x` / `setopt XTRACE` / `set -x`."),
+    ("--login",    "Force login-shell mode. Equivalent to short `-l`."),
+    ("--interactive", "Force interactive mode. Equivalent to short `-i`."),
+];
 
 const COMPSYS_FN_FLAG_DOCS: &[(&str, &[(&str, &str)])] = &[
     (
@@ -9536,6 +9750,96 @@ mod tests {
                 got,
             );
         }
+    }
+
+    #[test]
+    fn zshrs_self_long_flag_completion_covers_zshrs_specific_plus_setopt_mirrors() {
+        // `zshrs --<TAB>` previously returned zero long-flag items.
+        // The new `BuiltinLongFlag` context + extract_builtin_long_flags
+        // now surfaces every zshrs-specific long flag plus every
+        // setopt option (transformed `AUTO_CD` → `--autocd`).
+        assert!(super::is_known_builtin_with_long_flag_docs("zshrs"));
+        assert!(super::is_known_builtin_with_long_flag_docs("zsh"));
+        assert!(!super::is_known_builtin_with_long_flag_docs("print"));
+
+        let flags = super::extract_builtin_long_flags("zshrs");
+        let by: std::collections::HashMap<&str, &str> =
+            flags.iter().map(|(f, d)| (f.as_str(), d.as_str())).collect();
+
+        // Spot-check zshrs-specific long flags.
+        for spec in [
+            "--help", "--version", "--doctor",
+            "--lsp", "--dap", "--dump-tokens", "--dump-ast",
+            "--dump-wordcode", "--dump-zwc", "--dump-reflection",
+            "--docs", "--disasm",
+            "--zsh", "--bash", "--ksh", "--sh", "--csh", "--posix",
+            "--emulate", "--zsh-compat",
+            "--no-rcs", "--verbose", "--xtrace", "--login", "--interactive",
+        ] {
+            assert!(
+                by.contains_key(spec),
+                "zshrs long-flag table missing {spec}",
+            );
+            let d = by.get(spec).unwrap();
+            let letters = d.chars().filter(|c| c.is_ascii_alphabetic()).count();
+            assert!(
+                letters >= 10,
+                "{spec} description should be substantive, got {:?}",
+                d,
+            );
+        }
+        // Setopt mirrors arrive from OPTION_DOCS — spot-check
+        // both positive and inverse forms.
+        for mirror in [
+            "--autocd", "--errexit", "--pipefail", "--nullglob", "--extendedglob",
+            "--no-autocd", "--no-errexit", "--no-pipefail",
+        ] {
+            assert!(
+                by.contains_key(mirror),
+                "setopt-mirror flag {mirror} missing — OPTION_DOCS not flowing through?",
+            );
+        }
+        // Total: ZSHRS_SELF_LONG_FLAG_DOCS hand table (~25) +
+        // OPTION_DOCS canonical (~197) × 2 (positive + inverse).
+        // Should land near 420.
+        assert!(
+            flags.len() > 400,
+            "expected > 400 long-flag entries (hand table + setopt mirrors × 2), got {}",
+            flags.len(),
+        );
+    }
+
+    #[test]
+    fn zshrs_self_flag_completion_lists_standard_short_flags() {
+        // `zshrs -<TAB>` previously returned zero completions: the
+        // binary itself isn't a builtin / ext-builtin / compsys fn,
+        // so `is_known_builtin_with_flag_docs` short-circuited. The
+        // ZSHRS_SELF_FLAG_DOCS table + the `name == "zshrs"` branch
+        // make all 9 standard short flags surface, each with a
+        // description.
+        assert!(super::is_known_builtin_with_flag_docs("zshrs"));
+        assert!(super::is_known_builtin_with_flag_docs("zsh"));
+
+        let flags = extract_builtin_flags("zshrs");
+        let names: std::collections::HashSet<&str> =
+            flags.iter().map(|(f, _)| f.as_str()).collect();
+        for must_have in ["-b", "-c", "-f", "-i", "-l", "-s", "-o", "-v", "-x"] {
+            assert!(
+                names.contains(must_have),
+                "zshrs self-flag table missing {must_have}",
+            );
+        }
+        for (f, d) in &flags {
+            let letters = d.chars().filter(|c| c.is_ascii_alphabetic()).count();
+            assert!(
+                letters >= 10,
+                "zshrs {f} description should be substantive, got {:?}",
+                d,
+            );
+        }
+        // `zsh` as a name alias resolves to the same table.
+        let zsh_flags = extract_builtin_flags("zsh");
+        assert_eq!(zsh_flags.len(), flags.len());
     }
 
     // Coverage audit — eprintln only, never fails. Run with

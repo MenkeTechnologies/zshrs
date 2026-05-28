@@ -63,7 +63,10 @@ use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
 pub use crate::ported::zsh_h::{
     patstralloc, Patstralloc, GF_BACKREF, GF_IGNCASE, GF_LCMATCHUC, GF_MATCHREF, GF_MULTIBYTE,
     PAT_ANY, PAT_FILE, PAT_FILET, PAT_HAS_EXCLUDP, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH,
-    PAT_NOGLD, PAT_NOTEND, PAT_NOTSTART, PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP,
+    PAT_NOGLD, PAT_NOTEND, PAT_NOTSTART, PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP, PP_ALNUM,
+    PP_ALPHA, PP_ASCII, PP_BLANK, PP_CNTRL, PP_DIGIT, PP_GRAPH, PP_IDENT, PP_IFS, PP_IFSSPACE,
+    PP_INCOMPLETE, PP_INVALID, PP_LOWER, PP_PRINT, PP_PUNCT, PP_RANGE, PP_SPACE, PP_UPPER,
+    PP_WORD, PP_XDIGIT, ZMB_INCOMPLETE, ZMB_INVALID,
 };
 use crate::utils::zerrnam;
 use crate::zsh_h::{
@@ -2027,14 +2030,22 @@ pub fn pattryrefs(
     // (PAT_STATIC etc.) stay on `prog.0.flags` for the outer
     // anchor/PURES checks at lines below.
     let match_result = patmatch(&prog.1, 0, trial, 0, &mut state, prog.0.globflags);
-    let ok = match match_result {
+    let (ok, matched_end) = match match_result {
         Some(end_pos) => {
             // c:2438 — `if (matched && !(prog->flags & (PAT_NOANCH|PAT_NOTEND))) ...`
             let no_anchor = (prog.0.flags & (PAT_NOANCH | PAT_NOTEND) as i32) != 0;
-            no_anchor || end_pos == trial.len()
+            (no_anchor || end_pos == trial.len(), end_pos)
         }
-        None => false,
+        None => (false, 0),
     };
+    if ok {
+        // c:2508 — `patinlen = patinput - patinstart;` — record the
+        // byte-length of the successful match so `patmatchlen()` can
+        // return it after the strings/state are torn down. `end_pos`
+        // is the in-trial byte offset where patmatch stopped, which
+        // is `patinput - patinstart` in C terms.
+        patinlen.store(matched_end as i32, Ordering::Relaxed);
+    }
     if ok {
         let n = (prog.0.patnpar as usize).min(NSUBEXP);
         if let Some(np) = nump {
@@ -2067,51 +2078,383 @@ pub fn pattryrefs(
 // =====================================================================
 // 15. Range matching — pattern.c:3856, :4004, :3610, :3767
 // =====================================================================
-//
-// `patmatchlen()` (C: pattern.c:2649 — `int patmatchlen(void)` reading
-// the file-static `patinput`/`patinstart`) had a Rust-only wrapper
-// `pub fn patmatchlen(prog: &Patprog, string: &str)` that compiled
-// the prog and ran `patmatch` to derive a length. Zero Rust callers,
-// Rule S1 deviation. Deleted; reintroduce as a faithful port once the
-// `patinput`/`patinstart` file-statics are bucket-1 thread_locals.
-//
-// `mb_patmatchrange()` / `mb_patmatchindex()` (C: pattern.c:3610 / :3767
-// — MULTIBYTE_SUPPORT variants of `patmatchrange` / `patmatchindex`)
-// had Rust-only thin delegates because `&[char]` is already UTF-32
-// per codepoint. Zero Rust callers; deleted. Callers that need the
-// MB variant should call `patmatchrange` / `patmatchindex` directly
-// — the non-MB code paths in pattern.c are reachable in the Rust
-// port too.
 
-// `patmatchrange(char *range, int ch, int *indptr, int *mtp)` (C:
-// pattern.c:3856) and `patmatchindex(char *range, int ind, int *chr,
-// int *mtp)` (C: pattern.c:4004) both walk the *compiled* (metafied,
-// PP_*-encoded) byte stream that the pattern compiler emits — not a
-// runtime "a-zA-Z" syntax string. Prior Rust ports here:
-//
-//   pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool
-//   pub fn patmatchindex(range: &[char], idx: usize) -> Option<char>
-//
-// took `&[char]` *runtime* range syntax (`"a-zA-Z"` parsed live) and
-// dropped the C `indptr`/`mtp` out-params. Both Rule B and semantic
-// violations:
-//   - C takes `char *range` (metafied bytes, NULL-passable, with
-//     `Meta+PP_*` markers); Rust took already-decoded char slices.
-//   - C dispatches over 15 PP_* classes (ALPHA, ALNUM, ASCII, BLANK,
-//     CNTRL, DIGIT, GRAPH, LOWER, PRINT, PUNCT, SPACE, UPPER, XDIGIT,
-//     IDENT, IFS, IFSSPACE, WORD, RANGE, INCOMPLETE, INVALID, UNKWN);
-//     Rust did a 2-arm runtime parse (lo-DASH-hi vs literal).
-//   - Rust's `igncase` param was threaded as state; C reads
-//     `patglobflags & GF_IGNCASE` at the relevant call sites.
-//
-// Deleted. `patmatchindex` had zero callers anywhere; `patmatchrange`
-// had only test callers in this file (deleted with it). The
-// closer-to-C implementation in `src/ported/zle/compmatch.rs:3928`
-// (Cpattern.str byte-stream walker with `indp`/`mtp` out-params) is
-// the production matcher used by compmatch; per PORT.md Rule C its
-// canonical home is also pattern.rs, but moving it requires the
-// metafied-byte substrate (encoding-parity between the compile and
-// match sides) which is a separate substrate work item.
+/// Direct port of `int patmatchlen(void)` from `Src/pattern.c:2649`.
+///
+/// ```c
+/// /**/
+/// int
+/// patmatchlen(void)
+/// {
+///     return patinlen;
+/// }
+/// ```
+///
+/// Returns the length in metafied bytes of the last successful
+/// `pattry` / `pattryrefs` match. `patinlen` is set at
+/// `pattern.c:2508` (`patinlen = patinput - patinstart`); the
+/// Rust port sets the equivalent `patinlen` AtomicI32 at the end
+/// of `pattryrefs` (see `pattern.rs::pattryrefs`).
+pub fn patmatchlen() -> i32 {
+    // c:2649-2652
+    patinlen.load(Ordering::Relaxed) // c:2651 — `return patinlen;`
+}
+/// Direct port of `int patmatchindex(char *range, int ind, int *chr, int *mtp)`
+/// from `Src/pattern.c:4004` (MULTIBYTE_SUPPORT-disabled single-byte
+/// variant). Walks a NULL-terminated, METAFIED, PP_*-encoded byte
+/// stream `range` and returns the character (or POSIX-class id)
+/// at index `ind`. Output:
+///   - `Some((Some(ch), mtp))` — literal character or PP_RANGE hit;
+///     `chr = ch`, `mtp = 0`.
+///   - `Some((None,    mtp))` — POSIX class match (PP_ALPHA etc);
+///     `chr = -1` in C, `None` in Rust; `mtp = class id`.
+///   - `None` — `ind` exceeds the descriptor's length.
+///
+/// Encoding the byte stream uses:
+///   * literal byte `< 0x83` = match char as itself
+///   * `Meta(0x83)` + (byte ^ 0x20) = ordinary metafied character
+///   * `Meta + PP_*` (0x84..) = POSIX class marker
+///   * `Meta + PP_RANGE` = next two metafied chars are `lo, hi`
+pub fn patmatchindex(range: &[u8], mut ind: i32) -> Option<(Option<u8>, i32)> {
+    // c:4004-4081
+    let mut chr: Option<u8> = None; // c:4014 — `*chr = -1`
+    let mut mtp: i32 = 0; // c:4015 — `*mtp = 0`
+
+    // C `UNMETA(range)` + `METACHARINC(range)` macro pair from
+    // Src/zsh.h:1796-1797 — decode-and-advance one metafied
+    // character. Returned as `(decoded_byte, byte_advance)`.
+    let unmeta = |bytes: &[u8], i: usize| -> (u8, usize) {
+        if i < bytes.len() && bytes[i] == Meta && i + 1 < bytes.len() {
+            (bytes[i + 1] ^ 0x20, 2)
+        } else if i < bytes.len() {
+            (bytes[i], 1)
+        } else {
+            (0, 0)
+        }
+    };
+
+    let mut i = 0usize;
+    while i < range.len() {
+        // c:4017 — `for (; *range; range++)`
+        let b = range[i];
+        if crate::ported::utils::imeta_byte(b) {
+            // c:4018 — `if (imeta((unsigned char) *range))`
+            // c:4019 — `int swtype = (unsigned char) *range - (unsigned char) Meta;`
+            let swtype = (b as i32) - (Meta as i32);
+            match swtype {
+                0 => {
+                    // c:4021-4028 — `case 0: ordinary metafied character`
+                    // c:4023 — `rchr = (unsigned char) *++range ^ 32;`
+                    i += 1;
+                    if i >= range.len() {
+                        break;
+                    }
+                    let rchr = range[i] ^ 0x20;
+                    if ind == 0 {
+                        // c:4024-4026 — `if (!ind) { *chr = rchr; return 1; }`
+                        chr = Some(rchr);
+                        return Some((chr, mtp));
+                    }
+                    // c:4027 — falls through to `if (!ind--) break;`
+                }
+                t if (PP_ALPHA..=PP_INVALID).contains(&t) => {
+                    // c:4030-4051 — POSIX class markers PP_ALPHA..PP_INVALID
+                    if ind == 0 {
+                        // c:4052-4054 — `if (!ind) { *mtp = swtype; return 1; }`
+                        mtp = swtype;
+                        return Some((None, mtp));
+                    }
+                }
+                t if t == PP_RANGE => {
+                    // c:4057-4069 — PP_RANGE: next two metafied chars
+                    // `range++; r1 = UNMETA(range); METACHARINC(range);
+                    //  r2 = UNMETA(range); if (*range == Meta) range++;`
+                    i += 1;
+                    if i >= range.len() {
+                        break;
+                    }
+                    let (r1, adv1) = unmeta(range, i);
+                    i += adv1;
+                    if i >= range.len() {
+                        break;
+                    }
+                    let (r2, adv2) = unmeta(range, i);
+                    i += adv2;
+                    let rdiff = r2 as i32 - r1 as i32;
+                    if rdiff >= ind {
+                        // c:4063-4067 — `if (rdiff >= ind) { *chr = r1 + ind; return 1; }`
+                        chr = Some((r1 as i32 + ind) as u8);
+                        return Some((chr, mtp));
+                    }
+                    // c:4068 — `ind -= rdiff;` (extra decrement happens via
+                    // the `ind--` below, accounting for the C comment
+                    // "note the extra decrement to ind below").
+                    ind -= rdiff;
+                    // Skip the trailing `if (!ind--) break;` decrement
+                    // for this branch since C's loop already does it.
+                }
+                _ => {
+                    // c:4070-4076 — PP_UNKWN / default → DPUTS bug warn
+                    // (unreachable in well-formed compiled output; bail).
+                }
+            }
+        } else {
+            // c:4079-4082 — literal char path
+            if ind == 0 {
+                // c:4080-4082 — `if (!ind) { *chr = (unsigned char) *range; return 1; }`
+                chr = Some(b);
+                return Some((chr, mtp));
+            }
+        }
+        // c:4087 — `if (!ind--) break;` — pre-decrement-check.
+        if ind == 0 {
+            break;
+        }
+        ind -= 1;
+        i += 1; // c:4017 — `range++`
+    }
+    // c:4091 — `/* No corresponding index. */ return 0;`
+    None
+}
+
+/// Direct port of `int mb_patmatchrange(char *range, wchar_t ch,
+/// int zmb_ind, wint_t *indptr, int *mtp)` from `Src/pattern.c:3610`.
+/// Multibyte variant of `patmatchrange`: walks the metafied,
+/// PP_*-encoded byte stream `range` and tests whether wide char `ch`
+/// is in it. `indptr` (when Some) accumulates the running index for
+/// `mb_patmatchindex`-side lookup; `mtp` (when Some) records which
+/// PP_* class fired.
+///
+/// `zmb_ind` is the `ZMB_*` multibyte-completion state from the
+/// caller (typically the pattry input pos): ZMB_INCOMPLETE /
+/// ZMB_INVALID feed the PP_INCOMPLETE / PP_INVALID branches.
+///
+/// The Rust port delegates `iswalpha` / `iswdigit` / `wcsitype` to
+/// `is_alphabetic()` / `is_numeric()` / etc. on the decoded `char`,
+/// matching the C `iswXXX(wchar_t)` semantics.
+pub fn mb_patmatchrange(
+    range: &[u8],
+    ch: char,
+    zmb_ind: i32,
+    mut indptr: Option<&mut u32>,
+    mut mtp: Option<&mut i32>,
+) -> bool {
+    // c:3610-3766
+    if let Some(p) = indptr.as_deref_mut() {
+        *p = 0; // c:3615-3616 — `if (indptr) *indptr = 0;`
+    }
+    // C `UNMETA(s)` + `METACHARINC(s)` macro pair (Src/zsh.h).
+    let unmeta = |bytes: &[u8], i: usize| -> (u8, usize) {
+        if i < bytes.len() && bytes[i] == Meta && i + 1 < bytes.len() {
+            (bytes[i + 1] ^ 0x20, 2)
+        } else if i < bytes.len() {
+            (bytes[i], 1)
+        } else {
+            (0, 0)
+        }
+    };
+    let mut i = 0usize;
+    while i < range.len() {
+        // c:3623 — `while (*range)`
+        let b = range[i];
+        if crate::ported::utils::imeta_byte(b) {
+            // c:3624 — `if (imeta((unsigned char) *range))`
+            // c:3625 — `swtype = (unsigned char) *range++ - (unsigned char) Meta;`
+            let swtype = (b as i32) - (Meta as i32);
+            i += 1;
+            if let Some(p) = mtp.as_deref_mut() {
+                *p = swtype; // c:3626-3627 — `if (mtp) *mtp = swtype;`
+            }
+            let class_hit = match swtype {
+                0 => {
+                    // c:3629-3634 — `case 0: ordinary metafied character`
+                    i -= 1; // c:3631 — `range--;`
+                    let (decoded, adv) = unmeta(range, i);
+                    i += adv;
+                    decoded == (ch as u32) as u8 && (ch as u32) < 256
+                }
+                t if t == PP_ALPHA => ch.is_alphabetic(),
+                t if t == PP_ALNUM => ch.is_alphanumeric(),
+                t if t == PP_ASCII => (ch as u32) < 128,
+                t if t == PP_BLANK => ch == ' ' || ch == '\t',
+                t if t == PP_CNTRL => ch.is_control(),
+                t if t == PP_DIGIT => ch.is_ascii_digit(),
+                t if t == PP_GRAPH => !ch.is_whitespace() && !ch.is_control(),
+                t if t == PP_LOWER => ch.is_lowercase(),
+                t if t == PP_PRINT => !ch.is_control(),
+                t if t == PP_PUNCT => ch.is_ascii_punctuation(),
+                t if t == PP_SPACE => ch.is_whitespace(),
+                t if t == PP_UPPER => ch.is_uppercase(),
+                t if t == PP_XDIGIT => ch.is_ascii_hexdigit(),
+                t if t == PP_IDENT => {
+                    // c:3704 — `PP_IDENT: if (wcsitype(ch, IIDENT)) return 1;`
+                    // IIDENT = alphanumeric, underscore, or "$" depending on
+                    // option state. Conservative: ASCII identifier chars.
+                    ch.is_alphanumeric() || ch == '_'
+                }
+                t if t == PP_IFS => {
+                    // c:3708 — `wcsitype(ch, ISEP)`. ISEP = space, tab,
+                    // newline + user IFS additions. Default IFS in zsh
+                    // is ` \t\n`.
+                    ch == ' ' || ch == '\t' || ch == '\n' || ch == '\0'
+                }
+                t if t == PP_IFSSPACE => {
+                    // c:3712-3713 — ASCII-only IFS-space.
+                    (ch as u32) < 128 && (ch == ' ' || ch == '\t' || ch == '\n')
+                }
+                t if t == PP_WORD => {
+                    // c:3716 — `wcsitype(ch, IWORD)`. IWORD = WORDCHARS-derived;
+                    // conservative ASCII alphanumeric + `_`.
+                    ch.is_alphanumeric() || ch == '_'
+                }
+                t if t == PP_RANGE => {
+                    // c:3719-3735 — PP_RANGE: two metafied wide chars are
+                    // `r1` and `r2`; matches if `r1 <= ch <= r2`.
+                    let (r1_byte, adv1) = unmeta(range, i);
+                    i += adv1;
+                    let (r2_byte, adv2) = unmeta(range, i);
+                    i += adv2;
+                    let r1 = r1_byte as u32;
+                    let r2 = r2_byte as u32;
+                    let chu = ch as u32;
+                    if r1 <= chu && chu <= r2 {
+                        if let Some(p) = indptr.as_deref_mut() {
+                            *p += chu - r1; // c:3725-3726
+                        }
+                        return true; // c:3727
+                    }
+                    if let Some(p) = indptr.as_deref_mut() {
+                        if r1 < r2 {
+                            *p += r2 - r1; // c:3733-3734
+                        }
+                    }
+                    false
+                }
+                t if t == PP_INCOMPLETE => {
+                    // c:3740 — `if (zmb_ind == ZMB_INCOMPLETE) return 1;`
+                    zmb_ind == ZMB_INCOMPLETE
+                }
+                t if t == PP_INVALID => {
+                    // c:3744 — `if (zmb_ind == ZMB_INVALID) return 1;`
+                    zmb_ind == ZMB_INVALID
+                }
+                _ => {
+                    // c:3747-3753 — PP_UNKWN / default → DPUTS bug warn
+                    false
+                }
+            };
+            if class_hit {
+                return true;
+            }
+        } else {
+            // c:3757-3762 — literal-char path
+            let (decoded, adv) = unmeta(range, i);
+            i += adv;
+            if decoded == (ch as u32) as u8 && (ch as u32) < 256 {
+                if let Some(p) = mtp.as_deref_mut() {
+                    *p = 0; // c:3760
+                }
+                return true; // c:3761
+            }
+        }
+        if let Some(p) = indptr.as_deref_mut() {
+            *p += 1; // c:3764-3765 — `if (indptr) (*indptr)++;`
+        }
+    }
+    false // c:3766 — `return 0;`
+}
+
+/// Direct port of `int mb_patmatchindex(char *range, wint_t ind,
+/// wint_t *chr, int *mtp)` from `Src/pattern.c:3767`. The reverse
+/// of `mb_patmatchrange`: given a metafied byte range and an index
+/// `ind` into it, return the character (or PP_* class) at that
+/// position.
+///
+/// Returns:
+///   - `Some((Some(ch),  0))` — literal or PP_RANGE hit (chr = ch).
+///   - `Some((None,     mtp))` — POSIX class match; chr = WEOF / None.
+///   - `None` — index out of range.
+pub fn mb_patmatchindex(
+    range: &[u8],
+    mut ind: u32,
+) -> Option<(Option<char>, i32)> {
+    // c:3767-3849
+    let mut chr: Option<char> = None; // c:3776 — `*chr = WEOF`
+    let mut mtp: i32 = 0; // c:3777 — `*mtp = 0`
+
+    // C `UNMETA(s)` + `METACHARINC(s)` macro pair (Src/zsh.h).
+    let unmeta = |bytes: &[u8], i: usize| -> (u8, usize) {
+        if i < bytes.len() && bytes[i] == Meta && i + 1 < bytes.len() {
+            (bytes[i + 1] ^ 0x20, 2)
+        } else if i < bytes.len() {
+            (bytes[i], 1)
+        } else {
+            (0, 0)
+        }
+    };
+
+    let mut i = 0usize;
+    while i < range.len() {
+        // c:3779 — `while (*range)`
+        let b = range[i];
+        if crate::ported::utils::imeta_byte(b) {
+            // c:3780 — `if (imeta((unsigned char) *range))`
+            let swtype = (b as i32) - (Meta as i32);
+            i += 1;
+            match swtype {
+                0 => {
+                    // c:3782-3789 — `case 0: ordinary metafied char`
+                    i -= 1;
+                    let (decoded, adv) = unmeta(range, i);
+                    i += adv;
+                    let rchr = decoded as char;
+                    if ind == 0 {
+                        chr = Some(rchr);
+                        return Some((chr, mtp));
+                    }
+                }
+                t if (PP_ALPHA..=PP_INVALID).contains(&t) => {
+                    // c:3791-3812 — POSIX class markers
+                    if ind == 0 {
+                        mtp = swtype;
+                        return Some((None, mtp));
+                    }
+                }
+                t if t == PP_RANGE => {
+                    // c:3814-3829 — PP_RANGE: two metafied wide chars
+                    let (r1_byte, adv1) = unmeta(range, i);
+                    i += adv1;
+                    let (r2_byte, adv2) = unmeta(range, i);
+                    i += adv2;
+                    let r1 = r1_byte as u32;
+                    let r2 = r2_byte as u32;
+                    let rdiff = r2.saturating_sub(r1);
+                    if rdiff >= ind {
+                        chr = char::from_u32(r1 + ind);
+                        return Some((chr, mtp));
+                    }
+                    ind = ind.saturating_sub(rdiff);
+                }
+                _ => {
+                    // c:3831-3837 — PP_UNKWN / default → DPUTS
+                }
+            }
+        } else {
+            // c:3840-3843 — literal byte path
+            if ind == 0 {
+                chr = Some(b as char);
+                return Some((chr, mtp));
+            }
+        }
+        // c:3846 — `if (!ind--) break;`
+        if ind == 0 {
+            break;
+        }
+        ind -= 1;
+        i += 1;
+    }
+    None // c:3849 — `return 0`
+}
 
 /// Port of `freepatprog(Patprog prog)` from `Src/pattern.c:4161`. Frees a Patprog.
 /// Rust's `Drop` on `Box<patprog>` handles this; the explicit fn
@@ -6563,5 +6906,115 @@ mod tests {
             ext_glob_match("?(a|b)c#d", "abcd"),
             "?(a|b)c#d matches abcd",
         );
+    }
+
+    // ── patmatchlen — c:2649 ─────────────────────────────────────────
+
+    /// `Src/pattern.c:2649` — `int patmatchlen(void)` returns the
+    /// byte-length of the last successful pattry match. After a
+    /// successful match against `"hello"` with pattern `"hel*"`,
+    /// the recorded length is 5 (all of "hello" was consumed).
+    #[test]
+    fn patmatchlen_records_consumed_byte_length() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = compile("hel*");
+        assert!(pattry(&prog, "hello"), "hel* matches hello");
+        assert_eq!(
+            patmatchlen(),
+            5,
+            "all 5 bytes of 'hello' consumed by hel*",
+        );
+    }
+
+    /// Anchored prefix match: `"foo"` against `"foobar"` with the
+    /// `NOANCH` form is the user-visible case `[[ foobar = foo* ]]`,
+    /// which consumes all 6 bytes when the pattern matches the whole
+    /// string.
+    #[test]
+    fn patmatchlen_full_string_match_returns_full_length() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = compile("foo*");
+        assert!(pattry(&prog, "foobar"));
+        assert_eq!(patmatchlen(), 6, "foo* against 'foobar' = 6 bytes");
+    }
+
+    // ── patmatchindex (c:4004) ──────────────────────────────────────
+
+    /// `patmatchindex` on a literal-byte range returns the byte at
+    /// the requested position.
+    #[test]
+    fn patmatchindex_literal_byte_at_index() {
+        let _g = crate::test_util::global_state_lock();
+        let range = b"abc";
+        assert_eq!(patmatchindex(range, 0), Some((Some(b'a'), 0)));
+        assert_eq!(patmatchindex(range, 1), Some((Some(b'b'), 0)));
+        assert_eq!(patmatchindex(range, 2), Some((Some(b'c'), 0)));
+        assert_eq!(patmatchindex(range, 3), None, "out-of-range index");
+    }
+
+    /// `patmatchindex` on a PP_ALPHA class marker returns `(None,
+    /// PP_ALPHA)` to signal the class without a literal char.
+    #[test]
+    fn patmatchindex_posix_class_marker_returns_mtp() {
+        let _g = crate::test_util::global_state_lock();
+        // Meta + PP_ALPHA = 0x83 + 1 = 0x84
+        let range = &[Meta + PP_ALPHA as u8];
+        let r = patmatchindex(range, 0);
+        assert_eq!(r, Some((None, PP_ALPHA)));
+    }
+
+    // ── mb_patmatchrange (c:3610) ───────────────────────────────────
+
+    /// `mb_patmatchrange` literal hit on `'a'`.
+    #[test]
+    fn mb_patmatchrange_literal_ascii_hits() {
+        let _g = crate::test_util::global_state_lock();
+        let range = b"a";
+        let mut mtp = -1;
+        assert!(
+            mb_patmatchrange(range, 'a', 0, None, Some(&mut mtp)),
+            "literal 'a' matches"
+        );
+        assert_eq!(mtp, 0, "literal hit sets mtp=0");
+    }
+
+    /// `mb_patmatchrange` PP_DIGIT class hit on `'5'`.
+    #[test]
+    fn mb_patmatchrange_digit_class_hits() {
+        let _g = crate::test_util::global_state_lock();
+        let range = &[Meta + PP_DIGIT as u8];
+        assert!(mb_patmatchrange(range, '5', 0, None, None));
+        assert!(!mb_patmatchrange(range, 'x', 0, None, None));
+    }
+
+    /// `mb_patmatchrange` PP_RANGE on `'b'` in `a..c`.
+    #[test]
+    fn mb_patmatchrange_range_hits_middle() {
+        let _g = crate::test_util::global_state_lock();
+        // Meta + PP_RANGE then two literal bytes for the endpoints.
+        let range = &[Meta + PP_RANGE as u8, b'a', b'c'];
+        assert!(mb_patmatchrange(range, 'b', 0, None, None));
+        assert!(mb_patmatchrange(range, 'a', 0, None, None));
+        assert!(mb_patmatchrange(range, 'c', 0, None, None));
+        assert!(!mb_patmatchrange(range, 'd', 0, None, None));
+    }
+
+    // ── mb_patmatchindex (c:3767) ───────────────────────────────────
+
+    /// `mb_patmatchindex` literal char at index 0.
+    #[test]
+    fn mb_patmatchindex_literal_first_index() {
+        let _g = crate::test_util::global_state_lock();
+        let range = b"xyz";
+        let r = mb_patmatchindex(range, 0);
+        assert_eq!(r, Some((Some('x'), 0)));
+    }
+
+    /// `mb_patmatchindex` on PP_UPPER marker at index 0.
+    #[test]
+    fn mb_patmatchindex_class_marker_returns_mtp() {
+        let _g = crate::test_util::global_state_lock();
+        let range = &[Meta + PP_UPPER as u8];
+        assert_eq!(mb_patmatchindex(range, 0), Some((None, PP_UPPER)));
     }
 }
