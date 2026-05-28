@@ -33,7 +33,11 @@ if (( ! ${+_zshrs_doc_names_cache} )); then
 fi
 
 _arguments -S -s : \
-  ${not}'--emulate[specify emulation mode]:mode:(zsh sh ksh csh)' \
+  ${not}'--emulate[specify emulation mode]:mode:(zsh sh ksh csh bash)' \
+  '--bash[parity-mode drop-in for /bin/bash (caches OFF, daemon OFF)]' \
+  '--ksh[parity-mode drop-in for /bin/ksh (ksh-93)]' \
+  '--sh[parity-mode drop-in for /bin/sh / POSIX (alias of --posix)]' \
+  '--csh[parity-mode drop-in for /bin/csh]' \
   '*-o+[set named option]:option:_options' \
   '*+o+[unset named option]:option:_options' \
   '(1 -s --shinstdin)'{-s,--shinstdin}'[read commands from standard input]' \
