@@ -341,8 +341,11 @@ mod case_flags {
         assert_parity("X=HelloWorld; echo ${(U)X}");
     }
 
+    /// Note: `X=hello world` is an inline-env-prefix invocation of the
+    /// command `world`, NOT an assignment of "hello world" to X. Both
+    /// shells emit "command not found: world" via the standard
+    /// scriptname prefix and exit 127.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: (C) capitalize differs from zsh per-word semantics"]
     fn capitalize_flag() {
         assert_parity("X=hello world; echo ${(C)X}");
     }
