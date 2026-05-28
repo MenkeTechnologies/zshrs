@@ -221,7 +221,6 @@ mod precedence {
 
     /// `builtin command echo` — both keywords nested, runs the builtin echo.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: builtin command echo combo output differs"]
     fn builtin_then_command_runs_builtin_echo() {
         assert_parity(r#"builtin command echo hi"#);
     }
