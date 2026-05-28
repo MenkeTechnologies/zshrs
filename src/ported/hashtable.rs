@@ -2408,13 +2408,19 @@ pub fn cmdnam_unhashed(name: &str, path_segments: Vec<String>) -> cmdnam {
 /// after callers populate `shf->funcdef = parse_subst_string(body)`.
 pub fn shfunc_with_body(name: &str, body: &str) -> shfunc {
     // c:824 idiom
+    // c:Src/exec.c:5383 — `ztrdup(scriptfilename)`. zsh tags every
+    // shfunc with the script it was defined in so `whence -v fn`
+    // and `type fn` can print `is a shell function from <script>`.
+    // For `-c '...'` invocations zsh sets scriptfilename to "zsh".
+    // Without this seed, fusevm-compiled functions all had
+    // filename=None and `type fn` lost the "from <script>" suffix.
     shfunc {
         node: hashnode {
             next: None,
             nam: name.to_string(),
             flags: 0,
         },
-        filename: None,
+        filename: crate::ported::utils::scriptfilename_get(),
         lineno: 0,
         funcdef: None,
         redir: None,
