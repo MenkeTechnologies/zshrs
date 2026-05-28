@@ -1907,11 +1907,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `${...}` param-expansion braces), so its collapse hit even
         // pure-paramsubst args.
         let raw = vm.pop();
+        // c:Src/options.c — `no_brace_expand` (negated braceexpand)
+        // disables brace expansion entirely. When set, `{a,b}` stays
+        // literal. Mirror by short-circuiting xpandbraces; pass the
+        // input through unchanged.
+        let brace_expand = opt_state_get("braceexpand").unwrap_or(true);
         let brace_ccl = opt_state_get("braceccl").unwrap_or(false);
         let inputs: Vec<String> = match raw {
             Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
             other => vec![other.to_str()],
         };
+        if !brace_expand {
+            return nodes_to_value(inputs);
+        }
         let mut out: Vec<String> = Vec::with_capacity(inputs.len());
         for s in inputs {
             for w in crate::ported::glob::xpandbraces(&s, brace_ccl) {
@@ -4165,6 +4173,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // strips TOKEN bytes, after which the strict-TOKEN
                 // xpandbraces gate would no longer match.
                 let brace_ccl = opt_state_get("braceccl").unwrap_or(false);
+                // c:Src/options.c — `no_brace_expand` (negated
+                // `braceexpand`) gates brace expansion entirely.
+                // When off, `{a,b}` stays literal.
+                let brace_expand = opt_state_get("braceexpand").unwrap_or(true);
                 let pre_brace: Vec<String> = if nodes.is_empty() {
                     vec![String::new()]
                 } else {
@@ -4173,7 +4185,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let brace_expanded: Vec<String> = pre_brace
                     .into_iter()
                     .flat_map(|w| {
-                        if w.contains('\u{8f}') {
+                        if brace_expand && w.contains('\u{8f}') {
                             crate::ported::glob::xpandbraces(&w, brace_ccl)
                         } else {
                             vec![w]
