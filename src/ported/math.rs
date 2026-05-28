@@ -1241,6 +1241,18 @@ pub(crate) fn getcvar(name: &str) -> mnumber {
             type_: MN_INTEGER,
         };
     }
+    // c:Src/math.c:943 — `getcvar` falls back to `getsparam` for
+    // scalar params not already cached in math-local tables. Without
+    // this, `a=A; (( #a ))` returned 0 instead of 65 — `m_string_
+    // variables_get` only sees variables explicitly seeded into the
+    // math frame.
+    if let Some(raw) = getsparam(name) {
+        return mnumber {
+            l: raw.chars().next().map(|c| c as i64).unwrap_or(0),
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
+    }
     if let Some(v) = m_variables_get(name) {
         let s = match v.type_ {
             MN_INTEGER => v.l.to_string(),
