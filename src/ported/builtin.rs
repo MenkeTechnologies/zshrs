@@ -1662,7 +1662,11 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
             let dd: usize = arg[1..].parse().unwrap_or(0); // c:894
             let pushdminus = isset(optlookup("pushdminus"));
             let from_top = (arg.starts_with('+')) ^ pushdminus; // c:898
-            return DIRSTACK.lock().ok().and_then(|d| {
+            // c:Src/builtin.c:904 — out-of-range stack index emits
+            // "no such entry in dir stack". Previous Rust port
+            // returned None silently and bin_cd's caller exited 1
+            // with no stderr, breaking parity.
+            let resolved = DIRSTACK.lock().ok().and_then(|d| {
                 if from_top {
                     d.get(dd).cloned()
                 } else if d.len() > dd {
@@ -1671,6 +1675,10 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
                     None
                 }
             });
+            if resolved.is_none() {
+                zwarnnam(nam, "no such entry in dir stack");
+            }
+            return resolved;
         }
         // c:910-911 — `-` alias for $OLDPWD; else literal arg.
         //              C reads `oldpwd` global / `$OLDPWD` param;
