@@ -3810,17 +3810,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if !errexit_on {
             return Value::Int(0);
         }
-        if in_subshell {
-            // c:Src/exec.c — `set -e` inside a subshell terminates
-            // the subshell (the forked child), and the parent shell
-            // sees `last` as the subshell's exit status. Set
-            // EXIT_PENDING + EXIT_VAL so subshell_end at the boundary
-            // promotes them into the parent's $?; the caller's
-            // JumpIfTrue will branch to the SubshellEnd landing so
-            // no further ops in the subshell body run.
-            crate::ported::builtin::EXIT_VAL.store(last, Ordering::Relaxed);
-            crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
-        }
+        // c:Src/exec.c — `set -e` fires shell exit, NOT a function-only
+        // unwind. When LOCAL_OPTIONS restores the option mid-fn, the
+        // restoration would otherwise mask the trigger and let the
+        // outer scope continue. Setting EXIT_PENDING + EXIT_VAL here
+        // (for ALL scope kinds, not just subshells) makes the fn-exit
+        // path propagate to the shell-exit boundary at c:6135-6155.
+        crate::ported::builtin::EXIT_VAL.store(last, Ordering::Relaxed);
+        crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
+        let _ = in_subshell;
         // Function scope and top-level scope both branch to their
         // respective return_patches; top-level lands at chunk-end,
         // so execute_script returns `last` as the script's exit
