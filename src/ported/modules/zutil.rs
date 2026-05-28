@@ -847,20 +847,39 @@ pub fn bin_zstyle(
     // being clear of -L/-l; otherwise fall through to the
     // OPT_ISSET(L|l) arm below.
     if args.is_empty() && !OPT_ISSET(ops, b'L') && !OPT_ISSET(ops, b'l') {
-        // c:495
-        // c:496 — list mode: walk zstyletab printing each entry.
+        // c:Src/Modules/zutil.c:184-216 printstylenode in ZSLIST_BASIC
+        // mode: emit one block per style — first the style name on its
+        // own line, then `      <pat> <val>...` (or `(eval) <pat> ...`)
+        // indented for each pattern bound to that style. zshrs's bare-
+        // list previously emitted flat `pat style val` triples; this
+        // matches C's grouped format used by `zstyle` with no args.
+        use crate::ported::utils::quotedzputs;
         let t = match zstyletab.lock() {
             Ok(g) => g,
             Err(_) => return 1,
         };
-        let mut out = std::io::stdout().lock();
+        let mut by_style: std::collections::BTreeMap<String, Vec<(String, Vec<String>)>> =
+            std::collections::BTreeMap::new();
         for (pat, style, vals) in t.list(None) {
-            // c:496
-            let _ = write!(out, "{} {}", pat, style);
-            for v in &vals {
-                let _ = write!(out, " {}", v);
+            by_style
+                .entry(style)
+                .or_insert_with(Vec::new)
+                .push((pat, vals));
+        }
+        let mut out = std::io::stdout().lock();
+        for (style, patterns) in &by_style {
+            let _ = write!(out, "{}", quotedzputs(style)); // c:191
+            let _ = writeln!(out); // c:192
+            for (pat, vals) in patterns {
+                // c:195 — non-eval indent is six spaces; eval marker
+                // not threaded through zshrs's style storage yet, so
+                // always emit the plain indent.
+                let _ = write!(out, "        {}", pat); // c:195
+                for v in vals {
+                    let _ = write!(out, " {}", quotedzputs(v)); // c:208
+                }
+                let _ = writeln!(out); // c:211
             }
-            let _ = writeln!(out);
         }
         return 0; // c:497
     }
