@@ -954,8 +954,48 @@ impl ZshCompiler {
             }
         }
 
-        // ── If no words: bare assignment, done ────────────────────────
+        // ── If no words: bare assignment / redir-only, done ──────────
         if simple.words.is_empty() {
+            // c:Src/exec.c:3330-3364 — no command word but has redirs.
+            // - assigns-only: nullexec=2 (apply redirs in scope, assigns
+            //   already compiled above, no command run, status from
+            //   prior cmd-subst preserved or 0)
+            // - no-assigns, no-words, has-redirs: NULLCMD path. Default
+            //   NULLCMD=cat reads the redir-bound fd through the
+            //   inherited redirect.
+            if !simple.redirs.is_empty() {
+                self.builder
+                    .emit(Op::WithRedirectsBegin(simple.redirs.len() as u8), 0);
+                for redir in &simple.redirs {
+                    self.compile_redir(redir);
+                }
+                if simple.assigns.is_empty() {
+                    // c:3340-3364 — invoke NULLCMD/READNULLCMD.
+                    let is_single_read = simple.redirs.len() == 1
+                        && simple.redirs[0].rtype
+                            == crate::ported::zsh_h::REDIR_READ;
+                    self.builder
+                        .emit(Op::LoadInt(if is_single_read { 1 } else { 0 }), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_NULLCMD_EXEC, 1),
+                        0,
+                    );
+                    self.builder.emit(Op::SetStatus, 0);
+                } else if !chain_had_cmd_subst {
+                    // nullexec=2 with assigns: redirs applied to current
+                    // shell; preserve cmd-subst $? or reset to 0.
+                    self.builder.emit(Op::LoadInt(0), 0);
+                    self.builder.emit(Op::SetStatus, 0);
+                }
+                self.builder.emit(Op::WithRedirectsEnd, 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_NEWLINE, 0),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
+                self.emit_errexit_check();
+                return;
+            }
             // c:Src/exec.c:3395-3396 — `lastval = cmdoutval;`
             // For the assignment-only path: if no $() ran in any RHS
             // the post-assignment $? is 0; if any did, last_status
