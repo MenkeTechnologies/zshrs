@@ -85,27 +85,23 @@ isn't ticked until ALL of them pass.
 
 ---
 
-## Status Summary (updated 2026-05-13)
+## Status Summary (updated 2026-05-28)
 
-**Codebase metrics:**
-- `src/ported/`: 81,020 lines, 66 files (tracked `git ls-files 'src/ported/**/*.rs'`)
-- `// c:NNN` citations: subst.rs (2000), builtin.rs (1957), zsh_h.rs (690), module.rs (342)
-- `/// Port of` citations: params.rs (171), zsh_h.rs (119), utils.rs (186)
+**Codebase metrics** (regenerate via `find src/ported -name '*.rs' | xargs wc -l`
+and `grep -c '// c:' src/ported/<file>.rs`):
+- `src/ported/`: 262,261 lines, 107 files (`find src/ported -name '*.rs'`)
+- `// c:NNN` citations: subst.rs (2144), builtin.rs (2324), zsh_h.rs (745), module.rs (735)
+- `/// Port of` citations: params.rs (181), zsh_h.rs (123), utils.rs (194)
 
-**ADHOC warnings still present (should be deleted/ported):**
-| File | Count |
-|------|-------|
-| `modules/parameter.rs` | 72 |
-| `modules/db_gdbm.rs` | 21 |
-| `modules/zftp.rs` | 20 |
-| `modules/zutil.rs` | 15 |
-| `modules/zpty.rs` | 9 |
-| `modules/pcre.rs` | 1 |
-| `modules/watch.rs` | 1 |
+**ADHOC warnings:** all `WARNING.*ADHOC` annotations cleared from the
+`modules/*.rs` set (`grep -rc 'ADHOC' src/ported/modules/` now reports
+zero across `parameter.rs`, `db_gdbm.rs`, `zftp.rs`, `zutil.rs`,
+`zpty.rs`, `pcre.rs`, `watch.rs`).
+
+**Stub coverage:** see `docs/audits/PORT_STUBS.md` (regenerate with
+`python3 scripts/gen_port_stubs.py`).
 
 **Build status:** `cargo build` clean (dev profile).
-
-**In-flight work:** Adding `// c:NNN` line citations to jobs.rs, module.rs, params.rs, modules/parameter.rs.
 
 ---
 

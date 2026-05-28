@@ -12,7 +12,7 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 
 ---
 
-## Progress Summary (updated 2026-05-13)
+## Progress Summary (updated 2026-05-28)
 
 | Phase | Total Items | Done | Remaining |
 |-------|-------------|------|-----------|
@@ -21,23 +21,22 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 | Phase 3 — Bucket-2 shared holders | 11 | 11 | 0 |
 | Phase 4 — Daemon image holders | 5 | 0 | 5 |
 | Phase 5 — Test invariants | 3 | 3 | 0 |
-| Phase 6 — ShellExecutor field dissolution | ~57 | 13 | ~44 |
+| Phase 6 — ShellExecutor field dissolution | ~57 | ~20 | ~37 |
 
 **Phase 2 remaining structs to dissolve:** none
 
-**Phase 6 in flight (2026-05-12):** the `pub struct ShellExecutor` at
-`src/exec.rs:345` is the next bag-of-globals to dissolve. It aggregates
-57 fields that should each map to a canonical zsh C global. Recent
-deletions (most-recent first): `autoload_pending`, `options`,
-`cmd_stack`, `hook_functions`, `command_hash`, `named_dirs`,
-`readonly_vars`, `dir_stack`, `last_subst`/`sub_flags`/
-`in_paramsubst_nest`/`zftp`/`style_table` (5 in one commit),
-`expanding_aliases`. Each field deletion routes callers to the
-canonical zsh global (e.g. `paramtab`, `cmdnamtab`, `OPTS_LIVE`,
-`prompt::CMDSTACK`, `aliastab`). Pattern matches the dissolved `Zle`
-struct work: identify the canonical C-equivalent, migrate callers,
-delete the field. Same anti-pattern (Rule 1 violation: bag-of-globals
-with no `struct executor` in C).
+**Phase 6 in flight:** `pub struct ShellExecutor` relocated to
+`src/vm_helper.rs:238` (was `src/exec.rs:345`); current field count
+is 37 per `awk '/^pub struct ShellExecutor/,/^}/' src/vm_helper.rs |
+grep -cE '^\s*(pub )?[a-z_]+:'`. Each remaining field maps to a
+canonical zsh C global that callers should reach directly. Recent
+deletions (older→newer): `autoload_pending`, `options`, `cmd_stack`,
+`hook_functions`, `command_hash`, `named_dirs`, `readonly_vars`,
+`dir_stack`, `last_subst`/`sub_flags`/`in_paramsubst_nest`/`zftp`/
+`style_table` (5 in one commit), `expanding_aliases`. Routes through
+`paramtab`, `cmdnamtab`, `OPTS_LIVE`, `prompt::CMDSTACK`, `aliastab`.
+Same anti-pattern as the dissolved `Zle` struct (Rule 1: bag-of-
+globals with no `struct executor` in C).
 
 **Phase 2 final-batch dissolutions (verified 2026-05-12):**
 - `init.rs` `ShellState` — verified absent via `grep -rn 'struct
