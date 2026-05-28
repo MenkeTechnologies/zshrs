@@ -1437,36 +1437,74 @@ fn par_case() -> Option<ZshCommand> {
             break;
         }
 
-        // Skip optional `(`. zsh's case grammar: `case W in (P)…)`.
-        // The leading `(` is paired with a matching `)` that closes
-        // the pattern itself; the arm-close `)` follows separately.
-        // Track whether we consumed it so we can skip the matching
-        // `)` after pattern parsing — otherwise the arm-close would
-        // be interpreted as the pattern-close and the actual body
-        // would get the leftover `)`.
-        let had_leading_paren = tok() == INPAR_TOK;
-        if had_leading_paren {
+        // c:1250 — `if (tok == INPAR) zshlex();` — leading-paren
+        // skip path. Used when the lexer DID return INPAR_TOK (e.g.
+        // SHGLOB or incmdpos forced it). In the normal case-pattern
+        // path the lexer absorbs `(...)` into one Stringg and the
+        // hack at c:1322 strips the surrounding parens later. Both
+        // paths land here.
+        if tok() == INPAR_TOK {
             zshlex();
         }
 
-        // incasepat is already set above
+        // c:1255-1262 — read pattern STRING. zsh's parser falls
+        // straight into the STRING reader after the optional INPAR.
+        // BAR before any pattern means empty string.
         let mut patterns = Vec::new();
+        // Tracks whether the c:1322-1354 hack has fired (paren-
+        // wrapped Stringg absorbed by the lexer). When it has, the
+        // closing `)` was already absorbed — no separate OUTPAR
+        // arm-close to consume.
+        let mut absorbed_outpar = false;
         loop {
             if tok() == STRING_LEX {
                 let s = tokstr();
-                if s.map(|s| s == "esac").unwrap_or(false) {
+                if s.as_deref().map(|s| s == "esac").unwrap_or(false) {
                     break;
                 }
-                patterns.push(tokstr().unwrap_or_default());
-                // After first pattern token, set incasepat=2 so ( is treated as part of pattern
+                let mut str_val = s.unwrap_or_default();
+
+                // c:1322-1354 hack: when this is the first alt AND
+                // the string starts with the Inpar marker, the lexer
+                // absorbed the whole `(...)` as one token. Strip the
+                // surrounding parens — the remainder IS the pattern.
+                // The closing arm-paren was absorbed too, so we don't
+                // expect a separate OUTPAR token afterward.
+                if patterns.is_empty() && str_val.starts_with(crate::ported::zsh_h::Inpar) {
+                    let mut pct = 0i32;
+                    let mut chars: Vec<char> = str_val.chars().collect();
+                    let mut end_idx: Option<usize> = None;
+                    for (idx, &c) in chars.iter().enumerate() {
+                        if c == crate::ported::zsh_h::Inpar {
+                            pct += 1;
+                        } else if c == crate::ported::zsh_h::Outpar {
+                            pct -= 1;
+                            if pct == 0 {
+                                end_idx = Some(idx);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(idx) = end_idx {
+                        chars.remove(idx);
+                        chars.remove(0);
+                        str_val = chars.into_iter().collect();
+                        absorbed_outpar = true;
+                    }
+                }
+                patterns.push(str_val);
                 set_incasepat(2);
                 zshlex();
+                // When the hack fired the closing `)` is already
+                // consumed; don't read alt-`|` continuations either.
+                if absorbed_outpar {
+                    break;
+                }
             } else if tok() != BAR_TOK {
                 break;
             }
 
             if tok() == BAR_TOK {
-                // Reset to 1 (start of next alternative pattern)
                 set_incasepat(1);
                 zshlex();
             } else {
@@ -1475,45 +1513,31 @@ fn par_case() -> Option<ZshCommand> {
         }
         set_incasepat(0);
 
-        // zsh's `(P)` form (parse.c:1320-1360 hack) treats the entire
-        // parenthesized contents as ONE zsh pattern with internal `|`
-        // as the literal alternation operator — NOT as multiple
-        // case-arm alternatives. Without a leading `(`, the bare
-        // `P1|P2)` form splits into multiple alts. Mirror that here:
-        // when a leading `(` was consumed, fold the |-separated
-        // pieces back into a single pattern string.
-        if had_leading_paren && patterns.len() > 1 {
-            let joined = patterns.join("|");
-            patterns = vec![joined];
-        }
-
-        // Expect ).  Also handle the `(P))` wrapped-pattern form:
-        // when a leading `(` was consumed, accept an extra `)` —
-        // the inner `)` closes the optional-paren wrapper, the
-        // outer `)` is the arm-close. zsh accepts BOTH `(P) BODY`
-        // (bare pattern, leading-paren is just the opt-marker, the
-        // close is arm-close) and `(P)) BODY` (paren-wrapped
-        // pattern, then arm-close). The first form is unambiguous
-        // when the bare pattern was simple; the second is needed
-        // when the body starts with `(`.
-        if tok() != OUTPAR_TOK {
-            zerr("expected ')' in case pattern");
-            return None;
-        }
-        // Port of Src/parse.c:1310-1313 — when the case pattern
-        // closes with `)`, set `incmdpos = 1` BEFORE consuming
-        // the token so the first word of the arm body is lexed
-        // in command position (so `case X in X) c1=v ;;` parses
-        // `c1=v` as an assignment word, not a command name).
-        set_incmdpos(true);
-        zshlex();
-        if had_leading_paren && tok() == OUTPAR_TOK {
+        // c:1305 — expect OUTPAR (arm-close) when the hack didn't
+        // already swallow it.
+        if !absorbed_outpar {
+            if tok() != OUTPAR_TOK {
+                zerr("expected ')' in case pattern");
+                return None;
+            }
             set_incmdpos(true);
             zshlex();
+        } else {
+            set_incmdpos(true);
         }
 
-        // Parse body
-        let body = parse_program();
+        // Parse body. Pass end_tokens explicitly so the body's
+        // parser stops at DSEMI/SEMIAMP/SEMIBAR/ESAC without
+        // tripping parse_program_until's orphan-terminator check
+        // (line 7131) which only fires when end_tokens is None.
+        // Without this, a case arm whose body has no trailing
+        // `;;` before `esac` (last arm — zsh accepts the dangling
+        // form) produced "parse error near orphan terminator" on
+        // the closing `esac`. zsh's par_case at parse.c:1318 sets
+        // up the case-arm reader to recognize the same terminator
+        // set; the Rust port was passing the implicit-None and
+        // hitting the top-level orphan check.
+        let body = parse_program_until(Some(&[DSEMI, SEMIAMP, SEMIBAR, ESAC]));
 
         // Get terminator. Set incasepat=1 BEFORE the zshlex
         // advance so the next token (the next arm's pattern, like
@@ -1669,6 +1693,17 @@ fn par_if() -> Option<ZshCommand> {
                     break;
                 }
                 FI => {
+                    // Brace-form `if ... { ... }` is already terminated by
+                    // its closing `}`. Do NOT consume `fi` here — it belongs
+                    // to an enclosing then-form if. Without this gate, a
+                    // brace-form if inside a then-form if's body would steal
+                    // the outer `fi`, leaving the outer parser to see
+                    // "unterminated if". This bit zinit-install.zsh:978
+                    // where `if (( … )) {` (brace) inside `if … ; then …`
+                    // (then-form) ate the outer `fi`.
+                    if use_brace {
+                        break;
+                    }
                     zshlex();
                     saw_terminator = true;
                     break;

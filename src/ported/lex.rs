@@ -1288,11 +1288,15 @@ fn gettok() -> lextok {
                     // (falls through to gettokstr so `(` starts a
                     // Stringg — typical for unquoted glob args like
                     // `ls (^foo)*`).
-                    if isset(SHGLOB)
-                        || LEX_INCOND.get() == 1
-                        || LEX_INCMDPOS.get()
-                        || LEX_INCASEPAT.get() >= 1
-                    {
+                    //
+                    // Case-pattern context (incasepat>0): C source does
+                    // NOT add incasepat here — the `(` is absorbed into
+                    // gettokstr as part of the pattern, and par_case
+                    // detects the leading-paren form by checking if the
+                    // resulting str starts with the Inpar marker
+                    // (parse.c:1322 hack). Mirror exactly: do not gate
+                    // on incasepat.
+                    if isset(SHGLOB) || LEX_INCOND.get() == 1 || LEX_INCMDPOS.get() {
                         INPAR_TOK
                     } else {
                         gettokstr('(', false)
