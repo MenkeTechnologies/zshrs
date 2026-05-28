@@ -591,4 +591,157 @@ mod tests {
             s,
         );
     }
+
+    // ========================================================
+    // redir_type_tag — total redirection-code coverage
+    // ========================================================
+
+    #[test]
+    fn redir_type_tag_maps_all_known_constants_to_distinct_names() {
+        use crate::ported::zsh_h::*;
+        let tags = [
+            redir_type_tag(REDIR_WRITE),
+            redir_type_tag(REDIR_WRITENOW),
+            redir_type_tag(REDIR_APP),
+            redir_type_tag(REDIR_APPNOW),
+            redir_type_tag(REDIR_READ),
+            redir_type_tag(REDIR_READWRITE),
+            redir_type_tag(REDIR_HEREDOC),
+            redir_type_tag(REDIR_HEREDOCDASH),
+            redir_type_tag(REDIR_HERESTR),
+            redir_type_tag(REDIR_MERGEIN),
+            redir_type_tag(REDIR_MERGEOUT),
+            redir_type_tag(REDIR_ERRWRITE),
+            redir_type_tag(REDIR_ERRWRITENOW),
+            redir_type_tag(REDIR_ERRAPP),
+            redir_type_tag(REDIR_ERRAPPNOW),
+            redir_type_tag(REDIR_INPIPE),
+            redir_type_tag(REDIR_OUTPIPE),
+        ];
+        // All must be non-Unknown and unique — otherwise the parity
+        // sexp loses information.
+        for t in &tags {
+            assert_ne!(*t, "Unknown", "tag should not be Unknown");
+        }
+        let mut sorted = tags.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), tags.len(), "duplicate tag names");
+    }
+
+    #[test]
+    fn redir_type_tag_unknown_for_unmapped_int() {
+        // Pick a value far outside the REDIR_* enum range.
+        assert_eq!(redir_type_tag(9_999), "Unknown");
+        assert_eq!(redir_type_tag(-1), "Unknown");
+    }
+
+    #[test]
+    fn redir_type_tag_basic_names_are_stable() {
+        use crate::ported::zsh_h::{REDIR_APP, REDIR_READ, REDIR_WRITE};
+        assert_eq!(redir_type_tag(REDIR_WRITE), "Write");
+        assert_eq!(redir_type_tag(REDIR_READ), "Read");
+        assert_eq!(redir_type_tag(REDIR_APP), "Append");
+    }
+
+    // ========================================================
+    // emit_str — escaping (drives canonical-sexp byte parity)
+    // ========================================================
+
+    #[test]
+    fn emit_str_escapes_backslash_and_quote() {
+        let mut out = String::new();
+        emit_str(r#"a\"b"#, &mut out);
+        assert_eq!(out, r#""a\\\"b""#);
+    }
+
+    #[test]
+    fn emit_str_escapes_control_chars_to_hex() {
+        let mut out = String::new();
+        // BEL (0x07) is outside printable range — must encode as \x07.
+        emit_str("\x07ring", &mut out);
+        assert!(out.contains("\\x07"), "expected \\x07 escape: {}", out);
+    }
+
+    #[test]
+    fn emit_str_emits_tab_newline_cr_short_escapes() {
+        let mut out = String::new();
+        emit_str("a\tb\nc\rd", &mut out);
+        assert!(out.contains("\\t"), "missing tab escape: {}", out);
+        assert!(out.contains("\\n"), "missing nl escape: {}", out);
+        assert!(out.contains("\\r"), "missing cr escape: {}", out);
+    }
+
+    #[test]
+    fn emit_str_passes_ascii_printable_unchanged() {
+        let mut out = String::new();
+        emit_str("plain text 123", &mut out);
+        assert_eq!(out, "\"plain text 123\"");
+    }
+
+    #[test]
+    fn emit_str_emits_paired_quotes_even_for_empty_input() {
+        let mut out = String::new();
+        emit_str("", &mut out);
+        assert_eq!(out, "\"\"");
+    }
+
+    // ========================================================
+    // emit_list_flags — list-execution mode tag
+    // ========================================================
+
+    #[test]
+    fn list_flags_sync_takes_priority() {
+        let mut out = String::new();
+        emit_list_flags(
+            &ListFlags {
+                async_: false,
+                disown: false,
+            },
+            &mut out,
+        );
+        assert_eq!(out, "Sync");
+    }
+
+    #[test]
+    fn list_flags_disown_takes_priority_over_async() {
+        // Both flags set → render as Disown (background detached).
+        let mut out = String::new();
+        emit_list_flags(
+            &ListFlags {
+                async_: true,
+                disown: true,
+            },
+            &mut out,
+        );
+        assert_eq!(out, "Disown");
+    }
+
+    #[test]
+    fn list_flags_async_alone_renders_async() {
+        let mut out = String::new();
+        emit_list_flags(
+            &ListFlags {
+                async_: true,
+                disown: false,
+            },
+            &mut out,
+        );
+        assert_eq!(out, "Async");
+    }
+
+    #[test]
+    fn list_flags_disown_without_async_still_renders_as_sync() {
+        // Per the impl, disown only matters when async is set; with
+        // async=false the first match arm wins → Sync.
+        let mut out = String::new();
+        emit_list_flags(
+            &ListFlags {
+                async_: false,
+                disown: true,
+            },
+            &mut out,
+        );
+        assert_eq!(out, "Sync");
+    }
 }
