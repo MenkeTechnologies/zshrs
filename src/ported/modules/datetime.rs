@@ -1120,4 +1120,138 @@ mod tests {
             assert!(getcurrentsecs() > 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/datetime.c
+    // c:233 bin_strftime / c:266 getcurrentsecs / c:283 getcurrentrealtime /
+    // c:303 getcurrenttime + lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:266 — `getcurrentsecs` returns i64 (compile-time pin, alt).
+    #[test]
+    fn getcurrentsecs_returns_i64_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i64 = getcurrentsecs();
+    }
+
+    /// c:283 — `getcurrentrealtime` returns f64 (compile-time pin, alt).
+    #[test]
+    fn getcurrentrealtime_returns_f64_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: f64 = getcurrentrealtime();
+    }
+
+    /// c:303 — `getcurrenttime` returns Vec<String> (compile-time pin).
+    #[test]
+    fn getcurrenttime_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = getcurrenttime();
+    }
+
+    /// c:266 — `getcurrentsecs` is monotonically non-decreasing across
+    /// rapid consecutive calls (no time-travel within a single test
+    /// process; system clock could change but on a stable test bed
+    /// the next call >= prev).
+    #[test]
+    fn getcurrentsecs_monotonically_non_decreasing() {
+        let _g = crate::test_util::global_state_lock();
+        let mut prev = getcurrentsecs();
+        for _ in 0..50 {
+            let now = getcurrentsecs();
+            assert!(now >= prev,
+                "time went backwards: {} → {}", prev, now);
+            prev = now;
+        }
+    }
+
+    /// c:283 — `getcurrentrealtime` is monotonically non-decreasing.
+    #[test]
+    fn getcurrentrealtime_monotonically_non_decreasing() {
+        let _g = crate::test_util::global_state_lock();
+        let mut prev = getcurrentrealtime();
+        for _ in 0..50 {
+            let now = getcurrentrealtime();
+            assert!(now >= prev,
+                "realtime went backwards: {} → {}", prev, now);
+            prev = now;
+        }
+    }
+
+    /// c:266 — `getcurrentsecs` returns plausible current time (after
+    /// 2020-01-01 epoch = 1577836800, before 2100-01-01 = 4102444800).
+    #[test]
+    fn getcurrentsecs_in_plausible_epoch_range() {
+        let _g = crate::test_util::global_state_lock();
+        let now = getcurrentsecs();
+        assert!(now >= 1_577_836_800,
+            "current time {} must be after 2020-01-01 epoch", now);
+        assert!(now <= 4_102_444_800,
+            "current time {} must be before 2100-01-01 epoch", now);
+    }
+
+    /// c:303 — first element of `getcurrenttime` parses as i64 seconds.
+    #[test]
+    fn getcurrenttime_first_element_is_secs() {
+        let _g = crate::test_util::global_state_lock();
+        let v = getcurrenttime();
+        assert!(v.len() >= 1, "must have at least one element");
+        let secs: Result<i64, _> = v[0].parse();
+        assert!(secs.is_ok(),
+            "first element {:?} must parse as i64 secs", v[0]);
+    }
+
+    /// c:303 — `getcurrenttime` nsec ≤ 999_999_999 (within one second).
+    #[test]
+    fn getcurrenttime_nsec_within_one_second() {
+        let _g = crate::test_util::global_state_lock();
+        let v = getcurrenttime();
+        if v.len() >= 2 {
+            if let Ok(n) = v[1].parse::<i64>() {
+                assert!(n <= 999_999_999,
+                    "nsec {} must be ≤ 999_999_999", n);
+            }
+        }
+    }
+
+    /// c:233 — `bin_strftime` returns i32 (compile-time pin).
+    #[test]
+    fn bin_strftime_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let _: i32 = bin_strftime("strftime", &[], &ops, 0);
+    }
+
+    /// c:233 — `bin_strftime` no-args returns nonzero (usage error, alt).
+    #[test]
+    fn bin_strftime_no_args_returns_nonzero_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_strftime("strftime", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// c:329/342/350/357/367/374 — each lifecycle hook returns 0 individually.
+    #[test]
+    fn datetime_each_lifecycle_hook_returns_zero_individually() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v: Vec<String> = Vec::new();
+        let mut e: Option<Vec<i32>> = None;
+        assert_eq!(setup_(null), 0, "c:329 setup_");
+        assert_eq!(features_(null, &mut v), 0, "c:342 features_");
+        assert_eq!(enables_(null, &mut e), 0, "c:350 enables_");
+        assert_eq!(boot_(null), 0, "c:357 boot_");
+        assert_eq!(cleanup_(null), 0, "c:367 cleanup_");
+        assert_eq!(finish_(null), 0, "c:374 finish_");
+    }
 }
