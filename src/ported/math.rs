@@ -23,7 +23,7 @@ use crate::ported::params::{convbase, getsparam, unsetparam};
 use crate::ported::utils::zerr;
 /// Re-export of `mnumber` (defined in zsh_h.rs as the Src/zsh.h:95 port).
 pub use crate::ported::zsh_h::{mnumber, Nularg, MN_FLOAT, MN_INTEGER, MN_UNSET};
-use crate::zsh_h::{PM_EFLOAT, PM_FFLOAT, PM_INTEGER};
+use crate::zsh_h::{PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_TYPE};
 
 /// Re-export of `MN_FLOAT` (defined in zsh_h.rs as the Src/zsh.h:104 port).
 /// Re-export of `MN_INTEGER` (defined in zsh_h.rs as the Src/zsh.h:103 port).
@@ -1899,20 +1899,74 @@ pub(crate) fn setmathvar(name: &str, val: mnumber) -> mnumber {
     if M_NOEVAL.with(|n| n.get()) != 0 {
         return val;
     }
-    // Extract base name for subscripted writes; subscript handling
-    // already done by SubscriptArith higher up.
-    let base_name = if let Some(bracket) = name.find('[') {
-        &name[..bracket]
-    } else {
-        name
-    };
-    // Cache into math-local m_variables so subsequent reads in the
-    // same math expression see the new value without a paramtab
-    // round-trip. The canonical paramtab write below is what makes
-    // the value persist beyond the current $((…)) evaluation.
-    m_variables_insert(base_name.to_string(), val);
+    // c:1004 — `setnparam(mvp->lval, v)`. C passes the FULL lval
+    // (including any `[subscript]`) to setnparam → assignnparam,
+    // which calls getvalue to resolve the subscript and routes the
+    // write via setnumvalue on the resulting Value (whose v->pm for
+    // a hash element is the hash-element scalar shim — see
+    // params.c:640 `foundparam` set by scanparamvals at c:664). The
+    // previous Rust port stripped the subscript here and called
+    // setnparam("counts", val) for `counts[apple]++` — silently
+    // wiping the assoc/array and replacing it with a scalar.
+    //
+    // Until the foundparam/PM_HASHELEM scalar-shim path lands in
+    // assignnparam, route subscripted writes through `assignsparam`
+    // (which already handles PM_HASHED + PM_ARRAY[idx] writes at
+    // params.rs:4880-4914). For PM_ARRAY targets pre-evaluate the
+    // subscript body via `matheval` so `arr[i + 1]` becomes
+    // `arr[3]` before assignsparam parses the body as i64 — same
+    // dispatch C's getarg (params.c:1367) performs internally via
+    // mathevalarg.
+    if let Some(bi) = name.find('[') {
+        let close = name.rfind(']').unwrap_or(name.len());
+        let base = &name[..bi];
+        let body = if close > bi { &name[bi + 1..close] } else { "" };
+        // PM_HASHED → literal-string subscript (no math eval).
+        // PM_ARRAY / unset → math-eval the subscript body.
+        let is_hashed = {
+            let tab = crate::ported::params::paramtab().read();
+            tab.ok()
+                .and_then(|t| {
+                    t.get(base)
+                        .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED)
+                })
+                .unwrap_or(false)
+        };
+        let canonical = if is_hashed {
+            name.to_string()
+        } else {
+            // Save/restore evaluator state around the recursive
+            // matheval — mirrors getmathparam at math.rs:230 and
+            // C mathevall's xyy* save/restore pattern (math.c:367).
+            let saved = save_state();
+            let idx_val = matheval(body)
+                .map(|n| if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })
+                .unwrap_or(0);
+            restore_state(saved);
+            format!("{}[{}]", base, idx_val)
+        };
+        // Render mnumber as decimal string for assignsparam's
+        // numeric subscript-write path. PM_ARRAY/PM_HASHED store
+        // strings; assignsparam writes them straight through.
+        let val_str = if val.type_ == MN_FLOAT {
+            crate::ported::params::convfloat_underscore(val.d, 0)
+        } else {
+            crate::ported::params::convbase_underscore(val.l, 10, 0)
+        };
+        let _ = crate::ported::params::assignsparam(&canonical, &val_str, 0);
+        // Cache the resolved (canonical) name so a subsequent read
+        // of the same subscript in the SAME math expression sees
+        // the new value without a paramtab round-trip.
+        m_variables_insert(canonical, val);
+        return val;
+    }
+
+    // Unsubscripted path — cache by name and route through setnparam
+    // as before. The canonical paramtab write inside setnparam is
+    // what makes the value persist beyond the current $((…)).
+    m_variables_insert(name.to_string(), val);
     // c:1005 — `pm = setnparam(mvp->lval, v);`
-    let pm = crate::ported::params::setnparam(base_name, val);
+    let pm = crate::ported::params::setnparam(name, val);
     // c:1006-1027 — re-type the return per the param's type after setnparam.
     if let Some(pm) = pm {
         let flags = pm.node.flags as u32;
@@ -5432,5 +5486,204 @@ mod tests {
             assert_eq!(mathevali("__never_real_var_xyz__"), first,
                 "mathevali on undefined ident must be deterministic");
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Regression pins for setmathvar subscripted-lvalue writes.
+    //
+    // Prior to commit 2026-05-29, setmathvar stripped the subscript
+    // before calling setnparam, so `(( h[k]++ ))` wrote to the bare
+    // base name and wiped the assoc/array. C's setmathvar at
+    // Src/math.c:1004 passes the FULL `mvp->lval` (subscript and
+    // all) to setnparam — fixed by routing subscripted writes
+    // through assignsparam after pre-evaluating numeric subscripts
+    // via matheval.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Helper — read assoc element directly out of the hashed-storage
+    /// backing map. `getsparam("h[k]")` doesn't resolve the subscript
+    /// form in our port; the canonical hash-element read goes through
+    /// expansion (subst), so these unit tests poke the storage map
+    /// the same way `assignsparam`'s subscript-write path does.
+    fn assoc_read(base: &str, key: &str) -> Option<String> {
+        let m = crate::ported::params::paramtab_hashed_storage()
+            .lock()
+            .ok()?;
+        m.get(base).and_then(|map| map.get(key).cloned())
+    }
+
+    /// c:Src/math.c:1004 — `(( assoc[key]++ ))` must mutate the
+    /// hash element, not the bare assoc param. Bug: silent no-op
+    /// (counts[apple] stayed at 10).
+    #[test]
+    fn setmathvar_assoc_post_increment_mutates_hash_element() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("counts");
+        // Create assoc with apple=10.
+        let _ = crate::ported::params::assignsparam("counts[apple]", "10", 0);
+        // (( counts[apple]++ )) → read 10, write 11.
+        let _ = setmathvar(
+            "counts[apple]",
+            mnumber { l: 11, d: 0.0, type_: MN_INTEGER },
+        );
+        assert_eq!(
+            assoc_read("counts", "apple"),
+            Some("11".to_string()),
+            "(( counts[apple]++ )) must mutate the hash element",
+        );
+        crate::ported::params::unsetparam("counts");
+    }
+
+    /// c:Src/math.c:1004 — `(( assoc[key] = N ))` on an existing
+    /// assoc creates/updates the slot without wiping siblings.
+    #[test]
+    fn setmathvar_assoc_assign_creates_slot_preserving_siblings() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("h");
+        let _ = crate::ported::params::assignsparam("h[a]", "1", 0);
+        let _ = crate::ported::params::assignsparam("h[b]", "2", 0);
+        let _ = setmathvar(
+            "h[c]",
+            mnumber { l: 99, d: 0.0, type_: MN_INTEGER },
+        );
+        assert_eq!(
+            assoc_read("h", "a"),
+            Some("1".to_string()),
+            "sibling h[a] preserved",
+        );
+        assert_eq!(
+            assoc_read("h", "b"),
+            Some("2".to_string()),
+            "sibling h[b] preserved",
+        );
+        assert_eq!(
+            assoc_read("h", "c"),
+            Some("99".to_string()),
+            "h[c] created with assigned value",
+        );
+        crate::ported::params::unsetparam("h");
+    }
+
+    /// c:Src/math.c:1004 — `(( arr[i] = N ))` on indexed array
+    /// must write element i, not wipe the array and replace with
+    /// a scalar.
+    #[test]
+    fn setmathvar_indexed_array_assign_writes_element() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("arr");
+        let _ = crate::ported::params::assignaparam(
+            "arr",
+            vec!["10".to_string(), "20".to_string(), "30".to_string()],
+            0,
+        );
+        let _ = setmathvar(
+            "arr[2]",
+            mnumber { l: 99, d: 0.0, type_: MN_INTEGER },
+        );
+        assert_eq!(
+            crate::ported::params::getaparam("arr"),
+            Some(vec!["10".to_string(), "99".to_string(), "30".to_string()]),
+            "(( arr[2]=99 )) must write slot 2 only",
+        );
+        crate::ported::params::unsetparam("arr");
+    }
+
+    /// c:Src/math.c:1004 + Src/params.c:1367 — `(( arr[i + 1] = N ))`
+    /// inside math context: subscript body is a math expression and
+    /// must be evaluated. Pinned because the previous Rust port
+    /// passed "arr[i + 1]" verbatim and assignsparam's i64-parse on
+    /// the body failed, auto-vivifying as PM_HASHED.
+    #[test]
+    fn setmathvar_array_with_math_subscript_pre_evaluates_index() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("arr");
+        crate::ported::params::unsetparam("i");
+        let _ = crate::ported::params::setiparam("i", 2);
+        let _ = crate::ported::params::assignaparam(
+            "arr",
+            vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()],
+            0,
+        );
+        // arr[i + 1] → arr[3] after matheval.
+        let _ = setmathvar(
+            "arr[i + 1]",
+            mnumber { l: 77, d: 0.0, type_: MN_INTEGER },
+        );
+        let got = crate::ported::params::getaparam("arr");
+        assert_eq!(
+            got.as_ref().and_then(|v| v.get(2)).map(|s| s.as_str()),
+            Some("77"),
+            "arr[i+1] with i=2 must write slot 3",
+        );
+        crate::ported::params::unsetparam("arr");
+        crate::ported::params::unsetparam("i");
+    }
+
+    /// c:Src/math.c:1004 — chained `(( h[k]++ ))` calls compound:
+    /// three increments on a fresh slot yield 3, not 1.
+    #[test]
+    fn setmathvar_assoc_three_increments_compound_to_three() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("hc");
+        let _ = crate::ported::params::assignsparam("hc[x]", "0", 0);
+        for _ in 0..3 {
+            // Read current then write read+1 — like (( hc[x]++ )).
+            let cur = assoc_read("hc", "x")
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
+            let _ = setmathvar(
+                "hc[x]",
+                mnumber { l: cur + 1, d: 0.0, type_: MN_INTEGER },
+            );
+        }
+        assert_eq!(
+            assoc_read("hc", "x"),
+            Some("3".to_string()),
+            "three (( hc[x]++ )) must compound to 3",
+        );
+        crate::ported::params::unsetparam("hc");
+    }
+
+    /// c:Src/math.c:1004 — `(( h[fresh]++ ))` auto-vivifies the
+    /// slot to value 1 (read NULL → 0, write 0+1).
+    #[test]
+    fn setmathvar_assoc_post_increment_on_unset_slot_creates_with_one() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("hv");
+        // Create the assoc first (typeset -A hv).
+        let _ = crate::ported::params::assignsparam("hv[seed]", "0", 0);
+        // (( hv[fresh]++ )) — fresh slot should become 1.
+        let _ = setmathvar(
+            "hv[fresh]",
+            mnumber { l: 1, d: 0.0, type_: MN_INTEGER },
+        );
+        assert_eq!(
+            assoc_read("hv", "fresh"),
+            Some("1".to_string()),
+            "(( hv[fresh]++ )) on unset slot must create with 1",
+        );
+        crate::ported::params::unsetparam("hv");
+    }
+
+    /// c:Src/math.c:1002 — NO_EXEC mode: setmathvar returns val
+    /// without any param-table mutation, even for subscripted
+    /// names. Pinned because the new subscript branch must respect
+    /// the noeval guard added by the previous code path.
+    #[test]
+    fn setmathvar_subscript_respects_noeval_guard() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("nev");
+        let _ = crate::ported::params::assignsparam("nev[k]", "1", 0);
+        M_NOEVAL.with(|n| n.set(1));
+        let v = mnumber { l: 999, d: 0.0, type_: MN_INTEGER };
+        let ret = setmathvar("nev[k]", v);
+        M_NOEVAL.with(|n| n.set(0));
+        assert_eq!(ret.l, 999, "noeval returns val unchanged");
+        assert_eq!(
+            assoc_read("nev", "k"),
+            Some("1".to_string()),
+            "noeval must suppress the paramtab write",
+        );
+        crate::ported::params::unsetparam("nev");
     }
 }

@@ -3,7 +3,7 @@
 sieve() {
     local n=$1
     local is_prime=()
-    local i j idx
+    local i j
     # Allocate n+1 slots, 1-based; slot k → number (k-1).
     for ((i = 0; i <= n; i++)); do
         is_prime+=(1)
@@ -13,11 +13,8 @@ sieve() {
     is_prime[2]=0
     for ((i = 2; i * i <= n; i++)); do
         if (( is_prime[i + 1] )); then
-            j=$(( i * i ))
-            while (( j <= n )); do
-                idx=$(( j + 1 ))
-                is_prime[$idx]=0
-                (( j += i ))
+            for ((j = i * i; j <= n; j += i)); do
+                is_prime[j+1]=0
             done
         fi
     done

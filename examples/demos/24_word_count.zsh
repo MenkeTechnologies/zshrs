@@ -9,7 +9,7 @@ while read -r line; do
         local clean=${w//[^a-zA-Z]/}
         clean=${clean:l}
         [[ -z $clean ]] && continue
-        counts[$clean]=$(( ${counts[$clean]:-0} + 1 ))
+        (( counts[$clean]++ ))
     done
 done <<EOF
 The quick brown fox jumps over the lazy dog.
