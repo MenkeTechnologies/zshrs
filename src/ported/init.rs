@@ -1876,4 +1876,98 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert!(zleentry(-1).is_none());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/init.c tccap_get_name / init_term
+    // / noop helpers.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:756 — `tccap_get_name(cap)` for cap >= 39 (TC_COUNT) returns
+    /// empty string (Rust port out-of-range guard, c:771).
+    #[test]
+    fn tccap_get_name_out_of_range_returns_empty_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(tccap_get_name(39), "", "TC_COUNT boundary returns ''");
+        assert_eq!(tccap_get_name(100), "");
+        assert_eq!(tccap_get_name(usize::MAX), "");
+    }
+
+    /// c:756 — `tccap_get_name(0)` returns a non-empty cap name
+    /// (first entry of tccapnams table).
+    #[test]
+    fn tccap_get_name_first_entry_is_nonempty() {
+        let _g = crate::test_util::global_state_lock();
+        let n = tccap_get_name(0);
+        assert!(!n.is_empty(), "tccapnams[0] must be a valid cap name");
+    }
+
+    /// c:756 — `tccap_get_name` is deterministic across calls.
+    #[test]
+    fn tccap_get_name_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for i in 0..39 {
+            let first = tccap_get_name(i);
+            for _ in 0..5 {
+                assert_eq!(tccap_get_name(i), first, "tccap_get_name({}) impure", i);
+            }
+        }
+    }
+
+    /// c:756 — every in-range cap name fits in ASCII and has
+    /// non-control content (termcap caps are 2-char ASCII codes).
+    #[test]
+    fn tccap_get_name_in_range_returns_printable_ascii() {
+        let _g = crate::test_util::global_state_lock();
+        for i in 0..39 {
+            let n = tccap_get_name(i);
+            if n.is_empty() {
+                continue;
+            }
+            for c in n.chars() {
+                assert!(
+                    c.is_ascii() && !c.is_control(),
+                    "tccap_get_name({}) = {:?} has non-printable char {:?}",
+                    i,
+                    n,
+                    c
+                );
+            }
+        }
+    }
+
+    /// c:1713 — `noop_function` returns nothing, has no observable effect.
+    /// Repeated calls don't accumulate state.
+    #[test]
+    fn noop_function_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..100 {
+            noop_function();
+        }
+    }
+
+    /// c:1720 — `noop_function_int` accepts any i32 value without panic.
+    #[test]
+    fn noop_function_int_accepts_any_value() {
+        let _g = crate::test_util::global_state_lock();
+        noop_function_int(0);
+        noop_function_int(-1);
+        noop_function_int(i32::MAX);
+        noop_function_int(i32::MIN);
+    }
+
+    /// `zleentry` with very large positive cmd code returns None
+    /// (out-of-range cmd dispatch).
+    #[test]
+    fn zleentry_unknown_cmd_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(zleentry(99999).is_none(), "unknown cmd → None");
+    }
+
+    /// c:1209 — `init_bltinmods` is idempotent (safe to call multiple times).
+    #[test]
+    fn init_bltinmods_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        init_bltinmods();
+        init_bltinmods();
+    }
 }
