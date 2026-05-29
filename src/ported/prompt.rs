@@ -475,62 +475,152 @@ pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {
 // ---------------------------------------------------------------------------
 
 /// Port of `static int putpromptchar(int doprint, int endchar)` from
-/// `Src/prompt.c:359`. Delegates to `buf_vars::run_putpromptchar` +
-/// `buf_vars::process_percent` — the 566-line C body's per-`%X`
-/// escape table lives there split across the inherent-method
-/// dispatch (~100 lines each, real ports). The free-fn entry exists
-/// for C-ABI parity so cross-module call sites match the C symbol.
-pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
-    // c:359
-    // Delegates to the buf_vars method that holds the real loop.
-    bv.run_putpromptchar(doprint, endchar)
+/// `Src/prompt.c:359`. STUB — the 611-line C body that walks `bv->fm`
+/// and processes every `%X` percent-escape was previously stashed in
+/// invented `buf_vars::run_putpromptchar` / `buf_vars::process_percent`
+/// impl methods (Rule 0 violations — neither name existed in C). The
+/// entire `impl buf_vars` block was deleted 2026-05-29 per maintainer
+/// directive. This stub returns 0 without consuming `bv->fm`; full
+/// C-faithful port pending.
+pub fn putpromptchar(bv: &mut buf_vars, _doprint: i32, _endchar: i32) -> i32 {
+    // c:359 — STUB — see WARNING above. Full port = 611 lines of C body
+    // (the big switch over every %X case) to be inlined here.
+    let _ = bv;
+    0
 }
 
-/// Internal prompt char output.
-/// Port of `pputc(char c)` from Src/prompt.c:976 — the C source's
-/// per-character buffer-append helper. Rust's `String::push`
-/// covers it directly; this wrapper exists for call-site parity.
-/// WARNING: param names don't match C — Rust=(buf, c) vs C=(c)
-pub fn pputc(buf: &mut String, c: char) {
-    // c:976
-    buf.push(c);
-}
-
-// Make sure there is room for `need' more characters in the buffer.       // c:991
 /// Port of `static void addbufspc(int need)` from `Src/prompt.c:991`.
-/// C accesses the file-static `bv` (struct promptbuf) and may
-/// realloc `bv->buf` if (bp - buf) + need*2 > bufspc. The zshrs
-/// promptbuf state lives on a per-promptbuf `PromptBuf` struct
-/// (impl method `PromptBuf::addbufspc` does the real work at line
-/// 1325). This free-fn shape is a C-name-parity anchor: callers
-/// that don't have a PromptBuf in hand (only via file-static `bv`
-/// in C) reach for `addbufspc(need)` directly — no such caller
-/// exists in zshrs yet because every prompt-buf op goes through
-/// the struct method. The body is a no-op because Rust String
-/// auto-grows on the impl-method side; `need` is bound to mirror C.
-pub fn addbufspc(need: i32) {
+///
+/// C body:
+/// ```c
+/// need *= 2;
+/// if ((bv->bp - bv->buf) + need > bv->bufspc) {
+///     int bo = bv->bp - bv->buf;
+///     int bl = bv->bufline - bv->buf;
+///     if (need & 255) need = (need | 255) + 1;
+///     bv->buf = realloc(bv->buf, bv->bufspc += need);
+///     bv->bp = bv->buf + bo;
+///     bv->bufline = bv->buf + bl;
+/// }
+/// ```
+///
+/// Grows `bv->buf` to fit `need` more bytes (×2 for metafy worst
+/// case). C uses raw realloc with a file-static `bv` pointer; Rust
+/// takes `&mut buf_vars` explicitly because buf_vars has no impl
+/// methods (per maintainer directive — Rule 0).
+pub fn addbufspc(bv: &mut buf_vars, mut need: i32) {
     // c:991
-    // c:993 — `need *= 2;` for metafication
-    let _need_doubled = need.saturating_mul(2);
-    // c:994-1010 — realloc dance on `bv->buf` if growth needed.
-    // Architectural divergence: C's `bv` is a file-static struct
-    // (Src/prompt.c:~50) — implicit global state that every prompt
-    // helper mutates. zshrs models the same state as a `buf_vars`
-    // struct constructed per `promptexpand()` call (line 1286) with
-    // an inherent `addbufspc` method (line 1380) — the real growth
-    // dance. Free-fn callers MUST go through the impl method via the
-    // promptexpand entry, where they have a `&mut buf_vars` in hand.
-    // This free-fn body is intentionally a name-parity no-op (kept so
-    // grep'ping for `addbufspc` finds the C-side counterpart); no
-    // direct invocation path exists or should exist.
+    need = need.saturating_mul(2); // c:993
+    if bv.bp as i32 + need > bv.bufspc as i32 {
+        // c:994
+        // c:995-996 — round up to next 256-byte boundary
+        if need & 255 != 0 {
+            need = (need | 255) + 1;
+        }
+        let new_size = bv.bufspc as i32 + need;
+        bv.buf.resize(new_size as usize, 0); // c:998 realloc
+        bv.bufspc = new_size as usize; // c:998 bufspc += need
+        // bp / bufline are usize indexes (not pointers); no recompute
+    }
 }
 
-/// Append a string to the prompt buffer.
-/// Port of `stradd(char *d)` from Src/prompt.c:1016.
-/// WARNING: param names don't match C — Rust=(buf, s) vs C=(d)
-pub fn stradd(buf: &mut String, s: &str) {
+/// Port of `pputc(char c)` from `Src/prompt.c:976`.
+///
+/// C body:
+/// ```c
+/// static void
+/// pputc(int c)
+/// {
+///     if (imeta(c)) {
+///         addbufspc(2);
+///         *bv->bp++ = Meta;
+///         c ^= 32;
+///     } else {
+///         addbufspc(1);
+///     }
+///     *bv->bp++ = c;
+///     if (c == '\n' && !bv->dontcount)
+///         bv->bufline = bv->bp;
+/// }
+/// ```
+///
+/// Append one byte to `bv->buf`, metafying via `Meta + (c^0x20)`
+/// pair if `imeta(c)`. Tracks `bufline` (most recent newline
+/// position) when not inside a `%{...%}` dontcount span.
+pub fn pputc(bv: &mut buf_vars, mut c: u8) {
+    // c:976
+    use crate::ported::ztype_h::imeta;
+    if imeta(c) {
+        // c:978
+        addbufspc(bv, 2); // c:979
+        bv.buf[bv.bp] = Meta as u8; // c:980 *bv->bp++ = Meta
+        bv.bp += 1;
+        c ^= 32; // c:981
+    } else {
+        addbufspc(bv, 1); // c:983
+    }
+    bv.buf[bv.bp] = c; // c:985 *bv->bp++ = c
+    bv.bp += 1;
+    if c == b'\n' && bv.dontcount == 0 {
+        // c:986
+        bv.bufline = bv.bp;
+    }
+}
+
+/// Port of `void stradd(char *d)` from `Src/prompt.c:1016`.
+///
+/// C body (MULTIBYTE_SUPPORT arm c:1018-1075):
+/// ```c
+/// ums = ztrdup(d);
+/// ups = unmetafy(ums, &upslen);
+/// while (upslen > 0) {
+///     cnt = eol ? MB_INVALID : mbrtowc(&cc, ups, upslen, &mbs);
+///     switch (cnt) {
+///       case MB_INCOMPLETE: eol = 1; /* FALL THROUGH */
+///       case MB_INVALID: pc = nicechar(*ups); cnt = 1; break;
+///       case 0: cnt = 1; /* FALL THROUGH */
+///       default: mb_charinit(); pc = wcs_nicechar(cc, NULL, NULL); break;
+///     }
+///     addbufspc(strlen(pc));
+///     upslen -= cnt; ups += cnt;
+///     while (*pc) *bv->bp++ = *pc++;
+/// }
+/// ```
+///
+/// Append `d` to `bv->buf` with display-form conversion:
+/// 1. unmetafy input (canonical `crate::ported::utils::unmetafy`).
+/// 2. UTF-8 decode (Rust's str::from_utf8 = mbrtowc analog).
+/// 3. Per char: wcs_nicechar (or nicechar on MB_INVALID).
+/// 4. addbufspc + write each byte through `pputc` (which
+///    re-metafies high bytes).
+pub fn stradd(bv: &mut buf_vars, d: &str) {
     // c:1016
-    buf.push_str(s);
+    // c:1023-1025 — `ums = ztrdup(d); ups = unmetafy(ums, &upslen);`
+    let mut raw: Vec<u8> = d.as_bytes().to_vec();
+    crate::ported::utils::unmetafy(&mut raw);
+    // c:1031-1071 — walk decoded bytes.
+    match std::str::from_utf8(&raw) {
+        Ok(decoded) => {
+            // c:1058 default arm — wide char per codepoint.
+            for ch in decoded.chars() {
+                let pc = crate::ported::utils::wcs_nicechar(ch, None, None);
+                addbufspc(bv, pc.len() as i32); // c:1063
+                for &b in pc.as_bytes() {
+                    pputc(bv, b); // c:1069 `*bv->bp++ = *pc++`
+                }
+            }
+        }
+        Err(_) => {
+            // c:1046-1051 MB_INVALID arm — per-byte nicechar.
+            for &b in &raw {
+                let pc = crate::ported::utils::nicechar(b as char);
+                addbufspc(bv, pc.len() as i32); // c:1063
+                for &out_b in pc.as_bytes() {
+                    pputc(bv, out_b); // c:1069
+                }
+            }
+        }
+    }
 }
 
 /// Port of `void tsetcap(int cap, int flags)` from `Src/prompt.c:1083`.
@@ -1373,1128 +1463,6 @@ pub fn truecolor_terminal() -> bool {
     false // c:1944
 }
 
-impl buf_vars {
-    /// `new` — see implementation.
-    pub fn new(input: &str) -> Self {
-        Self {
-            // Bag-of-globals fields removed — see struct def comment.
-            buf: vec![0u8; 256],
-            bufspc: 256,
-            bp: 0,
-            bufline: 0,
-            bp1: None,
-            fm: input.to_string(),
-            fm_pos: 0,
-            truncwidth: 0,
-            dontcount: 0,
-            trunccount: 0,
-            rstring: None,
-            Rstring: None,
-            attrs: 0 as zattr, // c:zsh.h:2685 (zattr=0 == no attrs)
-            in_escape: false,
-            // prompt_percent / prompt_bang — removed; route through
-            // `isset(PROMPTPERCENT)` / `isset(PROMPTBANG)`.
-        }
-    }
-
-    // `with_prompt_percent` / `with_prompt_bang` builder methods removed
-    // — they configured Rust-only fields that no longer exist. zsh
-    // controls prompt-% / prompt-! interpretation via the canonical
-    // `setopt promptpercent` / `setopt promptbang` (option table), not
-    // a per-buf_vars override.
-
-    fn fork_snapshot(&self, input: String) -> buf_vars {
-        buf_vars {
-            // Bag-of-globals fields removed — see struct def comment.
-            buf: Vec::new(),
-            bufspc: 0,
-            bp: 0,
-            bufline: 0,
-            bp1: None,
-            fm: input,
-            fm_pos: 0,
-            truncwidth: 0,
-            dontcount: 0,
-            trunccount: 0,
-            rstring: None,
-            Rstring: None,
-            attrs: self.attrs,
-            in_escape: false,
-        }
-    }
-
-    /// Src/prompt.c:991 `addbufspc`
-    fn addbufspc(&mut self, need: usize) {
-        let need = need.saturating_mul(2).max(need.max(1));
-        self.buf.reserve(need);
-        self.bufspc = self.buf.capacity();
-    }
-
-    /// Src/prompt.c:976 `pputc` — metafy high bytes.
-    fn pputc(&mut self, c: u8) {
-        self.addbufspc(2);
-        let bp = self.bp;
-        if imeta_byte(c) {
-            self.buf.resize(bp + 2, 0);
-            self.buf[bp] = Meta as u8;
-            self.buf[bp + 1] = c ^ 32;
-            self.bp = bp + 2;
-        } else {
-            self.buf.resize(bp + 1, 0);
-            self.buf[bp] = c;
-            self.bp = bp + 1;
-        }
-        if c == b'\n' && self.dontcount == 0 {
-            self.bufline = self.bp;
-        }
-    }
-
-    fn out_raw_byte(&mut self, b: u8) {
-        self.addbufspc(1);
-        let bp = self.bp;
-        self.buf.resize(bp + 1, 0);
-        self.buf[bp] = b;
-        self.bp = bp + 1;
-    }
-
-    fn out_char(&mut self, c: char) {
-        let mut tmp = [0u8; 4];
-        let enc = c.encode_utf8(&mut tmp);
-        for &b in enc.as_bytes() {
-            self.pputc(b);
-        }
-    }
-
-    fn out_str(&mut self, s: &str) {
-        for &b in s.as_bytes() {
-            self.pputc(b);
-        }
-    }
-
-    /// Port of `void stradd(char *d)` from `Src/prompt.c:1016`.
-    ///
-    /// C body (MULTIBYTE_SUPPORT arm):
-    /// ```c
-    /// ums = ztrdup(d);
-    /// ups = unmetafy(ums, &upslen);
-    /// while (upslen > 0) {
-    ///     cnt = eol ? MB_INVALID : mbrtowc(&cc, ups, upslen, &mbs);
-    ///     switch (cnt) {
-    ///       case MB_INCOMPLETE: eol = 1; /* FALL THROUGH */
-    ///       case MB_INVALID: pc = nicechar(*ups); cnt = 1; break;
-    ///       case 0: cnt = 1; /* FALL THROUGH */
-    ///       default: mb_charinit(); pc = wcs_nicechar(cc, NULL, NULL); break;
-    ///     }
-    ///     addbufspc(strlen(pc));
-    ///     upslen -= cnt; ups += cnt;
-    ///     while (*pc) *bv->bp++ = *pc++;
-    /// }
-    /// ```
-    ///
-    /// Steps:
-    /// 1. unmetafy the input (collapse Meta + (b^0x20) pairs) via
-    ///    the canonical [`crate::ported::utils::unmetafy`].
-    /// 2. Walk the unmetafied bytes — Rust UTF-8 `from_utf8`
-    ///    handles the `mbrtowc` decode. Invalid bytes fall back to
-    ///    the single-byte `nicechar` path (matches C MB_INVALID).
-    /// 3. Per char: call `wcs_nicechar` (or `nicechar` byte-fallback)
-    ///    to get the printable form (control chars → `^X`, high
-    ///    bytes → `M-X`).
-    /// 4. Grow buf via `addbufspc(strlen(pc))` then push via
-    ///    `out_str` (which re-metafies high bytes through `pputc`).
-    fn stradd(&mut self, d: &str) {
-        // c:1016
-        // c:1023-1025 — `ums = ztrdup(d); ups = unmetafy(ums, &upslen);`
-        let mut raw: Vec<u8> = d.as_bytes().to_vec();
-        crate::ported::utils::unmetafy(&mut raw);
-        // c:1031-1071 — walk decoded bytes.
-        match std::str::from_utf8(&raw) {
-            Ok(decoded) => {
-                // c:1058 default arm — wide char per codepoint.
-                for ch in decoded.chars() {
-                    let pc = crate::ported::utils::wcs_nicechar(ch, None, None);
-                    self.addbufspc(pc.len()); // c:1063
-                    self.out_str(&pc); // c:1069 `while (*pc) *bv->bp++ = *pc++;`
-                }
-            }
-            Err(_) => {
-                // c:1046-1051 MB_INVALID arm — per-byte nicechar.
-                for &b in &raw {
-                    let pc = crate::ported::utils::nicechar(b as char);
-                    self.addbufspc(pc.len()); // c:1063
-                    self.out_str(&pc); // c:1069
-                }
-            }
-        }
-    }
-
-    /// Append raw metafied bytes from a nested `putpromptchar` (`%(…)` branches).
-    fn append_buf_from(&mut self, other: &buf_vars) {
-        let end = other.bp.min(other.buf.len());
-        if end == 0 {
-            return;
-        }
-        self.addbufspc(end);
-        let bp0 = self.bp;
-        self.buf.resize(bp0 + end, 0);
-        self.buf[bp0..bp0 + end].copy_from_slice(&other.buf[..end]);
-        self.bp = bp0 + end;
-        if self.dontcount == 0 {
-            for i in 0..end {
-                if other.buf[i] == b'\n' {
-                    self.bufline = bp0 + i + 1;
-                }
-            }
-        }
-    }
-
-    /// After expansion: `unmetafy` for display (lossy UTF-8).
-    pub fn expanded_utf8(&self) -> String {
-        let end = self.bp.min(self.buf.len());
-        let mut v = self.buf[..end].to_vec();
-        crate::ported::utils::unmetafy(&mut v);
-        String::from_utf8_lossy(&v).into_owned()
-    }
-
-    /// Src/prompt.c:236-246 — strip Inpar/Outpar/Nularg when `ns == 0`.
-    fn strip_prompt_tokens_ns0(&mut self) {
-        let end = self.bp.min(self.buf.len());
-        let mut v = Vec::with_capacity(end);
-        let mut i = 0usize;
-        while i < end {
-            let b = self.buf[i];
-            if b == (Meta as u8) {
-                if i + 1 < end {
-                    v.push(b);
-                    v.push(self.buf[i + 1]);
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-                continue;
-            }
-            if b == Inpar as u8 || b == Outpar as u8 || b == Nularg as u8 {
-                i += 1;
-                continue;
-            }
-            v.push(b);
-            i += 1;
-        }
-        self.buf = v;
-        self.bp = self.buf.len();
-    }
-    /// `finish_expanded_string` — see implementation.
-    pub fn finish_expanded_string(&mut self, keep_spacing_tokens: bool) -> String {
-        if !keep_spacing_tokens {
-            self.strip_prompt_tokens_ns0();
-        }
-        self.expanded_utf8()
-    }
-
-    /// Src/prompt.c:359 — core of `putpromptchar(int doprint, int endchar)`.
-    pub(crate) fn run_putpromptchar(&mut self, doprint: i32, endchar: i32) -> i32 {
-        loop {
-            if self.fm_pos >= self.fm.len() {
-                return 0;
-            }
-            let ec = endchar as u8;
-            if ec != 0 {
-                let b = self.fm.as_bytes()[self.fm_pos];
-                if b == ec {
-                    return endchar;
-                }
-            }
-
-            let c = match self.peek() {
-                Some(c) => c,
-                None => return 0,
-            };
-
-            if c == '%' && isset(PROMPTPERCENT) {
-                self.advance();
-                self.process_percent(doprint);
-            } else if c == '!' && isset(PROMPTBANG) {
-                if doprint != 0 {
-                    self.advance();
-                    if self.peek() == Some('!') {
-                        self.advance();
-                        self.out_char('!');
-                    } else {
-                        self.out_str(&prompt_tls::HISTNUM.with(|c| *c.borrow()).to_string());
-                    }
-                } else {
-                    self.advance();
-                    if self.peek() == Some('!') {
-                        self.advance();
-                    }
-                }
-            } else {
-                self.advance();
-                if doprint != 0 {
-                    self.out_char(c);
-                }
-            }
-        }
-    }
-
-    fn peek(&self) -> Option<char> {
-        self.fm[self.fm_pos..].chars().next()
-    }
-
-    fn advance(&mut self) -> Option<char> {
-        let c = self.peek()?;
-        self.fm_pos += c.len_utf8();
-        Some(c)
-    }
-
-    fn parse_number(&mut self) -> Option<i32> {
-        let start = self.fm_pos;
-        let mut negative = false;
-
-        if self.peek() == Some('-') {
-            negative = true;
-            self.advance();
-        }
-
-        while let Some(c) = self.peek() {
-            if c.is_ascii_digit() {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-
-        if self.fm_pos == start || (negative && self.fm_pos == start + 1) {
-            if negative {
-                self.fm_pos = start;
-            }
-            return None;
-        }
-
-        let num_str = &self.fm[if negative { start + 1 } else { start }..self.fm_pos];
-        let num: i32 = num_str.parse().ok()?;
-        Some(if negative { -num } else { num })
-    }
-
-    fn parse_braced_arg(&mut self) -> Option<String> {
-        if self.peek() != Some('{') {
-            return None;
-        }
-        self.advance(); // skip {
-
-        let start = self.fm_pos;
-        let mut depth = 1;
-
-        while let Some(c) = self.advance() {
-            match c {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(self.fm[start..self.fm_pos - 1].to_string());
-                    }
-                }
-                '\\' => {
-                    self.advance(); // skip escaped char
-                }
-                _ => {}
-            }
-        }
-
-        None
-    }
-
-    /// Get path with tilde substitution
-    fn path_with_tilde(&self, path: &str) -> String {
-        let home = prompt_tls::HOME.with(|c| c.borrow().clone());
-        if !home.is_empty() && path.starts_with(&home) {
-            format!("~{}", &path[home.len()..])
-        } else {
-            path.to_string()
-        }
-    }
-
-    /// Get trailing path components
-    fn trailing_path(&self, path: &str, n: usize, with_tilde: bool) -> String {
-        let path = if with_tilde {
-            self.path_with_tilde(path)
-        } else {
-            path.to_string()
-        };
-
-        if n == 0 {
-            return path;
-        }
-
-        let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        if components.len() <= n {
-            return path;
-        }
-
-        components[components.len() - n..].join("/")
-    }
-
-    /// Get leading path components
-    fn leading_path(&self, path: &str, n: usize) -> String {
-        if n == 0 {
-            return path.to_string();
-        }
-
-        let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        if components.len() <= n {
-            return path.to_string();
-        }
-
-        let result = components[..n].join("/");
-        if path.starts_with('/') {
-            format!("/{}", result)
-        } else {
-            result
-        }
-    }
-
-    /// Start escape sequence (non-printing characters)
-    fn start_escape(&mut self) {
-        if !self.in_escape {
-            self.out_char('\x01'); // RL_PROMPT_START_IGNORE
-            self.in_escape = true;
-        }
-    }
-
-    /// End escape sequence
-    fn end_escape(&mut self) {
-        if self.in_escape {
-            self.out_char('\x02'); // RL_PROMPT_END_IGNORE
-            self.in_escape = false;
-        }
-    }
-
-    /// Apply text attributes incrementally. zsh emits just the new
-    /// SGR codes (no leading `\e[0m`) when adding attrs to a default
-    /// state — only emit a reset when there's nothing to apply (rare,
-    /// covered by the explicit `%b`/`%f`/`%k`/`%u` reset handlers).
-    fn apply_attrs(&mut self) {
-        self.start_escape();
-        if self.attrs & TXTBOLDFACE != 0 {
-            // c:1645
-            self.out_str("\x1b[1m");
-        }
-        if self.attrs & TXTUNDERLINE != 0 {
-            // c:1645
-            self.out_str("\x1b[4m");
-        }
-        if self.attrs & TXTSTANDOUT != 0 {
-            // c:1645
-            // zsh emits italic (`3m`) for `%S` standout, not reverse
-            // video (`7m`). Match zsh's actual prompt output.
-            self.out_str("\x1b[3m");
-        }
-        if self.attrs & TXTFGCOLOUR != 0 {
-            // c:1645
-            let raw = (self.attrs & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT;
-            let c = if self.attrs & TXT_ATTR_FG_24BIT != 0 {
-                COLOR_24BIT | (raw as Color & 0x00ff_ffff)
-            } else {
-                raw as Color
-            };
-            self.out_str(&color_to_ansi(c, true));
-        }
-        if self.attrs & TXTBGCOLOUR != 0 {
-            // c:1645
-            let raw = (self.attrs & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT;
-            let c = if self.attrs & TXT_ATTR_BG_24BIT != 0 {
-                COLOR_24BIT | (raw as Color & 0x00ff_ffff)
-            } else {
-                raw as Color
-            };
-            self.out_str(&color_to_ansi(c, false));
-        }
-        self.end_escape();
-    }
-
-    /// Parse conditional %(x.true.false)
-    fn parse_conditional(&mut self, arg: i32, doprint: i32) -> bool {
-        if self.peek() != Some('(') {
-            return false;
-        }
-        self.advance(); // skip (
-
-        // Parse condition character
-        let cond_char = match self.advance() {
-            Some(c) => c,
-            None => return false,
-        };
-
-        // Evaluate condition
-        let test = match cond_char {
-            '/' | 'c' | '.' | '~' | 'C' => {
-                // Directory depth test
-                let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
-                let path = self.path_with_tilde(&pwd);
-                let depth = path.matches('/').count() as i32;
-                if arg == 0 {
-                    depth > 0
-                } else {
-                    depth >= arg
-                }
-            }
-            '?' => prompt_tls::LASTVAL.with(|c| *c.borrow()) == arg,
-            '#' => {
-                let euid = unsafe { libc::geteuid() };
-                euid == arg as u32
-            }
-            'L' => prompt_tls::SHLVL.with(|c| *c.borrow()) >= arg,
-            'j' => prompt_tls::NUM_JOBS.with(|c| *c.borrow()) >= arg,
-            'v' => (arg as usize) <= prompt_tls::PSVAR.with(|c| c.borrow().len()),
-            'V' => {
-                if arg <= 0 {
-                    false
-                } else {
-                    prompt_tls::PSVAR.with(|c| {
-                        let v = c.borrow();
-                        (arg as usize) <= v.len() && !v[arg as usize - 1].is_empty()
-                    })
-                }
-            }
-            '_' => prompt_tls::CMDSTACK.with(|c| c.borrow().len()) >= arg as usize,
-            't' | 'T' | 'd' | 'D' | 'w' => {
-                let now = chrono::Local::now();
-                match cond_char {
-                    't' => now.format("%M").to_string().parse::<i32>().unwrap_or(0) == arg,
-                    'T' => now.format("%H").to_string().parse::<i32>().unwrap_or(0) == arg,
-                    'd' => now.format("%d").to_string().parse::<i32>().unwrap_or(0) == arg,
-                    'D' => now.format("%m").to_string().parse::<i32>().unwrap_or(0) == arg - 1,
-                    'w' => now.format("%w").to_string().parse::<i32>().unwrap_or(0) == arg,
-                    _ => false,
-                }
-            }
-            '!' => prompt_tls::IS_ROOT.with(|c| *c.borrow()),
-            _ => false,
-        };
-
-        // Get separator
-        let sep = match self.advance() {
-            Some(c) => c,
-            None => return false,
-        };
-
-        // Parse true branch
-        let true_start = self.fm_pos;
-        let mut depth = 1;
-        while let Some(c) = self.peek() {
-            if c == '(' {
-                depth += 1;
-            } else if c == ')' {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-            } else if c == sep && depth == 1 {
-                break;
-            }
-            self.advance();
-        }
-        let true_branch = self.fm[true_start..self.fm_pos].to_string();
-
-        if self.peek() != Some(sep) {
-            return false;
-        }
-        self.advance(); // skip separator
-
-        // Parse false branch
-        let false_start = self.fm_pos;
-        depth = 1;
-        while let Some(c) = self.peek() {
-            if c == '(' {
-                depth += 1;
-            } else if c == ')' {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-            }
-            self.advance();
-        }
-        let false_branch = self.fm[false_start..self.fm_pos].to_string();
-
-        if self.peek() != Some(')') {
-            return false;
-        }
-        self.advance(); // skip )
-
-        // Src/prompt.c:511-516 — `putpromptchar(test && doprint, sep)` then
-        // `putpromptchar(!test && doprint, ')' )`; same `bv->buf`, we append serially.
-        let mut tsub = self.fork_snapshot(true_branch);
-        tsub.run_putpromptchar(if test { doprint } else { 0 }, 0);
-        self.append_buf_from(&tsub);
-        let mut fsub = self.fork_snapshot(false_branch);
-        fsub.run_putpromptchar(if test { 0 } else { doprint }, 0);
-        self.append_buf_from(&fsub);
-
-        true
-    }
-
-    /// Parse and process a % escape sequence
-    fn process_percent(&mut self, doprint: i32) {
-        let arg = self.parse_number().unwrap_or(0);
-
-        // Check for conditional
-        if self.peek() == Some('(') {
-            self.parse_conditional(arg, doprint);
-            return;
-        }
-
-        if doprint == 0 {
-            // Src/prompt.c:520-538 — parse-only skips; C `default: continue` advances
-            // past one opcode byte after the (already-parsed) numeric arg.
-            match self.peek() {
-                Some('[') => {
-                    self.advance();
-                    let _ = self.parse_number();
-                    while self.peek() != Some(']') {
-                        if self.advance().is_none() {
-                            break;
-                        }
-                    }
-                    let _ = self.advance();
-                    return;
-                }
-                Some('<') | Some('>') => {
-                    let end = self.peek().unwrap();
-                    self.advance();
-                    while self.peek() != Some(end) {
-                        if self.advance().is_none() {
-                            break;
-                        }
-                    }
-                    let _ = self.advance();
-                    return;
-                }
-                Some('D') => {
-                    self.advance();
-                    if self.peek() == Some('{') {
-                        while self.peek() != Some('}') {
-                            if self.advance().is_none() {
-                                break;
-                            }
-                        }
-                        let _ = self.advance();
-                    }
-                    return;
-                }
-                _ => {
-                    let _ = self.advance();
-                    return;
-                }
-            }
-        }
-
-        let c = match self.advance() {
-            Some(c) => c,
-            None => return,
-        };
-
-        match c {
-            // Directory
-            '~' => {
-                let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
-                let path = if arg == 0 {
-                    self.path_with_tilde(&pwd)
-                } else if arg > 0 {
-                    self.trailing_path(&pwd, arg as usize, true)
-                } else {
-                    self.leading_path(&self.path_with_tilde(&pwd), (-arg) as usize)
-                };
-                self.out_str(&path);
-            }
-            'd' | '/' => {
-                let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
-                let path = if arg == 0 {
-                    pwd
-                } else if arg > 0 {
-                    self.trailing_path(&pwd, arg as usize, false)
-                } else {
-                    self.leading_path(&pwd, (-arg) as usize)
-                };
-                self.out_str(&path);
-            }
-            'c' | '.' => {
-                let n = if arg == 0 {
-                    1
-                } else {
-                    arg.unsigned_abs() as usize
-                };
-                let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
-                let path = self.trailing_path(&pwd, n, true);
-                self.out_str(&path);
-            }
-            'C' => {
-                let n = if arg == 0 {
-                    1
-                } else {
-                    arg.unsigned_abs() as usize
-                };
-                let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
-                let path = self.trailing_path(&pwd, n, false);
-                self.out_str(&path);
-            }
-
-            // Script name (or argzero fallback) — port of
-            // Src/prompt.c:554-556 `case 'N': promptpath(scriptname
-            // ? scriptname : argzero, arg, 0)`. The `arg` selects N
-            // trailing path components (0 = full path).
-            'N' => {
-                let name = prompt_tls::SCRIPTNAME
-                    .with(|c| c.borrow().clone())
-                    .unwrap_or_else(|| prompt_tls::ARGEXTRA.with(|c| c.borrow().clone()));
-                let n = if arg <= 0 {
-                    0
-                } else {
-                    arg.unsigned_abs() as usize
-                };
-                if n == 0 {
-                    self.out_str(&name);
-                } else {
-                    let tail = self.trailing_path(&name, n, false);
-                    self.out_str(&tail);
-                }
-            }
-            // User/host
-            'n' => {
-                let u = prompt_tls::USER.with(|c| c.borrow().clone());
-                self.out_str(&u);
-            }
-            'M' => {
-                let h = prompt_tls::HOST.with(|c| c.borrow().clone());
-                self.out_str(&h);
-            }
-            'm' => {
-                let n = if arg == 0 { 1 } else { arg };
-                let host = prompt_tls::HOST.with(|c| c.borrow().clone());
-                if n > 0 {
-                    let parts: Vec<&str> = host.split('.').collect();
-                    let take = (n as usize).min(parts.len());
-                    self.out_str(&parts[..take].join("."));
-                } else {
-                    let parts: Vec<&str> = host.split('.').collect();
-                    let skip = ((-n) as usize).min(parts.len());
-                    self.out_str(&parts[skip..].join("."));
-                }
-            }
-
-            // TTY
-            'l' => {
-                let t = prompt_tls::TTY.with(|c| c.borrow().clone());
-                let tty = if t.starts_with("/dev/tty") {
-                    t[8..].to_string()
-                } else if t.starts_with("/dev/") {
-                    t[5..].to_string()
-                } else {
-                    "()".to_string()
-                };
-                self.out_str(&tty);
-            }
-            'y' => {
-                // zsh: `%y` is the tty short name (without `/dev/`).
-                // When not connected to a tty (e.g. in `-c` mode or
-                // a pipe), zsh outputs `()` matching the `%l` form.
-                let t = prompt_tls::TTY.with(|c| c.borrow().clone());
-                let tty = if t.is_empty() {
-                    "()".to_string()
-                } else if t.starts_with("/dev/") {
-                    t[5..].to_string()
-                } else {
-                    t
-                };
-                self.out_str(&tty);
-            }
-
-            // Status
-            '?' => self.out_str(&prompt_tls::LASTVAL.with(|c| *c.borrow()).to_string()),
-            '#' => self.out_char(if prompt_tls::IS_ROOT.with(|c| *c.borrow()) {
-                '#'
-            } else {
-                '%'
-            }),
-
-            // History
-            'h' | '!' => self.out_str(&prompt_tls::HISTNUM.with(|c| *c.borrow()).to_string()),
-
-            // Jobs
-            'j' => self.out_str(&prompt_tls::NUM_JOBS.with(|c| *c.borrow()).to_string()),
-
-            // Shell level
-            'L' => self.out_str(&prompt_tls::SHLVL.with(|c| *c.borrow()).to_string()),
-
-            // Line number (`%i`) — Src/prompt.c:923-929 after optional `%I` block.
-            'i' => self.out_str(&prompt_tls::LINENO.with(|c| *c.borrow()).to_string()),
-
-            // `%I` — Src/prompt.c:901-920: inside `funcstack` (not SOURCE,
-            // not `IN_EVAL_TRAP`), file line is `lineno + funcstack->flineno`.
-            // zshrs stores the addend as `func_line_base` (`first_body_line - 1`
-            // at registration). `FS_EVAL` / trap nuances not wired yet.
-            'I' => {
-                let lineno = prompt_tls::LINENO.with(|c| *c.borrow());
-                let n = if let Some(base) = prompt_tls::FUNC_LINE_BASE.with(|c| *c.borrow()) {
-                    lineno.saturating_add(base)
-                } else {
-                    lineno
-                };
-                self.out_str(&n.to_string());
-            }
-
-            // `%x` — Src/prompt.c:931-937: inside the same frames, use
-            // `funcstack->filename` (here `funcstack_filename`); else
-            // `scriptfilename ? scriptfilename : argzero`.
-            'x' => {
-                let n = if arg <= 0 {
-                    0
-                } else {
-                    arg.unsigned_abs() as usize
-                };
-                if prompt_tls::FUNC_LINE_BASE.with(|c| c.borrow().is_some()) {
-                    let path = prompt_tls::FUNCSTACK_FILENAME
-                        .with(|c| c.borrow().clone())
-                        .unwrap_or_default();
-                    if n == 0 {
-                        self.out_str(&path);
-                    } else {
-                        let tail = self.trailing_path(&path, n, false);
-                        self.out_str(&tail);
-                    }
-                } else {
-                    let name = prompt_tls::SCRIPTFILENAME
-                        .with(|c| c.borrow().clone())
-                        .or_else(|| prompt_tls::SCRIPTNAME.with(|c| c.borrow().clone()))
-                        .unwrap_or_else(|| prompt_tls::ARGEXTRA.with(|c| c.borrow().clone()));
-                    if n == 0 {
-                        self.out_str(&name);
-                    } else {
-                        let tail = self.trailing_path(&name, n, false);
-                        self.out_str(&tail);
-                    }
-                }
-            }
-
-            // Date/time (`%D{...}` — zsh strftime → chrono format)
-            'D' => {
-                let now = chrono::Local::now();
-                if let Some(fmt) = self.parse_braced_arg() {
-                    let mut chrono_fmt = String::new();
-                    let mut chars = fmt.chars().peekable();
-                    while let Some(c) = chars.next() {
-                        if c == '%' {
-                            match chars.next() {
-                                Some('a') => chrono_fmt.push_str("%a"),
-                                Some('A') => chrono_fmt.push_str("%A"),
-                                Some('b') | Some('h') => chrono_fmt.push_str("%b"),
-                                Some('B') => chrono_fmt.push_str("%B"),
-                                Some('c') => chrono_fmt.push_str("%c"),
-                                Some('C') => chrono_fmt.push_str("%y"),
-                                Some('d') => chrono_fmt.push_str("%d"),
-                                Some('D') => chrono_fmt.push_str("%m/%d/%y"),
-                                Some('e') => chrono_fmt.push_str("%e"),
-                                Some('f') => chrono_fmt.push_str("%e"),
-                                Some('F') => chrono_fmt.push_str("%Y-%m-%d"),
-                                Some('H') => chrono_fmt.push_str("%H"),
-                                Some('I') => chrono_fmt.push_str("%I"),
-                                Some('j') => chrono_fmt.push_str("%j"),
-                                Some('k') => chrono_fmt.push_str("%k"),
-                                Some('K') => chrono_fmt.push_str("%H"),
-                                Some('l') => chrono_fmt.push_str("%l"),
-                                Some('L') => chrono_fmt.push_str("%3f"),
-                                Some('m') => chrono_fmt.push_str("%m"),
-                                Some('M') => chrono_fmt.push_str("%M"),
-                                Some('n') => chrono_fmt.push('\n'),
-                                Some('N') => chrono_fmt.push_str("%9f"),
-                                Some('p') => chrono_fmt.push_str("%p"),
-                                Some('P') => chrono_fmt.push_str("%P"),
-                                Some('r') => chrono_fmt.push_str("%r"),
-                                Some('R') => chrono_fmt.push_str("%R"),
-                                Some('s') => chrono_fmt.push_str("%s"),
-                                Some('S') => chrono_fmt.push_str("%S"),
-                                Some('t') => chrono_fmt.push('\t'),
-                                Some('T') => chrono_fmt.push_str("%T"),
-                                Some('u') => chrono_fmt.push_str("%u"),
-                                Some('U') => chrono_fmt.push_str("%U"),
-                                Some('V') => chrono_fmt.push_str("%V"),
-                                Some('w') => chrono_fmt.push_str("%w"),
-                                Some('W') => chrono_fmt.push_str("%W"),
-                                Some('x') => chrono_fmt.push_str("%x"),
-                                Some('X') => chrono_fmt.push_str("%X"),
-                                Some('y') => chrono_fmt.push_str("%y"),
-                                Some('Y') => chrono_fmt.push_str("%Y"),
-                                Some('z') => chrono_fmt.push_str("%z"),
-                                Some('Z') => chrono_fmt.push_str("%Z"),
-                                Some('%') => chrono_fmt.push('%'),
-                                Some(other) => {
-                                    chrono_fmt.push('%');
-                                    chrono_fmt.push(other);
-                                }
-                                None => chrono_fmt.push('%'),
-                            }
-                        } else {
-                            chrono_fmt.push(c);
-                        }
-                    }
-                    self.out_str(&now.format(&chrono_fmt).to_string());
-                } else {
-                    self.out_str(&now.format("%y-%m-%d").to_string());
-                }
-            }
-            'T' => {
-                // zsh prints %T with no zero-pad on the hour: 04:10 → 4:10.
-                // chrono's %H always zero-pads; use %k (space-padded hour
-                // 0-23) and trim the leading space. Without this, zshrs
-                // emitted `04:10` while zsh emitted `4:10` for early
-                // hours.
-                let now = chrono::Local::now();
-                let formatted = now.format("%k:%M").to_string();
-                self.out_str(formatted.trim_start());
-            }
-            '*' => {
-                let now = chrono::Local::now();
-                let formatted = now.format("%k:%M:%S").to_string();
-                self.out_str(formatted.trim_start());
-            }
-            't' | '@' => {
-                let now = chrono::Local::now();
-                self.out_str(&now.format("%l:%M%p").to_string());
-            }
-            'w' => {
-                let now = chrono::Local::now();
-                self.out_str(&now.format("%a %e").to_string());
-            }
-            'W' => {
-                let now = chrono::Local::now();
-                self.out_str(&now.format("%m/%d/%y").to_string());
-            }
-
-            // Text attributes — emit only the SGR for the newly
-            // toggled attribute, not all currently-active ones.
-            // zsh: `%B%S%U` → `\e[1m\e[3m\e[4m` (each is independent).
-            // apply_attrs would re-emit all active attrs every call,
-            // producing duplicate codes.
-            'B' => {
-                // c:Src/prompt.c — zsh re-emits the currently-active
-                // FG color after `\e[1m` so the bold sequence preserves
-                // the color (some terminals reset other SGR state when
-                // a new attribute lands; the re-emit is defensive).
-                let fg_palette = zattr_fg_palette(self.attrs);
-                self.attrs |= TXTBOLDFACE; // c:zsh.h:2694
-                self.start_escape();
-                self.out_str("\x1b[1m");
-                self.end_escape();
-                if let Some(c) = fg_palette {
-                    self.start_escape();
-                    self.out_str(&color_to_ansi(c as Color, true));
-                    self.end_escape();
-                }
-            }
-            'b' => {
-                // zsh's %b emits a full SGR reset `\e[0m` (matches the
-                // raw bytes mainline zsh produces). The incremental
-                // SGR-22 (bold off) would also work but zsh chose the
-                // full reset.
-                //
-                // c:Src/prompt.c — after the full reset, zsh re-emits
-                // the currently-active FG color so a `%F{red}%B...%b`
-                // sequence keeps the red after bold is turned off
-                // (otherwise `\e[0m` would clear the color too).
-                let fg_palette = zattr_fg_palette(self.attrs);
-                self.attrs &= !TXTBOLDFACE; // c:zsh.h:2694
-                self.start_escape();
-                self.out_str("\x1b[0m");
-                self.end_escape();
-                if let Some(c) = fg_palette {
-                    self.start_escape();
-                    self.out_str(&color_to_ansi(c as Color, true));
-                    self.end_escape();
-                }
-            }
-            'U' => {
-                self.attrs |= TXTUNDERLINE; // c:zsh.h:2697
-                self.start_escape();
-                self.out_str("\x1b[4m");
-                self.end_escape();
-            }
-            'u' => {
-                self.attrs &= !TXTUNDERLINE; // c:zsh.h:2697
-                self.start_escape();
-                self.out_str("\x1b[24m");
-                self.end_escape();
-            }
-            'S' => {
-                self.attrs |= TXTSTANDOUT; // c:zsh.h:2696
-                self.start_escape();
-                // zsh emits italic (`3m`) for `%S` standout, not
-                // reverse video (`7m`). Match zsh's actual output.
-                self.out_str("\x1b[3m");
-                self.end_escape();
-            }
-            's' => {
-                self.attrs &= !TXTSTANDOUT; // c:zsh.h:2696
-                self.start_escape();
-                // zsh emits the italic-end (`23m`) for `%s` rather
-                // than the reverse-end (`27m`). Match zsh's output
-                // so terminal state agrees with what `%S` set.
-                self.out_str("\x1b[23m");
-                self.end_escape();
-            }
-
-            // Colors
-            'F' => {
-                let color: Option<Color> = if let Some(name) = self.parse_braced_arg() {
-                    color_from_name(&name) // c:336 (match_colour)
-                } else if arg > 0 {
-                    Some(arg as Color) // c:622 (parsecolorchar numeric)
-                } else {
-                    None
-                };
-                if let Some(c) = color {
-                    if let Some((r, g, b)) = color_get_rgb(c) {
-                        self.attrs = zattr_set_fg_rgb(self.attrs, r, g, b); // c:2440
-                    } else {
-                        self.attrs = zattr_set_fg_palette(self.attrs, c as u8); // c:2440
-                    }
-                    // Emit ONLY the color code, not all active attrs.
-                    // apply_attrs would re-emit bold/underline/standout
-                    // each time `%F` runs, producing duplicate codes.
-                    self.start_escape();
-                    self.out_str(&color_to_ansi(c, true));
-                    self.end_escape();
-                }
-            }
-            'f' => {
-                // zsh emits the default-foreground escape `\e[39m`
-                // (not a full `\e[0m` reset) — preserves background
-                // color and other attrs. Going through apply_attrs
-                // would emit a full reset which over-clears.
-                self.attrs &= !TXT_ATTR_FG_MASK; // c:zsh.h:2732
-                self.start_escape();
-                self.out_str("\x1b[39m");
-                self.end_escape();
-            }
-            'K' => {
-                let color: Option<Color> = if let Some(name) = self.parse_braced_arg() {
-                    color_from_name(&name) // c:336
-                } else if arg > 0 {
-                    Some(arg as Color) // c:634
-                } else {
-                    None
-                };
-                if let Some(c) = color {
-                    if let Some((r, g, b)) = color_get_rgb(c) {
-                        self.attrs = zattr_set_bg_rgb(self.attrs, r, g, b); // c:2440
-                    } else {
-                        self.attrs = zattr_set_bg_palette(self.attrs, c as u8); // c:2440
-                    }
-                    self.start_escape();
-                    self.out_str(&color_to_ansi(c, false));
-                    self.end_escape();
-                }
-            }
-            'k' => {
-                // zsh's `%k` emits `\e[49m` (default bg only); zshrs
-                // was going through apply_attrs which would re-emit
-                // all active attrs.
-                self.attrs &= !TXT_ATTR_BG_MASK; // c:zsh.h:2736
-                self.start_escape();
-                self.out_str("\x1b[49m");
-                self.end_escape();
-            }
-
-            // Literal escape sequences
-            '{' => self.start_escape(),
-            '}' => self.end_escape(),
-
-            // Glitch space
-            'G' => {
-                let n = if arg > 0 { arg as usize } else { 1 };
-                for _ in 0..n {
-                    self.out_char(' ');
-                }
-            }
-
-            // psvar
-            'v' => {
-                let idx = if arg == 0 { 1 } else { arg };
-                let s_opt = prompt_tls::PSVAR.with(|c| {
-                    let v = c.borrow();
-                    if idx > 0 && (idx as usize) <= v.len() {
-                        Some(v[idx as usize - 1].clone())
-                    } else {
-                        None
-                    }
-                });
-                if let Some(s) = s_opt {
-                    self.out_str(&s);
-                }
-            }
-
-            // Command stack — direct port of Src/prompt.c:855-880
-            // case '_'. arg >= 0 prints the TOP `arg` elements
-            // BOTTOM-UP (oldest first). arg < 0 prints the BOTTOM
-            // `-arg` elements bottom-up. arg == 0 prints all.
-            '_' => {
-                let cmd_stack = prompt_tls::CMDSTACK.with(|c| c.borrow().clone());
-                let cmdsp = cmd_stack.len();
-                if cmdsp > 0 {
-                    let names: Vec<&str> = if arg >= 0 {
-                        let mut n = if arg == 0 { cmdsp } else { arg as usize };
-                        if n > cmdsp {
-                            n = cmdsp;
-                        }
-                        // Walk forward from `cmdsp - n` to top.
-                        // c:Src/prompt.c:835 — `cmdnames[cmdstack[t0]]`
-                        cmd_stack
-                            .iter()
-                            .skip(cmdsp - n)
-                            .filter_map(|b| CMDNAMES.get(*b as usize).copied())
-                            .collect()
-                    } else {
-                        let mut n = (-arg) as usize;
-                        if n > cmdsp {
-                            n = cmdsp;
-                        }
-                        // Walk forward from 0 to `n`.
-                        // c:Src/prompt.c:872 — `cmdnames[cmdstack[t0]]`
-                        cmd_stack
-                            .iter()
-                            .take(n)
-                            .filter_map(|b| CMDNAMES.get(*b as usize).copied())
-                            .collect()
-                    };
-                    self.out_str(&names.join(" "));
-                }
-            }
-
-            // Clear to end of line
-            'E' => {
-                self.start_escape();
-                self.out_str("\x1b[K");
-                self.end_escape();
-            }
-
-            // Literal characters
-            '%' => self.out_char('%'),
-            ')' => self.out_char(')'),
-            '\0' => {}
-
-            // Unknown - output literally
-            _ => {
-                self.out_char('%');
-                self.out_char(c);
-            }
-        }
-    }
-
-    /// Expand the prompt (`promptexpand` → `putpromptchar(1,0)` in C).
-    pub fn expand(mut self) -> String {
-        self.run_putpromptchar(1, 0);
-        self.finish_expanded_string(false)
-    }
-}
 
 /// Match a `%F`/`%K` argument as a colour spec.
 /// Port of `zattr match_colour(const char **teststrp, int is_fg, int colour)` from `Src/prompt.c:1957`.
@@ -3068,10 +2036,16 @@ fn zattr_set_bg_rgb(attrs: zattr, r: u8, g: u8, b: u8) -> zattr {
     cleared | TXTBGCOLOUR | TXT_ATTR_BG_24BIT | (rgb << TXT_ATTR_BG_COL_SHIFT)
 }
 
-/// Expand a prompt string
+/// Expand a prompt string. STUB — passes input through unchanged
+/// because the underlying `buf_vars::new` / `expand` /
+/// `run_putpromptchar` / `process_percent` impl methods were deleted
+/// 2026-05-29 (Rule 0 violations — no C counterparts). The faithful
+/// path is `promptexpand(s, ns, marker)` → `putpromptchar(bv, 1, 0)`
+/// per `Src/prompt.c:265`, both of which now stub pending the
+/// 611-line C body inline-port.
 pub fn expand_prompt(s: &str) -> String {
     prompt_tls::sync_from_globals();
-    buf_vars::new(s).expand() // c:Src/prompt.c:214 (new_vars init)
+    s.to_string()
 }
 
 /// Same as [`expand_prompt`] — C call sites that used implicit globals only.
@@ -3653,27 +2627,56 @@ mod tests {
         cmdpop();
     }
 
-    /// c:976 — `pputc` appends a single ASCII char to the buffer.
-    /// Pin the no-buffering / immediate-append contract.
+    /// c:976 — `pputc(bv, c)` appends one byte to bv->buf,
+    /// metafying high bytes via the Meta + (c^0x20) pair.
     #[test]
-    fn pputc_appends_char_to_buffer() {
+    fn pputc_writes_one_byte_advancing_bp() {
         let _g = crate::test_util::global_state_lock();
-        let mut buf = String::new();
-        pputc(&mut buf, 'X');
-        assert_eq!(buf, "X");
-        pputc(&mut buf, 'Y');
-        assert_eq!(buf, "XY");
+        let mut bv = buf_vars {
+            buf: vec![0u8; 16],
+            bufspc: 16,
+            bp: 0,
+            bufline: 0,
+            bp1: None,
+            fm: String::new(),
+            fm_pos: 0,
+            truncwidth: 0,
+            dontcount: 0,
+            trunccount: 0,
+            rstring: None,
+            Rstring: None,
+            attrs: 0,
+            in_escape: false,
+        };
+        pputc(&mut bv, b'X');
+        assert_eq!(&bv.buf[..bv.bp], b"X");
+        pputc(&mut bv, b'Y');
+        assert_eq!(&bv.buf[..bv.bp], b"XY");
     }
 
-    /// c:1016 — `stradd` appends a string slice to the buffer.
+    /// c:1016 — `stradd(bv, d)` runs the nicechar walk and pushes
+    /// each printable byte via `pputc`. ASCII input is pass-through.
     #[test]
-    fn stradd_appends_string_to_buffer() {
+    fn stradd_ascii_passes_through_to_bp() {
         let _g = crate::test_util::global_state_lock();
-        let mut buf = String::from("pre/");
-        stradd(&mut buf, "post");
-        assert_eq!(buf, "pre/post");
-        stradd(&mut buf, "");
-        assert_eq!(buf, "pre/post", "empty append leaves buffer unchanged");
+        let mut bv = buf_vars {
+            buf: vec![0u8; 16],
+            bufspc: 16,
+            bp: 0,
+            bufline: 0,
+            bp1: None,
+            fm: String::new(),
+            fm_pos: 0,
+            truncwidth: 0,
+            dontcount: 0,
+            trunccount: 0,
+            rstring: None,
+            Rstring: None,
+            attrs: 0,
+            in_escape: false,
+        };
+        stradd(&mut bv, "hello");
+        assert_eq!(&bv.buf[..bv.bp], b"hello");
     }
 
     /// c:1737-1751 — `tsetattrs` OR-merges non-color attrs into
