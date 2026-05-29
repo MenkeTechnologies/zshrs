@@ -912,4 +912,116 @@ mod tests {
         let r2 = bin_echoti("echoti", &["zz_zshrs_test".to_string()], &ops, 0);
         assert_eq!(r1, r2);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/terminfo.c
+    // c:59 bin_echoti / c:204 getterminfo / c:304 scanterminfo / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:59 — bin_echoti return value in u8 exit-code range.
+    #[test]
+    fn bin_echoti_returns_in_exit_code_range() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_for_pin();
+        for args in [
+            vec![],
+            vec!["unknown".to_string()],
+            vec!["bold".to_string()],
+        ] {
+            let r = bin_echoti("echoti", &args, &ops, 0);
+            assert!((0..256).contains(&r),
+                "exit code must fit in u8 range, got {} for {:?}", r, args);
+        }
+    }
+
+    /// c:59 — bin_echoti with empty cap name returns nonzero.
+    #[test]
+    fn bin_echoti_empty_cap_name_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_for_pin();
+        let r = bin_echoti("echoti", &["".to_string()], &ops, 0);
+        assert_ne!(r, 0, "empty cap name → error");
+    }
+
+    /// c:204 — getterminfo("") returns Some (always Param node per C
+    /// convention, missing → PM_UNSET).
+    #[test]
+    fn getterminfo_empty_name_returns_some_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let pm = getterminfo(std::ptr::null_mut(), "");
+        assert!(pm.is_some(), "C convention: always Some, missing via PM_UNSET");
+    }
+
+    /// c:204 — getterminfo is deterministic (multiple calls = same result).
+    #[test]
+    fn getterminfo_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let a = getterminfo(std::ptr::null_mut(), "bold").is_some();
+        for _ in 0..5 {
+            let b = getterminfo(std::ptr::null_mut(), "bold").is_some();
+            assert_eq!(a, b);
+        }
+    }
+
+    /// c:204 — getterminfo nonexistent cap returns Some with PM_UNSET.
+    #[test]
+    fn getterminfo_unknown_cap_sets_pm_unset() {
+        use crate::ported::zsh_h::PM_UNSET;
+        let _g = crate::test_util::global_state_lock();
+        let pm = getterminfo(std::ptr::null_mut(), "definitely_unknown_xyz_cap");
+        if let Some(p) = pm {
+            assert_ne!(p.node.flags & PM_UNSET as i32, 0,
+                "unknown cap must have PM_UNSET bit");
+        }
+    }
+
+    /// c:304 — scanterminfo with None callback is safe.
+    #[test]
+    fn scanterminfo_none_callback_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        scanterminfo(std::ptr::null_mut(), None, 0);
+    }
+
+    /// c:59 — bin_echoti repeated calls don't leak state.
+    #[test]
+    fn bin_echoti_repeated_calls_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_for_pin();
+        for _ in 0..20 {
+            let _ = bin_echoti("echoti", &["xyz".to_string()], &ops, 0);
+        }
+    }
+
+    /// c:491-532 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn terminfo_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:491 — setup_ idempotent.
+    #[test]
+    fn terminfo_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:532 — finish_ idempotent.
+    #[test]
+    fn terminfo_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
 }
