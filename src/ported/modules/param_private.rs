@@ -1685,4 +1685,132 @@ mod tests {
             assert_eq!(ppa_getfn(std::ptr::null_mut()), first);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/param_private.c
+    // c:200 is_private / c:365 setfn_error / c:433 pps_setfn /
+    // c:512 ppi_setfn / c:572 ppf_setfn / c:632 ppa_setfn /
+    // c:690 pph_getfn / c:706 pph_setfn / c:766 scopeprivate /
+    // c:875 getprivatenode / c:922 getprivatenode2 / c:965 printprivatenode
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:200 — `is_private` returns i32 (compile-time type pin).
+    #[test]
+    fn is_private_returns_i32_type_pin2() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = is_private(std::ptr::null());
+    }
+
+    /// c:200 — `is_private(null)` deterministic across calls.
+    #[test]
+    fn is_private_null_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = is_private(std::ptr::null());
+        for _ in 0..5 {
+            assert_eq!(is_private(std::ptr::null()), first,
+                "is_private(null) must be deterministic");
+        }
+    }
+
+    /// c:365 — `setfn_error(null)` is safe and idempotent.
+    #[test]
+    fn setfn_error_null_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            setfn_error(std::ptr::null_mut());
+        }
+    }
+
+    /// c:766 — `scopeprivate(null, _)` is safe for both onoff values.
+    #[test]
+    fn scopeprivate_null_both_onoff_safe() {
+        let _g = crate::test_util::global_state_lock();
+        scopeprivate(std::ptr::null_mut(), 0);
+        scopeprivate(std::ptr::null_mut(), 1);
+    }
+
+    /// c:766 — `scopeprivate(null, _)` is idempotent.
+    #[test]
+    fn scopeprivate_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            scopeprivate(std::ptr::null_mut(), 0);
+        }
+    }
+
+    /// c:875 — `getprivatenode(null)` returns null pointer.
+    #[test]
+    fn getprivatenode_null_returns_null_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let p = getprivatenode(std::ptr::null_mut());
+        assert!(p.is_null(), "null in → null out");
+    }
+
+    /// c:922 — `getprivatenode2(null)` returns null pointer.
+    #[test]
+    fn getprivatenode2_null_returns_null_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let p = getprivatenode2(std::ptr::null_mut());
+        assert!(p.is_null(), "null in → null out");
+    }
+
+    /// c:875 + c:922 — both getprivatenode variants null-safe and pure.
+    #[test]
+    fn getprivatenode_variants_deterministic_on_null() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            assert!(getprivatenode(std::ptr::null_mut()).is_null());
+            assert!(getprivatenode2(std::ptr::null_mut()).is_null());
+        }
+    }
+
+    /// c:965 — `printprivatenode(null, _)` is safe for any flags.
+    #[test]
+    fn printprivatenode_null_with_various_flags_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for flags in [0i32, 1, -1, i32::MIN, i32::MAX] {
+            printprivatenode(std::ptr::null_mut(), flags);
+        }
+    }
+
+    /// c:690 — `pph_getfn(null)` returns Option<()> (compile-time pin).
+    #[test]
+    fn pph_getfn_returns_option_unit_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<()> = pph_getfn(std::ptr::null_mut());
+    }
+
+    /// c:433 — `pps_setfn(null, _)` is safe.
+    #[test]
+    fn pps_setfn_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        pps_setfn(std::ptr::null_mut(), "");
+        pps_setfn(std::ptr::null_mut(), "any value");
+    }
+
+    /// c:512 — `ppi_setfn(null, _)` is safe.
+    #[test]
+    fn ppi_setfn_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        ppi_setfn(std::ptr::null_mut(), 0);
+        ppi_setfn(std::ptr::null_mut(), i64::MAX);
+        ppi_setfn(std::ptr::null_mut(), i64::MIN);
+    }
+
+    /// c:572 — `ppf_setfn(null, _)` is safe.
+    #[test]
+    fn ppf_setfn_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        ppf_setfn(std::ptr::null_mut(), 0.0);
+        ppf_setfn(std::ptr::null_mut(), f64::INFINITY);
+        ppf_setfn(std::ptr::null_mut(), f64::NAN);
+    }
+
+    /// c:632 — `ppa_setfn(null, _)` is safe.
+    #[test]
+    fn ppa_setfn_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        ppa_setfn(std::ptr::null_mut(), vec![]);
+        ppa_setfn(std::ptr::null_mut(), vec!["a".into(), "b".into()]);
+    }
 }
