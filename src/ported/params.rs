@@ -13546,4 +13546,175 @@ mod tests {
         unsetparam("__never_real_var_xyz__");
         unsetparam("__never_real_var_xyz__");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/params.c GSU vtable callbacks.
+    // c:3993 intgetfn   / c:4002 intsetfn   / c:4011 floatgetfn
+    // c:4020 floatsetfn / c:4029 strgetfn   / c:4057 arrgetfn
+    // c:4084 hashgetfn  / c:4093 hashsetfn  / c:4180 nullstrsetfn
+    // c:4192 nullunsetfn
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:3993-3997 — `intgetfn` body is `return pm->u.val;`. Pin that
+    /// the Rust port reads `pm.u_val` verbatim with no transform.
+    #[test]
+    fn intgetfn_returns_u_val_verbatim() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pm = param::default();
+        pm.u_val = 0;
+        assert_eq!(intgetfn(&pm), 0, "u_val=0 → 0");
+        pm.u_val = 42;
+        assert_eq!(intgetfn(&pm), 42, "u_val=42 → 42");
+        pm.u_val = i64::MIN;
+        assert_eq!(intgetfn(&pm), i64::MIN, "u_val=i64::MIN preserved");
+        pm.u_val = i64::MAX;
+        assert_eq!(intgetfn(&pm), i64::MAX, "u_val=i64::MAX preserved");
+    }
+
+    /// c:4002-4006 — `intsetfn` body is `pm->u.val = x;`. For a
+    /// non-special name (not SECONDS/RANDOM), the Rust port must
+    /// write `pm.u_val = x` and intgetfn must round-trip.
+    #[test]
+    fn intsetfn_intgetfn_round_trip_for_non_special_name() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pm = param::default();
+        pm.node.nam = "X".to_string(); // non-SECONDS, non-RANDOM
+        intsetfn(&mut pm, 7);
+        assert_eq!(intgetfn(&pm), 7, "non-special intsetfn writes u_val");
+        intsetfn(&mut pm, -123);
+        assert_eq!(intgetfn(&pm), -123, "negative i64 round-trips");
+    }
+
+    /// c:4011-4015 — `floatgetfn` body is `return pm->u.dval;`.
+    /// Read `pm.u_dval` verbatim with no transform.
+    #[test]
+    fn floatgetfn_returns_u_dval_verbatim() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pm = param::default();
+        pm.u_dval = 0.0;
+        assert_eq!(floatgetfn(&pm), 0.0, "u_dval=0.0 → 0.0");
+        pm.u_dval = 3.14;
+        assert_eq!(floatgetfn(&pm), 3.14, "u_dval=3.14 preserved");
+        pm.u_dval = -2.71;
+        assert_eq!(floatgetfn(&pm), -2.71, "negative dval preserved");
+    }
+
+    /// c:4020-4024 — `floatsetfn` body for non-SECONDS is
+    /// `pm->u.dval = x;`. Round-trip via floatgetfn.
+    #[test]
+    fn floatsetfn_floatgetfn_round_trip_for_non_seconds() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pm = param::default();
+        pm.node.nam = "Y".to_string(); // non-SECONDS
+        floatsetfn(&mut pm, 1.5);
+        assert_eq!(floatgetfn(&pm), 1.5, "non-SECONDS floatsetfn writes u_dval");
+        floatsetfn(&mut pm, -0.0);
+        assert_eq!(floatgetfn(&pm), -0.0, "neg zero round-trips");
+    }
+
+    /// c:4029-4033 — `strgetfn` C body returns `pm->u.str ? pm->u.str
+    /// : (char *) hcalloc(1);` — when u_str is None the C path
+    /// returns a freshly allocated empty C string. Rust port must
+    /// return `String::new()` (empty owned String) for the None case.
+    #[test]
+    fn strgetfn_returns_empty_string_when_u_str_none() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pm = param::default();
+        pm.u_str = None;
+        let s = strgetfn(&pm);
+        assert!(s.is_empty(), "None u_str → empty String (port of hcalloc(1))");
+    }
+
+    /// c:4029-4033 — `strgetfn` returns u_str clone when present.
+    #[test]
+    fn strgetfn_returns_clone_when_u_str_some() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pm = param::default();
+        pm.u_str = Some("hello".to_string());
+        assert_eq!(strgetfn(&pm), "hello", "Some(s) → s");
+    }
+
+    /// c:4057-4061 — `arrgetfn` C body returns `pm->u.arr ? pm->u.arr
+    /// : &nullarray;` — when u_arr is None, the C path returns a
+    /// pointer to the static empty `nullarray`. Rust port returns
+    /// `Vec::new()` for the None case (empty owned Vec).
+    #[test]
+    fn arrgetfn_returns_empty_vec_when_u_arr_none() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pm = param::default();
+        pm.u_arr = None;
+        let v = arrgetfn(&pm);
+        assert!(v.is_empty(), "None u_arr → empty Vec (port of &nullarray)");
+    }
+
+    /// c:4057-4061 — `arrgetfn` returns u_arr clone when present.
+    #[test]
+    fn arrgetfn_returns_clone_when_u_arr_some() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pm = param::default();
+        let src = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        pm.u_arr = Some(src.clone());
+        assert_eq!(arrgetfn(&pm), src, "Some(v) → v clone");
+    }
+
+    /// c:4084-4088 — `hashgetfn` C body is `return pm->u.hash;`. The
+    /// Rust port returns `Option<&HashTable>` (borrowing form of the
+    /// C nullable pointer). Pin both the None and Some cases.
+    #[test]
+    fn hashgetfn_returns_option_ref_hashtable() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pm = param::default();
+        pm.u_hash = None;
+        assert!(hashgetfn(&pm).is_none(), "None u_hash → None");
+        pm.u_hash = newparamtable(8, "h");
+        assert!(hashgetfn(&pm).is_some(), "Some u_hash → Some");
+    }
+
+    /// c:4093-4097 — `hashsetfn` C body installs `x` into `pm->u.hash`.
+    /// Rust port writes `pm.u_hash = Some(x)`; round-trip via
+    /// hashgetfn must observe the same table.
+    #[test]
+    fn hashsetfn_hashgetfn_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pm = param::default();
+        let ht = newparamtable(8, "h").expect("newparamtable returns Some");
+        let want_size = ht.hsize;
+        hashsetfn(&mut pm, ht);
+        let got = hashgetfn(&pm).expect("hashsetfn must store table");
+        assert_eq!(got.hsize, want_size, "stored table size preserved");
+    }
+
+    /// c:4180-4183 — `nullstrsetfn(UNUSED pm, char *x)` is the
+    /// PM_SPECIAL "cannot be set" hook: `zsfree(x);` discards x and
+    /// makes no change to pm. Pin that the Rust port leaves every
+    /// field of pm untouched.
+    #[test]
+    fn nullstrsetfn_leaves_pm_unchanged() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pm = param::default();
+        pm.node.nam = "PINNED".to_string();
+        pm.u_str = Some("orig".to_string());
+        pm.u_val = 99;
+        nullstrsetfn(&mut pm, "discarded".to_string());
+        assert_eq!(pm.node.nam, "PINNED", "nam untouched");
+        assert_eq!(pm.u_str.as_deref(), Some("orig"), "u_str untouched");
+        assert_eq!(pm.u_val, 99, "u_val untouched");
+    }
+
+    /// c:4192-4195 — `nullunsetfn(UNUSED pm, UNUSED exp)` is the
+    /// PM_SPECIAL "cannot be unset" hook: empty body. Pin that the
+    /// Rust port leaves every field of pm untouched.
+    #[test]
+    fn nullunsetfn_leaves_pm_unchanged() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pm = param::default();
+        pm.node.nam = "PINNED".to_string();
+        pm.node.flags = PM_SCALAR as i32;
+        pm.u_str = Some("keep".to_string());
+        nullunsetfn(&mut pm, 0);
+        nullunsetfn(&mut pm, 1);
+        assert_eq!(pm.node.nam, "PINNED", "nam untouched");
+        assert_eq!(pm.node.flags, PM_SCALAR as i32, "flags untouched");
+        assert_eq!(pm.u_str.as_deref(), Some("keep"), "u_str untouched");
+    }
 }
