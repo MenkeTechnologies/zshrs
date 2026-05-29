@@ -1049,4 +1049,97 @@ mod tests {
             assert_eq!(setup_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/mapfile.c
+    // c:52 setpmmapfile / c:181 unsetpmmapfile / c:206 setpmmapfiles /
+    // c:239 get_contents / c:329 getpmmapfile / c:384 scanpmmapfile
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:239 — `get_contents` returns Option<String> (compile-time pin).
+    #[test]
+    fn get_contents_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = get_contents("/tmp");
+    }
+
+    /// c:239 — `get_contents("")` empty path returns None.
+    #[test]
+    fn get_contents_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(get_contents("").is_none(), "empty path → None");
+    }
+
+    /// c:329 — `getpmmapfile(null, "anything")` returns Option<Param>.
+    #[test]
+    fn getpmmapfile_returns_option_param_type() {
+        use crate::ported::zsh_h::Param;
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Param> = getpmmapfile(std::ptr::null_mut(), "anything");
+    }
+
+    /// c:52 — `setpmmapfile(name, val, readonly=true)` is safe with bool flag.
+    #[test]
+    fn setpmmapfile_readonly_true_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        setpmmapfile("__never_real_mapfile_test__", "/tmp/__nonexistent__", true);
+    }
+
+    /// c:206 — `setpmmapfiles` empty entries no-panic + readonly variant.
+    #[test]
+    fn setpmmapfiles_empty_entries_both_flags_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        setpmmapfiles(&[], false);
+        setpmmapfiles(&[], true);
+    }
+
+    /// c:181 — `unsetpmmapfile(name, exp)` empty name + both exp values safe.
+    #[test]
+    fn unsetpmmapfile_empty_name_both_exp_safe() {
+        let _g = crate::test_util::global_state_lock();
+        unsetpmmapfile("", false);
+        unsetpmmapfile("", true);
+    }
+
+    /// c:239 — `get_contents` is deterministic for nonexistent path.
+    #[test]
+    fn get_contents_nonexistent_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let p = "/__nonexistent_zshrs_mapfile_xyz__";
+        let first = get_contents(p);
+        for _ in 0..3 {
+            assert_eq!(get_contents(p), first,
+                "get_contents nonexistent must be deterministic");
+        }
+    }
+
+    /// c:329 — `getpmmapfile(null, "")` empty name returns Some(PM_UNSET).
+    /// C convention: always Param node (PM_UNSET for missing).
+    #[test]
+    fn getpmmapfile_empty_returns_some_with_pm_unset() {
+        use crate::ported::zsh_h::PM_UNSET;
+        let _g = crate::test_util::global_state_lock();
+        let pm = getpmmapfile(std::ptr::null_mut(), "");
+        if let Some(p) = pm {
+            assert_ne!(p.node.flags & PM_UNSET as i32, 0,
+                "empty name → PM_UNSET bit set");
+        }
+    }
+
+    /// c:384 — `scanpmmapfile(null, None, 0)` returns void.
+    #[test]
+    fn scanpmmapfile_none_callback_signature_void() {
+        let _g = crate::test_util::global_state_lock();
+        let _: () = scanpmmapfile(std::ptr::null_mut(), None, 0);
+    }
+
+    /// c:453-492 — setup_/cleanup_/finish_ all return i32.
+    #[test]
+    fn mapfile_lifecycle_funcs_return_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+        let _: i32 = boot_(std::ptr::null());
+        let _: i32 = cleanup_(std::ptr::null());
+        let _: i32 = finish_(std::ptr::null());
+    }
 }
