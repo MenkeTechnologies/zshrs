@@ -857,4 +857,88 @@ mod tests {
         let c = get_contents(p.to_str().unwrap());
         assert_eq!(c.as_deref(), Some("日本語"));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/mapfile.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:239 — `get_contents("")` returns None (empty path invalid).
+    #[test]
+    fn get_contents_empty_path_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(get_contents("").is_none());
+    }
+
+    /// c:239 — `get_contents` of directory no panic (read fails / returns
+    /// something).
+    #[test]
+    fn get_contents_directory_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = get_contents("/tmp");
+    }
+
+    /// c:239 — `get_contents` of a text file preserves byte content.
+    #[test]
+    fn get_contents_text_file_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("data.txt");
+        let content = "line1\nline2\nline3\n";
+        std::fs::write(&p, content).unwrap();
+        let r = get_contents(p.to_str().unwrap());
+        assert_eq!(r.as_deref(), Some(content));
+    }
+
+    /// c:329 — `getpmmapfile(_, "")` returns Option (Some PM_UNSET or
+    /// None per port). Pin no panic; the Rust port returns Some(Param)
+    /// with PM_UNSET flag for empty/missing keys, matching C's
+    /// "always return a Param node" convention.
+    #[test]
+    fn getpmmapfile_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = getpmmapfile(std::ptr::null_mut(), "");
+    }
+
+    /// c:329 — `getpmmapfile` of nonexistent path no panic
+    /// (may return Some PM_UNSET).
+    #[test]
+    fn getpmmapfile_nonexistent_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = getpmmapfile(std::ptr::null_mut(), "/__never_exists_zshrs_xyz__");
+    }
+
+    /// c:181 — `unsetpmmapfile("never_set", true)` no panic.
+    #[test]
+    fn unsetpmmapfile_unset_param_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        unsetpmmapfile("zshrs_never_mapfile_xyz", true);
+    }
+
+    /// c:206 — `setpmmapfiles(&[], true)` empty entries no-op.
+    #[test]
+    fn setpmmapfiles_empty_entries_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        setpmmapfiles(&[], true);
+    }
+
+    /// Lifecycle (c:453/476/485/492) split per-hook.
+    #[test]
+    fn mapfile_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:485 — cleanup_(NULL) = 0.
+    #[test]
+    fn mapfile_cleanup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+    }
+
+    /// c:492 — finish_(NULL) = 0.
+    #[test]
+    fn mapfile_finish_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
