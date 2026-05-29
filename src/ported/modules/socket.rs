@@ -562,4 +562,93 @@ mod tests {
         let mut features = Vec::new();
         assert_eq!(features_(std::ptr::null(), &mut features), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/socket.c bin_zsocket
+    // option handling.
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn ops_with_flag(flag: u8) -> options {
+        let mut ind = [0u8; crate::ported::zsh_h::MAX_OPS];
+        ind[flag as usize] = 1;
+        options { ind, args: Vec::new(), argscount: 0, argsalloc: 0 }
+    }
+
+    /// c:88 — `bin_zsocket -l` with no args returns 1 ("requires arg").
+    #[test]
+    fn bin_zsocket_l_no_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = ops_with_flag(b'l');
+        let r = bin_zsocket("zsocket", &[], &ops, 0);
+        assert_eq!(r, 1, "-l with no args → usage error");
+    }
+
+    /// c:57 — `bin_zsocket` with no flags or args runs without panic
+    /// (no-op invocation; returns 1 for missing operation per usage check).
+    #[test]
+    fn bin_zsocket_no_args_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = options {
+            ind: [0; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let _ = bin_zsocket("zsocket", &[], &ops, 0);
+        // No panic = pass.
+    }
+
+    /// c:64-65 — `-v` flag alone (verbose, no connect/listen) returns
+    /// nonzero per usage check (verbose without action).
+    #[test]
+    fn bin_zsocket_v_alone_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = ops_with_flag(b'v');
+        let _ = bin_zsocket("zsocket", &[], &ops, 0);
+    }
+
+    /// c:70-75 — `-d` flag set runs the targetfd validation path.
+    /// Pin no-panic only (OPT_ARG wiring details vary between ports).
+    #[test]
+    fn bin_zsocket_d_flag_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = ops_with_flag(b'd');
+        let _ = bin_zsocket("zsocket", &[], &ops, 0);
+    }
+
+    /// c:67-68 — `-t` (test) flag alone doesn't panic.
+    #[test]
+    fn bin_zsocket_t_alone_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = ops_with_flag(b't');
+        let _ = bin_zsocket("zsocket", &[], &ops, 0);
+    }
+
+    /// c:351 — `setup_(NULL)` returns 0 (split from combined test).
+    #[test]
+    fn socket_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:373 — `boot_(NULL)` returns 0.
+    #[test]
+    fn socket_boot_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
+
+    /// c:380 — `cleanup_(NULL)` returns 0.
+    #[test]
+    fn socket_cleanup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+    }
+
+    /// c:387 — `finish_(NULL)` returns 0.
+    #[test]
+    fn socket_finish_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
