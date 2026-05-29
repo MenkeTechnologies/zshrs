@@ -1865,15 +1865,29 @@ mod tests {
         assert_eq!(wordclass('\x01'), 3);
     }
 
-    /// `wordclass('\r')` per zsh C uses iblank = isspace - newline.
-    /// On most POSIX systems isblank covers only space + tab, so CR
-    /// should land in class 3 (other). zshrs zc_iblank is returning
-    /// true for CR — likely classifies via iswspace then excludes
-    /// newline, but doesn't exclude CR.
+    /// c:82 + Src/utils.c:4302-4307 — `wordclass('\r')` returns 0.
+    /// zsh's wcsiblank is `iswspace(wc) && wc != L'\n'` — every space
+    /// char EXCEPT newline counts as iblank, so CR/FF/VT all → class 0.
+    /// Only newline is excluded explicitly.
     #[test]
-    #[ignore = "ZSHRS BUG: wordclass('\\r') returns 0 (iblank) — zsh C iblank = isblank, excludes CR; zshrs zc_iblank includes it. See Src/utils.c wcsiblank vs Src/Zle/zle_word.c:82"]
-    fn wordclass_cr_is_three() {
-        assert_eq!(wordclass('\r'), 3, "CR is not iblank per zsh isblank semantics");
+    fn wordclass_cr_is_iblank_matching_c() {
+        assert_eq!(
+            wordclass('\r'),
+            0,
+            "CR is iblank per Src/utils.c:wcsiblank (iswspace minus newline)"
+        );
+    }
+
+    /// c:82 + wcsiblank — FF (form feed) is also iblank → class 0.
+    #[test]
+    fn wordclass_ff_is_iblank() {
+        assert_eq!(wordclass('\x0c'), 0, "FF is iblank");
+    }
+
+    /// c:82 + wcsiblank — VT (vertical tab) is iblank → class 0.
+    #[test]
+    fn wordclass_vt_is_iblank() {
+        assert_eq!(wordclass('\x0b'), 0, "VT is iblank");
     }
 
     /// c:82 — `wordclass` is deterministic + idempotent (same input
