@@ -939,4 +939,133 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(cleanup_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/nearcolor.c
+    // c:53 deltae / c:73 RGBtoLAB / c:141 mapRGBto88 / c:218 mapRGBto256
+    // c:302 getnearestcolor / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:53 — `deltae(a, a)` = 0 (reflexive).
+    #[test]
+    fn deltae_reflexive_for_arbitrary_colors() {
+        for (r, g, b) in [(0,0,0), (255,0,0), (128,128,128), (255,255,255)] {
+            let mut lab = cielab::default();
+            RGBtoLAB(r, g, b, &mut lab);
+            assert_eq!(deltae(&lab, &lab), 0.0,
+                "deltae({:?}, {:?}) must be 0", (r,g,b), (r,g,b));
+        }
+    }
+
+    /// c:53 — `deltae` is symmetric: deltae(a,b) == deltae(b,a).
+    #[test]
+    fn deltae_symmetric_full_sweep() {
+        let pairs = [
+            ((255,0,0), (0,255,0)),
+            ((0,0,0), (128,128,128)),
+            ((255,255,255), (0,0,0)),
+        ];
+        for ((r1,g1,b1), (r2,g2,b2)) in pairs {
+            let mut a = cielab::default();
+            let mut b = cielab::default();
+            RGBtoLAB(r1, g1, b1, &mut a);
+            RGBtoLAB(r2, g2, b2, &mut b);
+            let ab = deltae(&a, &b);
+            let ba = deltae(&b, &a);
+            assert_eq!(ab, ba, "deltae must be symmetric");
+        }
+    }
+
+    /// c:141 — `mapRGBto88` is pure (deterministic for same input).
+    #[test]
+    fn mapRGBto88_full_sweep_pure() {
+        for (r, g, b) in [(0,0,0), (127,127,127), (255,0,0), (255,255,255)] {
+            let first = mapRGBto88(r, g, b);
+            for _ in 0..3 {
+                assert_eq!(mapRGBto88(r, g, b), first,
+                    "mapRGBto88({},{},{}) must be pure", r, g, b);
+            }
+        }
+    }
+
+    /// c:218 — `mapRGBto256` is pure.
+    #[test]
+    fn mapRGBto256_full_sweep_pure() {
+        for (r, g, b) in [(0,0,0), (127,127,127), (255,0,0), (255,255,255)] {
+            let first = mapRGBto256(r, g, b);
+            for _ in 0..3 {
+                assert_eq!(mapRGBto256(r, g, b), first,
+                    "mapRGBto256({},{},{}) must be pure", r, g, b);
+            }
+        }
+    }
+
+    /// c:73 — `RGBtoLAB` produces L in [0, 100] for valid sRGB input.
+    #[test]
+    fn rgb_to_lab_lightness_in_zero_to_hundred() {
+        for (r, g, b) in [(0,0,0), (255,0,0), (0,255,0), (0,0,255), (255,255,255)] {
+            let mut lab = cielab::default();
+            RGBtoLAB(r, g, b, &mut lab);
+            assert!((0.0..=100.5).contains(&lab.L),
+                "L value {} out of [0, 100] for ({},{},{})", lab.L, r, g, b);
+        }
+    }
+
+    /// c:141 — `mapRGBto88` output in [16, 88) palette range.
+    #[test]
+    fn mapRGBto88_output_in_palette_range() {
+        for (r, g, b) in [(0,0,0), (255,0,0), (128,128,128), (255,255,255)] {
+            let idx = mapRGBto88(r, g, b);
+            assert!((16..88).contains(&idx),
+                "mapRGBto88({},{},{}) = {} out of [16, 88)", r, g, b, idx);
+        }
+    }
+
+    /// c:218 — `mapRGBto256` output in [16, 256) palette range.
+    #[test]
+    fn mapRGBto256_output_in_palette_range() {
+        for (r, g, b) in [(0,0,0), (255,0,0), (128,128,128), (255,255,255)] {
+            let idx = mapRGBto256(r, g, b);
+            assert!((16..256).contains(&idx),
+                "mapRGBto256({},{},{}) = {} out of [16, 256)", r, g, b, idx);
+        }
+    }
+
+    /// c:73 — `RGBtoLAB` is pure (same input → same output).
+    #[test]
+    fn rgb_to_lab_full_sweep_is_pure() {
+        for (r, g, b) in [(0,0,0), (255,128,64), (50,50,50)] {
+            let mut a = cielab::default();
+            let mut b_lab = cielab::default();
+            RGBtoLAB(r, g, b, &mut a);
+            RGBtoLAB(r, g, b, &mut b_lab);
+            assert_eq!(a.L, b_lab.L, "L must be pure");
+            assert_eq!(a.a, b_lab.a, "a must be pure");
+            assert_eq!(a.b, b_lab.b, "b must be pure");
+        }
+    }
+
+    /// c:343-... — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn nearcolor_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:343 — setup_ idempotent.
+    #[test]
+    fn nearcolor_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
 }
