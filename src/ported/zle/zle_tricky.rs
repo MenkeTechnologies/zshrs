@@ -1691,18 +1691,19 @@ pub fn processcmd() -> i32 {
     ZMOD.lock().unwrap().mult = 1; // c:2981
     let _ = pushline(); // c:2982
     ZMOD.lock().unwrap().mult = m; // c:2983
-                                   // c:2984 — `inststr(bindk->nam)` injects the bound widget name.
-                                   //           Without bindk live we use the literal "run-help " marker
-                                   //           commonly bound to processcmd in zsh.
+    // c:2984 — `inststr(bindk->nam);` — bound widget name. Without
+    // live bindk we use "run-help" (the canonical default binding).
+    let bindk_nam = crate::ported::zle::zle_main::BINDK
+        .lock()
+        .ok()
+        .and_then(|b| b.as_ref().map(|t| t.nam.clone()))
+        .unwrap_or_else(|| "run-help".to_string());
+    let _ = inststr(&bindk_nam);
+    // c:2985 — `inststr(" ");`.
+    let _ = inststr(" ");
+    // c:2986-2987 — `untokenize(s); inststr(quotename(s));`.
     let q = quotename(&s, 0);
-    let combined = format!("run-help {}", q);
-    for (i, ch) in combined.chars().enumerate() {
-        ZLELINE
-            .lock()
-            .unwrap()
-            .insert(ZLECS.load(Ordering::SeqCst) + i, ch);
-    }
-    ZLECS.fetch_add(combined.chars().count(), Ordering::SeqCst);
+    let _ = inststr(&q);
     0
 }
 
