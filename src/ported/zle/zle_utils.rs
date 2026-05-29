@@ -230,23 +230,33 @@ pub fn zle_free_positions() {
 }
 
 /// Port of `spaceinline(int ct)` from Src/Zle/zle_utils.c:777.
-/// WARNING: param names don't match C — Rust=(zle, ct) vs C=(ct)
+/// WARNING: signature divergence — handles only the non-meta arm
+/// (c:817-844). The C meta arm (c:782-815, `if (zlemetaline)`) is
+/// inlined by callers that operate on ZLEMETALINE because
+/// ZLEMETALINE is a `OnceLock<Mutex<String>>` in the Rust port
+/// that stays initialized across tests, so there is no clean
+/// "meta active" check available from inside this fn.
 pub fn spaceinline(ct: i32) {
     // c:777
-    // C body c:779-844 — opens `ct` chars of space at zlecs by
-    //                    moving zleline[zlecs..zlell] forward `ct`,
-    //                    growing buffer if needed. zlell += ct.
     if ct <= 0 {
         return;
     }
-    let ct = ct as usize;
-    for _ in 0..ct {
+    let ct_u = ct as usize;
+    // c:817-844 — non-meta branch: shift ZLELINE[zlecs..zlell]
+    // forward by ct, fill with NUL.
+    for _ in 0..ct_u {
         ZLELINE
             .lock()
             .unwrap()
             .insert(ZLECS.load(Ordering::SeqCst), '\0');
     }
     ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
+    // c:825-826 — `if (mark > zlecs) mark += ct;`.
+    let mark_cur = MARK.load(Ordering::SeqCst) as i32;
+    let cs = ZLECS.load(Ordering::SeqCst) as i32;
+    if mark_cur > cs {
+        MARK.store((mark_cur + ct) as usize, Ordering::SeqCst);
+    }
 }
 
 /// Port of `shiftchars(int to, int cnt)` from Src/Zle/zle_utils.c:846.
