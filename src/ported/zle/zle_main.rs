@@ -786,8 +786,7 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         let wflags = w.flags;
         // c:1455-1469 — WIDGET_INT | WIDGET_NCOMP branch.
         if (wflags
-            & (crate::ported::zle::zle_h::WIDGET_INT
-                | crate::ported::zle::zle_h::WIDGET_NCOMP))
+            & (crate::ported::zle::zle_h::WIDGET_INT | crate::ported::zle::zle_h::WIDGET_NCOMP))
             != 0
         {
             let rc = if (wflags & crate::ported::zle::zle_h::WIDGET_NCOMP) != 0 {
@@ -829,11 +828,9 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         let name_for_body = call_name.to_string();
         let body_args: Vec<String> = args.to_vec();
         let body_runner = move || -> i32 {
-            crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args)
-                .unwrap_or(0)
+            crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args).unwrap_or(0)
         };
-        let rc =
-            crate::ported::exec::doshfunc(&mut shf, largs, true, body_runner);
+        let rc = crate::ported::exec::doshfunc(&mut shf, largs, true, body_runner);
         // c:1530 — capture LASTVAL after the call.
         LASTVAL.store(rc, Ordering::Relaxed);
         // c:1597 — restore BINDK.

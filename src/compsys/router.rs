@@ -17,7 +17,7 @@
 //! backend handled the call; `None` to defer to the regular shfunc
 //! path (the standard zsh-compatible chain).
 
-use crate::extensions::config::{CompsysBackend, current as current_config};
+use crate::extensions::config::{current as current_config, CompsysBackend};
 
 /// Resolve a `_NAME` to its Rust port fn pointer, gated on the
 /// `[compsys] backend = "rust"` config.

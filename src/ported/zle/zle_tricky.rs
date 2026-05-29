@@ -10,21 +10,21 @@
 //! - spell-word, delete-char-or-list
 //! - magic-space, accept-and-menu-complete
 
-use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::Mutex;
 use crate::ported::module::gethookdef;
 use crate::ported::utils::{write_loop, zwarn};
 use crate::ported::zle::compcore::{
     compfunc, ADDEDX, LASTCHAR, WB, WE, ZLEMETACS, ZLEMETALINE, ZLEMETALL,
 };
 use crate::ported::zle::zle_h::{
-    COMP_COMPLETE, COMP_EXPAND, COMP_EXPAND_COMPLETE, COMP_ISEXPAND, COMP_LIST_COMPLETE,
-    COMP_LIST_EXPAND, COMP_SPELL, CUT_RAW, WidgetImpl,
+    WidgetImpl, COMP_COMPLETE, COMP_EXPAND, COMP_EXPAND_COMPLETE, COMP_ISEXPAND,
+    COMP_LIST_COMPLETE, COMP_LIST_EXPAND, COMP_SPELL, CUT_RAW,
 };
 use crate::ported::zsh_h::{
     isset, BASHAUTOLIST, GLOBCOMPLETE, MENUCOMPLETE, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE,
     QT_SINGLE, RECEXACT,
 };
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Mutex;
 
 // =====================================================================
 // Globals — `Src/Zle/zle_tricky.c:96-106`.
@@ -113,9 +113,7 @@ pub fn completecall(args: &[String]) -> i32 {
     drop(compwidget_g);
 
     if let Some(name) = func_name {
-        let g = compfunc.get_or_init(
-            || Mutex::new(None),
-        );
+        let g = compfunc.get_or_init(|| Mutex::new(None));
         *g.lock().unwrap() = Some(name); // c:206
     }
 
@@ -148,9 +146,9 @@ pub fn completeword(args: &[String]) -> i32 {
     USEMENU.store(isset(MENUCOMPLETE) as i32, Ordering::SeqCst); // c:218 — `usemenu = !!isset(MENUCOMPLETE)`
     USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:219 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:220
-    // c:221-222 — Tab-at-indent → `selfinsert(args)`. Body of
-    // `selfinsert` ignores args (C marks them `UNUSED`); kept in
-    // the contract for sig parity.
+                                            // c:221-222 — Tab-at-indent → `selfinsert(args)`. Body of
+                                            // `selfinsert` ignores args (C marks them `UNUSED`); kept in
+                                            // the contract for sig parity.
     let lastch = LASTCHAR.load(Ordering::SeqCst);
     if lastch == b'\t' as i32 && usetab() != 0 {
         return selfinsert(args);
@@ -272,11 +270,11 @@ pub fn expandorcomplete(args: &[String]) -> i32 {
     USEMENU.store(isset(MENUCOMPLETE) as i32, Ordering::SeqCst); // c:301 — `usemenu = !!isset(MENUCOMPLETE)`
     USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:302 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:303
-    // c:304-305 — Tab-at-indent → `selfinsert(args)`. Rust
-    // `selfinsert()` takes no args today (C's body marks them
-    // `UNUSED`) so the arg pass-through is dropped; a follow-up
-    // patch should widen `selfinsert` to `fn(&[String]) -> i32`
-    // for sig parity.
+                                            // c:304-305 — Tab-at-indent → `selfinsert(args)`. Rust
+                                            // `selfinsert()` takes no args today (C's body marks them
+                                            // `UNUSED`) so the arg pass-through is dropped; a follow-up
+                                            // patch should widen `selfinsert` to `fn(&[String]) -> i32`
+                                            // for sig parity.
     let lastch = LASTCHAR.load(Ordering::SeqCst);
     if lastch == b'\t' as i32 && usetab() != 0 {
         return selfinsert(args);
@@ -308,7 +306,7 @@ pub fn menuexpandorcomplete(args: &[String]) -> i32 {
     USEMENU.store(1, Ordering::SeqCst); // c:323
     USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:324 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:325
-    // c:326-327 — Tab-at-indent → selfinsert.
+                                            // c:326-327 — Tab-at-indent → selfinsert.
     let lastch = LASTCHAR.load(Ordering::SeqCst);
     if lastch == b'\t' as i32 && usetab() != 0 {
         return selfinsert(args);
@@ -431,18 +429,15 @@ pub fn checkparams(p: &str) -> i32 {
 pub fn cmphaswilds(str: &str) -> i32 {
     // c:457
     use crate::ported::zsh_h::{
-        isset, Equals, Hat, Inang, Inbrace, Inbrack, Inpar, Outang, Outbrace,
-        Outbrack, Outpar, Pound, Qstring, Quest, Star, Stringg, Tilde,
-        EXTENDEDGLOB, IGNOREBRACES,
+        isset, Equals, Hat, Inang, Inbrace, Inbrack, Inpar, Outang, Outbrace, Outbrack, Outpar,
+        Pound, Qstring, Quest, Star, Stringg, Tilde, EXTENDEDGLOB, IGNOREBRACES,
     };
     let mut s = str;
     let bar_byte = b'|' as char;
     // c:459-460 — `if ((*str == Inbrack || *str == Outbrack) && !str[1])
     //                return 0;`
     let chars: Vec<char> = s.chars().collect();
-    if chars.len() == 1
-        && (chars[0] == Inbrack as char || chars[0] == Outbrack as char)
-    {
+    if chars.len() == 1 && (chars[0] == Inbrack as char || chars[0] == Outbrack as char) {
         return 0;
     }
     // c:465-467 — `if (str[0] == '%' && str[1] == Quest) str += 2;`
@@ -469,19 +464,19 @@ pub fn cmphaswilds(str: &str) -> i32 {
             let next_c = s.chars().next();
             if next_c == Some(Inbrace as char) {
                 // c:482 — skip past `${...}`.
-                let _ = crate::ported::utils::skipparens(
-                    Inbrace as char,
-                    Outbrace as char,
-                    &mut s,
-                );
+                let _ = crate::ported::utils::skipparens(Inbrace as char, Outbrace as char, &mut s);
             } else if next_c == Some(Stringg as char) || next_c == Some(Qstring as char) {
                 // c:484 — nested `$$`.
                 s = &s[next_c.unwrap().len_utf8()..];
             } else {
                 // c:487-499 — skip parameter-expression prefix chars.
                 while let Some(p) = s.chars().next() {
-                    if p != '^' && p != Hat as char && p != '=' && p != Equals as char
-                        && p != '~' && p != Tilde as char
+                    if p != '^'
+                        && p != Hat as char
+                        && p != '='
+                        && p != Equals as char
+                        && p != '~'
+                        && p != Tilde as char
                     {
                         break;
                     }
@@ -498,10 +493,8 @@ pub fn cmphaswilds(str: &str) -> i32 {
             }
         } else {
             // c:501-508 — wildcard / balanced-bracket detection.
-            let is_extglob_meta =
-                (c == Pound as char || c == Hat as char) && isset(EXTENDEDGLOB);
-            let is_simple_wild =
-                c == Star as char || c == bar_byte || c == Quest as char;
+            let is_extglob_meta = (c == Pound as char || c == Hat as char) && isset(EXTENDEDGLOB);
+            let is_simple_wild = c == Star as char || c == bar_byte || c == Quest as char;
             let mut s_try = s;
             let brack_balanced =
                 crate::ported::utils::skipparens(Inbrack as char, Outbrack as char, &mut s_try)
@@ -511,17 +504,13 @@ pub fn cmphaswilds(str: &str) -> i32 {
                 crate::ported::utils::skipparens(Inang as char, Outang as char, &mut s_try) == 0;
             let mut s_try = s;
             let brace_balanced = !isset(IGNOREBRACES)
-                && crate::ported::utils::skipparens(
-                    Inbrace as char,
-                    Outbrace as char,
-                    &mut s_try,
-                ) == 0;
+                && crate::ported::utils::skipparens(Inbrace as char, Outbrace as char, &mut s_try)
+                    == 0;
             let mut s_try = s;
             let pchars: Vec<char> = s.chars().collect();
             let pair_colon = pchars.first() == Some(&(Inpar as char))
                 && pchars.get(1) == Some(&':')
-                && crate::ported::utils::skipparens(Inpar as char, Outpar as char, &mut s_try)
-                    == 0;
+                && crate::ported::utils::skipparens(Inpar as char, Outpar as char, &mut s_try) == 0;
             if is_extglob_meta
                 || is_simple_wild
                 || brack_balanced
@@ -551,11 +540,11 @@ pub fn cmphaswilds(str: &str) -> i32 {
 /// `offs` global (zle_tricky.c) passed explicitly here.
 pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
     // c:521
-    use crate::ported::ztype_h::{idigit, INAMESPC};
     use crate::ported::zsh_h::{
-        Dnull, Equals, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outpar, Pound, Qstring,
-        Quest, Star, Stringg, Tilde,
+        Dnull, Equals, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outpar, Pound, Qstring, Quest, Star,
+        Stringg, Tilde,
     };
+    use crate::ported::ztype_h::{idigit, INAMESPC};
     let bytes = s.as_bytes();
     if offs > bytes.len() {
         return None;
@@ -580,9 +569,7 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
     let pchar = bytes[p];
     if pchar == Stringg as u8 || pchar == Qstring as u8 {
         // c:529-532 — `$$` paired-marker walk.
-        while p > 0
-            && (bytes[p - 1] == Stringg as u8 || bytes[p - 1] == Qstring as u8)
-        {
+        while p > 0 && (bytes[p - 1] == Stringg as u8 || bytes[p - 1] == Qstring as u8) {
             p -= 1;
         }
         while p + 2 < bytes.len()
@@ -616,9 +603,7 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
         // c:548 — `if (!skipparens(Inbrace, Outbrace, &tb)) return NULL;`
         let tb_str = &s[b..];
         let mut tb = tb_str;
-        if crate::ported::utils::skipparens(Inbrace as char, Outbrace as char, &mut tb)
-            != 0
-        {
+        if crate::ported::utils::skipparens(Inbrace as char, Outbrace as char, &mut tb) != 0 {
             return None;
         }
         // c:551-552 — `b++, br++;`.
@@ -658,9 +643,16 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
     // c:570-580 — find end of parameter name.
     if e < bytes.len() {
         let eb = bytes[e];
-        if eb == Quest as u8 || eb == Star as u8 || eb == Stringg as u8
-            || eb == Qstring as u8 || eb == b'?' || eb == b'*' || eb == b'$'
-            || eb == b'-' || eb == b'!' || eb == b'@'
+        if eb == Quest as u8
+            || eb == Star as u8
+            || eb == Stringg as u8
+            || eb == Qstring as u8
+            || eb == b'?'
+            || eb == b'*'
+            || eb == b'$'
+            || eb == b'-'
+            || eb == b'!'
+            || eb == b'@'
         {
             e += 1;
         } else if idigit(eb) {
@@ -1321,21 +1313,14 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
         // original line and display the expansions as a list.
         if lst == COMP_LIST_EXPAND {
             ZLEMETACS.store(0, Ordering::SeqCst);
-            foredel(
-                ZLEMETALL.load(Ordering::SeqCst),
-                CUT_RAW,
-            );
+            foredel(ZLEMETALL.load(Ordering::SeqCst), CUT_RAW);
             spaceinline(ORIGLL.load(Ordering::SeqCst));
-            if let (Some(metabuf), Some(orig)) = (
-                ZLEMETALINE.get(),
-                ORIGLINE.get(),
-            ) {
+            if let (Some(metabuf), Some(orig)) = (ZLEMETALINE.get(), ORIGLINE.get()) {
                 if let (Ok(mut m), Ok(o)) = (metabuf.lock(), orig.lock()) {
                     *m = o.clone();
                 }
             }
-            ZLEMETACS
-                .store(ORIGCS.load(Ordering::SeqCst), Ordering::SeqCst);
+            ZLEMETACS.store(ORIGCS.load(Ordering::SeqCst), Ordering::SeqCst);
             // Drain vl into a Vec<String> for listlist's slice arg.
             let mut items: Vec<String> = Vec::new();
             while let Some(x) = crate::ported::linklist::ugetnode(&mut vl) {
@@ -1691,8 +1676,8 @@ pub fn processcmd() -> i32 {
     ZMOD.lock().unwrap().mult = 1; // c:2981
     let _ = pushline(); // c:2982
     ZMOD.lock().unwrap().mult = m; // c:2983
-    // c:2984 — `inststr(bindk->nam);` — bound widget name. Without
-    // live bindk we use "run-help" (the canonical default binding).
+                                   // c:2984 — `inststr(bindk->nam);` — bound widget name. Without
+                                   // live bindk we use "run-help" (the canonical default binding).
     let bindk_nam = crate::ported::zle::zle_main::BINDK
         .lock()
         .ok()

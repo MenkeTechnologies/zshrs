@@ -214,11 +214,7 @@ pub fn bindkey_by_name(keymap: &str, seq: &str, widget: &str) -> bool {
     if rc != 0 {
         return false;
     }
-    crate::ported::zle::zle_keymap::linkkeymap(
-        std::sync::Arc::new(km),
-        keymap,
-        0,
-    );
+    crate::ported::zle::zle_keymap::linkkeymap(std::sync::Arc::new(km), keymap, 0);
     true
 }
 
@@ -970,14 +966,32 @@ pub static IWIDGET_FLAGS: &[(&str, i32)] = {
         // c:iwidgets.list:34 / c:40 / c:61 / c:62 / c:86 / c:87 /
         // c:103 — the 7 simple ZLE_ISCOMP widgets that `zle -C` wraps.
         ("complete-word", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
-        ("delete-char-or-list", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
-        ("expand-or-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
-        ("expand-or-complete-prefix", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
+        (
+            "delete-char-or-list",
+            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP,
+        ),
+        (
+            "expand-or-complete",
+            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP,
+        ),
+        (
+            "expand-or-complete-prefix",
+            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP,
+        ),
         ("menu-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
-        ("menu-expand-or-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
-        ("reverse-menu-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
+        (
+            "menu-expand-or-complete",
+            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP,
+        ),
+        (
+            "reverse-menu-complete",
+            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP,
+        ),
         // c:83 — list-choices: ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_ISCOMP.
-        ("list-choices", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_ISCOMP),
+        (
+            "list-choices",
+            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_ISCOMP,
+        ),
         // c:13 — accept-and-menu-complete.
         ("accept-and-menu-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX),
         // c:21-24 — backward-delete / -kill widgets.

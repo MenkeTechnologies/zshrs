@@ -558,10 +558,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     //   c:4778-4789 child  — entersubsh+execode+_realexit collapse
     cmdoutval.store(0, Ordering::Relaxed); // c:4759
     let buf = crate::ported::exec_hooks::run_command_substitution(cmd);
-    LASTVAL.store(
-        cmdoutval.load(Ordering::Relaxed),
-        Ordering::Relaxed,
-    ); // c:4775
+    LASTVAL.store(cmdoutval.load(Ordering::Relaxed), Ordering::Relaxed); // c:4775
 
     // c:4772 retval = readoutput — post-walk (c:4855-4871 tail) inlined.
     let buf = buf.trim_end_matches('\n');
@@ -675,10 +672,7 @@ pub fn getfpfunc(
         Some(s) => s.to_vec(),
         None => crate::ported::params::getaparam("fpath")
             .filter(|v| !v.is_empty())
-            .or_else(|| {
-                getsparam("FPATH")
-                    .map(|v| v.split(':').map(String::from).collect())
-            })
+            .or_else(|| getsparam("FPATH").map(|v| v.split(':').map(String::from).collect()))
             .or_else(|| {
                 std::env::var("FPATH")
                     .ok()
@@ -732,10 +726,7 @@ pub fn resolvebuiltin<'a>(
             crate::ported::module::ensurefeature(&mut t, &modname, "b:", Some(cmdarg))
         };
         // c:2715-2716 — re-lookup the now-(hopefully)-resolved builtin.
-        if let Some(re) = BUILTINS
-            .iter()
-            .find(|b| b.node.nam == cmdarg)
-        {
+        if let Some(re) = BUILTINS.iter().find(|b| b.node.nam == cmdarg) {
             if re.handlerfunc.is_some() {
                 return Some(re); // c:2723
             }
@@ -1549,16 +1540,16 @@ pub fn execsave() {
         // BADCSHGLOB) so nested eval / trap dispatch doesn't disturb
         // the outer command's per-line accounting.
         badcshglob: crate::ported::glob::BADCSHGLOB.load(Ordering::Relaxed), // c:6451
-        cmdoutpid: cmdoutpid.load(Ordering::Relaxed), // c:6452
-        cmdoutval: cmdoutval.load(Ordering::Relaxed), // c:6453
-        use_cmdoutval: use_cmdoutval.load(Ordering::Relaxed), // c:6454
-        procsubstpid: procsubstpid.load(Ordering::Relaxed), // c:6455
-        trap_return: TRAP_RETURN.load(Ordering::Relaxed), // c:6456
-        trap_state: TRAP_STATE.load(Ordering::Relaxed), // c:6457
-        trapisfunc: trapisfunc.load(Ordering::Relaxed), // c:6458
-        traplocallevel: traplocallevel.load(Ordering::Relaxed), // c:6459
-        noerrs: noerrs.load(Ordering::Relaxed),       // c:6460
-        this_noerrexit: this_noerrexit.load(Ordering::Relaxed), // c:6461
+        cmdoutpid: cmdoutpid.load(Ordering::Relaxed),                        // c:6452
+        cmdoutval: cmdoutval.load(Ordering::Relaxed),                        // c:6453
+        use_cmdoutval: use_cmdoutval.load(Ordering::Relaxed),                // c:6454
+        procsubstpid: procsubstpid.load(Ordering::Relaxed),                  // c:6455
+        trap_return: TRAP_RETURN.load(Ordering::Relaxed),                    // c:6456
+        trap_state: TRAP_STATE.load(Ordering::Relaxed),                      // c:6457
+        trapisfunc: trapisfunc.load(Ordering::Relaxed),                      // c:6458
+        traplocallevel: traplocallevel.load(Ordering::Relaxed),              // c:6459
+        noerrs: noerrs.load(Ordering::Relaxed),                              // c:6460
+        this_noerrexit: this_noerrexit.load(Ordering::Relaxed),              // c:6461
         // c:6462 — `es->underscore = ztrdup(zunderscore);`
         underscore: Some(zunderscore.lock().unwrap().clone()),
     });
@@ -1876,10 +1867,7 @@ pub fn runshfunc(prog: &eprog, mut wrap: Option<&funcwrap>, name: &str) {
         if cur_locallevel > cur_forklevel {
             // c:6143 — still inside a nested function: keep unwinding.
             RETFLAG.store(1, Ordering::Relaxed); // c:6144
-            BREAKS.store(
-                LOOPS.load(Ordering::Relaxed),
-                Ordering::Relaxed,
-            ); // c:6145
+            BREAKS.store(LOOPS.load(Ordering::Relaxed), Ordering::Relaxed); // c:6145
         } else {
             // c:6151 — out of all functions: exit for real.
             crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed); // c:6151
@@ -2580,10 +2568,7 @@ pub fn closemn(mfds: &mut [Option<Box<multio>>; 10], fd: i32, type_: i32) {
             // the tee/cat child in the current job's auxprocs (aux=true).
             if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
-                let tj = THISJOB
-                    .get()
-                    .map(|m| *m.lock().unwrap())
-                    .unwrap_or(-1);
+                let tj = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
                 if tj >= 0 {
                     if let Some(j) = guard.get_mut(tj as usize) {
                         crate::ported::jobs::addproc(
@@ -3894,10 +3879,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     // OS temp-reaper).
     if let Some(jt) = JOBTAB.get() {
         let mut guard = jt.lock().unwrap();
-        let tj = THISJOB
-            .get()
-            .map(|m| *m.lock().unwrap())
-            .unwrap_or(-1);
+        let tj = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
         if tj >= 0 {
             if let Some(j) = guard.get_mut(tj as usize) {
                 crate::ported::jobs::addfilelist(j, Some(&nam), 0);
@@ -3992,10 +3974,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     };
     // c:5068-5071 — `if (thisjob == -1) { zerr(...); return NULL; }` —
     // proc subst needs a host job to attach the child to.
-    let tj_check = THISJOB
-        .get()
-        .map(|m| *m.lock().unwrap())
-        .unwrap_or(-1);
+    let tj_check = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
     if tj_check == -1 {
         zerr(&format!("process substitution {} cannot be used here", cmd)); // c:5069
         return None; // c:5070
@@ -4031,10 +4010,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
                                          // pipe fd in the current job's filelist so it's closed at job exit.
         if let Some(jt) = JOBTAB.get() {
             let mut guard = jt.lock().unwrap();
-            let tj = THISJOB
-                .get()
-                .map(|m| *m.lock().unwrap())
-                .unwrap_or(-1);
+            let tj = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
             if tj >= 0 {
                 if let Some(j) = guard.get_mut(tj as usize) {
                     crate::ported::jobs::addfilelist(j, None, fd);
@@ -4048,10 +4024,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         if out == 0 {
             if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
-                let tj = THISJOB
-                    .get()
-                    .map(|m| *m.lock().unwrap())
-                    .unwrap_or(-1);
+                let tj = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
                 if tj >= 0 {
                     if let Some(j) = guard.get_mut(tj as usize) {
                         crate::ported::jobs::addproc(
@@ -4199,10 +4172,7 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
         }
     } else if (flags & esub::PGRP) != 0 {
         // c:1110 — `else if (thisjob != -1 && (flags & ESUB_PGRP))`.
-        let thisjob = THISJOB
-            .get()
-            .map(|m| *m.lock().unwrap())
-            .unwrap_or(-1);
+        let thisjob = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
         if thisjob != -1 {
             let lpj = list_pipe_job.load(Ordering::Relaxed);
             let lp = list_pipe.load(Ordering::Relaxed);
@@ -4471,10 +4441,7 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
         if nullexec == 0 {
             if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
-                let tj = THISJOB
-                    .get()
-                    .map(|m| *m.lock().unwrap())
-                    .unwrap_or(-1);
+                let tj = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
                 if tj >= 0 {
                     if let Some(j) = guard.get_mut(tj as usize) {
                         crate::ported::jobs::addproc(
@@ -5255,10 +5222,7 @@ pub fn execcursh(state: &mut estate, do_exec: i32) -> i32 {
     {
         let lp = list_pipe.load(Ordering::Relaxed);
         let lpj = list_pipe_job.load(Ordering::Relaxed);
-        let tj = THISJOB
-            .get()
-            .map(|m| *m.lock().unwrap())
-            .unwrap_or(-1);
+        let tj = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
         if lp == 0 && tj != -1 && tj != lpj {
             if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
@@ -5405,10 +5369,7 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     {
         let lp = list_pipe.load(Ordering::Relaxed);
         let lpj = list_pipe_job.load(Ordering::Relaxed);
-        let tj = THISJOB
-            .get()
-            .map(|m| *m.lock().unwrap())
-            .unwrap_or(-1);
+        let tj = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
         if lp == 0 && tj != -1 && tj != lpj {
             if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
@@ -5466,12 +5427,11 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     } else {
         None
     };
-    let prog_ref: Option<&eprog> =
-        match (shf.funcdef.as_deref(), prog_owned.as_ref()) {
-            (Some(p), _) => Some(p),
-            (_, Some(p)) => Some(p),
-            _ => None,
-        };
+    let prog_ref: Option<&eprog> = match (shf.funcdef.as_deref(), prog_owned.as_ref()) {
+        (Some(p), _) => Some(p),
+        (_, Some(p)) => Some(p),
+        _ => None,
+    };
     if let Some(_prog) = prog_ref {
         // c:5580 — `doshfunc(shf, args, 0);`. Direct doshfunc call —
         // noreturnval=0 means the body's return value updates LASTVAL
@@ -5485,11 +5445,8 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
             Vec::new()
         };
         let body_runner = move || -> i32 {
-            crate::ported::exec_hooks::run_function_body(
-                &name_for_body,
-                &body_args_owned,
-            )
-            .unwrap_or(0)
+            crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args_owned)
+                .unwrap_or(0)
         };
         let _ = doshfunc(shf, args.clone(), false, body_runner);
     }
@@ -5885,10 +5842,7 @@ pub fn doshfunc(
         if cur_locallevel > cur_forklevel {
             // c:6143 — still inside a nested function: keep unwinding.
             RETFLAG.store(1, Ordering::Relaxed); // c:6144
-            BREAKS.store(
-                LOOPS.load(Ordering::Relaxed),
-                Ordering::Relaxed,
-            ); // c:6145
+            BREAKS.store(LOOPS.load(Ordering::Relaxed), Ordering::Relaxed); // c:6145
         } else {
             // c:6151 — out of all functions: exit for real.
             crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed); // c:6151
@@ -6542,11 +6496,7 @@ pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i
 /// the way if `expand` is set. Used by `execcmd_exec` to pull the
 /// command head one word at a time so prefix-modifier walking
 /// (BINF_COMMAND, BINF_EXEC etc.) sees expanded names.
-pub fn execcmd_getargs(
-    preargs: &mut LinkList<String>,
-    args: &mut LinkList<String>,
-    expand: i32,
-) {
+pub fn execcmd_getargs(preargs: &mut LinkList<String>, args: &mut LinkList<String>, expand: i32) {
     // c:2791
     if args.firstnode().is_none() {
         // c:2793 — `if (!firstnode(args)) return;`
@@ -6880,9 +6830,7 @@ pub fn execcmd_analyse(state: &mut estate, eparams: &mut crate::ported::zsh_h::e
             if wc_code(code) != ZWC_ASSIGN {
                 break;
             }
-            state.pc += if WC_ASSIGN_TYPE(code)
-                == WC_ASSIGN_SCALAR
-            {
+            state.pc += if WC_ASSIGN_TYPE(code) == WC_ASSIGN_SCALAR {
                 3 // c:2745
             } else {
                 (WC_ASSIGN_NUM(code) + 2) as usize // c:2746
@@ -6941,9 +6889,7 @@ pub fn execcmd_analyse(state: &mut estate, eparams: &mut crate::ported::zsh_h::e
                 }
                 code = state.prog.prog[state.pc];
                 // c:2772-2773 DPUTS — assert wc_code == WC_ASSIGN; skipped.
-                state.pc += if WC_ASSIGN_TYPE(code)
-                    == WC_ASSIGN_SCALAR
-                {
+                state.pc += if WC_ASSIGN_TYPE(code) == WC_ASSIGN_SCALAR {
                     3 // c:2774
                 } else {
                     (WC_ASSIGN_NUM(code) + 2) as usize // c:2775
@@ -8581,8 +8527,7 @@ pub fn execcmd_exec(
                         if args.is_none() {
                             args = Some(Vec::new());
                         }
-                        let rnc =
-                            getsparam("READNULLCMD").unwrap_or_default();
+                        let rnc = getsparam("READNULLCMD").unwrap_or_default();
                         args.as_mut().unwrap().push(rnc); // c:3359
                     } else {
                         // c:3360-3364 — default: nullcmd as command.
@@ -9277,9 +9222,7 @@ pub fn execcmd_exec(
                         fn_.varid.as_deref(),
                     );
                 }
-                t if t == REDIR_READ
-                    || t == REDIR_READWRITE =>
-                {
+                t if t == REDIR_READ || t == REDIR_READWRITE => {
                     // c:3781-3782
                     if checkclobberparam(&fn_) == 0 {
                         fil_local = -1; // c:3784
@@ -9389,12 +9332,10 @@ pub fn execcmd_exec(
                                 Ok(n) => {
                                     fd1_local = n;
                                     fn_.fd1 = n;
-                                    let max_fd =
-                                        MAX_ZSH_FD.load(Ordering::Relaxed);
+                                    let max_fd = MAX_ZSH_FD.load(Ordering::Relaxed);
                                     if n >= 10
                                         && n <= max_fd
-                                        && (fdtable_get(n) & FDT_TYPE_MASK)
-                                            == FDT_INTERNAL
+                                        && (fdtable_get(n) & FDT_TYPE_MASK) == FDT_INTERNAL
                                     {
                                         // c:3835 shell-owned-fd reject
                                         bad = 3;
@@ -9443,10 +9384,7 @@ pub fn execcmd_exec(
                     }
                     // c:3873-3876
                     let _ = &mut fd1_local;
-                    if closed == 0
-                        && zclose(fn_.fd1) < 0
-                        && fn_.varid.is_some()
-                    {
+                    if closed == 0 && zclose(fn_.fd1) < 0 && fn_.varid.is_some() {
                         zwarn(&format!(
                             "failed to close file descriptor {}: {}",
                             fn_.fd1,
@@ -9454,9 +9392,7 @@ pub fn execcmd_exec(
                         )); // c:3873-3875
                     }
                 }
-                t if t == REDIR_MERGEIN
-                    || t == REDIR_MERGEOUT =>
-                {
+                t if t == REDIR_MERGEIN || t == REDIR_MERGEOUT => {
                     // c:3878-3879
                     if fn_.fd2 < 10 {
                         closemn(&mut mfds, fn_.fd2, fn_.typ); // c:3881
@@ -9469,10 +9405,8 @@ pub fn execcmd_exec(
                         let cin = crate::ported::modules::clone::coprocin.load(Ordering::Relaxed);
                         let cout = crate::ported::modules::clone::coprocout.load(Ordering::Relaxed);
                         let in_table = if fn_.fd2 <= max_fd {
-                            let kind = fdtable_get(fn_.fd2)
-                                & FDT_TYPE_MASK;
-                            kind != FDT_UNUSED
-                                && kind != FDT_EXTERNAL
+                            let kind = fdtable_get(fn_.fd2) & FDT_TYPE_MASK;
+                            kind != FDT_UNUSED && kind != FDT_EXTERNAL
                         } else {
                             false
                         };
@@ -9535,11 +9469,7 @@ pub fn execcmd_exec(
                         break;
                     }
                     // c:3916-3917
-                    let merge_is_out = if fn_.typ == REDIR_MERGEOUT {
-                        1
-                    } else {
-                        0
-                    };
+                    let merge_is_out = if fn_.typ == REDIR_MERGEOUT { 1 } else { 0 };
                     addfd(
                         forked,
                         &mut save,
@@ -9868,10 +9798,7 @@ pub fn execcmd_exec(
                 // `JOBTAB[thisjob]`.
                 if let Some(jt) = JOBTAB.get() {
                     let mut guard = jt.lock().unwrap();
-                    let tj = THISJOB
-                        .get()
-                        .map(|m| *m.lock().unwrap())
-                        .unwrap_or(-1);
+                    let tj = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
                     if tj >= 0 {
                         if let Some(j) = guard.get_mut(tj as usize) {
                             crate::ported::jobs::pipecleanfilelist(j, false);
@@ -9905,16 +9832,11 @@ pub fn execcmd_exec(
                         }
                         let ac = state.prog.prog[state.pc]; // c:4118
                         state.pc += 1;
-                        let mut name = ecgetstr(
-                            state,
-                            ECDUPTOK_LOCAL,
-                            Some(&mut pa_htok),
-                        ); // c:4119
-                           // c:4123-4124 DPUTS — debug assertion skipped.
+                        let mut name = ecgetstr(state, ECDUPTOK_LOCAL, Some(&mut pa_htok)); // c:4119
+                                                                                            // c:4123-4124 DPUTS — debug assertion skipped.
                         if pa_htok != 0 {
                             // c:4126 — `init_list1(svl, name);`
-                            let mut svl: LinkList<String> =
-                                Default::default();
+                            let mut svl: LinkList<String> = Default::default();
                             svl.push_back(name.clone());
                             // c:4127-4166 — INC-scalar special case (typeset $ass form).
                             if WC_ASSIGN_TYPE(ac) == WC_ASSIGN_SCALAR
@@ -9922,11 +9844,7 @@ pub fn execcmd_exec(
                             {
                                 // c:4141 — `(void)ecgetstr(...)` — dummy.
                                 let mut dummy_htok: i32 = 0;
-                                let _ = ecgetstr(
-                                    state,
-                                    ECDUPTOK_LOCAL,
-                                    Some(&mut dummy_htok),
-                                );
+                                let _ = ecgetstr(state, ECDUPTOK_LOCAL, Some(&mut dummy_htok));
                                 let mut rf = 0i32;
                                 prefork(&mut svl, PREFORK_TYPESET, &mut rf); // c:4142
                                 if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
@@ -9997,11 +9915,7 @@ pub fn execcmd_exec(
                         if WC_ASSIGN_TYPE(ac) == WC_ASSIGN_SCALAR {
                             // c:4175
                             let mut val_htok: i32 = 0;
-                            let mut val = ecgetstr(
-                                state,
-                                ECDUPTOK_LOCAL,
-                                Some(&mut val_htok),
-                            ); // c:4176
+                            let mut val = ecgetstr(state, ECDUPTOK_LOCAL, Some(&mut val_htok)); // c:4176
                             asg.flags = 0; // c:4177
                             if WC_ASSIGN_TYPE2(ac) == WC_ASSIGN_INC {
                                 // c:4178-4180 — fake assignment, no value.
@@ -10009,15 +9923,10 @@ pub fn execcmd_exec(
                             } else {
                                 if val_htok != 0 {
                                     // c:4183
-                                    let mut svl: LinkList<String> =
-                                        Default::default();
+                                    let mut svl: LinkList<String> = Default::default();
                                     svl.push_back(val.clone());
                                     let mut rf = 0i32;
-                                    prefork(
-                                        &mut svl,
-                                        PREFORK_SINGLE | PREFORK_ASSIGN,
-                                        &mut rf,
-                                    ); // c:4184-4186
+                                    prefork(&mut svl, PREFORK_SINGLE | PREFORK_ASSIGN, &mut rf); // c:4184-4186
                                     if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
                                         // c:4187
                                         state.pc = opc; // c:4188
@@ -10043,8 +9952,7 @@ pub fn execcmd_exec(
                                 ECDUPTOK_LOCAL,
                                 Some(&mut arr_htok),
                             ); // c:4204
-                            let mut arr_list: LinkList<String> =
-                                Default::default();
+                            let mut arr_list: LinkList<String> = Default::default();
                             for s in arr_words {
                                 arr_list.push_back(s);
                             }
@@ -10053,11 +9961,7 @@ pub fn execcmd_exec(
                             {
                                 // c:4209 — `int prefork_ret = 0;`
                                 let mut prefork_ret = 0i32;
-                                prefork(
-                                    &mut arr_list,
-                                    PREFORK_ASSIGN,
-                                    &mut prefork_ret,
-                                ); // c:4210-4211
+                                prefork(&mut arr_list, PREFORK_ASSIGN, &mut prefork_ret); // c:4210-4211
                                 if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
                                     // c:4212
                                     state.pc = opc; // c:4213
@@ -10193,15 +10097,12 @@ pub fn execcmd_exec(
             } else {
                 // c:4315 — `( ... )` — WC_SUBSH.
                 list_pipe.store(0, Ordering::Relaxed); // c:4318
-                                                                            // c:4319 — `pipecleanfilelist(filelist, 0);` — clean
-                                                                            // proc-subst entries from the current job's filelist
-                                                                            // before recursing into the subshell body.
+                                                       // c:4319 — `pipecleanfilelist(filelist, 0);` — clean
+                                                       // proc-subst entries from the current job's filelist
+                                                       // before recursing into the subshell body.
                 if let Some(jt) = JOBTAB.get() {
                     let mut guard = jt.lock().unwrap();
-                    let tj = THISJOB
-                        .get()
-                        .map(|m| *m.lock().unwrap())
-                        .unwrap_or(-1);
+                    let tj = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
                     if tj >= 0 {
                         if let Some(j) = guard.get_mut(tj as usize) {
                             crate::ported::jobs::pipecleanfilelist(j, false);
@@ -10261,7 +10162,7 @@ fn execcmd_exec_done_path(
     {
         // c:4367-4369
         let _forked_or_subsh = forked | zsh_subshell.load(Ordering::Relaxed); // c:4376
-                                                                                                   // fatal: label entry point — same handling.
+                                                                              // fatal: label entry point — same handling.
         if redir_err != 0 || (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
             // c:4378
             if !isset(INTERACTIVE) {

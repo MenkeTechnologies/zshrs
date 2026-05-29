@@ -911,10 +911,10 @@ pub fn dashgetfn() -> String {
     // the `$-` string. Match C exactly with FIRST_OPT..=LAST_OPT.
     const FIRST_OPT: u8 = b'0'; // c:289
     const LAST_OPT: u8 = b'y'; // c:290
-    // c:721 — `isset(SHOPTIONLETTERS)`. Use the const directly; the
-    // previous code did `isset(optlookup("shoptionletters"))` which
-    // is the same value but pays a hash lookup per call. C uses the
-    // optno constant inline.
+                               // c:721 — `isset(SHOPTIONLETTERS)`. Use the const directly; the
+                               // previous code did `isset(optlookup("shoptionletters"))` which
+                               // is the same value but pays a hash lookup per call. C uses the
+                               // optno constant inline.
     let letters = if isset(crate::ported::zsh_h::SHOPTIONLETTERS) {
         KSH_LETTERS
     } else {
@@ -1037,10 +1037,10 @@ pub fn printoptionlist() {
                                  // tracking on each option, so the alias walk emits nothing here.
     println!();
     println!("Option letters:"); // c:949
-    // c:721 — `isset(SHOPTIONLETTERS)`. Use the const directly; the
-    // previous code did `isset(optlookup("shoptionletters"))` which
-    // is the same value but pays a hash lookup per call. C uses the
-    // optno constant inline.
+                                 // c:721 — `isset(SHOPTIONLETTERS)`. Use the const directly; the
+                                 // previous code did `isset(optlookup("shoptionletters"))` which
+                                 // is the same value but pays a hash lookup per call. C uses the
+                                 // optno constant inline.
     let letters = if isset(crate::ported::zsh_h::SHOPTIONLETTERS) {
         KSH_LETTERS
     } else {
@@ -1088,8 +1088,8 @@ pub fn printoptionlist_printequiv(optno: i32) {
     let isneg = optno < 0; // c:971
     let abs_optno = if isneg { -optno } else { optno }; // c:974
     let prefix = if isneg { "no-" } else { "" }; // c:975
-    // c:976 — `optns[optno-1].node.nam`. Reverse-lookup via opt_name
-    // instead of linear scan + per-name optlookup.
+                                                 // c:976 — `optns[optno-1].node.nam`. Reverse-lookup via opt_name
+                                                 // instead of linear scan + per-name optlookup.
     let name = crate::ported::zsh_h::opt_name(abs_optno);
     let name = if name.is_empty() { "?" } else { name };
     println!("  equivalent to --{}{}", prefix, name); // c:975

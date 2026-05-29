@@ -6285,23 +6285,22 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                 while idx < bytes.len() {
                     let ch = bytes[idx];
                     if ch == '\u{91}' /* Inbrack */
-                        || ch == '=' || ch == '+' || ch == '\u{8d}' /* Equals */
+                        || ch == '=' || ch == '+' || ch == '\u{8d}'
+                    /* Equals */
                     {
                         break;
                     }
                     idx += 1;
                 }
-                if idx < bytes.len() && bytes[idx] == '\u{91}' /* Inbrack */ {
+                if idx < bytes.len() && bytes[idx] == '\u{91}'
+                /* Inbrack */
+                {
                     // c:1855 — `skipparens(Inbrack, Outbrack, &ptr);`.
                     let byte_off: usize = bytes[..idx].iter().map(|c| c.len_utf8()).sum();
                     let mut cursor: &str = &raw_str[byte_off..];
-                    let _ = crate::ported::utils::skipparens(
-                        '\u{91}', '\u{92}', &mut cursor,
-                    );
+                    let _ = crate::ported::utils::skipparens('\u{91}', '\u{92}', &mut cursor);
                     let consumed = raw_str.len() - byte_off - cursor.len();
-                    let advance_chars = raw_str[byte_off..byte_off + consumed]
-                        .chars()
-                        .count();
+                    let advance_chars = raw_str[byte_off..byte_off + consumed].chars().count();
                     idx += advance_chars;
                     // Continue scanning for `=` / `+` after the `]`.
                     while idx < bytes.len() {
@@ -6549,19 +6548,20 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                 while idx < bytes.len() {
                     let ch = bytes[idx];
                     if ch == '\u{91}' /* Inbrack */
-                        || ch == '=' || ch == '+' || ch == '\u{8d}' /* Equals */
+                        || ch == '=' || ch == '+' || ch == '\u{8d}'
+                    /* Equals */
                     {
                         break;
                     }
                     idx += 1;
                 }
-                if idx < bytes.len() && bytes[idx] == '\u{91}' /* Inbrack */ {
+                if idx < bytes.len() && bytes[idx] == '\u{91}'
+                /* Inbrack */
+                {
                     // c:2014 — `skipparens(Inbrack, Outbrack, &ptr);`.
                     let byte_off: usize = bytes[..idx].iter().map(|c| c.len_utf8()).sum();
                     let mut cursor: &str = &raw[byte_off..];
-                    let _ = crate::ported::utils::skipparens(
-                        '\u{91}', '\u{92}', &mut cursor,
-                    );
+                    let _ = crate::ported::utils::skipparens('\u{91}', '\u{92}', &mut cursor);
                     let consumed = raw.len() - byte_off - cursor.len();
                     let advance_chars = raw[byte_off..byte_off + consumed].chars().count();
                     idx += advance_chars;

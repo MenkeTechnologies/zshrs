@@ -959,18 +959,11 @@ fn stringsubst(
                     let open_byte_off: usize =
                         chars[..start - 1].iter().map(|c| c.len_utf8()).sum();
                     let mut cursor: &str = &str3[open_byte_off..];
-                    let bal = crate::ported::utils::skipparens(
-                        Inbrack, Outbrack, &mut cursor,
-                    );
+                    let bal = crate::ported::utils::skipparens(Inbrack, Outbrack, &mut cursor);
                     if bal == 0 {
                         let after_close_byte = str3.len() - cursor.len();
-                        let after_close_char =
-                            str3[..after_close_byte].chars().count();
-                        end_off = Some(
-                            after_close_char
-                                .saturating_sub(1)
-                                .saturating_sub(start),
-                        );
+                        let after_close_char = str3[..after_close_byte].chars().count();
+                        end_off = Some(after_close_char.saturating_sub(1).saturating_sub(start));
                     }
                 } else {
                     // Mixed-form fallback. Original Rust depth walk.
