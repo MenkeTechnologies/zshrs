@@ -233,4 +233,83 @@ mod tests {
         // Must hold at least: fd (i32) + 2 sockaddrs + flags (i32).
         assert!(size >= 4 + 4, "tcp_session must hold fd + flags minimum");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/tcp.h
+    // c:71 SUPPORT_IPV6 / c:83 ZTCP_LISTEN / c:84 ZTCP_INBOUND /
+    // c:85 ZTCP_ZFTP / c:87 tcp_session / c:97 INET_ADDRSTRLEN /
+    // c:101 INET6_ADDRSTRLEN
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:83-85 — all ZTCP_* are i32 type (compile-time pin).
+    #[test]
+    fn ztcp_flags_all_i32_type() {
+        let _: i32 = ZTCP_LISTEN;
+        let _: i32 = ZTCP_INBOUND;
+        let _: i32 = ZTCP_ZFTP;
+    }
+
+    /// c:97/101 — INET_ADDRSTRLEN and INET6_ADDRSTRLEN are usize.
+    #[test]
+    fn inet_strlen_constants_are_usize_type() {
+        let _: usize = INET_ADDRSTRLEN;
+        let _: usize = INET6_ADDRSTRLEN;
+    }
+
+    /// c:101 — INET6_ADDRSTRLEN matches max IPv6 textual representation length.
+    /// "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255" + NUL = 46.
+    #[test]
+    fn inet6_addrstrlen_matches_max_ipv6_with_v4_mapped() {
+        // Maximum IPv6 textual form is 45 chars + NUL = 46:
+        // "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255"
+        let max_ipv6 = "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255";
+        assert_eq!(max_ipv6.len(), 45, "verify max IPv6 text length");
+        assert_eq!(INET6_ADDRSTRLEN, max_ipv6.len() + 1,
+            "INET6_ADDRSTRLEN must hold max textual + NUL");
+    }
+
+    /// c:71 — SUPPORT_IPV6 is bool (compile-time pin).
+    #[test]
+    fn support_ipv6_is_bool_type() {
+        let _: bool = SUPPORT_IPV6;
+    }
+
+    /// c:83-85 — ZTCP_LISTEN/INBOUND combined OR keeps both bits.
+    #[test]
+    fn ztcp_listen_inbound_or_keeps_both_bits() {
+        let combo = ZTCP_LISTEN | ZTCP_INBOUND;
+        assert_ne!(combo & ZTCP_LISTEN, 0, "LISTEN bit preserved");
+        assert_ne!(combo & ZTCP_INBOUND, 0, "INBOUND bit preserved");
+    }
+
+    /// c:83-85 — ZTCP_ZFTP can OR with LISTEN+INBOUND combination.
+    #[test]
+    fn ztcp_zftp_can_or_with_listen_inbound_combo() {
+        let combo = ZTCP_ZFTP | ZTCP_LISTEN | ZTCP_INBOUND;
+        assert_ne!(combo & ZTCP_ZFTP, 0);
+        assert_ne!(combo & ZTCP_LISTEN, 0);
+        assert_ne!(combo & ZTCP_INBOUND, 0);
+    }
+
+    /// c:97/101 — INET_ADDRSTRLEN + INET6_ADDRSTRLEN both positive.
+    #[test]
+    fn inet_strlen_constants_positive() {
+        assert!(INET_ADDRSTRLEN > 0);
+        assert!(INET6_ADDRSTRLEN > 0);
+    }
+
+    /// c:97 — `INET_ADDRSTRLEN` of 16 holds longest IPv4 ("255.255.255.255" + NUL).
+    #[test]
+    fn inet_addrstrlen_holds_max_ipv4_dotted() {
+        let max_ipv4 = "255.255.255.255";
+        assert_eq!(INET_ADDRSTRLEN, max_ipv4.len() + 1,
+            "INET_ADDRSTRLEN must hold max IPv4 textual + NUL");
+    }
+
+    /// c:87 — tcp_session size is at least 8 bytes (fd + flags as i32 pair).
+    #[test]
+    fn tcp_session_minimum_size_holds_fd_plus_flags() {
+        let size = std::mem::size_of::<tcp_session>();
+        assert!(size >= 8, "must hold fd+flags pair (≥ 8 bytes), got {}", size);
+    }
 }
