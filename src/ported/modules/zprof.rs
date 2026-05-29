@@ -1294,4 +1294,117 @@ mod tests {
         assert!(s.contains(']'), "has closing bracket");
         assert!(s.contains(':'), "has line-number separator");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests for Src/Modules/zprof.c cmp comparators + free ops.
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn mk_pfunc(name: &str, self_time: f64, time: f64) -> Pfunc {
+        Pfunc {
+            name: name.to_string(),
+            calls: 0,
+            time,
+            self_time,
+            num: 0,
+        }
+    }
+
+    fn mk_parc(from: usize, to: usize, time: f64) -> Parc {
+        Parc {
+            from,
+            to,
+            calls: 0,
+            time,
+            ..Default::default()
+        }
+    }
+
+    /// c:121 — `cmpsfuncs` is descending by self_time: a > b → Less
+    /// (sort places larger first).
+    #[test]
+    fn cmpsfuncs_descending_by_self_time() {
+        let a = mk_pfunc("a", 10.0, 0.0);
+        let b = mk_pfunc("b", 5.0, 0.0);
+        assert_eq!(
+            cmpsfuncs(&a, &b),
+            std::cmp::Ordering::Less,
+            "larger self_time sorts first"
+        );
+        assert_eq!(cmpsfuncs(&b, &a), std::cmp::Ordering::Greater);
+    }
+
+    /// c:121 — equal self_time → Equal.
+    #[test]
+    fn cmpsfuncs_equal_returns_equal() {
+        let a = mk_pfunc("a", 7.5, 0.0);
+        let b = mk_pfunc("b", 7.5, 99.0); // different time, equal self_time
+        assert_eq!(cmpsfuncs(&a, &b), std::cmp::Ordering::Equal);
+    }
+
+    /// c:127 — `cmptfuncs` descending by total time (ignores self_time).
+    #[test]
+    fn cmptfuncs_descending_by_total_time() {
+        let a = mk_pfunc("a", 0.0, 10.0);
+        let b = mk_pfunc("b", 99.0, 5.0); // larger self but smaller time
+        assert_eq!(
+            cmptfuncs(&a, &b),
+            std::cmp::Ordering::Less,
+            "larger total time sorts first regardless of self_time"
+        );
+    }
+
+    /// c:133 — `cmpparcs` descending by time.
+    #[test]
+    fn cmpparcs_descending_by_time() {
+        let a = mk_parc(0, 1, 10.0);
+        let b = mk_parc(0, 1, 5.0);
+        assert_eq!(cmpparcs(&a, &b), std::cmp::Ordering::Less);
+        assert_eq!(cmpparcs(&b, &a), std::cmp::Ordering::Greater);
+    }
+
+    /// c:121 — NaN comparison → Equal (partial_cmp unwrap_or branch).
+    #[test]
+    fn cmpsfuncs_nan_returns_equal() {
+        let a = mk_pfunc("a", f64::NAN, 0.0);
+        let b = mk_pfunc("b", 5.0, 0.0);
+        assert_eq!(
+            cmpsfuncs(&a, &b),
+            std::cmp::Ordering::Equal,
+            "NaN partial_cmp returns None → Equal fallback"
+        );
+    }
+
+    /// c:74 — `freepfuncs` empties the vec.
+    #[test]
+    fn freepfuncs_clears_vec() {
+        let mut v = vec![mk_pfunc("a", 0.0, 0.0), mk_pfunc("b", 0.0, 0.0)];
+        freepfuncs(&mut v);
+        assert!(v.is_empty(), "freepfuncs must clear the Vec");
+    }
+
+    /// c:86 — `freeparcs` empties the vec.
+    #[test]
+    fn freeparcs_clears_vec() {
+        let mut v = vec![mk_parc(0, 1, 0.0), mk_parc(1, 2, 0.0)];
+        freeparcs(&mut v);
+        assert!(v.is_empty());
+    }
+
+    /// c:74 — `freepfuncs` on empty vec is a no-op.
+    #[test]
+    fn freepfuncs_empty_is_noop() {
+        let mut v: Vec<Pfunc> = Vec::new();
+        freepfuncs(&mut v);
+        assert!(v.is_empty());
+    }
+
+    /// c:97 — `findpfunc` is deterministic for the same lookup.
+    #[test]
+    fn findpfunc_is_deterministic_for_missing() {
+        let _g = crate::test_util::global_state_lock();
+        let first = findpfunc("__nope__");
+        for _ in 0..10 {
+            assert_eq!(findpfunc("__nope__"), first);
+        }
+    }
 }
