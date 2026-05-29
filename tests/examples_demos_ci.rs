@@ -341,6 +341,31 @@ demo_test!(d182_progress_bar, "182_progress_bar.zsh");
 demo_test!(d183_word_frequency, "183_word_frequency.zsh");
 demo_test!(d184_simple_cron, "184_simple_cron.zsh");
 demo_test!(d185_final_recap, "185_final_recap.zsh");
+demo_test!(d186_alias_forms, "186_alias_forms.zsh");
+demo_test!(d187_hex_dump, "187_hex_dump.zsh");
+demo_test!(d188_ip_parser, "188_ip_parser.zsh");
+demo_test!(d189_http_status, "189_http_status.zsh");
+demo_test!(d190_ansi_stripper, "190_ansi_stripper.zsh");
+demo_test!(d191_retry_backoff, "191_retry_backoff.zsh");
+demo_test!(d192_memoize, "192_memoize.zsh");
+demo_test!(d193_log_rotate, "193_log_rotate.zsh");
+demo_test!(d194_url_parser, "194_url_parser.zsh");
+demo_test!(d195_sha_simple_hash, "195_sha_simple_hash.zsh");
+demo_test!(d196_base64, "196_base64.zsh");
+demo_test!(d197_csv_full_parse, "197_csv_full_parse.zsh");
+demo_test!(d198_yaml_lite, "198_yaml_lite.zsh");
+demo_test!(d199_color_picker, "199_color_picker.zsh");
+demo_test!(d200_milestone, "200_milestone.zsh");
+demo_test!(d201_unit_converter, "201_unit_converter.zsh");
+demo_test!(d202_tokenizer, "202_tokenizer.zsh");
+demo_test!(d203_argv_dispatch, "203_argv_dispatch.zsh");
+demo_test!(d204_string_interpolation, "204_string_interpolation.zsh");
+demo_test!(d205_zsh_in_scripts, "205_zsh_in_scripts.zsh");
+demo_test!(d206_assoc_iteration, "206_assoc_iteration.zsh");
+demo_test!(d207_lru_with_ttl, "207_lru_with_ttl.zsh");
+demo_test!(d208_directory_walker, "208_directory_walker.zsh");
+demo_test!(d209_command_pipeline, "209_command_pipeline.zsh");
+demo_test!(d210_quine, "210_quine.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -533,6 +558,31 @@ fn every_demo_in_dir_has_a_test() {
         "183_word_frequency.zsh",
         "184_simple_cron.zsh",
         "185_final_recap.zsh",
+        "186_alias_forms.zsh",
+        "187_hex_dump.zsh",
+        "188_ip_parser.zsh",
+        "189_http_status.zsh",
+        "190_ansi_stripper.zsh",
+        "191_retry_backoff.zsh",
+        "192_memoize.zsh",
+        "193_log_rotate.zsh",
+        "194_url_parser.zsh",
+        "195_sha_simple_hash.zsh",
+        "196_base64.zsh",
+        "197_csv_full_parse.zsh",
+        "198_yaml_lite.zsh",
+        "199_color_picker.zsh",
+        "200_milestone.zsh",
+        "201_unit_converter.zsh",
+        "202_tokenizer.zsh",
+        "203_argv_dispatch.zsh",
+        "204_string_interpolation.zsh",
+        "205_zsh_in_scripts.zsh",
+        "206_assoc_iteration.zsh",
+        "207_lru_with_ttl.zsh",
+        "208_directory_walker.zsh",
+        "209_command_pipeline.zsh",
+        "210_quine.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
