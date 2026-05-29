@@ -5488,4 +5488,65 @@ mod tests {
             p
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/zsh.h macro ports.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `minimum(3, 5)` returns 3. C `#define minimum(x,y) ((x)<(y)?(x):(y))`.
+    #[test]
+    fn minimum_picks_smaller_int() {
+        assert_eq!(minimum(3, 5), 3);
+        assert_eq!(minimum(5, 3), 3);
+    }
+
+    /// `minimum(3, 3)` returns either (both equal).
+    #[test]
+    fn minimum_equal_values_returns_value() {
+        assert_eq!(minimum(7, 7), 7);
+    }
+
+    /// `minimum(-5, 5)` returns -5 (negative smaller).
+    #[test]
+    fn minimum_negative_picks_negative() {
+        assert_eq!(minimum(-5, 5), -5);
+    }
+
+    /// `QT_IS_SINGLE(QT_SINGLE)` returns true.
+    /// C `#define QT_IS_SINGLE(x) (x == QT_SINGLE || x == QT_SINGLE_OPTIONAL)`.
+    #[test]
+    fn QT_IS_SINGLE_recognises_QT_SINGLE() {
+        assert!(QT_IS_SINGLE(QT_SINGLE));
+    }
+
+    /// `QT_IS_SINGLE(QT_NONE)` returns false.
+    #[test]
+    fn QT_IS_SINGLE_QT_NONE_returns_false() {
+        assert!(!QT_IS_SINGLE(QT_NONE));
+    }
+
+    /// `IS_WRITE_FILE(REDIR_WRITE)` returns true. C `#define
+    /// IS_WRITE_FILE(x)` — any write-redirect family.
+    #[test]
+    fn IS_WRITE_FILE_recognises_write_token() {
+        assert!(IS_WRITE_FILE(REDIR_WRITE));
+    }
+
+    /// `IS_APPEND_REDIR(REDIR_APP)` returns true.
+    #[test]
+    fn IS_APPEND_REDIR_recognises_app_token() {
+        assert!(IS_APPEND_REDIR(REDIR_APP));
+    }
+
+    /// `IS_ERROR_REDIR(REDIR_ERRWRITE)` returns true.
+    #[test]
+    fn IS_ERROR_REDIR_recognises_errwrite_token() {
+        assert!(IS_ERROR_REDIR(REDIR_ERRWRITE));
+    }
+
+    /// `IS_READFD(REDIR_READ)` returns true.
+    #[test]
+    fn IS_READFD_recognises_read_token() {
+        assert!(IS_READFD(REDIR_READ));
+    }
 }
