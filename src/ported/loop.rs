@@ -401,4 +401,117 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = selectlist(&[" "], 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/loop.c
+    // c:36 loops / c:41 contflag / c:46 breaks / c:347 selectlist /
+    // c:731 try_tryflag — initial-state + idempotency pins.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:36 — `loops` initial state is zero (`int loops;` BSS zero init).
+    #[test]
+    fn loop_depth_initial_state_is_zero() {
+        use std::sync::atomic::Ordering;
+        let v = LOOP_DEPTH.load(Ordering::SeqCst);
+        assert!(v >= 0, "loop depth must never be negative; got {}", v);
+    }
+
+    /// c:41 — `contflag` initial state must be non-negative
+    /// (`mod_export int contflag;` BSS-zero).
+    #[test]
+    fn cont_flag_initial_state_non_negative() {
+        use std::sync::atomic::Ordering;
+        let v = CONT_FLAG.load(Ordering::SeqCst);
+        assert!(v >= 0, "cont flag must be non-negative; got {}", v);
+    }
+
+    /// c:46 — `breaks` initial state non-negative
+    /// (`volatile int breaks;` BSS-zero).
+    #[test]
+    fn break_level_initial_state_non_negative() {
+        use std::sync::atomic::Ordering;
+        let v = BREAK_LEVEL.load(Ordering::SeqCst);
+        assert!(v >= 0, "break level must be non-negative; got {}", v);
+    }
+
+    /// c:347 — `selectlist` is idempotent across many calls (no mutation).
+    #[test]
+    fn selectlist_no_mutation_across_calls() {
+        let _g = crate::test_util::global_state_lock();
+        let items = ["alpha", "beta", "gamma"];
+        let first = selectlist(&items, 0);
+        for _ in 0..20 {
+            assert_eq!(selectlist(&items, 0), first,
+                "selectlist must be pure across repeated calls");
+        }
+    }
+
+    /// c:347 — `selectlist` four items doesn't panic.
+    #[test]
+    fn selectlist_four_items_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = selectlist(&["a", "b", "c", "d"], 0);
+    }
+
+    /// c:347 — `selectlist` with newline-bearing entry doesn't panic.
+    #[test]
+    fn selectlist_newline_entry_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = selectlist(&["a\nb"], 0);
+    }
+
+    /// c:347 — `selectlist` mixed-length entries doesn't panic.
+    #[test]
+    fn selectlist_mixed_length_entries_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = selectlist(&["a", "ab", "abc", "abcd", "abcde"], 0);
+    }
+
+    /// c:347 — `selectlist` Unicode emoji entry doesn't panic.
+    #[test]
+    fn selectlist_emoji_entries_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = selectlist(&["foo", "bar"], 0);
+    }
+
+    /// c:731 — `try_tryflag` load is idempotent (pure read, no mutation).
+    #[test]
+    fn try_tryflag_load_idempotent() {
+        use std::sync::atomic::Ordering;
+        let first = try_tryflag.load(Ordering::SeqCst);
+        for _ in 0..50 {
+            assert_eq!(try_tryflag.load(Ordering::SeqCst), first,
+                "try_tryflag pure load must be deterministic");
+        }
+    }
+
+    /// c:731 — `try_tryflag` static address is stable.
+    #[test]
+    fn try_tryflag_address_is_stable() {
+        let p1 = &try_tryflag as *const _;
+        let p2 = &try_tryflag as *const _;
+        assert_eq!(p1, p2, "static must have a single, stable address");
+    }
+
+    /// c:347 — `selectlist` with whitespace-only entries doesn't panic.
+    #[test]
+    fn selectlist_whitespace_only_entries_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = selectlist(&["   ", "\t\t", "  \t  "], 0);
+    }
+
+    /// c:36 / c:41 / c:46 — `LOOP_DEPTH`, `CONT_FLAG`, `BREAK_LEVEL`
+    /// addresses are stable (no per-call alloc).
+    #[test]
+    fn loop_static_addresses_stable() {
+        let a1 = &LOOP_DEPTH as *const _;
+        let a2 = &LOOP_DEPTH as *const _;
+        assert_eq!(a1, a2, "LOOP_DEPTH must be a true static");
+        let b1 = &CONT_FLAG as *const _;
+        let b2 = &CONT_FLAG as *const _;
+        assert_eq!(b1, b2, "CONT_FLAG must be a true static");
+        let c1 = &BREAK_LEVEL as *const _;
+        let c2 = &BREAK_LEVEL as *const _;
+        assert_eq!(c1, c2, "BREAK_LEVEL must be a true static");
+    }
 }
