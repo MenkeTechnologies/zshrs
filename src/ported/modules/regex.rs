@@ -922,4 +922,121 @@ mod tests {
             &[".", "a"], 0);
         assert!(r == 0 || r == 1);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/regex.c
+    // c:40 zregex_regerrwarn / c:58 zcond_regex_match + lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:58 — `zcond_regex_match` returns i32 (compile-time pin).
+    #[test]
+    fn zcond_regex_match_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = crate::regex_module::zcond_regex_match(
+            &[".", "a"], 0);
+    }
+
+    /// c:58 — `zcond_regex_match` is deterministic for the same input.
+    #[test]
+    fn zcond_regex_match_deterministic_for_simple_pattern() {
+        let _g = crate::test_util::global_state_lock();
+        let first = crate::regex_module::zcond_regex_match(
+            &["abc", "abcdef"], 0);
+        for _ in 0..5 {
+            assert_eq!(
+                crate::regex_module::zcond_regex_match(&["abc", "abcdef"], 0),
+                first,
+                "zcond_regex_match must be pure across calls");
+        }
+    }
+
+    /// c:58 — `zcond_regex_match` result is always 0 or 1 (boolean i32).
+    #[test]
+    fn zcond_regex_match_result_is_boolean_only() {
+        let _g = crate::test_util::global_state_lock();
+        for pair in &[
+            (".", "a"),
+            ("[0-9]+", "abc"),
+            ("xyz", "abc"),
+            ("^foo", "foobar"),
+            (".+", ""),
+        ] {
+            let r = crate::regex_module::zcond_regex_match(
+                &[pair.0, pair.1], 0);
+            assert!(r == 0 || r == 1,
+                "regex match ({:?}, {:?}) → {} not in 0/1", pair.0, pair.1, r);
+        }
+    }
+
+    /// c:40 — `zregex_regerrwarn` long-prefix + long-msg safe.
+    #[test]
+    fn zregex_regerrwarn_long_inputs_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let long_prefix = "p".repeat(1000);
+        let long_msg = "m".repeat(2000);
+        crate::regex_module::zregex_regerrwarn(&long_prefix, &long_msg);
+    }
+
+    /// c:40 — `zregex_regerrwarn` multibyte + ANSI escape safe.
+    #[test]
+    fn zregex_regerrwarn_multibyte_and_ansi_safe() {
+        let _g = crate::test_util::global_state_lock();
+        crate::regex_module::zregex_regerrwarn("日本", "包含中文");
+        crate::regex_module::zregex_regerrwarn("\x1b[31m", "red message\x1b[0m");
+    }
+
+    /// c:58 — `zcond_regex_match` malformed regex doesn't panic.
+    #[test]
+    fn zcond_regex_match_malformed_pattern_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        for bad in &["[", "(", "*", "+", "(?", "[a-"] {
+            let _ = crate::regex_module::zcond_regex_match(
+                &[bad, "input"], 0);
+        }
+    }
+
+    /// c:215 — `setup_` returns i32 (compile-time pin).
+    #[test]
+    fn regex_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = crate::regex_module::setup_(std::ptr::null());
+    }
+
+    /// c:228 — `enables_` returns i32 + None safe.
+    #[test]
+    fn regex_enables_with_none_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = crate::regex_module::enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:222 — `features_` does not panic on null + populates safely.
+    #[test]
+    fn regex_features_safe_with_caller_vec() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = Vec::new();
+        let _ = crate::regex_module::features_(std::ptr::null(), &mut v);
+    }
+
+    /// c:215/222/228/234/242/248 — each lifecycle hook returns 0 individually.
+    #[test]
+    fn regex_each_lifecycle_hook_returns_zero_individually() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v: Vec<String> = Vec::new();
+        let mut e: Option<Vec<i32>> = None;
+        assert_eq!(crate::regex_module::setup_(null), 0, "c:215 setup_");
+        assert_eq!(crate::regex_module::features_(null, &mut v), 0, "c:222 features_");
+        assert_eq!(crate::regex_module::enables_(null, &mut e), 0, "c:228 enables_");
+        assert_eq!(crate::regex_module::boot_(null), 0, "c:234 boot_");
+        assert_eq!(crate::regex_module::cleanup_(null), 0, "c:242 cleanup_");
+        assert_eq!(crate::regex_module::finish_(null), 0, "c:248 finish_");
+    }
+
+    /// c:58 — `zcond_regex_match` insufficient args (1) doesn't panic.
+    #[test]
+    fn zcond_regex_match_single_arg_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = crate::regex_module::zcond_regex_match(&["pattern"], 0);
+    }
 }
