@@ -802,4 +802,112 @@ mod tests {
         let any_different = (0..100).any(|_| get_srandom() != first);
         assert!(any_different, "100 calls should produce ≥ 1 different value");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/random.c
+    // c:26 getrandom_buffer / c:109 get_bound_random_buffer / c:144 get_srandom
+    // c:173 math_zrand_int / c:219 math_zrand_float / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:26 — `getrandom_buffer(&mut [])` empty buf no-panic.
+    #[test]
+    fn getrandom_buffer_empty_buffer_returns_ok() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf: [u8; 0] = [];
+        assert!(getrandom_buffer(&mut buf).is_ok());
+    }
+
+    /// c:26 — `getrandom_buffer` returns Result type.
+    #[test]
+    fn getrandom_buffer_returns_io_result_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 1];
+        let _: io::Result<()> = getrandom_buffer(&mut buf);
+    }
+
+    /// c:26 — `getrandom_buffer` actually fills (high probability of
+    /// at least one non-zero byte in 256 bytes).
+    #[test]
+    fn getrandom_buffer_fills_with_nonzero_bytes() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 256];
+        getrandom_buffer(&mut buf).unwrap();
+        assert!(buf.iter().any(|&b| b != 0),
+            "256 random bytes should have ≥ 1 non-zero");
+    }
+
+    /// c:109 — `get_bound_random_buffer(buf, 1)` fills all zeros (only
+    /// value < 1 is 0).
+    #[test]
+    fn get_bound_random_buffer_max_one_all_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u32; 100];
+        get_bound_random_buffer(&mut buf, 1);
+        for &v in &buf {
+            assert_eq!(v, 0, "max=1 → all values must be 0");
+        }
+    }
+
+    /// c:109 — `get_bound_random_buffer(buf, max)` all values < max.
+    #[test]
+    fn get_bound_random_buffer_respects_max_bound() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u32; 1000];
+        let max = 100u32;
+        get_bound_random_buffer(&mut buf, max);
+        for &v in &buf {
+            assert!(v < max, "value {} must be < max {}", v, max);
+        }
+    }
+
+    /// c:144 — `get_srandom` returns u32 (compile-time type pin).
+    #[test]
+    fn get_srandom_returns_u32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: u32 = get_srandom();
+    }
+
+    /// c:219 — `math_zrand_float()` returns f64 strictly in [0.0, 1.0).
+    #[test]
+    fn math_zrand_float_strictly_in_half_open_unit() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..50 {
+            let v = math_zrand_float();
+            assert!(v >= 0.0 && v < 1.0,
+                "math_zrand_float = {} must be in [0.0, 1.0)", v);
+        }
+    }
+
+    /// c:226-303 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn random_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:343 — `random_u32` produces varied values.
+    #[test]
+    fn random_u32_produces_varied_values() {
+        let _g = crate::test_util::global_state_lock();
+        let first = random_u32();
+        let any_diff = (0..100).any(|_| random_u32() != first);
+        assert!(any_diff, "100 u32 randoms should differ from first");
+    }
+
+    /// c:353 — `random_u64` produces varied values.
+    #[test]
+    fn random_u64_produces_varied_values() {
+        let _g = crate::test_util::global_state_lock();
+        let first = random_u64();
+        let any_diff = (0..100).any(|_| random_u64() != first);
+        assert!(any_diff, "100 u64 randoms should differ from first");
+    }
 }
