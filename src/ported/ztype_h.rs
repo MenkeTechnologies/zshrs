@@ -901,4 +901,146 @@ mod tests {
             assert!(!ipattern(b'0'));
         });
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/ztype.h classifiers.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:48 — `idigit('5')` true, `idigit('a')` false.
+    #[test]
+    fn idigit_distinguishes_digit_from_letter() {
+        with_typtab(|| {
+            assert!(idigit(b'5'));
+            assert!(!idigit(b'a'));
+            assert!(!idigit(b'Z'));
+            assert!(!idigit(b' '));
+        });
+    }
+
+    /// c:48 — `idigit` for 0..9 all true.
+    #[test]
+    fn idigit_all_ascii_digits() {
+        with_typtab(|| {
+            for d in b'0'..=b'9' {
+                assert!(idigit(d), "{:?} must be idigit", d as char);
+            }
+        });
+    }
+
+    /// c:54 — `ialpha` for ASCII letters returns true.
+    #[test]
+    fn ialpha_ascii_letters() {
+        with_typtab(|| {
+            for c in b'a'..=b'z' {
+                assert!(ialpha(c), "{:?} must be ialpha", c as char);
+            }
+            for c in b'A'..=b'Z' {
+                assert!(ialpha(c), "{:?} must be ialpha", c as char);
+            }
+        });
+    }
+
+    /// c:54 — `ialpha` rejects digits and punct.
+    #[test]
+    fn ialpha_rejects_non_letter() {
+        with_typtab(|| {
+            assert!(!ialpha(b'5'));
+            assert!(!ialpha(b'.'));
+            assert!(!ialpha(b' '));
+            assert!(!ialpha(b'_'));
+        });
+    }
+
+    /// c:55 — `iident` includes alphanumeric + underscore.
+    #[test]
+    fn iident_includes_underscore() {
+        with_typtab(|| {
+            assert!(iident(b'a'));
+            assert!(iident(b'Z'));
+            assert!(iident(b'5'));
+            assert!(iident(b'_'));
+            assert!(!iident(b'.'));
+            assert!(!iident(b'-'));
+            assert!(!iident(b' '));
+        });
+    }
+
+    /// c:50 — `iblank` includes space + tab, excludes newline.
+    #[test]
+    fn iblank_space_tab_not_newline() {
+        with_typtab(|| {
+            assert!(iblank(b' '));
+            assert!(iblank(b'\t'));
+            assert!(!iblank(b'\n'), "newline NOT in iblank");
+        });
+    }
+
+    /// c:51 — `inblank` includes space, tab, AND newline.
+    #[test]
+    fn inblank_includes_newline() {
+        with_typtab(|| {
+            assert!(inblank(b' '));
+            assert!(inblank(b'\t'));
+            assert!(inblank(b'\n'), "inblank includes newline");
+        });
+    }
+
+    /// c:57 — `icntrl` recognizes ASCII control chars.
+    #[test]
+    fn icntrl_recognizes_control_chars() {
+        with_typtab(|| {
+            assert!(icntrl(0x00));
+            assert!(icntrl(0x01));
+            assert!(icntrl(0x1f));
+            assert!(!icntrl(b' '));
+            assert!(!icntrl(b'a'));
+        });
+    }
+
+    /// c:53 — `isep` recognizes IFS separators (space, tab, newline).
+    #[test]
+    fn isep_recognizes_ifs_separators() {
+        with_typtab(|| {
+            assert!(isep(b' '));
+            assert!(isep(b'\t'));
+            assert!(isep(b'\n'));
+            assert!(!isep(b'a'));
+        });
+    }
+
+    /// c:47 — `zistype(byte, IDIGIT)` matches idigit for all bytes.
+    #[test]
+    fn zistype_matches_direct_predicates() {
+        with_typtab(|| {
+            for b in 0u8..=127 {
+                assert_eq!(zistype(b, IDIGIT as u32), idigit(b));
+                assert_eq!(zistype(b, IALPHA as u32), ialpha(b));
+                assert_eq!(zistype(b, IBLANK as u32), iblank(b));
+            }
+        });
+    }
+
+    /// c:47 — `zistype` is deterministic for a given (byte, bits) pair.
+    #[test]
+    fn zistype_is_deterministic() {
+        with_typtab(|| {
+            for b in &[b'a', b'5', b' ', b'\n', b'_'] {
+                for bits in [IDIGIT, IALPHA, IBLANK, IIDENT] {
+                    let first = zistype(*b, bits as u32);
+                    for _ in 0..3 {
+                        assert_eq!(zistype(*b, bits as u32), first);
+                    }
+                }
+            }
+        });
+    }
+
+    /// c:60 — `imeta(0x83)` returns true (Meta lead byte).
+    #[test]
+    fn imeta_recognizes_meta_lead_byte() {
+        with_typtab(|| {
+            // Meta = 0x83 per zsh.h. The IMETA bit includes Meta + token range.
+            assert!(imeta(0x83));
+        });
+    }
 }
