@@ -1660,4 +1660,80 @@ mod tests {
         // c:579 — `len && ...` guards against zero-length input.
         assert_eq!(base64_decode(""), Vec::<u8>::new());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/termquery.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `find_branch(s, ';')` finds the first ';' at top level.
+    /// C `Src/Zle/termquery.c:find_branch` walks balancing parens.
+    #[test]
+    fn find_branch_top_level_separator() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = find_branch("abc;def", b';');
+        assert_eq!(r, Some(3));
+    }
+
+    /// `find_branch` returns None when separator absent.
+    #[test]
+    fn find_branch_no_match_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(find_branch("abc", b';').is_none());
+    }
+
+    /// `find_matching` finds matching `)` for `(`.
+    /// Walk starts at depth=0 — must see an `open` paren first to
+    /// increment depth, then the matching close pops it.
+    #[test]
+    fn find_matching_balanced_parens() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        // "(x)" — open at 0 (depth=1), close at 2 (depth=0).
+        let r = find_matching("(x)", b'(', b')');
+        assert_eq!(r, Some(2), "matching close at offset 2");
+    }
+
+    /// `find_matching` handles nested parens.
+    #[test]
+    fn find_matching_nested_parens() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        // "((x))" — outer open at 0, outer close at 4.
+        let r = find_matching("((x))", b'(', b')');
+        assert_eq!(r, Some(4), "outer match at offset 4 (after nested pair)");
+    }
+
+    /// `find_matching` unbalanced returns None.
+    #[test]
+    fn find_matching_unbalanced_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(find_matching("abc", b'(', b')').is_none());
+    }
+
+    /// `url_encode("hello")` passes alphanumerics through.
+    #[test]
+    fn url_encode_alphanumerics_pass_through() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(url_encode("hello"), "hello");
+    }
+
+    /// `url_encode(" ")` returns "%20" per RFC 3986.
+    #[test]
+    fn url_encode_space_becomes_percent_20() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(url_encode(" "), "%20");
+    }
+
+    /// `url_encode("")` returns empty string.
+    #[test]
+    fn url_encode_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(url_encode("").is_empty());
+    }
 }

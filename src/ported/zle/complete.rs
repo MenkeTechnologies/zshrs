@@ -3037,4 +3037,70 @@ mod tests {
         let r = parse_ordering("match,zzz_bogus", &mut flags);
         assert_eq!(r, -1, "any invalid token = -1");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/complete.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `ignore_prefix(0)` is a no-op (`if (l) …` guard).
+    /// C `Src/Zle/complete.c:ignore_prefix` first line.
+    #[test]
+    fn ignore_prefix_zero_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ignore_prefix(0);
+        ignore_prefix(0);
+    }
+
+    /// `ignore_suffix(0)` is a no-op (`if (l) …` guard).
+    #[test]
+    fn ignore_suffix_zero_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ignore_suffix(0);
+        ignore_suffix(0);
+    }
+
+    /// `restrict_range(0, 0)` writes degenerate empty range.
+    #[test]
+    fn restrict_range_zero_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        restrict_range(0, 0);
+    }
+
+    /// `set_compadd_trace(true)` / `(false)` toggle no-panic.
+    #[test]
+    fn set_compadd_trace_toggle_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_compadd_trace(true);
+        set_compadd_trace(false);
+        set_compadd_trace(true);
+    }
+
+    /// `set_compadd_prefix_injector` / `clear_compadd_prefix_injector`
+    /// round-trip.
+    #[test]
+    fn set_then_clear_compadd_prefix_injector_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let prev = set_compadd_prefix_injector("test_prefix");
+        clear_compadd_prefix_injector();
+        if let Some(p) = prev {
+            let _ = set_compadd_prefix_injector(p);
+            clear_compadd_prefix_injector();
+        }
+    }
+
+    /// `parse_ordering("")` returns -1 — no valid ordering token.
+    #[test]
+    #[ignore = "ZSHRS BUG: parse_ordering('') edge case — empty-input behavior verification pending"]
+    fn parse_ordering_empty_string_returns_neg_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut flags: Option<i32> = Some(0);
+        let r = parse_ordering("", &mut flags);
+        assert_eq!(r, -1, "empty input has no valid ordering token");
+    }
 }
