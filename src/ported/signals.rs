@@ -2681,4 +2681,127 @@ mod tests {
         let has_term = unsafe { libc::sigismember(&m, libc::SIGTERM) };
         assert_eq!(has_term, 0, "signal 0 must not add SIGTERM");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/signals.c
+    // c:160 signal_mask / c:1291 rtsigno / c:1317 rtsigname
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:160 — `signal_mask(SIG)` only contains SIG, no other signal.
+    #[cfg(unix)]
+    #[test]
+    fn signal_mask_isolates_only_requested_signal() {
+        let _g = crate::test_util::global_state_lock();
+        let m = signal_mask(libc::SIGUSR1);
+        for s in [libc::SIGTERM, libc::SIGINT, libc::SIGUSR2, libc::SIGHUP] {
+            let has = unsafe { libc::sigismember(&m, s) };
+            assert_eq!(has, 0, "signal_mask(SIGUSR1) must not include {}", s);
+        }
+        let has_usr1 = unsafe { libc::sigismember(&m, libc::SIGUSR1) };
+        assert_eq!(has_usr1, 1, "signal_mask(SIGUSR1) MUST include SIGUSR1");
+    }
+
+    /// c:160 — `signal_mask` is a pure function (same input → same output,
+    /// no side effects).
+    #[cfg(unix)]
+    #[test]
+    fn signal_mask_is_pure() {
+        let _g = crate::test_util::global_state_lock();
+        for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGUSR1] {
+            let m1 = signal_mask(sig);
+            let m2 = signal_mask(sig);
+            for s in [libc::SIGINT, libc::SIGTERM, libc::SIGUSR1, libc::SIGUSR2] {
+                let h1 = unsafe { libc::sigismember(&m1, s) };
+                let h2 = unsafe { libc::sigismember(&m2, s) };
+                assert_eq!(h1, h2, "signal_mask must be pure for sig {}", sig);
+            }
+        }
+    }
+
+    /// c:1291 — `rtsigno("RTMIN")` returns Some(SIGRTMIN) on Linux,
+    /// None elsewhere.
+    #[test]
+    fn rtsigno_bare_rtmin_smoke() {
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(rtsigno("RTMIN"), Some(libc::SIGRTMIN()));
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert_eq!(rtsigno("RTMIN"), None, "non-linux: no rt signals");
+        }
+    }
+
+    /// c:1291 — empty string is not a valid rt signal name.
+    #[test]
+    fn rtsigno_empty_string_returns_none() {
+        assert_eq!(rtsigno(""), None);
+    }
+
+    /// c:1291 — random non-RT names return None.
+    #[test]
+    fn rtsigno_arbitrary_names_return_none() {
+        for s in ["INT", "TERM", "rtmin", "RTMINX", "RT", "MIN", "SIGRTMIN"] {
+            assert_eq!(rtsigno(s), None, "{:?} must not parse as RT name", s);
+        }
+    }
+
+    /// c:1291 — `rtsigno("RTMIN+0")` equals `rtsigno("RTMIN")` (zero offset
+    /// is a no-op).
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn rtsigno_rtmin_plus_zero_equals_bare_rtmin() {
+        assert_eq!(rtsigno("RTMIN+0"), rtsigno("RTMIN"));
+    }
+
+    /// c:1317 — `rtsigname(SIG)` returns empty string for out-of-range.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn rtsigname_out_of_range_returns_empty() {
+        let too_low = libc::SIGRTMIN() - 1;
+        let too_high = libc::SIGRTMAX() + 1;
+        assert_eq!(rtsigname(too_low), "");
+        assert_eq!(rtsigname(too_high), "");
+        assert_eq!(rtsigname(0), "");
+        assert_eq!(rtsigname(-1), "");
+    }
+
+    /// c:1317 — `rtsigname(SIGRTMIN)` returns "RTMIN" (zero offset).
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn rtsigname_sigrtmin_returns_rtmin() {
+        assert_eq!(rtsigname(libc::SIGRTMIN()), "RTMIN");
+    }
+
+    /// c:1317 — `rtsigname(SIGRTMAX)` returns "RTMAX" (zero offset).
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn rtsigname_sigrtmax_returns_rtmax() {
+        assert_eq!(rtsigname(libc::SIGRTMAX()), "RTMAX");
+    }
+
+    /// c:1317 — `rtsigname` and `rtsigno` round-trip for SIGRTMIN.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn rtsigname_rtsigno_round_trip_sigrtmin() {
+        let s = rtsigname(libc::SIGRTMIN());
+        let n = rtsigno(&s);
+        assert_eq!(n, Some(libc::SIGRTMIN()));
+    }
+
+    /// c:175 — `signal_block(empty)` is a no-op (returns current mask,
+    /// blocks nothing new).
+    #[cfg(unix)]
+    #[test]
+    fn signal_block_empty_set_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let empty: libc::sigset_t = unsafe {
+            let mut s: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut s);
+            s
+        };
+        let _prev = signal_block(&empty);
+        // Restore (block-empty + unblock-empty is round-trip-safe).
+        let _ = signal_unblock(&empty);
+    }
 }
