@@ -2223,4 +2223,140 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(getposint("0", "test"), 0, "0 is valid pos int");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/system.c
+    // c:65 bin_sysread / c:264 bin_syswrite / c:345 bin_sysopen /
+    // c:534 bin_sysseek / c:631 bin_syserror / c:718 bin_zsystem_flock /
+    // c:1018 bin_zsystem_supports / c:1053 bin_zsystem +
+    // c:1224-1261 lifecycle type pins
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn empty_ops_sys() -> crate::ported::zsh_h::options {
+        crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        }
+    }
+
+    /// c:65 — `bin_sysread` returns i32 (compile-time type pin).
+    #[test]
+    fn bin_sysread_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let _: i32 = bin_sysread("sysread", &[], &ops, 0);
+    }
+
+    /// c:264 — `bin_syswrite` returns i32.
+    #[test]
+    fn bin_syswrite_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let _: i32 = bin_syswrite("syswrite", &[], &ops, 0);
+    }
+
+    /// c:345 — `bin_sysopen` returns i32.
+    #[test]
+    fn bin_sysopen_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let _: i32 = bin_sysopen("sysopen", &[], &ops, 0);
+    }
+
+    /// c:534 — `bin_sysseek` returns i32.
+    #[test]
+    fn bin_sysseek_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let _: i32 = bin_sysseek("sysseek", &[], &ops, 0);
+    }
+
+    /// c:631 — `bin_syserror` returns i32.
+    #[test]
+    fn bin_syserror_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let _: i32 = bin_syserror("syserror", &[], &ops, 0);
+    }
+
+    /// c:718 — `bin_zsystem_flock` returns i32.
+    #[test]
+    fn bin_zsystem_flock_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let _: i32 = bin_zsystem_flock("zsystem", &[], &ops, 0);
+    }
+
+    /// c:1018 — `bin_zsystem_supports` returns i32.
+    #[test]
+    fn bin_zsystem_supports_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let _: i32 = bin_zsystem_supports("zsystem", &[], &ops, 0);
+    }
+
+    /// c:1053 — `bin_zsystem` returns i32.
+    #[test]
+    fn bin_zsystem_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let _: i32 = bin_zsystem("zsystem", &[], &ops, 0);
+    }
+
+    /// c:1053 — `bin_zsystem` with no args returns nonzero (usage error).
+    #[test]
+    fn bin_zsystem_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let r = bin_zsystem("zsystem", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// c:1018 — `bin_zsystem_supports` is deterministic for same input.
+    #[test]
+    fn bin_zsystem_supports_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let first = bin_zsystem_supports("zsystem", &["flock".into()], &ops, 0);
+        for _ in 0..3 {
+            assert_eq!(
+                bin_zsystem_supports("zsystem", &["flock".into()], &ops, 0),
+                first,
+                "bin_zsystem_supports must be deterministic",
+            );
+        }
+    }
+
+    /// c:1224 — `setup_` returns i32 (compile-time type pin).
+    #[test]
+    fn system_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:1255 + c:1261 — cleanup/finish idempotent.
+    #[test]
+    fn system_cleanup_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:1232 — features non-empty + use canonical b:/p:/f:/c: prefix
+    /// per zsh's module-feature naming spec (b=builtin, p=param, f=mathfunc,
+    /// c=condition).
+    #[test]
+    fn system_features_nonempty_canonical_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        assert!(!feats.is_empty(), "system advertises ≥1 feature");
+        for f in &feats {
+            let ok = f.starts_with("b:") || f.starts_with("p:")
+                || f.starts_with("f:") || f.starts_with("c:");
+            assert!(ok, "feature {:?} must use b:/p:/f:/c: prefix", f);
+        }
+    }
 }
