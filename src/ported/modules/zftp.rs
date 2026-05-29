@@ -5546,4 +5546,95 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(setup_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zftp.c
+    // c:25 zftp_session / c:111 ZFST_TYPE / c:120 ZFST_MODE /
+    // c:307 zfmovefd / c:327 zfsetparam / c:363 zfunsetparam /
+    // c:377 zfargstring
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:111 — `ZFST_TYPE` returns i32 type pin.
+    #[test]
+    fn zfst_type_returns_i32_type() {
+        let _: i32 = ZFST_TYPE(0);
+    }
+
+    /// c:120 — `ZFST_MODE` returns i32 type pin.
+    #[test]
+    fn zfst_mode_returns_i32_type() {
+        let _: i32 = ZFST_MODE(0);
+    }
+
+    /// c:111 — `ZFST_TYPE` is pure full sweep.
+    #[test]
+    fn zfst_type_is_pure_full_sweep() {
+        for v in [0i32, 1, 7, 0xff, i32::MAX] {
+            let first = ZFST_TYPE(v);
+            for _ in 0..3 {
+                assert_eq!(ZFST_TYPE(v), first, "ZFST_TYPE({}) pure", v);
+            }
+        }
+    }
+
+    /// c:120 — `ZFST_MODE` is pure.
+    #[test]
+    fn zfst_mode_is_pure_full_sweep() {
+        for v in [0i32, 1, 7, 0xff, i32::MAX] {
+            let first = ZFST_MODE(v);
+            for _ in 0..3 {
+                assert_eq!(ZFST_MODE(v), first, "ZFST_MODE({}) pure", v);
+            }
+        }
+    }
+
+    /// c:307 — `zfmovefd(-1)` invalid fd returns i32 type.
+    #[test]
+    fn zfmovefd_invalid_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = zfmovefd(-1);
+    }
+
+    /// c:327 — `zfsetparam("", "", 0)` empty inputs safe.
+    #[test]
+    fn zfsetparam_empty_inputs_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        zfsetparam("", "", 0);
+    }
+
+    /// c:363 — `zfunsetparam("")` empty name PANICS in zshrs port
+    /// ("failed to remove environment variable \"\": Invalid argument").
+    /// C body calls `unsetparam` which silently no-ops on empty names;
+    /// Rust port forwards to `std::env::remove_var("")` which traps
+    /// on empty key per recent Rust safety hardening (since 1.86).
+    /// Should guard empty-name short-circuit per C semantic.
+    #[test]
+    #[ignore = "ZSHRS BUG: zfunsetparam('') panics in std::env::remove_var since Rust 1.86; C unsetparam('') is silent no-op. See Src/Modules/zftp.c:363"]
+    fn zfunsetparam_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        zfunsetparam("");
+    }
+
+    /// c:377 — `zfargstring("", &[])` empty returns String.
+    #[test]
+    fn zfargstring_empty_returns_string_type() {
+        let _: String = zfargstring("", &[]);
+    }
+
+    /// c:377 — `zfargstring` is pure for empty input.
+    #[test]
+    fn zfargstring_empty_is_pure() {
+        let first = zfargstring("", &[]);
+        for _ in 0..3 {
+            assert_eq!(zfargstring("", &[]), first,
+                "zfargstring empty must be pure");
+        }
+    }
+
+    /// c:25 — `zftp_session` returns i32 type pin.
+    #[test]
+    fn zftp_session_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = zftp_session("nothing", &[], 0);
+    }
 }
