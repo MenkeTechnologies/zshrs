@@ -3961,4 +3961,121 @@ mod tests {
             "newzstyletable stub returns None; pin until ported"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zutil.c zformat_substring.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:814 — `zformat_substring("", _, _)` returns empty.
+    #[test]
+    fn zformat_substring_empty_format_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let specs = std::collections::HashMap::new();
+        let r = zformat_substring("", &specs, false);
+        assert!(r.is_empty());
+    }
+
+    /// c:814 — plain text with no `%` passes through verbatim.
+    #[test]
+    fn zformat_substring_plain_text_pass_through() {
+        let _g = crate::test_util::global_state_lock();
+        let specs = std::collections::HashMap::new();
+        assert_eq!(zformat_substring("hello", &specs, false), "hello");
+        assert_eq!(zformat_substring("abc def", &specs, false), "abc def");
+    }
+
+    /// c:975 — `%%` produces literal `%` (pre-populated spec).
+    #[test]
+    fn zformat_substring_percent_percent_is_literal_percent() {
+        let _g = crate::test_util::global_state_lock();
+        let specs = std::collections::HashMap::new();
+        let r = zformat_substring("%%", &specs, false);
+        assert_eq!(r, "%");
+    }
+
+    /// c:976 — `%)` produces literal `)` (pre-populated spec).
+    #[test]
+    fn zformat_substring_percent_close_paren_is_literal_close_paren() {
+        let _g = crate::test_util::global_state_lock();
+        let specs = std::collections::HashMap::new();
+        let r = zformat_substring("%)", &specs, false);
+        assert_eq!(r, ")");
+    }
+
+    /// c:814 — `%X` substitutes spec value when registered.
+    #[test]
+    fn zformat_substring_substitutes_registered_spec() {
+        let _g = crate::test_util::global_state_lock();
+        let mut specs = std::collections::HashMap::new();
+        specs.insert('n', "alice".to_string());
+        let r = zformat_substring("%n", &specs, false);
+        assert_eq!(r, "alice");
+    }
+
+    /// c:814 — multiple `%X` substitutions in same format.
+    #[test]
+    fn zformat_substring_multiple_specs() {
+        let _g = crate::test_util::global_state_lock();
+        let mut specs = std::collections::HashMap::new();
+        specs.insert('n', "alice".to_string());
+        specs.insert('h', "/home/alice".to_string());
+        let r = zformat_substring("%n is at %h", &specs, false);
+        assert_eq!(r, "alice is at /home/alice");
+    }
+
+    /// c:814 — text between two `%X` substitutions preserved.
+    #[test]
+    fn zformat_substring_text_between_specs_preserved() {
+        let _g = crate::test_util::global_state_lock();
+        let mut specs = std::collections::HashMap::new();
+        specs.insert('a', "X".to_string());
+        let r = zformat_substring("[%a-%a]", &specs, false);
+        assert_eq!(r, "[X-X]");
+    }
+
+    /// c:814 — caller's `%`-override beats the pre-populated literal `%`.
+    /// Pin: if user registers `%`→"OVERRIDE", `%%` → "OVERRIDE".
+    #[test]
+    fn zformat_substring_caller_override_of_percent_wins() {
+        let _g = crate::test_util::global_state_lock();
+        let mut specs = std::collections::HashMap::new();
+        specs.insert('%', "OVERRIDE".to_string());
+        let r = zformat_substring("%%", &specs, false);
+        assert_eq!(r, "OVERRIDE", "caller override of % beats default '%' literal");
+    }
+
+    /// c:814 — `%` followed by unregistered char produces empty
+    /// substitution.
+    #[test]
+    fn zformat_substring_unregistered_spec_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let specs = std::collections::HashMap::new();
+        let _ = zformat_substring("%z", &specs, false);
+    }
+
+    /// c:814 — determinism for identical input.
+    #[test]
+    fn zformat_substring_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut specs = std::collections::HashMap::new();
+        specs.insert('n', "alice".to_string());
+        let first = zformat_substring("hi %n!", &specs, false);
+        for _ in 0..5 {
+            assert_eq!(zformat_substring("hi %n!", &specs, false), first);
+        }
+    }
+
+    /// Lifecycle (c:2966/2988/2995/3002):
+    #[test]
+    fn zutil_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:3002 — finish_(NULL) = 0.
+    #[test]
+    fn zutil_finish_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
