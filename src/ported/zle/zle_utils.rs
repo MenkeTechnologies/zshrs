@@ -56,70 +56,373 @@ pub fn sizeline(sz: usize) {
     }
 }
 
-/// Port of `zleaddtoline(int chr)` from Src/Zle/zle_utils.c:102.
-/// WARNING: param names don't match C — Rust=(zle, ch) vs C=(chr)
-pub fn zleaddtoline(ch: i32) {
+/// Port of `void zleaddtoline(int chr)` from Src/Zle/zle_utils.c:102.
+///
+/// C body (3 lines):
+///   `spaceinline(1);
+///    zlemetaline[zlemetacs++] = chr;`
+///
+/// Opens one slot at the meta cursor + writes `chr` byte. Used by
+/// init paths that pre-populate the line buffer before zleread.
+/// Note C writes to ZLEMETALINE, not ZLELINE — this is a meta-mode
+/// helper called during early line construction.
+pub fn zleaddtoline(chr: i32) {
     // c:102
-    // C body c:104-115 — `sizeline(zlell+1); zleline[zlell] = ch;
-    //                    zleline[++zlell] = '\\0'`.
-    ZLELINE.lock().unwrap().push(ch as u8 as char);
-    ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
+    use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+
+    spaceinline(1); // c:104
+                    // c:105 — `zlemetaline[zlemetacs++] = chr;`
+    if ZLEMETALL.load(Ordering::SeqCst) > 0 {
+        if let Some(m) = ZLEMETALINE.get() {
+            if let Ok(mut g) = m.lock() {
+                let cs = ZLEMETACS.load(Ordering::SeqCst) as usize;
+                let byte = (chr & 0xff) as u8;
+                let mut bytes = g.as_bytes().to_vec();
+                if cs < bytes.len() {
+                    bytes[cs] = byte;
+                } else {
+                    bytes.push(byte);
+                }
+                *g = unsafe { String::from_utf8_unchecked(bytes) };
+                ZLEMETACS.fetch_add(1, Ordering::SeqCst);
+                return;
+            }
+        }
+    }
+    // Fallback: meta-mode not active, write to ZLELINE codepoint
+    // vector. spaceinline already opened the slot.
+    let cs = ZLECS.load(Ordering::SeqCst);
+    if let Some(slot) = ZLELINE.lock().unwrap().get_mut(cs) {
+        *slot = (chr & 0xff) as u8 as char;
+    }
+    ZLECS.fetch_add(1, Ordering::SeqCst);
 }
 
-/// Port of `zlecharasstring(ZLE_CHAR_T inchar, char *buf)` from Src/Zle/zle_utils.c:117.
+/// Port of `int zlecharasstring(ZLE_CHAR_T inchar, char *buf)` from Src/Zle/zle_utils.c:117.
+///
+/// C body (multibyte arm c:119-165): wctomb-encode `inchar` to
+/// up to MB_CUR_MAX bytes, then walk the encoded bytes in reverse
+/// applying the metafy expansion in-place (each imeta byte gets
+/// expanded to `Meta + (b^0x20)`, bumping the byte count). Returns
+/// the final byte length written to `buf`.
+///
+/// Rust port: UTF-8 encode `inchar` via `char::encode_utf8`, then
+/// walk the bytes appending each one to `buf` and Meta-prefixing
+/// any byte that satisfies `imeta()`. Returns the total bytes
+/// pushed.
 pub fn zlecharasstring(inchar: char, buf: &mut String) -> i32 {
-    // inchar:117
-    // C body inchar:119-145 — converts a ZLE_CHAR_T to its display form
-    //                    (UTF-8 multibyte if MULTIBYTE_SUPPORT, else
-    //                    raw byte). Vec<char> is wide-char already;
-    //                    just append.
-    let start = buf.len();
-    buf.push(inchar);
-    (buf.len() - start) as i32
+    // c:117
+    use crate::ported::ztype_h::imeta;
+    use crate::ported::zsh_h::Meta;
+
+    let start_len = buf.len();
+    let mut enc = [0u8; 4];
+    let bytes = inchar.encode_utf8(&mut enc).as_bytes().to_vec(); // c:131 wctomb
+                                                                  // c:138-160 — metafy each byte that needs escaping.
+    let mut out_bytes = buf.as_bytes().to_vec();
+    for b in bytes {
+        if imeta(b) {
+            out_bytes.push(Meta); // c:154
+            out_bytes.push(b ^ 0x20); // c:155
+        } else {
+            out_bytes.push(b);
+        }
+    }
+    *buf = unsafe { String::from_utf8_unchecked(out_bytes) };
+    (buf.len() - start_len) as i32
 }
 
-/// Port of `zlelineasstring(...)` from Src/Zle/zle_utils.c:192.
-/// `Vec<char>`→String is the direct Rust port; C's mb_len/wcrtomb/
-/// metafy pipeline collapses since Rust char is already UTF-32.
-/// WARNING: param names don't match C — Rust=(line, ll, _flags) vs C=(instr, inll, incs, outllp, outcsp, useheap)
-pub fn zlelineasstring(line: &[char], ll: usize, _flags: i32) -> String {
+/// Port of `zlelineasstring(ZLE_STRING_T instr, int inll, int incs, int *outllp, int *outcsp, int useheap)` from Src/Zle/zle_utils.c:192.
+///
+/// Three-phase port matching the C body line-for-line:
+/// 1. **MB encode loop** (c:200-247). Walk input wchars; for each
+///    one, encode to UTF-8 bytes via `char::encode_utf8`. Track
+///    `outcs` (in bytes) as the input cursor walks past each
+///    codepoint. Region-highlights start_meta/end_meta tracking
+///    is gated by `outcsp == &zlemetacs` in C; Rust has no
+///    pointer-identity test so callers that need the highlight
+///    sync must invoke the dedicated helpers separately.
+/// 2. **Metafy adjustment** (c:282-322). C output is a metafied
+///    byte string; bytes that fail `imeta` get Meta-prefixed
+///    (each `imeta` byte adds +1 to `outll`, +1 to `outcs` if it
+///    lands before the cursor). Walk the encoded buffer and apply
+///    the metafy expansion in-place.
+/// 3. **Return** (c:322-330). C returns `dupstring(s, useheap)`;
+///    Rust returns the String directly (heap-arena vs persistent
+///    is a memory-mgmt distinction without behavior consequence).
+///
+/// `_flags` (Rust extra param) is reserved for the `useheap` toggle
+/// — currently unused since Rust owns the returned String.
+pub fn zlelineasstring(
+    line: &[char],
+    inll: usize,
+    incs: i32,
+    outllp: Option<&mut i32>,
+    outcsp: Option<&mut i32>,
+    _useheap: i32,
+) -> String {
     // c:192
-    line.iter().take(ll).collect()
+    use crate::ported::ztype_h::imeta;
+    use crate::ported::zsh_h::Meta;
+
+    // === Phase 1: MB encode (wcrtomb equivalent) ===
+    let mut s: Vec<u8> = Vec::with_capacity(inll * 4);
+    let mut outcs: i32 = 0;
+    let mut remaining = incs;
+    let mut buf4 = [0u8; 4];
+    for ch in line.iter().take(inll) {
+        // c:206-207 — `if (incs == 0) outcs = mb_len;`. Cursor
+        // landing on this codepoint locks outcs to the byte length
+        // so far.
+        if remaining == 0 {
+            outcs = s.len() as i32;
+        }
+        remaining -= 1; // c:208 — `incs--;`
+        let enc = ch.encode_utf8(&mut buf4);
+        s.extend_from_slice(enc.as_bytes()); // c:235-242 wcrtomb
+    }
+    // c:248-250 — `if (incs == 0) outcs = mb_len;`. Cursor past EOL.
+    if remaining == 0 {
+        outcs = s.len() as i32;
+    }
+
+    // c:265-266 — `outll = mb_len; s[mb_len] = '\0';`. Output byte
+    // length pre-metafy.
+    let mut outll = s.len() as i32;
+
+    // === Phase 2: metafy adjustment (c:282-322) ===
+    if outllp.is_some() || outcsp.is_some() {
+        // c:295 — `while (strp < stopll)` — walk bytes, expand each
+        // imeta byte to a 2-byte Meta+(b^0x20) pair, bumping outll
+        // and outcs (when before cursor) by 1 per expansion.
+        let mut metafied: Vec<u8> = Vec::with_capacity(s.len());
+        for (i, &b) in s.iter().enumerate() {
+            if imeta(b) {
+                metafied.push(Meta);
+                metafied.push(b ^ 0x20);
+                if (i as i32) < outcs {
+                    outcs += 1;
+                }
+                outll += 1;
+            } else {
+                metafied.push(b);
+            }
+        }
+        s = metafied;
+    }
+
+    if let Some(p) = outcsp {
+        *p = outcs;
+    }
+    if let Some(p) = outllp {
+        *p = outll;
+    }
+
+    // c:322-330 — `return dupstring(s, useheap)`.
+    // Phase 2 may have produced bytes that aren't valid UTF-8 (Meta = 0x83);
+    // construct via from_utf8_unchecked since the byte stream is the
+    // metafied form by design, not a Rust display string.
+    unsafe { String::from_utf8_unchecked(s) }
 }
+
 
 /// Port of `stringaszleline(char *instr, int incs, int *outll, int *outsz, int *outcs)` from Src/Zle/zle_utils.c:375.
-/// Rust input is a UTF-8 `&str` (callers pass already-decoded text;
-/// the C-side `metafy()` call that precedes stringaszleline is a
-/// no-op in Rust per the storage divergence). The C body's
-/// `unmetafy + mbrtowc` pipeline collapses to `s.chars().collect()`.
-/// Use [`stringaszleline_with_cursor`] when the cursor position in
-/// the input needs to be mapped to the output codepoint index.
 ///
-/// The previous Rust port walked bytes and unescaped 0x83-prefixed
-/// sequences as a Meta pair — that was correct for raw metafied
-/// byte streams but silently corrupted any UTF-8 multibyte sequence
-/// whose continuation byte happened to be 0x83 (e.g. U+00C3 = 0xC3
-/// 0x83 ate the 0x83). All current callers pass UTF-8.
-pub fn stringaszleline(s: &str) -> Vec<char> {
+/// Three-phase port matching the C body line-for-line:
+/// 1. **Pre-unmetafy `incs` adjustment** (c:383-426). When the caller
+///    asks for `outcs` (`want_outcs = true`), walk `instr` bytes;
+///    each `Meta` byte before the cursor `incs` decrements `incs`
+///    by 1 (the `Meta + 0x20`-XOR pair will collapse to a single
+///    byte in phase 2, so the cursor must shift left). Skipped if
+///    `want_outcs == false`, matching C's `if (outcs)` gate.
+/// 2. **`unmetafy(instr, &ll)`** (c:428) — collapse the `Meta + byte`
+///    encoding via the canonical [`crate::ported::utils::unmetafy`]
+///    helper. Returns the new byte length `ll`.
+/// 3. **Multibyte decode loop** (c:436-525, `mbrtowc` equivalent).
+///    For UTF-8 inputs we use [`std::str::from_utf8`] +
+///    `char_indices()` — each codepoint span maps to one output
+///    `char`. For each codepoint that straddles the adjusted-incs
+///    cursor, set `outcs = output codepoint index`. Invalid UTF-8
+///    bytes fall back to the C `ZSH_CHAR_TO_INVALID_WCHAR` private
+///    encoding (use a U+FFFD replacement per byte, matching the
+///    spirit if not the exact codepoint).
+///
+/// `outsz` (c:431) is set to the worst-case codepoint count (`ll`)
+/// — Rust `Vec<char>` capacity not pre-reserved per byte since
+/// `Vec::with_capacity(ll)` already gives an over-estimate.
+///
+/// The region_highlights `start_meta`/`end_meta` adjustment in C
+/// (c:387-410, c:476-510) is GATED on `outcs == &zlecs` — i.e. only
+/// when the caller is mutating the live cursor. The Rust port has
+/// no `&zlecs` identity test; callers that want the highlight
+/// shift must use the dedicated [`shiftchars`] / region helpers
+/// before/after this call.
+pub fn stringaszleline(
+    instr: &str,
+    mut incs: i32,
+    outll: Option<&mut i32>,
+    outsz: Option<&mut i32>,
+    outcs: Option<&mut i32>,
+) -> Vec<char> {
     // c:375
-    s.chars().collect()
+    use crate::ported::zsh_h::Meta;
+
+    let want_outcs = outcs.is_some();
+
+    // === Phase 1: pre-unmetafy `incs` adjustment ===
+    if want_outcs {
+        // c:383-385 — `cspos = instr + incs`. Walk bytes; each Meta
+        // before cspos collapses to one byte, so incs must
+        // decrement.
+        let bytes = instr.as_bytes();
+        let cspos = (incs as usize).min(bytes.len());
+        let mut inptr = 0usize;
+        while inptr < bytes.len() {
+            if bytes[inptr] == Meta {
+                if inptr < cspos {
+                    incs -= 1; // c:391-393
+                }
+                inptr += 1; // c:421 — skip the byte after Meta
+            }
+            inptr += 1; // c:422
+        }
+    }
+
+    // === Phase 2: unmetafy ===
+    let mut raw: Vec<u8> = instr.as_bytes().to_vec();
+    let ll = crate::ported::utils::unmetafy(&mut raw); // c:428
+    let sz = ll; // c:430-432 — `sz = (ll + 2) * ZLE_CHAR_SIZE`; for
+                 // Rust Vec<char> we just report the worst-case
+                 // codepoint count.
+    if let Some(p) = outsz {
+        *p = sz as i32;
+    }
+
+    // === Phase 3: UTF-8 decode loop (mbrtowc equivalent) ===
+    if ll == 0 {
+        // c:528-535 — empty input: zeroed output.
+        if let Some(p) = outll {
+            *p = 0;
+        }
+        if let Some(p) = outcs {
+            *p = 0;
+        }
+        return Vec::new();
+    }
+
+    let mut line: Vec<char> = Vec::with_capacity(ll);
+    let mut outcs_val: i32 = 0;
+    let mut outcs_set = false;
+
+    match std::str::from_utf8(&raw[..ll]) {
+        Ok(decoded) => {
+            // c:438-525 — `while (ll > 0) { cnt = mbrtowc(...) }`.
+            // Rust UTF-8 char_indices gives (byte_offset, char) pairs;
+            // each char is exactly `cnt = ch.len_utf8()` bytes wide.
+            for (byte_idx, ch) in decoded.char_indices() {
+                let cnt = ch.len_utf8();
+                // c:483-484 — `if (offs <= incs && incs < offs + cnt)
+                //               *outcs = outptr - outstr;`. The
+                // codepoint spanning the cursor takes the output
+                // index slot.
+                if want_outcs
+                    && (byte_idx as i32) <= incs
+                    && incs < (byte_idx + cnt) as i32
+                {
+                    outcs_val = line.len() as i32;
+                    outcs_set = true;
+                }
+                line.push(ch); // c:520-521 — `*outptr++ = ch; inptr += cnt;`
+            }
+        }
+        Err(_) => {
+            // c:457-461 — `ZSH_CHAR_TO_INVALID_WCHAR(*inptr)` for
+            // bytes that fail decode. Rust analog: U+FFFD per bad
+            // byte. Walk bytes one at a time so we keep going.
+            for (i, &b) in raw[..ll].iter().enumerate() {
+                if want_outcs && (i as i32) == incs {
+                    outcs_val = line.len() as i32;
+                    outcs_set = true;
+                }
+                match std::str::from_utf8(std::slice::from_ref(&b)) {
+                    Ok(s) => line.extend(s.chars()),
+                    Err(_) => line.push('\u{FFFD}'),
+                }
+            }
+        }
+    }
+
+    // c:524-525 — `if (outcs && inptr <= instr + incs)
+    //               *outcs = outptr - outstr;`. Cursor past EOL → end.
+    if want_outcs && !outcs_set {
+        outcs_val = line.len() as i32;
+    }
+
+    if let Some(p) = outll {
+        *p = line.len() as i32; // c:526 — `*outll = outptr - outstr`
+    }
+    if let Some(p) = outcs {
+        *p = outcs_val;
+    }
+
+    line
 }
 
 
-/// Port of `zlegetline(int *ll, int *cs)` from Src/Zle/zle_utils.c:547.
-/// WARNING: param names don't match C — Rust=(zle, cs) vs C=(ll, cs)
-pub fn zlegetline(
+/// Port of `char *zlegetline(int *ll, int *cs)` from Src/Zle/zle_utils.c:547.
+///
+/// C body branches on `zlemetaline`:
+///   1. If `zlemetaline != NULL`: `*ll = zlemetall; *cs = zlemetacs;
+///      return ztrdup(zlemetaline);` — already metafied, snapshot
+///      and dup.
+///   2. Else if `zleline`: `return zlelineasstring(zleline, zlell,
+///      zlecs, ll, cs, 0);` — encode the codepoint vector into
+///      metafied bytes, populating `*ll`/`*cs` for the caller.
+///   3. Else: `*ll = *cs = 0; return ztrdup("");` — fresh empty.
+///
+/// Returns the metafied byte string. Caller-out-params `ll` and
+/// `cs` receive the metafied-byte length and metafied-byte cursor
+/// position respectively (not codepoint counts).
+pub fn zlegetline(ll: &mut i32, cs: &mut i32) -> String {
     // c:547
-    ll: &mut usize,
-    cs: &mut usize,
-) -> Vec<char> {
-    // C body c:150-200 — `if (zlemetaline) { *ll=zlemetall; *cs=zlemetacs;
-    //                     return ztrdup(zlemetaline) } else
-    //                     return zlelineasstring(...)`. Snapshot of the
-    //                     current line + cursor.
-    *ll = ZLELL.load(Ordering::SeqCst);
-    *cs = ZLECS.load(Ordering::SeqCst);
-    ZLELINE.lock().unwrap().clone()
+    use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+
+    // c:549 — `if (zlemetaline != NULL)`. In Rust ZLEMETALINE is a
+    // OnceLock<Mutex<String>>; treat ZLEMETALL > 0 as the "active
+    // meta" signal (see spaceinline doc for why .get().is_some()
+    // alone leaks across tests).
+    if ZLEMETALL.load(Ordering::SeqCst) > 0 {
+        if let Some(m) = ZLEMETALINE.get() {
+            if let Ok(g) = m.lock() {
+                *ll = ZLEMETALL.load(Ordering::SeqCst); // c:551
+                *cs = ZLEMETACS.load(Ordering::SeqCst); // c:552
+                return g.clone(); // c:553 — `ztrdup(zlemetaline)`
+            }
+        }
+    }
+    // c:555 — `if (zleline) return zlelineasstring(...)`.
+    let line = ZLELINE.lock().unwrap().clone();
+    if !line.is_empty() || ZLELL.load(Ordering::SeqCst) > 0 {
+        let zlell = ZLELL.load(Ordering::SeqCst) as usize;
+        let zlecs = ZLECS.load(Ordering::SeqCst) as i32;
+        let mut out_ll: i32 = 0;
+        let mut out_cs: i32 = 0;
+        let s = zlelineasstring(
+            &line,
+            zlell,
+            zlecs,
+            Some(&mut out_ll),
+            Some(&mut out_cs),
+            0,
+        );
+        *ll = out_ll;
+        *cs = out_cs;
+        return s;
+    }
+    // c:558 — `*ll = *cs = 0; return ztrdup("")`.
+    *ll = 0;
+    *cs = 0;
+    String::new()
 }
 
 /// Port of `free_region_highlights_memos()` from Src/Zle/zle_utils.c:567.
@@ -2215,7 +2518,7 @@ mod findbol_findeol_tests {
     fn zle_utils_corpus_zlelineasstring_basic() {
         let _g = crate::test_util::global_state_lock();
         let line: Vec<char> = vec!['a', 'b', 'c'];
-        assert_eq!(zlelineasstring(&line, 3, 0), "abc");
+        assert_eq!(zlelineasstring(&line, 3, 0, None, None, 0), "abc");
     }
 
     /// `zlelineasstring` honors ll param (truncates).
@@ -2224,7 +2527,7 @@ mod findbol_findeol_tests {
         let _g = crate::test_util::global_state_lock();
         let line: Vec<char> = vec!['a', 'b', 'c', 'd', 'e'];
         assert_eq!(
-            zlelineasstring(&line, 3, 0),
+            zlelineasstring(&line, 3, 0, None, None, 0),
             "abc",
             "ll=3 takes first 3 chars only"
         );
@@ -2235,7 +2538,7 @@ mod findbol_findeol_tests {
     fn zle_utils_corpus_zlelineasstring_zero_len_empty() {
         let _g = crate::test_util::global_state_lock();
         let line: Vec<char> = vec!['a', 'b'];
-        assert_eq!(zlelineasstring(&line, 0, 0), "");
+        assert_eq!(zlelineasstring(&line, 0, 0, None, None, 0), "");
     }
 
     /// `zlelineasstring` empty slice → empty string.
@@ -2243,14 +2546,14 @@ mod findbol_findeol_tests {
     fn zle_utils_corpus_zlelineasstring_empty_slice() {
         let _g = crate::test_util::global_state_lock();
         let line: Vec<char> = vec![];
-        assert_eq!(zlelineasstring(&line, 0, 0), "");
+        assert_eq!(zlelineasstring(&line, 0, 0, None, None, 0), "");
     }
 
     /// `stringaszleline("hello")` returns Vec<char> matching ASCII.
     #[test]
     fn zle_utils_corpus_stringaszleline_ascii_passthrough() {
         let _g = crate::test_util::global_state_lock();
-        let v = stringaszleline("hello");
+        let v = stringaszleline("hello", 0, None, None, None);
         let s: String = v.iter().collect();
         assert_eq!(s, "hello");
     }
@@ -2259,7 +2562,7 @@ mod findbol_findeol_tests {
     #[test]
     fn zle_utils_corpus_stringaszleline_empty_returns_empty() {
         let _g = crate::test_util::global_state_lock();
-        assert!(stringaszleline("").is_empty());
+        assert!(stringaszleline("", 0, None, None, None).is_empty());
     }
 
     /// Round-trip: stringaszleline → zlelineasstring preserves ASCII.
@@ -2267,8 +2570,44 @@ mod findbol_findeol_tests {
     fn zle_utils_corpus_string_round_trip_ascii() {
         let _g = crate::test_util::global_state_lock();
         let input = "abc123";
-        let v = stringaszleline(input);
-        let s = zlelineasstring(&v, v.len(), 0);
+        let v = stringaszleline(input, 0, None, None, None);
+        let s = zlelineasstring(&v, v.len(), 0, None, None, 0);
         assert_eq!(s, input);
+    }
+
+    /// Metafied input collapses correctly (c:428 unmetafy).
+    /// Input `"a\x83\xc1b"` is `'a' + Meta + (0xc1) + 'b'` →
+    /// unmetafy collapses Meta+0xc1 → (0xc1^0x20 = 0xe1) → `"a\xe1b"`
+    /// which is valid UTF-8 for U+00E1 alone → decoded `['a','á','b']`.
+    /// Wait — 0xe1 alone is invalid UTF-8 (continuation byte). Adjust:
+    /// use the simpler case `'a' + Meta + 0xa0 → 'a' + 0x80` (also
+    /// invalid). Real round-trip needs the inverse `metafy()`. Here
+    /// we just verify Meta is stripped, not the multibyte decode.
+    #[test]
+    fn zle_utils_corpus_stringaszleline_meta_collapse() {
+        let _g = crate::test_util::global_state_lock();
+        // 'a' + Meta (0x83) + 'A' (0x41) — Meta+0x41 → 0x61 ('a')
+        // result bytes: 'a' 'a' = "aa", decoded to ['a','a'].
+        let raw: Vec<u8> = vec![b'a', 0x83, 0x41];
+        let s = unsafe { std::str::from_utf8_unchecked(&raw) };
+        let v = stringaszleline(s, 0, None, None, None);
+        assert_eq!(v.iter().collect::<String>(), "aa");
+    }
+
+    /// `outcs` adjusts for Meta-byte cursor positioning (c:391-393).
+    /// Input `"a" + Meta + "X" + "b"` with cursor at byte 3 (after Meta+X)
+    /// → post-unmetafy bytes are `['a', X^0x20, 'b']`, cursor at byte 2.
+    /// Codepoint cursor `outcs = 2`.
+    #[test]
+    fn zle_utils_corpus_stringaszleline_outcs_meta_adjust() {
+        let _g = crate::test_util::global_state_lock();
+        let raw: Vec<u8> = vec![b'a', 0x83, 0x41, b'b'];
+        let s = unsafe { std::str::from_utf8_unchecked(&raw) };
+        let mut outll: i32 = 0;
+        let mut outcs: i32 = 0;
+        let v = stringaszleline(s, 3, Some(&mut outll), None, Some(&mut outcs));
+        assert_eq!(v.len(), 3);
+        assert_eq!(outll, 3);
+        assert_eq!(outcs, 2); // c:483-484 — cursor at byte 3 → codepoint 2
     }
 }
