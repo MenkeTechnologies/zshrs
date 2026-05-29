@@ -1727,4 +1727,114 @@ mod tests {
         assert_eq!(r, 0, "mkdir -p with nested path returns 0");
         assert!(nested.exists(), "nested dir should exist after mkdir -p");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/files.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:708 — `getnumeric("0")` returns 0 with err=0.
+    #[test]
+    fn getnumeric_zero_returns_zero_no_err() {
+        let mut err = 0;
+        let r = getnumeric("0", &mut err);
+        assert_eq!(r, 0);
+        assert_eq!(err, 0);
+    }
+
+    /// c:708 — `getnumeric("12345")` returns 12345 with err=0.
+    #[test]
+    fn getnumeric_canonical_decimal() {
+        let mut err = 0;
+        let r = getnumeric("12345", &mut err);
+        assert_eq!(r, 12345);
+        assert_eq!(err, 0);
+    }
+
+    /// c:725 — `getnumeric("100abc")` returns 100 but sets err=1
+    /// (trailing non-digit).
+    #[test]
+    fn getnumeric_trailing_garbage_sets_err() {
+        let mut err = 0;
+        let r = getnumeric("100abc", &mut err);
+        assert_eq!(r, 100, "digits consumed");
+        assert_eq!(err, 1, "trailing non-digit sets err");
+    }
+
+    /// c:713 — `getnumeric("abc")` returns 0 and sets err=1 (no leading digit).
+    #[test]
+    fn getnumeric_no_leading_digit_sets_err() {
+        let mut err = 0;
+        let r = getnumeric("abc", &mut err);
+        assert_eq!(r, 0);
+        assert_eq!(err, 1);
+    }
+
+    /// c:708 — `getnumeric("")` empty input: no leading digit → err=1, ret=0.
+    #[test]
+    fn getnumeric_empty_sets_err() {
+        let mut err = 0;
+        let r = getnumeric("", &mut err);
+        assert_eq!(r, 0);
+        assert_eq!(err, 1, "empty input is invalid");
+    }
+
+    /// c:713 — getnumeric with negative-sign prefix sets err (no leading digit).
+    #[test]
+    fn getnumeric_negative_sign_sets_err() {
+        let mut err = 0;
+        let r = getnumeric("-5", &mut err);
+        assert_eq!(r, 0);
+        assert_eq!(err, 1, "minus sign isn't a digit");
+    }
+
+    /// c:53 — `bin_sync` always returns 0 (no-op success).
+    #[test]
+    fn bin_sync_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_sync("sync", &[], &ops, 0);
+        assert_eq!(r, 0, "sync builtin must return 0");
+    }
+
+    /// c:222 — `domkdir` on existing dir returns nonzero (already exists).
+    #[test]
+    fn domkdir_existing_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        // Attempt mkdir of the already-existing temp dir.
+        let r = domkdir("mkdir", dir.path().to_str().unwrap(), 0o755, 0);
+        assert_ne!(r, 0, "existing dir → nonzero error");
+    }
+
+    /// c:1205 — `mv_rename` on missing source path returns nonzero.
+    #[test]
+    fn mv_rename_missing_source_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let src = std::ffi::CString::new("/__nonexistent_zshrs_xyz__").unwrap();
+        let dst = std::ffi::CString::new("/tmp/zshrs_mv_dst").unwrap();
+        let r = mv_rename(&src, &dst);
+        assert_ne!(r, 0, "missing source → error");
+    }
+
+    /// c:1210 — `mv_symlink` to nonexistent target returns nonzero or
+    /// succeeds creating dangling link. Test no panic.
+    #[test]
+    fn mv_symlink_no_panic_on_dangling() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let dst_path = dir.path().join("zshrs_symlink_test");
+        let src = std::ffi::CString::new("/__nonexistent_zshrs_xyz__").unwrap();
+        let dst = std::ffi::CString::new(dst_path.to_str().unwrap()).unwrap();
+        let _ = mv_symlink(&src, &dst);
+    }
+
+    /// Lifecycle stubs return 0.
+    #[test]
+    fn files_lifecycle_stubs_return_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+        assert_eq!(boot_(std::ptr::null()), 0);
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
