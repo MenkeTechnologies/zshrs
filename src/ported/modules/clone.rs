@@ -481,4 +481,72 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/clone.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:44 — `bin_clone` with no args returns 1 ("terminal required").
+    /// The Rust port's defensive guard at args.first() handles direct
+    /// callers; C BUILTIN spec (clone.c:110) enforces 1,1 arity via the
+    /// dispatcher.
+    #[test]
+    fn bin_clone_no_args_returns_one_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_clone("clone", &[], &ops, 0);
+        assert_eq!(r, 1, "no args → 1 (terminal required)");
+    }
+
+    /// c:49 — `bin_clone /nonexistent/tty` returns 1 (open(2) fails).
+    #[test]
+    fn bin_clone_nonexistent_tty_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_clone(
+            "clone",
+            &["/__never_exists_zshrs_tty__".to_string()],
+            &ops,
+            0,
+        );
+        assert_eq!(r, 1, "open of nonexistent tty → 1");
+    }
+
+    /// c:49 — `bin_clone /dev/null` opens successfully (not a tty but
+    /// open(2) accepts it). Result depends on fork() outcome — pin
+    /// no-panic only. The function involves fork(2) which makes
+    /// outcome non-deterministic under the test harness.
+    #[test]
+    #[cfg(unix)]
+    #[ignore = "ZSHRS BUG: bin_clone(/dev/null) returns 0 — fork() succeeds, parent doesn't validate tty; C should fail via setsid/ioctl path"]
+    fn bin_clone_non_tty_path_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_clone("clone", &["/dev/null".to_string()], &ops, 0);
+        assert_eq!(r, 1, "/dev/null is not a tty → 1");
+    }
+
+    /// c:213 — `setup_(NULL)` returns 0 (split out for per-hook resolution).
+    #[test]
+    fn clone_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:220 — `features_` returns 0 + populates expected list.
+    #[test]
+    fn clone_features_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let mut features: Vec<String> = Vec::new();
+        let r = features_(std::ptr::null(), &mut features);
+        assert_eq!(r, 0);
+    }
+
+    /// c:228 — `enables_(NULL, _)` doesn't panic on None enables ref.
+    #[test]
+    fn clone_enables_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
 }
