@@ -60,6 +60,15 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # zsh is required by tests/zsh_zshrs_demo_equivalence.rs which
+      # compares system-zsh stdout vs `zshrs --zsh` stdout for every
+      # demo under examples/demos/. macOS-runner ships zsh by default;
+      # ubuntu-runner needs an explicit install. Without zsh the
+      # equivalence tests silently skip — installing here makes the
+      # contract enforced in CI rather than aspirational.
+      - name: Install zsh (ubuntu runner)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh
       - run: cargo test --locked --no-fail-fast
 
   doc:
