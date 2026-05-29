@@ -5543,4 +5543,109 @@ mod tests {
             Some(crate::ported::signals_h::SIGDEBUG)
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/jobs.c
+    // c:93 dtime_tv / c:105 dtime_ts / c:524 get_usage / c:866 get_clktck /
+    // c:885 printhhmmss / c:1172 sigmsg / c:340 hasprocs
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:866 — `get_clktck` returns i64 (compile-time type pin).
+    #[test]
+    fn get_clktck_returns_i64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i64 = get_clktck();
+    }
+
+    /// c:866 — `get_clktck` returns positive value (clock ticks per sec).
+    #[test]
+    fn get_clktck_returns_positive_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let tk = get_clktck();
+        assert!(tk > 0, "clock tick rate must be > 0, got {}", tk);
+    }
+
+    /// c:866 — `get_clktck` is deterministic.
+    #[test]
+    fn get_clktck_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = get_clktck();
+        for _ in 0..5 {
+            assert_eq!(get_clktck(), first, "clock tick rate must be stable");
+        }
+    }
+
+    /// c:885 — `printhhmmss(0.0)` returns String (compile-time type pin).
+    #[test]
+    fn printhhmmss_returns_string_type() {
+        let _: String = printhhmmss(0.0);
+    }
+
+    /// c:885 — `printhhmmss` is pure for arbitrary seconds.
+    #[test]
+    fn printhhmmss_is_pure() {
+        for s in [0.0, 1.0, 60.0, 3661.5, -1.0] {
+            let first = printhhmmss(s);
+            for _ in 0..3 {
+                assert_eq!(printhhmmss(s), first,
+                    "printhhmmss({}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:885 — `printhhmmss(0)` produces "0.000" (sub-minute, no `:`).
+    /// Per C body c:893-895: only adds h/m components when total exceeds them.
+    #[test]
+    fn printhhmmss_zero_short_form() {
+        let s = printhhmmss(0.0);
+        assert!(s.contains('.'), "sub-minute must use 'S.MMM' form, got {:?}", s);
+        assert!(s.contains('0'), "must contain '0' digit, got {:?}", s);
+    }
+
+    /// c:885 — `printhhmmss(>60)` adds minute colon separator.
+    #[test]
+    fn printhhmmss_over_minute_adds_colon() {
+        let s = printhhmmss(125.0);  // 2m 5s
+        assert!(s.contains(':'),
+            "over 60s must contain ':' separator, got {:?}", s);
+    }
+
+    /// c:1172 — `sigmsg` returns &'static str (compile-time type pin).
+    #[test]
+    fn sigmsg_returns_static_str_type() {
+        let _: &'static str = sigmsg(0);
+    }
+
+    /// c:1172 — `sigmsg(N)` is pure for arbitrary signals.
+    #[test]
+    fn sigmsg_is_pure() {
+        for s in [0i32, 1, 9, 15, 999] {
+            let first = sigmsg(s);
+            for _ in 0..3 {
+                assert_eq!(sigmsg(s), first,
+                    "sigmsg({}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:340 — `hasprocs(empty_table, _)` returns false.
+    #[test]
+    fn hasprocs_empty_table_returns_false() {
+        let empty: Vec<job> = vec![];
+        assert!(!hasprocs(&empty, 0), "empty table → false");
+    }
+
+    /// c:340 — `hasprocs` returns bool (compile-time type pin).
+    #[test]
+    fn hasprocs_returns_bool_type() {
+        let empty: Vec<job> = vec![];
+        let _: bool = hasprocs(&empty, 0);
+    }
+
+    /// c:524 — `get_usage` returns timeinfo (compile-time type pin).
+    #[test]
+    fn get_usage_returns_timeinfo_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: timeinfo = get_usage();
+    }
 }
