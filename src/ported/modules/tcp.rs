@@ -1380,4 +1380,109 @@ mod tests {
         assert_eq!(cleanup_(std::ptr::null()), 0);
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/tcp.c
+    // c:65 zsh_inet_ntop / c:83 zsh_inet_pton / c:107 zsh_gethostbyname2
+    // c:147 zts_alloc / c:172 tcp_socket / c:199 zts_delete / c:218 zts_byfd
+    // c:227 tcp_cleanup / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:65 — `zsh_inet_ntop` is deterministic.
+    #[test]
+    fn zsh_inet_ntop_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let addr = [127u8, 0, 0, 1];
+        let first = zsh_inet_ntop(libc::AF_INET, &addr);
+        for _ in 0..5 {
+            assert_eq!(zsh_inet_ntop(libc::AF_INET, &addr), first);
+        }
+    }
+
+    /// c:65 — `zsh_inet_ntop` AF_UNSPEC returns None.
+    #[test]
+    fn zsh_inet_ntop_af_unspec_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let addr = [127u8, 0, 0, 1];
+        assert!(zsh_inet_ntop(libc::AF_UNSPEC, &addr).is_none());
+    }
+
+    /// c:83 — `zsh_inet_pton` empty src returns 0.
+    #[test]
+    fn zsh_inet_pton_empty_src_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut dst = [0u8; 4];
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "", &mut dst), 0);
+    }
+
+    /// c:107 — `zsh_gethostbyname2` for nonexistent name returns empty Vec.
+    #[test]
+    fn zsh_gethostbyname2_nonexistent_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zsh_gethostbyname2("definitely_not_a_real_host_xyz_zshrs.invalid",
+                                    libc::AF_INET);
+        assert!(r.is_empty(), "nonexistent host → empty vec");
+    }
+
+    /// c:107 — `zsh_gethostbyname2` empty name returns empty Vec.
+    #[test]
+    fn zsh_gethostbyname2_empty_name_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zsh_gethostbyname2("", libc::AF_INET);
+        assert!(r.is_empty());
+    }
+
+    /// c:188 — `ztcp_free_session(invalid)` is safe.
+    #[test]
+    fn ztcp_free_session_invalid_handle_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        // 0 / max / random — should be safe.
+        let _ = ztcp_free_session(0);
+        let _ = ztcp_free_session(usize::MAX);
+        let _ = ztcp_free_session(99999);
+    }
+
+    /// c:199 — `zts_delete(0)` is safe (stdin fd, but our table doesn't
+    /// own it).
+    #[test]
+    fn zts_delete_fd_zero_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = zts_delete(0);
+    }
+
+    /// c:227 — `tcp_cleanup` is idempotent.
+    #[test]
+    fn tcp_cleanup_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            tcp_cleanup();
+        }
+    }
+
+    /// c:147 — `zts_alloc(N)` followed by `zts_alloc(M)` returns
+    /// monotonically increasing indices (each alloc gets a fresh slot).
+    #[test]
+    fn zts_alloc_returns_monotonic_indices() {
+        let _g = crate::test_util::global_state_lock();
+        let a = zts_alloc(0);
+        let b = zts_alloc(0);
+        let c = zts_alloc(0);
+        assert!(b > a, "second alloc > first ({} > {})", b, a);
+        assert!(c > b, "third alloc > second ({} > {})", c, b);
+    }
+
+    /// c:844-890 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn tcp_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
 }
