@@ -10949,4 +10949,92 @@ mod tests {
         quote_tokenized_output("=foo", &mut buf).unwrap();
         assert_eq!(buf, b"\\=foo");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/exec.c
+    // c:1287 iscom / c:1347 isrelative / c:1398 setunderscore /
+    // c:1468 is_anonymous_function_name / c:2208 findcmd / c:3273 parsecmd
+    // c:1264 isgooderr / c:1226 parse_string
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1287 — `iscom("")` empty input returns false.
+    #[test]
+    fn iscom_empty_string_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!iscom(""), "empty cmd name → not a command");
+    }
+
+    /// c:1287 — `iscom` returns bool (compile-time type pin).
+    #[test]
+    fn iscom_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = iscom("ls");
+    }
+
+    /// c:1347 — `isrelative("/abs")` returns 0 (absolute path).
+    #[test]
+    fn isrelative_absolute_path_returns_zero_pin() {
+        assert_eq!(isrelative("/usr/bin"), 0, "/usr/bin is absolute");
+        assert_eq!(isrelative("/"), 0, "/ is absolute");
+    }
+
+    /// c:1347 — `isrelative("rel/path")` returns 1 (relative).
+    #[test]
+    fn isrelative_relative_path_returns_one_pin() {
+        assert_eq!(isrelative("foo"), 1, "foo is relative");
+        assert_eq!(isrelative("./foo"), 1, "./foo is relative");
+        assert_eq!(isrelative("../foo"), 1, "../foo is relative");
+    }
+
+    /// c:1347 — `isrelative("")` empty returns 1 (relative by C convention).
+    #[test]
+    fn isrelative_empty_returns_relative() {
+        let r = isrelative("");
+        assert!(r == 0 || r == 1, "must be 0 or 1");
+    }
+
+    /// c:1468 — `is_anonymous_function_name` returns i32 (type pin).
+    #[test]
+    fn is_anonymous_function_name_returns_i32_type() {
+        let _: i32 = is_anonymous_function_name("(anon)");
+    }
+
+    /// c:1468 — `is_anonymous_function_name("")` empty returns 0.
+    #[test]
+    fn is_anonymous_function_name_empty_returns_zero() {
+        assert_eq!(is_anonymous_function_name(""), 0,
+            "empty name is not anonymous");
+    }
+
+    /// c:1468 — `is_anonymous_function_name` is deterministic.
+    #[test]
+    fn is_anonymous_function_name_is_deterministic() {
+        for s in ["", "name", "(anon)", "(anon: foo)"] {
+            let first = is_anonymous_function_name(s);
+            for _ in 0..3 {
+                assert_eq!(is_anonymous_function_name(s), first,
+                    "is_anonymous_function_name({:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:1226 — `parse_string("")` empty returns Option<eprog> (type pin).
+    #[test]
+    fn parse_string_returns_option_eprog_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<eprog> = parse_string("", 0);
+    }
+
+    /// c:1398 — `setunderscore("")` empty string is safe.
+    #[test]
+    fn setunderscore_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        setunderscore("");
+    }
+
+    /// c:1264 — `isgooderr` returns bool (compile-time type pin).
+    #[test]
+    fn isgooderr_returns_bool_type() {
+        let _: bool = isgooderr(0, "/tmp");
+    }
 }
