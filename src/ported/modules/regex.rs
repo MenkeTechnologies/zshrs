@@ -87,7 +87,7 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     // regex crate ACCEPTS an empty pattern as "matches everywhere"
     // (POSIX-style). To match zsh, reject empty patterns explicitly.
     if rhre.is_empty() {
-        zregex_regerrwarn(
+        crate::regex_module::zregex_regerrwarn(
             "-regex-match",
             "failed to compile regex: empty (sub)expression",
         );
@@ -98,7 +98,7 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
         Ok(r) => r,
         Err(_) => {
             // c:79-81
-            zregex_regerrwarn("-regex-match", "failed to compile regex");
+            crate::regex_module::zregex_regerrwarn("-regex-match", "failed to compile regex");
             return 0; // c:81 break;
         }
     };
@@ -712,5 +712,119 @@ mod tests {
     fn regex_boot_returns_zero_pin() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(crate::regex_module::boot_(std::ptr::null()), 0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/regex.c
+    // c:40 zregex_regerrwarn / c:58 zcond_regex_match / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:58 — `zcond_regex_match` return strictly boolean (0/1).
+    #[test]
+    fn zcond_regex_match_return_in_boolean_set() {
+        let _g = crate::test_util::global_state_lock();
+        for (args, id) in [
+            (vec!["a"], 0i32),
+            (vec!["a", "b"], 0),
+            (vec![], 0),
+            (vec!["abc", "abc"], 0),
+            (vec!["a*", ""], 0),
+        ] {
+            let r = crate::regex_module::zcond_regex_match(&args, id);
+            assert!(r == 0 || r == 1,
+                "zcond_regex_match({:?}, {}) = {} not in {{0,1}}", args, id, r);
+        }
+    }
+
+    /// c:58 — `zcond_regex_match` is pure across repeated identical calls.
+    #[test]
+    fn zcond_regex_match_full_sweep_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for (args, id) in [
+            (vec!["pat", "val"], 0i32),
+            (vec!["", ""], 0),
+            (vec!["abc"], 0),
+            (vec!["[a-z]+", "xyz"], 0),
+        ] {
+            let first = crate::regex_module::zcond_regex_match(&args, id);
+            for _ in 0..5 {
+                assert_eq!(crate::regex_module::zcond_regex_match(&args, id), first,
+                    "({:?}, {}) must be deterministic", args, id);
+            }
+        }
+    }
+
+    /// c:40 — `zregex_regerrwarn(empty, empty)` is safe.
+    #[test]
+    fn zregex_regerrwarn_both_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        crate::regex_module::zregex_regerrwarn("", "");
+    }
+
+    /// c:40 — `zregex_regerrwarn` with multi-byte strings doesn't panic.
+    #[test]
+    fn zregex_regerrwarn_multibyte_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        crate::regex_module::zregex_regerrwarn("プレフィックス", "エラー");
+        crate::regex_module::zregex_regerrwarn("préfixe", "erreur");
+    }
+
+    /// c:40 — `zregex_regerrwarn` repeated calls don't leak state.
+    #[test]
+    fn zregex_regerrwarn_repeated_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..20 {
+            crate::regex_module::zregex_regerrwarn("prefix", "msg");
+        }
+    }
+
+    /// c:58 — `zcond_regex_match` with no arguments returns 0.
+    #[test]
+    fn zcond_regex_match_no_args_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(crate::regex_module::zcond_regex_match(&[], 0), 0);
+    }
+
+    /// c:58 — `zcond_regex_match` with large input doesn't panic.
+    #[test]
+    fn zcond_regex_match_large_input_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let big = "x".repeat(10000);
+        let pat = "x+";
+        let _ = crate::regex_module::zcond_regex_match(&[pat, big.as_str()], 0);
+    }
+
+    /// c:215-248 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn regex_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::regex_module::*;
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:215 — setup_ idempotent.
+    #[test]
+    fn regex_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(crate::regex_module::setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:248 — finish_ idempotent.
+    #[test]
+    fn regex_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(crate::regex_module::finish_(std::ptr::null()), 0);
+        }
     }
 }
