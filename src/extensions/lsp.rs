@@ -6423,6 +6423,42 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                 col += end;
                 continue;
             }
+            // Long CLI flag `--foo` / `--foo-bar` — emit as a single
+            // OPERATOR token so the whole flag highlights uniformly.
+            // Before this branch, `--verbose` fell through every
+            // classifier (`-` isn't IUSER/IDENT, no operator match)
+            // and ended up unhighlighted (default editor color) while
+            // adjacent words stayed colored — the user sees an
+            // inconsistent flag display reported in the screenshot.
+            //
+            // Short flag `-f` is intentionally NOT handled here (zsh's
+            // `-x`/`-n`/etc. already render fine as `-` + word; only
+            // the double-dash long form was visibly broken).
+            if rest.starts_with("--") && rest.len() > 2
+                && rest.as_bytes()[2].is_ascii_alphabetic()
+            {
+                let bb = rest.as_bytes();
+                let mut end = 2;
+                while end < bb.len() {
+                    let c = bb[end];
+                    if c.is_ascii_alphanumeric() || c == b'-' || c == b'_' {
+                        end += 1;
+                    } else {
+                        break;
+                    }
+                }
+                push_tok(
+                    &mut data,
+                    &mut last_line,
+                    &mut last_col,
+                    ln,
+                    col as u32,
+                    end as u32,
+                    4, // operator
+                );
+                col += end;
+                continue;
+            }
             // Brace-range expansion `{X..Y}` / `{X..Y..N}` — emit as
             // a single OPERATOR token so the editor colors the whole
             // span uniformly. Without this, the word-classifier below
@@ -9071,6 +9107,39 @@ mod tests {
         }
         assert!(found,
             "brace range `{{A..E}}` must emit a single 6-byte operator token, got data={:?}", data);
+    }
+
+    /// Long-form CLI flags `--verbose` / `--debug` emit a single
+    /// OPERATOR token so the whole `--word` highlights uniformly.
+    /// Before fix the `--` fell through to `col += 1` and the rest
+    /// of the flag word was unhighlighted, producing the visible
+    /// "stripe" reported in the user's screenshot.
+    #[test]
+    fn semantic_tokens_long_cli_flag_emits_operator_span() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        let uri = "file:///t.zsh";
+        state.docs.insert(uri.to_string(),
+            "parse_demo --verbose --debug arg1\n".to_string());
+        let r = semantic_tokens(&state, &json!({ "textDocument": { "uri": uri } }));
+        let data = r["data"].as_array().expect("data array");
+        // Need at least one operator token of len=9 (`--verbose`)
+        // AND one of len=7 (`--debug`).
+        let mut saw_9_op = false;
+        let mut saw_7_op = false;
+        for chunk in data.chunks(5) {
+            if chunk.len() == 5 && chunk[3].as_u64() == Some(4) {
+                match chunk[2].as_u64() {
+                    Some(9) => saw_9_op = true,
+                    Some(7) => saw_7_op = true,
+                    _ => {}
+                }
+            }
+        }
+        assert!(saw_9_op,
+            "`--verbose` (9 bytes) must emit an operator token, got {:?}", data);
+        assert!(saw_7_op,
+            "`--debug` (7 bytes) must emit an operator token, got {:?}", data);
     }
 
     /// Stepped brace range `{1..10..2}` covers the full 10-byte span
