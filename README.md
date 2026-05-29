@@ -409,19 +409,20 @@ intercept before git { …; }       # AOP advice fires for both literal and dyna
 
 ### Runnable demos
 
-[`examples/demos/*.zsh`](examples/demos/) — 85 self-contained scripts, every one
-pinned to the same zshrs binary that runs CI. Three batches:
+[`examples/demos/*.zsh`](examples/demos/) — 110 self-contained scripts, every
+one pinned to the same zshrs binary that runs CI. Four batches:
 
 | Range | Theme |
 |---|---|
 | 01–30 | shell fundamentals (arithmetic, arrays, assoc, control flow, fn/recursion, brace + parameter expansion, parameter flags, heredocs, command/process subst, pipes, printf, traps, IFS, anon fn, positional args, typeset, pattern match) |
 | 31–60 | data structures (stack, queue, set ops), sorting (bubble/insertion/selection/counting), search (binary), classic algorithms (matrix mul, roman, hanoi, collatz, happy, armstrong, perfect, rot13, atbash, GCD/LCM), zsh idioms (CSV, env, file tests, date, read loop, exit codes, atoi, mapfile) |
-| 61–85 | zsh C-feature demos — each cites the `Src/*.c` it exercises: `:h:t:r:e:a:A:s` modifiers (`Src/hist.c`), parameter flags `(M)(P)(Q)(V)(j)(s)(o)(O)(u)(L)(U)(C)(l)(r)` (`Src/subst.c paramsubst`), glob qualifiers `(.)(/)(@)(N)(om)(oL)` (`Src/glob.c`), extended glob `^pat ~ # ## (alt|alt) **/*` (`Src/pattern.c`), associative-array advanced ops (`Src/params.c` PM_HASHED), array set ops `:|`/`:*`, pattern-filter `${arr:#pat}` / `(M):#`, typeset -i base (PM_INTEGER + pm->base), `print -aC` columnar (`Src/builtin.c bin_print`), `print -P` prompt escapes (`Src/prompt.c`), `zparseopts` (`Src/Modules/zutil.c`), `zsh/mathfunc` (`Src/Modules/mathfunc.c`), `zsh/datetime` (`Src/Modules/datetime.c`), `setopt local_options`, `eval` + dynamic dispatch (`Src/builtin.c bin_eval`), anonymous fns (`Src/exec.c is_anonymous_function_name`), compound defaults `:- := :+ :?`, advanced brace expansion (`Src/glob.c bracecomplete`), history-style word modifiers, complex split/join, mini calc REPL. |
+| 61–85 | zsh C-feature demos — each cites `Src/*.c`: `:h:t:r:e:a:A:s` modifiers (`Src/hist.c`), parameter flags `(M)(P)(Q)(V)(j)(s)(o)(O)(u)(L)(U)(C)(l)(r)` (`Src/subst.c paramsubst`), glob qualifiers `(.)(/)(@)(N)(om)(oL)` (`Src/glob.c`), extended glob `^pat ~ # ## (alt\|alt) **/*` (`Src/pattern.c`), associative-array advanced ops (`Src/params.c` PM_HASHED), array set ops `:\|`/`:*`, pattern-filter `${arr:#pat}` / `(M):#`, typeset -i base, `print -aC` columnar (`Src/builtin.c bin_print`), `print -P` prompt escapes (`Src/prompt.c`), `zparseopts` (`Src/Modules/zutil.c`), `zsh/mathfunc` (`Src/Modules/mathfunc.c`), `zsh/datetime` (`Src/Modules/datetime.c`), `setopt local_options`, `eval` + dynamic dispatch (`Src/builtin.c bin_eval`), anonymous fns (`Src/exec.c is_anonymous_function_name`), compound defaults, advanced brace expansion (`Src/glob.c bracecomplete`), history-style word modifiers, complex split/join, mini calc REPL |
+| 86–110 | advanced runtime patterns — `setopt` exhaustive (`Src/options.c`), `read -A -d` (`Src/builtin.c bin_read`), printf format dispatch, `[[ … =~ … ]]` + `$match` (`Src/cond.c cond_match` + `Src/Modules/regex.c`), `type`/`whence`/`which` (`Src/builtin.c bin_whence`), `hash` cmd cache (`Src/builtin.c bin_hash`), C-style for with multi-counter (`Src/parse.c`), 2D-assoc emulation, case alternation + fallthrough `;&` (`Src/exec.c execcase`), fd redirection + `&>` + `tee` (`Src/exec.c addfd`), strict mode `set -euo pipefail`, variable indirection `(P)` + `eval`, coreutils builtins (anti-fork extension), negative+ranged indexing, zsh-features summary, subshell-vs-group scope, function introspection (`functions[]` assoc), EXIT/ERR/ZERR traps, arithmetic edge cases, dispatch table via assoc, 3-stage pipelines + `pipefail`, eval metaprogramming, globsubst/`=cmd`/nullglob, boolean truth tables, `getopts`+`until`+`repeat`+`time`+`break N` |
 
 ```bash
 cargo build --bin zshrs
 target/debug/zshrs --zsh examples/demos/10_fizzbuzz.zsh
-cargo test --test examples_demos_ci          # full sweep, ~4s
+cargo test --test examples_demos_ci          # full sweep, ~4.5s
 ```
 
 ---
