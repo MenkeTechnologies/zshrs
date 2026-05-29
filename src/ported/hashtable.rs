@@ -3443,4 +3443,121 @@ mod tests {
         let _ = removehashnode(&mut h, "x");
         assert!(gethashnode2(&h, "x").is_none());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hashtable.c hasher + hnamcmp +
+    // generic add/remove primitives.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:86 — `hasher` of empty string returns 0 (no bytes contribute).
+    #[test]
+    fn hasher_empty_string_returns_zero() {
+        assert_eq!(hasher(""), 0, "no bytes → hash 0");
+    }
+
+    /// c:86 — `hasher` is deterministic: same input → same output.
+    #[test]
+    fn hasher_is_deterministic() {
+        let h1 = hasher("test_string");
+        let h2 = hasher("test_string");
+        assert_eq!(h1, h2, "hasher must be deterministic");
+    }
+
+    /// c:86 — `hasher` differentiates between different strings
+    /// (no trivial collisions on common inputs).
+    #[test]
+    fn hasher_distinguishes_common_strings() {
+        assert_ne!(hasher("foo"), hasher("bar"));
+        assert_ne!(hasher("a"), hasher("b"));
+        assert_ne!(hasher("test"), hasher("Test"), "case-sensitive");
+    }
+
+    /// c:86 — hash of single char "a" matches the formula
+    /// `0 + (0<<5) + 'a' = 0x61` (verifies inline formula).
+    #[test]
+    fn hasher_single_char_matches_formula() {
+        let h = hasher("a");
+        assert_eq!(h, b'a' as u32, "single char 'a' → 0x61");
+        let h = hasher("0");
+        assert_eq!(h, b'0' as u32, "single char '0' → 0x30");
+    }
+
+    /// c:86 — hasher of "ab": h=0 → h=0+(0<<5)+'a'=0x61
+    /// → h=0x61+(0x61<<5)+'b' = 0x61 + 0xC20 + 0x62 = 0xCE3.
+    #[test]
+    fn hasher_two_char_matches_formula() {
+        let h = hasher("ab");
+        let expected: u32 = 0u32
+            .wrapping_add(0u32.wrapping_shl(5))
+            .wrapping_add(b'a' as u32);
+        let expected = expected
+            .wrapping_add(expected.wrapping_shl(5))
+            .wrapping_add(b'b' as u32);
+        assert_eq!(h, expected, "two-char formula must match");
+    }
+
+    /// c:86 — uses wrapping arithmetic so long strings don't panic.
+    #[test]
+    fn hasher_long_string_does_not_panic() {
+        let s = "a".repeat(10_000);
+        let _ = hasher(&s);
+    }
+
+    /// c:345 — `hnamcmp("abc", "abc")` returns Equal.
+    #[test]
+    fn hnamcmp_equal_strings_return_equal() {
+        assert_eq!(hnamcmp("abc", "abc"), std::cmp::Ordering::Equal);
+        assert_eq!(hnamcmp("", ""), std::cmp::Ordering::Equal);
+    }
+
+    /// c:345 — `hnamcmp` orders lexicographically.
+    #[test]
+    fn hnamcmp_lex_order() {
+        assert_eq!(hnamcmp("abc", "abd"), std::cmp::Ordering::Less);
+        assert_eq!(hnamcmp("abd", "abc"), std::cmp::Ordering::Greater);
+    }
+
+    /// c:345 — empty string sorts before any non-empty string.
+    #[test]
+    fn hnamcmp_empty_sorts_first() {
+        assert_eq!(hnamcmp("", "x"), std::cmp::Ordering::Less);
+        assert_eq!(hnamcmp("x", ""), std::cmp::Ordering::Greater);
+    }
+
+    /// `emptyhashtable` drops all entries.
+    #[test]
+    fn emptyhashtable_clears_all_entries() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        h.insert("a".to_string(), 1);
+        h.insert("b".to_string(), 2);
+        h.insert("c".to_string(), 3);
+        emptyhashtable(&mut h);
+        assert!(h.is_empty(), "all entries dropped after emptyhashtable");
+    }
+
+    /// `deletehashtable` clears the map (Rust semantics).
+    #[test]
+    fn deletehashtable_clears_all_entries() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        h.insert("x".to_string(), 42);
+        deletehashtable(&mut h);
+        assert!(h.is_empty());
+    }
+
+    /// `removehashnode` on missing key returns None (no panic).
+    #[test]
+    fn removehashnode_missing_returns_none() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        let prev = removehashnode(&mut h, "never_there");
+        assert!(prev.is_none(), "remove of missing key → None");
+    }
+
+    /// `addhashnode` overwriting existing key drops old value silently.
+    #[test]
+    fn addhashnode_overwrite_does_not_panic() {
+        let mut h: HashMap<String, String> = HashMap::new();
+        addhashnode(&mut h, "k", "first".into());
+        addhashnode(&mut h, "k", "second".into());
+        assert_eq!(gethashnode2(&h, "k"), Some(&"second".to_string()));
+    }
 }
