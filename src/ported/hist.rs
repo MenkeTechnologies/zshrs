@@ -1195,9 +1195,17 @@ pub fn herrflush() {
     }
 }
 
-/// Port of `int getargc(Histent ehist)` from Src/hist.c.
+/// Port of `int getargc(Histent ehist)` from Src/hist.c:556.
+/// C body: `return ehist->nwords ? ehist->nwords-1 : 0;`
+/// Returns the number of word designators (nwords - 1, since word 0
+/// is the command name and arguments start at word 1).
 pub fn getargc(entry: &histent) -> usize {
-    entry.nwords as usize
+    // c:558
+    if entry.nwords > 0 {
+        (entry.nwords - 1) as usize
+    } else {
+        0
+    }
 }
 
 /// Port of `int substfailed(void)` from Src/hist.c:562.
@@ -6709,10 +6717,8 @@ mod subst_modifier_tests {
     /// `getargc(entry)` returns `entry.nwords - 1` (or 0 if nwords=0).
     /// C `Src/hist.c:556`:
     ///   `return ehist->nwords ? ehist->nwords-1 : 0;`
-    /// ZSHRS BUG: Rust port at hist.rs:1199 returns plain `entry.nwords`
-    /// (off-by-one) — diverges from C subtraction.
+    /// Fixed: previously Rust returned plain `entry.nwords` (off-by-one).
     #[test]
-    #[ignore = "ZSHRS BUG: getargc returns nwords (Rust) instead of nwords-1 (C hist.c:557) — off-by-one"]
     fn getargc_returns_nwords_minus_one() {
         let _g = crate::test_util::global_state_lock();
         // Build a fake histent with nwords=3. C returns 2; current
@@ -6764,10 +6770,9 @@ mod subst_modifier_tests {
         assert_eq!(getargc(&entry), 0, "nwords=0 → 0 (both C and Rust)");
     }
 
-    /// `getargc(entry)` with nwords=1 — C returns 0 (1-1), Rust
-    /// off-by-one returns 1.
+    /// `getargc(entry)` with nwords=1 — C returns 0 (1-1).
+    /// Fixed: matches C semantics now.
     #[test]
-    #[ignore = "ZSHRS BUG: getargc off-by-one (see getargc_returns_nwords_minus_one)"]
     fn getargc_nwords_one_returns_zero() {
         let _g = crate::test_util::global_state_lock();
         let entry = histent {
@@ -6879,11 +6884,10 @@ mod subst_modifier_tests {
         assert!(hist_ring.lock().unwrap().is_empty());
     }
 
-    /// `getargc(entry)` returns entry.nwords as usize (current impl).
-    /// Documented separately from the BUG test — pins what the code
-    /// actually does today.
+    /// `getargc(entry)` for nwords=5 returns 4 per C `nwords - 1`.
+    /// Pins post-fix C-correct semantics.
     #[test]
-    fn getargc_returns_nwords_as_usize() {
+    fn getargc_returns_nwords_minus_one_for_five() {
         let _g = crate::test_util::global_state_lock();
         let entry = histent {
             node: crate::ported::zsh_h::hashnode {
@@ -6900,6 +6904,6 @@ mod subst_modifier_tests {
             nwords: 5,
             histnum: 0,
         };
-        assert_eq!(getargc(&entry), 5, "Rust returns nwords as-is");
+        assert_eq!(getargc(&entry), 4, "C: 5-1 = 4");
     }
 }
