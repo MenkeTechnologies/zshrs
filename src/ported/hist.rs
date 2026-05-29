@@ -6787,4 +6787,119 @@ mod subst_modifier_tests {
         };
         assert_eq!(getargc(&entry), 0, "nwords=1 → 0 (1-1) per C");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hist.c histreduceblanks.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1240 — `histreduceblanks("")` returns empty.
+    #[test]
+    fn histreduceblanks_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(histreduceblanks(""), "");
+    }
+
+    /// c:1240 — `histreduceblanks` collapses multiple spaces to one.
+    #[test]
+    fn histreduceblanks_collapses_runs_of_spaces() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(histreduceblanks("a    b"), "a b");
+        assert_eq!(histreduceblanks("a  b  c"), "a b c");
+    }
+
+    /// c:1240 — `histreduceblanks` collapses tabs same as spaces.
+    #[test]
+    fn histreduceblanks_collapses_tabs_to_space() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(histreduceblanks("a\tb"), "a b", "tab → space");
+        assert_eq!(histreduceblanks("a\t\t\tb"), "a b", "tab run → 1 space");
+        assert_eq!(histreduceblanks("a \t \tb"), "a b", "mixed run → 1 space");
+    }
+
+    /// c:1240 — strips leading whitespace.
+    #[test]
+    fn histreduceblanks_strips_leading_whitespace() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(histreduceblanks("   abc"), "abc");
+        assert_eq!(histreduceblanks("\t\tabc"), "abc");
+    }
+
+    /// c:1240 — strips trailing whitespace.
+    #[test]
+    fn histreduceblanks_strips_trailing_whitespace() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(histreduceblanks("abc   "), "abc");
+        assert_eq!(histreduceblanks("abc\t\t"), "abc");
+    }
+
+    /// c:1240 — pure whitespace input returns empty.
+    #[test]
+    fn histreduceblanks_only_whitespace_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(histreduceblanks("   "), "");
+        assert_eq!(histreduceblanks("\t\t\t"), "");
+        assert_eq!(histreduceblanks(" \t \t "), "");
+    }
+
+    /// c:1240 — `histreduceblanks` is idempotent.
+    #[test]
+    fn histreduceblanks_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for input in &["a  b", "   foo", "x\ty\tz", "  hello world  "] {
+            let once = histreduceblanks(input);
+            let twice = histreduceblanks(&once);
+            assert_eq!(once, twice, "must be idempotent on {:?}", input);
+        }
+    }
+
+    /// c:1240 — single space between words is preserved (already minimal).
+    #[test]
+    fn histreduceblanks_single_space_preserved() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(histreduceblanks("a b"), "a b");
+        assert_eq!(histreduceblanks("hello world"), "hello world");
+    }
+
+    /// c:50 — inblank is space/tab ONLY; newline is NOT collapsed.
+    #[test]
+    fn histreduceblanks_preserves_newlines() {
+        let _g = crate::test_util::global_state_lock();
+        // Newline is not inblank → preserved (and bordering chars too).
+        let r = histreduceblanks("a\nb");
+        assert!(r.contains('\n'), "newline preserved in {:?}", r);
+    }
+
+    /// `histremovedups()` is safe on an empty hist_ring.
+    #[test]
+    fn histremovedups_empty_ring_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        hist_ring.lock().unwrap().clear();
+        histremovedups();
+        // No panic = pass; ring stays empty.
+        assert!(hist_ring.lock().unwrap().is_empty());
+    }
+
+    /// `getargc(entry)` returns entry.nwords as usize (current impl).
+    /// Documented separately from the BUG test — pins what the code
+    /// actually does today.
+    #[test]
+    fn getargc_returns_nwords_as_usize() {
+        let _g = crate::test_util::global_state_lock();
+        let entry = histent {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: String::new(),
+                flags: 0,
+            },
+            down: None,
+            up: None,
+            zle_text: None,
+            stim: 0,
+            ftim: 0,
+            words: Vec::new(),
+            nwords: 5,
+            histnum: 0,
+        };
+        assert_eq!(getargc(&entry), 5, "Rust returns nwords as-is");
+    }
 }
