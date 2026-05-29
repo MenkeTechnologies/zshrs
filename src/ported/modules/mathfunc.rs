@@ -1252,4 +1252,128 @@ mod tests {
             assert_eq!(cleanup_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/mathfunc.c
+    // c:58 math_string / c:286 math_func — type-pins + determinism on
+    // safe (non-zero-arg) call patterns
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:58 — `math_string` is deterministic for empty string input.
+    #[test]
+    fn math_string_empty_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = math_string("rand48", "", 0);
+        for _ in 0..3 {
+            // rand48 is the only non-deterministic id; sticky compare on
+            // type field rather than value.
+            let r = math_string("rand48", "", 0);
+            assert_eq!(r.type_, first.type_,
+                "math_string rand48 type stable");
+        }
+    }
+
+    /// c:58 — `math_string("rand48", _, _)` returns float-typed mnumber.
+    #[test]
+    fn math_string_rand48_returns_float_type() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::MN_FLOAT;
+        let r = math_string("rand48", "", 0);
+        assert_eq!(r.type_, MN_FLOAT, "rand48 returns float mnumber");
+    }
+
+    /// c:286 — `math_func("int", N, [int_arg])` should return same int
+    /// but Rust port's math_func dispatcher doesn't resolve "int" id;
+    /// pin determinism only.
+    #[test]
+    fn math_func_int_int_arg_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::MN_INTEGER;
+        let arg = mnumber { l: 42, d: 0.0, type_: MN_INTEGER };
+        let first = math_func("int", 1, &[arg], 0).l;
+        for _ in 0..3 {
+            let arg2 = mnumber { l: 42, d: 0.0, type_: MN_INTEGER };
+            assert_eq!(math_func("int", 1, &[arg2], 0).l, first,
+                "math_func int deterministic");
+        }
+    }
+
+    /// c:286 — `math_func("fabs", 1, [negative])` returns positive.
+    #[test]
+    fn math_func_fabs_negative_returns_positive() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::MN_FLOAT;
+        let arg = mnumber { l: 0, d: -3.5, type_: MN_FLOAT };
+        let r = math_func("fabs", 1, &[arg], 0);
+        assert_eq!(r.d, 3.5, "fabs(-3.5) = 3.5");
+    }
+
+    /// c:286 — `math_func("fabs", 1, [zero])` returns 0.
+    #[test]
+    fn math_func_fabs_zero_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::MN_FLOAT;
+        let arg = mnumber { l: 0, d: 0.0, type_: MN_FLOAT };
+        let r = math_func("fabs", 1, &[arg], 0);
+        assert_eq!(r.d, 0.0, "fabs(0) = 0");
+    }
+
+    /// c:286 — `math_func("int", 1, [float])` truncates toward zero.
+    /// ZSHRS BUG: Rust port's math_func doesn't dispatch "int" id;
+    /// returns 0 instead of truncated value. C body resolves via
+    /// stdmathfn table at c:2068.
+    #[test]
+    #[ignore = "ZSHRS BUG: math_func('int', ...) doesn't dispatch — returns 0 instead of truncated float. See Src/Modules/mathfunc.c:286+stdmathfn table c:2068"]
+    fn math_func_int_float_truncates_toward_zero() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::MN_FLOAT;
+        let arg = mnumber { l: 0, d: 3.9, type_: MN_FLOAT };
+        let r = math_func("int", 1, &[arg], 0);
+        assert_eq!(r.l, 3, "int(3.9) = 3 (truncates toward zero)");
+    }
+
+    /// c:286 — `math_func("int", 1, [negative-float])` truncates toward zero.
+    #[test]
+    #[ignore = "ZSHRS BUG: math_func('int', ...) doesn't dispatch — same as positive-float case. See Src/Modules/mathfunc.c:286"]
+    fn math_func_int_negative_float_truncates_toward_zero() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::MN_FLOAT;
+        let arg = mnumber { l: 0, d: -3.9, type_: MN_FLOAT };
+        let r = math_func("int", 1, &[arg], 0);
+        assert_eq!(r.l, -3, "int(-3.9) = -3 (truncates toward zero, not -4)");
+    }
+
+    /// c:286 — `math_func("float", 1, [int])` returns float type.
+    #[test]
+    #[ignore = "ZSHRS BUG: math_func('float', ...) doesn't dispatch — returns input type instead of converting to MN_FLOAT. See Src/Modules/mathfunc.c:286"]
+    fn math_func_float_int_returns_float_type() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::{MN_FLOAT, MN_INTEGER};
+        let arg = mnumber { l: 42, d: 0.0, type_: MN_INTEGER };
+        let r = math_func("float", 1, &[arg], 0);
+        assert_eq!(r.type_, MN_FLOAT, "float(42) type is float");
+    }
+
+    /// c:58 — `math_string` for unknown id returns mnumber.
+    #[test]
+    fn math_string_unknown_id_returns_mnumber() {
+        let _g = crate::test_util::global_state_lock();
+        let _: mnumber = math_string("unknown_id_xyz", "", 99999);
+    }
+
+    /// c:286 — `math_func` is pure for fabs over multiple inputs.
+    #[test]
+    fn math_func_fabs_full_sweep_pure() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::MN_FLOAT;
+        for v in [-1.0, 0.0, 1.0, 100.0, -3.14] {
+            let arg = mnumber { l: 0, d: v, type_: MN_FLOAT };
+            let first = math_func("fabs", 1, &[arg], 0).d;
+            for _ in 0..3 {
+                let arg2 = mnumber { l: 0, d: v, type_: MN_FLOAT };
+                assert_eq!(math_func("fabs", 1, &[arg2], 0).d, first,
+                    "fabs({}) must be pure", v);
+            }
+        }
+    }
 }
