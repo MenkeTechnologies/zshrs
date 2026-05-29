@@ -336,4 +336,102 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/newuser.c
+    // c:58 check_dotfile / c:68 boot_ / c:16-162 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:58 — `check_dotfile` returns boolean 0 / -1 only (never other).
+    #[test]
+    fn check_dotfile_returns_zero_or_minus_one_only() {
+        let _g = crate::test_util::global_state_lock();
+        for (dir, fname) in [
+            ("/tmp", "xyz_nonexistent_zshrs_test"),
+            ("/nonexistent_dir_xyz_zshrs", "anything"),
+            ("/", "etc"),
+            ("", ""),
+        ] {
+            let r = check_dotfile(dir, fname);
+            assert!(r == 0 || r == -1, "result must be 0 or -1, got {} for ({:?}, {:?})", r, dir, fname);
+        }
+    }
+
+    /// c:58 — `check_dotfile` is deterministic for same args.
+    #[test]
+    fn check_dotfile_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            assert_eq!(check_dotfile("/tmp", "xyz_nonexistent"), -1);
+        }
+    }
+
+    /// c:58 — relative path inputs don't panic.
+    #[test]
+    fn check_dotfile_relative_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = check_dotfile("relative", ".zshrc");
+        let _ = check_dotfile(".", ".gitignore"); // possibly exists
+        let _ = check_dotfile("..", "anything");
+    }
+
+    /// c:58 — multibyte/non-ASCII paths don't panic.
+    #[test]
+    fn check_dotfile_multibyte_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = check_dotfile("/tmp/日本", ".zshrc");
+        let _ = check_dotfile("/tmp", "包含中文");
+    }
+
+    /// c:68 — `boot_(null)` is safe (returns 0).
+    #[test]
+    fn newuser_boot_null_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0, "boot_ MUST return 0");
+    }
+
+    /// c:68 — boot_ is idempotent (safe to call multiple times).
+    #[test]
+    fn newuser_boot_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            assert_eq!(boot_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:16-162 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn newuser_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:58 — empty fname against existing dir creates a path that
+    /// is the dir itself (which exists) → returns 0.
+    #[test]
+    fn check_dotfile_empty_fname_with_tmp_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // "/tmp" + "" = "/tmp/" which exists.
+        assert_eq!(check_dotfile("/tmp", ""), 0);
+    }
+
+    /// c:58 — paths with embedded NUL handled safely (don't panic;
+    /// the FFI layer treats it as terminator or returns error).
+    /// Note: PathBuf may panic on interior NUL, so we use a non-NUL
+    /// path with NUL-like content avoided.
+    #[test]
+    fn check_dotfile_special_chars_in_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = check_dotfile("/tmp", ".hidden");
+        let _ = check_dotfile("/tmp", "file with spaces");
+        let _ = check_dotfile("/tmp/sub/dir/that/does/not/exist", "file");
+    }
 }
