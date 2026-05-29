@@ -88,29 +88,23 @@ pub fn zlelineasstring(line: &[char], ll: usize, _flags: i32) -> String {
 }
 
 /// Port of `stringaszleline(char *instr, int incs, int *outll, int *outsz, int *outcs)` from Src/Zle/zle_utils.c:375.
-/// WARNING: param names don't match C — Rust=(s) vs C=(instr, incs, outll, outsz, outcs)
+/// Rust input is a UTF-8 `&str` (callers pass already-decoded text;
+/// the C-side `metafy()` call that precedes stringaszleline is a
+/// no-op in Rust per the storage divergence). The C body's
+/// `unmetafy + mbrtowc` pipeline collapses to `s.chars().collect()`.
+/// Use [`stringaszleline_with_cursor`] when the cursor position in
+/// the input needs to be mapped to the output codepoint index.
+///
+/// The previous Rust port walked bytes and unescaped 0x83-prefixed
+/// sequences as a Meta pair — that was correct for raw metafied
+/// byte streams but silently corrupted any UTF-8 multibyte sequence
+/// whose continuation byte happened to be 0x83 (e.g. U+00C3 = 0xC3
+/// 0x83 ate the 0x83). All current callers pass UTF-8.
 pub fn stringaszleline(s: &str) -> Vec<char> {
     // c:375
-    // C body c:377-580 — converts a metafied string into ZLE_CHAR_T
-    //                    array (multibyte decode + meta unescape).
-    //                    Vec<char> is already wide-char; demeta and
-    //                    return.
-    let mut out = Vec::new();
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == 0x83 && i + 1 < bytes.len() {
-            // Meta byte
-            i += 1;
-            out.push((bytes[i] ^ 32) as char);
-        } else {
-            out.push(b as char);
-        }
-        i += 1;
-    }
-    out
+    s.chars().collect()
 }
+
 
 /// Port of `zlegetline(int *ll, int *cs)` from Src/Zle/zle_utils.c:547.
 /// WARNING: param names don't match C — Rust=(zle, cs) vs C=(ll, cs)
