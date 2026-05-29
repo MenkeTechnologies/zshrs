@@ -2113,4 +2113,115 @@ mod region_tests {
         let r = vigotocolumn();
         assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_move.c
+    // c:56 alignmultiwordleft / c:118 alignmultiwordright /
+    // c:327 beginningoflinehist / c:384 endoflinehist /
+    // c:691 vimatchbracket / c:867 viendofline / c:903 vibeginningofline
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:56 — `alignmultiwordleft` returns i32 (compile-time type pin).
+    #[test]
+    fn alignmultiwordleft_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut pos = 0usize;
+        let _: i32 = alignmultiwordleft(&mut pos, 0);
+    }
+
+    /// c:118 — `alignmultiwordright` returns i32.
+    #[test]
+    fn alignmultiwordright_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut pos = 0usize;
+        let _: i32 = alignmultiwordright(&mut pos, 0);
+    }
+
+    /// c:327 — `beginningoflinehist` returns i32.
+    #[test]
+    fn beginningoflinehist_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = beginningoflinehist();
+    }
+
+    /// c:384 — `endoflinehist` returns i32.
+    #[test]
+    fn endoflinehist_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = endoflinehist();
+    }
+
+    /// c:691 — `vimatchbracket` returns i32.
+    #[test]
+    fn vimatchbracket_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = vimatchbracket();
+    }
+
+    /// c:867 — `viendofline` returns i32.
+    #[test]
+    fn viendofline_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = viendofline();
+    }
+
+    /// c:903 — `vibeginningofline` returns i32.
+    #[test]
+    fn vibeginningofline_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = vibeginningofline();
+    }
+
+    /// c:56 — `alignmultiwordleft(_, 0)` safe on empty buffer.
+    #[test]
+    fn alignmultiwordleft_safe_on_empty_buffer() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut pos = 0usize;
+        let _ = alignmultiwordleft(&mut pos, 0);
+    }
+
+    /// c:118 — `alignmultiwordright(_, 0)` safe on empty buffer.
+    #[test]
+    fn alignmultiwordright_safe_on_empty_buffer() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut pos = 0usize;
+        let _ = alignmultiwordright(&mut pos, 0);
+    }
+
+    /// c:691 — `vimatchbracket` returns in u8 exit range.
+    #[test]
+    fn vimatchbracket_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vimatchbracket();
+        assert!((0..256).contains(&r),
+            "vimatchbracket exit code {} must fit u8", r);
+    }
+
+    /// c:867 — `viendofline` returns in u8 exit range.
+    #[test]
+    fn viendofline_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = viendofline();
+        assert!((0..256).contains(&r));
+    }
+
+    /// c:903 — `vibeginningofline` returns in u8 exit range.
+    #[test]
+    fn vibeginningofline_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vibeginningofline();
+        assert!((0..256).contains(&r));
+    }
 }
