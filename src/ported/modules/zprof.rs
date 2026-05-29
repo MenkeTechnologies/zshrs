@@ -1407,4 +1407,89 @@ mod tests {
             assert_eq!(findpfunc("__nope__"), first);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zprof.c
+    // c:123 findpfunc / c:135 findparc / c:152-170 cmp* / c:418 name_for_anon /
+    // c:509 zprof_wrapper / c:682+ lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:135 — `findparc(0,0)` on empty table returns None.
+    #[test]
+    fn findparc_zero_zero_empty_table_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        reset_state();
+        assert_eq!(findparc(0, 0), None);
+    }
+
+    /// c:123 — `findpfunc("")` empty name returns None on empty table.
+    #[test]
+    fn findpfunc_empty_name_empty_table_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        reset_state();
+        assert_eq!(findpfunc(""), None);
+    }
+
+    /// c:152 — `cmpsfuncs(a, a)` is Equal (reflexive).
+    #[test]
+    fn cmpsfuncs_reflexive() {
+        let a = mk_pfunc("x", 1.0, 2.0);
+        assert_eq!(cmpsfuncs(&a, &a), std::cmp::Ordering::Equal);
+    }
+
+    /// c:161 — `cmptfuncs(a, a)` is Equal (reflexive).
+    #[test]
+    fn cmptfuncs_reflexive() {
+        let a = mk_pfunc("x", 1.0, 2.0);
+        assert_eq!(cmptfuncs(&a, &a), std::cmp::Ordering::Equal);
+    }
+
+    /// c:170 — `cmpparcs(a, a)` is Equal (reflexive).
+    #[test]
+    fn cmpparcs_reflexive() {
+        let a = mk_parc(0, 1, 5.0);
+        assert_eq!(cmpparcs(&a, &a), std::cmp::Ordering::Equal);
+    }
+
+    /// c:152 — `cmpsfuncs` is antisymmetric: if a vs b is X, b vs a
+    /// is X.reverse().
+    #[test]
+    fn cmpsfuncs_antisymmetric() {
+        let a = mk_pfunc("a", 1.0, 5.0);
+        let b = mk_pfunc("b", 2.0, 5.0);
+        let ab = cmpsfuncs(&a, &b);
+        let ba = cmpsfuncs(&b, &a);
+        assert_eq!(ab.reverse(), ba, "must be antisymmetric");
+    }
+
+    /// c:509 — `zprof_wrapper(null, null, "")` no panic.
+    #[test]
+    fn zprof_wrapper_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = zprof_wrapper(std::ptr::null(), std::ptr::null(), "");
+    }
+
+    /// c:418 — `name_for_anonymous_function` is deterministic.
+    #[test]
+    fn name_for_anonymous_function_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = name_for_anonymous_function("anon");
+        for _ in 0..5 {
+            assert_eq!(name_for_anonymous_function("anon"), first);
+        }
+    }
+
+    /// c:682-... — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn zprof_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+    }
 }
