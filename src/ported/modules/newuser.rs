@@ -265,4 +265,75 @@ mod tests {
             "newuser has no advertised features"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/newuser.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:58 — `check_dotfile` for empty fname checks the dir itself
+    /// (with empty append). On real dir → 0; on missing → -1.
+    #[test]
+    fn check_dotfile_real_dir_empty_fname_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // /tmp exists on every Unix → check_dotfile("/tmp", "") returns 0.
+        let r = check_dotfile("/tmp", "");
+        assert_eq!(r, 0, "/tmp exists → check_dotfile returns 0");
+    }
+
+    /// c:58 — `check_dotfile` for existing dotfile in /tmp → 0.
+    #[test]
+    fn check_dotfile_existing_in_tmp_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // Create a real dotfile then check.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".zshrc_test"), "").unwrap();
+        let r = check_dotfile(dir.path().to_str().unwrap(), ".zshrc_test");
+        assert_eq!(r, 0, "existing file → 0");
+    }
+
+    /// c:58 — `check_dotfile` for missing file in existing dir → -1.
+    #[test]
+    fn check_dotfile_missing_in_real_dir_returns_neg_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = check_dotfile("/tmp", ".zshrs_never_real_xyz_zzz");
+        assert_eq!(r, -1, "missing file → -1");
+    }
+
+    /// c:58 — `check_dotfile` for empty dotdir + missing fname → -1.
+    #[test]
+    fn check_dotfile_empty_dotdir_missing_returns_neg_one() {
+        let _g = crate::test_util::global_state_lock();
+        // Empty dotdir + non-existent fname → joined path doesn't exist.
+        let r = check_dotfile("", "zshrs_never_exists_xyz");
+        assert_eq!(r, -1);
+    }
+
+    /// c:16 — setup_(NULL) returns 0.
+    #[test]
+    fn newuser_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:34 — `enables_(NULL, _)` returns 0 (or non-panic per port).
+    #[test]
+    fn newuser_enables_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:154 — `cleanup_(NULL)` returns 0.
+    #[test]
+    fn newuser_cleanup_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+    }
+
+    /// c:162 — `finish_(NULL)` returns 0.
+    #[test]
+    fn newuser_finish_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
