@@ -1477,4 +1477,97 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         gdbmunsetfn("zshrs_never_tied_xyz", "key", 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/db_gdbm.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:46 — `bin_ztie` with no args returns nonzero (usage error).
+    #[test]
+    fn bin_ztie_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_ztie("ztie", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// c:93 (BUILTIN spec) — `bin_zuntie` declared with min_args=1.
+    /// C zsh dispatcher rejects zero-arg calls BEFORE bin_zuntie runs.
+    /// Rust port bin_zuntie returns 0 because it lacks the arg-count
+    /// gate. Should return nonzero (usage error) per C dispatcher.
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_zuntie missing min_args=1 gate per Src/Modules/db_gdbm.c:93 — C dispatcher rejects no-args; Rust accepts + returns 0"]
+    fn bin_zuntie_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_zuntie("zuntie", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// c:157 — `bin_zuntie` on never-tied param returns nonzero.
+    #[test]
+    fn bin_zuntie_never_tied_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_zuntie("zuntie", &["zshrs_never_tied_xyz".to_string()], &ops, 0);
+        assert_ne!(r, 0, "never-tied param → error");
+    }
+
+    /// c:262 — `gdbmgetfn` for empty param name returns empty string.
+    #[test]
+    fn gdbmgetfn_empty_param_name_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(gdbmgetfn("", "key").is_empty());
+    }
+
+    /// c:262 — `gdbmgetfn` for empty key returns empty string.
+    #[test]
+    fn gdbmgetfn_empty_key_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(gdbmgetfn("untied", "").is_empty());
+    }
+
+    /// c:350 — `getgdbmnode` empty input returns false.
+    #[test]
+    fn getgdbmnode_empty_inputs_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!getgdbmnode("", "key"));
+        assert!(!getgdbmnode("untied", ""));
+    }
+
+    /// c:288 — `gdbmsetfn(..., None)` on untied param is safe.
+    #[test]
+    fn gdbmsetfn_none_value_on_untied_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        gdbmsetfn("zshrs_never_tied", "key", None);
+    }
+
+    /// c:478 — `gdbmhashsetfn` on untied with empty hash is safe.
+    #[test]
+    fn gdbmhashsetfn_empty_hash_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        gdbmhashsetfn("zshrs_never_tied", &[]);
+    }
+
+    /// c:519 — `gdbmuntie` on never-tied param is safe.
+    #[test]
+    fn gdbmuntie_never_tied_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        gdbmuntie("zshrs_never_tied_xyz");
+    }
+
+    /// c:398 — `scangdbmkeys` on untied param invokes callback 0 times.
+    #[test]
+    fn scangdbmkeys_untied_invokes_callback_zero_times() {
+        let _g = crate::test_util::global_state_lock();
+        let mut count = 0;
+        scangdbmkeys(
+            "zshrs_never_tied_xyz",
+            |_k, _v, _f| {
+                count += 1;
+            },
+            0,
+        );
+        assert_eq!(count, 0, "untied → no entries to scan");
+    }
 }
