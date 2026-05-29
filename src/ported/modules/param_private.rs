@@ -1595,4 +1595,94 @@ mod tests {
         unsafe { drop(Box::from_raw(ptr as *mut param)); }
         assert_eq!(r, 0, "unregistered param → not private");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/param_private.c
+    // c:200 is_private / c:403 pps_getfn / c:497 ppi_getfn /
+    // c:557 ppf_getfn / c:617 ppa_getfn — type pins + determinism
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:200 — `is_private(null)` deterministic full sweep.
+    #[test]
+    fn is_private_null_deterministic_full_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(is_private(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:200 — `is_private` returns i32 (compile-time type pin).
+    #[test]
+    fn is_private_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = is_private(std::ptr::null());
+    }
+
+    /// c:403 — `pps_getfn` returns String (compile-time type pin).
+    #[test]
+    fn pps_getfn_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = pps_getfn(std::ptr::null_mut());
+    }
+
+    /// c:497 — `ppi_getfn` returns i64 (compile-time type pin).
+    #[test]
+    fn ppi_getfn_returns_i64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i64 = ppi_getfn(std::ptr::null_mut());
+    }
+
+    /// c:557 — `ppf_getfn` returns f64 (compile-time type pin).
+    #[test]
+    fn ppf_getfn_returns_f64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: f64 = ppf_getfn(std::ptr::null_mut());
+    }
+
+    /// c:617 — `ppa_getfn` returns Vec<String> (compile-time type pin).
+    #[test]
+    fn ppa_getfn_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = ppa_getfn(std::ptr::null_mut());
+    }
+
+    /// c:403 — `pps_getfn(null)` is deterministic.
+    #[test]
+    fn pps_getfn_null_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = pps_getfn(std::ptr::null_mut());
+        for _ in 0..5 {
+            assert_eq!(pps_getfn(std::ptr::null_mut()), first);
+        }
+    }
+
+    /// c:497 — `ppi_getfn(null)` is deterministic.
+    #[test]
+    fn ppi_getfn_null_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = ppi_getfn(std::ptr::null_mut());
+        for _ in 0..5 {
+            assert_eq!(ppi_getfn(std::ptr::null_mut()), first);
+        }
+    }
+
+    /// c:557 — `ppf_getfn(null)` bitwise-deterministic (NaN-safe).
+    #[test]
+    fn ppf_getfn_null_bitwise_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = ppf_getfn(std::ptr::null_mut());
+        for _ in 0..5 {
+            assert_eq!(ppf_getfn(std::ptr::null_mut()).to_bits(), first.to_bits());
+        }
+    }
+
+    /// c:617 — `ppa_getfn(null)` is deterministic.
+    #[test]
+    fn ppa_getfn_null_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = ppa_getfn(std::ptr::null_mut());
+        for _ in 0..5 {
+            assert_eq!(ppa_getfn(std::ptr::null_mut()), first);
+        }
+    }
 }
