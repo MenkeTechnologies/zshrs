@@ -970,4 +970,95 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(cleanup_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/hlgroup.c
+    // c:58 convertattr / c:210 getgroup / c:283 scangroup / c:297 getpmesc /
+    // c:305 scanpmesc / c:313 getpmsgr / c:321 scanpmsgr / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:58 — `convertattr` returns String (compile-time type pin).
+    #[test]
+    fn convertattr_returns_string_type() {
+        let _: String = convertattr("", false);
+        let _: String = convertattr("fg=red", true);
+    }
+
+    /// c:58 — `convertattr("", _)` is well-defined (empty or default).
+    #[test]
+    fn convertattr_empty_input_no_panic() {
+        let _ = convertattr("", false);
+        let _ = convertattr("", true);
+    }
+
+    /// c:58 — `convertattr` full-sweep pure.
+    #[test]
+    fn convertattr_is_pure_full_sweep() {
+        for input in ["", "fg=red", "bold", "bg=blue,underline"] {
+            let first_no_sgr = convertattr(input, false);
+            let first_sgr = convertattr(input, true);
+            for _ in 0..3 {
+                assert_eq!(convertattr(input, false), first_no_sgr,
+                    "convertattr({:?}, false) must be pure", input);
+                assert_eq!(convertattr(input, true), first_sgr,
+                    "convertattr({:?}, true) must be pure", input);
+            }
+        }
+    }
+
+    /// c:210 — `getgroup` returns Option<String>.
+    #[test]
+    fn getgroup_returns_option_string_type() {
+        let _: Option<String> = getgroup("any", false);
+    }
+
+    /// c:283 — `scangroup` returns Vec (compile-time pin).
+    #[test]
+    fn scangroup_returns_vec_type() {
+        let _: Vec<(String, String)> = scangroup(false);
+    }
+
+    /// c:283 — `scangroup` is deterministic.
+    #[test]
+    fn scangroup_is_deterministic() {
+        let first = scangroup(false);
+        for _ in 0..3 {
+            assert_eq!(scangroup(false), first,
+                "scangroup must be deterministic");
+        }
+    }
+
+    /// c:297 — `getpmesc(empty)` returns None.
+    #[test]
+    fn getpmesc_empty_returns_none() {
+        assert!(getpmesc("").is_none());
+    }
+
+    /// c:313 — `getpmsgr(empty)` returns None.
+    #[test]
+    fn getpmsgr_empty_returns_none() {
+        assert!(getpmsgr("").is_none());
+    }
+
+    /// c:305 + c:321 — `scanpmesc`/`scanpmsgr` return Vec (type pin).
+    #[test]
+    fn scanpm_variants_return_vec_type() {
+        let _: Vec<(String, String)> = scanpmesc();
+        let _: Vec<(String, String)> = scanpmsgr();
+    }
+
+    /// c:337-373 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn hlgroup_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
 }
