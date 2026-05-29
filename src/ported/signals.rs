@@ -2476,4 +2476,60 @@ mod tests {
         // Restore.
         dosetopt(HUP, if saved { 1 } else { 0 }, 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/signals.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `intr()` is a no-op when not interactive. C:
+    ///   `if (interact) install_handler(SIGINT);`
+    #[test]
+    fn intr_returns_without_panic() {
+        let _g = crate::test_util::global_state_lock();
+        intr();
+        intr();
+        intr();
+    }
+
+    /// `nointr()` symmetric no-op when not interactive.
+    #[test]
+    fn nointr_returns_without_panic() {
+        let _g = crate::test_util::global_state_lock();
+        nointr();
+        nointr();
+    }
+
+    /// `holdintr()`/`noholdintr()` block-then-unblock SIGINT.
+    #[test]
+    fn holdintr_noholdintr_round_trip_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        holdintr();
+        holdintr();
+        noholdintr();
+        noholdintr();
+    }
+
+    /// `signal_mask(SIGTERM)` returns sigset with ONLY SIGTERM set.
+    /// C `Src/signals.c:194` — sigemptyset + sigaddset(SIGTERM).
+    #[cfg(unix)]
+    #[test]
+    fn signal_mask_sigterm_isolates_signal() {
+        let _g = crate::test_util::global_state_lock();
+        let mask = signal_mask(libc::SIGTERM);
+        let has_term = unsafe { libc::sigismember(&mask, libc::SIGTERM) };
+        let has_int = unsafe { libc::sigismember(&mask, libc::SIGINT) };
+        assert_eq!(has_term, 1, "SIGTERM bit must be set");
+        assert_eq!(has_int, 0, "SIGINT bit must NOT be set");
+    }
+
+    /// `signal_block` + `signal_unblock` round-trip safely.
+    #[cfg(unix)]
+    #[test]
+    fn signal_block_unblock_round_trip_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mask = signal_mask(libc::SIGUSR1);
+        let prev = signal_block(&mask);
+        let _ = signal_unblock(&mask);
+        let _ = signal_setmask(&prev);
+    }
 }
