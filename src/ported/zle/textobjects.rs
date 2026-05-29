@@ -701,4 +701,92 @@ mod tests {
         ZLECS.store(1, Ordering::SeqCst);
         let _ = selectargument();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/textobjects.c
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:36 — `\v` (vertical tab) is iblank (`iswspace(wc) && wc != '\n'`).
+    /// Per ISO C, iswspace includes VT.
+    #[test]
+    fn blankwordclass_vertical_tab_is_iblank() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(blankwordclass('\x0b'), 0, "VT is whitespace (excl. newline)");
+    }
+
+    /// c:36 — `\f` (form feed) is iblank.
+    #[test]
+    fn blankwordclass_form_feed_is_iblank() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(blankwordclass('\x0c'), 0, "FF is whitespace (excl. newline)");
+    }
+
+    /// c:36 — `\r` (carriage return) is iblank (iswspace(CR) is true,
+    /// and CR != '\n').
+    #[test]
+    fn blankwordclass_carriage_return_is_iblank() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(blankwordclass('\r'), 0, "CR is whitespace (excl. newline)");
+    }
+
+    /// c:36 — return value is always 0 or 1 (no other values).
+    #[test]
+    fn blankwordclass_returns_boolean_i32_only() {
+        let _g = crate::test_util::global_state_lock();
+        for c in (0u32..0x10000).step_by(1024).filter_map(char::from_u32) {
+            let r = blankwordclass(c);
+            assert!(r == 0 || r == 1, "blankwordclass({:?}) = {} not in 0/1", c, r);
+        }
+    }
+
+    /// c:212 — `selectargument` with n=0 (negative-mult-zero edge)
+    /// returns 1 per the c:225 guard `n < 1`.
+    #[test]
+    fn selectargument_n_zero_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ZMOD.lock().unwrap().flags |= MOD_MULT;
+        ZMOD.lock().unwrap().mult = 0;
+        *ZLELINE.lock().unwrap() = "hello world".chars().collect();
+        ZLELL.store(11, Ordering::SeqCst);
+        ZLECS.store(0, Ordering::SeqCst);
+        assert_eq!(selectargument(), 1, "n=0 hits n<1 guard");
+        ZMOD.lock().unwrap().flags &= !MOD_MULT;
+    }
+
+    /// c:225 — `2*n > zlell+1` guard returns 1 (n too large for buffer).
+    #[test]
+    fn selectargument_n_too_large_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ZMOD.lock().unwrap().flags |= MOD_MULT;
+        ZMOD.lock().unwrap().mult = 100; // way past buffer length
+        *ZLELINE.lock().unwrap() = "hi".chars().collect();
+        ZLELL.store(2, Ordering::SeqCst);
+        ZLECS.store(0, Ordering::SeqCst);
+        assert_eq!(selectargument(), 1, "n=100 vs zlell=2 hits guard");
+        ZMOD.lock().unwrap().flags &= !MOD_MULT;
+    }
+
+    /// c:36 — entire ASCII range: classifiers agree with C `isspace`
+    /// minus newline (per `wcsiblank` def: `iswspace(wc) && wc != '\n'`).
+    /// Rust's `is_ascii_whitespace` is narrower than C's `isspace`
+    /// (excludes VT 0x0b); pin against the C-correct set explicitly.
+    #[test]
+    fn blankwordclass_ascii_matches_c_isspace_excluding_newline() {
+        let _g = crate::test_util::global_state_lock();
+        // ISO C isspace ASCII members: ' ', '\t', '\n', '\v', '\f', '\r'.
+        // iblank = isspace - '\n'.
+        const IBLANK: &[char] = &[' ', '\t', '\x0b', '\x0c', '\r'];
+        for b in 0u8..128 {
+            let c = b as char;
+            let want = if IBLANK.contains(&c) { 0 } else { 1 };
+            assert_eq!(
+                blankwordclass(c),
+                want,
+                "blankwordclass(0x{:02x}) mismatch — C isspace excl '\\n'",
+                b
+            );
+        }
+    }
 }
