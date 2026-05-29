@@ -216,6 +216,31 @@ demo_test!(d57_atoi_itoa, "57_atoi_itoa.zsh");
 demo_test!(d58_gcd_lcm, "58_gcd_lcm.zsh");
 demo_test!(d59_string_reverse_ops, "59_string_reverse_ops.zsh");
 demo_test!(d60_mapfile_like, "60_mapfile_like.zsh");
+demo_test!(d61_zsh_modifiers, "61_zsh_modifiers.zsh");
+demo_test!(d62_param_flags_match, "62_param_flags_match.zsh");
+demo_test!(d63_param_flags_join_split, "63_param_flags_join_split.zsh");
+demo_test!(d64_param_flags_case, "64_param_flags_case.zsh");
+demo_test!(d65_param_flags_sort, "65_param_flags_sort.zsh");
+demo_test!(d66_param_flags_format, "66_param_flags_format.zsh");
+demo_test!(d67_glob_qualifiers, "67_glob_qualifiers.zsh");
+demo_test!(d68_extended_glob, "68_extended_glob.zsh");
+demo_test!(d69_assoc_advanced, "69_assoc_advanced.zsh");
+demo_test!(d70_array_set_ops_zsh, "70_array_set_ops_zsh.zsh");
+demo_test!(d71_array_pattern_filter, "71_array_pattern_filter.zsh");
+demo_test!(d72_typeset_int_base, "72_typeset_int_base.zsh");
+demo_test!(d73_print_columnar, "73_print_columnar.zsh");
+demo_test!(d74_print_prompt_escapes, "74_print_prompt_escapes.zsh");
+demo_test!(d75_zparseopts, "75_zparseopts.zsh");
+demo_test!(d76_mathfunc, "76_mathfunc.zsh");
+demo_test!(d77_datetime, "77_datetime.zsh");
+demo_test!(d78_setopt_local_scope, "78_setopt_local_scope.zsh");
+demo_test!(d79_eval_dynamic_dispatch, "79_eval_dynamic_dispatch.zsh");
+demo_test!(d80_anon_fn_args, "80_anon_fn_args.zsh");
+demo_test!(d81_compound_defaults, "81_compound_defaults.zsh");
+demo_test!(d82_brace_advanced, "82_brace_advanced.zsh");
+demo_test!(d83_history_modifiers, "83_history_modifiers.zsh");
+demo_test!(d84_subst_split_complex, "84_subst_split_complex.zsh");
+demo_test!(d85_zcalc_repl, "85_zcalc_repl.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -283,6 +308,31 @@ fn every_demo_in_dir_has_a_test() {
         "58_gcd_lcm.zsh",
         "59_string_reverse_ops.zsh",
         "60_mapfile_like.zsh",
+        "61_zsh_modifiers.zsh",
+        "62_param_flags_match.zsh",
+        "63_param_flags_join_split.zsh",
+        "64_param_flags_case.zsh",
+        "65_param_flags_sort.zsh",
+        "66_param_flags_format.zsh",
+        "67_glob_qualifiers.zsh",
+        "68_extended_glob.zsh",
+        "69_assoc_advanced.zsh",
+        "70_array_set_ops_zsh.zsh",
+        "71_array_pattern_filter.zsh",
+        "72_typeset_int_base.zsh",
+        "73_print_columnar.zsh",
+        "74_print_prompt_escapes.zsh",
+        "75_zparseopts.zsh",
+        "76_mathfunc.zsh",
+        "77_datetime.zsh",
+        "78_setopt_local_scope.zsh",
+        "79_eval_dynamic_dispatch.zsh",
+        "80_anon_fn_args.zsh",
+        "81_compound_defaults.zsh",
+        "82_brace_advanced.zsh",
+        "83_history_modifiers.zsh",
+        "84_subst_split_complex.zsh",
+        "85_zcalc_repl.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
