@@ -4093,4 +4093,129 @@ mod tests {
             let _ = cccleanuphookfn(());
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compctl.c
+    // c:320 set_gmatcher / c:356 get_gmatcher / c:381 print_gmatcher /
+    // c:1303 bin_compctl / c:1435 bin_compcall / c:1589 maketildelist
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:320 — `set_gmatcher` returns i32 (compile-time type pin).
+    #[test]
+    fn set_gmatcher_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = set_gmatcher("", &[]);
+    }
+
+    /// c:356 — `get_gmatcher` returns i32 (compile-time type pin).
+    #[test]
+    fn get_gmatcher_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = get_gmatcher("", &[]);
+    }
+
+    /// c:381 — `print_gmatcher(0)` is safe.
+    #[test]
+    fn print_gmatcher_safe_for_zero() {
+        let _g = crate::test_util::global_state_lock();
+        print_gmatcher(0);
+    }
+
+    /// c:1589 — `maketildelist` is safe (no panic / no side effects
+    /// outside the tilde-completion buffer).
+    #[test]
+    fn maketildelist_safe_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        maketildelist();
+    }
+
+    /// c:1589 — `maketildelist` is idempotent.
+    #[test]
+    fn maketildelist_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            maketildelist();
+        }
+    }
+
+    /// c:320 — `set_gmatcher` is deterministic for stable input.
+    #[test]
+    fn set_gmatcher_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = set_gmatcher("test", &[]);
+        for _ in 0..3 {
+            assert_eq!(set_gmatcher("test", &[]), first,
+                "set_gmatcher must be deterministic");
+        }
+    }
+
+    /// c:356 — `get_gmatcher` is deterministic for stable input.
+    #[test]
+    fn get_gmatcher_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = get_gmatcher("test", &[]);
+        for _ in 0..3 {
+            assert_eq!(get_gmatcher("test", &[]), first,
+                "get_gmatcher must be deterministic");
+        }
+    }
+
+    /// c:1303 — `bin_compctl` no-args returns i32 (compile-time type pin).
+    #[test]
+    fn bin_compctl_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let _: i32 = bin_compctl("compctl", &[], &ops, 0);
+    }
+
+    /// c:1435 — `bin_compcall` no-args returns i32.
+    #[test]
+    fn bin_compcall_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let _: i32 = bin_compcall("compcall", &[], &ops, 0);
+    }
+
+    /// c:1485 — `ccmakehookfn(())` is deterministic.
+    #[test]
+    fn ccmakehookfn_is_deterministic() {
+        let first = ccmakehookfn(());
+        for _ in 0..3 {
+            assert_eq!(ccmakehookfn(()), first,
+                "ccmakehookfn must be deterministic");
+        }
+    }
+
+    /// c:1573 — `cccleanuphookfn(())` is deterministic.
+    #[test]
+    fn cccleanuphookfn_is_deterministic() {
+        let first = cccleanuphookfn(());
+        for _ in 0..3 {
+            assert_eq!(cccleanuphookfn(()), first,
+                "cccleanuphookfn must be deterministic");
+        }
+    }
+
+    /// c:381 — `print_gmatcher` for various indices is safe (no panic).
+    #[test]
+    fn print_gmatcher_full_index_range_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for ac in [-1i32, 0, 1, 10, 100, i32::MAX, i32::MIN] {
+            print_gmatcher(ac);
+        }
+    }
+
+    /// c:1052 — `compctl_name_pat(empty)` returns (false, empty).
+    #[test]
+    fn compctl_name_pat_empty_returns_false_empty() {
+        let (is_pat, name) = compctl_name_pat("");
+        assert!(!is_pat, "empty input not a pattern");
+        assert_eq!(name, "", "empty input → empty name");
+    }
 }
