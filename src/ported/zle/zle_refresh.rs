@@ -3639,4 +3639,61 @@ mod tests {
         }
         assert!(attrs[4].is_none());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/zle_refresh.c ZR_* helpers.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `ZR_strlen` returns 0 for an empty (NUL-terminated) buffer.
+    /// C `Src/Zle/zle_refresh.c:102`:
+    ///   `int len = 0; while (wstr++->chr != '\0') len++; return len;`
+    #[test]
+    fn ZR_strlen_empty_terminated_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let buf = [REFRESH_ELEMENT { chr: '\0', atr: 0 }];
+        assert_eq!(ZR_strlen(&buf), 0);
+    }
+
+    /// `ZR_strlen` counts chars up to (not including) the NUL.
+    #[test]
+    fn ZR_strlen_counts_chars_before_nul() {
+        let _g = crate::test_util::global_state_lock();
+        let buf = [
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'b', atr: 0 },
+            REFRESH_ELEMENT { chr: 'c', atr: 0 },
+            REFRESH_ELEMENT { chr: '\0', atr: 0 },
+        ];
+        assert_eq!(ZR_strlen(&buf), 3);
+    }
+
+    /// `ZR_strlen` on a buffer with NO NUL returns slice len.
+    /// Rust port adds bounds check (C UB on no-NUL buffer).
+    #[test]
+    fn ZR_strlen_no_nul_returns_full_len() {
+        let _g = crate::test_util::global_state_lock();
+        let buf = [
+            REFRESH_ELEMENT { chr: 'x', atr: 0 },
+            REFRESH_ELEMENT { chr: 'y', atr: 0 },
+        ];
+        assert_eq!(ZR_strlen(&buf), 2, "no NUL → bounded by slice");
+    }
+
+    /// `tcoutclear(false)` runs without panic. C `Src/Zle/zle_refresh.c`:
+    ///   helper to clear cap state before tcout.
+    #[test]
+    fn tcoutclear_runs_without_panic() {
+        let _g = crate::test_util::global_state_lock();
+        tcoutclear(false);
+        tcoutclear(true);
+    }
+
+    /// `zle_free_highlight()` runs without panic (no-op when no
+    /// highlights present). C: clears highlight tables.
+    #[test]
+    fn zle_free_highlight_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        zle_free_highlight();
+        zle_free_highlight();
+    }
 }
