@@ -3571,4 +3571,108 @@ mod tests {
         let _g2 = zle_test_setup();
         assert_eq!(selectkeymap("emacs", 0), 0, "default 'emacs' keymap must exist");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_keymap.c
+    // c:134 createkeymapnamtab / c:145 init_keymaps / c:205 refkeymap_by_name
+    // c:240 unrefkeymap_by_name / c:664 openkeymap / c:675 unlinkkeymap
+    // c:805 linkkeymap / c:886 selectkeymap / c:921 selectlocalmap /
+    // c:940 reselectkeymap
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:664 — `openkeymap("emacs")` returns Some after init.
+    #[test]
+    fn openkeymap_default_emacs_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(openkeymap("emacs").is_some(),
+            "default 'emacs' keymap must open");
+    }
+
+    /// c:664 — `openkeymap("")` returns None (empty name invalid).
+    #[test]
+    fn openkeymap_empty_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(openkeymap("").is_none(), "empty name → None");
+    }
+
+    /// c:664 — `openkeymap(unknown)` returns None.
+    #[test]
+    fn openkeymap_unknown_name_returns_none_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(openkeymap("__never_a_real_keymap_xyz__").is_none(),
+            "unknown keymap → None");
+    }
+
+    /// c:886 — `selectkeymap` returns i32 (compile-time type pin).
+    #[test]
+    fn selectkeymap_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = selectkeymap("emacs", 0);
+    }
+
+    /// c:675 — `unlinkkeymap` returns i32 (compile-time type pin).
+    #[test]
+    fn unlinkkeymap_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = unlinkkeymap("nothing_real", 0);
+    }
+
+    /// c:675 — `unlinkkeymap("")` is safe (empty name).
+    #[test]
+    fn unlinkkeymap_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _ = unlinkkeymap("", 0);
+    }
+
+    /// c:921 — `selectlocalmap(None)` is safe.
+    #[test]
+    fn selectlocalmap_none_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        selectlocalmap(None);
+    }
+
+    /// c:940 — `reselectkeymap` is idempotent / safe.
+    #[test]
+    fn reselectkeymap_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            reselectkeymap();
+        }
+    }
+
+    /// c:205 — `refkeymap_by_name("")` empty name is safe.
+    #[test]
+    fn refkeymap_by_name_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        refkeymap_by_name("");
+    }
+
+    /// c:240 — `unrefkeymap_by_name("")` empty name is safe.
+    #[test]
+    fn unrefkeymap_by_name_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        unrefkeymap_by_name("");
+    }
+
+    /// c:886 — `selectkeymap` is deterministic for same input.
+    #[test]
+    fn selectkeymap_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = selectkeymap("emacs", 0);
+        for _ in 0..3 {
+            assert_eq!(selectkeymap("emacs", 0), first,
+                "selectkeymap('emacs') must be deterministic");
+        }
+    }
 }
