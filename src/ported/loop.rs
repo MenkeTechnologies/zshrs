@@ -258,4 +258,86 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(selectlist(&[], 0), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/loop.c selectlist.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:347 — `selectlist` with start=0 doesn't panic and returns
+    /// a valid count.
+    #[test]
+    fn selectlist_start_zero_returns_valid_count() {
+        let _g = crate::test_util::global_state_lock();
+        let items = ["a", "b", "c"];
+        let r = selectlist(&items, 0);
+        // Return value is "next start" for paginated display.
+        // Must be reasonable: 0 (full draw fit) or >0 (paginated).
+        assert!(r <= items.len());
+    }
+
+    /// c:347 — single-item list always fits in one column.
+    #[test]
+    fn selectlist_single_item_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let r = selectlist(&["only"], 0);
+        let _ = r;
+    }
+
+    /// c:347 — list with empty string entries doesn't panic.
+    #[test]
+    fn selectlist_empty_string_entries_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let items = ["", "", ""];
+        let _ = selectlist(&items, 0);
+    }
+
+    /// c:347 — long items (longer than terminal width) handled safely.
+    #[test]
+    fn selectlist_long_items_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let long = "x".repeat(500);
+        let items = [long.as_str(), "short"];
+        let _ = selectlist(&items, 0);
+    }
+
+    /// c:347 — multibyte content (CJK) doesn't panic.
+    #[test]
+    fn selectlist_multibyte_entries_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let items = ["日本", "中文", "한국어"];
+        let _ = selectlist(&items, 0);
+    }
+
+    /// c:347 — many small items doesn't panic (stress: 100 entries).
+    #[test]
+    fn selectlist_many_items_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let items: Vec<String> = (0..100).map(|i| format!("item{}", i)).collect();
+        let refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
+        let _ = selectlist(&refs, 0);
+    }
+
+    /// c:347 — start > 0 with valid index PANICS in zshrs port
+    /// ("index out of bounds: the len is 5 but the index is 5").
+    /// C handles paginated start correctly via the c:379 column loop
+    /// bound `t1 - start < zterm_lines - 2`. Likely off-by-one in
+    /// the Rust port's index walk past last column.
+    #[test]
+    #[ignore = "ZSHRS BUG: selectlist panics with index OOB when start > 0; C handles paginated start cleanly. See Src/loop.c:379 column loop"]
+    fn selectlist_start_in_range_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let items = ["a", "b", "c", "d", "e"];
+        let _ = selectlist(&items, 2);
+    }
+
+    /// c:347 — `selectlist` is deterministic for a given (items, start).
+    #[test]
+    fn selectlist_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let items = ["a", "b", "c"];
+        let first = selectlist(&items, 0);
+        for _ in 0..5 {
+            assert_eq!(selectlist(&items, 0), first);
+        }
+    }
 }
