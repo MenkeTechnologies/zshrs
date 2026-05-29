@@ -1684,4 +1684,87 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/watch.c
+    // c:44 getlogtime / c:95 watch3ary / c:112 watchlog2 / c:286 watchlog /
+    // c:450 readwtab / c:526 dowatch / c:617 checksched / c:658 bin_log
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:44 — `getlogtime` returns i64 (compile-time type pin).
+    #[test]
+    fn getlogtime_returns_i64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let u: libc::utmpx = unsafe { std::mem::zeroed() };
+        let _: i64 = getlogtime(&u, 0);
+    }
+
+    /// c:95 — `watch3ary` returns String (compile-time type pin).
+    #[test]
+    fn watch3ary_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let u: libc::utmpx = unsafe { std::mem::zeroed() };
+        let _: String = watch3ary(&u, false, "");
+    }
+
+    /// c:112 — `watchlog2` returns String.
+    #[test]
+    fn watchlog2_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let u: libc::utmpx = unsafe { std::mem::zeroed() };
+        let _: String = watchlog2(0, &u, "", 0, 0);
+    }
+
+    /// c:286 — `watchlog` returns void.
+    #[test]
+    fn watchlog_returns_void() {
+        let _g = crate::test_util::global_state_lock();
+        let u: libc::utmpx = unsafe { std::mem::zeroed() };
+        let _: () = watchlog(0, &u, &[], "");
+    }
+
+    /// c:526 — `dowatch` returns void.
+    #[test]
+    fn dowatch_returns_void() {
+        let _g = crate::test_util::global_state_lock();
+        let _: () = dowatch();
+    }
+
+    /// c:617 — `checksched` returns void.
+    #[test]
+    fn checksched_returns_void() {
+        let _g = crate::test_util::global_state_lock();
+        let _: () = checksched();
+    }
+
+    /// c:450 — `readwtab` returns Vec<libc::utmpx>.
+    #[test]
+    fn readwtab_returns_vec_utmpx_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<libc::utmpx> = readwtab(0);
+    }
+
+    /// c:450 — `readwtab(negative)` doesn't panic.
+    #[test]
+    fn readwtab_negative_size_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = readwtab(-1);
+        let _ = readwtab(-100);
+    }
+
+    /// c:262 — `watchlog_match("")` empty pattern matches only empty.
+    #[test]
+    fn watchlog_match_empty_pattern_only_matches_empty_value() {
+        assert!(watchlog_match("", ""), "empty matches empty");
+        assert!(!watchlog_match("", "x"), "empty does NOT match non-empty");
+    }
+
+    /// c:617 — `checksched` is idempotent.
+    #[test]
+    fn checksched_idempotent_full_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            checksched();
+        }
+    }
 }
