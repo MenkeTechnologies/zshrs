@@ -1264,4 +1264,113 @@ mod tests {
         assert!(SIGEXIT < SIGZERR,
             "SIGEXIT=0 must be below SIGZERR={}", SIGZERR);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/signals.h
+    // c:221 sigs_name / c:238 sigs_number / c:262 SIGNUM / c:284 SIGIDX /
+    // c:398 queue_signal_level
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:221 — `sigs_name` returns Option<&'static str> (compile-time pin).
+    #[test]
+    fn sigs_name_returns_option_static_str_type() {
+        let _: Option<&'static str> = sigs_name(0);
+    }
+
+    /// c:221 — `sigs_name` for negative idx returns None (out of range).
+    #[test]
+    fn sigs_name_negative_idx_returns_none() {
+        assert!(sigs_name(-1).is_none(), "negative idx → None");
+        assert!(sigs_name(i32::MIN).is_none(), "MIN idx → None");
+    }
+
+    /// c:221 — `sigs_name` for far-out-of-range idx returns None.
+    #[test]
+    fn sigs_name_far_out_of_range_returns_none() {
+        assert!(sigs_name(99999).is_none(), "huge idx → None");
+        assert!(sigs_name(i32::MAX).is_none(), "MAX idx → None");
+    }
+
+    /// c:221 — `sigs_name` is deterministic.
+    #[test]
+    fn sigs_name_deterministic() {
+        for idx in [0, 1, 2, 5, 9, 15, -1, 100] {
+            let first = sigs_name(idx);
+            for _ in 0..3 {
+                assert_eq!(sigs_name(idx), first,
+                    "sigs_name({}) must be pure", idx);
+            }
+        }
+    }
+
+    /// c:238 — `sigs_number` returns Option<i32> (compile-time pin).
+    #[test]
+    fn sigs_number_returns_option_i32_type() {
+        let _: Option<i32> = sigs_number("HUP");
+    }
+
+    /// c:238 — `sigs_number("")` empty name returns None.
+    #[test]
+    fn sigs_number_empty_returns_none() {
+        assert!(sigs_number("").is_none(), "empty name → None");
+    }
+
+    /// c:238 — `sigs_number` for nonsense name returns None.
+    #[test]
+    fn sigs_number_nonsense_returns_none() {
+        assert!(sigs_number("__bogus_signal_xyz__").is_none(),
+            "nonsense name → None");
+    }
+
+    /// c:238 — `sigs_number` is deterministic.
+    #[test]
+    fn sigs_number_deterministic() {
+        for name in ["HUP", "INT", "TERM", "__bogus__", ""] {
+            let first = sigs_number(name);
+            for _ in 0..3 {
+                assert_eq!(sigs_number(name), first,
+                    "sigs_number({:?}) must be pure", name);
+            }
+        }
+    }
+
+    /// c:262 — `SIGNUM` returns i32 (compile-time pin).
+    #[test]
+    fn signum_returns_i32_type() {
+        let _: i32 = SIGNUM(0);
+    }
+
+    /// c:284 — `SIGIDX` returns i32 (compile-time pin).
+    #[test]
+    fn sigidx_returns_i32_type() {
+        let _: i32 = SIGIDX(0);
+    }
+
+    /// c:262+284 — SIGNUM/SIGIDX deterministic across full byte range.
+    #[test]
+    fn signum_sigidx_deterministic_byte_range() {
+        for x in 0..256i32 {
+            let n1 = SIGNUM(x);
+            let n2 = SIGNUM(x);
+            assert_eq!(n1, n2, "SIGNUM({}) must be pure", x);
+            let i1 = SIGIDX(x);
+            let i2 = SIGIDX(x);
+            assert_eq!(i1, i2, "SIGIDX({}) must be pure", x);
+        }
+    }
+
+    /// c:398 — `queue_signal_level` returns i32 (compile-time pin, alt).
+    #[test]
+    fn queue_signal_level_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = queue_signal_level();
+    }
+
+    /// c:398 — `queue_signal_level` is non-negative.
+    #[test]
+    fn queue_signal_level_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let v = queue_signal_level();
+        assert!(v >= 0, "queue level must be ≥ 0, got {}", v);
+    }
 }
