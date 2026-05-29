@@ -27,6 +27,24 @@ The work is the same; only the call-site syntax differs.
 | `bindkey` | 69 | 3 (4%) | 71 (103%) | Rust factored into 3 methods; restored canonical fn (commits `a77af29` + `591929e`) |
 | `skipparens` | 28 | 1 (4%) | 16 (57%) | 5-commit substrate-port arc: signature fix + glob/cmphaswilds/parambeg/check_param/parse/lex/subst sites (commits `b39ba9b` → `0273296`) |
 | `inststr` | — | 10 | 13 | `processcmd` faithful 3-call port (commit `8d522a5`) |
+| `optlookup` | 10 | 59 (590%) | 14 (140%) | Over-wired direction — Rust used `isset(optlookup("name"))` as a string→optno bridge where C uses compile-time `OPT_NAME` integer constants. Mass-replaced 39 call sites across `builtin.rs`/`signals.rs`/`params.rs`/`options.rs`/`modules/*` with the existing `zsh_h::NAME` constants (commit `0c31afd`). |
+
+### Over-wired direction (>100%)
+
+When Rust calls a fn more often than C, the metric reads >100%.
+Two cases:
+
+- **Real over-wiring** (fixable): Rust ports use a runtime helper
+  where C uses a compile-time idiom. `optlookup` was the
+  canonical case — every `isset(optlookup("name"))` site is a
+  string→optno bridge that could be `isset(NAME)` against the
+  existing `zsh_h::NAME` constant. Fix by replacing the runtime
+  lookups with the constants (commit `0c31afd`).
+- **Generic name collision** (leave it): C `push`/`add`/`write_loop`
+  share names with Rust idioms (`Vec::push`, `String::add`, etc.).
+  The audit excludes `.name(` method calls but not bare-fn-call
+  shapes that happen to match. These are metric noise, not
+  fakery — leave them flagged.
 
 ## 2. Architectural divergence — leave it.
 
