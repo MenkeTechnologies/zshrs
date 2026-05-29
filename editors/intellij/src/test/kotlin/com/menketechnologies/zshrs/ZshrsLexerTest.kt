@@ -839,4 +839,64 @@ class ZshrsLexerTest {
             toks.none { it.first == ZshrsTokenTypes.IDENTIFIER && it.second == "--" },
         )
     }
+
+    @Test
+    fun arithmetic_inside_dq_string_emits_opener_then_interior_atoms() {
+        // `"$(( 7 % 3 ))"` — the arithmetic interior must NOT be
+        // re-absorbed into the STRING_DQ token (which was the user-
+        // visible italic-green coloring bug). After the strykelang-
+        // style state-machine fix, we expect to see:
+        //   * STRING_DQ "\""            (opening quote)
+        //   * OPERATOR "\$(("           (3-byte arithmetic opener)
+        //   * INTEGER  "7"              (sub-lex inside DQ_ARITH)
+        //   * OPERATOR "%"              (operator atom)
+        //   * INTEGER  "3"              (operand atom)
+        //   * OPERATOR "))"             (2-byte closer)
+        //   * STRING_DQ "\""            (closing quote)
+        val toks = nonWs("echo \"\$(( 7 % 3 ))\"")
+        // Verify the OPERATOR `$((` and OPERATOR `))` are present.
+        assertTrue(
+            "expected OPERATOR `\$((` opener in: $toks",
+            toks.any { it.first == ZshrsTokenTypes.OPERATOR && it.second == "\$((" },
+        )
+        assertTrue(
+            "expected OPERATOR `))` closer in: $toks",
+            toks.any { it.first == ZshrsTokenTypes.OPERATOR && it.second == "))" },
+        )
+        // Verify the digit `7` lexed as its own token (not absorbed
+        // into a STRING_DQ run).
+        assertTrue(
+            "expected digit `7` as a separate token in: $toks",
+            toks.any { it.second == "7" && it.first != ZshrsTokenTypes.STRING_DQ },
+        )
+        // No STRING_DQ should contain the arith body text.
+        assertTrue(
+            "STRING_DQ must not absorb arith body in: $toks",
+            toks.none {
+                it.first == ZshrsTokenTypes.STRING_DQ
+                && (it.second.contains("7 % 3") || it.second.contains("\$(("))
+            },
+        )
+    }
+
+    @Test
+    fun cmdsub_inside_dq_string_emits_opener_then_interior_atoms() {
+        // `"$( echo hi )"` — same shape as the arith fix but the
+        // closer is a single `)` instead of `))`. Pin the OPERATOR
+        // `$(` opener + closer + interior `echo` token.
+        val toks = nonWs("x=\"\$( echo hi )\"")
+        assertTrue(
+            "expected OPERATOR `\$(` opener: $toks",
+            toks.any { it.first == ZshrsTokenTypes.OPERATOR && it.second == "\$(" },
+        )
+        assertTrue(
+            "expected OPERATOR `)` closer: $toks",
+            toks.any { it.first == ZshrsTokenTypes.OPERATOR && it.second == ")" },
+        )
+        // `echo` should be its own non-STRING token.
+        assertTrue(
+            "expected `echo` not inside STRING_DQ: $toks",
+            toks.any { it.second == "echo" && it.first != ZshrsTokenTypes.STRING_DQ },
+        )
+    }
 }
