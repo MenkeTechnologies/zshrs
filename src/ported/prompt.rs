@@ -4147,4 +4147,92 @@ mod tests {
         let out = expand_prompt("%I");
         assert!(out.parse::<i32>().is_ok(), "%I should be decimal; got {out:?}");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/prompt.c
+    // c:288 promptpath / c:393 zattrescape / c:434 parsehighlight /
+    // c:1410 cmdpush / c:1423 cmdpop / c:1813 countprompt /
+    // c:1889 match_named_colour / c:1931 truecolor_terminal /
+    // c:2089 match_highlight
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:288 — `promptpath` returns String (compile-time type pin).
+    #[test]
+    fn promptpath_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = promptpath("", 0, false, "");
+    }
+
+    /// c:288 — `promptpath("", 0, _, _)` empty path returns empty.
+    #[test]
+    fn promptpath_empty_path_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(promptpath("", 0, false, ""), "");
+    }
+
+    /// c:393 — `zattrescape` returns String.
+    #[test]
+    fn zattrescape_returns_string_type() {
+        let _: String = zattrescape(0);
+    }
+
+    /// c:393 — `zattrescape(0)` zero attrs is pure.
+    #[test]
+    fn zattrescape_zero_is_pure() {
+        let first = zattrescape(0);
+        for _ in 0..3 {
+            assert_eq!(zattrescape(0), first, "zattrescape(0) must be pure");
+        }
+    }
+
+    /// c:434 — `parsehighlight("")` empty returns zattr type.
+    #[test]
+    fn parsehighlight_returns_zattr_type() {
+        let _: zattr = parsehighlight("");
+    }
+
+    /// c:1410 + c:1423 — `cmdpush` + `cmdpop` round-trip safe.
+    #[test]
+    fn cmdpush_cmdpop_round_trip_safe() {
+        let _g = crate::test_util::global_state_lock();
+        cmdpush(0);
+        cmdpop();
+    }
+
+    /// c:1813 — `countprompt("", _, _, 0)` empty doesn't panic.
+    #[test]
+    fn countprompt_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut w = 0i32;
+        let mut h = 0i32;
+        countprompt("", &mut w, &mut h, 0);
+    }
+
+    /// c:1889 — `match_named_colour("")` empty returns None.
+    #[test]
+    fn match_named_colour_empty_returns_none_pin() {
+        assert!(match_named_colour("").is_none(),
+            "empty color name → None");
+    }
+
+    /// c:1889 — `match_named_colour("red")` known color returns Some.
+    #[test]
+    fn match_named_colour_red_returns_some() {
+        let r = match_named_colour("red");
+        assert!(r.is_some(), "'red' must be a known color");
+    }
+
+    /// c:1931 — `truecolor_terminal` returns bool (compile-time type pin).
+    #[test]
+    fn truecolor_terminal_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = truecolor_terminal();
+    }
+
+    /// c:2089 — `match_highlight("")` empty returns (zattr, zattr) tuple.
+    #[test]
+    fn match_highlight_returns_tuple_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: (zattr, zattr) = match_highlight("");
+    }
 }
