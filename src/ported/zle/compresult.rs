@@ -2272,4 +2272,111 @@ mod tests {
         let r = unambig_data(&["single".to_string()]);
         assert_eq!(r, "single", "single match → common prefix is itself");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compresult.c
+    // c:71 cut_cline / c:99 cline_str / c:166 build_pos_string /
+    // c:180 unambig_data / c:250 hasbrpsfx / c:379 valid_match /
+    // c:502 comp_mod / c:639 list_lines / c:701 skipnolist
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:71 — `cut_cline("", _)` returns empty.
+    #[test]
+    fn cut_cline_empty_input_returns_empty() {
+        assert_eq!(cut_cline("", 0), "");
+        assert_eq!(cut_cline("", 100), "");
+    }
+
+    /// c:71 — `cut_cline` is deterministic.
+    #[test]
+    fn cut_cline_is_deterministic() {
+        for s in ["", "abc", "hello world"] {
+            for n in [0usize, 1, 5, 100] {
+                let first = cut_cline(s, n);
+                for _ in 0..3 {
+                    assert_eq!(cut_cline(s, n), first,
+                        "cut_cline({:?}, {}) must be deterministic", s, n);
+                }
+            }
+        }
+    }
+
+    /// c:166 — `build_pos_string` returns String (compile-time type pin).
+    #[test]
+    fn build_pos_string_returns_string_type() {
+        let _: String = build_pos_string(1, 1);
+    }
+
+    /// c:166 — `build_pos_string` is pure.
+    #[test]
+    fn build_pos_string_is_pure() {
+        for (c, t) in [(1usize, 1usize), (5, 10), (100, 1000)] {
+            let first = build_pos_string(c, t);
+            for _ in 0..3 {
+                assert_eq!(build_pos_string(c, t), first,
+                    "build_pos_string({}, {}) must be pure", c, t);
+            }
+        }
+    }
+
+    /// c:180 — `unambig_data(empty)` returns empty.
+    #[test]
+    fn unambig_data_empty_returns_empty_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(unambig_data(&[]), "");
+    }
+
+    /// c:250 — `hasbrpsfx("")` returns bool (compile-time type pin).
+    #[test]
+    fn hasbrpsfx_returns_bool_type() {
+        let _: bool = hasbrpsfx("");
+    }
+
+    /// c:250 — `hasbrpsfx` is pure.
+    #[test]
+    fn hasbrpsfx_is_pure() {
+        for s in ["", "abc", "{a,b}", "a{b,c}d"] {
+            let first = hasbrpsfx(s);
+            for _ in 0..3 {
+                assert_eq!(hasbrpsfx(s), first,
+                    "hasbrpsfx({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:502 — `comp_mod(0, M)` returns M-1 per 1-indexed menu-cycle
+    /// decrement: c:1367 always subtracts 1 first, then the negative-v
+    /// branch wraps via repeated `+= m` until non-negative → ends at M-1.
+    #[test]
+    fn comp_mod_zero_returns_m_minus_one() {
+        for m in [1i32, 5, 100, 1000] {
+            assert_eq!(comp_mod(0, m), m - 1,
+                "comp_mod(0, {}) = {}-1 = {} per c:1367 decrement+wrap", m, m, m - 1);
+        }
+    }
+
+    /// c:502 — `comp_mod` result strictly less than m.
+    #[test]
+    fn comp_mod_result_less_than_modulus() {
+        for v in [-100i32, -1, 0, 1, 50, 100] {
+            for m in [1i32, 5, 10] {
+                let r = comp_mod(v, m);
+                assert!(r >= 0 && r < m,
+                    "comp_mod({}, {}) = {} must be in [0, {})", v, m, r, m);
+            }
+        }
+    }
+
+    /// c:379 — `valid_match(word, prefix, suffix)` returns bool (type pin).
+    #[test]
+    fn valid_match_returns_bool_type() {
+        let _: bool = valid_match("", "", "");
+    }
+
+    /// c:701 — `skipnolist(empty, _)` returns 0 (empty array).
+    #[test]
+    fn skipnolist_empty_returns_zero() {
+        assert_eq!(skipnolist(&[], 0), 0);
+        assert_eq!(skipnolist(&[], 1), 0);
+    }
 }
