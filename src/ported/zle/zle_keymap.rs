@@ -1829,34 +1829,190 @@ pub fn add_cursor_key(km: &mut Keymap, tccode: i32, thingy: Thingy, defchar: i32
 /// keymap names exist and resolve via `openkeymap()`. Without that,
 /// any later `bindkey -K emacs ...` user call fails.
 pub fn default_bindings() {
-    // c:1309
-    // c:1309-1810 — alloc + link each named keymap; apply the per-key
-    // bindkey defaults for emacs / viins / vicmd inline (mirroring
-    // the C body which has all the bindkey calls inside this fn).
-    for name in [
-        "emacs",
-        "vicmd",
-        "viins",
-        "menuselect",
-        "listscroll",
-        ".safe",
-    ] {
-        let mut km = Keymap::default();
-        km.primary = Some(name.to_string());
-        match name {
-            "emacs" => setup_emacs_keymap(&mut km),
-            "viins" => setup_viins_keymap(&mut km),
-            "vicmd" => setup_vicmd_keymap(&mut km),
-            _ => {}
+    // c:1309 — `void default_bindings(void)`. Inlined line-for-line
+    // from `Src/Zle/zle_keymap.c:1309-1473`. No extracted helpers
+    // (the C body is one ~165-line function with every bindkey call
+    // expanded; the Rust port mirrors that shape exactly).
+    let mut vmap = Keymap::default(); // c:1311
+    vmap.primary = Some("viins".to_string());
+    let mut emap = Keymap::default(); // c:1312
+    emap.primary = Some("emacs".to_string());
+    let mut amap = Keymap::default(); // c:1313
+    amap.primary = Some("vicmd".to_string());
+    let mut oppmap = Keymap::default(); // c:1314
+    oppmap.primary = Some("viopp".to_string());
+    let mut vismap = Keymap::default(); // c:1315
+    vismap.primary = Some("visual".to_string());
+    let mut smap = Keymap::default(); // c:1316
+    smap.primary = Some(".safe".to_string());
+
+    // c:1326-1329 — `for (i = 0; i < 32; i++)
+    //                  vmap->first[i] = refthingy(Th(viinsbind[i]));
+    //                  emap->first[i] = refthingy(Th(emacsbind[i]));`
+    for i in 0..32 {
+        vmap.bind_char(i as u8, Thingy::builtin(VIINSBIND[i]));
+        emap.bind_char(i as u8, Thingy::builtin(EMACSBIND[i]));
+    }
+    // c:1330-1333 — 32-255 self-insert in both vmap and emap.
+    for i in 32u8..=255u8 {
+        vmap.bind_char(i, Thingy::builtin("self-insert"));
+        emap.bind_char(i, Thingy::builtin("self-insert"));
+    }
+    // c:1336-1337 — `first[127] = first[8]` (DEL == ^H).
+    vmap.bind_char(0x7F, Thingy::builtin(VIINSBIND[8]));
+    emap.bind_char(0x7F, Thingy::builtin(EMACSBIND[8]));
+
+    // c:1342-1343 — vicmd 0-127 from vicmdbind.
+    for i in 0..128 {
+        amap.bind_char(i as u8, Thingy::builtin(VICMDBIND[i]));
+    }
+    // c:1344-1345 — vicmd 128-255 undefined-key.
+    for i in 128u8..=255u8 {
+        amap.bind_char(i, Thingy::builtin("undefined-key"));
+    }
+
+    // c:1352-1358 — .safe fallback keymap: 0-255 → .self-insert,
+    // except \n/\r → .accept-line. The dotted names are the
+    // internal widget aliases not overridable by user `zle -N`.
+    for i in 0u8..=255u8 {
+        smap.bind_char(i, Thingy::builtin(".self-insert"));
+    }
+    smap.bind_char(b'\n', Thingy::builtin(".accept-line"));
+    smap.bind_char(b'\r', Thingy::builtin(".accept-line"));
+
+    // c:1364-1369 — vi command + insert: arrow keys. C uses
+    // `add_cursor_key` for termcap-aware bindings; without termcap
+    // substrate at this level we use the vt100 fallback escape
+    // sequences (matches the `defchar` path of add_cursor_key).
+    for kptr in [&mut vmap, &mut amap] {
+        kptr.bind_seq(b"\x1b[A", Thingy::builtin("up-line-or-history"));
+        kptr.bind_seq(b"\x1b[B", Thingy::builtin("down-line-or-history"));
+        kptr.bind_seq(b"\x1b[D", Thingy::builtin("vi-backward-char"));
+        kptr.bind_seq(b"\x1b[C", Thingy::builtin("vi-forward-char"));
+        kptr.bind_seq(b"\x1bOA", Thingy::builtin("up-line-or-history"));
+        kptr.bind_seq(b"\x1bOB", Thingy::builtin("down-line-or-history"));
+        kptr.bind_seq(b"\x1bOD", Thingy::builtin("vi-backward-char"));
+        kptr.bind_seq(b"\x1bOC", Thingy::builtin("vi-forward-char"));
+    }
+
+    // c:1374-1385 — vi operator-pending + visual local maps: cursor
+    // keys + j/k + aa/ia/aw/iw/aW/iW.
+    for kptr in [&mut oppmap, &mut vismap] {
+        kptr.bind_seq(b"\x1b[A", Thingy::builtin("up-line"));
+        kptr.bind_seq(b"\x1b[B", Thingy::builtin("down-line"));
+        kptr.bind_seq(b"\x1bOA", Thingy::builtin("up-line"));
+        kptr.bind_seq(b"\x1bOB", Thingy::builtin("down-line"));
+        kptr.bind_char(b'k', Thingy::builtin("up-line")); // c:1379
+        kptr.bind_char(b'j', Thingy::builtin("down-line")); // c:1380
+        kptr.bind_seq(b"aa", Thingy::builtin("select-a-shell-word")); // c:1381
+        kptr.bind_seq(b"ia", Thingy::builtin("select-in-shell-word")); // c:1382
+        kptr.bind_seq(b"aw", Thingy::builtin("select-a-word")); // c:1383
+        kptr.bind_seq(b"iw", Thingy::builtin("select-in-word")); // c:1384
+        kptr.bind_seq(b"aW", Thingy::builtin("select-a-blank-word")); // c:1385
+        kptr.bind_seq(b"iW", Thingy::builtin("select-in-blank-word")); // c:1386
+    }
+
+    // c:1388 — `bindkey(oppmap, "\33", refthingy(t_vicmdmode))`.
+    oppmap.bind_char(0x1B, Thingy::builtin("vi-cmd-mode"));
+    // c:1389-1395 — visual-mode local bindings.
+    vismap.bind_char(0x1B, Thingy::builtin("deactivate-region"));
+    vismap.bind_char(b'o', Thingy::builtin("exchange-point-and-mark"));
+    vismap.bind_char(b'p', Thingy::builtin("put-replace-selection"));
+    vismap.bind_char(b'u', Thingy::builtin("vi-down-case"));
+    vismap.bind_char(b'U', Thingy::builtin("vi-up-case"));
+    vismap.bind_char(b'x', Thingy::builtin("vi-delete"));
+    vismap.bind_char(b'~', Thingy::builtin("vi-oper-swap-case"));
+
+    // c:1398-1407 — vi g-prefix sequences (on amap = vicmd).
+    amap.bind_seq(b"ga", Thingy::builtin("what-cursor-position"));
+    amap.bind_seq(b"ge", Thingy::builtin("vi-backward-word-end"));
+    amap.bind_seq(b"gE", Thingy::builtin("vi-backward-blank-word-end"));
+    amap.bind_seq(b"gg", Thingy::builtin("beginning-of-buffer-or-history"));
+    amap.bind_seq(b"gu", Thingy::builtin("vi-down-case"));
+    amap.bind_seq(b"gU", Thingy::builtin("vi-up-case"));
+    amap.bind_seq(b"g~", Thingy::builtin("vi-oper-swap-case"));
+    // c:1405-1407 — vim double-operator send-strings (NULL bind +
+    // str form, i.e. `bindkey -s`).
+    amap.bind_str(b"g~~", "g~g~".to_string());
+    amap.bind_str(b"guu", "gugu".to_string());
+    amap.bind_str(b"gUU", "gUgU".to_string());
+
+    // c:1410-1413 — emacs cursor keys (vt100 fallback).
+    emap.bind_seq(b"\x1b[A", Thingy::builtin("up-line-or-history"));
+    emap.bind_seq(b"\x1b[B", Thingy::builtin("down-line-or-history"));
+    emap.bind_seq(b"\x1b[D", Thingy::builtin("backward-char"));
+    emap.bind_seq(b"\x1b[C", Thingy::builtin("forward-char"));
+    emap.bind_seq(b"\x1bOA", Thingy::builtin("up-line-or-history"));
+    emap.bind_seq(b"\x1bOB", Thingy::builtin("down-line-or-history"));
+    emap.bind_seq(b"\x1bOD", Thingy::builtin("backward-char"));
+    emap.bind_seq(b"\x1bOC", Thingy::builtin("forward-char"));
+
+    // c:1416-1432 — emacs ^X sequences.
+    emap.bind_seq(b"\x18*", Thingy::builtin("expand-word"));
+    emap.bind_seq(b"\x18g", Thingy::builtin("list-expand"));
+    emap.bind_seq(b"\x18G", Thingy::builtin("list-expand"));
+    emap.bind_seq(b"\x18\x0e", Thingy::builtin("infer-next-history"));
+    emap.bind_seq(b"\x18\x0b", Thingy::builtin("kill-buffer"));
+    emap.bind_seq(b"\x18\x06", Thingy::builtin("vi-find-next-char"));
+    emap.bind_seq(b"\x18\x0f", Thingy::builtin("overwrite-mode"));
+    emap.bind_seq(b"\x18\x15", Thingy::builtin("undo"));
+    emap.bind_seq(b"\x18\x16", Thingy::builtin("vi-cmd-mode"));
+    emap.bind_seq(b"\x18\x0a", Thingy::builtin("vi-join"));
+    emap.bind_seq(b"\x18\x02", Thingy::builtin("vi-match-bracket"));
+    emap.bind_seq(b"\x18s", Thingy::builtin("history-incremental-search-forward"));
+    emap.bind_seq(b"\x18r", Thingy::builtin("history-incremental-search-backward"));
+    emap.bind_seq(b"\x18u", Thingy::builtin("undo"));
+    emap.bind_seq(b"\x18\x18", Thingy::builtin("exchange-point-and-mark"));
+    emap.bind_seq(b"\x18=", Thingy::builtin("what-cursor-position"));
+
+    // c:1435-1437 — bracketed paste in all three primary keymaps.
+    emap.bind_seq(b"\x1b[200~", Thingy::builtin("bracketed-paste"));
+    vmap.bind_seq(b"\x1b[200~", Thingy::builtin("bracketed-paste"));
+    amap.bind_seq(b"\x1b[200~", Thingy::builtin("bracketed-paste"));
+
+    // c:1440-1445 — emacs ESC sequences from metabind table.
+    for i in 0..128 {
+        let name = METABIND[i];
+        if name == "undefined-key" {
+            continue;
         }
-        let imm = if name == ".safe" { 1 } else { 0 };
-        linkkeymap(Arc::new(km), name, imm);
+        emap.bind_seq(&[0x1b, i as u8], Thingy::builtin(name));
     }
-    // c:1816-1818 — `linkkeymap(emacs_km, "main", 0)` — promote emacs
-    // as the active "main" keymap by default.
-    if let Some(emacs) = openkeymap("emacs") {
-        linkkeymap(emacs, "main", 0);
+
+    // c:1449-1454 — link each keymap into the name table.
+    linkkeymap(Arc::new(vmap), "viins", 0); // c:1449
+    linkkeymap(Arc::new(emap), "emacs", 0); // c:1450
+    linkkeymap(Arc::new(amap), "vicmd", 0); // c:1451
+    linkkeymap(Arc::new(oppmap), "viopp", 0); // c:1452
+    linkkeymap(Arc::new(vismap), "visual", 0); // c:1453
+    linkkeymap(Arc::new(smap), ".safe", 1); // c:1454 — KM_IMMUTABLE
+
+    // c:1455-1458 — `if (isset(VIMODE)) linkkeymap(vmap, "main", 0);
+    //                else linkkeymap(emap, "main", 0);`
+    let main_src = if crate::ported::zsh_h::isset(crate::ported::zsh_h::VIMODE) {
+        "viins"
+    } else {
+        "emacs"
+    };
+    if let Some(km) = openkeymap(main_src) {
+        linkkeymap(km, "main", 0);
     }
+
+    // c:1464-1465 — `isearch_keymap = newkeymap(NULL, "isearch");
+    //                linkkeymap(isearch_keymap, "isearch", 0);`.
+    let mut isearch_km = Keymap::default();
+    isearch_km.primary = Some("isearch".to_string());
+    linkkeymap(Arc::new(isearch_km), "isearch", 0);
+
+    // c:1468-1472 — `command_keymap`: \n/\r → accept-line,
+    // ^G ('G'&0x1F = 0x07) → send-break.
+    let mut command_km = Keymap::default();
+    command_km.primary = Some("command".to_string());
+    command_km.bind_char(b'\n', Thingy::builtin("accept-line")); // c:1470
+    command_km.bind_char(b'\r', Thingy::builtin("accept-line")); // c:1471
+    command_km.bind_char(0x07, Thingy::builtin("send-break")); // c:1472
+    linkkeymap(Arc::new(command_km), "command", 0);
+
     // Seed curkeymap/curkeymapname so the first key read has a target.
     *curkeymap.lock().unwrap() = openkeymap("main"); // c:519
     *curkeymapname() = "main".to_string(); // c:513
@@ -2320,144 +2476,6 @@ pub fn curkeymapname() -> std::sync::MutexGuard<'static, String> {
 // equivalent `bindkey` calls in one body (Src/Zle/zle_keymap.c:124).
 // The Rust port keeps them factored by keymap for readability.
 
-// WARNING: NOT IN ZLE_KEYMAP.C — Rust-only factoring of zsh's
-// inlined `default_bindings()` body (Src/Zle/zle_keymap.c:124).
-
-/// Set up emacs keymap bindings. Direct port of the emacs branch of
-/// `default_bindings()` from `Src/Zle/zle_keymap.c:1309` driven by the
-/// canonical `EMACSBIND` / `METABIND` tables in
-/// `zle_bindings.rs` (which mirror `Src/Zle/zle_bindings.c:88-253`).
-pub fn setup_emacs_keymap(km: &mut Keymap) {
-    // c:1326-1329 — first 32 entries come from emacsbind table.
-    for i in 0..32 {
-        km.bind_char(i as u8, Thingy::builtin(EMACSBIND[i]));
-    }
-    // c:1330-1333 — 32-255 self-insert.
-    for i in 32u8..=255u8 {
-        km.bind_char(i, Thingy::builtin("self-insert"));
-    }
-    // c:1337 — entry[127] = entry[8] (DEL == ^H).
-    km.bind_char(0x7F, Thingy::builtin(EMACSBIND[8]));
-
-    // c:1410-1413 — emacs cursor keys (vt100 fallback).
-    km.bind_seq(b"\x1b[A", Thingy::builtin("up-line-or-history"));
-    km.bind_seq(b"\x1b[B", Thingy::builtin("down-line-or-history"));
-    km.bind_seq(b"\x1b[C", Thingy::builtin("forward-char"));
-    km.bind_seq(b"\x1b[D", Thingy::builtin("backward-char"));
-    km.bind_seq(b"\x1bOA", Thingy::builtin("up-line-or-history"));
-    km.bind_seq(b"\x1bOB", Thingy::builtin("down-line-or-history"));
-    km.bind_seq(b"\x1bOC", Thingy::builtin("forward-char"));
-    km.bind_seq(b"\x1bOD", Thingy::builtin("backward-char"));
-
-    // c:1415-1431 — ^X sequences.
-    km.bind_seq(b"\x18*", Thingy::builtin("expand-word"));
-    km.bind_seq(b"\x18g", Thingy::builtin("list-expand"));
-    km.bind_seq(b"\x18G", Thingy::builtin("list-expand"));
-    km.bind_seq(b"\x18\x0e", Thingy::builtin("infer-next-history"));
-    km.bind_seq(b"\x18\x0b", Thingy::builtin("kill-buffer"));
-    km.bind_seq(b"\x18\x06", Thingy::builtin("vi-find-next-char"));
-    km.bind_seq(b"\x18\x0f", Thingy::builtin("overwrite-mode"));
-    km.bind_seq(b"\x18\x15", Thingy::builtin("undo"));
-    km.bind_seq(b"\x18\x16", Thingy::builtin("vi-cmd-mode"));
-    km.bind_seq(b"\x18\x0a", Thingy::builtin("vi-join"));
-    km.bind_seq(b"\x18\x02", Thingy::builtin("vi-match-bracket"));
-    km.bind_seq(
-        b"\x18s",
-        Thingy::builtin("history-incremental-search-forward"),
-    );
-    km.bind_seq(
-        b"\x18r",
-        Thingy::builtin("history-incremental-search-backward"),
-    );
-    km.bind_seq(b"\x18u", Thingy::builtin("undo"));
-    km.bind_seq(b"\x18\x18", Thingy::builtin("exchange-point-and-mark"));
-    km.bind_seq(b"\x18=", Thingy::builtin("what-cursor-position"));
-
-    // c:1434 — bracketed paste.
-    km.bind_seq(b"\x1b[200~", Thingy::builtin("bracketed-paste"));
-
-    // c:1438-1445 — ESC sequences from metabind table.
-    for i in 0..128 {
-        let name = METABIND[i];
-        if name == "undefined-key" {
-            continue;
-        }
-        km.bind_seq(&[0x1b, i as u8], Thingy::builtin(name));
-    }
-}
-
-// WARNING: NOT IN ZLE_KEYMAP.C — Rust-only factoring of zsh's
-// inlined `default_bindings()` body (Src/Zle/zle_keymap.c:124).
-
-/// Set up viins (vi insert mode) keymap bindings. Direct port of the
-/// viins branch of `default_bindings()` (`Src/Zle/zle_keymap.c:1311`)
-/// driven by the canonical `VIINSBIND` table
-/// (`Src/Zle/zle_bindings.c:256-289`).
-pub fn setup_viins_keymap(km: &mut Keymap) {
-    // c:1326-1329 — first 32 entries from viinsbind.
-    for i in 0..32 {
-        km.bind_char(i as u8, Thingy::builtin(VIINSBIND[i]));
-    }
-    // c:1330-1333 — 32-255 self-insert.
-    for i in 32u8..=255u8 {
-        km.bind_char(i, Thingy::builtin("self-insert"));
-    }
-    // c:1336 — entry[127] = entry[8] (DEL == ^H).
-    km.bind_char(0x7F, Thingy::builtin(VIINSBIND[8]));
-
-    // c:1361-1370 — vi cursor keys.
-    km.bind_seq(b"\x1b[A", Thingy::builtin("up-line-or-history"));
-    km.bind_seq(b"\x1b[B", Thingy::builtin("down-line-or-history"));
-    km.bind_seq(b"\x1b[C", Thingy::builtin("vi-forward-char"));
-    km.bind_seq(b"\x1b[D", Thingy::builtin("vi-backward-char"));
-    km.bind_seq(b"\x1bOA", Thingy::builtin("up-line-or-history"));
-    km.bind_seq(b"\x1bOB", Thingy::builtin("down-line-or-history"));
-    km.bind_seq(b"\x1bOC", Thingy::builtin("vi-forward-char"));
-    km.bind_seq(b"\x1bOD", Thingy::builtin("vi-backward-char"));
-
-    // c:1435 — bracketed paste.
-    km.bind_seq(b"\x1b[200~", Thingy::builtin("bracketed-paste"));
-}
-
-// WARNING: NOT IN ZLE_KEYMAP.C — Rust-only factoring of zsh's
-// inlined `default_bindings()` body (Src/Zle/zle_keymap.c:124).
-
-/// Set up vicmd (vi command mode) keymap bindings. Direct port of the
-/// vicmd branch of `default_bindings()` (`Src/Zle/zle_keymap.c:1313`)
-/// driven by the canonical `VICMDBIND` table
-/// (`Src/Zle/zle_bindings.c:292-421`).
-pub fn setup_vicmd_keymap(km: &mut Keymap) {
-    // c:1342-1343 — 0-127 from vicmdbind.
-    for i in 0..128 {
-        km.bind_char(i as u8, Thingy::builtin(VICMDBIND[i]));
-    }
-    // c:1344-1345 — 128-255 undefined-key.
-    for i in 128u8..=255u8 {
-        km.bind_char(i, Thingy::builtin("undefined-key"));
-    }
-
-    // c:1361-1369 — vi cursor keys.
-    km.bind_seq(b"\x1b[A", Thingy::builtin("up-line-or-history"));
-    km.bind_seq(b"\x1b[B", Thingy::builtin("down-line-or-history"));
-    km.bind_seq(b"\x1b[C", Thingy::builtin("vi-forward-char"));
-    km.bind_seq(b"\x1b[D", Thingy::builtin("vi-backward-char"));
-    km.bind_seq(b"\x1bOA", Thingy::builtin("up-line-or-history"));
-    km.bind_seq(b"\x1bOB", Thingy::builtin("down-line-or-history"));
-    km.bind_seq(b"\x1bOC", Thingy::builtin("vi-forward-char"));
-    km.bind_seq(b"\x1bOD", Thingy::builtin("vi-backward-char"));
-
-    // c:1398-1407 — vi g-prefix sequences.
-    km.bind_seq(b"ga", Thingy::builtin("what-cursor-position"));
-    km.bind_seq(b"ge", Thingy::builtin("vi-backward-word-end"));
-    km.bind_seq(b"gE", Thingy::builtin("vi-backward-blank-word-end"));
-    km.bind_seq(b"gg", Thingy::builtin("beginning-of-buffer-or-history"));
-    km.bind_seq(b"gu", Thingy::builtin("vi-down-case"));
-    km.bind_seq(b"gU", Thingy::builtin("vi-up-case"));
-    km.bind_seq(b"g~", Thingy::builtin("vi-oper-swap-case"));
-
-    // c:1436 — bracketed paste.
-    km.bind_seq(b"\x1b[200~", Thingy::builtin("bracketed-paste"));
-}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

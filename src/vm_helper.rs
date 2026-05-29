@@ -1357,6 +1357,61 @@ impl ShellExecutor {
     /// Returns `None` when the name isn't a known function so the caller
     /// can fall through to external dispatch.
     pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
+        // zshrs-original: `[compsys] backend = "rust"` short-circuit.
+        // Routes `_NAME` calls to the in-repo Rust ports under
+        // `src/compsys/ported/` when the user opted in (default).
+        // The Rust port runs as the `body_runner` closure INSIDE
+        // doshfunc's scope so the C-faithful prologue/epilogue
+        // (locallevel++, FUNCSTACK push, BREAKS/CONTFLAG/LASTVAL
+        // save+restore, trap_state, noerrexit clear, pipestats
+        // deep-copy) applies identically to shell-fn body and Rust
+        // port. Router returns None for names without a Rust port →
+        // graceful fallback to the shfunc autoload path below.
+        if let Some(rust_fn) = crate::compsys::router::try_rust_dispatch(name) {
+            let display_name = name.to_string();
+            self.prompt_funcstack
+                .push((display_name.clone(), 0, None));
+            self.local_scope_depth += 1;
+            let mut synth_shf = crate::ported::zsh_h::shfunc {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: display_name.clone(),
+                    flags: 0,
+                },
+                filename: None,
+                lineno: 0,
+                funcdef: None,
+                redir: None,
+                sticky: None,
+                body: None,
+            };
+            // C convention: argv[0] = function name (for FUNCTIONARGZERO
+            // `$0` propagation), argv[1..] = real positional args.
+            let mut doshargs: Vec<String> = vec![display_name.clone()];
+            doshargs.extend(args.iter().cloned());
+            let args_owned: Vec<String> = args.to_vec();
+            let body_runner = move || -> i32 { rust_fn(&args_owned) };
+            let _ctx = ExecutorContext::enter(self);
+            let status = crate::ported::exec::doshfunc(
+                &mut synth_shf,
+                doshargs,
+                false,
+                body_runner,
+            );
+            drop(_ctx);
+            self.prompt_funcstack.pop();
+            self.local_scope_depth -= 1;
+            // Honor explicit `return N` from inside the Rust port (the
+            // port can set `self.returning` via an executor reach-in
+            // when it needs early exit; otherwise the body status wins).
+            if let Some(ret) = self.returning.take() {
+                self.set_last_status(ret);
+                return Some(ret);
+            }
+            self.set_last_status(status);
+            return Some(status);
+        }
+
         // Autoload prelude: PM_UNDEFINED stub → loadautofn → wrap + eval.
         if !self.functions_compiled.contains_key(name) {
             if let Some(stub) = crate::ported::utils::getshfunc(name) {

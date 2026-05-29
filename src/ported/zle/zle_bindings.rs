@@ -609,6 +609,7 @@ pub const IWIDGET_NAMES: &[&str] = &[
     "beginning-of-line",
     "capitalize-word",
     "clear-screen",
+    "complete-word",
     "copy-prev-word",
     "copy-region-as-kill",
     "delete-char-or-list",
@@ -635,6 +636,8 @@ pub const IWIDGET_NAMES: &[&str] = &[
     "kill-word",
     "list-choices",
     "list-expand",
+    "menu-complete",
+    "menu-expand-or-complete",
     "neg-argument",
     "pound-insert",
     "push-line",
@@ -643,6 +646,7 @@ pub const IWIDGET_NAMES: &[&str] = &[
     "quoted-insert",
     "redisplay",
     "redo",
+    "reverse-menu-complete",
     "run-help",
     "self-insert",
     "self-insert-unmeta",
@@ -932,6 +936,82 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         _ => None,
     }
 }
+
+/// Per-widget ZLE flags table — direct port of the FLAGS column of
+/// `Src/Zle/iwidgets.list`. The C build pipeline turns each
+/// `iwidgets.list` line into a `W(ZLE_FLAGS, t_name, fn)` entry in
+/// the generated `widgets[]` array (`Makefile:1078-1090`). Rust uses
+/// a `(name, flags)` array — same data, looked up at `init_thingies`
+/// time.
+///
+/// The eight `ZLE_ISCOMP` entries here are what `zle -C` requires
+/// as the BASE arg (`Src/Zle/zle_thingy.c:612`
+/// `if (!cw || !(cw->flags & ZLE_ISCOMP)) return 1`).
+pub static IWIDGET_FLAGS: &[(&str, i32)] = {
+    use super::zle_h::{
+        ZLE_ISCOMP, ZLE_KEEPSUFFIX, ZLE_KILL, ZLE_LASTCOL, ZLE_LINEMOVE, ZLE_MENUCMP,
+        ZLE_NOTCOMMAND, ZLE_VIOPER, ZLE_YANK, ZLE_YANKAFTER, ZLE_YANKBEFORE,
+    };
+    &[
+        // c:iwidgets.list:34 / c:40 / c:61 / c:62 / c:86 / c:87 /
+        // c:103 — the 7 simple ZLE_ISCOMP widgets that `zle -C` wraps.
+        ("complete-word", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
+        ("delete-char-or-list", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
+        ("expand-or-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
+        ("expand-or-complete-prefix", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
+        ("menu-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
+        ("menu-expand-or-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
+        ("reverse-menu-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_ISCOMP),
+        // c:83 — list-choices: ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_ISCOMP.
+        ("list-choices", ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_ISCOMP),
+        // c:13 — accept-and-menu-complete.
+        ("accept-and-menu-complete", ZLE_MENUCMP | ZLE_KEEPSUFFIX),
+        // c:21-24 — backward-delete / -kill widgets.
+        ("backward-delete-char", ZLE_KEEPSUFFIX),
+        ("backward-delete-word", ZLE_KEEPSUFFIX),
+        ("backward-kill-line", ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("backward-kill-word", ZLE_KILL | ZLE_KEEPSUFFIX),
+        // Line-movement (ZLE_LINEMOVE).
+        ("beginning-of-buffer-or-history", ZLE_LINEMOVE),
+        ("beginning-of-history", ZLE_LINEMOVE),
+        ("end-of-buffer-or-history", ZLE_LINEMOVE),
+        ("end-of-history", ZLE_LINEMOVE),
+        ("down-history", ZLE_LINEMOVE),
+        ("down-line-or-history", ZLE_LINEMOVE),
+        ("down-line-or-search", ZLE_LINEMOVE),
+        ("up-history", ZLE_LINEMOVE),
+        ("up-line-or-history", ZLE_LINEMOVE),
+        ("up-line-or-search", ZLE_LINEMOVE),
+        // Kill widgets (non-VI-operator forms).
+        ("kill-line", ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("kill-region", ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("kill-whole-line", ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("kill-word", ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("vi-backward-kill-word", ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("vi-change-eol", ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("vi-change-whole-line", ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("vi-delete-char", ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("vi-kill-eol", ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("vi-kill-line", ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("vi-yank-eol", ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("vi-yank-whole-line", ZLE_KILL | ZLE_KEEPSUFFIX),
+        // VI operator-pending widgets (read further keys; also kill).
+        ("vi-change", ZLE_VIOPER | ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("vi-delete", ZLE_VIOPER | ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("vi-yank", ZLE_VIOPER | ZLE_KILL | ZLE_KEEPSUFFIX),
+        ("vi-oper-swap-case", ZLE_VIOPER | ZLE_KILL | ZLE_KEEPSUFFIX),
+        // Yank widgets.
+        ("yank", ZLE_YANK | ZLE_YANKAFTER),
+        ("yank-pop", ZLE_YANK | ZLE_YANKBEFORE),
+        // Non-command widgets (don't update lastcmd).
+        ("argument-base", ZLE_NOTCOMMAND),
+        ("digit-argument", ZLE_NOTCOMMAND),
+        ("neg-argument", ZLE_NOTCOMMAND),
+        ("auto-suffix-remove", ZLE_NOTCOMMAND),
+        ("universal-argument", ZLE_NOTCOMMAND),
+        ("auto-suffix-retain", ZLE_KEEPSUFFIX | ZLE_NOTCOMMAND),
+    ]
+};
 
 #[cfg(test)]
 mod tests {

@@ -132,6 +132,11 @@ pub mod in_editor;
 // src/ported/zle/complist.rs.
 /// `ported` submodule.
 pub mod ported;
+/// Rust-vs-shell backend dispatcher consulted by
+/// `vm_helper::dispatch_function_call` before the standard shfunc
+/// lookup. Honors `[compsys] backend = "rust"|"shell"` from the
+/// TOML config (`extensions::config::CompsysConfig`).
+pub mod router;
 // state.rs deleted — dup of shell parameter table for completion
 // (PREFIX/SUFFIX/IPREFIX/ISUFFIX/QIPREFIX/QISUFFIX/CURRENT/words/
 // compstate) ported in src/ported/zle/complete.rs + accessed via

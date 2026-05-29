@@ -10,19 +10,21 @@
 //! - spell-word, delete-char-or-list
 //! - magic-space, accept-and-menu-complete
 
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Mutex;
 use crate::ported::module::gethookdef;
 use crate::ported::utils::{write_loop, zwarn};
-use crate::ported::zle::compcore::{compfunc, ADDEDX, ZLEMETACS, ZLEMETALINE, ZLEMETALL};
-use crate::ported::zle::compcore::{WB, WE};
+use crate::ported::zle::compcore::{
+    compfunc, ADDEDX, LASTCHAR, WB, WE, ZLEMETACS, ZLEMETALINE, ZLEMETALL,
+};
 use crate::ported::zle::zle_h::{
     COMP_COMPLETE, COMP_EXPAND, COMP_EXPAND_COMPLETE, COMP_ISEXPAND, COMP_LIST_COMPLETE,
-    COMP_LIST_EXPAND, COMP_SPELL, CUT_RAW,
+    COMP_LIST_EXPAND, COMP_SPELL, CUT_RAW, WidgetImpl,
 };
 use crate::ported::zsh_h::{
     isset, BASHAUTOLIST, GLOBCOMPLETE, MENUCOMPLETE, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE,
     QT_SINGLE, RECEXACT,
 };
-use std::sync::atomic::{AtomicI32, Ordering};
 
 // =====================================================================
 // Globals — `Src/Zle/zle_tricky.c:96-106`.
@@ -85,18 +87,57 @@ pub fn usetab() -> i32 {
     1
 }
 
-/// Port of `completecall(char **args)` from Src/Zle/zle_tricky.c:202.
+/// Direct port of `int completecall(char **args)` from
+/// `Src/Zle/zle_tricky.c:202`. Invoked by `execzlefunc` when the
+/// dispatched widget has `WIDGET_NCOMP` set (a `zle -C` wrapper
+/// widget). Reads `compwidget->u.comp.{fn,func}`, plants the user
+/// shell function name in the `compfunc` global so the eventual
+/// `callcompfunc(s, compfunc)` inside `do_completion` invokes the
+/// right shfunc (`_main_complete` for the default compinit setup),
+/// and calls the base widget's C fn (e.g. `completeword`).
 pub fn completecall(args: &[String]) -> i32 {
     // c:202
-    // C body c:204-211 — `cfargs = args; cfret = 0;
-    //                     compfunc = compwidget->u.comp.func;
-    //                     if (compwidget->u.comp.fn(zlenoargs) && !cfret)
-    //                         cfret = 1;
-    //                     compfunc = NULL; return cfret`.
-    // Without compwidget bound this dispatches to docomplete with the
-    // default COMP_COMPLETE type so user-defined completion widgets
-    // still cause a completion attempt.
-    docomplete(COMP_COMPLETE)
+    // c:204-205 — `cfargs = args; cfret = 0;`.
+    *cfargs.lock().unwrap() = args.to_vec();
+    cfret.store(0, Ordering::SeqCst);
+
+    // c:206 — `compfunc = compwidget->u.comp.func`. Read the COMP
+    // widget's `func` field; if compwidget is unset or not Comp,
+    // fall through to a plain `docomplete(COMP_COMPLETE)` matching
+    // the behavior when no `zle -C` widget is active.
+    let compwidget_g = COMPWIDGET.lock().unwrap();
+    let (base_fn, func_name) = match compwidget_g.as_ref().map(|w| (&w.u, w.flags)) {
+        Some((WidgetImpl::Comp { fn_, func, .. }, _)) => (Some(*fn_), Some(func.clone())),
+        _ => (None, None),
+    };
+    drop(compwidget_g);
+
+    if let Some(name) = func_name {
+        let g = compfunc.get_or_init(
+            || Mutex::new(None),
+        );
+        *g.lock().unwrap() = Some(name); // c:206
+    }
+
+    // c:207-208 — `if (compwidget->u.comp.fn(zlenoargs) && !cfret)
+    //                cfret = 1;`. zlenoargs is the empty argv (C's
+    // `static char *zlenoargs[1] = { NULL }`); Rust uses an empty
+    // slice.
+    let zlenoargs: &[String] = &[];
+    let r = match base_fn {
+        Some(f) => f(zlenoargs),
+        None => docomplete(COMP_COMPLETE),
+    };
+    if r != 0 && cfret.load(Ordering::SeqCst) == 0 {
+        cfret.store(1, Ordering::SeqCst); // c:208
+    }
+
+    // c:209 — `compfunc = NULL`.
+    if let Some(g) = compfunc.get() {
+        *g.lock().unwrap() = None;
+    }
+
+    cfret.load(Ordering::SeqCst) // c:211
 }
 
 /// Port of `int completeword(char **args)` from
@@ -107,10 +148,10 @@ pub fn completeword(args: &[String]) -> i32 {
     USEMENU.store(isset(MENUCOMPLETE) as i32, Ordering::SeqCst); // c:218 — `usemenu = !!isset(MENUCOMPLETE)`
     USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:219 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:220
-                                            // c:221-222 — Tab-at-indent → `selfinsert(args)`. Body of
-                                            // `selfinsert` ignores args (C marks them `UNUSED`); kept in
-                                            // the contract for sig parity.
-    let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
+    // c:221-222 — Tab-at-indent → `selfinsert(args)`. Body of
+    // `selfinsert` ignores args (C marks them `UNUSED`); kept in
+    // the contract for sig parity.
+    let lastch = LASTCHAR.load(Ordering::SeqCst);
     if lastch == b'\t' as i32 && usetab() != 0 {
         return selfinsert(args);
     }
@@ -143,7 +184,7 @@ pub fn menucomplete(args: &[String]) -> i32 {
     USEMENU.store(1, Ordering::SeqCst); // c:240
     USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:241 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:242
-    let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
+    let lastch = LASTCHAR.load(Ordering::SeqCst);
     if lastch == b'\t' as i32 && usetab() != 0 {
         return selfinsert(args);
     }
@@ -231,12 +272,12 @@ pub fn expandorcomplete(args: &[String]) -> i32 {
     USEMENU.store(isset(MENUCOMPLETE) as i32, Ordering::SeqCst); // c:301 — `usemenu = !!isset(MENUCOMPLETE)`
     USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:302 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:303
-                                            // c:304-305 — Tab-at-indent → `selfinsert(args)`. Rust
-                                            // `selfinsert()` takes no args today (C's body marks them
-                                            // `UNUSED`) so the arg pass-through is dropped; a follow-up
-                                            // patch should widen `selfinsert` to `fn(&[String]) -> i32`
-                                            // for sig parity.
-    let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
+    // c:304-305 — Tab-at-indent → `selfinsert(args)`. Rust
+    // `selfinsert()` takes no args today (C's body marks them
+    // `UNUSED`) so the arg pass-through is dropped; a follow-up
+    // patch should widen `selfinsert` to `fn(&[String]) -> i32`
+    // for sig parity.
+    let lastch = LASTCHAR.load(Ordering::SeqCst);
     if lastch == b'\t' as i32 && usetab() != 0 {
         return selfinsert(args);
     }
@@ -267,8 +308,8 @@ pub fn menuexpandorcomplete(args: &[String]) -> i32 {
     USEMENU.store(1, Ordering::SeqCst); // c:323
     USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:324 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:325
-                                            // c:326-327 — Tab-at-indent → selfinsert.
-    let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
+    // c:326-327 — Tab-at-indent → selfinsert.
+    let lastch = LASTCHAR.load(Ordering::SeqCst);
     if lastch == b'\t' as i32 && usetab() != 0 {
         return selfinsert(args);
     }
@@ -319,7 +360,7 @@ pub fn acceptandmenucomplete(args: &[String]) -> i32 {
     // c:358 — `runhookdef(ACCEPTCOMPHOOK, NULL)`. Fires registered
     // accept-completion hooks (used by `_menu`, etc.) before
     // advancing the menu cursor.
-    let h_accept = crate::ported::module::gethookdef("accept_comp");
+    let h_accept = gethookdef("accept_comp");
     if !h_accept.is_null() {
         crate::ported::module::runhookdef(h_accept, std::ptr::null_mut());
     }
@@ -488,7 +529,7 @@ pub fn docomplete(lst: i32) -> i32 {
     // to the full line.
     let origword = get_comp_string();
     let line = crate::ported::zle::compcore::ZLELINE
-        .get_or_init(|| std::sync::Mutex::new(String::new()))
+        .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
@@ -508,9 +549,9 @@ pub fn docomplete(lst: i32) -> i32 {
         let we = WE.load(Ordering::SeqCst);
         if we > wb {
             // c:807 — `zlemetacs = wb`.
-            crate::ported::zle::compcore::ZLEMETACS.store(wb, Ordering::SeqCst);
+            ZLEMETACS.store(wb, Ordering::SeqCst);
             // c:808 — `foredel(we - wb, CUT_RAW)`.
-            crate::ported::zle::zle_utils::foredel(we - wb, CUT_RAW);
+            foredel(we - wb, CUT_RAW);
         }
         let mut x = s_word.clone(); // c:810 — `dupstring(w)`
         let ox = s_word.clone(); // c:810 — `ox = dupstring(w)`
@@ -537,7 +578,7 @@ pub fn docomplete(lst: i32) -> i32 {
         // c:847-868 — if expand-or-complete and buffer unchanged,
         // fall through to docompletion.
         let after = crate::ported::zle::compcore::ZLELINE
-            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .get_or_init(|| Mutex::new(String::new()))
             .lock()
             .map(|g| g.clone())
             .unwrap_or_default();
@@ -548,7 +589,7 @@ pub fn docomplete(lst: i32) -> i32 {
             ret_local = docompletion(&s_word, lst, lincmd); // c:865
         } else if ret_local != 0 {
             // c:854 — `if (ret) clearlist = 1`.
-            crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::SeqCst);
+            CLEARLIST.store(1, Ordering::SeqCst);
         }
         ret = ret_local;
     } else {
@@ -1071,21 +1112,21 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
         // c:2306-2316 — `COMP_LIST_EXPAND` path: restore the
         // original line and display the expansions as a list.
         if lst == COMP_LIST_EXPAND {
-            crate::ported::zle::compcore::ZLEMETACS.store(0, Ordering::SeqCst);
-            crate::ported::zle::zle_utils::foredel(
-                crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst),
+            ZLEMETACS.store(0, Ordering::SeqCst);
+            foredel(
+                ZLEMETALL.load(Ordering::SeqCst),
                 CUT_RAW,
             );
-            crate::ported::zle::zle_utils::spaceinline(ORIGLL.load(Ordering::SeqCst));
+            spaceinline(ORIGLL.load(Ordering::SeqCst));
             if let (Some(metabuf), Some(orig)) = (
-                crate::ported::zle::compcore::ZLEMETALINE.get(),
+                ZLEMETALINE.get(),
                 ORIGLINE.get(),
             ) {
                 if let (Ok(mut m), Ok(o)) = (metabuf.lock(), orig.lock()) {
                     *m = o.clone();
                 }
             }
-            crate::ported::zle::compcore::ZLEMETACS
+            ZLEMETACS
                 .store(ORIGCS.load(Ordering::SeqCst), Ordering::SeqCst);
             // Drain vl into a Vec<String> for listlist's slice arg.
             let mut items: Vec<String> = Vec::new();
@@ -1093,15 +1134,15 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
                 items.push(x);
             }
             ret = listlist(&items, 0);
-            crate::ported::zle::zle_refresh::SHOWINGLIST.store(0, Ordering::SeqCst);
+            SHOWINGLIST.store(0, Ordering::SeqCst);
             return ret;
         }
         // c:2319-2332 — splice expansions into the buffer at the
         // current word position (wb..we).
         let wb = WB.load(Ordering::SeqCst);
         let we = WE.load(Ordering::SeqCst);
-        crate::ported::zle::compcore::ZLEMETACS.store(wb, Ordering::SeqCst);
-        crate::ported::zle::zle_utils::foredel(we - wb, CUT_RAW);
+        ZLEMETACS.store(wb, Ordering::SeqCst);
+        foredel(we - wb, CUT_RAW);
         while let Some(node) = crate::ported::linklist::ugetnode(&mut vl) {
             ret = 0;
             // c:2324 — `ss = quotename(ss); untokenize(ss); inststr(ss);`
@@ -1110,9 +1151,9 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
             inststr(&unt);
             // c:2326-2330 — between items, insert a space.
             if !vl.empty() || !first {
-                crate::ported::zle::zle_utils::spaceinline(1);
-                let pos = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
-                if let Some(metabuf) = crate::ported::zle::compcore::ZLEMETALINE.get() {
+                spaceinline(1);
+                let pos = ZLEMETACS.load(Ordering::SeqCst);
+                if let Some(metabuf) = ZLEMETALINE.get() {
                     if let Ok(mut m) = metabuf.lock() {
                         if (pos as usize) < m.len() {
                             // C: `zlemetaline[zlemetacs++] = ' '`.
@@ -1124,7 +1165,7 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
                                 *m = String::from_utf8_lossy(&bytes).into_owned();
                             }
                         }
-                        crate::ported::zle::compcore::ZLEMETACS.store(pos + 1, Ordering::SeqCst);
+                        ZLEMETACS.store(pos + 1, Ordering::SeqCst);
                     }
                 }
             }
@@ -1155,7 +1196,7 @@ pub fn docompletion(s: &str, lst: i32, incmd: i32) -> i32 {
         lst,
         incmd,
     };
-    let h = crate::ported::module::gethookdef("complete");
+    let h = gethookdef("complete");
     if !h.is_null() {
         // c:2346 — `runhookdef(COMPLETEHOOK, &dat)`.
         let dat_ptr =
@@ -1326,7 +1367,7 @@ pub fn listlist(items: &[String], cols: usize) -> i32 {
 pub fn doexpandhist() -> i32 {
     // c:2802
     let line = crate::ported::zle::compcore::ZLELINE
-        .get_or_init(|| std::sync::Mutex::new(String::new()))
+        .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
@@ -1345,7 +1386,7 @@ pub fn doexpandhist() -> i32 {
     } // c:2860 no `!` = no expansion
     let expanded = line.clone(); // pass-through
     if let Ok(mut g) = crate::ported::zle::compcore::ZLELINE
-        .get_or_init(|| std::sync::Mutex::new(String::new()))
+        .get_or_init(|| Mutex::new(String::new()))
         .lock()
     {
         *g = expanded.clone();
@@ -1361,7 +1402,7 @@ pub fn fixmagicspace() {
     // c:2867
     // C body c:2869-2876 — `lastchar = ' '; lastchar_wide = L' ';
     //                       lastchar_wide_valid = 1`.
-    crate::ported::zle::compcore::LASTCHAR.store((b' ' as i32) as i32, Ordering::SeqCst);
+    LASTCHAR.store((b' ' as i32) as i32, Ordering::SeqCst);
     LASTCHAR_WIDE.store((b' ' as i32) as i32, Ordering::SeqCst);
     LASTCHAR_WIDE_VALID.store(1, Ordering::SeqCst);
 }
@@ -1602,18 +1643,18 @@ pub static INBACKT: AtomicI32 = AtomicI32::new(0); // c:419
 
 /// Port of `mod_export char *origline` from `Src/Zle/zle_tricky.c`.
 /// The metafied line saved at completion entry.
-pub static ORIGLINE: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
+pub static ORIGLINE: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
 
 /// Port of `mod_export char *lastprebr` from `Src/Zle/zle_tricky.c`.
-pub static LASTPREBR: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
+pub static LASTPREBR: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
 /// Port of `mod_export char *lastpostbr` from `Src/Zle/zle_tricky.c`.
-pub static LASTPOSTBR: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
+pub static LASTPOSTBR: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
 
 /// Port of `mod_export char *compquote` from `Src/Zle/zle_tricky.c`.
 /// `$compstate[quote]` — current quoting context character.
-pub static COMPQUOTE: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
+pub static COMPQUOTE: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
 /// Port of `mod_export char *autoq` from `Src/Zle/zle_tricky.c`.
-pub static AUTOQ: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
+pub static AUTOQ: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new(); // zle_tricky.c
 
 /// Port of `mod_export int menucmp` from `Src/Zle/zle_tricky.c:106`.
 /// Non-zero while inside a menu-completion sequence.
@@ -1649,6 +1690,19 @@ pub static BASHLISTFIRST: AtomicI32 = AtomicI32::new(0); // c:157
 /// Threaded into the COMPLETEHOOK payload as `compldat.incmd` — drives
 /// `_command_names` selection in `_main_complete`.
 pub static LINCMD: AtomicI32 = AtomicI32::new(0); // c:139
+
+/// Port of `mod_export char **cfargs` from
+/// `Src/Zle/zle_tricky.c:162`. The argv passed into the wrapping
+/// `completecall(args)`; the user shell function `_main_complete`
+/// reads these via `$compstate[...]` and via the `$1`/`$2`/... that
+/// `callcompfunc` forwards.
+pub static cfargs: Mutex<Vec<String>> = Mutex::new(Vec::new()); // c:162
+
+/// Port of `mod_export int cfret` from
+/// `Src/Zle/zle_tricky.c:164`. Per-call return-value cell that
+/// `completecall` resets then ORs with the base widget's return; the
+/// user widget can override via `$compstate[force_return]`.
+pub static cfret: AtomicI32 = AtomicI32::new(0); // c:164
 
 /// Port of `mod_export int amenu` from `Src/Zle/zle_tricky.c`. Set
 /// non-zero while a menu-completion is in progress — drives the
