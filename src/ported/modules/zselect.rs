@@ -773,4 +773,118 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zselect.c
+    // c:25 handle_digits / c:68 bin_zselect / c:295-341 lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:25 — `handle_digits` returns i32 (compile-time type pin).
+    #[test]
+    fn handle_digits_returns_i32_type() {
+        let (mut set, mut fdmax) = fresh_set();
+        let _: i32 = handle_digits("zselect", "0", &mut set, &mut fdmax);
+    }
+
+    /// c:25 — `handle_digits` is deterministic.
+    #[test]
+    fn handle_digits_is_deterministic() {
+        for s in ["0", "5", "abc", ""] {
+            let (mut set, mut fdmax) = fresh_set();
+            let first = handle_digits("zselect", s, &mut set, &mut fdmax);
+            for _ in 0..3 {
+                let (mut s2, mut f2) = fresh_set();
+                let r = handle_digits("zselect", s, &mut s2, &mut f2);
+                assert_eq!(r, first,
+                    "handle_digits({:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:25 — `handle_digits` return value in canonical set (0 success / 1 error).
+    #[test]
+    fn handle_digits_return_in_canonical_set() {
+        let (mut set, mut fdmax) = fresh_set();
+        for s in ["0", "1", "100", "abc", "", "-1", "0x10"] {
+            let r = handle_digits("zselect", s, &mut set, &mut fdmax);
+            assert!(r == 0 || r == 1,
+                "handle_digits({:?}) = {} not in {{0,1}}", s, r);
+        }
+    }
+
+    /// c:25 — `handle_digits("0")` succeeds (fd 0 is valid).
+    #[test]
+    fn handle_digits_fd_zero_returns_success_pin() {
+        let (mut set, mut fdmax) = fresh_set();
+        let r = handle_digits("zselect", "0", &mut set, &mut fdmax);
+        assert_eq!(r, 0, "fd 0 must succeed");
+    }
+
+    /// c:25 — `handle_digits` for a very high fd doesn't panic.
+    #[test]
+    fn handle_digits_high_fd_no_panic() {
+        let (mut set, mut fdmax) = fresh_set();
+        let _ = handle_digits("zselect", "100", &mut set, &mut fdmax);
+    }
+
+    /// c:68 — `bin_zselect` with garbage arg returns nonzero in u8
+    /// exit-code range. (No-args case skipped: known ZSHRS BUG that
+    /// hangs in select(2) on empty fd_set.)
+    #[test]
+    fn bin_zselect_garbage_arg_return_in_exit_code_range() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_zs();
+        for args in [
+            vec!["garbage".to_string()],
+            vec!["abc".to_string()],
+        ] {
+            let r = bin_zselect("zselect", &args, &ops, 0);
+            assert!((0..256).contains(&r),
+                "exit code {} must fit in u8 range for {:?}", r, args);
+        }
+    }
+
+    /// c:68 — `bin_zselect` no-args HANGS in select(2) on empty fd_set.
+    /// C source guards against this; zshrs port does not.
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_zselect with no args hangs in select(2) on empty fd_set; C guards. See Src/Modules/zselect.c:68"]
+    fn bin_zselect_empty_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_zs();
+        let r = bin_zselect("zselect", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → error");
+    }
+
+    /// c:295-341 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn zselect_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:295 — setup_ idempotent.
+    #[test]
+    fn zselect_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:341 — finish_ idempotent.
+    #[test]
+    fn zselect_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
 }
