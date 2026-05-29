@@ -538,38 +538,158 @@ pub fn cmphaswilds(str: &str) -> i32 {
     0 // c:513
 }
 
-/// Port of `parambeg(char *s)` from Src/Zle/zle_tricky.c:521.
-/// Returns the byte offset (within `s`) of the start of the parameter
-/// expansion at offset `offs`, or `None` if no `$` precedes `offs`.
-/// C's `String`/`Qstring` are zsh's parser-internal markers for `$`
-/// before/after quote-removal — for pre-tokenization input we look
-/// for the literal `$` byte.
-/// WARNING: param names don't match C — Rust=(s, offs) vs C=(s)
+/// Direct port of `char *parambeg(char *s)` from
+/// `Src/Zle/zle_tricky.c:521`. Walks back from the cursor (`offs`)
+/// looking for a `$` (Stringg/Qstring token), then dispatches on
+/// the following char to identify a parameter expression. Returns
+/// the byte offset (within `s`) of the parameter-NAME start (after
+/// `$`, `${`, flag-parens, modifier chars), or `None` if no
+/// parameter expression brackets the cursor.
+///
+/// Rust signature: `(s, offs)` returns `Option<usize>` byte offset
+/// instead of C's `char *` to the same position. `offs` is C's
+/// `offs` global (zle_tricky.c) passed explicitly here.
 pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
     // c:521
+    use crate::ported::ztype_h::{idigit, INAMESPC};
+    use crate::ported::zsh_h::{
+        Dnull, Equals, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outpar, Pound, Qstring,
+        Quest, Star, Stringg, Tilde,
+    };
     let bytes = s.as_bytes();
-    if offs > bytes.len() || offs == 0 {
+    if offs > bytes.len() {
         return None;
     }
-    // c:526 — `for (p = s + offs; p > s && *p != Stringg && *p != Qstring; p--)`.
-    let mut p = offs.min(bytes.len()) - 1;
-    loop {
-        if bytes[p] == b'$' {
-            // c:529-530 — `while (p > s && (p[-1] == Stringg ...)) p--`.
-            while p > 0 && bytes[p - 1] == b'$' {
-                p -= 1;
-            }
-            // c:531-533 — paired `$$` skip-forward.
-            while p + 2 < bytes.len() && bytes[p + 1] == b'$' && bytes[p + 2] == b'$' {
-                p += 2;
-            }
-            return Some(p);
+    // c:526 — `for (p = s + offs; p > s && *p != Stringg && *p != Qstring; p--);`.
+    // Walk back to find a Stringg/Qstring token (the `$` marker).
+    let mut p = offs.min(bytes.len());
+    while p > 0 {
+        let b = bytes[p.saturating_sub(1)];
+        if p < bytes.len() && (bytes[p] == Stringg as u8 || bytes[p] == Qstring as u8) {
+            break;
         }
-        if p == 0 {
-            return None;
+        if b == Stringg as u8 || b == Qstring as u8 {
+            p -= 1;
+            break;
         }
         p -= 1;
     }
+    if p >= bytes.len() {
+        return None;
+    }
+    let pchar = bytes[p];
+    if pchar == Stringg as u8 || pchar == Qstring as u8 {
+        // c:529-532 — `$$` paired-marker walk.
+        while p > 0
+            && (bytes[p - 1] == Stringg as u8 || bytes[p - 1] == Qstring as u8)
+        {
+            p -= 1;
+        }
+        while p + 2 < bytes.len()
+            && (bytes[p + 1] == Stringg as u8 || bytes[p + 1] == Qstring as u8)
+            && (bytes[p + 2] == Stringg as u8 || bytes[p + 2] == Qstring as u8)
+        {
+            p += 2;
+        }
+    }
+    // c:535-537 — confirm `$` followed by NOT `(` / `[` / `'` (those
+    // are `$(...)` / `$[...]` / `$'...'`, not parameter exprs).
+    if p >= bytes.len() {
+        return None;
+    }
+    let pchar = bytes[p];
+    let after = bytes.get(p + 1).copied().unwrap_or(0);
+    if !(pchar == Stringg as u8 || pchar == Qstring as u8)
+        || after == Inpar as u8
+        || after == Inbrack as u8
+        || after == b'\''
+    {
+        return None;
+    }
+    // c:540-543 — `b = p + 1; n = 0; br = 1;`
+    let mut b = p + 1;
+    let mut br = 1;
+    let mut n: i32 = 0;
+    // c:545-553 — `${...}` form: validate balanced braces, then skip
+    // possible `(...)` flag-prefix via skipparens.
+    if b < bytes.len() && bytes[b] == Inbrace as u8 {
+        // c:548 — `if (!skipparens(Inbrace, Outbrace, &tb)) return NULL;`
+        let tb_str = &s[b..];
+        let mut tb = tb_str;
+        if crate::ported::utils::skipparens(Inbrace as char, Outbrace as char, &mut tb)
+            != 0
+        {
+            return None;
+        }
+        // c:551-552 — `b++, br++;`.
+        b += 1;
+        br += 1;
+        let _ = br;
+        // c:553 — `n = skipparens(Inpar, Outpar, &b);` skip `(flags)`.
+        let mut b_str: &str = &s[b..];
+        n = crate::ported::utils::skipparens(Inpar as char, Outpar as char, &mut b_str);
+        b = s.len() - b_str.len();
+    }
+    // c:556-560 — skip modifier prefix chars `^=~` (Hat/Equals/Tilde).
+    while b < bytes.len() {
+        let bb = bytes[b];
+        if bb != b'^'
+            && bb != Hat as u8
+            && bb != b'='
+            && bb != Equals as u8
+            && bb != b'~'
+            && bb != Tilde as u8
+        {
+            break;
+        }
+        b += 1;
+    }
+    // c:561-562 — `# ` modifier.
+    if b < bytes.len() && (bytes[b] == b'#' || bytes[b] == Pound as u8 || bytes[b] == b'+') {
+        b += 1;
+    }
+    // c:564-569 — skip leading Dnull (`$'...'` delimiters) inside `${...}`.
+    let mut e = b;
+    if br != 0 {
+        while e < bytes.len() && bytes[e] == Dnull as u8 {
+            e += 1;
+        }
+    }
+    // c:570-580 — find end of parameter name.
+    if e < bytes.len() {
+        let eb = bytes[e];
+        if eb == Quest as u8 || eb == Star as u8 || eb == Stringg as u8
+            || eb == Qstring as u8 || eb == b'?' || eb == b'*' || eb == b'$'
+            || eb == b'-' || eb == b'!' || eb == b'@'
+        {
+            e += 1;
+        } else if idigit(eb) {
+            while e < bytes.len() && idigit(bytes[e]) {
+                e += 1;
+            }
+        } else {
+            // c:579 — `e = itype_end(e, INAMESPC, 0);`. Rust port has
+            // a simpler signature; INAMESPC matches identifier-name
+            // chars (alpha/digit/_).
+            let _ = INAMESPC;
+            let span = crate::ported::utils::itype_end(&s[e..], false);
+            e += span;
+        }
+    }
+    // c:583-590 — confirm cursor falls inside the name AND `n <= 0`
+    // (skipparens didn't fail).
+    if offs <= e && offs >= b && n <= 0 {
+        // c:585-588 — skip trailing Dnull when `br` is set.
+        if br != 0 {
+            let mut pp = e;
+            while pp < bytes.len() && bytes[pp] == Dnull as u8 {
+                pp += 1;
+            }
+            let _ = pp;
+        }
+        return Some(b);
+    }
+    None
 }
 
 // The main entry point for completion.                                     // c:599
