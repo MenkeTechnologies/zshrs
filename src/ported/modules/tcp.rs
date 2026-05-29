@@ -1485,4 +1485,103 @@ mod tests {
         assert_eq!(cleanup_(null), 0);
         assert_eq!(finish_(null), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/tcp.c
+    // c:65 zsh_inet_ntop / c:83 zsh_inet_pton / c:107 zsh_gethostbyname2 /
+    // c:131 zsh_getipnodebyname / c:139 freehostent / c:147 zts_alloc /
+    // c:188 ztcp_free_session / c:199 zts_delete / c:927 zsh_inet_aton +
+    // lifecycle type pins
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:65 — `zsh_inet_ntop` returns Option<String> (compile-time type pin).
+    #[test]
+    fn zsh_inet_ntop_returns_option_string_type() {
+        let _: Option<String> = zsh_inet_ntop(libc::AF_INET, &[127, 0, 0, 1]);
+    }
+
+    /// c:83 — `zsh_inet_pton` returns i32 (compile-time type pin).
+    #[test]
+    fn zsh_inet_pton_returns_i32_type() {
+        let mut dst = [0u8; 4];
+        let _: i32 = zsh_inet_pton(libc::AF_INET, "1.2.3.4", &mut dst);
+    }
+
+    /// c:107 — `zsh_gethostbyname2` returns Vec<[u8;4]>.
+    #[test]
+    fn zsh_gethostbyname2_returns_vec_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<[u8; 4]> = zsh_gethostbyname2("", libc::AF_INET);
+    }
+
+    /// c:131 — `zsh_getipnodebyname` delegates to `zsh_gethostbyname2`
+    /// (same body per c:170). Both must return identical results.
+    #[test]
+    fn zsh_getipnodebyname_matches_gethostbyname2() {
+        let _g = crate::test_util::global_state_lock();
+        for name in ["", "nonexistent.invalid.zshrs.xyz"] {
+            let a = zsh_getipnodebyname(name, libc::AF_INET);
+            let b = zsh_gethostbyname2(name, libc::AF_INET);
+            assert_eq!(a, b, "zsh_getipnodebyname({:?}) must match gethostbyname2", name);
+        }
+    }
+
+    /// c:139 — `freehostent` is a void no-op (compile-time pin).
+    #[test]
+    fn freehostent_signature_void() {
+        let _: () = freehostent();
+    }
+
+    /// c:139 — `freehostent` is idempotent / safe to call repeatedly.
+    #[test]
+    fn freehostent_idempotent() {
+        for _ in 0..10 {
+            freehostent();
+        }
+    }
+
+    /// c:147 — `zts_alloc` returns usize (compile-time type pin).
+    #[test]
+    fn zts_alloc_returns_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: usize = zts_alloc(0);
+    }
+
+    /// c:188 — `ztcp_free_session` returns i32.
+    #[test]
+    fn ztcp_free_session_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = ztcp_free_session(usize::MAX);
+    }
+
+    /// c:199 — `zts_delete` returns i32.
+    #[test]
+    fn zts_delete_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = zts_delete(-1);
+    }
+
+    /// c:927 — `zsh_inet_aton` returns Option<u32>.
+    #[test]
+    fn zsh_inet_aton_returns_option_u32_type() {
+        let _: Option<u32> = zsh_inet_aton("1.2.3.4");
+    }
+
+    /// c:927 — `zsh_inet_aton("")` empty returns None.
+    #[test]
+    fn zsh_inet_aton_empty_returns_none() {
+        assert!(zsh_inet_aton("").is_none(), "empty → None");
+    }
+
+    /// c:927 — `zsh_inet_aton` is deterministic for stable input.
+    #[test]
+    fn zsh_inet_aton_is_deterministic() {
+        for s in ["", "1.2.3.4", "garbage", "256.256.256.256"] {
+            let first = zsh_inet_aton(s);
+            for _ in 0..3 {
+                assert_eq!(zsh_inet_aton(s), first,
+                    "zsh_inet_aton({:?}) must be deterministic", s);
+            }
+        }
+    }
 }
