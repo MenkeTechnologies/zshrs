@@ -1837,4 +1837,117 @@ mod tests {
         assert_eq!(cleanup_(std::ptr::null()), 0);
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/files.c
+    // c:116 bin_sync / c:137 bin_mkdir / c:275 bin_rmdir / c:347 bin_ln /
+    // c:757 bin_rm / c:845 bin_chmod / c:963 bin_chown / c:1132+ lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:116 — `bin_sync` returns u8 exit-code range.
+    #[test]
+    fn bin_sync_returns_in_exit_code_range() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_sync("sync", &[], &ops, 0);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:116 — `bin_sync` is idempotent (safe to call many times).
+    #[test]
+    fn bin_sync_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for _ in 0..5 {
+            let r = bin_sync("sync", &[], &ops, 0);
+            assert_eq!(r, 0, "sync must return 0");
+        }
+    }
+
+    /// c:137 — `bin_mkdir` empty path returns nonzero.
+    #[test]
+    fn bin_mkdir_empty_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_mkdir("mkdir", &["".to_string()], &ops, 0);
+        assert_ne!(r, 0, "empty path → error");
+    }
+
+    /// c:275 — `bin_rmdir` empty path returns nonzero.
+    #[test]
+    fn bin_rmdir_empty_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_rmdir("rmdir", &["".to_string()], &ops, 0);
+        assert_ne!(r, 0, "empty path → error");
+    }
+
+    /// c:757 — `bin_rm` empty path returns nonzero.
+    #[test]
+    fn bin_rm_empty_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_rm("rm", &["".to_string()], &ops, 0);
+        assert_ne!(r, 0, "empty path → error");
+    }
+
+    /// c:347 — `bin_ln` no args returns nonzero (usage error).
+    #[test]
+    fn bin_ln_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_ln("ln", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → error");
+    }
+
+    /// c:845 — `bin_chmod` no args returns nonzero.
+    #[test]
+    fn bin_chmod_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_chmod("chmod", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → error");
+    }
+
+    /// c:963 — `bin_chown` no args returns nonzero.
+    #[test]
+    fn bin_chown_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_chown("chown", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → error");
+    }
+
+    /// c:137-963 — all file-op builtin returns fit in u8 exit-code range.
+    #[test]
+    fn files_builtins_return_in_exit_code_range() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for r in [
+            bin_mkdir("mkdir", &[], &ops, 0),
+            bin_rmdir("rmdir", &[], &ops, 0),
+            bin_rm("rm", &[], &ops, 0),
+            bin_ln("ln", &[], &ops, 0),
+            bin_chmod("chmod", &[], &ops, 0),
+            bin_chown("chown", &[], &ops, 0),
+        ] {
+            assert!((0..256).contains(&r),
+                "exit code {} must fit in u8 range", r);
+        }
+    }
+
+    /// c:1132+ — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn files_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
 }
