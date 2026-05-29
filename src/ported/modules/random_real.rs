@@ -599,4 +599,94 @@ mod tests {
             assert!(!v.is_nan(), "random_real must not be NaN");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/random_real.c
+    // c:25 _zclz64 / c:83 random_64bit / c:119 random_real / c:216 clz64
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:25 — `_zclz64` returns i32 (compile-time type pin).
+    #[test]
+    fn zclz64_returns_i32_type() {
+        let _: i32 = _zclz64(0);
+        let _: i32 = _zclz64(1);
+        let _: i32 = _zclz64(u64::MAX);
+    }
+
+    /// c:25 — `_zclz64` result in [0, 64] for all inputs.
+    #[test]
+    fn zclz64_result_bounded_zero_to_64() {
+        for &x in &[0u64, 1, 2, 0xff, 0xffff_ffff, u64::MAX, 0x8000_0000_0000_0000] {
+            let r = _zclz64(x);
+            assert!((0..=64).contains(&r),
+                "_zclz64({:#x}) = {} must be in [0, 64]", x, r);
+        }
+    }
+
+    /// c:25 — `_zclz64` is pure (deterministic across calls).
+    #[test]
+    fn zclz64_is_pure() {
+        for x in [0u64, 1, 42, u64::MAX] {
+            let first = _zclz64(x);
+            for _ in 0..5 {
+                assert_eq!(_zclz64(x), first, "_zclz64({:#x}) must be pure", x);
+            }
+        }
+    }
+
+    /// c:216 — `clz64` alias matches `_zclz64` for all inputs.
+    #[test]
+    fn clz64_alias_full_sweep() {
+        for x in [0u64, 1, 2, 0xff, 0x8000_0000_0000_0000, u64::MAX] {
+            assert_eq!(clz64(x), _zclz64(x), "clz64({:#x}) must match _zclz64", x);
+        }
+    }
+
+    /// c:83 — `random_64bit` returns u64 (compile-time pin).
+    #[test]
+    fn random_64bit_returns_u64_type() {
+        let _: u64 = random_64bit();
+    }
+
+    /// c:119 — `random_real` returns f64.
+    #[test]
+    fn random_real_returns_f64_type() {
+        let _: f64 = random_real();
+    }
+
+    /// c:119 — `random_real` is non-infinite.
+    #[test]
+    fn random_real_is_finite() {
+        for _ in 0..100 {
+            let v = random_real();
+            assert!(v.is_finite(), "random_real must be finite, got {}", v);
+        }
+    }
+
+    /// c:25 — `_zclz64(0x4000...)` returns 1 (second-highest bit only).
+    #[test]
+    fn zclz64_second_highest_bit_returns_one() {
+        assert_eq!(_zclz64(0x4000_0000_0000_0000), 1);
+    }
+
+    /// c:25 — every single-bit input pinned: bit N → 63-N leading zeros.
+    /// Pin a few key positions across the spectrum.
+    #[test]
+    fn zclz64_canonical_bit_positions() {
+        assert_eq!(_zclz64(1u64 << 0), 63, "bit 0 → 63 leading zeros");
+        assert_eq!(_zclz64(1u64 << 7), 56, "bit 7 → 56 leading zeros");
+        assert_eq!(_zclz64(1u64 << 31), 32, "bit 31 → 32 leading zeros");
+        assert_eq!(_zclz64(1u64 << 63), 0, "bit 63 → 0 leading zeros");
+    }
+
+    /// c:119 — `random_real` distribution: across 1000 samples, ≥ 10%
+    /// should be > 0.1 (weak uniformity check).
+    #[test]
+    fn random_real_distribution_has_values_above_one_tenth() {
+        let _g = crate::test_util::global_state_lock();
+        let n = 1000;
+        let above = (0..n).filter(|_| random_real() > 0.1).count();
+        assert!(above >= n / 10,
+            "{} out of {} should be > 0.1, got {}", n / 10, n, above);
+    }
 }
