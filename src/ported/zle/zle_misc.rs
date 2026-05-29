@@ -36,7 +36,7 @@ use crate::ported::builtins::sched::zleactive;
 use crate::ported::utils::{errflag, quotestring};
 use crate::ported::zle::complete::INCOMPFUNC;
 use crate::ported::zle::zle_move::{deccs, decpos, inccs, incpos, vifirstnonblank};
-use crate::ported::zle::zle_utils::{findbol, findeol};
+use crate::ported::zle::zle_utils::{findbol, findeol, shiftchars, spaceinline};
 use crate::ported::zle::zle_vi::startvichange;
 use crate::ported::zsh_h::{isset, ERRFLAG_ERROR, ERRFLAG_INT, KSHARRAYS, QT_SINGLE_OPTIONAL};
 use crate::zle::zle_h::{MOD_MULT, MOD_NEG, MOD_NULL, MOD_TMULT};
@@ -82,9 +82,9 @@ pub fn doinsert(zstr: &[char]) {
     // c:48 — `invalidatelist()`.
     invalidatelist();
 
-    let m = ZMOD.lock().unwrap().mult.unsigned_abs() as usize;
-    let neg = ZMOD.lock().unwrap().mult < 0;
     let zmult_val = ZMOD.lock().unwrap().mult;
+    let neg = zmult_val < 0;
+    let m = zmult_val.unsigned_abs() as usize;
     let len = zstr.len();
     let total = m * len;
     let cs = ZLECS.load(SeqCst);
@@ -95,7 +95,7 @@ pub fn doinsert(zstr: &[char]) {
     // the count or next newline; insert any remaining slack.
     let overwrite = insmode == 0 && !at_newline;
     if overwrite {
-        // c:82-83 — find end pos: cs + count or first newline.
+        // c:82-86 — walk to end pos: cs + count or first newline.
         let mut pos = cs;
         let mut i = total;
         let ll = ZLELL.load(SeqCst);
@@ -107,44 +107,44 @@ pub fn doinsert(zstr: &[char]) {
             pos += 1;
             i -= 1;
         }
-        // c:90-100 — diff between replaced span and inserted span.
-        let span = pos - cs;
-        if total < span {
-            // Need to shrink: remove the excess.
-            let extra = span - total;
-            for _ in 0..extra {
-                ZLELINE.lock().unwrap().remove(cs + total);
-                ZLELL.fetch_sub(1, SeqCst);
-            }
-        }
-        // c:102-104 — overwrite: store each char.
-        for k in 0..total {
-            let c = zstr[k % len];
-            if cs + k < ll {
-                if let Some(slot) = ZLELINE.lock().unwrap().get_mut(cs + k) {
-                    *slot = c;
-                }
-            } else {
-                ZLELINE.lock().unwrap().push(c);
-                ZLELL.fetch_add(1, SeqCst);
-            }
+        // c:90-100 — diff = pos - cs - m * len.
+        let diff = pos as i32 - cs as i32 - total as i32;
+        if diff < 0 {
+            // c:92 — `spaceinline(-diff)` — opens slack we still need.
+            spaceinline(-diff);
+        } else if diff > 0 {
+            // c:99 — `shiftchars(zlecs, diff)` — surplus collapses.
+            shiftchars(cs as i32, diff);
         }
     } else {
         // c:52 — `spaceinline(m * len)`: pure insert.
-        for _ in 0..m {
-            for (i, &c) in zstr.iter().enumerate() {
-                ZLELINE.lock().unwrap().insert(cs + i, c);
-            }
-            ZLELL.fetch_add(len, SeqCst);
-        }
+        spaceinline(total as i32);
     }
-    // c:102-106 — cursor: advance unless neg.
-    if !neg {
-        ZLECS.fetch_add(total, SeqCst);
-    } else {
-        // c:106 — `zlecs += zmult * len` (negative).
+    // c:102-104 — `while (m--) for (s=zstr; count; s++, count--)
+    //              zleline[zlecs++] = *s;` — write chars + advance cs.
+    {
+        let mut line = ZLELINE.lock().unwrap();
+        let mut wcs = cs;
+        for _ in 0..m {
+            for &c in zstr.iter() {
+                if wcs < line.len() {
+                    line[wcs] = c;
+                } else {
+                    line.push(c);
+                }
+                wcs += 1;
+            }
+        }
+        let new_ll = line.len();
+        drop(line);
+        ZLELL.store(new_ll, SeqCst);
+        ZLECS.store(wcs, SeqCst);
+    }
+    // c:105-106 — `if (neg) zlecs += zmult * len;` (already past
+    // inserted span; back up).
+    if neg {
         let offset = (zmult_val * len as i32) as i64;
-        let new_cs = (cs as i64 + offset).max(0) as usize;
+        let new_cs = (ZLECS.load(SeqCst) as i64 + offset).max(0) as usize;
         ZLECS.store(new_cs, SeqCst);
     }
     ZLE_RESET_NEEDED.store(1, SeqCst);
@@ -543,15 +543,19 @@ pub fn poundinsert() -> i32 {
     let at_pound = ZLELINE.lock().unwrap().get(ZLECS.load(SeqCst)) == Some(&'#');
     if !at_pound {
         // c:374-383 — insert # at this line, advance to next, repeat.
-        ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), '#');
-        ZLELL.fetch_add(1, SeqCst);
-        ZLECS.store(findeol(), SeqCst);
+        spaceinline(1); // c:374
+        if let Some(slot) = ZLELINE.lock().unwrap().get_mut(ZLECS.load(SeqCst)) {
+            *slot = '#'; // c:375
+        }
+        ZLECS.store(findeol(), SeqCst); // c:376
         while ZLECS.load(SeqCst) != ZLELL.load(SeqCst) {
-            ZLECS.fetch_add(1, SeqCst);
-            vifirstnonblank();
-            ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), '#');
-            ZLELL.fetch_add(1, SeqCst);
-            ZLECS.store(findeol(), SeqCst);
+            ZLECS.fetch_add(1, SeqCst); // c:378
+            vifirstnonblank(); // c:379
+            spaceinline(1); // c:380
+            if let Some(slot) = ZLELINE.lock().unwrap().get_mut(ZLECS.load(SeqCst)) {
+                *slot = '#'; // c:381
+            }
+            ZLECS.store(findeol(), SeqCst); // c:382
         }
     } else {
         // c:384-393 — strip leading # from each line.
@@ -747,13 +751,24 @@ pub fn copyregionaskill(args: &[String]) -> i32 {
 /// Port of yank(UNUSED(char **args)) from zle_misc.c
 pub fn yank() {
     // c:533
-    if let Some(text) = KILLRING.lock().unwrap().front() {
-        MARK.store(ZLECS.load(SeqCst), SeqCst);
-        for &c in text {
-            ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), c);
-            ZLECS.fetch_add(1, SeqCst);
+    // c:541-549 — `yankb = yankcs = mark = zlecs; while (n--) {
+    //              kct = -1; spaceinline(kctbuf->len);
+    //              ZS_memcpy(zleline + zlecs, kctbuf->buf, kctbuf->len);
+    //              zlecs += kctbuf->len; yanke = zlecs; }`.
+    let text_opt = KILLRING.lock().unwrap().front().cloned();
+    if let Some(text) = text_opt {
+        MARK.store(ZLECS.load(SeqCst), SeqCst); // c:543
+        spaceinline(text.len() as i32); // c:546
+        let cs = ZLECS.load(SeqCst);
+        {
+            let mut line = ZLELINE.lock().unwrap();
+            for (i, &c) in text.iter().enumerate() {
+                if cs + i < line.len() {
+                    line[cs + i] = c; // c:547
+                }
+            }
         }
-        ZLELL.store(ZLELINE.lock().unwrap().len(), SeqCst);
+        ZLECS.fetch_add(text.len(), SeqCst); // c:548
         YANKLAST.store(true, SeqCst);
         ZLE_RESET_NEEDED.store(1, SeqCst);
     }
@@ -780,12 +795,19 @@ pub fn pastebuf(buf: &[char], mult: i32, position: i32) -> i32 {
     YANKB.store(ZLECS.load(SeqCst), SeqCst);
     // c:595-599 — `while (mult--) { spaceinline(cc); ZS_memcpy; zlecs += cc }`.
     let mut n = mult;
+    let cc = buf.len();
     while n > 0 {
-        for (i, &c) in buf.iter().enumerate() {
-            ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst) + i, c);
+        spaceinline(cc as i32); // c:596
+        let cs = ZLECS.load(SeqCst);
+        {
+            let mut line = ZLELINE.lock().unwrap();
+            for (i, &c) in buf.iter().enumerate() {
+                if cs + i < line.len() {
+                    line[cs + i] = c; // c:597
+                }
+            }
         }
-        ZLECS.fetch_add(buf.len(), SeqCst);
-        ZLELL.fetch_add(buf.len(), SeqCst);
+        ZLECS.fetch_add(cc, SeqCst); // c:598
         n -= 1;
     }
     // c:600 — `yanke = zlecs`.
@@ -1362,12 +1384,20 @@ pub fn copyprevword() -> i32 {
     if len == 0 {
         return 1;
     }
+    // c:1100-1103 — `spaceinline(len); ZS_memcpy(zleline + zlecs,
+    //                  zleline + t0, len); zlecs += len;`.
     let copied: Vec<char> = ZLELINE.lock().unwrap()[t0..t1].to_vec();
-    for (i, &c) in copied.iter().enumerate() {
-        ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst) + i, c);
+    spaceinline(len as i32); // c:1100
+    let cs = ZLECS.load(SeqCst);
+    {
+        let mut line = ZLELINE.lock().unwrap();
+        for (i, &c) in copied.iter().enumerate() {
+            if cs + i < line.len() {
+                line[cs + i] = c; // c:1101
+            }
+        }
     }
-    ZLECS.fetch_add(len, SeqCst);
-    ZLELL.fetch_add(len, SeqCst);
+    ZLECS.fetch_add(len, SeqCst); // c:1102
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0
 }
@@ -1390,12 +1420,19 @@ pub fn copyprevshellword() -> i32 {
     if t0 == t1 {
         return 1;
     }
+    // c:1133 — `spaceinline(len); ZS_memcpy; zlecs += len;`.
     let copied: Vec<char> = ZLELINE.lock().unwrap()[t0..t1].to_vec();
-    for (i, &c) in copied.iter().enumerate() {
-        ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst) + i, c);
+    spaceinline(copied.len() as i32); // c:1133
+    let cs = ZLECS.load(SeqCst);
+    {
+        let mut line = ZLELINE.lock().unwrap();
+        for (i, &c) in copied.iter().enumerate() {
+            if cs + i < line.len() {
+                line[cs + i] = c; // c:1134
+            }
+        }
     }
-    ZLECS.fetch_add(copied.len(), SeqCst);
-    ZLELL.fetch_add(copied.len(), SeqCst);
+    ZLECS.fetch_add(copied.len(), SeqCst); // c:1135
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0
 }
