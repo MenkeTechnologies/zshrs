@@ -1105,4 +1105,88 @@ mod tests {
         assert_eq!(CGF_NUMSORT, 512);
         assert_eq!(CGF_REVSORT, 1024);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/comp.h CMF_* + CGF_*.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:127-134 — first 8 CMF_* flags (1<<0 through 1<<7).
+    #[test]
+    fn cmf_low_byte_flags_are_single_bits() {
+        assert_eq!(CMF_FILE, 1);
+        assert_eq!(CMF_REMOVE, 2);
+        assert_eq!(CMF_ISPAR, 4);
+        assert_eq!(CMF_PARBR, 8);
+        assert_eq!(CMF_PARNEST, 16);
+        assert_eq!(CMF_NOLIST, 32);
+        assert_eq!(CMF_DISPLINE, 64);
+        assert_eq!(CMF_HIDE, 128);
+    }
+
+    /// c:135-143 — second half of CMF_* (1<<8 through 1<<16).
+    #[test]
+    fn cmf_high_byte_flags_are_single_bits() {
+        assert_eq!(CMF_NOSPACE, 1 << 8);
+        assert_eq!(CMF_PACKED, 1 << 9);
+        assert_eq!(CMF_ROWS, 1 << 10);
+        assert_eq!(CMF_MULT, 1 << 11);
+        assert_eq!(CMF_FMULT, 1 << 12);
+        assert_eq!(CMF_ALL, 1 << 13);
+        assert_eq!(CMF_DUMMY, 1 << 14);
+        assert_eq!(CMF_MORDER, 1 << 15);
+        assert_eq!(CMF_DELETE, 1 << 16);
+    }
+
+    /// c:127-143 — Cmatch CMF_* flags pairwise disjoint single-bit
+    /// values (the 17-flag bitfield).
+    #[test]
+    fn cmf_match_flags_pairwise_disjoint() {
+        let flags = [
+            CMF_FILE, CMF_REMOVE, CMF_ISPAR, CMF_PARBR, CMF_PARNEST,
+            CMF_NOLIST, CMF_DISPLINE, CMF_HIDE, CMF_NOSPACE, CMF_PACKED,
+            CMF_ROWS, CMF_MULT, CMF_FMULT, CMF_ALL, CMF_DUMMY,
+            CMF_MORDER, CMF_DELETE,
+        ];
+        for i in 0..flags.len() {
+            for j in (i + 1)..flags.len() {
+                assert_eq!(
+                    flags[i] & flags[j],
+                    0,
+                    "CMF_* flags {} and {} must not overlap",
+                    flags[i],
+                    flags[j]
+                );
+            }
+        }
+    }
+
+    /// c:85-95 — CGF_* flags pairwise disjoint single bits.
+    #[test]
+    fn cgf_flags_pairwise_disjoint() {
+        let flags = [
+            CGF_NOSORT, CGF_LINES, CGF_HASDL, CGF_UNIQALL, CGF_UNIQCON,
+            CGF_PACKED, CGF_ROWS, CGF_FILES, CGF_MATSORT, CGF_NUMSORT,
+        ];
+        for i in 0..flags.len() {
+            for j in (i + 1)..flags.len() {
+                assert_eq!(
+                    flags[i] & flags[j],
+                    0,
+                    "CGF_* flags {} and {} must not overlap",
+                    flags[i],
+                    flags[j]
+                );
+            }
+        }
+    }
+
+    /// c:85-89 — low CGF_* bit values (1, 2, 4, 8, 16).
+    #[test]
+    fn cgf_low_bits_canonical() {
+        assert_eq!(CGF_NOSORT, 1);
+        assert_eq!(CGF_LINES, 2);
+        assert_eq!(CGF_HASDL, 4);
+        assert_eq!(CGF_UNIQALL, 8);
+        assert_eq!(CGF_UNIQCON, 16);
+    }
 }
