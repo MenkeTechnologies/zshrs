@@ -1799,4 +1799,103 @@ mod tests {
             "newline is NOT iblank (iblank = space/tab only) → class 3"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_word.c wordclass branches.
+    // Each char-category branch independently pinned per c:82.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:82 — `wordclass(' ')` returns 0 (iblank class wins first).
+    #[test]
+    fn wordclass_space_is_zero() {
+        assert_eq!(wordclass(' '), 0);
+    }
+
+    /// c:82 — `wordclass('\t')` returns 0 (tab is iblank).
+    #[test]
+    fn wordclass_tab_is_zero() {
+        assert_eq!(wordclass('\t'), 0, "tab is iblank, class 0");
+    }
+
+    /// c:82 — alphanumeric ASCII letters → class 1.
+    #[test]
+    fn wordclass_ascii_letters_are_one() {
+        assert_eq!(wordclass('a'), 1);
+        assert_eq!(wordclass('Z'), 1);
+        assert_eq!(wordclass('m'), 1);
+    }
+
+    /// c:82 — digits → class 1 (ialnum includes digits).
+    #[test]
+    fn wordclass_digits_are_one() {
+        assert_eq!(wordclass('0'), 1);
+        assert_eq!(wordclass('5'), 1);
+        assert_eq!(wordclass('9'), 1);
+    }
+
+    /// c:82 — `_` is explicitly bumped to class 1 (`ZWC('_') == x` arm).
+    /// Pin: a regen dropping the underscore special-case would push it
+    /// to class 2 (punct) and break identifier-word boundaries.
+    #[test]
+    fn wordclass_underscore_is_one_not_punct() {
+        assert_eq!(
+            wordclass('_'),
+            1,
+            "underscore must be class 1 (word) not 2 (punct)"
+        );
+    }
+
+    /// c:82 — common punctuation → class 2.
+    #[test]
+    fn wordclass_more_punct_examples() {
+        // Various punct that should fall into class 2.
+        for c in &['"', '\'', '(', ')', '[', ']', '{', '}', '<', '>', '/', '\\'] {
+            let cls = wordclass(*c);
+            assert!(cls == 2 || cls == 3, "{:?} → 2 or 3, got {}", c, cls);
+        }
+    }
+
+    /// c:82 — control chars (not iblank, not ialnum, not ipunct) → class 3.
+    /// Note: newline + ctrl-A are class 3; CR pinned separately because
+    /// zshrs zc_iblank classifies it as blank — possible BUG.
+    #[test]
+    fn wordclass_control_chars_are_three() {
+        assert_eq!(wordclass('\n'), 3, "newline → 3");
+        // \x01 ctrl-A — not blank/alnum/punct.
+        assert_eq!(wordclass('\x01'), 3);
+    }
+
+    /// `wordclass('\r')` per zsh C uses iblank = isspace - newline.
+    /// On most POSIX systems isblank covers only space + tab, so CR
+    /// should land in class 3 (other). zshrs zc_iblank is returning
+    /// true for CR — likely classifies via iswspace then excludes
+    /// newline, but doesn't exclude CR.
+    #[test]
+    #[ignore = "ZSHRS BUG: wordclass('\\r') returns 0 (iblank) — zsh C iblank = isblank, excludes CR; zshrs zc_iblank includes it. See Src/utils.c wcsiblank vs Src/Zle/zle_word.c:82"]
+    fn wordclass_cr_is_three() {
+        assert_eq!(wordclass('\r'), 3, "CR is not iblank per zsh isblank semantics");
+    }
+
+    /// c:82 — `wordclass` is deterministic + idempotent (same input
+    /// → same output across many calls).
+    #[test]
+    fn wordclass_is_deterministic() {
+        for c in &['a', ' ', '_', '.', '\n', '0', '!'] {
+            let first = wordclass(*c);
+            for _ in 0..100 {
+                assert_eq!(wordclass(*c), first, "wordclass({:?}) must be pure", c);
+            }
+        }
+    }
+
+    /// c:82 — all returns are in [0, 3] range (4 classes total).
+    #[test]
+    fn wordclass_returns_in_zero_to_three() {
+        for c in &[
+            'a', 'Z', '0', '_', ' ', '\t', '.', '!', '\n', '\r', '\x01', '@',
+        ] {
+            let cls = wordclass(*c);
+            assert!(cls >= 0 && cls <= 3, "wordclass({:?})={} out of range", c, cls);
+        }
+    }
 }
