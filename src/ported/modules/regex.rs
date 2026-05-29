@@ -552,4 +552,61 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(zcond_regex_match(&["only_one"], ZREGEX_EXTENDED), 0,);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Modules/regex.c (zsh/regex module).
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `zcond_regex_match([], ZREGEX_EXTENDED)` with no args returns 0.
+    /// C: `if (regcomp(...) != 0) return 0;` short-circuits when input
+    /// missing.
+    #[test]
+    fn zcond_regex_match_empty_args_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcond_regex_match(&[], ZREGEX_EXTENDED), 0);
+    }
+
+    /// `zcond_regex_match(["abc", "abc"], ZREGEX_EXTENDED)` matches.
+    /// C: regcomp + regexec; identical strings match.
+    #[test]
+    fn zcond_regex_match_identical_strings_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            zcond_regex_match(&["abc", "abc"], ZREGEX_EXTENDED),
+            1,
+            "identical str=pattern matches"
+        );
+    }
+
+    /// `zcond_regex_match(["abcdef", "abc"], ...)` matches (substring).
+    /// C regex without anchors matches anywhere.
+    #[test]
+    fn zcond_regex_match_substring_match_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcond_regex_match(&["abcdef", "abc"], ZREGEX_EXTENDED), 1);
+    }
+
+    /// `zcond_regex_match(["abc", "xyz"], ...)` no match returns 0.
+    #[test]
+    fn zcond_regex_match_no_match_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcond_regex_match(&["abc", "xyz"], ZREGEX_EXTENDED), 0);
+    }
+
+    /// `zcond_regex_match` with extended-regex pattern (`a+`).
+    /// C ZREGEX_EXTENDED uses POSIX extended regex.
+    #[test]
+    fn zcond_regex_match_plus_quantifier_works() {
+        let _g = crate::test_util::global_state_lock();
+        // "aaa" matches `a+`
+        assert_eq!(zcond_regex_match(&["aaa", "a+"], ZREGEX_EXTENDED), 1);
+    }
+
+    /// `zregex_regerrwarn` runs without panic. Writes warning via
+    /// zwarnnam — side effect, not return value.
+    #[test]
+    fn zregex_regerrwarn_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        crate::regex_module::zregex_regerrwarn("test", "bad regex");
+    }
 }

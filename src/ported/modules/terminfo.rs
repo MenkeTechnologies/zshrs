@@ -785,4 +785,46 @@ mod tests {
         let r = features_(std::ptr::null(), &mut features);
         assert_eq!(r, 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Modules/terminfo.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `setup_` returns 0 (no-op setup hook).
+    /// C `Src/Modules/terminfo.c:setup_` — standard module init.
+    #[test]
+    fn terminfo_setup_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// `boot_` returns 0.
+    #[test]
+    fn terminfo_boot_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
+
+    /// `cleanup_` returns 0.
+    #[test]
+    fn terminfo_cleanup_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+    }
+
+    /// `finish_` returns 0.
+    #[test]
+    fn terminfo_finish_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
+
+    /// `enables_` initializes enable list and returns 0.
+    #[test]
+    fn terminfo_enables_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut enables = None;
+        let r = enables_(std::ptr::null(), &mut enables);
+        assert_eq!(r, 0);
+    }
 }
