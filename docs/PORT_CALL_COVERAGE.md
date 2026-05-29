@@ -24,8 +24,9 @@ The work is the same; only the call-site syntax differs.
 | Fixed | C calls | Rust before | Rust after | Notes |
 |---|---|---|---|---|
 | `doshfunc` | 18 | 1 (5%) | 18 (100%) | Wired all 22 sites per `docs/PORT.md` audit (commits `b83cb32`/`a77af29`) |
-| `bindkey` | 69 | 3 (4%) | 71 (103%) | Rust factored into 3 methods; restored canonical fn (commit `591929e`) |
-| `skipparens` | 28 | 1 (4%) | 2 (7%) | Wired one glob.rs inlined paren-walk; remaining sites are in unported substrate |
+| `bindkey` | 69 | 3 (4%) | 71 (103%) | Rust factored into 3 methods; restored canonical fn (commits `a77af29` + `591929e`) |
+| `skipparens` | 28 | 1 (4%) | 16 (57%) | 5-commit substrate-port arc: signature fix + glob/cmphaswilds/parambeg/check_param/parse/lex/subst sites (commits `b39ba9b` → `0273296`) |
+| `inststr` | — | 10 | 13 | `processcmd` faithful 3-call port (commit `8d522a5`) |
 
 ## 2. Architectural divergence — leave it.
 
@@ -45,14 +46,42 @@ these would be metric-gaming, not real porting work.
 | `dupstring`, `dupstrpfx` | 466 | `.to_string()` / `.into()` | Same memory-mgmt story |
 | `strcmp`, `strncmp`, `strlen`, `memcpy`, `memset` | many | `==` / `.len()` / `.copy_from_slice` | C stdlib equivalents replaced by Rust idioms |
 | `scanhashtable`, `getnode`, `addnode`, `freenode`, `removenode`, `newhashtable` | 50-200 | `HashMap` / `BTreeMap` iter + ops | Hashtable plumbing replaced by std collections |
+| `dyncat` | 103 | `format!` / `String::push_str` | Rust string concat is built into the language |
+| `pattrylen`, `patadd`, `patmatch` (subset) | 25-30 | Rust port routes through `matchpat` wrapper that takes raw pattern + flags | Rust port abstracts pattern compile + try into single call; C is multi-step |
+| `addbufspc`, `taddchr` | 30-36 | `Vec::push` / `Vec::reserve` | Vec grows automatically |
+| `strpfx` | 49 | `str::starts_with` | Built-in |
+| `nicezputs`, `applytextattributes` | 40+ | `fmt::Display` / ANSI escape composition | Rust formatting + termion-style escape composition |
+| `freeeprog`, `countlinknodes`, `attachtty` | 20-25 | Various Rust idiom replacements | See per-fn doc comments |
 
 ## 3. Substrate gap — port the surrounding fn first.
 
 Pattern: C calls the fn from a code path Rust hasn't ported yet.
 Wiring it requires porting the containing function first.
-Example: `skipparens` has 26 remaining C call sites in
-`zle_tricky.c`/`compcore.c` paths that the Rust port hasn't
-reached yet (lex/parse substrate).
+
+**Worked example — `skipparens` 1 → 16 over 6 commits:**
+
+| Commit | Coverage | Where the work went |
+|---|---|---|
+| `b39ba9b` | 1 → 2 (7%) | C-signature rewrite of `skipparens` + replace 1 inline depth-walk in `glob.rs:parsecomplist` |
+| `5c65993d` | 2 → 7 (25%) | Faithful re-port of `cmphaswilds` (was a stub) adds 4 internal skipparens calls |
+| `3ddc1017` | 7 → 12 (43%) | Faithful re-port of `parambeg` (was a stub, +2) + `check_param` ternary expansion (+3) |
+| `cde5367b` | 12 → 15 (54%) | `parse.rs:par_simple_wordcode` (+2) + `lex.rs:is_valid_assignment_target` (+1) |
+| `0273296b` | 15 → 16 (57%) | `subst.rs:stringsubst` `$[...]` tokenized arm routed through canonical skipparens |
+
+Remaining 12 sites all sit in unported deeper substrate:
+`docomplete`/`get_comp_string` (zle_tricky.c, 8 sites), niche
+`paramsubst`/`modify` (subst.c, 3 sites), `xpandbraces`
+unbalanced-brace fallback (glob.c, 1 site — bucket 2 actually).
+
+**Recipe** (reusable for any substrate-gap fn):
+
+1. Find call sites: `grep -n 'fnname(' /Users/wizard/forkedRepos/zsh/Src/...c`
+2. Map to containing fn: `awk '/^[a-z_]+\(.*\)$/{fn=$0; line=NR} /fnname\(/{print line": "fn}'`
+3. Read C body: `awk '/^fnname/{f=1} f && /^}/{f=0; exit} f' /Users/wizard/forkedRepos/zsh/Src/X.c`
+4. Find Rust counterpart: `grep -n 'fn containing_fn' src/ported/...rs`
+5. Replace inline depth-walks with `crate::ported::utils::skipparens(open, close, &mut cursor)`
+6. Compute char-offset advances correctly when cursor moves (Rust slice operates in bytes, char-walks need translation)
+7. Verify with `cargo test -p zshrs --lib <module>` — no new test failures
 
 ## Reading the report
 
