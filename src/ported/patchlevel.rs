@@ -115,4 +115,83 @@ mod tests {
     fn patchlevel_corpus_patchlevel_differs_from_version() {
         assert_ne!(ZSH_PATCHLEVEL, ZSH_VERSION);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/patchlevel.h constants.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// ZSH_PATCHLEVEL has ≥ 4 dash-separated segments (zsh-VER-N-gHASH).
+    #[test]
+    fn patchlevel_has_four_dash_segments() {
+        let parts: Vec<&str> = ZSH_PATCHLEVEL.split('-').collect();
+        assert!(
+            parts.len() >= 4,
+            "patchlevel must have ≥ 4 dash segments, got {:?}",
+            parts
+        );
+    }
+
+    /// ZSH_PATCHLEVEL hash segment starts with 'g' (git-describe).
+    #[test]
+    fn patchlevel_hash_starts_with_g() {
+        let last = ZSH_PATCHLEVEL.rsplit('-').next().unwrap_or("");
+        assert!(
+            last.starts_with('g'),
+            "last segment {:?} must start with 'g'",
+            last
+        );
+    }
+
+    /// ZSH_PATCHLEVEL commit-count segment is numeric.
+    #[test]
+    fn patchlevel_commit_count_is_numeric() {
+        let parts: Vec<&str> = ZSH_PATCHLEVEL.split('-').collect();
+        if parts.len() >= 4 {
+            let count_part = parts[2];
+            let parsed: Result<i32, _> = count_part.parse();
+            assert!(parsed.is_ok(), "commit-count {:?} must parse", count_part);
+        }
+    }
+
+    /// ZSH_VERSION has no spaces.
+    #[test]
+    fn zsh_version_no_spaces() {
+        assert!(!ZSH_VERSION.contains(' '));
+    }
+
+    /// ZSH_PATCHLEVEL has no spaces.
+    #[test]
+    fn zsh_patchlevel_no_spaces() {
+        assert!(!ZSH_PATCHLEVEL.contains(' '));
+    }
+
+    /// Both constants are ASCII (parse-safe across all locales).
+    #[test]
+    fn version_strings_are_ascii() {
+        assert!(ZSH_VERSION.is_ascii());
+        assert!(ZSH_PATCHLEVEL.is_ascii());
+    }
+
+    /// Both have no trailing whitespace.
+    #[test]
+    fn version_strings_no_trailing_ws() {
+        assert_eq!(ZSH_VERSION.trim_end(), ZSH_VERSION);
+        assert_eq!(ZSH_PATCHLEVEL.trim_end(), ZSH_PATCHLEVEL);
+    }
+
+    /// MAJOR.MINOR from ZSH_VERSION appears inside ZSH_PATCHLEVEL.
+    #[test]
+    fn patchlevel_contains_major_minor_from_version() {
+        let mm: String = ZSH_VERSION
+            .split('.')
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(".");
+        assert!(
+            ZSH_PATCHLEVEL.contains(&mm),
+            "patchlevel {:?} must contain {}",
+            ZSH_PATCHLEVEL,
+            mm
+        );
+    }
 }
