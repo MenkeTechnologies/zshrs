@@ -2931,4 +2931,116 @@ mod findbol_findeol_tests {
         let _g2 = zle_test_setup();
         zleaddtoline(0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_utils.c
+    // c:467 zle_save_positions / c:500 zle_restore_positions /
+    // c:544 spaceinline / c:569 shiftchars / c:656 cut /
+    // c:784 backkill / c:816 forekill / c:844 backdel / c:890 foredel /
+    // c:1160 getzlequery
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:467 + c:500 — save/restore positions round-trip safe (pin 2).
+    #[test]
+    fn zle_save_restore_positions_round_trip_safe_pin2() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..3 {
+            zle_save_positions();
+            zle_restore_positions();
+        }
+    }
+
+    /// c:467 — `zle_save_positions` is void / no-panic.
+    #[test]
+    fn zle_save_positions_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: () = zle_save_positions();
+        zle_free_positions(); // cleanup so other tests see fresh stack
+    }
+
+    /// c:544 — `spaceinline(0)` zero count safe.
+    #[test]
+    fn spaceinline_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        spaceinline(0);
+    }
+
+    /// c:569 — `shiftchars(0, 0)` zero/zero safe.
+    #[test]
+    fn shiftchars_zero_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        shiftchars(0, 0);
+    }
+
+    /// c:656 — `cut(0, 0, 0)` returns i32 (compile-time type pin).
+    #[test]
+    fn cut_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = cut(0, 0, 0);
+    }
+
+    /// c:784 — `backkill(0, 0)` zero count safe.
+    #[test]
+    fn backkill_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        backkill(0, 0);
+    }
+
+    /// c:816 — `forekill(0, 0)` zero count safe.
+    #[test]
+    fn forekill_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        forekill(0, 0);
+    }
+
+    /// c:844 — `backdel(0, 0)` zero count safe.
+    #[test]
+    fn backdel_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        backdel(0, 0);
+    }
+
+    /// c:890 — `foredel(0, 0)` zero count safe.
+    #[test]
+    fn foredel_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        foredel(0, 0);
+    }
+
+    /// c:1160 — `getzlequery` returns i32 (compile-time type pin).
+    #[test]
+    fn getzlequery_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = getzlequery();
+    }
+
+    /// c:1005 + c:1028 — `findbol() <= findeol()` invariant.
+    #[test]
+    fn findbol_le_findeol_invariant_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let b = findbol();
+        let e = findeol();
+        assert!(b <= e, "findbol={} must be ≤ findeol={}", b, e);
+    }
+
+    /// c:1153 — `findline` returns (usize, usize) with start ≤ end.
+    #[test]
+    fn findline_start_le_end_invariant() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let (start, end) = findline();
+        assert!(start <= end,
+            "findline start={} must be ≤ end={}", start, end);
+    }
 }
