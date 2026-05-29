@@ -910,4 +910,118 @@ mod tests {
         let any_diff = (0..100).any(|_| random_u64() != first);
         assert!(any_diff, "100 u64 randoms should differ from first");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/random.c
+    // c:343 random_u32 / c:353 random_u64 / c:364 bounded /
+    // c:144 get_srandom + lifecycle type pins
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:343 — `random_u32` returns u32 (compile-time type pin).
+    #[test]
+    fn random_u32_returns_u32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: u32 = random_u32();
+    }
+
+    /// c:353 — `random_u64` returns u64 (compile-time type pin).
+    #[test]
+    fn random_u64_returns_u64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: u64 = random_u64();
+    }
+
+    /// c:364 — `bounded(0)` returns 0 (degenerate range).
+    #[test]
+    fn bounded_zero_max_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(bounded(0), 0, "max=0 always returns 0");
+    }
+
+    /// c:364 — `bounded(1)` always returns 0 (only value < 1).
+    #[test]
+    fn bounded_one_max_always_zero() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..50 {
+            assert_eq!(bounded(1), 0, "max=1 → result must be 0");
+        }
+    }
+
+    /// c:364 — `bounded(max)` result always strictly less than max.
+    #[test]
+    fn bounded_result_strictly_less_than_max() {
+        let _g = crate::test_util::global_state_lock();
+        for &max in &[2u32, 10, 100, 1000, 1_000_000] {
+            for _ in 0..20 {
+                let v = bounded(max);
+                assert!(v < max, "bounded({}) = {} must be < max", max, v);
+            }
+        }
+    }
+
+    /// c:364 — `bounded` returns u32 (compile-time type pin).
+    #[test]
+    fn bounded_returns_u32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: u32 = bounded(100);
+    }
+
+    /// c:364 — `bounded(u32::MAX)` short-circuit branch returns
+    /// arbitrary u32 (degenerate special case at c:368).
+    #[test]
+    fn bounded_u32_max_returns_u32_range() {
+        let _g = crate::test_util::global_state_lock();
+        // No bound to check beyond "doesn't panic" + type.
+        let _: u32 = bounded(u32::MAX);
+    }
+
+    /// c:226 — `setup_` returns i32 (compile-time type pin).
+    #[test]
+    fn random_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:249 — features list contains the canonical 3 entries
+    /// (f:zrand_float, f:zrand_int, p:SRANDOM).
+    #[test]
+    fn random_features_canonical_three_entries() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        assert_eq!(feats.len(), 3, "random advertises 3 features");
+        assert!(feats.iter().any(|f| f == "f:zrand_float"),
+            "must contain f:zrand_float");
+        assert!(feats.iter().any(|f| f == "f:zrand_int"),
+            "must contain f:zrand_int");
+        assert!(feats.iter().any(|f| f == "p:SRANDOM"),
+            "must contain p:SRANDOM");
+    }
+
+    /// c:296 — `cleanup_` idempotent.
+    #[test]
+    fn random_cleanup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:303 — `finish_` idempotent.
+    #[test]
+    fn random_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:263 — `boot_` idempotent.
+    #[test]
+    fn random_boot_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(boot_(std::ptr::null()), 0);
+        }
+    }
 }
