@@ -266,6 +266,31 @@ demo_test!(d107_eval_metaprogramming, "107_eval_metaprogramming.zsh");
 demo_test!(d108_globsubst_globalias, "108_globsubst_globalias.zsh");
 demo_test!(d109_arith_truth_tables, "109_arith_truth_tables.zsh");
 demo_test!(d110_misc_advanced, "110_misc_advanced.zsh");
+demo_test!(d111_let_builtin, "111_let_builtin.zsh");
+demo_test!(d112_assignment_forms, "112_assignment_forms.zsh");
+demo_test!(d113_tied_arrays, "113_tied_arrays.zsh");
+demo_test!(d114_local_modifiers, "114_local_modifiers.zsh");
+demo_test!(d115_param_strip_advanced, "115_param_strip_advanced.zsh");
+demo_test!(d116_cond_numeric_ops, "116_cond_numeric_ops.zsh");
+demo_test!(d117_backref_replacement, "117_backref_replacement.zsh");
+demo_test!(d118_recursive_glob, "118_recursive_glob.zsh");
+demo_test!(d119_background_wait, "119_background_wait.zsh");
+demo_test!(d120_utf8_strings, "120_utf8_strings.zsh");
+demo_test!(d121_mini_cat, "121_mini_cat.zsh");
+demo_test!(d122_mini_grep, "122_mini_grep.zsh");
+demo_test!(d123_mini_wc, "123_mini_wc.zsh");
+demo_test!(d124_url_encode, "124_url_encode.zsh");
+demo_test!(d125_json_pretty, "125_json_pretty.zsh");
+demo_test!(d126_xml_escape, "126_xml_escape.zsh");
+demo_test!(d127_string_trim, "127_string_trim.zsh");
+demo_test!(d128_csv_writer, "128_csv_writer.zsh");
+demo_test!(d129_assoc_serialize, "129_assoc_serialize.zsh");
+demo_test!(d130_ini_parser, "130_ini_parser.zsh");
+demo_test!(d131_emulate_modes, "131_emulate_modes.zsh");
+demo_test!(d132_ksh_patterns, "132_ksh_patterns.zsh");
+demo_test!(d133_zstyle_demo, "133_zstyle_demo.zsh");
+demo_test!(d134_compdef_signatures, "134_compdef_signatures.zsh");
+demo_test!(d135_bindkey_config, "135_bindkey_config.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -383,6 +408,31 @@ fn every_demo_in_dir_has_a_test() {
         "108_globsubst_globalias.zsh",
         "109_arith_truth_tables.zsh",
         "110_misc_advanced.zsh",
+        "111_let_builtin.zsh",
+        "112_assignment_forms.zsh",
+        "113_tied_arrays.zsh",
+        "114_local_modifiers.zsh",
+        "115_param_strip_advanced.zsh",
+        "116_cond_numeric_ops.zsh",
+        "117_backref_replacement.zsh",
+        "118_recursive_glob.zsh",
+        "119_background_wait.zsh",
+        "120_utf8_strings.zsh",
+        "121_mini_cat.zsh",
+        "122_mini_grep.zsh",
+        "123_mini_wc.zsh",
+        "124_url_encode.zsh",
+        "125_json_pretty.zsh",
+        "126_xml_escape.zsh",
+        "127_string_trim.zsh",
+        "128_csv_writer.zsh",
+        "129_assoc_serialize.zsh",
+        "130_ini_parser.zsh",
+        "131_emulate_modes.zsh",
+        "132_ksh_patterns.zsh",
+        "133_zstyle_demo.zsh",
+        "134_compdef_signatures.zsh",
+        "135_bindkey_config.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
