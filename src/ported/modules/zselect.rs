@@ -887,4 +887,122 @@ mod tests {
             assert_eq!(finish_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zselect.c
+    // c:25 handle_digits / c:68 bin_zselect / c:295-341 lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:25 — `handle_digits` returns i32 (compile-time type pin).
+    #[test]
+    fn handle_digits_returns_i32_type_pin2() {
+        let (mut set, mut fdmax) = fresh_set();
+        let _: i32 = handle_digits("zselect", "1", &mut set, &mut fdmax);
+    }
+
+    /// c:68 — `bin_zselect` returns i32 (compile-time type pin).
+    #[test]
+    fn bin_zselect_returns_i32_type_pin2() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_zs();
+        let _: i32 = bin_zselect("zselect", &["garbage".to_string()], &ops, 0);
+    }
+
+    /// c:25 — `handle_digits` is deterministic for same input.
+    #[test]
+    fn handle_digits_is_deterministic_for_same_input() {
+        for fd in ["1", "5", "100", "garbage"] {
+            let (mut set, mut fdmax) = fresh_set();
+            let first = handle_digits("zselect", fd, &mut set, &mut fdmax);
+            for _ in 0..3 {
+                let (mut set2, mut fdmax2) = fresh_set();
+                assert_eq!(handle_digits("zselect", fd, &mut set2, &mut fdmax2), first,
+                    "handle_digits({:?}) must be deterministic", fd);
+            }
+        }
+    }
+
+    /// c:25 — `handle_digits` empty string returns nonzero (no digits).
+    #[test]
+    fn handle_digits_empty_returns_nonzero_pin() {
+        let (mut set, mut fdmax) = fresh_set();
+        let r = handle_digits("zselect", "", &mut set, &mut fdmax);
+        assert_ne!(r, 0, "empty string → error");
+    }
+
+    /// c:25 — `handle_digits` negative fd returns nonzero.
+    #[test]
+    fn handle_digits_negative_returns_nonzero_pin() {
+        let (mut set, mut fdmax) = fresh_set();
+        let r = handle_digits("zselect", "-1", &mut set, &mut fdmax);
+        assert_ne!(r, 0, "negative fd → error");
+    }
+
+    /// c:25 — `handle_digits` non-numeric returns nonzero.
+    #[test]
+    fn handle_digits_non_numeric_returns_nonzero_pin() {
+        for s in ["xyz", "1a", "a1", "abc"] {
+            let (mut set, mut fdmax) = fresh_set();
+            assert_ne!(handle_digits("zselect", s, &mut set, &mut fdmax), 0,
+                "non-numeric {:?} → error", s);
+        }
+    }
+
+    /// c:25 — `handle_digits` raises fdmax only when fd > current fdmax.
+    #[test]
+    fn handle_digits_fdmax_monotonically_non_decreasing() {
+        let (mut set, mut fdmax) = fresh_set();
+        let _ = handle_digits("zselect", "5", &mut set, &mut fdmax);
+        let after_5 = fdmax;
+        let _ = handle_digits("zselect", "2", &mut set, &mut fdmax);
+        assert!(fdmax >= after_5, "fdmax must never decrease");
+        let _ = handle_digits("zselect", "10", &mut set, &mut fdmax);
+        assert!(fdmax >= 10, "fdmax must rise to 10 after fd 10");
+    }
+
+    /// c:295 — `setup_` returns i32 (compile-time type pin).
+    #[test]
+    fn zselect_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:312 — features list non-empty.
+    #[test]
+    fn zselect_features_nonempty() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        assert!(!feats.is_empty(), "zselect must advertise ≥1 feature");
+    }
+
+    /// c:312 — features all use b:/p: prefix per zsh module spec.
+    #[test]
+    fn zselect_features_use_canonical_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        for f in &feats {
+            assert!(f.starts_with("b:") || f.starts_with("p:"),
+                "feature {:?} must use b:/p: prefix", f);
+        }
+    }
+
+    /// c:334 — `cleanup_` idempotent.
+    #[test]
+    fn zselect_cleanup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:327 — `boot_` idempotent.
+    #[test]
+    fn zselect_boot_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(boot_(std::ptr::null()), 0);
+        }
+    }
 }
