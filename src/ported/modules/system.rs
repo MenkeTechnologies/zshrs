@@ -1935,4 +1935,105 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(getposint("1000000", "test"), 1_000_000);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/system.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:45 — `getposint("0")` returns 0 (zero is non-negative, valid).
+    #[test]
+    fn getposint_zero_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("0", "test"), 0, "zero is valid positive int");
+    }
+
+    /// c:51 — `getposint("-5")` returns -1 (negative rejected).
+    #[test]
+    fn getposint_negative_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            getposint("-5", "test"),
+            -1,
+            "negative rejected per ret < 0 branch"
+        );
+    }
+
+    /// c:51 — `getposint("12abc")` returns -1 (trailing garbage).
+    #[test]
+    fn getposint_trailing_garbage_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            getposint("12abc", "test"),
+            -1,
+            "trailing non-digit rejected per *eptr != \\0"
+        );
+    }
+
+    /// c:45 — `getposint("42")` returns 42 (canonical positive int).
+    #[test]
+    fn getposint_canonical_positive() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("42", "test"), 42);
+        assert_eq!(getposint("1", "test"), 1);
+    }
+
+    /// c:45 — `getposint` is deterministic.
+    #[test]
+    fn getposint_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for s in &["0", "42", "1000", "-1", "abc"] {
+            let first = getposint(s, "test");
+            for _ in 0..5 {
+                assert_eq!(getposint(s, "test"), first, "{:?} must be pure", s);
+            }
+        }
+    }
+
+    /// c:1085 — `errnosgetfn` returns a vec of error name strings
+    /// (errno names like "EACCES", "ENOENT").
+    #[test]
+    fn errnosgetfn_returns_nonempty_vec() {
+        let _g = crate::test_util::global_state_lock();
+        let names = errnosgetfn(std::ptr::null_mut());
+        // Must contain at least the common POSIX errnos.
+        assert!(!names.is_empty(), "errno table must not be empty");
+    }
+
+    /// c:1085 — errnosgetfn output should contain "EACCES" (a POSIX
+    /// errno guaranteed on every Unix system).
+    #[test]
+    #[cfg(unix)]
+    fn errnosgetfn_includes_eacces() {
+        let _g = crate::test_util::global_state_lock();
+        let names = errnosgetfn(std::ptr::null_mut());
+        assert!(
+            names.iter().any(|n| n == "EACCES"),
+            "errno table must include EACCES, got {:?}",
+            names
+        );
+    }
+
+    /// c:1098 — `fillpmsysparams("anything")` returns Option<String>
+    /// (no panic on lookup of arbitrary key).
+    #[test]
+    fn fillpmsysparams_does_not_panic_on_arbitrary_key() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = fillpmsysparams("zshrs_never_real_sysparam_key");
+    }
+
+    /// c:1224 — `setup_(NULL)` returns 0 (no-op).
+    #[test]
+    fn system_setup_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:1245-1261 — lifecycle stubs all return 0.
+    #[test]
+    fn system_lifecycle_stubs_return_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
