@@ -2279,4 +2279,86 @@ mod tests {
         set_keybuf(b"\t");
         assert_eq!(usetab(), 1, "after pure-WS indent, tab = literal");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/zle_tricky.c. Tests that capture
+    // KNOWN ZSHRS BUGS use #[ignore = "ZSHRS BUG: …"].
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `usetab()` returns 0 when keybuf has multiple chars. C
+    /// `Src/Zle/zle_tricky.c:usetab` first check:
+    ///   `if (keybuf[0] != '\t' || keybuf[1]) return 0;`
+    /// Multi-char keybuf → never use tab.
+    #[test]
+    fn usetab_multi_char_keybuf_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "   ".chars().collect();
+        ZLELL.store(3, Ordering::SeqCst);
+        ZLECS.store(3, Ordering::SeqCst);
+        // 2-byte keybuf — keybuf[1] is non-zero → return 0.
+        set_keybuf(b"\t\t");
+        assert_eq!(usetab(), 0, "multi-char keybuf disables tab use");
+    }
+
+    /// `usetab()` returns 0 when keybuf is empty / not tab. C:
+    /// `keybuf[0] != '\t'` triggers the early return.
+    #[test]
+    fn usetab_non_tab_keybuf_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "   ".chars().collect();
+        ZLELL.store(3, Ordering::SeqCst);
+        ZLECS.store(3, Ordering::SeqCst);
+        set_keybuf(b"x");
+        assert_eq!(usetab(), 0, "non-tab keybuf returns 0");
+    }
+
+    /// `usetab()` returns 0 when prior char is non-whitespace.
+    /// C: `for (; s >= zleline && *s != '\n'; s--) if (*s != '\t' &&
+    /// *s != ' ') return 0;` — any non-WS in the line-so-far → 0.
+    #[test]
+    fn usetab_non_whitespace_in_line_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "abc".chars().collect();
+        ZLELL.store(3, Ordering::SeqCst);
+        ZLECS.store(3, Ordering::SeqCst);
+        set_keybuf(b"\t");
+        assert_eq!(usetab(), 0, "non-WS in line → tab = completion key");
+    }
+
+    /// `cmphaswilds("foo")` returns 0 — plain string has no wildcards.
+    /// C `Src/Zle/zle_tricky.c:cmphaswilds`.
+    #[test]
+    fn cmphaswilds_plain_string_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(cmphaswilds("foo"), 0, "no wildcards in plain string");
+    }
+
+    /// `cmphaswilds("")` on empty input returns 0.
+    #[test]
+    fn cmphaswilds_empty_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(cmphaswilds(""), 0, "empty string has no wildcards");
+    }
+
+    /// `cmphaswilds("[")` — lone Inbrack returns 0 per C:
+    ///   `if ((*str == Inbrack || *str == Outbrack) && !str[1]) return 0;`
+    /// A bracket with nothing after isn't a pattern, just a literal char.
+    #[test]
+    #[ignore = "ZSHRS BUG: lone-bracket short-circuit (c:cmphaswilds first check) — requires Inbrack token, not literal '['"]
+    fn cmphaswilds_lone_inbrack_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        // C uses Inbrack token (0xa9) here, not literal '['.
+        let lone_inbrack = format!("{}", crate::ported::zsh_h::Inbrack);
+        assert_eq!(
+            cmphaswilds(&lone_inbrack),
+            0,
+            "lone Inbrack with no follower returns 0"
+        );
+    }
 }
