@@ -5228,4 +5228,107 @@ mod tests {
         assert_eq!(m_noeval(), 3);
         m_noeval_set(saved);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/math.c matheval + mathevali +
+    // outputradix / outputunderscore / reset_output_format.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1491 — `matheval("")` returns MN_INTEGER 0.
+    #[test]
+    fn matheval_empty_returns_integer_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = matheval("").expect("empty must succeed");
+        assert_eq!(r.l, 0);
+        assert_eq!(r.type_, MN_INTEGER);
+    }
+
+    /// c:1489 — Nularg-prefixed expression is treated as the suffix.
+    /// `Nularg + "42"` → 42.
+    #[test]
+    fn matheval_nularg_prefix_skipped() {
+        let _g = crate::test_util::global_state_lock();
+        let s = format!("{}42", Nularg);
+        let r = matheval(&s).expect("must succeed");
+        assert_eq!(r.l, 42, "Nularg prefix stripped, '42' evaluated");
+    }
+
+    /// c:1480 — `matheval("1+2")` returns 3.
+    #[test]
+    fn matheval_basic_addition() {
+        let _g = crate::test_util::global_state_lock();
+        let r = matheval("1+2").expect("must succeed");
+        assert_eq!(r.l, 3);
+    }
+
+    /// c:1480 — `matheval("10*5")` returns 50.
+    #[test]
+    fn matheval_basic_multiplication() {
+        let _g = crate::test_util::global_state_lock();
+        let r = matheval("10*5").expect("must succeed");
+        assert_eq!(r.l, 50);
+    }
+
+    /// c:1505 — `mathevali("3+4")` returns 7 (integer-coerce).
+    #[test]
+    fn mathevali_integer_result() {
+        let _g = crate::test_util::global_state_lock();
+        let r = mathevali("3+4").expect("must succeed");
+        assert_eq!(r, 7);
+    }
+
+    /// c:1505 — `mathevali("3.7")` truncates to 3 (MN_FLOAT → i64).
+    #[test]
+    fn mathevali_float_truncates() {
+        let _g = crate::test_util::global_state_lock();
+        let r = mathevali("3.7").expect("must succeed");
+        assert_eq!(r, 3, "float must truncate (cast to i64)");
+    }
+
+    /// c:1505 — `mathevali("-2.7")` truncates toward zero → -2.
+    #[test]
+    fn mathevali_negative_float_truncates_toward_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = mathevali("-2.7").expect("must succeed");
+        assert_eq!(r, -2, "-2.7 truncates to -2 (toward zero, not -3)");
+    }
+
+    /// c:898 — `reset_output_format()` clears both radix + underscore.
+    #[test]
+    fn reset_output_format_clears_both_state() {
+        let _g = crate::test_util::global_state_lock();
+        reset_output_format();
+        assert_eq!(outputradix(), 0);
+        assert_eq!(outputunderscore(), 0);
+    }
+
+    /// c:889 — `outputradix` is deterministic right after reset.
+    #[test]
+    fn outputradix_zero_after_reset() {
+        let _g = crate::test_util::global_state_lock();
+        reset_output_format();
+        for _ in 0..5 {
+            assert_eq!(outputradix(), 0);
+        }
+    }
+
+    /// c:1049 — `lastbase` accessor returns valid base value.
+    #[test]
+    fn lastbase_accessor_returns_value() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = lastbase();
+        set_lastbase(16);
+        assert_eq!(lastbase(), 16);
+        set_lastbase(saved);
+    }
+
+    /// c:1061 — `set_lastbase(8)` then `lastbase()` returns 8.
+    #[test]
+    fn set_lastbase_round_trips_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = lastbase();
+        set_lastbase(8);
+        assert_eq!(lastbase(), 8);
+        set_lastbase(saved);
+    }
 }
