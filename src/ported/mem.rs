@@ -1099,4 +1099,166 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = zhalloc(0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests for Src/string.c string-concat + dup primitives.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:33 — `dupstring(s)` returns an independent copy.
+    /// Mutation of the result must not leak back to the original
+    /// (Rust owns; pin: result is owned, not borrowed).
+    #[test]
+    fn dupstring_returns_independent_copy() {
+        let original = "hello";
+        let mut dup = dupstring(original);
+        dup.push_str("_mutated");
+        assert_eq!(original, "hello", "original must not be affected");
+        assert_eq!(dup, "hello_mutated");
+    }
+
+    /// c:33 — `dupstring("")` returns empty string.
+    #[test]
+    fn dupstring_empty_returns_empty() {
+        assert_eq!(dupstring(""), "");
+    }
+
+    /// c:48 — `dupstring_wlen(s, n)` clamps to `s.len()` when n exceeds.
+    #[test]
+    fn dupstring_wlen_clamps_overlong_len() {
+        // n > s.len() should clamp to s.len(), no panic.
+        let r = dupstring_wlen("hi", 100);
+        assert_eq!(r, "hi", "len clamped to actual byte length");
+    }
+
+    /// c:48 — `dupstring_wlen` is byte-based: 4-byte prefix of "café"
+    /// is "café" (4 bytes: c, a, f, é-first-byte). With from_utf8_lossy,
+    /// a mid-codepoint cut produces the replacement char OR drops it.
+    #[test]
+    fn dupstring_wlen_byte_based_not_char_based() {
+        // "café" is 5 bytes: c(1) a(1) f(1) é(2).
+        let r = dupstring_wlen("café", 3);
+        assert_eq!(r, "caf", "3 bytes of 'café' = 'caf'");
+        let r5 = dupstring_wlen("café", 5);
+        assert_eq!(r5, "café", "full 5 bytes round-trips");
+    }
+
+    /// c:62 — `ztrdup(s)` is equivalent to dupstring (Rust collapses
+    /// permanent/heap distinction).
+    #[test]
+    fn ztrdup_round_trip_matches_input() {
+        assert_eq!(ztrdup("anything"), "anything");
+        assert_eq!(ztrdup(""), "");
+    }
+
+    /// c:172 — `ztrduppfx(s, len)` returns first `len` bytes.
+    #[test]
+    fn ztrduppfx_returns_byte_prefix() {
+        assert_eq!(ztrduppfx("hello world", 5), "hello");
+        assert_eq!(ztrduppfx("hello", 0), "");
+        // Clamp on overflow.
+        assert_eq!(ztrduppfx("hi", 100), "hi");
+    }
+
+    /// c:145 — `bicat("foo", "bar")` returns "foobar" (simple concat).
+    #[test]
+    fn bicat_joins_two_strings() {
+        assert_eq!(bicat("foo", "bar"), "foobar");
+        assert_eq!(bicat("", "bar"), "bar");
+        assert_eq!(bicat("foo", ""), "foo");
+        assert_eq!(bicat("", ""), "");
+    }
+
+    /// c:98 — `tricat("a", "b", "c")` returns "abc".
+    #[test]
+    fn tricat_joins_three_strings() {
+        assert_eq!(tricat("a", "b", "c"), "abc");
+        assert_eq!(tricat("", "middle", ""), "middle");
+        assert_eq!(tricat("pre", "", "suf"), "presuf");
+    }
+
+    /// c:131 — `dyncat(s1, s2)` is the heap-arena version of bicat
+    /// (same behavior in Rust).
+    #[test]
+    fn dyncat_matches_bicat_behavior() {
+        assert_eq!(dyncat("foo", "bar"), bicat("foo", "bar"));
+        assert_eq!(dyncat("", ""), "");
+    }
+
+    /// c:196 — `strend(s)` returns the last char of s.
+    #[test]
+    fn strend_returns_last_char() {
+        assert_eq!(strend("hello"), Some('o'));
+        assert_eq!(strend("a"), Some('a'));
+        assert_eq!(strend(""), None, "empty → None");
+    }
+
+    /// c:196 — `strend` is char-based, not byte-based — multibyte
+    /// returns the codepoint, not the trailing byte.
+    #[test]
+    fn strend_returns_codepoint_for_multibyte() {
+        assert_eq!(strend("café"), Some('é'));
+        assert_eq!(strend("日本語"), Some('語'));
+    }
+
+    /// c:186 — `appstr(base, append)` mutates base in place.
+    #[test]
+    fn appstr_mutates_base_in_place() {
+        let mut s = String::from("hello");
+        appstr(&mut s, " world");
+        assert_eq!(s, "hello world");
+    }
+
+    /// `arrlen` matches slice len (corpus pin, non-empty + empty).
+    #[test]
+    fn arrlen_matches_slice_len_for_empty_and_nonempty() {
+        let v: Vec<i32> = vec![1, 2, 3, 4, 5];
+        assert_eq!(arrlen(&v), 5);
+        let empty: Vec<i32> = vec![];
+        assert_eq!(arrlen(&empty), 0);
+    }
+
+    /// `arrlen_le` boundary: 3 ≤ 3 is true.
+    #[test]
+    fn arrlen_le_boundary_inclusive() {
+        let v: Vec<i32> = vec![1, 2, 3];
+        assert!(arrlen_le(&v, 3), "3 ≤ 3 is true (inclusive)");
+        assert!(arrlen_le(&v, 4));
+        assert!(!arrlen_le(&v, 2));
+    }
+
+    /// `arrlen_gt` boundary: 3 > 3 is false (strict).
+    #[test]
+    fn arrlen_gt_strict_at_boundary() {
+        let v: Vec<i32> = vec![1, 2, 3];
+        assert!(!arrlen_gt(&v, 3), "3 > 3 is false (strict)");
+        assert!(arrlen_gt(&v, 2));
+        assert!(!arrlen_gt(&v, 4));
+    }
+
+    /// `arrdup_max` clamps when max > arr.len().
+    #[test]
+    fn arrdup_max_clamps_to_arr_len() {
+        let arr = vec!["a".to_string(), "b".to_string()];
+        let r = arrdup_max(&arr, 100);
+        assert_eq!(r.len(), 2, "max clamped to arr.len()");
+        assert_eq!(r, arr);
+    }
+
+    /// `arrdup_max(_, 0)` returns empty.
+    #[test]
+    fn arrdup_max_zero_returns_empty() {
+        let arr = vec!["a".to_string(), "b".to_string()];
+        let r = arrdup_max(&arr, 0);
+        assert!(r.is_empty());
+    }
+
+    /// `zarrdup` returns independent copies (Vec clone).
+    #[test]
+    fn zarrdup_returns_independent_copies() {
+        let original = vec!["x".to_string(), "y".to_string()];
+        let mut dup = zarrdup(&original);
+        dup.push("added".to_string());
+        assert_eq!(original.len(), 2, "original unchanged");
+        assert_eq!(dup.len(), 3);
+    }
 }
