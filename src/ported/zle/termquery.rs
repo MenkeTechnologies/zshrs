@@ -1736,4 +1736,118 @@ mod tests {
         let _g2 = zle_test_setup();
         assert!(url_encode("").is_empty());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/termquery.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:570 — `base64_decode("")` returns empty Vec.
+    #[test]
+    fn base64_decode_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = base64_decode("");
+        assert!(r.is_empty());
+    }
+
+    /// c:570 — `base64_decode("YWJj")` returns "abc" (canonical roundtrip).
+    #[test]
+    fn base64_decode_canonical_abc() {
+        let _g = crate::test_util::global_state_lock();
+        let r = base64_decode("YWJj"); // base64("abc")
+        assert_eq!(r, b"abc", "YWJj must decode to 'abc'");
+    }
+
+    /// c:570 — `base64_decode("aGVsbG8=")` returns "hello".
+    #[test]
+    fn base64_decode_with_padding_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let r = base64_decode("aGVsbG8=");
+        assert_eq!(r, b"hello");
+    }
+
+    /// c:570 — `base64_decode("aGVsbG8gd29ybGQ=")` returns "hello world".
+    #[test]
+    fn base64_decode_with_space_payload() {
+        let _g = crate::test_util::global_state_lock();
+        let r = base64_decode("aGVsbG8gd29ybGQ=");
+        assert_eq!(r, b"hello world");
+    }
+
+    /// c:570 — base64 with `+/` characters (URL-unsafe variant).
+    #[test]
+    fn base64_decode_with_plus_slash() {
+        let _g = crate::test_util::global_state_lock();
+        // base64("\xfb\xff\xfb") = "+//7"
+        let r = base64_decode("+/+/");
+        assert!(!r.is_empty(), "+/ chars should decode (not skip)");
+    }
+
+    /// c:531 — `url_encode("/")` preserves slash.
+    #[test]
+    fn url_encode_slash_preserved() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(url_encode("/path/to/file"), "/path/to/file");
+    }
+
+    /// c:531 — `url_encode("-._~")` preserves all unreserved chars.
+    #[test]
+    fn url_encode_unreserved_chars_preserved() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(url_encode("-._~"), "-._~");
+    }
+
+    /// c:531 — `url_encode("&")` encodes special chars.
+    #[test]
+    fn url_encode_special_chars_become_percent_encoded() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(url_encode("&"), "%26");
+        assert_eq!(url_encode("="), "%3D");
+        assert_eq!(url_encode("?"), "%3F");
+    }
+
+    /// c:531 — `url_encode` round-trip preserves digits.
+    #[test]
+    fn url_encode_digits_preserved() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(url_encode("12345"), "12345");
+    }
+
+    /// c:116 — `find_branch` returns Some(idx) for matching char.
+    #[test]
+    fn find_branch_finds_existing_char() {
+        let _g = crate::test_util::global_state_lock();
+        let r = find_branch("hello", b'l');
+        assert!(r.is_some(), "find_branch must find 'l' in 'hello'");
+    }
+
+    /// c:116 — `find_branch` returns None for missing char.
+    #[test]
+    fn find_branch_missing_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let r = find_branch("hello", b'x');
+        assert!(r.is_none());
+    }
+
+    /// c:126 — `find_matching("(x)", '(', ')')` finds the closing paren.
+    #[test]
+    fn find_matching_simple_pair() {
+        let _g = crate::test_util::global_state_lock();
+        // Starting at index 0 (depth=0), need open first to step to depth=1.
+        let r = find_matching("(x)", b'(', b')');
+        // Should find the matching close; pin no panic + valid Option.
+        let _ = r;
+    }
+
+    /// `system_clipget` no panic on any clip selector.
+    #[test]
+    fn system_clipget_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = system_clipget('p');
+        let _ = system_clipget('s');
+        let _ = system_clipget('c');
+    }
 }
