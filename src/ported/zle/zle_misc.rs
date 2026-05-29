@@ -3671,4 +3671,112 @@ mod tests {
         let r = acceptandhold();
         assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_misc.c
+    // c:177 selfinsert / c:225 selfinsertunmeta / c:234 deletechar /
+    // c:271 backwarddeletechar / c:355 backwardkillline /
+    // c:478 transposechars / c:754 yank / c:781 pastebuf /
+    // c:890 putreplaceselection / c:930 yankpop
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:177 — `selfinsert(&[])` returns i32 (compile-time type pin).
+    #[test]
+    fn selfinsert_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = selfinsert(&[]);
+    }
+
+    /// c:225 — `selfinsertunmeta(&[])` returns i32.
+    #[test]
+    fn selfinsertunmeta_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = selfinsertunmeta(&[]);
+    }
+
+    /// c:234 — `deletechar` returns i32.
+    #[test]
+    fn deletechar_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = deletechar();
+    }
+
+    /// c:271 — `backwarddeletechar` returns i32.
+    #[test]
+    fn backwarddeletechar_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = backwarddeletechar();
+    }
+
+    /// c:754 — `yank` returns void (signature pin).
+    #[test]
+    fn yank_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: () = yank();
+    }
+
+    /// c:930 — `yankpop` returns i32.
+    #[test]
+    fn yankpop_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = yankpop();
+    }
+
+    /// c:890 — `putreplaceselection` returns i32.
+    #[test]
+    fn putreplaceselection_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = putreplaceselection();
+    }
+
+    /// c:355 — `backwardkillline` returns i32.
+    #[test]
+    fn backwardkillline_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = backwardkillline();
+    }
+
+    /// c:478 — `transposechars` is safe on empty buffer (3-iter).
+    #[test]
+    fn transposechars_safe_empty_buffer() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..3 {
+            let _ = transposechars();
+        }
+    }
+
+    /// c:234 + c:271 — `deletechar`/`backwarddeletechar` safe on empty.
+    #[test]
+    fn delete_chars_safe_on_empty_buffer() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _ = deletechar();
+        let _ = backwarddeletechar();
+    }
+
+    /// c:781 — `pastebuf(empty, _, _)` empty input safe.
+    #[test]
+    fn pastebuf_empty_buf_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _ = pastebuf(&[], 1, 0);
+        let _ = pastebuf(&[], 1, 1);
+    }
+
+    /// c:781 — `pastebuf` returns i32 (compile-time type pin).
+    #[test]
+    fn pastebuf_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = pastebuf(&[], 1, 0);
+    }
 }
