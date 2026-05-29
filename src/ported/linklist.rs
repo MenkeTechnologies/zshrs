@@ -1339,4 +1339,126 @@ mod tests {
         assert_eq!(a.len(), 3);
         assert!(b.is_empty(), "second emptied after join");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/linklist.c
+    // c:30 newlinklist / c:285 znewlinklist / c:375 countlinknodes /
+    // c:417 joinlists / c:423 linknodebydatum / c:429 linknodebystring /
+    // c:436 hlinklist2array / c:443 zlinklist2array
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:30 — `newlinklist` returns LinkList<String> (compile-time pin).
+    #[test]
+    fn newlinklist_returns_linklist_string_type() {
+        let _: LinkList<String> = newlinklist();
+    }
+
+    /// c:30 — `newlinklist` starts empty.
+    #[test]
+    fn newlinklist_starts_empty() {
+        let l = newlinklist();
+        assert!(l.is_empty(), "new list must be empty");
+        assert_eq!(l.len(), 0, "new list len = 0");
+    }
+
+    /// c:285 — `znewlinklist` starts empty (same contract as newlinklist).
+    #[test]
+    fn znewlinklist_starts_empty() {
+        let l = znewlinklist();
+        assert!(l.is_empty(), "znewlinklist must start empty");
+    }
+
+    /// c:375 — `countlinknodes` returns usize (compile-time pin, alt).
+    #[test]
+    fn countlinknodes_returns_usize_pin_alt() {
+        let l: LinkList<i32> = LinkList::new();
+        let _: usize = countlinknodes(&l);
+    }
+
+    /// c:375 — `countlinknodes` on empty list returns 0 (alt name).
+    #[test]
+    fn countlinknodes_empty_returns_zero_alt() {
+        let l: LinkList<i32> = LinkList::new();
+        assert_eq!(countlinknodes(&l), 0);
+    }
+
+    /// c:375 — `countlinknodes` matches `LinkList::len`.
+    #[test]
+    fn countlinknodes_matches_list_len() {
+        for n in [0usize, 1, 3, 10, 100] {
+            let mut l: LinkList<i32> = LinkList::new();
+            for i in 0..n {
+                l.push_back(i as i32);
+            }
+            assert_eq!(countlinknodes(&l), l.len(),
+                "countlinknodes must equal list.len() for n={}", n);
+        }
+    }
+
+    /// c:417 — `joinlists` empty into non-empty leaves first unchanged.
+    #[test]
+    fn joinlists_empty_into_nonempty_unchanged() {
+        let mut a: LinkList<i32> = LinkList::new();
+        a.push_back(1);
+        a.push_back(2);
+        let mut b: LinkList<i32> = LinkList::new();
+        let before_len = a.len();
+        joinlists(&mut a, &mut b);
+        assert_eq!(a.len(), before_len, "empty append leaves a unchanged");
+    }
+
+    /// c:417 — `joinlists` both-empty is a clean no-op.
+    #[test]
+    fn joinlists_both_empty_no_op() {
+        let mut a: LinkList<i32> = LinkList::new();
+        let mut b: LinkList<i32> = LinkList::new();
+        joinlists(&mut a, &mut b);
+        assert!(a.is_empty() && b.is_empty(), "both still empty");
+    }
+
+    /// c:423 — `linknodebydatum` for missing datum returns None.
+    #[test]
+    fn linknodebydatum_missing_returns_none() {
+        let mut l: LinkList<i32> = LinkList::new();
+        l.push_back(1);
+        l.push_back(2);
+        assert!(linknodebydatum(&l, &999).is_none(),
+            "missing datum → None");
+    }
+
+    /// c:429 — `linknodebystring("")` empty needle is deterministic.
+    #[test]
+    fn linknodebystring_empty_needle_is_deterministic() {
+        let mut l: LinkList<String> = LinkList::new();
+        l.push_back("foo".to_string());
+        let a = linknodebystring(&l, "");
+        let b = linknodebystring(&l, "");
+        assert_eq!(a.is_some(), b.is_some(),
+            "linknodebystring('') must be deterministic");
+    }
+
+    /// c:436 — `hlinklist2array` returns Vec<String> (compile-time pin).
+    #[test]
+    fn hlinklist2array_returns_vec_string_type() {
+        let l: LinkList<String> = LinkList::new();
+        let _: Vec<String> = hlinklist2array(&l);
+    }
+
+    /// c:436 — `hlinklist2array` empty list returns empty Vec.
+    #[test]
+    fn hlinklist2array_empty_returns_empty_vec() {
+        let l: LinkList<String> = LinkList::new();
+        assert!(hlinklist2array(&l).is_empty());
+    }
+
+    /// c:443 — `zlinklist2array` length preserved across the conversion.
+    #[test]
+    fn zlinklist2array_length_preserved() {
+        let mut l: LinkList<String> = LinkList::new();
+        for i in 0..7 {
+            l.push_back(format!("item_{}", i));
+        }
+        let arr = zlinklist2array(&l);
+        assert_eq!(arr.len(), 7, "array length = list length");
+    }
 }
