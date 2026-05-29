@@ -3422,4 +3422,40 @@ mod tests {
         let _g2 = zle_test_setup();
         assert_ne!(selectkeymap("zshrs_never_keymap_xyz", 0), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/zle_keymap.c. Tests that capture
+    // KNOWN ZSHRS BUGS use #[ignore = "ZSHRS BUG: …"].
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `newkeytab()` returns an empty key table — fresh state must
+    /// have zero bindings. C newhashtable equivalent at table init.
+    #[test]
+    fn newkeytab_returns_empty_table() {
+        let _g = crate::test_util::global_state_lock();
+        let kt = newkeytab();
+        assert_eq!(kt.len(), 0, "fresh keytab must be empty");
+    }
+
+    /// `openkeymap("zshrs_definitely_not_a_keymap")` returns None.
+    /// C `Keymap openkeymap(char *name)` returns NULL on miss.
+    #[test]
+    fn openkeymap_unknown_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(openkeymap("zshrs_unknown_keymap_xyz").is_none());
+    }
+
+    /// `unlinkkeymap` on a non-existent name returns nonzero.
+    /// C convention: 0 = success, nonzero = error.
+    #[test]
+    fn unlinkkeymap_unknown_name_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_ne!(
+            unlinkkeymap("zshrs_doesnt_exist", 0),
+            0,
+            "unlinking missing keymap must return error"
+        );
+    }
 }
