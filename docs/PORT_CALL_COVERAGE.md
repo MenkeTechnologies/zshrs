@@ -46,6 +46,23 @@ Two cases:
   shapes that happen to match. These are metric noise, not
   fakery — leave them flagged.
 
+### Macro-wrapper false positives (under-wired direction)
+
+Some C fns have a `#define` wrapper that hides the real call.
+The audit greps text and can't expand macros, so wrapper calls
+count under the macro name (C=0, Rust=N), while the wrapped fn
+appears under-wired.
+
+| Macro | Expansion | Rust strategy |
+|---|---|---|
+| `inststr(X)` | `inststrlen((X),1,-1)` (compresult.c:39) | Rust defines `inststr(s) { inststrlen(s, true, -1) }` and calls `inststr(s)` everywhere C uses the macro. Faithful to C source. |
+
+The audit will show the wrapped name (e.g., `inststrlen`) as
+under-wired because it can't see the macro expansion. Inlining
+the macro at call sites to make the audit happy would make the
+Rust port DIVERGE from C source syntax — wrong direction. Leave
+flagged; document the wrapper here.
+
 ## 2. Architectural divergence — leave it.
 
 Pattern: Rust replaces the C pattern with a different idiom that
