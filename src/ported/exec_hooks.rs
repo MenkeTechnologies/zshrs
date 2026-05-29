@@ -33,6 +33,14 @@ pub type ArrayUnsetFn = fn(&str);
 pub type AssocUnsetFn = fn(&str);
 /// `DispatchFunctionCallFn` type alias.
 pub type DispatchFunctionCallFn = fn(&str, &[String]) -> Option<i32>;
+/// Body-only function dispatch — runs the function body WITHOUT
+/// the doshfunc scope wrap (locallevel/FUNCSTACK/BREAKS/etc.).
+/// Used as the `body_runner` closure passed to direct
+/// `crate::ported::exec::doshfunc(...)` callers (so they don't
+/// double-wrap by going back through `dispatch_function_call`).
+/// Returns the body's exit status. Mirrors C's `runshfunc(prog,
+/// wrappers, name)` at `exec.c:6042` from doshfunc's perspective.
+pub type RunFunctionBodyFn = fn(&str, &[String]) -> Option<i32>;
 /// `ExecuteScriptFn` type alias.
 pub type ExecuteScriptFn = fn(&str) -> Result<i32, String>;
 /// `ExecuteScriptZshPipelineFn` type alias.
@@ -55,6 +63,7 @@ static SCALAR_UNSET: OnceLock<ScalarUnsetFn> = OnceLock::new();
 static ARRAY_UNSET: OnceLock<ArrayUnsetFn> = OnceLock::new();
 static ASSOC_UNSET: OnceLock<AssocUnsetFn> = OnceLock::new();
 static DISPATCH_FUNCTION_CALL: OnceLock<DispatchFunctionCallFn> = OnceLock::new();
+static RUN_FUNCTION_BODY: OnceLock<RunFunctionBodyFn> = OnceLock::new();
 static EXECUTE_SCRIPT: OnceLock<ExecuteScriptFn> = OnceLock::new();
 static EXECUTE_SCRIPT_ZSH_PIPELINE: OnceLock<ExecuteScriptZshPipelineFn> = OnceLock::new();
 static RUN_COMMAND_SUBSTITUTION: OnceLock<RunCommandSubstitutionFn> = OnceLock::new();
@@ -92,6 +101,10 @@ pub fn install_assoc_unset(f: AssocUnsetFn) {
 /// `install_dispatch_function_call` — see implementation.
 pub fn install_dispatch_function_call(f: DispatchFunctionCallFn) {
     let _ = DISPATCH_FUNCTION_CALL.set(f);
+}
+/// `install_run_function_body` — see [`RunFunctionBodyFn`].
+pub fn install_run_function_body(f: RunFunctionBodyFn) {
+    let _ = RUN_FUNCTION_BODY.set(f);
 }
 /// `install_execute_script` — see implementation.
 pub fn install_execute_script(f: ExecuteScriptFn) {
@@ -167,6 +180,13 @@ pub fn unset_assoc(name: &str) {
 /// `dispatch_function_call` — see implementation.
 pub fn dispatch_function_call(name: &str, args: &[String]) -> Option<i32> {
     DISPATCH_FUNCTION_CALL.get().and_then(|f| f(name, args))
+}
+/// Body-only dispatch — call as the `body_runner` of a direct
+/// `crate::ported::exec::doshfunc(...)` invocation to avoid the
+/// double-wrap that would happen if the body_runner went back
+/// through [`dispatch_function_call`].
+pub fn run_function_body(name: &str, args: &[String]) -> Option<i32> {
+    RUN_FUNCTION_BODY.get().and_then(|f| f(name, args))
 }
 /// `execute_script` — see implementation.
 pub fn execute_script(src: &str) -> Result<i32, String> {

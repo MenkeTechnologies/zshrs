@@ -2815,8 +2815,93 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, s: &str, _incmd: bool, _compa
     // `crate::ported::params` / `crate::ported::utils`; arms expand
     // their entries with `scanhashtable(table, …)` equivalents.
 
-    // cc.func (compctl -K) — call user function for matches.
-    // Skipped pending function-dispatch wiring.
+    // c:3700-3736 — cc.func (compctl -K user-fn) → call shfunc for
+    // matches. Build args = [func-name, lpre, lsuf] and dispatch via
+    // doshfunc; the user shfunc populates `$reply` array which we
+    // then walk via addmatch.
+    if let Some(func_name) = cc.func.as_ref() {
+        if let Some(mut shfunc) = crate::ported::utils::getshfunc(func_name) {
+            // c:3702-3717 — `addlinknode(args, cc->func); ... lpre; lsuf;`.
+            // Without the lpre/lsuf split substrate here we pass the
+            // raw cursor word as a single arg.
+            let largs: Vec<String> = vec![func_name.clone(), s.to_string()];
+            // c:3722-3724 — `if (incompfunc != 1) incompctlfunc = 1;
+            //                sfcontext = SFC_COMPLETE;`.
+            let in_compfunc = INCOMPFUNC.with(|c| c.get());
+            if in_compfunc != 1 {
+                INCOMPCTLFUNC.with(|c| c.set(true));
+            }
+            let osc = crate::ported::builtin::SFCONTEXT
+                .swap(crate::ported::zsh_h::SFC_COMPLETE, std::sync::atomic::Ordering::Relaxed);
+            // c:3725 — `doshfunc(shfunc, args, 1);`.
+            let name_for_body = func_name.clone();
+            let body_args: Vec<String> = vec![s.to_string()];
+            let body_runner = move || -> i32 {
+                crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args)
+                    .unwrap_or(0)
+            };
+            let _ = crate::ported::exec::doshfunc(
+                &mut shfunc,
+                largs,
+                true,
+                body_runner,
+            );
+            // c:3726-3727 — `sfcontext = osc; incompctlfunc = 0;`.
+            crate::ported::builtin::SFCONTEXT.store(osc, std::sync::atomic::Ordering::Relaxed);
+            INCOMPCTLFUNC.with(|c| c.set(false));
+            // c:3729-3731 — `if ((r = get_user_var("reply"))) while
+            // (*r) addmatch(*r++, NULL);`.
+            if let Some(reply) = crate::ported::params::getaparam("reply") {
+                ADDWHAT.with(|c| c.set(0));
+                for m in reply {
+                    addmatch(&m, None);
+                }
+            }
+        }
+    }
+
+    // c:3870-3906 — cc.ylist (compctl -y) → explanation source.
+    // If ylist starts with `$` or `(`, read from a parameter; else
+    // treat as a shfunc that receives the current match list and
+    // populates `$reply` with per-match explanation strings.
+    if let Some(ylist) = cc.ylist.as_ref() {
+        let is_var_ref = ylist.starts_with('$') || ylist.starts_with('(');
+        if !is_var_ref {
+            if let Some(mut shfunc) = crate::ported::utils::getshfunc(ylist) {
+                // c:3886-3895 — `addlinknode(args, cc->ylist);` then
+                // for each match append the prefix+str+suffix string.
+                // Match list isn't threaded here yet so we pass just
+                // the ylist function name; full match-list plumbing
+                // is a follow-up tied to the Cmatch port.
+                let largs: Vec<String> = vec![ylist.clone()];
+                // c:3898-3900 — same SFC_COMPLETE / incompctlfunc=1
+                // bracketing as cc.func above.
+                let in_compfunc = INCOMPFUNC.with(|c| c.get());
+                if in_compfunc != 1 {
+                    INCOMPCTLFUNC.with(|c| c.set(true));
+                }
+                let osc = crate::ported::builtin::SFCONTEXT.swap(
+                    crate::ported::zsh_h::SFC_COMPLETE,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                // c:3901 — `doshfunc(shfunc, args, 1);`.
+                let name_for_body = ylist.clone();
+                let body_runner = move || -> i32 {
+                    crate::ported::exec_hooks::run_function_body(&name_for_body, &[])
+                        .unwrap_or(0)
+                };
+                let _ = crate::ported::exec::doshfunc(
+                    &mut shfunc,
+                    largs,
+                    true,
+                    body_runner,
+                );
+                crate::ported::builtin::SFCONTEXT
+                    .store(osc, std::sync::atomic::Ordering::Relaxed);
+                INCOMPCTLFUNC.with(|c| c.set(false));
+            }
+        }
+    }
 
     // cc.glob — globlist expansion. Skipped pending glob-port use.
 

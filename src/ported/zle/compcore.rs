@@ -657,8 +657,81 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     // c:838 — `incompfunc = 1` before invoking the user fn.
     INCOMPFUNC.store(1, Ordering::Relaxed); // c:838
 
-    // c:638 — doshfunc(fn).
-    let _ = shfunc_call(fn_name); // c:638
+    // c:828-832 — `largs = newlinklist(); addlinknode(largs,
+    //   dupstring(fn)); while (*cfargs) addlinknode(largs,
+    //   dupstring(*p++));`. argv[0] = function name, then the
+    // wrapper-widget args stored in `cfargs` by `completecall`.
+    let largs: Vec<String> = {
+        let mut v = vec![fn_name.to_string()];
+        if let Ok(cf) = crate::ported::zle::zle_tricky::cfargs.lock() {
+            v.extend(cf.iter().cloned());
+        }
+        v
+    };
+
+    // c:833-834 — `int oxt = isset(XTRACE); opts[XTRACE] = 0;`. Mute
+    // xtrace during the body so PS4 noise doesn't appear from every
+    // compsys helper line.
+    let oxt = crate::ported::zsh_h::isset(crate::ported::zsh_h::XTRACE) as i32;
+    crate::ported::options::opt_state_set(
+        &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::XTRACE),
+        false,
+    );
+    let _ = oxt; // c:833 saved for restore at c:836
+
+    // c:835 — `cfret = doshfunc(shfunc, largs, 1)`. The body runner
+    // closure resolves the actual implementation:
+    //   - If a Rust compsys port is registered for `fn_name` and
+    //     `backend = "rust"`, run that.
+    //   - Else autoload + run the upstream shfunc body via the
+    //     standard dispatch path. dispatch_function_call already
+    //     wraps the fusevm Chunk in its own doshfunc scope; we
+    //     intentionally call only the body half here so the C-faithful
+    //     prologue/epilogue runs exactly once around the body.
+    let largs_for_body = largs.clone();
+    let fn_name_owned = fn_name.to_string();
+    let body_runner = move || -> i32 {
+        // c:6042 — `runshfunc(prog, wrappers, name)`. zshrs runs the
+        // body via either the Rust compsys port (direct fn call) or
+        // the fusevm Chunk dispatch (via exec_hooks).
+        if let Some(rust_fn) =
+            crate::compsys::router::try_rust_dispatch(&fn_name_owned)
+        {
+            // C convention: largs[0] = fn name, [1..] = real argv.
+            return rust_fn(&largs_for_body[1..]);
+        }
+        crate::ported::exec_hooks::dispatch_function_call(
+            &fn_name_owned,
+            &largs_for_body[1..],
+        )
+        .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed))
+    };
+
+    // Look up the real shfunc; if missing we still want doshfunc's
+    // scope around the Rust port (synth_shf carries just the name).
+    let mut synth_shf = crate::ported::zsh_h::shfunc {
+        node: crate::ported::zsh_h::hashnode {
+            next: None,
+            nam: fn_name.to_string(),
+            flags: 0,
+        },
+        filename: None,
+        lineno: 0,
+        funcdef: None,
+        redir: None,
+        sticky: None,
+        body: None,
+    };
+    let cfret_val =
+        crate::ported::exec::doshfunc(&mut synth_shf, largs, true, body_runner);
+    crate::ported::zle::zle_tricky::cfret
+        .store(cfret_val, Ordering::Relaxed);
+
+    // c:836 — `opts[XTRACE] = oxt;` restore xtrace state.
+    crate::ported::options::opt_state_set(
+        &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::XTRACE),
+        oxt != 0,
+    );
 
     // c:909-912 — unwind: read `$compstate[insert]` etc. back into
     // the compcore globals so do_completion sees the user fn's

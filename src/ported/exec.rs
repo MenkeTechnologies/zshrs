@@ -479,7 +479,7 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
 pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     // c:4713
     // c:4715 — `Eprog prog;`
-    let prog: Option<crate::ported::exec::eprog>;
+    let prog: Option<eprog>;
     // c:4716 — `int pipes[2];`  (collapsed: in-process executor; no fork)
     // c:4717 — `pid_t pid;`     (collapsed)
     let mut s: String; // c:4718
@@ -488,8 +488,8 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
                        //                prog = parse_string(cmd, 0); nocomments = onc;`
     let onc = crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.get());
     let new_nc = crate::ported::zsh_h::interact()
-        && crate::ported::init::sourcelevel.load(std::sync::atomic::Ordering::Relaxed) == 0
-        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVECOMMENTS);
+        && crate::ported::init::sourcelevel.load(Ordering::Relaxed) == 0
+        && !isset(crate::ported::zsh_h::INTERACTIVECOMMENTS);
     crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.set(new_nc));
     prog = parse_string(cmd, 0);
     crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.set(onc));
@@ -500,7 +500,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     }
     let prog = prog.unwrap();
 
-    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::EXECOPT) {
+    if !isset(crate::ported::zsh_h::EXECOPT) {
         // c:4728
         return Vec::new(); // c:4729 newlinklist()
     }
@@ -510,12 +510,12 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
         /* $(< word) */
         // c:4732
         s = red_name;
-        s = crate::ported::subst::singsub(&s); // c:4737
-        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+        s = singsub(&s); // c:4737
+        if errflag.load(Ordering::Relaxed) != 0 {
             return Vec::new(); // c:4739
         }
-        let s = crate::ported::lex::untokenize(&s); // c:4740
-        let path_meta = crate::ported::utils::unmeta(&s); // c:4741 unmeta(s)
+        let s = untokenize(&s); // c:4740
+        let path_meta = unmeta(&s); // c:4741 unmeta(s)
         let cpath = match std::ffi::CString::new(path_meta.as_bytes()) {
             Ok(c) => c,
             Err(_) => return Vec::new(),
@@ -526,9 +526,9 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
         if stream == -1 {
             // c:4742 — `zwarn("%e: %s", errno, s);`
             let errno = std::io::Error::last_os_error();
-            crate::ported::utils::zerr(&format!("{}: {}", errno, s));
-            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
-            crate::ported::exec::cmdoutval.store(1, std::sync::atomic::Ordering::Relaxed);
+            zerr(&format!("{}: {}", errno, s));
+            LASTVAL.store(1, Ordering::Relaxed);
+            cmdoutval.store(1, Ordering::Relaxed);
             return Vec::new(); // c:4744
         }
         // c:4746 — `retval = readoutput(stream, qt, &readerror);`
@@ -536,13 +536,13 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
         let retval = readoutput(stream, qt, &mut readerror); // c:4746
         if readerror != 0 {
             // c:4747
-            crate::ported::utils::zerr(&format!(
+            zerr(&format!(
                 "error when reading {}: {}", // c:4748
                 s,
                 std::io::Error::from_raw_os_error(readerror)
             ));
-            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
-            crate::ported::exec::cmdoutval.store(1, std::sync::atomic::Ordering::Relaxed);
+            LASTVAL.store(1, Ordering::Relaxed);
+            cmdoutval.store(1, Ordering::Relaxed);
         }
         return retval; // c:4751
     }
@@ -556,18 +556,18 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     //   c:4760 zfork       — replaced by in-process exec
     //   c:4768-4776 parent — equivalent to executor return
     //   c:4778-4789 child  — entersubsh+execode+_realexit collapse
-    crate::ported::exec::cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed); // c:4759
+    cmdoutval.store(0, Ordering::Relaxed); // c:4759
     let buf = crate::ported::exec_hooks::run_command_substitution(cmd);
-    crate::ported::builtin::LASTVAL.store(
-        crate::ported::exec::cmdoutval.load(std::sync::atomic::Ordering::Relaxed),
-        std::sync::atomic::Ordering::Relaxed,
+    LASTVAL.store(
+        cmdoutval.load(Ordering::Relaxed),
+        Ordering::Relaxed,
     ); // c:4775
 
     // c:4772 retval = readoutput — post-walk (c:4855-4871 tail) inlined.
     let buf = buf.trim_end_matches('\n');
     if qt != 0 {
         if buf.is_empty() {
-            vec![String::from(crate::ported::zsh_h::Nularg)] // c:4859-4861
+            vec![String::from(Nularg)] // c:4859-4861
         } else {
             vec![buf.to_string()] // c:4863
         }
@@ -676,7 +676,7 @@ pub fn getfpfunc(
         None => crate::ported::params::getaparam("fpath")
             .filter(|v| !v.is_empty())
             .or_else(|| {
-                crate::ported::params::getsparam("FPATH")
+                getsparam("FPATH")
                     .map(|v| v.split(':').map(String::from).collect())
             })
             .or_else(|| {
@@ -732,7 +732,7 @@ pub fn resolvebuiltin<'a>(
             crate::ported::module::ensurefeature(&mut t, &modname, "b:", Some(cmdarg))
         };
         // c:2715-2716 — re-lookup the now-(hopefully)-resolved builtin.
-        if let Some(re) = crate::ported::builtin::BUILTINS
+        if let Some(re) = BUILTINS
             .iter()
             .find(|b| b.node.nam == cmdarg)
         {
@@ -1548,7 +1548,7 @@ pub fn execsave() {
         // csh-glob diagnostic counter (glob.c:103 / glob.rs
         // BADCSHGLOB) so nested eval / trap dispatch doesn't disturb
         // the outer command's per-line accounting.
-        badcshglob: crate::ported::glob::BADCSHGLOB.load(std::sync::atomic::Ordering::Relaxed), // c:6451
+        badcshglob: crate::ported::glob::BADCSHGLOB.load(Ordering::Relaxed), // c:6451
         cmdoutpid: cmdoutpid.load(Ordering::Relaxed), // c:6452
         cmdoutval: cmdoutval.load(Ordering::Relaxed), // c:6453
         use_cmdoutval: use_cmdoutval.load(Ordering::Relaxed), // c:6454
@@ -1642,7 +1642,7 @@ pub fn execrestore() {
     crate::ported::math::m_noeval_set(en.noeval);
     // c:6487 — `badcshglob = en->badcshglob;`. Restore the csh-glob
     // diagnostic counter saved on entry.
-    crate::ported::glob::BADCSHGLOB.store(en.badcshglob, std::sync::atomic::Ordering::Relaxed);
+    crate::ported::glob::BADCSHGLOB.store(en.badcshglob, Ordering::Relaxed);
     cmdoutpid.store(en.cmdoutpid, Ordering::Relaxed); // c:6488
     cmdoutval.store(en.cmdoutval, Ordering::Relaxed); // c:6489
     use_cmdoutval.store(en.use_cmdoutval, Ordering::Relaxed); // c:6490
@@ -1840,7 +1840,7 @@ pub fn runshfunc(prog: &eprog, mut wrap: Option<&funcwrap>, name: &str) {
         let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(src);
     } else {
         // Pure wordcode body — drive via the canonical execode.
-        crate::ported::exec::execode(Box::new(prog.clone()), 1, 0, "shfunc");
+        execode(Box::new(prog.clone()), 1, 0, "shfunc");
         let _ = name;
     }
     if let Some(ou_str) = ou {
@@ -1868,22 +1868,22 @@ pub fn runshfunc(prog: &eprog, mut wrap: Option<&funcwrap>, name: &str) {
                      // surface — read it directly here.
     let exit_pending = crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed);
     let exit_level = crate::ported::builtin::EXIT_LEVEL.load(Ordering::Relaxed);
-    let cur_locallevel = crate::ported::params::locallevel.load(Ordering::Relaxed) as i32;
+    let cur_locallevel = locallevel.load(Ordering::Relaxed) as i32;
     let cur_forklevel = FORKLEVEL.load(Ordering::Relaxed);
     let in_exit_trap = crate::ported::signals::in_exit_trap.load(Ordering::Relaxed); // c:Src/signals.c:63
     if exit_pending != 0 && exit_level >= cur_locallevel + 1 && in_exit_trap == 0 {
         // c:6141
         if cur_locallevel > cur_forklevel {
             // c:6143 — still inside a nested function: keep unwinding.
-            crate::ported::builtin::RETFLAG.store(1, Ordering::Relaxed); // c:6144
-            crate::ported::builtin::BREAKS.store(
-                crate::ported::builtin::LOOPS.load(Ordering::Relaxed),
+            RETFLAG.store(1, Ordering::Relaxed); // c:6144
+            BREAKS.store(
+                LOOPS.load(Ordering::Relaxed),
                 Ordering::Relaxed,
             ); // c:6145
         } else {
             // c:6151 — out of all functions: exit for real.
             crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed); // c:6151
-            let val = crate::ported::builtin::EXIT_VAL.load(Ordering::Relaxed);
+            let val = EXIT_VAL.load(Ordering::Relaxed);
             crate::ported::builtin::zexit(val, crate::ported::zsh_h::ZEXIT_NORMAL);
             // c:6152
         }
@@ -2071,17 +2071,17 @@ pub fn checkclobberparam(f: &redir) -> i32 {
     // open so we don't clobber it.
     if !isset(CLOBBER) {
         // c:2201 — `getstrvalue(v)` — read the param's string form.
-        let val_str = crate::ported::params::paramtab()
+        let val_str = paramtab()
             .read()
             .ok()
             .and_then(|t| t.get(&s).and_then(|p| p.u_str.clone()))
             .unwrap_or_default();
         if let Ok(fd) = val_str.trim().parse::<i32>() {
             // c:2202 — `if (fd <= max_zsh_fd && fdtable[fd] == FDT_EXTERNAL)`
-            let max_fd = crate::ported::utils::MAX_ZSH_FD.load(Ordering::Relaxed);
+            let max_fd = MAX_ZSH_FD.load(Ordering::Relaxed);
             if fd >= 0 && fd <= max_fd {
-                let kind = crate::ported::utils::fdtable_get(fd);
-                if kind == crate::ported::zsh_h::FDT_EXTERNAL {
+                let kind = fdtable_get(fd);
+                if kind == FDT_EXTERNAL {
                     zwarn(&format!("{}: file descriptor {} already open", s, fd)); // c:2206-2210
                     return 0; // c:2211
                 }
@@ -2570,9 +2570,9 @@ pub fn closemn(mfds: &mut [Option<Box<multio>>; 10], fd: i32, type_: i32) {
             mfds[fd as usize] = Some(mn_back);
             // c:2299 — `addproc(pid, NULL, 1, &bgtime, -1, -1);` — record
             // the tee/cat child in the current job's auxprocs (aux=true).
-            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
-                let tj = crate::ported::jobs::THISJOB
+                let tj = THISJOB
                     .get()
                     .map(|m| *m.lock().unwrap())
                     .unwrap_or(-1);
@@ -3096,17 +3096,24 @@ pub fn commandnotfound(arg0: &str, args: &mut Vec<String>) -> i32 {
     // is the first positional arg per C convention).
     args.insert(0, arg0.to_string());
     args.insert(0, "command_not_found_handler".to_string());
-    // c:680 — `lastval = doshfunc(shf, args, 1);` — dispatch through
-    // execshfunc (exec.rs:5009), which swaps PPARAMS, runshfuncs the
-    // body, and updates LASTVAL. doshfunc itself isn't ported; this
-    // covers the noreturnval=1 contract via execshfunc's
-    // PPARAMS-save/restore wrap.
-    let shf_clone: Option<crate::ported::zsh_h::shfunc> = shfunctab_lock()
+    // c:680 — `lastval = doshfunc(shf, args, 1);`. Direct doshfunc
+    // call mirrors C — body_runner routes through the host body-only
+    // entry so the function body runs once inside doshfunc's scope.
+    let shf_clone: Option<shfunc> = shfunctab_lock()
         .read()
         .ok()
         .and_then(|t| t.get("command_not_found_handler").cloned());
     if let Some(mut shf) = shf_clone {
-        crate::ported::exec::execshfunc(&mut shf, args);
+        let body_args = args.clone();
+        let body_runner = move || -> i32 {
+            crate::ported::exec_hooks::run_function_body(
+                "command_not_found_handler",
+                &body_args[1..],
+            )
+            .unwrap_or(0)
+        };
+        let lv = doshfunc(&mut shf, args.clone(), true, body_runner);
+        LASTVAL.store(lv, Ordering::Relaxed);
     }
     0 // c:681
 }
@@ -3251,7 +3258,7 @@ pub fn readoutput(in_fd: i32, qt: i32, readerror: &mut i32) -> Vec<String> {
     if qt != 0 {
         // c:4861
         if buf.is_empty() {
-            return vec![String::from(crate::ported::zsh_h::Nularg)]; // c:4862
+            return vec![String::from(Nularg)]; // c:4862
         }
         return vec![s]; // c:4864
     }
@@ -3477,7 +3484,7 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
         // skipping the full $PATH scan (one exec attempt vs N).
         // c:824 — `if ((cn = cmdnamtab->getnode(cmdnamtab, arg0)))`.
         let hashed_path: Option<String> = {
-            let tab = crate::ported::hashtable::cmdnamtab_lock().read().ok();
+            let tab = cmdnamtab_lock().read().ok();
             tab.and_then(|t| {
                 t.get(&arg0).and_then(|cn| {
                     if (cn.node.flags & crate::ported::zsh_h::HASHED) != 0 {
@@ -3877,9 +3884,9 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     // c:4960 — `addfilelist(nam, 0);` — register temp file in current
     // job's filelist so it's unlinked at job exit (not relying on the
     // OS temp-reaper).
-    if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+    if let Some(jt) = JOBTAB.get() {
         let mut guard = jt.lock().unwrap();
-        let tj = crate::ported::jobs::THISJOB
+        let tj = THISJOB
             .get()
             .map(|m| *m.lock().unwrap())
             .unwrap_or(-1);
@@ -3977,7 +3984,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     };
     // c:5068-5071 — `if (thisjob == -1) { zerr(...); return NULL; }` —
     // proc subst needs a host job to attach the child to.
-    let tj_check = crate::ported::jobs::THISJOB
+    let tj_check = THISJOB
         .get()
         .map(|m| *m.lock().unwrap())
         .unwrap_or(-1);
@@ -4014,9 +4021,9 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         fdtable_set(fd, FDT_PROC_SUBST); // c:5086
                                          // c:5087 — `addfilelist(NULL, fd);` — register the proc-subst
                                          // pipe fd in the current job's filelist so it's closed at job exit.
-        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+        if let Some(jt) = JOBTAB.get() {
             let mut guard = jt.lock().unwrap();
-            let tj = crate::ported::jobs::THISJOB
+            let tj = THISJOB
                 .get()
                 .map(|m| *m.lock().unwrap())
                 .unwrap_or(-1);
@@ -4031,9 +4038,9 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         // auxprocs (aux=true). For `<(cmd)` (out==1 = reader-side
         // child), C omits the addproc — symmetric here.
         if out == 0 {
-            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
-                let tj = crate::ported::jobs::THISJOB
+                let tj = THISJOB
                     .get()
                     .map(|m| *m.lock().unwrap())
                     .unwrap_or(-1);
@@ -4184,7 +4191,7 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
         }
     } else if (flags & esub::PGRP) != 0 {
         // c:1110 — `else if (thisjob != -1 && (flags & ESUB_PGRP))`.
-        let thisjob = crate::ported::jobs::THISJOB
+        let thisjob = THISJOB
             .get()
             .map(|m| *m.lock().unwrap())
             .unwrap_or(-1);
@@ -4192,7 +4199,7 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
             let lpj = list_pipe_job.load(Ordering::Relaxed);
             let lp = list_pipe.load(Ordering::Relaxed);
             let lpc = list_pipe_child.load(Ordering::Relaxed);
-            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
                 let lpj_gleader = guard.get(lpj as usize).map(|j| j.gleader).unwrap_or(0);
                 if lpj_gleader != 0 && (lp != 0 || lpc != 0) {
@@ -4454,9 +4461,9 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
         }
         // c:5141-5142 — `if (!nullexec) addproc(pid, NULL, 1, &bgtime, -1, -1);`
         if nullexec == 0 {
-            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
-                let tj = crate::ported::jobs::THISJOB
+                let tj = THISJOB
                     .get()
                     .map(|m| *m.lock().unwrap())
                     .unwrap_or(-1);
@@ -4964,10 +4971,10 @@ fn execsubst(list: &mut Vec<String>) {
     let mut ll: crate::ported::subst::LinkList = std::mem::take(list).into_iter().collect();
     let prefork_flags = esprefork.load(Ordering::Relaxed); // c:2687 esprefork
     let mut rf: i32 = 0;
-    crate::ported::subst::prefork(&mut ll, prefork_flags, &mut rf); // c:2687
+    prefork(&mut ll, prefork_flags, &mut rf); // c:2687
     if esglob.load(Ordering::Relaxed) != 0 && errflag.load(Ordering::Relaxed) == 0 {
         // c:2688 `if (esglob && !errflag)`
-        crate::ported::subst::globlist(&mut ll, 0); // c:2690
+        globlist(&mut ll, 0); // c:2690
     }
     *list = ll.into_iter().collect();
 }
@@ -5240,12 +5247,12 @@ pub fn execcursh(state: &mut estate, do_exec: i32) -> i32 {
     {
         let lp = list_pipe.load(Ordering::Relaxed);
         let lpj = list_pipe_job.load(Ordering::Relaxed);
-        let tj = crate::ported::jobs::THISJOB
+        let tj = THISJOB
             .get()
             .map(|m| *m.lock().unwrap())
             .unwrap_or(-1);
         if lp == 0 && tj != -1 && tj != lpj {
-            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
                 let has = crate::ported::jobs::hasprocs(&guard, tj as usize);
                 if !has {
@@ -5390,12 +5397,12 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     {
         let lp = list_pipe.load(Ordering::Relaxed);
         let lpj = list_pipe_job.load(Ordering::Relaxed);
-        let tj = crate::ported::jobs::THISJOB
+        let tj = THISJOB
             .get()
             .map(|m| *m.lock().unwrap())
             .unwrap_or(-1);
         if lp == 0 && tj != -1 && tj != lpj {
-            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
                 let has = crate::ported::jobs::hasprocs(&guard, tj as usize);
                 if !has {
@@ -5419,12 +5426,12 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     // emit PS4 prefix + space-separated quoted args on the trace
     // stream so `set -x` shows the function invocation line.
     if isset(XTRACE) {
-        crate::ported::utils::printprompt4();
+        printprompt4();
         for (i, a) in args.iter().enumerate() {
             if i > 0 {
                 eprint!(" ");
             }
-            eprint!("{}", crate::ported::utils::quotedzputs(a));
+            eprint!("{}", quotedzputs(a));
         }
         eprintln!();
     }
@@ -5441,44 +5448,42 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     // the definition. When that's the case, build a one-shot eprog
     // whose `strs` carries the source so runshfunc's script-pipeline
     // arm (execute_script_zsh_pipeline) executes the body.
-    let prog_owned: Option<crate::ported::zsh_h::eprog> = if shf.funcdef.is_some() {
+    let prog_owned: Option<eprog> = if shf.funcdef.is_some() {
         None
     } else if let Some(ref body) = shf.body {
-        Some(crate::ported::zsh_h::eprog {
+        Some(eprog {
             strs: Some(body.clone()),
             ..Default::default()
         })
     } else {
         None
     };
-    let prog_ref: Option<&crate::ported::zsh_h::eprog> =
+    let prog_ref: Option<&eprog> =
         match (shf.funcdef.as_deref(), prog_owned.as_ref()) {
             (Some(p), _) => Some(p),
             (_, Some(p)) => Some(p),
             _ => None,
         };
-    if let Some(prog) = prog_ref {
-        // Save old PPARAMS.
-        let old_pparams: Vec<String> = crate::ported::builtin::PPARAMS
-            .lock()
-            .map(|p| p.clone())
-            .unwrap_or_default();
-        // args[0] is the function name (matching C's `argv[0]` →
-        // FUNCTION_ARGZERO); strip it so $1..$N are the real call
-        // args. C's `pparams = args + 1`.
-        let positionals: Vec<String> = if args.len() > 1 {
+    if let Some(_prog) = prog_ref {
+        // c:5580 — `doshfunc(shf, args, 0);`. Direct doshfunc call —
+        // noreturnval=0 means the body's return value updates LASTVAL
+        // (caller of execfuncdef reads it back). PPARAMS swap +
+        // restore happens INSIDE doshfunc's scope; body_runner just
+        // runs the body.
+        let name_for_body = shf.node.nam.clone();
+        let body_args_owned: Vec<String> = if args.len() > 1 {
             args[1..].to_vec()
         } else {
             Vec::new()
         };
-        if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
-            *pp = positionals;
-        }
-        runshfunc(prog, None, &shf.node.nam);
-        // Restore.
-        if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
-            *pp = old_pparams;
-        }
+        let body_runner = move || -> i32 {
+            crate::ported::exec_hooks::run_function_body(
+                &name_for_body,
+                &body_args_owned,
+            )
+            .unwrap_or(0)
+        };
+        let _ = doshfunc(shf, args.clone(), false, body_runner);
     }
     // c:5582-5589 cmdstack restore/free: omit (no cmdstack).
 }
@@ -5613,7 +5618,7 @@ pub fn doshfunc(
 
     // c:5977 — `opts[PRINTEXITVALUE] = 0;` — suppress printexitvalue
     // for inner commands; outer flag restored on exit.
-    crate::ported::options::opt_state_set("printexitvalue", false);
+    opt_state_set("printexitvalue", false);
 
     // c:5978-5998 — pparams swap. C reads doshargs and constructs the
     // function's positional-param array. First arg is the function
@@ -5663,9 +5668,12 @@ pub fn doshfunc(
     // not inside the closure. inc_locallevel is exactly startparamscope.
     inc_locallevel();
 
-    // c:6000-6003 — FUNCNEST check. Skip; the zshrs fusevm doesn't
-    // recurse via real stack frames so the depth limit is less
-    // critical.
+    // c:6000-6004 — FUNCNEST check + `goto undoshfunc` on overflow.
+    // Skip the runtime check (the zshrs fusevm doesn't recurse via
+    // real stack frames so the depth limit is less critical), but
+    // keep the comment so the C label `undoshfunc:` target is
+    // visible — `goto undoshfunc;` here would jump straight to the
+    // epilogue at the `undoshfunc:` label below.
 
     // c:6005-6019 — funcstack frame push. The full C block:
     //   funcsave->fstack.name      = dupstring(name);
@@ -5715,11 +5723,16 @@ pub fn doshfunc(
     let body_status = body_runner();
     LASTVAL.store(body_status, Ordering::Relaxed);
 
+    // c:6043 — `doneshfunc:` label. The C `runshfunc` happy-path
+    // falls through here from c:6042.
     // c:6044 — `funcstack = funcsave->fstack.prev;` — pop our frame.
     {
         let mut stack = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
         stack.pop();
     }
+    // c:6045 — `undoshfunc:` label. Reached either by fall-through
+    // from c:6044 or by `goto undoshfunc;` from the FUNCNEST check
+    // at c:6003. Tail epilogue follows.
 
     // c:6046 — `--funcdepth;` — paired endparamscope (c:6200 inside
     // runshfunc) lives at c:6157 below as `endparamscope()`. Removed
@@ -5761,7 +5774,7 @@ pub fn doshfunc(
             }
         }
         for (k, v) in &funcsave_opts {
-            crate::ported::options::opt_state_set(k, *v);
+            opt_state_set(k, *v);
         }
     } else {
         // c:6097-6101 — non-LOCALOPTIONS: restore only the always-
@@ -5775,7 +5788,7 @@ pub fn doshfunc(
             "warnnestedvar",
         ] {
             if let Some(v) = funcsave_opts.get(opt) {
-                crate::ported::options::opt_state_set(opt, *v);
+                opt_state_set(opt, *v);
             }
         }
     }
@@ -5856,22 +5869,22 @@ pub fn doshfunc(
     // nested function) or actually exit the shell.
     let exit_pending = crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed);
     let exit_level = crate::ported::builtin::EXIT_LEVEL.load(Ordering::Relaxed);
-    let cur_locallevel = crate::ported::params::locallevel.load(Ordering::Relaxed) as i32;
+    let cur_locallevel = locallevel.load(Ordering::Relaxed) as i32;
     let cur_forklevel = FORKLEVEL.load(Ordering::Relaxed);
     let in_exit_trap = crate::ported::signals::in_exit_trap.load(Ordering::Relaxed); // c:Src/signals.c:63
     if exit_pending != 0 && exit_level >= cur_locallevel + 1 && in_exit_trap == 0 {
         // c:6141
         if cur_locallevel > cur_forklevel {
             // c:6143 — still inside a nested function: keep unwinding.
-            crate::ported::builtin::RETFLAG.store(1, Ordering::Relaxed); // c:6144
-            crate::ported::builtin::BREAKS.store(
-                crate::ported::builtin::LOOPS.load(Ordering::Relaxed),
+            RETFLAG.store(1, Ordering::Relaxed); // c:6144
+            BREAKS.store(
+                LOOPS.load(Ordering::Relaxed),
                 Ordering::Relaxed,
             ); // c:6145
         } else {
             // c:6151 — out of all functions: exit for real.
             crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed); // c:6151
-            let val = crate::ported::builtin::EXIT_VAL.load(Ordering::Relaxed);
+            let val = EXIT_VAL.load(Ordering::Relaxed);
             crate::ported::builtin::zexit(val, crate::ported::zsh_h::ZEXIT_NORMAL);
             // c:6152
         }
@@ -5953,9 +5966,9 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
     // c:5328 — `nprg = (end - state->pc);`
     nprg = end.saturating_sub(state.pc) as i32;
     // c:5329 — `plen = nprg * sizeof(wordcode);`
-    plen = nprg.saturating_mul(std::mem::size_of::<wordcode>() as i32);
+    plen = nprg.saturating_mul(size_of::<wordcode>() as i32);
     // c:5330 — `len = plen + (npats * sizeof(Patprog)) + nstrs;`
-    len = plen + npats.saturating_mul(std::mem::size_of::<usize>() as i32) + nstrs;
+    len = plen + npats.saturating_mul(size_of::<usize>() as i32) + nstrs;
     // c:5331 — `tracing_flags = do_tracing ? PM_TAGGED_LOCAL : 0;`
     tracing_flags = if do_tracing != 0 {
         PM_TAGGED_LOCAL as i32
@@ -6522,8 +6535,8 @@ pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i
 /// command head one word at a time so prefix-modifier walking
 /// (BINF_COMMAND, BINF_EXEC etc.) sees expanded names.
 pub fn execcmd_getargs(
-    preargs: &mut crate::ported::linklist::LinkList<String>,
-    args: &mut crate::ported::linklist::LinkList<String>,
+    preargs: &mut LinkList<String>,
+    args: &mut LinkList<String>,
     expand: i32,
 ) {
     // c:2791
@@ -6535,7 +6548,7 @@ pub fn execcmd_getargs(
         // c:2796-2797 — `local_list0(svl); init_list0(svl);` —
         // stack-local single-bucket list. Rust uses a fresh
         // LinkList<String> per call.
-        let mut svl: crate::ported::linklist::LinkList<String> = Default::default();
+        let mut svl: LinkList<String> = Default::default();
         // c:2799 — `addlinknode(&svl, uremnode(args, firstnode(args)));`
         if let Some(idx) = args.firstnode() {
             if let Some(head) = crate::ported::linklist::uremnode(args, idx) {
@@ -6544,7 +6557,7 @@ pub fn execcmd_getargs(
         }
         // c:2801 — `prefork(&svl, 0, NULL);`
         let mut rf = 0i32;
-        crate::ported::subst::prefork(&mut svl, 0, &mut rf);
+        prefork(&mut svl, 0, &mut rf);
         // c:2802 — `joinlists(preargs, &svl);`
         crate::ported::linklist::joinlists(preargs, &mut svl);
     } else {
@@ -6595,7 +6608,7 @@ pub fn execcmd_fork(
                                                                // for accounting; the Rust zfork wrapper expects Option<&mut ZshTimespec>.
     let mut bgtime = ZshTimespec::default();
 
-    crate::ported::signals_h::child_block(); // c:2819
+    child_block(); // c:2819
     esret.gleader = -1; // c:2820
     esret.list_pipe_job = -1; // c:2821
 
@@ -6619,7 +6632,7 @@ pub fn execcmd_fork(
         // c:2833 — parent.
         unsafe { libc::close(synch[1]) }; // c:2834
                                           // c:2835 — `read_loop(synch[0], (char *)&esret, sizeof(esret));`
-        let mut buf = [0u8; std::mem::size_of::<entersubsh_ret>()];
+        let mut buf = [0u8; size_of::<entersubsh_ret>()];
         let _ = crate::ported::utils::read_loop(synch[0], &mut buf);
         // entersubsh_ret is two i32s; reconstruct from LE bytes (host order).
         if buf.len() >= 8 {
@@ -6633,7 +6646,7 @@ pub fn execcmd_fork(
         } else {
             // c:2839 — `if (!jobtab[thisjob].stty_in_env && varspc)`.
             let thisjob_idx = {
-                if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                if let Some(m) = THISJOB.get() {
                     *m.lock().unwrap()
                 } else {
                     -1
@@ -6641,7 +6654,7 @@ pub fn execcmd_fork(
             };
             // Examine the jobtab entry under lock.
             let stty_already = if thisjob_idx >= 0 {
-                if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                if let Some(jt) = JOBTAB.get() {
                     let guard = jt.lock().unwrap();
                     guard
                         .get(thisjob_idx as usize)
@@ -6665,10 +6678,10 @@ pub fn execcmd_fork(
                         break;
                     }
                     // c:2845 — `if (!strcmp(ecrawstr(state->prog, p + 1, NULL), "STTY"))`
-                    let name = crate::ported::parse::ecrawstr(&state.prog, p + 1, None);
+                    let name = ecrawstr(&state.prog, p + 1, None);
                     if name == "STTY" {
                         // c:2846 — `jobtab[thisjob].stty_in_env = 1;`
-                        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                        if let Some(jt) = JOBTAB.get() {
                             let mut guard = jt.lock().unwrap();
                             if let Some(j) = guard.get_mut(thisjob_idx as usize) {
                                 j.stty_in_env = 1;
@@ -6685,10 +6698,10 @@ pub fn execcmd_fork(
             }
         }
         // c:2853 — `addproc(pid, text, 0, &bgtime, esret.gleader, esret.list_pipe_job);`
-        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+        if let Some(jt) = JOBTAB.get() {
             let mut guard = jt.lock().unwrap();
             let tj = {
-                if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                if let Some(m) = THISJOB.get() {
                     *m.lock().unwrap()
                 } else {
                     -1
@@ -6710,14 +6723,14 @@ pub fn execcmd_fork(
         }
         // c:2854-2855 — `if (oautocont >= 0) opts[AUTOCONTINUE] = oautocont;`
         if oautocont >= 0 {
-            crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
+            opt_state_set("autocontinue", oautocont != 0);
             let _ = AUTOCONTINUE; // const referenced for parity
         }
         // c:2856 — `pipecleanfilelist(jobtab[thisjob].filelist, 1);`
-        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+        if let Some(jt) = JOBTAB.get() {
             let mut guard = jt.lock().unwrap();
             let tj = {
-                if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                if let Some(m) = THISJOB.get() {
                     *m.lock().unwrap()
                 } else {
                     -1
@@ -6747,10 +6760,10 @@ pub fn execcmd_fork(
         flags |= esub::JOB_CONTROL; // c:2866
     }
     // c:2867 — `*filelistp = jobtab[thisjob].filelist;`
-    if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+    if let Some(jt) = JOBTAB.get() {
         let mut guard = jt.lock().unwrap();
         let tj = {
-            if let Some(m) = crate::ported::jobs::THISJOB.get() {
+            if let Some(m) = THISJOB.get() {
                 *m.lock().unwrap()
             } else {
                 -1
@@ -6848,7 +6861,7 @@ pub fn execcmd_analyse(state: &mut estate, eparams: &mut crate::ported::zsh_h::e
         };
     // c:2741-2748 — varspc walk (WC_ASSIGN chain).
     if state.pc < state.prog.prog.len() && wc_code(state.prog.prog[state.pc]) == ZWC_ASSIGN {
-        cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed); // c:2742
+        cmdoutval.store(0, Ordering::Relaxed); // c:2742
         eparams.varspc = Some(state.pc); // c:2743
                                          // c:2744-2746 — `while (wc_code((code = *state->pc)) == WC_ASSIGN) state->pc += ...`
         loop {
@@ -6859,12 +6872,12 @@ pub fn execcmd_analyse(state: &mut estate, eparams: &mut crate::ported::zsh_h::e
             if wc_code(code) != ZWC_ASSIGN {
                 break;
             }
-            state.pc += if crate::ported::zsh_h::WC_ASSIGN_TYPE(code)
-                == crate::ported::zsh_h::WC_ASSIGN_SCALAR
+            state.pc += if WC_ASSIGN_TYPE(code)
+                == WC_ASSIGN_SCALAR
             {
                 3 // c:2745
             } else {
-                (crate::ported::zsh_h::WC_ASSIGN_NUM(code) + 2) as usize // c:2746
+                (WC_ASSIGN_NUM(code) + 2) as usize // c:2746
             };
         }
     } else {
@@ -6920,12 +6933,12 @@ pub fn execcmd_analyse(state: &mut estate, eparams: &mut crate::ported::zsh_h::e
                 }
                 code = state.prog.prog[state.pc];
                 // c:2772-2773 DPUTS — assert wc_code == WC_ASSIGN; skipped.
-                state.pc += if crate::ported::zsh_h::WC_ASSIGN_TYPE(code)
-                    == crate::ported::zsh_h::WC_ASSIGN_SCALAR
+                state.pc += if WC_ASSIGN_TYPE(code)
+                    == WC_ASSIGN_SCALAR
                 {
                     3 // c:2774
                 } else {
-                    (crate::ported::zsh_h::WC_ASSIGN_NUM(code) + 2) as usize // c:2775
+                    (WC_ASSIGN_NUM(code) + 2) as usize // c:2775
                 };
                 k += 1;
             }
@@ -6973,10 +6986,10 @@ pub fn save_params(
             break;
         }
         // c:4420 — `s = ecrawstr(state->prog, pc + 1, NULL);`
-        let s = crate::ported::parse::ecrawstr(&state.prog, p + 1, None);
+        let s = ecrawstr(&state.prog, p + 1, None);
         // c:4421 — `pm = paramtab->getnode(paramtab, s)`
         let pm_clone: Option<crate::ported::zsh_h::param> = {
-            let tab = crate::ported::params::paramtab().read().unwrap();
+            let tab = paramtab().read().unwrap();
             tab.get(&s).map(|b| (**b).clone())
         };
         if let Some(pm) = pm_clone {
@@ -7024,19 +7037,19 @@ pub fn restore_params(restorelist: Vec<crate::ported::zsh_h::param>, removelist:
     for s in &removelist {
         // c:4471 — `if ((pm = paramtab->getnode(paramtab, s)) && !(pm->node.flags & PM_SPECIAL))`
         let flags = {
-            let tab = crate::ported::params::paramtab().read().unwrap();
+            let tab = paramtab().read().unwrap();
             tab.get(s).map(|p| p.node.flags)
         };
         if let Some(f) = flags {
             if (f & PM_SPECIAL as i32) == 0 {
                 // c:4473 — `pm->node.flags &= ~PM_READONLY;`
-                let mut tab = crate::ported::params::paramtab().write().unwrap();
+                let mut tab = paramtab().write().unwrap();
                 if let Some(pm_mut) = tab.get_mut(s) {
                     pm_mut.node.flags &= !(PM_READONLY as i32);
                 }
                 // Drop write guard before calling unsetparam_pm.
                 drop(tab);
-                let mut tab = crate::ported::params::paramtab().write().unwrap();
+                let mut tab = paramtab().write().unwrap();
                 if let Some(pm_mut) = tab.get_mut(s) {
                     let _ = crate::ported::params::unsetparam_pm(pm_mut, 0, 0); // c:4474
                 }
@@ -7054,11 +7067,11 @@ pub fn restore_params(restorelist: Vec<crate::ported::zsh_h::param>, removelist:
             // paramtab; daily-driver path rarely saves specials (those
             // are reserved-name vars like PATH/FPATH/etc. which can't
             // appear as `VAR=val cmd` prefix anyway).
-            let mut tab = crate::ported::params::paramtab().write().unwrap();
+            let mut tab = paramtab().write().unwrap();
             tab.insert(pm.node.nam.clone(), Box::new(pm));
         } else {
             // c:4521 — `paramtab->addnode(paramtab, ztrdup(pm->node.nam), pm);`
-            let mut tab = crate::ported::params::paramtab().write().unwrap();
+            let mut tab = paramtab().write().unwrap();
             tab.insert(pm.node.nam.clone(), Box::new(pm));
         }
     }
@@ -7279,10 +7292,10 @@ pub fn execpline2(
 
         // c:2027 — `addfilelist(NULL, pipes[0]);`
         // C uses the current thisjob's filelist; Rust port wires through JOBTAB.
-        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+        if let Some(jt) = JOBTAB.get() {
             let mut guard = jt.lock().unwrap();
             let tj = {
-                if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                if let Some(m) = THISJOB.get() {
                     *m.lock().unwrap()
                 } else {
                     -1
@@ -7301,7 +7314,7 @@ pub fn execpline2(
         state.pc = next; // c:2030
 
         // c:2034 — `cmdpush(CS_PIPE);`
-        crate::ported::prompt::cmdpush(CS_PIPE as u8);
+        cmdpush(CS_PIPE as u8);
         // c:2035 — `list_pipe = 1;`
         list_pipe.store(1, Ordering::Relaxed);
         // c:2036 — `execpline2(state, *state->pc++, how, pipes[0], output, last1);`
@@ -7317,7 +7330,7 @@ pub fn execpline2(
         // c:2037 — `list_pipe = old_list_pipe;`
         list_pipe.store(old_list_pipe, Ordering::Relaxed);
         // c:2038 — `cmdpop();`
-        crate::ported::prompt::cmdpop();
+        cmdpop();
     }
 }
 
@@ -7874,7 +7887,7 @@ pub fn execcase(state: &mut estate, do_exec: i32) -> i32 {
             // zshrs's pat-compile-on-demand path: extract raw pat text + try patcompile/pattry.
             queue_signals(); // c:636
             let mut htok = 0i32;
-            let pat_raw = crate::ported::parse::ecrawstr(&state.prog, state.pc, Some(&mut htok));
+            let pat_raw = ecrawstr(&state.prog, state.pc, Some(&mut htok));
             let pat = if htok != 0 {
                 singsub(&pat_raw)
             } else {
@@ -7891,7 +7904,7 @@ pub fn execcase(state: &mut estate, do_exec: i32) -> i32 {
             }
             state.pc += 2; // c:664 — `state->pc += 2;`
             nalts_remaining -= 1;
-            crate::ported::signals::unqueue_signals(); // c:666
+            unqueue_signals(); // c:666
         }
         state.pc += (2 * nalts_remaining) as usize; // c:668
         if patok {
@@ -8175,7 +8188,7 @@ pub fn execcmd_exec(
             } else {
                 0
             }; // c:2967
-            crate::ported::options::opt_state_set("autocontinue", true); // c:2968
+            opt_state_set("autocontinue", true); // c:2968
         }
         // c:2970-2971 — `pushnode(args, dupstring((how & Z_DISOWN) ? "disown" : (how & Z_ASYNC) ? "bg" : "fg"));`
         let head = if (how & Z_DISOWN as i32) != 0 {
@@ -8205,7 +8218,7 @@ pub fn execcmd_exec(
             // c:2982 — `scanjobs();` inlined: walk JOBTAB and printjob
             // each STAT_CHANGED entry. C scanjobs body at jobs.c:1993
             // is identical to this 5-line walk.
-            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
                 let long_list = isset(crate::ported::zsh_h::LONGLISTJOBS);
                 for i in 1..guard.len() {
@@ -8288,7 +8301,7 @@ pub fn execcmd_exec(
         ));
         // c:3000-3008 — `switch (execcmd_fork(...)) { -1: goto fatal; 0: break; default: return; }`
         let mut filelist_for_fork = filelist.clone();
-        let pid = crate::ported::exec::execcmd_fork(
+        let pid = execcmd_fork(
             state,
             how,
             typ,
@@ -8328,7 +8341,7 @@ pub fn execcmd_exec(
                 // c:3007 — parent: `return;` — but first restore AUTOCONTINUE
                 // and shelltime stop. Inline the done-tail equivalent.
                 if oautocont >= 0 {
-                    crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
+                    opt_state_set("autocontinue", oautocont != 0);
                 }
                 if (how & Z_TIMED as i32) != 0 {
                     crate::ported::jobs::shelltime(
@@ -8431,14 +8444,14 @@ pub fn execcmd_exec(
     // c:3302-3307 — prefork(args, esprefork, NULL) + joinlists(preargs, args).
     if args.is_some() && eparams.htok != 0 {
         // c:3303-3304 — `if (eparams->htok) prefork(args, esprefork, NULL);`
-        let mut as_linklist: crate::ported::linklist::LinkList<String> = Default::default();
+        let mut as_linklist: LinkList<String> = Default::default();
         if let Some(ref v) = args {
             for s in v {
                 as_linklist.push_back(s.clone());
             }
         }
         let mut rf = 0i32;
-        crate::ported::subst::prefork(&mut as_linklist, esprefork_v, &mut rf);
+        prefork(&mut as_linklist, esprefork_v, &mut rf);
         // Move back into args.
         let mut out: Vec<String> = Vec::new();
         while let Some(s) = as_linklist.pop_front() {
@@ -8513,7 +8526,7 @@ pub fn execcmd_exec(
                     } else if {
                         // c:3340-3341 — `if (!nullcmd || !*nullcmd ||
                         //   opts[CSHNULLCMD] || (cflags & BINF_PREFIX))`
-                        let nc = crate::ported::params::getsparam("NULLCMD");
+                        let nc = getsparam("NULLCMD");
                         let nc_empty = nc.as_deref().map(|s| s.is_empty()).unwrap_or(true);
                         nc_empty || isset(CSHNULLCMD) || (cflags & BINF_PREFIX) != 0
                     } {
@@ -8537,7 +8550,7 @@ pub fn execcmd_exec(
                         return; // c:3349
                     } else if {
                         // c:3350 — `if (!nullcmd || !*nullcmd || opts[SHNULLCMD])`
-                        let nc = crate::ported::params::getsparam("NULLCMD");
+                        let nc = getsparam("NULLCMD");
                         let nc_empty = nc.as_deref().map(|s| s.is_empty()).unwrap_or(true);
                         nc_empty || isset(SHNULLCMD)
                     } {
@@ -8550,7 +8563,7 @@ pub fn execcmd_exec(
                         // c:3354-3356 — `readnullcmd && *readnullcmd &&
                         //   peekfirst(redir).type == REDIR_READ &&
                         //   !nextnode(firstnode(redir))`
-                        let rnc = crate::ported::params::getsparam("READNULLCMD");
+                        let rnc = getsparam("READNULLCMD");
                         let rnc_nonempty = rnc.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
                         rnc_nonempty
                             && redir.as_ref().unwrap().len() == 1
@@ -8561,14 +8574,14 @@ pub fn execcmd_exec(
                             args = Some(Vec::new());
                         }
                         let rnc =
-                            crate::ported::params::getsparam("READNULLCMD").unwrap_or_default();
+                            getsparam("READNULLCMD").unwrap_or_default();
                         args.as_mut().unwrap().push(rnc); // c:3359
                     } else {
                         // c:3360-3364 — default: nullcmd as command.
                         if args.is_none() {
                             args = Some(Vec::new());
                         }
-                        let nc = crate::ported::params::getsparam("NULLCMD").unwrap_or_default();
+                        let nc = getsparam("NULLCMD").unwrap_or_default();
                         args.as_mut().unwrap().push(nc); // c:3363
                     }
                 } else if (cflags & BINF_PREFIX) != 0 && (cflags & BINF_COMMAND) != 0 {
@@ -8687,7 +8700,7 @@ pub fn execcmd_exec(
                     LASTVAL.store(1, Ordering::Relaxed); // c:3437
                     if oautocont >= 0 {
                         // c:3438-3439
-                        crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
+                        opt_state_set("autocontinue", oautocont != 0);
                     }
                     if forked != 0 {
                         crate::ported::builtin::_realexit(); // c:3440-3441
@@ -8733,7 +8746,7 @@ pub fn execcmd_exec(
             LASTVAL.store(1, Ordering::Relaxed); // c:3470
         }
         if oautocont >= 0 {
-            crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
+            opt_state_set("autocontinue", oautocont != 0);
             // c:3472
         }
         if forked != 0 {
@@ -8787,7 +8800,7 @@ pub fn execcmd_exec(
             let l = s.len();
             // c:3505 — `if (s[0] == Star && !s[1])` — bare `*`.
             if s.len() == 1 && s.as_bytes()[0] == Star as u8 {
-                let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
+                let pwd = getsparam("PWD").unwrap_or_default();
                 if !crate::ported::utils::checkrmall(&pwd) {
                     // c:3506
                     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:3507
@@ -8828,12 +8841,12 @@ pub fn execcmd_exec(
             // c:3543-3559 — autoload preload.
             if let Some(ref mut sh) = state.prog.shf {
                 let shf_ptr: *mut shfunc = sh.as_mut() as *mut shfunc;
-                let r = crate::ported::exec::loadautofn(shf_ptr, 1, 0, 0);
+                let r = loadautofn(shf_ptr, 1, 0, 0);
                 if r != 0 {
                     // c:3551 — `lastval = 1;`
                     LASTVAL.store(1, Ordering::Relaxed);
                     if oautocont >= 0 {
-                        crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
+                        opt_state_set("autocontinue", oautocont != 0);
                     }
                     if forked != 0 {
                         crate::ported::builtin::_realexit();
@@ -8896,7 +8909,7 @@ pub fn execcmd_exec(
         // c:3582
         LASTVAL.store(1, Ordering::Relaxed); // c:3583
         if oautocont >= 0 {
-            crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
+            opt_state_set("autocontinue", oautocont != 0);
             // c:3584-3585
         }
         if forked != 0 {
@@ -8947,7 +8960,7 @@ pub fn execcmd_exec(
                 let has_slash = cmdarg.contains('/'); // c:3617-3618
                 if !has_slash {
                     // c:3619 — `hn = (HashNode) hashcmd(cmdarg, checkpath);`
-                    let path_dirs = crate::ported::params::getsparam("PATH").unwrap_or_default();
+                    let path_dirs = getsparam("PATH").unwrap_or_default();
                     let dirs: Vec<String> = path_dirs.split(':').map(String::from).collect();
                     have_cmdnam = hashcmd(&cmdarg, &dirs);
                 }
@@ -8996,7 +9009,7 @@ pub fn execcmd_exec(
         {
             // c:3660-3663
             let mut filelist_for_fork = filelist.clone();
-            let pid = crate::ported::exec::execcmd_fork(
+            let pid = execcmd_fork(
                 state,
                 how,
                 typ,
@@ -9031,7 +9044,7 @@ pub fn execcmd_exec(
                 _ => {
                     // c:3670-3671 — parent returns.
                     if oautocont >= 0 {
-                        crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
+                        opt_state_set("autocontinue", oautocont != 0);
                     }
                     if (how & Z_TIMED as i32) != 0 {
                         crate::ported::jobs::shelltime(
@@ -9081,13 +9094,13 @@ pub fn execcmd_exec(
     // c:3700-3704 — `if ((esglob = !(cflags & BINF_NOGLOB)) && args && htok)`
     if (cflags & BINF_NOGLOB) == 0 && args.is_some() && eparams.htok != 0 {
         // c:3700
-        let mut oargs: crate::ported::linklist::LinkList<String> = Default::default();
+        let mut oargs: LinkList<String> = Default::default();
         if let Some(ref v) = args {
             for s in v {
                 oargs.push_back(s.clone());
             }
         }
-        crate::ported::subst::globlist(&mut oargs, 0); // c:3702
+        globlist(&mut oargs, 0); // c:3702
         let mut out: Vec<String> = Vec::new();
         while let Some(s) = oargs.pop_front() {
             out.push(s);
@@ -9133,7 +9146,7 @@ pub fn execcmd_exec(
 
     // c:3726-3728 — `if (redir) spawnpipes(redir, nullexec);`
     if let Some(ref mut r) = redir {
-        crate::ported::exec::spawnpipes(r.as_mut_slice(), nullexec);
+        spawnpipes(r.as_mut_slice(), nullexec);
     }
 
     // c:3731-3955 — io redirection loop. Faithful per-redir match.
@@ -9144,15 +9157,15 @@ pub fn execcmd_exec(
         }
         let mut fn_ = redir_list.remove(0); // c:3732 `fn = (Redir) ugetnode(redir);`
                                             // c:3734-3735 DPUTS — debug assert REDIR_HEREDOC* gone.
-        if fn_.typ == crate::ported::zsh_h::REDIR_INPIPE {
+        if fn_.typ == REDIR_INPIPE {
             // c:3736
-            if crate::ported::exec::checkclobberparam(&fn_) == 0 || fn_.fd2 == -1 {
+            if checkclobberparam(&fn_) == 0 || fn_.fd2 == -1 {
                 // c:3737
                 if fn_.fd2 != -1 {
-                    let _ = crate::ported::utils::zclose(fn_.fd2); // c:3738-3739
+                    let _ = zclose(fn_.fd2); // c:3738-3739
                 }
-                crate::ported::exec::closemnodes(&mut mfds); // c:3740
-                crate::ported::exec::fixfds(&save); // c:3741
+                closemnodes(&mut mfds); // c:3740
+                fixfds(&save); // c:3741
                 {
                     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                     LASTVAL.store(1, Ordering::Relaxed);
@@ -9160,7 +9173,7 @@ pub fn execcmd_exec(
                 break;
             }
             // c:3744 — `addfd(forked, save, mfds, fn->fd1, fn->fd2, 0, fn->varid);`
-            crate::ported::exec::addfd(
+            addfd(
                 forked,
                 &mut save,
                 &mut mfds,
@@ -9169,15 +9182,15 @@ pub fn execcmd_exec(
                 0,
                 fn_.varid.as_deref(),
             );
-        } else if fn_.typ == crate::ported::zsh_h::REDIR_OUTPIPE {
+        } else if fn_.typ == REDIR_OUTPIPE {
             // c:3745
-            if crate::ported::exec::checkclobberparam(&fn_) == 0 || fn_.fd2 == -1 {
+            if checkclobberparam(&fn_) == 0 || fn_.fd2 == -1 {
                 // c:3746
                 if fn_.fd2 != -1 {
-                    let _ = crate::ported::utils::zclose(fn_.fd2); // c:3747-3748
+                    let _ = zclose(fn_.fd2); // c:3747-3748
                 }
-                crate::ported::exec::closemnodes(&mut mfds); // c:3749
-                crate::ported::exec::fixfds(&save); // c:3750
+                closemnodes(&mut mfds); // c:3749
+                fixfds(&save); // c:3750
                 {
                     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                     LASTVAL.store(1, Ordering::Relaxed);
@@ -9185,7 +9198,7 @@ pub fn execcmd_exec(
                 break;
             }
             // c:3753
-            crate::ported::exec::addfd(
+            addfd(
                 forked,
                 &mut save,
                 &mut mfds,
@@ -9198,7 +9211,7 @@ pub fn execcmd_exec(
             // c:3754 — non-pipe redir branch.
             let mut closed: i32; // c:3755
                                  // c:3756-3757 — xpandredir glob/brace.
-            if fn_.typ != crate::ported::zsh_h::REDIR_HERESTR {
+            if fn_.typ != REDIR_HERESTR {
                 // Put fn_ back temporarily so xpandredir can mutate
                 // around it; not implemented identically — xpandredir
                 // signature in zshrs differs (takes &mut redir + ctx).
@@ -9208,26 +9221,26 @@ pub fn execcmd_exec(
             }
             if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
                 // c:3758
-                crate::ported::exec::closemnodes(&mut mfds); // c:3759
-                crate::ported::exec::fixfds(&save); // c:3760
+                closemnodes(&mut mfds); // c:3759
+                fixfds(&save); // c:3760
                 {
                     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                     LASTVAL.store(1, Ordering::Relaxed);
                 } // c:3761
                 break;
             }
-            if !isset(crate::ported::zsh_h::EXECOPT) {
+            if !isset(EXECOPT) {
                 // c:3763 — `if (unset(EXECOPT)) continue;`
                 continue;
             }
             let fil_local: i32;
             match fn_.typ {
-                t if t == crate::ported::zsh_h::REDIR_HERESTR => {
+                t if t == REDIR_HERESTR => {
                     // c:3766
-                    if crate::ported::exec::checkclobberparam(&fn_) == 0 {
+                    if checkclobberparam(&fn_) == 0 {
                         fil_local = -1; // c:3768
                     } else {
-                        fil_local = crate::ported::exec::getherestr(&fn_); // c:3770
+                        fil_local = getherestr(&fn_); // c:3770
                     }
                     if fil_local == -1 {
                         // c:3771
@@ -9237,8 +9250,8 @@ pub fn execcmd_exec(
                             zwarn(&format!("can't create temp file for here document: {}", e));
                             // c:3772-3774
                         }
-                        crate::ported::exec::closemnodes(&mut mfds); // c:3775
-                        crate::ported::exec::fixfds(&save); // c:3776
+                        closemnodes(&mut mfds); // c:3775
+                        fixfds(&save); // c:3776
                         {
                             errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                             LASTVAL.store(1, Ordering::Relaxed);
@@ -9246,7 +9259,7 @@ pub fn execcmd_exec(
                         break;
                     }
                     // c:3779
-                    crate::ported::exec::addfd(
+                    addfd(
                         forked,
                         &mut save,
                         &mut mfds,
@@ -9256,20 +9269,20 @@ pub fn execcmd_exec(
                         fn_.varid.as_deref(),
                     );
                 }
-                t if t == crate::ported::zsh_h::REDIR_READ
-                    || t == crate::ported::zsh_h::REDIR_READWRITE =>
+                t if t == REDIR_READ
+                    || t == REDIR_READWRITE =>
                 {
                     // c:3781-3782
-                    if crate::ported::exec::checkclobberparam(&fn_) == 0 {
+                    if checkclobberparam(&fn_) == 0 {
                         fil_local = -1; // c:3784
                     } else {
                         let name = fn_.name.clone().unwrap_or_default();
-                        let unmeta_name = crate::ported::utils::unmeta(&name);
+                        let unmeta_name = unmeta(&name);
                         let cstr = match std::ffi::CString::new(unmeta_name.as_str()) {
                             Ok(c) => c,
                             Err(_) => {
-                                crate::ported::exec::closemnodes(&mut mfds);
-                                crate::ported::exec::fixfds(&save);
+                                closemnodes(&mut mfds);
+                                fixfds(&save);
                                 {
                                     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                                     LASTVAL.store(1, Ordering::Relaxed);
@@ -9277,7 +9290,7 @@ pub fn execcmd_exec(
                                 break;
                             }
                         };
-                        if fn_.typ == crate::ported::zsh_h::REDIR_READ {
+                        if fn_.typ == REDIR_READ {
                             // c:3786
                             fil_local = unsafe {
                                 libc::open(cstr.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY)
@@ -9295,8 +9308,8 @@ pub fn execcmd_exec(
                     }
                     if fil_local == -1 {
                         // c:3790
-                        crate::ported::exec::closemnodes(&mut mfds); // c:3791
-                        crate::ported::exec::fixfds(&save); // c:3792
+                        closemnodes(&mut mfds); // c:3791
+                        fixfds(&save); // c:3792
                         let e = std::io::Error::last_os_error();
                         if e.raw_os_error().unwrap_or(0) != libc::EINTR {
                             zwarn(&format!("{}: {}", e, fn_.name.as_deref().unwrap_or("")));
@@ -9309,7 +9322,7 @@ pub fn execcmd_exec(
                         break;
                     }
                     // c:3797
-                    crate::ported::exec::addfd(
+                    addfd(
                         forked,
                         &mut save,
                         &mut mfds,
@@ -9322,15 +9335,15 @@ pub fn execcmd_exec(
                     if nullexec == 1
                         && fn_.fd1 == 0
                         && fn_.varid.is_none()
-                        && isset(crate::ported::zsh_h::SHINSTDIN)
-                        && isset(crate::ported::zsh_h::INTERACTIVE)
+                        && isset(SHINSTDIN)
+                        && isset(INTERACTIVE)
                     {
                         // c:3801 — `!zleactive` check ommitted (zleactive
                         // accessor lives in zle module; fusevm bypasses ZLE).
                         crate::ported::init::init_io(None); // c:3802
                     }
                 }
-                t if t == crate::ported::zsh_h::REDIR_CLOSE => {
+                t if t == REDIR_CLOSE => {
                     // c:3804
                     // c:3805 — `if (fn->varid) { parse fd from variable }`
                     let mut fd1_local = fn_.fd1;
@@ -9349,7 +9362,7 @@ pub fn execcmd_exec(
                         // paramtab read for PM_READONLY, MAX_ZSH_FD +
                         // fdtable_get for shell-owned guard.
                         let mut bad: u8 = 0;
-                        let value_opt = crate::ported::params::getsparam(varname);
+                        let value_opt = getsparam(varname);
                         let is_ro = paramtab()
                             .read()
                             .ok()
@@ -9369,10 +9382,10 @@ pub fn execcmd_exec(
                                     fd1_local = n;
                                     fn_.fd1 = n;
                                     let max_fd =
-                                        crate::ported::utils::MAX_ZSH_FD.load(Ordering::Relaxed);
+                                        MAX_ZSH_FD.load(Ordering::Relaxed);
                                     if n >= 10
                                         && n <= max_fd
-                                        && (crate::ported::utils::fdtable_get(n) & FDT_TYPE_MASK)
+                                        && (fdtable_get(n) & FDT_TYPE_MASK)
                                             == FDT_INTERNAL
                                     {
                                         // c:3835 shell-owned-fd reject
@@ -9409,7 +9422,7 @@ pub fn execcmd_exec(
                     closed = 0;
                     if forked == 0 && fd1_local < 10 && save[fd1_local as usize] == -2 {
                         // c:3856
-                        let mv = crate::ported::utils::movefd(fd1_local); // c:3857
+                        let mv = movefd(fd1_local); // c:3857
                         save[fd1_local as usize] = mv;
                         if mv >= 0 {
                             closed = 1; // c:3862-3863
@@ -9417,13 +9430,13 @@ pub fn execcmd_exec(
                     }
                     if fd1_local < 10 {
                         // c:3866
-                        closemn(&mut mfds, fd1_local, crate::ported::zsh_h::REDIR_CLOSE);
+                        closemn(&mut mfds, fd1_local, REDIR_CLOSE);
                         // c:3867
                     }
                     // c:3873-3876
                     let _ = &mut fd1_local;
                     if closed == 0
-                        && crate::ported::utils::zclose(fn_.fd1) < 0
+                        && zclose(fn_.fd1) < 0
                         && fn_.varid.is_some()
                     {
                         zwarn(&format!(
@@ -9433,25 +9446,25 @@ pub fn execcmd_exec(
                         )); // c:3873-3875
                     }
                 }
-                t if t == crate::ported::zsh_h::REDIR_MERGEIN
-                    || t == crate::ported::zsh_h::REDIR_MERGEOUT =>
+                t if t == REDIR_MERGEIN
+                    || t == REDIR_MERGEOUT =>
                 {
                     // c:3878-3879
                     if fn_.fd2 < 10 {
                         closemn(&mut mfds, fn_.fd2, fn_.typ); // c:3881
                     }
-                    if crate::ported::exec::checkclobberparam(&fn_) == 0 {
+                    if checkclobberparam(&fn_) == 0 {
                         fil_local = -1; // c:3883
                     } else if fn_.fd2 > 9 {
                         // c:3884-3897 — fd table check.
-                        let max_fd = crate::ported::utils::MAX_ZSH_FD.load(Ordering::Relaxed);
+                        let max_fd = MAX_ZSH_FD.load(Ordering::Relaxed);
                         let cin = crate::ported::modules::clone::coprocin.load(Ordering::Relaxed);
                         let cout = crate::ported::modules::clone::coprocout.load(Ordering::Relaxed);
                         let in_table = if fn_.fd2 <= max_fd {
-                            let kind = crate::ported::utils::fdtable_get(fn_.fd2)
-                                & crate::ported::zsh_h::FDT_TYPE_MASK;
-                            kind != crate::ported::zsh_h::FDT_UNUSED
-                                && kind != crate::ported::zsh_h::FDT_EXTERNAL
+                            let kind = fdtable_get(fn_.fd2)
+                                & FDT_TYPE_MASK;
+                            kind != FDT_UNUSED
+                                && kind != FDT_EXTERNAL
                         } else {
                             false
                         };
@@ -9469,7 +9482,7 @@ pub fn execcmd_exec(
                         } else {
                             let fd = if fn_.fd2 == -2 {
                                 // c:3900-3901
-                                if fn_.typ == crate::ported::zsh_h::REDIR_MERGEOUT {
+                                if fn_.typ == REDIR_MERGEOUT {
                                     crate::ported::modules::clone::coprocout.load(Ordering::Relaxed)
                                 } else {
                                     crate::ported::modules::clone::coprocin.load(Ordering::Relaxed)
@@ -9479,11 +9492,11 @@ pub fn execcmd_exec(
                             };
                             // c:3902 — `fil = movefd(dup(fd));`
                             let dup_fd = unsafe { libc::dup(fd) };
-                            fil_local = crate::ported::utils::movefd(dup_fd);
+                            fil_local = movefd(dup_fd);
                         }
                     } else {
                         let fd = if fn_.fd2 == -2 {
-                            if fn_.typ == crate::ported::zsh_h::REDIR_MERGEOUT {
+                            if fn_.typ == REDIR_MERGEOUT {
                                 crate::ported::modules::clone::coprocout.load(Ordering::Relaxed)
                             } else {
                                 crate::ported::modules::clone::coprocin.load(Ordering::Relaxed)
@@ -9492,12 +9505,12 @@ pub fn execcmd_exec(
                             fn_.fd2
                         };
                         let dup_fd = unsafe { libc::dup(fd) };
-                        fil_local = crate::ported::utils::movefd(dup_fd);
+                        fil_local = movefd(dup_fd);
                     }
                     if fil_local == -1 {
                         // c:3904
-                        crate::ported::exec::closemnodes(&mut mfds); // c:3907
-                        crate::ported::exec::fixfds(&save); // c:3908
+                        closemnodes(&mut mfds); // c:3907
+                        fixfds(&save); // c:3908
                         if std::io::Error::last_os_error().raw_os_error().unwrap_or(0) != 0 {
                             let desc = if fn_.fd2 == -2 {
                                 "coprocess".to_string()
@@ -9514,12 +9527,12 @@ pub fn execcmd_exec(
                         break;
                     }
                     // c:3916-3917
-                    let merge_is_out = if fn_.typ == crate::ported::zsh_h::REDIR_MERGEOUT {
+                    let merge_is_out = if fn_.typ == REDIR_MERGEOUT {
                         1
                     } else {
                         0
                     };
-                    crate::ported::exec::addfd(
+                    addfd(
                         forked,
                         &mut save,
                         &mut mfds,
@@ -9532,17 +9545,17 @@ pub fn execcmd_exec(
                 _ => {
                     // c:3919 default — write/append/error_redir.
                     let mut dfil: i32;
-                    if crate::ported::exec::checkclobberparam(&fn_) == 0 {
+                    if checkclobberparam(&fn_) == 0 {
                         fil_local = -1; // c:3921
-                    } else if crate::ported::zsh_h::IS_APPEND_REDIR(fn_.typ) {
+                    } else if IS_APPEND_REDIR(fn_.typ) {
                         // c:3922
                         let name = fn_.name.clone().unwrap_or_default();
-                        let unmeta_name = crate::ported::utils::unmeta(&name);
+                        let unmeta_name = unmeta(&name);
                         let cstr = match std::ffi::CString::new(unmeta_name.as_str()) {
                             Ok(c) => c,
                             Err(_) => {
-                                crate::ported::exec::closemnodes(&mut mfds);
-                                crate::ported::exec::fixfds(&save);
+                                closemnodes(&mut mfds);
+                                fixfds(&save);
                                 {
                                     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                                     LASTVAL.store(1, Ordering::Relaxed);
@@ -9553,7 +9566,7 @@ pub fn execcmd_exec(
                         // c:3924-3927
                         let mode = if !isset(CLOBBER)
                             && !isset(crate::ported::zsh_h::APPENDCREATE)
-                            && !crate::ported::zsh_h::IS_CLOBBER_REDIR(fn_.typ)
+                            && !IS_CLOBBER_REDIR(fn_.typ)
                         {
                             libc::O_WRONLY | libc::O_APPEND | libc::O_NOCTTY
                         } else {
@@ -9562,12 +9575,12 @@ pub fn execcmd_exec(
                         fil_local = unsafe { libc::open(cstr.as_ptr(), mode, 0o666) };
                     } else {
                         // c:3929
-                        fil_local = crate::ported::exec::clobber_open(&fn_);
+                        fil_local = clobber_open(&fn_);
                     }
                     // c:3930-3933 — error_redir dup.
-                    if fil_local != -1 && crate::ported::zsh_h::IS_ERROR_REDIR(fn_.typ) {
+                    if fil_local != -1 && IS_ERROR_REDIR(fn_.typ) {
                         let dup_fd = unsafe { libc::dup(fil_local) };
-                        dfil = crate::ported::utils::movefd(dup_fd); // c:3931
+                        dfil = movefd(dup_fd); // c:3931
                     } else {
                         dfil = 0; // c:3933
                     }
@@ -9576,8 +9589,8 @@ pub fn execcmd_exec(
                         if fil_local != -1 {
                             unsafe { libc::close(fil_local) }; // c:3935-3936
                         }
-                        crate::ported::exec::closemnodes(&mut mfds); // c:3937
-                        crate::ported::exec::fixfds(&save); // c:3938
+                        closemnodes(&mut mfds); // c:3937
+                        fixfds(&save); // c:3938
                         let e = std::io::Error::last_os_error();
                         let raw = e.raw_os_error().unwrap_or(0);
                         if raw != 0 && raw != libc::EINTR {
@@ -9591,7 +9604,7 @@ pub fn execcmd_exec(
                         break;
                     }
                     // c:3943
-                    crate::ported::exec::addfd(
+                    addfd(
                         forked,
                         &mut save,
                         &mut mfds,
@@ -9600,9 +9613,9 @@ pub fn execcmd_exec(
                         1,
                         fn_.varid.as_deref(),
                     );
-                    if crate::ported::zsh_h::IS_ERROR_REDIR(fn_.typ) {
+                    if IS_ERROR_REDIR(fn_.typ) {
                         // c:3944-3945
-                        crate::ported::exec::addfd(forked, &mut save, &mut mfds, 2, dfil, 1, None);
+                        addfd(forked, &mut save, &mut mfds, 2, dfil, 1, None);
                     }
                     let _ = &mut dfil;
                 }
@@ -9610,8 +9623,8 @@ pub fn execcmd_exec(
             // c:3948-3952 — addfd errflag check.
             if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
                 // c:3949
-                crate::ported::exec::closemnodes(&mut mfds); // c:3950
-                crate::ported::exec::fixfds(&save); // c:3951
+                closemnodes(&mut mfds); // c:3950
+                fixfds(&save); // c:3951
                 {
                     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                     LASTVAL.store(1, Ordering::Relaxed);
@@ -9729,7 +9742,7 @@ pub fn execcmd_exec(
             // approximate by passing None.
             let redir_prog: Option<crate::ported::zsh_h::Eprog> = None;
             // c:4039 — `lastval = execfuncdef(state, redir_prog);`
-            let lv = crate::ported::exec::execfuncdef(state, redir_prog);
+            let lv = execfuncdef(state, redir_prog);
             LASTVAL.store(lv, Ordering::Relaxed);
         } else if typ >= WC_CURSH as i32 {
             // c:4042
@@ -9839,15 +9852,15 @@ pub fn execcmd_exec(
                     None
                 };
                 if let Some(ref mut shf) = shf_clone {
-                    crate::ported::exec::execshfunc(shf, &mut a_vec);
+                    execshfunc(shf, &mut a_vec);
                 }
                 // c:4105 — `pipecleanfilelist(filelist, 0);` — clean
                 // out the proc_subst entries from the current job's
                 // filelist after the shfunc body ran. Route through
                 // `JOBTAB[thisjob]`.
-                if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                if let Some(jt) = JOBTAB.get() {
                     let mut guard = jt.lock().unwrap();
-                    let tj = crate::ported::jobs::THISJOB
+                    let tj = THISJOB
                         .get()
                         .map(|m| *m.lock().unwrap())
                         .unwrap_or(-1);
@@ -9884,7 +9897,7 @@ pub fn execcmd_exec(
                         }
                         let ac = state.prog.prog[state.pc]; // c:4118
                         state.pc += 1;
-                        let mut name = crate::ported::parse::ecgetstr(
+                        let mut name = ecgetstr(
                             state,
                             ECDUPTOK_LOCAL,
                             Some(&mut pa_htok),
@@ -9892,7 +9905,7 @@ pub fn execcmd_exec(
                            // c:4123-4124 DPUTS — debug assertion skipped.
                         if pa_htok != 0 {
                             // c:4126 — `init_list1(svl, name);`
-                            let mut svl: crate::ported::linklist::LinkList<String> =
+                            let mut svl: LinkList<String> =
                                 Default::default();
                             svl.push_back(name.clone());
                             // c:4127-4166 — INC-scalar special case (typeset $ass form).
@@ -9901,20 +9914,20 @@ pub fn execcmd_exec(
                             {
                                 // c:4141 — `(void)ecgetstr(...)` — dummy.
                                 let mut dummy_htok: i32 = 0;
-                                let _ = crate::ported::parse::ecgetstr(
+                                let _ = ecgetstr(
                                     state,
                                     ECDUPTOK_LOCAL,
                                     Some(&mut dummy_htok),
                                 );
                                 let mut rf = 0i32;
-                                crate::ported::subst::prefork(&mut svl, PREFORK_TYPESET, &mut rf); // c:4142
+                                prefork(&mut svl, PREFORK_TYPESET, &mut rf); // c:4142
                                 if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
                                     // c:4143
                                     state.pc = opc; // c:4144
                                     break;
                                 }
                                 let mut rf2 = 0i32;
-                                crate::ported::subst::globlist(&mut svl, rf2); // c:4147
+                                globlist(&mut svl, rf2); // c:4147
                                 let _ = &mut rf2;
                                 if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
                                     // c:4148
@@ -9950,7 +9963,7 @@ pub fn execcmd_exec(
                             }
                             // c:4168 — `prefork(&svl, PREFORK_SINGLE, NULL);`
                             let mut rf = 0i32;
-                            crate::ported::subst::prefork(&mut svl, PREFORK_SINGLE, &mut rf);
+                            prefork(&mut svl, PREFORK_SINGLE, &mut rf);
                             // c:4169-4170 — `name = empty(svl) ? "" : firstnode_data;`
                             name = if svl.is_empty() {
                                 String::new()
@@ -9961,7 +9974,7 @@ pub fn execcmd_exec(
                         // c:4172 — `untokenize(name);`
                         // (untokenize is destructive on bytes; Rust untokenize
                         // returns a new String — call and rebind.)
-                        name = crate::ported::lex::untokenize(&name);
+                        name = untokenize(&name);
                         let mut asg = crate::ported::zsh_h::asgment {
                             node: crate::ported::zsh_h::linknode {
                                 next: None,
@@ -9976,7 +9989,7 @@ pub fn execcmd_exec(
                         if WC_ASSIGN_TYPE(ac) == WC_ASSIGN_SCALAR {
                             // c:4175
                             let mut val_htok: i32 = 0;
-                            let mut val = crate::ported::parse::ecgetstr(
+                            let mut val = ecgetstr(
                                 state,
                                 ECDUPTOK_LOCAL,
                                 Some(&mut val_htok),
@@ -9988,11 +10001,11 @@ pub fn execcmd_exec(
                             } else {
                                 if val_htok != 0 {
                                     // c:4183
-                                    let mut svl: crate::ported::linklist::LinkList<String> =
+                                    let mut svl: LinkList<String> =
                                         Default::default();
                                     svl.push_back(val.clone());
                                     let mut rf = 0i32;
-                                    crate::ported::subst::prefork(
+                                    prefork(
                                         &mut svl,
                                         PREFORK_SINGLE | PREFORK_ASSIGN,
                                         &mut rf,
@@ -10010,19 +10023,19 @@ pub fn execcmd_exec(
                                     };
                                 }
                                 // c:4198 — `untokenize(val);`
-                                asg.scalar = Some(crate::ported::lex::untokenize(&val));
+                                asg.scalar = Some(untokenize(&val));
                             }
                         } else {
                             // c:4202 — array assignment.
                             asg.flags = ASG_ARRAY; // c:4202
                             let mut arr_htok: i32 = 0;
-                            let arr_words = crate::ported::parse::ecgetlist(
+                            let arr_words = ecgetlist(
                                 state,
                                 WC_ASSIGN_NUM(ac) as usize,
                                 ECDUPTOK_LOCAL,
                                 Some(&mut arr_htok),
                             ); // c:4204
-                            let mut arr_list: crate::ported::linklist::LinkList<String> =
+                            let mut arr_list: LinkList<String> =
                                 Default::default();
                             for s in arr_words {
                                 arr_list.push_back(s);
@@ -10032,7 +10045,7 @@ pub fn execcmd_exec(
                             {
                                 // c:4209 — `int prefork_ret = 0;`
                                 let mut prefork_ret = 0i32;
-                                crate::ported::subst::prefork(
+                                prefork(
                                     &mut arr_list,
                                     PREFORK_ASSIGN,
                                     &mut prefork_ret,
@@ -10046,7 +10059,7 @@ pub fn execcmd_exec(
                                     // c:4216
                                     asg.flags |= ASG_KEY_VALUE; // c:4217
                                 }
-                                crate::ported::subst::globlist(&mut arr_list, prefork_ret); // c:4218
+                                globlist(&mut arr_list, prefork_ret); // c:4218
                                 if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
                                     // c:4220
                                     state.pc = opc; // c:4221
@@ -10114,7 +10127,7 @@ pub fn execcmd_exec(
                 // c:4277
                 if forked == 0 {
                     // c:4280 — `setiparam("SHLVL", --shlvl);`
-                    let cur = crate::ported::params::getsparam("SHLVL")
+                    let cur = getsparam("SHLVL")
                         .and_then(|s| s.parse::<i64>().ok())
                         .unwrap_or(1);
                     setiparam("SHLVL", cur - 1); // c:4281
@@ -10159,7 +10172,7 @@ pub fn execcmd_exec(
                 }
                 if forked == 0 {
                     // c:4307
-                    crate::ported::builtins::rlimits::setlimits(""); // c:4308
+                    setlimits(""); // c:4308
                 }
                 if (how & Z_ASYNC as i32) != 0 {
                     // c:4310 — `zsfree(STTYval); STTYval = 0;`
@@ -10168,16 +10181,16 @@ pub fn execcmd_exec(
                 }
                 // c:4314 — `execute(args, cflags, use_defpath);`
                 let mut a_vec: Vec<String> = args.clone().unwrap_or_default();
-                crate::ported::exec::execute(&mut a_vec, cflags, use_defpath); // c:4314
+                execute(&mut a_vec, cflags, use_defpath); // c:4314
             } else {
                 // c:4315 — `( ... )` — WC_SUBSH.
-                crate::ported::exec::list_pipe.store(0, Ordering::Relaxed); // c:4318
+                list_pipe.store(0, Ordering::Relaxed); // c:4318
                                                                             // c:4319 — `pipecleanfilelist(filelist, 0);` — clean
                                                                             // proc-subst entries from the current job's filelist
                                                                             // before recursing into the subshell body.
-                if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                if let Some(jt) = JOBTAB.get() {
                     let mut guard = jt.lock().unwrap();
-                    let tj = crate::ported::jobs::THISJOB
+                    let tj = THISJOB
                         .get()
                         .map(|m| *m.lock().unwrap())
                         .unwrap_or(-1);
@@ -10188,7 +10201,7 @@ pub fn execcmd_exec(
                     }
                 }
                 state.pc += 1; // c:4324 — `state->pc++;`
-                let _ = crate::ported::exec::execlist(state, 0, 1); // c:4325
+                let _ = execlist(state, 0, 1); // c:4325
             }
         }
     }
@@ -10239,7 +10252,7 @@ fn execcmd_exec_done_path(
         && (orig_cflags & BINF_COMMAND) == 0
     {
         // c:4367-4369
-        let _forked_or_subsh = forked | crate::ported::exec::zsh_subshell.load(Ordering::Relaxed); // c:4376
+        let _forked_or_subsh = forked | zsh_subshell.load(Ordering::Relaxed); // c:4376
                                                                                                    // fatal: label entry point — same handling.
         if redir_err != 0 || (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
             // c:4378
@@ -10271,7 +10284,7 @@ fn execcmd_exec_done_path(
     }
     // c:4402-4403 — `if (oautocont >= 0) opts[AUTOCONTINUE] = oautocont;`
     if oautocont >= 0 {
-        crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
+        opt_state_set("autocontinue", oautocont != 0);
     }
 }
 
@@ -10303,7 +10316,7 @@ fn execcmd_exec_err_path(
         // c:4356-4358 — close all fds 0..10 whose fdtable entry != FDT_UNUSED.
         let mut i: i32 = 0;
         while i < 10 {
-            if crate::ported::utils::fdtable_get(i) != FDT_UNUSED {
+            if fdtable_get(i) != FDT_UNUSED {
                 unsafe { libc::close(i) }; // c:4358
             }
             i += 1;
@@ -10485,8 +10498,8 @@ pub fn stripkshdef(
         return Some(prog);
     }
     let nprg = end_pc - body_start;
-    let plen = nprg * std::mem::size_of::<wordcode>();
-    let len = plen + (npats as usize) * std::mem::size_of::<usize>() + nstrs;
+    let plen = nprg * size_of::<wordcode>();
+    let len = plen + (npats as usize) * size_of::<usize>() + nstrs;
 
     // Build the new pats slice — `dummy_patprog1` slots in C; the
     // Rust convention (mirrors `dupeprog` at parse.rs:2716) is to
@@ -10532,7 +10545,7 @@ pub fn stripkshdef(
     }
 
     // c:6356-6361 — heap-allocated new Eprog.
-    let ret = Box::new(crate::ported::zsh_h::eprog {
+    let ret = Box::new(eprog {
         flags: EF_HEAP,
         len: len as i32,
         npats,
@@ -10650,7 +10663,7 @@ mod tests {
     /// Eprog unchanged (no funcdef-shape to strip).
     #[test]
     fn exec_corpus_stripkshdef_empty_prog_returns_input() {
-        let prog = Box::new(crate::ported::zsh_h::eprog {
+        let prog = Box::new(eprog {
             prog: vec![],
             ..Default::default()
         });
@@ -10664,7 +10677,7 @@ mod tests {
     #[test]
     fn exec_corpus_stripkshdef_non_list_head_returns_input() {
         use crate::ported::zsh_h::{wc_bld, WC_SUBLIST};
-        let prog = Box::new(crate::ported::zsh_h::eprog {
+        let prog = Box::new(eprog {
             prog: vec![wc_bld(WC_SUBLIST, 0), 0, 0],
             ..Default::default()
         });

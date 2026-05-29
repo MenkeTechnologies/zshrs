@@ -1481,7 +1481,36 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
     let mut ascbuf: Vec<u8> = Vec::new(); // c:1463 ascbuf = NULL
     let mut sofar: libc::off_t = 0; // c:1464
     let mut last_sofar: libc::off_t = 0; // c:1464
-    let _ = progress;
+
+    // c:1469-1481 — pre-transfer progress hook. Fires once at the
+    // top of zfsenddata when ZFTP_COUNT starts at zero so the user
+    // shfunc can set up its meter. After it runs, we seed `sofar`
+    // with `startat` (resume-from offset) per c:1480.
+    if progress != 0 {
+        if let Some(mut shfunc) = getshfunc("zftp_progress") {
+            // c:1473 — `osc = sfcontext;`
+            let osc = SFCONTEXT.load(Ordering::Relaxed);
+            SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed); // c:1475
+            // c:1477 — `doshfunc(shfunc, NULL, 1);`.
+            let body_runner = || -> i32 {
+                crate::ported::exec_hooks::run_function_body(
+                    "zftp_progress",
+                    &[],
+                )
+                .unwrap_or(0)
+            };
+            let _ = crate::ported::exec::doshfunc(
+                &mut shfunc,
+                vec!["zftp_progress".to_string()],
+                true,
+                body_runner,
+            );
+            SFCONTEXT.store(osc, Ordering::Relaxed); // c:1478
+            // c:1480 — `sofar = last_sofar = startat;`.
+            sofar = startat;
+            last_sofar = startat;
+        }
+    }
 
     // c:1482-1498 — direction-dependent fd + ascii-flag setup.
     let mut use_block_mode = false;
@@ -1657,7 +1686,7 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
         }
         // c:1604-1613 — progress hook (zftp_progress shfunc dispatch).
         if ret == 0 && sofar != last_sofar && progress != 0 {
-            if let Some(_shfunc) = getshfunc("zftp_progress") {
+            if let Some(mut shfunc) = getshfunc("zftp_progress") {
                 // c:1605
                 let osc = SFCONTEXT.load(Ordering::Relaxed); // c:1606
                 zfsetparam(
@@ -1666,11 +1695,22 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
                     ZFPM_READONLY | ZFPM_INTEGER,
                 ); // c:1608
                 SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed); // c:1609
-                                                              // c:1610 — doshfunc(shfunc, NULL, 1). Static-link path:
-                                                              // VM-level CallFunction dispatch happens inside fusevm
-                                                              // when a live frame exists; from this caller we trust
-                                                              // the `getshfunc` probe and read the post-call LASTVAL.
-                let _ = LASTVAL.load(Ordering::Relaxed);
+                // c:1610 — `doshfunc(shfunc, NULL, 1);`. NULL doshargs
+                // → argv = [fn-name only]; body_runner routes through
+                // the host body-only entry.
+                let body_runner = || -> i32 {
+                    crate::ported::exec_hooks::run_function_body(
+                        "zftp_progress",
+                        &[],
+                    )
+                    .unwrap_or(0)
+                };
+                let _ = crate::ported::exec::doshfunc(
+                    &mut shfunc,
+                    vec!["zftp_progress".to_string()],
+                    true,
+                    body_runner,
+                );
                 SFCONTEXT.store(osc, Ordering::Relaxed);
             // c:1611
             } else {
@@ -2551,11 +2591,33 @@ pub fn zfgetcwd() -> i32 {
         zfunsetparam("ZFTP_PWD"); // c:2367
         return 1; // c:2368
     }
-    if lastcode.load(Ordering::Relaxed) >= 200 {
+    let cwd_ret = if lastcode.load(Ordering::Relaxed) >= 200 {
         0
     } else {
         1
+    };
+
+    // c:2388-2393 — zftp_chpwd hook: after PWD reply parses, fire
+    // the shfunc with SFC_HOOK context. The fully-ported parse loop
+    // (extract dir between `"`s in the reply) isn't here yet, so
+    // ZFTP_PWD update is partial; the hook firing is independent.
+    if let Some(mut shfunc) = getshfunc("zftp_chpwd") {
+        let osc = SFCONTEXT.load(Ordering::Relaxed);
+        SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed);
+        // c:2393 — `doshfunc(shfunc, NULL, 1);`.
+        let body_runner = || -> i32 {
+            crate::ported::exec_hooks::run_function_body("zftp_chpwd", &[])
+                .unwrap_or(0)
+        };
+        let _ = crate::ported::exec::doshfunc(
+            &mut shfunc,
+            vec!["zftp_chpwd".to_string()],
+            true,
+            body_runner,
+        );
+        SFCONTEXT.store(osc, Ordering::Relaxed);
     }
+    cwd_ret
 }
 
 /// Port of `zfsettype(int type)` from `Src/Modules/zftp.c:2405`.
@@ -2807,7 +2869,7 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
 
         // c:2606-2616 — final progress callback (zftp_progress shfunc).
         if progress != 0 && ret != 2 {
-            if let Some(_shfunc) = getshfunc("zftp_progress") {
+            if let Some(mut shfunc) = getshfunc("zftp_progress") {
                 // c:2607
                 let osc = SFCONTEXT.load(Ordering::Relaxed); // c:2610
                 zfsetparam(
@@ -2816,9 +2878,20 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
                     ZFPM_READONLY,
                 );
                 SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed); // c:2613
-                                                              // c:2614 — doshfunc dispatch happens inside fusevm; static
-                                                              // caller probes via getshfunc + reads LASTVAL.
-                let _ = LASTVAL.load(Ordering::Relaxed);
+                // c:2614 — `doshfunc(shfunc, NULL, 1);`.
+                let body_runner = || -> i32 {
+                    crate::ported::exec_hooks::run_function_body(
+                        "zftp_progress",
+                        &[],
+                    )
+                    .unwrap_or(0)
+                };
+                let _ = crate::ported::exec::doshfunc(
+                    &mut shfunc,
+                    vec!["zftp_progress".to_string()],
+                    true,
+                    body_runner,
+                );
                 SFCONTEXT.store(osc, Ordering::Relaxed);
                 // c:2615
             } else {
@@ -3000,13 +3073,24 @@ pub fn zfclose(leaveparams: i32) {
             zfunsetparam(n); // c:2764
         }
         // c:2767-2773 — zftp_chpwd shfunc dispatch.
-        if getshfunc("zftp_chpwd").is_some() {
+        if let Some(mut shfunc) = getshfunc("zftp_chpwd") {
             // c:2767
             let osc = SFCONTEXT.load(Ordering::Relaxed);
             SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed); // c:2770
-                                                          // c:2771 doshfunc dispatch — VM-level CallFunction lives
-                                                          // inside fusevm; static caller probes via getshfunc.
-            let _ = LASTVAL.load(Ordering::Relaxed);
+            // c:2771 — `doshfunc(shfunc, NULL, 1);`.
+            let body_runner = || -> i32 {
+                crate::ported::exec_hooks::run_function_body(
+                    "zftp_chpwd",
+                    &[],
+                )
+                .unwrap_or(0)
+            };
+            let _ = crate::ported::exec::doshfunc(
+                &mut shfunc,
+                vec!["zftp_chpwd".to_string()],
+                true,
+                body_runner,
+            );
             SFCONTEXT.store(osc, Ordering::Relaxed); // c:2772
         }
     }

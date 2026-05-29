@@ -821,10 +821,19 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         _ => None,
     });
     let call_name = shfunc_name.as_deref().unwrap_or(name);
-    if getshfunc(call_name).is_some() {
-        // c:1490
+    if let Some(mut shf) = getshfunc(call_name) {
+        // c:1537 — `ret = doshfunc(shf, largs, 1);`. Direct doshfunc
+        // call mirrors C — argv[0] = widget name, argv[1..] = args.
+        let mut largs: Vec<String> = vec![call_name.to_string()];
+        largs.extend(args.iter().cloned());
+        let name_for_body = call_name.to_string();
+        let body_args: Vec<String> = args.to_vec();
+        let body_runner = move || -> i32 {
+            crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args)
+                .unwrap_or(0)
+        };
         let rc =
-            crate::ported::exec_hooks::dispatch_function_call(call_name, args).unwrap_or(0);
+            crate::ported::exec::doshfunc(&mut shf, largs, true, body_runner);
         // c:1530 — capture LASTVAL after the call.
         LASTVAL.store(rc, Ordering::Relaxed);
         // c:1597 — restore BINDK.

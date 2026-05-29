@@ -1593,9 +1593,20 @@ pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: 
         .ok()
         .and_then(|t| t.get(name).cloned());
     if let Some(mut shf) = shf_clone {
-        let mut args = mk_args(name);
-        crate::ported::exec::execshfunc(&mut shf, &mut args); // c:1503 doshfunc
-        ret = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+        let args = mk_args(name);
+        // c:1487 — `ret = doshfunc(shfunc, lnklst, 1);`. Direct
+        // doshfunc invocation; body_runner routes through the host
+        // body-only entry to avoid double-wrapping the scope.
+        let name_for_body = name.to_string();
+        let body_args = args.clone();
+        let body_runner = move || -> i32 {
+            crate::ported::exec_hooks::run_function_body(
+                &name_for_body,
+                &body_args[1..],
+            )
+            .unwrap_or(0)
+        };
+        ret = crate::ported::exec::doshfunc(&mut shf, args, true, body_runner);
         stat = 0; // c:1504
     }
 
@@ -1615,9 +1626,18 @@ pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: 
                 .and_then(|t| t.get(&fn_name).cloned());
             if let Some(mut shf) = shf_clone {
                 // c:1518
-                let mut args = mk_args(&fn_name);
-                crate::ported::exec::execshfunc(&mut shf, &mut args); // c:1519
-                ret = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+                let args = mk_args(&fn_name);
+                // c:1508 — `newret = doshfunc(shfunc, arg0, 1);`.
+                let name_for_body = fn_name.clone();
+                let body_args = args.clone();
+                let body_runner = move || -> i32 {
+                    crate::ported::exec_hooks::run_function_body(
+                        &name_for_body,
+                        &body_args[1..],
+                    )
+                    .unwrap_or(0)
+                };
+                ret = crate::ported::exec::doshfunc(&mut shf, args, true, body_runner);
                 stat = 0; // c:1520
             }
         }
@@ -4721,9 +4741,29 @@ pub fn subst_string_by_func(
         .store(SFC_SUBST, Ordering::Relaxed);
     INCOMPFUNC.store(0, Ordering::Relaxed); // c:4028
 
-    let rc = callhookfunc(func_name, Some(&args), 0, std::ptr::null_mut()); // c:4030
-                                                                            // c:4033 — `ret = getaparam("reply")` against paramtab. `reply`
-                                                                            // is a shell-local PM_ARRAY entry, never exported to env.
+    // c:4030 — `if (doshfunc(func, l, 1))`. Direct doshfunc call
+    // mirrors C. body_runner routes through the host body-only entry
+    // (matching the same shfunc that `callhookfunc` would resolve).
+    let shf_clone: Option<crate::ported::zsh_h::shfunc> = shfunctab_lock()
+        .read()
+        .ok()
+        .and_then(|t| t.get(func_name).cloned());
+    let rc = if let Some(mut shf) = shf_clone {
+        let name_for_body = func_name.to_string();
+        let body_args = args.clone();
+        let body_runner = move || -> i32 {
+            crate::ported::exec_hooks::run_function_body(
+                &name_for_body,
+                &body_args[1..],
+            )
+            .unwrap_or(0)
+        };
+        crate::ported::exec::doshfunc(&mut shf, args.clone(), true, body_runner)
+    } else {
+        callhookfunc(func_name, Some(&args), 0, std::ptr::null_mut())
+    };
+    // c:4033 — `ret = getaparam("reply")` against paramtab. `reply`
+    // is a shell-local PM_ARRAY entry, never exported to env.
     let ret: Option<Vec<String>> = if rc != 0 {
         None // c:4031
     } else {

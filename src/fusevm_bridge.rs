@@ -299,6 +299,9 @@ pub(crate) fn install_exec_hooks() {
     h::install_dispatch_function_call(|name, args| {
         with_executor(|exec| exec.dispatch_function_call(name, args))
     });
+    h::install_run_function_body(|name, args| {
+        with_executor(|exec| exec.run_function_body_only(name, args))
+    });
     h::install_execute_script(|src| with_executor(|exec| exec.execute_script(src)));
     h::install_execute_script_zsh_pipeline(|src| {
         with_executor(|exec| exec.execute_script_zsh_pipeline(src))

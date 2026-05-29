@@ -1631,6 +1631,7 @@ install_scalar_unset
 install_array_unset
 install_assoc_unset
 install_dispatch_function_call
+install_run_function_body
 install_execute_script
 install_execute_script_zsh_pipeline
 install_run_command_substitution
@@ -1645,6 +1646,7 @@ unset_scalar
 unset_array
 unset_assoc
 dispatch_function_call
+run_function_body
 execute_script
 execute_script_zsh_pipeline
 run_command_substitution

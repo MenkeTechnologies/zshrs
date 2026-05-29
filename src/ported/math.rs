@@ -2026,6 +2026,49 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             })
         })
         .unwrap_or(false);
+    // c:Src/math.c:1108-1116 — MFF_USERFUNC branch: when the named
+    // math function points at a user shfunc (registered via
+    // `functions -M`), dispatch via doshfunc instead of looking it
+    // up in mathfuncs. The body sets `lastmathval` and returns;
+    // callmathfunc reads it back. Routed here BEFORE the module
+    // arms below so a user-registered fn shadows a built-in name
+    // (matching C lookup order).
+    if let Some(mut shfunc) = crate::ported::utils::getshfunc(name) {
+        // Build largs = [name, arg-strings].
+        let mut largs: Vec<String> = vec![name.to_string()];
+        let argv_str: Vec<String> = call[paren..]
+            .trim_start_matches('(')
+            .trim_end_matches(')')
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        largs.extend(argv_str.iter().cloned());
+        let name_for_body = name.to_string();
+        let body_args = argv_str.clone();
+        let body_runner = move || -> i32 {
+            crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args)
+                .unwrap_or(0)
+        };
+        // c:1114 — `doshfunc(shfunc, l, 1);`. Body's last math
+        // assignment lands in `lastmathval`.
+        let _ = crate::ported::exec::doshfunc(
+            &mut shfunc,
+            largs,
+            true,
+            body_runner,
+        );
+        // c:Src/math.c:53 — `mnumber lastmathval` global. Rust port
+        // doesn't yet have it as a free static; return the body's
+        // last-status as int for now.
+        return mnumber {
+            l: crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed)
+                as i64,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
+    }
+
     if is_module_func && !module_loaded {
         crate::ported::utils::zerr(&format!("unknown function: {}", name));
         crate::ported::utils::errflag.fetch_or(
