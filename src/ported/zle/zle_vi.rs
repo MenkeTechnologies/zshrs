@@ -852,12 +852,7 @@ pub fn viindent() -> i32 {
     //                zlecs = findeol() + 1; } }`.
     let line_len = ZLELL.load(SeqCst);
     while ZLECS.load(SeqCst) < line_len {
-        let at_nl = ZLELINE
-            .lock()
-            .unwrap()
-            .get(ZLECS.load(SeqCst))
-            .copied()
-            == Some('\n');
+        let at_nl = ZLELINE.lock().unwrap().get(ZLECS.load(SeqCst)).copied() == Some('\n');
         if at_nl {
             ZLECS.fetch_add(1, SeqCst); // c:844
             continue;

@@ -112,8 +112,8 @@ pub fn zleaddtoline(chr: i32) {
 /// pushed.
 pub fn zlecharasstring(inchar: char, buf: &mut String) -> i32 {
     // c:117
-    use crate::ported::ztype_h::imeta;
     use crate::ported::zsh_h::Meta;
+    use crate::ported::ztype_h::imeta;
 
     let start_len = buf.len();
     let mut enc = [0u8; 4];
@@ -162,8 +162,8 @@ pub fn zlelineasstring(
     _useheap: i32,
 ) -> String {
     // c:192
-    use crate::ported::ztype_h::imeta;
     use crate::ported::zsh_h::Meta;
+    use crate::ported::ztype_h::imeta;
 
     // === Phase 1: MB encode (wcrtomb equivalent) ===
     let mut s: Vec<u8> = Vec::with_capacity(inll * 4);
@@ -224,7 +224,6 @@ pub fn zlelineasstring(
     // metafied form by design, not a Rust display string.
     unsafe { String::from_utf8_unchecked(s) }
 }
-
 
 /// Port of `stringaszleline(char *instr, int incs, int *outll, int *outsz, int *outcs)` from Src/Zle/zle_utils.c:375.
 ///
@@ -325,10 +324,7 @@ pub fn stringaszleline(
                 //               *outcs = outptr - outstr;`. The
                 // codepoint spanning the cursor takes the output
                 // index slot.
-                if want_outcs
-                    && (byte_idx as i32) <= incs
-                    && incs < (byte_idx + cnt) as i32
-                {
+                if want_outcs && (byte_idx as i32) <= incs && incs < (byte_idx + cnt) as i32 {
                     outcs_val = line.len() as i32;
                     outcs_set = true;
                 }
@@ -368,7 +364,6 @@ pub fn stringaszleline(
     line
 }
 
-
 /// Port of `char *zlegetline(int *ll, int *cs)` from Src/Zle/zle_utils.c:547.
 ///
 /// C body branches on `zlemetaline`:
@@ -407,14 +402,7 @@ pub fn zlegetline(ll: &mut i32, cs: &mut i32) -> String {
         let zlecs = ZLECS.load(Ordering::SeqCst) as i32;
         let mut out_ll: i32 = 0;
         let mut out_cs: i32 = 0;
-        let s = zlelineasstring(
-            &line,
-            zlell,
-            zlecs,
-            Some(&mut out_ll),
-            Some(&mut out_cs),
-            0,
-        );
+        let s = zlelineasstring(&line, zlell, zlecs, Some(&mut out_ll), Some(&mut out_cs), 0);
         *ll = out_ll;
         *cs = out_cs;
         return s;
