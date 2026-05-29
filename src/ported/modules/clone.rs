@@ -661,4 +661,132 @@ mod tests {
         let r = bin_clone("clone", &["/tmp".to_string(), "/etc".to_string()], &ops, 0);
         assert_ne!(r, 0, "two args → usage error");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/clone.c
+    // c:37 bin_clone / c:213-249 lifecycle + type pins
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:37 — `bin_clone` returns i32 (compile-time pin).
+    #[test]
+    fn bin_clone_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_clone("clone", &[], &ops, 0);
+    }
+
+    /// c:37 — `bin_clone` with three args returns nonzero (usage error).
+    #[test]
+    fn bin_clone_three_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_clone("clone", &["a".into(), "b".into(), "c".into()], &ops, 0);
+        assert_ne!(r, 0, "three args → usage error");
+    }
+
+    /// c:37 — `bin_clone` with 5+ args still returns nonzero (no clamping).
+    #[test]
+    fn bin_clone_five_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_clone("clone",
+            &["a".into(), "b".into(), "c".into(), "d".into(), "e".into()],
+            &ops, 0);
+        assert_ne!(r, 0, "five args → usage error");
+    }
+
+    /// c:37 — `bin_clone("clone", &[], &ops, 0)` no-args deterministic
+    /// (no hidden state mutation).
+    #[test]
+    fn bin_clone_no_args_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let first = bin_clone("clone", &[], &ops, 0);
+        for _ in 0..5 {
+            assert_eq!(bin_clone("clone", &[], &ops, 0), first,
+                "bin_clone no-args must be pure");
+        }
+    }
+
+    /// c:37 — bin_clone exit code is non-negative for usage-error paths.
+    #[test]
+    fn bin_clone_exit_code_non_negative_for_usage_errors() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for argv in [
+            vec![],
+            vec!["arg".into()],
+            vec!["a".into(), "b".into()],
+        ] {
+            let r = bin_clone("clone", &argv, &ops, 0);
+            assert!(r >= 0,
+                "exit code must be non-negative, got {} for {:?}", r, argv);
+        }
+    }
+
+    /// c:213 — `setup_` returns i32 (compile-time pin).
+    #[test]
+    fn clone_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:220 — `features_` returns i32 (compile-time pin).
+    #[test]
+    fn clone_features_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = Vec::new();
+        let _: i32 = features_(std::ptr::null(), &mut v);
+    }
+
+    /// c:228 — `enables_` returns i32 with None enables-out param safe.
+    #[test]
+    fn clone_enables_with_none_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:130 — `features_` REPLACES the caller's Vec wholesale per
+    /// the C body `*features = featuresarray(...)`. Pin the clobber
+    /// behaviour so a future "merge instead of replace" regression
+    /// would fail loudly.
+    #[test]
+    fn clone_features_replaces_caller_vec_wholesale() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = vec!["sentinel".to_string()];
+        let _ = features_(std::ptr::null(), &mut v);
+        assert!(!v.iter().any(|s| s == "sentinel"),
+            "c:130 — features_ MUST overwrite the Vec (`*features = featuresarray(...)`)");
+    }
+
+    /// c:228 — `enables_` deterministic for null callback.
+    #[test]
+    fn clone_enables_deterministic_for_null_in() {
+        let _g = crate::test_util::global_state_lock();
+        let mut a: Option<Vec<i32>> = None;
+        let first = enables_(std::ptr::null(), &mut a);
+        for _ in 0..5 {
+            let mut b: Option<Vec<i32>> = None;
+            assert_eq!(enables_(std::ptr::null(), &mut b), first,
+                "enables_ must be deterministic for null in");
+        }
+    }
+
+    /// c:213/220/228/235/242/249 — every lifecycle hook returns 0 (success
+    /// sentinel), distinct per call site so a regression that changes
+    /// one returns nonzero gets pinned individually.
+    #[test]
+    fn clone_each_lifecycle_hook_returns_zero_individually() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v: Vec<String> = Vec::new();
+        let mut e: Option<Vec<i32>> = None;
+        assert_eq!(setup_(null), 0, "c:213 setup_");
+        assert_eq!(features_(null, &mut v), 0, "c:220 features_");
+        assert_eq!(enables_(null, &mut e), 0, "c:228 enables_");
+        assert_eq!(boot_(null), 0, "c:235 boot_");
+        assert_eq!(cleanup_(null), 0, "c:242 cleanup_");
+        assert_eq!(finish_(null), 0, "c:249 finish_");
+    }
 }
