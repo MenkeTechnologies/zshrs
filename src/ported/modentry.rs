@@ -246,4 +246,113 @@ mod tests {
             assert!(!m.booted, "op {} must NOT trigger boot", op);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/modentry.c
+    // c:7 modentry — type/value pins beyond the existing 0-5 sweep
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:7 — `modentry` returns i32 (compile-time type pin).
+    #[test]
+    fn modentry_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        let _: i32 = modentry(0, &mut m);
+    }
+
+    /// c:7 — `modentry` op=0 always returns 0 (success).
+    #[test]
+    fn modentry_setup_op_always_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            let mut m = TestModule { booted: false };
+            assert_eq!(modentry(0, &mut m), 0, "op=0 (setup) → 0");
+        }
+    }
+
+    /// c:7 — `modentry` op=3 (finish) always returns 0.
+    #[test]
+    fn modentry_finish_op_always_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            let mut m = TestModule { booted: false };
+            assert_eq!(modentry(3, &mut m), 0, "op=3 (finish) → 0");
+        }
+    }
+
+    /// c:7 — `modentry` op=4 (features) returns 0 + does NOT touch trait.
+    #[test]
+    fn modentry_features_op_returns_zero_no_side_effect() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            let mut m = TestModule { booted: false };
+            assert_eq!(modentry(4, &mut m), 0);
+            assert!(!m.booted, "features op (4) must NOT trigger boot");
+        }
+    }
+
+    /// c:7 — `modentry` op=5 (enables) returns 0 + does NOT touch trait.
+    #[test]
+    fn modentry_enables_op_returns_zero_no_side_effect() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            let mut m = TestModule { booted: false };
+            assert_eq!(modentry(5, &mut m), 0);
+            assert!(!m.booted, "enables op (5) must NOT trigger boot");
+        }
+    }
+
+    /// c:7 — `modentry` boot side-effect persists across subsequent calls.
+    #[test]
+    fn modentry_boot_side_effect_persists() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        modentry(1, &mut m); // boot
+        assert!(m.booted, "boot triggered");
+        modentry(2, &mut m); // cleanup
+        assert!(m.booted, "boot side-effect persists past cleanup");
+        modentry(3, &mut m); // finish
+        assert!(m.booted, "boot side-effect persists past finish");
+    }
+
+    /// c:7 — `modentry` does NOT decrement m.booted on subsequent boot calls.
+    /// (TestModule sets booted=true unconditionally; bool stays true.)
+    #[test]
+    fn modentry_boot_sticky_true_across_calls() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        for _ in 0..5 {
+            modentry(1, &mut m);
+        }
+        assert!(m.booted, "booted stays true across repeated boot calls");
+    }
+
+    /// c:38 — `modentry(MAX-1)` is in unknown-op range (returns 1).
+    #[test]
+    fn modentry_max_minus_one_unknown_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(i32::MAX - 1, &mut m), 1,
+            "MAX-1 op → 1 (unknown)");
+    }
+
+    /// c:7 — `modentry` for op=5 returns same result as op=4 (both feature-side).
+    #[test]
+    fn modentry_features_enables_both_zero() {
+        let _g = crate::test_util::global_state_lock();
+        for op in [4, 5] {
+            let mut m = TestModule { booted: false };
+            assert_eq!(modentry(op, &mut m), 0,
+                "feature-side op {} returns 0", op);
+        }
+    }
+
+    /// c:7 — `modentry` for op=2 (cleanup) without prior boot is safe.
+    #[test]
+    fn modentry_cleanup_without_prior_boot_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(2, &mut m), 0, "cleanup without boot → 0");
+        assert!(!m.booted, "boot side-effect not triggered by cleanup");
+    }
 }
