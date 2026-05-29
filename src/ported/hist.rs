@@ -6700,4 +6700,91 @@ mod subst_modifier_tests {
         let _g = crate::test_util::global_state_lock();
         let _ = substfailed();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/hist.c. Tests that capture KNOWN
+    // ZSHRS BUGS use #[ignore = "ZSHRS BUG: …"].
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `getargc(entry)` returns `entry.nwords - 1` (or 0 if nwords=0).
+    /// C `Src/hist.c:556`:
+    ///   `return ehist->nwords ? ehist->nwords-1 : 0;`
+    /// ZSHRS BUG: Rust port at hist.rs:1199 returns plain `entry.nwords`
+    /// (off-by-one) — diverges from C subtraction.
+    #[test]
+    #[ignore = "ZSHRS BUG: getargc returns nwords (Rust) instead of nwords-1 (C hist.c:557) — off-by-one"]
+    fn getargc_returns_nwords_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        // Build a fake histent with nwords=3. C returns 2; current
+        // Rust returns 3.
+        let entry = histent {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: String::new(),
+                flags: 0,
+            },
+            down: None,
+            up: None,
+            zle_text: None,
+            stim: 0,
+            ftim: 0,
+            words: Vec::new(),
+            nwords: 3,
+            histnum: 0,
+        };
+        assert_eq!(
+            getargc(&entry),
+            2,
+            "C returns nwords-1=2 for nwords=3; Rust off-by-one bug returns 3"
+        );
+    }
+
+    /// `getargc(entry)` with nwords=0 returns 0 (per C ternary
+    /// guard). Rust's off-by-one bug happens to return 0 here too
+    /// (correct value); this test pins the corner case where Rust
+    /// and C agree by accident.
+    #[test]
+    fn getargc_nwords_zero_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let entry = histent {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: String::new(),
+                flags: 0,
+            },
+            down: None,
+            up: None,
+            zle_text: None,
+            stim: 0,
+            ftim: 0,
+            words: Vec::new(),
+            nwords: 0,
+            histnum: 0,
+        };
+        assert_eq!(getargc(&entry), 0, "nwords=0 → 0 (both C and Rust)");
+    }
+
+    /// `getargc(entry)` with nwords=1 — C returns 0 (1-1), Rust
+    /// off-by-one returns 1.
+    #[test]
+    #[ignore = "ZSHRS BUG: getargc off-by-one (see getargc_returns_nwords_minus_one)"]
+    fn getargc_nwords_one_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let entry = histent {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: String::new(),
+                flags: 0,
+            },
+            down: None,
+            up: None,
+            zle_text: None,
+            stim: 0,
+            ftim: 0,
+            words: Vec::new(),
+            nwords: 1,
+            histnum: 0,
+        };
+        assert_eq!(getargc(&entry), 0, "nwords=1 → 0 (1-1) per C");
+    }
 }
