@@ -878,4 +878,98 @@ mod tests {
         let _ = cond_p_len(&["abc".to_string()], 0);
         // Just pin: no panic.
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/example.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:80-95 — `cond_p_len([""], 0)` with single empty-string arg:
+    /// no second arg, so c:95 branch fires `return !s1[0]` = !"" = 1.
+    #[test]
+    fn cond_p_len_empty_single_arg_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_p_len(&["".to_string()], 0);
+        assert_eq!(r, 1, "empty s1 with no len arg → !s1[0] = 1");
+    }
+
+    /// c:80-87 — `cond_p_len([s, "N"])` returns 1 when len(s) == N,
+    /// 0 otherwise.
+    #[test]
+    fn cond_p_len_length_match_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        // s1="abc" (len=3), arg[1]="3" → 1.
+        let r = cond_p_len(&["abc".to_string(), "3".to_string()], 0);
+        assert_eq!(r, 1, "len(abc) == 3 → 1");
+    }
+
+    /// c:80-87 — len mismatch returns 0.
+    #[test]
+    fn cond_p_len_length_mismatch_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_p_len(&["abc".to_string(), "5".to_string()], 0);
+        assert_eq!(r, 0, "len(abc) != 5 → 0");
+    }
+
+    /// c:95-104 — `cond_i_ex(["exam", "ple"])` returns 1
+    /// (dyncat == "example").
+    #[test]
+    fn cond_i_ex_concatenation_to_example_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_i_ex(&["exam".to_string(), "ple".to_string()], 0);
+        assert_eq!(r, 1, "exam+ple = 'example' → 1");
+    }
+
+    /// c:95-104 — non-matching concat returns 0.
+    #[test]
+    fn cond_i_ex_non_matching_concat_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_i_ex(&["foo".to_string(), "bar".to_string()], 0);
+        assert_eq!(r, 0, "foo+bar = 'foobar' != 'example' → 0");
+    }
+
+    /// c:95-104 — empty inputs (dyncat("","") = "" != "example") → 0.
+    #[test]
+    fn cond_i_ex_empty_inputs_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_i_ex(&["".to_string(), "".to_string()], 0);
+        assert_eq!(r, 0, "'' != 'example' → 0");
+    }
+
+    /// c:104 — `math_sum([])` with empty args returns 0 (integer init).
+    #[test]
+    fn math_sum_empty_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_sum("sum", 0, &[], 0);
+        assert_eq!(r.l, 0);
+        assert_eq!(r.type_, MN_INTEGER);
+    }
+
+    /// c:104-115 — `math_sum` of two integers returns integer sum.
+    #[test]
+    fn math_sum_two_integers_returns_integer_sum() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec![
+            mnumber { l: 3, d: 0.0, type_: MN_INTEGER },
+            mnumber { l: 4, d: 0.0, type_: MN_INTEGER },
+        ];
+        let r = math_sum("sum", 2, &args, 0);
+        assert_eq!(r.l, 7, "3 + 4 = 7");
+        assert_eq!(r.type_, MN_INTEGER);
+    }
+
+    /// c:250 — `math_length` of empty string returns 0.
+    #[test]
+    fn math_length_empty_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_length("length", "", 0);
+        assert_eq!(r.l, 0);
+    }
+
+    /// c:250 — `math_length` returns byte count (not codepoints).
+    #[test]
+    fn math_length_ascii_returns_byte_count() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_length("length", "hello", 0);
+        assert_eq!(r.l, 5);
+    }
 }
