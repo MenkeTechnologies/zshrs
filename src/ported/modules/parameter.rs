@@ -5057,4 +5057,121 @@ mod paramtypestr_table_tests {
             assert_eq!(patcharsgetfn(std::ptr::null_mut()), first);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/parameter.c alias accessors.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1901 — `getalias(_, _, "missing", 0)` returns Some(PM_UNSET).
+    /// Per c:1917, missing entries get PM_UNSET|PM_SPECIAL flags set.
+    #[test]
+    fn getalias_missing_returns_pm_unset() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::PM_UNSET;
+        let pm = getalias(
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            "zshrs_never_real_alias_xyz",
+            0,
+        )
+        .expect("getalias returns Some even for missing");
+        assert!(pm.node.flags & PM_UNSET as i32 != 0, "PM_UNSET on miss");
+    }
+
+    /// c:1907 — getalias returns Param with name preserved.
+    #[test]
+    fn getalias_returns_param_with_name_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let pm = getalias(
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            "test_name_xyz",
+            0,
+        )
+        .expect("Some");
+        assert_eq!(pm.node.nam, "test_name_xyz");
+    }
+
+    /// c:1923 — `getpmralias(_, "missing")` returns Some(PM_UNSET).
+    #[test]
+    fn getpmralias_missing_returns_pm_unset() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::PM_UNSET;
+        let pm = getpmralias(std::ptr::null_mut(), "zshrs_never_real_ralias_xyz")
+            .expect("Some");
+        assert!(pm.node.flags & PM_UNSET as i32 != 0);
+    }
+
+    /// c:1930 — `getpmdisralias(_, "missing")` returns Some(PM_UNSET).
+    #[test]
+    fn getpmdisralias_missing_returns_pm_unset() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::PM_UNSET;
+        let pm = getpmdisralias(std::ptr::null_mut(), "zshrs_never_real_disralias_xyz")
+            .expect("Some");
+        assert!(pm.node.flags & PM_UNSET as i32 != 0);
+    }
+
+    /// c:1937 — `getpmgalias(_, "missing")` returns Some(PM_UNSET).
+    #[test]
+    fn getpmgalias_missing_returns_pm_unset() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::PM_UNSET;
+        let pm = getpmgalias(std::ptr::null_mut(), "zshrs_never_real_galias_xyz")
+            .expect("Some");
+        assert!(pm.node.flags & PM_UNSET as i32 != 0);
+    }
+
+    /// c:1901 — getalias for empty name returns Some(PM_UNSET).
+    #[test]
+    fn getalias_empty_name_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = getalias(std::ptr::null_mut(), std::ptr::null_mut(), "", 0)
+            .expect("always Some per C convention");
+    }
+
+    /// c:2844 — `setpmralias` no panic with empty value.
+    #[test]
+    fn setpmralias_empty_value_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::{hashnode, param};
+        let pm = Box::new(param {
+            node: hashnode { next: None, nam: "test".to_string(), flags: 0 },
+            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
+            gsu_h: None, base: 0, width: 0, env: None, ename: None,
+            old: None, level: 0,
+        });
+        setpmralias(pm, String::new());
+    }
+
+    /// c:2891 — `unsetpmalias` no panic.
+    #[test]
+    fn unsetpmalias_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::{hashnode, param};
+        let pm = Box::new(param {
+            node: hashnode { next: None, nam: "test".to_string(), flags: 0 },
+            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
+            gsu_h: None, base: 0, width: 0, env: None, ename: None,
+            old: None, level: 0,
+        });
+        unsetpmalias(pm, 0);
+    }
+
+    /// c:2905 — `unsetpmsalias` no panic.
+    #[test]
+    fn unsetpmsalias_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::{hashnode, param};
+        let pm = Box::new(param {
+            node: hashnode { next: None, nam: "test".to_string(), flags: 0 },
+            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
+            gsu_h: None, base: 0, width: 0, env: None, ename: None,
+            old: None, level: 0,
+        });
+        unsetpmsalias(pm, 0);
+    }
 }
