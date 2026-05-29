@@ -864,4 +864,110 @@ mod tests {
         assert!(s.contains("\x1b[1m"), "has bold");
         assert!(s.contains("\x1b[31m"), "has fg=red");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/hlgroup.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:58 — "bold" → SGR 1.
+    #[test]
+    fn convertattr_bold_emits_sgr_1() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("bold", false);
+        assert!(s.contains("\x1b[1m"), "got {:?}", s);
+    }
+
+    /// c:58 — "underline" → SGR 4.
+    #[test]
+    fn convertattr_underline_emits_sgr_4() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("underline", false);
+        assert!(s.contains("\x1b[4m"), "got {:?}", s);
+    }
+
+    /// c:58 — "fg=red" → SGR 31.
+    #[test]
+    fn convertattr_fg_red_emits_sgr_31() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("fg=red", false);
+        assert!(s.contains("\x1b[31m"));
+    }
+
+    /// c:58 — "fg=green" → SGR 32.
+    #[test]
+    fn convertattr_fg_green_emits_sgr_32() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("fg=green", false);
+        assert!(s.contains("\x1b[32m"));
+    }
+
+    /// c:58 — "fg=blue" → SGR 34.
+    #[test]
+    fn convertattr_fg_blue_emits_sgr_34() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("fg=blue", false);
+        assert!(s.contains("\x1b[34m"));
+    }
+
+    /// c:58 — deterministic.
+    #[test]
+    fn convertattr_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for input in ["bold", "fg=red", "underline,fg=blue", ""] {
+            let first = convertattr(input, false);
+            for _ in 0..5 {
+                assert_eq!(convertattr(input, false), first);
+            }
+        }
+    }
+
+    /// c:210 — getgroup unknown → None.
+    #[test]
+    fn getgroup_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getgroup("zshrs_never_real_group_xyz", false).is_none());
+    }
+
+    /// c:210 — getgroup empty → None.
+    #[test]
+    fn getgroup_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getgroup("", false).is_none());
+    }
+
+    /// c:283 — scangroup no panic.
+    #[test]
+    fn scangroup_returns_vec_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = scangroup(false);
+        let _ = scangroup(true);
+    }
+
+    /// c:297 — getpmesc unknown → None.
+    #[test]
+    fn getpmesc_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getpmesc("zshrs_never_real_esc_xyz").is_none());
+    }
+
+    /// c:313 — getpmsgr unknown → None.
+    #[test]
+    fn getpmsgr_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getpmsgr("zshrs_never_real_sgr_xyz").is_none());
+    }
+
+    /// Lifecycle (c:337/366) split per-hook.
+    #[test]
+    fn hlgroup_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:366 — cleanup_(NULL) = 0.
+    #[test]
+    fn hlgroup_cleanup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+    }
 }
