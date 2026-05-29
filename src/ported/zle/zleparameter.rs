@@ -885,4 +885,126 @@ mod tests {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zleparameter.c
+    // c:30 widgetstr / c:37 dispatch / c:81 scanpmwidgets /
+    // c:105 keymapsgetfn / c:147-198 lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:30 — `widgetstr(name,false,false)` returns "builtin" regardless of name.
+    #[test]
+    fn widgetstr_builtin_ignores_name() {
+        let _g = crate::test_util::global_state_lock();
+        for name in ["", "a", "x", "self-insert", "fancy-name"] {
+            assert_eq!(widgetstr(name, false, false), "builtin",
+                "builtin mode ignores name; got name={:?}", name);
+        }
+    }
+
+    /// c:32-34 — `is_completion=true` wins over `is_user=true`
+    /// (completion checked first in the dispatch order).
+    #[test]
+    fn widgetstr_completion_precedence_over_user() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(widgetstr("foo", true, true), "completion:foo",
+            "completion bit dominates user bit");
+    }
+
+    /// c:35 — `is_user=true,is_completion=false` formats `user:NAME`.
+    #[test]
+    fn widgetstr_user_format() {
+        let _g = crate::test_util::global_state_lock();
+        for name in ["", "a", "complete-word", "_complete"] {
+            assert_eq!(widgetstr(name, true, false), format!("user:{}", name));
+        }
+    }
+
+    /// c:33 — `is_completion=true` formats `completion:NAME`.
+    #[test]
+    fn widgetstr_completion_format() {
+        let _g = crate::test_util::global_state_lock();
+        for name in ["", "_main_complete", "_complete_help", "x"] {
+            assert_eq!(widgetstr(name, false, true), format!("completion:{}", name));
+        }
+    }
+
+    /// c:30 — `widgetstr` return type is owned String (compile-time pin).
+    #[test]
+    fn widgetstr_return_type_is_owned_string() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = widgetstr("x", false, false);
+        let _: String = widgetstr("x", true, false);
+        let _: String = widgetstr("x", false, true);
+    }
+
+    /// c:81 — `scanpmwidgets` with None callback returns void (safe no-op).
+    #[test]
+    fn scanpmwidgets_none_callback_safe() {
+        let _g = crate::test_util::global_state_lock();
+        scanpmwidgets(std::ptr::null_mut(), None, 0);
+        scanpmwidgets(std::ptr::null_mut(), None, 0xff);
+    }
+
+    /// c:105 — `keymapsgetfn` returns Vec<String> (compile-time pin, alt name).
+    #[test]
+    fn keymapsgetfn_returns_vec_string_compile_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = keymapsgetfn(std::ptr::null_mut());
+    }
+
+    /// c:105-119 — `keymapsgetfn` output is sorted (additional pin via clone-compare).
+    #[test]
+    fn keymapsgetfn_sorted_clone_compare() {
+        let _g = crate::test_util::global_state_lock();
+        let v = keymapsgetfn(std::ptr::null_mut());
+        let mut sorted = v.clone();
+        sorted.sort();
+        assert_eq!(v, sorted, "keymapsgetfn must return sorted names");
+    }
+
+    /// c:105 — `keymapsgetfn` is deterministic (purely a snapshot read).
+    #[test]
+    fn keymapsgetfn_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = keymapsgetfn(std::ptr::null_mut());
+        for _ in 0..5 {
+            assert_eq!(keymapsgetfn(std::ptr::null_mut()), first,
+                "must be deterministic across calls");
+        }
+    }
+
+    /// c:33 — `getpmwidgets` returns Some unconditionally (PM_UNSET signals
+    /// not-found; C path mirrors this with `pm.flags |= PM_UNSET`).
+    #[test]
+    fn getpmwidgets_returns_some_for_unknown_name() {
+        let _g = crate::test_util::global_state_lock();
+        let pm = getpmwidgets(std::ptr::null_mut(), "definitely-not-a-widget-xyz123");
+        assert!(pm.is_some(), "even unknown name returns Some (flags carry PM_UNSET)");
+    }
+
+    /// c:155-198 — every lifecycle hook is independently idempotent
+    /// (fine-grained vs the bulk full-sweep test).
+    #[test]
+    fn zleparameter_features_idempotent() {
+        for _ in 0..10 { assert_eq!(features_(), 0); }
+    }
+
+    /// c:162 — `enables_` idempotent.
+    #[test]
+    fn zleparameter_enables_idempotent() {
+        for _ in 0..10 { assert_eq!(enables_(), 0); }
+    }
+
+    /// c:181 — `boot_` idempotent.
+    #[test]
+    fn zleparameter_boot_idempotent() {
+        for _ in 0..10 { assert_eq!(boot_(), 0); }
+    }
+
+    /// c:190 — `cleanup_` idempotent.
+    #[test]
+    fn zleparameter_cleanup_idempotent() {
+        for _ in 0..10 { assert_eq!(cleanup_(), 0); }
+    }
 }
