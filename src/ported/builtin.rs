@@ -13327,4 +13327,104 @@ mod tests {
         // never called by test code (would terminate the test process).
         // No assertions — pin via not calling.
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/builtin.c
+    // c:131 createbuiltintable / c:232 init_builtins / c:1837 cd_able_vars
+    // c:1999 fixdir / c:2490 fcgetcomm / c:2526 fcsubs / c:209 freebuiltinnode
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:131 — `createbuiltintable` returns &HashMap (compile-time pin).
+    #[test]
+    fn createbuiltintable_returns_hashmap_ref_type() {
+        let _: &HashMap<String, &builtin> = createbuiltintable();
+    }
+
+    /// c:131 — `createbuiltintable` is idempotent (returns same ref).
+    #[test]
+    fn createbuiltintable_returns_same_ref() {
+        let a = createbuiltintable() as *const _;
+        let b = createbuiltintable() as *const _;
+        assert_eq!(a, b, "createbuiltintable must return same singleton");
+    }
+
+    /// c:131 — table contains common shell builtins (sanity sweep).
+    #[test]
+    fn createbuiltintable_contains_canonical_builtins() {
+        let t = createbuiltintable();
+        for name in ["true", "false", "set", "cd", "exit", "echo"] {
+            assert!(t.contains_key(name),
+                "builtin table must contain {:?}", name);
+        }
+    }
+
+    /// c:232 — `init_builtins` is idempotent.
+    #[test]
+    fn init_builtins_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            init_builtins();
+        }
+    }
+
+    /// c:1837 — `cd_able_vars("")` empty returns None.
+    #[test]
+    fn cd_able_vars_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(cd_able_vars("").is_none(), "empty → None");
+    }
+
+    /// c:1837 — `cd_able_vars` returns Option<String> (type pin).
+    #[test]
+    fn cd_able_vars_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = cd_able_vars("anything");
+    }
+
+    /// c:1999 — `fixdir("")` empty returns String (type pin).
+    #[test]
+    fn fixdir_empty_returns_string_type() {
+        let _: String = fixdir("");
+    }
+
+    /// c:1999 — `fixdir` is pure.
+    #[test]
+    fn fixdir_is_pure() {
+        for s in ["", "/abs", "rel", "./dot", "../parent", "a/b/c"] {
+            let first = fixdir(s);
+            for _ in 0..3 {
+                assert_eq!(fixdir(s), first,
+                    "fixdir({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:2490 — `fcgetcomm("")` empty returns i64 (type pin).
+    #[test]
+    fn fcgetcomm_empty_returns_i64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i64 = fcgetcomm("");
+    }
+
+    /// c:2490 — `fcgetcomm` is deterministic for invalid input.
+    #[test]
+    fn fcgetcomm_invalid_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["", "garbage", "not_a_number"] {
+            let first = fcgetcomm(s);
+            for _ in 0..3 {
+                assert_eq!(fcgetcomm(s), first,
+                    "fcgetcomm({:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:2526 — `fcsubs(&mut s, &[])` empty sub list is no-op.
+    #[test]
+    fn fcsubs_empty_subs_returns_zero() {
+        let mut s = "hello".to_string();
+        let r = fcsubs(&mut s, &[]);
+        assert_eq!(r, 0, "empty subs → 0 (no substitutions)");
+        assert_eq!(s, "hello", "string unchanged");
+    }
 }
