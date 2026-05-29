@@ -2047,13 +2047,25 @@ pub fn checkclobberparam(f: &redir) -> i32 {
         Some(v) => v.clone(),
         None => return 1, // c:2185-2186 — `if (!s) return 1;`
     };
-    // c:2188-2197 — readonly refusal: lookup PM flags directly via
-    // paramtab (the C `getvalue` returns a Value wrapping the same
-    // pm; we read pm->node.flags here without the wrap).
-    let readonly = paramtab()
-        .read()
-        .ok()
-        .and_then(|t| t.get(&s).map(|p| (p.node.flags as u32 & PM_READONLY) != 0))
+    // c:2186 — `if (!(v = getvalue(&vbuf, &s, 0))) return 1;`
+    let mut vbuf = crate::ported::zsh_h::value {
+        pm: None,
+        arr: Vec::new(),
+        scanflags: 0,
+        valflags: 0,
+        start: 0,
+        end: 0,
+    };
+    let mut cursor: &str = s.as_str();
+    let v_opt = crate::ported::params::getvalue(Some(&mut vbuf), &mut cursor, 0);
+    if v_opt.is_none() {
+        return 1; // c:2187
+    }
+    // c:2188-2197 — readonly refusal via v->pm->node.flags.
+    let readonly = vbuf
+        .pm
+        .as_ref()
+        .map(|p| (p.node.flags as u32 & PM_READONLY) != 0)
         .unwrap_or(false);
     if readonly {
         // c:2191
@@ -2071,11 +2083,7 @@ pub fn checkclobberparam(f: &redir) -> i32 {
     // open so we don't clobber it.
     if !isset(CLOBBER) {
         // c:2201 — `getstrvalue(v)` — read the param's string form.
-        let val_str = paramtab()
-            .read()
-            .ok()
-            .and_then(|t| t.get(&s).and_then(|p| p.u_str.clone()))
-            .unwrap_or_default();
+        let val_str = crate::ported::params::getstrvalue(Some(&mut vbuf));
         if let Ok(fd) = val_str.trim().parse::<i32>() {
             // c:2202 — `if (fd <= max_zsh_fd && fdtable[fd] == FDT_EXTERNAL)`
             let max_fd = MAX_ZSH_FD.load(Ordering::Relaxed);
