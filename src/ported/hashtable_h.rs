@@ -245,4 +245,89 @@ mod tests {
         assert_eq!(BIN_PRINT, 13);
         assert_eq!(BIN_EVAL, 14);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hashtable.h BIN_* constants.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:34 — `BIN_TYPESET` is 0 (canonical first slot).
+    #[test]
+    fn BIN_TYPESET_is_zero() {
+        assert_eq!(BIN_TYPESET, 0);
+    }
+
+    /// c:35-39 — job-control builtins (BG/FG/JOBS/WAIT/DISOWN).
+    #[test]
+    fn job_control_builtin_codes_canonical() {
+        assert_eq!(BIN_BG, 1);
+        assert_eq!(BIN_FG, 2);
+        assert_eq!(BIN_JOBS, 3);
+        assert_eq!(BIN_WAIT, 4);
+        assert_eq!(BIN_DISOWN, 5);
+    }
+
+    /// c:49-53 — sched/fc/r/pushline/logout sequence (15..19).
+    #[test]
+    fn hist_builtin_codes_canonical() {
+        assert_eq!(BIN_SCHED, 15);
+        assert_eq!(BIN_FC, 16);
+        assert_eq!(BIN_R, 17);
+        assert_eq!(BIN_PUSHLINE, 18);
+        assert_eq!(BIN_LOGOUT, 19);
+    }
+
+    /// c:54-58 — test/[/readonly/echo/disable (20..24).
+    #[test]
+    fn test_readonly_echo_builtin_codes_canonical() {
+        assert_eq!(BIN_TEST, 20);
+        assert_eq!(BIN_BRACKET, 21);
+        assert_eq!(BIN_READONLY, 22);
+        assert_eq!(BIN_ECHO, 23);
+        assert_eq!(BIN_DISABLE, 24);
+    }
+
+    /// All BIN_* constants are pairwise distinct (no aliasing).
+    #[test]
+    fn all_bin_codes_pairwise_distinct() {
+        let codes = [
+            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
+            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
+            BIN_CD, BIN_POPD, BIN_PUSHD,
+            BIN_PRINT, BIN_EVAL, BIN_SCHED, BIN_FC, BIN_R,
+            BIN_PUSHLINE, BIN_LOGOUT, BIN_TEST, BIN_BRACKET,
+            BIN_READONLY, BIN_ECHO, BIN_DISABLE,
+        ];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "BIN_* must be pairwise distinct");
+    }
+
+    /// All BIN_* constants are non-negative (used as array indices).
+    #[test]
+    fn all_bin_codes_non_negative() {
+        for c in [
+            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
+            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
+            BIN_CD, BIN_POPD, BIN_PUSHD,
+            BIN_PRINT, BIN_EVAL,
+        ] {
+            assert!(c >= 0, "BIN_* code {} must be ≥ 0", c);
+        }
+    }
+
+    /// c:34-58 — BIN_* form contiguous 0..25 (no holes).
+    #[test]
+    fn bin_codes_form_contiguous_range() {
+        let mut codes: Vec<i32> = vec![
+            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
+            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
+            BIN_CD, BIN_POPD, BIN_PUSHD,
+            BIN_PRINT, BIN_EVAL, BIN_SCHED, BIN_FC, BIN_R,
+            BIN_PUSHLINE, BIN_LOGOUT, BIN_TEST, BIN_BRACKET,
+            BIN_READONLY, BIN_ECHO, BIN_DISABLE,
+        ];
+        codes.sort();
+        for (i, c) in codes.iter().enumerate() {
+            assert_eq!(*c, i as i32, "BIN_* must form contiguous 0..N range");
+        }
+    }
 }
