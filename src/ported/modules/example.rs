@@ -1079,4 +1079,121 @@ mod tests {
             assert_eq!(setup_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/example.c
+    // c:149 cond_p_len / c:179 cond_i_ex / c:198 math_sum / c:250 math_length
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:149 — `cond_p_len` returns i32 (compile-time pin).
+    #[test]
+    fn cond_p_len_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cond_p_len(&[], 0);
+    }
+
+    /// c:149 — `cond_p_len([empty])` (single empty-string arg) returns 1
+    /// per c:95 `return !s1[0]`.
+    #[test]
+    fn cond_p_len_single_empty_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_p_len(&["".to_string()], 0);
+        assert_eq!(r, 1, "single empty-arg case must match `!s1[0]` → 1");
+    }
+
+    /// c:149 — return value is boolean 0 or 1 only.
+    #[test]
+    fn cond_p_len_returns_boolean_i32_only() {
+        let _g = crate::test_util::global_state_lock();
+        for a in [
+            vec!["".to_string()],
+            vec!["hello".to_string()],
+            vec!["hello".to_string(), "5".to_string()],
+            vec!["hello".to_string(), "0".to_string()],
+        ] {
+            let r = cond_p_len(&a, 0);
+            assert!(r == 0 || r == 1,
+                "cond_p_len({:?}) must return 0 or 1; got {}", a, r);
+        }
+    }
+
+    /// c:179 — `cond_i_ex` returns i32 (compile-time pin).
+    #[test]
+    fn cond_i_ex_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cond_i_ex(&["".to_string(), "".to_string()], 0);
+    }
+
+    /// c:179 — `cond_i_ex(["exam", "ple"])` concat = "example" → returns 1.
+    #[test]
+    fn cond_i_ex_split_example_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_i_ex(&["exam".to_string(), "ple".to_string()], 0);
+        assert_eq!(r, 1, "exam+ple = example → 1");
+    }
+
+    /// c:179 — `cond_i_ex(["foo", "bar"])` concat ≠ "example" → returns 0.
+    #[test]
+    fn cond_i_ex_mismatch_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_i_ex(&["foo".to_string(), "bar".to_string()], 0);
+        assert_eq!(r, 0, "foo+bar ≠ example → 0");
+    }
+
+    /// c:198 — `math_sum` of integer arguments yields MN_INTEGER.
+    #[test]
+    fn math_sum_all_integers_returns_integer_type() {
+        let _g = crate::test_util::global_state_lock();
+        let argv = vec![
+            mnumber { l: 3, d: 0.0, type_: MN_INTEGER },
+            mnumber { l: 5, d: 0.0, type_: MN_INTEGER },
+        ];
+        let r = math_sum("sum", 2, &argv, 0);
+        assert_eq!(r.type_, MN_INTEGER, "all-int sum must be MN_INTEGER");
+        assert_eq!(r.l, 8, "3+5=8");
+    }
+
+    /// c:198 — `math_sum` with any float arg promotes result to MN_FLOAT.
+    #[test]
+    fn math_sum_mixed_promotes_to_float() {
+        let _g = crate::test_util::global_state_lock();
+        let argv = vec![
+            mnumber { l: 3, d: 0.0, type_: MN_INTEGER },
+            mnumber { l: 0, d: 2.5, type_: MN_FLOAT },
+        ];
+        let r = math_sum("sum", 2, &argv, 0);
+        assert_eq!(r.type_, MN_FLOAT, "mixed int+float must promote to MN_FLOAT");
+        assert!((r.d - 5.5).abs() < 1e-9, "3+2.5 = 5.5, got {}", r.d);
+    }
+
+    /// c:250 — `math_length("")` returns l=0 + MN_INTEGER (combined pin, alt name).
+    #[test]
+    fn math_length_empty_string_returns_zero_and_int_type() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_length("length", "", 0);
+        assert_eq!(r.l, 0, "len('') = 0");
+        assert_eq!(r.type_, MN_INTEGER, "math_length is always MN_INTEGER");
+    }
+
+    /// c:250 — `math_length(arg)` matches arg.len() (byte length per
+    /// c:138 `strlen(arg)`).
+    #[test]
+    fn math_length_matches_byte_length_for_ascii() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["x", "hello", "a longer string here"] {
+            let r = math_length("length", s, 0);
+            assert_eq!(r.l, s.len() as i64,
+                "math_length({:?}) must equal byte length {}", s, s.len());
+        }
+    }
+
+    /// c:198 — `math_sum` empty argv is canonically integer-typed
+    /// (`f=0` path at c:133 → `type_ = MN_INTEGER`).
+    #[test]
+    fn math_sum_empty_is_integer_type() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_sum("sum", 0, &[], 0);
+        assert_eq!(r.type_, MN_INTEGER,
+            "empty sum must be MN_INTEGER (f stayed 0)");
+    }
 }
