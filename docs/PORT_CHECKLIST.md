@@ -89,8 +89,8 @@ isn't ticked until ALL of them pass.
 
 **Codebase metrics** (regenerate via `find src/ported -name '*.rs' | xargs wc -l`
 and `grep -c '// c:' src/ported/<file>.rs`):
-- `src/ported/`: 262,261 lines, 107 files (`find src/ported -name '*.rs'`)
-- `// c:NNN` citations: subst.rs (2144), builtin.rs (2324), zsh_h.rs (745), module.rs (735)
+- `src/ported/`: 266,721 lines, 107 files (`find src/ported -name '*.rs'`)
+- `// c:NNN` citations: subst.rs (2266), builtin.rs (2425), zsh_h.rs (745), module.rs (739)
 - `/// Port of` citations: params.rs (181), zsh_h.rs (123), utils.rs (194)
 
 **ADHOC warnings:** all `WARNING.*ADHOC` annotations cleared from the
