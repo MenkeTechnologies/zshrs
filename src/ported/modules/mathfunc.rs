@@ -1376,4 +1376,117 @@ mod tests {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/mathfunc.c
+    // c:58 math_string / c:286 math_func + lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:58 — `math_string` returns mnumber (compile-time pin, alt).
+    #[test]
+    fn math_string_returns_mnumber_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: mnumber = math_string("strlen", "x", 0);
+    }
+
+    /// c:58 — `math_string` returns the canonical mnumber-shaped value
+    /// for any (name, arg, id). Note: id=0 dispatches to rand48-like
+    /// non-deterministic functions in zshrs's mftab; pin only the
+    /// structural invariant (always returns a 3-field mnumber struct,
+    /// no panic on common id values).
+    #[test]
+    fn math_string_no_panic_across_common_ids() {
+        let _g = crate::test_util::global_state_lock();
+        for id in [0, 1, 2, 5, 10, 100, -1] {
+            let _: mnumber = math_string("any", "input", id);
+        }
+    }
+
+    /// c:286 — `math_func("fabs", 0, &[])` MUST safely return mnumber
+    /// without panicking; C source guards via `argc < min_args` check.
+    /// In zshrs the port indexes `argv[0]` without bounds check at c:347.
+    #[test]
+    #[ignore = "ZSHRS BUG: math_func indexes argv[0] without argc validation; panics OOB when argc=0 (Src/Modules/mathfunc.c:286 — should validate min_args)"]
+    fn math_func_returns_mnumber_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: mnumber = math_func("fabs", 0, &[], 0);
+    }
+
+    /// c:286 — `math_func("fabs", 1, [positive])` keeps value (alt).
+    #[test]
+    fn math_func_fabs_positive_unchanged_alt() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::MN_FLOAT;
+        let arg = mnumber { l: 0, d: 5.0, type_: MN_FLOAT };
+        let r = math_func("fabs", 1, &[arg], 0);
+        assert_eq!(r.d, 5.0, "fabs(5.0) = 5.0");
+    }
+
+    /// c:286 — `math_func("fabs", 1, [large negative])` returns large positive.
+    #[test]
+    fn math_func_fabs_large_negative() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::MN_FLOAT;
+        let arg = mnumber { l: 0, d: -1e20, type_: MN_FLOAT };
+        let r = math_func("fabs", 1, &[arg], 0);
+        assert!((r.d - 1e20).abs() < 1.0, "fabs(-1e20) ≈ 1e20; got {}", r.d);
+    }
+
+    /// c:91 — `setup_` returns i32 (compile-time pin).
+    #[test]
+    fn mathfunc_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:99 — `features_` returns i32 (compile-time pin).
+    #[test]
+    fn mathfunc_features_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = Vec::new();
+        let _: i32 = features_(std::ptr::null(), &mut v);
+    }
+
+    /// c:99 — `features_` produces non-empty list (mathfunc advertises
+    /// several math fns).
+    #[test]
+    fn mathfunc_features_non_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = Vec::new();
+        let _ = features_(std::ptr::null(), &mut v);
+        assert!(!v.is_empty(), "mathfunc must advertise ≥1 feature");
+    }
+
+    /// c:107 — `enables_` returns i32 + None safe.
+    #[test]
+    fn mathfunc_enables_with_none_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:286 — `math_func("fabs", 1, [NaN])` returns NaN (NaN-preserving).
+    #[test]
+    fn math_func_fabs_nan_returns_nan() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::MN_FLOAT;
+        let arg = mnumber { l: 0, d: f64::NAN, type_: MN_FLOAT };
+        let r = math_func("fabs", 1, &[arg], 0);
+        assert!(r.d.is_nan(), "fabs(NaN) = NaN; got {}", r.d);
+    }
+
+    /// c:91/99/107/114/124/131 — each lifecycle hook returns 0 individually.
+    #[test]
+    fn mathfunc_each_lifecycle_hook_returns_zero_individually() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v: Vec<String> = Vec::new();
+        let mut e: Option<Vec<i32>> = None;
+        assert_eq!(setup_(null), 0, "c:91 setup_");
+        assert_eq!(features_(null, &mut v), 0, "c:99 features_");
+        assert_eq!(enables_(null, &mut e), 0, "c:107 enables_");
+        assert_eq!(boot_(null), 0, "c:114 boot_");
+        assert_eq!(cleanup_(null), 0, "c:124 cleanup_");
+        assert_eq!(finish_(null), 0, "c:131 finish_");
+    }
 }
