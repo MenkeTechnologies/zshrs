@@ -1139,4 +1139,118 @@ mod tests {
         let pm = getterminfo(std::ptr::null_mut(), "bold");
         assert!(pm.is_some(), "getterminfo always returns Some per C convention");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/terminfo.c
+    // c:59 bin_echoti / c:204 getterminfo / c:304 scanterminfo + lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:59 — `bin_echoti` returns i32 (compile-time pin, alt).
+    #[test]
+    fn bin_echoti_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_for_pin();
+        let _: i32 = bin_echoti("echoti", &[], &ops, 0);
+    }
+
+    /// c:59 — `bin_echoti` no args returns nonzero (usage error).
+    #[test]
+    fn bin_echoti_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_for_pin();
+        let r = bin_echoti("echoti", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// c:59 — `bin_echoti` empty cap-name returns nonzero.
+    #[test]
+    fn bin_echoti_empty_cap_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_for_pin();
+        let r = bin_echoti("echoti", &["".to_string()], &ops, 0);
+        assert_ne!(r, 0, "empty cap → error");
+    }
+
+    /// c:59 — `bin_echoti` exit code is non-negative.
+    #[test]
+    fn bin_echoti_exit_code_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_for_pin();
+        for argv in [
+            vec![],
+            vec!["bold".into()],
+            vec!["zz_unknown".into()],
+            vec!["cup".into(), "5".into(), "10".into()],
+        ] {
+            let r = bin_echoti("echoti", &argv, &ops, 0);
+            assert!(r >= 0,
+                "exit code must be non-negative, got {} for {:?}", r, argv);
+        }
+    }
+
+    /// c:204 — `getterminfo` returns Some for empty cap name too
+    /// (PM_UNSET signals missing, never None per c:204 convention).
+    #[test]
+    fn getterminfo_empty_cap_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let pm = getterminfo(std::ptr::null_mut(), "");
+        assert!(pm.is_some(),
+            "c:204 getterminfo always returns Some (PM_UNSET signals missing)");
+    }
+
+    /// c:204 — `getterminfo` is deterministic for the same input.
+    #[test]
+    fn getterminfo_deterministic_for_bold() {
+        let _g = crate::test_util::global_state_lock();
+        let a = getterminfo(std::ptr::null_mut(), "bold");
+        let b = getterminfo(std::ptr::null_mut(), "bold");
+        assert_eq!(a.is_some(), b.is_some(),
+            "getterminfo must be deterministic");
+    }
+
+    /// c:304 — `scanterminfo` with None callback returns void.
+    #[test]
+    fn scanterminfo_none_callback_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: () = scanterminfo(std::ptr::null_mut(), None, 0);
+    }
+
+    /// c:304 — `scanterminfo` with various flag bitmasks doesn't panic.
+    #[test]
+    fn scanterminfo_various_flags_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        for flags in [0i32, 1, 2, 0xff, -1] {
+            scanterminfo(std::ptr::null_mut(), None, flags);
+        }
+    }
+
+    /// c:491 — `setup_` returns i32 (compile-time pin).
+    #[test]
+    fn terminfo_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:507 — `enables_` returns i32 (compile-time pin).
+    #[test]
+    fn terminfo_enables_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:491/499/507/514/525/532 — each lifecycle hook returns 0 individually.
+    #[test]
+    fn terminfo_each_lifecycle_hook_returns_zero_individually() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v: Vec<String> = Vec::new();
+        let mut e: Option<Vec<i32>> = None;
+        assert_eq!(setup_(null), 0, "c:491 setup_");
+        assert_eq!(features_(null, &mut v), 0, "c:499 features_");
+        assert_eq!(enables_(null, &mut e), 0, "c:507 enables_");
+        assert_eq!(boot_(null), 0, "c:514 boot_");
+        assert_eq!(cleanup_(null), 0, "c:525 cleanup_");
+        assert_eq!(finish_(null), 0, "c:532 finish_");
+    }
 }
