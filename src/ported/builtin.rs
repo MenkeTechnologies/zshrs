@@ -13427,4 +13427,126 @@ mod tests {
         assert_eq!(r, 0, "empty subs → 0 (no substitutions)");
         assert_eq!(s, "hello", "string unchanged");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/builtin.c
+    // c:1324 bin_pwd / c:6810 bin_true / c:6823 bin_false / c:7247 bin_shift /
+    // c:8444 bin_eval / c:8922 bin_test / c:9012 bin_times / c:9207 bin_ttyctl /
+    // c:9295 bin_umask / c:9240 bin_let — type pins + edge cases
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1324 — `bin_pwd` returns i32 (compile-time type pin).
+    #[test]
+    fn bin_pwd_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        let _: i32 = bin_pwd("pwd", &[], &o, 0);
+    }
+
+    /// c:6810 — `bin_true` returns i32.
+    #[test]
+    fn bin_true_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        let _: i32 = bin_true("true", &[], &o, 0);
+    }
+
+    /// c:6823 — `bin_false` returns i32.
+    #[test]
+    fn bin_false_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        let _: i32 = bin_false("false", &[], &o, 0);
+    }
+
+    /// c:9240 — `bin_let` returns i32.
+    #[test]
+    fn bin_let_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        let _: i32 = bin_let("let", &[], &o, 0);
+    }
+
+    /// c:7247 — `bin_shift` returns i32.
+    #[test]
+    fn bin_shift_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        let _: i32 = bin_shift("shift", &[], &o, 0);
+    }
+
+    /// c:6810 + c:6823 — `bin_true` and `bin_false` are pure (always
+    /// same value regardless of state).
+    #[test]
+    fn bin_true_false_are_pure() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        for _ in 0..5 {
+            assert_eq!(bin_true("true", &[], &o, 0), 0);
+            assert_eq!(bin_false("false", &[], &o, 0), 1);
+        }
+    }
+
+    /// c:1324 — `bin_pwd` exit code in u8 range.
+    #[test]
+    fn bin_pwd_return_in_u8_range() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        let r = bin_pwd("pwd", &[], &o, 0);
+        assert!((0..256).contains(&r),
+            "bin_pwd exit code must fit u8, got {}", r);
+    }
+
+    /// c:7247 — `bin_shift` with no args + empty positional returns
+    /// in 0/1 range (POSIX-conforming).
+    #[test]
+    fn bin_shift_no_args_in_zero_one_range() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        let r = bin_shift("shift", &[], &o, 0);
+        assert!(r == 0 || r == 1, "shift no args ∈ {{0,1}}, got {}", r);
+    }
+
+    /// c:9240 — `bin_let` is deterministic for no-args.
+    #[test]
+    fn bin_let_no_args_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        let first = bin_let("let", &[], &o, 0);
+        for _ in 0..3 {
+            assert_eq!(bin_let("let", &[], &o, 0), first,
+                "bin_let no-args must be deterministic");
+        }
+    }
+
+    /// c:8444 — `bin_eval(&[])` empty args returns i32 (type pin).
+    #[test]
+    fn bin_eval_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        let _: i32 = bin_eval("eval", &[], &o, 0);
+    }
+
+    /// c:6810 — `bin_true` ignores everything (args, opts, func).
+    #[test]
+    fn bin_true_full_argument_immunity() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        // Various permutations all return 0.
+        assert_eq!(bin_true("true", &[], &o, 0), 0);
+        assert_eq!(bin_true("anything", &[], &o, 0), 0);
+        assert_eq!(bin_true("true", &["unused".into()], &o, 99), 0);
+        assert_eq!(bin_true("", &["a".into(), "b".into(), "c".into()], &o, -1), 0);
+    }
+
+    /// c:6823 — `bin_false` ignores everything (args, opts, func).
+    #[test]
+    fn bin_false_full_argument_immunity() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        assert_eq!(bin_false("false", &[], &o, 0), 1);
+        assert_eq!(bin_false("anything", &[], &o, 0), 1);
+        assert_eq!(bin_false("false", &["unused".into()], &o, 99), 1);
+        assert_eq!(bin_false("", &["a".into(), "b".into(), "c".into()], &o, -1), 1);
+    }
 }
