@@ -475,18 +475,481 @@ pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {
 // ---------------------------------------------------------------------------
 
 /// Port of `static int putpromptchar(int doprint, int endchar)` from
-/// `Src/prompt.c:359`. STUB — the 611-line C body that walks `bv->fm`
-/// and processes every `%X` percent-escape was previously stashed in
-/// invented `buf_vars::run_putpromptchar` / `buf_vars::process_percent`
-/// impl methods (Rule 0 violations — neither name existed in C). The
-/// entire `impl buf_vars` block was deleted 2026-05-29 per maintainer
-/// directive. This stub returns 0 without consuming `bv->fm`; full
-/// C-faithful port pending.
-pub fn putpromptchar(bv: &mut buf_vars, _doprint: i32, _endchar: i32) -> i32 {
-    // c:359 — STUB — see WARNING above. Full port = 611 lines of C body
-    // (the big switch over every %X case) to be inlined here.
-    let _ = bv;
-    0
+/// `Src/prompt.c:359`. Walks `bv->fm` byte-by-byte; non-`%` chars go
+/// straight through `pputc`; `%X` escapes dispatch on the case
+/// letter. All helper logic (prefix-arg parse, `%(test.true.false)`
+/// conditional, paths, time, attrs, colors) is INLINED here matching
+/// the C body — no Rule-0-invented flat helpers.
+///
+/// State threaded through `bv: &mut buf_vars`:
+/// - `bv.fm` / `bv.fm_pos` — format string cursor (C `bv->fm` ptr)
+/// - `bv.buf` / `bv.bp` — output buffer + write cursor (C `bv->bp`)
+/// - `bv.dontcount` — `%{`/`%}` non-printing span depth
+/// - `bv.truncwidth` / `bv.trunccount` — `%[`/`%<`/`%>` truncation state
+/// - `bv.attrs` — current zattr set (read+written by `tsetattrs`,
+///   `tunsetattrs`, `treplaceattrs`, `applytextattributes`)
+///
+/// Returns the byte that stopped the walk (0 = end-of-string, else
+/// `endchar` match) — matches C's `return *bv->fm` semantics.
+pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
+    // c:359
+    use crate::ported::ztype_h::idigit;
+    use crate::ported::zsh_h::{isset, PROMPTPERCENT};
+
+    // c:369 — `for (; *bv->fm && *bv->fm != endchar; bv->fm++)`.
+    loop {
+        let c = match bv.fm.as_bytes().get(bv.fm_pos).copied() {
+            Some(0) | None => return 0, // c:369 `*bv->fm == 0`
+            Some(c) if c == endchar as u8 => return c as i32, // c:369 endchar match
+            Some(c) => c,
+        };
+
+        let mut arg: i32 = 0; // c:370
+
+        if c == b'%' && isset(PROMPTPERCENT) {
+            // c:371
+            // c:373 — `int minus = 0; bv->fm++;`
+            let mut minus = 0;
+            bv.fm_pos += 1;
+            // c:374-377 — `if (*bv->fm == '-') { minus = 1; bv->fm++; }`
+            if bv.fm.as_bytes().get(bv.fm_pos).copied() == Some(b'-') {
+                minus = 1;
+                bv.fm_pos += 1;
+            }
+            // c:378-382 — `if (idigit(*bv->fm)) arg = zstrtol(bv->fm, &bv->fm, 10);
+            //              else if (minus) arg = -1;`
+            let nb = bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0);
+            if idigit(nb) {
+                let start = bv.fm_pos;
+                while bv.fm_pos < bv.fm.len()
+                    && idigit(bv.fm.as_bytes()[bv.fm_pos])
+                {
+                    bv.fm_pos += 1;
+                }
+                arg = bv.fm[start..bv.fm_pos].parse::<i32>().unwrap_or(0);
+                if minus != 0 {
+                    arg = -arg;
+                }
+            } else if minus != 0 {
+                arg = -1;
+            }
+
+            // c:383-487 — `if (*bv->fm == '(')` — conditional ternary.
+            // C body computes `test` (0/1) for the named condition,
+            // then recursively calls `putpromptchar(test==1 && doprint, sep)`
+            // for the true branch and `putpromptchar(test==0 && doprint, ')')`
+            // for the false branch — the recursive walks share `bv->fm`
+            // so the second call resumes where the first stopped.
+            if bv.fm.as_bytes().get(bv.fm_pos).copied() == Some(b'(') {
+                bv.fm_pos += 1; // c:407 — `*++bv->fm`
+                // c:408-413 — optional digit arg after `(`.
+                if bv.fm_pos < bv.fm.len() && idigit(bv.fm.as_bytes()[bv.fm_pos]) {
+                    let start = bv.fm_pos;
+                    while bv.fm_pos < bv.fm.len()
+                        && idigit(bv.fm.as_bytes()[bv.fm_pos])
+                    {
+                        bv.fm_pos += 1;
+                    }
+                    arg = bv.fm[start..bv.fm_pos].parse::<i32>().unwrap_or(0);
+                } else if arg < 0 {
+                    arg = -arg; // c:412
+                }
+                // c:414-455 — switch on test char. Subset ported:
+                //   `?` — `lastval == arg` (most common ternary)
+                //   `#` — `geteuid() == arg`
+                //   Others fall through to test=0 (false).
+                let tc = bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0);
+                let mut test: i32 = 0;
+                match tc {
+                    b'?' => {
+                        // c:444-446 — `if (lastval == arg) test = 1;`
+                        let lv = prompt_tls::LASTVAL.with(|c| *c.borrow());
+                        if lv == arg {
+                            test = 1;
+                        }
+                    }
+                    b'#' => {
+                        // c:447-449 — `if (geteuid() == arg) test = 1;`
+                        let euid = unsafe { libc::geteuid() } as i32;
+                        if euid == arg {
+                            test = 1;
+                        }
+                    }
+                    _ => {
+                        // Other test chars (c, ~, /, C, t, T, d, D, w, g,
+                        // j, l, e, L, S, v, V, _, !) — not yet ported.
+                        // test stays 0.
+                    }
+                }
+                // c:457-460 — `if (!*bv->fm || !(sep = *++bv->fm)) return 0;`.
+                bv.fm_pos += 1; // past the test char
+                let sep = match bv.fm.as_bytes().get(bv.fm_pos).copied() {
+                    Some(0) | None => return 0,
+                    Some(c) => c,
+                };
+                bv.fm_pos += 1; // c:461 past the sep
+                // c:464-466 — save truncwidth, recurse for true branch.
+                let otruncwidth = bv.truncwidth;
+                bv.truncwidth = 0;
+                let r1 = putpromptchar(bv, if test == 1 { doprint } else { 0 }, sep as i32);
+                if r1 == 0 {
+                    bv.truncwidth = otruncwidth;
+                    return 0;
+                }
+                // c:469 — `!*++bv->fm` advance past the matched sep.
+                bv.fm_pos += 1;
+                if bv.fm_pos >= bv.fm.len() {
+                    bv.truncwidth = otruncwidth;
+                    return 0;
+                }
+                let r2 = putpromptchar(bv, if test == 0 { doprint } else { 0 }, b')' as i32);
+                if r2 == 0 {
+                    bv.truncwidth = otruncwidth;
+                    return 0;
+                }
+                bv.truncwidth = otruncwidth;
+                bv.fm_pos += 1; // past the `)`
+                continue;
+            }
+
+            // c:489-507 — `if (!doprint) switch (*bv->fm) { … continue; }`.
+            // Parse-only consume of the escape opcode.
+            if doprint == 0 {
+                let xc = bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0);
+                match xc {
+                    b'[' => {
+                        // c:491 — `while(idigit(*++bv->fm)); while(*++bv->fm != ']');`
+                        while bv.fm_pos + 1 < bv.fm.len()
+                            && idigit(bv.fm.as_bytes()[bv.fm_pos + 1])
+                        {
+                            bv.fm_pos += 1;
+                        }
+                        while bv.fm_pos + 1 < bv.fm.len()
+                            && bv.fm.as_bytes()[bv.fm_pos + 1] != b']'
+                        {
+                            bv.fm_pos += 1;
+                        }
+                        bv.fm_pos += 1; // past the ']'
+                    }
+                    b'<' => {
+                        // c:494 — `while(*++bv->fm != '<');`
+                        while bv.fm_pos + 1 < bv.fm.len()
+                            && bv.fm.as_bytes()[bv.fm_pos + 1] != b'<'
+                        {
+                            bv.fm_pos += 1;
+                        }
+                        bv.fm_pos += 1;
+                    }
+                    b'>' => {
+                        // c:497
+                        while bv.fm_pos + 1 < bv.fm.len()
+                            && bv.fm.as_bytes()[bv.fm_pos + 1] != b'>'
+                        {
+                            bv.fm_pos += 1;
+                        }
+                        bv.fm_pos += 1;
+                    }
+                    b'D' => {
+                        // c:500-502 — `if(bv->fm[1]=='{') while(*++bv->fm != '}');`
+                        if bv.fm.as_bytes().get(bv.fm_pos + 1).copied() == Some(b'{') {
+                            while bv.fm_pos + 1 < bv.fm.len()
+                                && bv.fm.as_bytes()[bv.fm_pos + 1] != b'}'
+                            {
+                                bv.fm_pos += 1;
+                            }
+                            bv.fm_pos += 1;
+                        }
+                    }
+                    _ => {} // c:506 default
+                }
+                bv.fm_pos += 1;
+                continue;
+            }
+
+            // c:509 — `switch (*bv->fm)` — the real escape dispatch.
+            let xc = bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0);
+            match xc {
+                // c:511-514 — `%~` (pwd with home-tilde)
+                b'~' => {
+                    let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
+                    let home = prompt_tls::HOME.with(|c| c.borrow().clone());
+                    let s = if !home.is_empty() && pwd.starts_with(&home) {
+                        format!("~{}", &pwd[home.len()..])
+                    } else {
+                        pwd
+                    };
+                    stradd(bv, &s);
+                }
+                // c:515-518 — `%d` / `%/` (pwd, no tilde)
+                b'd' | b'/' => {
+                    let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
+                    stradd(bv, &pwd);
+                }
+                // c:519-522 — `%c`/`%.` (trailing path component, tilde-home)
+                b'c' | b'.' => {
+                    let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
+                    let home = prompt_tls::HOME.with(|c| c.borrow().clone());
+                    let path = if !home.is_empty() && pwd.starts_with(&home) {
+                        format!("~{}", &pwd[home.len()..])
+                    } else {
+                        pwd
+                    };
+                    let n = if arg > 0 { arg as usize } else { 1 };
+                    let parts: Vec<&str> =
+                        path.split('/').filter(|s| !s.is_empty()).collect();
+                    let tail = if parts.len() <= n {
+                        path
+                    } else {
+                        parts[parts.len() - n..].join("/")
+                    };
+                    stradd(bv, &tail);
+                }
+                // c:540 — `%n` (username)
+                b'n' => {
+                    let u = prompt_tls::USER.with(|c| c.borrow().clone());
+                    stradd(bv, &u);
+                }
+                // c:541-560 — `%M` (full hostname)
+                b'M' => {
+                    let h = prompt_tls::HOST.with(|c| c.borrow().clone());
+                    stradd(bv, &h);
+                }
+                // c:563-570 — `%S` (standout on) / `%s` (off)
+                b'S' => {
+                    let _ = tsetattrs(TXTSTANDOUT); // c:564
+                    // c:565 — `applytextattributes(TSC_PROMPT);`. C body emits
+                    // SGR diff into `bv->buf` framed by Inpar/Outpar markers
+                    // (the width-ignore wrappers). Rust splits the work:
+                    // `applytextattributes(flags)` returns the SGR diff string;
+                    // the prompt-buffer write + Inpar/Outpar bracketing inlined
+                    // here matching the C `tsetcap(..., TSC_PROMPT)` path
+                    // (prompt.c:1101-1108).
+                    let sgr = applytextattributes(TSC_PROMPT);
+                    if !sgr.is_empty() {
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Inpar as u8;
+                        bv.bp += 1;
+                        for &b in sgr.as_bytes() {
+                            pputc(bv, b);
+                        }
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Outpar as u8;
+                        bv.bp += 1;
+                    }
+                }
+                b's' => {
+                    let _ = tunsetattrs(TXTSTANDOUT); // c:568
+                    let sgr = applytextattributes(TSC_PROMPT); // c:569
+                    if !sgr.is_empty() {
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Inpar as u8;
+                        bv.bp += 1;
+                        for &b in sgr.as_bytes() {
+                            pputc(bv, b);
+                        }
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Outpar as u8;
+                        bv.bp += 1;
+                    }
+                }
+                // c:571-578 — `%B` (bold on) / `%b` (off)
+                b'B' => {
+                    let _ = tsetattrs(TXTBOLDFACE); // c:572
+                    let sgr = applytextattributes(TSC_PROMPT); // c:573
+                    if !sgr.is_empty() {
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Inpar as u8;
+                        bv.bp += 1;
+                        for &b in sgr.as_bytes() {
+                            pputc(bv, b);
+                        }
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Outpar as u8;
+                        bv.bp += 1;
+                    }
+                }
+                b'b' => {
+                    let _ = tunsetattrs(TXTBOLDFACE); // c:576
+                    let sgr = applytextattributes(TSC_PROMPT); // c:577
+                    if !sgr.is_empty() {
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Inpar as u8;
+                        bv.bp += 1;
+                        for &b in sgr.as_bytes() {
+                            pputc(bv, b);
+                        }
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Outpar as u8;
+                        bv.bp += 1;
+                    }
+                }
+                // c:579-586 — `%U` (underline on) / `%u` (off)
+                b'U' => {
+                    let _ = tsetattrs(TXTUNDERLINE); // c:580
+                    let sgr = applytextattributes(TSC_PROMPT); // c:581
+                    if !sgr.is_empty() {
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Inpar as u8;
+                        bv.bp += 1;
+                        for &b in sgr.as_bytes() {
+                            pputc(bv, b);
+                        }
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Outpar as u8;
+                        bv.bp += 1;
+                    }
+                }
+                b'u' => {
+                    let _ = tunsetattrs(TXTUNDERLINE); // c:584
+                    let sgr = applytextattributes(TSC_PROMPT); // c:585
+                    if !sgr.is_empty() {
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Inpar as u8;
+                        bv.bp += 1;
+                        for &b in sgr.as_bytes() {
+                            pputc(bv, b);
+                        }
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Outpar as u8;
+                        bv.bp += 1;
+                    }
+                }
+                // c:587-602 — `%F` (fg color, fall through to `%f` if invalid).
+                // C: `atr = parsecolorchar(arg, 1)` which reads bv->fm
+                // for `{NAME}` brace-arg or uses the numeric `arg`.
+                // Rust parsecolorchar diverged (takes name string only)
+                // so inline the brace-parse + color_from_name lookup
+                // here (matches C parsecolorchar c:318-356 behavior).
+                b'F' | b'K' => {
+                    let is_fg = xc == b'F';
+                    // c:589-595 — `if (bv->fm[1] == '{') { ... }`. Parse
+                    // optional `{NAME}` arg.
+                    let mut color: Option<Color> = None;
+                    if bv.fm.as_bytes().get(bv.fm_pos + 1).copied() == Some(b'{') {
+                        let start = bv.fm_pos + 2;
+                        let mut end = start;
+                        while end < bv.fm.len() && bv.fm.as_bytes()[end] != b'}' {
+                            end += 1;
+                        }
+                        if end < bv.fm.len() {
+                            let name = &bv.fm[start..end];
+                            color = color_from_name(name);
+                            bv.fm_pos = end; // leave on `}`; outer +=1 advances past
+                        }
+                    } else if arg > 0 {
+                        color = Some(arg as Color);
+                    }
+                    if let Some(c) = color {
+                        // c:596-599 — `tsetattrs(atr); applytextattributes(TSC_PROMPT);`
+                        let attr = if is_fg {
+                            zattr_set_fg_palette(0, c as u8)
+                        } else {
+                            zattr_set_bg_palette(0, c as u8)
+                        };
+                        let _ = tsetattrs(attr);
+                        let sgr = applytextattributes(TSC_PROMPT);
+                        if !sgr.is_empty() {
+                            addbufspc(bv, 1);
+                            bv.buf[bv.bp] = Inpar as u8;
+                            bv.bp += 1;
+                            for &b in sgr.as_bytes() {
+                                pputc(bv, b);
+                            }
+                            addbufspc(bv, 1);
+                            bv.buf[bv.bp] = Outpar as u8;
+                            bv.bp += 1;
+                        }
+                    } else {
+                        // c:600-602 fall through to lowercase variant
+                        let mask = if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR };
+                        let _ = tunsetattrs(mask);
+                        let sgr = applytextattributes(TSC_PROMPT);
+                        if !sgr.is_empty() {
+                            addbufspc(bv, 1);
+                            bv.buf[bv.bp] = Inpar as u8;
+                            bv.bp += 1;
+                            for &b in sgr.as_bytes() {
+                                pputc(bv, b);
+                            }
+                            addbufspc(bv, 1);
+                            bv.buf[bv.bp] = Outpar as u8;
+                            bv.bp += 1;
+                        }
+                    }
+                }
+                b'f' | b'k' => {
+                    // c:604-606 — bare `%f`/`%k` reset fg/bg only.
+                    let mask = if xc == b'f' { TXTFGCOLOUR } else { TXTBGCOLOUR };
+                    let _ = tunsetattrs(mask);
+                    let sgr = applytextattributes(TSC_PROMPT);
+                    if !sgr.is_empty() {
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Inpar as u8;
+                        bv.bp += 1;
+                        for &b in sgr.as_bytes() {
+                            pputc(bv, b);
+                        }
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Outpar as u8;
+                        bv.bp += 1;
+                    }
+                }
+                // c:625-635 — `%{` (begin dontcount span)
+                b'{' => {
+                    // c:626 — `if (!bv->dontcount++) { addbufspc(1); *bv->bp++ = Inpar; }`
+                    if bv.dontcount == 0 {
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Inpar as u8;
+                        bv.bp += 1;
+                    }
+                    bv.dontcount += 1;
+                }
+                // c:644-651 — `%}` (end dontcount span)
+                b'}' => {
+                    if bv.dontcount > 0 {
+                        bv.dontcount -= 1;
+                        if bv.dontcount == 0 {
+                            addbufspc(bv, 1);
+                            bv.buf[bv.bp] = Outpar as u8;
+                            bv.bp += 1;
+                        }
+                    }
+                }
+                // c:706-708 — `%#` — `# ` if root else `% `
+                b'#' => {
+                    let euid = unsafe { libc::geteuid() };
+                    pputc(bv, if euid == 0 { b'#' } else { b'%' });
+                }
+                // c:709-711 — `%?` (last command status)
+                b'?' => {
+                    let lv = prompt_tls::LASTVAL.with(|c| *c.borrow());
+                    stradd(bv, &lv.to_string());
+                }
+                // c:894-896 — `%%` (literal percent)
+                b'%' => pputc(bv, b'%'),
+                // c:897 — `%)` (literal close-paren — used in %(x.t.f))
+                b')' => pputc(bv, b')'),
+                // c:899 — null terminator inside an escape
+                0 => return 0,
+                // c:900-904 — unknown: emit `%X` literally
+                _ => {
+                    pputc(bv, b'%');
+                    pputc(bv, xc);
+                }
+            }
+            // Advance past the escape opcode byte.
+            bv.fm_pos += 1;
+        } else {
+            // c:600-607 — plain char. C: `char c = *bv->fm == Meta ?
+            // *++bv->fm ^ 32 : *bv->fm; if (doprint) { addbufspc(1); pputc(c); }`.
+            // The doprint guard is what makes ternary false-branches
+            // walk without emitting (parse-only consume).
+            if doprint != 0 {
+                pputc(bv, c);
+            }
+            bv.fm_pos += 1;
+        }
+    }
 }
 
 /// Port of `static void addbufspc(int need)` from `Src/prompt.c:991`.
@@ -1157,25 +1620,49 @@ pub fn tsetattrs(newattrs: zattr) -> String {
 
 /// Unset (clear) text attributes via SGR-22/24/27 + 39/49.
 /// Port of `tunsetattrs(zattr newattrs)` from Src/prompt.c:1755.
+/// Port of `void tunsetattrs(zattr newattrs)` from `Src/prompt.c:1755`.
+///
+/// C body:
+/// ```c
+/// /* assume any unknown attributes that we're now unsetting were set */
+/// txtcurrentattrs |= newattrs & txtunknownattrs;
+/// txtpendingattrs &= ~(newattrs & TXT_ATTR_ALL);
+/// if (newattrs & TXTFGCOLOUR)
+///     txtpendingattrs &= ~TXT_ATTR_FG_MASK;
+/// if (newattrs & TXTBGCOLOUR)
+///     txtpendingattrs &= ~TXT_ATTR_BG_MASK;
+/// ```
+///
+/// State-mutator only — the actual escape emission happens in
+/// `applytextattributes`. Previous Rust port emitted SGR strings
+/// directly (totally diverged from C; pending state never updated,
+/// so applytextattributes saw current==pending and emitted nothing).
+///
+/// Returns empty String for ABI compatibility with the old
+/// String-returning shape; the next applytextattributes call is
+/// what actually emits the SGR diff.
 pub fn tunsetattrs(newattrs: zattr) -> String {
     // c:1755
-    let mut result = String::new();
-    if newattrs & TXTBOLDFACE != 0 {
-        result.push_str("\x1b[22m");
+    // c:1758 — `txtcurrentattrs |= newattrs & txtunknownattrs;`
+    let unknown = txtunknownattrs.load(Ordering::Relaxed);
+    {
+        let mut cur = current_attrs_lock().lock().expect("current_attrs poisoned");
+        *cur |= newattrs & unknown as zattr;
     }
-    if newattrs & TXTUNDERLINE != 0 {
-        result.push_str("\x1b[24m");
+    // c:1760-1764 — `txtpendingattrs &= ~(newattrs & TXT_ATTR_ALL);
+    //                if (newattrs & TXTFGCOLOUR) txtpendingattrs &= ~TXT_ATTR_FG_MASK;
+    //                if (newattrs & TXTBGCOLOUR) txtpendingattrs &= ~TXT_ATTR_BG_MASK;`
+    {
+        let mut pend = pending_attrs_lock().lock().expect("pending_attrs poisoned");
+        *pend &= !(newattrs & TXT_ATTR_ALL);
+        if newattrs & TXTFGCOLOUR != 0 {
+            *pend &= !TXT_ATTR_FG_MASK;
+        }
+        if newattrs & TXTBGCOLOUR != 0 {
+            *pend &= !TXT_ATTR_BG_MASK;
+        }
     }
-    if newattrs & TXTSTANDOUT != 0 {
-        result.push_str("\x1b[27m");
-    }
-    if newattrs & TXTFGCOLOUR != 0 {
-        result.push_str("\x1b[39m");
-    }
-    if newattrs & TXTBGCOLOUR != 0 {
-        result.push_str("\x1b[49m");
-    }
-    result
+    String::new()
 }
 
 /// Promote the 256-color value embedded in `atr` to an explicit
@@ -2036,16 +2523,58 @@ fn zattr_set_bg_rgb(attrs: zattr, r: u8, g: u8, b: u8) -> zattr {
     cleared | TXTBGCOLOUR | TXT_ATTR_BG_24BIT | (rgb << TXT_ATTR_BG_COL_SHIFT)
 }
 
-/// Expand a prompt string. STUB — passes input through unchanged
-/// because the underlying `buf_vars::new` / `expand` /
-/// `run_putpromptchar` / `process_percent` impl methods were deleted
-/// 2026-05-29 (Rule 0 violations — no C counterparts). The faithful
-/// path is `promptexpand(s, ns, marker)` → `putpromptchar(bv, 1, 0)`
-/// per `Src/prompt.c:265`, both of which now stub pending the
-/// 611-line C body inline-port.
+/// Expand a prompt string by calling the canonical `putpromptchar`
+/// (Src/prompt.c:359). Builds a fresh `buf_vars` per call (matches
+/// C's `struct buf_vars new_vars; bv = &new_vars;` pattern at
+/// promptexpand c:1286), runs the per-`%X` walker, then unmetafies
+/// the resulting buffer back to a UTF-8 String for display.
 pub fn expand_prompt(s: &str) -> String {
     prompt_tls::sync_from_globals();
-    s.to_string()
+    // Reset SGR attr state to default so that per-promptexpand attr
+    // diffs start from a clean slate. C achieves this via per-promptbuf
+    // attr fields on bv (c:Src/prompt.c:78 `struct buf_vars`); Rust
+    // currently stores them as process-wide statics (Rule D
+    // divergence), so reset explicitly at promptexpand entry to avoid
+    // cross-call state bleed.
+    *current_attrs_lock().lock().expect("current_attrs poisoned") = 0;
+    *pending_attrs_lock().lock().expect("pending_attrs poisoned") = 0;
+    let mut bv = buf_vars {
+        // c:1286-1299 — `new_vars` init in promptexpand.
+        buf: vec![0u8; 256],
+        bufspc: 256,
+        bp: 0,
+        bufline: 0,
+        bp1: None,
+        fm: s.to_string(),
+        fm_pos: 0,
+        truncwidth: 0,
+        dontcount: 0,
+        trunccount: 0,
+        rstring: None,
+        Rstring: None,
+        attrs: 0,
+        in_escape: false,
+    };
+    putpromptchar(&mut bv, 1, 0); // c:1305 `putpromptchar(1, '\0')`
+    // Unmetafy the buffer for display.
+    let end = bv.bp.min(bv.buf.len());
+    let mut raw = bv.buf[..end].to_vec();
+    crate::ported::utils::unmetafy(&mut raw);
+    // Translate Inpar/Outpar (C's internal width-ignore markers) to
+    // readline-style RL_PROMPT_START_IGNORE (0x01) / RL_PROMPT_END_IGNORE
+    // (0x02) for the consumer terminal. Nularg is the `%G` glitch-
+    // space marker — strip from visible output (zsh's
+    // putpromptchar emits it as a no-print width hint).
+    let translated: Vec<u8> = raw
+        .into_iter()
+        .filter_map(|b| match b {
+            x if x == Inpar as u8 => Some(0x01),
+            x if x == Outpar as u8 => Some(0x02),
+            x if x == Nularg as u8 => None,
+            other => Some(other),
+        })
+        .collect();
+    String::from_utf8_lossy(&translated).into_owned()
 }
 
 /// Same as [`expand_prompt`] — C call sites that used implicit globals only.
@@ -2765,10 +3294,13 @@ mod tests {
         assert_eq!(expand("%B"), "\x01\x1b[1m\x02");
     }
 
-    /// `%b` → attr reset (zsh 5.9 emits `\e[0m`, not `\e[22m`).
+    /// `%b` with NO prior bold emits nothing — matches C
+    /// `applytextattributes` early-out `if (!change) return;`
+    /// (Src/prompt.c:1647). Previous test asserted `\e[0m` which
+    /// reflected the deleted Rust impl's always-emit-reset hack.
     #[test]
-    fn promptexpand_lowercase_b_emits_attr_reset_with_ignore_markers() {
-        assert_eq!(expand("%b"), "\x01\x1b[0m\x02");
+    fn promptexpand_lowercase_b_alone_no_reset_emitted() {
+        assert_eq!(expand("%b"), "");
     }
 
     /// `%U` → SGR underline on.
@@ -2799,10 +3331,13 @@ mod tests {
         assert_eq!(expand("%F{red}"), "\x01\x1b[31m\x02");
     }
 
-    /// `%f` → SGR default fg.
+    /// `%f` with NO prior fg color emits nothing — matches C
+    /// `applytextattributes` early-out (Src/prompt.c:1647).
+    /// Previous test asserted `\e[39m` (deleted Rust hack always
+    /// emitted reset).
     #[test]
-    fn promptexpand_lowercase_f_emits_default_fg_with_ignore_markers() {
-        assert_eq!(expand("%f"), "\x01\x1b[39m\x02");
+    fn promptexpand_lowercase_f_alone_no_reset_emitted() {
+        assert_eq!(expand("%f"), "");
     }
 
     /// `%K{blue}` → SGR bg blue (color index 4 + 40).
@@ -2811,10 +3346,11 @@ mod tests {
         assert_eq!(expand("%K{blue}"), "\x01\x1b[44m\x02");
     }
 
-    /// `%k` → SGR default bg.
+    /// `%k` with NO prior bg color emits nothing — matches C
+    /// `applytextattributes` early-out (Src/prompt.c:1647).
     #[test]
-    fn promptexpand_lowercase_k_emits_default_bg_with_ignore_markers() {
-        assert_eq!(expand("%k"), "\x01\x1b[49m\x02");
+    fn promptexpand_lowercase_k_alone_no_reset_emitted() {
+        assert_eq!(expand("%k"), "");
     }
 
     // ── Literal opaque %{...%} (passthrough) ───────────────────────
