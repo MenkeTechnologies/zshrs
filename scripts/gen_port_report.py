@@ -437,13 +437,63 @@ def _all_call_counts(files: list[tuple[str, list[str]]],
     """
     counts: dict[str, int] = defaultdict(int)
     for rel, lines in files:
+        # Per-file state: are we currently inside a `#[cfg(test)]`
+        # gated mod / fn block? Calls under test code don't count —
+        # C tests live in separate `.ztst` files, not the .c sources,
+        # so counting Rust test calls would inflate the Rust side
+        # 5-10x for fns heavily exercised by unit tests (`unsetparam`
+        # 94 calls in params.rs ARE all in #[cfg(test)] mod tests
+        # blocks, etc.).
+        in_test_block = False
+        test_brace_depth = 0
+        cfg_test_seen_on_prev = False  # `#[cfg(test)]` attribute pending
         for i, line in enumerate(lines, 1):
             ls = line.lstrip()
             # Single-line C / Rust comments.
             if ls.startswith("//") or ls.startswith("///") or ls.startswith("//!"):
+                cfg_test_seen_on_prev = False
                 continue
             if ls.startswith("*"):  # C block-continuation
+                cfg_test_seen_on_prev = False
                 continue
+            # `#[cfg(test)]` attribute — if followed by a `mod ... {` or
+            # a `fn ... {` opening brace, enter test block at that brace.
+            if "#[cfg(test)]" in ls or "#[cfg(any(test" in ls:
+                cfg_test_seen_on_prev = True
+                continue
+            # `#[test]` attribute marks an individual test fn — same
+            # treatment as a cfg(test) mod block.
+            if ls.startswith("#[test]"):
+                cfg_test_seen_on_prev = True
+                continue
+            # Other attribute lines pass through the pending state.
+            if ls.startswith("#["):
+                continue
+            if in_test_block:
+                # Track brace depth to find the matching `}` that ends
+                # the test block.
+                test_brace_depth += line.count("{") - line.count("}")
+                if test_brace_depth <= 0:
+                    in_test_block = False
+                    test_brace_depth = 0
+                continue
+            if cfg_test_seen_on_prev:
+                # First non-comment, non-attribute line after `#[cfg(test)]`
+                # or `#[test]`. If it opens a brace block, we're in a
+                # test block from here until the matching `}`.
+                opens = line.count("{")
+                closes = line.count("}")
+                if opens > closes:
+                    in_test_block = True
+                    test_brace_depth = opens - closes
+                    cfg_test_seen_on_prev = False
+                    continue
+                # No brace yet — the attribute might span multiple lines
+                # before the fn/mod opens. Keep `cfg_test_seen_on_prev`
+                # true until we see the brace.
+                if opens == 0 and closes == 0:
+                    continue
+                cfg_test_seen_on_prev = False
             for m in _RE_ANY_CALL.finditer(line):
                 name = m.group(1)
                 if name in C_KEYWORDS:
