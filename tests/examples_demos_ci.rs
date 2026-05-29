@@ -291,6 +291,31 @@ demo_test!(d132_ksh_patterns, "132_ksh_patterns.zsh");
 demo_test!(d133_zstyle_demo, "133_zstyle_demo.zsh");
 demo_test!(d134_compdef_signatures, "134_compdef_signatures.zsh");
 demo_test!(d135_bindkey_config, "135_bindkey_config.zsh");
+demo_test!(d136_path_manipulation, "136_path_manipulation.zsh");
+demo_test!(d137_named_pipes, "137_named_pipes.zsh");
+demo_test!(d138_lock_files, "138_lock_files.zsh");
+demo_test!(d139_env_manipulation, "139_env_manipulation.zsh");
+demo_test!(d140_signal_handling, "140_signal_handling.zsh");
+demo_test!(d141_color_codes, "141_color_codes.zsh");
+demo_test!(d142_calc_engine, "142_calc_engine.zsh");
+demo_test!(d143_todo_app, "143_todo_app.zsh");
+demo_test!(d144_graph_bfs, "144_graph_bfs.zsh");
+demo_test!(d145_state_machine, "145_state_machine.zsh");
+demo_test!(d146_topological_sort, "146_topological_sort.zsh");
+demo_test!(d147_pomodoro_timer, "147_pomodoro_timer.zsh");
+demo_test!(d148_inventory_system, "148_inventory_system.zsh");
+demo_test!(d149_event_log, "149_event_log.zsh");
+demo_test!(d150_lru_cache, "150_lru_cache.zsh");
+demo_test!(d151_priority_queue, "151_priority_queue.zsh");
+demo_test!(d152_bloom_filter, "152_bloom_filter.zsh");
+demo_test!(d153_trie, "153_trie.zsh");
+demo_test!(d154_levenshtein, "154_levenshtein.zsh");
+demo_test!(d155_text_diff, "155_text_diff.zsh");
+demo_test!(d156_simple_template, "156_simple_template.zsh");
+demo_test!(d157_observer_pattern, "157_observer_pattern.zsh");
+demo_test!(d158_simulate_random, "158_simulate_random.zsh");
+demo_test!(d159_bank_account, "159_bank_account.zsh");
+demo_test!(d160_zshrs_capabilities, "160_zshrs_capabilities.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -433,6 +458,31 @@ fn every_demo_in_dir_has_a_test() {
         "133_zstyle_demo.zsh",
         "134_compdef_signatures.zsh",
         "135_bindkey_config.zsh",
+        "136_path_manipulation.zsh",
+        "137_named_pipes.zsh",
+        "138_lock_files.zsh",
+        "139_env_manipulation.zsh",
+        "140_signal_handling.zsh",
+        "141_color_codes.zsh",
+        "142_calc_engine.zsh",
+        "143_todo_app.zsh",
+        "144_graph_bfs.zsh",
+        "145_state_machine.zsh",
+        "146_topological_sort.zsh",
+        "147_pomodoro_timer.zsh",
+        "148_inventory_system.zsh",
+        "149_event_log.zsh",
+        "150_lru_cache.zsh",
+        "151_priority_queue.zsh",
+        "152_bloom_filter.zsh",
+        "153_trie.zsh",
+        "154_levenshtein.zsh",
+        "155_text_diff.zsh",
+        "156_simple_template.zsh",
+        "157_observer_pattern.zsh",
+        "158_simulate_random.zsh",
+        "159_bank_account.zsh",
+        "160_zshrs_capabilities.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
