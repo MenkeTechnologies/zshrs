@@ -4738,4 +4738,41 @@ mod paramtypestr_table_tests {
         let pm = mk_pm(PM_INTEGER | PM_READONLY, 0);
         assert_eq!(paramtypestr(&pm), "integer-readonly");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Modules/parameter.c funcstack helpers.
+    // Tests that capture KNOWN ZSHRS BUGS use #[ignore = "ZSHRS BUG: …"].
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `funcstackgetfn` on empty FUNCSTACK returns empty vec.
+    /// C `Src/Modules/parameter.c:627` — count is 0, ret has only
+    /// the terminating NULL (1-element char**), Rust returns empty
+    /// Vec<String> (matches semantically — caller iterates non-NULL
+    /// elements).
+    #[test]
+    fn funcstackgetfn_empty_stack_returns_empty_vec() {
+        let _g = crate::test_util::global_state_lock();
+        // Empty FUNCSTACK (no shell function in progress).
+        crate::ported::modules::parameter::FUNCSTACK.lock().unwrap().clear();
+        let v = funcstackgetfn(std::ptr::null_mut());
+        assert!(v.is_empty(), "no shell function in progress → empty stack");
+    }
+
+    /// `functracegetfn` on empty stack returns empty.
+    #[test]
+    fn functracegetfn_empty_stack_returns_empty_vec() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::modules::parameter::FUNCSTACK.lock().unwrap().clear();
+        let v = functracegetfn(std::ptr::null_mut());
+        assert!(v.is_empty());
+    }
+
+    /// `funcsourcetracegetfn` on empty stack returns empty.
+    #[test]
+    fn funcsourcetracegetfn_empty_stack_returns_empty_vec() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::modules::parameter::FUNCSTACK.lock().unwrap().clear();
+        let v = funcsourcetracegetfn(std::ptr::null_mut());
+        assert!(v.is_empty());
+    }
 }
