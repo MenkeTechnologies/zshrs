@@ -1489,4 +1489,110 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(is_private(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/param_private.c
+    // null-safety + lifecycle.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:98 — `makeprivate(null, 0)` is safe (no panic).
+    #[test]
+    fn makeprivate_null_pm_safe() {
+        let _g = crate::test_util::global_state_lock();
+        makeprivate(std::ptr::null_mut(), 0);
+    }
+
+    /// c:365 — `setfn_error(null)` is safe.
+    #[test]
+    fn setfn_error_null_safe() {
+        let _g = crate::test_util::global_state_lock();
+        setfn_error(std::ptr::null_mut());
+    }
+
+    /// c:403 — `pps_getfn(null)` returns empty string.
+    #[test]
+    fn pps_getfn_null_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(pps_getfn(std::ptr::null_mut()), "");
+    }
+
+    /// c:497 — `ppi_getfn(null)` returns 0.
+    #[test]
+    fn ppi_getfn_null_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(ppi_getfn(std::ptr::null_mut()), 0);
+    }
+
+    /// c:557 — `ppf_getfn(null)` returns 0.0.
+    #[test]
+    fn ppf_getfn_null_returns_zero_float() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(ppf_getfn(std::ptr::null_mut()), 0.0);
+    }
+
+    /// c:617 — `ppa_getfn(null)` returns empty Vec.
+    #[test]
+    fn ppa_getfn_null_returns_empty_vec() {
+        let _g = crate::test_util::global_state_lock();
+        let v = ppa_getfn(std::ptr::null_mut());
+        assert!(v.is_empty());
+    }
+
+    /// c:512 — `ppi_setfn(null, 42)` is safe.
+    #[test]
+    fn ppi_setfn_null_safe() {
+        let _g = crate::test_util::global_state_lock();
+        ppi_setfn(std::ptr::null_mut(), 42);
+    }
+
+    /// c:572 — `ppf_setfn(null, 3.14)` is safe.
+    #[test]
+    fn ppf_setfn_null_safe() {
+        let _g = crate::test_util::global_state_lock();
+        ppf_setfn(std::ptr::null_mut(), 3.14);
+    }
+
+    /// c:530 — `ppi_unsetfn(null, _)` is safe.
+    #[test]
+    fn ppi_unsetfn_null_safe() {
+        let _g = crate::test_util::global_state_lock();
+        ppi_unsetfn(std::ptr::null_mut(), 0);
+    }
+
+    /// c:433 — `pps_setfn(null, "x")` is safe.
+    #[test]
+    fn pps_setfn_null_safe() {
+        let _g = crate::test_util::global_state_lock();
+        pps_setfn(std::ptr::null_mut(), "x");
+    }
+
+    /// c:468 — `pps_unsetfn(null, _)` is safe.
+    #[test]
+    fn pps_unsetfn_null_safe() {
+        let _g = crate::test_util::global_state_lock();
+        pps_unsetfn(std::ptr::null_mut(), 0);
+    }
+
+    /// c:181 — `is_private` for non-registered ptr (with name) returns 0.
+    #[test]
+    fn is_private_unregistered_param_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::{hashnode, param};
+        let pm = Box::new(param {
+            node: hashnode {
+                next: None,
+                nam: "zshrs_never_registered_param_xyz".to_string(),
+                flags: 0,
+            },
+            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
+            gsu_h: None, base: 0, width: 0, env: None, ename: None,
+            old: None, level: 0,
+        });
+        let ptr: *const param = Box::into_raw(pm);
+        let r = is_private(ptr);
+        // Reclaim Box to free.
+        unsafe { drop(Box::from_raw(ptr as *mut param)); }
+        assert_eq!(r, 0, "unregistered param → not private");
+    }
 }
