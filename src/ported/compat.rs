@@ -1338,4 +1338,98 @@ mod tests {
             assert_eq!(zpathmax("/"), first, "zpathmax must be pure");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/compat.c
+    // c:105 difftime / c:133 strerror / c:156 zopenmax / c:263 zgetcwd /
+    // c:453 output64 / c:499 strstr / c:509 gettimeofday / c:529 strtoul
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:105 — `difftime` returns f64 (compile-time pin).
+    #[test]
+    fn difftime_returns_f64_type() {
+        let _: f64 = difftime(0, 0);
+    }
+
+    /// c:105 — `difftime(t, t)` returns 0 (identity).
+    #[test]
+    fn difftime_identity_returns_zero() {
+        for t in [0i64, 100, 1_000_000, i32::MAX as i64] {
+            assert_eq!(difftime(t, t), 0.0,
+                "difftime({}, {}) must equal 0", t, t);
+        }
+    }
+
+    /// c:105 — `difftime(t2, t1)` = -(difftime(t1, t2)) (antisymmetric).
+    #[test]
+    fn difftime_antisymmetric() {
+        assert_eq!(difftime(100, 50), -difftime(50, 100),
+            "difftime is antisymmetric");
+    }
+
+    /// c:133 — `strerror` returns String (compile-time pin).
+    #[test]
+    fn strerror_returns_string_type() {
+        let _: String = strerror(0);
+    }
+
+    /// c:133 — `strerror(0)` returns non-empty (some success message
+    /// or "Undefined error: 0").
+    #[test]
+    fn strerror_zero_returns_non_empty() {
+        assert!(!strerror(0).is_empty(),
+            "strerror(0) must be non-empty");
+    }
+
+    /// c:156 — `zopenmax` returns i64 (compile-time pin).
+    #[test]
+    fn zopenmax_returns_i64_type() {
+        let _: i64 = zopenmax();
+    }
+
+    /// c:156 — `zopenmax` returns positive (must have ≥1 fd available).
+    #[test]
+    fn zopenmax_returns_positive() {
+        let n = zopenmax();
+        assert!(n > 0, "zopenmax must be positive; got {}", n);
+    }
+
+    /// c:263 — `zgetcwd` returns String (compile-time pin).
+    #[test]
+    fn zgetcwd_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = zgetcwd();
+    }
+
+    /// c:453 — `output64(0)` returns "0".
+    #[test]
+    fn output64_zero_returns_zero_digit() {
+        assert_eq!(output64(0), "0", "0 → \"0\"");
+    }
+
+    /// c:499 — `strstr("hello", "ll")` returns Some(2).
+    #[test]
+    fn strstr_substring_returns_position() {
+        assert_eq!(strstr("hello", "ll"), Some(2), "\"ll\" in \"hello\" at 2");
+    }
+
+    /// c:499 — `strstr("abc", "xyz")` returns None.
+    #[test]
+    fn strstr_not_found_returns_none() {
+        assert_eq!(strstr("abc", "xyz"), None, "no match → None");
+    }
+
+    /// c:509 — `gettimeofday` returns (i64, i64) tuple (compile-time pin).
+    #[test]
+    fn gettimeofday_returns_i64_pair_type() {
+        let _: (i64, i64) = gettimeofday();
+    }
+
+    /// c:529 — `strtoul("42", 10)` returns (42, 2).
+    #[test]
+    fn strtoul_basic_parse_returns_value_and_count() {
+        let (v, n) = strtoul("42", 10);
+        assert_eq!(v, 42, "value parses to 42");
+        assert_eq!(n, 2, "consumed 2 bytes");
+    }
 }
