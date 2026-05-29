@@ -944,4 +944,127 @@ mod tests {
             assert_eq!(finish_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/termcap.c
+    // c:32 ztgetflag / c:69 bin_echotc / c:210 gettermcap / c:288 scantermcap
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:32 — `ztgetflag` returns i32 (compile-time pin).
+    #[test]
+    fn ztgetflag_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = ztgetflag("am");
+    }
+
+    /// c:32 — `ztgetflag("")` empty input returns -1 (unknown cap).
+    #[test]
+    fn ztgetflag_empty_string_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(ztgetflag(""), -1, "empty cap name must return -1 (unknown)");
+    }
+
+    /// c:32 — `ztgetflag` is deterministic.
+    #[test]
+    fn ztgetflag_deterministic_for_unknown() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["zz_unknown", "AAA", "garbage"] {
+            let first = ztgetflag(s);
+            for _ in 0..5 {
+                assert_eq!(ztgetflag(s), first,
+                    "ztgetflag({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:69 — `bin_echotc` no-args returns nonzero (usage error, alt pin).
+    #[test]
+    fn bin_echotc_no_args_usage_error_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_echotc("echotc", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// c:69 — `bin_echotc` exit code is non-negative across argv shapes.
+    #[test]
+    fn bin_echotc_exit_code_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for argv in [
+            vec![],
+            vec!["".into()],
+            vec!["bl".into()],
+            vec!["zz_unknown".into()],
+            vec!["cm".into(), "5".into(), "10".into()],
+        ] {
+            let r = bin_echotc("echotc", &argv, &ops, 0);
+            assert!(r >= 0, "exit code must be non-negative, got {} for {:?}",
+                r, argv);
+        }
+    }
+
+    /// c:210 — `gettermcap` returns Option<Param> (compile-time pin).
+    #[test]
+    fn gettermcap_returns_option_param_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<crate::ported::zsh_h::Param> =
+            gettermcap(std::ptr::null_mut(), "co");
+    }
+
+    /// c:288 — `scantermcap` returns void (compile-time pin).
+    #[test]
+    fn scantermcap_none_callback_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: () = scantermcap(std::ptr::null_mut(), None, 0);
+    }
+
+    /// c:288 — `scantermcap` is safe across various flag values.
+    #[test]
+    fn scantermcap_various_flags_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        for flags in [0i32, 1, 2, 0xff, -1] {
+            scantermcap(std::ptr::null_mut(), None, flags);
+        }
+    }
+
+    /// c:365 — `setup_` returns i32 (compile-time pin).
+    #[test]
+    fn termcap_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:381 — `enables_` returns i32 + None enables-out safe.
+    #[test]
+    fn termcap_enables_with_none_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:365/373/381/388/399/410 — each lifecycle hook returns 0 individually.
+    #[test]
+    fn termcap_each_lifecycle_hook_returns_zero_individually() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v: Vec<String> = Vec::new();
+        let mut e: Option<Vec<i32>> = None;
+        assert_eq!(setup_(null), 0, "c:365 setup_");
+        assert_eq!(features_(null, &mut v), 0, "c:373 features_");
+        assert_eq!(enables_(null, &mut e), 0, "c:381 enables_");
+        assert_eq!(boot_(null), 0, "c:388 boot_");
+        assert_eq!(cleanup_(null), 0, "c:399 cleanup_");
+        assert_eq!(finish_(null), 0, "c:410 finish_");
+    }
 }
