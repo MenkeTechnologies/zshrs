@@ -2995,4 +2995,99 @@ mod tests {
             assert_eq!(finish_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/curses.c
+    // c:293 zcurses_pairs_to_array / c:307 zcurses_strerror /
+    // c:332 zcurses_getwindowbyname / c:379 zcurses_free_window /
+    // c:418 zcurses_color / c:437 zcurses_colorget
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:293 — `zcurses_pairs_to_array(&[])` returns empty Vec (alt).
+    #[test]
+    fn zcurses_pairs_to_array_empty_returns_empty_alt() {
+        let v = zcurses_pairs_to_array(&[]);
+        assert!(v.is_empty(), "empty input → empty Vec");
+    }
+
+    /// c:293 — `zcurses_pairs_to_array` returns Vec<String> (alt pin).
+    #[test]
+    fn zcurses_pairs_to_array_returns_vec_string_pin_alt() {
+        let _: Vec<String> = zcurses_pairs_to_array(&[]);
+    }
+
+    /// c:307 — `zcurses_strerror(0)` returns non-empty static str.
+    #[test]
+    fn zcurses_strerror_zero_returns_non_empty() {
+        let s = zcurses_strerror(0);
+        assert!(!s.is_empty(), "zcurses_strerror(0) must be non-empty");
+    }
+
+    /// c:307 — `zcurses_strerror` returns `&'static str` (compile-time pin).
+    #[test]
+    fn zcurses_strerror_returns_static_str_type() {
+        let _: &'static str = zcurses_strerror(-1);
+    }
+
+    /// c:307 — `zcurses_strerror` deterministic for any input.
+    #[test]
+    fn zcurses_strerror_deterministic() {
+        for err in [0, -1, 1, 42, i32::MIN, i32::MAX] {
+            let a = zcurses_strerror(err);
+            let b = zcurses_strerror(err);
+            assert_eq!(a, b,
+                "zcurses_strerror({}) must be pure", err);
+        }
+    }
+
+    /// c:332 — `zcurses_getwindowbyname("")` returns bool false (empty name).
+    #[test]
+    fn zcurses_getwindowbyname_empty_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!zcurses_getwindowbyname(""),
+            "empty name has no window");
+    }
+
+    /// c:332 — `zcurses_getwindowbyname` returns bool (compile-time pin).
+    #[test]
+    fn zcurses_getwindowbyname_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = zcurses_getwindowbyname("__never_window__");
+    }
+
+    /// c:379 — `zcurses_free_window` returns i32 (compile-time pin).
+    #[test]
+    fn zcurses_free_window_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = zcurses_free_window("__never_window__");
+    }
+
+    /// c:418 — `zcurses_color("")` returns i32 sentinel for unknown.
+    #[test]
+    fn zcurses_color_empty_string_returns_sentinel() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zcurses_color("");
+        assert!(r < 0,
+            "empty color name must return negative sentinel; got {}", r);
+    }
+
+    /// c:418 — `zcurses_color` is deterministic.
+    #[test]
+    fn zcurses_color_deterministic_for_unknown() {
+        let _g = crate::test_util::global_state_lock();
+        for name in ["__bogus_color__", "", "xyz"] {
+            let first = zcurses_color(name);
+            for _ in 0..3 {
+                assert_eq!(zcurses_color(name), first,
+                    "zcurses_color({:?}) must be pure", name);
+            }
+        }
+    }
+
+    /// c:437 — `zcurses_colorget` returns Option<i16> (compile-time pin, alt).
+    #[test]
+    fn zcurses_colorget_returns_option_i16_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i16> = zcurses_colorget("__never__", "red/black");
+    }
 }
