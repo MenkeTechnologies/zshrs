@@ -13339,4 +13339,109 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert!(isident("foo[0]"));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/params.c isident.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1288 — `isident("")` returns false (empty not an identifier).
+    #[test]
+    fn isident_empty_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isident(""));
+    }
+
+    /// c:1288 — single underscore IS valid ident.
+    #[test]
+    fn isident_single_underscore_is_valid() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isident("_"));
+    }
+
+    /// c:1288 — single letter IS valid ident.
+    #[test]
+    fn isident_single_letter_is_valid() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isident("a"));
+        assert!(isident("Z"));
+    }
+
+    /// c:1288 — all-digit name (positional param like '$1') IS valid.
+    #[test]
+    fn isident_all_digits_is_valid_positional() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isident("1"));
+        assert!(isident("123"));
+        assert!(isident("0"));
+    }
+
+    /// c:1288 — digit-first mixed (e.g. '1abc') is INVALID.
+    #[test]
+    fn isident_digit_first_mixed_is_invalid() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isident("1abc"));
+        assert!(!isident("0x"));
+    }
+
+    /// c:1288 — underscore + alnum is valid.
+    #[test]
+    fn isident_underscore_prefix_alnum_is_valid() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isident("_foo"));
+        assert!(isident("_123"));
+        assert!(isident("foo_bar"));
+    }
+
+    /// c:1288 — alphabetic + digits is valid.
+    #[test]
+    fn isident_alpha_digits_mix_is_valid() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isident("foo123"));
+        assert!(isident("var2"));
+    }
+
+    /// c:1326 — unbalanced subscript `foo[` is invalid.
+    #[test]
+    fn isident_unbalanced_open_bracket_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isident("foo["));
+        assert!(!isident("foo[0"));
+    }
+
+    /// c:1326 — special chars like `-`, `.`, `@` not allowed in identifier.
+    #[test]
+    fn isident_special_chars_rejected() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isident("foo-bar")); // hyphen
+        assert!(!isident("foo@bar"));
+        assert!(!isident("foo!"));
+    }
+
+    /// c:1288 — namespace prefix `.ns.var` requires a non-digit after dot.
+    #[test]
+    fn isident_namespace_prefix_dot_rejects_digit_after() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isident(".0"), "dot + digit invalid");
+        assert!(!isident("."), "lone dot invalid");
+    }
+
+    /// c:1288 — namespace prefix `.foo` is valid.
+    #[test]
+    fn isident_namespace_prefix_alpha_after_dot_valid() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isident(".foo"));
+        assert!(isident(".ns.var"));
+    }
+
+    /// c:1288 — `isident` is deterministic.
+    #[test]
+    fn isident_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["foo", "_bar", "123", "1abc", "", ".foo", "foo[", "foo-bar"] {
+            let first = isident(s);
+            for _ in 0..5 {
+                assert_eq!(isident(s), first, "{:?} must be pure", s);
+            }
+        }
+    }
 }
