@@ -9555,4 +9555,120 @@ mod tests {
         assert_eq!(a[0], "alpha", "original unchanged");
         assert_eq!(r[0], "alpha!", "copy mutated independently");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/computil.c
+    // c:172 freecdsets / c:372 cd_groups_want_sorting / c:396 cd_sort /
+    // c:1725 arrcmp / c:1754 freecaargs / c:1773 freecadef /
+    // c:1821 rembslashcolon / c:1858 bslashcolon / c:1890 single_index /
+    // c:3540 ca_opt_arg
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:172 — `freecdsets(None)` is safe idempotent.
+    #[test]
+    fn freecdsets_none_idempotent() {
+        for _ in 0..5 {
+            freecdsets(None);
+        }
+    }
+
+    /// c:1754 — `freecaargs(None)` is safe idempotent.
+    #[test]
+    fn freecaargs_none_idempotent() {
+        for _ in 0..5 {
+            freecaargs(None);
+        }
+    }
+
+    /// c:1773 — `freecadef(None)` is safe idempotent.
+    #[test]
+    fn freecadef_none_idempotent() {
+        for _ in 0..5 {
+            freecadef(None);
+        }
+    }
+
+    /// c:980 — `arrcmp(None, None)` returns 1 ("equal" sentinel, NOT 0).
+    /// C uses inverted boolean: 1 = equal, 0 = unequal (opposite of strcmp).
+    #[test]
+    fn arrcmp_both_none_returns_one_inverted_boolean() {
+        assert_eq!(arrcmp(None, None), 1,
+            "C inverted-boolean: 1=equal, 0=unequal (per c:980)");
+    }
+
+    /// c:980 — `arrcmp(None, Some)` returns 0 (unequal sentinel).
+    #[test]
+    fn arrcmp_none_vs_some_returns_zero_unequal() {
+        let a = vec!["x".to_string()];
+        assert_eq!(arrcmp(None, Some(&a)), 0, "None vs Some → 0 (unequal)");
+        assert_eq!(arrcmp(Some(&a), None), 0, "Some vs None → 0 (unequal)");
+    }
+
+    /// c:984 — `arrcmp(Some(a), Some(a))` returns 1 (equal).
+    #[test]
+    fn arrcmp_identical_arrays_returns_one_equal() {
+        let a = vec!["x".to_string(), "y".to_string()];
+        assert_eq!(arrcmp(Some(&a), Some(&a)), 1,
+            "identical arrays → 1 (equal) per c:989");
+    }
+
+    /// c:1725 — `arrcmp` is pure for non-empty arrays.
+    #[test]
+    fn arrcmp_is_pure() {
+        let a = vec!["x".to_string()];
+        let b = vec!["y".to_string()];
+        let first = arrcmp(Some(&a), Some(&b));
+        for _ in 0..5 {
+            assert_eq!(arrcmp(Some(&a), Some(&b)), first,
+                "arrcmp must be pure");
+        }
+    }
+
+    /// c:1821 — `rembslashcolon("")` empty returns empty.
+    #[test]
+    fn rembslashcolon_empty_returns_empty() {
+        assert_eq!(rembslashcolon(""), "");
+    }
+
+    /// c:1821 — `rembslashcolon` is pure.
+    #[test]
+    fn rembslashcolon_is_pure() {
+        for s in ["", "abc", r"a\:b", r"\:\:"] {
+            let first = rembslashcolon(s);
+            for _ in 0..3 {
+                assert_eq!(rembslashcolon(s), first,
+                    "rembslashcolon({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:1858 — `bslashcolon("")` empty returns empty.
+    #[test]
+    fn bslashcolon_empty_returns_empty() {
+        assert_eq!(bslashcolon(""), "");
+    }
+
+    /// c:1890 — `single_index(0, 0)` returns i32 (type pin).
+    #[test]
+    fn single_index_returns_i32_type() {
+        let _: i32 = single_index(0, 0);
+    }
+
+    /// c:3540 — `ca_opt_arg(empty, empty, false)` is safe.
+    #[test]
+    fn ca_opt_arg_empty_inputs_no_panic() {
+        let _: String = ca_opt_arg("", "", false);
+    }
+
+    /// c:1858 — `bslashcolon` is pure.
+    #[test]
+    fn bslashcolon_is_pure() {
+        for s in ["", "a:b", "no colon", "a:b:c:d"] {
+            let first = bslashcolon(s);
+            for _ in 0..3 {
+                assert_eq!(bslashcolon(s), first,
+                    "bslashcolon({:?}) must be pure", s);
+            }
+        }
+    }
 }
