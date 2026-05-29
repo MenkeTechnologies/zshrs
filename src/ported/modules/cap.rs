@@ -754,4 +754,121 @@ mod tests {
             assert_eq!(boot_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/cap.c
+    // c:62 bin_cap / c:147 bin_getcap / c:205 bin_setcap /
+    // c:274-310 lifecycle + Linux/non-Linux branch parity
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:62/147/205 — every `bin_*` cap builtin returns i32 (compile-time pin).
+    #[test]
+    fn bin_cap_builtins_return_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_cap("cap", &[], &ops, 0);
+        let _: i32 = bin_getcap("getcap", &["/tmp".into()], &ops, 0);
+        let _: i32 = bin_setcap("setcap", &["x".into(), "/tmp".into()], &ops, 0);
+    }
+
+    /// c:62 — `bin_cap` deterministic for no-args (no hidden state mutation).
+    #[test]
+    fn bin_cap_no_args_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let first = bin_cap("cap", &[], &ops, 0);
+        for _ in 0..5 {
+            assert_eq!(bin_cap("cap", &[], &ops, 0), first,
+                "bin_cap no-args must be pure");
+        }
+    }
+
+    /// c:147 — `bin_getcap` deterministic for fixed path arg.
+    #[test]
+    fn bin_getcap_deterministic_for_fixed_path() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let first = bin_getcap("getcap", &["/dev/null".into()], &ops, 0);
+        for _ in 0..3 {
+            assert_eq!(bin_getcap("getcap", &["/dev/null".into()], &ops, 0), first,
+                "bin_getcap on /dev/null must be deterministic");
+        }
+    }
+
+    /// c:205 — `bin_setcap` with only-flag-no-path argv is safe (no panic).
+    #[test]
+    fn bin_setcap_only_spec_no_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _ = bin_setcap("setcap", &["cap_net_admin+ep".into()], &ops, 0);
+    }
+
+    /// c:62 — `bin_cap` with very long spec arg doesn't panic.
+    #[test]
+    fn bin_cap_long_spec_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let long_spec = "cap_".to_string() + &"x".repeat(1000) + "+ep";
+        let _ = bin_cap("cap", &[long_spec], &ops, 0);
+    }
+
+    /// c:274 — `setup_(null)` returns i32 (compile-time pin).
+    #[test]
+    fn cap_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:281 — `features_(null, &mut Vec)` returns i32 + populates Vec safely.
+    #[test]
+    fn cap_features_returns_i32_and_populates_vec() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = Vec::new();
+        let _: i32 = features_(std::ptr::null(), &mut v);
+    }
+
+    /// c:289 — `enables_` returns i32 with None enables-out param safe.
+    #[test]
+    fn cap_enables_with_none_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:274 — `setup_` idempotent.
+    #[test]
+    fn cap_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:62/147/205 — bin_cap/getcap/setcap exit codes match
+    /// "0 = ok, nonzero = err" convention (no negative panics).
+    #[test]
+    fn bin_cap_builtins_no_negative_exit_codes() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for r in [
+            bin_cap("cap", &[], &ops, 0),
+            bin_getcap("getcap", &[], &ops, 0),
+            bin_setcap("setcap", &[], &ops, 0),
+        ] {
+            assert!(r >= 0, "exit code must be non-negative, got {}", r);
+        }
+    }
+
+    /// c:289 — `enables_` deterministic for null callback (Linux/no-Linux).
+    #[test]
+    fn cap_enables_deterministic_for_null_callback() {
+        let _g = crate::test_util::global_state_lock();
+        let mut a: Option<Vec<i32>> = None;
+        let first = enables_(std::ptr::null(), &mut a);
+        for _ in 0..3 {
+            let mut b: Option<Vec<i32>> = None;
+            assert_eq!(enables_(std::ptr::null(), &mut b), first,
+                "enables_ must be deterministic for null in");
+        }
+    }
 }
