@@ -5549,4 +5549,114 @@ mod tests {
     fn IS_READFD_recognises_read_token() {
         assert!(IS_READFD(REDIR_READ));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/zsh.h wordcode + macro helpers.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:918 — `WCB_END()` returns the WC_END opcode at offset 0.
+    #[test]
+    fn WCB_END_returns_wc_end_opcode() {
+        let end = WCB_END();
+        assert_eq!(wc_code(end), WC_END, "WCB_END encodes WC_END opcode");
+        assert_eq!(wc_data(end), 0, "WCB_END encodes zero data");
+    }
+
+    /// c:wc_bld — round-trip: wc_code(wc_bld(c, d)) == c.
+    #[test]
+    fn wc_bld_code_round_trip() {
+        for opcode in [WC_END, WC_LIST, WC_SUBLIST, WC_PIPE] {
+            let w = wc_bld(opcode, 42);
+            assert_eq!(wc_code(w), opcode, "wc_code round-trips opcode {}", opcode);
+        }
+    }
+
+    /// c:wc_bld — round-trip data field: wc_data(wc_bld(c, d)) == d.
+    #[test]
+    fn wc_bld_data_round_trip() {
+        for data in [0u32, 1, 42, 0xFFFF, 0x00FFFFFF] {
+            let w = wc_bld(WC_LIST, data);
+            assert_eq!(wc_data(w), data, "wc_data round-trips data {}", data);
+        }
+    }
+
+    /// c:920 — `WC_LIST_TYPE` reads the data field (matches wc_data).
+    #[test]
+    fn WC_LIST_TYPE_reads_data_field() {
+        let w = WCB_LIST(7, 0);
+        assert_eq!(WC_LIST_TYPE(w), 7, "list type round-trips");
+    }
+
+    /// c:924 — `WC_LIST_SKIP` shifts down by WC_LIST_FREE bits.
+    #[test]
+    fn WC_LIST_SKIP_round_trip() {
+        let w = WCB_LIST(0, 100);
+        assert_eq!(WC_LIST_SKIP(w), 100, "list skip round-trips");
+    }
+
+    /// c:927 — `WC_SUBLIST_TYPE` is data & 3 (low 2 bits).
+    #[test]
+    fn WC_SUBLIST_TYPE_masks_low_2_bits() {
+        let w = WCB_SUBLIST(2, 0, 0); // type=2 fits in 2 bits
+        assert_eq!(WC_SUBLIST_TYPE(w), 2);
+    }
+
+    /// c:931 — `WC_SUBLIST_FLAGS` masks bits 2-4 (0x1c).
+    #[test]
+    fn WC_SUBLIST_FLAGS_masks_bits_2_through_4() {
+        let w = WCB_SUBLIST(0, 0x04, 0); // flag bit 2
+        assert_eq!(WC_SUBLIST_FLAGS(w), 0x04);
+    }
+
+    /// c:940 — `WC_PIPE_TYPE` is data & 1 (low bit only).
+    #[test]
+    fn WC_PIPE_TYPE_masks_low_bit() {
+        let w = WCB_PIPE(1, 100);
+        assert_eq!(WC_PIPE_TYPE(w), 1);
+        let w0 = WCB_PIPE(0, 100);
+        assert_eq!(WC_PIPE_TYPE(w0), 0);
+    }
+
+    /// c:940 — `WC_PIPE_LINENO` is data >> 1.
+    #[test]
+    fn WC_PIPE_LINENO_shifts_down_by_one() {
+        let w = WCB_PIPE(0, 42);
+        assert_eq!(WC_PIPE_LINENO(w), 42, "lineno round-trips through >> 1");
+    }
+
+    /// c:215 — `IS_DASH('-')` returns true; other chars return false.
+    #[test]
+    fn IS_DASH_only_recognizes_hyphen() {
+        assert!(IS_DASH('-'));
+        assert!(!IS_DASH('+'));
+        assert!(!IS_DASH(' '));
+        assert!(!IS_DASH('a'));
+        assert!(!IS_DASH('\0'));
+    }
+
+    /// c:32 — `minimum(a, b)` returns the smaller of two values.
+    #[test]
+    fn minimum_returns_smaller_value() {
+        assert_eq!(minimum(3, 7), 3);
+        assert_eq!(minimum(7, 3), 3);
+        assert_eq!(minimum(5, 5), 5, "equal → either (returns first per PartialOrd)");
+        assert_eq!(minimum(-10, 10), -10);
+    }
+
+    /// c:32 — minimum works with floats.
+    #[test]
+    fn minimum_works_with_floats() {
+        assert_eq!(minimum(1.5_f64, 2.5_f64), 1.5);
+        assert_eq!(minimum(-1.0_f64, 0.0_f64), -1.0);
+    }
+
+    /// c:246 — `QT_IS_SINGLE(QT_SINGLE)` returns true.
+    #[test]
+    fn QT_IS_SINGLE_recognizes_single_quote() {
+        // QT_SINGLE is the canonical single-quote token value.
+        // Sanity: any non-QT_SINGLE returns false; QT_SINGLE → true.
+        assert!(QT_IS_SINGLE(crate::ported::zsh_h::QT_SINGLE));
+        assert!(!QT_IS_SINGLE(0));
+        assert!(!QT_IS_SINGLE(-1));
+    }
 }
