@@ -2067,4 +2067,104 @@ mod tests {
         assert!(s.contains('/'));
         assert_eq!(s, "3/10");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/compresult.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `build_pos_string(0, 1)` returns "1/1" — first of one.
+    #[test]
+    fn build_pos_string_first_of_one_returns_one_slash_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(build_pos_string(0, 1), "1/1");
+    }
+
+    /// `build_pos_string` displays 1-indexed current.
+    #[test]
+    fn build_pos_string_first_index_is_one_not_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // current=0 should display as "1" (1-indexed).
+        let s = build_pos_string(0, 5);
+        assert!(s.starts_with('1'), "0-indexed input shown as 1; got {s}");
+    }
+
+    /// `unambig_data` on identical matches returns the full string.
+    /// C: if all matches are the same, common prefix = whole string.
+    #[test]
+    fn unambig_data_all_identical_returns_full_string() {
+        let _g = crate::test_util::global_state_lock();
+        let matches = vec!["hello".to_string(), "hello".to_string()];
+        let r = unambig_data(&matches);
+        assert_eq!(r, "hello", "identical matches → full string");
+    }
+
+    /// `unambig_data` on empty matches returns empty string.
+    #[test]
+    fn unambig_data_empty_matches_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = unambig_data(&[]);
+        assert!(r.is_empty(), "no matches → empty unambig prefix");
+    }
+
+    /// `unambig_data` returns common prefix of multiple matches.
+    /// `["foobar", "football", "foo"]` → "foo".
+    #[test]
+    fn unambig_data_common_prefix_of_three() {
+        let _g = crate::test_util::global_state_lock();
+        let matches = vec![
+            "foobar".to_string(),
+            "football".to_string(),
+            "foo".to_string(),
+        ];
+        assert_eq!(unambig_data(&matches), "foo", "common prefix = 'foo'");
+    }
+
+    /// `unambig_data` with NO common prefix returns empty.
+    #[test]
+    fn unambig_data_no_common_prefix_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let matches = vec!["abc".to_string(), "xyz".to_string()];
+        let r = unambig_data(&matches);
+        assert!(r.is_empty(), "no common prefix → empty");
+    }
+
+    /// `valid_match` returns true when word has correct prefix+suffix.
+    #[test]
+    fn valid_match_pre_suf_wrap_matches() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            valid_match("prefoosuf", "pre", "suf"),
+            "word with matching prefix+suffix is valid"
+        );
+    }
+
+    /// `valid_match` returns false when prefix doesn't match.
+    #[test]
+    fn valid_match_wrong_prefix_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            !valid_match("foo", "bar", ""),
+            "wrong prefix → invalid match"
+        );
+    }
+
+    /// `comp_mod(v, m)` converts 1-indexed v to 0-indexed before
+    /// modulo. C `Src/Zle/compresult.c:1364`:
+    ///   `if (v >= 0) v -= 1; if (v >= 0) v % m; else { wrap into [0,m) }`
+    /// So `comp_mod(7, 3)` = (7-1) % 3 = 0, not 1 — the v-1 conversion
+    /// is for 1-indexed match-table semantics.
+    #[test]
+    fn comp_mod_positive_v_subtracts_one_then_mods() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(comp_mod(7, 3), 0, "(7-1)%3 = 6%3 = 0");
+        assert_eq!(comp_mod(6, 3), 2, "(6-1)%3 = 5%3 = 2");
+        assert_eq!(comp_mod(4, 3), 0, "(4-1)%3 = 3%3 = 0");
+    }
+
+    /// `comp_mod(0, 5)` — v=0 → v-1=-1 → wrap: -1 + 5 = 4.
+    #[test]
+    fn comp_mod_zero_v_wraps_to_m_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(comp_mod(0, 5), 4, "(0-1) wrapped to [0,5) = 4");
+    }
 }

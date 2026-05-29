@@ -1571,4 +1571,73 @@ mod widget_killring_tests {
         set_buffer("");
         assert_eq!(get_buffer(), "");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/zle_params.c $BUFFER/$CURSOR/
+    // $MARK/$LBUFFER/$RBUFFER round-trips.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `set_buffer` → `get_buffer` round-trips.
+    #[test]
+    fn set_buffer_then_get_buffer_round_trips() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("hello");
+        assert_eq!(get_buffer(), "hello", "round-trip preserves string");
+    }
+
+    /// `set_cursor(5)` then `get_cursor()` returns 5.
+    #[test]
+    fn set_cursor_then_get_cursor_round_trips() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("0123456789");
+        set_cursor(5);
+        assert_eq!(get_cursor(), 5);
+    }
+
+    /// `set_mark(3)` then `get_mark()` returns 3.
+    #[test]
+    fn set_mark_then_get_mark_round_trips() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("0123456789");
+        set_mark(3);
+        assert_eq!(get_mark(), 3);
+    }
+
+    /// `set_lbuffer` writes text before cursor.
+    #[test]
+    fn set_lbuffer_writes_before_cursor() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("AFTER");
+        set_cursor(0);
+        set_lbuffer("BEFORE");
+        let lbuf = get_lbuffer();
+        assert_eq!(lbuf, "BEFORE");
+    }
+
+    /// `set_rbuffer` writes text after cursor.
+    #[test]
+    fn set_rbuffer_writes_after_cursor() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("HELLO");
+        set_cursor(5);
+        set_rbuffer("POST");
+        assert_eq!(get_rbuffer(), "POST");
+    }
+
+    /// `set_cursor(N)` beyond end clamps to buffer length.
+    /// C: assigning $CURSOR=99 on 5-char buffer clamps.
+    #[test]
+    #[ignore = "ZSHRS BUG: set_cursor clamp-at-EOL semantic vs C zsh needs verification"]
+    fn set_cursor_past_eol_clamps_to_buffer_length() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("abc");
+        set_cursor(99);
+        assert!(get_cursor() <= 3, "cursor clamps to buffer length");
+    }
 }
