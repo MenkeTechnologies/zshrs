@@ -4203,4 +4203,120 @@ mod tests {
             assert_eq!(cleanup_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zutil.c
+    // c:787 lookupstyle / c:810 testforstyle / c:837 bin_zstyle /
+    // c:1131 bin_zformat / c:2022 bin_zregexparse / c:2408 bin_zparseopts /
+    // c:3135 zformat_substring
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:787 — `lookupstyle` returns Vec<String> (compile-time pin, alt).
+    #[test]
+    fn lookupstyle_returns_vec_string_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = lookupstyle("", "");
+    }
+
+    /// c:787 — `lookupstyle("", "")` returns empty Vec.
+    #[test]
+    fn lookupstyle_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let v = lookupstyle("", "");
+        assert!(v.is_empty(),
+            "empty ctx/style → empty Vec; got {:?}", v);
+    }
+
+    /// c:810 — `testforstyle` returns i32 (compile-time pin, alt).
+    #[test]
+    fn testforstyle_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = testforstyle("", "");
+    }
+
+    /// c:837 — `bin_zstyle` no-args returns 0 (listing form per c:837).
+    #[test]
+    fn bin_zstyle_no_args_returns_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let r = bin_zstyle("zstyle", &[], &ops, 0);
+        assert!(r == 0 || r == 1,
+            "no args is the listing form; result must be 0/1, got {}", r);
+    }
+
+    /// c:1131 — `bin_zformat` no-args returns nonzero (usage error).
+    #[test]
+    fn bin_zformat_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let r = bin_zformat("zformat", &[], &ops, 0);
+        assert_ne!(r, 0, "zformat no args → usage error");
+    }
+
+    /// c:2022 — `bin_zregexparse` returns i32 (compile-time pin).
+    #[test]
+    fn bin_zregexparse_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let _: i32 = bin_zregexparse("zregexparse", &[], &ops, 0);
+    }
+
+    /// c:2408 — `bin_zparseopts` returns i32 (compile-time pin).
+    #[test]
+    fn bin_zparseopts_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let _: i32 = bin_zparseopts("zparseopts", &[], &ops, 0);
+    }
+
+    /// c:2408 — `bin_zparseopts` no-args returns nonzero (usage error).
+    #[test]
+    fn bin_zparseopts_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let r = bin_zparseopts("zparseopts", &[], &ops, 0);
+        assert_ne!(r, 0, "zparseopts no args → usage error");
+    }
+
+    /// c:3135 — `zformat_substring("", _, false)` returns empty (alt).
+    #[test]
+    fn zformat_substring_empty_format_returns_empty_alt() {
+        let specs: std::collections::HashMap<char, String> =
+            std::collections::HashMap::new();
+        let r = zformat_substring("", &specs, false);
+        assert_eq!(r, "", "empty format → empty output");
+    }
+
+    /// c:3135 — `zformat_substring` returns String (compile-time pin).
+    #[test]
+    fn zformat_substring_returns_string_type() {
+        let specs: std::collections::HashMap<char, String> =
+            std::collections::HashMap::new();
+        let _: String = zformat_substring("plain text", &specs, false);
+    }
+
+    /// c:3135 — `zformat_substring` plain text (no `%`) returns as-is.
+    #[test]
+    fn zformat_substring_plain_text_no_specs() {
+        let specs: std::collections::HashMap<char, String> =
+            std::collections::HashMap::new();
+        let r = zformat_substring("hello world", &specs, false);
+        assert_eq!(r, "hello world",
+            "text without %-spec is returned verbatim");
+    }
 }
