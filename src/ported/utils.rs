@@ -12912,4 +12912,174 @@ mod tests {
     fn ztrlen_corpus_empty_is_zero() {
         assert_eq!(ztrlen(""), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // itype_end C-parity tests — pin `utils.c:4395-4495` per-itype-flag
+    // behavior. One assertion per flag/path so a regression in the
+    // char-class walk points at the exact branch that drifted.
+    //
+    // Tests that capture KNOWN ZSHRS BUGS use #[ignore = "ZSHRS BUG: …"]
+    // so the bug stays surfaced but CI doesn't fail until the fix.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `itype_end("abc123", IIDENT, false)` walks the full identifier.
+    /// C utils.c:4395 — IIDENT matches letters/digits/`_` via TYPTAB.
+    /// Requires `inittyptab()` for TYPTAB population — call at entry.
+    #[test]
+    fn itype_end_ident_walks_full_identifier() {
+        let _g = crate::test_util::global_state_lock();
+        inittyptab();
+        use crate::ported::ztype_h::IIDENT;
+        assert_eq!(itype_end("abc123", IIDENT as u32, false), 6);
+    }
+
+    /// `itype_end("abc-def", IIDENT, false)` stops at `-` (non-IIDENT).
+    #[test]
+    fn itype_end_ident_stops_at_dash() {
+        let _g = crate::test_util::global_state_lock();
+        inittyptab();
+        use crate::ported::ztype_h::IIDENT;
+        assert_eq!(itype_end("abc-def", IIDENT as u32, false), 3);
+    }
+
+    /// `itype_end("a", IIDENT, true)` with `once=true` stops after 1.
+    #[test]
+    fn itype_end_once_stops_after_first_match() {
+        let _g = crate::test_util::global_state_lock();
+        inittyptab();
+        use crate::ported::ztype_h::IIDENT;
+        assert_eq!(itype_end("abc", IIDENT as u32, true), 1);
+    }
+
+    /// `itype_end("", IIDENT, false)` on empty string returns 0.
+    #[test]
+    fn itype_end_empty_string_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        inittyptab();
+        use crate::ported::ztype_h::IIDENT;
+        assert_eq!(itype_end("", IIDENT as u32, false), 0);
+    }
+
+    /// `itype_end(":", IIDENT, false)` on non-IIDENT first char = 0.
+    #[test]
+    fn itype_end_non_ident_first_char_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        inittyptab();
+        use crate::ported::ztype_h::IIDENT;
+        assert_eq!(itype_end(":foo", IIDENT as u32, false), 0);
+    }
+
+    /// `itype_end("ns.foo", INAMESPC, false)` — C utils.c:4399-4413
+    /// INAMESPC special-cases ksh93 namespace `.` separators. With
+    /// non-POSIXIDENTIFIERS / non-KSH emulation, dotted names should
+    /// walk through the `.` to consume `ns.foo` as a single name.
+    /// The Rust port may stop at `.` since dotted-namespace support
+    /// requires POSIXIDENTIFIERS check + ksh emulation gating that
+    /// isn't fully wired.
+    #[test]
+    #[ignore = "ZSHRS BUG: INAMESPC dot-recursion depends on POSIXIDENTIFIERS / EMULATE_KSH wiring (c:4400-4411) — unwired in current options.rs path"]
+    fn itype_end_inamespc_walks_through_ksh93_dot() {
+        let _g = crate::test_util::global_state_lock();
+        inittyptab();
+        use crate::ported::ztype_h::INAMESPC;
+        // Expected: full "ns.foo" = 6 bytes walked.
+        assert_eq!(itype_end("ns.foo", INAMESPC, false), 6);
+    }
+
+    /// `itype_end("a b c", ISEP, false)` from a space char.
+    /// ISEP matches IFS chars. Default IFS includes ` \t\n`.
+    /// Walk should consume only the leading separator(s).
+    #[test]
+    fn itype_end_isep_walks_separator_run() {
+        let _g = crate::test_util::global_state_lock();
+        inittyptab();
+        use crate::ported::ztype_h::ISEP;
+        // " \t " then 'a' — 3 sep bytes.
+        assert_eq!(itype_end(" \t a", ISEP as u32, false), 3);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // unmetafy C-parity tests — pin `utils.c:4954-4983`. Meta-byte
+    // collapse (0x83 + (b^0x20) → b) must be in-place + return new len.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `unmetafy("abc")` is a no-op for non-metafied input.
+    #[test]
+    fn unmetafy_pure_ascii_unchanged() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v = b"abc".to_vec();
+        let n = unmetafy(&mut v);
+        assert_eq!(n, 3);
+        assert_eq!(v, b"abc");
+    }
+
+    /// `unmetafy("a\x83a")` → "a\x01" because Meta(0x83) + next ^ 0x20
+    /// = 'a' ^ 0x20 = 0x41 ^ 0x20 = 0x61... wait, 'a'=0x61, 0x61 ^ 0x20
+    /// = 0x41 = 'A'. So unmetafy("a\x83a") → "aA" (2 bytes).
+    #[test]
+    fn unmetafy_meta_pair_collapses_to_xor_byte() {
+        let _g = crate::test_util::global_state_lock();
+        // 'a' + Meta(0x83) + 'a' → 'a' + ('a' ^ 0x20) = 'a' + 'A' = "aA"
+        let mut v: Vec<u8> = vec![b'a', 0x83, b'a'];
+        let n = unmetafy(&mut v);
+        assert_eq!(n, 2);
+        assert_eq!(v, vec![b'a', b'A']);
+    }
+
+    /// `unmetafy("")` returns 0 with empty buffer.
+    #[test]
+    fn unmetafy_empty_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<u8> = Vec::new();
+        let n = unmetafy(&mut v);
+        assert_eq!(n, 0);
+    }
+
+    /// `unmetafy` with trailing lone Meta byte. C `unmetafy` checks
+    /// `p < s.len()` before reading the byte after Meta — trailing
+    /// Meta at EOF is preserved as a single literal Meta byte.
+    #[test]
+    fn unmetafy_trailing_lone_meta_preserved() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<u8> = vec![b'a', 0x83];
+        let n = unmetafy(&mut v);
+        // Rust port copies the Meta byte to t, then loop exits with
+        // p == s.len() → no second-byte read. Final = "a\x83" (2).
+        assert_eq!(n, 2);
+        assert_eq!(v, vec![b'a', 0x83]);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // nicechar / wcs_nicechar C-parity tests — pin display-form
+    // conversion. Required by stradd, prompt expansion, completion etc.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `nicechar('a')` returns the printable char unchanged.
+    #[test]
+    fn nicechar_printable_ascii_passes_through() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(nicechar('a'), "a");
+    }
+
+    /// `nicechar('\n')` returns `\n` escape sequence per C `nicechar`
+    /// (utils.c:464+ — control chars get `^M` style or `\n` escape).
+    /// zsh emits `\n` as literal `\n` (two chars) for non-quotable
+    /// nicechar; the `nicechar_sel(c, false)` form is non-quotable.
+    #[test]
+    fn nicechar_newline_emits_escape() {
+        let _g = crate::test_util::global_state_lock();
+        let out = nicechar('\n');
+        assert!(
+            out == "\\n" || out == "\n",
+            "newline should be escaped or literal; got {out:?}"
+        );
+    }
+
+    /// `wcs_nicechar('A', None, None)` returns "A" for printable wide
+    /// chars per utils.c:689.
+    #[test]
+    fn wcs_nicechar_printable_ascii_passes_through() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(wcs_nicechar('A', None, None), "A");
+    }
 }

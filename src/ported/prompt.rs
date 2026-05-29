@@ -3916,4 +3916,235 @@ mod tests {
         let y: i32 = out.parse().unwrap_or(0);
         assert!(y >= 2024, "%D{{%Y}} should emit a 4-digit year; got {out:?}");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Signature-divergence parity tests — pin known ZSHRS BUGS where the
+    // Rust port's fn signature doesn't match the C source. Tests are
+    // #[ignore]'d so CI passes; remove ignore when sig is fixed.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// PIN: `parsecolorchar` SIGNATURE BUG.
+    ///
+    /// C `Src/prompt.c:318` — `zattr parsecolorchar(zattr arg, int is_fg)`.
+    /// Reads `bv->fm[1]` for the `{NAME}` brace arg, mutates `bv->fm`,
+    /// returns the encoded `zattr` (with TXTFGCOLOUR / TXTBGCOLOUR +
+    /// color packed in TXT_ATTR_FG_COL_MASK / TXT_ATTR_BG_COL_MASK).
+    ///
+    /// Rust port: `pub fn parsecolorchar(arg: &str, is_fg: bool) ->
+    /// Option<(Color, String)>`. Takes color NAME as the arg
+    /// (totally wrong — C takes numeric arg + reads bv->fm for the
+    /// optional brace name), no bv access (so caller had to inline the
+    /// brace-parse logic in putpromptchar), returns a tuple instead of
+    /// zattr. The fn can't be called with C's contract.
+    ///
+    /// Until the signature is corrected to match C (would need bv to
+    /// become a thread-local or first-arg parameter, and zattr return),
+    /// the inline brace-parse in putpromptchar is the only working path.
+    #[test]
+    #[ignore = "ZSHRS BUG: parsecolorchar signature diverges from C — Rust=(arg:&str, is_fg:bool)->Option<(Color,String)>, C=(arg:zattr, is_fg:int)->zattr; reads bv->fm[1] in C, no equivalent in Rust"]
+    fn parsecolorchar_signature_matches_c() {
+        // Faithful C call: `parsecolorchar(1 as zattr, true)` should
+        // return zattr with TXTFGCOLOUR | (1 << TXT_ATTR_FG_COL_SHIFT)
+        // packed in. Rust's sig can't even be called this way.
+        //
+        // When fixed:
+        //   let zattr_out = parsecolorchar(1 as zattr, true);
+        //   assert_eq!(zattr_out & TXTFGCOLOUR, TXTFGCOLOUR);
+        //   assert_eq!(
+        //       (zattr_out & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT,
+        //       1
+        //   );
+        panic!("parsecolorchar signature is divergent — test cannot exercise the C contract; remove #[ignore] after signature is corrected");
+    }
+
+    /// PIN: `match_colour` SIGNATURE BUG.
+    ///
+    /// C `Src/prompt.c:1957` — `zattr match_colour(const char **teststrp,
+    /// int is_fg, int colour)`. Takes a by-ref char** so the fn can
+    /// advance the parse cursor past consumed chars.
+    ///
+    /// Rust port: `pub fn match_colour(cursor: Option<&mut usize>,
+    /// spec: &str, is_fg: bool, colour: i32) -> zattr`. Splits
+    /// `teststrp` into separate `cursor: Option<&mut usize>` + `spec: &str`
+    /// — semantically equivalent but ABI-divergent (callers in C pass
+    /// &teststrp directly).
+    ///
+    /// Less severe than parsecolorchar — the cursor-as-out-param Rust
+    /// idiom mirrors C's `**teststrp` semantics, just with a different
+    /// type. Documented but not bug-tagged.
+    #[test]
+    fn match_colour_signature_documented_split() {
+        // Rust signature is acceptable Rust-idiom of C's `**teststrp`.
+        // Pin: when cursor=None and colour=5 with is_fg=true, the fn
+        // returns the encoded zattr without parsing any spec string.
+        let z = match_colour(None, "", true, 5);
+        // Per C c:1957 fall-through path (teststrp NULL), it packs
+        // colour=5 into the fg color mask.
+        assert!(z & TXTFGCOLOUR != 0, "fg color bit should be set");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // putpromptchar additional %X case coverage — pin behaviors not
+    // covered by the previous test batch.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `%C` is identical to `%c` but WITHOUT tilde substitution.
+    /// C c:524-526 — `promptpath(pwd, arg ? arg : 1, 0)`.
+    /// CURRENT BUG: my putpromptchar handles `%c`/`%.` but not `%C`.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %C case not in dispatch switch (c:524-526) — falls to unknown-escape default emitting `%C` literally"]
+    fn putpromptchar_uppercase_C_trailing_no_tilde() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = std::env::var("PWD").ok();
+        unsafe { std::env::set_var("PWD", "/a/b/c"); }
+        let out = expand_prompt("%C");
+        if let Some(p) = saved { unsafe { std::env::set_var("PWD", p); } }
+        assert_eq!(out, "c", "%C with default arg=1 → last component");
+    }
+
+    /// `%N` emits the script name or `$0` fallback. C c:556 —
+    /// `promptpath(scriptname ? scriptname : argzero, arg, 0)`.
+    /// CURRENT BUG: not in my dispatch switch.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %N case not in dispatch (c:556) — needs scriptname/argzero substrate"]
+    fn putpromptchar_N_emits_script_name() {
+        let _g = crate::test_util::global_state_lock();
+        // Expected: non-empty (some script or argv[0]).
+        let out = expand_prompt("%N");
+        assert!(!out.is_empty(), "%N should emit script name or argv[0]");
+    }
+
+    /// `%m` (lowercase) emits the host short-name (up to first `.`).
+    /// C c:560-579. CURRENT BUG: not in my dispatch switch.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %m case not ported (c:560-579) — short-hostname logic"]
+    fn putpromptchar_lowercase_m_emits_host_short() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%m");
+        // %m with default arg=1 takes 1 leading domain component.
+        assert!(!out.is_empty(), "%m should emit hostname (short form)");
+        assert!(!out.contains('.'), "%m with arg=1 should not contain dots; got {out:?}");
+    }
+
+    /// `%l` emits the TTY name shortened (strip /dev/ or /dev/tty
+    /// prefix). C c:537-539.
+    /// CURRENT BUG: not in dispatch.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %l (tty name) not ported (c:537-539)"]
+    fn putpromptchar_l_emits_tty_short_name() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%l");
+        // In non-tty test env, %l might emit nothing or "()" per zsh
+        // behavior. Either way, no panic, no literal "%l".
+        assert_ne!(out, "%l", "%l must be expanded, not literal");
+    }
+
+    /// `%y` emits TTY name (same path as %l but always with /dev/
+    /// strip). C c:534-535.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %y (tty name verbose) not ported (c:534-535)"]
+    fn putpromptchar_y_emits_tty_name() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%y");
+        assert_ne!(out, "%y", "%y must be expanded, not literal");
+    }
+
+    /// `%w` emits the date as `DAY DD`. C c:783-785.
+    /// CURRENT BUG: not in my putpromptchar switch.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %w (date as DAY DD) not in switch (c:783-785)"]
+    fn putpromptchar_w_emits_day_date() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%w");
+        // Format like "Mon 29" — should contain a digit.
+        assert!(
+            out.chars().any(|c| c.is_ascii_digit()),
+            "%w should contain a day-number digit; got {out:?}"
+        );
+    }
+
+    /// `%E` clears to end of line. C c:892-893 — emits the
+    /// `tcstr[TCCLEAREOL]` termcap escape.
+    /// CURRENT BUG: not in my putpromptchar switch.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %E (clear-EOL) not in switch (c:892-893)"]
+    fn putpromptchar_E_emits_clear_eol_escape() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%E");
+        // Expect at minimum an ESC byte (the CSI sequence start).
+        assert!(out.contains('\x1b'), "%E should emit an ANSI escape");
+    }
+
+    /// `%G` emits N glitch-space bytes (`Nularg` sentinel). The
+    /// expand_prompt boundary translator currently FILTERS Nularg
+    /// out, so the visible output strips %G entirely.
+    /// C c:642-644 emits Nularg via addbufspc + write.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %G not in switch; expand_prompt strips Nularg unconditionally (c:642-644)"]
+    fn putpromptchar_G_emits_glitch_space() {
+        let _g = crate::test_util::global_state_lock();
+        // %G with no arg → one Nularg byte; with arg → N bytes.
+        // Visible output not specified by zsh (these are width hints)
+        // but %G should at least not produce literal "%G".
+        let out = expand_prompt("%G");
+        assert_ne!(out, "%G", "%G must NOT pass through as literal");
+    }
+
+    /// `%v` emits `$psvar[arg]` (or psvar[1] if arg=0). C c:884-887.
+    /// CURRENT BUG: not in my putpromptchar switch.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %v (psvar lookup) not in switch (c:884-887)"]
+    fn putpromptchar_v_emits_psvar_element() {
+        let _g = crate::test_util::global_state_lock();
+        // With no psvar set, %v emits nothing (NOT literal "%v").
+        let out = expand_prompt("%v");
+        assert_ne!(out, "%v", "%v must be expanded, not literal");
+    }
+
+    /// `%_` (underscore) emits the command-stack token names. C c:855-880.
+    /// CURRENT BUG: not in my switch.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %_ (cmd-stack names) not in switch (c:855-880)"]
+    fn putpromptchar_underscore_emits_cmdstack() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%_");
+        // With empty cmdstack, %_ emits nothing — but never literal "%_".
+        assert_ne!(out, "%_", "%_ must be expanded, not literal");
+    }
+
+    /// `%L` emits $SHLVL. C c:889.
+    /// CURRENT BUG: not in switch.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %L (shlvl) not in switch (c:889)"]
+    fn putpromptchar_L_emits_shlvl() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%L");
+        assert!(
+            out.parse::<i32>().is_ok(),
+            "%L should emit a decimal shell-level; got {out:?}"
+        );
+    }
+
+    /// `%i` emits $LINENO. C c:929 (inside funcstack path).
+    /// CURRENT BUG: not in switch.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %i (lineno) not in switch (c:929)"]
+    fn putpromptchar_i_emits_lineno() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%i");
+        assert!(
+            out.parse::<i32>().is_ok(),
+            "%i should emit a decimal line number; got {out:?}"
+        );
+    }
+
+    /// `%I` emits funcstack line number (file line). C c:901-920.
+    /// CURRENT BUG: not in switch.
+    #[test]
+    #[ignore = "ZSHRS BUG: putpromptchar %I (funcstack lineno) not in switch (c:901-920)"]
+    fn putpromptchar_I_emits_funcstack_lineno() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%I");
+        assert!(out.parse::<i32>().is_ok(), "%I should be decimal; got {out:?}");
+    }
 }
