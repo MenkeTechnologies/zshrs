@@ -831,4 +831,99 @@ mod tests {
             "getcurrentsecs={a} should match getcurrenttime[0]={b} within ~2s"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/datetime.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:266 — `getcurrentsecs` returns positive epoch (post-Y2000).
+    #[test]
+    fn getcurrentsecs_returns_positive_epoch() {
+        let _g = crate::test_util::global_state_lock();
+        let s = getcurrentsecs();
+        assert!(s > 0, "epoch must be positive, got {}", s);
+        assert!(s > 946_684_800, "must be after Y2000");
+    }
+
+    /// c:266 — monotonic non-decreasing across 3 immediate calls.
+    #[test]
+    fn getcurrentsecs_is_monotonic_non_decreasing_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let a = getcurrentsecs();
+        let b = getcurrentsecs();
+        let c = getcurrentsecs();
+        assert!(b >= a, "{} -> {} went backwards", a, b);
+        assert!(c >= b, "{} -> {} went backwards", b, c);
+    }
+
+    /// c:283 — `getcurrentrealtime` returns positive double.
+    #[test]
+    fn getcurrentrealtime_returns_positive() {
+        let _g = crate::test_util::global_state_lock();
+        let t = getcurrentrealtime();
+        assert!(t > 0.0);
+    }
+
+    /// c:283 — not NaN, finite.
+    #[test]
+    fn getcurrentrealtime_is_finite() {
+        let _g = crate::test_util::global_state_lock();
+        let t = getcurrentrealtime();
+        assert!(!t.is_nan());
+        assert!(t.is_finite());
+    }
+
+    /// c:283 — agrees with getcurrentsecs ±5s.
+    #[test]
+    fn getcurrentrealtime_agrees_with_secs() {
+        let _g = crate::test_util::global_state_lock();
+        let real = getcurrentrealtime();
+        let secs = getcurrentsecs() as f64;
+        assert!((real - secs).abs() < 5.0);
+    }
+
+    /// c:303 — returns exactly 2 elements [sec, nsec].
+    #[test]
+    fn getcurrenttime_returns_two_elements_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let arr = getcurrenttime();
+        assert_eq!(arr.len(), 2);
+    }
+
+    /// c:303 — nsec in [0, 1B).
+    #[test]
+    fn getcurrenttime_nsec_in_valid_range() {
+        let _g = crate::test_util::global_state_lock();
+        let arr = getcurrenttime();
+        let nsec: i64 = arr[1].parse().expect("nsec parses");
+        assert!(nsec >= 0 && nsec < 1_000_000_000, "nsec out of range: {}", nsec);
+    }
+
+    /// c:233 — `bin_strftime` with no args returns nonzero (usage).
+    #[test]
+    fn bin_strftime_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_strftime("strftime", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// Lifecycle (c:329/357) split per-hook.
+    #[test]
+    fn datetime_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:357 — boot_(NULL) = 0.
+    #[test]
+    fn datetime_boot_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
 }
