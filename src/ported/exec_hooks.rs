@@ -631,4 +631,95 @@ mod tests {
             assert_eq!(assoc("__never_real_assoc_xyz__").is_none(), first);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for src/ported/exec_hooks.rs
+    // c:134 array / c:147 assoc / c:181 dispatch_function_call /
+    // c:188 run_function_body / c:192 execute_script /
+    // c:206 run_command_substitution / c:213 pparams / c:223 unregister_function
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `array(name)` returns Option<Vec<String>> (compile-time pin).
+    #[test]
+    fn array_returns_option_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Vec<String>> = array("any");
+    }
+
+    /// `assoc(name)` returns Option<IndexMap<String,String>> (compile-time pin).
+    #[test]
+    fn assoc_returns_option_indexmap_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<indexmap::IndexMap<String, String>> = assoc("any");
+    }
+
+    /// `dispatch_function_call` returns Option<i32> (compile-time pin).
+    #[test]
+    fn dispatch_function_call_returns_option_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i32> = dispatch_function_call("__never__", &[]);
+    }
+
+    /// `run_function_body` returns Option<i32> (compile-time pin).
+    #[test]
+    fn run_function_body_returns_option_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i32> = run_function_body("__never__", &[]);
+    }
+
+    /// `execute_script` returns Result<i32, String> (compile-time pin).
+    #[test]
+    fn execute_script_returns_result_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<i32, String> = execute_script("");
+    }
+
+    /// `execute_script_zsh_pipeline` returns Result<i32, String> (compile-time pin).
+    #[test]
+    fn execute_script_zsh_pipeline_returns_result_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<i32, String> = execute_script_zsh_pipeline("");
+    }
+
+    /// `run_command_substitution` returns String (compile-time pin).
+    #[test]
+    fn run_command_substitution_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = run_command_substitution("");
+    }
+
+    /// `pparams` returns Vec<String> (compile-time pin).
+    #[test]
+    fn pparams_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = pparams();
+    }
+
+    /// `unregister_function` returns bool (compile-time pin).
+    #[test]
+    fn unregister_function_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = unregister_function("__never__");
+    }
+
+    /// `unset_scalar`/`unset_array`/`unset_assoc` for nonexistent name safe.
+    #[test]
+    fn unset_variants_nonexistent_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        unset_scalar("__never_unset_scalar__");
+        unset_array("__never_unset_array__");
+        unset_assoc("__never_unset_assoc__");
+    }
+
+    /// `set_pparams` with no hook installed is a silent no-op
+    /// (c:217-220 — `if let Some(f) = PPARAMS_SET.get() { f(v); }`).
+    /// Pin the no-hook contract so a refactor that panics on missing
+    /// hook gets caught.
+    #[test]
+    fn set_pparams_without_hook_is_silent_noop() {
+        let _g = crate::test_util::global_state_lock();
+        // No hook installed in test context — must not panic.
+        set_pparams(vec!["a".into(), "b".into(), "c".into()]);
+        set_pparams(vec![]);
+    }
 }
