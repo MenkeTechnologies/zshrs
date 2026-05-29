@@ -2659,23 +2659,43 @@ pub fn arrlen_lt<T>(arr: &[T], n: usize) -> bool {
     arr.len() < n
 }
 
-/// Skip balanced parentheses (from utils.c skipparens)
-// Skip over a balanced pair of parenthesis.                                // c:2409
-/// `skipparens` — see implementation.
-pub fn skipparens(s: &str, open: char, close: char) -> usize {
+/// Direct port of `int skipparens(char inpar, char outpar, char **s)`
+/// from `Src/utils.c:2409`. Walks `*s` past a balanced `inpar`/`outpar`
+/// pair, advancing the input slice in place. Returns 0 on full
+/// balance, `-1` when `**s != inpar` (no opening paren), or positive
+/// when the scan ran off the end of `*s` with `level > 0`
+/// (unbalanced).
+///
+/// Rust signature: `s: &mut &str` mirrors C's `char **s` out-arg —
+/// the caller's slice handle is rewritten to point past the closing
+/// paren (or to the empty tail on unbalanced input).
+/// WARNING: param names don't match C — Rust=(open, close, s) vs C=(inpar, outpar, s)
+pub fn skipparens(open: char, close: char, s: &mut &str) -> i32 {
     // c:2409
-    let mut depth = 0;
-    for (i, c) in s.char_indices() {
+    let mut chars = s.char_indices();
+    // c:2412 — `if (**s != inpar) return -1;`
+    match chars.next() {
+        Some((_, c)) if c == open => {}
+        _ => return -1,
+    }
+    // c:2414 — `for (level = 1; *++*s && level;)`
+    let mut level: i32 = 1;
+    let mut consumed = open.len_utf8();
+    for (i, c) in chars {
+        consumed = i + c.len_utf8();
         if c == open {
-            depth += 1;
+            level += 1; // c:2416-2417
         } else if c == close {
-            depth -= 1;
-            if depth == 0 {
-                return i + c.len_utf8();
-            }
+            level -= 1; // c:2418-2419
+        }
+        if level == 0 {
+            break;
         }
     }
-    s.len()
+    *s = &s[consumed..];
+    // c:2421 — `return level;`. 0 on balanced match, positive on
+    // ran-off-end (unbalanced input).
+    level
 }
 
 /// zlong with base autodetection. Returns the parsed value AND a

@@ -753,27 +753,25 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
     // c:746-748 — `if (*(str = instr) == zpc_special[ZPC_INPAR] &&
     //               !skipparens(Inpar, Outpar, (char **)&str) &&
     //               *str == zpc_special[ZPC_HASH] && str[-2] == '/')`.
-    // C `skipparens` returns 0 on a fully balanced `(...)` and -1/positive
-    // on failure. Replicate the depth-walk inline with C-faithful semantics
-    // (utils::skipparens has a divergent usize-returning signature).
-    let mut str_after_parens: Option<usize> = None; // char-index of char AFTER `)`
-    let mut skip_level: i32 = -1; // C `level` return value
-    if chars.first() == Some(&inpar_c) {
-        // c:746 — `*str == Inpar`
-        let mut level: i32 = 1; // c:2416
-        let mut i: usize = 1; // mirrors `++*s` advancing past `(`
-        while i < chars.len() && level != 0 {
-            // c:2416 `*++*s && level`
-            if chars[i] == crate::ported::zsh_h::Inpar {
-                level += 1; // c:2417-2418
-            } else if chars[i] == crate::ported::zsh_h::Outpar {
-                level -= 1; // c:2419-2420
-            }
-            i += 1;
-        }
-        skip_level = level; // c:2422 — 0 on success
-        str_after_parens = Some(i); // C `str` now points past `)`
-    }
+    // Routed through the canonical `skipparens` port for caller-coverage
+    // parity with C — was previously inlined as a divergent depth-walk
+    // because the old Rust signature returned usize. The C-faithful
+    // `skipparens(open, close, &mut &str)` now matches `int skipparens
+    // (char inpar, char outpar, char **s)` at utils.c:2409.
+    let instr_chars: String = chars.iter().collect();
+    let inpar_byte = crate::ported::zsh_h::Inpar as u32;
+    let outpar_byte = crate::ported::zsh_h::Outpar as u32;
+    let mut cursor: &str = &instr_chars;
+    let skip_level: i32 = crate::ported::utils::skipparens(
+        char::from_u32(inpar_byte).unwrap_or('('),
+        char::from_u32(outpar_byte).unwrap_or(')'),
+        &mut cursor,
+    );
+    let str_after_parens: Option<usize> = if chars.first() == Some(&inpar_c) {
+        Some(instr_chars.chars().count() - cursor.chars().count())
+    } else {
+        None
+    };
     let parens_balanced = chars.first() == Some(&inpar_c) && skip_level == 0; // c:746-747 `!skipparens(...)`
     let after_paren_idx = str_after_parens.unwrap_or(0);
     let str_at_hash = parens_balanced && chars.get(after_paren_idx) == Some(&hash_c); // c:748 `*str == Pound`
