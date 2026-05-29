@@ -827,4 +827,116 @@ mod tests {
         let d2 = deltae(&b, &a);
         assert!((d1 - d2).abs() < 1e-9);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/nearcolor.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:41 — `deltae` always returns non-negative (sum of squares).
+    #[test]
+    fn deltae_always_non_negative() {
+        let a = cielab { L: -100.0, a: -50.0, b: 200.0 };
+        let b = cielab { L: 100.0, a: 50.0, b: -200.0 };
+        let d = deltae(&a, &b);
+        assert!(d >= 0.0, "delta-E is sum of squares, must be ≥ 0, got {}", d);
+    }
+
+    /// c:41 — `deltae` matches the (L1-L2)^2 + (a1-a2)^2 + (b1-b2)^2
+    /// formula exactly (no sqrt per c:42 comment).
+    #[test]
+    fn deltae_matches_sum_of_squares_formula() {
+        let a = cielab { L: 50.0, a: 0.0, b: 0.0 };
+        let b = cielab { L: 53.0, a: 4.0, b: 12.0 };
+        let r = deltae(&a, &b);
+        let expected = 9.0 + 16.0 + 144.0; // 3² + 4² + 12² = 169
+        assert!((r - expected).abs() < 1e-9, "{} != {}", r, expected);
+    }
+
+    /// c:50 — `RGBtoLAB(0,0,0)` → black: L=0, a=0, b=0.
+    #[test]
+    fn rgb_to_lab_black_origin() {
+        let mut lab = cielab { L: 99.0, a: 99.0, b: 99.0 };
+        RGBtoLAB(0, 0, 0, &mut lab);
+        assert!(lab.L.abs() < 1e-3, "black L≈0, got {}", lab.L);
+        assert!(lab.a.abs() < 1e-3, "black a≈0, got {}", lab.a);
+        assert!(lab.b.abs() < 1e-3, "black b≈0, got {}", lab.b);
+    }
+
+    /// c:50 — `RGBtoLAB(255,255,255)` → white: L≈100.
+    #[test]
+    fn rgb_to_lab_white_has_l_near_100() {
+        let mut lab = cielab { L: 0.0, a: 0.0, b: 0.0 };
+        RGBtoLAB(255, 255, 255, &mut lab);
+        assert!(
+            (lab.L - 100.0).abs() < 0.5,
+            "white L≈100, got {}",
+            lab.L
+        );
+    }
+
+    /// c:50 — RGBtoLAB(R,R,R) for gray scale → a≈0, b≈0 (chromatic
+    /// neutrality of pure grays).
+    #[test]
+    fn rgb_to_lab_gray_has_zero_chroma() {
+        let mut lab = cielab { L: 0.0, a: 99.0, b: 99.0 };
+        RGBtoLAB(128, 128, 128, &mut lab);
+        assert!(lab.a.abs() < 1.0, "gray a≈0, got {}", lab.a);
+        assert!(lab.b.abs() < 1.0, "gray b≈0, got {}", lab.b);
+    }
+
+    /// c:50 — RGBtoLAB is deterministic.
+    #[test]
+    fn rgb_to_lab_is_deterministic() {
+        let mut lab1 = cielab { L: 0.0, a: 0.0, b: 0.0 };
+        let mut lab2 = cielab { L: 0.0, a: 0.0, b: 0.0 };
+        RGBtoLAB(100, 150, 200, &mut lab1);
+        RGBtoLAB(100, 150, 200, &mut lab2);
+        assert_eq!(lab1.L, lab2.L);
+        assert_eq!(lab1.a, lab2.a);
+        assert_eq!(lab1.b, lab2.b);
+    }
+
+    /// c:74 — `mapRGBto88(0,0,0)` returns valid index in 0..88 range.
+    #[test]
+    fn mapRGBto88_returns_valid_palette_index() {
+        let r = mapRGBto88(0, 0, 0);
+        assert!(r >= 0 && r < 88, "88-color palette index in [0,88), got {}", r);
+    }
+
+    /// c:74 — `mapRGBto88` deterministic for fixed input.
+    #[test]
+    fn mapRGBto88_is_deterministic() {
+        let a = mapRGBto88(255, 128, 64);
+        let b = mapRGBto88(255, 128, 64);
+        assert_eq!(a, b);
+    }
+
+    /// c:218 — `mapRGBto256(0,0,0)` returns valid index in 0..256.
+    #[test]
+    fn mapRGBto256_returns_valid_palette_index() {
+        let r = mapRGBto256(0, 0, 0);
+        assert!(r >= 0 && r < 256, "256-color palette index in [0,256), got {}", r);
+    }
+
+    /// c:218 — `mapRGBto256` deterministic.
+    #[test]
+    fn mapRGBto256_is_deterministic() {
+        let a = mapRGBto256(200, 100, 50);
+        let b = mapRGBto256(200, 100, 50);
+        assert_eq!(a, b);
+    }
+
+    /// Lifecycle (c:343/366/374) split per-hook.
+    #[test]
+    fn nearcolor_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:374 — cleanup_ returns 0.
+    #[test]
+    fn nearcolor_cleanup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+    }
 }
