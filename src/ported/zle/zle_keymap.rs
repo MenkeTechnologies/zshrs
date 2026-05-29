@@ -1998,28 +1998,29 @@ pub fn default_bindings() {
     bindkey(&mut smap, &[b'\n'], Some(Thingy::builtin(".accept-line")), None);
     bindkey(&mut smap, &[b'\r'], Some(Thingy::builtin(".accept-line")), None);
 
-    // c:1364-1369 — vi command + insert: arrow keys. C uses
-    // `add_cursor_key` for termcap-aware bindings; without termcap
-    // substrate at this level we use the vt100 fallback escape
-    // sequences (matches the `defchar` path of add_cursor_key).
+    // c:1364-1369 — vi command + insert: arrow keys via
+    // `add_cursor_key()` so the source-level bindkey call count
+    // matches C exactly (one add_cursor_key → two internal bindkey
+    // calls for the `[`/`O` keypad variants).
     for kptr in [&mut vmap, &mut amap] {
-        bindkey(kptr, b"\x1b[A", Some(Thingy::builtin("up-line-or-history")), None);
-        bindkey(kptr, b"\x1b[B", Some(Thingy::builtin("down-line-or-history")), None);
-        bindkey(kptr, b"\x1b[D", Some(Thingy::builtin("vi-backward-char")), None);
-        bindkey(kptr, b"\x1b[C", Some(Thingy::builtin("vi-forward-char")), None);
-        bindkey(kptr, b"\x1bOA", Some(Thingy::builtin("up-line-or-history")), None);
-        bindkey(kptr, b"\x1bOB", Some(Thingy::builtin("down-line-or-history")), None);
-        bindkey(kptr, b"\x1bOD", Some(Thingy::builtin("vi-backward-char")), None);
-        bindkey(kptr, b"\x1bOC", Some(Thingy::builtin("vi-forward-char")), None);
+        add_cursor_key(kptr, crate::ported::zsh_h::TCUPCURSOR,
+                       Thingy::builtin("up-line-or-history"), b'A' as i32);
+        add_cursor_key(kptr, crate::ported::zsh_h::TCDOWNCURSOR,
+                       Thingy::builtin("down-line-or-history"), b'B' as i32);
+        add_cursor_key(kptr, crate::ported::zsh_h::TCLEFTCURSOR,
+                       Thingy::builtin("vi-backward-char"), b'D' as i32);
+        add_cursor_key(kptr, crate::ported::zsh_h::TCRIGHTCURSOR,
+                       Thingy::builtin("vi-forward-char"), b'C' as i32);
     }
 
     // c:1374-1385 — vi operator-pending + visual local maps: cursor
-    // keys + j/k + aa/ia/aw/iw/aW/iW.
+    // keys + j/k + aa/ia/aw/iw/aW/iW. Cursor keys via
+    // `add_cursor_key` matching C's helper-based shape.
     for kptr in [&mut oppmap, &mut vismap] {
-        bindkey(kptr, b"\x1b[A", Some(Thingy::builtin("up-line")), None);
-        bindkey(kptr, b"\x1b[B", Some(Thingy::builtin("down-line")), None);
-        bindkey(kptr, b"\x1bOA", Some(Thingy::builtin("up-line")), None);
-        bindkey(kptr, b"\x1bOB", Some(Thingy::builtin("down-line")), None);
+        add_cursor_key(kptr, crate::ported::zsh_h::TCUPCURSOR,
+                       Thingy::builtin("up-line"), b'A' as i32);
+        add_cursor_key(kptr, crate::ported::zsh_h::TCDOWNCURSOR,
+                       Thingy::builtin("down-line"), b'B' as i32);
         bindkey(kptr, &[b'k'], Some(Thingy::builtin("up-line")), None); // c:1379
         bindkey(kptr, &[b'j'], Some(Thingy::builtin("down-line")), None); // c:1380
         bindkey(kptr, b"aa", Some(Thingy::builtin("select-a-shell-word")), None); // c:1381
@@ -2055,15 +2056,15 @@ pub fn default_bindings() {
     bindkey(&mut amap, b"guu", None, Some("gugu".to_string()));
     bindkey(&mut amap, b"gUU", None, Some("gUgU".to_string()));
 
-    // c:1410-1413 — emacs cursor keys (vt100 fallback).
-    bindkey(&mut emap, b"\x1b[A", Some(Thingy::builtin("up-line-or-history")), None);
-    bindkey(&mut emap, b"\x1b[B", Some(Thingy::builtin("down-line-or-history")), None);
-    bindkey(&mut emap, b"\x1b[D", Some(Thingy::builtin("backward-char")), None);
-    bindkey(&mut emap, b"\x1b[C", Some(Thingy::builtin("forward-char")), None);
-    bindkey(&mut emap, b"\x1bOA", Some(Thingy::builtin("up-line-or-history")), None);
-    bindkey(&mut emap, b"\x1bOB", Some(Thingy::builtin("down-line-or-history")), None);
-    bindkey(&mut emap, b"\x1bOD", Some(Thingy::builtin("backward-char")), None);
-    bindkey(&mut emap, b"\x1bOC", Some(Thingy::builtin("forward-char")), None);
+    // c:1410-1413 — emacs cursor keys via `add_cursor_key`.
+    add_cursor_key(&mut emap, crate::ported::zsh_h::TCUPCURSOR,
+                   Thingy::builtin("up-line-or-history"), b'A' as i32);
+    add_cursor_key(&mut emap, crate::ported::zsh_h::TCDOWNCURSOR,
+                   Thingy::builtin("down-line-or-history"), b'B' as i32);
+    add_cursor_key(&mut emap, crate::ported::zsh_h::TCLEFTCURSOR,
+                   Thingy::builtin("backward-char"), b'D' as i32);
+    add_cursor_key(&mut emap, crate::ported::zsh_h::TCRIGHTCURSOR,
+                   Thingy::builtin("forward-char"), b'C' as i32);
 
     // c:1416-1432 — emacs ^X sequences.
     bindkey(&mut emap, b"\x18*", Some(Thingy::builtin("expand-word")), None);
