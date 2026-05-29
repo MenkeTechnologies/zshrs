@@ -2797,4 +2797,121 @@ mod tests {
                 "exit code {} must fit in u8", r);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_thingy.c
+    // c:752 bin_zle_list / c:792 bin_zle_refresh / c:860 bin_zle_mesg /
+    // c:894 bin_zle_unget / c:919 bin_zle_keymap / c:1008 bin_zle_del /
+    // c:1219 zle_usable / c:1896 listwidgets / c:1907 getwidgettarget
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn empty_ops_thingy() -> options {
+        options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        }
+    }
+
+    /// c:752 — `bin_zle_list` returns i32 (compile-time type pin).
+    #[test]
+    fn bin_zle_list_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let ops = empty_ops_thingy();
+        let _: i32 = bin_zle_list("zle", &[], &ops, 0);
+    }
+
+    /// c:792 — `bin_zle_refresh` returns i32.
+    #[test]
+    fn bin_zle_refresh_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let ops = empty_ops_thingy();
+        let _: i32 = bin_zle_refresh("zle", &[], &ops, 0);
+    }
+
+    /// c:860 — `bin_zle_mesg` returns i32.
+    #[test]
+    fn bin_zle_mesg_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let ops = empty_ops_thingy();
+        let _: i32 = bin_zle_mesg("zle", &[], &ops, 0);
+    }
+
+    /// c:894 — `bin_zle_unget` returns i32.
+    #[test]
+    fn bin_zle_unget_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let ops = empty_ops_thingy();
+        let _: i32 = bin_zle_unget("zle", &[], &ops, 0);
+    }
+
+    /// c:919 — `bin_zle_keymap` returns i32.
+    #[test]
+    fn bin_zle_keymap_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let ops = empty_ops_thingy();
+        let _: i32 = bin_zle_keymap("zle", &[], &ops, 0);
+    }
+
+    /// c:1008 — `bin_zle_del` returns i32.
+    #[test]
+    fn bin_zle_del_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let ops = empty_ops_thingy();
+        let _: i32 = bin_zle_del("zle", &[], &ops, 0);
+    }
+
+    /// c:1219 — `zle_usable` returns i32 + 0/1 only.
+    #[test]
+    fn zle_usable_returns_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = zle_usable();
+        assert!(r == 0 || r == 1, "zle_usable ∈ {{0, 1}}, got {}", r);
+    }
+
+    /// c:1219 — `zle_usable` is deterministic in non-ZLE context.
+    #[test]
+    fn zle_usable_is_deterministic_no_zle_context() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = zle_usable();
+        for _ in 0..3 {
+            assert_eq!(zle_usable(), first,
+                "zle_usable must be deterministic");
+        }
+    }
+
+    /// c:1896 — `listwidgets` returns Vec<String> (compile-time type pin).
+    #[test]
+    fn listwidgets_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Vec<String> = listwidgets();
+    }
+
+    /// c:1907 — `getwidgettarget("")` empty returns Option<String>.
+    #[test]
+    fn getwidgettarget_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Option<String> = getwidgettarget("");
+    }
+
+    /// c:1896 — `listwidgets` is deterministic for stable widget table.
+    #[test]
+    fn listwidgets_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = listwidgets();
+        for _ in 0..3 {
+            assert_eq!(listwidgets(), first,
+                "listwidgets must be deterministic");
+        }
+    }
 }
