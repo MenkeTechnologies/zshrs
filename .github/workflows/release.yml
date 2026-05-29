@@ -90,7 +90,7 @@ jobs:
           java-version: '17'
 
       - name: Cache Gradle + IntelliJ Platform SDK
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.gradle/caches
