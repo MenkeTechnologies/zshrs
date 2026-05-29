@@ -1309,7 +1309,6 @@ pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {
     *hp = h; // c:1274 *hp = h
 }
 /// `match_named_colour` — see implementation.
-
 pub fn match_named_colour(teststrp: &str) -> Option<u8> {
     // c:1915
     // c:1925-1928 uses `strncmp` (case-SENSITIVE) against the
@@ -1528,7 +1527,6 @@ impl buf_vars {
         self.bp = self.buf.len();
     }
     /// `finish_expanded_string` — see implementation.
-
     pub fn finish_expanded_string(&mut self, keep_spacing_tokens: bool) -> String {
         if !keep_spacing_tokens {
             self.strip_prompt_tokens_ns0();

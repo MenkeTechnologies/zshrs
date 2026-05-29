@@ -38,7 +38,6 @@ pub struct ZshList {
     pub flags: ListFlags,
 }
 /// `ListFlags` — see fields for layout.
-
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct ListFlags {
     /// Run asynchronously (&)
@@ -58,16 +57,14 @@ pub struct ZshSublist {
     pub flags: SublistFlags,
 }
 /// `SublistOp` — see variants.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SublistOp {
     /// `And` variant.
     And, // &&
     /// `Or` variant.
-    Or,  // ||
+    Or, // ||
 }
 /// `SublistFlags` — see fields for layout.
-
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct SublistFlags {
     /// Coproc
@@ -122,7 +119,7 @@ pub enum ZshCommand {
     /// `Arith` variant.
     Arith(String), // (( ... ))
     /// `Try` variant.
-    Try(ZshTry),   // { ... } always { ... }
+    Try(ZshTry), // { ... } always { ... }
     /// Compound command with trailing redirects:
     /// `{ cmd } 2>&1`, `(...) >file`, `if ...; fi >file`, etc.
     /// Simple commands carry redirects in their own struct; this wrapper
@@ -151,7 +148,6 @@ pub struct ZshAssign {
     pub append: bool, // +=
 }
 /// `ZshAssignValue` — see variants.
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ZshAssignValue {
     /// `Scalar` variant.
@@ -195,7 +191,6 @@ pub struct ZshFor {
     pub is_select: bool,
 }
 /// `ForList` — see variants.
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ForList {
     /// `Words` variant.
@@ -219,7 +214,6 @@ pub struct ZshCase {
     pub arms: Vec<CaseArm>,
 }
 /// `CaseArm` — see fields for layout.
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaseArm {
     /// `patterns` field.
@@ -230,11 +224,10 @@ pub struct CaseArm {
     pub terminator: CaseTerm,
 }
 /// `CaseTerm` — see variants.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CaseTerm {
     /// `Break` variant.
-    Break,    // ;;
+    Break, // ;;
     /// `Continue` variant.
     Continue, // ;&
     /// `TestNext` variant.
@@ -310,11 +303,11 @@ pub enum ZshCond {
     /// `Or` variant.
     Or(Box<ZshCond>, Box<ZshCond>),
     /// `Unary` variant.
-    Unary(String, String),          // -f file, -n str, etc.
+    Unary(String, String), // -f file, -n str, etc.
     /// `Binary` variant.
     Binary(String, String, String), // str = pat, a -eq b, etc.
     /// `Regex` variant.
-    Regex(String, String),          // str =~ regex
+    Regex(String, String), // str =~ regex
 }
 
 /// Try/always block
@@ -330,83 +323,83 @@ pub struct ZshTry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ZshParamFlag {
     /// `Lower` variant.
-    Lower,                 // L - lowercase
+    Lower, // L - lowercase
     /// `Upper` variant.
-    Upper,                 // U - uppercase
+    Upper, // U - uppercase
     /// `Capitalize` variant.
-    Capitalize,            // C - capitalize words
+    Capitalize, // C - capitalize words
     /// `Join` variant.
-    Join(String),          // j:sep: - join array with separator
+    Join(String), // j:sep: - join array with separator
     /// `JoinNewline` variant.
-    JoinNewline,           // F - join with newlines
+    JoinNewline, // F - join with newlines
     /// `Split` variant.
-    Split(String),         // s:sep: - split string into array
+    Split(String), // s:sep: - split string into array
     /// `SplitLines` variant.
-    SplitLines,            // f - split on newlines
+    SplitLines, // f - split on newlines
     /// `SplitWords` variant.
-    SplitWords,            // z - split into words (shell parsing)
+    SplitWords, // z - split into words (shell parsing)
     /// `Type` variant.
-    Type,                  // t - type of variable
+    Type, // t - type of variable
     /// `Words` variant.
-    Words,                 // w - word splitting
+    Words, // w - word splitting
     /// `Quote` variant.
-    Quote,                 // qq - single-quote always
+    Quote, // qq - single-quote always
     /// `QuoteIfNeeded` variant.
-    QuoteIfNeeded,         // q+ - single-quote only if needed
+    QuoteIfNeeded, // q+ - single-quote only if needed
     /// `DoubleQuote` variant.
-    DoubleQuote,           // qqq - double-quote
+    DoubleQuote, // qqq - double-quote
     /// `DollarQuote` variant.
-    DollarQuote,           // qqqq - $'...' style
+    DollarQuote, // qqqq - $'...' style
     /// `QuoteBackslash` variant.
-    QuoteBackslash,        // q / b / B - backslash-escape special chars
+    QuoteBackslash, // q / b / B - backslash-escape special chars
     /// `Unique` variant.
-    Unique,                // u - unique elements only
+    Unique, // u - unique elements only
     /// `Reverse` variant.
-    Reverse,               // O - reverse sort
+    Reverse, // O - reverse sort
     /// `Sort` variant.
-    Sort,                  // o - sort
+    Sort, // o - sort
     /// `NumericSort` variant.
-    NumericSort,           // n - numeric sort
+    NumericSort, // n - numeric sort
     /// `IndexSort` variant.
-    IndexSort,             // a - sort in array index order
+    IndexSort, // a - sort in array index order
     /// `Keys` variant.
-    Keys,                  // k - associative array keys
+    Keys, // k - associative array keys
     /// `Values` variant.
-    Values,                // v - associative array values
+    Values, // v - associative array values
     /// `Length` variant.
-    Length,                // # - length (character codes)
+    Length, // # - length (character codes)
     /// `CountChars` variant.
-    CountChars,            // c - count total characters
+    CountChars, // c - count total characters
     /// `Expand` variant.
-    Expand,                // e - perform shell expansions
+    Expand, // e - perform shell expansions
     /// `PromptExpand` variant.
-    PromptExpand,          // % - expand prompt escapes
+    PromptExpand, // % - expand prompt escapes
     /// `PromptExpandFull` variant.
-    PromptExpandFull,      // %% - full prompt expansion
+    PromptExpandFull, // %% - full prompt expansion
     /// `Visible` variant.
-    Visible,               // V - make non-printable chars visible
+    Visible, // V - make non-printable chars visible
     /// `Directory` variant.
-    Directory,             // D - substitute directory names
+    Directory, // D - substitute directory names
     /// `Head` variant.
-    Head(usize),           // [1,n] - first n elements
+    Head(usize), // [1,n] - first n elements
     /// `Tail` variant.
-    Tail(usize),           // [-n,-1] - last n elements
+    Tail(usize), // [-n,-1] - last n elements
     /// `PadLeft` variant.
-    PadLeft(usize, char),  // l:len:fill: - pad left
+    PadLeft(usize, char), // l:len:fill: - pad left
     /// `PadRight` variant.
     PadRight(usize, char), // r:len:fill: - pad right
     /// `Width` variant.
-    Width(usize),          // m - use width for padding
+    Width(usize), // m - use width for padding
     /// `Match` variant.
-    Match,                 // M - include matched portion
+    Match, // M - include matched portion
     /// `Remove` variant.
-    Remove,                // R - include non-matched portion (complement of M)
+    Remove, // R - include non-matched portion (complement of M)
     /// `Subscript` variant.
-    Subscript,             // S - subscript scanning
+    Subscript, // S - subscript scanning
     /// `Parameter` variant.
-    Parameter,             // P - use value as parameter name (indirection)
+    Parameter, // P - use value as parameter name (indirection)
     /// `Glob` variant.
-    Glob,                  // ~ - glob patterns in pattern
+    Glob, // ~ - glob patterns in pattern
     /// `@` flag — force array-context behavior even inside DQ. zsh's
     /// `"${(@o)arr}"` keeps the sort active and splices each element as
     /// its own word. Without this, the array-only flags became no-ops
@@ -418,13 +411,13 @@ pub enum ZshParamFlag {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ListOp {
     /// `And` variant.
-    And,     // &&
+    And, // &&
     /// `Or` variant.
-    Or,      // ||
+    Or, // ||
     /// `Semi` variant.
-    Semi,    // ;
+    Semi, // ;
     /// `Amp` variant.
-    Amp,     // &
+    Amp, // &
     /// `Newline` variant.
     Newline, // \n
 }

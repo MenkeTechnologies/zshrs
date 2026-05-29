@@ -74,7 +74,6 @@ pub(crate) const KEY_NAMES: &[(char, &wstr)] = &[
     (PRINT_SCREEN, L!("printscreen")),
 ];
 /// `Modifiers` — see fields for layout.
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Modifiers {
     /// `ctrl` field.
@@ -130,7 +129,6 @@ pub struct ViewportPosition {
 }
 impl FloggableDebug for ViewportPosition {}
 /// `Key` — see fields for layout.
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Key {
     /// `modifiers` field.
@@ -180,7 +178,6 @@ impl Key {
     }
 }
 /// `canonicalize_control_char` — see implementation.
-
 pub fn canonicalize_control_char(c: u8) -> Option<Key> {
     let codepoint = canonicalize_keyed_control_char(char::from(c));
     if u32::from(codepoint) > 255 {
@@ -258,7 +255,6 @@ pub(crate) fn canonicalize_key(mut key: Key) -> Result<Key, WString> {
     Ok(key)
 }
 /// `KEY_SEPARATOR` constant.
-
 pub const KEY_SEPARATOR: char = ',';
 
 fn escape_nonprintables(key_name: &wstr) -> WString {

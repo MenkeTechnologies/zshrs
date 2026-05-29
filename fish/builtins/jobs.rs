@@ -16,7 +16,6 @@ use fish_widestring::{wstr, WExt as _, WString, L};
 use std::num::NonZeroU32;
 
 /// Print modes for the jobs builtin.
-
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum JobsPrintMode {
     Default,      // print lots of general info

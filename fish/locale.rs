@@ -148,7 +148,6 @@ unsafe fn read_locale() -> Option<Locale> {
 // Current numeric locale.
 static NUMERIC_LOCALE: Mutex<Option<Locale>> = Mutex::new(None);
 /// `get_numeric_locale` — see implementation.
-
 pub fn get_numeric_locale() -> Locale {
     let mut locale = NUMERIC_LOCALE.lock().unwrap();
     if locale.is_none() {

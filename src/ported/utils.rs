@@ -5626,7 +5626,6 @@ pub fn metafy(buf: &str) -> String {
     String::from_utf8(out.clone()).unwrap_or_else(|_| String::from_utf8_lossy(&out).into_owned())
 }
 
-
 /// Port of `ztrdup_metafy(const char *s)` from `Src/utils.c:4929`.
 ///
 /// ```c

@@ -45,7 +45,6 @@ pub enum CharInputStyle {
     NotFirst,
 }
 /// `ReadlineCmd` — see variants.
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ReadlineCmd {
@@ -275,7 +274,6 @@ pub enum ReadlineCmd {
     ReverseRepeatJump,
 }
 /// `KeyEvent` — see fields for layout.
-
 #[derive(Clone, Copy, Debug)]
 pub struct KeyEvent {
     /// `key` field.
@@ -430,7 +428,6 @@ pub enum CharEventType {
     CheckExit,
 }
 /// `ReadlineCmdEvent` — see fields for layout.
-
 #[derive(Debug, Clone)]
 pub struct ReadlineCmdEvent {
     /// `cmd` field.
@@ -441,7 +438,6 @@ pub struct ReadlineCmdEvent {
     pub seq: WString,
 }
 /// `KeyInputEvent` — see fields for layout.
-
 #[derive(Debug, Clone)]
 pub struct KeyInputEvent {
     // The key.
@@ -456,7 +452,6 @@ pub struct KeyInputEvent {
     pub seq: WString,
 }
 /// `ImplicitEvent` — see variants.
-
 #[derive(Debug, Clone)]
 pub enum ImplicitEvent {
     /// end-of-file was reached.
@@ -476,7 +471,6 @@ pub enum ImplicitEvent {
     NewWindowHeight,
 }
 /// `QueryResponse` — see variants.
-
 #[derive(Debug, Clone)]
 pub enum QueryResponse {
     /// `PrimaryDeviceAttribute` variant.
@@ -487,7 +481,6 @@ pub enum QueryResponse {
     CursorPosition(ViewportPosition),
 }
 /// `QueryResultEvent` — see variants.
-
 #[derive(Debug, Clone)]
 pub enum QueryResultEvent {
     /// `Response` variant.
@@ -498,7 +491,6 @@ pub enum QueryResultEvent {
     Interrupted,
 }
 /// `CharEvent` — see variants.
-
 #[derive(Debug, Clone)]
 pub enum CharEvent {
     /// A character was entered.
@@ -513,7 +505,6 @@ pub enum CharEvent {
     /// Any event that has no user-visible representation.
     Implicit(ImplicitEvent),
     /// `QueryResult` variant.
-
     QueryResult(QueryResultEvent),
 }
 impl FloggableDebug for CharEvent {}
@@ -524,17 +515,14 @@ impl CharEvent {
         matches!(self, CharEvent::Key(_))
     }
     /// `is_readline` — see implementation.
-
     pub fn is_readline(&self) -> bool {
         matches!(self, CharEvent::Readline(_))
     }
     /// `is_readline_or_command` — see implementation.
-
     pub fn is_readline_or_command(&self) -> bool {
         matches!(self, CharEvent::Readline(_) | CharEvent::Command(_))
     }
     /// `get_char` — see implementation.
-
     pub fn get_char(&self) -> char {
         let CharEvent::Key(kevt) = self else {
             panic!("Not a char type");
@@ -542,7 +530,6 @@ impl CharEvent {
         kevt.key.codepoint
     }
     /// `get_key` — see implementation.
-
     pub fn get_key(&self) -> Option<&KeyInputEvent> {
         match self {
             CharEvent::Key(kevt) => Some(kevt),
@@ -550,7 +537,6 @@ impl CharEvent {
         }
     }
     /// `get_readline` — see implementation.
-
     pub fn get_readline(&self) -> ReadlineCmd {
         let CharEvent::Readline(c) = self else {
             panic!("Not a readline type");
@@ -558,7 +544,6 @@ impl CharEvent {
         c.cmd
     }
     /// `get_command` — see implementation.
-
     pub fn get_command(&self) -> Option<&wstr> {
         match self {
             CharEvent::Command(c) => Some(c),
@@ -566,17 +551,14 @@ impl CharEvent {
         }
     }
     /// `from_char` — see implementation.
-
     pub fn from_char(c: char) -> CharEvent {
         Self::from_key(KeyEvent::from_raw(c))
     }
     /// `from_key` — see implementation.
-
     pub fn from_key(key: KeyEvent) -> CharEvent {
         Self::from_key_seq(key, WString::new())
     }
     /// `from_key_seq` — see implementation.
-
     pub fn from_key_seq(key: KeyEvent, seq: WString) -> CharEvent {
         CharEvent::Key(KeyInputEvent {
             key,
@@ -585,17 +567,14 @@ impl CharEvent {
         })
     }
     /// `from_readline` — see implementation.
-
     pub fn from_readline(cmd: ReadlineCmd) -> CharEvent {
         Self::from_readline_seq(cmd, WString::new())
     }
     /// `from_readline_seq` — see implementation.
-
     pub fn from_readline_seq(cmd: ReadlineCmd, seq: WString) -> CharEvent {
         CharEvent::Readline(ReadlineCmdEvent { cmd, seq })
     }
     /// `from_check_exit` — see implementation.
-
     pub fn from_check_exit() -> CharEvent {
         CharEvent::Implicit(ImplicitEvent::CheckExit)
     }
@@ -702,7 +681,6 @@ fn next_input_event(in_fd: RawFd, ioport_fd: RawFd, timeout: Timeout) -> InputEv
     }
 }
 /// `check_fd_readable` — see implementation.
-
 pub fn check_fd_readable(in_fd: BorrowedFd, timeout: Duration) -> bool {
     // We are not prepared to handle a signal immediately; we only want to know if we get input on
     // our fd before the timeout. Use pselect to block all signals; we will handle signals
@@ -861,14 +839,12 @@ impl InputData {
     }
 }
 /// `BackgroundColorQuery` — see fields for layout.
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BackgroundColorQuery {
     /// `result` field.
     pub result: Option<xterm_color::Color>,
 }
 /// `CursorPositionQueryReason` — see variants.
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CursorPositionQueryReason {
     /// `NewPrompt` variant.
@@ -877,7 +853,6 @@ pub enum CursorPositionQueryReason {
     WindowHeightChange,
 }
 /// `CursorPositionQuery` — see fields for layout.
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CursorPositionQuery {
     /// `reason` field.
@@ -896,7 +871,6 @@ impl CursorPositionQuery {
     }
 }
 /// `RecurrentQuery` — see fields for layout.
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RecurrentQuery {
     /// `background_color` field.
@@ -905,7 +879,6 @@ pub struct RecurrentQuery {
     pub cursor_position: Option<CursorPositionQuery>,
 }
 /// `TerminalQuery` — see variants.
-
 #[derive(Clone, Eq, PartialEq)]
 pub enum TerminalQuery {
     /// `Initial` variant.
@@ -914,7 +887,6 @@ pub enum TerminalQuery {
     Recurrent(RecurrentQuery),
 }
 /// `LONG_READ_TIMEOUT` constant.
-
 pub const LONG_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A trait which knows how to produce a stream of input events.

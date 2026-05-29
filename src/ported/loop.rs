@@ -15,9 +15,9 @@
 //! This module provides the loop state management and helper functions
 //! that support the executor's loop implementation.
 
+use crate::ported::utils::{adjustcolumns, adjustlines};
 use std::io::Write;
 use std::sync::atomic::AtomicI32;
-use crate::ported::utils::{adjustcolumns, adjustlines};
 // ===========================================================
 // C `Src/loop.c` — wordcode VM helpers for control flow.
 //

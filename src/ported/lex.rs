@@ -3582,7 +3582,6 @@ pub fn lextok2_get(c: char) -> u8 {
 
 // ─── Accessor ported for the LEX_* thread_locals (Src/lex.c file-statics) ───
 /// `toklineno` — see implementation.
-
 pub fn toklineno() -> u64 {
     LEX_TOKLINENO.get()
 }
@@ -4185,7 +4184,6 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
     (out, i)
 }
 /// `untokenize` — see implementation.
-
 pub fn untokenize(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();

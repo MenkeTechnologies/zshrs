@@ -22,7 +22,6 @@ use super::paths::CachePaths;
 use super::state::DaemonState;
 use super::Result;
 /// `SCHEMA_VERSION` constant.
-
 pub const SCHEMA_VERSION: i64 = 1;
 
 /// Open (or create) history.db, set WAL + FTS5 + triggers, ensure schema.
@@ -30,7 +29,6 @@ pub fn open(paths: &CachePaths) -> Result<Connection> {
     open_at(&paths.history_db)
 }
 /// `open_at` — see implementation.
-
 pub fn open_at(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
     super::paths::ensure_file_600(path)?;
@@ -112,7 +110,6 @@ pub struct HistoryRow {
     pub shell_id: Option<i64>,
 }
 /// `append` — see implementation.
-
 #[allow(clippy::too_many_arguments)]
 pub fn append(
     conn: &Connection,
@@ -133,7 +130,6 @@ pub fn append(
     Ok(conn.last_insert_rowid())
 }
 /// `count` — see implementation.
-
 pub fn count(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0))
 }
@@ -233,7 +229,6 @@ pub fn query(
 
 // ---- IPC op handlers ----
 /// `op_history_append` — see implementation.
-
 pub async fn op_history_append(state: &std::sync::Arc<DaemonState>, args: Value) -> OpResult {
     let line = args
         .get("line")
@@ -326,7 +321,6 @@ pub async fn op_history_append(state: &std::sync::Arc<DaemonState>, args: Value)
     Ok(json!({ "history_id": id }))
 }
 /// `op_history_query` — see implementation.
-
 pub async fn op_history_query(state: &std::sync::Arc<DaemonState>, args: Value) -> OpResult {
     let filter = args
         .get("filter")

@@ -50,7 +50,6 @@ const KNOWN_KINDS: &[&str] = &[
     "manpath",
 ];
 /// `op_definitions_kinds` — see implementation.
-
 pub async fn op_definitions_kinds(state: &Arc<DaemonState>, _args: Value) -> OpResult {
     // Filter to kinds that actually have rows so `kinds` reflects what
     // the user can usefully query right now.
@@ -68,7 +67,6 @@ pub async fn op_definitions_kinds(state: &Arc<DaemonState>, _args: Value) -> OpR
     }))
 }
 /// `op_definitions_query` — see implementation.
-
 pub async fn op_definitions_query(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let kind_arg = args.get("kind").and_then(Value::as_str);
     let name_arg = args.get("name").and_then(Value::as_str);

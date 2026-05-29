@@ -87,7 +87,6 @@ pub fn file_id_for_path(path: &wstr) -> FileId {
     file_id_for_path_narrow(&wcs2zstring(path))
 }
 /// `file_id_for_path_narrow` — see implementation.
-
 pub fn file_id_for_path_narrow(path: &CStr) -> FileId {
     let path = OsStr::from_bytes(path.to_bytes());
     fs::metadata(path)
@@ -95,7 +94,6 @@ pub fn file_id_for_path_narrow(path: &CStr) -> FileId {
         .map_or(INVALID_FILE_ID, FileId::from_md)
 }
 /// `file_id_for_path_or_error` — see implementation.
-
 pub fn file_id_for_path_or_error(path: &wstr) -> std::io::Result<FileId> {
     let path = wcs2zstring(path);
     let path = OsStr::from_bytes(path.to_bytes());

@@ -10,7 +10,6 @@ use std::num::NonZeroU16;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 /// `Termsize` — see fields for layout.
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Termsize {
     /// Width of the terminal, in columns.
@@ -69,7 +68,6 @@ impl Termsize {
         Self { width, height }
     }
     /// `width_u16` — see implementation.
-
     pub fn width_u16(&self) -> NonZeroU16 {
         self.width
     }
@@ -78,7 +76,6 @@ impl Termsize {
         self.height
     }
     /// `width` — see implementation.
-
     pub fn width(&self) -> usize {
         usize::from(self.width.get())
     }
@@ -241,7 +238,6 @@ impl TermsizeContainer {
     }
 }
 /// `SHARED_CONTAINER` static.
-
 pub static SHARED_CONTAINER: TermsizeContainer = TermsizeContainer {
     data: Mutex::new(TermsizeData::defaults()),
     setting_env_vars: AtomicBool::new(false),
@@ -260,7 +256,6 @@ pub fn handle_columns_lines_var_change(vars: &dyn Environment) {
     SHARED_CONTAINER.handle_columns_lines_var_change(vars);
 }
 /// `termsize_update` — see implementation.
-
 pub fn termsize_update(parser: &Parser) -> Termsize {
     SHARED_CONTAINER.updating(parser)
 }

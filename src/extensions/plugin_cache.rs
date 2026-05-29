@@ -96,7 +96,6 @@ pub struct PluginDelta {
     pub autoloads: Vec<(String, String)>, // function → flags
 }
 /// `AliasKind` — see variants.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AliasKind {
     /// `Regular` variant.

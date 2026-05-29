@@ -3,7 +3,6 @@ use std::ops::Deref;
 use super::*;
 use fish_wcstringutil::split_about;
 /// `Split` — see fields for layout.
-
 pub struct Split<'args> {
     /// `quiet` field.
     quiet: bool,

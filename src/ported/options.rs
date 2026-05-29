@@ -1158,7 +1158,6 @@ pub static EMULATION: AtomicI32 = AtomicI32::new(EMULATE_ZSH);
 pub static FULLY_EMULATING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 /// `ZSH_OPTIONS_SET` static.
-
 pub static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         "aliases",

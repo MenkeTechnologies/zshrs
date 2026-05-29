@@ -2927,9 +2927,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_OPTION_CHECK_TRISTATE, |vm, _argc| {
         let name = vm.pop().to_str();
         let r = crate::ported::cond::optison("test", &name); // c:cond.c:502
-        // optison itself prints the diagnostic via zwarnnam when r=3
-        // and POSIXBUILTINS is unset (the canonical path). Don't
-        // double-emit here. r is already 0/1/3.
+                                                             // optison itself prints the diagnostic via zwarnnam when r=3
+                                                             // and POSIXBUILTINS is unset (the canonical path). Don't
+                                                             // double-emit here. r is already 0/1/3.
         Value::Int(r as i64)
     });
 
@@ -3656,8 +3656,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         if args[0].is_empty() {
             // Explicit empty command word — exec returns EACCES.
-            let script_name = crate::ported::utils::scriptname_get()
-                .unwrap_or_else(|| "zshrs".to_string());
+            let script_name =
+                crate::ported::utils::scriptname_get().unwrap_or_else(|| "zshrs".to_string());
             let lineno: u64 = with_executor(|exec| {
                 exec.scalar("LINENO")
                     .and_then(|s| s.parse::<u64>().ok())
@@ -3669,8 +3669,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Non-empty path: route through the same logic ZshrsHost::exec
         // uses — intercepts/AOP, command_hash, pre/postexec hooks.
         let status = with_executor(|exec| exec.host_exec_external(&args));
-        crate::ported::builtin::LASTVAL
-            .store(status, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
         let mut synth = crate::ported::zsh_h::job::default();
         crate::ported::jobs::waitonejob(&mut synth);
         Value::Status(status)
@@ -3695,8 +3694,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             f
         });
         if redir_failed {
-            crate::ported::builtin::LASTVAL
-                .store(1, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
             return Value::Status(1);
         }
         let nullcmd = crate::ported::params::getsparam("NULLCMD");
@@ -3704,17 +3702,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let nc_empty = nc_str.is_empty();
         // c:3340-3344 — CSHNULLCMD or no NULLCMD set → diagnostic.
         if nc_empty || crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHNULLCMD) {
-            let script_name = crate::ported::utils::scriptname_get()
-                .unwrap_or_else(|| "zshrs".to_string());
+            let script_name =
+                crate::ported::utils::scriptname_get().unwrap_or_else(|| "zshrs".to_string());
             let lineno: u64 = with_executor(|exec| {
                 exec.scalar("LINENO")
                     .and_then(|s| s.parse::<u64>().ok())
                     .unwrap_or(1)
             });
-            eprintln!(
-                "{}:{}: redirection with no command",
-                script_name, lineno
-            );
+            eprintln!("{}:{}: redirection with no command", script_name, lineno);
             return Value::Status(1);
         }
         // c:3350 — SHNULLCMD → run `:`.
@@ -3733,8 +3728,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             nc_str.to_string() // c:3360-3363
         };
         let status = with_executor(|exec| exec.host_exec_external(&[cmd]));
-        crate::ported::builtin::LASTVAL
-            .store(status, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
         Value::Status(status)
     });
     vm.register_builtin(BUILTIN_DEBUG_TRAP, |_vm, _argc| {
@@ -5522,8 +5516,8 @@ impl fusevm::ShellHost for ZshrsHost {
             return with_executor(|exec| exec.last_status());
         }
         if args[0].is_empty() {
-            let script_name = crate::ported::utils::scriptname_get()
-                .unwrap_or_else(|| "zshrs".to_string());
+            let script_name =
+                crate::ported::utils::scriptname_get().unwrap_or_else(|| "zshrs".to_string());
             let lineno: u64 = with_executor(|exec| {
                 exec.scalar("LINENO")
                     .and_then(|s| s.parse::<u64>().ok())
@@ -5626,8 +5620,8 @@ impl fusevm::ShellHost for ZshrsHost {
         // Rust port silently treated empty as a no-op (status 0).
         // Match zsh by emitting the diagnostic and returning 126.
         if name.is_empty() {
-            let script_name = crate::ported::utils::scriptname_get()
-                .unwrap_or_else(|| "zshrs".to_string());
+            let script_name =
+                crate::ported::utils::scriptname_get().unwrap_or_else(|| "zshrs".to_string());
             let lineno: u64 = with_executor(|exec| {
                 exec.scalar("LINENO")
                     .and_then(|s| s.parse::<u64>().ok())
@@ -5821,7 +5815,6 @@ impl ShellExecutor {
         }
     }
     /// `host_apply_redirect` — see implementation.
-
     pub fn host_apply_redirect(&mut self, fd: u8, op_byte: u8, target: &str) {
         // `&>` / `&>>` always target both fd 1 and fd 2 regardless of the
         // fd byte the parser supplied (the lexer's tokfd clamp makes the

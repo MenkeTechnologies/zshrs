@@ -221,12 +221,10 @@ impl EnvStack {
         self.lock().base.get_last_statuses().clone()
     }
     /// `get_last_status` — see implementation.
-
     pub fn get_last_status(&self) -> c_int {
         self.lock().base.get_last_statuses().status
     }
     /// `set_last_statuses` — see implementation.
-
     pub fn set_last_statuses(&self, statuses: Statuses) {
         self.lock().base.set_last_statuses(statuses);
     }
@@ -427,7 +425,6 @@ impl EnvStack {
         })
     }
     /// `set_argv` — see implementation.
-
     pub fn set_argv(&self, argv: Vec<WString>, is_repainting: bool) {
         self.set(
             L!("argv"),
@@ -577,7 +574,6 @@ fn setup_path(global_exported_mode: EnvSetMode) {
 /// This is a simple key->value map and not e.g. cut into paths.
 pub static INHERITED_VARS: OnceLock<HashMap<WString, WString>> = OnceLock::new();
 /// `env_init` — see implementation.
-
 pub fn env_init(paths: Option<&ConfigPaths>, do_uvars: bool, default_paths: bool) {
     let vars = EnvStack::globals();
 

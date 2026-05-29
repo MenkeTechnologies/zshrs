@@ -280,7 +280,6 @@ impl FdMonitor {
         item_id
     }
     /// `with_fd` — see implementation.
-
     pub fn with_fd(&self, item_id: FdMonitorItemId, cb: impl FnOnce(BorrowedFd)) {
         let data = self.data.lock().expect("Mutex poisoned!");
         if let Some(fd) = &data.items.get(&item_id).unwrap().fd {
@@ -302,7 +301,6 @@ impl FdMonitor {
         removed.fd
     }
     /// `new` — see implementation.
-
     pub fn new() -> Self {
         Self {
             data: Arc::new(Mutex::new(SharedData {
@@ -503,7 +501,6 @@ mod tests {
             Self::insert_new_into2(monitor, |_| {})
         }
         /// `insert_new_into2` — see implementation.
-
         pub fn insert_new_into2<F: Fn(&mut Self)>(monitor: &FdMonitor, config: F) -> Arc<Self> {
             let pipes = make_autoclose_pipes().expect("fds exhausted!");
 

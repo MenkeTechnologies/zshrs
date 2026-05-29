@@ -25,7 +25,11 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use crate::glob::matchpat;
+use crate::ported::lex::untokenize;
+use crate::ported::math::mathevali;
 use crate::ported::options::{optlookup, optlookupc};
+use crate::ported::params::{setaparam, setiparam, setsparam};
+use crate::ported::subst::singsub;
 use crate::ported::utils::{has_token, privasserted, unmeta, zwarnnam};
 use crate::ported::zsh_h::{
     isset, unset, CASEGLOB, COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NT,
@@ -34,10 +38,6 @@ use crate::ported::zsh_h::{
 };
 use std::io::Write;
 use std::os::unix::io::FromRawFd;
-use crate::ported::lex::untokenize;
-use crate::ported::math::mathevali;
-use crate::ported::params::{setaparam, setiparam, setsparam};
-use crate::ported::subst::singsub;
 // C-style i32 return codes from `evalcond` (mirroring cond.c:70):
 //   0 — condition true
 //   1 — condition false
@@ -724,7 +724,7 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {
         None => return false,
     };
     let p = singsub(p_raw); // c:556
-                                                  // c:2519 (glob.c) — `if (isset(EXTENDED_GLOB)) ...` controls #/~ syntax.
+                            // c:2519 (glob.c) — `if (isset(EXTENDED_GLOB)) ...` controls #/~ syntax.
     let extended = isset(EXTENDEDGLOB);
     // c:2519 — case sensitivity reads `isset(CASEGLOB)` (with the
     // canonical-name spelling, NOT a "no_case_glob" variant).
@@ -778,10 +778,10 @@ pub fn tracemodcond(name: &str, args: &[String], inf: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ported::params::{getaparam, getsparam};
     use std::fs::File;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
-    use crate::ported::params::{getaparam, getsparam};
 
     fn empty_maps() -> (HashMap<String, bool>, HashMap<String, String>) {
         (HashMap::new(), HashMap::new())

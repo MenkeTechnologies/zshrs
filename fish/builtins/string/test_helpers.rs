@@ -20,7 +20,6 @@ macro_rules! validate {
     };
 }
 /// `string_test` — see implementation.
-
 pub fn string_test(mut args: Vec<&wstr>) -> (WString, libc::c_int) {
     let parser = TestParser::new();
     let mut outs = OutputStream::String(StringOutputStream::new());

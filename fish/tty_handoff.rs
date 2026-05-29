@@ -45,7 +45,6 @@ pub fn get_scroll_content_up_capability() -> Option<bool> {
     SCROLL_CONTENT_UP_SUPPORTED.get().copied()
 }
 /// `maybe_set_scroll_content_up_capability` — see implementation.
-
 pub fn maybe_set_scroll_content_up_capability() {
     SCROLL_CONTENT_UP_SUPPORTED.get_or_init(|| {
         flog!(reader, "SCROLL UP is supported");
@@ -53,14 +52,11 @@ pub fn maybe_set_scroll_content_up_capability() {
     });
 }
 /// `TERMINAL_OS_NAME` static.
-
 pub static TERMINAL_OS_NAME: OnceLock<Option<WString>> = OnceLock::new();
 pub(crate) const XTGETTCAP_QUERY_OS_NAME: &str = "query-os-name";
 /// `XTVERSION` static.
-
 pub static XTVERSION: OnceLock<WString> = OnceLock::new();
 /// `xtversion` — see implementation.
-
 pub fn xtversion() -> Option<&'static wstr> {
     XTVERSION.get().as_ref().map(|s| s.as_utfstr())
 }
@@ -69,7 +65,6 @@ pub fn xtversion() -> Option<&'static wstr> {
 /// `TtyQuirks` — see variants.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum TtyQuirks {
-    /// `None` variant.
     None,
     // Running Midnight Commander which can't parse CSI yet.
     /// `PreCsiMidnightCommander` variant.

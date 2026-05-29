@@ -808,7 +808,6 @@ pub enum CompFileDef {
     CompDef(CompDef),
     /// #autoload - helper function with options
     Autoload(Vec<String>),
-    /// No recognized directive
     None,
 }
 

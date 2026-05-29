@@ -12,7 +12,6 @@ const LONG_OPTIONS: &[WOption] = &[
     wopt(L!("physical"), NoArgument, 'P'),
 ];
 /// `pwd` — see implementation.
-
 pub fn pwd(parser: &Parser, streams: &mut IoStreams, argv: &mut [&wstr]) -> BuiltinResult {
     let cmd = argv[0];
     let argc = argv.len();

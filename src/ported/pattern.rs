@@ -65,8 +65,8 @@ pub use crate::ported::zsh_h::{
     PAT_ANY, PAT_FILE, PAT_FILET, PAT_HAS_EXCLUDP, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH,
     PAT_NOGLD, PAT_NOTEND, PAT_NOTSTART, PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP, PP_ALNUM,
     PP_ALPHA, PP_ASCII, PP_BLANK, PP_CNTRL, PP_DIGIT, PP_GRAPH, PP_IDENT, PP_IFS, PP_IFSSPACE,
-    PP_INCOMPLETE, PP_INVALID, PP_LOWER, PP_PRINT, PP_PUNCT, PP_RANGE, PP_SPACE, PP_UPPER,
-    PP_WORD, PP_XDIGIT, ZMB_INCOMPLETE, ZMB_INVALID, ZPC_SEG_COUNT,
+    PP_INCOMPLETE, PP_INVALID, PP_LOWER, PP_PRINT, PP_PUNCT, PP_RANGE, PP_SPACE, PP_UPPER, PP_WORD,
+    PP_XDIGIT, ZMB_INCOMPLETE, ZMB_INVALID, ZPC_SEG_COUNT,
 };
 use crate::utils::zerrnam;
 use crate::zsh_h::{
@@ -96,7 +96,6 @@ pub const NSUBEXP: usize = 9;
 // endianness; we pin LE — see file header).
 // =====================================================================
 /// `P_END` constant.
-
 pub const P_END: u8 = 0x00; // c:97  End of program.
 /// `P_EXCSYNC` constant.
 pub const P_EXCSYNC: u8 = 0x01; // c:98  Test if following exclude already failed
@@ -174,7 +173,6 @@ pub fn P_NOTDOT(op: u8) -> bool {
 // pattern.c:216-218
 // =====================================================================
 /// `P_SIMPLE` constant.
-
 pub const P_SIMPLE: i32 = 0x01; // c:216 Simple enough to be # / ## operand.
 /// `P_HSTART` constant.
 pub const P_HSTART: i32 = 0x02; // c:217 Starts with # or ##'d pattern.
@@ -699,12 +697,10 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {
         // c:799-803 — accept `|` always; accept `~` only when the
         // lookahead char is `/` or NOT a segment-special byte.
         let is_bar = c == sp_bar;
-        let is_tilde_exclude = c == sp_tilde
-            && off + 1 < bytes.len()
-            && {
-                let la = bytes[off + 1];
-                la == b'/' || !sp_special_set[la as usize]
-            };
+        let is_tilde_exclude = c == sp_tilde && off + 1 < bytes.len() && {
+            let la = bytes[off + 1];
+            la == b'/' || !sp_special_set[la as usize]
+        };
         if !is_bar && !is_tilde_exclude {
             break;
         }
@@ -2584,10 +2580,7 @@ pub fn mb_patmatchrange(
 ///   - `Some((Some(ch),  0))` — literal or PP_RANGE hit (chr = ch).
 ///   - `Some((None,     mtp))` — POSIX class match; chr = WEOF / None.
 ///   - `None` — index out of range.
-pub fn mb_patmatchindex(
-    range: &[u8],
-    mut ind: u32,
-) -> Option<(Option<char>, i32)> {
+pub fn mb_patmatchindex(range: &[u8], mut ind: u32) -> Option<(Option<char>, i32)> {
     // c:3767-3849
     let mut chr: Option<char> = None; // c:3776 — `*chr = WEOF`
     let mut mtp: i32 = 0; // c:3777 — `*mtp = 0`
@@ -3977,9 +3970,9 @@ fn patmatch(
                     if let Some(n) = n_res {
                         if n >= from && n <= to {
                             let mut sub_state = state.clone();
-                            if let Some(end) = patmatch(
-                                code, next, string, k, &mut sub_state, glob_flags,
-                            ) {
+                            if let Some(end) =
+                                patmatch(code, next, string, k, &mut sub_state, glob_flags)
+                            {
                                 *state = sub_state;
                                 return Some(end);
                             }
@@ -4009,9 +4002,9 @@ fn patmatch(
                     if let Some(n) = n_res {
                         if n >= from {
                             let mut sub_state = state.clone();
-                            if let Some(end) = patmatch(
-                                code, next, string, k, &mut sub_state, glob_flags,
-                            ) {
+                            if let Some(end) =
+                                patmatch(code, next, string, k, &mut sub_state, glob_flags)
+                            {
                                 *state = sub_state;
                                 return Some(end);
                             }
@@ -4040,9 +4033,9 @@ fn patmatch(
                     if let Some(n) = n_res {
                         if n <= to {
                             let mut sub_state = state.clone();
-                            if let Some(end) = patmatch(
-                                code, next, string, k, &mut sub_state, glob_flags,
-                            ) {
+                            if let Some(end) =
+                                patmatch(code, next, string, k, &mut sub_state, glob_flags)
+                            {
                                 *state = sub_state;
                                 return Some(end);
                             }
@@ -4067,9 +4060,7 @@ fn patmatch(
                 }
                 while k > start {
                     let mut sub_state = state.clone();
-                    if let Some(end) = patmatch(
-                        code, next, string, k, &mut sub_state, glob_flags,
-                    ) {
+                    if let Some(end) = patmatch(code, next, string, k, &mut sub_state, glob_flags) {
                         *state = sub_state;
                         return Some(end);
                     }
@@ -4443,7 +4434,6 @@ pub fn patallocstr(
 // build doesn't break; future cleanup commit renames callers.
 // =====================================================================
 /// `PatProg` type alias.
-
 #[deprecated(note = "use Patprog instead")]
 pub type PatProg = Patprog;
 
@@ -4576,8 +4566,6 @@ mod tests {
         assert!(pattry(&prog, "hello"));
         assert!(!pattry(&prog, "world"));
     }
-
-
 
     #[test]
     fn star_matches_anything() {
@@ -7195,11 +7183,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let prog = compile("hel*");
         assert!(pattry(&prog, "hello"), "hel* matches hello");
-        assert_eq!(
-            patmatchlen(),
-            5,
-            "all 5 bytes of 'hello' consumed by hel*",
-        );
+        assert_eq!(patmatchlen(), 5, "all 5 bytes of 'hello' consumed by hel*",);
     }
 
     /// Anchored prefix match: `"foo"` against `"foobar"` with the

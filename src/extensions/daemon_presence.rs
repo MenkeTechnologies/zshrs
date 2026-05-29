@@ -195,7 +195,6 @@ fn resolve_startup_config_path(raw: &str) -> PathBuf {
     PathBuf::from(s)
 }
 /// `read_config_full` — see implementation.
-
 pub fn read_config_full() -> Config {
     let defaults = Config {
         daemon: ConfigSetting::Auto,

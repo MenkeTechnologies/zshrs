@@ -318,7 +318,6 @@ fn should_mmap() -> bool {
     path_get_data_remoteness() != DirRemoteness::Remote
 }
 /// `time_to_seconds` — see implementation.
-
 pub fn time_to_seconds(ts: SystemTime) -> i64 {
     match ts.duration_since(UNIX_EPOCH) {
         Ok(d) => {

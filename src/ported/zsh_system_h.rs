@@ -47,7 +47,6 @@
 /// 1024; the Rust port uses libc's PATH_MAX.
 use std::os::unix::fs::MetadataExt;
 /// `PATH_MAX` constant.
-
 pub const PATH_MAX: usize = libc::PATH_MAX as usize; // c:298
 
 /// Port of `#define ZSH_INITIAL_OPEN_MAX` from `Src/zsh_system.h:307`.
@@ -84,7 +83,6 @@ pub const BDIGBUFSIZE: usize = (std::mem::size_of::<i64>() * 8) + 4; // c:570
 #[cfg(unix)]
 pub const VDISABLEVAL: u8 = libc::_POSIX_VDISABLE; // c:396
 /// `VDISABLEVAL` constant.
-
 #[cfg(not(unix))]
 pub const VDISABLEVAL: u8 = 0;
 
@@ -108,7 +106,6 @@ pub const VDISABLEVAL: u8 = 0;
 // type with no field-shape mismatch.
 // ---------------------------------------------------------------------------
 /// `timespec` type alias.
-
 #[allow(non_camel_case_types)]
 pub type timespec = libc::timespec; // c:245
 
@@ -411,7 +408,6 @@ pub const R_OK: i32 = 4; // c:750
 #[cfg(unix)]
 pub const O_NOCTTY: i32 = libc::O_NOCTTY; // c:791
 /// `O_NOCTTY` constant.
-
 #[cfg(not(unix))]
 pub const O_NOCTTY: i32 = 0;
 

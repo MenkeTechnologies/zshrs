@@ -40,12 +40,16 @@ fn parse_signatures(text: &str) -> BTreeMap<String, BTreeSet<char>> {
         }
         let rest = &line[7..];
         // First whitespace-delimited token is the builtin name.
-        let (name, after) = match rest.split_once(|c: char| c == ' ' || c == '\t') {
+        let (name, after) = match rest.split_once([' ', '\t']) {
             Some(p) => p,
             None => continue,
         };
         // Name must start with alpha / `_` and contain only ident chars.
-        if !name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') {
+        if !name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        {
             continue;
         }
         if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
@@ -131,8 +135,7 @@ fn scan_option_letters(s: &str) -> Vec<char> {
         // typeset `{+|-}` mode marker).
         if bytes[i] == b'-' {
             let prev = if i == 0 { b' ' } else { bytes[i - 1] };
-            let is_word_start =
-                prev == b' ' || prev == b'\t' || prev == b'|' || prev == b'}';
+            let is_word_start = prev == b' ' || prev == b'\t' || prev == b'|' || prev == b'}';
             if is_word_start && i + 1 < bytes.len() {
                 let next = bytes[i + 1];
                 // Skip `--` (separator), `-/` (path-style), `-1`..`-9`
@@ -144,8 +147,7 @@ fn scan_option_letters(s: &str) -> Vec<char> {
                 if next.is_ascii_alphabetic() || next.is_ascii_digit() || next == b'/' {
                     // Read run of flag-letter chars.
                     let mut k = i + 1;
-                    while k < bytes.len()
-                        && (bytes[k].is_ascii_alphanumeric() || bytes[k] == b'/')
+                    while k < bytes.len() && (bytes[k].is_ascii_alphanumeric() || bytes[k] == b'/')
                     {
                         out.push(bytes[k] as char);
                         k += 1;
@@ -162,8 +164,7 @@ fn scan_option_letters(s: &str) -> Vec<char> {
 
 fn load_fixture(name: &str) -> String {
     let path = format!("{FIXTURE_DIR}/{name}.man.txt");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("missing fixture {path}: {e}"))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"))
 }
 
 #[test]
@@ -227,7 +228,11 @@ fn audit_lsp_builtin_flags_against_man_zshall() {
     }
     for (n, mut flags) in by_builtin {
         flags.sort();
-        let joined: String = flags.iter().map(|c| format!("-{c}")).collect::<Vec<_>>().join(" ");
+        let joined: String = flags
+            .iter()
+            .map(|c| format!("-{c}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         eprintln!("  MISSING  {n:<14} {joined}");
     }
     // Hard contract: 0% missing. Every option letter documented in

@@ -11,7 +11,6 @@
 //   client.rs  — client-side IPC helpers used by z* builtins
 //   firstrun.rs — first-run detection + 6-line stderr notice
 /// `artifact` submodule.
-
 pub mod artifact;
 /// `auth` submodule.
 pub mod auth;
@@ -102,59 +101,48 @@ pub use paths::CachePaths;
 /// Result type used throughout the daemon.
 pub type Result<T> = std::result::Result<T, DaemonError>;
 /// `DaemonError` — see variants.
-
 #[derive(thiserror::Error, Debug)]
 pub enum DaemonError {
     /// `Io` variant.
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
     /// `Json` variant.
-
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
     /// `Nix` variant.
-
     #[error("nix: {0}")]
     Nix(#[from] nix::Error),
     /// `Sqlite` variant.
-
     #[error("rusqlite: {0}")]
     Sqlite(#[from] rusqlite::Error),
     /// `AlreadyRunning` variant.
-
     #[error("singleton: another daemon is running (pid {0})")]
     AlreadyRunning(i32),
 
     #[error("protocol: client v{client} incompatible with daemon v{daemon}")]
     ProtocolMismatch { client: u32, daemon: u32 },
     /// `BadHandshake` variant.
-
     #[error("protocol: malformed handshake")]
     BadHandshake,
 
     #[error("protocol: frame too large ({size} > {max})")]
     FrameTooLarge { size: usize, max: usize },
     /// `Shutdown` variant.
-
     #[error("daemon: shutting down")]
     Shutdown,
     /// `UnknownOp` variant.
-
     #[error("op: unknown opcode {0:?}")]
     UnknownOp(String),
 
     #[error("op: bad args for {op}: {reason}")]
     BadArgs { op: String, reason: String },
     /// `NotConnected` variant.
-
     #[error("client: not connected to daemon")]
     NotConnected,
     /// `Timeout` variant.
-
     #[error("client: timed out after {0:?}")]
     Timeout(std::time::Duration),
     /// `Other` variant.
-
     #[error("{0}")]
     Other(String),
 }

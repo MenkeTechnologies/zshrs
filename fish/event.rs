@@ -21,7 +21,6 @@ use std::sync::{
     Arc, Mutex,
 };
 /// `EventType` — see variants.
-
 pub enum EventType {
     /// `Any` variant.
     Any,
@@ -39,7 +38,6 @@ pub enum EventType {
     Generic,
 }
 /// `EventDescription` — see variants.
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EventDescription {
     /// Matches any event type (not always any event, as the function name may limit the choice as
@@ -132,7 +130,6 @@ impl From<&EventDescription> for EventType {
     }
 }
 /// `EventHandler` — see fields for layout.
-
 #[derive(Debug)]
 pub struct EventHandler {
     /// Properties of the event to match.
@@ -211,7 +208,6 @@ impl EventHandler {
 }
 type EventHandlerList = Vec<Arc<EventHandler>>;
 /// `Event` — see fields for layout.
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
     /// `desc` field.
@@ -229,7 +225,6 @@ impl Event {
         }
     }
     /// `variable_erase` — see implementation.
-
     pub fn variable_erase(name: WString) -> Self {
         Self {
             desc: EventDescription::Variable { name: name.clone() },
@@ -237,7 +232,6 @@ impl Event {
         }
     }
     /// `variable_set` — see implementation.
-
     pub fn variable_set(name: WString) -> Self {
         Self {
             desc: EventDescription::Variable { name: name.clone() },
@@ -245,7 +239,6 @@ impl Event {
         }
     }
     /// `process_exit` — see implementation.
-
     pub fn process_exit(pid: Pid, status: i32) -> Self {
         Self {
             desc: EventDescription::ProcessExit { pid: Some(pid) },
@@ -257,7 +250,6 @@ impl Event {
         }
     }
     /// `job_exit` — see implementation.
-
     pub fn job_exit(pgid: Pid, jid: u64) -> Self {
         Self {
             desc: EventDescription::JobExit {
@@ -272,7 +264,6 @@ impl Event {
         }
     }
     /// `caller_exit` — see implementation.
-
     pub fn caller_exit(internal_job_id: u64, job_id: MaybeJobId) -> Self {
         Self {
             desc: EventDescription::CallerExit {
@@ -398,7 +389,6 @@ pub fn is_signal_observed(sig: libc::c_int) -> bool {
         .is_some_and(|s| s.load(Ordering::Relaxed) > 0)
 }
 /// `get_desc` — see implementation.
-
 pub fn get_desc(parser: &Parser, evt: &Event) -> WString {
     let s = match &evt.desc {
         EventDescription::Signal { signal } => {

@@ -17,13 +17,10 @@ use std::{
 
 use fish_common::*;
 /// `BUILD_DIR` constant.
-
 pub const BUILD_DIR: &str = env!("FISH_RESOLVED_BUILD_DIR");
 /// `PACKAGE_NAME` constant.
-
 pub const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 /// `shell_modes` — see implementation.
-
 pub fn shell_modes() -> MutexGuard<'static, Termios> {
     crate::reader::SHELL_MODES.lock().unwrap()
 }
@@ -41,7 +38,6 @@ pub static PROFILING_ACTIVE: RelaxedAtomicBool = RelaxedAtomicBool::new(false);
 /// Name of the current program. Should be set at startup. Used by the debug function.
 pub static PROGRAM_NAME: OnceLock<&'static wstr> = OnceLock::new();
 /// `get_program_name` — see implementation.
-
 pub fn get_program_name() -> &'static wstr {
     PROGRAM_NAME.get().unwrap()
 }
@@ -66,7 +62,6 @@ pub fn has_working_tty_timestamps() -> bool {
 /// todo!("Maybe remove the box? It is only needed for get_bg_context.")
 pub type CancelChecker = Box<dyn Fn() -> bool>;
 /// `init_special_chars_once` — see implementation.
-
 pub fn init_special_chars_once() {
     if is_windows_subsystem_for_linux(WSL::Any) {
         // neither of \u23CE and \u25CF can be displayed in the default fonts on Windows, though
@@ -195,7 +190,6 @@ fn slice_contains_slice<T: Eq>(a: &[T], b: &[T]) -> bool {
     subslice_position(a, b).is_some()
 }
 /// `WSL` — see variants.
-
 #[derive(Copy, Debug, Clone, PartialEq, Eq)]
 pub enum WSL {
     /// `Any` variant.
@@ -363,7 +357,6 @@ mod tests {
         );
     }
     /// `test_unescape_sane` — see implementation.
-
     #[test]
     pub fn test_unescape_sane() {
         const TEST_CASES: &[(&wstr, &wstr)] = &[

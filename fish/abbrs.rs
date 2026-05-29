@@ -10,19 +10,16 @@ use pcre2::utf32::Regex;
 
 static ABBRS: LazyLock<Mutex<AbbreviationSet>> = LazyLock::new(|| Mutex::new(Default::default()));
 /// `with_abbrs` — see implementation.
-
 pub fn with_abbrs<R>(cb: impl FnOnce(&AbbreviationSet) -> R) -> R {
     let abbrs_g = ABBRS.lock().unwrap();
     cb(&abbrs_g)
 }
 /// `with_abbrs_mut` — see implementation.
-
 pub fn with_abbrs_mut<R>(cb: impl FnOnce(&mut AbbreviationSet) -> R) -> R {
     let mut abbrs_g = ABBRS.lock().unwrap();
     cb(&mut abbrs_g)
 }
 /// `abbrs_get_set` — see implementation.
-
 pub fn abbrs_get_set() -> MutexGuard<'static, AbbreviationSet> {
     ABBRS.lock().unwrap()
 }
@@ -36,7 +33,6 @@ pub enum Position {
     Anywhere, // expand in any token
 }
 /// `Abbreviation` — see fields for layout.
-
 #[derive(Debug)]
 pub struct Abbreviation {
     // Abbreviation name. This is unique within the abbreviation set.
@@ -140,7 +136,6 @@ pub struct Replacer {
     pub set_cursor_marker: Option<WString>,
 }
 /// `Replacement` — see fields for layout.
-
 pub struct Replacement {
     /// The original range of the token in the command line.
     pub range: SourceRange,
@@ -178,7 +173,6 @@ impl Replacement {
     }
 }
 /// `AbbreviationSet` — see fields for layout.
-
 #[derive(Default)]
 pub struct AbbreviationSet {
     /// List of abbreviations, in definition order.

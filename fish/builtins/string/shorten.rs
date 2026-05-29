@@ -1,7 +1,6 @@
 use super::*;
 use fish_widestring::{decoded_width, ELLIPSIS_CHAR};
 /// `Shorten` — see fields for layout.
-
 pub struct Shorten<'args> {
     /// `ellipsis` field.
     ellipsis: &'args wstr,

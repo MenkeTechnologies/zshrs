@@ -1796,7 +1796,6 @@ pub fn init_thingies() -> i32 {
     0
 }
 /// `Thingy` — see fields for layout.
-
 #[derive(Debug, Clone)]
 pub struct Thingy {
     // c:224

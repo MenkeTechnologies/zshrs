@@ -88,7 +88,6 @@ fn now_ns_i64() -> i64 {
 
 // ---- IPC op handlers ----
 /// `op_push_canonical` — see implementation.
-
 pub async fn op_push_canonical(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     let subsystem = args
         .get("subsystem")
@@ -325,7 +324,6 @@ fn validate_push_payload(
     Ok(())
 }
 /// `op_pull_canonical` — see implementation.
-
 pub async fn op_pull_canonical(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let subsystem = args
         .get("subsystem")
@@ -346,7 +344,6 @@ pub async fn op_pull_canonical(state: &Arc<DaemonState>, args: Value) -> OpResul
     }))
 }
 /// `op_diff_canonical` — see implementation.
-
 pub async fn op_diff_canonical(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let subsystem = args
         .get("subsystem")

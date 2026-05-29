@@ -3,15 +3,12 @@
 use crate::prelude::*;
 use fish_fallback::{fish_wcswidth, fish_wcwidth};
 /// `SourceOffset` type alias.
-
 pub type SourceOffset = u32;
 /// `SOURCE_OFFSET_INVALID` constant.
-
 pub const SOURCE_OFFSET_INVALID: usize = SourceOffset::MAX as _;
 /// `SOURCE_LOCATION_UNKNOWN` constant.
 pub const SOURCE_LOCATION_UNKNOWN: usize = usize::MAX;
 /// `ParseTreeFlags` — see fields for layout.
-
 #[derive(Copy, Clone, Default)]
 pub struct ParseTreeFlags {
     /// attempt to build a "parse tree" no matter what. this may result in a 'forest' of
@@ -68,7 +65,6 @@ impl SourceRange {
     }
 }
 /// `ParseTokenType` — see variants.
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ParseTokenType {
     #[default]
@@ -105,7 +101,6 @@ pub enum ParseTokenType {
     Comment,
 }
 /// `ParseKeyword` — see variants.
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ParseKeyword {
     // 'None' is not a keyword, it is a sentinel indicating nothing.
@@ -155,7 +150,6 @@ pub enum ParseKeyword {
 /// `StatementDecoration` — see variants.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StatementDecoration {
-    /// `None` variant.
     None,
     /// `Command` variant.
     Command,
@@ -179,7 +173,6 @@ pub enum ParseErrorCode {
     /// `CmdSubst` variant.
     CmdSubst,
     /// `Generic` variant.
-
     Generic, // unclassified error types
 
     // Tokenizer errors.
@@ -194,7 +187,6 @@ pub enum ParseErrorCode {
     /// `TokenizerOther` variant.
     TokenizerOther,
     /// `UnbalancingEnd` variant.
-
     UnbalancingEnd,         // end outside of block
     /// `UnbalancingElse` variant.
     UnbalancingElse,        // else outside of if
@@ -212,7 +204,6 @@ pub enum ParseErrorCode {
 /// `PipelinePosition` — see variants.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum PipelinePosition {
-    /// `None` variant.
     None,       // not part of a pipeline
     /// `First` variant.
     First,      // first command in a pipeline
@@ -353,7 +344,6 @@ impl From<&wstr> for ParseKeyword {
     }
 }
 /// `ParseError` — see fields for layout.
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ParseError {
     /// Text of the error.
@@ -485,7 +475,6 @@ impl ParseError {
     }
 }
 /// `token_type_user_presentable_description` — see implementation.
-
 pub fn token_type_user_presentable_description(
     type_: ParseTokenType,
     keyword: ParseKeyword,
@@ -511,7 +500,6 @@ pub fn token_type_user_presentable_description(
     }
 }
 /// `ParseErrorList` type alias.
-
 pub type ParseErrorList = Vec<ParseError>;
 
 /// Helper function to offset error positions by the given amount. This is used when determining

@@ -551,7 +551,6 @@ impl<'a> ArithCompiler<'a> {
     // Precedence climbing: comma < assign < ternary < logor < logand <
     // bitor < bitxor < bitand < eq < cmp < shift < add < mul < pow < unary
     /// `expr` — see implementation.
-
     pub fn expr(&mut self) {
         self.assign_expr();
     }

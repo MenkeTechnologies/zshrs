@@ -8,7 +8,6 @@ struct builtin_cmd_opts_t {
     list_names: bool,
 }
 /// `r` — see implementation.
-
 pub fn r#builtin(parser: &Parser, streams: &mut IoStreams, argv: &mut [&wstr]) -> BuiltinResult {
     let cmd = argv[0];
     let argc = argv.len();

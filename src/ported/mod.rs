@@ -28,6 +28,16 @@ pub mod context;
 // `crate::ported::vm_helper` stays as an alias for the runtime state
 // struct + impl methods that hang off it.
 pub use crate::vm_helper;
+/// `builtin` submodule.
+pub mod builtin;
+/// `builtins` submodule.
+pub mod builtins;
+/// `config_h` submodule.
+pub mod config_h;
+/// `exec` submodule.
+pub mod exec;
+/// `exec_hooks` submodule.
+pub mod exec_hooks;
 /// `glob` submodule.
 pub mod glob;
 /// `hashnameddir` submodule.
@@ -44,6 +54,8 @@ pub mod init;
 pub mod input;
 /// `jobs` submodule.
 pub mod jobs;
+/// `lex` submodule.
+pub mod lex;
 /// `linklist` submodule.
 pub mod linklist;
 /// `r` submodule.
@@ -64,12 +76,19 @@ pub mod openssh_bsd_setres_id;
 pub mod options;
 /// `params` submodule.
 pub mod params;
+/// `parse` submodule.
+pub mod parse;
+/// `patchlevel` submodule.
+pub mod patchlevel;
 /// `pattern` submodule.
 pub mod pattern;
 /// `prompt` submodule.
 pub mod prompt;
+mod prototypes_h;
 /// `signals` submodule.
 pub mod signals;
+/// `signals_h` submodule.
+pub mod signals_h;
 /// `sort` submodule.
 pub mod sort;
 /// `string` submodule.
@@ -80,26 +99,6 @@ pub mod subst;
 pub mod text;
 /// `utils` submodule.
 pub mod utils;
-/// `builtin` submodule.
-
-pub mod builtin;
-/// `builtins` submodule.
-pub mod builtins;
-/// `config_h` submodule.
-pub mod config_h;
-/// `exec` submodule.
-pub mod exec;
-/// `exec_hooks` submodule.
-pub mod exec_hooks;
-/// `lex` submodule.
-pub mod lex;
-/// `parse` submodule.
-pub mod parse;
-/// `patchlevel` submodule.
-pub mod patchlevel;
-mod prototypes_h;
-/// `signals_h` submodule.
-pub mod signals_h;
 /// `zle` submodule.
 pub mod zle;
 /// `zsh_h` submodule.

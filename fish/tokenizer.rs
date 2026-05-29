@@ -40,10 +40,8 @@ pub enum TokenType {
     Comment,
 }
 /// `TokenizerError` — see variants.
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum TokenizerError {
-    /// `None` variant.
     None,
     /// `UnterminatedQuote` variant.
     UnterminatedQuote,
@@ -71,7 +69,6 @@ pub enum TokenizerError {
     ExpectedBcloseFoundPclose,
 }
 /// `Tok` — see fields for layout.
-
 #[derive(Debug)]
 pub struct Tok {
     // Offset of the token.
@@ -92,7 +89,6 @@ pub struct Tok {
     /// `error` field.
     pub error: TokenizerError,
     /// `is_unterminated_brace` field.
-
     pub is_unterminated_brace: bool,
 
     // The type of the token.
@@ -128,7 +124,6 @@ pub struct PipeOrRedir {
     pub consumed: usize,
 }
 /// `TokFlags` — see fields for layout.
-
 #[derive(Clone, Copy)]
 pub struct TokFlags(pub u8);
 
@@ -883,7 +878,6 @@ impl<'c> Tokenizer<'c> {
     }
 }
 /// `quote_end` — see implementation.
-
 pub fn quote_end(s: &wstr, mut pos: usize, quote: char) -> Option<usize> {
     loop {
         pos += 1;
@@ -901,7 +895,6 @@ pub fn quote_end(s: &wstr, mut pos: usize, quote: char) -> Option<usize> {
     }
 }
 /// `comment_end` — see implementation.
-
 pub fn comment_end(s: &wstr, mut pos: usize) -> usize {
     loop {
         pos += 1;

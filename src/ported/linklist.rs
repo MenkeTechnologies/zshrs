@@ -95,7 +95,6 @@ impl<T> LinkList<T> {
         self.nodes.front()
     }
     /// `front_mut` — see implementation.
-
     pub fn front_mut(&mut self) -> Option<&mut T> {
         self.nodes.front_mut()
     }
@@ -106,17 +105,14 @@ impl<T> LinkList<T> {
         self.nodes.back()
     }
     /// `back_mut` — see implementation.
-
     pub fn back_mut(&mut self) -> Option<&mut T> {
         self.nodes.back_mut()
     }
     /// `iter` — see implementation.
-
     pub fn iter(&self) -> std::collections::vec_deque::Iter<'_, T> {
         self.nodes.iter()
     }
     /// `iter_mut` — see implementation.
-
     pub fn iter_mut(&mut self) -> std::collections::vec_deque::IterMut<'_, T> {
         self.nodes.iter_mut()
     }
@@ -135,7 +131,6 @@ impl<T> LinkList<T> {
         self.nodes.clear();
     }
     /// `to_vec` — see implementation.
-
     pub fn to_vec(self) -> Vec<T>
     where
         T: Clone,

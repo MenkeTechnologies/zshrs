@@ -102,7 +102,6 @@ pub const ZTCP_ZFTP: i32 = 16; // c:85
 // };
 // ```
 /// `tcp_session` — see fields for layout.
-
 #[allow(non_camel_case_types)]
 #[repr(C)]
 pub struct tcp_session {

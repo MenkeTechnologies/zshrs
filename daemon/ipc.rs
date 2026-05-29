@@ -27,7 +27,6 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// Largest single frame the daemon will accept. Guards against runaway client.
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 /// `ProtocolVersion` — see fields for layout.
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtocolVersion(pub u32);
 
@@ -103,13 +102,9 @@ impl From<super::DaemonError> for ErrPayload {
 #[serde(untagged)]
 pub enum Frame {
     /// `Hello` variant.
-    Hello {
-        hello: Hello,
-    },
+    Hello { hello: Hello },
     /// `Welcome` variant.
-    Welcome {
-        welcome: Welcome,
-    },
+    Welcome { welcome: Welcome },
     /// `WelcomeErr` variant.
     WelcomeErr {
         welcome: serde_json::Value,

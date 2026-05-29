@@ -86,7 +86,6 @@ pub fn slice_length(input: &wstr) -> Option<usize> {
     None
 }
 /// `Parentheses` — see fields for layout.
-
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct Parentheses {
     /// `range` field.
@@ -118,12 +117,10 @@ impl Parentheses {
     }
 }
 /// `MaybeParentheses` — see variants.
-
 #[derive(Eq, PartialEq, Debug)]
 pub enum MaybeParentheses {
     /// `Error` variant.
     Error,
-    /// `None` variant.
     None,
     /// `CommandSubstitution` variant.
     CommandSubstitution(Parentheses),
@@ -399,7 +396,6 @@ pub fn get_process_extent(
     get_job_or_process_extent(true, buff, cursor_pos, out_tokens)
 }
 /// `get_process_first_token_offset` — see implementation.
-
 pub fn get_process_first_token_offset(buff: &wstr, cursor_pos: usize) -> Option<usize> {
     let mut tokens = vec![];
     get_process_extent(buff, cursor_pos, Some(&mut tokens));
@@ -785,7 +781,6 @@ fn compute_indents_from(src: &wstr, initial_indent: i32) -> Vec<i32> {
 /// `SPACES_PER_INDENT` constant.
 pub const SPACES_PER_INDENT: usize = 4;
 /// `apply_indents` — see implementation.
-
 pub fn apply_indents(src: &wstr, indents: &[i32]) -> WString {
     let mut indented = WString::new();
     for (i, c) in src.chars().enumerate() {

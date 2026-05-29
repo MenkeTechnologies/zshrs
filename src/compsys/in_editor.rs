@@ -133,9 +133,32 @@ pub fn try_capture_compadd_argv(argv: &[String]) -> bool {
     fn takes_arg(c: char) -> bool {
         matches!(
             c,
-            'X' | 'x' | 'd' | 'J' | 'V' | 'P' | 'S' | 'p' | 's' | 'W' | 'i'
-            | 'I' | 'O' | 'A' | 'D' | 'F' | 'M' | 'n' | 'r' | 'R' | 'q' | 'Q'
-            | 'T' | 'U' | 'C' | 'y' | 'e'
+            'X' | 'x'
+                | 'd'
+                | 'J'
+                | 'V'
+                | 'P'
+                | 'S'
+                | 'p'
+                | 's'
+                | 'W'
+                | 'i'
+                | 'I'
+                | 'O'
+                | 'A'
+                | 'D'
+                | 'F'
+                | 'M'
+                | 'n'
+                | 'r'
+                | 'R'
+                | 'q'
+                | 'Q'
+                | 'T'
+                | 'U'
+                | 'C'
+                | 'y'
+                | 'e'
         )
     }
     fn pull_arg(argv: &[String], i: &mut usize, a: &str) -> String {
@@ -243,10 +266,8 @@ pub fn complete_at(req: CompsysRequest<'_>) -> CompsysResponse {
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let saved_zlecs = crate::ported::zle::compcore::ZLECS
-        .load(std::sync::atomic::Ordering::SeqCst);
-    let saved_zlell = crate::ported::zle::compcore::ZLELL
-        .load(std::sync::atomic::Ordering::SeqCst);
+    let saved_zlecs = crate::ported::zle::compcore::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    let saved_zlell = crate::ported::zle::compcore::ZLELL.load(std::sync::atomic::Ordering::SeqCst);
     let saved_curcontext = crate::ported::params::getsparam("curcontext");
 
     // Populate the ZLE line buffer + cursor + length the way the
@@ -257,14 +278,10 @@ pub fn complete_at(req: CompsysRequest<'_>) -> CompsysResponse {
     {
         *g = req.line.to_string();
     }
-    crate::ported::zle::compcore::ZLECS.store(
-        req.cursor as i32,
-        std::sync::atomic::Ordering::SeqCst,
-    );
-    crate::ported::zle::compcore::ZLELL.store(
-        req.line.len() as i32,
-        std::sync::atomic::Ordering::SeqCst,
-    );
+    crate::ported::zle::compcore::ZLECS
+        .store(req.cursor as i32, std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::compcore::ZLELL
+        .store(req.line.len() as i32, std::sync::atomic::Ordering::SeqCst);
     let _ = crate::ported::params::setsparam("curcontext", ":::");
 
     // Install the shadow on every `compadd` call. While Some, the
@@ -300,9 +317,7 @@ pub fn complete_at(req: CompsysRequest<'_>) -> CompsysResponse {
     // SUFFIX / IPREFIX / ISUFFIX / CURRENT / compstate, run the
     // before/after hooks, invoke `_main_complete`. Pure
     // completion — exactly what the user asked for.
-    let _ret = crate::ported::zle::zle_tricky::docomplete(
-        crate::ported::zle::zle_h::COMP_COMPLETE,
-    );
+    let _ret = crate::ported::zle::zle_tricky::docomplete(crate::ported::zle::zle_h::COMP_COMPLETE);
     // (docomplete itself takes an int lst, not args — `Src/Zle/
     // zle_tricky.c:599 int docomplete(int lst)`. The argv form
     // belongs to the widget-level entry points completeword /
@@ -342,7 +357,10 @@ pub fn complete_at(req: CompsysRequest<'_>) -> CompsysResponse {
         "complete_at done",
     );
 
-    CompsysResponse { matches, is_incomplete }
+    CompsysResponse {
+        matches,
+        is_incomplete,
+    }
 }
 
 #[cfg(test)]
@@ -374,7 +392,11 @@ mod tests {
         eprintln!(
             "setopt ext -> {} matches: {:?}",
             resp.matches.len(),
-            resp.matches.iter().take(5).map(|m| &m.completion).collect::<Vec<_>>(),
+            resp.matches
+                .iter()
+                .take(5)
+                .map(|m| &m.completion)
+                .collect::<Vec<_>>(),
         );
     }
 }

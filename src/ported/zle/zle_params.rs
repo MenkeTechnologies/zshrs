@@ -124,7 +124,6 @@ pub fn set_buffer(s: &str) {
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 /// `get_buffer` — see implementation.
-
 pub fn get_buffer() -> String {
     // c:258
     ZLELINE.lock().unwrap().iter().collect()

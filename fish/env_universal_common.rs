@@ -28,7 +28,6 @@ pub struct CallbackData {
     pub val: Option<EnvVar>,
 }
 /// `CallbackDataList` type alias.
-
 pub type CallbackDataList = Vec<CallbackData>;
 
 // List of fish universal variable formats.
@@ -350,7 +349,6 @@ impl EnvUniversal {
         contents
     }
     /// `is_ok_to_save` — see implementation.
-
     #[cfg(test)]
     pub fn is_ok_to_save(&self) -> bool {
         self.ok_to_save

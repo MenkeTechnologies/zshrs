@@ -906,7 +906,6 @@ pub fn bufswap(state: &mut RefreshState) {
     std::mem::swap(&mut state.old_video, &mut state.new_video);
 }
 /// `zrefresh` — see implementation.
-
 pub fn zrefresh() {
     // c:975
     // c:975 — full repaint pipeline. C writes every byte through

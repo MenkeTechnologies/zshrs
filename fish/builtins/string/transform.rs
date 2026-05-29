@@ -1,6 +1,5 @@
 use super::*;
 /// `Transform` — see fields for layout.
-
 pub struct Transform {
     /// `quiet` field.
     pub quiet: bool,

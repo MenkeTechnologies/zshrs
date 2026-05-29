@@ -30,7 +30,6 @@ localizable_consts!(
     COMPLETE_DIRECTORY_DESC "directory"
 );
 /// `WildcardResult` — see variants.
-
 #[derive(PartialEq)]
 pub enum WildcardResult {
     /// The wildcard did not match.
@@ -254,7 +253,6 @@ fn wildcard_complete_internal(
     }
 }
 /// `wildcard_complete` — see implementation.
-
 pub fn wildcard_complete(
     s: &wstr,
     wc: &wstr,
@@ -648,7 +646,6 @@ mod expander {
             }
         }
         /// `status_code` — see implementation.
-
         pub fn status_code(&self) -> WildcardResult {
             if self.did_interrupt {
                 WildcardResult::Cancel

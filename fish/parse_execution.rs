@@ -68,7 +68,6 @@ use std::{io::ErrorKind, rc::Rc, sync::Arc};
 /// cancellation. Note it does not track the exit status of commands.
 #[derive(Debug, Eq, PartialEq)]
 pub enum EndExecutionReason {
-    /// Evaluation was successful.
     Ok,
 
     /// Evaluation was skipped due to control flow (break or return).
@@ -81,7 +80,6 @@ pub enum EndExecutionReason {
     Error,
 }
 /// `ExecutionContext` — see fields for layout.
-
 pub struct ExecutionContext<'a> {
     // The parsed source and its AST.
     /// `pstree` field.
@@ -125,7 +123,6 @@ macro_rules! report_error_formatted {
     }};
 }
 /// `varname_error` — see implementation.
-
 pub fn varname_error<'a>(command: &'a wstr, bad_name: &'a wstr) -> Error<'a> {
     err_fmt!(
         Error::INVALID_VARNAME,
@@ -153,12 +150,10 @@ impl<'a> ExecutionContext<'a> {
         }
     }
     /// `pstree` — see implementation.
-
     pub fn pstree(&self) -> &ParsedSourceRef {
         &self.pstree
     }
     /// `eval_node` — see implementation.
-
     pub fn eval_node(
         &mut self,
         ctx: &OperationContext<'_>,

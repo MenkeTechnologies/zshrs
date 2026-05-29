@@ -909,32 +909,26 @@ pub fn zshrs_log_path() -> PathBuf {
     zsh::log::log_path()
 }
 /// `shell_mode` — see implementation.
-
 pub fn shell_mode() -> ShellMode {
     unsafe { SHELL_MODE }
 }
 /// `is_zsh_mode` — see implementation.
-
 pub fn is_zsh_mode() -> bool {
     matches!(shell_mode(), ShellMode::Zsh)
 }
 /// `is_bash_mode` — see implementation.
-
 pub fn is_bash_mode() -> bool {
     matches!(shell_mode(), ShellMode::Bash)
 }
 /// `is_ksh_mode` — see implementation.
-
 pub fn is_ksh_mode() -> bool {
     matches!(shell_mode(), ShellMode::Ksh)
 }
 /// `is_posix_mode` — see implementation.
-
 pub fn is_posix_mode() -> bool {
     matches!(shell_mode(), ShellMode::Posix)
 }
 /// `is_zshrs_mode` — see implementation.
-
 pub fn is_zshrs_mode() -> bool {
     matches!(shell_mode(), ShellMode::Zshrs)
 }

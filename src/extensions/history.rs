@@ -139,7 +139,6 @@ impl HistoryEngine {
         Ok(engine)
     }
     /// `in_memory` — see implementation.
-
     pub fn in_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
         let engine = Self { conn };
@@ -672,7 +671,6 @@ impl ReedlineHistory {
         })
     }
     /// `add` — see implementation.
-
     pub fn add(&mut self, command: &str) -> rusqlite::Result<i64> {
         self.session_history.push(command.to_string());
         self.cursor = self.session_history.len();
@@ -682,7 +680,6 @@ impl ReedlineHistory {
         self.engine.add(command, cwd.as_deref())
     }
     /// `search` — see implementation.
-
     pub fn search(&self, query: &str) -> Vec<String> {
         self.engine
             .search(query, 50)
@@ -692,7 +689,6 @@ impl ReedlineHistory {
             .collect()
     }
     /// `previous` — see implementation.
-
     pub fn previous(&mut self, prefix: &str) -> Option<String> {
         if self.cursor == 0 {
             return None;
@@ -714,7 +710,6 @@ impl ReedlineHistory {
             .map(|e| e.command)
     }
     /// `next` — see implementation.
-
     pub fn next(&mut self, prefix: &str) -> Option<String> {
         if self.cursor >= self.session_history.len() {
             return None;
@@ -731,7 +726,6 @@ impl ReedlineHistory {
         None
     }
     /// `reset_cursor` — see implementation.
-
     pub fn reset_cursor(&mut self) {
         self.cursor = self.session_history.len();
     }

@@ -4632,7 +4632,6 @@ pub static ZFDRRRRING: std::sync::atomic::AtomicI32 = // c:340
 pub static ZFALARMED: std::sync::atomic::AtomicI32 = // c:346
     std::sync::atomic::AtomicI32::new(0);
 /// `OALREMAIN` static.
-
 pub static OALREMAIN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 /// `OALTIME` static.
 pub static OALTIME: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);

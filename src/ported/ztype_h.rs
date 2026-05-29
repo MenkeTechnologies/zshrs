@@ -25,7 +25,6 @@ use std::sync::Mutex;
 // classification bitmap.
 // ---------------------------------------------------------------------------
 /// `IDIGIT` constant.
-
 pub const IDIGIT: u16 = 1 << 0; // c:30
 /// `IALNUM` constant.
 pub const IALNUM: u16 = 1 << 1; // c:31

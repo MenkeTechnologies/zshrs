@@ -90,7 +90,6 @@ static NL_TABLE: &[(&str, libc::nl_item)] = &[
     ("ALT_DIGITS", libc::ALT_DIGITS),
 ];
 /// `liitem` — see implementation.
-
 #[cfg(unix)]
 pub fn liitem(name: &str) -> Option<libc::nl_item> {
     // c:379

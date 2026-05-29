@@ -55,7 +55,6 @@ pub struct KeymapName {
     pub keymap: Arc<Keymap>, // c:58 Keymap keymap
 }
 /// `KMN_IMMORTAL` constant.
-
 pub const KMN_IMMORTAL: i32 = 1 << 1; // c:62
 
 /// Port of `KM_IMMUTABLE` from `Src/Zle/zle_keymap.c:83`. Marks a
@@ -82,14 +81,14 @@ pub const KM_IMMUTABLE: i32 = 1 << 1; // c:83
 #[allow(non_camel_case_types)]
 pub struct bindstate {
     // c:95
-    pub flags: i32,             // c:96
-    pub kmname: String,         // c:97
-    pub firstseq: Vec<u8>,      // c:98
-    pub lastseq: Vec<u8>,       // c:99
-    pub bind: Option<Thingy>,   // c:100 — None ≡ C `t_undefinedkey`
-    pub str: Option<String>,    // c:101 — None ≡ C `NULL`
+    pub flags: i32,              // c:96
+    pub kmname: String,          // c:97
+    pub firstseq: Vec<u8>,       // c:98
+    pub lastseq: Vec<u8>,        // c:99
+    pub bind: Option<Thingy>,    // c:100 — None ≡ C `t_undefinedkey`
+    pub str: Option<String>,     // c:101 — None ≡ C `NULL`
     pub prefix: Option<Vec<u8>>, // c:102 — None ≡ C `NULL`
-    pub prefixlen: usize,       // c:103
+    pub prefixlen: usize,        // c:103
 }
 
 /// Port of `struct remprefstate` from `Src/Zle/zle_keymap.c:108`.
@@ -880,7 +879,6 @@ pub fn keybind(km: &Keymap, seq: &[u8]) -> (Option<Thingy>, Option<String>) {
     }
 }
 /// `keyisprefix` — see implementation.
-
 pub fn keyisprefix(km: &Keymap, seq: &[u8]) -> i32 {
     // c:683
     // c:683-688 — `if(!*seq) return 1`. Empty sequence → trivially prefix.
@@ -1633,12 +1631,7 @@ pub fn bin_bindkey_list(
 /// `bin_bindkey_list` via `scankeymap`. Coalesces consecutive
 /// single-character bindings into ranges; flushes via `bindlistout`
 /// otherwise.
-pub fn scanbindlist(
-    seq: &[u8],
-    bind: Option<&Thingy>,
-    str: Option<&str>,
-    bs: &mut bindstate,
-) {
+pub fn scanbindlist(seq: &[u8], bind: Option<&Thingy>, str: Option<&str>, bs: &mut bindstate) {
     // c:1141
     // c:1145-1148 — prefix filter: if `bs->prefix` is set and either
     // (a) seq doesn't start with prefix or (b) seq equals prefix

@@ -21,7 +21,6 @@
 // `-x` condition type constants (c:76-89).
 // ---------------------------------------------------------------------------
 /// `CCT_UNUSED` constant.
-
 pub const CCT_UNUSED: i32 = 0; // c:76
 /// `CCT_POS` constant.
 pub const CCT_POS: i32 = 1; // c:77
@@ -56,7 +55,6 @@ pub const CCT_QUOTE: i32 = 13; // c:89
 // the compctl spec expands.
 // ---------------------------------------------------------------------------
 /// `CC_FILES` constant.
-
 pub const CC_FILES: u64 = 1 << 0; // c:118
 /// `CC_COMMPATH` constant.
 pub const CC_COMMPATH: u64 = 1 << 1; // c:119
@@ -123,7 +121,6 @@ pub const CC_RESERVED: u64 = 1 << 31; // c:149
 // Secondary completion-target flags (`mask2`, c:152-158).
 // ---------------------------------------------------------------------------
 /// `CC_NOSORT` constant.
-
 pub const CC_NOSORT: u64 = 1 << 0; // c:152
 /// `CC_XORCONT` constant.
 pub const CC_XORCONT: u64 = 1 << 1; // c:153

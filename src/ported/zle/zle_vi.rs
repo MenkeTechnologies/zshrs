@@ -1171,7 +1171,6 @@ pub fn vidigitorbeginningofline() -> i32 {
     vibeginningofline()
 }
 /// `VIRANGEFLAG` static.
-
 pub static VIRANGEFLAG: std::sync::atomic::AtomicI32 = // c:36
     std::sync::atomic::AtomicI32::new(0);
 

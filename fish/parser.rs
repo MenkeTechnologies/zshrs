@@ -49,7 +49,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 /// `BlockData` — see variants.
-
 pub enum BlockData {
     /// `Function` variant.
     Function {
@@ -96,7 +95,6 @@ impl Block {
         self.data.as_deref()
     }
     /// `wants_pop_env` — see implementation.
-
     #[inline(always)]
     pub fn wants_pop_env(&self) -> bool {
         self.typ() != BlockType::top
@@ -144,7 +142,6 @@ impl Block {
         result
     }
     /// `typ` — see implementation.
-
     pub fn typ(&self) -> BlockType {
         self.block_type
     }
@@ -208,7 +205,6 @@ impl Block {
 
 type Microseconds = i64;
 /// `ProfileItem` — see fields for layout.
-
 #[derive(Default)]
 pub struct ProfileItem {
     /// Time spent executing the command, including nested blocks.
@@ -391,7 +387,6 @@ impl EvalRes {
     }
 }
 /// `ParserStatusVar` — see variants.
-
 pub enum ParserStatusVar {
     current_command,
     current_commandline,
@@ -415,7 +410,6 @@ pub enum CancelBehavior {
     Clear,
 }
 /// `Parser` — see fields for layout.
-
 pub struct Parser {
     /// `interactive_initialized` field.
     pub interactive_initialized: RelaxedAtomicBool,
@@ -457,7 +451,6 @@ pub struct Parser {
     /// Global event blocks.
     pub global_event_blocks: AtomicU64,
     /// `blocking_query` field.
-
     pub blocking_query: RefCell<Option<TerminalQuery>>,
 
     // Timeout for blocking terminal queries.
@@ -465,7 +458,6 @@ pub struct Parser {
     pub blocking_query_timeout: RefCell<Option<Duration>>,
 }
 /// `ParserEnvSetMode` — see fields for layout.
-
 #[derive(Copy, Clone, Default)]
 pub struct ParserEnvSetMode {
     /// `mode` field.
@@ -539,7 +531,6 @@ impl Parser {
             .any(|b| b.typ() == BlockType::subst)
     }
     /// `eval` — see implementation.
-
     pub fn eval(&self, cmd: &wstr, io: &IoChain) -> EvalRes {
         self.eval_with(cmd, io, None, BlockType::top, false)
     }
@@ -626,7 +617,6 @@ impl Parser {
         }
     }
     /// `eval_wstr` — see implementation.
-
     pub fn eval_wstr(
         &self,
         src: WString,
@@ -653,7 +643,6 @@ impl Parser {
         Ok(self.eval_parsed_source(&ps, io, job_group, block_type, false))
     }
     /// `eval_file_wstr` — see implementation.
-
     pub fn eval_file_wstr(
         &self,
         src: WString,
@@ -939,7 +928,6 @@ impl Parser {
         Ref::map(self.block_list.borrow(), |bl| &bl[id.0])
     }
     /// `blocks_size` — see implementation.
-
     pub fn blocks_size(&self) -> usize {
         self.block_list.borrow().len()
     }
@@ -1020,12 +1008,10 @@ impl Parser {
         res
     }
     /// `is_repainting` — see implementation.
-
     pub fn is_repainting(&self) -> bool {
         self.libdata().is_repaint
     }
     /// `convert_env_set_mode` — see implementation.
-
     pub fn convert_env_set_mode(&self, mode: ParserEnvSetMode) -> EnvSetMode {
         EnvSetMode::new_with(mode.mode, mode.user, self.is_repainting())
     }
@@ -1181,7 +1167,6 @@ impl Parser {
         None
     }
     /// `profile_items_mut` — see implementation.
-
     pub fn profile_items_mut(&self) -> RefMut<'_, Vec<ProfileItem>> {
         self.profile_items.borrow_mut()
     }
@@ -1212,7 +1197,6 @@ impl Parser {
         print_profile(&self.profile_items.borrow(), &mut f);
     }
     /// `get_backtrace` — see implementation.
-
     pub fn get_backtrace(&self, src: &wstr, errors: &ParseErrorList) -> WString {
         let Some(err) = errors.first() else {
             return WString::new();
@@ -1328,7 +1312,6 @@ impl Parser {
         self.scope().eval_level >= FISH_MAX_EVAL_DEPTH
     }
     /// `set_color_theme` — see implementation.
-
     pub fn set_color_theme(&self, background_color: Option<&xterm_color::Color>) {
         let color_theme = match background_color.map(|c| c.perceived_lightness()) {
             Some(x) if x < 0.5 => L!("dark"),

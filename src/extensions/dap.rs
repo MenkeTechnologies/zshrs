@@ -211,7 +211,6 @@ impl DapShared {
         self.write_message(msg)
     }
     /// `emit_event` — see implementation.
-
     pub fn emit_event(&self, event: &str, body: Value) -> io::Result<()> {
         let seq = self.next_seq();
         let milestone = matches!(

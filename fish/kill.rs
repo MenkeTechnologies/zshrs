@@ -78,7 +78,6 @@ pub fn kill_yank() -> WString {
     KILL_RING.lock().unwrap().yank()
 }
 /// `kill_entries` — see implementation.
-
 pub fn kill_entries() -> Vec<WString> {
     KILL_RING.lock().unwrap().entries()
 }

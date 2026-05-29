@@ -25,7 +25,6 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 /// `FunctionProperties` — see fields for layout.
-
 #[derive(Clone)]
 pub struct FunctionProperties {
     /// Reference to the node, along with the parsed source.

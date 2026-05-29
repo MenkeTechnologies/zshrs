@@ -41,7 +41,6 @@ use super::ipc::ErrPayload;
 use super::ops::OpResult;
 use super::state::DaemonState;
 /// `LockEntry` — see fields for layout.
-
 #[derive(Debug, Clone)]
 pub struct LockEntry {
     /// `holder_pid` field.
@@ -52,7 +51,6 @@ pub struct LockEntry {
     pub acquired_at_ns: i64,
 }
 /// `LockTable` type alias.
-
 pub type LockTable = Mutex<HashMap<String, LockEntry>>;
 
 /// Build the in-memory lock table. Called once from `DaemonState::new`.
@@ -131,7 +129,6 @@ fn try_acquire_inner(table: &LockTable, name: &str, pid: i32) -> Option<u128> {
     Some(token)
 }
 /// `op_lock_try_acquire` — see implementation.
-
 pub async fn op_lock_try_acquire(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let name = name_arg(&args)?;
     let pid = caller_pid(&args);
@@ -145,7 +142,6 @@ pub async fn op_lock_try_acquire(state: &Arc<DaemonState>, args: Value) -> OpRes
     }
 }
 /// `op_lock_acquire` — see implementation.
-
 pub async fn op_lock_acquire(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let name = name_arg(&args)?;
     let pid = caller_pid(&args);
@@ -188,7 +184,6 @@ pub async fn op_lock_acquire(state: &Arc<DaemonState>, args: Value) -> OpResult 
     }
 }
 /// `op_lock_release` — see implementation.
-
 pub async fn op_lock_release(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let name = name_arg(&args)?;
     let token_str = args
@@ -216,7 +211,6 @@ pub async fn op_lock_release(state: &Arc<DaemonState>, args: Value) -> OpResult 
     Ok(json!({ "name": name, "released": released }))
 }
 /// `op_lock_list` — see implementation.
-
 pub async fn op_lock_list(state: &Arc<DaemonState>, _args: Value) -> OpResult {
     let now = now_ns();
     let g = state.locks.lock();

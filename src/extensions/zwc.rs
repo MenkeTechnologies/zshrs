@@ -296,12 +296,10 @@ impl ZwcFile {
         })
     }
     /// `list_functions` — see implementation.
-
     pub fn list_functions(&self) -> Vec<&str> {
         self.functions.iter().map(|f| f.name.as_str()).collect()
     }
     /// `function_count` — see implementation.
-
     pub fn function_count(&self) -> usize {
         self.functions.len()
     }
@@ -311,14 +309,12 @@ impl ZwcFile {
         ZwcBuilder::new()
     }
     /// `get_function` — see implementation.
-
     pub fn get_function(&self, name: &str) -> Option<&ZwcFunction> {
         self.functions
             .iter()
             .find(|f| f.name == name || f.name.ends_with(&format!("/{}", name)))
     }
     /// `decode_function` — see implementation.
-
     pub fn decode_function(&self, func: &ZwcFunction) -> Option<DecodedFunction> {
         let header_words = self.header.header_len as usize;
         let start_idx = (func.start as usize).saturating_sub(header_words);
@@ -495,10 +491,7 @@ pub enum DecodedOp {
         ops: Vec<DecodedOp>,
     },
     /// `Pipe` variant.
-    Pipe {
-        lineno: u32,
-        ops: Vec<DecodedOp>,
-    },
+    Pipe { lineno: u32, ops: Vec<DecodedOp> },
     /// `Redir` variant.
     Redir {
         redir_type: u32,
@@ -507,41 +500,24 @@ pub enum DecodedOp {
         varid: Option<String>,
     },
     /// `Assign` variant.
-    Assign {
-        name: String,
-        value: String,
-    },
+    Assign { name: String, value: String },
     /// `AssignArray` variant.
-    AssignArray {
-        name: String,
-        values: Vec<String>,
-    },
+    AssignArray { name: String, values: Vec<String> },
     /// `Simple` variant.
-    Simple {
-        args: Vec<String>,
-    },
+    Simple { args: Vec<String> },
     /// `Typeset` variant.
     Typeset {
         args: Vec<String>,
         assigns: Vec<DecodedOp>,
     },
     /// `Subsh` variant.
-    Subsh {
-        ops: Vec<DecodedOp>,
-    },
+    Subsh { ops: Vec<DecodedOp> },
     /// `Cursh` variant.
-    Cursh {
-        ops: Vec<DecodedOp>,
-    },
+    Cursh { ops: Vec<DecodedOp> },
     /// `Timed` variant.
-    Timed {
-        cmd: Option<Box<DecodedOp>>,
-    },
+    Timed { cmd: Option<Box<DecodedOp>> },
     /// `FuncDef` variant.
-    FuncDef {
-        name: String,
-        body: Vec<DecodedOp>,
-    },
+    FuncDef { name: String, body: Vec<DecodedOp> },
     /// `For` variant.
     For {
         var: String,
@@ -568,10 +544,7 @@ pub enum DecodedOp {
         is_until: bool,
     },
     /// `Repeat` variant.
-    Repeat {
-        count: String,
-        body: Vec<DecodedOp>,
-    },
+    Repeat { count: String, body: Vec<DecodedOp> },
     /// `Case` variant.
     Case {
         word: String,
@@ -590,14 +563,9 @@ pub enum DecodedOp {
         else_body: Option<Vec<DecodedOp>>,
     },
     /// `Cond` variant.
-    Cond {
-        cond_type: u32,
-        args: Vec<String>,
-    },
+    Cond { cond_type: u32, args: Vec<String> },
     /// `Arith` variant.
-    Arith {
-        expr: String,
-    },
+    Arith { expr: String },
     /// `AutoFn` variant.
     AutoFn,
     /// `Try` variant.
@@ -606,10 +574,7 @@ pub enum DecodedOp {
         always_body: Vec<DecodedOp>,
     },
     /// `Unknown` variant.
-    Unknown {
-        code: u32,
-        data: u32,
-    },
+    Unknown { code: u32, data: u32 },
 }
 
 /// Wordcode-byte cursor for decoding `.zwc` blobs.
@@ -638,17 +603,14 @@ impl<'a> WordcodeDecoder<'a> {
         }
     }
     /// `at_end` — see implementation.
-
     pub fn at_end(&self) -> bool {
         self.pos >= self.code.len()
     }
     /// `peek` — see implementation.
-
     pub fn peek(&self) -> Option<u32> {
         self.code.get(self.pos).copied()
     }
     /// `next` — see implementation.
-
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u32> {
         let val = self.code.get(self.pos).copied();
@@ -658,13 +620,11 @@ impl<'a> WordcodeDecoder<'a> {
         val
     }
     /// `read_string` — see implementation.
-
     pub fn read_string(&mut self) -> String {
         let wc = self.next().unwrap_or(0);
         self.decode_string(wc)
     }
     /// `decode_string` — see implementation.
-
     pub fn decode_string(&self, wc: u32) -> String {
         // Zsh string encoding from ecrawstr():
         // - c == 6 || c == 7 -> empty string

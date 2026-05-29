@@ -13,7 +13,6 @@ localizable_consts! {
     BUILTIN_ULIMIT_UNLIMITED "unlimited"
 }
 /// `limits` submodule.
-
 pub mod limits {
     /// Constants that exist everywhere (except perhaps Cygwin).
     /// Note these are uints on Linux but ints everywhere else - we use -1 as a sentinel
@@ -263,7 +262,6 @@ impl Default for Options {
     }
 }
 /// `ulimit` — see implementation.
-
 pub fn ulimit(parser: &Parser, streams: &mut IoStreams, args: &mut [&wstr]) -> BuiltinResult {
     let cmd = args[0];
 

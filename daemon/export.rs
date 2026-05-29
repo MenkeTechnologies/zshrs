@@ -30,12 +30,10 @@ use super::ops::OpResult;
 use super::state::DaemonState;
 use super::zsync::CanonicalRow;
 /// `op_view` — see implementation.
-
 pub async fn op_view(state: &Arc<DaemonState>, args: Value) -> OpResult {
     op_view_or_export(state, args, false).await
 }
 /// `op_export` — see implementation.
-
 pub async fn op_export(state: &Arc<DaemonState>, args: Value) -> OpResult {
     op_view_or_export(state, args, true).await
 }

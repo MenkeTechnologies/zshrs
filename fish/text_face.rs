@@ -125,7 +125,6 @@ impl TextStyling {
         self.bold
     }
     /// `underline_style` — see implementation.
-
     #[cfg(test)]
     pub const fn underline_style(self) -> ResettableStyle<UnderlineStyle> {
         self.underline_style
@@ -170,7 +169,6 @@ impl TextFace {
         }
     }
     /// `new` — see implementation.
-
     pub fn new(fg: Color, bg: Color, underline_color: Color, style: TextStyling) -> Self {
         Self {
             fg,

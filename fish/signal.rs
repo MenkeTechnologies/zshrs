@@ -240,7 +240,6 @@ pub fn signal_set_handlers(interactive: bool) {
     }
 }
 /// `signal_set_handlers_once` — see implementation.
-
 pub fn signal_set_handlers_once(interactive: bool) {
     static NONINTER_ONCE: std::sync::Once = std::sync::Once::new();
     NONINTER_ONCE.call_once(|| signal_set_handlers(false));
@@ -274,7 +273,6 @@ pub fn signal_handle(sig: Signal) {
     sigaction(sig, &act, std::ptr::null_mut());
 }
 /// `SIGNALS_TO_DEFAULT` static.
-
 pub static SIGNALS_TO_DEFAULT: LazyLock<libc::sigset_t> = LazyLock::new(|| {
     let mut set = MaybeUninit::uninit();
     unsafe { libc::sigemptyset(set.as_mut_ptr()) };
@@ -512,7 +510,6 @@ impl Signal {
         }
     }
     /// `code` — see implementation.
-
     pub fn code(&self) -> i32 {
         self.0.into()
     }

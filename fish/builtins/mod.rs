@@ -1,7 +1,6 @@
 /// `shared` submodule.
 pub mod shared;
 /// `abbr` submodule.
-
 pub mod abbr;
 /// `argparse` submodule.
 pub mod argparse;

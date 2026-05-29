@@ -30,7 +30,6 @@ use super::ipc::{ErrPayload, Frame};
 use super::ops::OpResult;
 use super::state::DaemonState;
 /// `AskRequest` — see fields for layout.
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AskRequest {
     /// `request_id` field.
@@ -51,7 +50,6 @@ pub struct AskRequest {
     pub timeout_ms: u64,
 }
 /// `AskKind` — see variants.
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AskKind {
@@ -116,19 +114,16 @@ impl AskInbox {
         format!("ask-{}", *n)
     }
     /// `push` — see implementation.
-
     pub fn push(&self, req: AskRequest) {
         let mut g = self.queues.lock();
         g.entry(req.target_shell).or_default().push_back(req);
     }
     /// `pending_count` — see implementation.
-
     pub fn pending_count(&self, shell_id: u64) -> usize {
         let g = self.queues.lock();
         g.get(&shell_id).map(|q| q.len()).unwrap_or(0)
     }
     /// `pending` — see implementation.
-
     pub fn pending(&self, shell_id: u64) -> Vec<AskRequest> {
         let g = self.queues.lock();
         g.get(&shell_id)
@@ -150,7 +145,6 @@ impl AskInbox {
         q.remove(idx)
     }
     /// `take_specific` — see implementation.
-
     pub fn take_specific(&self, shell_id: u64, req_id: &str) -> Option<AskRequest> {
         let mut g = self.queues.lock();
         let q = g.get_mut(&shell_id)?;
@@ -158,7 +152,6 @@ impl AskInbox {
         q.remove(idx)
     }
     /// `dismiss` — see implementation.
-
     pub fn dismiss(&self, shell_id: u64, req_id: &str) -> bool {
         let mut g = self.queues.lock();
         let Some(q) = g.get_mut(&shell_id) else {
@@ -172,7 +165,6 @@ impl AskInbox {
         }
     }
     /// `clear` — see implementation.
-
     pub fn clear(&self, shell_id: u64) -> usize {
         let mut g = self.queues.lock();
         if let Some(q) = g.get_mut(&shell_id) {
@@ -217,7 +209,6 @@ impl AskInbox {
 
 // ---- IPC op handlers ----
 /// `op_ask_ask` — see implementation.
-
 pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     let kind_s = args
         .get("kind")
@@ -341,7 +332,6 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
     Ok(resp)
 }
 /// `op_ask_pending` — see implementation.
-
 pub async fn op_ask_pending(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     let target_shell = match args.get("shell_id").and_then(Value::as_u64) {
         Some(id) => id,
@@ -362,7 +352,6 @@ pub async fn op_ask_pending(state: &Arc<DaemonState>, client_id: u64, args: Valu
     }))
 }
 /// `op_ask_take` — see implementation.
-
 pub async fn op_ask_take(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     let req = if let Some(req_id) = args.get("request_id").and_then(Value::as_str) {
         state.ask_inbox.take_specific(client_id, req_id)
@@ -385,7 +374,6 @@ pub async fn op_ask_take(state: &Arc<DaemonState>, client_id: u64, args: Value) 
     }
 }
 /// `op_ask_dismiss` — see implementation.
-
 pub async fn op_ask_dismiss(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     if args.get("all").and_then(Value::as_bool).unwrap_or(false) {
         let n = state.ask_inbox.clear(client_id);
@@ -399,7 +387,6 @@ pub async fn op_ask_dismiss(state: &Arc<DaemonState>, client_id: u64, args: Valu
     Ok(json!({ "dismissed": if removed { 1 } else { 0 } }))
 }
 /// `op_ask_response` — see implementation.
-
 pub async fn op_ask_response(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // The user picked / declined a UI request. Route the response back to the
     // originating shell.

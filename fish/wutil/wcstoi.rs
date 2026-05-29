@@ -10,7 +10,6 @@ struct ParseResult {
     consumed: usize,
 }
 /// `Options` — see fields for layout.
-
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Options {
     /// If set, and the requested type is unsigned, then negative values are wrapped

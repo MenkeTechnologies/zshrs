@@ -221,7 +221,6 @@ impl DirIter {
         Self::new_impl(path, false)
     }
     /// `new_with_dots` — see implementation.
-
     pub fn new_with_dots(path: &wstr) -> io::Result<Self> {
         Self::new_impl(path, true)
     }

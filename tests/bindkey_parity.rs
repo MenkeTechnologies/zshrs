@@ -5,6 +5,7 @@
 //! `bin_bindkey` → `scankeymap` → `scanbindlist` → `bindlistout`
 //! chain — listing format, range-collapsing, undefined-key skip,
 //! `bindztrdup` escape, `dquotedztrdup` quoting.
+#![allow(non_snake_case)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -147,7 +148,10 @@ fn bindkey_dash_lL_emits_create_commands_substring() {
         return;
     }
     let r = run_zshrs("bindkey -lL");
-    assert!(!r.stdout.contains(".safe"), "scanlistmaps should skip .safe");
+    assert!(
+        !r.stdout.contains(".safe"),
+        "scanlistmaps should skip .safe"
+    );
     for must in [
         "bindkey -N emacs",
         "bindkey -N vicmd",
@@ -221,8 +225,5 @@ fn bindkey_dash_M_emacs_dash_L_emits_bindkey_M_prefix() {
 fn bindkey_dash_a_vicmd_dash_L_emits_dash_a_prefix() {
     // `bindkey -a -L` (= -M vicmd -L) outputs lines as `bindkey -a ...`
     // per bindlistout c:1191.
-    assert_contains_in_both(
-        "bindkey -a -L",
-        r#"bindkey -a"#,
-    );
+    assert_contains_in_both("bindkey -a -L", r#"bindkey -a"#);
 }

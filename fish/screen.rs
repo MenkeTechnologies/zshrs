@@ -39,7 +39,6 @@ use std::sync::atomic::AtomicU32;
 use std::sync::Mutex;
 use std::time::SystemTime;
 /// `CharOffset` — see variants.
-
 #[derive(Copy, Clone, Default)]
 pub enum CharOffset {
     /// `None` variant.
@@ -53,7 +52,6 @@ pub enum CharOffset {
     Pager(usize),
 }
 /// `HighlightedChar` — see fields for layout.
-
 #[derive(Clone, Default)]
 pub struct HighlightedChar {
     /// `highlight` field.
@@ -183,17 +181,14 @@ impl ScreenData {
         self.line_datas.last_mut().unwrap()
     }
     /// `clear_lines` — see implementation.
-
     pub fn clear_lines(&mut self) {
         self.line_datas.clear();
     }
     /// `resize` — see implementation.
-
     pub fn resize(&mut self, size: usize) {
         self.line_datas.resize(size, Default::default());
     }
     /// `create_line` — see implementation.
-
     pub fn create_line(&mut self, idx: usize) -> &mut Line {
         if idx >= self.line_datas.len() {
             self.line_datas.resize(idx + 1, Default::default());
@@ -201,34 +196,28 @@ impl ScreenData {
         self.line_mut(idx)
     }
     /// `insert_line_at_index` — see implementation.
-
     pub fn insert_line_at_index(&mut self, idx: usize) -> &mut Line {
         assert!(idx <= self.line_datas.len());
         self.line_datas.insert(idx, Default::default());
         &mut self.line_datas[idx]
     }
     /// `line` — see implementation.
-
     pub fn line(&self, idx: usize) -> &Line {
         &self.line_datas[idx]
     }
     /// `line_mut` — see implementation.
-
     pub fn line_mut(&mut self, idx: usize) -> &mut Line {
         &mut self.line_datas[idx]
     }
     /// `line_count` — see implementation.
-
     pub fn line_count(&self) -> usize {
         self.line_datas.len()
     }
     /// `append_lines` — see implementation.
-
     pub fn append_lines(&mut self, d: &ScreenData) {
         self.line_datas.extend_from_slice(&d.line_datas);
     }
     /// `is_empty` — see implementation.
-
     pub fn is_empty(&self) -> bool {
         self.line_datas.is_empty()
     }
@@ -582,7 +571,6 @@ impl Screen {
         self.save_status();
     }
     /// `push_to_scrollback` — see implementation.
-
     pub fn push_to_scrollback(&mut self) {
         let Some(lines_to_scroll) = self.viewport_y else {
             return;
@@ -601,7 +589,6 @@ impl Screen {
         self.set_position_in_viewport("scrollback-push", Some(0));
     }
     /// `set_position_in_viewport` — see implementation.
-
     pub fn set_position_in_viewport(&mut self, whence: &str, viewport_y: Option<usize>) {
         flogf!(
             reader,
@@ -612,7 +599,6 @@ impl Screen {
         self.viewport_y = viewport_y;
     }
     /// `autoscroll` — see implementation.
-
     pub fn autoscroll(&mut self, screen_height: usize) {
         let Some(viewport_y) = self.viewport_y else {
             return;
@@ -633,7 +619,6 @@ impl Screen {
         }
     }
     /// `command_line_y_given_cursor_y` — see implementation.
-
     pub fn command_line_y_given_cursor_y(&mut self, viewport_cursor_y: usize) -> usize {
         let prompt_y = viewport_cursor_y.checked_sub(self.actual.cursor.y);
         prompt_y.unwrap_or_else(|| {
@@ -648,7 +633,6 @@ impl Screen {
         })
     }
     /// `offset_in_cmdline_given_cursor` — see implementation.
-
     pub fn offset_in_cmdline_given_cursor(
         &mut self,
         viewport_position: ViewportPosition,
@@ -1423,7 +1407,6 @@ impl LayoutCache {
         }
     }
     /// `PROMPT_CACHE_MAX_SIZE` constant.
-
     pub const PROMPT_CACHE_MAX_SIZE: usize = 12;
 
     /// Return the size of the escape code cache.
@@ -1535,7 +1518,6 @@ impl LayoutCache {
         layout
     }
     /// `clear` — see implementation.
-
     pub fn clear(&mut self) {
         self.esc_cache.clear();
         self.prompt_cache.clear();

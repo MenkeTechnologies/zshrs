@@ -64,7 +64,6 @@ localizable_consts!(
     ABBR_DESC "Abbreviation: %s"
 );
 /// `CompletionMode` — see fields for layout.
-
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct CompletionMode {
     /// If set, skip file completions.
@@ -119,7 +118,6 @@ pub fn const_desc(s: &wstr) -> DescriptionFunc {
     Box::new(move |_| s.clone())
 }
 /// `CompletionList` type alias.
-
 pub type CompletionList = Vec<Completion>;
 
 /// This is an individual completion entry, i.e. the result of an expansion of a completion rule.
@@ -175,12 +173,10 @@ impl Completion {
         }
     }
     /// `from_completion` — see implementation.
-
     pub fn from_completion(completion: WString) -> Self {
         Self::with_desc(completion, WString::new())
     }
     /// `with_desc` — see implementation.
-
     pub fn with_desc(completion: WString, description: WString) -> Self {
         Self::new(
             completion,
@@ -348,7 +344,6 @@ impl CompletionReceiver {
     }
 }
 /// `CompleteOptionType` — see variants.
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CompleteOptionType {
     /// no option
@@ -860,12 +855,10 @@ impl<'ctx> Completer<'ctx> {
         self.mark_completions_duplicating_arguments(&cmdline, current_token, tokens);
     }
     /// `acquire_completions` — see implementation.
-
     pub fn acquire_completions(&mut self) -> Vec<Completion> {
         self.completions.take()
     }
     /// `acquire_needs_load` — see implementation.
-
     pub fn acquire_needs_load(&mut self) -> Vec<WString> {
         mem::take(&mut self.needs_load)
     }
@@ -2618,7 +2611,6 @@ pub fn complete_get_wrap_targets(command: &wstr) -> Vec<WString> {
     wrappers.get(command).cloned().unwrap_or_default()
 }
 /// `CompletionRequestOptions` — see fields for layout.
-
 #[derive(Clone, Copy, Default)]
 pub struct CompletionRequestOptions {
     /// Requesting autosuggestion

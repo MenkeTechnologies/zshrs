@@ -3,7 +3,6 @@ use std::cell::{Ref, RefMut};
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::MutexGuard;
 /// `RelaxedAtomicBool` — see fields for layout.
-
 #[derive(Debug, Default)]
 pub struct RelaxedAtomicBool(AtomicBool);
 
@@ -44,19 +43,16 @@ impl<T: ?Sized> AtomicRef<T> {
         Self(AtomicPtr::new(std::ptr::from_ref(value).cast_mut()))
     }
     /// `load` — see implementation.
-
     pub fn load(&self) -> &'static T {
         unsafe { *self.0.load(Ordering::Relaxed) }
     }
     /// `store` — see implementation.
-
     pub fn store(&self, value: &'static &'static T) {
         self.0
             .store(std::ptr::from_ref(value).cast_mut(), Ordering::Relaxed);
     }
 }
 /// `DebugRef` — see fields for layout.
-
 pub struct DebugRef<'a, T>(Ref<'a, T>);
 
 impl<'a, T> DebugRef<'a, T> {
@@ -88,7 +84,6 @@ impl<'a, T> std::ops::Deref for DebugRef<'a, T> {
     }
 }
 /// `DebugRefMut` — see fields for layout.
-
 pub struct DebugRefMut<'a, T>(RefMut<'a, T>);
 
 impl<'a, T> DebugRefMut<'a, T> {
@@ -125,7 +120,6 @@ impl<'a, T> std::ops::DerefMut for DebugRefMut<'a, T> {
     }
 }
 /// `DebugMutexGuard` — see fields for layout.
-
 pub struct DebugMutexGuard<'a, T>(MutexGuard<'a, T>);
 
 impl<'a, T> DebugMutexGuard<'a, T> {

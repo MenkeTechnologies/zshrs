@@ -625,7 +625,6 @@ impl ShellExecutor {
         unsetparam(name);
     }
     /// `new` — see implementation.
-
     pub fn new() -> Self {
         tracing::debug!("ShellExecutor::new() initializing");
 
@@ -1305,7 +1304,6 @@ impl ShellExecutor {
         Ok(self.last_status())
     }
     /// `execute_script` — see implementation.
-
     #[tracing::instrument(skip(self, script), fields(len = script.len()))]
     pub fn execute_script(&mut self, script: &str) -> Result<i32, String> {
         // lex+parse free ported + ZshCompiler is the only execution path.
@@ -1597,7 +1595,6 @@ impl ShellExecutor {
         }
     }
     /// `run_command_substitution` — see implementation.
-
     pub fn run_command_substitution(&mut self, cmd_str: &str) -> String {
         // `$(< FILE)` — zsh shorthand for "read FILE contents". Faster
         // than spawning `cat`. The leading `<` (after stripping

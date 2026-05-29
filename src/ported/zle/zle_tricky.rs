@@ -10,19 +10,19 @@
 //! - spell-word, delete-char-or-list
 //! - magic-space, accept-and-menu-complete
 
-use std::sync::atomic::{AtomicI32, Ordering};
 use crate::ported::module::gethookdef;
 use crate::ported::utils::{write_loop, zwarn};
 use crate::ported::zle::compcore::{compfunc, ADDEDX, ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+use crate::ported::zle::compcore::{WB, WE};
 use crate::ported::zle::zle_h::{
     COMP_COMPLETE, COMP_EXPAND, COMP_EXPAND_COMPLETE, COMP_ISEXPAND, COMP_LIST_COMPLETE,
     COMP_LIST_EXPAND, COMP_SPELL, CUT_RAW,
 };
-use crate::ported::zle::compcore::{WB, WE};
 use crate::ported::zsh_h::{
-    isset, BASHAUTOLIST, GLOBCOMPLETE, MENUCOMPLETE, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE,
-    RECEXACT,
+    isset, BASHAUTOLIST, GLOBCOMPLETE, MENUCOMPLETE, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE,
+    QT_SINGLE, RECEXACT,
 };
+use std::sync::atomic::{AtomicI32, Ordering};
 
 // =====================================================================
 // Globals — `Src/Zle/zle_tricky.c:96-106`.
@@ -107,9 +107,9 @@ pub fn completeword(args: &[String]) -> i32 {
     USEMENU.store(isset(MENUCOMPLETE) as i32, Ordering::SeqCst); // c:218 — `usemenu = !!isset(MENUCOMPLETE)`
     USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:219 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:220
-    // c:221-222 — Tab-at-indent → `selfinsert(args)`. Body of
-    // `selfinsert` ignores args (C marks them `UNUSED`); kept in
-    // the contract for sig parity.
+                                            // c:221-222 — Tab-at-indent → `selfinsert(args)`. Body of
+                                            // `selfinsert` ignores args (C marks them `UNUSED`); kept in
+                                            // the contract for sig parity.
     let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
     if lastch == b'\t' as i32 && usetab() != 0 {
         return selfinsert(args);
@@ -231,11 +231,11 @@ pub fn expandorcomplete(args: &[String]) -> i32 {
     USEMENU.store(isset(MENUCOMPLETE) as i32, Ordering::SeqCst); // c:301 — `usemenu = !!isset(MENUCOMPLETE)`
     USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:302 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:303
-    // c:304-305 — Tab-at-indent → `selfinsert(args)`. Rust
-    // `selfinsert()` takes no args today (C's body marks them
-    // `UNUSED`) so the arg pass-through is dropped; a follow-up
-    // patch should widen `selfinsert` to `fn(&[String]) -> i32`
-    // for sig parity.
+                                            // c:304-305 — Tab-at-indent → `selfinsert(args)`. Rust
+                                            // `selfinsert()` takes no args today (C's body marks them
+                                            // `UNUSED`) so the arg pass-through is dropped; a follow-up
+                                            // patch should widen `selfinsert` to `fn(&[String]) -> i32`
+                                            // for sig parity.
     let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
     if lastch == b'\t' as i32 && usetab() != 0 {
         return selfinsert(args);
@@ -267,7 +267,7 @@ pub fn menuexpandorcomplete(args: &[String]) -> i32 {
     USEMENU.store(1, Ordering::SeqCst); // c:323
     USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:324 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:325
-    // c:326-327 — Tab-at-indent → selfinsert.
+                                            // c:326-327 — Tab-at-indent → selfinsert.
     let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
     if lastch == b'\t' as i32 && usetab() != 0 {
         return selfinsert(args);
@@ -312,7 +312,7 @@ pub fn reversemenucomplete(args: &[String]) -> i32 {
 pub fn acceptandmenucomplete(args: &[String]) -> i32 {
     // c:353
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:355
-    // c:356-357 — `if (!menucmp) return 1`.
+                                            // c:356-357 — `if (!menucmp) return 1`.
     if MENUCMP.load(Ordering::SeqCst) == 0 {
         return 1;
     }
@@ -514,7 +514,7 @@ pub fn docomplete(lst: i32) -> i32 {
         }
         let mut x = s_word.clone(); // c:810 — `dupstring(w)`
         let ox = s_word.clone(); // c:810 — `ox = dupstring(w)`
-        // c:813 — `spckword(&x, 0, lincmd, 0)`.
+                                 // c:813 — `spckword(&x, 0, lincmd, 0)`.
         crate::ported::utils::spckword(&mut x, 0, lincmd, 0);
         // c:814 — `ret = !strcmp(x, ox)` — returns 1 (unchanged) /
         // 0 (changed). Matches C `!strcmp` semantics.
@@ -993,8 +993,7 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
     crate::ported::mem::pushheap();
 
     // c:2270 — `vl = newlinklist()`.
-    let mut vl: crate::ported::linklist::LinkList<String> =
-        crate::ported::linklist::newlinklist();
+    let mut vl: crate::ported::linklist::LinkList<String> = crate::ported::linklist::newlinklist();
     // c:2271 — `ss = dupstring(s)`.
     let ss = crate::ported::string::dupstring(s);
     // c:2274-2278 — swap "/' → Dnull/Snull. C walks `ts` byte-by-
@@ -1025,10 +1024,7 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
         if lst == COMP_LIST_EXPAND || lst == COMP_EXPAND {
             let ng = crate::ported::options::opt_state_get("NULL_GLOB").unwrap_or(false);
             crate::ported::options::opt_state_set("NULL_GLOB", true);
-            crate::ported::subst::globlist(
-                &mut vl,
-                crate::ported::zsh_h::PREFORK_NO_UNTOK,
-            );
+            crate::ported::subst::globlist(&mut vl, crate::ported::zsh_h::PREFORK_NO_UNTOK);
             crate::ported::options::opt_state_set("NULL_GLOB", ng);
         }
         // c:2290-2291 — `if (errflag) goto end`.
@@ -1128,8 +1124,7 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
                                 *m = String::from_utf8_lossy(&bytes).into_owned();
                             }
                         }
-                        crate::ported::zle::compcore::ZLEMETACS
-                            .store(pos + 1, Ordering::SeqCst);
+                        crate::ported::zle::compcore::ZLEMETACS.store(pos + 1, Ordering::SeqCst);
                     }
                 }
             }
@@ -1163,8 +1158,8 @@ pub fn docompletion(s: &str, lst: i32, incmd: i32) -> i32 {
     let h = crate::ported::module::gethookdef("complete");
     if !h.is_null() {
         // c:2346 — `runhookdef(COMPLETEHOOK, &dat)`.
-        let dat_ptr = (&mut dat) as *mut crate::ported::zle::zle_h::compldat
-            as *mut std::ffi::c_void;
+        let dat_ptr =
+            (&mut dat) as *mut crate::ported::zle::zle_h::compldat as *mut std::ffi::c_void;
         return crate::ported::module::runhookdef(h, dat_ptr);
     }
     // Fallback to the canonical Rust handler (matches the C
@@ -1574,7 +1569,6 @@ pub fn endoflist() -> i32 {
     1 // c:3073
 }
 /// `USEMENU` static.
-
 pub static USEMENU: AtomicI32 = AtomicI32::new(0); // c:96
 
 /// Port of `mod_export int useglob` from `Src/Zle/zle_tricky.c:96`.

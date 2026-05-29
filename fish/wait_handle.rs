@@ -53,7 +53,6 @@ impl WaitHandle {
     }
 }
 /// `WaitHandleRef` type alias.
-
 pub type WaitHandleRef = Rc<WaitHandle>;
 
 const WAIT_HANDLE_STORE_DEFAULT_LIMIT: usize = 1024;

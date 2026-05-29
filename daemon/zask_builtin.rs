@@ -50,7 +50,6 @@ fn connect() -> Result<Client, ()> {
     })
 }
 /// `zask` — see implementation.
-
 pub fn zask(args: &[String]) -> i32 {
     // Top-level routing — `zask --target ...` (push form) routes to `ask`,
     // `zask <verb>` (pull form) routes to the verb. Spec per docs/DAEMON.md.

@@ -1,7 +1,6 @@
 use super::prelude::*;
 use crate::{err_str, event};
 /// `emit` — see implementation.
-
 pub fn emit(parser: &Parser, streams: &mut IoStreams, argv: &mut [&wstr]) -> BuiltinResult {
     let Some(&cmd) = argv.first() else {
         return Err(STATUS_INVALID_ARGS);

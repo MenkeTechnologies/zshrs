@@ -6,7 +6,6 @@ use fish_common::escape;
 static DO_TRACE: RelaxedAtomicBool = RelaxedAtomicBool::new(false);
 static DO_TRACE_ALL: RelaxedAtomicBool = RelaxedAtomicBool::new(false);
 /// `trace_set_enabled` — see implementation.
-
 pub fn trace_set_enabled(enable: Vec<WString>) {
     DO_TRACE.store(!enable.is_empty());
     DO_TRACE_ALL.store(enable.iter().any(|s| s == "all"));

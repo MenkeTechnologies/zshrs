@@ -315,7 +315,6 @@ struct PerprocData {
     statuses: Statuses,
 }
 /// `EnvScopedImpl` — see fields for layout.
-
 #[derive(Clone)]
 pub struct EnvScopedImpl {
     // A linked list of scopes.
@@ -352,12 +351,10 @@ impl EnvScopedImpl {
         }
     }
     /// `get_last_statuses` — see implementation.
-
     pub fn get_last_statuses(&self) -> &Statuses {
         &self.perproc_data.statuses
     }
     /// `set_last_statuses` — see implementation.
-
     pub fn set_last_statuses(&mut self, s: Statuses) {
         self.perproc_data.statuses = s;
     }
@@ -474,7 +471,6 @@ impl EnvScopedImpl {
         return uvars().get(key);
     }
     /// `getf` — see implementation.
-
     pub fn getf(&self, key: &wstr, mode: EnvMode) -> Option<EnvVar> {
         let query = Query::from(mode);
         let mut result: Option<EnvVar> = None;
@@ -505,7 +501,6 @@ impl EnvScopedImpl {
         result
     }
     /// `get_names` — see implementation.
-
     pub fn get_names(&self, flags: EnvMode) -> Vec<WString> {
         let query = Query::from(flags);
         let mut names: HashSet<WString> = HashSet::new();
@@ -696,7 +691,6 @@ struct VarFlags {
     pub parent_exports: bool,
 }
 /// `ModResult` — see fields for layout.
-
 #[derive(Copy, Clone, Default)]
 pub struct ModResult {
     /// The publicly visible status of the set call.
@@ -1108,17 +1102,14 @@ impl EnvStackImpl {
         None
     }
     /// `getf` — see implementation.
-
     pub fn getf(&self, key: &wstr, mode: EnvMode) -> Option<EnvVar> {
         self.base.getf(key, mode)
     }
     /// `get_names` — see implementation.
-
     pub fn get_names(&self, flags: EnvMode) -> Vec<WString> {
         self.base.get_names(flags)
     }
     /// `get_pwd_slash` — see implementation.
-
     pub fn get_pwd_slash(&self) -> WString {
         self.base.get_pwd_slash()
     }
@@ -1170,7 +1161,6 @@ impl<T> EnvMutex<T> {
         }
     }
     /// `lock` — see implementation.
-
     pub fn lock(&self) -> EnvMutexGuard<'_, T> {
         let guard = ENV_LOCK.lock().unwrap();
         // Safety: we have the global lock.

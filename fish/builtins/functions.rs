@@ -119,7 +119,6 @@ fn parse_cmd_opts<'args>(
     Ok(SUCCESS)
 }
 /// `functions` — see implementation.
-
 pub fn functions(parser: &Parser, streams: &mut IoStreams, args: &mut [&wstr]) -> BuiltinResult {
     let Some(&cmd) = args.first() else {
         return Err(STATUS_INVALID_ARGS);

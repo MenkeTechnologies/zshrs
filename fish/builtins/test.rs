@@ -721,7 +721,6 @@ mod test_expressions {
             }
         }
         /// `parse_args` — see implementation.
-
         pub fn parse_args(args: &[WString]) -> Result<Box<dyn Expression>, error::Error<'_>> {
             let mut parser = TestParser {
                 strings: args,

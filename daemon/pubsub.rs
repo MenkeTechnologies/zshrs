@@ -27,7 +27,6 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 /// `Subscription` — see fields for layout.
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Subscription {
     /// `id` field.

@@ -73,12 +73,10 @@ pub fn wunlink(file_name: &wstr) -> io::Result<()> {
     fs::remove_file(tmp)
 }
 /// `perror_nix` — see implementation.
-
 pub fn perror_nix(s: &str, e: nix::errno::Errno) {
     eprintf!("%s: %s\n", s, e.desc());
 }
 /// `perror_io` — see implementation.
-
 pub fn perror_io(s: &str, e: &io::Error) {
     eprintf!("%s: %s\n", s, e);
 }

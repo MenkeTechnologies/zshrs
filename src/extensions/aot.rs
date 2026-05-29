@@ -64,7 +64,6 @@ pub const AOT_VERSION_V2: u32 = 2;
 /// Fixed trailer length: `8 (cl) + 8 (ul) + 4 (ver) + 4 (rsv) + 8 (magic)`.
 pub const TRAILER_LEN: u64 = 32;
 /// `EmbeddedFile` — see fields for layout.
-
 #[derive(Debug, Clone)]
 pub struct EmbeddedFile {
     /// `__FILE__` / error-reporting name (e.g. `hello.zsh`).

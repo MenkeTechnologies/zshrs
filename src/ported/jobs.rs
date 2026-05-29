@@ -2857,8 +2857,7 @@ pub fn bin_fg(
                 let mut status: libc::c_int = 0;
                 let pid = unsafe { libc::waitpid(-1, &mut status, 0) };
                 if pid > 0 {
-                    let t = table.clone();
-                    if let Ok(mut tab) = t.lock() {
+                    if let Ok(mut tab) = table.lock() {
                         update_bg_job(&mut tab, pid, status);
                     }
                 } else {
@@ -3304,7 +3303,6 @@ pub fn sig_names_for_signals_param() -> Vec<String> {
     out
 }
 /// `getsigidx` — see implementation.
-
 pub fn getsigidx(s: &str) -> Option<i32> {
     // c:3052-3058 — numeric-input branch: bounded by VSIGCOUNT + RT range.
     if let Some(first) = s.chars().next() {

@@ -106,7 +106,6 @@ pub struct mathfunc {
     pub funcid: i32,                 // c:120
 }
 /// `MFF_STR` constant.
-
 pub const MFF_STR: i32 = 1; // c:124
 /// `MFF_ADDED` constant.
 pub const MFF_ADDED: i32 = 2; // c:126
@@ -206,7 +205,6 @@ pub const Nularg: char = '\u{a1}'; // c:206
 #[allow(non_upper_case_globals)]
 pub const Marker: char = '\u{a2}'; // c:224
 /// `SPECCHARS` constant.
-
 pub const SPECCHARS: &str = "#$^*()=|{}[]`<>?~;&\n\t \\\'\""; // c:228
 /// `PATCHARS` constant.
 pub const PATCHARS: &str = "#^*()|[]<>?~\\"; // c:232
@@ -222,7 +220,6 @@ pub fn IS_DASH(x: char) -> bool {
 // 4. Quote types (zsh.h:252-294).
 // =============================================================================
 /// `QT_NONE` constant.
-
 pub const QT_NONE: i32 = 0; // c:257
 /// `QT_BACKSLASH` constant.
 pub const QT_BACKSLASH: i32 = 1; // c:259
@@ -254,7 +251,6 @@ pub fn QT_IS_SINGLE(x: i32) -> bool {
 // 5. Lexical tokens (zsh.h:304-371).
 // =============================================================================
 /// `lextok` type alias.
-
 #[allow(non_camel_case_types)]
 pub type lextok = i32;
 /// `NULLTOK` constant.
@@ -390,7 +386,6 @@ pub const TYPESET: lextok = 63; // c:370
 // 6. Redirection types (zsh.h:377-408).
 // =============================================================================
 /// `REDIR_WRITE` constant.
-
 pub const REDIR_WRITE: i32 = 0;
 /// `REDIR_WRITENOW` constant.
 pub const REDIR_WRITENOW: i32 = 1;
@@ -427,14 +422,12 @@ pub const REDIR_INPIPE: i32 = 16;
 /// `REDIR_OUTPIPE` constant.
 pub const REDIR_OUTPIPE: i32 = 17;
 /// `REDIR_TYPE_MASK` constant.
-
 pub const REDIR_TYPE_MASK: i32 = 0x1f; // c:397
 /// `REDIR_VARID_MASK` constant.
 pub const REDIR_VARID_MASK: i32 = 0x20; // c:399
 /// `REDIR_FROM_HEREDOC_MASK` constant.
 pub const REDIR_FROM_HEREDOC_MASK: i32 = 0x40; // c:401
 /// `IS_WRITE_FILE` — see implementation.
-
 #[inline]
 #[allow(non_snake_case)]
 pub fn IS_WRITE_FILE(x: i32) -> bool {
@@ -475,7 +468,6 @@ pub fn IS_REDIROP(x: lextok) -> bool {
 // 7. fdtable values (zsh.h:415-465).
 // =============================================================================
 /// `FDT_UNUSED` constant.
-
 pub const FDT_UNUSED: i32 = 0; // c:416
 /// `FDT_INTERNAL` constant.
 pub const FDT_INTERNAL: i32 = 1; // c:421
@@ -500,7 +492,6 @@ pub const FDT_SAVED_MASK: i32 = 16; // c:465
 // 8. Input-stack flags (zsh.h:468-476).
 // =============================================================================
 /// `INP_FREE` constant.
-
 pub const INP_FREE: i32 = 1 << 0; // c:468
 /// `INP_ALIAS` constant.
 pub const INP_ALIAS: i32 = 1 << 1; // c:469
@@ -523,7 +514,6 @@ pub const INP_RAW_KEEP: i32 = 1 << 8; // c:476
 // 9. metafy flags (zsh.h:479-486).
 // =============================================================================
 /// `META_REALLOC` constant.
-
 pub const META_REALLOC: i32 = 0; // c:479
 /// `META_USEHEAP` constant.
 pub const META_USEHEAP: i32 = 1;
@@ -544,14 +534,12 @@ pub const META_HREALLOC: i32 = 7;
 // 10. ZCONTEXT_* (zsh.h:489-496) + entersubsh_ret (c:499-504).
 // =============================================================================
 /// `ZCONTEXT_HIST` constant.
-
 pub const ZCONTEXT_HIST: i32 = 1 << 0; // c:491
 /// `ZCONTEXT_LEX` constant.
 pub const ZCONTEXT_LEX: i32 = 1 << 1; // c:493
 /// `ZCONTEXT_PARSE` constant.
 pub const ZCONTEXT_PARSE: i32 = 1 << 2; // c:495
 /// `entersubsh_ret` — see fields for layout.
-
 #[derive(Default)]
 #[allow(non_camel_case_types)]
 pub struct entersubsh_ret {
@@ -564,7 +552,6 @@ pub struct entersubsh_ret {
 // 11. Linknode/linklist (zsh.h:557-572) + opaque pointer typedefs (c:510-549).
 // =============================================================================
 /// `linknode` — see fields for layout.
-
 #[allow(non_camel_case_types)]
 pub struct linknode {
     // c:557
@@ -597,7 +584,6 @@ pub type LinkList = Box<linklist>; // c:534
 // here so structs that reference each other (e.g. param.old: Param)
 // can compile.
 /// `Alias` type alias.
-
 pub type Alias = Box<alias>; // c:510
 /// `Asgment` type alias.
 pub type Asgment = Box<asgment>; // c:511
@@ -677,7 +663,6 @@ pub type Timedfn = Box<timedfn>; // c:548
 /// `Value` type alias.
 pub type Value = Box<value>; // c:549
 /// `voidvoidfnptr_t` type alias.
-
 pub type voidvoidfnptr_t = fn(); // c:621
 
 // Body-by-body struct definitions (C source order, fields verbatim
@@ -1120,7 +1105,6 @@ pub type GsuArray = Box<gsu_array>; // c:1793
 /// `GsuHash` type alias.
 pub type GsuHash = Box<gsu_hash>; // c:1794
 /// `gsu_scalar` — see fields for layout.
-
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
 pub struct gsu_scalar {
@@ -1563,7 +1547,6 @@ pub struct eccstr {
 // 12. Z_* sublist flags (zsh.h:645-648).
 // =============================================================================
 /// `Z_TIMED` constant.
-
 pub const Z_TIMED: i32 = 1 << 0; // c:645
 /// `Z_SYNC` constant.
 pub const Z_SYNC: i32 = 1 << 1; // c:646
@@ -1576,7 +1559,6 @@ pub const Z_DISOWN: i32 = 1 << 3; // c:648
 // 13. COND_* condition types (zsh.h:660-679).
 // =============================================================================
 /// `COND_NOT` constant.
-
 pub const COND_NOT: i32 = 0;
 /// `COND_AND` constant.
 pub const COND_AND: i32 = 1;
@@ -1617,7 +1599,6 @@ pub const COND_MOD: i32 = 18;
 /// `COND_MODI` constant.
 pub const COND_MODI: i32 = 19;
 /// `CONDF_INFIX` constant.
-
 pub const CONDF_INFIX: i32 = 1; // c:695
 /// `CONDF_ADDED` constant.
 pub const CONDF_ADDED: i32 = 2; // c:697
@@ -1628,10 +1609,8 @@ pub const CONDF_AUTOALL: i32 = 4; // c:699
 // 14. Redirection structures (zsh.h:706-740) + MULTIOUNIT.
 // =============================================================================
 /// `REDIRF_FROM_HEREDOC` constant.
-
 pub const REDIRF_FROM_HEREDOC: i32 = 1; // c:708
 /// `redir` — see fields for layout.
-
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
 pub struct redir {
@@ -1654,10 +1633,8 @@ pub struct redir {
     pub munged_here_terminator: Option<String>,
 }
 /// `MULTIOUNIT` constant.
-
 pub const MULTIOUNIT: usize = 8; // c:725
 /// `multio` — see fields for layout.
-
 #[allow(non_camel_case_types)]
 pub struct multio {
     // c:735
@@ -1678,7 +1655,6 @@ pub struct multio {
 // 15. value struct (zsh.h:744-755) + VALFLAG_* + MAX_ARRLEN.
 // =============================================================================
 /// `value` — see fields for layout.
-
 #[allow(non_camel_case_types)]
 pub struct value {
     // c:744
@@ -1696,7 +1672,6 @@ pub struct value {
     pub end: i32,
 }
 /// `VALFLAG_INV` constant.
-
 pub const VALFLAG_INV: i32 = 0x0001; // c:758
 /// `VALFLAG_EMPTY` constant.
 pub const VALFLAG_EMPTY: i32 = 0x0002;
@@ -1705,25 +1680,21 @@ pub const VALFLAG_SUBST: i32 = 0x0004;
 /// `VALFLAG_REFSLICE` constant.
 pub const VALFLAG_REFSLICE: i32 = 0x0008;
 /// `MAX_ARRLEN` constant.
-
 pub const MAX_ARRLEN: i32 = 262144; // c:764
 
 // =============================================================================
 // 16. Word code types (zsh.h:770-1038).
 // =============================================================================
 /// `wordcode` type alias.
-
 #[allow(non_camel_case_types)]
 pub type wordcode = u32; // c:770
 /// `Wordcode` type alias.
 pub type Wordcode = Vec<wordcode>; // c:771
 /// `FuncDump` type alias.
-
 pub type FuncDump = Box<funcdump>; // c:773
 /// `Eprog` type alias.
 pub type Eprog = Box<eprog>; // c:774
 /// `EF_REAL` constant.
-
 pub const EF_REAL: i32 = 1; // c:817
 /// `EF_HEAP` constant.
 pub const EF_HEAP: i32 = 2;
@@ -1732,19 +1703,16 @@ pub const EF_MAP: i32 = 4;
 /// `EF_RUN` constant.
 pub const EF_RUN: i32 = 8;
 /// `Estate` type alias.
-
 pub type Estate = Box<estate>; // c:822
 /// `Eccstr` type alias.
 pub type Eccstr = Box<eccstr>; // c:835
 /// `EC_NODUP` constant.
-
 pub const EC_NODUP: i32 = 0; // c:869
 /// `EC_DUP` constant.
 pub const EC_DUP: i32 = 1; // c:872
 /// `EC_DUPTOK` constant.
 pub const EC_DUPTOK: i32 = 2; // c:878
 /// `WC_CODEBITS` constant.
-
 pub const WC_CODEBITS: u32 = 5; // c:882
 /// `wc_code` — see implementation.
 #[inline]
@@ -1771,7 +1739,6 @@ pub fn wc_bld(c: wordcode, d: wordcode) -> wordcode {
     c | (d << WC_CODEBITS)
 }
 /// `WC_END` constant.
-
 pub const WC_END: wordcode = 0;
 /// `WC_LIST` constant.
 pub const WC_LIST: wordcode = 1;
@@ -1818,14 +1785,12 @@ pub const WC_TRY: wordcode = 21;
 /// `WC_COUNT` constant.
 pub const WC_COUNT: wordcode = 22;
 /// `Z_END` constant.
-
 pub const Z_END: i32 = 1 << 4; // c:921
 /// `Z_SIMPLE` constant.
 pub const Z_SIMPLE: i32 = 1 << 5; // c:922
 /// `WC_LIST_FREE` constant.
 pub const WC_LIST_FREE: u32 = 6; // c:923
 /// `WC_SUBLIST_END` constant.
-
 pub const WC_SUBLIST_END: wordcode = 0;
 /// `WC_SUBLIST_AND` constant.
 pub const WC_SUBLIST_AND: wordcode = 1;
@@ -1840,12 +1805,10 @@ pub const WC_SUBLIST_SIMPLE: wordcode = 16;
 /// `WC_SUBLIST_FREE` constant.
 pub const WC_SUBLIST_FREE: u32 = 5; // c:935
 /// `WC_PIPE_END` constant.
-
 pub const WC_PIPE_END: wordcode = 0;
 /// `WC_PIPE_MID` constant.
 pub const WC_PIPE_MID: wordcode = 1;
 /// `WC_ASSIGN_SCALAR` constant.
-
 pub const WC_ASSIGN_SCALAR: wordcode = 0;
 /// `WC_ASSIGN_ARRAY` constant.
 pub const WC_ASSIGN_ARRAY: wordcode = 1;
@@ -1854,29 +1817,24 @@ pub const WC_ASSIGN_NEW: wordcode = 0;
 /// `WC_ASSIGN_INC` constant.
 pub const WC_ASSIGN_INC: wordcode = 1;
 /// `WC_TIMED_EMPTY` constant.
-
 pub const WC_TIMED_EMPTY: wordcode = 0;
 /// `WC_TIMED_PIPE` constant.
 pub const WC_TIMED_PIPE: wordcode = 1;
 /// `WC_FOR_PPARAM` constant.
-
 pub const WC_FOR_PPARAM: wordcode = 0;
 /// `WC_FOR_LIST` constant.
 pub const WC_FOR_LIST: wordcode = 1;
 /// `WC_FOR_COND` constant.
 pub const WC_FOR_COND: wordcode = 2;
 /// `WC_SELECT_PPARAM` constant.
-
 pub const WC_SELECT_PPARAM: wordcode = 0;
 /// `WC_SELECT_LIST` constant.
 pub const WC_SELECT_LIST: wordcode = 1;
 /// `WC_WHILE_WHILE` constant.
-
 pub const WC_WHILE_WHILE: wordcode = 0;
 /// `WC_WHILE_UNTIL` constant.
 pub const WC_WHILE_UNTIL: wordcode = 1;
 /// `WC_CASE_HEAD` constant.
-
 pub const WC_CASE_HEAD: wordcode = 0;
 /// `WC_CASE_OR` constant.
 pub const WC_CASE_OR: wordcode = 1;
@@ -1887,7 +1845,6 @@ pub const WC_CASE_TESTAND: wordcode = 3;
 /// `WC_CASE_FREE` constant.
 pub const WC_CASE_FREE: u32 = 3; // c:1020
 /// `WC_IF_HEAD` constant.
-
 pub const WC_IF_HEAD: wordcode = 0;
 /// `WC_IF_IF` constant.
 pub const WC_IF_IF: wordcode = 1;
@@ -1902,7 +1859,6 @@ pub const WC_IF_ELSE: wordcode = 3;
 // `wc_data` slicers / `wc_bld` constructors.
 // =============================================================================
 /// `WCB_END` — see implementation.
-
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_END() -> wordcode {
@@ -2539,7 +2495,6 @@ pub const SGTTYFLAG: &str = SGTTYFLAG_NAME;
 #[cfg(target_os = "linux")]
 pub const SGTABTYPE: u32 = libc::XTABS;
 /// `SGTABTYPE` constant.
-
 #[cfg(not(target_os = "linux"))]
 pub const SGTABTYPE: u32 = 0;
 
@@ -2752,7 +2707,6 @@ pub fn WRAPDEF(func: WrapFunc) -> funcwrap {
 // 17. Job structures (zsh.h:1046-1166).
 // =============================================================================
 /// `jobfile` — see fields for layout.
-
 #[allow(non_camel_case_types)]
 pub struct jobfile {
     // c:1046
@@ -2764,7 +2718,6 @@ pub struct jobfile {
     pub is_fd: i32,
 }
 /// `STAT_CHANGED` constant.
-
 pub const STAT_CHANGED: i32 = 0x0001; // c:1073
 /// `STAT_STOPPED` constant.
 pub const STAT_STOPPED: i32 = 0x0002;
@@ -2799,10 +2752,8 @@ pub const STAT_SUBJOB_ORPHANED: i32 = 0x8000;
 /// `STAT_DISOWN` constant.
 pub const STAT_DISOWN: i32 = 0x10000; // c:1095
 /// `SP_RUNNING` constant.
-
 pub const SP_RUNNING: i32 = -1; // c:1097
 /// `JOBTEXTSIZE` constant.
-
 pub const JOBTEXTSIZE: usize = 80; // c:1104
                                    // C: `#define MAXJOBS_ALLOC 50` (Src/zsh.h:1107) — an int literal.
                                    // Stored as `usize` so callers using it for Vec capacity / slice
@@ -2814,7 +2765,6 @@ pub const MAXJOBS_ALLOC: usize = 50; // c:1107
 /// `MAX_PIPESTATS` constant.
 pub const MAX_PIPESTATS: usize = 256; // c:1166
 /// `timeinfo` — see fields for layout.
-
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Default)]
 pub struct timeinfo {
@@ -2902,26 +2852,22 @@ impl timeinfo {
 // 18. Hash table types (zsh.h:1172-1235) — DISABLED.
 // =============================================================================
 /// `DISABLED` constant.
-
 pub const DISABLED: i32 = 1 << 0; // c:1235
 
 // =============================================================================
 // 19. Alias / asgment / cmdnam / shfunc / funcstack flags + macros.
 // =============================================================================
 /// `HASHED` constant.
-
 pub const HASHED: i32 = 1 << 1; // c:1312
 /// `ALIAS_GLOBAL` constant.
 pub const ALIAS_GLOBAL: i32 = 1 << 1; // c:1261
 /// `ALIAS_SUFFIX` constant.
 pub const ALIAS_SUFFIX: i32 = 1 << 2; // c:1263
 /// `ASG_ARRAY` constant.
-
 pub const ASG_ARRAY: i32 = 1; // c:1280
 /// `ASG_KEY_VALUE` constant.
 pub const ASG_KEY_VALUE: i32 = 2; // c:1282
 /// `SFC_NONE` constant.
-
 pub const SFC_NONE: i32 = 0; // c:1329
 /// `SFC_DIRECT` constant.
 pub const SFC_DIRECT: i32 = 1;
@@ -2938,17 +2884,14 @@ pub const SFC_CWIDGET: i32 = 6;
 /// `SFC_SUBST` constant.
 pub const SFC_SUBST: i32 = 7;
 /// `FS_SOURCE` constant.
-
 pub const FS_SOURCE: i32 = 0; // c:1341
 /// `FS_FUNC` constant.
 pub const FS_FUNC: i32 = 1;
 /// `FS_EVAL` constant.
 pub const FS_EVAL: i32 = 2;
 /// `WRAPF_ADDED` constant.
-
 pub const WRAPF_ADDED: i32 = 1; // c:1369
 /// `HOOK_SUFFIX` constant.
-
 pub const HOOK_SUFFIX: &str = "_functions"; // c:1379
 /// `HOOK_SUFFIX_LEN` constant.
 pub const HOOK_SUFFIX_LEN: usize = 11; // c:1381
@@ -2957,10 +2900,8 @@ pub const HOOK_SUFFIX_LEN: usize = 11; // c:1381
 // 20. Options struct + MAX_OPS + OPT_* macros (zsh.h:1396-1427).
 // =============================================================================
 /// `MAX_OPS` constant.
-
 pub const MAX_OPS: usize = 128; // c:1396
 /// `options` — see fields for layout.
-
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
 pub struct options {
@@ -2974,7 +2915,6 @@ pub struct options {
     pub argsalloc: i32,
 }
 /// `PARSEARGS_TOPLEVEL` constant.
-
 pub const PARSEARGS_TOPLEVEL: i32 = 0x1; // c:1425
 /// `PARSEARGS_LOGIN` constant.
 pub const PARSEARGS_LOGIN: i32 = 0x2; // c:1426
@@ -3021,10 +2961,8 @@ pub fn OPT_HASARG(ops: &options, c: u8) -> bool {
 // 21. Builtin types + BINF_* (zsh.h:1436-1486).
 // =============================================================================
 /// `HandlerFunc` type alias.
-
 pub type HandlerFunc = fn(name: &str, args: &[String], ops: &options, funcid: i32) -> i32;
 /// `BINF_PLUSOPTS` constant.
-
 pub const BINF_PLUSOPTS: u32 = 1 << 1; // c:1457
 /// `BINF_PRINTOPTS` constant.
 pub const BINF_PRINTOPTS: u32 = 1 << 2; // c:1458
@@ -3067,7 +3005,6 @@ pub const BINF_ASSIGN: u32 = 1 << 19; // c:1486
 // 22. Module flags (zsh.h:1516-1532).
 // =============================================================================
 /// `MOD_BUSY` constant.
-
 pub const MOD_BUSY: i32 = 1 << 0; // c:1516
 /// `MOD_UNLOAD` constant.
 pub const MOD_UNLOAD: i32 = 1 << 1; // c:1522
@@ -3082,14 +3019,12 @@ pub const MOD_INIT_B: i32 = 1 << 5; // c:1530
 /// `MOD_ALIAS` constant.
 pub const MOD_ALIAS: i32 = 1 << 6; // c:1532
 /// `HOOKF_ALL` constant.
-
 pub const HOOKF_ALL: i32 = 1; // c:1592
 
 // =============================================================================
 // 23. Pattern flags (zsh.h:1624-1637).
 // =============================================================================
 /// `PAT_HEAPDUP` constant.
-
 pub const PAT_HEAPDUP: i32 = 0x0000; // c:1624
 /// `PAT_FILE` constant.
 pub const PAT_FILE: i32 = 0x0001;
@@ -3122,7 +3057,6 @@ pub const PAT_LCMATCHUC: i32 = 0x1000;
 // 24. zpc_chars enum (zsh.h:1643-1676).
 // =============================================================================
 /// `ZPC_SLASH` constant.
-
 pub const ZPC_SLASH: i32 = 0;
 /// `ZPC_NULL` constant.
 pub const ZPC_NULL: i32 = 1;
@@ -3171,7 +3105,6 @@ pub const ZPC_COUNT: i32 = ZPC_NO_KSH_GLOB + 6;
 // 25. PP_* (zsh.h:1707-1735) + GF_* + ZMB_*.
 // =============================================================================
 /// `PP_FIRST` constant.
-
 pub const PP_FIRST: i32 = 1;
 /// `PP_ALPHA` constant.
 pub const PP_ALPHA: i32 = 1;
@@ -3218,7 +3151,6 @@ pub const PP_UNKWN: i32 = 20;
 /// `PP_RANGE` constant.
 pub const PP_RANGE: i32 = 21;
 /// `GF_LCMATCHUC` constant.
-
 pub const GF_LCMATCHUC: i32 = 0x0100;
 /// `GF_IGNCASE` constant.
 pub const GF_IGNCASE: i32 = 0x0200;
@@ -3229,7 +3161,6 @@ pub const GF_MATCHREF: i32 = 0x0800;
 /// `GF_MULTIBYTE` constant.
 pub const GF_MULTIBYTE: i32 = 0x1000;
 /// `ZMB_VALID` constant.
-
 pub const ZMB_VALID: i32 = 0;
 /// `ZMB_INCOMPLETE` constant.
 pub const ZMB_INCOMPLETE: i32 = 1;
@@ -3240,7 +3171,6 @@ pub const ZMB_INVALID: i32 = 2;
 // 26. Param type flags (zsh.h:1878-1949).
 // =============================================================================
 /// `PM_SCALAR` constant.
-
 pub const PM_SCALAR: u32 = 0;
 /// `PM_ARRAY` constant.
 pub const PM_ARRAY: u32 = 1 << 0;
@@ -3333,14 +3263,12 @@ pub const PM_NAMEDDIR: u32 = 1 << 29;
 /// `PM_NAMEREF` constant.
 pub const PM_NAMEREF: u32 = 1 << 30;
 /// `PM_TYPE` — see implementation.
-
 #[inline]
 #[allow(non_snake_case)]
 pub const fn PM_TYPE(x: u32) -> u32 {
     x & (PM_SCALAR | PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_ARRAY | PM_HASHED | PM_NAMEREF)
 }
 /// `TYPESET_OPTSTR` constant.
-
 pub const TYPESET_OPTSTR: &str = "aiEFALRZlurtxUhHT"; // c:1947
 /// `TYPESET_OPTNUM` constant.
 pub const TYPESET_OPTNUM: &str = "LRZiEF"; // c:1950
@@ -3349,7 +3277,6 @@ pub const TYPESET_OPTNUM: &str = "LRZiEF"; // c:1950
 // 27. SCANPM_* (zsh.h:1953-1973).
 // =============================================================================
 /// `SCANPM_WANTVALS` constant.
-
 pub const SCANPM_WANTVALS: u32 = 1 << 0;
 /// `SCANPM_WANTKEYS` constant.
 pub const SCANPM_WANTKEYS: u32 = 1 << 1;
@@ -3384,7 +3311,6 @@ pub const SCANPM_ISVAR_AT: u32 = 1 << 14;
 // 28. SUB_* substitution flags (zsh.h:1981-1996).
 // =============================================================================
 /// `SUB_END` constant.
-
 pub const SUB_END: i32 = 0x0001;
 /// `SUB_LONG` constant.
 pub const SUB_LONG: i32 = 0x0002;
@@ -3419,12 +3345,10 @@ pub const SUB_EGLOB: i32 = 0x4000;
 // 29. ZSHTOK_* + PREFORK_* + MULTSUB_* (zsh.h:2014-2065).
 // =============================================================================
 /// `ZSHTOK_SUBST` constant.
-
 pub const ZSHTOK_SUBST: i32 = 0x0001;
 /// `ZSHTOK_SHGLOB` constant.
 pub const ZSHTOK_SHGLOB: i32 = 0x0002;
 /// `PREFORK_TYPESET` constant.
-
 pub const PREFORK_TYPESET: i32 = 0x01;
 /// `PREFORK_ASSIGN` constant.
 pub const PREFORK_ASSIGN: i32 = 0x02;
@@ -3443,7 +3367,6 @@ pub const PREFORK_KEY_VALUE: i32 = 0x80;
 /// `PREFORK_NO_UNTOK` constant.
 pub const PREFORK_NO_UNTOK: i32 = 0x100;
 /// `MULTSUB_WS_AT_START` constant.
-
 pub const MULTSUB_WS_AT_START: i32 = 1;
 /// `MULTSUB_WS_AT_END` constant.
 pub const MULTSUB_WS_AT_END: i32 = 2;
@@ -3454,7 +3377,6 @@ pub const MULTSUB_PARAM_NAME: i32 = 4;
 // 30. ASSPM_* (zsh.h:2130-2145).
 // =============================================================================
 /// `ASSPM_AUGMENT` constant.
-
 pub const ASSPM_AUGMENT: i32 = 1 << 0;
 /// `ASSPM_WARN_CREATE` constant.
 pub const ASSPM_WARN_CREATE: i32 = 1 << 1;
@@ -3471,12 +3393,10 @@ pub const ASSPM_KEY_VALUE: i32 = 1 << 4;
 // 31. ND_* + PRINT_* + loop_return + source_return + noerrexit_bits.
 // =============================================================================
 /// `ND_USERNAME` constant.
-
 pub const ND_USERNAME: i32 = 1 << 1; // c:2157
 /// `ND_NOABBREV` constant.
 pub const ND_NOABBREV: i32 = 1 << 2; // c:2158
 /// `PRINT_NAMEONLY` constant.
-
 pub const PRINT_NAMEONLY: i32 = 1 << 0; // c:2179
 /// `PRINT_TYPE` constant.
 pub const PRINT_TYPE: i32 = 1 << 1;
@@ -3497,7 +3417,6 @@ pub const PRINT_POSIX_READONLY: i32 = 1 << 8;
 /// `PRINT_WITH_NAMESPACE` constant.
 pub const PRINT_WITH_NAMESPACE: i32 = 1 << 9;
 /// `PRINT_WHENCE_CSH` constant.
-
 pub const PRINT_WHENCE_CSH: i32 = 1 << 7; // c:2191
 /// `PRINT_WHENCE_VERBOSE` constant.
 pub const PRINT_WHENCE_VERBOSE: i32 = 1 << 8;
@@ -3508,21 +3427,18 @@ pub const PRINT_WHENCE_FUNCDEF: i32 = 1 << 10;
 /// `PRINT_WHENCE_WORD` constant.
 pub const PRINT_WHENCE_WORD: i32 = 1 << 11;
 /// `LOOP_OK` constant.
-
 pub const LOOP_OK: i32 = 0; // c:2199
 /// `LOOP_EMPTY` constant.
 pub const LOOP_EMPTY: i32 = 1;
 /// `LOOP_ERROR` constant.
 pub const LOOP_ERROR: i32 = 2;
 /// `SOURCE_OK` constant.
-
 pub const SOURCE_OK: i32 = 0; // c:2210
 /// `SOURCE_NOT_FOUND` constant.
 pub const SOURCE_NOT_FOUND: i32 = 1;
 /// `SOURCE_ERROR` constant.
 pub const SOURCE_ERROR: i32 = 2;
 /// `NOERREXIT_EXIT` constant.
-
 pub const NOERREXIT_EXIT: i32 = 1; // c:2219
 /// `NOERREXIT_RETURN` constant.
 pub const NOERREXIT_RETURN: i32 = 2;
@@ -3533,7 +3449,6 @@ pub const NOERREXIT_SIGNAL: i32 = 8;
 // 32. History flags + GETHIST_* + HISTFLAG_* + HFILE_* + LEXFLAGS_*.
 // =============================================================================
 /// `HIST_MAKEUNIQUE` constant.
-
 pub const HIST_MAKEUNIQUE: u32 = 0x00000001; // c:2252
 /// `HIST_OLD` constant.
 pub const HIST_OLD: u32 = 0x00000002;
@@ -3548,14 +3463,12 @@ pub const HIST_TMPSTORE: u32 = 0x00000020;
 /// `HIST_NOWRITE` constant.
 pub const HIST_NOWRITE: u32 = 0x00000040;
 /// `GETHIST_UPWARD` constant.
-
 pub const GETHIST_UPWARD: i32 = -1;
 /// `GETHIST_DOWNWARD` constant.
 pub const GETHIST_DOWNWARD: i32 = 1;
 /// `GETHIST_EXACT` constant.
 pub const GETHIST_EXACT: i32 = 0;
 /// `HISTFLAG_DONE` constant.
-
 pub const HISTFLAG_DONE: i32 = 1; // c:2270
 /// `HISTFLAG_NOEXEC` constant.
 pub const HISTFLAG_NOEXEC: i32 = 2;
@@ -3564,7 +3477,6 @@ pub const HISTFLAG_RECALL: i32 = 4;
 /// `HISTFLAG_SETTY` constant.
 pub const HISTFLAG_SETTY: i32 = 8;
 /// `HFILE_APPEND` constant.
-
 pub const HFILE_APPEND: u32 = 0x0001;
 /// `HFILE_SKIPOLD` constant.
 pub const HFILE_SKIPOLD: u32 = 0x0002;
@@ -3579,7 +3491,6 @@ pub const HFILE_NO_REWRITE: u32 = 0x0020;
 /// `HFILE_USE_OPTIONS` constant.
 pub const HFILE_USE_OPTIONS: u32 = 0x8000;
 /// `LEXFLAGS_ACTIVE` constant.
-
 pub const LEXFLAGS_ACTIVE: i32 = 0x0001;
 /// `LEXFLAGS_ZLE` constant.
 pub const LEXFLAGS_ZLE: i32 = 0x0002;
@@ -3596,7 +3507,6 @@ pub const LEXFLAGS_NEWLINE: i32 = 0x0010;
 // 33. Completion context (zsh.h:2322-2332).
 // =============================================================================
 /// `IN_NOTHING` constant.
-
 pub const IN_NOTHING: i32 = 0;
 /// `IN_CMD` constant.
 pub const IN_CMD: i32 = 1;
@@ -3613,7 +3523,6 @@ pub const IN_PAR: i32 = 5;
 // 34. Emulation flags (zsh.h:2341-2358).
 // =============================================================================
 /// `EMULATE_CSH` constant.
-
 pub const EMULATE_CSH: i32 = 1 << 1; // c:2341
 /// `EMULATE_KSH` constant.
 pub const EMULATE_KSH: i32 = 1 << 2;
@@ -3630,7 +3539,6 @@ pub const EMULATE_UNUSED: i32 = 1 << 6;
 // 35. Option indices (zsh.h:2362-2550).
 // =============================================================================
 /// `OPT_INVALID` constant.
-
 pub const OPT_INVALID: i32 = 0;
 /// `ALIASESOPT` constant.
 pub const ALIASESOPT: i32 = 1;
@@ -4005,7 +3913,6 @@ pub const DVORAK: i32 = 185;
 /// `OPT_SIZE` constant.
 pub const OPT_SIZE: i32 = 186;
 /// `OptIndex` type alias.
-
 pub type OptIndex = u8; // c:2556
 
 // #define isset(X) (opts[X])                                               // c:2559
@@ -4245,7 +4152,6 @@ pub fn opt_name(opt: i32) -> &'static str {
 // 36. Terminal control (zsh.h:2633-2680).
 // =============================================================================
 /// `TERM_BAD` constant.
-
 pub const TERM_BAD: i32 = 0x01;
 /// `TERM_UNKNOWN` constant.
 pub const TERM_UNKNOWN: i32 = 0x02;
@@ -4256,7 +4162,6 @@ pub const TERM_SHORT: i32 = 0x08;
 /// `TERM_NARROW` constant.
 pub const TERM_NARROW: i32 = 0x10;
 /// `TCCLEARSCREEN` constant.
-
 pub const TCCLEARSCREEN: i32 = 0;
 /// `TCLEFT` constant.
 pub const TCLEFT: i32 = 1;
@@ -4341,10 +4246,8 @@ pub const TC_COUNT: i32 = 39;
 // 37. Text attributes (zattr) (zsh.h:2689-2750).
 // =============================================================================
 /// `zattr` type alias.
-
 pub type zattr = u64; // c:2689
 /// `TXTBOLDFACE` constant.
-
 pub const TXTBOLDFACE: zattr = 0x0001;
 /// `TXTFAINT` constant.
 pub const TXTFAINT: zattr = 0x0002;
@@ -4359,7 +4262,6 @@ pub const TXTFGCOLOUR: zattr = 0x0020;
 /// `TXTBGCOLOUR` constant.
 pub const TXTBGCOLOUR: zattr = 0x0040;
 /// `TXT_ATTR_ALL` constant.
-
 pub const TXT_ATTR_ALL: zattr = 0x007F;
 /// `TXT_MULTIWORD_MASK` constant.
 pub const TXT_MULTIWORD_MASK: zattr = 0x0400;
@@ -4368,7 +4270,6 @@ pub const TXT_ERROR: zattr = 0xF00000F000000003;
 /// `TXT_ATTR_FONT_WEIGHT` constant.
 pub const TXT_ATTR_FONT_WEIGHT: zattr = TXTBOLDFACE | TXTFAINT;
 /// `TXT_ATTR_FG_COL_MASK` constant.
-
 pub const TXT_ATTR_FG_COL_MASK: zattr = 0x000000FFFFFF0000;
 /// `TXT_ATTR_FG_COL_SHIFT` constant.
 pub const TXT_ATTR_FG_COL_SHIFT: u32 = 16;
@@ -4377,24 +4278,20 @@ pub const TXT_ATTR_BG_COL_MASK: zattr = 0xFFFFFF0000000000;
 /// `TXT_ATTR_BG_COL_SHIFT` constant.
 pub const TXT_ATTR_BG_COL_SHIFT: u32 = 40;
 /// `TXT_ATTR_FG_24BIT` constant.
-
 pub const TXT_ATTR_FG_24BIT: zattr = 0x4000;
 /// `TXT_ATTR_BG_24BIT` constant.
 pub const TXT_ATTR_BG_24BIT: zattr = 0x8000;
 /// `TXT_ATTR_FG_MASK` constant.
-
 pub const TXT_ATTR_FG_MASK: zattr = TXTFGCOLOUR | TXT_ATTR_FG_COL_MASK | TXT_ATTR_FG_24BIT;
 /// `TXT_ATTR_BG_MASK` constant.
 pub const TXT_ATTR_BG_MASK: zattr = TXTBGCOLOUR | TXT_ATTR_BG_COL_MASK | TXT_ATTR_BG_24BIT;
 /// `TXT_ATTR_COLOUR_MASK` constant.
 pub const TXT_ATTR_COLOUR_MASK: zattr = TXT_ATTR_FG_MASK | TXT_ATTR_BG_MASK;
 /// `COL_SEQ_FG` constant.
-
 pub const COL_SEQ_FG: i32 = 0;
 /// `COL_SEQ_BG` constant.
 pub const COL_SEQ_BG: i32 = 1;
 /// `color_rgb` — see fields for layout.
-
 #[allow(non_camel_case_types)]
 pub struct color_rgb {
     // c:2752
@@ -4408,7 +4305,6 @@ pub struct color_rgb {
 /// `Color_rgb` type alias.
 pub type Color_rgb = Box<color_rgb>;
 /// `TSC_RAW` constant.
-
 pub const TSC_RAW: i32 = 0x0001; // c:2764
 /// `TSC_PROMPT` constant.
 pub const TSC_PROMPT: i32 = 0x0002;
@@ -4417,7 +4313,6 @@ pub const TSC_PROMPT: i32 = 0x0002;
 // 38. Prompt %_ command stack (zsh.h:2773-2809).
 // =============================================================================
 /// `CMDSTACKSZ` constant.
-
 pub const CMDSTACKSZ: usize = 256;
 /// `CS_FOR` constant.
 pub const CS_FOR: i32 = 0;
@@ -4490,13 +4385,10 @@ pub const CS_COUNT: i32 = 32;
 // 39. Heap memory + Heapid (zsh.h:2826-2862).
 // =============================================================================
 /// `Heapid` type alias.
-
 pub type Heapid = u32; // c:2826
 /// `HEAPID_PERMANENT` constant.
-
 pub const HEAPID_PERMANENT: Heapid = u32::MAX; // c:2834
 /// `HDV_PUSH` constant.
-
 pub const HDV_PUSH: i32 = 0x01;
 /// `HDV_POP` constant.
 pub const HDV_POP: i32 = 0x02;
@@ -4517,7 +4409,6 @@ pub const HDV_ALLOC: i32 = 0x80;
 // 40. Signal trap state (zsh.h:2935-2984).
 // =============================================================================
 /// `ZSIG_TRAPPED` constant.
-
 pub const ZSIG_TRAPPED: i32 = 1 << 0;
 /// `ZSIG_IGNORED` constant.
 pub const ZSIG_IGNORED: i32 = 1 << 1;
@@ -4530,14 +4421,12 @@ pub const ZSIG_ALIAS: i32 = 1 << 3;
 /// `ZSIG_SHIFT` constant.
 pub const ZSIG_SHIFT: i32 = 4;
 /// `TRAP_STATE_INACTIVE` constant.
-
 pub const TRAP_STATE_INACTIVE: i32 = 0;
 /// `TRAP_STATE_PRIMED` constant.
 pub const TRAP_STATE_PRIMED: i32 = 1;
 /// `TRAP_STATE_FORCE_RETURN` constant.
 pub const TRAP_STATE_FORCE_RETURN: i32 = 2;
 /// `ERRFLAG_ERROR` constant.
-
 pub const ERRFLAG_ERROR: i32 = 1;
 /// `ERRFLAG_INT` constant.
 pub const ERRFLAG_INT: i32 = 2;
@@ -4548,7 +4437,6 @@ pub const ERRFLAG_HARD: i32 = 4;
 // 41. Sorting (zsh.h:2992-3008).
 // =============================================================================
 /// `SORTIT_ANYOLDHOW` constant.
-
 pub const SORTIT_ANYOLDHOW: i32 = 0;
 /// `SORTIT_IGNORING_CASE` constant.
 pub const SORTIT_IGNORING_CASE: i32 = 1;
@@ -4567,7 +4455,6 @@ pub const SORTIT_SOMEHOW: i32 = 32;
 // 42. Case modify + Getkey (zsh.h:3122-3197).
 // =============================================================================
 /// `CASMOD_NONE` constant.
-
 pub const CASMOD_NONE: i32 = 0;
 /// `CASMOD_UPPER` constant.
 pub const CASMOD_UPPER: i32 = 1;
@@ -4576,7 +4463,6 @@ pub const CASMOD_LOWER: i32 = 2;
 /// `CASMOD_CAPS` constant.
 pub const CASMOD_CAPS: i32 = 3;
 /// `GETKEY_OCTAL_ESC` constant.
-
 pub const GETKEY_OCTAL_ESC: i32 = 1 << 0;
 /// `GETKEY_EMACS` constant.
 pub const GETKEY_EMACS: i32 = 1 << 1;
@@ -4595,7 +4481,6 @@ pub const GETKEY_UPDATE_OFFSET: i32 = 1 << 7;
 /// `GETKEY_PRINTF_PERCENT` constant.
 pub const GETKEY_PRINTF_PERCENT: i32 = 1 << 8;
 /// `GETKEYS_ECHO` constant.
-
 pub const GETKEYS_ECHO: i32 = GETKEY_BACKSLASH_C;
 /// `GETKEYS_PRINTF_FMT` constant.
 pub const GETKEYS_PRINTF_FMT: i32 = GETKEY_OCTAL_ESC | GETKEY_BACKSLASH_C | GETKEY_PRINTF_PERCENT;
@@ -4618,14 +4503,12 @@ pub const GETKEYS_SUFFIX: i32 =
 // 43. zle flags (zsh.h:3203-3216).
 // =============================================================================
 /// `ZLRF_HISTORY` constant.
-
 pub const ZLRF_HISTORY: i32 = 0x01;
 /// `ZLRF_NOSETTY` constant.
 pub const ZLRF_NOSETTY: i32 = 0x02;
 /// `ZLRF_IGNOREEOF` constant.
 pub const ZLRF_IGNOREEOF: i32 = 0x04;
 /// `ZLCON_LINE_START` constant.
-
 pub const ZLCON_LINE_START: i32 = 0;
 /// `ZLCON_LINE_CONT` constant.
 pub const ZLCON_LINE_CONT: i32 = 1;
@@ -4634,7 +4517,6 @@ pub const ZLCON_SELECT: i32 = 2;
 /// `ZLCON_VARED` constant.
 pub const ZLCON_VARED: i32 = 3;
 /// `ZLE_CMD_GET_LINE` constant.
-
 pub const ZLE_CMD_GET_LINE: i32 = 0;
 /// `ZLE_CMD_READ` constant.
 pub const ZLE_CMD_READ: i32 = 1;
@@ -4663,14 +4545,12 @@ pub const ZLE_CMD_CHPWD: i32 = 11;
 // 44. zexit + nice format (zsh.h:3252-3268).
 // =============================================================================
 /// `ZEXIT_NORMAL` constant.
-
 pub const ZEXIT_NORMAL: i32 = 0;
 /// `ZEXIT_SIGNAL` constant.
 pub const ZEXIT_SIGNAL: i32 = 1;
 /// `ZEXIT_DEFERRED` constant.
 pub const ZEXIT_DEFERRED: i32 = 2;
 /// `NICEFLAG_HEAP` constant.
-
 pub const NICEFLAG_HEAP: i32 = 1;
 /// `NICEFLAG_QUOTE` constant.
 pub const NICEFLAG_QUOTE: i32 = 2;
@@ -4681,10 +4561,8 @@ pub const NICEFLAG_NODUP: i32 = 4;
 // 45. Multibyte macros (zsh.h:3271-3375).
 // =============================================================================
 /// `convchar_t` type alias.
-
 pub type convchar_t = u32; // c:3276/3357
 /// `MB_INCOMPLETE` constant.
-
 pub const MB_INCOMPLETE: usize = usize::MAX - 1; // c:3313
 /// `MB_INVALID` constant.
 pub const MB_INVALID: usize = usize::MAX; // c:3314

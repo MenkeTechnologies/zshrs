@@ -6,7 +6,6 @@ use crate::wutil::fish_wcstoi;
 use nix::fcntl::OFlag;
 use std::os::fd::RawFd;
 /// `RedirectionMode` — see variants.
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum RedirectionMode {
     /// `Overwrite` variant.
@@ -96,7 +95,6 @@ impl RedirectionSpec {
     }
 }
 /// `RedirectionSpecList` type alias.
-
 pub type RedirectionSpecList = Vec<RedirectionSpec>;
 
 /// Produce a dup_fd_list_t from an io_chain. This may not be called before fork().

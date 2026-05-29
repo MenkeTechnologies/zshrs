@@ -50,7 +50,6 @@ pub const SHARD_MAGIC: u32 = 0x5A52414C;
 /// `SHARD_FORMAT_VERSION` constant.
 pub const SHARD_FORMAT_VERSION: u32 = 1;
 /// `ShardHeader` — see fields for layout.
-
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct ShardHeader {
@@ -66,7 +65,6 @@ pub struct ShardHeader {
     pub built_at_secs: u64,
 }
 /// `AutoloadEntry` — see fields for layout.
-
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct AutoloadEntry {
@@ -78,7 +76,6 @@ pub struct AutoloadEntry {
     pub chunk_blob: Vec<u8>,
 }
 /// `AutoloadShard` — see fields for layout.
-
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct AutoloadShard {
@@ -88,7 +85,6 @@ pub struct AutoloadShard {
     pub entries: HashMap<String, AutoloadEntry>,
 }
 /// `MmappedShard` — see fields for layout.
-
 pub struct MmappedShard {
     /// `_mmap` field.
     _mmap: Mmap,
@@ -132,7 +128,6 @@ impl MmappedShard {
     }
 }
 /// `AutoloadCache` — see fields for layout.
-
 pub struct AutoloadCache {
     /// `path` field.
     path: PathBuf,
@@ -174,7 +169,6 @@ impl AutoloadCache {
         *guard = None;
     }
     /// `get` — see implementation.
-
     pub fn get(&self, name: &str) -> Option<Vec<u8>> {
         self.ensure_mmap();
         let guard = self.mmap.lock();
@@ -293,7 +287,6 @@ impl AutoloadCache {
         Ok(())
     }
     /// `entry_count` — see implementation.
-
     pub fn entry_count(&self) -> usize {
         self.ensure_mmap();
         let guard = self.mmap.lock();
@@ -317,7 +310,6 @@ impl AutoloadCache {
             .collect()
     }
     /// `stats` — see implementation.
-
     pub fn stats(&self) -> (i64, i64) {
         self.ensure_mmap();
         let guard = self.mmap.lock();
@@ -334,7 +326,6 @@ impl AutoloadCache {
         (count, bytes)
     }
     /// `clear` — see implementation.
-
     pub fn clear(&self) -> std::io::Result<()> {
         let _lock = acquire_lock(&self.lock_path);
         let res = match std::fs::remove_file(&self.path) {
@@ -424,14 +415,12 @@ fn current_binary_mtime_secs() -> Option<i64> {
     })
 }
 /// `default_cache_path` — see implementation.
-
 pub fn default_cache_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join(".cache/zshrs/autoloads.rkyv")
 }
 /// `cache_enabled` — see implementation.
-
 pub fn cache_enabled() -> bool {
     !matches!(
         std::env::var("ZSHRS_CACHE").as_deref(),
@@ -439,7 +428,6 @@ pub fn cache_enabled() -> bool {
     )
 }
 /// `CACHE` static.
-
 pub static CACHE: once_cell::sync::Lazy<Option<AutoloadCache>> = once_cell::sync::Lazy::new(|| {
     if !cache_enabled() {
         return None;
@@ -447,13 +435,11 @@ pub static CACHE: once_cell::sync::Lazy<Option<AutoloadCache>> = once_cell::sync
     AutoloadCache::open(&default_cache_path()).ok()
 });
 /// `try_load` — see implementation.
-
 pub fn try_load(name: &str) -> Option<Vec<u8>> {
     let cache = CACHE.as_ref()?;
     cache.get(name)
 }
 /// `try_save_one` — see implementation.
-
 pub fn try_save_one(name: &str, chunk_blob: &[u8]) -> Result<(), String> {
     let Some(cache) = CACHE.as_ref() else {
         return Ok(());
@@ -481,22 +467,18 @@ pub fn try_merge_in(entries: HashMap<String, Vec<u8>>) -> Result<(), String> {
     cache.merge_in(entries)
 }
 /// `cached_names` — see implementation.
-
 pub fn cached_names() -> std::collections::HashSet<String> {
     CACHE.as_ref().map(|c| c.cached_names()).unwrap_or_default()
 }
 /// `entry_count` — see implementation.
-
 pub fn entry_count() -> usize {
     CACHE.as_ref().map(|c| c.entry_count()).unwrap_or(0)
 }
 /// `stats` — see implementation.
-
 pub fn stats() -> Option<(i64, i64)> {
     CACHE.as_ref().map(|c| c.stats())
 }
 /// `clear` — see implementation.
-
 pub fn clear() -> bool {
     CACHE.as_ref().map(|c| c.clear().is_ok()).unwrap_or(false)
 }
