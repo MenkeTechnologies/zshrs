@@ -3730,9 +3730,18 @@ pub const IN_ENV_LW: i32 = 5; // lex.h
                               // `origline` / `origcs` at zle_tricky.c:75 etc.). C reads these
                               // globals inline; callers in compcore.rs now do the lock/load
                               // directly.
-/// Direct port of `void unmetafy_line(void)` from `zle_tricky.c:995`.
-/// Reads `ZLEMETALINE`, runs `unmetafy_line(...)` from zle_tricky.rs,
-/// stores result into `ZLELINE` + updates `ZLECS`/`ZLELL`.
+/// Port of `void unmetafy_line(void)` from `zle_tricky.c:995`.
+///
+/// C body:
+///   `zlemetaline[zlemetall] = '\0';
+///    zleline = stringaszleline(zlemetaline, zlemetacs, &zlell,
+///                              &linesz, &zlecs);
+///    free(zlemetaline); zlemetaline = NULL;
+///    CCRIGHT();`
+///
+/// Reads ZLEMETALINE, decodes via the canonical stringaszleline
+/// (handles incs adjustment + unmetafy + UTF-8 decode), populates
+/// ZLELINE / ZLELL / ZLECS, clears ZLEMETALINE/ZLEMETALL.
 fn unmetafy_line() {
     // zle_tricky.c:995
     let meta = ZLEMETALINE
@@ -3740,34 +3749,78 @@ fn unmetafy_line() {
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let unmeta = crate::ported::zle::zle_tricky::unmetafy_line(&meta);
-    let new_len = unmeta.len() as i32;
-    let cs = ZLEMETACS.load(Ordering::Relaxed); // c:978-1000
+    let zlemetacs = ZLEMETACS.load(Ordering::Relaxed) as i32;
+    let mut out_ll: i32 = 0;
+    let mut out_cs: i32 = 0;
+    // c:998 — `zleline = stringaszleline(zlemetaline, zlemetacs, &zlell, &linesz, &zlecs);`
+    let line = crate::ported::zle::zle_utils::stringaszleline(
+        &meta,
+        zlemetacs,
+        Some(&mut out_ll),
+        None,
+        Some(&mut out_cs),
+    );
     if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
-        *g = unmeta;
+        *g = line.iter().collect();
     }
-    ZLELL.store(new_len, Ordering::Relaxed);
-    ZLECS.store(cs.min(new_len), Ordering::Relaxed);
+    ZLELL.store(out_ll, Ordering::Relaxed);
+    ZLECS.store(out_cs, Ordering::Relaxed);
+    // c:1001-1002 — `free(zlemetaline); zlemetaline = NULL;`. Rust:
+    // clear the buffer + zero the length to mark meta-mode inactive.
+    if let Some(m) = ZLEMETALINE.get() {
+        if let Ok(mut g) = m.lock() {
+            g.clear();
+        }
+    }
+    ZLEMETALL.store(0, Ordering::Relaxed);
+    // c:1007 — CCRIGHT(): combining-char alignment fixup. No-op in
+    // this Rust port (handled by stringaszleline's codepoint walk).
 }
 
-/// Direct port of `void metafy_line(void)` from `zle_tricky.c:978`.
-/// Reads `ZLELINE`, runs `metafy_line(...)` from zle_tricky.rs, stores
-/// result into `ZLEMETALINE` + updates `ZLEMETACS`/`ZLEMETALL`.
+/// Port of `void metafy_line(void)` from `zle_tricky.c:978`.
+///
+/// C body:
+///   `zlemetaline = zlelineasstring(zleline, zlell, zlecs,
+///                                  &zlemetall, &zlemetacs, 0);
+///    metalinesz = zlemetall;
+///    free(zleline); zleline = NULL;`
+///
+/// Reads ZLELINE, encodes via the canonical zlelineasstring (handles
+/// wcrtomb + metafy expansion), populates ZLEMETALINE / ZLEMETALL /
+/// ZLEMETACS, clears ZLELINE/ZLELL.
 fn metafy_line() {
     // zle_tricky.c:978
-    let raw = ZLELINE
+    let raw_vec: Vec<char> = ZLELINE
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
-        .map(|g| g.clone())
+        .map(|g| g.chars().collect())
         .unwrap_or_default();
-    let meta = crate::ported::zle::zle_tricky::metafy_line(&raw);
-    let new_len = meta.len() as i32;
-    let cs = ZLECS.load(Ordering::Relaxed);
+    let zlell = raw_vec.len();
+    let zlecs = ZLECS.load(Ordering::Relaxed);
+    let mut out_ll: i32 = 0;
+    let mut out_cs: i32 = 0;
+    // c:982 — `zlemetaline = zlelineasstring(zleline, zlell, zlecs, &zlemetall, &zlemetacs, 0);`
+    let meta = crate::ported::zle::zle_utils::zlelineasstring(
+        &raw_vec,
+        zlell,
+        zlecs,
+        Some(&mut out_ll),
+        Some(&mut out_cs),
+        0,
+    );
     if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
         *g = meta;
     }
-    ZLEMETALL.store(new_len, Ordering::Relaxed);
-    ZLEMETACS.store(cs.min(new_len), Ordering::Relaxed);
+    ZLEMETALL.store(out_ll, Ordering::Relaxed);
+    ZLEMETACS.store(out_cs, Ordering::Relaxed);
+    // c:985 — `metalinesz = zlemetall;`. Rust String grows on demand;
+    // no separate sizeline tracker.
+    // c:989-990 — `free(zleline); zleline = NULL;`. Rust: clear the
+    // buffer + zero ZLELL.
+    if let Ok(mut g) = ZLELINE.get().unwrap().lock() {
+        g.clear();
+    }
+    ZLELL.store(0, Ordering::Relaxed);
 }
 
 fn opt_isset(name: &str) -> i32 {

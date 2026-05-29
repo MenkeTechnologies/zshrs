@@ -413,10 +413,30 @@ pub fn zlegetline(ll: &mut i32, cs: &mut i32) -> String {
     String::new()
 }
 
-/// Port of `free_region_highlights_memos()` from Src/Zle/zle_utils.c:567.
-pub fn free_region_highlights_memos() { // c:567
-                                        // C body c:569-580 — walks region_highlights_memos free list,
-                                        //                    calls zfree on each. Drop covers it; no-op.
+/// Port of `void free_region_highlights_memos(void)` from Src/Zle/zle_utils.c:567.
+///
+/// C body:
+///   `for (rhp = region_highlights;
+///         rhp < region_highlights + n_region_highlights;
+///         rhp++)
+///        zfree((char*) rhp->memo, 0);`
+///
+/// Releases the `memo` strings held by every active region
+/// highlight. C uses zfree (manual heap release); Rust uses
+/// `Option::take()` which Drops the inner String and resets
+/// the field to None — same observable effect.
+///
+/// Called by `zlecallhook` etc. when highlight state needs to be
+/// reset between widget invocations (otherwise `memo` strings
+/// accumulate across widget calls).
+pub fn free_region_highlights_memos() {
+    // c:567
+    use crate::ported::zle::zle_refresh::REGION_HIGHLIGHTS;
+    if let Ok(mut rh) = REGION_HIGHLIGHTS.lock() {
+        for entry in rh.iter_mut() {
+            entry.memo.take(); // c:573 zfree((char*) rhp->memo, 0);
+        }
+    }
 }
 
 /// Direct port of `struct zle_position` from

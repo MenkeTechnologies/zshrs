@@ -918,42 +918,12 @@ pub fn dupstrspace(str: &str) -> String {
     out // c:961 return t
 }
 
-/// Metafy a line (escape special chars)
-/// Port of metafy_line() from zle_tricky.c
-pub fn metafy_line(s: &str) -> String {
-    // c:978
-    let mut result = String::with_capacity(s.len() * 2);
-    for c in s.chars() {
-        if c == META || (c as u32) >= 0x83 {
-            result.push(META);
-            result.push(char::from_u32((c as u32) ^ 32).unwrap_or(c));
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
-/// Unmetafy a line (unescape special chars)
-/// Port of unmetafy_line() from zle_tricky.c
-pub fn unmetafy_line(s: &str) -> String {
-    // c:995
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == META {
-            if let Some(&next) = chars.peek() {
-                chars.next();
-                result.push(char::from_u32((next as u32) ^ 32).unwrap_or(next));
-            }
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
-}
+// metafy_line / unmetafy_line — REMOVED. Both were ad-hoc 1-arg
+// string-transform helpers using the wrong signature `(s: &str) ->
+// String` for fns that C declares as `void metafy_line(void)` /
+// `void unmetafy_line(void)` (global ZLELINE ↔ ZLEMETALINE
+// mutators). The actual C-faithful ports live in compcore.rs and
+// dispatch through zle_utils::zlelineasstring + ::stringaszleline.
 
 /// Port of `freebrinfo(Brinfo p)` from `Src/Zle/zle_tricky.c:1015`.
 /// ```c
