@@ -1189,4 +1189,120 @@ mod tests {
         assert_eq!(CGF_UNIQALL, 8);
         assert_eq!(CGF_UNIQCON, 16);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/comp.h
+    // c:185-189 CPAT_* / c:259-267 CLF_* / c:299-... CAF_* / c:172-178 CMF_*
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:185-189 — CPAT_* enum values are sequential 0..5.
+    #[test]
+    fn cpat_enum_sequential_0_through_4() {
+        assert_eq!(CPAT_CCLASS, 0, "c:185");
+        assert_eq!(CPAT_NCLASS, 1, "c:186");
+        assert_eq!(CPAT_EQUIV, 2, "c:187");
+        assert_eq!(CPAT_ANY, 3, "c:188");
+        assert_eq!(CPAT_CHAR, 4, "c:189");
+    }
+
+    /// c:185-189 — CPAT_* are all distinct.
+    #[test]
+    fn cpat_enum_pairwise_distinct() {
+        let codes = [CPAT_CCLASS, CPAT_NCLASS, CPAT_EQUIV, CPAT_ANY, CPAT_CHAR];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "CPAT_* must be distinct");
+    }
+
+    /// c:259-267 — CLF_* flags are powers of 2 (single bits).
+    #[test]
+    fn clf_flags_are_single_bits() {
+        for &v in &[CLF_MISS, CLF_DIFF, CLF_SUF, CLF_MID, CLF_NEW,
+                    CLF_LINE, CLF_JOIN, CLF_MATCHED, CLF_SKIP] {
+            assert!((v as u32).is_power_of_two(),
+                "CLF_* flag {} must be a single bit", v);
+        }
+    }
+
+    /// c:259-267 — CLF_* canonical low-bit values.
+    #[test]
+    fn clf_canonical_values() {
+        assert_eq!(CLF_MISS, 1, "c:259");
+        assert_eq!(CLF_DIFF, 2, "c:260");
+        assert_eq!(CLF_SUF, 4, "c:261");
+        assert_eq!(CLF_MID, 8, "c:262");
+        assert_eq!(CLF_NEW, 16, "c:263");
+        assert_eq!(CLF_LINE, 32, "c:264");
+        assert_eq!(CLF_JOIN, 64, "c:265");
+        assert_eq!(CLF_MATCHED, 128, "c:266");
+        assert_eq!(CLF_SKIP, 256, "c:267");
+    }
+
+    /// c:259-267 — CLF_* flags pairwise distinct.
+    #[test]
+    fn clf_flags_pairwise_distinct() {
+        let codes = [CLF_MISS, CLF_DIFF, CLF_SUF, CLF_MID, CLF_NEW,
+                     CLF_LINE, CLF_JOIN, CLF_MATCHED, CLF_SKIP];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "CLF_* must be pairwise distinct");
+    }
+
+    /// c:299-302 — CAF_* canonical values.
+    #[test]
+    fn caf_canonical_values() {
+        assert_eq!(CAF_QUOTE, 1, "c:299");
+        assert_eq!(CAF_NOSORT, 2, "c:300");
+        assert_eq!(CAF_MATCH, 4, "c:301");
+        assert_eq!(CAF_UNIQCON, 8, "c:302");
+    }
+
+    /// c:299-302 — CAF_* are single bits.
+    #[test]
+    fn caf_flags_are_single_bits() {
+        for &v in &[CAF_QUOTE, CAF_NOSORT, CAF_MATCH, CAF_UNIQCON] {
+            assert!((v as u32).is_power_of_two(),
+                "CAF_* flag {} must be a single bit", v);
+        }
+    }
+
+    /// c:172-178 — secondary CMF_* (LINE/LEFT/RIGHT/INTER) overlap with
+    /// the main CMF_FILE/REMOVE/ISPAR/PARBR by design (different namespace).
+    /// Pin canonical secondary values.
+    #[test]
+    fn cmf_secondary_canonical_values() {
+        assert_eq!(CMF_LINE, 1, "c:172");
+        assert_eq!(CMF_LEFT, 2, "c:174");
+        assert_eq!(CMF_RIGHT, 4, "c:176");
+        assert_eq!(CMF_INTER, 8, "c:178");
+    }
+
+    /// c:172-178 — secondary CMF_* are single bits in their namespace.
+    #[test]
+    fn cmf_secondary_flags_are_single_bits() {
+        for &v in &[CMF_LINE, CMF_LEFT, CMF_RIGHT, CMF_INTER] {
+            assert!((v as u32).is_power_of_two(),
+                "CMF secondary flag {} must be a single bit", v);
+        }
+    }
+
+    /// c:127-143 — all CMF_* main flags are non-negative i32.
+    #[test]
+    fn cmf_main_flags_all_non_negative() {
+        for &v in &[CMF_FILE, CMF_REMOVE, CMF_ISPAR, CMF_PARBR, CMF_PARNEST,
+                    CMF_NOLIST, CMF_DISPLINE, CMF_HIDE, CMF_NOSPACE,
+                    CMF_PACKED, CMF_ROWS, CMF_MULT, CMF_FMULT, CMF_ALL,
+                    CMF_DUMMY, CMF_MORDER, CMF_DELETE] {
+            assert!(v >= 0, "CMF_* flag {} must be ≥ 0", v);
+        }
+    }
+
+    /// c:85-95 — CGF_* are powers of two (full sweep).
+    #[test]
+    fn cgf_all_flags_are_single_bits() {
+        for &v in &[CGF_NOSORT, CGF_LINES, CGF_HASDL, CGF_UNIQALL, CGF_UNIQCON,
+                    CGF_PACKED, CGF_ROWS, CGF_FILES, CGF_MATSORT, CGF_NUMSORT,
+                    CGF_REVSORT] {
+            assert!((v as u32).is_power_of_two(),
+                "CGF_* flag {} must be a single bit", v);
+        }
+    }
 }
