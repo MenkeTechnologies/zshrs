@@ -1369,4 +1369,116 @@ mod tests {
             prev = cur;
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/mem.c
+    // c:23 new_heap_id / c:228 zhalloc / c:273 hcalloc / c:285 malloc /
+    // c:537 dupstring / c:563 zarrdup / c:587 arrdup_max / c:596 arrlen
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:23 — `new_heap_id` returns u64 (compile-time pin, alt).
+    #[test]
+    fn new_heap_id_returns_u64_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: u64 = new_heap_id();
+    }
+
+    /// c:23 — `new_heap_id` two consecutive calls strictly increase.
+    #[test]
+    fn new_heap_id_strictly_increasing() {
+        let _g = crate::test_util::global_state_lock();
+        let a = new_heap_id();
+        let b = new_heap_id();
+        assert!(b > a, "new id must be strictly > prior; got {} <= {}", b, a);
+    }
+
+    /// c:228 — `zhalloc` returns usize (compile-time pin).
+    #[test]
+    fn zhalloc_returns_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: usize = zhalloc(0);
+    }
+
+    /// c:228 — `zhalloc(0)` is safe (no panic for zero-sized).
+    #[test]
+    fn zhalloc_zero_size_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = zhalloc(0);
+    }
+
+    /// c:273 — `hcalloc` returns usize (compile-time pin).
+    #[test]
+    fn hcalloc_returns_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: usize = hcalloc(0);
+    }
+
+    /// c:285 — `malloc(0)` returns usize + safe.
+    #[test]
+    fn malloc_zero_returns_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: usize = malloc(0);
+    }
+
+    /// c:537 — `dupstring` returns String (compile-time pin).
+    #[test]
+    fn dupstring_returns_string_type() {
+        let _: String = dupstring("any");
+    }
+
+    /// c:537 — `dupstring(s)` returns s verbatim across multi-byte.
+    #[test]
+    fn dupstring_preserves_content() {
+        for s in ["", "x", "hello", "world", "日本"] {
+            assert_eq!(dupstring(s), s, "dupstring must preserve {:?}", s);
+        }
+    }
+
+    /// c:563 — `zarrdup` of empty array returns empty Vec.
+    #[test]
+    fn zarrdup_empty_returns_empty_vec() {
+        let arr: Vec<String> = vec![];
+        assert!(zarrdup(&arr).is_empty(), "empty input → empty output");
+    }
+
+    /// c:563 — `zarrdup` preserves length.
+    #[test]
+    fn zarrdup_length_preserved() {
+        let arr: Vec<String> = (0..7).map(|i| format!("e_{}", i)).collect();
+        let dup = zarrdup(&arr);
+        assert_eq!(dup.len(), arr.len(), "length preserved");
+    }
+
+    /// c:587 — `arrdup_max` respects max=0 (returns empty, alt).
+    #[test]
+    fn arrdup_max_zero_returns_empty_alt() {
+        let arr: Vec<String> = vec!["a".into(), "b".into()];
+        let r = arrdup_max(&arr, 0);
+        assert_eq!(r.len(), 0, "max=0 → empty");
+    }
+
+    /// c:587 — `arrdup_max` with max ≥ len returns full copy.
+    #[test]
+    fn arrdup_max_full_returns_all() {
+        let arr: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
+        let r = arrdup_max(&arr, arr.len());
+        assert_eq!(r.len(), arr.len(), "max=len → full copy");
+    }
+
+    /// c:596 — `arrlen` returns usize (compile-time pin).
+    #[test]
+    fn arrlen_returns_usize_type() {
+        let arr: Vec<i32> = vec![];
+        let _: usize = arrlen(&arr);
+    }
+
+    /// c:596 — `arrlen` matches slice.len() across various sizes (alt).
+    #[test]
+    fn arrlen_matches_slice_len_alt() {
+        for n in [0usize, 1, 5, 100, 1000] {
+            let arr: Vec<i32> = (0..n as i32).collect();
+            assert_eq!(arrlen(&arr), n,
+                "arrlen must equal slice len for n={}", n);
+        }
+    }
 }
