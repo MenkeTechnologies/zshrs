@@ -655,4 +655,103 @@ mod tests {
         let mut e: Option<Vec<i32>> = None;
         let _ = enables_(std::ptr::null(), &mut e);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/cap.c on platforms
+    // without libcap (macOS, BSDs): bin_cap/bin_getcap/bin_setcap all
+    // return nonzero ("not available") regardless of input.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:62 — `bin_cap` is deterministic for the same input.
+    #[test]
+    fn bin_cap_no_args_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let first = bin_cap("cap", &[], &ops, 0);
+        for _ in 0..5 {
+            assert_eq!(bin_cap("cap", &[], &ops, 0), first,
+                "bin_cap must be deterministic");
+        }
+    }
+
+    /// c:147 — `bin_getcap` with empty path arg returns nonzero.
+    #[test]
+    fn bin_getcap_empty_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_getcap("getcap", &["".into()], &ops, 0);
+        assert_ne!(r, 0, "empty path → error");
+    }
+
+    /// c:205 — `bin_setcap` with empty cap spec returns nonzero.
+    #[test]
+    fn bin_setcap_empty_spec_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_setcap("setcap", &["".into(), "/tmp".into()], &ops, 0);
+        assert_ne!(r, 0, "empty cap spec → error");
+    }
+
+    /// c:62,147,205 — return values fit in canonical exit-code range
+    /// (signed-byte 0..256).
+    #[test]
+    fn cap_builtins_return_in_exit_code_range() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for r in [
+            bin_cap("cap", &[], &ops, 0),
+            bin_getcap("getcap", &["/tmp".into()], &ops, 0),
+            bin_setcap("setcap", &["cap=ep".into(), "/tmp".into()], &ops, 0),
+        ] {
+            assert!((0..256).contains(&r),
+                "exit code must fit in u8 range, got {}", r);
+        }
+    }
+
+    /// c:147 — `bin_getcap` with multiple paths doesn't panic.
+    #[test]
+    fn bin_getcap_multiple_paths_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _ = bin_getcap("getcap", &[
+            "/tmp".into(), "/etc".into(), "/dev/null".into()
+        ], &ops, 0);
+    }
+
+    /// c:62 — `bin_cap` with arbitrary spec args doesn't panic.
+    #[test]
+    fn bin_cap_with_args_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _ = bin_cap("cap", &["cap_net_admin+ep".into()], &ops, 0);
+        let _ = bin_cap("cap", &["+all".into()], &ops, 0);
+        let _ = bin_cap("cap", &["-all".into()], &ops, 0);
+    }
+
+    /// c:303 — cleanup_ idempotent.
+    #[test]
+    fn cap_cleanup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:310 — finish_ idempotent.
+    #[test]
+    fn cap_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:296 — boot_ idempotent.
+    #[test]
+    fn cap_boot_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(boot_(std::ptr::null()), 0);
+        }
+    }
 }
