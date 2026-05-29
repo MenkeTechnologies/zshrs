@@ -19,7 +19,7 @@
 use crate::options::optlookup;
 use crate::ported::params::TERMFLAGS;
 use crate::ported::zsh_h::module;
-use crate::zsh_h::{isset, TERM_UNKNOWN};
+use crate::zsh_h::{isset, INTERACTIVE, TERM_UNKNOWN};
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
 
@@ -75,7 +75,7 @@ pub fn bin_echoti(
         // c:75
         return 1; // c:76
     }
-    let interactive = isset(optlookup("interactive")); // c:77
+    let interactive = isset(INTERACTIVE); // c:77
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 && interactive {
         return 1; // c:78
     }
@@ -215,7 +215,7 @@ pub fn getterminfo(
     }
     // c:144 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return NULL;`
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
-        if isset(optlookup("interactive")) {
+        if isset(INTERACTIVE) {
             return None;
         }
     }
@@ -348,7 +348,7 @@ pub fn scanterminfo(
         return;
     }
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
-        let interactive = isset(optlookup("interactive"));
+        let interactive = isset(INTERACTIVE);
         if interactive {
             return;
         }

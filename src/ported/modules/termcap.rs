@@ -17,7 +17,7 @@
 use crate::ported::options::optlookup;
 use crate::ported::params::{getsparam, TERMFLAGS};
 use crate::ported::utils::{zsetupterm, zwarnnam};
-use crate::ported::zsh_h::{features, isset, module};
+use crate::ported::zsh_h::{features, isset, module, INTERACTIVE};
 use crate::zsh_h::TERM_UNKNOWN;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -90,7 +90,7 @@ pub fn bin_echotc(
     // c:89 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return 1;`
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
         // c:89
-        let interactive = isset(optlookup("interactive"));
+        let interactive = isset(INTERACTIVE);
         if interactive || !ensure_termcap_loaded() {
             // c:89-90
             return 1; // c:90
