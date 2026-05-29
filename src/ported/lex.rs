@@ -5342,4 +5342,115 @@ mod tests {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/lex.c
+    // c:667 isnumglob / c:2564 parsestr / c:2612 parsestrnoerr /
+    // c:2693 parse_subscript / c:2751 parse_subst_string /
+    // c:3533 lexact1_get / c:3546 lexact2_get / c:3560 lextok2_get /
+    // c:3585 toklineno / c:3601 isnewlin
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:2564 — `parsestr("")` empty input returns Ok("") (type pin).
+    #[test]
+    fn parsestr_empty_returns_ok_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parsestr("");
+        assert!(r.is_ok(), "empty parse must succeed");
+        assert_eq!(r.unwrap(), "");
+    }
+
+    /// c:2612 — `parsestrnoerr("")` empty returns Ok("").
+    #[test]
+    fn parsestrnoerr_empty_returns_ok_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parsestrnoerr("");
+        assert!(r.is_ok(), "empty parse must succeed");
+        assert_eq!(r.unwrap(), "");
+    }
+
+    /// c:2564 — `parsestr` returns Result<String, String> type.
+    #[test]
+    fn parsestr_returns_result_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<String, String> = parsestr("");
+    }
+
+    /// c:2751 — `parse_subst_string("")` empty returns Ok("").
+    #[test]
+    fn parse_subst_string_empty_returns_ok_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse_subst_string("");
+        assert!(r.is_ok());
+        assert_eq!(r.unwrap(), "");
+    }
+
+    /// c:2693 — `parse_subscript("", ']')` empty returns Option<usize>.
+    #[test]
+    fn parse_subscript_returns_option_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<usize> = parse_subscript("", ']');
+    }
+
+    /// c:667 — `isnumglob` returns bool (compile-time type pin).
+    #[test]
+    fn isnumglob_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = isnumglob();
+    }
+
+    /// c:3533 — `lexact1_get` is pure full ASCII sweep.
+    #[test]
+    fn lexact1_get_pure_full_ascii() {
+        let _g = crate::test_util::global_state_lock();
+        for b in 0u8..=127 {
+            let ch = b as char;
+            let first = lexact1_get(ch);
+            for _ in 0..3 {
+                assert_eq!(lexact1_get(ch), first,
+                    "lexact1_get({:?}) must be pure", ch);
+            }
+        }
+    }
+
+    /// c:3546 — `lexact2_get` is pure full ASCII sweep.
+    #[test]
+    fn lexact2_get_pure_full_ascii() {
+        let _g = crate::test_util::global_state_lock();
+        for b in 0u8..=127 {
+            let ch = b as char;
+            let first = lexact2_get(ch);
+            for _ in 0..3 {
+                assert_eq!(lexact2_get(ch), first,
+                    "lexact2_get({:?}) must be pure", ch);
+            }
+        }
+    }
+
+    /// c:3585 — `toklineno`/`set_toklineno` round-trip preserves value.
+    #[test]
+    fn toklineno_set_get_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = toklineno();
+        set_toklineno(42);
+        assert_eq!(toklineno(), 42, "set_toklineno round-trips");
+        set_toklineno(saved);
+    }
+
+    /// c:3601 — `isnewlin` returns i32 (compile-time type pin).
+    #[test]
+    fn isnewlin_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = isnewlin();
+    }
+
+    /// c:3593 — `tokfd`/`set_tokfd` round-trip preserves value.
+    #[test]
+    fn tokfd_set_get_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = tokfd();
+        set_tokfd(7);
+        assert_eq!(tokfd(), 7, "set_tokfd round-trips");
+        set_tokfd(saved);
+    }
 }
