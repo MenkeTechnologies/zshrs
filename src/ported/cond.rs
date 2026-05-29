@@ -1660,4 +1660,68 @@ mod tests {
             "ztst:117 — -r true for 0644 file",
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/cond.c helper fns.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `doaccess("/", F_OK)` returns 1 (true) — root always exists.
+    /// C `Src/cond.c:doaccess` — `!access(unmeta(s), c)` — F_OK=0
+    /// passes for any existing path.
+    #[cfg(unix)]
+    #[test]
+    fn doaccess_root_dir_exists_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(doaccess("/", libc::F_OK), 1, "/ exists → true");
+    }
+
+    /// `doaccess(non-existent, F_OK)` returns 0.
+    #[cfg(unix)]
+    #[test]
+    fn doaccess_missing_path_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            doaccess("/no/such/path/zshrs_test_xyz", libc::F_OK),
+            0,
+            "non-existent path → false"
+        );
+    }
+
+    /// `dostat` on a missing path returns 0 (no mode bits).
+    #[cfg(unix)]
+    #[test]
+    fn dostat_missing_path_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mode = dostat("/no/such/path/zshrs_test_xyz");
+        assert_eq!(mode, 0, "missing path → mode=0");
+    }
+
+    /// `dostat("/")` returns a mode with S_IFDIR bit set.
+    #[cfg(unix)]
+    #[test]
+    fn dostat_root_dir_has_ifdir_bit() {
+        let _g = crate::test_util::global_state_lock();
+        let mode = dostat("/");
+        let is_dir = (mode & libc::S_IFMT as u32) == libc::S_IFDIR as u32;
+        assert!(is_dir, "/ should have S_IFDIR; got mode=0o{mode:o}");
+    }
+
+    /// `optison("test", "definitely_not_an_option")` returns nonzero.
+    /// C: with POSIXBUILTINS off → 3 (with zwarnnam); with on → 1.
+    /// Either way: nonzero.
+    #[test]
+    fn optison_unknown_option_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = optison("test", "zshrs_definitely_not_an_option_xyz");
+        assert_ne!(r, 0, "unknown option → nonzero error (1 or 3)");
+    }
+
+    /// `optison("test", "x")` for `set -x` — never panics, returns
+    /// 0/1 based on current xtrace state.
+    #[test]
+    fn optison_single_char_xtrace_returns_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = optison("test", "x");
+        assert!(r == 0 || r == 1, "single-char x must return 0/1; got {r}");
+    }
 }
