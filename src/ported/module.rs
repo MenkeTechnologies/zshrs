@@ -4742,4 +4742,71 @@ mod modname_tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/module.c. Tests that capture KNOWN
+    // ZSHRS BUGS use #[ignore = "ZSHRS BUG: …"].
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `newmoduletable()` returns an empty modules table per C.
+    /// C `Src/module.c:newmoduletable` allocates a fresh HashTable
+    /// with NO entries — modules are added later via addbuiltin /
+    /// load_module dispatch.
+    /// ZSHRS BUG: Rust port at module.rs:1013 pre-registers all the
+    /// statically-compiled module names (zsh/complete, zsh/datetime,
+    /// zsh/files etc.) at construction time — an architectural
+    /// divergence to support the no-dlopen "all modules built in"
+    /// model. C only adds entries on demand.
+    #[test]
+    #[ignore = "ZSHRS BUG: newmoduletable() pre-registers builtin modules (module.rs:1015 register_builtin_modules call); C creates empty HashTable"]
+    fn newmoduletable_returns_empty_table() {
+        let _g = crate::test_util::global_state_lock();
+        let t = newmoduletable();
+        assert!(t.modules.is_empty(), "fresh modules table is empty per C");
+    }
+
+    /// `newmoduletable()` pre-registers the known statically-compiled
+    /// builtin modules — pins the divergent Rust behavior.
+    #[test]
+    fn newmoduletable_pre_registers_builtin_modules() {
+        let _g = crate::test_util::global_state_lock();
+        let t = newmoduletable();
+        // Rust pre-registers known builtins; pin that some are present.
+        assert!(
+            !t.modules.is_empty(),
+            "Rust port pre-registers builtin modules at construction"
+        );
+        assert!(
+            t.modules.contains_key("zsh/complete"),
+            "zsh/complete should be pre-registered"
+        );
+    }
+
+    /// `gethookdef("zshrs_definitely_not_a_hook")` returns null ptr.
+    /// C `Src/module.c:gethookdef` — walks hooktab, missing → NULL.
+    #[test]
+    fn gethookdef_unknown_name_returns_null() {
+        let _g = crate::test_util::global_state_lock();
+        let p = gethookdef("zshrs_definitely_not_a_hook_xyz");
+        assert!(p.is_null(), "missing hook name → NULL pointer");
+    }
+
+    /// `gethookdef("")` on empty name returns null.
+    #[test]
+    fn gethookdef_empty_name_returns_null() {
+        let _g = crate::test_util::global_state_lock();
+        let p = gethookdef("");
+        assert!(p.is_null(), "empty name → NULL (no empty-named hooks)");
+    }
+
+    /// `register_module` of a fresh name. C analog uses int return
+    /// (0=success), Rust uses bool — sig divergence.
+    #[test]
+    #[ignore = "ZSHRS BUG: register_module sig divergence — C returns int (0=success), Rust returns bool"]
+    fn register_module_fresh_name_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        let mut tab = newmoduletable();
+        let r = register_module(&mut tab, "zshrs_test_fresh_module");
+        assert!(r, "fresh module name should register successfully");
+    }
 }
