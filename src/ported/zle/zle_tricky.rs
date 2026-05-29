@@ -2361,4 +2361,101 @@ mod tests {
             "lone Inbrack with no follower returns 0"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_tricky.c utilities.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:955 — `dupstrspace("foo")` appends single trailing space.
+    #[test]
+    fn dupstrspace_appends_single_trailing_space() {
+        let r = dupstrspace("foo");
+        assert_eq!(r, "foo ", "trailing space appended");
+        assert_eq!(r.len(), 4, "exactly 1 byte longer than input");
+    }
+
+    /// c:955 — `dupstrspace("")` returns just " " (single space).
+    #[test]
+    fn dupstrspace_empty_input_returns_space() {
+        let r = dupstrspace("");
+        assert_eq!(r, " ", "empty input → single space");
+    }
+
+    /// c:955 — `dupstrspace` preserves the input verbatim (no
+    /// transformation of inner chars).
+    #[test]
+    fn dupstrspace_preserves_input_verbatim() {
+        let r = dupstrspace("hello world");
+        assert_eq!(r, "hello world ", "inner space preserved + trailing space");
+        let r2 = dupstrspace("a\tb");
+        assert_eq!(r2, "a\tb ", "tab preserved");
+    }
+
+    /// c:955 — multibyte input preserved + trailing ASCII space.
+    #[test]
+    fn dupstrspace_preserves_multibyte() {
+        let r = dupstrspace("café");
+        assert_eq!(r, "café ", "multibyte preserved");
+    }
+
+    /// c:1015 — `freebrinfo(None)` is a no-op (null head pointer).
+    #[test]
+    fn freebrinfo_none_is_noop() {
+        freebrinfo(None);
+        // No panic = pass.
+    }
+
+    /// `cmphaswilds("*")` returns 1 — Star is a wildcard.
+    /// C `Src/Zle/zle_tricky.c:506` — `c == Star`.
+    #[test]
+    fn cmphaswilds_star_token_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        // Star is tokenized — use the token value directly.
+        let star = format!("{}", crate::ported::zsh_h::Star);
+        assert_eq!(cmphaswilds(&star), 1, "Star token → has wildcard");
+    }
+
+    /// `cmphaswilds("?")` returns 1 — Quest is a wildcard.
+    /// C `Src/Zle/zle_tricky.c:506` — `c == Quest`.
+    #[test]
+    fn cmphaswilds_quest_token_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let quest = format!("{}", crate::ported::zsh_h::Quest);
+        assert_eq!(cmphaswilds(&quest), 1, "Quest token → has wildcard");
+    }
+
+    /// `cmphaswilds("|")` returns 1 — pipe is a wildcard at top-level.
+    /// C `Src/Zle/zle_tricky.c:506` — `c == '|'`.
+    #[test]
+    fn cmphaswilds_pipe_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(cmphaswilds("|"), 1, "| literal → has wildcard");
+    }
+
+    /// `cmphaswilds("abc.def")` returns 0 — dot isn't a wildcard.
+    #[test]
+    fn cmphaswilds_dot_is_not_wildcard() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(cmphaswilds("abc.def"), 0, "dot is literal");
+    }
+
+    /// `cmphaswilds("foo bar")` returns 0 — space isn't a wildcard.
+    #[test]
+    fn cmphaswilds_space_is_not_wildcard() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(cmphaswilds("foo bar"), 0, "space is literal");
+    }
+
+    /// `cmphaswilds("hello/world")` returns 0 — slash isn't a wildcard.
+    #[test]
+    fn cmphaswilds_slash_is_not_wildcard() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(cmphaswilds("hello/world"), 0, "slash is literal");
+    }
 }
