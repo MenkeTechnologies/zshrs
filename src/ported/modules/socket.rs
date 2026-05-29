@@ -764,4 +764,127 @@ mod tests {
         let ops = empty_ops();
         let _ = bin_zsocket("zsocket", &["/tmp/日本".to_string()], &ops, 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/socket.c
+    // c:21 bin_zsocket + c:351-387 lifecycle type/exit-code pins
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:21 — `bin_zsocket` returns i32 (compile-time pin).
+    #[test]
+    fn bin_zsocket_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_zsocket("zsocket", &[], &ops, 0);
+    }
+
+    /// c:21 — `bin_zsocket` exit codes are non-negative.
+    #[test]
+    fn bin_zsocket_exit_codes_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for argv in [
+            vec![],
+            vec!["/tmp/sock".into()],
+            vec!["".into()],
+            vec!["/tmp/sock".into(), "extra".into()],
+        ] {
+            let r = bin_zsocket("zsocket", &argv, &ops, 0);
+            assert!(r >= 0,
+                "exit code must be non-negative, got {} for {:?}", r, argv);
+        }
+    }
+
+    /// c:21 — `bin_zsocket` empty path is deterministic (no hidden state).
+    #[test]
+    fn bin_zsocket_empty_path_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let first = bin_zsocket("zsocket", &["".to_string()], &ops, 0);
+        for _ in 0..5 {
+            assert_eq!(bin_zsocket("zsocket", &["".to_string()], &ops, 0), first,
+                "empty-path zsocket must be pure across calls");
+        }
+    }
+
+    /// c:21 — `bin_zsocket` with both -a and -l flags is safe (no panic).
+    /// C source resolves precedence inside the body; what matters here
+    /// is that calling with both flags set doesn't crash.
+    #[test]
+    fn bin_zsocket_both_a_and_l_flags_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ops = empty_ops();
+        ops.ind[b'a' as usize] = 1;
+        ops.ind[b'l' as usize] = 1;
+        let _ = bin_zsocket("zsocket", &["/tmp/sock".to_string()], &ops, 0);
+    }
+
+    /// c:21 — `bin_zsocket` -d <fd> with non-numeric arg doesn't panic.
+    #[test]
+    fn bin_zsocket_d_flag_with_non_numeric_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ops = empty_ops();
+        ops.ind[b'd' as usize] = 1;
+        let _ = bin_zsocket("zsocket", &["not-a-number".to_string()], &ops, 0);
+    }
+
+    /// c:21 — `bin_zsocket` with very long path doesn't panic.
+    #[test]
+    fn bin_zsocket_long_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let path = "/tmp/".to_string() + &"x".repeat(2000);
+        let _ = bin_zsocket("zsocket", &[path], &ops, 0);
+    }
+
+    /// c:351 — `setup_` returns i32 (compile-time pin).
+    #[test]
+    fn socket_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:358 — `features_` returns i32 (compile-time pin).
+    #[test]
+    fn socket_features_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = Vec::new();
+        let _: i32 = features_(std::ptr::null(), &mut v);
+    }
+
+    /// c:366 — `enables_` returns i32 with None enables-out param safe.
+    #[test]
+    fn socket_enables_with_none_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:366 — `enables_` deterministic for null callback.
+    #[test]
+    fn socket_enables_deterministic_for_null_in() {
+        let _g = crate::test_util::global_state_lock();
+        let mut a: Option<Vec<i32>> = None;
+        let first = enables_(std::ptr::null(), &mut a);
+        for _ in 0..3 {
+            let mut b: Option<Vec<i32>> = None;
+            assert_eq!(enables_(std::ptr::null(), &mut b), first,
+                "enables_ must be deterministic");
+        }
+    }
+
+    /// c:351/358/366/373/380/387 — each lifecycle hook returns 0 individually.
+    #[test]
+    fn socket_each_lifecycle_hook_returns_zero_individually() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v: Vec<String> = Vec::new();
+        let mut e: Option<Vec<i32>> = None;
+        assert_eq!(setup_(null), 0, "c:351 setup_");
+        assert_eq!(features_(null, &mut v), 0, "c:358 features_");
+        assert_eq!(enables_(null, &mut e), 0, "c:366 enables_");
+        assert_eq!(boot_(null), 0, "c:373 boot_");
+        assert_eq!(cleanup_(null), 0, "c:380 cleanup_");
+        assert_eq!(finish_(null), 0, "c:387 finish_");
+    }
 }
