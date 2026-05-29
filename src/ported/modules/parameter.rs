@@ -5280,4 +5280,98 @@ mod paramtypestr_table_tests {
         let _g = crate::test_util::global_state_lock();
         let _: Option<Param> = getpmcommand(std::ptr::null_mut(), "anything");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/parameter.c
+    // c:606 getpmcommand / c:998 getpmfunction / c:1007 getpmdisfunction /
+    // c:1159 getpmfunction_source / c:1169 getpmdisfunction_source /
+    // c:1202 funcstackgetfn / c:1239 functracegetfn / c:1273 funcsourcetracegetfn
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:606 — `getpmcommand` is deterministic for unknown command.
+    #[test]
+    fn getpmcommand_deterministic_for_unknown() {
+        let _g = crate::test_util::global_state_lock();
+        let a = getpmcommand(std::ptr::null_mut(), "__zshrs_never_cmd__")
+            .map(|p| p.node.nam.clone());
+        let b = getpmcommand(std::ptr::null_mut(), "__zshrs_never_cmd__")
+            .map(|p| p.node.nam.clone());
+        assert_eq!(a, b, "getpmcommand must be deterministic");
+    }
+
+    /// c:998 — `getpmfunction` returns Option<Param>.
+    #[test]
+    fn getpmfunction_returns_option_param_type() {
+        use crate::ported::zsh_h::Param;
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Param> = getpmfunction(std::ptr::null_mut(), "anything");
+    }
+
+    /// c:998 — `getpmfunction` is deterministic for unknown function.
+    #[test]
+    fn getpmfunction_deterministic_for_unknown() {
+        let _g = crate::test_util::global_state_lock();
+        let a = getpmfunction(std::ptr::null_mut(), "__zshrs_never_fn__")
+            .map(|p| p.node.nam.clone());
+        let b = getpmfunction(std::ptr::null_mut(), "__zshrs_never_fn__")
+            .map(|p| p.node.nam.clone());
+        assert_eq!(a, b, "getpmfunction must be deterministic");
+    }
+
+    /// c:1007 — `getpmdisfunction` returns Option<Param>.
+    #[test]
+    fn getpmdisfunction_returns_option_param_type() {
+        use crate::ported::zsh_h::Param;
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Param> = getpmdisfunction(std::ptr::null_mut(), "anything");
+    }
+
+    /// c:1159 — `getpmfunction_source` returns Option<Param>.
+    #[test]
+    fn getpmfunction_source_returns_option_param_type() {
+        use crate::ported::zsh_h::Param;
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Param> = getpmfunction_source(std::ptr::null_mut(), "anything");
+    }
+
+    /// c:1169 — `getpmdisfunction_source` returns Option<Param>.
+    #[test]
+    fn getpmdisfunction_source_returns_option_param_type() {
+        use crate::ported::zsh_h::Param;
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Param> = getpmdisfunction_source(std::ptr::null_mut(), "anything");
+    }
+
+    /// c:1202 — `funcstackgetfn` returns Vec<String> (compile-time type pin).
+    #[test]
+    fn funcstackgetfn_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = funcstackgetfn(std::ptr::null_mut());
+    }
+
+    /// c:1239 — `functracegetfn` returns Vec<String>.
+    #[test]
+    fn functracegetfn_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = functracegetfn(std::ptr::null_mut());
+    }
+
+    /// c:1273 — `funcsourcetracegetfn` returns Vec<String>.
+    #[test]
+    fn funcsourcetracegetfn_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = funcsourcetracegetfn(std::ptr::null_mut());
+    }
+
+    /// c:1202 — `funcstackgetfn(null)` is deterministic across calls.
+    #[test]
+    fn funcstackgetfn_null_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = funcstackgetfn(std::ptr::null_mut());
+        for _ in 0..3 {
+            assert_eq!(funcstackgetfn(std::ptr::null_mut()), first,
+                "funcstackgetfn(null) must be deterministic");
+        }
+    }
+
 }
