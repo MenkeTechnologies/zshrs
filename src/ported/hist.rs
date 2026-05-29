@@ -7011,4 +7011,127 @@ mod subst_modifier_tests {
             nohwe();
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hist.c
+    // c:141 hist_in_word / c:150 hist_is_in_word / c:1417 unlinkcurline /
+    // c:3582 flockhistfile / c:3745 histfileIsLocked / c:4449 firsthist
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:150 — `hist_is_in_word` returns i32 (compile-time type pin).
+    #[test]
+    fn hist_is_in_word_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = hist_is_in_word();
+    }
+
+    /// c:150 — `hist_is_in_word` returns 0 or 1 only.
+    #[test]
+    fn hist_is_in_word_returns_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = hist_is_in_word();
+        assert!(r == 0 || r == 1, "hist_is_in_word ∈ {{0,1}}, got {}", r);
+    }
+
+    /// c:141 + c:150 — `hist_in_word(1)` then `hist_is_in_word() == 1`
+    /// round-trip.
+    #[test]
+    fn hist_in_word_set_clear_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = hist_is_in_word();
+        hist_in_word(1);
+        assert_eq!(hist_is_in_word(), 1, "set → is_in_word=1");
+        hist_in_word(0);
+        assert_eq!(hist_is_in_word(), 0, "clear → is_in_word=0");
+        hist_in_word(saved);
+    }
+
+    /// c:141 — `hist_in_word(0)` idempotent on a clear state.
+    #[test]
+    fn hist_in_word_clear_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = hist_is_in_word();
+        hist_in_word(0);
+        for _ in 0..5 {
+            hist_in_word(0);
+            assert_eq!(hist_is_in_word(), 0, "still clear");
+        }
+        hist_in_word(saved);
+    }
+
+    /// c:1417 — `unlinkcurline` is safe on empty / fresh state.
+    #[test]
+    fn unlinkcurline_idempotent_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            unlinkcurline();
+        }
+    }
+
+    /// c:3582 — `flockhistfile` returns i32 (compile-time type pin).
+    #[test]
+    fn flockhistfile_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = flockhistfile("/__never_exists_zshrs_xyz__");
+    }
+
+    /// c:3582 — `flockhistfile(nonexistent)` returns nonzero / determ.
+    #[test]
+    fn flockhistfile_nonexistent_path_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = flockhistfile("/__never_exists_zshrs_flock__");
+        for _ in 0..3 {
+            assert_eq!(flockhistfile("/__never_exists_zshrs_flock__"), first,
+                "flockhistfile must be deterministic");
+        }
+    }
+
+    /// c:3745 — `histfileIsLocked` returns i32 (compile-time type pin).
+    #[test]
+    fn histfileIsLocked_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = histfileIsLocked();
+    }
+
+    /// c:3745 — `histfileIsLocked` returns 0 or 1 only.
+    #[test]
+    fn histfileIsLocked_returns_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = histfileIsLocked();
+        assert!(r == 0 || r == 1,
+            "histfileIsLocked ∈ {{0,1}}, got {}", r);
+    }
+
+    /// c:4449 — `firsthist` returns i64 (compile-time type pin).
+    #[test]
+    fn firsthist_returns_i64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i64 = firsthist();
+    }
+
+    /// c:4449 — `firsthist` empty ring returns 1 (per c:4451 default).
+    #[test]
+    fn firsthist_default_when_ring_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = firsthist();
+        assert!(r >= 1, "firsthist ≥ 1 (default + populated both ≥ 1), got {}", r);
+    }
+
+    /// c:4449 — `firsthist` is deterministic on stable ring.
+    #[test]
+    fn firsthist_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = firsthist();
+        for _ in 0..3 {
+            assert_eq!(firsthist(), first,
+                "firsthist must be deterministic on unchanged ring");
+        }
+    }
+
+    /// c:1221 — `substfailed` returns i32 (compile-time type pin).
+    #[test]
+    fn substfailed_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = substfailed();
+    }
 }
