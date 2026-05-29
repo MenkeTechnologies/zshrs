@@ -5417,4 +5417,130 @@ mod tests {
         // POSIX guarantees CLK_TCK ≥ 1; typical values are 100/250/1000.
         assert!(ck <= 10_000, "CLK_TCK suspiciously large: {}", ck);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/jobs.c isanum + getsigidx.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:2010 — `isanum("")` returns false (empty not valid).
+    #[test]
+    fn isanum_empty_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isanum(""));
+    }
+
+    /// c:2010 — all-digit string returns true.
+    #[test]
+    fn isanum_all_digits_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isanum("123"));
+        assert!(isanum("0"));
+        assert!(isanum("999999"));
+    }
+
+    /// c:2010 — hyphen-prefixed digits valid.
+    #[test]
+    fn isanum_with_hyphen_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isanum("-1"));
+        assert!(isanum("-123"));
+        assert!(isanum("-"));
+    }
+
+    /// c:2010 — alpha or non-digit chars rejected.
+    #[test]
+    fn isanum_rejects_alpha() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isanum("abc"));
+        assert!(!isanum("1a"));
+        assert!(!isanum("a1"));
+        assert!(!isanum("1 2"));
+        assert!(!isanum("1.0"));
+    }
+
+    /// c:2010 — deterministic.
+    #[test]
+    fn isanum_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["", "123", "-1", "abc", "1a"] {
+            let first = isanum(s);
+            for _ in 0..5 {
+                assert_eq!(isanum(s), first);
+            }
+        }
+    }
+
+    /// c:3052 — `getsigidx("")` returns None.
+    #[test]
+    fn getsigidx_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getsigidx("").is_none());
+    }
+
+    /// c:3334 — `getsigidx("EXIT")` returns Some(0).
+    #[test]
+    fn getsigidx_exit_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getsigidx("EXIT"), Some(0));
+    }
+
+    /// c:3052 — canonical POSIX signal names resolve.
+    #[test]
+    #[cfg(unix)]
+    fn getsigidx_canonical_signal_names() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getsigidx("HUP"), Some(libc::SIGHUP));
+        assert_eq!(getsigidx("TERM"), Some(libc::SIGTERM));
+        assert_eq!(getsigidx("INT"), Some(libc::SIGINT));
+        assert_eq!(getsigidx("KILL"), Some(libc::SIGKILL));
+    }
+
+    /// c:3332 — SIG prefix stripped transparently.
+    #[test]
+    #[cfg(unix)]
+    fn getsigidx_strips_sig_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getsigidx("HUP"), getsigidx("SIGHUP"));
+        assert_eq!(getsigidx("TERM"), getsigidx("SIGTERM"));
+    }
+
+    /// c:3333 — case-insensitive on signal name.
+    #[test]
+    #[cfg(unix)]
+    fn getsigidx_case_insensitive() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getsigidx("hup"), getsigidx("HUP"));
+    }
+
+    /// c:3081 — unknown name returns None.
+    #[test]
+    fn getsigidx_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getsigidx("NEVER_REAL_SIGNAL").is_none());
+    }
+
+    /// c:3339 — ZERR and ERR both resolve to SIGZERR.
+    #[test]
+    fn getsigidx_zerr_and_err_alias() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            getsigidx("ZERR"),
+            Some(crate::ported::signals_h::SIGZERR)
+        );
+        assert_eq!(
+            getsigidx("ERR"),
+            Some(crate::ported::signals_h::SIGZERR),
+            "ERR aliases ZERR"
+        );
+    }
+
+    /// c:3340 — DEBUG resolves to SIGDEBUG.
+    #[test]
+    fn getsigidx_debug_returns_sigdebug() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            getsigidx("DEBUG"),
+            Some(crate::ported::signals_h::SIGDEBUG)
+        );
+    }
 }
