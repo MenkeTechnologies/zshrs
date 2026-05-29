@@ -787,4 +787,97 @@ mod tests {
             "random_real mean across {} samples = {} should be in (0.3, 0.7)",
             n, mean);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/random_real.c
+    // c:25 _zclz64 / c:83 random_64bit / c:119 random_real / c:216 clz64
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:25 — `_zclz64` returns i32 (alt-name compile-time pin).
+    #[test]
+    fn zclz64_returns_i32_pin_alt() {
+        let _: i32 = _zclz64(0);
+    }
+
+    /// c:25 — `_zclz64(0)` returns 64 (alt-name pin).
+    #[test]
+    fn zclz64_zero_returns_64_alt() {
+        assert_eq!(_zclz64(0), 64,
+            "clz64(0) MUST equal 64 (all 64 bits are leading zeros)");
+    }
+
+    /// c:25 — `_zclz64(u64::MAX)` returns 0 (no leading zeros).
+    #[test]
+    fn zclz64_max_returns_zero() {
+        assert_eq!(_zclz64(u64::MAX), 0,
+            "clz64(u64::MAX) MUST equal 0 (no leading zeros)");
+    }
+
+    /// c:25 — `_zclz64(1)` returns 63 (only the LSB set; alt-name).
+    #[test]
+    fn zclz64_one_returns_63_alt() {
+        assert_eq!(_zclz64(1), 63,
+            "clz64(1) MUST equal 63 (63 leading zeros + 1 LSB)");
+    }
+
+    /// c:25 — `_zclz64(1 << 63)` returns 0 (top bit set).
+    #[test]
+    fn zclz64_top_bit_returns_zero() {
+        assert_eq!(_zclz64(1u64 << 63), 0,
+            "clz64(1<<63) MUST equal 0 (MSB set)");
+    }
+
+    /// c:25 — `_zclz64` matches std `u64::leading_zeros` for power-of-2 inputs.
+    #[test]
+    fn zclz64_matches_stdlib_for_powers_of_two() {
+        for shift in 0..64 {
+            let x = 1u64 << shift;
+            assert_eq!(_zclz64(x) as u32, x.leading_zeros(),
+                "_zclz64(1<<{}) must match stdlib leading_zeros", shift);
+        }
+    }
+
+    /// c:83 — `random_64bit` is non-deterministic (two calls almost
+    /// always differ; probability of equal = 1 / 2^64 ≈ 5.4e-20).
+    #[test]
+    fn random_64bit_two_calls_almost_always_differ() {
+        let _g = crate::test_util::global_state_lock();
+        let a = random_64bit();
+        let b = random_64bit();
+        assert_ne!(a, b, "two random_64bit() calls must differ");
+    }
+
+    /// c:83 — `random_64bit` produces values spanning multiple bytes
+    /// (sanity check that the RNG isn't returning small/clamped values).
+    #[test]
+    fn random_64bit_eventually_exceeds_32_bit_threshold() {
+        let _g = crate::test_util::global_state_lock();
+        let any_large = (0..200).any(|_| random_64bit() > (u32::MAX as u64));
+        assert!(any_large,
+            "200 random_64bit values must include ≥ 1 above u32::MAX");
+    }
+
+    /// c:119 — `random_real` returns f64 (alt-name compile-time pin).
+    #[test]
+    fn random_real_returns_f64_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: f64 = random_real();
+    }
+
+    /// c:119 — `random_real` outputs are always finite (no NaN/Inf).
+    #[test]
+    fn random_real_always_finite() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..500 {
+            let v = random_real();
+            assert!(v.is_finite(),
+                "random_real must always be finite, got {}", v);
+        }
+    }
+
+    /// c:216 — `clz64(0)` returns 64 (consistent with `_zclz64`).
+    #[test]
+    fn clz64_zero_returns_64() {
+        assert_eq!(clz64(0), 64, "clz64(0) MUST equal 64");
+    }
 }
