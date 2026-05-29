@@ -1091,4 +1091,128 @@ mod tests {
         let l: LinkList<i32> = newsizedlist(0);
         assert!(l.is_empty());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/linklist.c
+    // c:173 uinsertlinknode / c:317 rolllist / c:331 newsizedlist /
+    // c:403 linknodebystring / c:423 hlinklist2array / c:449 zlinklist2array
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:173 — `uinsertlinknode` returns None when dup already in list.
+    #[test]
+    fn uinsertlinknode_dup_returns_none() {
+        let mut l: LinkList<String> = LinkList::new();
+        l.push_back("a".to_string());
+        l.push_back("b".to_string());
+        let r = uinsertlinknode(&mut l, 0, "a".to_string());
+        assert_eq!(r, None, "dup must return None");
+        assert_eq!(l.len(), 2, "list size unchanged");
+    }
+
+    /// c:173 — `uinsertlinknode` returns Some(idx) when value is new.
+    #[test]
+    fn uinsertlinknode_new_returns_some() {
+        let mut l: LinkList<String> = LinkList::new();
+        l.push_back("a".to_string());
+        let r = uinsertlinknode(&mut l, 0, "b".to_string());
+        assert!(r.is_some(), "new value must return Some");
+        assert_eq!(l.len(), 2, "list size incremented");
+    }
+
+    /// c:317 — `rolllist` on empty list is safe (no panic, no-op).
+    #[test]
+    fn rolllist_empty_no_panic() {
+        let mut l: LinkList<i32> = LinkList::new();
+        rolllist(&mut l, 5);
+        assert!(l.is_empty());
+    }
+
+    /// c:317 — `rolllist` by length is identity (full cycle).
+    #[test]
+    fn rolllist_full_length_is_identity() {
+        let mut l: LinkList<i32> = LinkList::new();
+        for i in 1..=5 {
+            l.push_back(i);
+        }
+        let before: Vec<i32> = l.iter().copied().collect();
+        rolllist(&mut l, 5); // full rotation
+        let after: Vec<i32> = l.iter().copied().collect();
+        assert_eq!(before, after, "full rotation is identity");
+    }
+
+    /// c:331 — `newsizedlist(N)` returns exactly N default-constructed nodes.
+    #[test]
+    fn newsizedlist_n_returns_n_default_nodes() {
+        for n in [1usize, 3, 10, 100] {
+            let l: LinkList<i32> = newsizedlist(n);
+            assert_eq!(l.len(), n, "newsizedlist({}) must return {} nodes", n, n);
+            for v in l.iter() {
+                assert_eq!(*v, 0, "default i32 = 0");
+            }
+        }
+    }
+
+    /// c:403 — `linknodebystring` returns None for non-existent string.
+    #[test]
+    fn linknodebystring_missing_returns_none_pin() {
+        let mut l: LinkList<String> = LinkList::new();
+        l.push_back("apple".to_string());
+        l.push_back("banana".to_string());
+        assert_eq!(linknodebystring(&l, "cherry"), None);
+    }
+
+    /// c:403 — `linknodebystring` is case-sensitive.
+    #[test]
+    fn linknodebystring_case_sensitive() {
+        let mut l: LinkList<String> = LinkList::new();
+        l.push_back("APPLE".to_string());
+        assert_eq!(linknodebystring(&l, "apple"), None,
+            "case mismatch must miss");
+        assert!(linknodebystring(&l, "APPLE").is_some(),
+            "exact case match");
+    }
+
+    /// c:386 — `linknodebydatum` for absent value returns None.
+    #[test]
+    fn linknodebydatum_missing_returns_none_pin() {
+        let mut l: LinkList<i32> = LinkList::new();
+        for i in [1, 2, 3] {
+            l.push_back(i);
+        }
+        assert_eq!(linknodebydatum(&l, &99), None);
+    }
+
+    /// c:449 — `zlinklist2array` agrees with `hlinklist2array` on
+    /// the same input (both produce identical Vec).
+    #[test]
+    fn zlinklist2array_matches_hlinklist2array() {
+        let mut l: LinkList<String> = LinkList::new();
+        for s in ["a", "b", "c", "d"] {
+            l.push_back(s.to_string());
+        }
+        let h = hlinklist2array(&l);
+        let z = zlinklist2array(&l);
+        assert_eq!(h, z, "h and z variants must agree");
+    }
+
+    /// c:386 + c:403 — both lookup fns are deterministic.
+    #[test]
+    fn lookup_fns_are_deterministic() {
+        let mut l: LinkList<String> = LinkList::new();
+        for s in ["a", "b", "c"] {
+            l.push_back(s.to_string());
+        }
+        let a = linknodebystring(&l, "b");
+        for _ in 0..5 {
+            assert_eq!(linknodebystring(&l, "b"), a);
+        }
+        let mut ll: LinkList<i32> = LinkList::new();
+        for i in [1, 2, 3] {
+            ll.push_back(i);
+        }
+        let b = linknodebydatum(&ll, &2);
+        for _ in 0..5 {
+            assert_eq!(linknodebydatum(&ll, &2), b);
+        }
+    }
 }
