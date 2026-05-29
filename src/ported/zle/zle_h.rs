@@ -1438,4 +1438,133 @@ mod tests {
         assert!(!ZC_ialnum(' '));
         assert!(!ZC_ialnum('.'));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle.h:60-73 ZC_* macros.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:62 — `ZC_iblank` is `iswspace(c) && c != '\n'` per
+    /// Src/utils.c:wcsiblank. CR is iblank; newline is NOT.
+    #[test]
+    fn ZC_iblank_excludes_newline_only() {
+        assert!(ZC_iblank(' '), "space is iblank");
+        assert!(ZC_iblank('\t'), "tab is iblank");
+        assert!(ZC_iblank('\r'), "CR is iblank (iswspace minus \\n)");
+        assert!(ZC_iblank('\x0b'), "VT is iblank");
+        assert!(ZC_iblank('\x0c'), "FF is iblank");
+        assert!(!ZC_iblank('\n'), "newline explicitly excluded");
+        assert!(!ZC_iblank('a'), "letter is not iblank");
+    }
+
+    /// c:67 — `ZC_inblank` is `iswspace(c)` — DOES include newline
+    /// (counterpart to iblank which excludes it).
+    #[test]
+    fn ZC_inblank_includes_newline() {
+        assert!(ZC_inblank(' '));
+        assert!(ZC_inblank('\t'));
+        assert!(ZC_inblank('\n'), "inblank includes newline (vs iblank)");
+        assert!(ZC_inblank('\r'));
+        assert!(!ZC_inblank('a'));
+    }
+
+    /// c:65 — `ZC_iident` is alphanumeric OR `_` (IIDENT class).
+    #[test]
+    fn ZC_iident_includes_underscore() {
+        assert!(ZC_iident('_'), "underscore is iident");
+        assert!(ZC_iident('a'));
+        assert!(ZC_iident('5'));
+        assert!(!ZC_iident('-'), "hyphen is NOT iident");
+        assert!(!ZC_iident('.'));
+        assert!(!ZC_iident(' '));
+    }
+
+    /// c:69 — `ZC_iword` is alphanumeric OR `_` (same as IIDENT for now).
+    #[test]
+    fn ZC_iword_matches_iident_for_ascii() {
+        for c in &['a', 'Z', '5', '_'] {
+            assert_eq!(
+                ZC_iword(*c),
+                ZC_iident(*c),
+                "iword and iident agree on {:?}",
+                c
+            );
+        }
+    }
+
+    /// c:63 — `ZC_icntrl` flags ASCII control chars.
+    #[test]
+    fn ZC_icntrl_flags_control_chars() {
+        assert!(ZC_icntrl('\x00'));
+        assert!(ZC_icntrl('\x01'));
+        assert!(ZC_icntrl('\x1b'), "ESC is control");
+        assert!(ZC_icntrl('\x7f'), "DEL is control");
+        assert!(!ZC_icntrl('a'));
+        assert!(!ZC_icntrl(' '));
+    }
+
+    /// c:64 — `ZC_idigit` only matches ASCII digits 0-9.
+    #[test]
+    fn ZC_idigit_ascii_digits_only() {
+        for d in '0'..='9' {
+            assert!(ZC_idigit(d), "{:?} must be digit", d);
+        }
+        assert!(!ZC_idigit('a'));
+        assert!(!ZC_idigit(' '));
+        // Unicode digit like Arabic-Indic ٠ (U+0660) — NOT ASCII so false.
+        assert!(!ZC_idigit('\u{0660}'), "non-ASCII digit excluded");
+    }
+
+    /// c:66/68 — `ZC_ilower` / `ZC_iupper` agree with char::is_lowercase/upper.
+    #[test]
+    fn ZC_ilower_iupper_basic() {
+        assert!(ZC_ilower('a'));
+        assert!(!ZC_ilower('A'));
+        assert!(!ZC_ilower('5'));
+        assert!(ZC_iupper('A'));
+        assert!(!ZC_iupper('a'));
+        assert!(!ZC_iupper('5'));
+    }
+
+    /// c:70 — `ZC_ipunct` true for ASCII punct, false for letters/digits/space.
+    #[test]
+    fn ZC_ipunct_basic_branches() {
+        assert!(ZC_ipunct('.'));
+        assert!(ZC_ipunct('!'));
+        assert!(ZC_ipunct(','));
+        assert!(!ZC_ipunct('a'));
+        assert!(!ZC_ipunct('5'));
+        assert!(!ZC_ipunct(' '), "space is iblank, not ipunct");
+    }
+
+    /// c:72 — `ZC_tolower('A')` → 'a'.
+    #[test]
+    fn ZC_tolower_uppercase_to_lowercase() {
+        assert_eq!(ZC_tolower('A'), 'a');
+        assert_eq!(ZC_tolower('Z'), 'z');
+        // Already lowercase stays.
+        assert_eq!(ZC_tolower('a'), 'a');
+        // Non-letter unchanged.
+        assert_eq!(ZC_tolower('5'), '5');
+        assert_eq!(ZC_tolower(' '), ' ');
+    }
+
+    /// c:73 — `ZC_toupper('a')` → 'A'.
+    #[test]
+    fn ZC_toupper_lowercase_to_uppercase() {
+        assert_eq!(ZC_toupper('a'), 'A');
+        assert_eq!(ZC_toupper('z'), 'Z');
+        assert_eq!(ZC_toupper('A'), 'A');
+        assert_eq!(ZC_toupper('5'), '5');
+    }
+
+    /// c:72/73 — tolower/toupper round-trip on ASCII letters.
+    #[test]
+    fn ZC_case_round_trip_ascii() {
+        for c in 'a'..='z' {
+            assert_eq!(ZC_tolower(ZC_toupper(c)), c);
+        }
+        for c in 'A'..='Z' {
+            assert_eq!(ZC_toupper(ZC_tolower(c)), c);
+        }
+    }
 }
