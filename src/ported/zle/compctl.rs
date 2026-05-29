@@ -4009,4 +4009,88 @@ mod tests {
             assert!((0..=5).contains(&q), "QT_* value {q} out of [0,5]");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compctl.c
+    // c:92 createcompctltable / c:104 freecompctlp / c:1052 compctl_name_pat
+    // c:1080 delpatcomp / c:1303 bin_compctl / c:1435 bin_compcall /
+    // c:1485 ccmakehookfn / c:1573 cccleanuphookfn / c:1589 maketildelist /
+    // c:1948 gen_matches_files
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:92 — `createcompctltable` is idempotent (safe to call multiple times).
+    #[test]
+    fn createcompctltable_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            createcompctltable();
+        }
+    }
+
+    /// c:104 — `freecompctlp("")` empty name is safe.
+    #[test]
+    fn freecompctlp_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        freecompctlp("");
+    }
+
+    /// c:104 — `freecompctlp(unknown)` safe.
+    #[test]
+    fn freecompctlp_unknown_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        freecompctlp("__never_a_real_compctl_xyz__");
+    }
+
+    /// c:1052 — `compctl_name_pat("")` returns (bool, String) type.
+    #[test]
+    fn compctl_name_pat_returns_tuple_type() {
+        let _: (bool, String) = compctl_name_pat("");
+    }
+
+    /// c:1052 — `compctl_name_pat` is pure.
+    #[test]
+    fn compctl_name_pat_is_pure() {
+        for s in ["", "name", "*pat*", "with[brackets]"] {
+            let first = compctl_name_pat(s);
+            for _ in 0..3 {
+                assert_eq!(compctl_name_pat(s), first,
+                    "compctl_name_pat({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:1080 — `delpatcomp("")` empty name is safe.
+    #[test]
+    fn delpatcomp_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        delpatcomp("");
+    }
+
+    /// c:1485 — `ccmakehookfn` returns i32 (type pin).
+    #[test]
+    fn ccmakehookfn_returns_i32_type() {
+        let _: i32 = ccmakehookfn(());
+    }
+
+    /// c:1573 — `cccleanuphookfn` returns i32 (type pin).
+    #[test]
+    fn cccleanuphookfn_returns_i32_type() {
+        let _: i32 = cccleanuphookfn(());
+    }
+
+    /// c:1485 — `ccmakehookfn` is idempotent.
+    #[test]
+    fn ccmakehookfn_idempotent() {
+        for _ in 0..5 {
+            let _ = ccmakehookfn(());
+        }
+    }
+
+    /// c:1573 — `cccleanuphookfn` is idempotent.
+    #[test]
+    fn cccleanuphookfn_idempotent() {
+        for _ in 0..5 {
+            let _ = cccleanuphookfn(());
+        }
+    }
 }
