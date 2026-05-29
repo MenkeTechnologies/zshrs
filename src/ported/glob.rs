@@ -7127,4 +7127,143 @@ mod tests {
             "Bnullkeep should be stripped or materialized; got {s:?}"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/glob.c file_type + hasbraces.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:2018 — file_type for regular file with no exec bits → ' '.
+    #[test]
+    #[cfg(unix)]
+    fn file_type_regular_non_exec_returns_space() {
+        let r = file_type(libc::S_IFREG as u32 | 0o644);
+        assert_eq!(r, ' ');
+    }
+
+    /// c:2018 — file_type for regular file WITH exec bit → '*'.
+    #[test]
+    #[cfg(unix)]
+    fn file_type_regular_exec_returns_star() {
+        let r = file_type(libc::S_IFREG as u32 | 0o755);
+        assert_eq!(r, '*');
+    }
+
+    /// c:2018 — file_type for directory → '/'.
+    #[test]
+    #[cfg(unix)]
+    fn file_type_directory_returns_slash() {
+        let r = file_type(libc::S_IFDIR as u32 | 0o755);
+        assert_eq!(r, '/');
+    }
+
+    /// c:2018 — file_type for symlink → '@'.
+    #[test]
+    #[cfg(unix)]
+    fn file_type_symlink_returns_at() {
+        let r = file_type(libc::S_IFLNK as u32 | 0o777);
+        assert_eq!(r, '@');
+    }
+
+    /// c:2018 — file_type for FIFO → '|'.
+    #[test]
+    #[cfg(unix)]
+    fn file_type_fifo_returns_pipe() {
+        let r = file_type(libc::S_IFIFO as u32 | 0o644);
+        assert_eq!(r, '|');
+    }
+
+    /// c:2018 — file_type for socket → '='.
+    #[test]
+    #[cfg(unix)]
+    fn file_type_socket_returns_equals() {
+        let r = file_type(libc::S_IFSOCK as u32 | 0o777);
+        assert_eq!(r, '=');
+    }
+
+    /// c:2018 — file_type for char device → '%'.
+    #[test]
+    #[cfg(unix)]
+    fn file_type_char_device_returns_percent() {
+        let r = file_type(libc::S_IFCHR as u32 | 0o644);
+        assert_eq!(r, '%');
+    }
+
+    /// c:2018 — file_type for block device → '#'.
+    #[test]
+    #[cfg(unix)]
+    fn file_type_block_device_returns_hash() {
+        let r = file_type(libc::S_IFBLK as u32 | 0o644);
+        assert_eq!(r, '#');
+    }
+
+    /// c:2018 — file_type for unknown mode → '?'.
+    #[test]
+    fn file_type_unknown_mode_returns_question() {
+        // Bare 0 mode (none of the S_IF* bits set) → '?'.
+        assert_eq!(file_type(0), '?');
+    }
+
+    /// c:2018 — file_type is deterministic.
+    #[test]
+    #[cfg(unix)]
+    fn file_type_is_deterministic() {
+        for mode in [
+            libc::S_IFREG as u32 | 0o644,
+            libc::S_IFDIR as u32,
+            libc::S_IFLNK as u32,
+            0u32,
+        ] {
+            let first = file_type(mode);
+            for _ in 0..5 {
+                assert_eq!(file_type(mode), first);
+            }
+        }
+    }
+
+    /// c:2042 — hasbraces on plain string returns false.
+    #[test]
+    fn hasbraces_no_braces_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!hasbraces("hello", false));
+        assert!(!hasbraces("", false));
+    }
+
+    /// c:2042 — hasbraces on plain ASCII `{a,b}` returns FALSE because
+    /// the C port checks TOKEN bytes (Inbrace=0x8f / Outbrace=0x90 /
+    /// Comma=0x9a) not literal ASCII. The lexer pre-tokenizes input
+    /// before hasbraces runs in the real pipeline. Pin the actual
+    /// behavior so a regen that adds ASCII fast-path is caught.
+    #[test]
+    fn hasbraces_plain_ascii_braces_returns_false_uses_tokens() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            !hasbraces("{a,b}", false),
+            "plain ASCII not tokenized → false; lexer pre-tokenizes in real pipeline"
+        );
+    }
+
+    /// c:2042 — hasbraces on tokenized brace expansion returns true.
+    /// Construct the TOKEN form: Inbrace + 'a' + Comma + 'b' + Outbrace.
+    #[test]
+    fn hasbraces_tokenized_brace_expansion_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        let tokenized = format!(
+            "{}a{}b{}",
+            '\u{8f}', // Inbrace token
+            '\u{9a}', // Comma token
+            '\u{90}'  // Outbrace token
+        );
+        assert!(
+            hasbraces(&tokenized, false),
+            "Inbrace+a+Comma+b+Outbrace must trigger brace expansion"
+        );
+    }
+
+    /// c:2042 — hasbraces on unclosed `{` returns false (no matching pair).
+    #[test]
+    fn hasbraces_unclosed_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!hasbraces("{", false));
+        assert!(!hasbraces("{abc", false));
+    }
 }
