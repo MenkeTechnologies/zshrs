@@ -9756,4 +9756,148 @@ esac"#;
             ecadjusthere(p, -1);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/parse.c FD_* accessors
+    // c:3127 fdmagic / c:3131 fdflags / c:3133 fdother / c:3140 fdversion /
+    // c:3145 fdhflags / c:3146 fdhtail / c:3147 fdhbldflags
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn build_fd_header() -> Vec<u32> {
+        let mut buf = vec![0u32; FD_PRELEN + 32];
+        buf[0] = FD_MAGIC; // pre[0] magic
+        buf[1] = (0x12u32) | (0x00ABCDEFu32 << 8); // flags=0x12, other=0xABCDEF
+        // Embed version string starting at pre[2].
+        let ver = b"5.9\0";
+        for (i, chunk) in ver.chunks(4).enumerate() {
+            let mut word = [0u8; 4];
+            word[..chunk.len()].copy_from_slice(chunk);
+            buf[2 + i] = u32::from_le_bytes(word);
+        }
+        buf[FD_PRELEN - 1] = (FD_PRELEN as u32) + 8; // header-len slot
+        buf
+    }
+
+    /// c:3127 — `fdmagic(f)` returns pre[0] verbatim.
+    #[test]
+    fn fdmagic_returns_pre_zero_word() {
+        let buf = build_fd_header();
+        assert_eq!(fdmagic(&buf), FD_MAGIC, "fdmagic = pre[0]");
+    }
+
+    /// c:3131 — `fdflags` extracts low byte of pre[1].
+    #[test]
+    fn fdflags_low_byte_extraction() {
+        let buf = build_fd_header();
+        assert_eq!(fdflags(&buf), 0x12, "flags = pre[1] & 0xff");
+    }
+
+    /// c:3133 — `fdother` extracts high 24 bits of pre[1].
+    #[test]
+    fn fdother_high_24_bits_extraction() {
+        let buf = build_fd_header();
+        assert_eq!(fdother(&buf), 0x00ABCDEF, "other = pre[1] >> 8 & 0x00ffffff");
+    }
+
+    /// c:3132 — `fdsetflags` writes low byte, preserves high 24 bits.
+    #[test]
+    fn fdsetflags_preserves_high_24_bits() {
+        let mut buf = build_fd_header();
+        let other_before = fdother(&buf);
+        fdsetflags(&mut buf, 0x42);
+        assert_eq!(fdflags(&buf), 0x42, "new flags written");
+        assert_eq!(fdother(&buf), other_before, "high 24 bits preserved");
+    }
+
+    /// c:3134 — `fdsetother` writes high 24 bits, preserves low byte.
+    #[test]
+    fn fdsetother_preserves_low_byte() {
+        let mut buf = build_fd_header();
+        let flags_before = fdflags(&buf);
+        fdsetother(&mut buf, 0x00DEADBE);
+        assert_eq!(fdother(&buf), 0x00DEADBE, "new other written");
+        assert_eq!(fdflags(&buf), flags_before, "low byte preserved");
+    }
+
+    /// c:3134 — `fdsetother` clamps to 24 bits (caller-passed high bits dropped).
+    #[test]
+    fn fdsetother_clamps_to_24_bits() {
+        let mut buf = build_fd_header();
+        fdsetother(&mut buf, 0xFF_FFFF_FF);
+        // Only the low 24 bits land in `other`.
+        assert_eq!(fdother(&buf), 0x00FF_FFFF, "high bits dropped");
+    }
+
+    /// c:3140 — `fdversion(buf)` returns String (compile-time type pin).
+    #[test]
+    fn fdversion_returns_string_type() {
+        let buf = build_fd_header();
+        let _: String = fdversion(&buf);
+    }
+
+    /// c:3140 — `fdversion` reads the NUL-terminated string from pre[2..].
+    #[test]
+    fn fdversion_reads_until_nul() {
+        let buf = build_fd_header();
+        assert_eq!(fdversion(&buf), "5.9", "version read until NUL");
+    }
+
+    /// c:3145 — `fdhflags(h)` returns low 2 bits of flags.
+    #[test]
+    fn fdhflags_low_two_bits() {
+        let h = fdhead {
+            start: 0, len: 0, npats: 0, strs: 0, hlen: 0,
+            flags: 0b1011, // tail=2, kshload bits = 0b11
+        };
+        assert_eq!(fdhflags(&h), 0b11, "flags = h.flags & 0x3");
+    }
+
+    /// c:3146 — `fdhtail(h)` returns high 30 bits (shifted right by 2).
+    #[test]
+    fn fdhtail_shift_right_two() {
+        let h = fdhead {
+            start: 0, len: 0, npats: 0, strs: 0, hlen: 0,
+            flags: (0x12_3456 << 2) | 0x3,
+        };
+        assert_eq!(fdhtail(&h), 0x12_3456, "tail = h.flags >> 2");
+    }
+
+    /// c:3147 — `fdhbldflags(flags, tail)` packs into single u32.
+    #[test]
+    fn fdhbldflags_packs_flags_low_tail_high() {
+        let packed = fdhbldflags(0x3, 0x42);
+        assert_eq!(packed & 0x3, 0x3, "low 2 bits = flags");
+        assert_eq!(packed >> 2, 0x42, "high 30 bits = tail");
+    }
+
+    /// c:3145-3147 — `fdhflags(h)`+`fdhtail(h)` round-trip via fdhbldflags.
+    #[test]
+    fn fdh_round_trip_via_bldflags() {
+        for (flags, tail) in [(0u32, 0u32), (1, 100), (2, 0xABC), (3, 0xFFFF)] {
+            let packed = fdhbldflags(flags, tail);
+            let h = fdhead {
+                start: 0, len: 0, npats: 0, strs: 0, hlen: 0,
+                flags: packed,
+            };
+            assert_eq!(fdhflags(&h), flags, "flags round-trips");
+            assert_eq!(fdhtail(&h), tail, "tail round-trips");
+        }
+    }
+
+    /// c:8271 — `firstfdhead_offset()` returns FD_PRELEN constant.
+    #[test]
+    fn firstfdhead_offset_returns_prelen() {
+        assert_eq!(firstfdhead_offset(), FD_PRELEN,
+            "first header starts after prelude");
+    }
+
+    /// c:3127 — `fdmagic` differentiates FD_MAGIC from FD_OMAGIC.
+    #[test]
+    fn fdmagic_differentiates_magic_omagic() {
+        let mut buf = vec![FD_MAGIC; FD_PRELEN];
+        assert_eq!(fdmagic(&buf), FD_MAGIC);
+        buf[0] = FD_OMAGIC;
+        assert_eq!(fdmagic(&buf), FD_OMAGIC, "swapped magic readable");
+        assert_ne!(FD_MAGIC, FD_OMAGIC, "the two magics differ");
+    }
 }
