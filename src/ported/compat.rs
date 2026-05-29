@@ -1127,4 +1127,129 @@ mod tests {
             assert!(!isprint_ascii(c), "{c:?} should NOT be printable");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/compat.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:175 — `difftime(t, t)` returns 0.0 (identity).
+    #[test]
+    fn difftime_same_input_returns_zero() {
+        assert_eq!(difftime(100, 100), 0.0);
+        assert_eq!(difftime(0, 0), 0.0);
+    }
+
+    /// c:175 — `difftime` positive when t2 > t1.
+    #[test]
+    fn difftime_positive_when_t2_greater() {
+        assert_eq!(difftime(100, 60), 40.0);
+        assert_eq!(difftime(1000, 1), 999.0);
+    }
+
+    /// c:194 — `strerror(0)` returns a non-empty string (errno 0 ≠ valid
+    /// libc error but should still render something like "Success" or
+    /// "No error" depending on platform).
+    #[test]
+    fn strerror_zero_returns_nonempty() {
+        let s = strerror(0);
+        assert!(!s.is_empty(), "strerror(0) must return non-empty string");
+    }
+
+    /// c:194 — `strerror(libc::EACCES)` returns a non-empty string.
+    #[test]
+    #[cfg(unix)]
+    fn strerror_known_errno_returns_descriptive() {
+        let s = strerror(libc::EACCES);
+        assert!(!s.is_empty());
+        assert_ne!(s, " ", "should have meaningful content");
+    }
+
+    /// c:194 — strerror is deterministic for a given errno.
+    #[test]
+    fn strerror_is_deterministic() {
+        let a = strerror(2);
+        let b = strerror(2);
+        assert_eq!(a, b, "strerror must be pure");
+    }
+
+    /// c:488 — `isprint_ascii('\\x7f')` is false (DEL is control).
+    #[test]
+    fn isprint_ascii_del_is_not_printable() {
+        assert!(!isprint_ascii('\x7f'), "DEL (0x7f) is control");
+    }
+
+    /// c:488 — `isprint_ascii` non-ASCII chars (> 0x7f) — behavior pin.
+    /// Per zsh C source `isprint_ascii` is ASCII-only, so non-ASCII
+    /// codepoints return false.
+    #[test]
+    fn isprint_ascii_non_ascii_returns_false() {
+        assert!(!isprint_ascii('\u{0080}'), "U+0080 is non-ASCII control");
+        assert!(!isprint_ascii('é'), "é (U+00E9) is non-ASCII");
+        assert!(!isprint_ascii('日'), "日 (CJK) is non-ASCII");
+    }
+
+    /// c:300 — `zopenmax()` returns positive within sane bounds.
+    /// Per zsh ZSH_INITIAL_OPEN_MAX cap, never above ~10000.
+    #[test]
+    #[cfg(unix)]
+    fn zopenmax_returns_positive_bounded() {
+        let max = zopenmax();
+        assert!(max > 0, "zopenmax must be positive, got {}", max);
+        assert!(max < 100_000, "zopenmax suspiciously large: {}", max);
+    }
+
+    /// c:499 — `strstr("haystack", "tack")` returns Some(byte_offset).
+    #[test]
+    fn strstr_finds_substring() {
+        assert_eq!(strstr("haystack", "tack"), Some(4));
+        assert_eq!(strstr("abc", "abc"), Some(0), "full match at start");
+        assert_eq!(strstr("abc", ""), Some(0), "empty needle matches at 0");
+    }
+
+    /// c:499 — `strstr` returns None when not found.
+    #[test]
+    fn strstr_missing_returns_none() {
+        assert_eq!(strstr("haystack", "xyz"), None);
+        assert_eq!(strstr("", "needle"), None);
+    }
+
+    /// c:509 — `gettimeofday()` returns positive (sec, usec).
+    #[test]
+    fn gettimeofday_returns_positive_seconds() {
+        let (sec, usec) = gettimeofday();
+        assert!(sec > 0, "current epoch sec must be positive");
+        assert!(usec >= 0 && usec < 1_000_000, "usec in [0, 1M)");
+    }
+
+    /// c:529 — `strtoul("", base)` returns (0, 0).
+    #[test]
+    fn strtoul_empty_returns_zero_zero() {
+        let (v, n) = strtoul("", 10);
+        assert_eq!(v, 0);
+        assert_eq!(n, 0);
+    }
+
+    /// c:529 — `strtoul("123", 10)` returns (123, 3).
+    #[test]
+    fn strtoul_base_10_parses_digits() {
+        let (v, n) = strtoul("123", 10);
+        assert_eq!(v, 123);
+        assert_eq!(n, 3);
+    }
+
+    /// c:529 — `strtoul("abc", 10)` returns (0, 0) (non-digit prefix).
+    #[test]
+    fn strtoul_non_digit_prefix_returns_zero() {
+        let (v, n) = strtoul("abc", 10);
+        assert_eq!(v, 0);
+        assert_eq!(n, 0);
+    }
+
+    /// c:529 — `strtoul("ff", 16)` parses hex.
+    #[test]
+    fn strtoul_base_16_parses_hex() {
+        let (v, n) = strtoul("ff", 16);
+        assert_eq!(v, 0xff);
+        assert_eq!(n, 2);
+    }
 }
