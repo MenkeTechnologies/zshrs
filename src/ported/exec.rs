@@ -11037,4 +11037,126 @@ mod tests {
     fn isgooderr_returns_bool_type() {
         let _: bool = isgooderr(0, "/tmp");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/exec.c
+    // c:3325 makecline / c:4603 cancd / c:4674 simple_redir_name /
+    // c:1287 iscom / c:1314 isreallycom / c:3076 commandnotfound
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:3325 — `makecline` returns Vec<String> (compile-time type pin).
+    #[test]
+    fn makecline_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = makecline(&[]);
+    }
+
+    /// c:3325 — `makecline([])` empty returns empty Vec.
+    #[test]
+    fn makecline_empty_input_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = makecline(&[]);
+        assert!(r.is_empty(), "empty input → empty output");
+    }
+
+    /// c:3325 — `makecline` preserves input order.
+    #[test]
+    fn makecline_preserves_input_order() {
+        let _g = crate::test_util::global_state_lock();
+        let input = vec!["one".to_string(), "two".to_string(), "three".to_string()];
+        let out = makecline(&input);
+        assert_eq!(out, input, "makecline must preserve order");
+    }
+
+    /// c:3325 — `makecline` clones (output is independent of input).
+    #[test]
+    fn makecline_returns_independent_copy() {
+        let _g = crate::test_util::global_state_lock();
+        let input = vec!["a".to_string(), "b".to_string()];
+        let out = makecline(&input);
+        assert_eq!(out.len(), input.len(), "lengths match");
+        // Output can be mutated without affecting input.
+        let mut out_mut = out;
+        out_mut.push("c".to_string());
+        assert_eq!(input.len(), 2, "input unchanged");
+    }
+
+    /// c:4603 — `cancd("")` empty path returns None.
+    /// ZSHRS BUG: empty path returns Some(...) instead of None. C path
+    /// at Src/exec.c:6376 enters relative-path branch which calls cancd2("")
+    /// — that should return 0 (not a valid dir), causing the fn to fall
+    /// through CDPATH and cd_able_vars, both of which should miss for
+    /// the empty string. Likely cd_able_vars("") or CDPATH-with-empty-element
+    /// is silently matching $HOME or "." here.
+    #[test]
+    #[ignore = "ZSHRS BUG: cancd('') returns Some instead of None — likely cd_able_vars or empty CDPATH element matching $HOME (Src/exec.c:6383-6403)"]
+    fn cancd_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(cancd("").is_none(), "empty path → None");
+    }
+
+    /// c:4603 — `cancd("/")` root dir returns Some (always exists).
+    #[test]
+    fn cancd_root_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cancd("/");
+        assert_eq!(r.as_deref(), Some("/"), "root dir cancd → Some(/)");
+    }
+
+    /// c:4603 — `cancd` returns Option<String> (compile-time type pin).
+    #[test]
+    fn cancd_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = cancd("/");
+    }
+
+    /// c:4603 — `cancd("/__nonexistent__")` returns None.
+    #[test]
+    fn cancd_nonexistent_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(cancd("/__nonexistent_zshrs_dir_xyz__").is_none(),
+            "nonexistent dir → None");
+    }
+
+    /// c:4603 — `cancd("/tmp")` exists → Some.
+    #[test]
+    fn cancd_tmp_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cancd("/tmp");
+        assert!(r.is_some(), "/tmp exists → Some");
+    }
+
+    /// c:4603 — `cancd` is deterministic for stable paths.
+    #[test]
+    fn cancd_is_deterministic_for_stable_paths() {
+        let _g = crate::test_util::global_state_lock();
+        for p in ["/", "/tmp", "/__never__"] {
+            let first = cancd(p).is_some();
+            for _ in 0..3 {
+                assert_eq!(cancd(p).is_some(), first,
+                    "cancd({:?}) must be deterministic", p);
+            }
+        }
+    }
+
+    /// c:1287 — `iscom` is deterministic for stable paths.
+    #[test]
+    fn iscom_is_deterministic_for_stable_paths() {
+        let _g = crate::test_util::global_state_lock();
+        for p in ["/tmp", "/__never__", "/bin/sh"] {
+            let first = iscom(p);
+            for _ in 0..3 {
+                assert_eq!(iscom(p), first,
+                    "iscom({:?}) must be deterministic", p);
+            }
+        }
+    }
+
+    /// c:3076 — `commandnotfound("", ...)` empty cmd returns i32.
+    #[test]
+    fn commandnotfound_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut args = Vec::new();
+        let _: i32 = commandnotfound("", &mut args);
+    }
 }
