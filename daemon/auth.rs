@@ -87,7 +87,6 @@ impl ScopeMatcher {
         }
     }
     /// `matches` — see implementation.
-
     pub fn matches(&self, op_scope: &str) -> bool {
         for p in &self.patterns {
             if p == "*" || p == op_scope {
@@ -131,12 +130,10 @@ impl TokenRegistry {
         }
     }
     /// `is_empty` — see implementation.
-
     pub fn is_empty(&self) -> bool {
         self.tokens.is_empty()
     }
     /// `len` — see implementation.
-
     pub fn len(&self) -> usize {
         self.tokens.len()
     }

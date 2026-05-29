@@ -1,6 +1,5 @@
 use super::*;
 /// `Collect` — see fields for layout.
-
 #[derive(Default)]
 pub struct Collect {
     /// `allow_empty` field.

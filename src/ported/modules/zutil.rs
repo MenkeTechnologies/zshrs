@@ -2126,7 +2126,6 @@ pub static OPT_DESCS: std::sync::Mutex<Option<Zoptdesc>> = std::sync::Mutex::new
 /// each `Zoptdesc.arr` points into.
 pub static OPT_ARRS: std::sync::Mutex<Option<Zoptarr>> = std::sync::Mutex::new(None); // c:1555
 /// `zoptval` — see fields for layout.
-
 #[allow(non_camel_case_types)]
 
 pub struct zoptval {

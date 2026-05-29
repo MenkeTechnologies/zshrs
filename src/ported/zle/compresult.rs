@@ -1779,7 +1779,6 @@ pub fn invalidate_list() -> i32 {
     0 // c:2358
 }
 /// `INVCOUNT` static.
-
 pub static INVCOUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:37
 
 #[cfg(test)]

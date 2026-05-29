@@ -521,7 +521,6 @@ pub mod _vcs_info_hooks;
 #[path = "Zsh/Type/_widgets.rs"]
 pub mod _widgets;
 /// `shared` submodule.
-
 pub mod shared;
 
 /// `compinit` — top-level shell initialisation entry point. Lives at

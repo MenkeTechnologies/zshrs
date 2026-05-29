@@ -129,7 +129,6 @@ impl JobState {
         }
     }
     /// `exit_code` — see implementation.
-
     pub fn exit_code(&self) -> Option<i32> {
         match self {
             JobState::Exited(c) => Some(*c),
@@ -138,7 +137,6 @@ impl JobState {
         }
     }
     /// `is_terminal` — see implementation.
-
     pub fn is_terminal(&self) -> bool {
         !matches!(self, JobState::Running)
     }
@@ -276,7 +274,6 @@ impl Supervisor {
         })
     }
     /// `bind_state` — see implementation.
-
     pub fn bind_state(&self, state: &Arc<DaemonState>) {
         *self.state.write() = Arc::downgrade(state);
     }
@@ -801,7 +798,6 @@ impl Supervisor {
         let _ = state.publish(&job_scope, topic_kind, frame);
     }
     /// `list` — see implementation.
-
     pub fn list(
         &self,
         state_filter: Option<&str>,
@@ -825,13 +821,11 @@ impl Supervisor {
         out
     }
     /// `status` — see implementation.
-
     pub fn status(&self, id: u64) -> Option<JobSnapshot> {
         let g = self.inner.lock();
         g.jobs.get(&id).map(JobMeta::snapshot)
     }
     /// `output` — see implementation.
-
     pub fn output(&self, id: u64, stderr: bool, lines: Option<u64>) -> Result<String> {
         let path = {
             let g = self.inner.lock();
@@ -858,7 +852,6 @@ impl Supervisor {
         }
     }
     /// `kill` — see implementation.
-
     pub fn kill(&self, id: u64, signal: Option<&str>) -> Result<bool> {
         let pid = {
             let g = self.inner.lock();

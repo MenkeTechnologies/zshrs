@@ -1422,7 +1422,6 @@ pub fn set_undo_limit_change(value: i64) -> i32 {
     0
 }
 /// `insert_str` — see implementation.
-
 pub fn insert_str(s: &str) {
     for c in s.chars() {
         ZLELINE

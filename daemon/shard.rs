@@ -235,18 +235,15 @@ impl Shard {
         }
     }
     /// `insert` — see implementation.
-
     pub fn insert(&mut self, fq_name: impl Into<String>, bytecode: Vec<u8>) {
         self.entries.insert(fq_name.into(), bytecode);
         self.header.entry_count = self.entries.len() as u32;
     }
     /// `len` — see implementation.
-
     pub fn len(&self) -> usize {
         self.entries.len()
     }
     /// `is_empty` — see implementation.
-
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -470,22 +467,18 @@ impl MmappedShard {
         unsafe { &*self.archived }
     }
     /// `header` — see implementation.
-
     pub fn header(&self) -> &ArchivedShardHeader {
         &self.shard().header
     }
     /// `generation` — see implementation.
-
     pub fn generation(&self) -> u64 {
         self.shard().header.generation.into()
     }
     /// `slug` — see implementation.
-
     pub fn slug(&self) -> &str {
         self.shard().header.slug.as_str()
     }
     /// `entry_count` — see implementation.
-
     pub fn entry_count(&self) -> u32 {
         self.shard().header.entry_count.into()
     }
@@ -501,7 +494,6 @@ impl MmappedShard {
         self.shard().entries.keys().map(|s| s.as_str())
     }
     /// `path` — see implementation.
-
     pub fn path(&self) -> &Path {
         &self.path
     }

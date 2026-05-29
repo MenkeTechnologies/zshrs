@@ -3283,99 +3283,84 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
 pub mod qualifiers {
     use std::os::unix::fs::MetadataExt;
     /// `is_regular` — see implementation.
-
     pub fn is_regular(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| m.is_file())
             .unwrap_or(false)
     }
     /// `is_directory` — see implementation.
-
     pub fn is_directory(path: &str) -> bool {
         std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
     }
     /// `is_symlink` — see implementation.
-
     pub fn is_symlink(path: &str) -> bool {
         std::fs::symlink_metadata(path)
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false)
     }
     /// `is_fifo` — see implementation.
-
     pub fn is_fifo(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFIFO as u32)
             .unwrap_or(false)
     }
     /// `is_socket` — see implementation.
-
     pub fn is_socket(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFSOCK as u32)
             .unwrap_or(false)
     }
     /// `is_block_device` — see implementation.
-
     pub fn is_block_device(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFBLK as u32)
             .unwrap_or(false)
     }
     /// `is_char_device` — see implementation.
-
     pub fn is_char_device(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFCHR as u32)
             .unwrap_or(false)
     }
     /// `is_setuid` — see implementation.
-
     pub fn is_setuid(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_ISUID as u32) != 0)
             .unwrap_or(false)
     }
     /// `is_setgid` — see implementation.
-
     pub fn is_setgid(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_ISGID as u32) != 0)
             .unwrap_or(false)
     }
     /// `is_sticky` — see implementation.
-
     pub fn is_sticky(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_ISVTX as u32) != 0)
             .unwrap_or(false)
     }
     /// `is_readable` — see implementation.
-
     pub fn is_readable(path: &str) -> bool {
         std::fs::metadata(path).is_ok() && std::fs::File::open(path).is_ok()
     }
     /// `is_writable` — see implementation.
-
     pub fn is_writable(path: &str) -> bool {
         std::fs::OpenOptions::new().write(true).open(path).is_ok()
     }
     /// `is_executable` — see implementation.
-
     pub fn is_executable(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & 0o111) != 0)
             .unwrap_or(false)
     }
     /// `size_matches` — see implementation.
-
     pub fn size_matches(path: &str, size: u64, cmp: std::cmp::Ordering) -> bool {
         std::fs::metadata(path)
             .map(|m| m.len().cmp(&size) == cmp)
             .unwrap_or(false)
     }
     /// `mtime_matches` — see implementation.
-
     pub fn mtime_matches(path: &str, secs: i64, cmp: std::cmp::Ordering) -> bool {
         std::fs::metadata(path)
             .and_then(|m| m.modified())
@@ -3386,21 +3371,18 @@ pub mod qualifiers {
             .unwrap_or(false)
     }
     /// `uid_matches` — see implementation.
-
     pub fn uid_matches(path: &str, uid: u32) -> bool {
         std::fs::metadata(path)
             .map(|m| m.uid() == uid)
             .unwrap_or(false)
     }
     /// `gid_matches` — see implementation.
-
     pub fn gid_matches(path: &str, gid: u32) -> bool {
         std::fs::metadata(path)
             .map(|m| m.gid() == gid)
             .unwrap_or(false)
     }
     /// `nlinks_matches` — see implementation.
-
     pub fn nlinks_matches(path: &str, nlinks: u64, cmp: std::cmp::Ordering) -> bool {
         std::fs::metadata(path)
             .map(|m| m.nlink().cmp(&nlinks) == cmp)

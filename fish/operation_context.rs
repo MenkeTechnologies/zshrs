@@ -89,7 +89,6 @@ impl<'a> OperationContext<'a> {
         }
     }
     /// `test_only_foreground` — see implementation.
-
     pub fn test_only_foreground(
         parser: &'a Parser,
         vars: &'a dyn Environment,
@@ -113,7 +112,6 @@ impl<'a> OperationContext<'a> {
         }
     }
     /// `background_with_cancel_checker` — see implementation.
-
     pub fn background_with_cancel_checker(
         vars: &'a dyn Environment,
         cancel_checker: CancelChecker,
@@ -127,7 +125,6 @@ impl<'a> OperationContext<'a> {
         }
     }
     /// `background_interruptible` — see implementation.
-
     pub fn background_interruptible(env: &dyn Environment) -> OperationContext<'_> {
         OperationContext::background_with_cancel_checker(
             env,
@@ -136,7 +133,6 @@ impl<'a> OperationContext<'a> {
         )
     }
     /// `has_parser` — see implementation.
-
     pub fn has_parser(&self) -> bool {
         matches!(self.vars, Vars::Parser(_) | Vars::TestOnly(_, _))
     }

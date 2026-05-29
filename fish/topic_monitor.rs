@@ -66,7 +66,6 @@ impl GenerationsList {
     }
 }
 /// `Generation` type alias.
-
 pub type Generation = u64;
 
 impl FloggableDebug for Topic {}
@@ -74,7 +73,6 @@ impl FloggableDebug for Topic {}
 /// A generation value which indicates the topic is not of interest.
 pub const INVALID_GENERATION: Generation = u64::MAX;
 /// `all_topics` — see implementation.
-
 pub fn all_topics() -> [Topic; 3] {
     [Topic::SigHupIntTerm, Topic::SigChld, Topic::InternalExit]
 }
@@ -267,7 +265,6 @@ impl BinarySemaphore {
         }
     }
     /// `die` — see implementation.
-
     pub fn die(&self, msg: &str) {
         perror(msg);
         panic!("die");
@@ -324,7 +321,6 @@ struct data_t {
 const STATUS_NEEDS_WAKEUP: u8 = 128;
 type StatusBits = u8;
 /// `TopicMonitor` — see fields for layout.
-
 #[derive(Default)]
 pub struct TopicMonitor {
     /// `data_` field.
@@ -369,7 +365,6 @@ impl TopicMonitor {
         }
     }
     /// `post` — see implementation.
-
     pub fn post(&self, topic: Topic) {
         // Beware, we may be in a signal handler!
         // Atomically update the pending topics.
@@ -603,12 +598,10 @@ impl TopicMonitor {
     }
 }
 /// `topic_monitor_init` — see implementation.
-
 pub fn topic_monitor_init() {
     TopicMonitor::initialize();
 }
 /// `topic_monitor_principal` — see implementation.
-
 pub fn topic_monitor_principal() -> &'static TopicMonitor {
     unsafe {
         assert!(

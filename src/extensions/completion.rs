@@ -9,13 +9,11 @@
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
 /// `CompletionEngine` — see fields for layout.
-
 pub struct CompletionEngine {
     /// `conn` field.
     conn: Connection,
 }
 /// `Completion` — see fields for layout.
-
 #[derive(Debug, Clone)]
 pub struct Completion {
     /// `name` field.
@@ -28,7 +26,6 @@ pub struct Completion {
     pub frequency: u32,
 }
 /// `CompletionKind` — see variants.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionKind {
     /// `Command` variant.
@@ -91,7 +88,6 @@ impl CompletionEngine {
         Ok(engine)
     }
     /// `in_memory` — see implementation.
-
     pub fn in_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
         let engine = Self { conn };
@@ -150,7 +146,6 @@ impl CompletionEngine {
         Ok(())
     }
     /// `add_completion` — see implementation.
-
     pub fn add_completion(
         &self,
         name: &str,
@@ -164,7 +159,6 @@ impl CompletionEngine {
         Ok(())
     }
     /// `add_completions` — see implementation.
-
     pub fn add_completions(
         &self,
         completions: &[(String, CompletionKind, Option<String>)],
@@ -182,7 +176,6 @@ impl CompletionEngine {
         Ok(())
     }
     /// `increment_frequency` — see implementation.
-
     pub fn increment_frequency(&self, name: &str) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE completions SET frequency = frequency + 1 WHERE name = ?1",
@@ -191,7 +184,6 @@ impl CompletionEngine {
         Ok(())
     }
     /// `search` — see implementation.
-
     pub fn search(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<Completion>> {
         if query.is_empty() {
             return self.get_top_by_frequency(limit);
@@ -269,13 +261,11 @@ impl CompletionEngine {
         rows.collect()
     }
     /// `count` — see implementation.
-
     pub fn count(&self) -> rusqlite::Result<usize> {
         self.conn
             .query_row("SELECT COUNT(*) FROM completions", [], |row| row.get(0))
     }
     /// `index_system_commands` — see implementation.
-
     pub fn index_system_commands(&self) -> rusqlite::Result<usize> {
         let path = std::env::var("PATH").unwrap_or_default();
         let mut completions = Vec::new();
@@ -299,7 +289,6 @@ impl CompletionEngine {
         Ok(count)
     }
     /// `index_shell_builtins` — see implementation.
-
     pub fn index_shell_builtins(&self) -> rusqlite::Result<usize> {
         let builtins = [
             ("cd", "Change directory"),

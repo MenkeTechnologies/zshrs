@@ -652,7 +652,6 @@ pub fn parse_pattern<'a>(
     (ret, rest, len, false)
 }
 /// `parse_class` — see implementation.
-
 pub fn parse_class<'a>(
     p: &mut Cpattern, // c:480
     iptr: &'a str,
@@ -1708,7 +1707,6 @@ pub fn get_complist(pm: *mut param) -> String {
 /// mutate completion state via `${compstate[...]}`.
 pub const COMPSTATENAME: &str = "compstate"; // c:1294
 /// `CVT_RANGENUM` constant.
-
 pub const CVT_RANGENUM: i32 = 0; // c:855
 /// `CVT_RANGEPAT` constant.
 pub const CVT_RANGEPAT: i32 = 1; // c:856

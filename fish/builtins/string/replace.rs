@@ -5,7 +5,6 @@ use pcre2::utf32::{Regex, RegexBuilder};
 use super::*;
 use fish_feature_flags::{feature_test, FeatureFlag};
 /// `Replace` — see fields for layout.
-
 #[derive(Default)]
 pub struct Replace<'args> {
     /// `all` field.

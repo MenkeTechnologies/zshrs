@@ -3646,7 +3646,6 @@ fn goto_compend(ret: i32) -> i32 {
 // violated Rule C (every decl in its mirroring C file). Callers in
 // this module now route through the canonical ported.
 /// `IN_NOTHING_LW` constant.
-
 pub const IN_NOTHING_LW: i32 = 0; // lex.h
 /// `IN_CMD_LW` constant.
 pub const IN_CMD_LW: i32 = 1; // lex.h

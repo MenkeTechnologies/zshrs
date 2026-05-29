@@ -49,7 +49,6 @@ impl From<EnvMode> for u16 {
     }
 }
 /// `EnvSetMode` — see fields for layout.
-
 #[derive(Copy, Clone, Default)]
 pub struct EnvSetMode {
     /// `mode` field.
@@ -61,7 +60,6 @@ pub struct EnvSetMode {
     /// a var that should not be modified by direct user action; e.g., a read-only var.
     pub user: bool,
     /// `is_repainting` field.
-
     pub is_repainting: bool,
 }
 
@@ -256,7 +254,6 @@ impl EnvVar {
     }
 }
 /// `VarTable` type alias.
-
 pub type VarTable = HashMap<WString, EnvVar>;
 
 mod electric {
@@ -266,7 +263,6 @@ mod electric {
     pub(super) type ElectricVarFlags = u8;
 }
 /// `ElectricVar` — see fields for layout.
-
 pub struct ElectricVar {
     /// `name` field.
     pub name: &'static wstr,
@@ -274,7 +270,6 @@ pub struct ElectricVar {
     flags: electric::ElectricVarFlags,
 }
 /// `FISH_TERMINAL_COLOR_THEME_VAR` constant.
-
 pub const FISH_TERMINAL_COLOR_THEME_VAR: &wstr = L!("fish_terminal_color_theme");
 
 // Keep sorted alphabetically
@@ -307,17 +302,14 @@ impl ElectricVar {
         }
     }
     /// `readonly` — see implementation.
-
     pub fn readonly(&self) -> bool {
         self.flags & electric::READONLY != 0
     }
     /// `computed` — see implementation.
-
     pub fn computed(&self) -> bool {
         self.flags & electric::COMPUTED != 0
     }
     /// `exports` — see implementation.
-
     pub fn exports(&self) -> bool {
         self.flags & electric::EXPORTS != 0
     }

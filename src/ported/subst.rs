@@ -84,21 +84,20 @@ use crate::ported::zsh_h::PAT_HEAPDUP;
 use crate::ported::zsh_h::{
     hashnode, isset, param, Bang, Bnull, Bnullkeep, Dash, Dnull, Equals, Hat, Inang, Inbrace,
     Inbrack, Inpar, Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar,
-    Outparmath, Param, Pound, Quest, Qstring, Qtick, Snull, Star, Stringg, Tick, Tilde,
-    ALIAS_GLOBAL, ALIAS_SUFFIX, CASMOD_NONE,
-    DISABLED, HASHED, HISTSUBSTPATTERN, IGNOREBRACES, KSHTYPESET, LEXFLAGS_ACTIVE,
-    LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP, LEXFLAGS_NEWLINE, MN_FLOAT, MN_UNSET,
-    MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START, PM_ARRAY, PM_EFLOAT, PM_EXPORTED,
-    PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF,
-    PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_UNIQUE, PM_UPPER,
-    PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK,
-    PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET,
-    PUSHDMINUS, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_DOLLARS, QT_NONE, QT_QUOTEDZPUTS, QT_SINGLE,
-    QT_SINGLE_OPTIONAL, RCEXPANDPARAM, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS,
-    SHFILEEXPANSION, SHWORDSPLIT, SORTIT_ANYOLDHOW, SORTIT_BACKWARDS, SORTIT_IGNORING_CASE,
-    SORTIT_NUMERICALLY, SORTIT_NUMERICALLY_SIGNED, SORTIT_SOMEHOW, SUB_ALL, SUB_BIND, SUB_DOSUBST,
-    SUB_EGLOB, SUB_EIND, SUB_END, SUB_GLOBAL, SUB_LEN, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST,
-    SUB_RETFAIL, SUB_START, SUB_SUBSTR,
+    Outparmath, Param, Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
+    ALIAS_GLOBAL, ALIAS_SUFFIX, CASMOD_NONE, DISABLED, HASHED, HISTSUBSTPATTERN, IGNOREBRACES,
+    KSHTYPESET, LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP, LEXFLAGS_NEWLINE,
+    MN_FLOAT, MN_UNSET, MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START, PM_ARRAY,
+    PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT,
+    PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED,
+    PM_UNIQUE, PM_UPPER, PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT,
+    PREFORK_NO_UNTOK, PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP,
+    PREFORK_TYPESET, PUSHDMINUS, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_DOLLARS, QT_NONE,
+    QT_QUOTEDZPUTS, QT_SINGLE, QT_SINGLE_OPTIONAL, RCEXPANDPARAM, SCANPM_NONAMEREF,
+    SCANPM_WANTKEYS, SCANPM_WANTVALS, SHFILEEXPANSION, SHWORDSPLIT, SORTIT_ANYOLDHOW,
+    SORTIT_BACKWARDS, SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY, SORTIT_NUMERICALLY_SIGNED,
+    SORTIT_SOMEHOW, SUB_ALL, SUB_BIND, SUB_DOSUBST, SUB_EGLOB, SUB_EIND, SUB_END, SUB_GLOBAL,
+    SUB_LEN, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_RETFAIL, SUB_START, SUB_SUBSTR,
 };
 use crate::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_UPPER};
 use crate::DPUTS;
@@ -3057,12 +3056,12 @@ pub fn paramsubst(
                             break;
                         }
                         let del = body_chars[idx]; // c:2325 del0 = s
-                        // c:Src/subst.c:1366-1391 get_strarg — paired
-                        // bracket delimiters: `(…)`, `[…]`, `{…}`,
-                        // `<…>`. `${(l[3][_])arr}` opens groups with
-                        // `[` and closes with `]`. Without the mapping
-                        // the (l)/(r) parser scanned for a second `[`
-                        // and bailed with "bad substitution".
+                                                   // c:Src/subst.c:1366-1391 get_strarg — paired
+                                                   // bracket delimiters: `(…)`, `[…]`, `{…}`,
+                                                   // `<…>`. `${(l[3][_])arr}` opens groups with
+                                                   // `[` and closes with `]`. Without the mapping
+                                                   // the (l)/(r) parser scanned for a second `[`
+                                                   // and bailed with "bad substitution".
                         let close_del = match del {
                             '(' => ')',
                             '[' => ']',
@@ -3431,11 +3430,11 @@ pub fn paramsubst(
                             return (String::new(), new_pos, vec![]);
                         }
                         let del = body_chars[idx]; // c:2303 (get_strarg del)
-                        // c:Src/subst.c:1366-1391 get_strarg — paired
-                        // delimiters: `(…)`, `[…]`, `{…}`, `<…>` use
-                        // matching close brackets instead of repeated
-                        // open. Previously `${(j[, ])arr}` errored
-                        // because the loop searched for another `[`.
+                                                   // c:Src/subst.c:1366-1391 get_strarg — paired
+                                                   // delimiters: `(…)`, `[…]`, `{…}`, `<…>` use
+                                                   // matching close brackets instead of repeated
+                                                   // open. Previously `${(j[, ])arr}` errored
+                                                   // because the loop searched for another `[`.
                         let close_del = match del {
                             '(' => ')',
                             '[' => ']',
@@ -3664,11 +3663,11 @@ pub fn paramsubst(
           // passthru: unquoted nested `${…}` also reaches paramsubst
           // as `Stringg` (\u{85}) since the lexer emits Stringg for
           // `$` inside braces; accept it too.
-        // c:Src/subst.c:2655 — nested `${…}` / `$(…)` / `$NAME` body.
-        // BUT a bare `$` followed directly by `}` / `)` / Outbrace /
-        // Outpar is the special-parameter `$$` shape (e.g. `${#$}` =
-        // length of PID), NOT a nested subexp. Only enter the
-        // subexp path when the `$` has actual content after it.
+          // c:Src/subst.c:2655 — nested `${…}` / `$(…)` / `$NAME` body.
+          // BUT a bare `$` followed directly by `}` / `)` / Outbrace /
+          // Outpar is the special-parameter `$$` shape (e.g. `${#$}` =
+          // length of PID), NOT a nested subexp. Only enter the
+          // subexp path when the `$` has actual content after it.
         let next_after_dollar = body_chars.get(idx + 1).copied();
         let is_bare_special_dollar = matches!(
             next_after_dollar,
@@ -5576,55 +5575,50 @@ pub fn paramsubst(
                 // string. Detected via literal `(#m)` substring in
                 // the original pattern; the (#b) and (#m) tests
                 // require this re-evaluation path.
-                let pat_has_m = pat_after_anchor.contains("(#m)")
-                    || pat_after_anchor.contains("(#b)");
-                let eval_repl_for_match =
-                    |span_text: &str, span_start_byte: usize| -> String {
-                        if !pat_has_m {
-                            return repl.clone();
-                        }
-                        // Set $MATCH / $MBEGIN / $MEND so the singsub
-                        // pass below sees the current capture state.
-                        crate::ported::params::setsparam("MATCH", span_text);
-                        let base = if isset(crate::ported::zsh_h::KSHARRAYS) {
-                            0i64
-                        } else {
-                            1
-                        };
-                        crate::ported::params::setiparam(
-                            "MBEGIN",
-                            span_start_byte as i64 + base,
-                        );
-                        crate::ported::params::setiparam(
-                            "MEND",
-                            (span_start_byte as i64 + span_text.len() as i64 + base)
-                                .saturating_sub(1),
-                        );
-                        let saved_skip = SKIP_FILESUB.with(|c| c.get());
-                        SKIP_FILESUB.with(|c| c.set(true));
-                        let s = untokenize(&singsub(&raw_repl));
-                        SKIP_FILESUB.with(|c| c.set(saved_skip));
-                        // Same `\X` → `X` strip as the precomputed
-                        // path above so the two stay in sync.
-                        let mut out = String::with_capacity(s.len());
-                        let mut it = s.chars().peekable();
-                        while let Some(c) = it.next() {
-                            if c == '\\' {
-                                if let Some(&nx) = it.peek() {
-                                    if nx == '\\' {
-                                        out.push('\\');
-                                        it.next();
-                                        continue;
-                                    }
-                                    out.push(nx);
+                let pat_has_m =
+                    pat_after_anchor.contains("(#m)") || pat_after_anchor.contains("(#b)");
+                let eval_repl_for_match = |span_text: &str, span_start_byte: usize| -> String {
+                    if !pat_has_m {
+                        return repl.clone();
+                    }
+                    // Set $MATCH / $MBEGIN / $MEND so the singsub
+                    // pass below sees the current capture state.
+                    crate::ported::params::setsparam("MATCH", span_text);
+                    let base = if isset(crate::ported::zsh_h::KSHARRAYS) {
+                        0i64
+                    } else {
+                        1
+                    };
+                    crate::ported::params::setiparam("MBEGIN", span_start_byte as i64 + base);
+                    crate::ported::params::setiparam(
+                        "MEND",
+                        (span_start_byte as i64 + span_text.len() as i64 + base).saturating_sub(1),
+                    );
+                    let saved_skip = SKIP_FILESUB.with(|c| c.get());
+                    SKIP_FILESUB.with(|c| c.set(true));
+                    let s = untokenize(&singsub(&raw_repl));
+                    SKIP_FILESUB.with(|c| c.set(saved_skip));
+                    // Same `\X` → `X` strip as the precomputed
+                    // path above so the two stay in sync.
+                    let mut out = String::with_capacity(s.len());
+                    let mut it = s.chars().peekable();
+                    while let Some(c) = it.next() {
+                        if c == '\\' {
+                            if let Some(&nx) = it.peek() {
+                                if nx == '\\' {
+                                    out.push('\\');
                                     it.next();
                                     continue;
                                 }
+                                out.push(nx);
+                                it.next();
+                                continue;
                             }
-                            out.push(c);
                         }
-                        out
-                    };
+                        out.push(c);
+                    }
+                    out
+                };
                 // Per-element replace for arrays — zsh treats each
                 // element as a separate match target, preserving the
                 // array shape. \${(@)arr//pat/repl} keeps element
@@ -5695,8 +5689,7 @@ pub fn paramsubst(
                         }
                         if let Some(e) = m {
                             let span_text: String = cv[q..e].iter().collect();
-                            let span_byte =
-                                cv[..q].iter().map(|c| c.len_utf8()).sum::<usize>();
+                            let span_byte = cv[..q].iter().map(|c| c.len_utf8()).sum::<usize>();
                             o.push_str(&eval_repl_for_match(&span_text, span_byte));
                             q = if e == q { q + 1 } else { e };
                         } else {
@@ -6647,14 +6640,30 @@ pub fn paramsubst(
                 } else {
                     "scalar".to_string()
                 };
-                if f & PM_READONLY != 0 { tag.push_str("-readonly"); }
-                if f & PM_TAGGED != 0   { tag.push_str("-tag"); }
-                if f & PM_TIED != 0     { tag.push_str("-tied"); }
-                if f & PM_EXPORTED != 0 { tag.push_str("-export"); }
-                if f & PM_UNIQUE != 0   { tag.push_str("-unique"); }
-                if f & PM_HIDE != 0     { tag.push_str("-hide"); }
-                if f & PM_HIDEVAL != 0  { tag.push_str("-hideval"); }
-                if f & PM_SPECIAL != 0  { tag.push_str("-special"); }
+                if f & PM_READONLY != 0 {
+                    tag.push_str("-readonly");
+                }
+                if f & PM_TAGGED != 0 {
+                    tag.push_str("-tag");
+                }
+                if f & PM_TIED != 0 {
+                    tag.push_str("-tied");
+                }
+                if f & PM_EXPORTED != 0 {
+                    tag.push_str("-export");
+                }
+                if f & PM_UNIQUE != 0 {
+                    tag.push_str("-unique");
+                }
+                if f & PM_HIDE != 0 {
+                    tag.push_str("-hide");
+                }
+                if f & PM_HIDEVAL != 0 {
+                    tag.push_str("-hideval");
+                }
+                if f & PM_SPECIAL != 0 {
+                    tag.push_str("-special");
+                }
                 tag
             });
             // c:2814 — read PM_* flags directly from paramtab and
@@ -6662,288 +6671,306 @@ pub fn paramsubst(
             // PM_TYPE` dispatch at subst.c:2814-2900.
             value = if let Some(tag) = partab_array_tag {
                 tag
-            } else { paramtab()
-                .read() // c:2814
-                .ok() // c:2814
-                .and_then(|tab| {
-                    tab.get(&var_name).map(|pm| {
-                        // c:2814
-                        let f = pm.node.flags as u32; // c:2814
-                                                      // c:Src/params.c paramtype-from-flags read.
-                                                      // For PM_SPECIAL params, the pm_type bits aren't
-                                                      // always carried on the paramtab entry (env-
-                                                      // imported specials like SHLVL come in as
-                                                      // PM_SCALAR even though IPDEF5 declares them
-                                                      // PM_INTEGER). Overlay the canonical pm_type
-                                                      // from special_params so (t) reads match zsh
-                                                      // (`integer-export-special` instead of
-                                                      // `scalar-special` for $SHLVL). Also detect
-                                                      // env-presence to set PM_EXPORTED on params
-                                                      // that came in via the environment but whose
-                                                      // paramtab entry didn't carry the flag (set-
-                                                      // before-export sequence loses the flag).
-                        let f_overlay = if (f & PM_SPECIAL) != 0 {
-                            let mut bits = f;
-                            if let Some(sp) = crate::ported::params::special_params
-                                .iter()
-                                .find(|sp| sp.name == var_name.as_str())
+            } else {
+                paramtab()
+                    .read() // c:2814
+                    .ok() // c:2814
+                    .and_then(|tab| {
+                        tab.get(&var_name).map(|pm| {
+                            // c:2814
+                            let f = pm.node.flags as u32; // c:2814
+                                                          // c:Src/params.c paramtype-from-flags read.
+                                                          // For PM_SPECIAL params, the pm_type bits aren't
+                                                          // always carried on the paramtab entry (env-
+                                                          // imported specials like SHLVL come in as
+                                                          // PM_SCALAR even though IPDEF5 declares them
+                                                          // PM_INTEGER). Overlay the canonical pm_type
+                                                          // from special_params so (t) reads match zsh
+                                                          // (`integer-export-special` instead of
+                                                          // `scalar-special` for $SHLVL). Also detect
+                                                          // env-presence to set PM_EXPORTED on params
+                                                          // that came in via the environment but whose
+                                                          // paramtab entry didn't carry the flag (set-
+                                                          // before-export sequence loses the flag).
+                            let f_overlay = if (f & PM_SPECIAL) != 0 {
+                                let mut bits = f;
+                                if let Some(sp) = crate::ported::params::special_params
+                                    .iter()
+                                    .find(|sp| sp.name == var_name.as_str())
+                                {
+                                    bits |= sp.pm_type as u32;
+                                    // c:Src/params.c — overlay the canonical
+                                    // pm_flags too (PM_READONLY for #/?,
+                                    // PM_TIED for path/PATH etc.). Without
+                                    // this, \${(t)?} read "integer-special"
+                                    // instead of "integer-readonly-special".
+                                    bits |= sp.pm_flags as u32;
+                                }
+                                // c:Src/params.c PM_EXPORTED — present iff
+                                // the name has a non-null `pm->env` entry,
+                                // which mirrors std::env::var Ok in Rust.
+                                if std::env::var(&var_name).is_ok() {
+                                    bits |= PM_EXPORTED;
+                                }
+                                bits
+                            } else {
+                                f
+                            };
+                            let f = f_overlay;
+                            let val = if f & PM_HASHED != 0 {
+                                "association"
+                            }
+                            // c:2823 case PM_HASHED
+                            else if f & PM_ARRAY != 0 {
+                                "array"
+                            }
+                            // c:2819 case PM_ARRAY
+                            else if f & PM_INTEGER != 0 {
+                                "integer"
+                            }
+                            // c:2820 case PM_INTEGER
+                            else if f & (PM_EFLOAT | PM_FFLOAT) != 0 {
+                                "float"
+                            }
+                            // c:2821-2822 PM_EFLOAT|PM_FFLOAT
+                            else if f & PM_NAMEREF != 0 {
+                                "nameref"
+                            }
+                            // c:2818 case PM_NAMEREF
+                            else {
+                                "scalar"
+                            }; // c:2817 case PM_SCALAR
+                            let val = dupstring(val); // c:2825 val = dupstring(val)
+                            let val = if pm.level != 0
+                            // c:2826
                             {
-                                bits |= sp.pm_type as u32;
-                                // c:Src/params.c — overlay the canonical
-                                // pm_flags too (PM_READONLY for #/?,
-                                // PM_TIED for path/PATH etc.). Without
-                                // this, \${(t)?} read "integer-special"
-                                // instead of "integer-readonly-special".
-                                bits |= sp.pm_flags as u32;
+                                dyncat(&val, "-local")
                             }
-                            // c:Src/params.c PM_EXPORTED — present iff
-                            // the name has a non-null `pm->env` entry,
-                            // which mirrors std::env::var Ok in Rust.
-                            if std::env::var(&var_name).is_ok() {
-                                bits |= PM_EXPORTED;
+                            // c:2827
+                            else {
+                                val
+                            }; // c:2826
+                            let val = if f & PM_LEFT != 0
+                            // c:2828
+                            {
+                                dyncat(&val, "-left")
                             }
-                            bits
-                        } else {
-                            f
-                        };
-                        let f = f_overlay;
-                        let val = if f & PM_HASHED != 0 {
-                            "association"
-                        }
-                        // c:2823 case PM_HASHED
-                        else if f & PM_ARRAY != 0 {
-                            "array"
-                        }
-                        // c:2819 case PM_ARRAY
-                        else if f & PM_INTEGER != 0 {
-                            "integer"
-                        }
-                        // c:2820 case PM_INTEGER
-                        else if f & (PM_EFLOAT | PM_FFLOAT) != 0 {
-                            "float"
-                        }
-                        // c:2821-2822 PM_EFLOAT|PM_FFLOAT
-                        else if f & PM_NAMEREF != 0 {
-                            "nameref"
-                        }
-                        // c:2818 case PM_NAMEREF
-                        else {
-                            "scalar"
-                        }; // c:2817 case PM_SCALAR
-                        let val = dupstring(val); // c:2825 val = dupstring(val)
-                        let val = if pm.level != 0
-                        // c:2826
-                        {
-                            dyncat(&val, "-local")
-                        }
-                        // c:2827
-                        else {
-                            val
-                        }; // c:2826
-                        let val = if f & PM_LEFT != 0
-                        // c:2828
-                        {
-                            dyncat(&val, "-left")
-                        }
-                        // c:2829
-                        else {
-                            val
-                        }; // c:2828
-                        let val = if f & PM_RIGHT_B != 0
-                        // c:2830
-                        {
-                            dyncat(&val, "-right_blanks")
-                        }
-                        // c:2831
-                        else {
-                            val
-                        }; // c:2830
-                        let val = if f & PM_RIGHT_Z != 0
-                        // c:2832
-                        {
-                            dyncat(&val, "-right_zeros")
-                        }
-                        // c:2833
-                        else {
-                            val
-                        }; // c:2832
-                        let val = if f & PM_LOWER != 0
-                        // c:2834
-                        {
-                            dyncat(&val, "-lower")
-                        }
-                        // c:2835
-                        else {
-                            val
-                        }; // c:2834
-                        let val = if f & PM_UPPER != 0
-                        // c:2836
-                        {
-                            dyncat(&val, "-upper")
-                        }
-                        // c:2837
-                        else {
-                            val
-                        }; // c:2836
-                        let val = if f & PM_READONLY != 0
-                        // c:2838
-                        {
-                            dyncat(&val, "-readonly")
-                        }
-                        // c:2839
-                        else {
-                            val
-                        }; // c:2838
-                        let val = if f & PM_TAGGED != 0
-                        // c:2840
-                        {
-                            dyncat(&val, "-tag")
-                        }
-                        // c:2841
-                        else {
-                            val
-                        }; // c:2840
-                        let val = if f & PM_TIED != 0
-                        // c:2842
-                        {
-                            dyncat(&val, "-tied")
-                        }
-                        // c:2843
-                        else {
-                            val
-                        }; // c:2842
-                        let val = if f & PM_EXPORTED != 0
-                        // c:2844
-                        {
-                            dyncat(&val, "-export")
-                        }
-                        // c:2845
-                        else {
-                            val
-                        }; // c:2844
-                        let val = if f & PM_UNIQUE != 0
-                        // c:2846
-                        {
-                            dyncat(&val, "-unique")
-                        }
-                        // c:2847
-                        else {
-                            val
-                        }; // c:2846
-                        let val = if f & PM_HIDE != 0
-                        // c:2848
-                        {
-                            dyncat(&val, "-hide")
-                        }
-                        // c:2849
-                        else {
-                            val
-                        }; // c:2848
-                        let val = if f & PM_HIDEVAL != 0
-                        // c:2850
-                        {
-                            dyncat(&val, "-hideval")
-                        }
-                        // c:2851
-                        else {
-                            val
-                        }; // c:2850
-                        let val = if f & PM_SPECIAL != 0
-                        // c:2852
-                        {
-                            dyncat(&val, "-special")
-                        }
-                        // c:2853
-                        else {
-                            val
-                        }; // c:2852
-                        val // c:2854
+                            // c:2829
+                            else {
+                                val
+                            }; // c:2828
+                            let val = if f & PM_RIGHT_B != 0
+                            // c:2830
+                            {
+                                dyncat(&val, "-right_blanks")
+                            }
+                            // c:2831
+                            else {
+                                val
+                            }; // c:2830
+                            let val = if f & PM_RIGHT_Z != 0
+                            // c:2832
+                            {
+                                dyncat(&val, "-right_zeros")
+                            }
+                            // c:2833
+                            else {
+                                val
+                            }; // c:2832
+                            let val = if f & PM_LOWER != 0
+                            // c:2834
+                            {
+                                dyncat(&val, "-lower")
+                            }
+                            // c:2835
+                            else {
+                                val
+                            }; // c:2834
+                            let val = if f & PM_UPPER != 0
+                            // c:2836
+                            {
+                                dyncat(&val, "-upper")
+                            }
+                            // c:2837
+                            else {
+                                val
+                            }; // c:2836
+                            let val = if f & PM_READONLY != 0
+                            // c:2838
+                            {
+                                dyncat(&val, "-readonly")
+                            }
+                            // c:2839
+                            else {
+                                val
+                            }; // c:2838
+                            let val = if f & PM_TAGGED != 0
+                            // c:2840
+                            {
+                                dyncat(&val, "-tag")
+                            }
+                            // c:2841
+                            else {
+                                val
+                            }; // c:2840
+                            let val = if f & PM_TIED != 0
+                            // c:2842
+                            {
+                                dyncat(&val, "-tied")
+                            }
+                            // c:2843
+                            else {
+                                val
+                            }; // c:2842
+                            let val = if f & PM_EXPORTED != 0
+                            // c:2844
+                            {
+                                dyncat(&val, "-export")
+                            }
+                            // c:2845
+                            else {
+                                val
+                            }; // c:2844
+                            let val = if f & PM_UNIQUE != 0
+                            // c:2846
+                            {
+                                dyncat(&val, "-unique")
+                            }
+                            // c:2847
+                            else {
+                                val
+                            }; // c:2846
+                            let val = if f & PM_HIDE != 0
+                            // c:2848
+                            {
+                                dyncat(&val, "-hide")
+                            }
+                            // c:2849
+                            else {
+                                val
+                            }; // c:2848
+                            let val = if f & PM_HIDEVAL != 0
+                            // c:2850
+                            {
+                                dyncat(&val, "-hideval")
+                            }
+                            // c:2851
+                            else {
+                                val
+                            }; // c:2850
+                            let val = if f & PM_SPECIAL != 0
+                            // c:2852
+                            {
+                                dyncat(&val, "-special")
+                            }
+                            // c:2853
+                            else {
+                                val
+                            }; // c:2852
+                            val // c:2854
+                        })
                     })
-                })
-                .unwrap_or_else(|| {
-                    // c:Src/Modules/parameter.c SPECIALPMDEF entries
-                    // (historywords / funcstack / patchars / dirstack /
-                    // …) live in PARTAB_ARRAY, NOT paramtab. Their
-                    // flags include PM_ARRAY plus the implicit
-                    // PM_SPECIAL | PM_HIDE | PM_HIDEVAL the C macro
-                    // adds at zsh.h:2123. Build the type tag from those
-                    // here so `(t)historywords` reads
-                    // `array-readonly-hide-hideval-special` matching
-                    // zsh.
-                    if let Some(f) = crate::vm_helper::partab_array_flags(&var_name) {
-                        let mut tag = if f & PM_HASHED != 0 {
-                            "association".to_string()
-                        } else if f & PM_ARRAY != 0 {
-                            "array".to_string()
-                        } else if f & PM_INTEGER != 0 {
-                            "integer".to_string()
-                        } else {
-                            "scalar".to_string()
-                        };
-                        if f & PM_READONLY != 0 { tag.push_str("-readonly"); }
-                        if f & PM_TAGGED != 0   { tag.push_str("-tag"); }
-                        if f & PM_TIED != 0     { tag.push_str("-tied"); }
-                        if f & PM_EXPORTED != 0 { tag.push_str("-export"); }
-                        if f & PM_UNIQUE != 0   { tag.push_str("-unique"); }
-                        if f & PM_HIDE != 0     { tag.push_str("-hide"); }
-                        if f & PM_HIDEVAL != 0  { tag.push_str("-hideval"); }
-                        if f & PM_SPECIAL != 0  { tag.push_str("-special"); }
-                        return tag;
-                    }
-                    if assoc_contains(&var_name) {
-                        "association".to_string() // c:2814
-                    } else if arrays_contains(&var_name) {
-                        "array".to_string() // c:2814
-                    } else if matches!(
-                        var_name.as_str(),
-                        "aliases"
-                            | "galiases"
-                            | "saliases"
-                            | "dis_aliases"
-                            | "dis_galiases"
-                            | "dis_saliases"
-                            | "functions"
-                            | "dis_functions"
-                            | "builtins"
-                            | "dis_builtins"
-                            | "reswords"
-                            | "dis_reswords"
-                            | "options"
-                            | "commands"
-                            | "modules"
-                            | "nameddirs"
-                            | "userdirs"
-                            | "jobtexts"
-                            | "jobdirs"
-                            | "jobstates"
-                            | "parameters"
-                            | "dirstack"
-                            | "errnos"
-                            | "sysparams"
-                            | "mapfile"
-                    ) {
-                        // Magic-assoc params — type is association.
-                        // Direct port of subst.c:2814 paramtab
-                        // lookup which finds the magic-assoc entry
-                        // and returns PM_HASHED type tag.
-                        "association".to_string() // c:2814
-                    } else if is_set {
-                        // c:Src/params.c — env-only vars (paramtab
-                        // miss + env::var hit) carry PM_EXPORTED.
-                        // C zsh imports every env var at startup so
-                        // the paramtab path catches them; Rust's
-                        // lazy import means env-only vars miss the
-                        // paramtab arm and land here. Tag with
-                        // `-export` to match zsh.
-                        if std::env::var(&var_name).is_ok() {
-                            "scalar-export".to_string()
-                        } else {
-                            "scalar".to_string()
+                    .unwrap_or_else(|| {
+                        // c:Src/Modules/parameter.c SPECIALPMDEF entries
+                        // (historywords / funcstack / patchars / dirstack /
+                        // …) live in PARTAB_ARRAY, NOT paramtab. Their
+                        // flags include PM_ARRAY plus the implicit
+                        // PM_SPECIAL | PM_HIDE | PM_HIDEVAL the C macro
+                        // adds at zsh.h:2123. Build the type tag from those
+                        // here so `(t)historywords` reads
+                        // `array-readonly-hide-hideval-special` matching
+                        // zsh.
+                        if let Some(f) = crate::vm_helper::partab_array_flags(&var_name) {
+                            let mut tag = if f & PM_HASHED != 0 {
+                                "association".to_string()
+                            } else if f & PM_ARRAY != 0 {
+                                "array".to_string()
+                            } else if f & PM_INTEGER != 0 {
+                                "integer".to_string()
+                            } else {
+                                "scalar".to_string()
+                            };
+                            if f & PM_READONLY != 0 {
+                                tag.push_str("-readonly");
+                            }
+                            if f & PM_TAGGED != 0 {
+                                tag.push_str("-tag");
+                            }
+                            if f & PM_TIED != 0 {
+                                tag.push_str("-tied");
+                            }
+                            if f & PM_EXPORTED != 0 {
+                                tag.push_str("-export");
+                            }
+                            if f & PM_UNIQUE != 0 {
+                                tag.push_str("-unique");
+                            }
+                            if f & PM_HIDE != 0 {
+                                tag.push_str("-hide");
+                            }
+                            if f & PM_HIDEVAL != 0 {
+                                tag.push_str("-hideval");
+                            }
+                            if f & PM_SPECIAL != 0 {
+                                tag.push_str("-special");
+                            }
+                            return tag;
                         }
-                    } else {
-                        String::new()
-                    }
-                })};
+                        if assoc_contains(&var_name) {
+                            "association".to_string() // c:2814
+                        } else if arrays_contains(&var_name) {
+                            "array".to_string() // c:2814
+                        } else if matches!(
+                            var_name.as_str(),
+                            "aliases"
+                                | "galiases"
+                                | "saliases"
+                                | "dis_aliases"
+                                | "dis_galiases"
+                                | "dis_saliases"
+                                | "functions"
+                                | "dis_functions"
+                                | "builtins"
+                                | "dis_builtins"
+                                | "reswords"
+                                | "dis_reswords"
+                                | "options"
+                                | "commands"
+                                | "modules"
+                                | "nameddirs"
+                                | "userdirs"
+                                | "jobtexts"
+                                | "jobdirs"
+                                | "jobstates"
+                                | "parameters"
+                                | "dirstack"
+                                | "errnos"
+                                | "sysparams"
+                                | "mapfile"
+                        ) {
+                            // Magic-assoc params — type is association.
+                            // Direct port of subst.c:2814 paramtab
+                            // lookup which finds the magic-assoc entry
+                            // and returns PM_HASHED type tag.
+                            "association".to_string() // c:2814
+                        } else if is_set {
+                            // c:Src/params.c — env-only vars (paramtab
+                            // miss + env::var hit) carry PM_EXPORTED.
+                            // C zsh imports every env var at startup so
+                            // the paramtab path catches them; Rust's
+                            // lazy import means env-only vars miss the
+                            // paramtab arm and land here. Tag with
+                            // `-export` to match zsh.
+                            if std::env::var(&var_name).is_ok() {
+                                "scalar-export".to_string()
+                            } else {
+                                "scalar".to_string()
+                            }
+                        } else {
+                            String::new()
+                        }
+                    })
+            };
             // c:2882-2883 — after wantt, C clears `v = NULL; isarr = 0;`
             // so the array-splat path at c:3950 doesn't fire on the
             // type string. Without this, ${(t)arr} would splat the
@@ -8629,13 +8656,7 @@ pub fn paramsubst(
                 let prefix: String = chars[..start_pos].iter().collect();
                 let suffix: String = chars[name_end..].iter().collect();
                 let rewritten = format!("{}${{#{}}}{}", prefix, name, suffix);
-                return paramsubst(
-                    &rewritten,
-                    prefix.chars().count(),
-                    qt,
-                    pf_flags,
-                    ret_flags,
-                );
+                return paramsubst(&rewritten, prefix.chars().count(), qt, pf_flags, ret_flags);
             }
             let value = arrays_get("@") // c:1625
                 .map(|a| a.len().to_string()) // c:1625

@@ -622,7 +622,6 @@ pub fn finish_(m: *const module) -> i32 {
     0
 }
 /// `ST_DEV` constant.
-
 pub const ST_DEV: i32 = 0; // c:33
 /// `ST_INO` constant.
 pub const ST_INO: i32 = 1;

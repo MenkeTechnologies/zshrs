@@ -119,7 +119,6 @@ impl EditableLine {
         &self.text
     }
     /// `colors` — see implementation.
-
     pub fn colors(&self) -> &[HighlightSpec] {
         &self.colors
     }
@@ -129,7 +128,6 @@ impl EditableLine {
         self.colors = colors;
     }
     /// `position` — see implementation.
-
     pub fn position(&self) -> usize {
         self.position
     }
@@ -145,17 +143,14 @@ impl EditableLine {
         self.text.len()
     }
     /// `is_empty` — see implementation.
-
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
     /// `at` — see implementation.
-
     pub fn at(&self, idx: usize) -> char {
         self.text.char_at(idx)
     }
     /// `offset_to_line` — see implementation.
-
     pub fn offset_to_line(&self, offset: usize) -> usize {
         self.text[0..offset].chars().filter(|&c| c == '\n').count()
     }
@@ -354,7 +349,6 @@ fn cursor_position_after_edit(edit: &Edit) -> usize {
     cursor.saturating_sub(removed)
 }
 /// `range_of_line_at_cursor` — see implementation.
-
 pub fn range_of_line_at_cursor(buffer: &wstr, cursor: usize) -> Range<usize> {
     let start = buffer[0..cursor]
         .as_char_slice()
@@ -373,7 +367,6 @@ pub fn range_of_line_at_cursor(buffer: &wstr, cursor: usize) -> Range<usize> {
     start..end
 }
 /// `line_at_cursor` — see implementation.
-
 pub fn line_at_cursor(buffer: &wstr, cursor: usize) -> &wstr {
     &buffer[range_of_line_at_cursor(buffer, cursor)]
 }

@@ -59,7 +59,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 /// `SearchType` — see variants.
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SearchType {
     /// Search for commands exactly matching the given string.
@@ -89,7 +88,6 @@ pub enum PersistenceMode {
     Ephemeral,
 }
 /// `SearchDirection` — see variants.
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SearchDirection {
     /// `Forward` variant.
@@ -103,7 +101,6 @@ use super::file::time_to_seconds;
 /// This is the history session ID we use by default if the user has not set env var fish_history.
 const DFLT_FISH_HISTORY_SESSION_ID: &wstr = L!("fish");
 /// `VACUUM_FREQUENCY` constant.
-
 pub const VACUUM_FREQUENCY: usize = 25;
 
 struct TimeProfiler {
@@ -161,10 +158,8 @@ impl LruCacheExt for LruCache<WString, HistoryItem> {
     }
 }
 /// `PathList` type alias.
-
 pub type PathList = Vec<WString>;
 /// `HistoryItem` — see fields for layout.
-
 #[derive(Clone, Debug)]
 pub struct HistoryItem {
     /// The actual contents of the entry.
@@ -1201,7 +1196,6 @@ fn should_import_bash_history_line(line: &wstr) -> bool {
     errors.is_empty()
 }
 /// `History` — see fields for layout.
-
 pub struct History(Mutex<HistoryImpl>);
 
 impl History {
@@ -1216,7 +1210,6 @@ impl History {
         self.imp().add(item, pending, true);
     }
     /// `add_commandline` — see implementation.
-
     pub fn add_commandline(&self, s: WString) {
         let mut imp = self.imp();
         let when = imp.timestamp_now();
@@ -1594,7 +1587,6 @@ impl HistorySearch {
         &self.orig_term
     }
     /// `prepare_to_search_after_deletion` — see implementation.
-
     pub fn prepare_to_search_after_deletion(&mut self) {
         assert_ne!(self.current_index, 0);
         self.current_index -= 1;
@@ -1666,7 +1658,6 @@ impl HistorySearch {
         self.current_item.as_ref().expect("No current item")
     }
     /// `canon_term` — see implementation.
-
     pub fn canon_term(&self) -> &wstr {
         &self.canon_term
     }
@@ -1708,7 +1699,6 @@ pub fn history_session_id(vars: &dyn Environment) -> WString {
     history_session_id_from_var(vars.get(L!("fish_history")))
 }
 /// `history_session_id_from_var` — see implementation.
-
 pub fn history_session_id_from_var(history_name_var: Option<EnvVar>) -> WString {
     let Some(var) = history_name_var else {
         return DFLT_FISH_HISTORY_SESSION_ID.to_owned();

@@ -20,7 +20,6 @@ struct type_cmd_opts_t {
     color: ColorEnabled,
 }
 /// `r` — see implementation.
-
 pub fn r#type(parser: &Parser, streams: &mut IoStreams, argv: &mut [&wstr]) -> BuiltinResult {
     let cmd = argv[0];
     let argc = argv.len();

@@ -54,7 +54,6 @@ fn connect() -> Result<Client, ()> {
     })
 }
 /// `zsource` — see implementation.
-
 pub fn zsource(args: &[String]) -> i32 {
     let mut path: Option<String> = None;
     let mut send_stat = false;

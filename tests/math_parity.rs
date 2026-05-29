@@ -1,5 +1,6 @@
 //! Arithmetic expansion parity tests — pin `$(( expr ))` and `(( expr ))`
 //! against real zsh 5.9.
+#![allow(non_snake_case)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

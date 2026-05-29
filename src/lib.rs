@@ -37,7 +37,6 @@
 // crate-wide.
 #![allow(clippy::all)]
 /// `compsys` submodule.
-
 pub mod compsys;
 /// `exec_jobs` submodule.
 pub mod exec_jobs;
@@ -46,7 +45,6 @@ pub mod extensions;
 /// `ported` submodule.
 pub mod ported;
 /// `test_util` submodule.
-
 #[cfg(test)]
 pub mod test_util;
 
@@ -57,7 +55,6 @@ pub mod test_util;
 // `src/ported/`. New code should prefer `crate::ported::<name>`.
 pub use ported::*;
 /// `aot` submodule.
-
 #[path = "extensions/aot.rs"]
 pub mod aot;
 /// `arith_compiler` submodule.
@@ -101,7 +98,6 @@ pub mod script_cache;
 #[cfg(feature = "daemon")]
 pub use zshrs_daemon as daemon;
 /// `daemon` submodule.
-
 #[cfg(not(feature = "daemon"))]
 pub mod daemon {
     //! Stub module used when the `daemon` feature is disabled. Provides

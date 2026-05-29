@@ -46,12 +46,10 @@ macro_rules! err_raw {
 }
 pub use err_raw;
 /// `Error` — see fields for layout.
-
 pub struct Error<'a> {
     /// `msg` field.
     msg: Cow<'a, wstr>,
     /// `cmd` field.
-
     cmd: Option<&'a wstr>,
     /// `subcmd` field.
     subcmd: Option<&'a wstr>,
@@ -162,7 +160,6 @@ impl<'a> Error<'a> {
         "Invalid max value '%s'"
     );
     /// `new` — see implementation.
-
     #[must_use]
     pub fn new(msg: Cow<'a, wstr>) -> Self {
         Error {
@@ -174,14 +171,12 @@ impl<'a> Error<'a> {
         }
     }
     /// `cmd` — see implementation.
-
     #[must_use]
     pub fn cmd(mut self, cmd: &'a wstr) -> Self {
         self.cmd = Some(cmd);
         self
     }
     /// `subcmd` — see implementation.
-
     #[must_use]
     pub fn subcmd(mut self, cmd: &'a wstr, subcmd: &'a wstr) -> Self {
         self.cmd = Some(cmd);
@@ -189,14 +184,12 @@ impl<'a> Error<'a> {
         self
     }
     /// `stacktrace` — see implementation.
-
     #[must_use]
     pub fn stacktrace(mut self, parser: &'a Parser) -> Self {
         self.parser = Some(parser);
         self
     }
     /// `hint` — see implementation.
-
     #[must_use]
     pub fn hint(mut self) -> Self {
         self.hint = true;
@@ -210,7 +203,6 @@ impl<'a> Error<'a> {
         self.stacktrace(parser).hint()
     }
     /// `append_to_msg` — see implementation.
-
     #[must_use]
     pub fn append_to_msg(mut self, append: impl IntoCharIter) -> Self {
         self.append_assign_to_msg(append);
@@ -228,14 +220,12 @@ impl<'a> Error<'a> {
         self.write_to(streams.err);
     }
     /// `to_string` — see implementation.
-
     pub fn to_string(&self) -> WString {
         let mut out = OutputStream::String(StringOutputStream::new());
         self.write_to(&mut out);
         out.take()
     }
     /// `write_to` — see implementation.
-
     pub fn write_to(&self, output: &mut OutputStream) {
         self.write_msg(output);
         self.write_stacktrace(output);

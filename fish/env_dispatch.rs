@@ -122,7 +122,6 @@ impl VarDispatchTable {
         assert!(prev.is_none(), "Already observing {}", name);
     }
     /// `dispatch` — see implementation.
-
     pub fn dispatch(&self, key: &wstr, vars: &EnvStack, suppress_repaint: bool) {
         match self.table.get(key) {
             Some(EnvCallback::Named(named)) => (named)(key, vars),
@@ -179,7 +178,6 @@ pub fn handle_emoji_width(vars: &EnvStack) {
     }
 }
 /// `VarChangeMilieu` — see fields for layout.
-
 pub struct VarChangeMilieu {
     /// `is_repainting` field.
     pub is_repainting: bool,
@@ -351,7 +349,6 @@ fn handle_fish_trace(vars: &EnvStack) {
     );
 }
 /// `env_dispatch_init` — see implementation.
-
 pub fn env_dispatch_init(vars: &EnvStack) {
     use once_cell::sync::Lazy;
 
@@ -454,7 +451,6 @@ fn update_fish_color_support(vars: &EnvStack) {
     crate::terminal::set_color_support(color_support);
 }
 /// `MIDNIGHT_COMMANDER_SID` constant.
-
 pub const MIDNIGHT_COMMANDER_SID: &wstr = L!("MC_SID");
 
 // Initialize the terminal subsystem
@@ -508,7 +504,6 @@ fn init_locale(vars: &EnvStack) {
     crate::localization::update_from_env(vars);
 }
 /// `use_posix_spawn` — see implementation.
-
 pub fn use_posix_spawn() -> bool {
     USE_POSIX_SPAWN.load(Ordering::Relaxed)
 }

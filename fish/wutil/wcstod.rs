@@ -58,7 +58,6 @@ where
     Some(res)
 }
 /// `parse_inf_nan` — see implementation.
-
 #[cold]
 #[inline(never)]
 pub fn parse_inf_nan(
@@ -279,7 +278,6 @@ where
 mod tests {
     use super::{wcstod, Error};
     /// `tests` — see implementation.
-
     #[test]
     #[allow(clippy::all)]
     pub fn tests() {

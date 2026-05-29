@@ -75,13 +75,11 @@ fn thread_id() -> usize {
     id
 }
 /// `is_main_thread` — see implementation.
-
 #[inline(always)]
 pub fn is_main_thread() -> bool {
     thread_id() == main_thread_id()
 }
 /// `assert_is_main_thread` — see implementation.
-
 #[inline(always)]
 pub fn assert_is_main_thread() {
     #[cold]
@@ -94,7 +92,6 @@ pub fn assert_is_main_thread() {
     }
 }
 /// `assert_is_background_thread` — see implementation.
-
 #[inline(always)]
 pub fn assert_is_background_thread() {
     #[cold]
@@ -107,12 +104,10 @@ pub fn assert_is_background_thread() {
     }
 }
 /// `is_forked_child` — see implementation.
-
 pub fn is_forked_child() -> bool {
     IS_FORKED_PROC.load(Ordering::Relaxed)
 }
 /// `assert_is_not_forked_child` — see implementation.
-
 #[inline(always)]
 pub fn assert_is_not_forked_child() {
     #[cold]
@@ -189,7 +184,6 @@ struct ThreadPoolProtected {
     pub waiting_threads: usize,
 }
 /// `ThreadPool` — see fields for layout.
-
 pub struct ThreadPool {
     /// The mutex to access shared state between [`ThreadPool`] and [`WorkerThread`] instances. This
     /// is accessed both standalone and via [`cond_var`](Self::cond_var).
@@ -320,7 +314,6 @@ impl<T> MainThread<T> {
         }
     }
     /// `get` — see implementation.
-
     pub fn get(&self) -> &T {
         assert_is_main_thread();
         &self.data

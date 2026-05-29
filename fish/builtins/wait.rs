@@ -134,7 +134,6 @@ fn wait_for_completion(parser: &Parser, whs: &[WaitHandleRef], any_flag: bool) -
     }
 }
 /// `wait` — see implementation.
-
 pub fn wait(parser: &Parser, streams: &mut IoStreams, argv: &mut [&wstr]) -> BuiltinResult {
     let cmd = argv[0];
     let argc = argv.len();

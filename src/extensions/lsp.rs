@@ -1142,7 +1142,10 @@ fn completion(state: &State, params: &Value) -> Value {
                         let doc_md = if desc.is_empty() {
                             format!("**`{}`** — long-form flag for `{}`", flag, bname)
                         } else {
-                            format!("**`{}`** — {}\n\n_long-form flag for `{}`_", flag, desc, bname)
+                            format!(
+                                "**`{}`** — {}\n\n_long-form flag for `{}`_",
+                                flag, desc, bname
+                            )
                         };
                         json!({
                             "label": flag,
@@ -1416,9 +1419,7 @@ fn try_compsys_completion(state: &State, params: &Value) -> Option<Value> {
     // will translate the LSP `character` UTF-16 unit count to a
     // byte index against `line_text`. Today the stub returns empty
     // regardless of cursor position.
-    let req = crate::compsys::in_editor::CompsysRequest::new_with_default_budget(
-        line_text, col,
-    );
+    let req = crate::compsys::in_editor::CompsysRequest::new_with_default_budget(line_text, col);
     let resp = crate::compsys::in_editor::complete_at(req);
     if resp.matches.is_empty() && !resp.is_incomplete {
         return None;
@@ -1434,11 +1435,11 @@ fn try_compsys_completion(state: &State, params: &Value) -> Option<Value> {
             //   `hosts` / `files` / `directories` → File (17)
             //   anything else → Text (1)
             let kind: u64 = match m.group.as_deref() {
-                Some("options") => 5,                          // Field
-                Some("subcommands") | Some("commands") => 3,   // Function
-                Some("values") => 12,                          // Value
+                Some("options") => 5,                                      // Field
+                Some("subcommands") | Some("commands") => 3,               // Function
+                Some("values") => 12,                                      // Value
                 Some("hosts") | Some("files") | Some("directories") => 17, // File
-                _ => 1,                                        // Text
+                _ => 1,                                                    // Text
             };
             // sortText prefix by group so subcommands list above
             // options list above paths, matching what zsh shows at
@@ -1737,7 +1738,15 @@ fn symbol_decl_kind(line: &str, name: &str) -> Option<&'static str> {
     // `readonly NAME=…` / `integer NAME=…` / `float NAME=…`.
     // Skip any leading `-X` flag arguments (`typeset -gA`, `local -i`,
     // `readonly -a`, etc.) before checking the first identifier.
-    for prefix in &["local ", "typeset ", "declare ", "readonly ", "export ", "integer ", "float "] {
+    for prefix in &[
+        "local ",
+        "typeset ",
+        "declare ",
+        "readonly ",
+        "export ",
+        "integer ",
+        "float ",
+    ] {
         if let Some(rest) = t.strip_prefix(prefix) {
             let after_flags = skip_leading_flags(rest);
             if first_ident(after_flags).as_deref() == Some(name) {
@@ -2496,7 +2505,6 @@ pub(crate) fn line_starts_comment_before(line: &str, end: usize) -> bool {
     false
 }
 /// `lookup_doc` — see implementation.
-
 pub fn lookup_doc(name: &str) -> String {
     // Upstream-yodl-derived tables come first — they carry the real
     // `man zshall` prose. The hand-curated stub tables below still
@@ -3965,8 +3973,7 @@ fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
             j -= 1;
         }
         let starts_with_dash = j < cap && bytes[j] == b'-';
-        let starts_with_double_dash =
-            j + 1 < cap && bytes[j] == b'-' && bytes[j + 1] == b'-';
+        let starts_with_double_dash = j + 1 < cap && bytes[j] == b'-' && bytes[j + 1] == b'-';
         let just_after_builtin = j == cap;
         // `zshrs --<TAB>` — route to long-flag completion when the
         // current word starts with `--` AND the command publishes
@@ -4225,8 +4232,7 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
     // entries fill in letters the override doesn't list. Pinned by
     // `tests/lsp_man_audit.rs`.
     if let Some(over) = lookup_builtin_flag_docs_override(name) {
-        let over_keys: std::collections::HashSet<&str> =
-            over.iter().map(|(f, _)| *f).collect();
+        let over_keys: std::collections::HashSet<&str> = over.iter().map(|(f, _)| *f).collect();
         out.retain(|(f, _)| !over_keys.contains(f.as_str()));
         for (f, d) in over {
             out.push((f.to_string(), d.to_string()));
@@ -4261,180 +4267,416 @@ pub(crate) fn lookup_builtin_flag_docs_override(
 /// Merged with body-scraped flags. Coverage 100% per
 /// `tests/lsp_man_audit.rs`.
 const BUILTIN_FLAG_DOCS_OVERRIDE: &[(&str, &[(&str, &str)])] = &[
-    ("bindkey", &[
-        ("-L", "With `-l`, format output as `bindkey -A` / `-N` replay invocations."),
-    ]),
-    ("enable", &[
-        ("-p", "Operate on patterns added with `disable -p` (custom match-pattern hooks)."),
-    ]),
-    ("example", &[
-        ("-a", "Pass arg as the example builtin's first parameter."),
-        ("-f", "Toggle the example builtin's `flag` field (test option)."),
-        ("-g", "Toggle the example builtin's global-state test mode."),
-        ("-l", "Toggle the example builtin's `long` test mode."),
-        ("-s", "Toggle the example builtin's stateful test mode."),
-    ]),
-    ("fc", &[
-        ("-s", "Substitute `old=new` on the selected line and re-execute (no editor invoked)."),
-    ]),
-    ("getln", &[
-        ("-A", "Read into an array (split into words instead of one scalar)."),
-        ("-E", "Don't echo (default; symmetric counterpart to `-e`)."),
-        ("-c", "Read characters one at a time."),
-        ("-e", "Echo read text back to terminal as it arrives."),
-        ("-l", "Read just one line (default)."),
-        ("-n", "Don't strip trailing newline from the result."),
-    ]),
-    ("kill", &[
-        ("-g", "Send the signal to the process GROUP, not just the process. Job-spec is a pgid."),
-        ("-i", "Interpret arguments as job specs rather than process ids."),
-        ("-n", "`-n signum` — send numeric signal `signum`."),
-        ("-s", "`-s signame` — send named signal (`TERM`, `HUP`, `KILL`, …)."),
-    ]),
-    ("print", &[
-        ("-f", "`-f format` — printf-style format string (same semantics as `printf`)."),
-    ]),
-    ("read", &[
-        ("-c", "Read characters one at a time (no line-buffering)."),
-        ("-e", "Echo read input back to terminal as it arrives."),
-    ]),
-    ("sched", &[
-        ("-e", "`+sched +HH:MM:SS event...` — schedule a command at the given time."),
-        ("-i", "`sched -i id` — remove the scheduled entry with the given id."),
-        ("-m", "`sched -m mask` — match scheduled entries against a glob pattern."),
-        ("-t", "Print scheduled entries with full timestamps."),
-    ]),
-    ("type", &[
-        ("-S", "Like `-s` but include scripts in `$PATH` as commands."),
-        ("-a", "Print every match for each name (not just the first)."),
-        ("-f", "Skip functions when looking up `name`."),
-        ("-m", "Treat each name as a glob pattern."),
-        ("-p", "Print only external commands found in `$path`."),
-        ("-s", "Suppress output; exit 0 if name resolves to a command."),
-        ("-w", "Print one of `alias`/`builtin`/`command`/`function`/`hashed`/`none` per name."),
-    ]),
-    ("ulimit", &[
-        ("-H", "Operate on the hard limit (default with `-S` is the soft limit)."),
-        ("-N", "`-N n` — operate on resource number `n` (system-specific integer)."),
-        ("-S", "Operate on the soft limit (default if neither `-H` nor `-S` given)."),
-        ("-T", "Maximum number of threads per process."),
-        ("-a", "List all of the current resource limits (default verb)."),
-        ("-c", "Maximum core-file size in 512-byte blocks."),
-        ("-d", "Maximum data-segment size in kilobytes."),
-        ("-f", "Maximum file size the shell can write in 512-byte blocks."),
-        ("-i", "Maximum number of pending signals."),
-        ("-k", "Maximum number of kqueues allocated (BSD)."),
-        ("-l", "Maximum locked-in-memory address space in kilobytes."),
-        ("-m", "Maximum resident-set size in kilobytes."),
-        ("-n", "Maximum number of open file descriptors."),
-        ("-p", "The number of pseudo-terminals (BSD)."),
-        ("-q", "Maximum bytes in POSIX message queues."),
-        ("-r", "Maximum real-time scheduling priority."),
-        ("-s", "Maximum stack size in kilobytes."),
-        ("-t", "Maximum CPU time in seconds."),
-        ("-v", "Maximum virtual-memory address space in kilobytes."),
-        ("-w", "Maximum kilobytes of swapped-out memory."),
-        ("-x", "Maximum number of file-locks held."),
-    ]),
-    ("where", &[
-        ("-S", "Like `-s` but include scripts in `$PATH` as commands."),
-        ("-m", "Treat each name as a glob pattern."),
-        ("-p", "Print only external commands found in `$path`."),
-        ("-s", "Suppress output; exit 0 if name resolves."),
-        ("-w", "Print one of `alias`/`builtin`/`command`/`function`/`hashed`/`none` per name."),
-        ("-x", "`-x num` — indent each printed body line by `num` spaces."),
-    ]),
-    ("which", &[
-        ("-S", "Like `-s` but include scripts in `$PATH`."),
-        ("-a", "Print every match for each name."),
-        ("-m", "Treat each name as a glob pattern."),
-        ("-p", "Print only external commands found in `$path`."),
-        ("-s", "Suppress output; exit 0 if name resolves."),
-        ("-w", "Print one of `alias`/`builtin`/`command`/`function`/`hashed`/`none` per name."),
-        ("-x", "`-x num` — indent each printed body line by `num` spaces."),
-    ]),
-    ("zcompile", &[
-        ("-k", "Mark each compiled function for KSH-style autoload."),
-        ("-m", "With `-c` / `-a`, treat each name as a glob pattern."),
-    ]),
+    (
+        "bindkey",
+        &[(
+            "-L",
+            "With `-l`, format output as `bindkey -A` / `-N` replay invocations.",
+        )],
+    ),
+    (
+        "enable",
+        &[(
+            "-p",
+            "Operate on patterns added with `disable -p` (custom match-pattern hooks).",
+        )],
+    ),
+    (
+        "example",
+        &[
+            ("-a", "Pass arg as the example builtin's first parameter."),
+            (
+                "-f",
+                "Toggle the example builtin's `flag` field (test option).",
+            ),
+            ("-g", "Toggle the example builtin's global-state test mode."),
+            ("-l", "Toggle the example builtin's `long` test mode."),
+            ("-s", "Toggle the example builtin's stateful test mode."),
+        ],
+    ),
+    (
+        "fc",
+        &[(
+            "-s",
+            "Substitute `old=new` on the selected line and re-execute (no editor invoked).",
+        )],
+    ),
+    (
+        "getln",
+        &[
+            (
+                "-A",
+                "Read into an array (split into words instead of one scalar).",
+            ),
+            ("-E", "Don't echo (default; symmetric counterpart to `-e`)."),
+            ("-c", "Read characters one at a time."),
+            ("-e", "Echo read text back to terminal as it arrives."),
+            ("-l", "Read just one line (default)."),
+            ("-n", "Don't strip trailing newline from the result."),
+        ],
+    ),
+    (
+        "kill",
+        &[
+            (
+                "-g",
+                "Send the signal to the process GROUP, not just the process. Job-spec is a pgid.",
+            ),
+            (
+                "-i",
+                "Interpret arguments as job specs rather than process ids.",
+            ),
+            ("-n", "`-n signum` — send numeric signal `signum`."),
+            (
+                "-s",
+                "`-s signame` — send named signal (`TERM`, `HUP`, `KILL`, …).",
+            ),
+        ],
+    ),
+    (
+        "print",
+        &[(
+            "-f",
+            "`-f format` — printf-style format string (same semantics as `printf`).",
+        )],
+    ),
+    (
+        "read",
+        &[
+            ("-c", "Read characters one at a time (no line-buffering)."),
+            ("-e", "Echo read input back to terminal as it arrives."),
+        ],
+    ),
+    (
+        "sched",
+        &[
+            (
+                "-e",
+                "`+sched +HH:MM:SS event...` — schedule a command at the given time.",
+            ),
+            (
+                "-i",
+                "`sched -i id` — remove the scheduled entry with the given id.",
+            ),
+            (
+                "-m",
+                "`sched -m mask` — match scheduled entries against a glob pattern.",
+            ),
+            ("-t", "Print scheduled entries with full timestamps."),
+        ],
+    ),
+    (
+        "type",
+        &[
+            (
+                "-S",
+                "Like `-s` but include scripts in `$PATH` as commands.",
+            ),
+            (
+                "-a",
+                "Print every match for each name (not just the first).",
+            ),
+            ("-f", "Skip functions when looking up `name`."),
+            ("-m", "Treat each name as a glob pattern."),
+            ("-p", "Print only external commands found in `$path`."),
+            (
+                "-s",
+                "Suppress output; exit 0 if name resolves to a command.",
+            ),
+            (
+                "-w",
+                "Print one of `alias`/`builtin`/`command`/`function`/`hashed`/`none` per name.",
+            ),
+        ],
+    ),
+    (
+        "ulimit",
+        &[
+            (
+                "-H",
+                "Operate on the hard limit (default with `-S` is the soft limit).",
+            ),
+            (
+                "-N",
+                "`-N n` — operate on resource number `n` (system-specific integer).",
+            ),
+            (
+                "-S",
+                "Operate on the soft limit (default if neither `-H` nor `-S` given).",
+            ),
+            ("-T", "Maximum number of threads per process."),
+            (
+                "-a",
+                "List all of the current resource limits (default verb).",
+            ),
+            ("-c", "Maximum core-file size in 512-byte blocks."),
+            ("-d", "Maximum data-segment size in kilobytes."),
+            (
+                "-f",
+                "Maximum file size the shell can write in 512-byte blocks.",
+            ),
+            ("-i", "Maximum number of pending signals."),
+            ("-k", "Maximum number of kqueues allocated (BSD)."),
+            ("-l", "Maximum locked-in-memory address space in kilobytes."),
+            ("-m", "Maximum resident-set size in kilobytes."),
+            ("-n", "Maximum number of open file descriptors."),
+            ("-p", "The number of pseudo-terminals (BSD)."),
+            ("-q", "Maximum bytes in POSIX message queues."),
+            ("-r", "Maximum real-time scheduling priority."),
+            ("-s", "Maximum stack size in kilobytes."),
+            ("-t", "Maximum CPU time in seconds."),
+            ("-v", "Maximum virtual-memory address space in kilobytes."),
+            ("-w", "Maximum kilobytes of swapped-out memory."),
+            ("-x", "Maximum number of file-locks held."),
+        ],
+    ),
+    (
+        "where",
+        &[
+            (
+                "-S",
+                "Like `-s` but include scripts in `$PATH` as commands.",
+            ),
+            ("-m", "Treat each name as a glob pattern."),
+            ("-p", "Print only external commands found in `$path`."),
+            ("-s", "Suppress output; exit 0 if name resolves."),
+            (
+                "-w",
+                "Print one of `alias`/`builtin`/`command`/`function`/`hashed`/`none` per name.",
+            ),
+            (
+                "-x",
+                "`-x num` — indent each printed body line by `num` spaces.",
+            ),
+        ],
+    ),
+    (
+        "which",
+        &[
+            ("-S", "Like `-s` but include scripts in `$PATH`."),
+            ("-a", "Print every match for each name."),
+            ("-m", "Treat each name as a glob pattern."),
+            ("-p", "Print only external commands found in `$path`."),
+            ("-s", "Suppress output; exit 0 if name resolves."),
+            (
+                "-w",
+                "Print one of `alias`/`builtin`/`command`/`function`/`hashed`/`none` per name.",
+            ),
+            (
+                "-x",
+                "`-x num` — indent each printed body line by `num` spaces.",
+            ),
+        ],
+    ),
+    (
+        "zcompile",
+        &[
+            ("-k", "Mark each compiled function for KSH-style autoload."),
+            ("-m", "With `-c` / `-a`, treat each name as a glob pattern."),
+        ],
+    ),
     // ── zsh/files coreutils-style builtins ──────────────────────
-    ("chgrp", &[
-        ("-R", "Recursively descend into directories."),
-        ("-h", "Change group of the symlink itself, not the target."),
-        ("-s", "Suppress error messages for inaccessible files."),
-    ]),
-    ("ln", &[
-        ("-d", "Create a hard link to a directory (requires privilege)."),
-        ("-f", "If `dest` exists, remove it before creating the link."),
-        ("-h", "If `dest` is a symlink, operate on the symlink itself."),
-        ("-i", "Prompt before overwriting `dest`."),
-        ("-n", "If `dest` is a symlink to a directory, replace the symlink."),
-        ("-s", "Create a symbolic link instead of a hard link."),
-    ]),
+    (
+        "chgrp",
+        &[
+            ("-R", "Recursively descend into directories."),
+            ("-h", "Change group of the symlink itself, not the target."),
+            ("-s", "Suppress error messages for inaccessible files."),
+        ],
+    ),
+    (
+        "ln",
+        &[
+            (
+                "-d",
+                "Create a hard link to a directory (requires privilege).",
+            ),
+            (
+                "-f",
+                "If `dest` exists, remove it before creating the link.",
+            ),
+            (
+                "-h",
+                "If `dest` is a symlink, operate on the symlink itself.",
+            ),
+            ("-i", "Prompt before overwriting `dest`."),
+            (
+                "-n",
+                "If `dest` is a symlink to a directory, replace the symlink.",
+            ),
+            ("-s", "Create a symbolic link instead of a hard link."),
+        ],
+    ),
     // ── zsh/system ──────────────────────────────────────────────
-    ("syserror", &[
-        ("-e", "`-e errvar` — store error string in `$errvar` instead of stderr."),
-        ("-p", "`-p prefix` — prepend `prefix` to the error message."),
-    ]),
-    ("sysread", &[
-        ("-c", "`-c countvar` — store byte count read in `$countvar`."),
-        ("-i", "`-i infd` — read from file descriptor `infd` instead of stdin."),
-        ("-o", "`-o outfd` — relay bytes to `outfd` as well as storing them."),
-    ]),
-    ("syswrite", &[
-        ("-c", "`-c countvar` — store byte count actually written in `$countvar`."),
-        ("-o", "`-o outfd` — write to `outfd` instead of stdout."),
-    ]),
-    ("zselect", &[
-        ("-A", "`-A arrayname` — store ready fds into `arrayname`."),
-        ("-t", "`-t timeout` — timeout in hundredths of a second (centiseconds)."),
-    ]),
-    ("zsystem", &[
-        ("-f", "`zsystem flock -f var file` — store lock file descriptor in `$var`."),
-    ]),
+    (
+        "syserror",
+        &[
+            (
+                "-e",
+                "`-e errvar` — store error string in `$errvar` instead of stderr.",
+            ),
+            ("-p", "`-p prefix` — prepend `prefix` to the error message."),
+        ],
+    ),
+    (
+        "sysread",
+        &[
+            (
+                "-c",
+                "`-c countvar` — store byte count read in `$countvar`.",
+            ),
+            (
+                "-i",
+                "`-i infd` — read from file descriptor `infd` instead of stdin.",
+            ),
+            (
+                "-o",
+                "`-o outfd` — relay bytes to `outfd` as well as storing them.",
+            ),
+        ],
+    ),
+    (
+        "syswrite",
+        &[
+            (
+                "-c",
+                "`-c countvar` — store byte count actually written in `$countvar`.",
+            ),
+            ("-o", "`-o outfd` — write to `outfd` instead of stdout."),
+        ],
+    ),
+    (
+        "zselect",
+        &[
+            ("-A", "`-A arrayname` — store ready fds into `arrayname`."),
+            (
+                "-t",
+                "`-t timeout` — timeout in hundredths of a second (centiseconds).",
+            ),
+        ],
+    ),
+    (
+        "zsystem",
+        &[(
+            "-f",
+            "`zsystem flock -f var file` — store lock file descriptor in `$var`.",
+        )],
+    ),
     // ── zsh/net/socket + zsh/net/tcp ────────────────────────────
-    ("zsocket", &[
-        ("-a", "Open a server (listening) socket bound to the named path."),
-        ("-d", "`-d fd` — open the socket on the specified file descriptor."),
-        ("-l", "List currently-open zsocket file descriptors."),
-        ("-t", "Set close-on-exec on the socket."),
-        ("-v", "Verbose — print the resulting file descriptor to stdout."),
-    ]),
-    ("ztcp", &[
-        ("-a", "Server mode — accept the next connection on the specified listening fd."),
-        ("-c", "Close the named ztcp file descriptor."),
-        ("-d", "`-d fd` — operate on the specified file descriptor."),
-        ("-f", "Force — don't fail if a similar connection already exists."),
-        ("-l", "Listen mode — open a server socket on the given port."),
-        ("-t", "Set close-on-exec on the socket."),
-        ("-v", "Verbose — print the resulting file descriptor to stdout."),
-    ]),
+    (
+        "zsocket",
+        &[
+            (
+                "-a",
+                "Open a server (listening) socket bound to the named path.",
+            ),
+            (
+                "-d",
+                "`-d fd` — open the socket on the specified file descriptor.",
+            ),
+            ("-l", "List currently-open zsocket file descriptors."),
+            ("-t", "Set close-on-exec on the socket."),
+            (
+                "-v",
+                "Verbose — print the resulting file descriptor to stdout.",
+            ),
+        ],
+    ),
+    (
+        "ztcp",
+        &[
+            (
+                "-a",
+                "Server mode — accept the next connection on the specified listening fd.",
+            ),
+            ("-c", "Close the named ztcp file descriptor."),
+            ("-d", "`-d fd` — operate on the specified file descriptor."),
+            (
+                "-f",
+                "Force — don't fail if a similar connection already exists.",
+            ),
+            (
+                "-l",
+                "Listen mode — open a server socket on the given port.",
+            ),
+            ("-t", "Set close-on-exec on the socket."),
+            (
+                "-v",
+                "Verbose — print the resulting file descriptor to stdout.",
+            ),
+        ],
+    ),
     // ── zsh/db/gdbm xattr family ────────────────────────────────
-    ("zdelattr",  &[("-h", "Operate on the symlink itself, not its target.")]),
-    ("zgetattr",  &[("-h", "Operate on the symlink itself, not its target.")]),
-    ("zlistattr", &[("-h", "Operate on the symlink itself, not its target.")]),
-    ("zsetattr",  &[("-h", "Operate on the symlink itself, not its target.")]),
+    (
+        "zdelattr",
+        &[("-h", "Operate on the symlink itself, not its target.")],
+    ),
+    (
+        "zgetattr",
+        &[("-h", "Operate on the symlink itself, not its target.")],
+    ),
+    (
+        "zlistattr",
+        &[("-h", "Operate on the symlink itself, not its target.")],
+    ),
+    (
+        "zsetattr",
+        &[("-h", "Operate on the symlink itself, not its target.")],
+    ),
     // ── zsh/zutil ───────────────────────────────────────────────
-    ("zstyle", &[
-        ("-L", "`-L [ metapattern [ style ] ]` — list styles in `zstyle`-replay form."),
-        ("-e", "`-e pattern style string ...` — value-as-shell-code (re-evaluated each lookup)."),
-    ]),
+    (
+        "zstyle",
+        &[
+            (
+                "-L",
+                "`-L [ metapattern [ style ] ]` — list styles in `zstyle`-replay form.",
+            ),
+            (
+                "-e",
+                "`-e pattern style string ...` — value-as-shell-code (re-evaluated each lookup).",
+            ),
+        ],
+    ),
     // ── zsh/zpty ────────────────────────────────────────────────
-    ("zpty", &[
-        ("-L", "List active zpty sessions with their commands."),
-        ("-m", "With `-r`, treat `pattern` as a match-spec (read until pattern matches)."),
-        ("-n", "With `-w`, don't append a newline to written strings."),
-        ("-t", "Test whether the named zpty session is still alive."),
-    ]),
+    (
+        "zpty",
+        &[
+            ("-L", "List active zpty sessions with their commands."),
+            (
+                "-m",
+                "With `-r`, treat `pattern` as a match-spec (read until pattern matches).",
+            ),
+            (
+                "-n",
+                "With `-w`, don't append a newline to written strings.",
+            ),
+            ("-t", "Test whether the named zpty session is still alive."),
+        ],
+    ),
     // ── zshzle: zle builtin ─────────────────────────────────────
-    ("zle", &[
-        ("-L", "With `-l`, format output as `zle` replay invocations."),
-        ("-a", "With `-N`, mark new widget as available outside the editor (script-callable)."),
-        ("-c", "With `-R`, clear the screen before re-display."),
-        ("-n", "Pass `-n num` through to the widget invocation (numeric argument)."),
-        ("-r", "With `-T`, remove the named termcap handler."),
-        ("-w", "With `-F`, treat the fd handler as a writeable-fd ready handler."),
-    ]),
+    (
+        "zle",
+        &[
+            (
+                "-L",
+                "With `-l`, format output as `zle` replay invocations.",
+            ),
+            (
+                "-a",
+                "With `-N`, mark new widget as available outside the editor (script-callable).",
+            ),
+            ("-c", "With `-R`, clear the screen before re-display."),
+            (
+                "-n",
+                "Pass `-n num` through to the widget invocation (numeric argument).",
+            ),
+            ("-r", "With `-T`, remove the named termcap handler."),
+            (
+                "-w",
+                "With `-F`, treat the fd handler as a writeable-fd ready handler.",
+            ),
+        ],
+    ),
 ];
 
 /// Per-compsys-fn flag tables sourced from `man zshcompsys` signatures
@@ -10003,7 +10245,8 @@ mod tests {
             "#!/usr/bin/env zsh\n\
              ## libfoo.zsh — utility helpers.\n\
              ## Provides foo / bar / baz.\n\
-             function foo() {}\n".into(),
+             function foo() {}\n"
+                .into(),
         );
         // Cursor on `env` (any position on line 0 triggers the
         // shebang-line module-doc lookup).
@@ -10032,7 +10275,8 @@ mod tests {
         state.docs.insert(
             "file:///proj/helpers.zsh".into(),
             "## helpers.zsh — shared bootstrap.\n\
-             function helpers_init() {}\n".into(),
+             function helpers_init() {}\n"
+                .into(),
         );
         // Cursor on the path argument `./helpers.zsh`.
         let pos = "source ".len() + 2; // somewhere inside `./helpers.zsh`
@@ -10041,7 +10285,10 @@ mod tests {
             "position": { "line": 0, "character": pos },
         });
         let h = hover(&state, &params);
-        assert!(!h.is_null(), "source-path hover should return target's module doc");
+        assert!(
+            !h.is_null(),
+            "source-path hover should return target's module doc"
+        );
         let body = h["contents"]["value"].as_str().unwrap_or("");
         assert!(body.contains("helpers.zsh"), "got {body:?}");
         assert!(body.contains("shared bootstrap"), "got {body:?}");
@@ -10052,10 +10299,9 @@ mod tests {
         // POSIX dot-source form: `. PATH` is equivalent to `source PATH`.
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert(
-            "file:///proj/main.zsh".into(),
-            ". ./helpers.zsh\n".into(),
-        );
+        state
+            .docs
+            .insert("file:///proj/main.zsh".into(), ". ./helpers.zsh\n".into());
         state.docs.insert(
             "file:///proj/helpers.zsh".into(),
             "## dot-sourced helpers.\nfunction h() {}\n".into(),
@@ -10102,7 +10348,8 @@ mod tests {
             "file:///t.zsh".into(),
             "## Sum two numbers and print the result.\n\
              function my_sum_helper() { print $(( $1 + $2 )) }\n\
-             my_sum_helper 1 2\n".into(),
+             my_sum_helper 1 2\n"
+                .into(),
         );
         // Cursor on `my_sum_helper` at the call site (line 2).
         let params = json!({
@@ -10707,8 +10954,12 @@ mod tests {
         let names: std::collections::HashSet<&str> =
             flags.iter().map(|(f, _)| f.as_str()).collect();
         for must_have in [
-            "--gen-docs", "--out", "--dump-reference-html",
-            "--names", "--daemon", "--color",
+            "--gen-docs",
+            "--out",
+            "--dump-reference-html",
+            "--names",
+            "--daemon",
+            "--color",
         ] {
             assert!(
                 names.contains(must_have),
@@ -10762,8 +11013,10 @@ mod tests {
         // instead of the next-line description. Every flag must
         // surface its real prose now.
         let flags = extract_builtin_flags("print");
-        let by: std::collections::HashMap<&str, &str> =
-            flags.iter().map(|(f, d)| (f.as_str(), d.as_str())).collect();
+        let by: std::collections::HashMap<&str, &str> = flags
+            .iter()
+            .map(|(f, d)| (f.as_str(), d.as_str()))
+            .collect();
 
         // Inline-desc flags — these always worked, keep as canary.
         assert!(
@@ -10772,7 +11025,8 @@ mod tests {
             by.get("-b"),
         );
         assert!(
-            by.get("-m").is_some_and(|d| d.contains("Take the first argument")),
+            by.get("-m")
+                .is_some_and(|d| d.contains("Take the first argument")),
             "-m should describe pattern matching, got {:?}",
             by.get("-m"),
         );
@@ -10812,18 +11066,38 @@ mod tests {
         assert!(!super::is_known_builtin_with_long_flag_docs("print"));
 
         let flags = super::extract_builtin_long_flags("zshrs");
-        let by: std::collections::HashMap<&str, &str> =
-            flags.iter().map(|(f, d)| (f.as_str(), d.as_str())).collect();
+        let by: std::collections::HashMap<&str, &str> = flags
+            .iter()
+            .map(|(f, d)| (f.as_str(), d.as_str()))
+            .collect();
 
         // Spot-check zshrs-specific long flags.
         for spec in [
-            "--help", "--version", "--doctor",
-            "--lsp", "--dap", "--dump-tokens", "--dump-ast",
-            "--dump-wordcode", "--dump-zwc", "--dump-reflection",
-            "--docs", "--disasm",
-            "--zsh", "--bash", "--ksh", "--sh", "--csh", "--posix",
-            "--emulate", "--zsh-compat",
-            "--no-rcs", "--verbose", "--xtrace", "--login", "--interactive",
+            "--help",
+            "--version",
+            "--doctor",
+            "--lsp",
+            "--dap",
+            "--dump-tokens",
+            "--dump-ast",
+            "--dump-wordcode",
+            "--dump-zwc",
+            "--dump-reflection",
+            "--docs",
+            "--disasm",
+            "--zsh",
+            "--bash",
+            "--ksh",
+            "--sh",
+            "--csh",
+            "--posix",
+            "--emulate",
+            "--zsh-compat",
+            "--no-rcs",
+            "--verbose",
+            "--xtrace",
+            "--login",
+            "--interactive",
         ] {
             assert!(
                 by.contains_key(spec),
@@ -10840,8 +11114,14 @@ mod tests {
         // Setopt mirrors arrive from OPTION_DOCS — spot-check
         // both positive and inverse forms.
         for mirror in [
-            "--autocd", "--errexit", "--pipefail", "--nullglob", "--extendedglob",
-            "--no-autocd", "--no-errexit", "--no-pipefail",
+            "--autocd",
+            "--errexit",
+            "--pipefail",
+            "--nullglob",
+            "--extendedglob",
+            "--no-autocd",
+            "--no-errexit",
+            "--no-pipefail",
         ] {
             assert!(
                 by.contains_key(mirror),

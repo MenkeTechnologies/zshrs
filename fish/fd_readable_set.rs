@@ -2,7 +2,6 @@ use libc::c_int;
 use std::os::unix::prelude::*;
 use std::time::Duration;
 /// `Timeout` — see variants.
-
 #[derive(Clone, Copy)]
 pub enum Timeout {
     /// `Duration` variant.
@@ -131,7 +130,6 @@ impl FdReadableSet {
     }
 }
 /// `FdReadableSet` — see fields for layout.
-
 #[cfg(not(apple))]
 pub struct FdReadableSet {
     /// `pollfds_` field.

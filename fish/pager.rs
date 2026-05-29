@@ -37,10 +37,8 @@ pub struct PageRendering {
     /// `screen_data` field.
     pub screen_data: ScreenData,
     /// `remaining_to_disclose` field.
-
     pub remaining_to_disclose: usize,
     /// `search_field_shown` field.
-
     pub search_field_shown: bool,
     /// `search_field_line` field.
     pub search_field_line: EditableLine,
@@ -54,7 +52,6 @@ impl PageRendering {
     }
 }
 /// `SelectionMotion` — see variants.
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SelectionMotion {
     // Visual directions.
@@ -108,7 +105,6 @@ localizable_consts!(
 
 const PAGER_SELECTION_NONE: usize = usize::MAX;
 /// `Pager` — see fields for layout.
-
 #[derive(Default)]
 pub struct Pager {
     /// `available_term_width` field.
@@ -116,7 +112,6 @@ pub struct Pager {
     /// `available_term_height` field.
     pub available_term_height: usize,
     /// `selected_completion_idx` field.
-
     pub selected_completion_idx: Option<usize>,
     /// `suggested_row_start` field.
     pub suggested_row_start: usize,
@@ -142,7 +137,6 @@ pub struct Pager {
     /// `have_unrendered_completions` field.
     have_unrendered_completions: bool,
     /// `prefix` field.
-
     prefix: Cow<'static, wstr>,
     /// `highlight_prefix` field.
     highlight_prefix: bool,
@@ -939,7 +933,6 @@ impl Pager {
             .map(|idx| &self.completion_infos[idx].representative)
     }
     /// `selected_completion_index` — see implementation.
-
     pub fn selected_completion_index(&self) -> Option<usize> {
         self.selected_completion_idx
     }

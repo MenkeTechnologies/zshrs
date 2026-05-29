@@ -112,7 +112,6 @@ pub fn highlight_shell(
     *color = highlighter.highlight();
 }
 /// `highlight_and_colorize` — see implementation.
-
 pub fn highlight_and_colorize(
     text: &wstr,
     ctx: &OperationContext<'_>,
@@ -341,7 +340,6 @@ fn autosuggest_parse_command(
     None
 }
 /// `is_veritable_cd` — see implementation.
-
 pub fn is_veritable_cd(expanded_command: &wstr) -> bool {
     expanded_command == L!("cd") && complete_wrap_map().get(L!("cd")).is_none()
 }
@@ -692,7 +690,6 @@ fn color_string_internal(buffstr: &wstr, base_color: HighlightSpec, colors: &mut
     }
 }
 /// `ColorArray` type alias.
-
 pub type ColorArray = Vec<HighlightSpec>;
 
 /// Syntax highlighter helper.
@@ -740,7 +737,6 @@ impl<'s> Highlighter<'s> {
         }
     }
     /// `highlight` — see implementation.
-
     pub fn highlight(&mut self) -> ColorArray {
         assert!(!self.done);
         self.done = true;

@@ -361,7 +361,6 @@ pub type ZleIntFunc = fn(args: &[String]) -> i32; // c:189
 ///     } u;
 /// };
 /// ```
-
 pub struct widget {
     // c:191
     /// flags (see below).
@@ -559,7 +558,6 @@ pub struct modifier {
     pub base: i32, // c:250
 }
 /// `MOD_MULT` constant.
-
 pub const MOD_MULT: i32 = 1 << 0; /* a repeat count has been selected */
 // c:253
 /// `MOD_TMULT` constant.
@@ -597,7 +595,6 @@ pub const MOD_OSSEL: i32 = MOD_PRI | MOD_CLIP; /* either system selection */
 // Cut-buffer flag bits — `Src/Zle/zle.h:271-280`.
 // =====================================================================
 /// `CUT_FRONT` constant.
-
 pub const CUT_FRONT: i32 = 1 << 0; /* Text goes in front of cut buffer */
 // c:271
 /// `CUT_REPLACE` constant.
@@ -647,7 +644,6 @@ pub struct change {
     pub changeno: i64, // c:294
 }
 /// `CH_NEXT` constant.
-
 pub const CH_NEXT: i32 = 1 << 0; /* next structure is also part of this change */
 // c:297
 /// `CH_PREV` constant.
@@ -724,7 +720,6 @@ pub struct cutbuffer {
 /// Port of `typedef struct cutbuffer *Cutbuffer` from zle.h:348.
 pub type CutbufferPtr = Box<cutbuffer>; // c:348
 /// `CUTBUFFER_LINE` constant.
-
 pub const CUTBUFFER_LINE: u8 = 1; /* for vi: buffer contains whole lines of data */
 // c:350
 /// `KRINGCTDEF` constant.
@@ -735,7 +730,6 @@ pub const KRINGCTDEF: i32 = 8; /* default number of buffers in the kill ring */
 // Completion modes — `Src/Zle/zle.h:354-362`.
 // =====================================================================
 /// `COMP_COMPLETE` constant.
-
 pub const COMP_COMPLETE: i32 = 0; // c:356
 /// `COMP_LIST_COMPLETE` constant.
 pub const COMP_LIST_COMPLETE: i32 = 1; // c:357
@@ -783,7 +777,6 @@ pub struct brinfo {
 // Hook offsets — `Src/Zle/zle.h:377-402`.
 // =====================================================================
 /// `LISTMATCHESHOOK` constant.
-
 pub const LISTMATCHESHOOK: i32 = 0; // c:379
 /// `COMPLETEHOOK` constant.
 pub const COMPLETEHOOK: i32 = 1; // c:380
@@ -856,7 +849,6 @@ pub fn invalidatelist() {
 // setline flags — `Src/Zle/zle.h:404-408`.
 // =====================================================================
 /// `ZSL_COPY` constant.
-
 pub const ZSL_COPY: i32 = 1; /* Copy the argument, don't modify it */
 // c:406
 /// `ZSL_TOEND` constant.
@@ -951,7 +943,6 @@ pub const CURC_DEFAULT: i32 = 8; // c:485
 // Cursor flag bits — `Src/Zle/zle.h:488-500`.
 // =====================================================================
 /// `CURF_DEFAULT` constant.
-
 pub const CURF_DEFAULT: i32 = 0; // c:488
 /// `CURF_UNDERLINE` constant.
 pub const CURF_UNDERLINE: i32 = 1; // c:489

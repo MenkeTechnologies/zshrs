@@ -2,18 +2,14 @@
 #![cfg_attr(all(nightly, feature = "benchmark"), feature(test))]
 #![allow(non_camel_case_types)]
 /// `BUILD_VERSION` constant.
-
 pub const BUILD_VERSION: &str = env!("FISH_BUILD_VERSION");
 /// `common` submodule.
-
 #[macro_use]
 pub mod common;
 /// `wutil` submodule.
-
 #[macro_use]
 pub mod wutil;
 /// `abbrs` submodule.
-
 pub mod abbrs;
 /// `ast` submodule.
 pub mod ast;

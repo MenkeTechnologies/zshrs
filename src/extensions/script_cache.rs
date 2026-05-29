@@ -56,7 +56,6 @@ pub const SHARD_MAGIC: u32 = 0x5A525343;
 /// Bumped on incompatible rkyv schema changes.
 pub const SHARD_FORMAT_VERSION: u32 = 1;
 /// `ShardHeader` — see fields for layout.
-
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct ShardHeader {
@@ -72,7 +71,6 @@ pub struct ShardHeader {
     pub built_at_secs: u64,
 }
 /// `ScriptEntry` — see fields for layout.
-
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct ScriptEntry {
@@ -88,7 +86,6 @@ pub struct ScriptEntry {
     pub chunk_blob: Vec<u8>,
 }
 /// `ScriptShard` — see fields for layout.
-
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct ScriptShard {
@@ -325,7 +322,6 @@ impl ScriptCache {
         evicted
     }
     /// `clear` — see implementation.
-
     pub fn clear(&self) -> std::io::Result<()> {
         let _lock = acquire_lock(&self.lock_path);
         let res = match std::fs::remove_file(&self.path) {
@@ -412,7 +408,6 @@ fn format_local_ts(secs: i64) -> String {
     dt.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 /// `file_mtime` — see implementation.
-
 pub fn file_mtime(path: &Path) -> Option<(i64, i64)> {
     let meta = std::fs::metadata(path).ok()?;
     Some((meta.mtime(), meta.mtime_nsec()))
@@ -479,17 +474,14 @@ pub fn try_save_bytes(path: &Path, chunk_blob: &[u8]) -> Result<(), String> {
     cache.put(&path_str, mtime_s, mtime_ns, chunk_blob.to_vec())
 }
 /// `stats` — see implementation.
-
 pub fn stats() -> Option<(i64, i64)> {
     CACHE.as_ref().map(|c| c.stats())
 }
 /// `evict_stale` — see implementation.
-
 pub fn evict_stale() -> usize {
     CACHE.as_ref().map(|c| c.evict_stale()).unwrap_or(0)
 }
 /// `clear` — see implementation.
-
 pub fn clear() -> bool {
     CACHE.as_ref().map(|c| c.clear().is_ok()).unwrap_or(false)
 }

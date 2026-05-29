@@ -18,7 +18,6 @@
 use indexmap::IndexMap;
 use std::sync::OnceLock;
 /// `ArrayGetFn` type alias.
-
 pub type ArrayGetFn = fn(&str) -> Option<Vec<String>>;
 /// `AssocGetFn` type alias.
 pub type AssocGetFn = fn(&str) -> Option<IndexMap<String, String>>;
@@ -63,7 +62,6 @@ static PPARAMS_GET: OnceLock<PparamsGetFn> = OnceLock::new();
 static PPARAMS_SET: OnceLock<PparamsSetFn> = OnceLock::new();
 static UNREGISTER_FUNCTION: OnceLock<UnregisterFunctionFn> = OnceLock::new();
 /// `install_array_get` — see implementation.
-
 pub fn install_array_get(f: ArrayGetFn) {
     let _ = ARRAY_GET.set(f);
 }
@@ -120,7 +118,6 @@ pub fn install_unregister_function(f: UnregisterFunctionFn) {
     let _ = UNREGISTER_FUNCTION.set(f);
 }
 /// `array` — see implementation.
-
 pub fn array(name: &str) -> Option<Vec<String>> {
     // Hook path (fusevm executor) when installed; otherwise fall
     // through to the direct param table at `params::getaparam` so

@@ -37,7 +37,6 @@ pub enum SeparationType {
     explicitly,
 }
 /// `BufferElement` — see fields for layout.
-
 pub struct BufferElement {
     /// `contents` field.
     pub contents: Vec<u8>,
@@ -195,7 +194,6 @@ pub trait IoData: Send + Sync {
     }
 }
 /// `IoClose` — see fields for layout.
-
 pub struct IoClose {
     /// `fd` field.
     fd: RawFd,
@@ -221,7 +219,6 @@ impl IoData for IoClose {
     }
 }
 /// `IoFd` — see fields for layout.
-
 pub struct IoFd {
     /// `fd` field.
     fd: RawFd,
@@ -373,12 +370,10 @@ impl IoBufferfill {
         }))
     }
     /// `buffer` — see implementation.
-
     pub fn buffer(&self) -> &IoBuffer {
         &self.buffer
     }
     /// `read_all_available` — see implementation.
-
     pub fn read_all_available(&self) {
         fd_monitor().with_fd(self.item_id, |fd| self.buffer.read_all_available(fd));
     }
@@ -462,7 +457,6 @@ impl IoBuffer {
         amt
     }
     /// `read_all_available` — see implementation.
-
     pub fn read_all_available(&self, fd: BorrowedFd) {
         let mut locked_buff = self.0.lock().unwrap();
         self.do_read_all_available(fd, &mut locked_buff);
@@ -524,10 +518,8 @@ fn begin_filling(iobuffer: IoBuffer, fd: OwnedFd) -> FdMonitorItemId {
     fd_monitor().add(fd, item_callback)
 }
 /// `IoDataRef` type alias.
-
 pub type IoDataRef = Arc<dyn IoData>;
 /// `IoChain` — see fields for layout.
-
 #[derive(Clone, Default)]
 pub struct IoChain(pub Vec<IoDataRef>);
 
@@ -873,7 +865,6 @@ impl BufferedOutputStream {
     }
 }
 /// `IoStreams` — see fields for layout.
-
 pub struct IoStreams<'a> {
     // Streams for out and err.
     /// `out` field.
@@ -938,7 +929,6 @@ impl<'a> IoStreams<'a> {
         }
     }
     /// `out_is_terminal` — see implementation.
-
     pub fn out_is_terminal(&self) -> bool {
         !self.out_is_redirected && isatty(STDOUT_FILENO)
     }
@@ -967,7 +957,6 @@ const OPEN_MASK: Mode = Mode::from_bits_truncate(0o666);
 /// Provide the fd monitor used for background fillthread operations.
 static FD_MONITOR: LazyLock<FdMonitor> = LazyLock::new(FdMonitor::new);
 /// `fd_monitor` — see implementation.
-
 pub fn fd_monitor() -> &'static FdMonitor {
     &FD_MONITOR
 }

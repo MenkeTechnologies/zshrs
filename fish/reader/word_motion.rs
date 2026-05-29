@@ -5,7 +5,6 @@ use crate::reader::is_backslashed;
 use crate::tokenizer::tok_is_string_character;
 use fish_widestring::word_char::{is_blank, WordCharClass};
 /// `MoveWordStyle` — see variants.
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MoveWordStyle {
     /// stop at punctuation
@@ -16,7 +15,6 @@ pub enum MoveWordStyle {
     Whitespace,
 }
 /// `MoveWordDir` — see variants.
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MoveWordDir {
     /// `Left` variant.
@@ -25,7 +23,6 @@ pub enum MoveWordDir {
     Right,
 }
 /// `MoveWordStateMachine` — see fields for layout.
-
 pub struct MoveWordStateMachine {
     /// `direction` field.
     direction: MoveWordDir,

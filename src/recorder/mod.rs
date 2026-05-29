@@ -207,7 +207,6 @@ impl ParamAttrs {
     /// codepath when reconstructing array state from the bundle.
     pub const APPEND: u16 = 1 << 12;
     /// `set` — see implementation.
-
     pub fn set(&mut self, mask: u16) {
         self.0 |= mask;
     }
@@ -332,7 +331,6 @@ pub struct RecorderBundle {
     pub shell_id: Option<String>,
 }
 /// `enable` — see implementation.
-
 #[inline]
 pub fn enable() {
     ENABLED.store(true, Ordering::Relaxed);
@@ -340,7 +338,6 @@ pub fn enable() {
     tracing::info!("recorder: enabled");
 }
 /// `is_enabled` — see implementation.
-
 #[inline]
 pub fn is_enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
@@ -379,7 +376,6 @@ pub fn recorder_ctx_global() -> RecordCtx {
     }
 }
 /// `set_daemon_disabled` — see implementation.
-
 #[inline]
 pub fn set_daemon_disabled(v: bool) {
     DAEMON_DISABLED.store(v, Ordering::Relaxed);
@@ -390,7 +386,6 @@ fn daemon_disabled() -> bool {
     DAEMON_DISABLED.load(Ordering::Relaxed)
 }
 /// `set_quiet` — see implementation.
-
 #[inline]
 pub fn set_quiet(v: bool) {
     QUIET.store(v, Ordering::Relaxed);
@@ -401,7 +396,6 @@ fn quiet() -> bool {
     QUIET.load(Ordering::Relaxed)
 }
 /// `set_json_summary` — see implementation.
-
 #[inline]
 pub fn set_json_summary(v: bool) {
     JSON_SUMMARY.store(v, Ordering::Relaxed);
@@ -412,7 +406,6 @@ fn json_summary_enabled() -> bool {
     JSON_SUMMARY.load(Ordering::Relaxed)
 }
 /// `set_output_path` — see implementation.
-
 pub fn set_output_path(p: Option<String>) {
     if let Ok(mut g) = OUTPUT_PATH.lock() {
         *g = p;
@@ -423,7 +416,6 @@ fn output_path() -> Option<String> {
     OUTPUT_PATH.lock().ok().and_then(|g| g.clone())
 }
 /// `set_shell_id_override` — see implementation.
-
 pub fn set_shell_id_override(s: Option<String>) {
     if let Ok(mut g) = SHELL_ID_OVERRIDE.lock() {
         *g = s;
@@ -1174,7 +1166,6 @@ pub fn flush_to_daemon() -> bool {
     }
 }
 /// `flush_to_daemon` — see implementation.
-
 #[cfg(not(feature = "daemon"))]
 pub fn flush_to_daemon() -> bool {
     if !is_enabled() {

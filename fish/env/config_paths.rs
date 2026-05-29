@@ -21,7 +21,6 @@ pub struct ConfigPaths {
     pub doc: Option<PathBuf>,  // e.g., /usr/local/share/doc/fish
 }
 /// `PREFIX` constant.
-
 pub const PREFIX: &str = env!("PREFIX");
 const SYSCONF_DIR: &str = env!("SYSCONFDIR");
 const DATADIR: Option<&str> = option_env!("DATADIR");
@@ -169,7 +168,6 @@ impl ConfigPaths {
     }
 }
 /// `FishPath` — see variants.
-
 pub enum FishPath {
     /// `Absolute` variant.
     Absolute(PathBuf),

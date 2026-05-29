@@ -47,14 +47,12 @@ pub struct PathFlags {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct IsFile(pub bool);
 /// `IsErr` — see fields for layout.
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct IsErr;
 
 /// The result of a file test.
 pub type FileTestResult = Result<IsFile, IsErr>;
 /// `FileTester` — see fields for layout.
-
 pub struct FileTester<'s> {
     // The working directory, for resolving paths against.
     /// `working_directory` field.
@@ -428,7 +426,6 @@ fn fs_is_case_insensitive(
     icase
 }
 /// `fs_is_case_insensitive` — see implementation.
-
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 pub fn fs_is_case_insensitive(
     _path: &wstr,

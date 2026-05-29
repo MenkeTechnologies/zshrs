@@ -320,12 +320,10 @@ pub fn bin_rmdir(
 // BIN_* / MV_* constants — `Src/Modules/files.c:170-178`.
 // =====================================================================
 /// `BIN_LN` constant.
-
 pub const BIN_LN: i32 = 0; // c:170
 /// `BIN_MV` constant.
 pub const BIN_MV: i32 = 1; // c:171
 /// `MV_NODIRS` constant.
-
 pub const MV_NODIRS: i32 = 1 << 0; // c:173
 /// `MV_FORCE` constant.
 pub const MV_FORCE: i32 = 1 << 1; // c:174
@@ -1188,7 +1186,6 @@ pub const BIN_CHOWN: i32 = 0; // c:719
 // module entries — `Src/Modules/files.c:828-876`.
 // =====================================================================
 /// `BIN_CHGRP` constant.
-
 pub const BIN_CHGRP: i32 = 1; // c:719
 
 // =====================================================================

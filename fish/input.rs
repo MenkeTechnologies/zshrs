@@ -20,7 +20,6 @@ use std::{
     },
 };
 /// `FISH_BIND_MODE_VAR` constant.
-
 pub const FISH_BIND_MODE_VAR: &wstr = L!("fish_bind_mode");
 /// `DEFAULT_BIND_MODE` constant.
 pub const DEFAULT_BIND_MODE: &wstr = L!("default");
@@ -28,7 +27,6 @@ pub const DEFAULT_BIND_MODE: &wstr = L!("default");
 /// A name for our own key mapping for nul.
 pub const NUL_MAPPING_NAME: &wstr = L!("nul");
 /// `InputMappingName` — see fields for layout.
-
 #[derive(Debug, Clone)]
 pub struct InputMappingName {
     /// `seq` field.
@@ -37,7 +35,6 @@ pub struct InputMappingName {
     pub mode: WString,
 }
 /// `KeyNameStyle` — see variants.
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum KeyNameStyle {
     /// `Plain` variant.
@@ -893,7 +890,6 @@ impl<'a> Reader<'a> {
         self.get_input_data_mut().input_function_args.push(arg);
     }
     /// `function_pop_arg` — see implementation.
-
     pub fn function_pop_arg(&mut self) -> Option<char> {
         self.get_input_data_mut().input_function_args.pop()
     }
@@ -1014,7 +1010,6 @@ pub fn input_function_get_names() -> Vec<&'static wstr> {
         .collect()
 }
 /// `input_function_get_code` — see implementation.
-
 pub fn input_function_get_code(name: &wstr) -> Option<ReadlineCmd> {
     // `input_function_metadata` is required to be kept in asciibetical order, making it OK to do
     // a binary search for the matching name.

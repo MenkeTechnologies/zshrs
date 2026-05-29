@@ -556,7 +556,6 @@ impl CanonicalEngine {
         super::shard::shard_path(&self.paths, PROMOTIONS_SOURCE_ROOT, PROMOTIONS_SLUG)
     }
     /// `last_persist_at_ns` — see implementation.
-
     pub fn last_persist_at_ns(&self) -> i64 {
         self.inner.read().last_persist_at_ns
     }

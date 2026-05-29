@@ -419,7 +419,6 @@ pub fn load_log_directive(paths: &CachePaths) -> String {
         .unwrap_or_else(|| DEFAULT.into())
 }
 /// `load_http_config` — see implementation.
-
 pub fn load_http_config() -> Result<super::http::HttpConfig> {
     let path = daemon_config_file()?;
     if !path.exists() {

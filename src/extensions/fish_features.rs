@@ -398,7 +398,7 @@ pub fn colorize_line(line: &str, colors: &[HighlightSpec]) -> String {
 /// `setopt EXPANDABBREV` only via the `zsh-abbr` plugin, not natively.
 pub enum AbbrPosition {
     /// `Command` variant.
-    Command,  // Only in command position
+    Command, // Only in command position
     /// `Anywhere` variant.
     Anywhere, // Anywhere in the line
 }
@@ -427,7 +427,6 @@ impl Abbreviation {
         }
     }
     /// `matches` — see implementation.
-
     pub fn matches(&self, token: &str, is_command_position: bool) -> bool {
         let position_ok = match self.position {
             AbbrPosition::Anywhere => true,
@@ -441,19 +440,16 @@ impl Abbreviation {
 static ABBRS: LazyLock<Mutex<AbbreviationSet>> =
     LazyLock::new(|| Mutex::new(AbbreviationSet::default()));
 /// `with_abbrs` — see implementation.
-
 pub fn with_abbrs<R>(cb: impl FnOnce(&AbbreviationSet) -> R) -> R {
     let abbrs = ABBRS.lock().unwrap();
     cb(&abbrs)
 }
 /// `with_abbrs_mut` — see implementation.
-
 pub fn with_abbrs_mut<R>(cb: impl FnOnce(&mut AbbreviationSet) -> R) -> R {
     let mut abbrs = ABBRS.lock().unwrap();
     cb(&mut abbrs)
 }
 /// `AbbreviationSet` — see fields for layout.
-
 #[derive(Default)]
 pub struct AbbreviationSet {
     /// `abbrs` field.
@@ -559,7 +555,6 @@ impl Autosuggestion {
         }
     }
     /// `is_empty` — see implementation.
-
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
@@ -705,22 +700,18 @@ impl KillRing {
     }
 }
 /// `kill_add` — see implementation.
-
 pub fn kill_add(text: String) {
     KILLRING.lock().unwrap().add(text);
 }
 /// `kill_replace` — see implementation.
-
 pub fn kill_replace(text: String) {
     KILLRING.lock().unwrap().replace(text);
 }
 /// `kill_yank` — see implementation.
-
 pub fn kill_yank() -> Option<String> {
     KILLRING.lock().unwrap().yank().map(|s| s.to_string())
 }
 /// `kill_yank_rotate` — see implementation.
-
 pub fn kill_yank_rotate() -> Option<String> {
     KILLRING.lock().unwrap().rotate().map(|s| s.to_string())
 }
@@ -790,7 +781,6 @@ pub fn validate_command(line: &str) -> ValidationStatus {
     ValidationStatus::Valid
 }
 /// `ValidationStatus` — see variants.
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValidationStatus {
     /// `Valid` variant.
@@ -807,12 +797,10 @@ pub enum ValidationStatus {
 
 static PRIVATE_MODE: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
 /// `is_private_mode` — see implementation.
-
 pub fn is_private_mode() -> bool {
     *PRIVATE_MODE.lock().unwrap()
 }
 /// `set_private_mode` — see implementation.
-
 pub fn set_private_mode(enabled: bool) {
     *PRIVATE_MODE.lock().unwrap() = enabled;
 }

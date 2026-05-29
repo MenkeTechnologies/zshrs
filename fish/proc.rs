@@ -70,7 +70,6 @@ pub enum ProcessType {
     Exec,
 }
 /// `JobControl` — see variants.
-
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum JobControl {
@@ -78,7 +77,6 @@ pub enum JobControl {
     All,
     /// `Interactive` variant.
     Interactive,
-    /// `None` variant.
     None,
 }
 
@@ -111,7 +109,6 @@ pub fn clock_ticks_to_seconds(ticks: ClockTicks) -> f64 {
     0.0
 }
 /// `JobGroupRef` type alias.
-
 pub type JobGroupRef = Arc<JobGroup>;
 
 /// A ProcStatus is a value type that encapsulates logic around exited vs stopped vs signaled,
@@ -207,7 +204,6 @@ impl ProcStatus {
         WIFSIGNALED(self.status())
     }
     /// `stop_signal` — see implementation.
-
     pub fn stop_signal(&self) -> libc::c_int {
         assert!(self.stopped(), "Process is not signal stopped");
         WSTOPSIG(self.status())
@@ -285,12 +281,10 @@ impl InternalProc {
         );
     }
     /// `get_status` — see implementation.
-
     pub fn get_status(&self) -> ProcStatus {
         *self.status.get().expect("Process has not exited")
     }
     /// `get_id` — see implementation.
-
     pub fn get_id(&self) -> u64 {
         self.internal_proc_id
     }
@@ -324,7 +318,6 @@ impl Pid {
         self.get().into()
     }
     /// `as_nix_pid` — see implementation.
-
     #[inline(always)]
     pub fn as_nix_pid(&self) -> nix::unistd::Pid {
         nix::unistd::Pid::from_raw(self.as_pid_t())
@@ -423,10 +416,8 @@ pub struct Process {
     /// Reported status value.
     pub status: Cell<ProcStatus>,
     /// `last_times` field.
-
     pub last_times: Cell<ProcTimes>,
     /// `argv` field.
-
     argv: Vec<WString>,
     /// `proc_redirection_specs` field.
     proc_redirection_specs: RedirectionSpecList,
@@ -437,7 +428,6 @@ pub struct Process {
     wait_handle: RefCell<Option<WaitHandleRef>>,
 }
 /// `ProcTimes` — see fields for layout.
-
 #[derive(Default, Clone, Copy)]
 pub struct ProcTimes {
     /// Last time of cpu time check, in seconds (per timef).
@@ -446,7 +436,6 @@ pub struct ProcTimes {
     pub jiffies: ClockTicks,
 }
 /// `ConcreteAssignment` — see fields for layout.
-
 pub struct ConcreteAssignment {
     /// `variable_name` field.
     pub variable_name: WString,
@@ -476,7 +465,6 @@ impl Process {
         self.pid.get().copied()
     }
     /// `has_pid` — see implementation.
-
     #[inline(always)]
     pub fn has_pid(&self) -> bool {
         self.pid().is_some()
@@ -577,12 +565,10 @@ impl Process {
         self.wait_handle.borrow().clone()
     }
     /// `is_stopped` — see implementation.
-
     pub fn is_stopped(&self) -> bool {
         self.stopped.load()
     }
     /// `is_completed` — see implementation.
-
     pub fn is_completed(&self) -> bool {
         self.completed.load()
     }
@@ -679,7 +665,6 @@ impl Job {
         }
     }
     /// `group` — see implementation.
-
     pub fn group(&self) -> &JobGroup {
         self.group.as_ref().unwrap()
     }
@@ -768,7 +753,6 @@ impl Job {
         self.group().wants_job_control()
     }
     /// `entitled_to_terminal` — see implementation.
-
     pub fn entitled_to_terminal(&self) -> bool {
         self.group().is_foreground() && self.processes().iter().any(|p| !p.is_internal())
     }
@@ -969,7 +953,6 @@ impl Job {
     }
 }
 /// `JobRef` type alias.
-
 pub type JobRef = Rc<Job>;
 
 /// Whether this shell is attached to a tty.

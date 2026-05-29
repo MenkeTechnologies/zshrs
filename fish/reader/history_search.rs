@@ -32,7 +32,6 @@ impl SearchMatch {
     }
 }
 /// `SearchMode` — see variants.
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SearchMode {
     #[default]
@@ -154,7 +153,6 @@ impl ReaderHistorySearch {
         self.skips.insert(s)
     }
     /// `handle_deletion` — see implementation.
-
     pub fn handle_deletion(&mut self) {
         assert!(!self.is_at_present());
         self.matches.remove(self.match_index);

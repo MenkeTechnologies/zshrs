@@ -912,7 +912,6 @@ fn char_is_escaped(text: &wstr, idx: usize) -> bool {
     count_preceding_backslashes(text, idx) % 2 == 1
 }
 /// `main` — see implementation.
-
 pub fn main() {
     PROGRAM_NAME.set(L!("fish_indent")).unwrap();
     panic_handler(throwing_main)
@@ -951,7 +950,6 @@ fn throwing_main() -> i32 {
     do_indent(None, &mut streams, args).builtin_status_code()
 }
 /// `fish_indent` — see implementation.
-
 pub fn fish_indent(parser: &Parser, streams: &mut IoStreams, args: &mut [&wstr]) -> BuiltinResult {
     let args = args.iter_mut().map(|x| x.to_owned()).collect();
     do_indent(Some(parser), streams, args)

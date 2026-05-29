@@ -12,7 +12,6 @@ use crate::{
 };
 use fish_widestring::{str2wcstring, ANY_STRING};
 /// `Match` — see fields for layout.
-
 #[derive(Default)]
 pub struct Match<'args> {
     /// `all` field.

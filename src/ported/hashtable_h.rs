@@ -15,7 +15,6 @@
 // Builtin function numbers — Src/hashtable.h:34-66.
 // =====================================================================
 /// `BIN_TYPESET` constant.
-
 pub const BIN_TYPESET: i32 = 0; // c:34
 /// `BIN_BG` constant.
 pub const BIN_BG: i32 = 1; // c:35

@@ -10411,8 +10411,8 @@ pub fn stripkshdef(
 ) -> Option<crate::ported::zsh_h::Eprog> {
     use crate::ported::parse::ecrawstr;
     use crate::ported::zsh_h::{
-        wc_code, wordcode, Dash, WC_FUNCDEF, WC_FUNCDEF_SKIP, WC_LIST, WC_LIST_TYPE, EF_HEAP,
-        EF_MAP, Z_END, Z_SIMPLE, Z_SYNC,
+        wc_code, wordcode, Dash, EF_HEAP, EF_MAP, WC_FUNCDEF, WC_FUNCDEF_SKIP, WC_LIST,
+        WC_LIST_TYPE, Z_END, Z_SIMPLE, Z_SYNC,
     };
 
     // c:6300 — `if (!prog) return NULL;`

@@ -149,7 +149,6 @@ pub struct cdstate {
     pub runs: Option<Box<cdrun>>, // c:55 Cdrun runs
 }
 /// `CRT_SIMPLE` constant.
-
 pub const CRT_SIMPLE: i32 = 0; // c:79
 /// Port of `CRT_DESC` from `computil.c:80`. Match with description.
 pub const CRT_DESC: i32 = 1; // c:80

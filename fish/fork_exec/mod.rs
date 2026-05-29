@@ -2,7 +2,6 @@
 // This concerns posix_spawn support, and async-signal
 // safe code which happens in between fork and exec.
 /// `flog_safe` submodule.
-
 pub mod flog_safe;
 /// `postfork` submodule.
 pub mod postfork;
@@ -32,6 +31,5 @@ pub fn blocked_signals_for_job(job: &Job, sigmask: &mut libc::sigset_t) -> bool 
 #[cfg(not(target_os = "android"))]
 pub static PATH_BSHELL: &[u8] = b"/bin/sh\0";
 /// `PATH_BSHELL` static.
-
 #[cfg(target_os = "android")]
 pub static PATH_BSHELL: &[u8] = b"/system/bin/sh\0";

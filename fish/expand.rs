@@ -1520,7 +1520,6 @@ impl<'a, 'b, 'c> Expander<'a, 'b, 'c> {
     }
 }
 /// `ExpandResultCode` — see variants.
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ExpandResultCode {
     /// There was an error, for example, unmatched braces.

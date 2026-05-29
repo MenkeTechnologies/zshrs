@@ -1886,7 +1886,6 @@ pub fn fixsuffix() {
     SUFFIXLEN.store(0, SeqCst);
 }
 /// `DONE` static.
-
 pub static DONE: AtomicI32 = AtomicI32::new(0); // c:79
 
 /// Port of `mod_export int suffixlen` from `Src/Zle/zle_misc.c:1553`.

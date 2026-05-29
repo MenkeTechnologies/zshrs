@@ -8,7 +8,6 @@ use std::process::Command;
 
 const HELP_ERR: LocalizableString = localizable_string!("Could not show help message");
 /// `print_help` — see implementation.
-
 pub fn print_help(command: &str) {
     let mut cmdline = OsString::new();
     cmdline.push("__fish_print_help ");

@@ -18,7 +18,6 @@ use crate::ported::zsh_h::{
 };
 use std::sync::{Mutex, OnceLock};
 /// `bin_zsocket` — see implementation.
-
 pub fn bin_zsocket(
     nam: &str,
     args: &[String], // c:57

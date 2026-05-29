@@ -62,7 +62,6 @@ impl HeaderColors {
         }
     }
     /// `format` — see implementation.
-
     pub fn format(&self, text: &str) -> String {
         format!(
             "\x1b[{}m{}\x1b[0m\x1b[{}m{}\x1b[0m\x1b[{}m{}\x1b[0m",

@@ -69,10 +69,8 @@ pub struct LockedFile {
     _locked_fd: File,
 }
 /// `LOCKED_FILE_MODE` constant.
-
 pub const LOCKED_FILE_MODE: Mode = Mode::from_bits_truncate(0o600);
 /// `LockingMode` — see variants.
-
 pub enum LockingMode {
     /// `Shared` variant.
     Shared,
@@ -96,7 +94,6 @@ impl LockingMode {
         }
     }
     /// `file_flags` — see implementation.
-
     pub fn file_flags(&self) -> OFlag {
         match self {
             Self::Shared => OFlag::O_RDONLY,
@@ -157,12 +154,10 @@ impl LockedFile {
         })
     }
     /// `get` — see implementation.
-
     pub fn get(&self) -> &File {
         &self.data_file
     }
     /// `get_mut` — see implementation.
-
     pub fn get_mut(&mut self) -> &mut File {
         &mut self.data_file
     }
@@ -264,7 +259,6 @@ where
     ))
 }
 /// `PotentialUpdate` — see fields for layout.
-
 pub struct PotentialUpdate<UserData> {
     /// `do_save` field.
     pub do_save: bool,

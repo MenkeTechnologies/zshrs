@@ -1762,7 +1762,6 @@ pub fn historybeginningsearchforward() -> i32 {
     1
 }
 /// `ISEARCH_ACTIVE` static.
-
 pub static ISEARCH_ACTIVE: AtomicI32 = AtomicI32::new(0); // c:1078
 
 /// Port of `int isearch_startpos` from `Src/Zle/zle_hist.c:1078`.

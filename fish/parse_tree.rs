@@ -172,7 +172,6 @@ impl ParsedSource {
     }
 }
 /// `ParsedSourceRef` type alias.
-
 pub type ParsedSourceRef = Arc<ParsedSource>;
 
 /// A reference to a node within a parse tree.
@@ -244,7 +243,6 @@ impl<NodeType: Node> NodeRef<NodeType> {
         &self.parsed_source
     }
     /// `parsed_source_ref` — see implementation.
-
     pub fn parsed_source_ref(&self) -> ParsedSourceRef {
         Pin::into_inner(self.parsed_source.clone())
     }

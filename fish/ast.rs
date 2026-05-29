@@ -88,7 +88,6 @@ impl<N: Node + NodeMut + CheckParse> VisitableField for Option<N> {
     }
 }
 /// `MissingEndError` — see fields for layout.
-
 pub struct MissingEndError {
     /// `allowed_keywords` field.
     allowed_keywords: &'static [ParseKeyword],
@@ -96,7 +95,6 @@ pub struct MissingEndError {
     token: ParseToken,
 }
 /// `VisitResult` type alias.
-
 pub type VisitResult = ControlFlow<MissingEndError>;
 
 /// Similar to NodeVisitor, but for mutable nodes.
@@ -352,7 +350,6 @@ pub enum Kind<'a> {
     JobList(&'a JobList),
 }
 /// `KindMut` — see variants.
-
 pub enum KindMut<'a> {
     /// `Redirection` variant.
     Redirection(&'a mut Redirection),
@@ -730,7 +727,6 @@ impl CheckParse for Redirection {
 
 define_list_node!(VariableAssignmentList, VariableAssignment);
 /// `ArgumentOrRedirection` — see variants.
-
 #[derive(Debug, Node!)]
 pub enum ArgumentOrRedirection {
     /// `Argument` variant.
@@ -902,7 +898,6 @@ impl CheckParse for JobConjunction {
     }
 }
 /// `ForHeader` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct ForHeader {
     /// 'for'
@@ -917,7 +912,6 @@ pub struct ForHeader {
     pub semi_nl: SemiNl,
 }
 /// `WhileHeader` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct WhileHeader {
     /// 'while'
@@ -928,7 +922,6 @@ pub struct WhileHeader {
     pub andor_tail: AndorJobList,
 }
 /// `FunctionHeader` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct FunctionHeader {
     /// `kw_function` field.
@@ -941,7 +934,6 @@ pub struct FunctionHeader {
     pub semi_nl: SemiNl,
 }
 /// `BeginHeader` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct BeginHeader {
     /// `kw_begin` field.
@@ -951,7 +943,6 @@ pub struct BeginHeader {
     pub semi_nl: Option<SemiNl>,
 }
 /// `BlockStatement` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct BlockStatement {
     /// A header like for, while, etc.
@@ -964,7 +955,6 @@ pub struct BlockStatement {
     pub args_or_redirs: ArgumentOrRedirectionList,
 }
 /// `BraceStatement` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct BraceStatement {
     /// The opening brace, in command position.
@@ -977,7 +967,6 @@ pub struct BraceStatement {
     pub args_or_redirs: ArgumentOrRedirectionList,
 }
 /// `IfClause` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct IfClause {
     /// The 'if' keyword.
@@ -990,7 +979,6 @@ pub struct IfClause {
     pub body: JobList,
 }
 /// `ElseifClause` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct ElseifClause {
     /// The 'else' keyword.
@@ -1007,7 +995,6 @@ impl CheckParse for ElseifClause {
 
 define_list_node!(ElseifClauseList, ElseifClause);
 /// `ElseClause` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct ElseClause {
     /// else ; body
@@ -1023,7 +1010,6 @@ impl CheckParse for ElseClause {
     }
 }
 /// `IfStatement` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct IfStatement {
     /// if part
@@ -1038,7 +1024,6 @@ pub struct IfStatement {
     pub args_or_redirs: ArgumentOrRedirectionList,
 }
 /// `CaseItem` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct CaseItem {
     /// case \<arguments\> ; body
@@ -1056,7 +1041,6 @@ impl CheckParse for CaseItem {
     }
 }
 /// `SwitchStatement` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct SwitchStatement {
     /// switch \<argument\> ; body ; end args_redirs
@@ -1098,7 +1082,6 @@ pub struct NotStatement {
     pub contents: Statement,
 }
 /// `JobContinuation` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct JobContinuation {
     /// `pipe` field.
@@ -1118,7 +1101,6 @@ impl CheckParse for JobContinuation {
 
 define_list_node!(JobContinuationList, JobContinuation);
 /// `JobConjunctionContinuation` — see fields for layout.
-
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct JobConjunctionContinuation {
     /// The && or || token.
@@ -1306,7 +1288,6 @@ impl DecoratedStatement {
     }
 }
 /// `BlockStatementHeader` — see variants.
-
 #[derive(Debug, Node!)]
 pub enum BlockStatementHeader {
     /// `Begin` variant.
@@ -1502,7 +1483,6 @@ impl<'a, 'v: 'a> NodeVisitor<'v> for Traversal<'a> {
     }
 }
 /// `SourceRangeList` type alias.
-
 pub type SourceRangeList = Vec<SourceRange>;
 
 /// Extra source ranges.

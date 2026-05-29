@@ -13,7 +13,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 #[repr(transparent)]
 pub struct JobId(NonZeroU32);
 /// `MaybeJobId` — see fields for layout.
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct MaybeJobId(pub Option<JobId>);
 
@@ -171,7 +170,6 @@ impl JobId {
     /// `NONE` constant.
     pub const NONE: MaybeJobId = MaybeJobId(None);
     /// `new` — see implementation.
-
     pub fn new(value: NonZeroU32) -> Self {
         JobId(value)
     }

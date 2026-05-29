@@ -1,6 +1,5 @@
 use super::*;
 /// `Join` — see fields for layout.
-
 pub struct Join<'args> {
     /// `quiet` field.
     quiet: bool,

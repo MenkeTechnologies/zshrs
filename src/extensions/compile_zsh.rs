@@ -1010,8 +1010,7 @@ impl ZshCompiler {
                 if simple.assigns.is_empty() {
                     // c:3340-3364 — invoke NULLCMD/READNULLCMD.
                     let is_single_read = simple.redirs.len() == 1
-                        && simple.redirs[0].rtype
-                            == crate::ported::zsh_h::REDIR_READ;
+                        && simple.redirs[0].rtype == crate::ported::zsh_h::REDIR_READ;
                     self.builder
                         .emit(Op::LoadInt(if is_single_read { 1 } else { 0 }), 0);
                     self.builder.emit(
@@ -1597,8 +1596,7 @@ impl ZshCompiler {
         let name_clean = crate::lex::untokenize(&redir.name);
         let name_is_fd_like = name_clean == "-"
             || name_clean == "p"
-            || (!name_clean.is_empty()
-                && name_clean.chars().all(|c| c.is_ascii_digit()));
+            || (!name_clean.is_empty() && name_clean.chars().all(|c| c.is_ascii_digit()));
         let mut effective_rtype = redir.rtype;
         if redir.rtype == REDIR_MERGEOUT && !name_is_fd_like {
             // `>& FILE` → `> FILE 2>&1`. Default fd1 was 1 (set above)
@@ -5761,9 +5759,20 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
                 // are all `${#SPECIAL}` (length of $?, $!, $-, $0,
                 // $$). Plus tokenized forms Quest/Bang/Dash/Star/
                 // Stringg/Pound.
-                if matches!(after,
-                    '@' | '*' | '?' | '!' | '-' | '0' | '$' |
-                    '\u{87}' | '\u{97}' | '\u{96}' | '\u{9b}' | '\u{85}' | '\u{84}'
+                if matches!(
+                    after,
+                    '@' | '*'
+                        | '?'
+                        | '!'
+                        | '-'
+                        | '0'
+                        | '$'
+                        | '\u{87}'
+                        | '\u{97}'
+                        | '\u{96}'
+                        | '\u{9b}'
+                        | '\u{85}'
+                        | '\u{84}'
                 ) {
                     return i + 3;
                 }

@@ -68,7 +68,6 @@ impl Function {
         }
     }
     /// `call` — see implementation.
-
     pub fn call(&self, args: &[f64]) -> f64 {
         match (self, args) {
             (Function::Constant(n), []) => *n,
@@ -80,7 +79,6 @@ impl Function {
     }
 }
 /// `ErrorKind` — see variants.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorKind {
     /// `UnknownFunction` variant.
@@ -125,7 +123,6 @@ impl ErrorKind {
     }
 }
 /// `Error` — see fields for layout.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Error {
     /// `kind` field.
@@ -136,7 +133,6 @@ pub struct Error {
     pub len: usize,
 }
 /// `Operator` — see variants.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operator {
     /// `Add` variant.
@@ -365,7 +361,6 @@ impl<'s> State<'s> {
         state
     }
     /// `error` — see implementation.
-
     pub fn error(&self) -> Result<(), Error> {
         if let Token::End = self.current {
             Ok(())
@@ -382,7 +377,6 @@ impl<'s> State<'s> {
         }
     }
     /// `eval` — see implementation.
-
     pub fn eval(&mut self) -> f64 {
         self.expr()
     }
@@ -723,7 +717,6 @@ impl<'s> State<'s> {
     }
 }
 /// `te_interp` — see implementation.
-
 pub fn te_interp(expression: &wstr) -> Result<f64, Error> {
     let mut s = State::new(expression);
     let ret = s.eval();

@@ -927,9 +927,10 @@ pub fn bin_enable(
                         }
                     }
                     Tab::SufAlias => {
-                        let val = sufaliastab_lock().read().ok().and_then(|t| {
-                            t.get_including_disabled(&nm).map(|a| a.text.clone())
-                        });
+                        let val = sufaliastab_lock()
+                            .read()
+                            .ok()
+                            .and_then(|t| t.get_including_disabled(&nm).map(|a| a.text.clone()));
                         if let Some(v) = val {
                             println!("{}={}", nm, quotedzputs(&v));
                         } else {
@@ -1701,10 +1702,10 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
             let dd: usize = arg[1..].parse().unwrap_or(0); // c:894
             let pushdminus = isset(optlookup("pushdminus"));
             let from_top = (arg.starts_with('+')) ^ pushdminus; // c:898
-            // c:Src/builtin.c:904 — out-of-range stack index emits
-            // "no such entry in dir stack". Previous Rust port
-            // returned None silently and bin_cd's caller exited 1
-            // with no stderr, breaking parity.
+                                                                // c:Src/builtin.c:904 — out-of-range stack index emits
+                                                                // "no such entry in dir stack". Previous Rust port
+                                                                // returned None silently and bin_cd's caller exited 1
+                                                                // with no stderr, breaking parity.
             let resolved = DIRSTACK.lock().ok().and_then(|d| {
                 if from_top {
                     d.get(dd).cloned()
@@ -5269,10 +5270,10 @@ pub fn bin_functions(
             let new_shf_ptr = Box::into_raw(new_shf);
             let _ = mkautofn(new_shf_ptr); // c:3765
             add_autoload_function(new_shf_ptr, fname); // c:3767
-            // PFA-SMR: an `autoload NAME` registers a function stub
-            // that fires on first call. Record it as a `function`
-            // kind so replay re-registers the autoload. C zsh has
-            // no recorder hook here; emit per Rust-only schema.
+                                                       // PFA-SMR: an `autoload NAME` registers a function stub
+                                                       // that fires on first call. Record it as a `function`
+                                                       // kind so replay re-registers the autoload. C zsh has
+                                                       // no recorder hook here; emit per Rust-only schema.
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() {
                 let ctx = crate::recorder::recorder_ctx_global();
@@ -5489,8 +5490,7 @@ pub fn bin_unset(
                                 let to = (end - 1) as usize;
                                 if from < arr.len() && from <= to {
                                     let cap_to = to.min(arr.len() - 1);
-                                    let mut new_arr: Vec<String> =
-                                        Vec::with_capacity(arr.len());
+                                    let mut new_arr: Vec<String> = Vec::with_capacity(arr.len());
                                     new_arr.extend(arr[..from].iter().cloned());
                                     new_arr.push(String::new());
                                     new_arr.extend(arr[cap_to + 1..].iter().cloned());
@@ -5508,10 +5508,7 @@ pub fn bin_unset(
                         // `unset arr[0]` is invalid (unless
                         // KSHZEROSUBSCRIPT) and emits a diagnostic.
                         if i == 0 {
-                            zwarn(&format!(
-                                "{}: assignment to invalid subscript range",
-                                nm
-                            ));
+                            zwarn(&format!("{}: assignment to invalid subscript range", nm));
                             returnval = 1;
                         } else if i == -1 {
                             if !arr.is_empty() {
@@ -6723,11 +6720,11 @@ pub fn bin_alias(
 
     // c:4521-4540 — literal args: define `name=value` or display a single name.
     queue_signals(); // c:4522
-    // PFA-SMR: capture per-definition for replay. Dispatch the
-    // right subkind (galias/salias/alias) based on the parsed
-    // flag bits set above. Same per-name loop the C code walks
-    // — one record per `name=value` argv slot. Without this,
-    // the recorder harness saw zero `alias` captures.
+                     // PFA-SMR: capture per-definition for replay. Dispatch the
+                     // right subkind (galias/salias/alias) based on the parsed
+                     // flag bits set above. Same per-name loop the C code walks
+                     // — one record per `name=value` argv slot. Without this,
+                     // the recorder harness saw zero `alias` captures.
     #[cfg(feature = "recorder")]
     let recorder_active = crate::recorder::is_enabled();
     #[cfg(feature = "recorder")]
@@ -6851,20 +6848,20 @@ pub fn bin_print(
 ) -> i32 {
     let nonewline = OPT_ISSET(ops, b'n'); // c:4595
     let raw = OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'R'); // c:4596
-    // c:4597 — `-l` puts one arg per line. `-c` is "columns" but
-    // degrades to one-per-line when stdout isn't a tty (terminal-
-    // width-aware tabular print isn't ported); accept -c here as
-    // a synonym for -l so `print -c a b c` byte-matches zsh's
-    // non-tty fallback.
+                                                            // c:4597 — `-l` puts one arg per line. `-c` is "columns" but
+                                                            // degrades to one-per-line when stdout isn't a tty (terminal-
+                                                            // width-aware tabular print isn't ported); accept -c here as
+                                                            // a synonym for -l so `print -c a b c` byte-matches zsh's
+                                                            // non-tty fallback.
     let one_per_line = OPT_ISSET(ops, b'l') || OPT_ISSET(ops, b'c');
     let nul_sep = OPT_ISSET(ops, b'N'); // c:5114/5127/5132 — NUL separator
-    // c:Src/builtin.c — `-D` runs each arg through `dirify()`: if
-    // it matches a named dir or $HOME-prefix, abbreviate with
-    // `~`. zsh has the dircache + named-dir table behind it; for
-    // -c mode (non-interactive) the table mostly contains $HOME
-    // → "~". Apply that single rewrite for parity with the common
-    // case. The richer named-dir lookup belongs in a deeper
-    // dirify port.
+                                        // c:Src/builtin.c — `-D` runs each arg through `dirify()`: if
+                                        // it matches a named dir or $HOME-prefix, abbreviate with
+                                        // `~`. zsh has the dircache + named-dir table behind it; for
+                                        // -c mode (non-interactive) the table mostly contains $HOME
+                                        // → "~". Apply that single rewrite for parity with the common
+                                        // case. The richer named-dir lookup belongs in a deeper
+                                        // dirify port.
     let dirify_d = OPT_ISSET(ops, b'D');
     let _printf_mode = func == BIN_PRINTF || OPT_HASARG(ops, b'f'); // c:4604
     let echo_mode = func == BIN_ECHO;
@@ -9483,7 +9480,6 @@ pub fn bin_notavail(
 // `Executor::register_builtins` (`src/ported/vm_helper`) wires up.
 // ---------------------------------------------------------------------------
 /// `BUILTINS` static.
-
 pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::new(|| {
     vec![
         BIN_PREFIX("-", BINF_DASH),
@@ -11594,9 +11590,7 @@ fn parse_int_arg(s: &str) -> i64 {
         // "no math result" fallback).
         match body.parse::<i64>() {
             Ok(n) => n,
-            Err(_) => matheval(body)
-                .map(|f| f.l)
-                .unwrap_or(0),
+            Err(_) => matheval(body).map(|f| f.l).unwrap_or(0),
         }
     };
     if neg {
@@ -11922,7 +11916,6 @@ fn pat_enables(name: &str, argv: &[String], on: bool) -> i32 {
 // the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 /// `traps_table` — see implementation.
-
 pub fn traps_table() -> &'static Mutex<HashMap<String, String>> {
     TRAPS_INNER.get_or_init(|| Mutex::new(HashMap::new()))
 }

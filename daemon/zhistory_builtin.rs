@@ -47,7 +47,6 @@ fn connect() -> Result<Client, ()> {
     })
 }
 /// `zhistory` — see implementation.
-
 pub fn zhistory(args: &[String]) -> i32 {
     let verb = args.get(1).map(|s| s.as_str()).unwrap_or("");
     let rest: &[String] = if args.len() > 2 { &args[2..] } else { &[] };

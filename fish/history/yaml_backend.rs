@@ -113,7 +113,6 @@ fn trim_leading_spaces(s: &[u8]) -> (usize, &[u8]) {
     (count, &s[count..])
 }
 /// `extract_prefix_and_unescape_yaml` — see implementation.
-
 #[inline(always)]
 #[allow(clippy::type_complexity)]
 pub fn extract_prefix_and_unescape_yaml(line: &[u8]) -> Option<(Cow<'_, [u8]>, Cow<'_, [u8]>)> {

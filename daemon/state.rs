@@ -72,7 +72,6 @@ impl Session {
     }
 }
 /// `SessionSnapshot` — see fields for layout.
-
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct SessionSnapshot {
     /// `client_id` field.
@@ -243,7 +242,6 @@ impl DaemonState {
         f(&conn)
     }
     /// `uptime_ms` — see implementation.
-
     pub fn uptime_ms(&self) -> u64 {
         self.started_at.elapsed().as_millis() as u64
     }
@@ -280,7 +278,6 @@ impl DaemonState {
         (client_id, session_id)
     }
     /// `unregister_session` — see implementation.
-
     pub fn unregister_session(&self, client_id: u64) {
         {
             let mut g = self.inner.lock();
@@ -409,13 +406,11 @@ impl DaemonState {
         })
     }
     /// `snapshot_sessions` — see implementation.
-
     pub fn snapshot_sessions(&self) -> Vec<SessionSnapshot> {
         let g = self.inner.lock();
         g.sessions.values().map(Session::snapshot).collect()
     }
     /// `session_count` — see implementation.
-
     pub fn session_count(&self) -> usize {
         self.inner.lock().sessions.len()
     }
@@ -502,7 +497,6 @@ impl DaemonState {
         Some(s.snapshot())
     }
     /// `add_tags` — see implementation.
-
     pub fn add_tags(&self, client_id: u64, tags: &[String]) -> Option<Vec<String>> {
         let mut g = self.inner.lock();
         let s = g.sessions.get_mut(&client_id)?;
@@ -512,7 +506,6 @@ impl DaemonState {
         Some(s.tags.iter().cloned().collect())
     }
     /// `remove_tags` — see implementation.
-
     pub fn remove_tags(&self, client_id: u64, tags: &[String]) -> Option<Vec<String>> {
         let mut g = self.inner.lock();
         let s = g.sessions.get_mut(&client_id)?;
@@ -546,7 +539,6 @@ impl DaemonState {
         }
     }
     /// `shells_with_tag` — see implementation.
-
     pub fn shells_with_tag(&self, tag: &str) -> Vec<u64> {
         let g = self.inner.lock();
         g.sessions

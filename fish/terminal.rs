@@ -32,13 +32,11 @@ bitflags! {
 /// Whether term256 and term24bit are supported.
 static COLOR_SUPPORT: AtomicU8 = AtomicU8::new(0);
 /// `get_color_support` — see implementation.
-
 pub fn get_color_support() -> ColorSupport {
     let val = COLOR_SUPPORT.load(Ordering::Relaxed);
     ColorSupport::from_bits_truncate(val)
 }
 /// `set_color_support` — see implementation.
-
 pub fn set_color_support(val: ColorSupport) {
     COLOR_SUPPORT.store(val.bits(), Ordering::Relaxed);
 }
@@ -241,7 +239,6 @@ fn index_for_color(c: Color) -> u8 {
     c.to_term256_index()
 }
 /// `Outputter` — see fields for layout.
-
 pub struct Outputter {
     /// Storage for buffered contents.
     contents: Vec<u8>,
@@ -275,7 +272,6 @@ impl Outputter {
         Self::new_from_fd(-1)
     }
     /// `new_buffering_no_assume_normal` — see implementation.
-
     pub fn new_buffering_no_assume_normal() -> Self {
         let mut zelf = Self::new_buffering();
         zelf.last = TextFace::unknown();
@@ -342,7 +338,6 @@ impl Outputter {
         }
     }
     /// `style_writer` — see implementation.
-
     pub fn style_writer(&mut self) -> OutputterStyleWriter<'_> {
         OutputterStyleWriter::new(self)
     }
@@ -577,7 +572,6 @@ impl Outputter {
         self.maybe_flush();
     }
     /// `write_bytes` — see implementation.
-
     pub fn write_bytes(&mut self, buf: &[u8]) {
         self.contents.extend_from_slice(buf);
         self.maybe_flush();
@@ -592,7 +586,6 @@ impl Outputter {
     }
 }
 /// `BufferedOutputter` — see fields for layout.
-
 pub struct BufferedOutputter<'a>(RefMut<'a, Outputter>);
 
 impl<'a> BufferedOutputter<'a> {
@@ -652,7 +645,6 @@ pub fn best_color(candidates: impl Iterator<Item = Color>, support: ColorSupport
     .or(first)
 }
 /// `OutputterStyleWriter` — see fields for layout.
-
 pub struct OutputterStyleWriter<'a> {
     /// `out` field.
     out: &'a mut Outputter,

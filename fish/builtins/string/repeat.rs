@@ -1,6 +1,5 @@
 use super::*;
 /// `Repeat` — see fields for layout.
-
 #[derive(Default)]
 pub struct Repeat {
     /// `count` field.

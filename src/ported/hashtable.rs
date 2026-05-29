@@ -20,7 +20,15 @@
 use crate::compat::zgetcwd;
 use crate::hist::{hashchar, hist_ring};
 use crate::jobs::getsigidx;
-use crate::ported::zsh_h::{alias, options, BANG_TOK, CASE, COPROC, DINBRACK, DOLOOP, DONE, ELIF, ELSE, ESAC, FI, FOR, FOREACH, FUNC, IF, INBRACE_TOK, NOCORRECT, OUTBRACE_TOK, PAT_HEAPDUP, REPEAT, SELECT, THEN, TIME, TYPESET, UNTIL, WHILE, ZEND};
+use crate::ported::hist::{histlinect, histremovedups};
+use crate::ported::pattern::{patcompile, pattry};
+use crate::ported::signals::removetrap;
+use crate::ported::utils::scriptfilename_get;
+use crate::ported::zsh_h::{
+    alias, options, BANG_TOK, CASE, COPROC, DINBRACK, DOLOOP, DONE, ELIF, ELSE, ESAC, FI, FOR,
+    FOREACH, FUNC, IF, INBRACE_TOK, NOCORRECT, OUTBRACE_TOK, PAT_HEAPDUP, REPEAT, SELECT, THEN,
+    TIME, TYPESET, UNTIL, WHILE, ZEND,
+};
 use crate::signals::{settrap, unsettrap};
 use crate::text::{getpermtext, zoutputtab};
 use crate::utils::{nicezputs, quotedzputs, xsymlink, zputs, ztrcmp, zwarn};
@@ -37,10 +45,6 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use crate::ported::hist::{histlinect, histremovedups};
-use crate::ported::pattern::{patcompile, pattry};
-use crate::ported::signals::removetrap;
-use crate::ported::utils::scriptfilename_get;
 
 /// Generic hash function (zsh's hasher)
 /// Compute the canonical zsh hash for a string.
@@ -176,51 +180,42 @@ impl cmdnam_table {
         }
     }
     /// `set_path` — see implementation.
-
     pub fn set_path(&mut self, path: Vec<String>) {
         self.path = path;
         self.path_checked_index = 0;
     }
     /// `set_hash_executables_only` — see implementation.
-
     pub fn set_hash_executables_only(&mut self, value: bool) {
         self.hash_executables_only = value;
     }
     /// `add` — see implementation.
-
     pub fn add(&mut self, cmd: cmdnam) {
         self.table.insert(cmd.node.nam.clone(), cmd);
     }
     /// `get` — see implementation.
-
     pub fn get(&self, name: &str) -> Option<&cmdnam> {
         self.table
             .get(name)
             .filter(|c| (c.node.flags & DISABLED as i32) == 0)
     }
     /// `get_including_disabled` — see implementation.
-
     pub fn get_including_disabled(&self, name: &str) -> Option<&cmdnam> {
         self.table.get(name)
     }
     /// `remove` — see implementation.
-
     pub fn remove(&mut self, name: &str) -> Option<cmdnam> {
         self.table.remove(name)
     }
     /// `clear` — see implementation.
-
     pub fn clear(&mut self) {
         self.table.clear();
         self.path_checked_index = 0;
     }
     /// `len` — see implementation.
-
     pub fn len(&self) -> usize {
         self.table.len()
     }
     /// `is_empty` — see implementation.
-
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
     }
@@ -383,14 +378,12 @@ impl shfunc_table {
         }
     }
     /// `add` — see implementation.
-
     pub fn add(&mut self, func: shfunc) -> Option<shfunc> {
         self.table
             .insert(func.node.nam.clone(), Box::new(func))
             .map(|b| *b)
     }
     /// `get` — see implementation.
-
     pub fn get(&self, name: &str) -> Option<&shfunc> {
         self.table
             .get(name)
@@ -398,12 +391,10 @@ impl shfunc_table {
             .filter(|f| (f.node.flags & DISABLED as i32) == 0)
     }
     /// `get_including_disabled` — see implementation.
-
     pub fn get_including_disabled(&self, name: &str) -> Option<&shfunc> {
         self.table.get(name).map(|b| b.as_ref())
     }
     /// `get_mut` — see implementation.
-
     pub fn get_mut(&mut self, name: &str) -> Option<&mut shfunc> {
         self.table
             .get_mut(name)
@@ -411,12 +402,10 @@ impl shfunc_table {
             .filter(|f| (f.node.flags & DISABLED as i32) == 0)
     }
     /// `remove` — see implementation.
-
     pub fn remove(&mut self, name: &str) -> Option<shfunc> {
         self.table.remove(name).map(|b| *b)
     }
     /// `contains_key` — see implementation.
-
     pub fn contains_key(&self, name: &str) -> bool {
         self.table.contains_key(name)
     }
@@ -461,7 +450,6 @@ impl shfunc_table {
             .unwrap_or(std::ptr::null_mut())
     }
     /// `disable` — see implementation.
-
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(func) = self.table.get_mut(name) {
             func.node.flags |= DISABLED as i32;
@@ -471,7 +459,6 @@ impl shfunc_table {
         }
     }
     /// `enable` — see implementation.
-
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(func) = self.table.get_mut(name) {
             func.node.flags &= !(DISABLED as i32);
@@ -481,22 +468,18 @@ impl shfunc_table {
         }
     }
     /// `len` — see implementation.
-
     pub fn len(&self) -> usize {
         self.table.len()
     }
     /// `is_empty` — see implementation.
-
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
     }
     /// `iter` — see implementation.
-
     pub fn iter(&self) -> impl Iterator<Item = (&String, &shfunc)> {
         self.table.iter().map(|(k, b)| (k, b.as_ref()))
     }
     /// `iter_sorted` — see implementation.
-
     pub fn iter_sorted(&self) -> Vec<(&String, &shfunc)> {
         let mut entries: Vec<(&String, &shfunc)> =
             self.table.iter().map(|(k, b)| (k, b.as_ref())).collect();
@@ -504,7 +487,6 @@ impl shfunc_table {
         entries
     }
     /// `clear` — see implementation.
-
     pub fn clear(&mut self) {
         self.table.clear();
     }
@@ -662,19 +644,16 @@ impl reswd_table {
         Self { table }
     }
     /// `get` — see implementation.
-
     pub fn get(&self, name: &str) -> Option<&reswd> {
         self.table
             .get(name)
             .filter(|r| (r.node.flags & DISABLED as i32) == 0)
     }
     /// `get_including_disabled` — see implementation.
-
     pub fn get_including_disabled(&self, name: &str) -> Option<&reswd> {
         self.table.get(name)
     }
     /// `disable` — see implementation.
-
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(rw) = self.table.get_mut(name) {
             rw.node.flags |= DISABLED as i32;
@@ -684,7 +663,6 @@ impl reswd_table {
         }
     }
     /// `enable` — see implementation.
-
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(rw) = self.table.get_mut(name) {
             rw.node.flags &= !(DISABLED as i32);
@@ -694,12 +672,10 @@ impl reswd_table {
         }
     }
     /// `is_reserved` — see implementation.
-
     pub fn is_reserved(&self, name: &str) -> bool {
         self.get(name).is_some()
     }
     /// `iter` — see implementation.
-
     pub fn iter(&self) -> impl Iterator<Item = (&String, &reswd)> {
         self.table.iter()
     }
@@ -795,7 +771,6 @@ impl alias_table {
         }
     }
     /// `with_defaults` — see implementation.
-
     pub fn with_defaults() -> Self {
         let mut table = Self::new();
         // C addaliasnode(aliastab, "run-help", createaliasnode("man", 0));
@@ -805,36 +780,30 @@ impl alias_table {
         table
     }
     /// `add` — see implementation.
-
     pub fn add(&mut self, alias: alias) -> Option<alias> {
         self.table.insert(alias.node.nam.clone(), alias)
     }
     /// `get` — see implementation.
-
     pub fn get(&self, name: &str) -> Option<&alias> {
         self.table
             .get(name)
             .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
     /// `get_including_disabled` — see implementation.
-
     pub fn get_including_disabled(&self, name: &str) -> Option<&alias> {
         self.table.get(name)
     }
     /// `get_mut` — see implementation.
-
     pub fn get_mut(&mut self, name: &str) -> Option<&mut alias> {
         self.table
             .get_mut(name)
             .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
     /// `remove` — see implementation.
-
     pub fn remove(&mut self, name: &str) -> Option<alias> {
         self.table.remove(name)
     }
     /// `disable` — see implementation.
-
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(alias) = self.table.get_mut(name) {
             alias.node.flags |= DISABLED as i32;
@@ -844,7 +813,6 @@ impl alias_table {
         }
     }
     /// `enable` — see implementation.
-
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(alias) = self.table.get_mut(name) {
             alias.node.flags &= !(DISABLED as i32);
@@ -854,27 +822,22 @@ impl alias_table {
         }
     }
     /// `len` — see implementation.
-
     pub fn len(&self) -> usize {
         self.table.len()
     }
     /// `is_empty` — see implementation.
-
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
     }
     /// `clear` — see implementation.
-
     pub fn clear(&mut self) {
         self.table.clear();
     }
     /// `iter` — see implementation.
-
     pub fn iter(&self) -> impl Iterator<Item = (&String, &alias)> {
         self.table.iter()
     }
     /// `iter_sorted` — see implementation.
-
     pub fn iter_sorted(&self) -> Vec<(&String, &alias)> {
         let mut entries: Vec<_> = self.table.iter().collect();
         entries.sort_by(|a, b| a.0.cmp(b.0));
@@ -2627,8 +2590,7 @@ fn simple_glob_match(pattern: &str, name: &str) -> bool {
     // c:hashtable.c:412 — `scanmatchtable` callers pass a compiled
     // `Patprog`; this helper inlines the compile+match since callers
     // here have only the raw pattern string.
-    patcompile(pattern, PAT_HEAPDUP as i32, None)
-        .map_or(false, |p| pattry(&p, name))
+    patcompile(pattern, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, name))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3249,34 +3211,18 @@ mod tests {
     #[test]
     fn alias_corpus_create_global_alias_carries_flag() {
         let _g = crate::test_util::global_state_lock();
-        let a = createaliasnode(
-            "G",
-            "global text",
-            ALIAS_GLOBAL as u32,
-        );
+        let a = createaliasnode("G", "global text", ALIAS_GLOBAL as u32);
         let f = a.node.flags as i32;
-        assert_ne!(
-            f & ALIAS_GLOBAL,
-            0,
-            "ALIAS_GLOBAL set"
-        );
+        assert_ne!(f & ALIAS_GLOBAL, 0, "ALIAS_GLOBAL set");
     }
 
     /// `createaliasnode` with ALIAS_SUFFIX flag sets the suffix bit.
     #[test]
     fn alias_corpus_create_suffix_alias_carries_flag() {
         let _g = crate::test_util::global_state_lock();
-        let a = createaliasnode(
-            "S",
-            "suffix text",
-            ALIAS_SUFFIX as u32,
-        );
+        let a = createaliasnode("S", "suffix text", ALIAS_SUFFIX as u32);
         let f = a.node.flags as i32;
-        assert_ne!(
-            f & ALIAS_SUFFIX,
-            0,
-            "ALIAS_SUFFIX set"
-        );
+        assert_ne!(f & ALIAS_SUFFIX, 0, "ALIAS_SUFFIX set");
     }
 
     /// Empty text is preserved (zsh allows zero-length alias expansion).

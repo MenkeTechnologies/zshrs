@@ -233,12 +233,10 @@ impl BorrowedFdFile {
         unsafe { Self::from_raw_fd(libc::STDIN_FILENO) }
     }
     /// `stdout` — see implementation.
-
     pub fn stdout() -> Self {
         unsafe { Self::from_raw_fd(libc::STDOUT_FILENO) }
     }
     /// `stderr` — see implementation.
-
     pub fn stderr() -> Self {
         unsafe { Self::from_raw_fd(libc::STDERR_FILENO) }
     }

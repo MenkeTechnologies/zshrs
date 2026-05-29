@@ -238,7 +238,6 @@ fn parse_flags(
     ControlFlow::Continue(())
 }
 /// `fish_key_reader` — see implementation.
-
 pub fn fish_key_reader(
     parser: &Parser,
     streams: &mut IoStreams,
@@ -272,7 +271,6 @@ pub fn fish_key_reader(
     )
 }
 /// `main` — see implementation.
-
 pub fn main() {
     PROGRAM_NAME.set(L!("fish_key_reader")).unwrap();
     panic_handler(throwing_main)

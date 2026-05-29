@@ -192,7 +192,6 @@ impl FsWatcher {
         Ok(())
     }
     /// `stats` — see implementation.
-
     pub fn stats(&self) -> WatcherStats {
         let g = self.inner.lock();
         g.stats.clone()
@@ -210,7 +209,6 @@ impl FsWatcher {
         })
     }
     /// `registered_paths` — see implementation.
-
     pub fn registered_paths(&self) -> Vec<WatchedPath> {
         let g = self.inner.lock();
         g.registered.values().cloned().collect()

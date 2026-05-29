@@ -1,7 +1,6 @@
 use super::*;
 use fish_fallback::fish_wcwidth;
 /// `Pad` — see fields for layout.
-
 pub struct Pad {
     /// `char_to_pad` field.
     char_to_pad: char,

@@ -1,7 +1,6 @@
 use super::*;
 use fish_common::{unescape_string, UnescapeStringStyle};
 /// `Unescape` — see fields for layout.
-
 #[derive(Default)]
 pub struct Unescape {
     /// `no_quoted` field.

@@ -1145,7 +1145,6 @@ pub fn vigotomarkline(ch: char) -> i32 {
     vifirstnonblank() // c:932
 }
 /// `move_to_bol` — see implementation.
-
 pub fn move_to_bol() {
     while ZLECS.load(Ordering::SeqCst) > 0
         && ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst) - 1] != '\n'

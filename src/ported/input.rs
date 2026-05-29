@@ -15,19 +15,19 @@
 //! - Character-by-character input with push-back support
 //! - Meta-character encoding for internal tokens
 
-use crate::ported::zsh_h::{
-    Meta, INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO,
-    INP_RAW_KEEP,
-};
-use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::io::{self, BufRead, BufReader, Read, Write};
 use crate::ported::hashtable::aliastab_lock;
 use crate::ported::hist::histbackword;
 use crate::ported::lex::{zshlex_raw_back, LEX_LEXSTOP};
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::utils::{unmetafy, zerr};
+use crate::ported::zsh_h::{
+    Meta, INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO,
+    INP_RAW_KEEP,
+};
 use crate::ported::ztype_h::itok;
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::io::{self, BufRead, BufReader, Read, Write};
 
 /// Port of `struct instacks` from `Src/input.c:109`. One frame in
 /// the input stack — pushed by `inpush()` and popped by `inpoptop()`
@@ -551,9 +551,7 @@ pub fn inpoptop() {
         //               space → inalmore=1; histbackword(); }
         if let Some(name) = &entry.alias {
             {
-                let mut tab = aliastab_lock()
-                    .write()
-                    .expect("aliastab poisoned");
+                let mut tab = aliastab_lock().write().expect("aliastab poisoned");
                 if let Some(a) = tab.get_mut(name) {
                     a.inuse = 0; // c:773
                 }
@@ -661,9 +659,9 @@ fn imeta(c: char) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::ported::utils::inittyptab;
     use crate::ported::ztype_h::TYPTAB_TEST_LOCK;
-    use super::*;
 
     /// Test-only reset: clear all input statics so per-test setup
     /// starts from a clean slate (tests run in the same thread by
@@ -752,9 +750,7 @@ mod tests {
         // Tests must initialise the typtab — without `inittyptab()`
         // every byte's IMETA bit reads as 0. Serialise against other
         // typtab-mutating tests via the canonical lock.
-        let _g = TYPTAB_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         inittyptab();
 
         // c:4195 — '\0' is IMETA.

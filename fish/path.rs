@@ -40,7 +40,6 @@ pub fn path_get_cache() -> Option<WString> {
     CACHE_DIRECTORY.path()
 }
 /// `DirRemoteness` — see variants.
-
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum DirRemoteness {
     /// directory status is unknown
@@ -190,7 +189,6 @@ impl GetPathResult {
     }
 }
 /// `path_try_get_path` — see implementation.
-
 pub fn path_try_get_path(cmd: &wstr, vars: &dyn Environment) -> GetPathResult {
     if let Some(path) = vars.get(L!("PATH")) {
         path_get_path_core(cmd, path.as_list())
@@ -471,7 +469,6 @@ pub fn paths_are_equivalent(p1: &wstr, p2: &wstr) -> bool {
     idx1 == len1 && idx2 == len2
 }
 /// `path_is_valid` — see implementation.
-
 pub fn path_is_valid(path: &wstr, working_directory: &wstr) -> bool {
     // Some special paths are always valid.
     if path.is_empty() {

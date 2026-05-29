@@ -56,7 +56,6 @@ pub struct ZshrsConfig {
     pub log: LogConfig,
 }
 /// `WorkerPoolConfig` — see fields for layout.
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 #[derive(Default)]
@@ -65,7 +64,6 @@ pub struct WorkerPoolConfig {
     pub size: usize,
 }
 /// `CompletionConfig` — see fields for layout.
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct CompletionConfig {
@@ -77,7 +75,6 @@ pub struct CompletionConfig {
     pub ast_cache: bool,
 }
 /// `HistoryConfig` — see fields for layout.
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HistoryConfig {
@@ -87,7 +84,6 @@ pub struct HistoryConfig {
     pub max_entries: usize,
 }
 /// `GlobConfig` — see fields for layout.
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct GlobConfig {
@@ -97,7 +93,6 @@ pub struct GlobConfig {
     pub recursive_parallel: bool,
 }
 /// `LogConfig` — see fields for layout.
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct LogConfig {
