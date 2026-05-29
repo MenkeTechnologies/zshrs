@@ -1427,4 +1427,118 @@ mod tests {
         assert_eq!(cleanup_(null), 0);
         assert_eq!(finish_(null), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/stat.c
+    // c:43 statmodeprint / c:112 statuidprint / c:156 statgidprint /
+    // c:199 stattimeprint / c:228 statulprint / c:300 bin_stat
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:43 — `statmodeprint` returns String (compile-time pin, alt).
+    #[test]
+    fn statmodeprint_returns_string_pin_alt() {
+        let _: String = statmodeprint(0o644, 0);
+    }
+
+    /// c:43 — `statmodeprint` is deterministic for any mode.
+    #[test]
+    fn statmodeprint_deterministic_for_common_modes() {
+        for mode in [0o644u32, 0o755, 0o600, 0o777, 0o000] {
+            let a = statmodeprint(mode, 0);
+            let b = statmodeprint(mode, 0);
+            assert_eq!(a, b, "statmodeprint({:o}) must be pure", mode);
+        }
+    }
+
+    /// c:112 — `statuidprint` returns String (compile-time pin, alt).
+    #[test]
+    fn statuidprint_returns_string_pin_alt() {
+        let _: String = statuidprint(0, 0);
+    }
+
+    /// c:112 — `statuidprint(0, STF_RAW)` returns "0" (raw uid digit).
+    /// Pin the c:115 STF_RAW arm; flags=0 produces empty by design.
+    #[test]
+    fn statuidprint_root_with_raw_flag_returns_zero_digit() {
+        let s = statuidprint(0, STF_RAW);
+        assert_eq!(s, "0", "uid 0 + STF_RAW must produce '0'");
+    }
+
+    /// c:156 — `statgidprint` returns String (compile-time pin, alt).
+    #[test]
+    fn statgidprint_returns_string_pin_alt() {
+        let _: String = statgidprint(0, 0);
+    }
+
+    /// c:156 — `statgidprint(0, STF_RAW)` returns "0" (raw gid digit).
+    /// Pin the c:159 STF_RAW arm; flags=0 produces empty by design.
+    #[test]
+    fn statgidprint_zero_with_raw_flag_returns_zero_digit() {
+        let s = statgidprint(0, STF_RAW);
+        assert_eq!(s, "0", "gid 0 + STF_RAW must produce '0'");
+    }
+
+    /// c:199 — `stattimeprint` returns String (compile-time pin, alt).
+    #[test]
+    fn stattimeprint_returns_string_pin_alt() {
+        let _: String = stattimeprint(0, 0, 0);
+    }
+
+    /// c:199 — `stattimeprint(0, 0, STF_RAW)` returns "0" (raw epoch).
+    /// Pin the c:202 STF_RAW arm; flags=0 produces empty by design.
+    #[test]
+    fn stattimeprint_epoch_zero_with_raw_flag_returns_zero() {
+        let s = stattimeprint(0, 0, STF_RAW);
+        assert_eq!(s, "0", "epoch 0 + STF_RAW must produce '0'");
+    }
+
+    /// c:300 — `bin_stat` exit code is non-negative.
+    #[test]
+    fn bin_stat_exit_code_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for argv in [
+            vec![],
+            vec!["/tmp".into()],
+            vec!["/dev/null".into()],
+            vec!["/__nonexistent_xyz__".into()],
+        ] {
+            let r = bin_stat("stat", &argv, &ops, 0);
+            assert!(r >= 0,
+                "exit code must be non-negative, got {} for {:?}", r, argv);
+        }
+    }
+
+    /// c:300 — `bin_stat` of nonexistent path MUST return nonzero
+    /// (C uses `stat(2)` which fails ENOENT, then zwarnnam + return 1).
+    /// In zshrs the port silently returns 0.
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_stat with nonexistent path returns 0 instead of nonzero (Src/Modules/stat.c:300 — stat(2) ENOENT path)"]
+    fn bin_stat_nonexistent_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_stat("stat", &["/__definitely_no_such_xyz__".into()], &ops, 0);
+        assert_ne!(r, 0, "nonexistent path → nonzero");
+    }
+
+    /// c:228 — `statulprint` deterministic for powers-of-2.
+    #[test]
+    fn statulprint_deterministic_for_powers_of_two() {
+        for shift in 0..64 {
+            let v = 1u64 << shift;
+            let a = statulprint(v);
+            let b = statulprint(v);
+            assert_eq!(a, b, "statulprint({}) must be pure", v);
+        }
+    }
 }
