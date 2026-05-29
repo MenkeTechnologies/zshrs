@@ -5756,4 +5756,96 @@ mod tests {
         let w = wc_bld(WC_FOR, 0b1011);
         assert_eq!(WC_FOR_TYPE(w), 3);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/zsh.h PM_* parameter flag bits
+    // c:3174-3206 — scalar/array/integer/float/hashed/case/readonly/etc.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:3174 — `PM_SCALAR` = 0 (default param type).
+    #[test]
+    fn pm_scalar_is_zero() {
+        assert_eq!(PM_SCALAR, 0, "PM_SCALAR is the default (no bits)");
+    }
+
+    /// c:3176-3184 — PM_ARRAY/INTEGER/EFLOAT/FFLOAT/HASHED canonical bit positions.
+    #[test]
+    fn pm_type_flags_canonical_bit_positions() {
+        assert_eq!(PM_ARRAY, 1 << 0, "c:3176");
+        assert_eq!(PM_INTEGER, 1 << 1, "c:3178");
+        assert_eq!(PM_EFLOAT, 1 << 2, "c:3180");
+        assert_eq!(PM_FFLOAT, 1 << 3, "c:3182");
+        assert_eq!(PM_HASHED, 1 << 4, "c:3184");
+    }
+
+    /// c:3186-3194 — PM_LEFT/RIGHT_B/RIGHT_Z/LOWER/UPPER canonical bits.
+    #[test]
+    fn pm_padding_case_flags_canonical_bit_positions() {
+        assert_eq!(PM_LEFT, 1 << 5, "c:3186");
+        assert_eq!(PM_RIGHT_B, 1 << 6, "c:3188");
+        assert_eq!(PM_RIGHT_Z, 1 << 7, "c:3190");
+        assert_eq!(PM_LOWER, 1 << 8, "c:3192");
+        assert_eq!(PM_UPPER, 1 << 9, "c:3194");
+    }
+
+    /// c:3196 — PM_UNDEFINED INTENTIONALLY aliases PM_UPPER (both 1<<9).
+    /// Per c:3196 comment, autoload-undefined fns reuse the UPPER bit
+    /// because undefined fns can never have case attributes.
+    #[test]
+    fn pm_undefined_aliases_pm_upper() {
+        assert_eq!(PM_UNDEFINED, PM_UPPER,
+            "c:3196 INTENTIONAL alias: undefined fns reuse UPPER bit");
+    }
+
+    /// c:3204 — PM_ABSPATH_USED INTENTIONALLY aliases PM_EXPORTED.
+    /// c:3204 comment: only-for-internal-tracking flag reuses exported bit.
+    #[test]
+    fn pm_abspath_used_aliases_pm_exported() {
+        assert_eq!(PM_ABSPATH_USED, PM_EXPORTED,
+            "c:3204 INTENTIONAL alias: bit reuse for path-tracking");
+    }
+
+    /// c:3198 — PM_READONLY = 1 << 10.
+    #[test]
+    fn pm_readonly_is_bit_10() {
+        assert_eq!(PM_READONLY, 1 << 10);
+    }
+
+    /// c:3174-3206 — PM_* flags are all u32 (compile-time type pin).
+    #[test]
+    fn pm_flags_are_u32_type() {
+        let _: u32 = PM_SCALAR;
+        let _: u32 = PM_ARRAY;
+        let _: u32 = PM_INTEGER;
+        let _: u32 = PM_READONLY;
+    }
+
+    /// c:3176-3194 — distinct type flags are pairwise disjoint
+    /// (excluding intentional aliases like UNDEFINED=UPPER).
+    #[test]
+    fn pm_distinct_type_flags_pairwise_disjoint() {
+        let codes = [PM_ARRAY, PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_HASHED,
+                     PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_LOWER, PM_UPPER];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(),
+            "distinct PM type/padding flags must be pairwise disjoint");
+    }
+
+    /// c:3176-3194 — every distinct PM_* type/padding flag is a single bit.
+    #[test]
+    fn pm_distinct_type_flags_all_single_bits() {
+        for &v in &[PM_ARRAY, PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_HASHED,
+                    PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_LOWER, PM_UPPER,
+                    PM_READONLY, PM_TAGGED, PM_EXPORTED, PM_UNIQUE] {
+            assert!(v.is_power_of_two(),
+                "PM_* flag {:#x} must be a single bit", v);
+        }
+    }
+
+    /// c:3174 — PM_SCALAR being 0 means "all flags clear" matches PM_SCALAR.
+    #[test]
+    fn pm_scalar_zero_is_default_state() {
+        assert_eq!(PM_SCALAR & (PM_ARRAY | PM_INTEGER | PM_HASHED), 0,
+            "PM_SCALAR=0 by design: clear-all-bits state");
+    }
 }
