@@ -1471,6 +1471,63 @@ impl buf_vars {
         }
     }
 
+    /// Port of `void stradd(char *d)` from `Src/prompt.c:1016`.
+    ///
+    /// C body (MULTIBYTE_SUPPORT arm):
+    /// ```c
+    /// ums = ztrdup(d);
+    /// ups = unmetafy(ums, &upslen);
+    /// while (upslen > 0) {
+    ///     cnt = eol ? MB_INVALID : mbrtowc(&cc, ups, upslen, &mbs);
+    ///     switch (cnt) {
+    ///       case MB_INCOMPLETE: eol = 1; /* FALL THROUGH */
+    ///       case MB_INVALID: pc = nicechar(*ups); cnt = 1; break;
+    ///       case 0: cnt = 1; /* FALL THROUGH */
+    ///       default: mb_charinit(); pc = wcs_nicechar(cc, NULL, NULL); break;
+    ///     }
+    ///     addbufspc(strlen(pc));
+    ///     upslen -= cnt; ups += cnt;
+    ///     while (*pc) *bv->bp++ = *pc++;
+    /// }
+    /// ```
+    ///
+    /// Steps:
+    /// 1. unmetafy the input (collapse Meta + (b^0x20) pairs) via
+    ///    the canonical [`crate::ported::utils::unmetafy`].
+    /// 2. Walk the unmetafied bytes — Rust UTF-8 `from_utf8`
+    ///    handles the `mbrtowc` decode. Invalid bytes fall back to
+    ///    the single-byte `nicechar` path (matches C MB_INVALID).
+    /// 3. Per char: call `wcs_nicechar` (or `nicechar` byte-fallback)
+    ///    to get the printable form (control chars → `^X`, high
+    ///    bytes → `M-X`).
+    /// 4. Grow buf via `addbufspc(strlen(pc))` then push via
+    ///    `out_str` (which re-metafies high bytes through `pputc`).
+    fn stradd(&mut self, d: &str) {
+        // c:1016
+        // c:1023-1025 — `ums = ztrdup(d); ups = unmetafy(ums, &upslen);`
+        let mut raw: Vec<u8> = d.as_bytes().to_vec();
+        crate::ported::utils::unmetafy(&mut raw);
+        // c:1031-1071 — walk decoded bytes.
+        match std::str::from_utf8(&raw) {
+            Ok(decoded) => {
+                // c:1058 default arm — wide char per codepoint.
+                for ch in decoded.chars() {
+                    let pc = crate::ported::utils::wcs_nicechar(ch, None, None);
+                    self.addbufspc(pc.len()); // c:1063
+                    self.out_str(&pc); // c:1069 `while (*pc) *bv->bp++ = *pc++;`
+                }
+            }
+            Err(_) => {
+                // c:1046-1051 MB_INVALID arm — per-byte nicechar.
+                for &b in &raw {
+                    let pc = crate::ported::utils::nicechar(b as char);
+                    self.addbufspc(pc.len()); // c:1063
+                    self.out_str(&pc); // c:1069
+                }
+            }
+        }
+    }
+
     /// Append raw metafied bytes from a nested `putpromptchar` (`%(…)` branches).
     fn append_buf_from(&mut self, other: &buf_vars) {
         let end = other.bp.min(other.buf.len());
