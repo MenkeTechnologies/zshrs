@@ -3834,19 +3834,64 @@ pub fn bin_typeset(
             let is_paren_init = raw_v.starts_with('(') && raw_v.ends_with(')') && raw_v.len() >= 2;
             if is_paren_init {
                 let inner = &raw_v[1..raw_v.len() - 1]; // c:2950
-                let raw_elems: Vec<String> = inner
+                let split_elems: Vec<String> = inner
                     .split_whitespace() // c:2952
                     .map(String::from)
                     .collect();
-                // c:Src/exec.c addvars c:2546-2547 — array RHS goes
-                // through `prefork(vl, PREFORK_SINGLE|PREFORK_ASSIGN)`
-                // which does glob expansion (the SINGLE-flag suppresses
-                // word splitting but NOT globbing). Without this,
-                // \`local -a a=(/etc/h*)\` stored "/etc/h*" literally
-                // instead of expanding to ["/etc/hosts", …].
-                // Mirror by glob-expanding each element via globdata_glob
-                // when the element contains wildcards; unglobable
-                // elements pass through unchanged.
+                // c:Src/subst.c:2558-2571 — `$=var` IFS-split operator.
+                // The full paramsubst path in subst.rs doesn't yet
+                // handle the `=` flag (spbreak=2 in C) when invoked
+                // outside the canonical addvars→prefork→stringsubst
+                // chain. typeset's array-init reaches bin_typeset
+                // AFTER the unified prefork has already run (against
+                // the entire `arr=( ... )` string, treating the parens
+                // as literal), so any `$=name` inside the parens
+                // stayed untouched.
+                //
+                // Mirror the C `spbreak=2` semantics inline: for each
+                // element of the form `$=NAME`, look up NAME, split on
+                // IFS, and substitute the resulting fields in place.
+                // Other elements (already paramsubst'd by the outer
+                // prefork, or literal) pass through unchanged.
+                let raw_elems: Vec<String> = {
+                    // c:Src/params.c IFS — the canonical IFS source is
+                    // the IFS shell param (PM_SPECIAL gsu reads the
+                    // live $IFS in the current scope). Reading the
+                    // OS env var would miss `local IFS=` overrides and
+                    // catch stale values left behind by earlier scopes.
+                    let ifs_chars: Vec<char> = crate::ported::params::getsparam("IFS")
+                        .unwrap_or_else(|| " \t\n".to_string())
+                        .chars()
+                        .collect();
+                    let mut out: Vec<String> = Vec::new();
+                    for se in split_elems {
+                        if let Some(stripped) = se.strip_prefix("$=") {
+                            // c:2562 — `s++; spbreak = 2; nojoin =
+                            // !(ifs && *ifs);`. Look up the variable;
+                            // if unset, treat as empty string and
+                            // produce no fields.
+                            let val = crate::ported::params::getsparam(stripped)
+                                .unwrap_or_default();
+                            if ifs_chars.is_empty() {
+                                if !val.is_empty() {
+                                    out.push(val);
+                                }
+                            } else {
+                                for field in val
+                                    .split(|c: char| ifs_chars.contains(&c))
+                                    .filter(|s| !s.is_empty())
+                                {
+                                    out.push(field.to_string());
+                                }
+                            }
+                        } else {
+                            out.push(se);
+                        }
+                    }
+                    out
+                };
+                // c:2555-2556 — `globlist(vl, prefork_ret)` glob-expands
+                // each element when it contains wildcards.
                 let mut elems: Vec<String> = Vec::with_capacity(raw_elems.len());
                 for re in raw_elems {
                     if crate::ported::pattern::haswilds(&re) {
@@ -13549,4 +13594,5 @@ mod tests {
         assert_eq!(bin_false("false", &["unused".into()], &o, 99), 1);
         assert_eq!(bin_false("", &["a".into(), "b".into(), "c".into()], &o, -1), 1);
     }
+
 }

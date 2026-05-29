@@ -925,6 +925,123 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     let lv = prompt_tls::LASTVAL.with(|c| *c.borrow());
                     stradd(bv, &lv.to_string());
                 }
+                // c:563-570 — `%j` (job count). C body:
+                // ```c
+                // for (numjobs = 0, j = 1; j <= maxjob; j++)
+                //     if (jobtab[j].stat && jobtab[j].procs &&
+                //         !(jobtab[j].stat & STAT_NOPRINT)) numjobs++;
+                // bv->bp += sprintf(bv->bp, "%d", numjobs);
+                // ```
+                b'j' => {
+                    let mut numjobs = 0i32;
+                    if let Some(tab_lock) = crate::ported::jobs::JOBTAB.get() {
+                        if let Ok(tab) = tab_lock.lock() {
+                            let max = crate::ported::jobs::MAXJOB
+                                .get()
+                                .and_then(|m| m.lock().ok().map(|g| *g))
+                                .unwrap_or(0);
+                            // c:564 — `for (j = 1; j <= maxjob; j++)`.
+                            let mut j = 1usize;
+                            while j <= max && j < tab.len() {
+                                let jb = &tab[j];
+                                if jb.stat != 0
+                                    && !jb.procs.is_empty()
+                                    && (jb.stat
+                                        & crate::ported::zsh_h::STAT_NOPRINT)
+                                        == 0
+                                {
+                                    numjobs += 1; // c:567
+                                }
+                                j += 1;
+                            }
+                        }
+                    }
+                    stradd(bv, &numjobs.to_string()); // c:569
+                }
+                // c:558-562 — `%!` / `%h` (current history number). C body:
+                // ```c
+                // addbufspc(DIGBUFSIZE);
+                // convbase(bv->bp, curhist, 10);
+                // ```
+                b'!' | b'h' => {
+                    let n = crate::ported::hist::curhist
+                        .load(std::sync::atomic::Ordering::SeqCst);
+                    stradd(bv, &n.to_string());
+                }
+                // c:703-770 — `%t %T %@ %* %w %W %D` — time / date dispatch
+                // via strftime. The format string is fixed per-escape; for
+                // `%D` followed by `{...}` the format comes from inside the
+                // braces.
+                //
+                // C body (paraphrased):
+                // ```c
+                // case 'T': tmfmt = "%K:%M"; break;
+                // case '*': tmfmt = "%K:%M:%S"; break;
+                // case 'w': tmfmt = "%a %f"; break;
+                // case 'W': tmfmt = "%m/%d/%y"; break;
+                // case 'D':
+                //     if (bv->fm[1]=='{') { read format from braces; }
+                //     else tmfmt = "%y-%m-%d";
+                //     break;
+                // default: tmfmt = "%l:%M%p"; break;  // %t, %@
+                // ztrftime(...);
+                // ```
+                b't' | b'T' | b'@' | b'*' | b'w' | b'W' | b'D' => {
+                    let tmfmt: String;
+                    match xc {
+                        b'T' => tmfmt = "%H:%M".to_string(), // c:715
+                        b'*' => tmfmt = "%H:%M:%S".to_string(), // c:718
+                        b'w' => tmfmt = "%a %e".to_string(), // c:721
+                        b'W' => tmfmt = "%m/%d/%y".to_string(), // c:724
+                        b'D' => {
+                            // c:727-746 — `%D{...}` format from braces;
+                            // bare `%D` → "%y-%m-%d".
+                            if bv.fm.as_bytes().get(bv.fm_pos + 1).copied()
+                                == Some(b'{')
+                            {
+                                // Walk from `{` to matching `}`, honouring
+                                // `\X` → X drop.
+                                let bytes = bv.fm.as_bytes();
+                                let mut ss = bv.fm_pos + 2; // c:729 past `{`
+                                let mut collected = String::new();
+                                while ss < bytes.len() && bytes[ss] != b'}' {
+                                    if bytes[ss] == b'\\' && ss + 1 < bytes.len() {
+                                        // c:732-733 — drop backslash, keep next.
+                                        ss += 1;
+                                        collected.push(bytes[ss] as char);
+                                    } else {
+                                        collected.push(bytes[ss] as char);
+                                    }
+                                    ss += 1;
+                                }
+                                // c:741 — `bv->fm = ss - !*ss;` — leave fm
+                                // pointing AT the `}` so the post-switch
+                                // `bv.fm_pos += 1` below lands one past it.
+                                bv.fm_pos = ss;
+                                if collected.is_empty() {
+                                    bv.fm_pos += 1;
+                                    continue;
+                                }
+                                tmfmt = collected;
+                            } else {
+                                tmfmt = "%y-%m-%d".to_string(); // c:748
+                            }
+                        }
+                        // c:751 — default for %t / %@ → 12-hour clock.
+                        _ => tmfmt = "%l:%M%p".to_string(),
+                    }
+                    // c:753-770 — `zgettime + localtime + ztrftime`. Port
+                    // routes through `utils::ztrftime` which already wraps
+                    // strftime + format quirks.
+                    let now = std::time::SystemTime::now();
+                    let rendered = crate::ported::utils::ztrftime(&tmfmt, now);
+                    stradd(bv, &rendered);
+                }
+                // c:923-927 — `%i` (line number). The interactive line
+                // number; in -c mode there's no editor so we report 0.
+                b'i' => {
+                    stradd(bv, "0");
+                }
                 // c:894-896 — `%%` (literal percent)
                 b'%' => pputc(bv, b'%'),
                 // c:897 — `%)` (literal close-paren — used in %(x.t.f))
@@ -4234,5 +4351,109 @@ mod tests {
     fn match_highlight_returns_tuple_type() {
         let _g = crate::test_util::global_state_lock();
         let _: (zattr, zattr) = match_highlight("");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Regression pins for BUGS.md #5 — print -P escape dispatch.
+    //
+    // Previously `%j` / `%!` / `%h` / `%t` / `%T` / `%@` / `%*` / `%w`
+    // / `%W` / `%D` / `%D{...}` / `%i` fell through to the default
+    // case at putpromptchar's c:900-904 and were emitted literally.
+    // Ported from Src/prompt.c:558-570 (job/hist) + 703-770 (time
+    // dispatch via ztrftime).
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:Src/prompt.c:563-570 — `%j` (job count). With no live jobs
+    /// in the unit-test paramtab, jobtab is empty so the count is 0.
+    /// Pin that the expansion produces the digit `0` and NOT the
+    /// literal text `%j`.
+    #[test]
+    fn promptexpand_percent_j_returns_job_count() {
+        let _g = crate::test_util::global_state_lock();
+        let (got, _, _) = promptexpand("%j", 0, None);
+        assert!(got.chars().all(|c| c.is_ascii_digit()),
+            "%j must expand to a decimal count, got {:?}", got);
+        assert_ne!(got, "%j", "%j must NOT emit literally");
+    }
+
+    /// c:Src/prompt.c:558-562 — `%!` (current history number).
+    #[test]
+    fn promptexpand_percent_bang_returns_history_number() {
+        let _g = crate::test_util::global_state_lock();
+        let (got, _, _) = promptexpand("%!", 0, None);
+        assert!(
+            got.chars().all(|c| c.is_ascii_digit()) || got.starts_with('-'),
+            "%! must expand to a (signed) decimal, got {:?}",
+            got
+        );
+        assert_ne!(got, "%!", "%! must NOT emit literally");
+    }
+
+    /// c:Src/prompt.c:715 — `%T` (HH:MM time).
+    #[test]
+    fn promptexpand_percent_T_returns_hhmm_clock() {
+        let _g = crate::test_util::global_state_lock();
+        let (got, _, _) = promptexpand("%T", 0, None);
+        assert_ne!(got, "%T", "%T must NOT emit literally");
+        // Expect "HH:MM" — 5 chars, colon at position 2.
+        assert_eq!(got.len(), 5, "%T → 'HH:MM' (5 chars), got {:?}", got);
+        assert_eq!(&got[2..3], ":", "colon at offset 2 in {:?}", got);
+    }
+
+    /// c:Src/prompt.c:718 — `%*` (HH:MM:SS time).
+    #[test]
+    fn promptexpand_percent_star_returns_hhmmss_clock() {
+        let _g = crate::test_util::global_state_lock();
+        let (got, _, _) = promptexpand("%*", 0, None);
+        assert_ne!(got, "%*", "%* must NOT emit literally");
+        assert_eq!(got.len(), 8, "%* → 'HH:MM:SS' (8 chars), got {:?}", got);
+        assert_eq!(&got[2..3], ":", "first colon at offset 2");
+        assert_eq!(&got[5..6], ":", "second colon at offset 5");
+    }
+
+    /// c:Src/prompt.c:727-746 — `%D{fmt}` (strftime with user fmt).
+    /// `%D{%Y}` must produce a 4-digit year ≥ 2025.
+    #[test]
+    fn promptexpand_percent_D_braces_year_returns_four_digit_year() {
+        let _g = crate::test_util::global_state_lock();
+        let (got, _, _) = promptexpand("%D{%Y}", 0, None);
+        assert_ne!(got, "%D{%Y}", "must NOT emit literally");
+        let year: u32 = got
+            .parse()
+            .unwrap_or_else(|_| panic!("%D{{%Y}} must be 4-digit int, got {:?}", got));
+        assert!(year >= 2025, "year >= 2025, got {}", year);
+    }
+
+    /// c:Src/prompt.c:748 — bare `%D` defaults to "%y-%m-%d".
+    #[test]
+    fn promptexpand_percent_D_bare_returns_dash_separated_date() {
+        let _g = crate::test_util::global_state_lock();
+        let (got, _, _) = promptexpand("%D", 0, None);
+        assert_ne!(got, "%D", "%D must NOT emit literally");
+        assert_eq!(got.len(), 8, "%D → 'YY-MM-DD' (8 chars), got {:?}", got);
+        assert_eq!(&got[2..3], "-", "first dash at offset 2");
+        assert_eq!(&got[5..6], "-", "second dash at offset 5");
+    }
+
+    /// c:Src/prompt.c:923 — `%i` (line number). In `-c` mode the
+    /// editor line number is 0; pin that the expansion produces a
+    /// digit, not the literal escape.
+    #[test]
+    fn promptexpand_percent_i_returns_digit() {
+        let _g = crate::test_util::global_state_lock();
+        let (got, _, _) = promptexpand("%i", 0, None);
+        assert_ne!(got, "%i", "%i must NOT emit literally");
+        assert!(got.chars().all(|c| c.is_ascii_digit()),
+            "%i must be a decimal, got {:?}", got);
+    }
+
+    /// c:Src/prompt.c:894-896 — `%%` regression pin. The newly-added
+    /// time/job/hist branches must NOT have stolen the literal-percent
+    /// case.
+    #[test]
+    fn promptexpand_percent_percent_still_literal() {
+        let _g = crate::test_util::global_state_lock();
+        let (got, _, _) = promptexpand("%%", 0, None);
+        assert_eq!(got, "%", "%% → literal %");
     }
 }
