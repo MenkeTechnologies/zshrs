@@ -3675,4 +3675,126 @@ mod tests {
                 "selectkeymap('emacs') must be deterministic");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_keymap.c
+    // c:134 createkeymapnamtab / c:145 init_keymaps / c:156 cleanup_keymaps /
+    // c:224 scanprimaryname / c:278 freekeymapnamnode / c:664 openkeymap /
+    // c:676 unlinkkeymap / c:921 selectlocalmap / c:940 reselectkeymap
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:134 — `createkeymapnamtab` idempotent.
+    #[test]
+    fn createkeymapnamtab_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            createkeymapnamtab();
+        }
+    }
+
+    /// c:145 — `init_keymaps` idempotent.
+    #[test]
+    fn init_keymaps_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            init_keymaps();
+        }
+    }
+
+    /// c:156 — `cleanup_keymaps` idempotent.
+    #[test]
+    fn cleanup_keymaps_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            cleanup_keymaps();
+        }
+        init_keymaps();
+    }
+
+    /// c:224 — `scanprimaryname("")` empty name is safe (no-op).
+    #[test]
+    fn scanprimaryname_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        scanprimaryname("");
+    }
+
+    /// c:278 — `freekeymapnamnode("")` empty name is safe.
+    #[test]
+    fn freekeymapnamnode_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        freekeymapnamnode("");
+    }
+
+    /// c:940 — `reselectkeymap` returns void (signature pin) + safe.
+    #[test]
+    fn reselectkeymap_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: () = reselectkeymap();
+    }
+
+    /// c:664 — `openkeymap` returns Option<Arc<Keymap>> (type pin).
+    #[test]
+    fn openkeymap_returns_option_arc_keymap_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Option<Arc<Keymap>> = openkeymap("");
+    }
+
+    /// c:676 — `unlinkkeymap("", 0)` empty name returns nonzero.
+    #[test]
+    fn unlinkkeymap_empty_name_returns_nonzero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = unlinkkeymap("", 0);
+        assert_ne!(r, 0, "empty name → nonzero error");
+    }
+
+    /// c:287 — `newkeytab` returns HashMap (compile-time type pin).
+    #[test]
+    fn newkeytab_returns_hashmap_type() {
+        let _: HashMap<Vec<u8>, KeyBinding> = newkeytab();
+    }
+
+    /// c:287 — `newkeytab` is empty.
+    #[test]
+    fn newkeytab_returns_empty_pin() {
+        let t = newkeytab();
+        assert!(t.is_empty(), "fresh keytab must be empty");
+    }
+
+    /// c:921 — `selectlocalmap(None)` is idempotent.
+    #[test]
+    fn selectlocalmap_none_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            selectlocalmap(None);
+        }
+    }
+
+    /// c:886 — `selectkeymap` returns i32 type.
+    #[test]
+    fn selectkeymap_returns_i32_type_pin2() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = selectkeymap("", 0);
+    }
+
+    /// c:676 — `unlinkkeymap` is deterministic for unknown name.
+    #[test]
+    fn unlinkkeymap_unknown_name_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = unlinkkeymap("__zshrs_never_keymap__", 0);
+        for _ in 0..3 {
+            assert_eq!(unlinkkeymap("__zshrs_never_keymap__", 0), first,
+                "unlinkkeymap unknown must be deterministic");
+        }
+    }
 }
