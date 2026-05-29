@@ -685,4 +685,187 @@ mod tests {
             assert_eq!(ab, ba.reverse(), "antisymmetry for ({a:?}, {b:?})");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/sort.c flag-mode edge cases.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// NUMERICALLY without SIGNED: leading minus is treated as part of
+    /// the lex prefix, not a sign. C `sort.c:eltpcmp` checks
+    /// `SORTIT_NUMERICALLY_SIGNED` separately for sign-aware parse.
+    #[test]
+    fn zstrcmp_numeric_unsigned_treats_minus_as_lex() {
+        let _g = crate::test_util::global_state_lock();
+        // Without SIGNED, "-5" and "5" both fall through; "-" sorts as
+        // its byte value vs the digit-start.
+        let ord = zstrcmp("-5", "5", SORTIT_NUMERICALLY as u32);
+        // "-" (0x2D) < "5" (0x35) lex-wise → Less.
+        assert_eq!(ord, Ordering::Less);
+    }
+
+    /// NUMERICALLY: trailing tail after the digit run continues lex.
+    /// "file2bc" vs "file2bd" → Less (after numeric 2==2, lex 'c'<'d').
+    #[test]
+    fn zstrcmp_numeric_continues_lex_after_digits() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            zstrcmp("file2bc", "file2bd", SORTIT_NUMERICALLY as u32),
+            Ordering::Less
+        );
+    }
+
+    /// NUMERICALLY: leading zeros don't change numeric value;
+    /// "file02" == "file2" numerically, then ties broken by length.
+    #[test]
+    fn zstrcmp_numeric_leading_zeros_compare_equal_value() {
+        let _g = crate::test_util::global_state_lock();
+        // C: numeric compare strips leading zeros; same value → fall
+        // through to lex on the surrounding bytes (length differs).
+        let ord = zstrcmp("file02", "file2", SORTIT_NUMERICALLY as u32);
+        // Sanity: not Greater (shorter equal-value should sort low).
+        assert_ne!(ord, Ordering::Greater);
+    }
+
+    /// strmetasort with SORTIT_BACKWARDS reverses output order.
+    #[test]
+    fn strmetasort_backwards_reverses_lex_order() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr = vec![
+            "alpha".to_string(),
+            "beta".to_string(),
+            "gamma".to_string(),
+        ];
+        strmetasort(&mut arr, SORTIT_BACKWARDS as u32, None);
+        assert_eq!(arr, vec!["gamma", "beta", "alpha"]);
+    }
+
+    /// strmetasort is stable across equal cmp keys (case-insensitive
+    /// sort preserves original order of "apple" vs "Apple").
+    #[test]
+    fn strmetasort_stable_on_equal_keys() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr = vec![
+            "apple".to_string(),
+            "Apple".to_string(),
+            "APPLE".to_string(),
+        ];
+        strmetasort(&mut arr, SORTIT_IGNORING_CASE as u32, None);
+        assert_eq!(arr[0], "apple");
+        assert_eq!(arr[1], "Apple");
+        assert_eq!(arr[2], "APPLE");
+    }
+
+    /// IGNORING_BACKSLASHES strips backslashes from cmp form, so
+    /// "a\\b\\c" and "abc" compare equal at strmetasort level.
+    #[test]
+    fn strmetasort_ignore_backslashes_equates_escaped_unescaped() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr = vec!["a\\b\\c".to_string(), "abc".to_string()];
+        strmetasort(&mut arr, SORTIT_IGNORING_BACKSLASHES as u32, None);
+        // Both compare equal → stable order preserves original.
+        assert_eq!(arr[0], "a\\b\\c");
+        assert_eq!(arr[1], "abc");
+    }
+
+    /// strmetasort with empty unmetalenp slice should not panic.
+    #[test]
+    fn strmetasort_empty_unmetalenp_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr: Vec<String> = vec![];
+        let mut lens: Vec<usize> = vec![];
+        strmetasort(&mut arr, 0, Some(&mut lens));
+        assert!(arr.is_empty());
+        assert!(lens.is_empty());
+    }
+
+    /// eltpcmp with reverse flag inverts ordering result.
+    #[test]
+    fn eltpcmp_backwards_inverts_ordering() {
+        let _g = crate::test_util::global_state_lock();
+        let a = sortelt {
+            orig: "a".to_string(),
+            cmp: "a".to_string(),
+            origlen: 1,
+            len: -1,
+        };
+        let b = sortelt {
+            orig: "b".to_string(),
+            cmp: "b".to_string(),
+            origlen: 1,
+            len: -1,
+        };
+        let fwd = eltpcmp(&a, &b, 0);
+        let rev = eltpcmp(&a, &b, SORTIT_BACKWARDS as u32);
+        assert_eq!(fwd, Ordering::Less);
+        assert_eq!(rev, Ordering::Greater);
+    }
+
+    /// Identical elts compare Equal even under reverse — reverse of
+    /// Equal is still Equal (preserves stability anchor).
+    #[test]
+    fn eltpcmp_equal_under_reverse_stays_equal() {
+        let _g = crate::test_util::global_state_lock();
+        let a = sortelt {
+            orig: "x".to_string(),
+            cmp: "x".to_string(),
+            origlen: 1,
+            len: -1,
+        };
+        let b = sortelt {
+            orig: "x".to_string(),
+            cmp: "x".to_string(),
+            origlen: 1,
+            len: -1,
+        };
+        assert_eq!(eltpcmp(&a, &b, SORTIT_BACKWARDS as u32), Ordering::Equal);
+    }
+
+    /// strmetasort on already-sorted input returns identical order
+    /// (idempotency / no-op).
+    #[test]
+    fn strmetasort_already_sorted_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr = vec![
+            "alpha".to_string(),
+            "beta".to_string(),
+            "gamma".to_string(),
+        ];
+        let expected = arr.clone();
+        strmetasort(&mut arr, 0, None);
+        assert_eq!(arr, expected);
+    }
+
+    /// Numeric mode with all-digit strings sorts by numeric value.
+    #[test]
+    fn strmetasort_numeric_sorts_by_value() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr = vec![
+            "100".to_string(),
+            "20".to_string(),
+            "3".to_string(),
+        ];
+        strmetasort(
+            &mut arr,
+            (SORTIT_NUMERICALLY | SORTIT_NUMERICALLY_SIGNED) as u32,
+            None,
+        );
+        assert_eq!(arr, vec!["3", "20", "100"]);
+    }
+
+    /// Numeric+backwards combined: descending numeric order.
+    #[test]
+    fn strmetasort_numeric_backwards_descends() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr = vec![
+            "1".to_string(),
+            "10".to_string(),
+            "2".to_string(),
+        ];
+        strmetasort(
+            &mut arr,
+            (SORTIT_NUMERICALLY | SORTIT_NUMERICALLY_SIGNED | SORTIT_BACKWARDS) as u32,
+            None,
+        );
+        assert_eq!(arr, vec!["10", "2", "1"]);
+    }
 }
