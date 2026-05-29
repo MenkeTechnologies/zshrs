@@ -3696,4 +3696,127 @@ mod tests {
         zle_free_highlight();
         zle_free_highlight();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests for Src/Zle/zle_refresh.c ZR_* primitives.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:86-89 — `ZR_memset(dst, rc, n)` fills first n cells with rc.
+    #[test]
+    fn zr_memset_fills_first_n_cells() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf: Vec<REFRESH_ELEMENT> = vec![REFRESH_ELEMENT { chr: 'X', atr: 0 }; 10];
+        let rc = REFRESH_ELEMENT { chr: 'A', atr: 0 };
+        ZR_memset(&mut buf, rc, 5);
+        for i in 0..5 {
+            assert_eq!(buf[i].chr, 'A', "cell {} must be filled", i);
+        }
+        for i in 5..10 {
+            assert_eq!(buf[i].chr, 'X', "cell {} must remain", i);
+        }
+    }
+
+    /// c:86 — `ZR_memset(dst, rc, 0)` is no-op.
+    #[test]
+    fn zr_memset_zero_len_no_op() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf: Vec<REFRESH_ELEMENT> = vec![REFRESH_ELEMENT { chr: 'X', atr: 0 }; 3];
+        let rc = REFRESH_ELEMENT { chr: 'A', atr: 0 };
+        ZR_memset(&mut buf, rc, 0);
+        for elt in &buf {
+            assert_eq!(elt.chr, 'X', "len=0 must not modify any cell");
+        }
+    }
+
+    /// c:86 — `ZR_memset` clamps to dst.len() when n > dst.len()
+    /// (Rust port-safety pin; C would overrun).
+    #[test]
+    fn zr_memset_clamps_to_dst_len() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf: Vec<REFRESH_ELEMENT> = vec![REFRESH_ELEMENT { chr: 'X', atr: 0 }; 3];
+        let rc = REFRESH_ELEMENT { chr: 'A', atr: 0 };
+        // n=100 but dst has 3 — must not panic.
+        ZR_memset(&mut buf, rc, 100);
+        for elt in &buf {
+            assert_eq!(elt.chr, 'A');
+        }
+    }
+
+    /// c:95-97 — `ZR_strcpy` copies including the NUL terminator.
+    #[test]
+    fn zr_strcpy_includes_nul_terminator() {
+        let _g = crate::test_util::global_state_lock();
+        let src: Vec<REFRESH_ELEMENT> = vec![
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'b', atr: 0 },
+            REFRESH_ELEMENT { chr: 'c', atr: 0 },
+            REFRESH_ELEMENT { chr: '\0', atr: 0 },
+        ];
+        let mut dst: Vec<REFRESH_ELEMENT> = vec![REFRESH_ELEMENT { chr: 'X', atr: 0 }; 5];
+        ZR_strcpy(&mut dst, &src);
+        assert_eq!(dst[0].chr, 'a');
+        assert_eq!(dst[1].chr, 'b');
+        assert_eq!(dst[2].chr, 'c');
+        assert_eq!(dst[3].chr, '\0', "NUL terminator must be copied");
+    }
+
+    /// c:102-109 — `ZR_strlen(empty)` returns 0 (early-NUL).
+    #[test]
+    fn zr_strlen_immediate_nul_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let buf: Vec<REFRESH_ELEMENT> = vec![REFRESH_ELEMENT { chr: '\0', atr: 0 }];
+        assert_eq!(ZR_strlen(&buf), 0);
+    }
+
+    /// c:102-109 — `ZR_strlen` counts up to (not including) NUL.
+    #[test]
+    fn zr_strlen_counts_until_nul() {
+        let _g = crate::test_util::global_state_lock();
+        let buf: Vec<REFRESH_ELEMENT> = vec![
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'b', atr: 0 },
+            REFRESH_ELEMENT { chr: 'c', atr: 0 },
+            REFRESH_ELEMENT { chr: '\0', atr: 0 },
+            REFRESH_ELEMENT { chr: 'x', atr: 0 }, // past NUL — not counted
+        ];
+        assert_eq!(ZR_strlen(&buf), 3);
+    }
+
+    /// c:120-133 — `ZR_strncmp(equal, equal, n)` returns 0 for any n.
+    #[test]
+    fn zr_strncmp_equal_strings_return_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let a: Vec<REFRESH_ELEMENT> = vec![
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'b', atr: 0 },
+        ];
+        let b = a.clone();
+        assert_eq!(ZR_strncmp(&a, &b, 2), 0);
+        assert_eq!(ZR_strncmp(&a, &b, 1), 0, "prefix match also returns 0");
+    }
+
+    /// c:120-133 — `ZR_strncmp(differ, ...)` returns 1 on first diff.
+    #[test]
+    fn zr_strncmp_diff_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let a: Vec<REFRESH_ELEMENT> = vec![
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'b', atr: 0 },
+        ];
+        let b: Vec<REFRESH_ELEMENT> = vec![
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'X', atr: 0 },
+        ];
+        assert_eq!(ZR_strncmp(&a, &b, 2), 1, "differ at idx 1 → 1");
+        assert_eq!(ZR_strncmp(&a, &b, 1), 0, "first char matches → 0");
+    }
+
+    /// c:120-133 — `ZR_strncmp(_, _, 0)` returns 0 (loop never runs).
+    #[test]
+    fn zr_strncmp_zero_len_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let a: Vec<REFRESH_ELEMENT> = vec![REFRESH_ELEMENT { chr: 'a', atr: 0 }];
+        let b: Vec<REFRESH_ELEMENT> = vec![REFRESH_ELEMENT { chr: 'z', atr: 0 }];
+        assert_eq!(ZR_strncmp(&a, &b, 0), 0, "n=0 → no comparison");
+    }
 }
