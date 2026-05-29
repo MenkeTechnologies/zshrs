@@ -5453,4 +5453,129 @@ mod tests {
         assert_eq!(tokfd(), 7, "set_tokfd round-trips");
         set_tokfd(saved);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/lex.c
+    // c:3641 lineno / c:3649 incmdpos / c:3677 incond / c:3692 incasepat /
+    // c:3725 input_slice / c:4317 has_token / c:4205 untokenize purity
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:3641 — `lineno()` returns u64 (compile-time type pin).
+    #[test]
+    fn lineno_returns_u64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: u64 = lineno();
+    }
+
+    /// c:3641 — `lineno`/`set_lineno` round-trip preserves value.
+    #[test]
+    fn lineno_set_get_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = lineno();
+        set_lineno(12345);
+        assert_eq!(lineno(), 12345, "set_lineno round-trips");
+        set_lineno(saved);
+    }
+
+    /// c:3649 — `incmdpos` returns bool (compile-time type pin).
+    #[test]
+    fn incmdpos_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = incmdpos();
+    }
+
+    /// c:3649 — `incmdpos`/`set_incmdpos` round-trip.
+    #[test]
+    fn incmdpos_set_get_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = incmdpos();
+        set_incmdpos(true);
+        assert!(incmdpos(), "set_incmdpos(true) → true");
+        set_incmdpos(false);
+        assert!(!incmdpos(), "set_incmdpos(false) → false");
+        set_incmdpos(saved);
+    }
+
+    /// c:3677 — `incond` returns i32.
+    #[test]
+    fn incond_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = incond();
+    }
+
+    /// c:3692 — `incasepat` returns i32.
+    #[test]
+    fn incasepat_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = incasepat();
+    }
+
+    /// c:3725 — `input_slice` returns Option<String>.
+    #[test]
+    fn input_slice_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = input_slice(0, 0);
+    }
+
+    /// c:3725 — `input_slice(0, 0)` empty slice safe.
+    #[test]
+    fn input_slice_zero_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = input_slice(0, 0);
+    }
+
+    /// c:4317 — `has_token("")` empty returns false (no tokens).
+    #[test]
+    fn has_token_empty_returns_false() {
+        assert!(!has_token(""), "empty string has no tokens");
+    }
+
+    /// c:4317 — `has_token("plain")` ASCII without tokens returns false.
+    #[test]
+    fn has_token_plain_ascii_returns_false() {
+        assert!(!has_token("hello world"), "plain ASCII has no tokens");
+        assert!(!has_token("abc123"), "alphanumeric has no tokens");
+    }
+
+    /// c:4317 — `has_token` returns bool (compile-time type pin).
+    #[test]
+    fn has_token_returns_bool_type() {
+        let _: bool = has_token("anything");
+    }
+
+    /// c:4317 — `has_token` is pure (deterministic across calls).
+    #[test]
+    fn has_token_is_pure() {
+        for s in ["", "abc", "abc def", "x\u{84}y", "\u{9c}"] {
+            let first = has_token(s);
+            for _ in 0..3 {
+                assert_eq!(has_token(s), first,
+                    "has_token({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:4205 — `untokenize` is pure (same input → same output).
+    #[test]
+    fn untokenize_is_pure() {
+        for s in ["", "abc", "hello world", "no tokens here"] {
+            let first = untokenize(s);
+            for _ in 0..3 {
+                assert_eq!(untokenize(s), first,
+                    "untokenize({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:4205 — `untokenize` returns String (compile-time type pin).
+    #[test]
+    fn untokenize_returns_string_type() {
+        let _: String = untokenize("anything");
+    }
+
+    /// c:4205 — `untokenize("")` empty returns empty.
+    #[test]
+    fn untokenize_empty_returns_empty() {
+        assert_eq!(untokenize(""), "", "empty → empty");
+    }
 }
