@@ -1046,4 +1046,114 @@ mod tests {
         let after = queue_signal_level();
         assert_eq!(before, after);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/signals.h c:34-46 + sigs_*.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:46 — SIGEXIT is slot 0 (reserved for the EXIT trap).
+    #[test]
+    fn sigexit_is_slot_zero() {
+        assert_eq!(SIGEXIT, 0, "EXIT trap occupies slot 0 per c:46");
+    }
+
+    /// c:34/35 — SIGZERR and SIGDEBUG are distinct pseudo-signals
+    /// above SIGCOUNT (don't collide with real signals).
+    #[test]
+    fn sigzerr_sigdebug_distinct_above_sigcount() {
+        assert!(SIGZERR > SIGCOUNT, "SIGZERR must be above real signals");
+        assert!(SIGDEBUG > SIGCOUNT, "SIGDEBUG must be above real signals");
+        assert_ne!(SIGZERR, SIGDEBUG, "ZERR and DEBUG must differ");
+        assert_eq!(SIGZERR, SIGCOUNT + 1, "c:34 = SIGCOUNT+1");
+        assert_eq!(SIGDEBUG, SIGCOUNT + 2, "c:35 = SIGCOUNT+2");
+    }
+
+    /// c:36 — VSIGCOUNT = SIGCOUNT + 3 (room for ZERR/DEBUG + slot 0).
+    #[test]
+    fn vsigcount_equals_sigcount_plus_three() {
+        assert_eq!(VSIGCOUNT, SIGCOUNT + 3, "c:36 invariant");
+    }
+
+    /// `sigs_name(0)` returns Some("EXIT") (the EXIT trap convention).
+    #[test]
+    fn sigs_name_zero_returns_exit() {
+        assert_eq!(sigs_name(0), Some("EXIT"));
+    }
+
+    /// `sigs_name(SIGZERR)` returns Some("ZERR").
+    #[test]
+    fn sigs_name_sigzerr_returns_zerr_pin() {
+        assert_eq!(sigs_name(SIGZERR), Some("ZERR"));
+    }
+
+    /// `sigs_name(SIGDEBUG)` returns Some("DEBUG").
+    #[test]
+    fn sigs_name_sigdebug_returns_debug_pin() {
+        assert_eq!(sigs_name(SIGDEBUG), Some("DEBUG"));
+    }
+
+    /// `sigs_name(-1)` returns None (out of range below).
+    #[test]
+    fn sigs_name_negative_returns_none() {
+        assert_eq!(sigs_name(-1), None);
+    }
+
+    /// `sigs_name(99999)` returns None (out of range above).
+    #[test]
+    fn sigs_name_far_above_range_returns_none() {
+        assert_eq!(sigs_name(99999), None);
+    }
+
+    /// `sigs_number("SIGINT")` and `sigs_number("INT")` both work
+    /// (with/without SIG prefix).
+    #[cfg(unix)]
+    #[test]
+    fn sigs_number_strips_sig_prefix_pin() {
+        let with = sigs_number("SIGINT");
+        let without = sigs_number("INT");
+        assert_eq!(with, without, "SIG prefix must be optional");
+        assert_eq!(with, Some(libc::SIGINT));
+    }
+
+    /// `sigs_number("DEFINITELY_NOT_A_SIGNAL_XYZ")` returns None.
+    #[test]
+    fn sigs_number_unknown_name_returns_none() {
+        assert_eq!(sigs_number("DEFINITELY_NOT_A_SIGNAL_XYZ"), None);
+    }
+
+    /// `sigs_number("")` (empty string) returns None.
+    #[test]
+    fn sigs_number_empty_string_returns_none() {
+        assert_eq!(sigs_number(""), None);
+    }
+
+    /// Round-trip: sigs_number(name) → sigs_name(num) → name (modulo
+    /// SIG prefix stripping).
+    #[cfg(unix)]
+    #[test]
+    fn sigs_number_to_name_round_trip_for_int() {
+        let n = sigs_number("INT").unwrap();
+        let back = sigs_name(n);
+        assert_eq!(back, Some("INT"), "INT round trip");
+    }
+
+    /// c:39/40 — SIGNUM and SIGIDX are inverses for normal (non-RT)
+    /// signal numbers.
+    #[test]
+    fn signum_sigidx_inverse_for_low_signals() {
+        for s in [1, 2, 3, 9, 15, 20] {
+            assert_eq!(SIGIDX(SIGNUM(s)), s, "round trip for sig {}", s);
+            assert_eq!(SIGNUM(SIGIDX(s)), s, "inverse round trip for sig {}", s);
+        }
+    }
+
+    /// c:76 — MAX_QUEUE_SIZE is a power of 2 (canonical buffer size).
+    #[test]
+    fn max_queue_size_is_power_of_two() {
+        assert!(
+            MAX_QUEUE_SIZE.is_power_of_two(),
+            "MAX_QUEUE_SIZE {} must be a power of 2 for buffer math",
+            MAX_QUEUE_SIZE
+        );
+    }
 }
