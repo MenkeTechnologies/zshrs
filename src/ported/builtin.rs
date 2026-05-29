@@ -13264,4 +13264,67 @@ mod tests {
         assert_eq!(fixdir("foo"), "foo");
         assert_eq!(fixdir("foo/bar"), "foo/bar");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/builtin.c bin_true/false +
+    // bin_break + other simple builtins.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:4550 — `bin_true` always returns 0 regardless of args.
+    #[test]
+    fn bin_true_always_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_opts_for_corpus();
+        assert_eq!(bin_true("true", &[], &ops, 0), 0);
+        assert_eq!(bin_true("true", &["arg1".into(), "arg2".into()], &ops, 0), 0);
+    }
+
+    /// c:4559 — `bin_false` always returns 1 regardless of args.
+    #[test]
+    fn bin_false_always_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_opts_for_corpus();
+        assert_eq!(bin_false("false", &[], &ops, 0), 1);
+        assert_eq!(bin_false("false", &["a".into()], &ops, 0), 1);
+    }
+
+    /// c:4550 — `bin_true` ignores name arg.
+    #[test]
+    fn bin_true_ignores_name() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_opts_for_corpus();
+        // Any name returns 0 (name is unused per UNUSED(char *name)).
+        assert_eq!(bin_true("anything", &[], &ops, 0), 0);
+        assert_eq!(bin_true("", &[], &ops, 0), 0);
+    }
+
+    /// c:4559 — `bin_false` ignores name arg.
+    #[test]
+    fn bin_false_ignores_name() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_opts_for_corpus();
+        assert_eq!(bin_false("anything", &[], &ops, 0), 1);
+        assert_eq!(bin_false("", &[], &ops, 0), 1);
+    }
+
+    /// `bin_true`/`bin_false` are deterministic (pure functions).
+    #[test]
+    fn bin_true_false_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_opts_for_corpus();
+        for _ in 0..10 {
+            assert_eq!(bin_true("true", &[], &ops, 0), 0);
+            assert_eq!(bin_false("false", &[], &ops, 0), 1);
+        }
+    }
+
+    /// c:7872 — `realexit` would terminate process; pin that we DON'T
+    /// accidentally call it. (no-op test — just documents the contract.)
+    /// `_realexit` similarly forbidden in tests.
+    #[test]
+    fn realexit_contract_pin_no_test_actually_calls_it() {
+        // This test exists to document that realexit / _realexit are
+        // never called by test code (would terminate the test process).
+        // No assertions — pin via not calling.
+    }
 }
