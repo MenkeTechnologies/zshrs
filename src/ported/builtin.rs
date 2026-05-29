@@ -13176,4 +13176,92 @@ mod tests {
         let r = bin_pwd("pwd", &[], &o, 0);
         assert_eq!(r, 0, "pwd returns 0 on success");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/builtin.c fixdir path normaliser.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1297 — `fixdir("")` returns empty string.
+    #[test]
+    fn fixdir_empty_returns_empty_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(fixdir(""), "");
+    }
+
+    /// c:1297 — `fixdir("/")` returns "/".
+    #[test]
+    fn fixdir_root_returns_root() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(fixdir("/"), "/", "root path preserved");
+    }
+
+    /// c:1352 — `fixdir("/foo/./bar")` collapses `.` to `/foo/bar`.
+    #[test]
+    fn fixdir_drops_dot_segments() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(fixdir("/foo/./bar"), "/foo/bar");
+        assert_eq!(fixdir("/./a"), "/a");
+        assert_eq!(fixdir("/a/."), "/a");
+    }
+
+    /// c:1339 — `fixdir("/foo//bar")` collapses `//` to `/foo/bar`.
+    #[test]
+    fn fixdir_collapses_double_slash_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(fixdir("/foo//bar"), "/foo/bar");
+        assert_eq!(fixdir("//foo//bar//"), "/foo/bar");
+    }
+
+    /// c:1358-1372 — `fixdir("/foo/bar/..")` pops via `..` → `/foo`.
+    #[test]
+    fn fixdir_pops_via_dotdot() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(fixdir("/foo/bar/.."), "/foo");
+        assert_eq!(fixdir("/a/b/c/../.."), "/a");
+        assert_eq!(fixdir("/a/b/../c"), "/a/c");
+    }
+
+    /// c:1358-1372 — `fixdir("/..")` past root → `/` (absolute paths
+    /// silently drop `..` past `/`).
+    #[test]
+    fn fixdir_dotdot_past_root_clamps_to_root_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(fixdir("/.."), "/", "absolute `..` past root → `/`");
+        assert_eq!(fixdir("/../.."), "/");
+        assert_eq!(fixdir("/a/../../.."), "/", "successive pops past root → /");
+    }
+
+    /// c:1358-1372 — `fixdir("../foo")` on relative path KEEPS leading `..`.
+    #[test]
+    fn fixdir_relative_keeps_leading_dotdot_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(fixdir("../foo"), "../foo");
+        assert_eq!(fixdir("../../foo"), "../../foo");
+    }
+
+    /// c:1297-1395 — `fixdir` is idempotent: fixdir(fixdir(x)) == fixdir(x).
+    #[test]
+    fn fixdir_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for input in &["/a/b/c", "/a/./b", "/a/b/..", "/../x", "../foo", "/foo//bar"] {
+            let once = fixdir(input);
+            let twice = fixdir(&once);
+            assert_eq!(once, twice, "fixdir must be idempotent on {:?}", input);
+        }
+    }
+
+    /// c:1297 — relative path of just `.` → `.` (not empty).
+    #[test]
+    fn fixdir_relative_dot_returns_dot() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(fixdir("."), ".", "lone `.` relative → `.`");
+    }
+
+    /// c:1297 — `fixdir("foo")` (plain relative) is identity.
+    #[test]
+    fn fixdir_plain_relative_is_identity() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(fixdir("foo"), "foo");
+        assert_eq!(fixdir("foo/bar"), "foo/bar");
+    }
 }
