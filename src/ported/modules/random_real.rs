@@ -486,4 +486,117 @@ mod tests {
             "3 random_real calls all same: {a} {b} {c}"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/random_real.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:52 — `_zclz64(0)` returns 64 (early-return guard).
+    #[test]
+    fn zclz64_zero_returns_64() {
+        assert_eq!(_zclz64(0), 64, "all-zero word → CLZ=64 per c:52");
+    }
+
+    /// c:75 — `_zclz64(1)` (only bit 0 set) returns 63.
+    #[test]
+    fn zclz64_one_returns_63() {
+        assert_eq!(_zclz64(1), 63, "bit 0 only → CLZ=63");
+    }
+
+    /// c:75 — `_zclz64(2)` (only bit 1 set) returns 62.
+    /// Pin: this is the SPECIFIC case that surfaced the upstream
+    /// c:73 bug (was `x <<= 1`, fixed to `x <<= 2` in zshrs port).
+    #[test]
+    fn zclz64_two_returns_62_per_fixed_cascade() {
+        assert_eq!(
+            _zclz64(2),
+            62,
+            "bit 1 only → CLZ=62 (regression pin for c:73 upstream bug)"
+        );
+    }
+
+    /// c:75 — `_zclz64(0x8000_0000_0000_0000)` (only top bit set) → 0.
+    #[test]
+    fn zclz64_top_bit_only_returns_zero() {
+        assert_eq!(_zclz64(0x8000_0000_0000_0000), 0, "top bit set → CLZ=0");
+    }
+
+    /// c:75 — `_zclz64(0xFFFF_FFFF_FFFF_FFFF)` → 0 (all bits set).
+    #[test]
+    fn zclz64_all_bits_set_returns_zero() {
+        assert_eq!(_zclz64(u64::MAX), 0);
+    }
+
+    /// c:75 — `_zclz64` matches `u64::leading_zeros()` for sample values.
+    /// Pin: Rust port's manual cascade and stdlib must agree.
+    #[test]
+    fn zclz64_matches_stdlib_leading_zeros() {
+        for v in [0u64, 1, 2, 3, 4, 7, 8, 15, 16, 255, 256, 0xFFFF,
+                  0x1_0000, u64::MAX, u64::MAX / 2, 0x8000_0000_0000_0000] {
+            assert_eq!(
+                _zclz64(v) as u32,
+                v.leading_zeros(),
+                "_zclz64({}) must match v.leading_zeros()",
+                v
+            );
+        }
+    }
+
+    /// `clz64` is the public alias for `_zclz64` — same contract.
+    #[test]
+    fn clz64_alias_matches_zclz64() {
+        for v in [0u64, 1, 42, u64::MAX] {
+            assert_eq!(clz64(v), _zclz64(v));
+        }
+    }
+
+    /// c:84 — `random_64bit()` returns non-zero (never returns 0 to
+    /// avoid infinite loop in random_real's zero-detection).
+    #[test]
+    fn random_64bit_never_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..100 {
+            let r = random_64bit();
+            assert_ne!(r, 0, "random_64bit must never return 0 per c:89");
+        }
+    }
+
+    /// c:84 — `random_64bit` produces varied output (basic PRNG sanity).
+    #[test]
+    fn random_64bit_produces_varied_output() {
+        let _g = crate::test_util::global_state_lock();
+        let first = random_64bit();
+        let any_different = (0..100).any(|_| random_64bit() != first);
+        assert!(any_different, "100 calls should produce ≥ 1 different value");
+    }
+
+    /// c:119 — `random_real` upper bound: never returns 1.0 exactly.
+    #[test]
+    fn random_real_never_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..100 {
+            let v = random_real();
+            assert!(v < 1.0, "random_real must be < 1.0, got {}", v);
+        }
+    }
+
+    /// c:119 — `random_real` lower bound: returns ≥ 0.0.
+    #[test]
+    fn random_real_never_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..100 {
+            let v = random_real();
+            assert!(v >= 0.0, "random_real must be ≥ 0.0, got {}", v);
+        }
+    }
+
+    /// c:119 — `random_real` is non-NaN.
+    #[test]
+    fn random_real_is_not_nan() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..50 {
+            let v = random_real();
+            assert!(!v.is_nan(), "random_real must not be NaN");
+        }
+    }
 }
