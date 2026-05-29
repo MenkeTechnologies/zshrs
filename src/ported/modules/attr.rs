@@ -363,20 +363,16 @@ pub fn bin_setattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 
 // =====================================================================
 
 /// Port of `bin_delattr(char *nam, char **argv, Options ops, UNUSED(int func))` from `Src/Modules/attr.c:150`.
+///
+/// Body assumes `argv.len() >= 2` (file + ≥1 attr) per C body c:154-157
+/// which dereferences `argv[0]` and `argv[1..]` directly. The
+/// `zdelattr` BUILTIN spec at builtin.rs:10876 declares
+/// `min_args=2`; the dispatcher at builtin.rs:591 rejects shorter
+/// argv before reaching this body, matching C
+/// `Src/builtin.c:432`. Tests that exercise the body MUST go through
+/// the dispatcher (or supply at least 2 args) to honor that contract.
 #[allow(unused_variables)]
 pub fn bin_delattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 {
-    // c:222 BUILTIN spec — `BUILTIN("zdelattr", 0, bin_delattr, 2, -1, ...)`
-    // declares min_args=2 (file + ≥1 attr); both the C dispatcher
-    // (Src/builtin.c:432) and the Rust dispatcher (builtin.rs:591) reject
-    // shorter argv before calling this body, so the normal `zdelattr`
-    // command path never reaches an empty-argv slice. Direct calls into
-    // the body from unit tests or other Rust call sites bypass the
-    // dispatcher gate, so defend in depth — `&argv[1..]` below would
-    // OOB-panic on empty argv otherwise.
-    if argv.len() < 2 {
-        zwarnnam(nam, "not enough arguments");
-        return 1;
-    }
     // c:150 — `int ret = 0, slen;`
     let _slen: usize;
     // c:153 — `int symlink = OPT_ISSET(ops, 'h');`
@@ -879,24 +875,40 @@ mod tests {
     // Additional C-parity tests for Src/Modules/attr.c.
     // ═══════════════════════════════════════════════════════════════════
 
-    /// `bin_delattr` with no args returns nonzero (usage error).
-    /// Fixed: bin_delattr now guards `argv.len() < 2` explicitly to
-    /// emulate the c:222 BUILTIN min_args=2 dispatcher gate.
+    /// `bin_delattr` no-args usage error — routed through the
+    /// dispatcher (`execbuiltin`) so the c:222 BUILTIN min_args=2 gate
+    /// at builtin.rs:591 fires before reaching the body. Calling
+    /// `bin_delattr(..., &[], ...)` directly would OOB-panic on
+    /// `argv[0]` — that's the dispatcher's job to prevent, not the
+    /// body's. This matches the C contract at Src/builtin.c:432 (gate)
+    /// + Src/Modules/attr.c:154 (body assumes argv[0]).
     #[test]
-    fn bin_delattr_no_args_errors() {
+    fn bin_delattr_no_args_errors_via_dispatcher() {
         let _g = crate::test_util::global_state_lock();
-        let ops = empty_ops();
-        let r = bin_delattr("zdelattr", &[], &ops, 0);
-        assert_ne!(r, 0, "no args → usage error");
+        let table = crate::ported::builtin::createbuiltintable();
+        let bn = table.get("zdelattr").expect("zdelattr registered");
+        let bn_ptr = (*bn as *const _) as *mut crate::ported::zsh_h::builtin;
+        let r = crate::ported::builtin::execbuiltin(
+            vec!["zdelattr".to_string()], // argv[0] = command name only
+            Vec::new(),
+            bn_ptr,
+        );
+        assert_ne!(r, 0, "min_args=2 unmet → dispatcher returns nonzero");
     }
 
-    /// `bin_delattr` with only file path (1 arg, missing attr) returns
-    /// nonzero per c:222 BUILTIN min_args=2.
+    /// `bin_delattr` with only file path routed through dispatcher —
+    /// argc=1 still fails min_args=2 gate (file + ≥1 attr required).
     #[test]
-    fn bin_delattr_one_arg_returns_nonzero() {
+    fn bin_delattr_one_arg_errors_via_dispatcher() {
         let _g = crate::test_util::global_state_lock();
-        let ops = empty_ops();
-        let r = bin_delattr("zdelattr", &["/tmp".into()], &ops, 0);
+        let table = crate::ported::builtin::createbuiltintable();
+        let bn = table.get("zdelattr").expect("zdelattr registered");
+        let bn_ptr = (*bn as *const _) as *mut crate::ported::zsh_h::builtin;
+        let r = crate::ported::builtin::execbuiltin(
+            vec!["zdelattr".to_string(), "/tmp".to_string()], // file only
+            Vec::new(),
+            bn_ptr,
+        );
         assert_ne!(r, 0, "file alone without attr name → usage error");
     }
 
