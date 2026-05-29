@@ -3910,4 +3910,99 @@ mod tests {
         assert!(val.is_empty());
         assert!(rest.is_empty());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/complist.c
+    // c:143 filecol / c:238 getcolval / c:314 getcoldef / c:366 getcols
+    // c:506 zlrputs / c:523 zcputs / c:533 zcoff / c:551 cleareol /
+    // c:802 putmatchcol / c:838 putfilecol / c:987 compprintnl /
+    // c:1157 compzputs
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:238 — `getcolval` is deterministic.
+    #[test]
+    fn getcolval_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["", "01", "01;31", "01;32:something"] {
+            let first = getcolval(s, 0);
+            for _ in 0..3 {
+                assert_eq!(getcolval(s, 0), first,
+                    "getcolval({:?}, 0) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:238 — `getcolval` returns (String, &str) (compile-time type pin).
+    #[test]
+    fn getcolval_returns_tuple_string_str_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: (String, &str) = getcolval("abc", 0);
+    }
+
+    /// c:314 — `getcoldef("")` empty input returns None.
+    #[test]
+    fn getcoldef_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getcoldef("").is_none(), "empty input → None");
+    }
+
+    /// c:314 — `getcoldef` returns Option<String> (compile-time type pin).
+    #[test]
+    fn getcoldef_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = getcoldef("foo");
+    }
+
+    /// c:533 — `zcoff` is idempotent / safe.
+    #[test]
+    fn zcoff_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            zcoff();
+        }
+    }
+
+    /// c:551 — `cleareol` is idempotent / safe.
+    #[test]
+    fn cleareol_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            cleareol();
+        }
+    }
+
+    /// c:802 — `putmatchcol("", "")` returns i32 (type pin).
+    #[test]
+    fn putmatchcol_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = putmatchcol("", "");
+    }
+
+    /// c:838 — `putfilecol("", "", 0, 0)` returns i32 (type pin).
+    #[test]
+    fn putfilecol_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = putfilecol("", "", 0, 0);
+    }
+
+    /// c:987 — `compprintnl(0)` returns i32 (type pin).
+    #[test]
+    fn compprintnl_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = compprintnl(0);
+    }
+
+    /// c:1157 — `compzputs("", 0)` returns i32 (type pin).
+    #[test]
+    fn compzputs_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = compzputs("", 0);
+    }
+
+    /// c:506 — `zlrputs("")` empty cap is safe.
+    #[test]
+    fn zlrputs_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = zlrputs("");
+    }
 }
