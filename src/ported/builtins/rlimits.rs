@@ -1982,4 +1982,114 @@ mod tests {
         assert_eq!(v, 0);
         assert_eq!(n, 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Builtins/rlimits.c utilities.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:277 — `zstrtorlimt("unlimited", _)` returns (RLIM_INFINITY, 9)
+    /// regardless of base.
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_unlimited_returns_rlim_infinity() {
+        let _g = crate::test_util::global_state_lock();
+        let (v, n) = zstrtorlimt("unlimited", 10);
+        assert_eq!(v, RLIM_INFINITY);
+        assert_eq!(n, 9, "exactly 9 bytes consumed for 'unlimited'");
+        // Base doesn't matter for the literal-word path.
+        let (v16, n16) = zstrtorlimt("unlimited", 16);
+        assert_eq!(v16, RLIM_INFINITY);
+        assert_eq!(n16, 9);
+    }
+
+    /// c:277 — `zstrtorlimt("unlimitedX", _)` is NOT unlimited (exact
+    /// strcmp); falls through to digit parser. 'X' isn't a digit so
+    /// returns (0, 0).
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_unlimited_with_suffix_is_not_special() {
+        let _g = crate::test_util::global_state_lock();
+        // C uses strcmp(s, "unlimited"); s.starts_with would be wrong.
+        let (v, n) = zstrtorlimt("unlimitedX", 10);
+        // The 'u' isn't a digit → no consumption.
+        assert_eq!(v, 0);
+        assert_eq!(n, 0);
+    }
+
+    /// c:272 — `zstrtorlimt("", _)` returns (0, 0) (empty input).
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_empty_returns_zero_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let (v, n) = zstrtorlimt("", 10);
+        assert_eq!(v, 0);
+        assert_eq!(n, 0);
+    }
+
+    /// c:272 — `zstrtorlimt("0", 10)` returns (0, 1).
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_single_zero_returns_zero_one() {
+        let _g = crate::test_util::global_state_lock();
+        let (v, n) = zstrtorlimt("0", 10);
+        assert_eq!(v, 0);
+        assert_eq!(n, 1, "consumed 1 byte");
+    }
+
+    /// c:272 — `zstrtorlimt("123abc", 10)` parses '123', stops at 'a'.
+    #[test]
+    #[cfg(unix)]
+    fn zstrtorlimt_stops_at_non_digit_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let (v, n) = zstrtorlimt("123abc", 10);
+        assert_eq!(v, 123);
+        assert_eq!(n, 3, "consumed only digit prefix");
+    }
+
+    /// c:244 — `find_resource('c')` finds RLIMIT_CORE (option char 'c').
+    /// Pin: known POSIX limit char returns a valid (non-negative) index.
+    #[test]
+    #[cfg(unix)]
+    fn find_resource_known_char_returns_nonneg() {
+        let _g = crate::test_util::global_state_lock();
+        let r = find_resource('c'); // core dump size
+        assert!(r >= 0, "core limit option 'c' must resolve, got {}", r);
+    }
+
+    /// c:244 — `find_resource` for unknown char returns -1.
+    #[test]
+    #[cfg(unix)]
+    fn find_resource_unknown_char_returns_neg_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(find_resource('Q'), -1, "unknown limit option → -1");
+        assert_eq!(find_resource('!'), -1);
+        assert_eq!(find_resource('\0'), -1);
+    }
+
+    /// c:244 — `find_resource` is deterministic across repeated calls.
+    #[test]
+    #[cfg(unix)]
+    fn find_resource_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = find_resource('c');
+        for _ in 0..10 {
+            assert_eq!(find_resource('c'), first);
+        }
+    }
+
+    /// c:147 (setup_) — returns 0.
+    #[test]
+    fn rlimits_setup_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:155-181 — lifecycle stubs all return 0 (or via handlefeatures).
+    #[test]
+    fn rlimits_lifecycle_stubs_return_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
