@@ -407,6 +407,21 @@ cmd=ls; $cmd -la                  # dynamic command name routes through host int
 intercept before git { …; }       # AOP advice fires for both literal and dynamic invocations
 ```
 
+### Runnable demos
+
+[`examples/demos/*.zsh`](examples/demos/) — 30 self-contained scripts covering
+arithmetic, arrays, assoc arrays, control flow, functions, recursion, brace /
+parameter expansion, parameter flags, heredocs, command/process substitution,
+pipes, printf, traps, IFS-splitting, anonymous fns, positional args, typeset,
+quicksort, prime sieve, fibonacci, fizzbuzz, pattern match. Every demo runs in
+CI via `tests/examples_demos_ci.rs`:
+
+```bash
+cargo build --bin zshrs
+target/debug/zshrs --zsh examples/demos/10_fizzbuzz.zsh
+cargo test --test examples_demos_ci          # full sweep, ~2s
+```
+
 ---
 
 ## [0x0A] COMPATIBILITY
