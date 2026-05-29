@@ -1950,4 +1950,133 @@ mod tests {
         assert_eq!(cleanup_(null), 0);
         assert_eq!(finish_(null), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/files.c
+    // c:116 bin_sync / c:137 bin_mkdir / c:222 domkdir / c:1222 getnumeric +
+    // c:1132-1169 lifecycle type pins
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:116 — `bin_sync` returns i32 (compile-time type pin).
+    #[test]
+    fn bin_sync_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_sync("sync", &[], &ops, 0);
+    }
+
+    /// c:137 — `bin_mkdir` returns i32 (compile-time type pin).
+    #[test]
+    fn bin_mkdir_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_mkdir("mkdir", &[], &ops, 0);
+    }
+
+    /// c:222 — `domkdir` returns i32 (compile-time type pin).
+    #[test]
+    fn domkdir_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = domkdir("mkdir", "/__never_zshrs_xyz__", 0o755, 0);
+    }
+
+    /// c:222 — `domkdir` for nonexistent parent fails.
+    #[test]
+    fn domkdir_nonexistent_parent_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = domkdir("mkdir", "/__never_real_parent__/foo", 0o755, 0);
+        assert_ne!(r, 0, "nonexistent parent → error");
+    }
+
+    /// c:1222 — `getnumeric("0")` returns (0, no-error).
+    #[test]
+    fn getnumeric_zero_no_error_pin() {
+        let mut err = 0i32;
+        let v = getnumeric("0", &mut err);
+        assert_eq!(v, 0, "0 → 0");
+        assert_eq!(err, 0, "no error flag on 0");
+    }
+
+    /// c:1222 — `getnumeric` returns u64 (compile-time type pin).
+    #[test]
+    fn getnumeric_returns_u64_type() {
+        let mut err = 0i32;
+        let _: u64 = getnumeric("0", &mut err);
+    }
+
+    /// c:1222 — `getnumeric` is deterministic for stable input.
+    #[test]
+    fn getnumeric_is_deterministic() {
+        for s in ["0", "42", "100", "garbage", ""] {
+            let mut err = 0i32;
+            let first = getnumeric(s, &mut err);
+            for _ in 0..3 {
+                let mut err2 = 0i32;
+                let v = getnumeric(s, &mut err2);
+                assert_eq!(v, first,
+                    "getnumeric({:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:1132 — `setup_` returns i32 (compile-time type pin).
+    #[test]
+    fn files_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:1139 — features list non-empty.
+    #[test]
+    fn files_features_nonempty() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        assert!(!feats.is_empty(), "files module advertises ≥1 feature");
+    }
+
+    /// c:1139 — features use b:/p: prefix per zsh module spec.
+    #[test]
+    fn files_features_use_canonical_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        for f in &feats {
+            assert!(f.starts_with("b:") || f.starts_with("p:"),
+                "feature {:?} must use b:/p: prefix", f);
+        }
+    }
+
+    /// c:116 — `bin_sync` is idempotent (safe to call repeatedly).
+    #[test]
+    fn bin_sync_idempotent_full_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for _ in 0..5 {
+            let r = bin_sync("sync", &[], &ops, 0);
+            assert_eq!(r, 0, "sync always returns 0");
+        }
+    }
+
+    /// c:1162 + c:1169 — cleanup/finish idempotent.
+    #[test]
+    fn files_cleanup_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:222 — `domkdir` creates real directory then succeeds.
+    #[test]
+    fn domkdir_real_path_succeeds() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("new_dir");
+        let r = domkdir("mkdir", target.to_str().unwrap(), 0o755, 0);
+        assert_eq!(r, 0, "creating new dir under tempdir → 0");
+        assert!(target.exists(), "directory was created");
+        assert!(target.is_dir(), "result is a directory");
+    }
 }
