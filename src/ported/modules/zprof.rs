@@ -1492,4 +1492,90 @@ mod tests {
         assert_eq!(boot_(null), 0);
         assert_eq!(cleanup_(null), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zprof.c
+    // c:105 freepfuncs / c:113 freeparcs / c:123 findpfunc / c:135 findparc
+    // c:152 cmpsfuncs / c:161 cmptfuncs / c:170 cmpparcs /
+    // c:418 name_for_anonymous_function / c:509 zprof_wrapper
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:105 — `freepfuncs` returns void (compile-time pin).
+    #[test]
+    fn freepfuncs_returns_void() {
+        let mut v: Vec<Pfunc> = vec![];
+        let _: () = freepfuncs(&mut v);
+    }
+
+    /// c:113 — `freeparcs` returns void.
+    #[test]
+    fn freeparcs_returns_void() {
+        let mut v: Vec<Parc> = vec![];
+        let _: () = freeparcs(&mut v);
+    }
+
+    /// c:123 — `findpfunc` returns Option<usize> (compile-time pin).
+    #[test]
+    fn findpfunc_returns_option_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<usize> = findpfunc("anything");
+    }
+
+    /// c:135 — `findparc(N, M)` returns Option<usize>.
+    #[test]
+    fn findparc_returns_option_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<usize> = findparc(0, 0);
+    }
+
+    /// c:152 — `cmpsfuncs` returns Ordering (compile-time pin).
+    #[test]
+    fn cmpsfuncs_returns_ordering_type() {
+        let a = mk_pfunc("a", 0.0, 0.0);
+        let _: std::cmp::Ordering = cmpsfuncs(&a, &a);
+    }
+
+    /// c:161 — `cmptfuncs` returns Ordering.
+    #[test]
+    fn cmptfuncs_returns_ordering_type() {
+        let a = mk_pfunc("a", 0.0, 0.0);
+        let _: std::cmp::Ordering = cmptfuncs(&a, &a);
+    }
+
+    /// c:170 — `cmpparcs` returns Ordering.
+    #[test]
+    fn cmpparcs_returns_ordering_type() {
+        let a = mk_parc(0, 1, 0.0);
+        let _: std::cmp::Ordering = cmpparcs(&a, &a);
+    }
+
+    /// c:418 — `name_for_anonymous_function` returns String type pin.
+    #[test]
+    fn name_for_anonymous_function_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = name_for_anonymous_function("anon");
+    }
+
+    /// c:509 — `zprof_wrapper` returns i32 type pin.
+    #[test]
+    fn zprof_wrapper_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = zprof_wrapper(std::ptr::null(), std::ptr::null(), "x");
+    }
+
+    /// c:105 — `freepfuncs` empties the vec.
+    #[test]
+    fn freepfuncs_empties_vec_pin() {
+        let mut v = vec![mk_pfunc("a", 0.0, 0.0)];
+        freepfuncs(&mut v);
+        assert!(v.is_empty(), "freepfuncs must empty");
+    }
+
+    /// c:113 — `freeparcs` empties the vec.
+    #[test]
+    fn freeparcs_empties_vec_pin() {
+        let mut v = vec![mk_parc(0, 1, 0.0)];
+        freeparcs(&mut v);
+        assert!(v.is_empty(), "freeparcs must empty");
+    }
 }
