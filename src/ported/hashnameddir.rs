@@ -795,4 +795,116 @@ mod tests {
         assert_eq!(allusersadded.load(Ordering::Relaxed), 0,
             "createnameddirtable must reset allusersadded → 0");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hashnameddir.c
+    // c:117 addnameddirnode / c:136 removenameddirnode / c:53 emptynameddirtable
+    // c:161 printnameddirnode / c:224 nameddirtab — type pins + read-only
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:117 — `addnameddirnode` followed by lookup finds the entry.
+    #[test]
+    fn addnameddirnode_followed_by_lookup_finds_entry() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("zshrs_test_lookup", make_nd("zshrs_test_lookup", "/tmp", 0));
+        let t = nameddirtab().lock().unwrap();
+        assert!(t.contains_key("zshrs_test_lookup"),
+            "added entry must be findable");
+    }
+
+    /// c:136 — `removenameddirnode` returns Option<nameddir> (type pin).
+    #[test]
+    fn removenameddirnode_returns_option_nameddir_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        let _: Option<nameddir> = removenameddirnode("nothing");
+    }
+
+    /// c:136 — `removenameddirnode` empty name returns None on empty table.
+    #[test]
+    fn removenameddirnode_empty_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        assert!(removenameddirnode("").is_none(), "empty name → None");
+    }
+
+    /// c:117 — `addnameddirnode` returns void.
+    #[test]
+    fn addnameddirnode_signature_void() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        let _: () = addnameddirnode("zshrs_void_pin",
+            make_nd("zshrs_void_pin", "/tmp", 0));
+    }
+
+    /// c:53 — `emptynameddirtable` returns void.
+    #[test]
+    fn emptynameddirtable_signature_void() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _: () = emptynameddirtable();
+    }
+
+    /// c:117 — `addnameddirnode` two distinct entries grows table by 2.
+    #[test]
+    fn addnameddirnode_two_distinct_entries_grows_by_two() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        let before = nameddirtab().lock().unwrap().len();
+        addnameddirnode("aa", make_nd("aa", "/a", 0));
+        addnameddirnode("bb", make_nd("bb", "/b", 0));
+        let after = nameddirtab().lock().unwrap().len();
+        assert_eq!(after, before + 2, "2 distinct names → grow by 2");
+    }
+
+    /// c:117 — `addnameddirnode` same name twice keeps count at 1 (overwrite).
+    #[test]
+    fn addnameddirnode_same_name_twice_keeps_count_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        let before = nameddirtab().lock().unwrap().len();
+        addnameddirnode("dup", make_nd("dup", "/v1", 0));
+        addnameddirnode("dup", make_nd("dup", "/v2", 0));
+        let after = nameddirtab().lock().unwrap().len();
+        assert_eq!(after, before + 1, "duplicate insert grows by 1 only");
+    }
+
+    /// c:136 — `removenameddirnode` after `add` decrements count by 1.
+    #[test]
+    fn removenameddirnode_decrements_count_by_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("rem_test", make_nd("rem_test", "/x", 0));
+        let before = nameddirtab().lock().unwrap().len();
+        removenameddirnode("rem_test");
+        let after = nameddirtab().lock().unwrap().len();
+        assert_eq!(after, before - 1, "remove decrements count by 1");
+    }
+
+    /// c:153 — `freenameddirnode` consumes the node (Box drop semantic).
+    #[test]
+    fn freenameddirnode_consumes_node_signature_void() {
+        let nd = nameddir {
+            node: crate::zsh_h::hashnode { next: None, nam: "free_test".to_string(), flags: 0 },
+            dir: "/tmp".to_string(),
+            diff: 0,
+        };
+        let _: () = freenameddirnode(nd);
+    }
+
+    /// c:224 — `nameddirtab()` returns same Mutex ref across calls.
+    #[test]
+    fn nameddirtab_returns_same_ref_across_calls() {
+        let a = nameddirtab() as *const _;
+        let b = nameddirtab() as *const _;
+        assert_eq!(a, b, "nameddirtab must return singleton");
+    }
 }
