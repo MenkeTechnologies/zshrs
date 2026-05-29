@@ -2138,4 +2138,89 @@ mod tests {
         assert_eq!(cleanup_(null), 0);
         assert_eq!(finish_(null), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/system.c
+    // c:40 getposint / c:1085 errnosgetfn / c:1098 fillpmsysparams /
+    // c:1118 getpmsysparams / c:1162 scanpmsysparams
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:40 — `getposint` returns i32 (compile-time type pin).
+    #[test]
+    fn getposint_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = getposint("0", "test");
+    }
+
+    /// c:40 — `getposint("999999999999")` overflow returns -1 (per C).
+    #[test]
+    fn getposint_overflow_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = getposint("999999999999999999999", "test");
+        // C body uses strtol which clamps + sets errno; expected -1 sentinel.
+        assert_eq!(r, -1, "overflow → -1");
+    }
+
+    /// c:1085 — `errnosgetfn` returns Vec<String> (compile-time pin).
+    #[test]
+    fn errnosgetfn_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = errnosgetfn(std::ptr::null_mut());
+    }
+
+    /// c:1085 — `errnosgetfn` returns non-empty vec on Unix.
+    #[cfg(unix)]
+    #[test]
+    fn errnosgetfn_unix_non_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let v = errnosgetfn(std::ptr::null_mut());
+        assert!(!v.is_empty(), "Unix must have errnos");
+    }
+
+    /// c:1098 — `fillpmsysparams` returns Option<String> (compile-time pin).
+    #[test]
+    fn fillpmsysparams_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = fillpmsysparams("anything");
+    }
+
+    /// c:1098 — `fillpmsysparams("ppid")` returns Some.
+    #[test]
+    fn fillpmsysparams_ppid_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let r = fillpmsysparams("ppid");
+        assert!(r.is_some(), "ppid is known sysparam");
+    }
+
+    /// c:1098 — `fillpmsysparams("")` empty name returns None.
+    #[test]
+    fn fillpmsysparams_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(fillpmsysparams("").is_none(), "empty → None");
+    }
+
+    /// c:40 — `getposint` is deterministic for negative input.
+    #[test]
+    fn getposint_negative_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = getposint("-42", "test");
+        for _ in 0..3 {
+            assert_eq!(getposint("-42", "test"), first,
+                "getposint(-42) must be deterministic");
+        }
+    }
+
+    /// c:1162 — `scanpmsysparams(null, None, 0)` is safe (returns void).
+    #[test]
+    fn scanpmsysparams_returns_void_signature() {
+        let _g = crate::test_util::global_state_lock();
+        let _: () = scanpmsysparams(std::ptr::null_mut(), None, 0);
+    }
+
+    /// c:40 — `getposint("0", _)` returns 0 (zero is valid pos int).
+    #[test]
+    fn getposint_zero_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("0", "test"), 0, "0 is valid pos int");
+    }
 }
