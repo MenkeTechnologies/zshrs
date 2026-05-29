@@ -93,7 +93,7 @@ jobs:
           ZSHRS: ${{ github.workspace }}/target/release/zshrs
       - name: Upload corpus failure log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: corpus-failures-${{ matrix.os }}
           path: test_corpus/corpus_failures.log
@@ -251,14 +251,14 @@ jobs:
       - name: Upload plugin zip
         # Make the built `.zip` downloadable from the workflow run so
         # contributors can grab it without rebuilding locally.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: zshrs-intellij-plugin
           path: editors/intellij/build/distributions/*.zip
           retention-days: 14
       - name: Upload test results on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: intellij-plugin-test-results
           path: editors/intellij/build/test-results/test/
@@ -286,7 +286,7 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked --target ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: zshrs-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/zshrs
