@@ -2530,6 +2530,11 @@ fn zattr_set_bg_rgb(attrs: zattr, r: u8, g: u8, b: u8) -> zattr {
 /// the resulting buffer back to a UTF-8 String for display.
 pub fn expand_prompt(s: &str) -> String {
     prompt_tls::sync_from_globals();
+    // Ensure TYPTAB is populated so idigit/imeta/etc. work — C zsh
+    // initializes typtab in zsh_init; in test environments and some
+    // entry paths this hasn't run yet, so put the call here as a
+    // belt-and-suspenders init (inittyptab is idempotent).
+    crate::ported::utils::inittyptab();
     // Reset SGR attr state to default so that per-promptexpand attr
     // diffs start from a clean slate. C achieves this via per-promptbuf
     // attr fields on bv (c:Src/prompt.c:78 `struct buf_vars`); Rust
@@ -3557,5 +3562,358 @@ mod tests {
         }
         let buf = PUTSTR_BUF.with(|b| b.borrow().clone());
         assert_eq!(buf, b"hi!".to_vec());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // putpromptchar C-parity tests — pin the ported %X cases against the
+    // observed C zsh 5.9 output (`print -P 'TEMPLATE'`). One assertion
+    // per case so a failure points at the exact case body that drifted.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `%~` with `$HOME` matching `$PWD` collapses to `~`. C source
+    /// (Src/prompt.c:511-514) routes through `promptpath(pwd, arg, 1)`
+    /// which calls `finddir(pwd)` for the tilde substitution.
+    /// Note: expand_prompt resets prompt_tls from paramtab/env via
+    /// sync_from_globals, so we set $HOME/$PWD via env::set_var.
+    #[test]
+    fn putpromptchar_pwd_tilde_substitutes_home() {
+        let _g = crate::test_util::global_state_lock();
+        let saved_home = std::env::var("HOME").ok();
+        let saved_pwd = std::env::var("PWD").ok();
+        unsafe { std::env::set_var("HOME", "/home/user"); }
+        unsafe { std::env::set_var("PWD", "/home/user/work"); }
+        let out = expand_prompt("%~");
+        if let Some(h) = saved_home { unsafe { std::env::set_var("HOME", h); } }
+        if let Some(p) = saved_pwd { unsafe { std::env::set_var("PWD", p); } }
+        assert_eq!(out, "~/work");
+    }
+
+    /// `%d` is the raw pwd with no tilde substitution (c:515-518).
+    #[test]
+    fn putpromptchar_d_emits_raw_pwd() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = std::env::var("PWD").ok();
+        unsafe { std::env::set_var("PWD", "/tmp/x"); }
+        let out = expand_prompt("%d");
+        if let Some(p) = saved { unsafe { std::env::set_var("PWD", p); } }
+        assert_eq!(out, "/tmp/x");
+    }
+
+    /// `%/` is identical to `%d` per c:515 (case fall-through).
+    #[test]
+    fn putpromptchar_slash_equals_d() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = std::env::var("PWD").ok();
+        unsafe { std::env::set_var("PWD", "/a/b/c"); }
+        let a = expand_prompt("%/");
+        let b = expand_prompt("%d");
+        if let Some(p) = saved { unsafe { std::env::set_var("PWD", p); } }
+        assert_eq!(a, b);
+    }
+
+    /// `%c` with no arg yields the LAST path component with tilde
+    /// substitution (c:519-522). `arg ? arg : 1` → default 1 component.
+    #[test]
+    fn putpromptchar_c_emits_trailing_component_with_tilde() {
+        let _g = crate::test_util::global_state_lock();
+        let saved_home = std::env::var("HOME").ok();
+        let saved_pwd = std::env::var("PWD").ok();
+        unsafe { std::env::set_var("HOME", "/home/u"); }
+        unsafe { std::env::set_var("PWD", "/home/u/proj/src"); }
+        let out = expand_prompt("%c");
+        if let Some(h) = saved_home { unsafe { std::env::set_var("HOME", h); } }
+        if let Some(p) = saved_pwd { unsafe { std::env::set_var("PWD", p); } }
+        assert_eq!(out, "src");
+    }
+
+    /// `%2c` yields 2 trailing path components.
+    #[test]
+    fn putpromptchar_2c_emits_two_trailing_components() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = std::env::var("PWD").ok();
+        unsafe { std::env::set_var("PWD", "/a/b/c/d"); }
+        let out = expand_prompt("%2c");
+        if let Some(p) = saved { unsafe { std::env::set_var("PWD", p); } }
+        assert_eq!(out, "c/d");
+    }
+
+    /// `%n` emits the username (c:540).
+    #[test]
+    fn putpromptchar_n_emits_username() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = std::env::var("USER").ok();
+        unsafe { std::env::set_var("USER", "alice"); }
+        let out = expand_prompt("%n");
+        if let Some(u) = saved { unsafe { std::env::set_var("USER", u); } }
+        assert_eq!(out, "alice");
+    }
+
+    /// `%M` emits the full hostname (c:541-548).
+    /// sync_from_globals reads HOST from paramtab first, then falls back
+    /// to libc hostname. We can't easily override that, so just assert
+    /// non-empty (the corpus test already pins username similarly).
+    #[test]
+    fn putpromptchar_M_emits_non_empty_hostname() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%M");
+        assert!(!out.is_empty(), "%M should emit a hostname; got empty");
+    }
+
+    /// `%?` emits the last command status as decimal (c:709-711).
+    /// LASTVAL is reset from `builtin::LASTVAL` by sync_from_globals
+    /// at every expand_prompt entry, so set the canonical atomic.
+    #[test]
+    fn putpromptchar_question_emits_lastval() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::LASTVAL.store(42, std::sync::atomic::Ordering::Relaxed);
+        let out = expand_prompt("%?");
+        crate::ported::builtin::LASTVAL.store(saved, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(out, "42");
+    }
+
+    /// `%#` emits `#` when euid==0 else `%` (c:706-708).
+    /// We can't change euid in-process; test only the non-root branch
+    /// (test runner runs as non-root).
+    #[test]
+    fn putpromptchar_hash_emits_percent_for_non_root() {
+        let _g = crate::test_util::global_state_lock();
+        let euid = unsafe { libc::geteuid() };
+        if euid == 0 {
+            return; // skip when running as root (CI rare)
+        }
+        assert_eq!(expand_prompt("%#"), "%");
+    }
+
+    /// `%S` then `%s` round-trip: standout on, then off (full reset
+    /// since standout was the only attr active).
+    #[test]
+    fn putpromptchar_standout_on_off_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%S%s");
+        // %S emits the standout-on SGR wrapped in markers; %s diff
+        // emits the reset since current==standout, pending==0.
+        assert!(out.starts_with('\x01'), "expected start marker, got {out:?}");
+        assert!(out.contains("\x1b["), "expected SGR escape");
+    }
+
+    /// `%B...%b` round-trip emits bold-on then reset.
+    #[test]
+    fn putpromptchar_bold_on_off_emits_both_diffs() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%BX%b");
+        // Expected: \x01\x1b[1m\x02X\x01\x1b[0m\x02 — bold on, then
+        // X, then reset (current==bold, pending==0 triggers diff).
+        assert_eq!(out, "\x01\x1b[1m\x02X\x01\x1b[0m\x02");
+    }
+
+    /// `%F{red}TEXT%f` emits red SGR, then TEXT, then default-fg
+    /// reset. Pins the color_frames_text pattern.
+    #[test]
+    fn putpromptchar_color_brackets_text() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%F{green}HI%f");
+        assert_eq!(out, "\x01\x1b[32m\x02HI\x01\x1b[39m\x02");
+    }
+
+    /// `%F{red}%K{blue}` stacks fg + bg attributes — diff after both
+    /// sets contains both color escapes.
+    #[test]
+    fn putpromptchar_fg_then_bg_emits_both_colors() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%F{red}%K{blue}");
+        // %F emits \e[31m; %K diff over (fg_red) → (fg_red+bg_blue)
+        // emits only \e[44m (fg already current).
+        assert!(out.contains("\x1b[31m"), "expected red fg in {out:?}");
+        assert!(out.contains("\x1b[44m"), "expected blue bg in {out:?}");
+    }
+
+    /// `%{ESCAPED%}` wraps content in `\x01`/`\x02` width-ignore markers
+    /// per the readline boundary translation in expand_prompt.
+    #[test]
+    fn putpromptchar_braces_wrap_content_in_ignore_markers() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(expand_prompt("%{xyz%}"), "\x01xyz\x02");
+    }
+
+    /// `%(?.OK.FAIL)` with $?=0 chooses OK branch (c:444-446 ternary).
+    #[test]
+    fn putpromptchar_ternary_question_zero_chooses_true_branch() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::LASTVAL.store(0, std::sync::atomic::Ordering::Relaxed);
+        let out = expand_prompt("%(?.OK.FAIL)");
+        crate::ported::builtin::LASTVAL.store(saved, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(out, "OK");
+    }
+
+    /// `%(?.OK.FAIL)` with $?=1 chooses FAIL branch — pinning the
+    /// false-branch doprint=1 path (true gets doprint=0).
+    #[test]
+    fn putpromptchar_ternary_question_nonzero_chooses_false_branch() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+        let out = expand_prompt("%(?.OK.FAIL)");
+        crate::ported::builtin::LASTVAL.store(saved, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(out, "FAIL");
+    }
+
+    /// `%(1?.OK.FAIL)` with arg=1 and $?=1 picks OK (c:444-446
+    /// `lastval == arg` test).
+    #[test]
+    fn putpromptchar_ternary_question_with_arg_matches_lastval() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+        let out = expand_prompt("%(1?.OK.FAIL)");
+        crate::ported::builtin::LASTVAL.store(saved, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(out, "OK");
+    }
+
+    /// `%(#.root.user)` chooses user branch for non-root euid
+    /// (c:447-449 — `geteuid() == arg`).
+    #[test]
+    fn putpromptchar_ternary_hash_non_root_chooses_false_branch() {
+        let _g = crate::test_util::global_state_lock();
+        let euid = unsafe { libc::geteuid() };
+        if euid == 0 {
+            return;
+        }
+        assert_eq!(expand_prompt("%(#.root.user)"), "user");
+    }
+
+    /// Plain chars between escapes pass through unchanged.
+    #[test]
+    fn putpromptchar_plain_text_between_escapes_preserved() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = std::env::var("USER").ok();
+        unsafe { std::env::set_var("USER", "bob"); }
+        let out = expand_prompt("user=%n done");
+        if let Some(u) = saved { unsafe { std::env::set_var("USER", u); } }
+        assert_eq!(out, "user=bob done");
+    }
+
+    /// `%%` emits a literal `%` (c:894-896).
+    #[test]
+    fn putpromptchar_double_percent_yields_one_percent() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(expand_prompt("a%%b"), "a%b");
+    }
+
+    /// Unknown `%X` emits `%X` literally (c:900-904 default arm).
+    #[test]
+    fn putpromptchar_unknown_escape_emits_literal_pair() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(expand_prompt("%Z"), "%Z");
+    }
+
+    /// `%(?.a.b)` with $?=0 emits `a` (no leading/trailing extras).
+    /// Pins that false-branch's plain chars don't leak when doprint=0.
+    #[test]
+    fn putpromptchar_ternary_false_branch_doprint_zero_suppresses_chars() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::LASTVAL.store(0, std::sync::atomic::Ordering::Relaxed);
+        let out = expand_prompt("%(?.a.bbb)");
+        crate::ported::builtin::LASTVAL.store(saved, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(out, "a", "false-branch 'bbb' must NOT leak when doprint=0");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // GAP-PINNING tests — ignored until the substrate lands. Document
+    // the C-faithful behavior so future ports of the gap have a
+    // correctness target. Remove the #[ignore] when the gap fills.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// GAP: `%h` / `%!` emit `curhist` (c:599-604). Requires history
+    /// substrate (Src/hist.c curhist global). Currently emits nothing.
+    #[test]
+    #[ignore = "GAP: curhist not ported (c:599-604)"]
+    fn putpromptchar_h_emits_curhist() {
+        let _g = crate::test_util::global_state_lock();
+        // Expected: a decimal digit string from history.
+        let out = expand_prompt("%h");
+        assert!(
+            out.chars().all(|c| c.is_ascii_digit()),
+            "%h should emit digits from curhist; got {out:?}"
+        );
+        assert!(!out.is_empty(), "%h should not be empty when history exists");
+    }
+
+    /// GAP: `%j` emits active job count (c:606-612). Requires jobs
+    /// substrate (Src/jobs.c maxjob/jobtab globals). Currently nothing.
+    #[test]
+    #[ignore = "GAP: maxjob/jobtab not ported (c:606-612)"]
+    fn putpromptchar_j_emits_job_count() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%j");
+        assert!(
+            out.parse::<i32>().is_ok(),
+            "%j should be a decimal integer; got {out:?}"
+        );
+    }
+
+    /// GAP: ternary `%(c...)` (dir depth >= arg). Requires `finddir`
+    /// + pwd path-component count (c:415-435). Currently false.
+    #[test]
+    #[ignore = "GAP: ternary 'c' test char (finddir + depth count) not ported"]
+    fn putpromptchar_ternary_c_test_dir_depth_match() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = std::env::var("PWD").ok();
+        unsafe { std::env::set_var("PWD", "/a/b/c"); }
+        let out = expand_prompt("%(2c.deep.shallow)");
+        if let Some(p) = saved { unsafe { std::env::set_var("PWD", p); } }
+        assert_eq!(out, "deep", "depth 3 >= arg 2 → true branch");
+    }
+
+    /// GAP: ternary `%(L...)` checks $SHLVL >= arg (c:471-473).
+    /// Requires shlvl global port.
+    #[test]
+    #[ignore = "GAP: ternary 'L' test (shlvl) not ported"]
+    fn putpromptchar_ternary_L_shlvl_match() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = std::env::var("SHLVL").ok();
+        unsafe { std::env::set_var("SHLVL", "3"); }
+        let out = expand_prompt("%(2L.nested.top)");
+        if let Some(s) = saved { unsafe { std::env::set_var("SHLVL", s); } }
+        assert_eq!(out, "nested");
+    }
+
+    /// GAP: `%[ARG]` truncation (c:701-705). Requires `prompttrunc`
+    /// + `countprompt` substrate. Currently a parse-only consume in
+    /// doprint=0 branch but no real truncation in doprint=1 path.
+    #[test]
+    #[ignore = "GAP: prompttrunc / countprompt not ported"]
+    fn putpromptchar_truncation_bracket_truncates_to_width() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%5[a]bcdef");
+        assert!(out.len() <= 5, "%5[a] should truncate to width 5");
+    }
+
+    /// GAP: `%T` time-of-day in HH:MM (c:778-782 strftime). Requires
+    /// localtime + format string.
+    #[test]
+    #[ignore = "GAP: %T time format not ported (c:778-782)"]
+    fn putpromptchar_T_emits_HH_MM_time() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%T");
+        // Format: HH:MM, 4-5 chars.
+        let bytes = out.as_bytes();
+        assert!(
+            bytes.len() >= 4 && bytes.contains(&b':'),
+            "%T should be HH:MM format; got {out:?}"
+        );
+    }
+
+    /// GAP: `%D{format}` strftime (c:818-880). Requires the
+    /// braced-arg strftime expansion path.
+    #[test]
+    #[ignore = "GAP: %D{...} strftime not ported"]
+    fn putpromptchar_D_braced_format_yields_strftime() {
+        let _g = crate::test_util::global_state_lock();
+        let out = expand_prompt("%D{%Y}");
+        let y: i32 = out.parse().unwrap_or(0);
+        assert!(y >= 2024, "%D{{%Y}} should emit a 4-digit year; got {out:?}");
     }
 }
