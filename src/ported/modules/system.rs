@@ -2036,4 +2036,106 @@ mod tests {
         assert_eq!(cleanup_(std::ptr::null()), 0);
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/system.c
+    // c:40 getposint / c:1085 errnosgetfn / c:1098 fillpmsysparams
+    // c:1118 getpmsysparams / c:1162 scanpmsysparams / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:40 — `getposint` accepts leading whitespace per strtol(3) convention.
+    /// C body uses zstrtol which skips leading whitespace.
+    #[test]
+    fn getposint_leading_whitespace_accepted_per_strtol() {
+        let _g = crate::test_util::global_state_lock();
+        let r = getposint(" 5", "test");
+        assert_eq!(r, 5, "strtol skips leading whitespace, parses 5");
+    }
+
+    /// c:40 — `getposint` rejects hex-prefix (only decimal allowed).
+    #[test]
+    fn getposint_hex_prefix_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = getposint("0x10", "test");
+        assert_eq!(r, -1, "hex prefix must reject");
+    }
+
+    /// c:40 — `getposint` is deterministic for arbitrary input.
+    #[test]
+    fn getposint_deterministic_for_any_input() {
+        let _g = crate::test_util::global_state_lock();
+        for input in ["42", "-1", "abc", "", "0", "999999999"] {
+            let first = getposint(input, "test");
+            for _ in 0..3 {
+                assert_eq!(getposint(input, "test"), first,
+                    "must be deterministic for {:?}", input);
+            }
+        }
+    }
+
+    /// c:1085 — `errnosgetfn(null)` is safe.
+    #[test]
+    fn errnosgetfn_null_pm_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = errnosgetfn(std::ptr::null_mut());
+    }
+
+    /// c:1085 — `errnosgetfn` entries all start with 'E' (errno names).
+    #[test]
+    fn errnosgetfn_all_entries_start_with_e() {
+        let _g = crate::test_util::global_state_lock();
+        let v = errnosgetfn(std::ptr::null_mut());
+        for entry in &v {
+            assert!(entry.starts_with('E'),
+                "errno name {:?} must start with 'E'", entry);
+        }
+    }
+
+    /// c:1085 — `errnosgetfn` is deterministic.
+    #[test]
+    fn errnosgetfn_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = errnosgetfn(std::ptr::null_mut());
+        for _ in 0..5 {
+            assert_eq!(errnosgetfn(std::ptr::null_mut()), first);
+        }
+    }
+
+    /// c:1098 — `fillpmsysparams("nothing_real")` returns None.
+    #[test]
+    fn fillpmsysparams_unknown_key_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let r = fillpmsysparams("definitely_not_a_sysparam_xyz");
+        assert!(r.is_none(), "unknown key → None");
+    }
+
+    /// c:1098 — `fillpmsysparams("pid")` returns Some.
+    #[test]
+    fn fillpmsysparams_pid_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let r = fillpmsysparams("pid");
+        assert!(r.is_some(), "pid key must resolve");
+    }
+
+    /// c:1162 — `scanpmsysparams` with None callback safe.
+    #[test]
+    fn scanpmsysparams_none_callback_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        scanpmsysparams(std::ptr::null_mut(), None, 0);
+    }
+
+    /// c:1224-1261 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn system_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
 }
