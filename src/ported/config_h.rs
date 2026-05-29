@@ -1801,4 +1801,96 @@ mod tests {
             assert!(s.is_ascii(), "PACKAGE_* must be ASCII: {:?}", s);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/config.h constants
+    // c:23 PASSWD_FILE / c:30 CACHE_USERNAMES / c:33 JOB_CONTROL /
+    // c:36 USE_SUSPENDED / c:39 DEFAULT_HISTSIZE / c:42 DEFAULT_FCEDIT /
+    // c:45 DEFAULT_TMPPREFIX / c:74 DEFAULT_PATH / c:77 DEFAULT_READNULLCMD /
+    // c:85 DL_EXT / c:967 MAX_FUNCTION_DEPTH
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:23 — `PASSWD_FILE` is absolute path.
+    #[test]
+    fn passwd_file_is_absolute_path() {
+        assert!(PASSWD_FILE.starts_with('/'),
+            "PASSWD_FILE must be absolute, got {:?}", PASSWD_FILE);
+    }
+
+    /// c:23 — `PASSWD_FILE` is canonical POSIX `/etc/passwd`.
+    #[test]
+    fn passwd_file_is_canonical_etc_passwd() {
+        assert_eq!(PASSWD_FILE, "/etc/passwd",
+            "PASSWD_FILE must be the POSIX canonical /etc/passwd");
+    }
+
+    /// c:39 — `DEFAULT_HISTSIZE` is positive.
+    #[test]
+    fn default_histsize_is_positive() {
+        assert!(DEFAULT_HISTSIZE > 0,
+            "DEFAULT_HISTSIZE must be positive, got {}", DEFAULT_HISTSIZE);
+    }
+
+    /// c:42 — `DEFAULT_FCEDIT` is non-empty ASCII (editor command).
+    #[test]
+    fn default_fcedit_is_non_empty_ascii() {
+        assert!(!DEFAULT_FCEDIT.is_empty());
+        assert!(DEFAULT_FCEDIT.is_ascii());
+    }
+
+    /// c:45 — `DEFAULT_TMPPREFIX` is absolute.
+    #[test]
+    fn default_tmpprefix_is_absolute() {
+        assert!(DEFAULT_TMPPREFIX.starts_with('/'),
+            "DEFAULT_TMPPREFIX must be absolute path");
+    }
+
+    /// c:74 — `DEFAULT_PATH` contains `/usr/bin` (POSIX required entry).
+    #[test]
+    fn default_path_contains_usr_bin() {
+        assert!(DEFAULT_PATH.contains("/usr/bin"),
+            "DEFAULT_PATH must contain /usr/bin; got {:?}", DEFAULT_PATH);
+    }
+
+    /// c:74 — `DEFAULT_PATH` uses ':' separator (POSIX convention).
+    #[test]
+    fn default_path_uses_colon_separator() {
+        assert!(DEFAULT_PATH.contains(':'),
+            "DEFAULT_PATH must use ':' separator");
+    }
+
+    /// c:77 — `DEFAULT_READNULLCMD` is non-empty (pager command).
+    #[test]
+    fn default_readnullcmd_is_non_empty() {
+        assert!(!DEFAULT_READNULLCMD.is_empty());
+    }
+
+    /// c:85 — `DL_EXT` is non-empty ASCII (e.g. "so", "dylib").
+    #[test]
+    fn dl_ext_is_non_empty_ascii() {
+        assert!(!DL_EXT.is_empty(),
+            "DL_EXT must be non-empty (e.g. 'so'/'dylib')");
+        assert!(DL_EXT.is_ascii());
+    }
+
+    /// c:967 — `MAX_FUNCTION_DEPTH` ≥ 100 (no degenerate shallow limit).
+    #[test]
+    fn max_function_depth_is_at_least_100() {
+        assert!(MAX_FUNCTION_DEPTH >= 100,
+            "MAX_FUNCTION_DEPTH must be ≥ 100 to support real scripts");
+    }
+
+    /// c:33+36 — JOB_CONTROL + USE_SUSPENDED both enabled.
+    #[test]
+    fn job_control_and_use_suspended_enabled() {
+        assert_eq!(JOB_CONTROL, 1, "JOB_CONTROL required for shell");
+        assert_eq!(USE_SUSPENDED, 1, "USE_SUSPENDED required");
+    }
+
+    /// c:30 — `CACHE_USERNAMES` enabled (canonical zsh behaviour).
+    #[test]
+    fn cache_usernames_enabled() {
+        assert_eq!(CACHE_USERNAMES, 1,
+            "CACHE_USERNAMES must be enabled for ~user expansion");
+    }
 }
