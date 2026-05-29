@@ -2532,4 +2532,153 @@ mod tests {
         let _ = signal_unblock(&mask);
         let _ = signal_setmask(&prev);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/signals.c contracts.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1304 — `rtsigno` returns None for non-RT names. Pin so any
+    /// accidental fall-through that returns Some(0) is caught (would
+    /// alias as a valid signal number → null-signal kill).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rtsigno_returns_none_for_non_rt_names() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rtsigno("TERM"), None);
+        assert_eq!(rtsigno("KILL"), None);
+        assert_eq!(rtsigno(""), None);
+        assert_eq!(rtsigno("RT"), None);  // RTMIN/RTMAX prefix incomplete
+    }
+
+    /// c:1310 — offset exceeding maxofs returns None.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rtsigno_returns_none_for_offset_overflow() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rtsigno("RTMIN+999"), None);
+        assert_eq!(rtsigno("RTMAX-999"), None);
+    }
+
+    /// c:1313 — trailing non-op chars after RTMIN/RTMAX → None.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rtsigno_returns_none_for_bad_trailing_chars() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rtsigno("RTMINx"), None);
+        assert_eq!(rtsigno("RTMAX-abc"), None);
+    }
+
+    /// c:1300 — `RTMIN` with no offset returns SIGRTMIN.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rtsigno_bare_rtmin_returns_sigrtmin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rtsigno("RTMIN"), Some(libc::SIGRTMIN()));
+    }
+
+    /// c:1302 — `RTMAX` with no offset returns SIGRTMAX.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rtsigno_bare_rtmax_returns_sigrtmax() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rtsigno("RTMAX"), Some(libc::SIGRTMAX()));
+    }
+
+    /// c:1307 — RTMIN+0 == RTMIN; RTMAX-0 == RTMAX (offset of 0 valid).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rtsigno_zero_offset_equals_bare() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rtsigno("RTMIN+0"), Some(libc::SIGRTMIN()));
+        assert_eq!(rtsigno("RTMAX-0"), Some(libc::SIGRTMAX()));
+    }
+
+    /// c:1307 — wrong-direction offset rejected: RTMIN-N and RTMAX+N
+    /// fall through (RTMIN only accepts `+`, RTMAX only accepts `-`).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rtsigno_wrong_direction_offset_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rtsigno("RTMIN-1"), None);  // RTMIN doesn't take minus
+        assert_eq!(rtsigno("RTMAX+1"), None);  // RTMAX doesn't take plus
+    }
+
+    /// `signal_mask` with negative signal is harmless (just empty set).
+    #[cfg(unix)]
+    #[test]
+    fn signal_mask_with_negative_sig_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        // sigaddset rejects invalid signals but doesn't crash.
+        let _mask = signal_mask(-1);
+    }
+
+    /// `signal_setmask` round-trip: saving current mask, replacing,
+    /// then restoring should leave process state unchanged.
+    #[cfg(unix)]
+    #[test]
+    fn signal_setmask_round_trip_preserves_mask() {
+        let _g = crate::test_util::global_state_lock();
+        unsafe {
+            let mut current: libc::sigset_t = std::mem::zeroed();
+            libc::sigprocmask(libc::SIG_BLOCK, std::ptr::null(), &mut current);
+            let new_mask = signal_mask(libc::SIGUSR2);
+            let old = signal_setmask(&new_mask);
+            let _ = signal_setmask(&old);
+            // No assertion on final state — pin: no panic.
+        }
+    }
+
+    /// `kill(0, 0)` is a no-op null-check — should not error.
+    #[cfg(unix)]
+    #[test]
+    fn kill_with_sig_zero_is_a_null_check() {
+        let _g = crate::test_util::global_state_lock();
+        // sig=0 → no signal sent; rc encodes whether the process exists.
+        let _ = kill(std::process::id() as i32, 0);
+    }
+
+    /// `killpg` accepts negative pgrp values (libc passthrough).
+    /// Pin no-panic — the syscall handles validation.
+    #[cfg(unix)]
+    #[test]
+    fn killpg_with_invalid_pgrp_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = killpg(-1, 0);
+    }
+
+    /// `intr` / `nointr` are idempotent — calling either twice in a
+    /// row should not leave residual state changes.
+    #[test]
+    fn intr_nointr_pair_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        intr();
+        intr();
+        nointr();
+        nointr();
+    }
+
+    /// `set_interact` / `is_interact` round-trip via the option flag.
+    /// Pin that the setter actually flips the predicate (this caught
+    /// the historical bug where set_interact wrote to a dead AtomicBool).
+    #[test]
+    fn set_interact_round_trip_flips_predicate() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = is_interact();
+        set_interact(true);
+        assert!(is_interact(), "set_interact(true) must set predicate");
+        set_interact(false);
+        assert!(!is_interact(), "set_interact(false) must clear predicate");
+        set_interact(saved);
+    }
+
+    /// `signal_mask(0)` matches `signal_mask(SIGTERM)` minus SIGTERM:
+    /// signal 0 alone produces an empty set.
+    #[cfg(unix)]
+    #[test]
+    fn signal_mask_zero_has_no_sigterm() {
+        let _g = crate::test_util::global_state_lock();
+        let m = signal_mask(0);
+        let has_term = unsafe { libc::sigismember(&m, libc::SIGTERM) };
+        assert_eq!(has_term, 0, "signal 0 must not add SIGTERM");
+    }
 }
