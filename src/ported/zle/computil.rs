@@ -9671,4 +9671,125 @@ mod tests {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/computil.c
+    // c:933 cd_arrcat / c:1153 cd_arrdup / c:1167 cd_get /
+    // c:1509 bin_compdescribe / c:1754 freecaargs / c:1773 freecadef /
+    // c:1821 rembslashcolon / c:1858 bslashcolon / c:2884 get_cadef
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:933 — `cd_arrcat(&[], &[])` empty + empty returns empty.
+    #[test]
+    fn cd_arrcat_both_empty_returns_empty() {
+        assert!(cd_arrcat(&[], &[]).is_empty(),
+            "empty + empty → empty");
+    }
+
+    /// c:933 — `cd_arrcat(&[], &b)` empty-A returns clone of B.
+    #[test]
+    fn cd_arrcat_empty_a_returns_clone_of_b() {
+        let b = vec!["x".to_string(), "y".to_string()];
+        assert_eq!(cd_arrcat(&[], &b), b, "empty + B → B");
+    }
+
+    /// c:933 — `cd_arrcat(&a, &[])` empty-B returns clone of A.
+    #[test]
+    fn cd_arrcat_empty_b_returns_clone_of_a() {
+        let a = vec!["m".to_string(), "n".to_string()];
+        assert_eq!(cd_arrcat(&a, &[]), a, "A + empty → A");
+    }
+
+    /// c:933 — `cd_arrcat` preserves order: A first, then B.
+    #[test]
+    fn cd_arrcat_preserves_a_then_b_order() {
+        let a = vec!["1".to_string(), "2".to_string()];
+        let b = vec!["3".to_string(), "4".to_string()];
+        let r = cd_arrcat(&a, &b);
+        assert_eq!(r, vec!["1", "2", "3", "4"]);
+    }
+
+    /// c:933 — `cd_arrcat` returns Vec<String> (compile-time type pin).
+    #[test]
+    fn cd_arrcat_returns_vec_string_type() {
+        let _: Vec<String> = cd_arrcat(&[], &[]);
+    }
+
+    /// c:1153 — `cd_arrdup` is identity on the input (deep clone).
+    #[test]
+    fn cd_arrdup_returns_independent_clone() {
+        let a = vec!["x".to_string(), "y".to_string()];
+        let dup = cd_arrdup(&a);
+        assert_eq!(dup, a, "dup equal to input");
+        let mut mut_dup = dup;
+        mut_dup.push("added".to_string());
+        assert_eq!(a.len(), 2, "original unchanged after mutating dup");
+    }
+
+    /// c:1153 — `cd_arrdup(&[])` empty returns empty.
+    #[test]
+    fn cd_arrdup_empty_returns_empty() {
+        assert!(cd_arrdup(&[]).is_empty());
+    }
+
+    /// c:1167 — `cd_get(&[])` empty args returns i32 (type pin).
+    #[test]
+    fn cd_get_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cd_get(&[]);
+    }
+
+    /// c:1509 — `bin_compdescribe` returns i32 (compile-time type pin).
+    #[test]
+    fn bin_compdescribe_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let _: i32 = bin_compdescribe("compdescribe", &[], &ops, 0);
+    }
+
+    /// c:1754 — `freecaargs(None)` is safe.
+    #[test]
+    fn freecaargs_none_no_panic() {
+        freecaargs(None);
+    }
+
+    /// c:1773 — `freecadef(None)` is safe.
+    #[test]
+    fn freecadef_none_no_panic() {
+        freecadef(None);
+    }
+
+    /// c:1821 — `rembslashcolon` returns String (compile-time type pin).
+    #[test]
+    fn rembslashcolon_returns_string_type() {
+        let _: String = rembslashcolon("");
+    }
+
+    /// c:1858 — `bslashcolon` returns String (compile-time type pin).
+    #[test]
+    fn bslashcolon_returns_string_type() {
+        let _: String = bslashcolon("");
+    }
+
+    /// c:1821 + c:1858 — `rembslashcolon(bslashcolon(s))` round-trips
+    /// for inputs without pre-existing escaped colons.
+    #[test]
+    fn bslashcolon_rembslashcolon_roundtrip_safe() {
+        for s in ["a:b", "x:y:z", "no_colon"] {
+            let escaped = bslashcolon(s);
+            let unescaped = rembslashcolon(&escaped);
+            assert_eq!(unescaped, s,
+                "bslashcolon→rembslashcolon must round-trip for {:?}", s);
+        }
+    }
+
+    /// c:2884 — `get_cadef("", &[])` empty inputs returns i32.
+    #[test]
+    fn get_cadef_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = get_cadef("", &[]);
+    }
 }
