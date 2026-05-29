@@ -13192,4 +13192,97 @@ mod tests {
         let r = pathprog("/__never_exists_zshrs_pathprog_xyz");
         assert!(r.is_none());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/utils.c
+    // c:99 set_widearray / c:447 nicechar_sel / c:521 is_nicechar /
+    // c:742 zwcwidth / c:836 findpwd / c:928 slashsplit /
+    // c:1258 get_username / c:1426 getnameddir / c:1475 dircmp /
+    // c:1576 callhookfunc
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:99 — `set_widearray("")` empty returns empty Vec.
+    #[test]
+    fn set_widearray_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(set_widearray("").is_empty());
+    }
+
+    /// c:99 — `set_widearray` returns Vec<char>.
+    #[test]
+    fn set_widearray_returns_vec_char_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<char> = set_widearray("a");
+    }
+
+    /// c:447 — `nicechar_sel('a', false)` returns "a" (printable pass-through).
+    #[test]
+    fn nicechar_sel_ascii_letter_passthrough() {
+        assert_eq!(nicechar_sel('a', false), "a", "printable letter as-is");
+    }
+
+    /// c:447 — `nicechar_sel` is pure.
+    #[test]
+    fn nicechar_sel_is_pure() {
+        for c in ['a', '\t', '\n', '\x1b', '\x7f', '日'] {
+            let first = nicechar_sel(c, false);
+            for _ in 0..3 {
+                assert_eq!(nicechar_sel(c, false), first,
+                    "nicechar_sel({:?}, false) must be pure", c);
+            }
+        }
+    }
+
+    /// c:742 — `zwcwidth` returns usize (compile-time type pin).
+    #[test]
+    fn zwcwidth_returns_usize_type() {
+        let _: usize = zwcwidth('a');
+    }
+
+    /// c:742 — `zwcwidth('a')` ASCII letter returns 1.
+    #[test]
+    fn zwcwidth_ascii_returns_one() {
+        assert_eq!(zwcwidth('a'), 1, "ASCII letter width = 1");
+    }
+
+    /// c:836 — `findpwd("")` empty returns Option<String>.
+    #[test]
+    fn findpwd_empty_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = findpwd("");
+    }
+
+    /// c:928 — `slashsplit("")` empty returns empty Vec.
+    #[test]
+    fn slashsplit_empty_returns_empty() {
+        assert!(slashsplit("").is_empty());
+    }
+
+    /// c:928 — `slashsplit("a/b/c")` splits to 3 elements.
+    #[test]
+    fn slashsplit_simple_three_components() {
+        let r = slashsplit("a/b/c");
+        assert_eq!(r, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    }
+
+    /// c:1475 — `dircmp("", "")` both empty returns bool (type pin + safe).
+    #[test]
+    fn dircmp_both_empty_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = dircmp("", "");
+    }
+
+    /// c:1426 — `getnameddir("")` empty returns None.
+    #[test]
+    fn getnameddir_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getnameddir("").is_none(), "empty → None");
+    }
+
+    /// c:1258 — `get_username` returns String (compile-time type pin).
+    #[test]
+    fn get_username_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = get_username();
+    }
 }
