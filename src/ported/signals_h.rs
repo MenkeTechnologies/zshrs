@@ -1156,4 +1156,112 @@ mod tests {
             MAX_QUEUE_SIZE
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/signals.h
+    // c:329 queue_signals / c:341 unqueue_signals / c:363 dont_queue_signals /
+    // c:398 queue_signal_level / c:419 run_queued_signals /
+    // c:466 child_block / c:483 child_unblock / c:506 winch_block /
+    // c:526 winch_unblock
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:329 — `queue_signals` returns void (compile-time pin).
+    #[test]
+    fn queue_signals_signature_void() {
+        let _g = crate::test_util::global_state_lock();
+        let _: () = queue_signals();
+        unqueue_signals(); // restore
+    }
+
+    /// c:398 — `queue_signal_level` returns i32 type pin.
+    #[test]
+    fn queue_signal_level_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = queue_signal_level();
+    }
+
+    /// c:329-341 — multiple queue/unqueue pairs preserve level.
+    #[test]
+    fn queue_unqueue_multiple_pairs_balance() {
+        let _g = crate::test_util::global_state_lock();
+        let before = queue_signal_level();
+        for _ in 0..5 {
+            queue_signals();
+        }
+        for _ in 0..5 {
+            unqueue_signals();
+        }
+        let after = queue_signal_level();
+        assert_eq!(before, after, "5x queue + 5x unqueue must balance");
+    }
+
+    /// c:466 — `child_block` is idempotent / safe.
+    #[test]
+    fn child_block_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            child_block();
+        }
+        for _ in 0..5 {
+            child_unblock();
+        }
+    }
+
+    /// c:506 — `winch_block` is idempotent / safe.
+    #[test]
+    fn winch_block_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            winch_block();
+        }
+        for _ in 0..5 {
+            winch_unblock();
+        }
+    }
+
+    /// c:419 — `run_queued_signals` is idempotent / safe to call when
+    /// no signals queued.
+    #[test]
+    fn run_queued_signals_empty_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            run_queued_signals();
+        }
+    }
+
+    /// c:363 — `dont_queue_signals` is idempotent.
+    #[test]
+    fn dont_queue_signals_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = queue_signal_level();
+        for _ in 0..5 {
+            dont_queue_signals();
+        }
+        restore_queue_signals(saved);
+    }
+
+    /// c:34/35/36 — SIGZERR/SIGDEBUG/VSIGCOUNT all positive.
+    #[test]
+    fn sig_pseudos_all_positive() {
+        assert!(SIGZERR > 0);
+        assert!(SIGDEBUG > 0);
+        assert!(VSIGCOUNT > 0);
+        assert!(SIGCOUNT > 0);
+        assert!(TRAPCOUNT > 0);
+    }
+
+    /// c:38/42 — TRAPCOUNT >= VSIGCOUNT (RT range never shrinks below VSIG).
+    #[test]
+    fn trapcount_greater_or_equal_vsigcount() {
+        assert!(TRAPCOUNT >= VSIGCOUNT,
+            "TRAPCOUNT {} must ≥ VSIGCOUNT {}", TRAPCOUNT, VSIGCOUNT);
+    }
+
+    /// c:46 — SIGEXIT (=0) is special pseudo-signal for EXIT trap slot.
+    /// c:34 — SIGZERR is SIGCOUNT+1 (above all real signals).
+    #[test]
+    fn sigexit_below_sigzerr() {
+        assert!(SIGEXIT < SIGZERR,
+            "SIGEXIT=0 must be below SIGZERR={}", SIGZERR);
+    }
 }
