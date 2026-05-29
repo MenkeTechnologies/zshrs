@@ -177,35 +177,49 @@ pub fn getkeystring(s: &str) -> Vec<u8> {
 /// `k->prefixct == 0`. The Rust port delegates the trie walk to
 /// `bind_seq` and the multi-char `domulti` branch; the KM_IMMUTABLE
 /// and empty-seq early returns are checked here.
-/// WARNING: param names don't match C — Rust=(keymap, seq, widget) vs C=(km, seq, bind, str)
-pub fn bindkey(keymap: &str, seq: &str, widget: &str) -> bool {
-    // c:566
+/// Rust-only convenience wrapper that resolves a keymap by NAME
+/// (string lookup against `keymapnamtab`), parses the user-typed
+/// key string via `getkeystring`, then dispatches to the
+/// canonical C-shape `bindkey(km, seq, bind, str)` at
+/// `zle_keymap.rs::bindkey`. The C source has no analog — its
+/// `bin_bindkey` handler resolves the keymap and parses the seq
+/// inline before calling `bindkey()`. Kept here so
+/// `canonical_apply` (recorder replay) and unit tests can drive a
+/// binding from a name+string pair.
+/// WARNING: NOT IN C — Rust-only helper. See
+/// `crate::ported::zle::zle_keymap::bindkey` for the C-faithful entry.
+pub fn bindkey_by_name(keymap: &str, seq: &str, widget: &str) -> bool {
+    // c:566 (via zle_keymap::bindkey)
     let seq_bytes = getkeystring(seq); // c:569 seq[0]
-    let mut tab = crate::ported::zle::zle_keymap::keymapnamtab()
-        .lock()
-        .unwrap();
-    let node = match tab.get_mut(keymap) {
-        // c:566 Keymap km
-        Some(n) => n,
-        None => return false, // C: caller resolves Keymap
+    let km_arc = {
+        let tab = crate::ported::zle::zle_keymap::keymapnamtab()
+            .lock()
+            .unwrap();
+        match tab.get(keymap) {
+            Some(n) => n.keymap.clone(),
+            None => return false,
+        }
     };
-    // c:572 — KM_IMMUTABLE check
-    if (node.keymap.flags & KM_IMMUTABLE) != 0 {
-        // c:572
-        return false; // c:573 return 1
+    // Clone the inner Keymap, run bindkey on it, then re-link the
+    // modified copy under the same name. zle_keymap.rs::bindkey
+    // takes &mut Keymap matching C; the Arc-wrapped storage means
+    // we can't mutate in place without cloning the variant.
+    let mut km = (*km_arc).clone();
+    let rc = crate::ported::zle::zle_keymap::bindkey(
+        &mut km,
+        &seq_bytes,
+        Some(crate::ported::zle::zle_thingy::Thingy::new(widget)),
+        None,
+    );
+    if rc != 0 {
+        return false;
     }
-    // c:574 — !*seq check
-    if seq_bytes.is_empty() {
-        // c:574
-        return false; // c:575 return 2
-    }
-    let inner = std::sync::Arc::make_mut(&mut node.keymap);
-    // c:576 — single-vs-multi byte dispatch delegates to
-    // `bind_seq`, which handles the prefix promotion (c:577-586),
-    // trie insert (c:631-641), and `km->first[f]` single-byte
-    // fast-path (c:600).
-    inner.bind_seq(&seq_bytes, Thingy::new(widget));
-    true // c:650 return 0
+    crate::ported::zle::zle_keymap::linkkeymap(
+        std::sync::Arc::new(km),
+        keymap,
+        0,
+    );
+    true
 }
 
 /// Enumerate every (key-sequence, widget-name) pair in `keymap`.
@@ -1023,7 +1037,7 @@ mod tests {
         let _g = zle_test_setup();
         crate::ported::zle::zle_keymap::createkeymapnamtab();
         crate::ported::zle::zle_keymap::default_bindings();
-        assert!(!bindkey("no-such-keymap", "^A", "self-insert"));
+        assert!(!bindkey_by_name("no-such-keymap", "^A", "self-insert"));
     }
 
     #[test]
@@ -1034,7 +1048,7 @@ mod tests {
         crate::ported::zle::zle_keymap::default_bindings();
         // Pick a sequence unlikely to clash with the default emacs map.
         // \M-z = ESC z = bytes 0x1B 0x7A.
-        assert!(bindkey("emacs", "\\ez", "self-insert"));
+        assert!(bindkey_by_name("emacs", "\\ez", "self-insert"));
         // Verify the binding shows up in bindlistout.
         let listed = bindlistout("emacs");
         let seq = printbind(&[0x1b, 0x7a]);
@@ -1207,7 +1221,7 @@ mod tests {
     fn bindkey_unknown_widget_binds_anyway_matching_c() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let ok = bindkey("main", "\\C-x", "user-widget-not-yet-defined");
+        let ok = bindkey_by_name("main", "\\C-x", "user-widget-not-yet-defined");
         assert!(
             ok,
             "C source resolves widgets at trigger time, so bind-time \

@@ -1611,6 +1611,15 @@ after_complete_hook
 list_matches_hook
 invalidate_list_hook
 
+# zle/zle_bindings.rs — Rust-only convenience wrapper that resolves a
+# keymap by NAME (string lookup against keymapnamtab) and parses the
+# user-typed key string via getkeystring, then dispatches to the
+# canonical C-shape `bindkey(km, seq, bind, str)` at
+# zle_keymap.rs::bindkey (which IS a 1:1 port). C has no analog —
+# bin_bindkey resolves the keymap and parses the seq inline. Used by
+# canonical_apply (recorder replay) and unit tests.
+bindkey_by_name
+
 
 # exec_hooks.rs — Rust-only callback fn-ptr registry that lets
 # src/ported/ dispatch to operations owned by `ShellExecutor`

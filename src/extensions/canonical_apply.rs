@@ -241,7 +241,7 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
         // does at runtime.
         for (keyseq, value) in shard.bindkeys {
             let (keymap, widget) = parse_bindkey_value(&value);
-            crate::ported::zle::zle_bindings::bindkey(keymap, &keyseq, widget);
+            crate::ported::zle::zle_bindings::bindkey_by_name(keymap, &keyseq, widget);
             total += 1;
         }
     }
