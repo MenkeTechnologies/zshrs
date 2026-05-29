@@ -2621,6 +2621,7 @@ mod tests {
             opt_state_set("kshtypeset", s);
         }
     }
+
 }
 
 /// Port of `mod_export Emulation_options sticky;` from
