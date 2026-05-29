@@ -434,4 +434,116 @@ mod tests {
         let _ = check_dotfile("/tmp", "file with spaces");
         let _ = check_dotfile("/tmp/sub/dir/that/does/not/exist", "file");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/newuser.c
+    // c:37 setup_ / c:44 features_ / c:51 enables_ / c:58 check_dotfile /
+    // c:68 boot_ + cleanup_ / finish_ semantic pins
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:37 — `setup_` returns i32 (compile-time pin).
+    #[test]
+    fn newuser_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:44 — `features_` returns 1 (NOT 0) — the newuser module exposes
+    /// no shell features and the non-zero return signals "no feature
+    /// table" to the loader. Pin this distinct-from-0 behaviour vs.
+    /// the sibling lifecycle hooks.
+    #[test]
+    fn newuser_features_returns_one_for_no_feature_table() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = Vec::new();
+        let r = features_(std::ptr::null(), &mut v);
+        assert_eq!(r, 1,
+            "c:44 — features_ MUST return 1 (no feature table), not 0");
+    }
+
+    /// c:44 — `features_` does NOT populate the out-Vec (no features).
+    #[test]
+    fn newuser_features_does_not_populate_vec() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = vec!["pre-existing".to_string()];
+        let _ = features_(std::ptr::null(), &mut v);
+        // Pre-existing content survives (no clobber); no additions.
+        assert_eq!(v.len(), 1, "features_ must not add entries");
+        assert_eq!(v[0], "pre-existing", "must not clear caller's Vec");
+    }
+
+    /// c:51 — `enables_` returns 0 (no per-feature enables to manage).
+    /// Distinct from c:44's `1` return; pin separately.
+    #[test]
+    fn newuser_enables_returns_zero_distinct_from_features() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let r = enables_(std::ptr::null(), &mut e);
+        assert_eq!(r, 0, "c:51 — enables_ MUST return 0");
+    }
+
+    /// c:58 — `check_dotfile` returns i32 (compile-time pin).
+    #[test]
+    fn check_dotfile_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = check_dotfile("/tmp", "anything");
+    }
+
+    /// c:58 — `check_dotfile("/tmp", missing)` returns -1 (access F_OK
+    /// fail), not 0 or any other sentinel.
+    #[test]
+    fn check_dotfile_missing_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = check_dotfile("/tmp", "__definitely_does_not_exist_xyz_42");
+        assert_eq!(r, -1, "missing file MUST return -1, got {}", r);
+    }
+
+    /// c:58 — `check_dotfile("/", "tmp")` returns 0 (existing dir
+    /// component).
+    #[test]
+    fn check_dotfile_existing_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = check_dotfile("/", "tmp");
+        assert_eq!(r, 0, "/ + tmp must exist on Unix; got {}", r);
+    }
+
+    /// c:68 — `boot_` returns i32 (compile-time pin).
+    #[test]
+    fn newuser_boot_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = boot_(std::ptr::null());
+    }
+
+    /// c:58 — `check_dotfile` walks dotfile names deterministically:
+    /// `.zshenv` / `.zprofile` / `.zshrc` / `.zlogin` against a missing
+    /// dir all return -1 (one branch per filename per c:78-81).
+    #[test]
+    fn check_dotfile_all_four_dotfile_names_against_missing_dir() {
+        let _g = crate::test_util::global_state_lock();
+        for fname in &[".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
+            let r = check_dotfile("/__no_such_dir_xyz_zshrs__", fname);
+            assert_eq!(r, -1,
+                "missing dir + {} must return -1, got {}", fname, r);
+        }
+    }
+
+    /// c:51 — `enables_` is deterministic (read-only path).
+    #[test]
+    fn newuser_enables_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            let mut e: Option<Vec<i32>> = None;
+            assert_eq!(enables_(std::ptr::null(), &mut e), 0);
+        }
+    }
+
+    /// c:44 — `features_` is deterministic (always returns 1).
+    #[test]
+    fn newuser_features_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            let mut v: Vec<String> = Vec::new();
+            assert_eq!(features_(std::ptr::null(), &mut v), 1);
+        }
+    }
 }
