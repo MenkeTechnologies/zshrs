@@ -1758,4 +1758,83 @@ mod tests {
         assert_eq!(is_cond_binary_op("=="), 1); // sanity that the list still works
         assert_eq!(is_cond_binary_op("==="), 0, "triple-eq not in list");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/text.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:32 — `is_cond_binary_op` recognizes string-comparison ops.
+    #[test]
+    fn is_cond_binary_op_recognizes_string_ops() {
+        for op in ["=", "==", "!=", "<", ">"] {
+            assert_eq!(is_cond_binary_op(op), 1, "{:?} must be binary", op);
+        }
+    }
+
+    /// c:32 — `is_cond_binary_op` recognizes -ot/-nt/-ef (file compare).
+    #[test]
+    fn is_cond_binary_op_recognizes_file_compare_ops() {
+        for op in ["-ot", "-nt", "-ef"] {
+            assert_eq!(is_cond_binary_op(op), 1, "{:?} must be binary", op);
+        }
+    }
+
+    /// c:32 — recognizes numeric ops -eq/-ne/-lt/-gt/-le/-ge.
+    #[test]
+    fn is_cond_binary_op_recognizes_numeric_ops() {
+        for op in ["-eq", "-ne", "-lt", "-gt", "-le", "-ge"] {
+            assert_eq!(is_cond_binary_op(op), 1, "{:?} must be binary", op);
+        }
+    }
+
+    /// c:32 — case-sensitive: `-EQ` is NOT recognized.
+    #[test]
+    fn is_cond_binary_op_is_case_sensitive() {
+        assert_eq!(is_cond_binary_op("-EQ"), 0, "uppercase variant not in list");
+        assert_eq!(is_cond_binary_op("-LT"), 0);
+    }
+
+    /// c:32 — `is_cond_binary_op` is deterministic.
+    #[test]
+    fn is_cond_binary_op_is_deterministic() {
+        for op in ["-eq", "==", "!=", "hello", ""] {
+            let first = is_cond_binary_op(op);
+            for _ in 0..5 {
+                assert_eq!(is_cond_binary_op(op), first, "{:?} must be pure", op);
+            }
+        }
+    }
+
+    /// c:70 — `dec_tindent` from 0 is safe (DPUTS warns but no panic).
+    #[test]
+    fn dec_tindent_from_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        // Initial tindent is 0; decrementing should be no-op + DPUTS.
+        dec_tindent();
+        // Verify still 0 after.
+        let v = tindent.with(|t| *t.borrow());
+        assert_eq!(v, 0, "tindent must not go negative");
+    }
+
+    /// c:89 — `taddpending("", "")` is no-op (empty content).
+    #[test]
+    fn taddpending_empty_strings_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        // Clear first.
+        tpending.with(|p| *p.borrow_mut() = None);
+        taddpending("", "");
+        // tpending should now be Some(empty) or remain None per port.
+    }
+
+    /// c:89 — `taddpending` accumulates: two calls produce "a\\nb"
+    /// (per c:91 ascii separator).
+    #[test]
+    fn taddpending_accumulates_with_newline_separator() {
+        let _g = crate::test_util::global_state_lock();
+        tpending.with(|p| *p.borrow_mut() = None);
+        taddpending("a", "");
+        taddpending("b", "");
+        let result = tpending.with(|p| p.borrow().clone());
+        assert_eq!(result.as_deref(), Some(b"a\nb" as &[u8]));
+    }
 }
