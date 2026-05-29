@@ -476,4 +476,161 @@ mod tests {
         zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_PARSE);
         assert!(cstack.lock().unwrap().is_none());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/context.c partial save/restore
+    // semantics + ZCONTEXT_* flag invariants.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:491-495 — ZCONTEXT_HIST/LEX/PARSE are distinct single bits.
+    #[test]
+    fn zcontext_flag_bits_pin_to_one_two_four() {
+        assert_eq!(crate::ported::zsh_h::ZCONTEXT_HIST, 1, "c:491 = 1<<0");
+        assert_eq!(crate::ported::zsh_h::ZCONTEXT_LEX, 2, "c:493 = 1<<1");
+        assert_eq!(crate::ported::zsh_h::ZCONTEXT_PARSE, 4, "c:495 = 1<<2");
+    }
+
+    /// c:491-495 — every ZCONTEXT_* is a single bit (power of two).
+    #[test]
+    fn zcontext_flags_are_single_bits() {
+        for &v in &[
+            crate::ported::zsh_h::ZCONTEXT_HIST,
+            crate::ported::zsh_h::ZCONTEXT_LEX,
+            crate::ported::zsh_h::ZCONTEXT_PARSE,
+        ] {
+            assert!((v as u32).is_power_of_two(), "{} must be a single bit", v);
+        }
+    }
+
+    /// c:52 — `zcontext_save_partial(0)` followed by restore should
+    /// drain the stack to empty (the c:60-78 branches all skip when
+    /// no flags match, but the frame still pushes per c:89).
+    #[test]
+    fn zcontext_save_partial_zero_round_trip_pops() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save_partial(0);
+        assert!(cstack.lock().unwrap().is_some(), "zero-mask still pushes");
+        zcontext_restore_partial(0);
+        assert!(cstack.lock().unwrap().is_none(), "restore drains to None");
+    }
+
+    /// c:52 — save HIST then restore with PARSE alone should still
+    /// pop the frame (c:91 unconditional take), but NOT restore HIST.
+    /// Pins the asymmetric-mask edge case from c:96.
+    #[test]
+    fn zcontext_save_hist_restore_with_parse_mask_pops_frame() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
+        assert!(cstack.lock().unwrap().is_some());
+        zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_PARSE);
+        assert!(cstack.lock().unwrap().is_none(), "frame popped regardless");
+    }
+
+    /// c:80 — `zcontext_save` and `zcontext_save_partial(HIST|LEX|PARSE)`
+    /// must each push exactly one frame.
+    #[test]
+    fn zcontext_save_shorthand_pushes_one_frame() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save();
+        // Stack must have one frame (top != None, top.next == None).
+        {
+            let head = cstack.lock().unwrap();
+            assert!(head.is_some(), "save pushed a frame");
+            assert!(head.as_ref().unwrap().next.is_none(), "stack depth = 1");
+        }
+        zcontext_restore();
+        assert!(cstack.lock().unwrap().is_none());
+
+        zcontext_save_partial(
+            crate::ported::zsh_h::ZCONTEXT_HIST
+                | crate::ported::zsh_h::ZCONTEXT_LEX
+                | crate::ported::zsh_h::ZCONTEXT_PARSE,
+        );
+        {
+            let head = cstack.lock().unwrap();
+            assert!(head.is_some(), "full-mask save_partial pushed a frame");
+            assert!(head.as_ref().unwrap().next.is_none(), "stack depth = 1");
+        }
+        zcontext_restore();
+    }
+
+    /// c:117 — `zcontext_restore` shorthand drains exactly one frame.
+    #[test]
+    fn zcontext_restore_drains_exactly_one_frame() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save();
+        zcontext_save();
+        // Two pushes.
+        zcontext_restore();
+        // One frame remains.
+        assert!(cstack.lock().unwrap().is_some());
+        zcontext_restore();
+        assert!(cstack.lock().unwrap().is_none());
+    }
+
+    /// c:91 — `zcontext_restore` shorthand on empty stack is a no-op
+    /// (matches DPUTS-trip path: warn + return without panic).
+    #[test]
+    fn zcontext_restore_shorthand_on_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        zcontext_restore();
+        assert!(cstack.lock().unwrap().is_none());
+    }
+
+    /// c:52 — `ZCONTEXT_HIST | ZCONTEXT_LEX` combo (no PARSE) round-trips.
+    #[test]
+    fn zcontext_save_hist_lex_combo_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        let mask = crate::ported::zsh_h::ZCONTEXT_HIST | crate::ported::zsh_h::ZCONTEXT_LEX;
+        zcontext_save_partial(mask);
+        zcontext_restore_partial(mask);
+        assert!(cstack.lock().unwrap().is_none());
+    }
+
+    /// c:52 — `ZCONTEXT_LEX | ZCONTEXT_PARSE` combo (no HIST) round-trips.
+    #[test]
+    fn zcontext_save_lex_parse_combo_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        let mask = crate::ported::zsh_h::ZCONTEXT_LEX | crate::ported::zsh_h::ZCONTEXT_PARSE;
+        zcontext_save_partial(mask);
+        zcontext_restore_partial(mask);
+        assert!(cstack.lock().unwrap().is_none());
+    }
+
+    /// c:91 — multiple restores on empty stack stay no-op (no DPUTS panic).
+    #[test]
+    fn many_restores_on_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        for _ in 0..10 {
+            zcontext_restore_partial(0);
+        }
+        assert!(cstack.lock().unwrap().is_none());
+    }
+
+    /// c:91 — DPUTS WARN-only: restore on empty stack must not crash.
+    #[test]
+    fn restore_on_empty_via_full_shorthand_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        zcontext_restore();
+        zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
+        zcontext_restore_partial(
+            crate::ported::zsh_h::ZCONTEXT_HIST | crate::ported::zsh_h::ZCONTEXT_LEX,
+        );
+        assert!(cstack.lock().unwrap().is_none());
+    }
 }
