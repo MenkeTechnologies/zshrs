@@ -1113,30 +1113,32 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
 
     if char_at(bytes, b) == Inbrace {
         // c:1184
-        // c:1188 — skipparens(Inbrace, Outbrace, &tb) check.
-        let close = skip_token_parens(bytes, b, Inbrace, Outbrace);
-        if let Some(end) = close {
-            if end <= s.len() && offs_v >= end - bytes.iter().take(end).count() {
-                // Already past `}` — not in this param.
-                return None; // c:1189
-            }
-        } else {
-            return None;
+        // c:1188 — `if (!skipparens(Inbrace, Outbrace, &tb) && tb - s <= offs) return NULL;`
+        let mut tb: &str = &s[b..];
+        let bal = crate::ported::utils::skipparens(Inbrace, Outbrace, &mut tb);
+        let tb_after = s.len() - tb.len();
+        if bal == 0 && tb_after <= offs_v {
+            return None; // c:1189
         }
 
         b += Inbrace.len_utf8(); // c:1192 b++
         br += 1;
-        // c:1193-1203 — skip leading `(...)` flag group.
-        let (open_p, close_p) = if qstring { ('(', ')') } else { (Inpar, Outpar) };
-        let after_flags = skip_token_parens(bytes, b, open_p, close_p);
-        if let Some(end) = after_flags {
-            // Compute "b-s offset" — bytes already chars-aware.
-            if end > offs_v + 1 {
-                ispar.store(2, Ordering::Relaxed); // c:1201
-                return None; // c:1202
-            }
-            b = end;
+        // c:1193-1203 — skip leading `(...)` flag group. C has a
+        // ternary `qstring ? skipparens('(',')',&b) : skipparens(Inpar,Outpar,&b)`
+        // — two source-level skipparens calls. Mirror that explicitly
+        // so the call-coverage metric matches C.
+        let mut b_str: &str = &s[b..];
+        let flag_ret: i32 = if qstring {
+            crate::ported::utils::skipparens('(', ')', &mut b_str)
+        } else {
+            crate::ported::utils::skipparens(Inpar, Outpar, &mut b_str)
+        };
+        let after_flags_pos = s.len() - b_str.len();
+        if flag_ret > 0 || after_flags_pos > offs_v {
+            ispar.store(2, Ordering::Relaxed); // c:1201
+            return None; // c:1202
         }
+        b = after_flags_pos;
 
         // c:1205 — detect `nest` from preceding `${ ${` chain.
         let mut tb = p;
