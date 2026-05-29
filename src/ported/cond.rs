@@ -1724,4 +1724,103 @@ mod tests {
         let r = optison("test", "x");
         assert!(r == 0 || r == 1, "single-char x must return 0/1; got {r}");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/cond.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:438 — `doaccess("/tmp", F_OK)` returns 1 (/tmp exists everywhere).
+    #[test]
+    #[cfg(unix)]
+    fn doaccess_existing_dir_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(doaccess("/tmp", libc::F_OK), 1, "/tmp must exist");
+    }
+
+    /// c:438 — `doaccess` on nonexistent path returns 0.
+    #[test]
+    #[cfg(unix)]
+    fn doaccess_nonexistent_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            doaccess("/__never_exists_zshrs_xyz__", libc::F_OK),
+            0,
+            "missing path → 0"
+        );
+    }
+
+    /// c:474 — `dostat` on /tmp returns nonzero mode (it's a dir).
+    #[test]
+    #[cfg(unix)]
+    fn dostat_directory_returns_nonzero_mode() {
+        let _g = crate::test_util::global_state_lock();
+        let mode = dostat("/tmp");
+        assert_ne!(mode, 0, "/tmp must have non-zero mode bits");
+    }
+
+    /// c:474 — `dostat` on nonexistent returns 0.
+    #[test]
+    fn dostat_nonexistent_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(dostat("/__never_exists_zshrs_xyz__"), 0);
+    }
+
+    /// c:488 — `dolstat` on /tmp returns nonzero mode.
+    #[test]
+    #[cfg(unix)]
+    fn dolstat_directory_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let m = dolstat("/tmp");
+        assert_ne!(m, 0);
+    }
+
+    /// c:488 — `dolstat` on missing path returns 0.
+    #[test]
+    fn dolstat_nonexistent_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(dolstat("/__never_exists_zshrs_xyz__"), 0);
+    }
+
+    /// c:653 — `cond_str` with out-of-range index returns empty string.
+    #[test]
+    fn cond_str_out_of_range_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(cond_str(&args, 5, false), "", "idx 5 of 2 args → empty");
+        assert_eq!(cond_str(&args, 100, false), "");
+    }
+
+    /// c:653 — `cond_str` in-range index returns the arg.
+    #[test]
+    fn cond_str_in_range_returns_arg() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec!["zero".to_string(), "one".to_string()];
+        assert_eq!(cond_str(&args, 0, false), "zero");
+        assert_eq!(cond_str(&args, 1, false), "one");
+    }
+
+    /// c:685 — `cond_val` for out-of-range returns 0.
+    #[test]
+    fn cond_val_out_of_range_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec!["42".to_string()];
+        assert_eq!(cond_val(&args, 5), 0);
+    }
+
+    /// c:685 — `cond_val("42")` parses to 42.
+    #[test]
+    fn cond_val_parses_canonical_decimal() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec!["42".to_string()];
+        assert_eq!(cond_val(&args, 0), 42);
+    }
+
+    /// c:716 — `cond_match` with empty pattern returns false / true
+    /// per fnmatch semantics. Pin no panic.
+    #[test]
+    fn cond_match_empty_args_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let args: Vec<String> = vec![];
+        let _ = cond_match(&args, 0, "anything");
+    }
 }
