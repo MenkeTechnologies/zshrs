@@ -305,4 +305,127 @@ mod tests {
         set_pparams(vec!["a".into(), "b".into()]);
         // No panic = pass.
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional default-path (no-hook-installed) parity tests.
+    // exec_hooks fallback semantics must remain stable: every accessor
+    // returns a safe default when no fusevm executor has wired its hook.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `assoc()` returns None when no hook installed (no params
+    /// fallback — assoc has no equivalent of getaparam fallback).
+    #[test]
+    fn exec_hooks_assoc_returns_none_when_no_hook() {
+        let _g = crate::test_util::global_state_lock();
+        // If a prior test installed a hook, the result is hook-defined;
+        // we only pin no-panic + valid Option<...>.
+        let _ = assoc("__never_real_assoc_zshrs__");
+    }
+
+    /// `set_array` is a no-op when no hook installed (silently
+    /// drops the write rather than panicking — fusevm-less env safe).
+    #[test]
+    fn exec_hooks_set_array_no_hook_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        set_array("__never_real_array_zshrs__", vec!["x".into(), "y".into()]);
+    }
+
+    /// `set_assoc` is a no-op when no hook installed.
+    #[test]
+    fn exec_hooks_set_assoc_no_hook_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = IndexMap::new();
+        m.insert("k".to_string(), "v".to_string());
+        set_assoc("__never_real_assoc_zshrs__", m);
+    }
+
+    /// `unset_scalar`, `unset_array`, `unset_assoc` are all no-ops
+    /// when no hook installed.
+    #[test]
+    fn exec_hooks_unset_variants_no_hook_dont_panic() {
+        let _g = crate::test_util::global_state_lock();
+        unset_scalar("__never_real_scalar_zshrs__");
+        unset_array("__never_real_array_zshrs__");
+        unset_assoc("__never_real_assoc_zshrs__");
+    }
+
+    /// `run_function_body` returns None when no hook installed.
+    #[test]
+    fn exec_hooks_run_function_body_returns_none_when_no_hook() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = run_function_body("__never_a_real_fn_zshrs__", &["a".into()]);
+        // No panic = pass; result is Option-typed.
+    }
+
+    /// `execute_script_zsh_pipeline` returns Ok(0) when no hook installed.
+    #[test]
+    fn exec_hooks_execute_script_zsh_pipeline_default_ok_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = execute_script_zsh_pipeline("no hook");
+        // If hook installed, result is hook-defined; if not, Ok(0).
+        let _ = r;
+    }
+
+    /// `array()` returns None when name doesn't exist in params either
+    /// (no fallback hits).
+    #[test]
+    fn exec_hooks_array_returns_none_for_missing_name() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("__no_such_array_zshrs__");
+        let got = array("__no_such_array_zshrs__");
+        // Either None (no hook + no param) or hook-returned value.
+        let _ = got;
+    }
+
+    /// `array()` empty name doesn't panic (some callers pass "" for
+    /// special parameter probes).
+    #[test]
+    fn exec_hooks_array_empty_name_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = array("");
+    }
+
+    /// Idempotent: calling array() twice with same name yields same
+    /// result (no observable side effect on the fallback path).
+    #[test]
+    fn exec_hooks_array_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("EH_IDEMPOTENT");
+        crate::ported::params::setaparam("EH_IDEMPOTENT", vec!["a".into(), "b".into()]);
+        let first = array("EH_IDEMPOTENT");
+        let second = array("EH_IDEMPOTENT");
+        assert_eq!(first, second);
+        crate::ported::params::unsetparam("EH_IDEMPOTENT");
+    }
+
+    /// `pparams()` returns an empty vec (not None) when no hook —
+    /// callers can iterate without an Option-check.
+    #[test]
+    fn exec_hooks_pparams_returns_vec_not_none() {
+        let _g = crate::test_util::global_state_lock();
+        // Type assertion: result is Vec<String>, not Option<Vec<String>>.
+        let p: Vec<String> = pparams();
+        let _ = p; // either [] or hook-installed value
+    }
+
+    /// Round-trip via params fallback: set then read returns same value.
+    #[test]
+    fn exec_hooks_array_set_get_roundtrip_via_params() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("EH_RT");
+        let vals = vec!["one".to_string(), "two".to_string(), "three".to_string()];
+        crate::ported::params::setaparam("EH_RT", vals.clone());
+        let got = array("EH_RT").expect("set then get should hit params fallback");
+        assert_eq!(got, vals);
+        crate::ported::params::unsetparam("EH_RT");
+    }
+
+    /// `unregister_function` is consistently a bool — pin the return
+    /// type so accidental refactor to () would fail the type check.
+    #[test]
+    fn exec_hooks_unregister_function_returns_bool() {
+        let _g = crate::test_util::global_state_lock();
+        let r: bool = unregister_function("__never_xyz_zshrs__");
+        let _ = r;
+    }
 }

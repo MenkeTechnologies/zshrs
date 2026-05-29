@@ -542,4 +542,123 @@ mod tests {
         assert_eq!(cleanup_(), 0);
         assert_eq!(finish_(), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests pinning Src/Zle/zleparameter.c contracts.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:37 — `widgetstr(name, false, false)` returns "builtin"
+    /// regardless of the name. Pins that the builtin branch ignores
+    /// the function-name arg (matches C's `return "builtin"`).
+    #[test]
+    fn widgetstr_builtin_form_ignores_name() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(widgetstr("anything", false, false), "builtin");
+        assert_eq!(widgetstr("", false, false), "builtin");
+        assert_eq!(widgetstr("with spaces", false, false), "builtin");
+    }
+
+    /// c:37 — completion form preserves the function name suffix
+    /// (parallel to widgetstr_user_form_carries_function_name).
+    #[test]
+    fn widgetstr_completion_form_carries_function_name() {
+        let _g = crate::test_util::global_state_lock();
+        let s = widgetstr("_complete-foo", false, true);
+        let (kind, rest) = s.split_once(':').expect("missing colon");
+        assert_eq!(kind, "completion");
+        assert_eq!(rest, "_complete-foo");
+    }
+
+    /// c:147 — `setup_()` returns 0 (split out from combined test).
+    #[test]
+    fn zleparameter_setup_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(), 0);
+    }
+
+    /// c:154 — `features_()` returns 0 (static-link path).
+    #[test]
+    fn zleparameter_features_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(features_(), 0);
+    }
+
+    /// c:162 — `enables_()` returns 0 (static-link path).
+    #[test]
+    fn zleparameter_enables_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(enables_(), 0);
+    }
+
+    /// c:33 — `getpmwidgets` sets PM_READONLY on every returned Param
+    /// (the parameter shape exposes a string scalar the user must
+    /// not assign to). PM_SCALAR is the 0-value sentinel ("no type
+    /// bit set"), not a settable bit, so we only assert READONLY.
+    /// Pin so any future refactor that drops READONLY would be
+    /// caught (would let `widgets[x]=...` silently corrupt the table).
+    #[test]
+    fn getpmwidgets_unknown_widget_has_readonly_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        use crate::ported::zsh_h::PM_READONLY;
+        let pm = getpmwidgets(std::ptr::null_mut(), "no-such-widget")
+            .expect("always returns Some");
+        assert!(pm.node.flags & PM_READONLY as i32 != 0, "PM_READONLY set");
+    }
+
+    /// c:33 — returned Param's `nam` field must round-trip the input
+    /// name verbatim (callers index into thingytab by this name).
+    #[test]
+    fn getpmwidgets_param_name_round_trips_input() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let pm = getpmwidgets(std::ptr::null_mut(), "my-test-widget")
+            .expect("always returns Some");
+        assert_eq!(pm.node.nam, "my-test-widget");
+    }
+
+    /// c:105 — `keymapsgetfn` output must be sorted (Rust port sorts
+    /// at the end of the fn). Pin sorted-order contract so callers
+    /// can rely on deterministic output for ${(o)zle_keymaps}.
+    #[test]
+    fn keymapsgetfn_output_is_sorted() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let names = keymapsgetfn(std::ptr::null_mut());
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "keymapsgetfn output must be sorted");
+    }
+
+    /// c:105 — `keymapsgetfn` output must not have duplicate names
+    /// (keymapnamtab is hashed by name, so duplicates would indicate
+    /// internal corruption).
+    #[test]
+    fn keymapsgetfn_output_has_no_duplicates() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let names = keymapsgetfn(std::ptr::null_mut());
+        let unique: std::collections::HashSet<_> = names.iter().collect();
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "keymapsgetfn returned duplicate keymap names"
+        );
+    }
+
+    /// c:33 — `getpmwidgets` returns Some for every input (the C
+    /// equivalent constructs the Param unconditionally; missing-from-
+    /// table is conveyed via PM_UNSET, never via NULL Param).
+    #[test]
+    fn getpmwidgets_always_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for name in &["x", "", "ANY"] {
+            assert!(
+                getpmwidgets(std::ptr::null_mut(), name).is_some(),
+                "getpmwidgets({:?}) returned None — C never returns NULL",
+                name
+            );
+        }
+    }
 }
