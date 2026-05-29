@@ -3915,7 +3915,7 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
         // c:3188 — `guess = *s + 1;` strip leading $.
         let guess = s[1..].to_string();
         // c:3189-3190 — `if (itype_end(guess, INAMESPC, 1) == guess) return;`
-        if itype_end(&guess, true) == 0 {
+        if itype_end(&guess, crate::ported::ztype_h::INAMESPC, true) == 0 {
             // c:3189
             return; // c:3190
         }
@@ -5287,35 +5287,144 @@ pub fn wcsitype(c: char, itype: u32) -> bool {
 }
 
 /// Check if a character type at end of string (from utils.c itype_end)
-/// Returns the position after the identifier characters
-/// Port of `itype_end(const char *ptr, int itype, int once)` from `Src/utils.c:4395`.
-/// WARNING: param names don't match C — Rust=(s, allow_digits_start) vs C=(ptr, itype, once)
-// Rust idiom replacement: `chars().peekable()` + `is_alphanumeric`
-// covers the C `itype` table-lookup loop; the `once`/`itype` args
-// collapse into the boolean `allow_digits_start` since callers in
-// zshrs only use IDENT/IFS classifications.
-/// `itype_end` — see implementation.
-pub fn itype_end(s: &str, allow_digits_start: bool) -> usize {
-    let mut chars = s.chars().peekable();
-    let mut pos = 0;
+/// Port of `char *itype_end(const char *ptr, int itype, int once)` from `Src/utils.c:4395`.
+///
+/// Walks `ptr` byte-by-byte advancing past every char whose
+/// type-bits include `itype`. Returns the byte offset where the
+/// walk stops (C returns the advanced pointer; the byte offset is
+/// the Rust equivalent — `ptr + return_value` reproduces the C
+/// pointer).
+///
+/// C body branches (ported line-for-line):
+///
+/// 1. **INAMESPC special-case** (c:4399-4413). If itype == INAMESPC
+///    and we're not POSIXIDENTIFIERS-strict outside ksh emulation,
+///    recurse on `ptr+(*ptr=='.')` with IIDENT to allow dotted
+///    ksh93 namespace names. The recursion result determines
+///    whether to advance past the dot or fall through.
+///
+/// 2. **MULTIBYTE branch** (c:4416-4470, gated `isset(MULTIBYTE)
+///    && (itype != IIDENT || !isset(POSIXIDENTIFIERS))`). Walks
+///    multibyte chars via mb_metacharlenconv (multibyte len +
+///    wchar conversion). Per-codepoint test:
+///      - itok byte (raw command line): test the byte via zistype
+///      - Meta-prefixed pair: extract real byte via XOR, test via
+///        zistype
+///      - ASCII (< 0x80): test via zistype
+///      - Non-ASCII codepoint: route through wcsitype (which
+///        already handles IWORD/ISEP via WORDCHARS/IFS paramtab
+///        lookup matching c:4364/c:4367)
+///
+/// 3. **Non-multibyte branch** (c:4474-4480). Simple Meta-byte +
+///    zistype byte loop.
+///
+/// `once = true` stops after the first matching char (used for
+/// "is this a valid first char" checks per c:1576 etc).
+pub fn itype_end(s: &str, mut itype: u32, once: bool) -> usize {
+    use crate::ported::zsh_h::{isset, Meta, EMULATE_KSH, EMULATION, MULTIBYTE, POSIXIDENTIFIERS};
+    use crate::ported::ztype_h::{itok, zistype, IIDENT, INAMESPC};
 
-    if let Some(&first) = chars.peek() {
-        if !allow_digits_start && first.is_ascii_digit() {
-            return 0;
-        }
-        if !first.is_alphanumeric() && first != '_' && first != '.' {
-            return 0;
+    // c:4399-4413 — INAMESPC handling with ksh93 namespace dot.
+    let mut start = 0usize;
+    if itype == INAMESPC {
+        itype = IIDENT as u32;
+        if !isset(POSIXIDENTIFIERS) || EMULATION(EMULATE_KSH) {
+            // c:4403 — `t = itype_end(ptr + (*ptr == '.'), itype, 0);`
+            let first_is_dot = s.as_bytes().first().copied() == Some(b'.');
+            let recurse_start = if first_is_dot { 1 } else { 0 };
+            let t = recurse_start + itype_end(&s[recurse_start..], itype, false);
+            // c:4404-4410 — `if (t > ptr + (*ptr == '.')) {
+            //                  if (*t == '.') ptr = t + 1;  /* Fall through */
+            //                  else if (!once) return t;
+            //              }`
+            if t > recurse_start {
+                let t_byte = s.as_bytes().get(t).copied();
+                if t_byte == Some(b'.') {
+                    start = t + 1; // c:4407
+                } else if !once {
+                    return t; // c:4409
+                }
+            }
         }
     }
 
-    for c in s.chars() {
-        if c.is_alphanumeric() || c == '_' || c == '.' {
-            pos += c.len_utf8();
-        } else {
-            break;
+    let bytes = s.as_bytes();
+    let mb = isset(MULTIBYTE) && (itype != IIDENT as u32 || !isset(POSIXIDENTIFIERS));
+
+    if mb {
+        // c:4416-4470 — multibyte walk. mb_charinit() in C is a
+        // no-op stateless reset; not needed in Rust since str::chars
+        // is already stateless UTF-8.
+        let mut i = start;
+        while i < bytes.len() {
+            let b = bytes[i];
+            // c:4422-4425 — itok: raw token byte, test via zistype,
+            // advance 1.
+            if itok(b) {
+                if !zistype(b, itype) {
+                    break;
+                }
+                i += 1;
+            } else if b == Meta {
+                // c:4438-4440 (WEOF arm) + non-MB Meta fallback:
+                // Meta-prefixed pair = single unescaped char via XOR.
+                let nxt = bytes.get(i + 1).copied().unwrap_or(0) ^ 0x20;
+                if (nxt as u32) > 127 || !zistype(nxt, itype) {
+                    break;
+                }
+                i += 2;
+            } else if b < 0x80 {
+                // c:4441-4443 (len == 1 && isascii) — ASCII: direct
+                // zistype on the byte.
+                if !zistype(b, itype) {
+                    break;
+                }
+                i += 1;
+            } else {
+                // c:4446-4467 — non-ASCII codepoint. Decode the UTF-8
+                // sequence starting at `i` and route through wcsitype
+                // (which already handles IWORD via WORDCHARS paramtab
+                // c:4364, ISEP via IFS paramtab c:4367, default via
+                // iswalnum/is_alphanumeric c:4370).
+                let tail = match std::str::from_utf8(&bytes[i..]) {
+                    Ok(t) => t,
+                    Err(_) => break, // invalid UTF-8 — stop walk
+                };
+                let ch = match tail.chars().next() {
+                    Some(c) => c,
+                    None => break,
+                };
+                if !wcsitype(ch, itype) {
+                    break;
+                }
+                i += ch.len_utf8();
+            }
+            if once {
+                break;
+            }
         }
+        i
+    } else {
+        // c:4474-4480 — non-multibyte arm. Simple byte loop with
+        // Meta-prefix collapse.
+        let mut i = start;
+        while i < bytes.len() {
+            let b = bytes[i];
+            let chr = if b == Meta {
+                bytes.get(i + 1).copied().unwrap_or(0) ^ 0x20
+            } else {
+                b
+            };
+            if !zistype(chr, itype) {
+                break;
+            }
+            i += if b == Meta { 2 } else { 1 };
+            if once {
+                break;
+            }
+        }
+        i
     }
-    pos
 }
 
 /// Duplicate array (from utils.c arrdup)

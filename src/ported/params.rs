@@ -3055,9 +3055,9 @@ pub fn fetchvalue<'a>(
             ppar = (c - b'0') as i32;
             end_pos = 1;
         }
-    } else if itype_end(s, true) > 0 {
-        // c:2196 itype_end
-        end_pos = itype_end(s, true);
+    } else if itype_end(s, crate::ported::ztype_h::IIDENT as u32, false) > 0 {
+        // c:2196 — `itype_end(s, IIDENT, 0)` — walk identifier chars.
+        end_pos = itype_end(s, crate::ported::ztype_h::IIDENT as u32, false);
     } else if matches!(c, b'?' | b'#' | b'$' | b'!' | b'@' | b'*' | b'-') {
         // c:2198-2210
         end_pos = 1;
