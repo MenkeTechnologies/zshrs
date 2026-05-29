@@ -1261,4 +1261,112 @@ mod tests {
         assert_eq!(original.len(), 2, "original unchanged");
         assert_eq!(dup.len(), 3);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/mem.c
+    // c:23 new_heap_id / c:228 zhalloc / c:273 hcalloc / c:383 zsfree
+    // c:587 arrdup_max / c:596 arrlen / c:604 arrlen_lt / c:611 arrlen_le
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:23 — `new_heap_id` returns u64 (compile-time type pin).
+    #[test]
+    fn new_heap_id_returns_u64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: u64 = new_heap_id();
+    }
+
+    /// c:23 — `new_heap_id` consecutive calls produce distinct increasing IDs.
+    #[test]
+    fn new_heap_id_distinct_across_calls() {
+        let _g = crate::test_util::global_state_lock();
+        let a = new_heap_id();
+        let b = new_heap_id();
+        let c = new_heap_id();
+        assert!(a < b && b < c, "IDs must increase: {} < {} < {}", a, b, c);
+    }
+
+    /// c:228 — `zhalloc(0)` doesn't panic.
+    #[test]
+    fn zhalloc_zero_size_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = zhalloc(0);
+    }
+
+    /// c:273 — `hcalloc(0)` doesn't panic.
+    #[test]
+    fn hcalloc_zero_size_no_panic_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = hcalloc(0);
+    }
+
+    /// c:383 — `zsfree(empty)` is safe.
+    #[test]
+    fn zsfree_empty_string_safe() {
+        let _g = crate::test_util::global_state_lock();
+        zsfree(String::new());
+    }
+
+    /// c:587 — `arrdup_max(empty, _)` returns empty for any max.
+    #[test]
+    fn arrdup_max_from_empty_returns_empty() {
+        let arr: Vec<String> = vec![];
+        for max in [0usize, 1, 100] {
+            assert!(arrdup_max(&arr, max).is_empty(),
+                "arrdup_max(empty, {}) must be empty", max);
+        }
+    }
+
+    /// c:596 — `arrlen` is pure (no side effects).
+    #[test]
+    fn arrlen_is_pure() {
+        let arr = vec![1, 2, 3, 4];
+        let first = arrlen(&arr);
+        for _ in 0..5 {
+            assert_eq!(arrlen(&arr), first, "arrlen must be pure");
+        }
+    }
+
+    /// c:604 — `arrlen_lt(slice, 0)` always false.
+    #[test]
+    fn arrlen_lt_zero_upper_always_false() {
+        let arr: Vec<i32> = vec![];
+        assert!(!arrlen_lt(&arr, 0), "empty < 0 is false");
+        let arr2 = vec![1];
+        assert!(!arrlen_lt(&arr2, 0), "[1] < 0 is false");
+    }
+
+    /// c:611 — `arrlen_le(slice, 0)` true only for empty.
+    #[test]
+    fn arrlen_le_zero_upper_only_for_empty() {
+        let empty: Vec<i32> = vec![];
+        let one = vec![1];
+        assert!(arrlen_le(&empty, 0), "empty ≤ 0 is true");
+        assert!(!arrlen_le(&one, 0), "[1] ≤ 0 is false");
+    }
+
+    /// c:162-178 — `pushheap` + `popheap` round-trip safe.
+    #[test]
+    fn pushheap_popheap_round_trip_safe() {
+        let _g = crate::test_util::global_state_lock();
+        pushheap();
+        popheap();
+    }
+
+    /// c:537 — `dupstring("")` returns empty string (pin).
+    #[test]
+    fn dupstring_empty_returns_empty_pin() {
+        assert_eq!(dupstring(""), "");
+    }
+
+    /// c:23 — `new_heap_id` monotonic non-decreasing across many calls.
+    #[test]
+    fn new_heap_id_monotonic_many_calls() {
+        let _g = crate::test_util::global_state_lock();
+        let mut prev = new_heap_id();
+        for _ in 0..50 {
+            let cur = new_heap_id();
+            assert!(cur > prev, "monotonic: {} must > {}", cur, prev);
+            prev = cur;
+        }
+    }
 }
