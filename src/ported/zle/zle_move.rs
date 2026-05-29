@@ -1999,4 +1999,118 @@ mod region_tests {
     fn bmc_bufsize_is_six() {
         assert_eq!(BMC_BUFSIZE, 6, "MB_CUR_MAX legacy encoding ceiling");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_move.c
+    // c:246 beginningofline / c:288 endofline / c:473 forwardchar /
+    // c:513 backwardchar / c:550 setmarkcommand / c:585 exchangepointandmark /
+    // c:607 visualmode / c:631 visuallinemode / c:665 deactivateregion /
+    // c:672 vigotocolumn / c:781 viforwardchar / c:838 vibackwardchar
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:246 — `beginningofline` returns i32 (compile-time type pin).
+    #[test]
+    fn beginningofline_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = beginningofline();
+    }
+
+    /// c:288 — `endofline` returns i32 (compile-time type pin).
+    #[test]
+    fn endofline_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = endofline();
+    }
+
+    /// c:473 — `forwardchar` return in u8 exit-code range.
+    #[test]
+    fn forwardchar_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = forwardchar();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:513 — `backwardchar` return in u8 exit-code range.
+    #[test]
+    fn backwardchar_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = backwardchar();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:550 — `setmarkcommand` return in u8 exit-code range.
+    #[test]
+    fn setmarkcommand_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = setmarkcommand();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:585 — `exchangepointandmark` return in u8 exit-code range.
+    #[test]
+    fn exchangepointandmark_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = exchangepointandmark();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:607 — `visualmode` return in u8 exit-code range.
+    #[test]
+    fn visualmode_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = visualmode();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:631 — `visuallinemode` return in u8 exit-code range.
+    #[test]
+    fn visuallinemode_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = visuallinemode();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:665 — `deactivateregion` return in u8 exit-code range.
+    #[test]
+    fn deactivateregion_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = deactivateregion();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:781 — `viforwardchar` return in u8 exit-code range.
+    #[test]
+    fn viforwardchar_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = viforwardchar();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:838 — `vibackwardchar` return in u8 exit-code range.
+    #[test]
+    fn vibackwardchar_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vibackwardchar();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:672 — `vigotocolumn` return in u8 exit-code range.
+    #[test]
+    fn vigotocolumn_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vigotocolumn();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
 }
