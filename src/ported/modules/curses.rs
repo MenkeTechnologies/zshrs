@@ -2762,4 +2762,114 @@ mod tests {
         let v = zcurses_pairs_to_array(&[]);
         assert!(v.is_empty());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/curses.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:233 — `zcurses_strerror(0)` returns 'unknown error'.
+    #[test]
+    fn zcurses_strerror_zero_returns_unknown() {
+        assert_eq!(zcurses_strerror(0), "unknown error");
+    }
+
+    /// c:233 — `zcurses_strerror(1)` returns 'window name invalid'.
+    #[test]
+    fn zcurses_strerror_one_returns_name_invalid() {
+        assert_eq!(zcurses_strerror(1), "window name invalid");
+    }
+
+    /// c:233 — `zcurses_strerror(2)` returns 'window already defined'.
+    #[test]
+    fn zcurses_strerror_two_returns_already_defined() {
+        assert_eq!(zcurses_strerror(2), "window already defined");
+    }
+
+    /// c:233 — `zcurses_strerror(3)` returns 'window undefined'.
+    #[test]
+    fn zcurses_strerror_three_returns_undefined() {
+        assert_eq!(zcurses_strerror(3), "window undefined");
+    }
+
+    /// c:233 — `zcurses_strerror` out-of-range returns 'unknown error'.
+    #[test]
+    fn zcurses_strerror_out_of_range_returns_unknown() {
+        assert_eq!(zcurses_strerror(-1), "unknown error");
+        assert_eq!(zcurses_strerror(4), "unknown error");
+        assert_eq!(zcurses_strerror(999), "unknown error");
+    }
+
+    /// c:233 — `zcurses_strerror` is deterministic for known errnos.
+    #[test]
+    fn zcurses_strerror_is_deterministic() {
+        for e in 0..=3 {
+            let first = zcurses_strerror(e);
+            for _ in 0..5 {
+                assert_eq!(zcurses_strerror(e), first);
+            }
+        }
+    }
+
+    /// c:1420 — `zcurses_colorsarrgetfn` returns vec (color names).
+    #[test]
+    fn zcurses_colorsarrgetfn_returns_vec() {
+        let _g = crate::test_util::global_state_lock();
+        let v = zcurses_colorsarrgetfn();
+        // Either empty (no curses init) or has color names — pin no panic.
+        let _ = v;
+    }
+
+    /// c:1427 — `zcurses_attrgetfn` returns vec (attribute names).
+    #[test]
+    fn zcurses_attrgetfn_returns_vec() {
+        let _g = crate::test_util::global_state_lock();
+        let v = zcurses_attrgetfn();
+        let _ = v;
+    }
+
+    /// c:1436 — `zcurses_keycodesgetfn` returns vec.
+    #[test]
+    fn zcurses_keycodesgetfn_returns_vec() {
+        let _g = crate::test_util::global_state_lock();
+        let v = zcurses_keycodesgetfn();
+        let _ = v;
+    }
+
+    /// c:1453 — `zcurses_windowsgetfn` returns vec.
+    #[test]
+    fn zcurses_windowsgetfn_returns_vec() {
+        let _g = crate::test_util::global_state_lock();
+        let v = zcurses_windowsgetfn();
+        let _ = v;
+    }
+
+    /// c:1461 — `zcurses_colorsintgetfn` returns non-negative.
+    #[test]
+    fn zcurses_colorsintgetfn_returns_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let n = zcurses_colorsintgetfn();
+        assert!(n >= 0, "color count must be ≥ 0, got {}", n);
+    }
+
+    /// c:1475 — `zcurses_colorpairsintgetfn` returns non-negative.
+    #[test]
+    fn zcurses_colorpairsintgetfn_returns_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let n = zcurses_colorpairsintgetfn();
+        assert!(n >= 0, "color pair count must be ≥ 0, got {}", n);
+    }
+
+    /// Lifecycle (c:1493/1513/1519/1526) split per-hook.
+    #[test]
+    fn curses_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:1513 — boot_(NULL) = 0.
+    #[test]
+    fn curses_boot_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
 }
