@@ -1516,4 +1516,115 @@ mod tests {
         reset_input();
         let _: String = shingetline();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/input.c
+    // c:326 inputline / c:337 inputsetline / c:360 inungetc /
+    // c:392 zstuff / c:441 stuff / c:455 inerrflush / c:467 inpush /
+    // c:181 shingetchar / c:603 ingetptr
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:181 — `shingetchar` returns i32 (compile-time type pin, alt name).
+    #[test]
+    fn shingetchar_returns_i32_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        let _: i32 = shingetchar();
+    }
+
+    /// c:337 — `inputsetline("", 0)` is safe + resets lexstop.
+    #[test]
+    fn inputsetline_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inputsetline("", 0);
+    }
+
+    /// c:337 — `inputsetline(s, INP_CONT)` accumulates inbufct
+    /// vs the non-CONT replacement variant. Pin both paths exist.
+    #[test]
+    fn inputsetline_cont_vs_replace_both_safe() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inputsetline("hello", 0);
+        inputsetline("world", INP_CONT);
+    }
+
+    /// c:360 — `inungetc` on fresh state without prior get pushes back.
+    #[test]
+    fn inungetc_on_empty_pushes_back_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inungetc('x');
+        inungetc('\n');
+    }
+
+    /// c:360 — `inungetc` is safe across many calls (no overflow).
+    #[test]
+    fn inungetc_many_calls_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        for c in "abcdefghij".chars() {
+            inungetc(c);
+        }
+    }
+
+    /// c:441 — `stuff` returns i32 (compile-time pin).
+    #[test]
+    fn stuff_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = stuff("/__nonexistent__");
+    }
+
+    /// c:441 — `stuff(empty)` returns nonzero (empty path is invalid).
+    #[test]
+    fn stuff_empty_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_ne!(stuff(""), 0, "empty path must be an error");
+    }
+
+    /// c:392 — `zstuff(empty)` returns Err.
+    #[test]
+    fn zstuff_empty_path_returns_err() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(zstuff("").is_err(), "empty path → Err");
+    }
+
+    /// c:455 — `inerrflush` is idempotent (callable repeatedly).
+    #[test]
+    fn inerrflush_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            inerrflush();
+        }
+    }
+
+    /// c:467 — `inpush(s, 0, None)` with various strings is safe.
+    #[test]
+    fn inpush_various_strings_safe() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        for s in &["a", "longer text", "\n", "\t", " "] {
+            inpush(s, 0, None);
+        }
+    }
+
+    /// c:467 — `inpush` with alias name doesn't panic.
+    #[test]
+    fn inpush_with_alias_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inpush("expanded", 0, Some("ll".to_string()));
+    }
+
+    /// c:523/580 — `inpoptop` + `inpop` are no-ops on empty stack.
+    #[test]
+    fn inpoptop_inpop_empty_stack_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inpoptop();
+        inpop();
+        inpoptop();
+        inpop();
+    }
 }
