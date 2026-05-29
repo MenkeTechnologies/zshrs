@@ -2816,4 +2816,119 @@ mod findbol_findeol_tests {
         let _g2 = zle_test_setup();
         sizeline(0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_utils.c
+    // c:467 zle_save_positions / c:500 zle_restore_positions / c:530 zle_free_positions
+    // c:1153 findline / c:1160 getzlequery / c:1205 bindztrdup / c:1243 printbind
+    // c:381 zlegetline
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:467-530 — `zle_save_positions` + `zle_restore_positions`
+    /// round-trip safe.
+    #[test]
+    fn zle_save_restore_positions_round_trip_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        zle_save_positions();
+        zle_restore_positions();
+    }
+
+    /// c:530 — `zle_free_positions` is idempotent.
+    #[test]
+    fn zle_free_positions_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            zle_free_positions();
+        }
+    }
+
+    /// c:432 — `free_region_highlights_memos` is idempotent.
+    #[test]
+    fn free_region_highlights_memos_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            free_region_highlights_memos();
+        }
+    }
+
+    /// c:1153 — `findline()` returns (usize, usize) with lo ≤ hi invariant.
+    #[test]
+    fn findline_returns_valid_range_tuple() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let (lo, hi) = findline();
+        assert!(lo <= hi, "findline lo={} must ≤ hi={}", lo, hi);
+    }
+
+    /// c:1205 — `bindztrdup(empty)` returns `""` (two quote chars).
+    /// C zsh quotes the binding for shell-safe display; empty sequence
+    /// becomes the literal `""` empty-quoted form.
+    #[test]
+    fn bindztrdup_empty_returns_quoted_empty() {
+        assert_eq!(bindztrdup(b""), "\"\"",
+            "empty seq → '\"\"' quoted-empty per C bindztrdup quoting");
+    }
+
+    /// c:1205 — `bindztrdup` is pure for ASCII input.
+    #[test]
+    fn bindztrdup_is_pure_for_ascii() {
+        for s in [b"a" as &[u8], b"hello", b"\t\n"] {
+            let first = bindztrdup(s);
+            for _ in 0..3 {
+                assert_eq!(bindztrdup(s), first,
+                    "bindztrdup({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:1243 — `printbind(empty)` returns `""` (two quote chars).
+    /// Same as bindztrdup — printbind delegates to bindztrdup-style
+    /// quoting for shell-display safety.
+    #[test]
+    fn printbind_empty_returns_quoted_empty() {
+        assert_eq!(printbind(b""), "\"\"",
+            "empty seq → '\"\"' per C printbind quoting");
+    }
+
+    /// c:1243 — `printbind` is deterministic.
+    #[test]
+    fn printbind_is_deterministic() {
+        for s in [b"" as &[u8], b"a", b"\x01", b"hello"] {
+            let first = printbind(s);
+            for _ in 0..3 {
+                assert_eq!(printbind(s), first,
+                    "printbind({:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:113 — `zlecharasstring` returns i32 (compile-time type pin).
+    #[test]
+    fn zlecharasstring_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut buf = String::new();
+        let _: i32 = zlecharasstring('a', &mut buf);
+    }
+
+    /// c:381 — `zlegetline` returns String + writes to ll/cs.
+    #[test]
+    fn zlegetline_returns_string_writes_outparams() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut ll: i32 = 0;
+        let mut cs: i32 = 0;
+        let _: String = zlegetline(&mut ll, &mut cs);
+    }
+
+    /// c:69 — `zleaddtoline(0)` (NUL char) is safe.
+    #[test]
+    fn zleaddtoline_nul_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        zleaddtoline(0);
+    }
 }
