@@ -1254,4 +1254,56 @@ mod tests {
         assert_eq!(ingetc(), Some('本'));
         assert_eq!(ingetc(), None);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/input.c. Tests that capture KNOWN
+    // ZSHRS BUGS use #[ignore = "ZSHRS BUG: …"].
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `ingetc` after `inputsetline("")` returns None (empty input).
+    /// C `Src/input.c:247` returns -1 (EOF) when input is exhausted.
+    #[test]
+    fn ingetc_empty_input_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inputsetline("", 0);
+        assert_eq!(ingetc(), None, "empty input → None (EOF)");
+    }
+
+    /// `inungetc` puts a char back so the next `ingetc` returns it.
+    /// C `Src/input.c:360`.
+    #[test]
+    fn inungetc_then_ingetc_returns_pushed_char() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inputsetline("XY", 0);
+        let first = ingetc().unwrap();
+        assert_eq!(first, 'X');
+        inungetc(first);
+        assert_eq!(ingetc(), Some('X'), "inungetc'd byte comes back");
+        assert_eq!(ingetc(), Some('Y'), "then the normal next byte");
+    }
+
+    /// `ingetc` after EOF returns None on repeated calls (not stuck).
+    #[test]
+    fn ingetc_repeated_after_eof_stays_none() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inputsetline("A", 0);
+        assert_eq!(ingetc(), Some('A'));
+        assert_eq!(ingetc(), None);
+        assert_eq!(ingetc(), None, "repeated EOF → still None");
+        assert_eq!(ingetc(), None);
+    }
+
+    /// `inerrflush` clears any pending input buffer without panic.
+    /// C `Src/input.c:455` — idempotent flush.
+    #[test]
+    fn inerrflush_is_safe_to_call_multiple_times() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inerrflush();
+        inerrflush();
+        inerrflush();
+    }
 }

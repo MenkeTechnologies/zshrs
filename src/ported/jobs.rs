@@ -5251,4 +5251,79 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(sigmsg(libc::SIGPIPE), "broken pipe");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/jobs.c. Tests that capture KNOWN ZSHRS
+    // BUGS use #[ignore = "ZSHRS BUG: …"].
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `initjob` must SKIP index 0 (the shell itself) when picking a
+    /// slot. C `Src/jobs.c:1865-1867`:
+    ///   `for (i = 1; i <= maxjob; i++)`
+    /// starts at 1.
+    /// ZSHRS BUG: Rust port at jobs.rs:1874 uses `enumerate()` starting
+    /// at 0 — would reuse the shell's own slot if jobtab[0] is empty,
+    /// corrupting parent-shell job tracking.
+    #[test]
+    #[ignore = "ZSHRS BUG: initjob iterates from index 0; C skips index 0 (jobs.c:1865, `i=1`) reserved for the shell process itself"]
+    fn initjob_skips_index_zero_reserved_for_shell() {
+        let _g = crate::test_util::global_state_lock();
+        // Fresh table with index 0 empty. C would skip it and add a
+        // new slot at index 1. Rust off-by-one would return 0.
+        let mut jt: Vec<job> = vec![job::new(), job::new(), job::new()];
+        // All slots empty (stat=0).
+        let idx = initjob(&mut jt);
+        assert_ne!(
+            idx, 0,
+            "initjob must NOT return index 0 (shell slot); got {idx}"
+        );
+        assert!(idx >= 1, "first available slot is index >= 1");
+    }
+
+    /// `initjob` returning -1 on table-full failure. C jobs.c:1875
+    /// emits `zerr("job table full…")` and returns -1.
+    /// ZSHRS BUG: Rust port at jobs.rs:1874 returns `usize` so no
+    /// negative value possible — fall-through expands the Vec
+    /// silently instead.
+    #[test]
+    #[ignore = "ZSHRS BUG: initjob signature returns usize (Rust) but C returns int with -1 sentinel on table-full (jobs.c:1875)"]
+    fn initjob_returns_negative_one_on_full_table() {
+        // Cannot exercise -1 return — Rust sig is `-> usize`.
+        // Pin the contract: when this test starts passing, the
+        // signature has been corrected to `-> i32`.
+        panic!("initjob returns usize — can't return -1; signature divergence (c:1875)");
+    }
+
+    /// `findproc` with pid=-1 (impossible pid) returns None.
+    /// Already covered but pin the never-match path explicitly.
+    #[test]
+    fn findproc_invalid_pid_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let jt: Vec<job> = vec![job::new()];
+        assert!(findproc(&jt, -1, false).is_none());
+    }
+
+    /// `findproc` on empty jobtab returns None (no panic on empty
+    /// slice; C `for (i=1; i<=maxjob; i++)` with maxjob=0 skips loop).
+    #[test]
+    fn findproc_empty_jobtab_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let jt: Vec<job> = Vec::new();
+        assert!(findproc(&jt, 1234, false).is_none());
+    }
+
+    /// `getsigname(0)` returns "EXIT" — pseudo-signal index 0 is the
+    /// EXIT trap target in zsh. C jobs.c:3392-3393 sigs[0]="EXIT".
+    #[test]
+    fn getsigname_zero_returns_exit_pseudo_signal() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getsigname(0), "EXIT");
+    }
+
+    /// `getsigname(libc::SIGHUP)` returns "HUP" without the SIG prefix.
+    #[test]
+    fn getsigname_sighup_returns_hup_without_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getsigname(libc::SIGHUP), "HUP");
+    }
 }

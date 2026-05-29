@@ -9439,4 +9439,76 @@ esac"#;
         let r = parse("( echo a )");
         assert!(r.is_ok(), "subshell parses cleanly");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/parse.c. Tests that capture KNOWN
+    // ZSHRS BUGS use #[ignore = "ZSHRS BUG: …"].
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `empty_eprog(p)` returns true on an eprog with empty `prog`.
+    /// C `Src/parse.c:584`:
+    ///   `return (!p || !p->prog || *p->prog == WCB_END());`
+    /// Rust port at parse.rs:685 — `p.prog.is_empty() || p.prog[0] == WCB_END()`.
+    #[test]
+    fn empty_eprog_empty_prog_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        let p = crate::ported::zsh_h::eprog::default();
+        assert!(empty_eprog(&p), "empty prog vec → empty_eprog true");
+    }
+
+    /// `empty_eprog(p)` returns true when first wordcode is WCB_END.
+    /// C: `*p->prog == WCB_END()`.
+    #[test]
+    fn empty_eprog_first_wcb_end_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        let mut p = crate::ported::zsh_h::eprog::default();
+        p.prog.push(WCB_END());
+        assert!(empty_eprog(&p), "prog[0]==WCB_END → empty_eprog true");
+    }
+
+    /// `empty_eprog(p)` returns false for non-empty non-END prog.
+    #[test]
+    fn empty_eprog_non_empty_non_end_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        let mut p = crate::ported::zsh_h::eprog::default();
+        // Push some non-END wordcode (1 is arbitrary non-zero, not WCB_END).
+        p.prog.push(1);
+        assert!(!empty_eprog(&p), "non-END first opcode → false");
+    }
+
+    /// `ecstrcode("")` returns a wordcode for the empty string. C
+    /// `Src/parse.c:346-ish` ecstrcode interns strings in `ecbuf`.
+    /// Pin: same call returns same wordcode (deterministic intern).
+    #[test]
+    fn ecstrcode_empty_string_returns_deterministic_code() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let a = ecstrcode("");
+        let b = ecstrcode("");
+        assert_eq!(a, b, "intern of '' must be deterministic");
+    }
+
+    /// `ecstrcode` of two different strings returns different codes.
+    #[test]
+    fn ecstrcode_distinct_strings_get_distinct_codes() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let a = ecstrcode("foo");
+        let b = ecstrcode("bar");
+        // Should differ — if equal, intern table collapsed two different
+        // strings to the same key (bug).
+        assert_ne!(a, b, "different strings must intern to different codes");
+    }
+
+    /// `parse_event(ENDINPUT)` on empty input returns None.
+    /// C `Src/parse.c:715-ish` — empty token stream → no program.
+    #[test]
+    #[ignore = "ZSHRS BUG: parse_event setup needs lex state — exact behavior on empty input verification pending"]
+    fn parse_event_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        // Empty input typically yields no program; needs lex state.
+        let r = parse_event(crate::ported::lex::ENDINPUT);
+        assert!(r.is_none(), "no tokens → no event");
+    }
 }
