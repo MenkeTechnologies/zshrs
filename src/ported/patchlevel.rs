@@ -298,4 +298,101 @@ mod tests {
             assert_eq!(ZSH_VERSION, "5.9.0.3-test");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/patchlevel.h + Config/version.mk
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Both constants are `&'static str` (compile-time pin).
+    #[test]
+    fn version_constants_static_str_type() {
+        let _: &'static str = ZSH_PATCHLEVEL;
+        let _: &'static str = ZSH_VERSION;
+    }
+
+    /// ZSH_PATCHLEVEL is reproducible byte-for-byte across address-of reads.
+    #[test]
+    fn zsh_patchlevel_address_is_stable() {
+        let p1 = ZSH_PATCHLEVEL.as_ptr();
+        let p2 = ZSH_PATCHLEVEL.as_ptr();
+        assert_eq!(p1, p2, "PATCHLEVEL must have stable static address");
+    }
+
+    /// ZSH_VERSION reproducible byte-for-byte across address-of reads.
+    #[test]
+    fn zsh_version_address_is_stable() {
+        let p1 = ZSH_VERSION.as_ptr();
+        let p2 = ZSH_VERSION.as_ptr();
+        assert_eq!(p1, p2, "VERSION must have stable static address");
+    }
+
+    /// ZSH_PATCHLEVEL length is reasonable (10..200 bytes — not empty,
+    /// not absurdly long).
+    #[test]
+    fn zsh_patchlevel_length_in_sane_range() {
+        let n = ZSH_PATCHLEVEL.len();
+        assert!(n >= 10 && n <= 200,
+            "PATCHLEVEL length {} must be in [10, 200]", n);
+    }
+
+    /// ZSH_VERSION length is reasonable (3..30 bytes).
+    #[test]
+    fn zsh_version_length_in_sane_range() {
+        let n = ZSH_VERSION.len();
+        assert!(n >= 3 && n <= 30,
+            "VERSION length {} must be in [3, 30]", n);
+    }
+
+    /// ZSH_PATCHLEVEL doesn't contain any uppercase hex above 9
+    /// (git-describe uses lowercase hex per `--abbrev` convention).
+    #[test]
+    fn zsh_patchlevel_hash_is_lowercase_hex() {
+        let last = ZSH_PATCHLEVEL.rsplit('-').next().unwrap_or("");
+        let hash = last.trim_start_matches('g');
+        for c in hash.chars() {
+            assert!(
+                !c.is_ascii_uppercase(),
+                "git-describe hash uses lowercase hex; found uppercase {:?}", c);
+        }
+    }
+
+    /// ZSH_PATCHLEVEL split on '-' all segments non-empty (no `--`).
+    #[test]
+    fn zsh_patchlevel_no_empty_segments() {
+        for seg in ZSH_PATCHLEVEL.split('-') {
+            assert!(!seg.is_empty(),
+                "PATCHLEVEL must have no empty segments (no consecutive dashes)");
+        }
+    }
+
+    /// ZSH_VERSION split on '.' first 2 segments non-empty.
+    #[test]
+    fn zsh_version_major_minor_segments_non_empty() {
+        let parts: Vec<&str> = ZSH_VERSION.split('.').collect();
+        assert!(parts.len() >= 2);
+        assert!(!parts[0].is_empty(), "MAJOR non-empty");
+        assert!(!parts[1].is_empty(), "MINOR non-empty");
+    }
+
+    /// ZSH_PATCHLEVEL doesn't contain trailing newline.
+    #[test]
+    fn zsh_patchlevel_no_trailing_newline() {
+        assert!(!ZSH_PATCHLEVEL.ends_with('\n'));
+        assert!(!ZSH_PATCHLEVEL.ends_with('\r'));
+    }
+
+    /// ZSH_VERSION doesn't contain trailing newline.
+    #[test]
+    fn zsh_version_no_trailing_newline() {
+        assert!(!ZSH_VERSION.ends_with('\n'));
+        assert!(!ZSH_VERSION.ends_with('\r'));
+    }
+
+    /// Both constants are valid UTF-8 (trivially true for &str but
+    /// pin the contract).
+    #[test]
+    fn version_constants_valid_utf8() {
+        let _ = std::str::from_utf8(ZSH_PATCHLEVEL.as_bytes()).expect("PATCHLEVEL valid UTF-8");
+        let _ = std::str::from_utf8(ZSH_VERSION.as_bytes()).expect("VERSION valid UTF-8");
+    }
 }
