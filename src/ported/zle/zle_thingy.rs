@@ -2608,4 +2608,133 @@ mod tests {
         let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         freethingynode("zshrs_never_thingy_xyz_abc");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_thingy.c lifecycle ops.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:108-113 — `makethingynode()` returns a Thingy with DISABLED
+    /// flag set + rc=0 (matches `zshcalloc` + explicit DISABLED).
+    #[test]
+    fn makethingynode_returns_disabled_and_rc_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let t = makethingynode();
+        assert_ne!(
+            t.flags & DISABLED,
+            0,
+            "fresh thingy must have DISABLED set per c:112"
+        );
+        assert_eq!(t.rc, 0, "fresh thingy must have rc=0 per zshcalloc + c:110");
+    }
+
+    /// c:138 — `refthingy(missing)` is a no-op (matches `if(th)` guard).
+    #[test]
+    fn refthingy_missing_name_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Doesn't panic, doesn't insert.
+        let before = thingytab().lock().unwrap().len();
+        refthingy("zshrs_never_thingy_for_refthingy_test");
+        let after = thingytab().lock().unwrap().len();
+        assert_eq!(before, after, "refthingy on missing must NOT insert");
+    }
+
+    /// c:147 — `unrefthingy(missing)` is a safe no-op.
+    #[test]
+    fn unrefthingy_missing_name_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // No panic = pass.
+        unrefthingy("zshrs_never_thingy_for_unref_test");
+    }
+
+    /// c:158 — `rthingy` creates entry on first call, increments rc on
+    /// each subsequent call. Pin: 3 calls → rc=3 (each call bumps).
+    #[test]
+    fn rthingy_repeated_calls_bump_refcount() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let name = "zshrs_rthingy_rc_test";
+        let _ = thingytab().lock().unwrap().remove(name);
+        rthingy(name);
+        rthingy(name);
+        rthingy(name);
+        let rc = thingytab().lock().unwrap().get(name).map(|t| t.rc);
+        assert_eq!(rc, Some(3), "3 rthingy calls → rc=3");
+        let _ = thingytab().lock().unwrap().remove(name);
+    }
+
+    /// c:169 — `rthingy_nocreate(missing)` returns false and does NOT
+    /// add an entry to the table.
+    #[test]
+    fn rthingy_nocreate_missing_returns_false_no_insert() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let name = "zshrs_rthingy_nocreate_test_missing";
+        let _ = thingytab().lock().unwrap().remove(name);
+        let r = rthingy_nocreate(name);
+        assert!(!r, "missing → false");
+        assert!(
+            !thingytab().lock().unwrap().contains_key(name),
+            "must NOT insert on lookup-only call"
+        );
+    }
+
+    /// c:169 — `rthingy_nocreate(existing)` returns true AND bumps rc.
+    #[test]
+    fn rthingy_nocreate_existing_bumps_rc() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let name = "zshrs_rthingy_nocreate_existing";
+        let _ = thingytab().lock().unwrap().remove(name);
+        rthingy(name); // create with rc=1
+        let rc_before = thingytab().lock().unwrap().get(name).map(|t| t.rc).unwrap_or(0);
+        let r = rthingy_nocreate(name);
+        assert!(r, "existing → true");
+        let rc_after = thingytab().lock().unwrap().get(name).map(|t| t.rc).unwrap_or(0);
+        assert_eq!(rc_after, rc_before + 1, "rc must increment by 1");
+        let _ = thingytab().lock().unwrap().remove(name);
+    }
+
+    /// c:147 — `unrefthingy` decrements rc and removes when rc hits 0.
+    #[test]
+    fn unrefthingy_at_last_ref_removes_entry() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let name = "zshrs_unref_last_test";
+        let _ = thingytab().lock().unwrap().remove(name);
+        rthingy(name); // rc=1
+        unrefthingy(name); // rc=0 → freed
+        assert!(
+            !thingytab().lock().unwrap().contains_key(name),
+            "rc=0 must remove entry"
+        );
+    }
+
+    /// c:147 — `unrefthingy` with rc>1 does NOT remove (decrement only).
+    #[test]
+    fn unrefthingy_with_rc_greater_one_decrements_only() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let name = "zshrs_unref_keepalive_test";
+        let _ = thingytab().lock().unwrap().remove(name);
+        rthingy(name); // rc=1
+        rthingy(name); // rc=2
+        unrefthingy(name); // rc=1 → keep
+        assert!(
+            thingytab().lock().unwrap().contains_key(name),
+            "rc=1 (after unref from 2) must remain"
+        );
+        let rc = thingytab().lock().unwrap().get(name).map(|t| t.rc).unwrap_or(99);
+        assert_eq!(rc, 1);
+        let _ = thingytab().lock().unwrap().remove(name);
+    }
 }
