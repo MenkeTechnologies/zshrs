@@ -1214,7 +1214,8 @@ pub fn zgetline() -> i32 {
         None => return 1,
     };
     // c:905 — `lineadd = stringaszleline(s, 0, &cc, NULL, NULL);`
-    let lineadd: Vec<char> = crate::ported::zle::zle_utils::stringaszleline(&s, 0, None, None, None);
+    let lineadd: Vec<char> =
+        crate::ported::zle::zle_utils::stringaszleline(&s, 0, None, None, None);
     let cc = lineadd.len();
     // c:907 — `spaceinline(cc);` — open `cc` slots at `zlecs`.
     spaceinline(cc as i32);
