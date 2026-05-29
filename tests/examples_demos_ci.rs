@@ -316,6 +316,31 @@ demo_test!(d157_observer_pattern, "157_observer_pattern.zsh");
 demo_test!(d158_simulate_random, "158_simulate_random.zsh");
 demo_test!(d159_bank_account, "159_bank_account.zsh");
 demo_test!(d160_zshrs_capabilities, "160_zshrs_capabilities.zsh");
+demo_test!(d161_dirstack, "161_dirstack.zsh");
+demo_test!(d162_umask_ulimit, "162_umask_ulimit.zsh");
+demo_test!(d163_quoting_flags, "163_quoting_flags.zsh");
+demo_test!(d164_z_split_shell, "164_z_split_shell.zsh");
+demo_test!(d165_print_advanced, "165_print_advanced.zsh");
+demo_test!(d166_glob_flags, "166_glob_flags.zsh");
+demo_test!(d167_mini_find, "167_mini_find.zsh");
+demo_test!(d168_mini_make, "168_mini_make.zsh");
+demo_test!(d169_markdown_to_text, "169_markdown_to_text.zsh");
+demo_test!(d170_regex_tester, "170_regex_tester.zsh");
+demo_test!(d171_moving_average, "171_moving_average.zsh");
+demo_test!(d172_password_check, "172_password_check.zsh");
+demo_test!(d173_anagram_finder, "173_anagram_finder.zsh");
+demo_test!(d174_number_to_words, "174_number_to_words.zsh");
+demo_test!(d175_ascii_chart, "175_ascii_chart.zsh");
+demo_test!(d176_game_of_life, "176_game_of_life.zsh");
+demo_test!(d177_days_between, "177_days_between.zsh");
+demo_test!(d178_maze_generator, "178_maze_generator.zsh");
+demo_test!(d179_lottery_sim, "179_lottery_sim.zsh");
+demo_test!(d180_calendar, "180_calendar.zsh");
+demo_test!(d181_fizzbuzz_variants, "181_fizzbuzz_variants.zsh");
+demo_test!(d182_progress_bar, "182_progress_bar.zsh");
+demo_test!(d183_word_frequency, "183_word_frequency.zsh");
+demo_test!(d184_simple_cron, "184_simple_cron.zsh");
+demo_test!(d185_final_recap, "185_final_recap.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -483,6 +508,31 @@ fn every_demo_in_dir_has_a_test() {
         "158_simulate_random.zsh",
         "159_bank_account.zsh",
         "160_zshrs_capabilities.zsh",
+        "161_dirstack.zsh",
+        "162_umask_ulimit.zsh",
+        "163_quoting_flags.zsh",
+        "164_z_split_shell.zsh",
+        "165_print_advanced.zsh",
+        "166_glob_flags.zsh",
+        "167_mini_find.zsh",
+        "168_mini_make.zsh",
+        "169_markdown_to_text.zsh",
+        "170_regex_tester.zsh",
+        "171_moving_average.zsh",
+        "172_password_check.zsh",
+        "173_anagram_finder.zsh",
+        "174_number_to_words.zsh",
+        "175_ascii_chart.zsh",
+        "176_game_of_life.zsh",
+        "177_days_between.zsh",
+        "178_maze_generator.zsh",
+        "179_lottery_sim.zsh",
+        "180_calendar.zsh",
+        "181_fizzbuzz_variants.zsh",
+        "182_progress_bar.zsh",
+        "183_word_frequency.zsh",
+        "184_simple_cron.zsh",
+        "185_final_recap.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
