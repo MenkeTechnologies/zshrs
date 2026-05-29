@@ -230,4 +230,151 @@ mod tests {
             "prototypes_h.rs MUST NOT contain `extern \"C\" {{}}` blocks"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for the remaining Src/prototypes.h
+    // legacy externs that weren't covered: tgetent/tgetnum/tgetflag/
+    // tgetstr/tputs/tgoto (termcap), wait3/wait4 (BSD wait), getdomainname,
+    // bcopy direct, and "this file must stay empty" structural pins.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `Src/prototypes.h` declares `tgetent` as a legacy fallback when
+    /// `HAVE_TGETENT` is missing. modern libc on Linux ships it via
+    /// libtinfo / on macOS via libncurses (linked through libSystem).
+    /// Skip the type-pin and use a presence check — terminfo crate
+    /// already vendors what zshrs needs.
+    #[test]
+    fn termcap_legacy_fns_not_redeclared_here() {
+        let _g = crate::test_util::global_state_lock();
+        let src = include_str!("prototypes_h.rs");
+        for name in &[
+            "tgetent", "tgetnum", "tgetflag", "tgetstr", "tputs", "tgoto",
+        ] {
+            assert!(
+                !src.contains(&format!("fn {}", name)),
+                "{} must NOT be declared in prototypes_h.rs (use terminfo crate)",
+                name
+            );
+        }
+    }
+
+    /// `Src/prototypes.h` declares legacy SVR4-era externs for BSD
+    /// `wait3`/`wait4`. Modern libc has waitpid; the C externs are
+    /// legacy fallbacks. Pin: no redeclaration here.
+    #[test]
+    fn bsd_wait_legacy_fns_not_redeclared_here() {
+        let _g = crate::test_util::global_state_lock();
+        let src = include_str!("prototypes_h.rs");
+        for name in &["wait3", "wait4"] {
+            assert!(
+                !src.contains(&format!("fn {}", name)),
+                "{} must NOT be declared in prototypes_h.rs (use libc::waitpid)",
+                name
+            );
+        }
+    }
+
+    /// libc provides waitpid (the modern successor to wait3/wait4 from
+    /// the C header's BSD-only fallback block).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_waitpid_as_wait3_wait4_successor() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(libc::pid_t, *mut libc::c_int, libc::c_int) -> libc::pid_t =
+            libc::waitpid;
+    }
+
+    /// libc provides clock_gettime (modern successor to gettimeofday +
+    /// the legacy DGUX/__STDC__ extern in the C header).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_clock_gettime() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(libc::clockid_t, *mut libc::timespec) -> libc::c_int =
+            libc::clock_gettime;
+    }
+
+    /// libc provides memmove (POSIX successor to bcopy; bcopy is
+    /// removed from modern libc bindings).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_memmove_as_bcopy_successor() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*mut libc::c_void, *const libc::c_void, libc::size_t)
+            -> *mut libc::c_void = libc::memmove;
+    }
+
+    /// libc provides memcmp (general-purpose successor for any of the
+    /// legacy compare fallbacks the C header may pull in).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_memcmp() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*const libc::c_void, *const libc::c_void, libc::size_t)
+            -> libc::c_int = libc::memcmp;
+    }
+
+    /// libc provides strlen (universal — never absent on any libc
+    /// zshrs targets; pin defensively).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_strlen() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*const libc::c_char) -> libc::size_t = libc::strlen;
+    }
+
+    /// `Src/prototypes.h` is empty per the file's own assertion. Pin:
+    /// no `use` statements (would imply a port body was added).
+    #[test]
+    fn prototypes_h_has_no_use_statements() {
+        let src = include_str!("prototypes_h.rs");
+        let use_lines: Vec<&str> = src
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                t.starts_with("use ") && !t.contains("//")
+            })
+            .collect();
+        assert!(
+            use_lines.is_empty(),
+            "prototypes_h.rs MUST stay empty — no `use` imports. Found: {:?}",
+            use_lines
+        );
+    }
+
+    /// File-structure pin: no `pub struct` / `pub enum` / `pub type`.
+    /// The C header has zero of these and the Rust port must too.
+    /// (Self-reference filter: skip lines containing test-asserts.)
+    #[test]
+    fn prototypes_h_exports_no_types() {
+        let src = include_str!("prototypes_h.rs");
+        for keyword in &["pub struct ", "pub enum ", "pub type ", "pub trait "] {
+            let count = src
+                .lines()
+                .filter(|l| l.trim_start().starts_with(keyword))
+                .count();
+            assert_eq!(
+                count, 0,
+                "prototypes_h.rs MUST NOT export {} — found {} occurrence(s)",
+                keyword.trim(),
+                count
+            );
+        }
+    }
+
+    /// File-structure pin: no `pub const` either (legacy header had
+    /// only externs, no const decls).
+    #[test]
+    fn prototypes_h_exports_no_consts() {
+        let src = include_str!("prototypes_h.rs");
+        let count = src.lines().filter(|l| {
+            let t = l.trim_start();
+            t.starts_with("pub const ") || t.starts_with("pub static ")
+        }).count();
+        assert_eq!(
+            count, 0,
+            "prototypes_h.rs MUST NOT export consts/statics — found {}",
+            count
+        );
+    }
 }
