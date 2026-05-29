@@ -920,4 +920,84 @@ mod tests {
             edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/ksh93.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:47 — `edcharsetfn(null, null)` is no-op (placeholder for the
+    /// SIGKEYBD trap interception; the body is just a comment in C).
+    /// Pin: single null call doesn't panic.
+    #[test]
+    fn edcharsetfn_single_null_call_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
+    }
+
+    /// c:60 — `matchgetfn(NULL)` returns empty Vec when `match` array
+    /// is unset (no $match parameter present).
+    #[test]
+    fn matchgetfn_null_pm_unset_match_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        // Without setting the "match" param, getaparam returns None →
+        // empty result.
+        crate::ported::params::unsetparam("match");
+        let r = matchgetfn(std::ptr::null_mut());
+        assert!(r.is_empty(), "no $match → empty vec");
+    }
+
+    /// c:212 — `ksh93_wrapper(null, null, null)` no panic on all-null.
+    #[test]
+    fn ksh93_wrapper_all_null_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = ksh93_wrapper(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+        );
+    }
+
+    /// c:491 — `setup_(NULL)` returns 0 (split per-hook).
+    #[test]
+    fn ksh93_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:514 — `boot_(NULL)` returns 0.
+    #[test]
+    fn ksh93_boot_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
+
+    /// c:536 — `cleanup_(NULL)` returns 0.
+    #[test]
+    fn ksh93_cleanup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+    }
+
+    /// c:595 — `finish_(NULL)` returns 0.
+    #[test]
+    fn ksh93_finish_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
+
+    /// c:499 — `features_(NULL, _)` returns 0 with features populated.
+    #[test]
+    fn ksh93_features_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let mut f = Vec::new();
+        assert_eq!(features_(std::ptr::null(), &mut f), 0);
+    }
+
+    /// c:507 — `enables_(NULL, _)` no panic.
+    #[test]
+    fn ksh93_enables_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
 }
