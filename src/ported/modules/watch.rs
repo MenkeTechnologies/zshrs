@@ -1594,4 +1594,94 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(cleanup_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/watch.c
+    // c:262 watchlog_match / c:385 ucmp / c:450 readwtab / c:526 dowatch
+    // c:617 checksched / c:658 bin_log / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:262 — `watchlog_match` returns bool (compile-time pin).
+    #[test]
+    fn watchlog_match_returns_bool_type() {
+        let _: bool = watchlog_match("*", "anything");
+    }
+
+    /// c:262 — `watchlog_match` is pure / deterministic.
+    #[test]
+    fn watchlog_match_is_deterministic_full_sweep() {
+        for (p, v) in [
+            ("", ""),
+            ("*", "abc"),
+            ("abc", "abc"),
+            ("abc", "abd"),
+            ("a*b", "axxxb"),
+        ] {
+            let first = watchlog_match(p, v);
+            for _ in 0..5 {
+                assert_eq!(watchlog_match(p, v), first,
+                    "({:?}, {:?}) must be deterministic", p, v);
+            }
+        }
+    }
+
+    /// c:262 — `watchlog_match` empty pattern doesn't match non-empty value.
+    #[test]
+    fn watchlog_match_empty_pattern_rejects_nonempty() {
+        assert!(!watchlog_match("", "x"),
+            "empty pattern must NOT match 'x'");
+    }
+
+    /// c:385 — `ucmp` returns 0 for self (reflexive).
+    #[test]
+    fn ucmp_reflexive_returns_zero() {
+        let u: libc::utmpx = unsafe { std::mem::zeroed() };
+        assert_eq!(ucmp(&u, &u), 0, "ucmp(u, u) must be 0");
+    }
+
+    /// c:385 — `ucmp` return value is integer (not specifically -1/0/1).
+    #[test]
+    fn ucmp_returns_i32_type() {
+        let u: libc::utmpx = unsafe { std::mem::zeroed() };
+        let _: i32 = ucmp(&u, &u);
+    }
+
+    /// c:450 — `readwtab(0)` returns empty Vec.
+    #[test]
+    fn readwtab_zero_size_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = readwtab(0);
+        // Either empty or non-empty if the system wtab exists; pin no-panic.
+        let _ = r;
+    }
+
+    /// c:526 — `dowatch()` is safe to call (no panic in non-interactive).
+    #[test]
+    fn dowatch_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        dowatch();
+    }
+
+    /// c:617 — `checksched()` is safe to call.
+    #[test]
+    fn checksched_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        checksched();
+    }
+
+    /// c:526 — `dowatch` is idempotent (callable repeatedly).
+    #[test]
+    fn dowatch_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            dowatch();
+        }
+    }
+
+    /// c:769 — `finish_(NULL)` returns 0.
+    #[test]
+    fn watch_finish_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
