@@ -2079,4 +2079,106 @@ mod tests {
         assert!(target.exists(), "directory was created");
         assert!(target.is_dir(), "result is a directory");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/files.c
+    // c:116 bin_sync / c:137 bin_mkdir / c:222 domkdir / c:275 bin_rmdir /
+    // c:347 bin_ln / c:757 bin_rm / c:845 bin_chmod / c:963 bin_chown
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:116 — `bin_sync` returns i32 (compile-time pin, alt).
+    #[test]
+    fn bin_sync_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_sync("sync", &[], &ops, 0);
+    }
+
+    /// c:116 — `bin_sync` is deterministic (always returns 0).
+    #[test]
+    fn bin_sync_always_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for _ in 0..10 {
+            assert_eq!(bin_sync("sync", &[], &ops, 0), 0,
+                "sync always returns 0");
+        }
+    }
+
+    /// c:137 — `bin_mkdir` no-args returns nonzero (usage error).
+    #[test]
+    fn bin_mkdir_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_mkdir("mkdir", &[], &ops, 0);
+        assert_ne!(r, 0, "mkdir no args → usage error");
+    }
+
+    /// c:275 — `bin_rmdir` no-args returns nonzero (usage error).
+    #[test]
+    fn bin_rmdir_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_rmdir("rmdir", &[], &ops, 0);
+        assert_ne!(r, 0, "rmdir no args → usage error");
+    }
+
+    /// c:347 — `bin_ln` no-args returns nonzero (usage error, alt).
+    #[test]
+    fn bin_ln_no_args_usage_error_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_ln("ln", &[], &ops, 0);
+        assert_ne!(r, 0, "ln no args → usage error");
+    }
+
+    /// c:757 — `bin_rm` no-args returns nonzero (usage error, alt).
+    #[test]
+    fn bin_rm_no_args_usage_error_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_rm("rm", &[], &ops, 0);
+        assert_ne!(r, 0, "rm no args → usage error");
+    }
+
+    /// c:845 — `bin_chmod` no-args returns nonzero (usage error, alt).
+    #[test]
+    fn bin_chmod_no_args_usage_error_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_chmod("chmod", &[], &ops, 0);
+        assert_ne!(r, 0, "chmod no args → usage error");
+    }
+
+    /// c:963 — `bin_chown` no-args returns nonzero (usage error, alt).
+    #[test]
+    fn bin_chown_no_args_usage_error_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_chown("chown", &[], &ops, 0);
+        assert_ne!(r, 0, "chown no args → usage error");
+    }
+
+    /// c:222 — `domkdir` on already-existing dir returns nonzero (EEXIST).
+    #[test]
+    fn domkdir_existing_dir_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = domkdir("mkdir", "/tmp", 0o755, 0);
+        assert_ne!(r, 0, "mkdir /tmp (already exists) must error");
+    }
+
+    /// c:222 — `domkdir` empty path returns nonzero (no path).
+    #[test]
+    fn domkdir_empty_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = domkdir("mkdir", "", 0o755, 0);
+        assert_ne!(r, 0, "mkdir empty path must error");
+    }
+
+    /// c:222 — `domkdir` returns i32 (compile-time pin, alt).
+    #[test]
+    fn domkdir_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = domkdir("mkdir", "/__nonexistent_xyz__", 0o755, 0);
+    }
 }
