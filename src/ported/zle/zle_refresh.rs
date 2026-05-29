@@ -3932,4 +3932,115 @@ mod tests {
             zwcputc(c);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_refresh.c
+    // c:33 ZR_memset / c:96 ZR_strcpy / c:143 ZR_strlen / c:230 ZR_strncmp /
+    // c:496 zwcwrite / c:1097 wpfxlen / c:1603 moveto / c:1629 tcmultout
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:33 — `ZR_memset` on empty slice is safe.
+    #[test]
+    fn zr_memset_empty_slice_no_panic() {
+        let mut buf: Vec<REFRESH_ELEMENT> = vec![];
+        ZR_memset(&mut buf, REFRESH_ELEMENT { chr: ' ', atr: 0 }, 0);
+    }
+
+    /// c:33 — `ZR_memset(buf, fill, n)` writes `fill` n times.
+    #[test]
+    fn zr_memset_writes_fill_value() {
+        let mut buf: Vec<REFRESH_ELEMENT> = vec![
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'b', atr: 0 },
+            REFRESH_ELEMENT { chr: 'c', atr: 0 },
+        ];
+        let fill = REFRESH_ELEMENT { chr: 'X', atr: 0 };
+        ZR_memset(&mut buf, fill, 3);
+        for e in &buf {
+            assert_eq!(e.chr, 'X', "ZR_memset must fill with X");
+        }
+    }
+
+    /// c:96 — `ZR_strcpy` empty src is safe.
+    #[test]
+    fn zr_strcpy_empty_src_no_panic() {
+        let mut dst: Vec<REFRESH_ELEMENT> = vec![
+            REFRESH_ELEMENT { chr: '\0', atr: 0 },
+        ];
+        ZR_strcpy(&mut dst, &[]);
+    }
+
+    /// c:230 — `ZR_strncmp(empty, empty, 0)` returns 0.
+    #[test]
+    fn zr_strncmp_empty_inputs_returns_zero() {
+        let r = ZR_strncmp(&[], &[], 0);
+        assert_eq!(r, 0, "empty + empty + 0 → 0");
+    }
+
+    /// c:230 — `ZR_strncmp` returns i32 (compile-time type pin).
+    #[test]
+    fn zr_strncmp_returns_i32_type() {
+        let _: i32 = ZR_strncmp(&[], &[], 0);
+    }
+
+    /// c:230 — empty + empty + nonzero cap still 0.
+    #[test]
+    fn zr_strncmp_empty_with_nonzero_cap_returns_zero() {
+        assert_eq!(ZR_strncmp(&[], &[], 5), 0);
+    }
+
+    /// c:496 — `zwcwrite("")` empty string is safe.
+    #[test]
+    fn zwcwrite_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        zwcwrite("");
+    }
+
+    /// c:1097 — `wpfxlen` returns usize (compile-time type pin).
+    #[test]
+    fn wpfxlen_returns_usize_type() {
+        let _: usize = wpfxlen(&[], &[]);
+    }
+
+    /// c:1603 — `moveto(0, 0)` returns void (compile-time type pin).
+    #[test]
+    fn moveto_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: () = moveto(0, 0);
+    }
+
+    /// c:1629 — `tcmultout(0, 0, 0)` returns i32 (compile-time type pin).
+    #[test]
+    fn tcmultout_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:143 — `ZR_strlen` returns usize (compile-time type pin).
+    #[test]
+    fn zr_strlen_returns_usize_type_pin2() {
+        let _: usize = ZR_strlen(&[]);
+    }
+
+    /// c:143 — `ZR_strlen` is pure across 4 inputs.
+    #[test]
+    fn zr_strlen_pure_full_sweep() {
+        let cases: Vec<Vec<REFRESH_ELEMENT>> = vec![
+            vec![],
+            vec![REFRESH_ELEMENT { chr: 'a', atr: 0 }],
+            vec![REFRESH_ELEMENT { chr: '\0', atr: 0 }],
+            vec![REFRESH_ELEMENT { chr: 'x', atr: 0 },
+                 REFRESH_ELEMENT { chr: 'y', atr: 0 }],
+        ];
+        for c in &cases {
+            let first = ZR_strlen(c);
+            for _ in 0..3 {
+                assert_eq!(ZR_strlen(c), first,
+                    "ZR_strlen must be pure");
+            }
+        }
+    }
 }
