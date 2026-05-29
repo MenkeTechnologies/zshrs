@@ -701,7 +701,11 @@ pub fn optlookup(name: &str) -> i32 {
 /// resolves the canonical name via `optno_by_name`.
 pub fn optlookupc(c: char) -> i32 {
     // c:721
-    let letters = if isset(optlookup("shoptionletters")) {
+    // c:721 — `isset(SHOPTIONLETTERS)`. Use the const directly; the
+    // previous code did `isset(optlookup("shoptionletters"))` which
+    // is the same value but pays a hash lookup per call. C uses the
+    // optno constant inline.
+    let letters = if isset(crate::ported::zsh_h::SHOPTIONLETTERS) {
         KSH_LETTERS
     } else {
         zshletters
@@ -761,8 +765,12 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
         // the current value, the call is a no-op success (return 0);
         // otherwise reject (return -1).
         if idx == INTERACTIVE || idx == SHINSTDIN || idx == SINGLECOMMAND {
-            let cur_name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
-            if let Some(name) = cur_name {
+            // c:746-749 — reverse-lookup name from optno via opt_name
+            // (the canonical reverse mapping). Was doing a linear
+            // scan over ZSH_OPTIONS_SET calling optlookup on each —
+            // O(N) hash lookups per call.
+            let name = crate::ported::zsh_h::opt_name(idx);
+            if !name.is_empty() {
                 let cur = opt_state_get(name).unwrap_or(false);
                 if cur as i32 == value {
                     return 0; // c:749 already matches
@@ -786,9 +794,10 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
         // option flag without actually acquiring the process group,
         // leaving job control half-broken.
         if idx == MONITOR && value != 0 {
-            // c:851
-            let cur_name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
-            if let Some(name) = cur_name {
+            // c:851 — reverse-lookup via opt_name instead of linear
+            // scan + per-name optlookup.
+            let name = crate::ported::zsh_h::opt_name(idx);
+            if !name.is_empty() {
                 let cur = opt_state_get(name).unwrap_or(false);
                 if cur as i32 == value {
                     // c:852 no-op
@@ -902,7 +911,11 @@ pub fn dashgetfn() -> String {
     // the `$-` string. Match C exactly with FIRST_OPT..=LAST_OPT.
     const FIRST_OPT: u8 = b'0'; // c:289
     const LAST_OPT: u8 = b'y'; // c:290
-    let letters = if isset(optlookup("shoptionletters")) {
+    // c:721 — `isset(SHOPTIONLETTERS)`. Use the const directly; the
+    // previous code did `isset(optlookup("shoptionletters"))` which
+    // is the same value but pays a hash lookup per call. C uses the
+    // optno constant inline.
+    let letters = if isset(crate::ported::zsh_h::SHOPTIONLETTERS) {
         KSH_LETTERS
     } else {
         zshletters
@@ -1024,7 +1037,11 @@ pub fn printoptionlist() {
                                  // tracking on each option, so the alias walk emits nothing here.
     println!();
     println!("Option letters:"); // c:949
-    let letters = if isset(optlookup("shoptionletters")) {
+    // c:721 — `isset(SHOPTIONLETTERS)`. Use the const directly; the
+    // previous code did `isset(optlookup("shoptionletters"))` which
+    // is the same value but pays a hash lookup per call. C uses the
+    // optno constant inline.
+    let letters = if isset(crate::ported::zsh_h::SHOPTIONLETTERS) {
         KSH_LETTERS
     } else {
         zshletters
@@ -1071,11 +1088,10 @@ pub fn printoptionlist_printequiv(optno: i32) {
     let isneg = optno < 0; // c:971
     let abs_optno = if isneg { -optno } else { optno }; // c:974
     let prefix = if isneg { "no-" } else { "" }; // c:975
-    let name = ZSH_OPTIONS_SET
-        .iter()
-        .find(|n| optlookup(n) == abs_optno)
-        .copied()
-        .unwrap_or("?"); // c:976 optns[optno-1].node.nam
+    // c:976 — `optns[optno-1].node.nam`. Reverse-lookup via opt_name
+    // instead of linear scan + per-name optlookup.
+    let name = crate::ported::zsh_h::opt_name(abs_optno);
+    let name = if name.is_empty() { "?" } else { name };
     println!("  equivalent to --{}{}", prefix, name); // c:975
 }
 

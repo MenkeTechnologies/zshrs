@@ -400,7 +400,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
             if handletrap(libc::SIGPIPE) == 0 {
                 // c:436-441 — non-interactive exits immediately; an
                 // interactive non-tty also exits via zexit.
-                let interact = isset(optlookup("interactive"));
+                let interact = isset(INTERACTIVE);
                 if !interact {
                     unsafe {
                         libc::_exit(libc::SIGPIPE);
@@ -434,8 +434,8 @@ extern "C" fn zhandler(sig: libc::c_int) {
             if handletrap(libc::SIGINT) == 0 {
                 // c:454-456 — PRIVILEGED+INTERACTIVE during a signal-
                 // noerrexit window: immediate exit.
-                let privileged = isset(optlookup("privileged"));
-                let interactive = isset(optlookup("interactive"));
+                let privileged = isset(PRIVILEGED);
+                let interactive = isset(INTERACTIVE);
                 if privileged && interactive {
                     zexit(libc::SIGINT, ZEXIT_SIGNAL);
                 }

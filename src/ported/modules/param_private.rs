@@ -41,7 +41,7 @@ use crate::ported::utils::{zerr, zwarn, zwarnnam};
 use crate::ported::zsh_h::{
     eprog, features, funcwrap, hashnode, hashtable, isset, module, options, param, HashTable,
     MAX_OPS, OPT_ISSET, PM_AUTOLOAD, PM_DECLARED, PM_HIDE, PM_NAMEREF, PM_NORESTORE, PM_READONLY,
-    PM_REMOVABLE, PM_RESTRICTED, PM_RO_BY_DESIGN, PM_SPECIAL, PM_UNSET,
+    PM_REMOVABLE, PM_RESTRICTED, PM_RO_BY_DESIGN, PM_SPECIAL, PM_UNSET, WARNCREATEGLOBAL,
 };
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
@@ -287,7 +287,7 @@ pub fn bin_private(
     let locallevel2 = locallevel.load(Ordering::Relaxed);
     if locallevel2 == 0 {
         // c:235
-        let warn = isset(optlookup("warncreateglobal"));
+        let warn = isset(WARNCREATEGLOBAL);
         if warn {
             // c:236
             zwarnnam(nam, "invalid local scope, using globals"); // c:237

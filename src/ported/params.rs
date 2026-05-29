@@ -60,8 +60,8 @@ use crate::ported::zsh_h::{
     VALFLAG_EMPTY, VALFLAG_INV, VALFLAG_SUBST, WARNCREATEGLOBAL, WARNNESTEDVAR,
 };
 use crate::ported::zsh_h::{
-    HashNode, Inbrack, Meta, CBASES, CHASELINKS, HFILE_USE_OPTIONS, OCTALZEROES, PM_LOWER,
-    PRIVILEGED, SCANPM_ASSIGNING,
+    HashNode, Inbrack, Meta, CBASES, CHASELINKS, HFILE_USE_OPTIONS, INTERACTIVE, OCTALZEROES,
+    PM_LOWER, PRIVILEGED, SCANPM_ASSIGNING,
 };
 use crate::ported::zsh_system_h::DEFAULT_TIMEFMT;
 use crate::{DPUTS, DPUTS2};
@@ -3142,7 +3142,7 @@ pub fn fetchvalue<'a>(
             }
         } else if (scanflags & SCANPM_ASSIGNING as i32) == 0
             && v.scanflags != 0
-            && isset(optlookup("ksharrays"))
+            && isset(KSHARRAYS)
         {
             // c:2294-2296 — KSHARRAYS implicit `[0]` for bare arr.
             v.end = 1;
@@ -7645,7 +7645,7 @@ pub fn underscoregetfn() -> String {
 pub fn term_reinit_from_pm() {
     // c:5163
     // c:5167 — `if (unset(INTERACTIVE) || !*term) termflags |= TERM_UNKNOWN;`
-    let interactive = isset(optlookup("interactive"));
+    let interactive = isset(INTERACTIVE);
     let term = term_lock().lock().map(|s| s.clone()).unwrap_or_default();
     if !interactive || term.is_empty() {
         // c:5167

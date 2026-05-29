@@ -93,7 +93,9 @@ use crate::ported::zsh_h::{
     PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD,
     PRINT_WITH_NAMESPACE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TRAP_STATE_FORCE_RETURN,
     TRAP_STATE_PRIMED, TYPESETSILENT, TYPESET_OPTSTR, XTRACE, ZEXIT_DEFERRED, ZEXIT_NORMAL,
-    ZEXIT_SIGNAL, ZSIG_FUNC,
+    ZEXIT_SIGNAL, ZSIG_FUNC, AUTOPUSHD, BSDECHO, CDABLEVARS, CHASELINKS, CHECKRUNNINGJOBS,
+    GLOBALEXPORT, KSHARRAYS, LOGINSHELL, POSIXCD, POSIXTRAPS, PUSHDIGNOREDUPS, PUSHDMINUS,
+    PUSHDSILENT, PUSHDTOHOME, RCQUOTES, SHINSTDIN, VERBOSE,
 };
 #[allow(unused_imports)]
 use crate::zwc::ZwcFile;
@@ -1041,10 +1043,8 @@ pub fn bin_set(
         && !argv.is_empty() && argv[0] == "-"
     {
         // c:610-611 — `dosetopt(VERBOSE, 0, 0, opts); dosetopt(XTRACE, 0, 0, opts);`
-        let v = optlookup("verbose");
-        let x = optlookup("xtrace");
-        dosetopt(v, 0, 0); // c:610
-        dosetopt(x, 0, 0); // c:611
+        dosetopt(VERBOSE, 0, 0); // c:610
+        dosetopt(XTRACE, 0, 0); // c:611
         if argv.len() == 1 {
             return 0;
         } // c:612-613
@@ -1145,7 +1145,7 @@ pub fn bin_set(
                     idx += 1;
                     break 'outer;
                 }
-                let ksharrays = isset(optlookup("ksharrays"));
+                let ksharrays = isset(KSHARRAYS);
                 if !ksharrays {
                     // c:653
                     idx += 1; // c:655 args++
@@ -1327,7 +1327,7 @@ pub fn bin_pwd(
     ops: &options,
     _func: i32,
 ) -> i32 {
-    let chaselinks = isset(optlookup("chaselinks"));
+    let chaselinks = isset(CHASELINKS);
     // c:730-731 — `if (OPT_ISSET(ops,'r') || OPT_ISSET(ops,'P') ||
     //               (isset(CHASELINKS) && !OPT_ISSET(ops,'L')))`
     if OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'P')                          // c:730
@@ -1501,7 +1501,7 @@ pub fn bin_cd(
     // c:846-847 — `chasinglinks = OPT_ISSET(ops,'P') ||
     //              (isset(CHASELINKS) && !OPT_ISSET(ops,'L'));`
     let chase = OPT_ISSET(ops, b'P')                                         // c:846
-        || (isset(optlookup("chaselinks"))
+        || (isset(CHASELINKS)
             && !OPT_ISSET(ops, b'L'));
     CHASINGLINKS.store(chase as i32, Relaxed);
 
@@ -1568,13 +1568,13 @@ pub fn bin_cd(
     //   * BIN_CD: dirstack unchanged unless AUTO_PUSHD is set, in
     //     which case the CD behaves like a pushd.
     {
-        let autopushd = isset(optlookup("autopushd"));
+        let autopushd = isset(AUTOPUSHD);
         if let Ok(mut d) = DIRSTACK.lock() {
             if func == BIN_PUSHD || (func == BIN_CD && autopushd) {
                 // c:849 — push pre-cd pwd.
                 // c:1210-1218 — PUSHDIGNOREDUPS: skip duplicate of
                 // the new (current) pwd.
-                let dup_skip = isset(optlookup("pushdignoredups"))
+                let dup_skip = isset(PUSHDIGNOREDUPS)
                     && d.first().map(|s| *s == pre_pwd).unwrap_or(false);
                 if !dup_skip {
                     d.insert(0, pre_pwd.clone());
@@ -1675,7 +1675,7 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
         if func == BIN_PUSHD {
             // c:877 — bare pushd without PUSHDTOHOME swaps top two.
             // In Rust's pre-push-free model that's just dirstack[0].
-            let pushdtohome = isset(optlookup("pushdtohome"));
+            let pushdtohome = isset(PUSHDTOHOME);
             if !pushdtohome {
                 return DIRSTACK.lock().ok().and_then(|d| d.first().cloned());
             }
@@ -1693,14 +1693,14 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
         let arg = &argv[0];
         DOPRINTDIR.fetch_add(1, Relaxed); // c:891
                                           // c:892-908 — `+N`/`-N` numeric stack-index form.
-        let posixcd = isset(optlookup("posixcd"));
+        let posixcd = isset(POSIXCD);
         if !posixcd
             && arg.len() > 1
             && (arg.starts_with('+') || arg.starts_with('-'))
             && arg[1..].chars().all(|c| c.is_ascii_digit())
         {
             let dd: usize = arg[1..].parse().unwrap_or(0); // c:894
-            let pushdminus = isset(optlookup("pushdminus"));
+            let pushdminus = isset(PUSHDMINUS);
             let from_top = (arg.starts_with('+')) ^ pushdminus; // c:898
                                                                 // c:Src/builtin.c:904 — out-of-range stack index emits
                                                                 // "no such entry in dir stack". Previous Rust port
@@ -1781,7 +1781,7 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
     }
 
     // c:1015-1018 — check $cdpath for "." (presence flips hasdot).
-    let posix_cd = isset(optlookup("posixcd"));
+    let posix_cd = isset(POSIXCD);
     let cdpath_str = getsparam("CDPATH").unwrap_or_default();
     let cdpath: Vec<&str> = if cdpath_str.is_empty() {
         Vec::new()
@@ -1837,7 +1837,7 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
 pub fn cd_able_vars(s: &str) -> Option<String> {
     // c:1088
     // c:1088 — `if (isset(CDABLEVARS)) { ... }`
-    let cdablevars = isset(optlookup("cdablevars"));
+    let cdablevars = isset(CDABLEVARS);
     if !cdablevars {
         // c:1093
         return None;
@@ -1946,7 +1946,7 @@ pub fn cd_new_pwd(func: i32, _dir: usize, quiet: i32) {
     // PWD writer and this fn must NOT re-write either parameter.
 
     // c:1245-1252 — print dirstack on PUSHD/POPD (unless silent/quiet).
-    if quiet == 0 && func != BIN_CD && isset(INTERACTIVE) && !isset(optlookup("pushdsilent")) {
+    if quiet == 0 && func != BIN_CD && isset(INTERACTIVE) && !isset(PUSHDSILENT) {
         printdirstack();
     }
 
@@ -2049,7 +2049,7 @@ pub fn fixdir(src: &str) -> String {
 /// `'` as `'\''` (or `''` if RCQUOTES is set).
 pub fn printqt(str: &str) {
     // c:1399
-    let rcquotes = isset(optlookup("rcquotes")); // c:1399 isset(RCQUOTES)
+    let rcquotes = isset(RCQUOTES); // c:1399 isset(RCQUOTES)
     for ch in str.chars() {
         // c:1403
         if ch == '\'' {
@@ -3296,7 +3296,7 @@ pub fn bin_typeset(
 
     // c:2668-2670 — POSIX bash/ksh ignore -p with args under
     // readonly/export.
-    let posix = isset(optlookup("posixbuiltins"));
+    let posix = isset(POSIXBUILTINS);
     if (func == BIN_READONLY || func == BIN_EXPORT) && posix && hasargs {
         // c:2668
         ops.ind[b'p' as usize] = 0; // c:2670
@@ -3499,7 +3499,7 @@ pub fn bin_typeset(
         // c:2801
         if OPT_MINUS(&ops, b'x') {
             // c:2802
-            let globalexport = isset(optlookup("globalexport"));
+            let globalexport = isset(GLOBALEXPORT);
             let ll_v = locallevel_param.load(Relaxed);
             if globalexport {
                 // c:2803
@@ -6573,7 +6573,7 @@ pub fn bin_unhash(
         // c:4431
         if remove_one(&tab, arg) { // c:4432
              // freed
-        } else if func == BIN_UNSET && isset(optlookup("posixbuiltins")) {
+        } else if func == BIN_UNSET && isset(POSIXBUILTINS) {
             // c:4434 — POSIX: unset of nonexistent isn't an error.
             returnval = 0; // c:4435
         } else {
@@ -7106,7 +7106,7 @@ pub fn bin_print(
     // escape processing is OFF unless `-e` is explicitly passed.
     // Without bsd_echo (the SysV default), escapes process unless
     // `-E`/`-R`/`-r` is set.
-    let bsd_echo_active = echo_mode && isset(optlookup("bsdecho"));
+    let bsd_echo_active = echo_mode && isset(BSDECHO);
     let suppress_escapes = OPT_ISSET(ops, b'R')
         || OPT_ISSET(ops, b'r')
         || (echo_mode && OPT_ISSET(ops, b'E'))
@@ -7492,7 +7492,7 @@ pub fn bin_getopts(
     };
 
     // c:5724-5740 — illegal option: `?` reply, OPTIND fixed under POSIXBUILTINS.
-    let posix = isset(optlookup("posixbuiltins"));
+    let posix = isset(POSIXBUILTINS);
     let found = optstr.bytes().position(|b| b == opch);
     if opch == b':' || found.is_none() {
         // c:5724
@@ -7650,8 +7650,8 @@ pub fn bin_break(
         }
         // c:5839-5860 — BIN_RETURN.
         x if x == BIN_RETURN => {
-            let interactive = isset(optlookup("interactive"));
-            let shinstdin = isset(optlookup("shinstdin"));
+            let interactive = isset(INTERACTIVE);
+            let shinstdin = isset(SHINSTDIN);
             let ll_v = locallevel_param.load(Relaxed);
             let sourcelevel = crate::ported::init::sourcelevel.load(Relaxed);
             // c:5840-5841 — `if ((interactive && shinstdin) || locallevel || sourcelevel)`
@@ -7664,7 +7664,7 @@ pub fn bin_break(
                                              // `trap_return == -2`, promote to TRAP_STATE_FORCE_RETURN
                                              // and carry `lastval`. POSIXTRAPS + `implicit` opts out:
                                              // POSIX semantics keep $? from before the trap fired.
-                let posixtraps = isset(optlookup("posixtraps"));
+                let posixtraps = isset(POSIXTRAPS);
                 let cur_state = TRAP_STATE.load(Relaxed);
                 let cur_return = TRAP_RETURN.load(Relaxed);
                 if cur_state == TRAP_STATE_PRIMED      // c:5845
@@ -7705,7 +7705,7 @@ pub fn bin_break(
             // saw \"not login shell\" and rejected with that error
             // regardless of whether the shell was actually started
             // with \`-l\`.
-            let loginshell = isset(optlookup("loginshell"));
+            let loginshell = isset(LOGINSHELL);
             if !loginshell {
                 // c:5865
                 zwarnnam(name, "not login shell"); // c:5866
@@ -7812,7 +7812,7 @@ pub fn bin_break(
 ///   "you have running/stopped jobs" + set `stopmsg = 1`.
 pub fn checkjobs() {
     // c:5899
-    let checkrunning = isset(optlookup("checkrunningjobs"));
+    let checkrunning = isset(CHECKRUNNINGJOBS);
     // c:5901 — read the canonical jobs.rs THISJOB/MAXJOB globals.
     // The previous builtin.rs duplicate AtomicI32s for both never
     // synced with the jobs.rs Mutex<i32> values that the spawn /
@@ -8070,7 +8070,7 @@ pub fn bin_dot(
     }
 
     // c:6102-6121 — $path search (with PATHDIRS guard).
-    let pathdirs = isset(optlookup("pathdirs"));
+    let pathdirs = isset(PATHDIRS);
     if found_path.is_none() && (!arg0.contains('/') || (pathdirs && diddot < 2 && dotdot == 0)) {
         // c:6102
         // c:6103 — `for (pp = path; *pp; pp++)`. C walks the `path[]`
@@ -8994,7 +8994,7 @@ pub fn bin_test(
     for (k, v) in env::vars() {
         variables.entry(k).or_insert(v);
     }
-    let posix = isset(optlookup("posixbuiltins"));
+    let posix = isset(POSIXBUILTINS);
     let mut ret = crate::ported::cond::evalcond(&args_refs, &options, &variables, posix); // c:7305
 
     // c:7307-7308 — `if (ret < 2 && sense) ret = !ret;`
@@ -12392,7 +12392,7 @@ mod tests {
         let r = cd_able_vars("HOME/anything");
         // Without CDABLEVARS, must be None; with it, would be Some.
         // Accept either since the option default is the actual invariant.
-        if !isset(optlookup("cdablevars")) {
+        if !isset(CDABLEVARS) {
             assert!(r.is_none());
         }
     }
