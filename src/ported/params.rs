@@ -13444,4 +13444,106 @@ mod tests {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/params.c
+    // c:1403 issetvar / c:2152 setsparam / c:2317 isident / c:4099 getiparam
+    // c:4191 getsparam / c:4326 getsparam_u / c:4353 getaparam /
+    // c:5363 setaparam / c:5696 setiparam / c:5775 unsetparam
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1403 — `issetvar` returns i32 (compile-time type pin).
+    #[test]
+    fn issetvar_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = issetvar("anything");
+    }
+
+    /// c:1403 — `issetvar("__nonexistent")` returns 0 for unset.
+    #[test]
+    fn issetvar_unknown_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = issetvar("__never_a_real_var_xyz_zshrs__");
+        assert_eq!(r, 0, "unset var → 0");
+    }
+
+    /// c:4191 — `getsparam` returns Option<String>.
+    #[test]
+    fn getsparam_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = getsparam("anything");
+    }
+
+    /// c:4191 — `getsparam("__nonexistent")` returns None.
+    #[test]
+    fn getsparam_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getsparam("__never_a_real_var_xyz_zshrs__").is_none(),
+            "unknown var → None");
+    }
+
+    /// c:4099 — `getiparam` returns i64.
+    #[test]
+    fn getiparam_returns_i64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i64 = getiparam("anything");
+    }
+
+    /// c:4353 — `getaparam` returns Option<Vec<String>>.
+    #[test]
+    fn getaparam_returns_option_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Vec<String>> = getaparam("anything");
+    }
+
+    /// c:4326 — `getsparam_u("")` empty returns None.
+    #[test]
+    fn getsparam_u_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getsparam_u("").is_none(), "empty → None");
+    }
+
+    /// c:2152 — `setsparam`/`getsparam` round-trip.
+    #[test]
+    fn setsparam_getsparam_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let name = "ZSHRS_TEST_SETSPARAM_ROUND_TRIP";
+        let _ = unsetparam(name);
+        setsparam(name, "hello");
+        assert_eq!(getsparam(name).as_deref(), Some("hello"),
+            "setsparam/getsparam round-trip");
+        unsetparam(name);
+    }
+
+    /// c:5696 — `setiparam`/`getiparam` round-trip.
+    #[test]
+    fn setiparam_getiparam_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let name = "ZSHRS_TEST_SETIPARAM_ROUND_TRIP";
+        unsetparam(name);
+        setiparam(name, 42);
+        assert_eq!(getiparam(name), 42, "setiparam/getiparam round-trip");
+        unsetparam(name);
+    }
+
+    /// c:5363 — `setaparam`/`getaparam` round-trip preserves array.
+    #[test]
+    fn setaparam_getaparam_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let name = "ZSHRS_TEST_SETAPARAM_ROUND_TRIP";
+        unsetparam(name);
+        let v = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        setaparam(name, v.clone());
+        assert_eq!(getaparam(name), Some(v),
+            "setaparam/getaparam round-trip");
+        unsetparam(name);
+    }
+
+    /// c:5775 — `unsetparam` is idempotent on unset names.
+    #[test]
+    fn unsetparam_unknown_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("__never_real_var_xyz__");
+        unsetparam("__never_real_var_xyz__");
+    }
 }
