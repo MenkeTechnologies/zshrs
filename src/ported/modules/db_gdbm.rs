@@ -1670,4 +1670,126 @@ mod tests {
             assert_eq!(setup_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/db_gdbm.c helpers
+    // c:44 unmetafy_zalloc / c:43 remove_tied_name / c:695 append_tied_name
+    // c:799 myfreeparamnode + lifecycle types
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:44 — `unmetafy_zalloc` returns (String, usize) — compile-time
+    /// pin so a regen that drops the len slot gets caught.
+    #[test]
+    fn unmetafy_zalloc_returns_string_usize_tuple_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: (String, usize) = unmetafy_zalloc("hello");
+    }
+
+    /// c:44 — `unmetafy_zalloc` of ASCII string returns (str, str.len()).
+    /// No metafication needed for plain ASCII per zsh's metafy(3) spec.
+    #[test]
+    fn unmetafy_zalloc_ascii_passes_through_with_correct_len() {
+        let _g = crate::test_util::global_state_lock();
+        let (s, n) = unmetafy_zalloc("hello");
+        assert_eq!(s, "hello", "ASCII passes through unchanged");
+        assert_eq!(n, 5, "len must match byte count");
+    }
+
+    /// c:44 — `unmetafy_zalloc("")` returns ("", 0).
+    #[test]
+    fn unmetafy_zalloc_empty_returns_empty_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let (s, n) = unmetafy_zalloc("");
+        assert_eq!(s, "");
+        assert_eq!(n, 0);
+    }
+
+    /// c:44 — `unmetafy_zalloc` is deterministic for same input.
+    #[test]
+    fn unmetafy_zalloc_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = unmetafy_zalloc("test-string");
+        for _ in 0..3 {
+            assert_eq!(unmetafy_zalloc("test-string"), first,
+                "unmetafy_zalloc must be deterministic");
+        }
+    }
+
+    /// c:695 — `append_tied_name` returns i32 (compile-time type pin).
+    /// C body returns 0 at c:713.
+    #[test]
+    fn append_tied_name_returns_i32_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // Use unique sentinel name to avoid leakage from other tests.
+        let r = append_tied_name("__zshrs_test_append_tied_xyz__");
+        assert_eq!(r, 0, "append_tied_name returns 0 per c:713");
+        // Cleanup.
+        let _ = remove_tied_name("__zshrs_test_append_tied_xyz__");
+    }
+
+    /// c:43 — `remove_tied_name` returns i32 (compile-time type pin).
+    #[test]
+    fn remove_tied_name_returns_i32_zero_on_missing() {
+        let _g = crate::test_util::global_state_lock();
+        let r = remove_tied_name("__zshrs_test_never_tied_remove__");
+        assert_eq!(r, 0, "remove of never-tied name → 0 (no-op)");
+    }
+
+    /// c:695 + c:43 — append+remove round-trip leaves ZGDBM_TIED unchanged.
+    #[test]
+    fn append_then_remove_tied_name_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let name = "__zshrs_test_round_trip_xyz__";
+        let before = ZGDBM_TIED.lock().unwrap().len();
+        append_tied_name(name);
+        let after_add = ZGDBM_TIED.lock().unwrap().len();
+        assert_eq!(after_add, before + 1, "append grows by 1");
+        remove_tied_name(name);
+        let after_remove = ZGDBM_TIED.lock().unwrap().len();
+        assert_eq!(after_remove, before, "remove restores original count");
+    }
+
+    /// c:799 — `myfreeparamnode` on unknown param is safe no-op
+    /// (calls gdbmunsetfn which is already pinned safe on unknown DBs).
+    #[test]
+    fn myfreeparamnode_unknown_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        myfreeparamnode("__zshrs_test_never_param_freenode__", "key");
+        myfreeparamnode("", "");
+    }
+
+    /// c:927+ — every lifecycle hook returns i32 (compile-time type pin).
+    #[test]
+    fn db_gdbm_lifecycle_hooks_return_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let _: i32 = setup_(null);
+        let _: i32 = boot_(null);
+        let _: i32 = cleanup_(null);
+        let _: i32 = finish_(null);
+        let mut feats = Vec::new();
+        let _: i32 = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _: i32 = enables_(null, &mut enables);
+    }
+
+    /// c:695 — `append_tied_name` with empty string still records
+    /// (C code doesn't filter empty names — ztrdup("") is valid).
+    #[test]
+    fn append_tied_name_empty_string_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let before = ZGDBM_TIED.lock().unwrap().len();
+        append_tied_name("");
+        let after = ZGDBM_TIED.lock().unwrap().len();
+        assert!(after >= before, "append never shrinks the list");
+        // Cleanup.
+        let _ = remove_tied_name("");
+    }
+
+    /// c:43 — `remove_tied_name` empty string is safe.
+    #[test]
+    fn remove_tied_name_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = remove_tied_name("");
+    }
 }
