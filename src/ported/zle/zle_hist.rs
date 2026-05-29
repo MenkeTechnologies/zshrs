@@ -2774,4 +2774,57 @@ mod tests {
         let r = zlinefind("hello", 5, "x", 1, 2);
         assert_eq!(r, None, "starting past end → no match");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_hist.c
+    // c:114 zlinecmp / c:190 zlinefind / c:225 uphistory / c:370 upline /
+    // c:460 downline / c:585 historysearchbackward / c:686 historysearchforward /
+    // c:778 beginningofbufferorhistory / c:814 endofbufferorhistory / c:1028 zle_setline
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:114 — `zlinecmp` returns i32 (compile-time type pin).
+    #[test]
+    fn zlinecmp_returns_i32_type() {
+        let _: i32 = zlinecmp("a", "a");
+    }
+
+    /// c:114 — `zlinecmp("", "")` (both empty) returns 0 per c:120 prefix match.
+    #[test]
+    fn zlinecmp_both_empty_returns_zero() {
+        assert_eq!(zlinecmp("", ""), 0,
+            "both empty → match (returns 0 per identical-prefix rule)");
+    }
+
+    /// c:114 — `zlinecmp` is deterministic for arbitrary input.
+    #[test]
+    fn zlinecmp_is_deterministic() {
+        for (a, b) in [("a", "a"), ("abc", "abc"), ("abc", "ab"), ("", "x")] {
+            let first = zlinecmp(a, b);
+            for _ in 0..3 {
+                assert_eq!(zlinecmp(a, b), first,
+                    "zlinecmp({:?}, {:?}) must be deterministic", a, b);
+            }
+        }
+    }
+
+    /// c:190 — `zlinefind` returns Option<usize> (compile-time type pin).
+    #[test]
+    fn zlinefind_returns_option_usize_type() {
+        let _: Option<usize> = zlinefind("hello", 0, "h", 1, 2);
+    }
+
+    /// c:190 — `zlinefind` is deterministic for arbitrary input.
+    #[test]
+    fn zlinefind_is_deterministic() {
+        let first = zlinefind("hello", 0, "ell", 1, 2);
+        for _ in 0..5 {
+            assert_eq!(zlinefind("hello", 0, "ell", 1, 2), first,
+                "zlinefind must be deterministic");
+        }
+    }
+
+    // Note: uphistory/downhistory/historysearch* and friends read from
+    // the live ZLE input buffer and BLOCK on missing terminal input,
+    // hanging the test runner. Type-pin tests for those widgets must
+    // first set up a fake key-read substrate; deferred.
 }
