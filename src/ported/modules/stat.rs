@@ -1109,4 +1109,101 @@ mod tests {
         let r = statmodeprint(0o100_644, 0);
         assert_eq!(r, "", "no flags → empty output");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/stat.c statmodeprint
+    // file-type + rwx bit dispatch.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:84-103 — regular file (S_IFREG=0o100000) → '-' first char.
+    #[test]
+    fn statmodeprint_regular_file_starts_with_dash() {
+        let r = statmodeprint(0o100_644, STF_STRING);
+        assert!(r.starts_with('-'), "regular file → '-', got {:?}", r);
+    }
+
+    /// c:84-103 — directory (S_IFDIR=0o040000) → 'd' first char.
+    #[test]
+    fn statmodeprint_directory_starts_with_d() {
+        let r = statmodeprint(0o040_755, STF_STRING);
+        assert!(r.starts_with('d'), "directory → 'd', got {:?}", r);
+    }
+
+    /// c:84-103 — symlink (S_IFLNK=0o120000) → 'l' first char.
+    #[test]
+    fn statmodeprint_symlink_starts_with_l() {
+        let r = statmodeprint(0o120_777, STF_STRING);
+        assert!(r.starts_with('l'), "symlink → 'l', got {:?}", r);
+    }
+
+    /// c:84-103 — char device (S_IFCHR=0o020000) → 'c' first char.
+    #[test]
+    fn statmodeprint_char_device_starts_with_c() {
+        let r = statmodeprint(0o020_644, STF_STRING);
+        assert!(r.starts_with('c'), "char device → 'c', got {:?}", r);
+    }
+
+    /// c:84-103 — block device (S_IFBLK=0o060000) → 'b' first char.
+    #[test]
+    fn statmodeprint_block_device_starts_with_b() {
+        let r = statmodeprint(0o060_644, STF_STRING);
+        assert!(r.starts_with('b'), "block device → 'b', got {:?}", r);
+    }
+
+    /// c:84-103 — socket (S_IFSOCK=0o140000) → 's' first char.
+    #[test]
+    fn statmodeprint_socket_starts_with_s() {
+        let r = statmodeprint(0o140_777, STF_STRING);
+        assert!(r.starts_with('s'), "socket → 's', got {:?}", r);
+    }
+
+    /// c:84-103 — FIFO (S_IFIFO=0o010000) → 'p' first char.
+    #[test]
+    fn statmodeprint_fifo_starts_with_p() {
+        let r = statmodeprint(0o010_644, STF_STRING);
+        assert!(r.starts_with('p'), "FIFO → 'p', got {:?}", r);
+    }
+
+    /// c:84-103 — unknown ifmt → '?' fallback.
+    #[test]
+    fn statmodeprint_unknown_ifmt_returns_question_mark() {
+        let r = statmodeprint(0o070_000, STF_STRING);
+        assert!(r.starts_with('?'), "unknown ifmt → '?', got {:?}", r);
+    }
+
+    /// c:111 — setuid sticky 's' when execute bit set on user.
+    #[test]
+    fn statmodeprint_setuid_with_exec_shows_lowercase_s() {
+        // 0o4755 = setuid + rwxr-xr-x
+        let r = statmodeprint(0o104_755, STF_STRING);
+        // Position 3 (user exec) should be 's' (setuid + x).
+        assert_eq!(r.as_bytes()[3], b's', "setuid+x → 's', got {:?}", r);
+    }
+
+    /// c:111 — setuid uppercase 'S' when execute bit NOT set on user.
+    #[test]
+    fn statmodeprint_setuid_without_exec_shows_uppercase_S() {
+        // 0o4644 = setuid + rw-r--r--
+        let r = statmodeprint(0o104_644, STF_STRING);
+        assert_eq!(r.as_bytes()[3], b'S', "setuid-no-x → 'S', got {:?}", r);
+    }
+
+    /// c:115 — sticky bit 't' when other-exec set, 'T' when not.
+    #[test]
+    fn statmodeprint_sticky_bit_dispatch() {
+        // 0o1777 = sticky + rwxrwxrwx
+        let r1 = statmodeprint(0o101_777, STF_STRING);
+        assert_eq!(r1.as_bytes()[9], b't', "sticky+other-x → 't'");
+        // 0o1644 = sticky + rw-r--r--
+        let r2 = statmodeprint(0o101_644, STF_STRING);
+        assert_eq!(r2.as_bytes()[9], b'T', "sticky no other-x → 'T'");
+    }
+
+    /// c:228 — `statulprint(N)` formats as decimal.
+    #[test]
+    fn statulprint_decimal_format() {
+        assert_eq!(statulprint(0), "0");
+        assert_eq!(statulprint(42), "42");
+        assert_eq!(statulprint(u64::MAX), format!("{}", u64::MAX));
+    }
 }
