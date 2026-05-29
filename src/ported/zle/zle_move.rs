@@ -1896,4 +1896,107 @@ mod region_tests {
             "wcsiblank excludes '\\n' — cursor must stop at the newline"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests for Src/Zle/zle_move.c inccs/deccs/incpos/decpos
+    // primitive cursor walks.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:122 — `inccs()` advances ZLECS by 1.
+    #[test]
+    fn inccs_advances_zlecs_by_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "hello".chars().collect();
+        ZLELL.store(5, Ordering::SeqCst);
+        ZLECS.store(0, Ordering::SeqCst);
+        inccs();
+        assert_eq!(ZLECS.load(Ordering::SeqCst), 1);
+        inccs();
+        inccs();
+        assert_eq!(ZLECS.load(Ordering::SeqCst), 3);
+    }
+
+    /// c:133 — `deccs()` decrements ZLECS by 1.
+    #[test]
+    fn deccs_decrements_zlecs_by_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "hello".chars().collect();
+        ZLELL.store(5, Ordering::SeqCst);
+        ZLECS.store(3, Ordering::SeqCst);
+        deccs();
+        assert_eq!(ZLECS.load(Ordering::SeqCst), 2);
+        deccs();
+        assert_eq!(ZLECS.load(Ordering::SeqCst), 1);
+    }
+
+    /// c:143 — `incpos(&mut p)` advances p by 1 in-place.
+    #[test]
+    fn incpos_advances_arg_in_place() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut p = 5_usize;
+        incpos(&mut p);
+        assert_eq!(p, 6);
+        incpos(&mut p);
+        incpos(&mut p);
+        assert_eq!(p, 8);
+    }
+
+    /// c:152 — `decpos(&mut p)` decrements p by 1 in-place.
+    #[test]
+    fn decpos_decrements_arg_in_place() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut p = 10_usize;
+        decpos(&mut p);
+        assert_eq!(p, 9);
+        decpos(&mut p);
+        assert_eq!(p, 8);
+    }
+
+    /// c:122/133 — `inccs` then `deccs` round-trips.
+    #[test]
+    fn inccs_deccs_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "hello world".chars().collect();
+        ZLELL.store(11, Ordering::SeqCst);
+        ZLECS.store(5, Ordering::SeqCst);
+        let before = ZLECS.load(Ordering::SeqCst);
+        inccs();
+        deccs();
+        assert_eq!(ZLECS.load(Ordering::SeqCst), before, "inccs+deccs is identity");
+    }
+
+    /// c:170 — `backwardmetafiedchar()` at ZLECS=0 is safe no-op
+    /// (won't underflow ZLECS).
+    #[test]
+    fn backwardmetafiedchar_at_zero_no_underflow() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ZLECS.store(0, Ordering::SeqCst);
+        backwardmetafiedchar();
+        assert_eq!(ZLECS.load(Ordering::SeqCst), 0, "must not underflow past 0");
+    }
+
+    /// c:170 — `backwardmetafiedchar()` from positive position
+    /// decrements by 1.
+    #[test]
+    fn backwardmetafiedchar_decrements_from_positive() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ZLECS.store(5, Ordering::SeqCst);
+        backwardmetafiedchar();
+        assert_eq!(ZLECS.load(Ordering::SeqCst), 4);
+    }
+
+    /// `BMC_BUFSIZE` constant equals 6 (POSIX MB_CUR_MAX upper bound).
+    /// Pin so a regen that lowered it to 4 (UTF-8 max) would be caught
+    /// — some legacy multibyte encodings need 6 bytes per codepoint.
+    #[test]
+    fn bmc_bufsize_is_six() {
+        assert_eq!(BMC_BUFSIZE, 6, "MB_CUR_MAX legacy encoding ceiling");
+    }
 }
