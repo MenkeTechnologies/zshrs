@@ -1970,4 +1970,101 @@ mod tests {
         init_bltinmods();
         init_bltinmods();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/init.c
+    // c:747 tccapnams / c:756 tccap_get_name / c:1713 noop_function /
+    // c:1199 fallback_compctlread.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:747 — `tccapnams` table has exactly 39 entries (TC_COUNT).
+    #[test]
+    fn tccapnams_table_size_is_tc_count() {
+        assert_eq!(tccapnams.len(), 39, "TC_COUNT must be 39");
+    }
+
+    /// c:747 — every tccapnams entry is exactly 2 ASCII chars
+    /// (termcap 2-letter capability code convention).
+    #[test]
+    fn tccapnams_entries_are_two_ascii_chars() {
+        for (i, &n) in tccapnams.iter().enumerate() {
+            assert_eq!(n.len(), 2, "tccapnams[{}] = {:?} must be 2 chars", i, n);
+            assert!(
+                n.chars().all(|c| c.is_ascii_alphabetic()),
+                "tccapnams[{}] = {:?} must be ASCII alpha",
+                i,
+                n
+            );
+        }
+    }
+
+    /// c:747 — no duplicates in tccapnams.
+    #[test]
+    fn tccapnams_has_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for &n in tccapnams.iter() {
+            assert!(seen.insert(n), "duplicate tccap name: {:?}", n);
+        }
+    }
+
+    /// c:756 — `tccap_get_name(39)` is at TC_COUNT boundary → empty.
+    #[test]
+    fn tccap_get_name_at_tc_count_boundary_returns_empty() {
+        assert_eq!(tccap_get_name(39), "", "TC_COUNT bound returns empty");
+    }
+
+    /// c:756 — `tccap_get_name(38)` is last valid index → non-empty.
+    #[test]
+    fn tccap_get_name_last_valid_index_returns_nonempty() {
+        let n = tccap_get_name(38);
+        assert!(!n.is_empty(), "tccap_get_name(38) must be non-empty");
+        assert_eq!(n, tccapnams[38], "matches table");
+    }
+
+    /// c:756 — `tccap_get_name(usize::MAX)` is far out of range → empty.
+    #[test]
+    fn tccap_get_name_usize_max_returns_empty() {
+        assert_eq!(tccap_get_name(usize::MAX), "");
+    }
+
+    /// c:756 — `tccap_get_name` is a pure function.
+    #[test]
+    fn tccap_get_name_is_pure() {
+        for i in [0usize, 1, 5, 10, 38, 39, 100] {
+            let a = tccap_get_name(i);
+            let b = tccap_get_name(i);
+            assert_eq!(a, b, "tccap_get_name({}) must be deterministic", i);
+        }
+    }
+
+    /// c:1199 — `fallback_compctlread` returns 1 (failure) without args.
+    #[test]
+    fn fallback_compctlread_returns_one_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(fallback_compctlread(""), 1, "fallback always fails");
+        assert_eq!(fallback_compctlread("anything"), 1);
+    }
+
+    /// c:1713 — `noop_function` is a true no-op (no panic, no state change).
+    #[test]
+    fn noop_function_does_nothing_observable() {
+        for _ in 0..100 {
+            noop_function();
+        }
+    }
+
+    /// c:1720 — `noop_function_int` accepts any i32 without panic.
+    #[test]
+    fn noop_function_int_accepts_full_i32_range() {
+        for v in [i32::MIN, -1, 0, 1, 42, i32::MAX] {
+            noop_function_int(v);
+        }
+    }
+
+    /// c:1159 — `zleentry(0)` returns None (no live ZLE for cmd=0).
+    #[test]
+    fn zleentry_zero_cmd_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zleentry(0), None, "cmd=0 unwired without live ZLE");
+    }
 }
