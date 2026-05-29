@@ -1514,4 +1514,78 @@ mod tests {
             "histsize must be positive, got {DEFAULT_HISTSIZE}"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/config.h constants.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// PASSWD_FILE points to canonical /etc/passwd path.
+    #[test]
+    fn passwd_file_is_etc_passwd() {
+        assert_eq!(PASSWD_FILE, "/etc/passwd");
+    }
+
+    /// DEFAULT_FCEDIT is "vi" (zsh's traditional default fc editor).
+    #[test]
+    fn default_fcedit_is_vi() {
+        assert_eq!(DEFAULT_FCEDIT, "vi");
+    }
+
+    /// DEFAULT_TMPPREFIX is under /tmp.
+    #[test]
+    fn default_tmpprefix_under_tmp() {
+        assert!(
+            DEFAULT_TMPPREFIX.starts_with("/tmp"),
+            "got {:?}",
+            DEFAULT_TMPPREFIX
+        );
+    }
+
+    /// DEFAULT_READNULLCMD is non-empty.
+    #[test]
+    fn default_readnullcmd_non_empty() {
+        assert!(!DEFAULT_READNULLCMD.is_empty());
+    }
+
+    /// All GLOBAL_Z* config paths are under /etc.
+    #[test]
+    fn global_z_files_are_under_etc() {
+        for p in [
+            GLOBAL_ZLOGIN, GLOBAL_ZLOGOUT, GLOBAL_ZPROFILE,
+            GLOBAL_ZSHENV, GLOBAL_ZSHRC,
+        ] {
+            assert!(p.starts_with("/etc/"), "{:?} must be under /etc", p);
+        }
+    }
+
+    /// All GLOBAL_Z* paths are pairwise distinct.
+    #[test]
+    fn global_z_files_pairwise_distinct() {
+        let paths = [
+            GLOBAL_ZLOGIN, GLOBAL_ZLOGOUT, GLOBAL_ZPROFILE,
+            GLOBAL_ZSHENV, GLOBAL_ZSHRC,
+        ];
+        let unique: std::collections::HashSet<_> = paths.iter().copied().collect();
+        assert_eq!(unique.len(), paths.len(), "must be distinct");
+    }
+
+    /// HAVE_* flags are 0/1 (booleans as int).
+    #[test]
+    fn have_flags_are_zero_or_one() {
+        for f in [HAVE_ALLOCA, HAVE_ALLOCA_H, HAVE_ARC4RANDOM_BUF] {
+            assert!(f == 0 || f == 1, "HAVE_* must be 0 or 1, got {}", f);
+        }
+    }
+
+    /// DYNAMIC = 1 (Rust port supports module loading).
+    #[test]
+    fn dynamic_enabled() {
+        assert_eq!(DYNAMIC, 1);
+    }
+
+    /// USE_SUSPENDED enabled (zsh job-control suspend semantics).
+    #[test]
+    fn use_suspended_enabled() {
+        assert_eq!(USE_SUSPENDED, 1);
+    }
 }
