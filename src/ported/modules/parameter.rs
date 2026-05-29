@@ -229,6 +229,198 @@ mod paramtypestr_tests {
         // c:91-92 — PM_UNSET short-circuits to "".
         assert_eq!(paramtypestr(&make_pm(PM_UNSET, 0)), "");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/parameter.c:43-95
+    // paramtypestr modifier chain (every PM_* branch independently).
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:49 — PM_AUTOLOAD short-circuits to "undefined" regardless
+    /// of any other flags or type.
+    #[test]
+    fn paramtypestr_autoload_returns_undefined() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_AUTOLOAD, 0)), "undefined");
+        // Even combined with other flags — autoload wins.
+        assert_eq!(paramtypestr(&make_pm(PM_AUTOLOAD | PM_READONLY, 5)), "undefined");
+        assert_eq!(paramtypestr(&make_pm(PM_AUTOLOAD | PM_SCALAR, 0)), "undefined");
+    }
+
+    /// c:55 — PM_ARRAY alone → "array".
+    #[test]
+    fn paramtypestr_plain_array() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_ARRAY, 0)), "array");
+    }
+
+    /// c:56 — PM_INTEGER alone → "integer".
+    #[test]
+    fn paramtypestr_plain_integer() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_INTEGER, 0)), "integer");
+    }
+
+    /// c:57-58 — PM_EFLOAT and PM_FFLOAT both → "float".
+    #[test]
+    fn paramtypestr_both_float_types_render_as_float() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_EFLOAT, 0)), "float");
+        assert_eq!(paramtypestr(&make_pm(PM_FFLOAT, 0)), "float");
+    }
+
+    /// c:59 — PM_HASHED → "association".
+    #[test]
+    fn paramtypestr_hashed_renders_as_association() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_HASHED, 0)), "association");
+    }
+
+    /// c:65-66 — PM_LEFT modifier appends "-left".
+    #[test]
+    fn paramtypestr_left_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_SCALAR | PM_LEFT, 0)), "scalar-left");
+    }
+
+    /// c:67-68 — PM_RIGHT_B modifier appends "-right_blanks".
+    #[test]
+    fn paramtypestr_right_blanks_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            paramtypestr(&make_pm(PM_SCALAR | PM_RIGHT_B, 0)),
+            "scalar-right_blanks"
+        );
+    }
+
+    /// c:69-70 — PM_RIGHT_Z modifier appends "-right_zeros".
+    #[test]
+    fn paramtypestr_right_zeros_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            paramtypestr(&make_pm(PM_SCALAR | PM_RIGHT_Z, 0)),
+            "scalar-right_zeros"
+        );
+    }
+
+    /// c:71-72 — PM_LOWER modifier appends "-lower".
+    #[test]
+    fn paramtypestr_lower_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_SCALAR | PM_LOWER, 0)), "scalar-lower");
+    }
+
+    /// c:73-74 — PM_UPPER modifier appends "-upper".
+    #[test]
+    fn paramtypestr_upper_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_SCALAR | PM_UPPER, 0)), "scalar-upper");
+    }
+
+    /// c:75-76 — PM_READONLY modifier appends "-readonly".
+    #[test]
+    fn paramtypestr_readonly_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            paramtypestr(&make_pm(PM_SCALAR | PM_READONLY, 0)),
+            "scalar-readonly"
+        );
+    }
+
+    /// c:77-78 — PM_TAGGED modifier appends "-tag".
+    #[test]
+    fn paramtypestr_tagged_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_SCALAR | PM_TAGGED, 0)), "scalar-tag");
+    }
+
+    /// c:79-80 — PM_TIED modifier appends "-tied".
+    #[test]
+    fn paramtypestr_tied_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_SCALAR | PM_TIED, 0)), "scalar-tied");
+    }
+
+    /// c:81-82 — PM_EXPORTED modifier appends "-export".
+    #[test]
+    fn paramtypestr_exported_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            paramtypestr(&make_pm(PM_SCALAR | PM_EXPORTED, 0)),
+            "scalar-export"
+        );
+    }
+
+    /// c:83-84 — PM_UNIQUE modifier appends "-unique".
+    #[test]
+    fn paramtypestr_unique_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_ARRAY | PM_UNIQUE, 0)), "array-unique");
+    }
+
+    /// c:85-86 — PM_HIDE modifier appends "-hide".
+    #[test]
+    fn paramtypestr_hide_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_SCALAR | PM_HIDE, 0)), "scalar-hide");
+    }
+
+    /// c:87-88 — PM_HIDEVAL modifier appends "-hideval".
+    #[test]
+    fn paramtypestr_hideval_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            paramtypestr(&make_pm(PM_SCALAR | PM_HIDEVAL, 0)),
+            "scalar-hideval"
+        );
+    }
+
+    /// c:89-90 — PM_SPECIAL modifier appends "-special".
+    #[test]
+    fn paramtypestr_special_modifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            paramtypestr(&make_pm(PM_SCALAR | PM_SPECIAL, 0)),
+            "scalar-special"
+        );
+    }
+
+    /// c:63-64 — pm.level > 0 appends "-local" before other modifiers.
+    /// Pin order: local-first to match C's modifier-chain order.
+    #[test]
+    fn paramtypestr_level_one_adds_local() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(paramtypestr(&make_pm(PM_SCALAR, 1)), "scalar-local");
+        assert_eq!(paramtypestr(&make_pm(PM_INTEGER, 3)), "integer-local");
+    }
+
+    /// c:63-64 — pm.level = 0 does NOT add "-local". Pin to catch
+    /// off-by-one (would label every var as "-local" silently).
+    #[test]
+    fn paramtypestr_level_zero_does_not_add_local() {
+        let _g = crate::test_util::global_state_lock();
+        let r = paramtypestr(&make_pm(PM_SCALAR, 0));
+        assert!(!r.contains("local"), "level=0 must not include 'local', got: {}", r);
+    }
+
+    /// Combined modifier chain order: local → flags appear in C's
+    /// declaration order (left/right_b/right_z/lower/upper/readonly/
+    /// tag/tied/export/unique/hide/hideval/special).
+    /// Pin: PM_LEFT + PM_READONLY + PM_EXPORTED = "scalar-left-readonly-export".
+    #[test]
+    fn paramtypestr_modifier_chain_order_matches_c() {
+        let _g = crate::test_util::global_state_lock();
+        let pm = make_pm(PM_SCALAR | PM_LEFT | PM_READONLY | PM_EXPORTED, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-left-readonly-export");
+    }
+
+    /// c:48 — PM_UNSET wins over any modifier — short-circuits to "".
+    /// Pin: even if PM_READONLY etc. are set, PM_UNSET → "".
+    #[test]
+    fn paramtypestr_unset_wins_over_modifiers() {
+        let _g = crate::test_util::global_state_lock();
+        let pm = make_pm(PM_UNSET | PM_SCALAR | PM_READONLY, 0);
+        assert_eq!(paramtypestr(&pm), "", "PM_UNSET wins over modifiers");
+    }
 }
 
 // =====================================================================
