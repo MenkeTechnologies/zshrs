@@ -7266,4 +7266,98 @@ mod tests {
         assert!(!hasbraces("{", false));
         assert!(!hasbraces("{abc", false));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/glob.c
+    // c:950 qgetnum / c:994 qgetmodespec / c:1250 glob_exec_string /
+    // c:1351 checkglobqual / c:1539 hasbraces / c:1617 bracechardots /
+    // c:1802 matchpat / c:1899 getmatch / c:1505 file_type
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:950 — `qgetnum("")` empty returns None.
+    #[test]
+    fn qgetnum_empty_returns_none() {
+        assert!(qgetnum("").is_none(), "empty → None");
+    }
+
+    /// c:950 — `qgetnum` returns Option<(i64, &str)> (type pin).
+    #[test]
+    fn qgetnum_returns_option_i64_str_tuple_type() {
+        let _: Option<(i64, &str)> = qgetnum("42");
+    }
+
+    /// c:950 — `qgetnum("123")` returns Some((123, "")) (canonical decimal).
+    #[test]
+    fn qgetnum_canonical_decimal_parses() {
+        let r = qgetnum("123");
+        assert!(r.is_some(), "valid digits → Some");
+        let (n, rest) = r.unwrap();
+        assert_eq!(n, 123);
+        assert_eq!(rest, "");
+    }
+
+    /// c:994 — `qgetmodespec("")` empty returns None.
+    #[test]
+    fn qgetmodespec_empty_returns_none() {
+        assert!(qgetmodespec("").is_none());
+    }
+
+    /// c:1539 — `hasbraces("")` empty returns false.
+    #[test]
+    fn hasbraces_empty_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!hasbraces("", false));
+    }
+
+    /// c:1539 — `hasbraces` is pure (no side effects).
+    #[test]
+    fn hasbraces_is_pure() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["", "abc", "{", "{a,b}", "no braces"] {
+            let first = hasbraces(s, false);
+            for _ in 0..3 {
+                assert_eq!(hasbraces(s, false), first,
+                    "hasbraces({:?}, false) must be pure", s);
+            }
+        }
+    }
+
+    /// c:1505 — `file_type(0)` returns char (compile-time type pin).
+    #[test]
+    fn file_type_returns_char_type() {
+        let _: char = file_type(0);
+    }
+
+    /// c:1505 — `file_type` is pure for arbitrary mode.
+    #[test]
+    fn file_type_is_pure() {
+        for m in [0u32, 0o100000, 0o040000, 0o120000, 0o140000, 0o160000] {
+            let first = file_type(m);
+            for _ in 0..3 {
+                assert_eq!(file_type(m), first,
+                    "file_type({:o}) must be pure", m);
+            }
+        }
+    }
+
+    /// c:1802 — `matchpat("", "", false, false)` returns bool (type pin).
+    #[test]
+    fn matchpat_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = matchpat("", "", false, false);
+    }
+
+    /// c:1899 — `getmatch("", "", 0, 0, None)` returns String (type pin).
+    #[test]
+    fn getmatch_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = getmatch("", "", 0, 0, None);
+    }
+
+    /// c:1862 — `compgetmatch("")` empty returns Option<(String, i32)>.
+    #[test]
+    fn compgetmatch_returns_option_tuple_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<(String, i32)> = compgetmatch("");
+    }
 }
