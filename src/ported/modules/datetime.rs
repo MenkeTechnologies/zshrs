@@ -1029,4 +1029,95 @@ mod tests {
             assert_eq!(finish_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/datetime.c
+    // c:34 reverse_strftime / c:89 output_strftime / c:266 getcurrentsecs
+    // c:283 getcurrentrealtime / c:303 getcurrenttime
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:266 — `getcurrentsecs` is deterministic-ish (monotonic step bound).
+    #[test]
+    fn getcurrentsecs_two_calls_close_in_time() {
+        let _g = crate::test_util::global_state_lock();
+        let a = getcurrentsecs();
+        let b = getcurrentsecs();
+        assert!((b - a).abs() <= 2,
+            "two getcurrentsecs calls must be within 2 seconds");
+    }
+
+    /// c:283 — `getcurrentrealtime` returns f64 finite.
+    #[test]
+    fn getcurrentrealtime_returns_finite_f64() {
+        let _g = crate::test_util::global_state_lock();
+        let v = getcurrentrealtime();
+        assert!(v.is_finite(), "must be finite");
+        assert!(v > 0.0, "after epoch");
+    }
+
+    /// c:283 — `getcurrentrealtime` and `getcurrentsecs` agree on whole secs.
+    #[test]
+    fn getcurrentrealtime_floor_matches_getcurrentsecs() {
+        let _g = crate::test_util::global_state_lock();
+        let secs = getcurrentsecs() as f64;
+        let real = getcurrentrealtime();
+        // Allow 2 seconds drift since they may straddle the second boundary.
+        assert!((real - secs).abs() < 2.0,
+            "realtime {} and secs {} must agree within 2 sec", real, secs);
+    }
+
+    /// c:303 — `getcurrenttime` returns Vec<String> with second element parseable.
+    #[test]
+    fn getcurrenttime_second_element_is_nsec() {
+        let _g = crate::test_util::global_state_lock();
+        let v = getcurrenttime();
+        if v.len() >= 2 {
+            let nsec: Result<i64, _> = v[1].parse();
+            assert!(nsec.is_ok(), "second element {:?} must parse as i64", v[1]);
+            if let Ok(n) = nsec {
+                assert!(n >= 0, "nsec must be ≥ 0");
+            }
+        }
+    }
+
+    /// c:303 — `getcurrenttime` Vec length is exactly 2 (secs, nsec).
+    #[test]
+    fn getcurrenttime_length_is_two() {
+        let _g = crate::test_util::global_state_lock();
+        let v = getcurrenttime();
+        assert_eq!(v.len(), 2, "secs + nsec = 2 elements");
+    }
+
+    /// c:303 — `getcurrenttime` is deterministic in structure (always 2 elements).
+    #[test]
+    fn getcurrenttime_always_two_elements() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            assert_eq!(getcurrenttime().len(), 2);
+        }
+    }
+
+    /// c:34 — `reverse_strftime` returns i32 (compile-time type pin).
+    #[test]
+    fn reverse_strftime_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = reverse_strftime("strftime", &[], None, 0);
+    }
+
+    /// c:34 — `reverse_strftime` empty argv returns nonzero (usage error).
+    #[test]
+    fn reverse_strftime_empty_argv_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = reverse_strftime("strftime", &[], None, 0);
+        assert_ne!(r, 0, "empty argv → usage error");
+    }
+
+    /// c:266 — `getcurrentsecs` is positive for many calls.
+    #[test]
+    fn getcurrentsecs_always_positive() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert!(getcurrentsecs() > 0);
+        }
+    }
 }
