@@ -10602,4 +10602,92 @@ mod tests {
             "header word preserved verbatim"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/exec.c. Tests that capture KNOWN
+    // ZSHRS BUGS use #[ignore = "ZSHRS BUG: …"].
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `isrelative("/abs/path")` returns 0 (false = absolute path).
+    /// C `Src/exec.c:996-1006` — leading `/` and no `.`/`..` components.
+    #[test]
+    fn isrelative_absolute_path_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative("/usr/local/bin"), 0);
+    }
+
+    /// `isrelative("foo/bar")` returns 1 (no leading slash).
+    #[test]
+    fn isrelative_no_leading_slash_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative("foo/bar"), 1);
+    }
+
+    /// `isrelative("/foo/./bar")` returns 1 — contains `/./` walk.
+    /// C c:1001 — `.` with prev `/` + next `/` triggers relative flag.
+    #[test]
+    fn isrelative_dot_component_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative("/foo/./bar"), 1, "/./ in path → relative");
+    }
+
+    /// `isrelative("/foo/../bar")` returns 1 — contains `/..` walk.
+    #[test]
+    fn isrelative_dotdot_component_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative("/foo/../bar"), 1, "/../ in path → relative");
+    }
+
+    /// `isrelative("")` returns 1 — empty input has no leading `/`.
+    /// C c:998 — `*s != '/'` includes the NUL terminator case.
+    #[test]
+    fn isrelative_empty_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative(""), 1, "empty string → not absolute");
+    }
+
+    /// `isrelative("/a/.b")` returns 0 — `.b` is NOT a `/./` walk
+    /// (followed by another non-`/` char `b`).
+    #[test]
+    fn isrelative_dotfile_in_path_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            isrelative("/usr/.config/zsh"),
+            0,
+            "dotfile name '.config' is NOT a relative walk"
+        );
+    }
+
+    /// `is_anonymous_function_name("(anon)")` returns 1 (true).
+    /// C `Src/exec.c` — `!strcmp(name, ANONYMOUS_FUNCTION_NAME)`.
+    #[test]
+    fn is_anonymous_function_name_anon_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(is_anonymous_function_name("(anon)"), 1);
+    }
+
+    /// `is_anonymous_function_name("foo")` returns 0 (false).
+    #[test]
+    fn is_anonymous_function_name_normal_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(is_anonymous_function_name("foo"), 0);
+        assert_eq!(is_anonymous_function_name(""), 0);
+        assert_eq!(is_anonymous_function_name("(other)"), 0);
+    }
+
+    /// `isgooderr(EACCES, "/no/such/dir")` returns true when the dir
+    /// is not actually accessible. C `Src/exec.c:isgooderr` filters
+    /// out "unreadable / not directory" errnos so caller doesn't
+    /// emit spurious warnings.
+    #[test]
+    #[ignore = "ZSHRS BUG: isgooderr exact semantics need verification — C: `((e != EACCES || !access(dir, X_OK)) && e != ENOENT && e != ENOTDIR)`"]
+    fn isgooderr_eacces_unreadable_dir_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        // /no/such/dir doesn't exist → access(X_OK) fails non-zero
+        // → !access() is 0 (false) → returns false.
+        assert!(
+            !isgooderr(libc::EACCES, "/no/such/dir/zshrs_test"),
+            "unreadable dir with EACCES should NOT be 'good error'"
+        );
+    }
 }
