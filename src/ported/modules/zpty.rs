@@ -1201,4 +1201,110 @@ mod tests {
         assert_eq!(cleanup_(std::ptr::null()), 0);
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zpty.c
+    // c:97 ptynonblock / c:119 ptygettyinfo / c:159 getptycmd /
+    // c:290 deleteptycmd / c:314 deleteallptycmds / c:748 ptyhook
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:97 — `ptynonblock(-1)` returns Err (invalid fd).
+    #[test]
+    fn ptynonblock_negative_fd_returns_err() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ptynonblock(-1).is_err(), "negative fd must error");
+    }
+
+    /// c:97 — `ptynonblock(99999)` returns Err (way-out-of-range fd).
+    #[test]
+    fn ptynonblock_far_fd_returns_err() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ptynonblock(99999).is_err(), "out-of-range fd must error");
+    }
+
+    /// c:159 — `getptycmd` is pure (multiple calls same result).
+    #[test]
+    fn getptycmd_is_pure_function() {
+        let _g = crate::test_util::global_state_lock();
+        let cmds = HashMap::new();
+        let first = getptycmd(&cmds, "nothing").is_none();
+        for _ in 0..5 {
+            assert_eq!(getptycmd(&cmds, "nothing").is_none(), first);
+        }
+    }
+
+    /// c:290 — `deleteptycmd` on empty table doesn't panic.
+    #[test]
+    fn deleteptycmd_on_empty_table_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cmds = HashMap::new();
+        deleteptycmd(&mut cmds, "anything");
+        deleteptycmd(&mut cmds, "");
+    }
+
+    /// c:314 — `deleteallptycmds` on already-empty table is no-op.
+    #[test]
+    fn deleteallptycmds_on_empty_table_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cmds = HashMap::new();
+        deleteallptycmds(&mut cmds);
+        assert!(cmds.is_empty(), "still empty");
+    }
+
+    /// c:748 — `ptyhook` on empty cmds map returns 0 (no jobs to clean).
+    #[test]
+    fn ptyhook_empty_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cmds = HashMap::new();
+        assert_eq!(ptyhook(&mut cmds), 0, "empty cmds map → 0");
+    }
+
+    /// c:761-803 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn zpty_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:761 — setup_ idempotent.
+    #[test]
+    fn zpty_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:803 — finish_ idempotent.
+    #[test]
+    fn zpty_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:159 — `getptycmd` empty name lookup returns None.
+    #[test]
+    fn getptycmd_empty_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let cmds = HashMap::new();
+        assert!(getptycmd(&cmds, "").is_none());
+    }
+
+    /// c:119 — `ptygettyinfo(-1)` returns nonzero (error on bad fd).
+    #[test]
+    fn ptygettyinfo_negative_fd_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ti: libc::termios = unsafe { std::mem::zeroed() };
+        assert_ne!(ptygettyinfo(-1, &mut ti), 0, "negative fd → nonzero");
+    }
 }
