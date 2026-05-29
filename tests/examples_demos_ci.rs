@@ -186,6 +186,36 @@ demo_test!(d27_positional_args, "27_positional_args.zsh");
 demo_test!(d28_typeset, "28_typeset.zsh");
 demo_test!(d29_matrix_print, "29_matrix_print.zsh");
 demo_test!(d30_pattern_match, "30_pattern_match.zsh");
+demo_test!(d31_stack, "31_stack.zsh");
+demo_test!(d32_queue, "32_queue.zsh");
+demo_test!(d33_binary_search, "33_binary_search.zsh");
+demo_test!(d34_bubble_sort, "34_bubble_sort.zsh");
+demo_test!(d35_insertion_sort, "35_insertion_sort.zsh");
+demo_test!(d36_selection_sort, "36_selection_sort.zsh");
+demo_test!(d37_counting_sort, "37_counting_sort.zsh");
+demo_test!(d38_set_ops, "38_set_ops.zsh");
+demo_test!(d39_matrix_multiply, "39_matrix_multiply.zsh");
+demo_test!(d40_roman_numerals, "40_roman_numerals.zsh");
+demo_test!(d41_base_convert, "41_base_convert.zsh");
+demo_test!(d42_tower_of_hanoi, "42_tower_of_hanoi.zsh");
+demo_test!(d43_collatz, "43_collatz.zsh");
+demo_test!(d44_happy_numbers, "44_happy_numbers.zsh");
+demo_test!(d45_armstrong, "45_armstrong.zsh");
+demo_test!(d46_perfect_numbers, "46_perfect_numbers.zsh");
+demo_test!(d47_rot13, "47_rot13.zsh");
+demo_test!(d48_atbash, "48_atbash.zsh");
+demo_test!(d49_word_reverse, "49_word_reverse.zsh");
+demo_test!(d50_histogram, "50_histogram.zsh");
+demo_test!(d51_csv_parse, "51_csv_parse.zsh");
+demo_test!(d52_env_basics, "52_env_basics.zsh");
+demo_test!(d53_file_tests, "53_file_tests.zsh");
+demo_test!(d54_date_format, "54_date_format.zsh");
+demo_test!(d55_read_loop, "55_read_loop.zsh");
+demo_test!(d56_exit_codes, "56_exit_codes.zsh");
+demo_test!(d57_atoi_itoa, "57_atoi_itoa.zsh");
+demo_test!(d58_gcd_lcm, "58_gcd_lcm.zsh");
+demo_test!(d59_string_reverse_ops, "59_string_reverse_ops.zsh");
+demo_test!(d60_mapfile_like, "60_mapfile_like.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -223,6 +253,36 @@ fn every_demo_in_dir_has_a_test() {
         "28_typeset.zsh",
         "29_matrix_print.zsh",
         "30_pattern_match.zsh",
+        "31_stack.zsh",
+        "32_queue.zsh",
+        "33_binary_search.zsh",
+        "34_bubble_sort.zsh",
+        "35_insertion_sort.zsh",
+        "36_selection_sort.zsh",
+        "37_counting_sort.zsh",
+        "38_set_ops.zsh",
+        "39_matrix_multiply.zsh",
+        "40_roman_numerals.zsh",
+        "41_base_convert.zsh",
+        "42_tower_of_hanoi.zsh",
+        "43_collatz.zsh",
+        "44_happy_numbers.zsh",
+        "45_armstrong.zsh",
+        "46_perfect_numbers.zsh",
+        "47_rot13.zsh",
+        "48_atbash.zsh",
+        "49_word_reverse.zsh",
+        "50_histogram.zsh",
+        "51_csv_parse.zsh",
+        "52_env_basics.zsh",
+        "53_file_tests.zsh",
+        "54_date_format.zsh",
+        "55_read_loop.zsh",
+        "56_exit_codes.zsh",
+        "57_atoi_itoa.zsh",
+        "58_gcd_lcm.zsh",
+        "59_string_reverse_ops.zsh",
+        "60_mapfile_like.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
