@@ -4914,4 +4914,107 @@ mod modname_tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(modname_ok("foo//bar"), 1);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/module.c
+    // c:1726-1766 dyn_* / c:1703 module_loaded / c:167 newmoduletable
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1703 — `module_loaded` returns 1 only when name is registered.
+    #[test]
+    fn module_loaded_returns_one_for_registered_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let mut t = newmoduletable();
+        register_module(&mut t, "zsh_test_loaded_check");
+        assert_eq!(module_loaded(&t, "zsh_test_loaded_check"), 1);
+    }
+
+    /// c:1703 — `module_loaded` returns 0 for unregistered names.
+    #[test]
+    fn module_loaded_returns_zero_for_unregistered_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let t = newmoduletable();
+        assert_eq!(module_loaded(&t, "definitely_not_a_module_xyz"), 0);
+    }
+
+    /// c:1703 — `module_loaded("")` returns 0.
+    #[test]
+    fn module_loaded_empty_name_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let t = newmoduletable();
+        assert_eq!(module_loaded(&t, ""), 0);
+    }
+
+    /// c:1726 — `dyn_setup_module(null)` returns 0 (static-link no-op).
+    #[test]
+    fn dyn_setup_module_null_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(dyn_setup_module(std::ptr::null()), 0);
+    }
+
+    /// c:1747 — `dyn_boot_module(null)` returns 0.
+    #[test]
+    fn dyn_boot_module_null_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(dyn_boot_module(std::ptr::null()), 0);
+    }
+
+    /// c:1754 — `dyn_cleanup_module(null)` returns 0.
+    #[test]
+    fn dyn_cleanup_module_null_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(dyn_cleanup_module(std::ptr::null()), 0);
+    }
+
+    /// c:1766 — `dyn_finish_module(null)` returns 0.
+    #[test]
+    fn dyn_finish_module_null_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(dyn_finish_module(std::ptr::null()), 0);
+    }
+
+    /// c:1733 — `dyn_features_module(null, &mut vec)` returns 0
+    /// without panicking; features unchanged.
+    #[test]
+    fn dyn_features_module_null_returns_zero_no_mutation() {
+        let _g = crate::test_util::global_state_lock();
+        let mut features: Vec<String> = vec!["preserved".into()];
+        assert_eq!(dyn_features_module(std::ptr::null(), &mut features), 0);
+        assert_eq!(features, vec!["preserved".to_string()],
+            "static-link path must NOT mutate features");
+    }
+
+    /// c:1740 — `dyn_enables_module(null, &mut None)` returns 0
+    /// without mutating enables.
+    #[test]
+    fn dyn_enables_module_null_returns_zero_no_mutation() {
+        let _g = crate::test_util::global_state_lock();
+        let mut enables: Option<Vec<i32>> = None;
+        assert_eq!(dyn_enables_module(std::ptr::null(), &mut enables), 0);
+        assert!(enables.is_none(), "static-link path must NOT mutate enables");
+    }
+
+    /// c:167 — `newmoduletable` produces a table where `register_module`
+    /// of fresh name succeeds.
+    #[test]
+    fn newmoduletable_accepts_fresh_register() {
+        let _g = crate::test_util::global_state_lock();
+        let mut t = newmoduletable();
+        assert!(register_module(&mut t, "zshrs_fresh_test_module_xyz"));
+    }
+
+    /// c:245 — `register_module` is idempotent on duplicate (returns false
+    /// per existing pin) and doesn't mutate state.
+    #[test]
+    fn register_module_duplicate_does_not_grow_table() {
+        let _g = crate::test_util::global_state_lock();
+        let mut t = newmoduletable();
+        let name = "zshrs_dup_register_test";
+        assert!(register_module(&mut t, name), "first call succeeds");
+        let count_after_first = t.modules.len();
+        let r = register_module(&mut t, name);
+        assert!(!r, "duplicate must return false");
+        assert_eq!(t.modules.len(), count_after_first,
+            "table size unchanged on dup");
+    }
 }
