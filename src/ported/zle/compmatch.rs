@@ -4573,4 +4573,188 @@ mod tests {
         };
         assert!(!cmatchers_same(&a, &c), "differing wlen must NOT be equal");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests for cpatterns_same NULL/chain edge cases.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:46-77 — `cpatterns_same(None, None)` returns true (both NULL
+    /// is trivially equal — while-loop exits immediately + `!b` is true).
+    #[test]
+    fn cpatterns_same_both_none_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(cpatterns_same(None, None), "both None → trivially equal");
+    }
+
+    /// c:48 — `cpatterns_same(Some, None)` returns false (a non-NULL,
+    /// b NULL during walk → `if(!b) return 0`).
+    #[test]
+    fn cpatterns_same_a_some_b_none_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let a = cpat_char('x' as u32);
+        assert!(!cpatterns_same(Some(&a), None));
+    }
+
+    /// c:77 — `cpatterns_same(None, Some)` returns false (loop doesn't
+    /// run, returns `!b` = false).
+    #[test]
+    fn cpatterns_same_a_none_b_some_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let b = cpat_char('x' as u32);
+        assert!(!cpatterns_same(None, Some(&b)));
+    }
+
+    /// c:60-61 — CCLASS pattern: same str → equal; differing str → not.
+    #[test]
+    fn cpatterns_same_class_str_differs_not_equal() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let a = cpat_class("abc");
+        let b = cpat_class("xyz");
+        assert!(!cpatterns_same(Some(&a), Some(&b)));
+    }
+
+    /// c:60-61 — NCLASS pattern (negated class) also uses str compare.
+    #[test]
+    fn cpatterns_same_nclass_str_compare() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let a = Cpattern {
+            tp: CPAT_NCLASS,
+            str: Some(b"abc".to_vec()),
+            ..Default::default()
+        };
+        let b = Cpattern {
+            tp: CPAT_NCLASS,
+            str: Some(b"abc".to_vec()),
+            ..Default::default()
+        };
+        assert!(cpatterns_same(Some(&a), Some(&b)), "same NCLASS str → equal");
+    }
+
+    /// c:52-54 — EQUIV uses str compare as well (same dispatch as
+    /// CCLASS/NCLASS per the `x if x == CPAT_*` arm).
+    #[test]
+    fn cpatterns_same_equiv_str_compare() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let a = Cpattern {
+            tp: CPAT_EQUIV,
+            str: Some(b"AaBb".to_vec()),
+            ..Default::default()
+        };
+        let b = Cpattern {
+            tp: CPAT_EQUIV,
+            str: Some(b"AaBb".to_vec()),
+            ..Default::default()
+        };
+        assert!(cpatterns_same(Some(&a), Some(&b)));
+        let c = Cpattern {
+            tp: CPAT_EQUIV,
+            str: Some(b"XxYy".to_vec()),
+            ..Default::default()
+        };
+        assert!(!cpatterns_same(Some(&a), Some(&c)));
+    }
+
+    /// c:74-75 — chain walk: different chain lengths → not equal.
+    /// `a` is 2-node chain, `b` is 1-node — second iter, b=None → false.
+    #[test]
+    fn cpatterns_same_different_chain_length_not_equal() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let a = Cpattern {
+            tp: CPAT_CHAR,
+            chr: 'a' as u32,
+            next: Some(Box::new(cpat_char('b' as u32))),
+            ..Default::default()
+        };
+        let b = cpat_char('a' as u32);
+        assert!(!cpatterns_same(Some(&a), Some(&b)), "a=2-chain, b=1 → not equal");
+        assert!(!cpatterns_same(Some(&b), Some(&a)), "b=1, a=2-chain → not equal");
+    }
+
+    /// c:46-77 — chain walk: same multi-node chain returns true.
+    #[test]
+    fn cpatterns_same_matching_chain_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let a = Cpattern {
+            tp: CPAT_CHAR,
+            chr: 'a' as u32,
+            next: Some(Box::new(cpat_char('b' as u32))),
+            ..Default::default()
+        };
+        let b = Cpattern {
+            tp: CPAT_CHAR,
+            chr: 'a' as u32,
+            next: Some(Box::new(cpat_char('b' as u32))),
+            ..Default::default()
+        };
+        assert!(cpatterns_same(Some(&a), Some(&b)));
+    }
+
+    /// c:86 — `cmatchers_same` with pointer-identity (same pointer)
+    /// returns true (short-circuit before any field comparison).
+    #[test]
+    fn cmatchers_same_pointer_identity_true() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let m = Cmatcher {
+            refc: 1,
+            next: None,
+            flags: 0xFFFF, // any garbage
+            line: None,
+            llen: 999,
+            word: None,
+            wlen: -42,
+            left: None,
+            lalen: 7,
+            right: None,
+            ralen: 11,
+        };
+        assert!(cmatchers_same(&m, &m), "same pointer → true regardless of fields");
+    }
+
+    /// c:91 — anchor checks ONLY run when CMF_LEFT or CMF_RIGHT is
+    /// set; bare flags=0 ignores lalen/ralen mismatch.
+    #[test]
+    fn cmatchers_same_no_anchor_flags_ignores_anchor_lens() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let a = Cmatcher {
+            refc: 1,
+            next: None,
+            flags: 0,
+            line: None,
+            llen: 0,
+            word: None,
+            wlen: 0,
+            left: None,
+            lalen: 5,    // mismatch
+            right: None,
+            ralen: 7,    // mismatch
+        };
+        let b = Cmatcher {
+            refc: 1,
+            next: None,
+            flags: 0,
+            line: None,
+            llen: 0,
+            word: None,
+            wlen: 0,
+            left: None,
+            lalen: 99,   // mismatch
+            right: None,
+            ralen: 0,    // mismatch
+        };
+        // Without CMF_LEFT/CMF_RIGHT, anchor lens shouldn't matter.
+        assert!(
+            cmatchers_same(&a, &b),
+            "flags=0 must ignore lalen/ralen per c:91 gate"
+        );
+    }
 }
