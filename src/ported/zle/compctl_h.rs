@@ -793,4 +793,93 @@ mod tests {
     fn cc_uniqall_is_bit_6_in_secondary() {
         assert_eq!(CC_UNIQALL, 1 << 6);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compctl.h c:131-156 CC_*
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:131-149 — every primary CC_* flag value is a power of two.
+    #[test]
+    fn cc_primary_flags_all_powers_of_two_full_sweep() {
+        for &v in &[CC_STOPPED, CC_BUILTINS, CC_ALREG, CC_ALGLOB, CC_USERS,
+                    CC_DISCMDS, CC_EXCMDS, CC_SCALARS, CC_READONLYS,
+                    CC_SPECIALS, CC_DELETE, CC_NAMED, CC_QUOTEFLAG,
+                    CC_EXTCMDS, CC_RESWDS, CC_DIRS, CC_EXPANDEXPL,
+                    CC_RESERVED] {
+            assert!(v.is_power_of_two(), "CC_* primary {:#x} must be single bit", v);
+        }
+    }
+
+    /// c:148 — CC_EXPANDEXPL = bit 30 (skips bit 29 by design).
+    #[test]
+    fn cc_expandexpl_skips_bit_29() {
+        assert_eq!(CC_EXPANDEXPL, 1u64 << 30, "c:148 = bit 30");
+        // Bit 29 is reserved (intentionally unused per C source).
+    }
+
+    /// c:152-158 — secondary CC_* flags are powers of two.
+    #[test]
+    fn cc_secondary_flags_all_powers_of_two() {
+        for &v in &[CC_NOSORT, CC_XORCONT, CC_CCCONT, CC_PATCONT,
+                    CC_DEFCONT, CC_UNIQCON, CC_UNIQALL] {
+            assert!(v.is_power_of_two(), "CC_* secondary {:#x} must be single bit", v);
+        }
+    }
+
+    /// c:152-158 — secondary CC_* are pairwise distinct.
+    #[test]
+    fn cc_secondary_flags_pairwise_distinct() {
+        let codes = [CC_NOSORT, CC_XORCONT, CC_CCCONT, CC_PATCONT,
+                     CC_DEFCONT, CC_UNIQCON, CC_UNIQALL];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "CC_* secondary must be distinct");
+    }
+
+    /// c:131-149 — primary CC_* canonical bit positions match c:113-149.
+    #[test]
+    fn cc_primary_canonical_high_bit_positions() {
+        assert_eq!(CC_DIRS, 1u64 << 28, "c:146");
+        assert_eq!(CC_RESERVED, 1u64 << 31, "c:149");
+        assert_eq!(CC_DELETE, 1u64 << 23, "c:141");
+        assert_eq!(CC_NAMED, 1u64 << 24, "c:142");
+        assert_eq!(CC_USERS, 1u64 << 17, "c:135");
+    }
+
+    /// c:131-149 + c:152-158 — every CC_* fits in u64 (compile-time
+    /// type pin).
+    #[test]
+    fn cc_all_flags_are_u64_type() {
+        let _: u64 = CC_STOPPED;
+        let _: u64 = CC_NOSORT;
+        let _: u64 = CC_RESERVED;
+    }
+
+    /// c:152-158 — CC_NOSORT through CC_UNIQALL form contiguous low-7 bits.
+    #[test]
+    fn cc_secondary_form_contiguous_low_bits() {
+        let mut bits: Vec<u64> = vec![CC_NOSORT, CC_XORCONT, CC_CCCONT,
+                                       CC_PATCONT, CC_DEFCONT, CC_UNIQCON,
+                                       CC_UNIQALL];
+        bits.sort();
+        for (i, &b) in bits.iter().enumerate() {
+            assert_eq!(b, 1u64 << i, "secondary bit {} must be 1<<{}", i, i);
+        }
+    }
+
+    /// c:131-149 — primary CC_* form mostly contiguous from bit 0 up
+    /// (with bit 29 reserved gap to bit 30 EXPANDEXPL).
+    #[test]
+    fn cc_primary_no_gaps_through_bit_28() {
+        // Bits 0..28 must all be claimed by primary CC_* flags.
+        let all = [
+            CC_FILES, CC_COMMPATH, CC_REMOVE, CC_OPTIONS, CC_VARS,
+            CC_BINDINGS, CC_ARRAYS, CC_INTVARS, CC_SHFUNCS, CC_PARAMS,
+            CC_ENVVARS, CC_JOBS, CC_RUNNING, CC_STOPPED, CC_BUILTINS,
+            CC_ALREG, CC_ALGLOB, CC_USERS, CC_DISCMDS, CC_EXCMDS,
+            CC_SCALARS, CC_READONLYS, CC_SPECIALS, CC_DELETE, CC_NAMED,
+            CC_QUOTEFLAG, CC_EXTCMDS, CC_RESWDS, CC_DIRS,
+        ];
+        let or_all: u64 = all.iter().fold(0, |acc, &v| acc | v);
+        assert_eq!(or_all, (1u64 << 29) - 1, "bits 0..28 must all be set");
+    }
 }
