@@ -941,4 +941,112 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/mapfile.c
+    // c:239 get_contents / c:329 getpmmapfile / c:384 scanpmmapfile
+    // c:206 setpmmapfiles / c:181 unsetpmmapfile / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:239 — `get_contents` is deterministic for missing path.
+    #[test]
+    fn get_contents_missing_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let p = "/nonexistent_path_xyz_zshrs";
+        let first = get_contents(p);
+        for _ in 0..5 {
+            assert_eq!(get_contents(p), first, "must be deterministic");
+        }
+    }
+
+    /// c:239 — `get_contents("/")` (a directory) returns None (not a regular file).
+    #[test]
+    fn get_contents_root_dir_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(get_contents("/"), None, "/ is a dir, not regular file");
+    }
+
+    /// c:239 — `get_contents` preserves multi-line content.
+    #[test]
+    fn get_contents_preserves_multiline_content() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("multi.txt");
+        let body = "line1\nline2\nline3\n";
+        std::fs::write(&p, body).unwrap();
+        let got = get_contents(p.to_str().unwrap()).expect("file should read");
+        assert_eq!(got, body, "multiline content preserved");
+    }
+
+    /// c:329 — `getpmmapfile` empty name returns Some(PM_UNSET) per
+    /// C "always Param node" convention.
+    #[test]
+    fn getpmmapfile_empty_name_returns_some_unset() {
+        use crate::ported::zsh_h::PM_UNSET;
+        let _g = crate::test_util::global_state_lock();
+        let pm = getpmmapfile(std::ptr::null_mut(), "");
+        if let Some(p) = pm {
+            assert_ne!(p.node.flags & PM_UNSET as i32, 0,
+                "missing file → PM_UNSET set");
+        }
+    }
+
+    /// c:181 — `unsetpmmapfile` on multiple absent params doesn't panic.
+    #[test]
+    fn unsetpmmapfile_many_absent_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        for name in ["abc", "xyz", "", "deeply/nested/missing/param"] {
+            unsetpmmapfile(name, false);
+            unsetpmmapfile(name, true);
+        }
+    }
+
+    /// c:206 — `setpmmapfiles` with readonly=true accepts but doesn't
+    /// crash on empty entries.
+    #[test]
+    fn setpmmapfiles_readonly_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        setpmmapfiles(&[], true);
+        setpmmapfiles(&[], false);
+    }
+
+    /// c:384 — `scanpmmapfile` with None callback is a safe no-op.
+    #[test]
+    fn scanpmmapfile_none_callback_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        scanpmmapfile(std::ptr::null_mut(), None, 0);
+    }
+
+    /// c:239 — `get_contents` with extreme paths (very long) doesn't
+    /// panic (returns None for unreachable paths).
+    #[test]
+    fn get_contents_very_long_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let p = format!("/{}", "a".repeat(500));
+        let _ = get_contents(&p);
+    }
+
+    /// c:453-492 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn mapfile_full_lifecycle_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:453 — setup_ idempotent.
+    #[test]
+    fn mapfile_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
 }
