@@ -428,4 +428,105 @@ mod tests {
         let r: bool = unregister_function("__never_xyz_zshrs__");
         let _ = r;
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional contract-pin tests for exec_hooks default behavior.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `run_command_substitution` returns String (never None / never Option).
+    #[test]
+    fn exec_hooks_run_command_substitution_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = run_command_substitution("anything");
+    }
+
+    /// `execute_script` returns Result<i32, String>. Pin signature.
+    #[test]
+    fn exec_hooks_execute_script_returns_result_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<i32, String> = execute_script("anything");
+    }
+
+    /// `execute_script_zsh_pipeline` returns Result<i32, String>.
+    #[test]
+    fn exec_hooks_execute_script_zsh_pipeline_returns_result_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<i32, String> = execute_script_zsh_pipeline("anything");
+    }
+
+    /// `dispatch_function_call` returns Option<i32>.
+    #[test]
+    fn exec_hooks_dispatch_function_call_returns_option_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i32> = dispatch_function_call("__never_real__", &[]);
+    }
+
+    /// `run_function_body` returns Option<i32>.
+    #[test]
+    fn exec_hooks_run_function_body_returns_option_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i32> = run_function_body("__never_real__", &[]);
+    }
+
+    /// `array` returns Option<Vec<String>>.
+    #[test]
+    fn exec_hooks_array_returns_option_vec_string() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Vec<String>> = array("anything");
+    }
+
+    /// `assoc` returns Option<IndexMap<String, String>>.
+    #[test]
+    fn exec_hooks_assoc_returns_option_indexmap() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<IndexMap<String, String>> = assoc("anything");
+    }
+
+    /// Empty-string args to `dispatch_function_call` doesn't panic.
+    #[test]
+    fn exec_hooks_dispatch_empty_args_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = dispatch_function_call("", &[]);
+        let _ = dispatch_function_call("name", &[]);
+    }
+
+    /// Empty-string args to `run_function_body` doesn't panic.
+    #[test]
+    fn exec_hooks_run_function_body_empty_args_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = run_function_body("", &[]);
+        let _ = run_function_body("name", &[]);
+    }
+
+    /// Empty-string name to `execute_script` doesn't panic and returns
+    /// Result.
+    #[test]
+    fn exec_hooks_execute_script_empty_src_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = execute_script("");
+        let _ = execute_script_zsh_pipeline("");
+    }
+
+    /// Empty-string cmd to `run_command_substitution` doesn't panic.
+    #[test]
+    fn exec_hooks_run_command_substitution_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = run_command_substitution("");
+    }
+
+    /// `unregister_function("")` doesn't panic.
+    #[test]
+    fn exec_hooks_unregister_function_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = unregister_function("");
+    }
+
+    /// `unset_*` with empty name does not panic.
+    #[test]
+    fn exec_hooks_unset_with_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        unset_scalar("");
+        unset_array("");
+        unset_assoc("");
+    }
 }
