@@ -5001,4 +5001,109 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(rembslash(r"abc\"), "abc");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compcore.c rembslash + remsquote
+    // + ctokenize + multiquote / tildequote string transforms.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1323 — `rembslash("abc")` (no backslash) is identity.
+    #[test]
+    fn rembslash_no_backslash_is_identity() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rembslash("abc"), "abc");
+        assert_eq!(rembslash("hello world"), "hello world");
+    }
+
+    /// c:1323 — `rembslash` of single backslash + char drops the backslash.
+    #[test]
+    fn rembslash_drops_backslash_keeps_next() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rembslash(r"\a"), "a");
+        assert_eq!(rembslash(r"\."), ".");
+        assert_eq!(rembslash(r"\$"), "$");
+    }
+
+    /// c:1323 — repeated escapes: every `\X` collapses to `X`.
+    #[test]
+    fn rembslash_multiple_escapes_chain() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rembslash(r"\a\b\c"), "abc");
+    }
+
+    /// c:1343 — `remsquote("")` returns 0 (no chars consumed).
+    #[test]
+    fn remsquote_empty_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut s = String::new();
+        let r = remsquote(&mut s);
+        assert_eq!(r, 0);
+        assert_eq!(s, "");
+    }
+
+    /// c:1343 — `remsquote("abc")` (no quote sequences) is identity,
+    /// returns 0.
+    #[test]
+    fn remsquote_no_quotes_is_identity() {
+        let _g = crate::test_util::global_state_lock();
+        let mut s = String::from("hello world");
+        let r = remsquote(&mut s);
+        assert_eq!(r, 0, "no quote sequences → 0");
+        assert_eq!(s, "hello world", "string unchanged");
+    }
+
+    /// c:1366 — `ctokenize("")` returns empty string.
+    #[test]
+    fn ctokenize_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(ctokenize(""), "");
+    }
+
+    /// c:1366 — `ctokenize("abc")` (no special chars) preserves content.
+    #[test]
+    fn ctokenize_plain_ascii_preserved() {
+        let _g = crate::test_util::global_state_lock();
+        // No $, {, }, or backslash → byte-for-byte preservation.
+        let r = ctokenize("abc");
+        assert_eq!(r.as_bytes()[0], b'a');
+        assert_eq!(r.as_bytes()[1], b'b');
+        assert_eq!(r.as_bytes()[2], b'c');
+    }
+
+    /// c:1505 — `comp_quoting_string(0)` returns a static str (no panic).
+    #[test]
+    fn comp_quoting_string_returns_static_str_for_all_stypes() {
+        let _g = crate::test_util::global_state_lock();
+        for stype in 0..10 {
+            let _s = comp_quoting_string(stype);
+            // No panic = pass; returned &'static str is well-defined.
+        }
+    }
+
+    /// c:954 — `multiquote("")` returns empty.
+    #[test]
+    fn multiquote_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = multiquote("", 0);
+        assert_eq!(r, "");
+    }
+
+    /// c:980 — `tildequote("")` returns empty.
+    #[test]
+    fn tildequote_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = tildequote("", 0);
+        assert_eq!(r, "");
+    }
+
+    /// c:980 — `tildequote("plain")` (no tilde) is identity.
+    #[test]
+    fn tildequote_no_tilde_is_identity() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = tildequote("plain", 0);
+        assert_eq!(r, "plain", "no tilde → input unchanged");
+    }
 }
