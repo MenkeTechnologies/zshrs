@@ -661,4 +661,133 @@ mod tests {
             );
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zleparameter.c
+    // c:37 widgetstr / c:33 getpmwidgets / c:105 keymapsgetfn /
+    // c:147-180 lifecycle.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:37 — `widgetstr(name, false, false)` always returns "builtin"
+    /// regardless of name (name is ignored in the builtin arm).
+    #[test]
+    fn widgetstr_builtin_ignores_all_names() {
+        for name in &["", "anything", "with spaces", "包含中文", "x\ny"] {
+            assert_eq!(widgetstr(name, false, false), "builtin",
+                "builtin arm must ignore name {:?}", name);
+        }
+    }
+
+    /// c:37 — `widgetstr` output starts with one of three known prefixes.
+    #[test]
+    fn widgetstr_output_has_canonical_prefix() {
+        let outs = [
+            widgetstr("x", false, false),
+            widgetstr("y", true, false),
+            widgetstr("z", false, true),
+        ];
+        for s in &outs {
+            assert!(
+                s == "builtin" || s.starts_with("user:") || s.starts_with("completion:"),
+                "widgetstr output {:?} not in known set",
+                s
+            );
+        }
+    }
+
+    /// c:37 — `widgetstr(name, true, false)` always emits `user:<name>`,
+    /// with colon at position 4 (`user`+`:`).
+    #[test]
+    fn widgetstr_user_colon_is_position_four() {
+        let s = widgetstr("abc", true, false);
+        assert_eq!(s.find(':'), Some(4));
+        assert!(s.starts_with("user:"));
+    }
+
+    /// c:37 — `widgetstr(name, false, true)` always emits `completion:<name>`.
+    #[test]
+    fn widgetstr_completion_colon_is_position_ten() {
+        let s = widgetstr("abc", false, true);
+        assert_eq!(s.find(':'), Some(10));
+        assert!(s.starts_with("completion:"));
+    }
+
+    /// c:37 — empty name still produces a well-formed label.
+    #[test]
+    fn widgetstr_empty_name_each_arm_well_formed() {
+        assert_eq!(widgetstr("", false, false), "builtin");
+        assert_eq!(widgetstr("", true, false), "user:");
+        assert_eq!(widgetstr("", false, true), "completion:");
+    }
+
+    /// c:37 — `widgetstr` is a pure function (no side effects across
+    /// repeated calls).
+    #[test]
+    fn widgetstr_is_pure() {
+        for _ in 0..50 {
+            assert_eq!(widgetstr("x", false, false), "builtin");
+            assert_eq!(widgetstr("y", true, false), "user:y");
+            assert_eq!(widgetstr("z", false, true), "completion:z");
+        }
+    }
+
+    /// c:105 — `keymapsgetfn(null)` is null-safe.
+    #[test]
+    fn keymapsgetfn_null_pm_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _ = keymapsgetfn(std::ptr::null_mut());
+    }
+
+    /// c:105 — `keymapsgetfn` is deterministic (sorted) across calls.
+    #[test]
+    fn keymapsgetfn_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = keymapsgetfn(std::ptr::null_mut());
+        for _ in 0..5 {
+            assert_eq!(
+                keymapsgetfn(std::ptr::null_mut()),
+                first,
+                "keymapsgetfn must be deterministic"
+            );
+        }
+    }
+
+    /// c:33 — `getpmwidgets` for unknown name sets PM_UNSET bit on
+    /// the returned Param (so `${widgets[unknown]}` reports unset).
+    #[test]
+    fn getpmwidgets_unknown_sets_pm_unset_flag() {
+        use crate::ported::zsh_h::PM_UNSET;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let pm = getpmwidgets(std::ptr::null_mut(), "zshrs_never_a_widget_xyz")
+            .expect("always Some");
+        assert_ne!(
+            pm.node.flags & PM_UNSET as i32,
+            0,
+            "unknown widget must have PM_UNSET bit set"
+        );
+    }
+
+    /// c:81 — `scanpmwidgets` with None callback is a safe no-op
+    /// (matches C: NULL func → early return).
+    #[test]
+    fn scanpmwidgets_none_callback_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        scanpmwidgets(std::ptr::null_mut(), None, 0);
+    }
+
+    /// c:147-180 — lifecycle hooks survive interleaved load/unload.
+    #[test]
+    fn zleparameter_interleaved_lifecycle_safe() {
+        // Pattern: setup → boot → cleanup → finish → setup → ...
+        for _ in 0..5 {
+            assert_eq!(setup_(), 0);
+            assert_eq!(boot_(), 0);
+            assert_eq!(cleanup_(), 0);
+            assert_eq!(finish_(), 0);
+        }
+    }
 }
