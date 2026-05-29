@@ -622,4 +622,99 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(ZSH_INITIAL_OPEN_MAX, 64);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/zsh_system.h.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:878 — `GET_ST_ATIME_NSEC` on tempfile returns nsec in [0, 1_000_000_000).
+    #[test]
+    fn get_st_atime_nsec_in_valid_range() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("atime_test");
+        std::fs::write(&p, b"x").unwrap();
+        let md = std::fs::metadata(&p).unwrap();
+        let nsec = GET_ST_ATIME_NSEC(&md);
+        assert!(nsec < 1_000_000_000, "nsec must be < 1B, got {}", nsec);
+    }
+
+    /// c:885 — `GET_ST_MTIME_NSEC` on tempfile returns nsec in valid range.
+    #[test]
+    fn get_st_mtime_nsec_in_valid_range() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("mtime_test");
+        std::fs::write(&p, b"x").unwrap();
+        let md = std::fs::metadata(&p).unwrap();
+        let nsec = GET_ST_MTIME_NSEC(&md);
+        assert!(nsec < 1_000_000_000, "nsec must be < 1B");
+    }
+
+    /// c:892 — `GET_ST_CTIME_NSEC` on tempfile returns nsec in valid range.
+    #[test]
+    #[cfg(unix)]
+    fn get_st_ctime_nsec_in_valid_range() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("ctime_test");
+        std::fs::write(&p, b"x").unwrap();
+        let md = std::fs::metadata(&p).unwrap();
+        let nsec = GET_ST_CTIME_NSEC(&md);
+        assert!(nsec < 1_000_000_000, "nsec must be < 1B");
+    }
+
+    /// c:878 — `GET_ST_ATIME_NSEC` is deterministic for same metadata.
+    #[test]
+    fn get_st_atime_nsec_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("det_test");
+        std::fs::write(&p, b"x").unwrap();
+        let md = std::fs::metadata(&p).unwrap();
+        let first = GET_ST_ATIME_NSEC(&md);
+        for _ in 0..5 {
+            assert_eq!(GET_ST_ATIME_NSEC(&md), first);
+        }
+    }
+
+    /// c:427 — DEFAULT_WORDCHARS includes all canonical chars (catch
+    /// regression that drops common ones like `_`, `-`, `.`).
+    #[test]
+    fn default_wordchars_includes_canonical_chars() {
+        for c in ['_', '-', '.', '~', '/', '&', ';', '!', '#', '$', '%', '^'] {
+            assert!(
+                DEFAULT_WORDCHARS.contains(c),
+                "DEFAULT_WORDCHARS missing canonical char {:?}",
+                c
+            );
+        }
+    }
+
+    /// c:427 — DEFAULT_WORDCHARS has no whitespace (would corrupt
+    /// word-boundary detection).
+    #[test]
+    fn default_wordchars_no_whitespace() {
+        for c in DEFAULT_WORDCHARS.chars() {
+            assert!(
+                !c.is_whitespace(),
+                "DEFAULT_WORDCHARS must not contain whitespace, found {:?}",
+                c
+            );
+        }
+    }
+
+    /// c:428 — DEFAULT_TIMEFMT contains required time specifiers.
+    #[test]
+    fn default_timefmt_contains_required_specifiers() {
+        // Must include %J (name), %U (user), %S (system), %P (cpu%),
+        // %*E (elapsed) per zsh time-builtin spec.
+        for spec in ["%J", "%U", "%S", "%P", "%*E"] {
+            assert!(
+                DEFAULT_TIMEFMT.contains(spec),
+                "DEFAULT_TIMEFMT missing required spec {}",
+                spec
+            );
+        }
+    }
 }
