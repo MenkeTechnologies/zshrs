@@ -40,6 +40,7 @@ use crate::ported::zle::{
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 // (was: use crate::ported::zle::widget::*; — widget.rs deleted)
+/// `ZLE_CHAR_T` type alias.
 #[allow(unused_imports)]
 
 pub type ZLE_CHAR_T = char; // c:31
@@ -465,32 +466,48 @@ pub enum WidgetImpl {
 }
 
 // Widget flags — `Src/Zle/zle.h:205-220`.
+/// `WIDGET_INT` constant.
 pub const WIDGET_INT: i32 = 1 << 0; /* widget is internally implemented */
 // c:205
+/// `WIDGET_NCOMP` constant.
 pub const WIDGET_NCOMP: i32 = 1 << 1; /* new style completion widget */
 // c:206
+/// `ZLE_MENUCMP` constant.
 pub const ZLE_MENUCMP: i32 = 1 << 2; /* DON'T invalidate completion list */
 // c:207
+/// `ZLE_YANKAFTER` constant.
 pub const ZLE_YANKAFTER: i32 = 1 << 3; // c:208
+/// `ZLE_YANKBEFORE` constant.
 pub const ZLE_YANKBEFORE: i32 = 1 << 4; // c:209
+/// `ZLE_YANK` constant.
 pub const ZLE_YANK: i32 = ZLE_YANKAFTER | ZLE_YANKBEFORE; // c:210
+/// `ZLE_LINEMOVE` constant.
 pub const ZLE_LINEMOVE: i32 = 1 << 5; /* line-oriented movement */
 // c:211
+/// `ZLE_VIOPER` constant.
 pub const ZLE_VIOPER: i32 = 1 << 6; /* widget reads further keys so wait if prefix */
 // c:212
+/// `ZLE_LASTCOL` constant.
 pub const ZLE_LASTCOL: i32 = 1 << 7; /* command maintains lastcol correctly */
 // c:213
+/// `ZLE_KILL` constant.
 pub const ZLE_KILL: i32 = 1 << 8; // c:214
+/// `ZLE_KEEPSUFFIX` constant.
 pub const ZLE_KEEPSUFFIX: i32 = 1 << 9; /* DON'T remove added suffix */
 // c:215
+/// `ZLE_NOTCOMMAND` constant.
 pub const ZLE_NOTCOMMAND: i32 = 1 << 10; /* widget should not alter lastcmd */
 // c:216
+/// `ZLE_ISCOMP` constant.
 pub const ZLE_ISCOMP: i32 = 1 << 11; /* usable for new style completion */
 // c:217
+/// `WIDGET_INUSE` constant.
 pub const WIDGET_INUSE: i32 = 1 << 12; /* widget is in use */
 // c:218
+/// `WIDGET_FREE` constant.
 pub const WIDGET_FREE: i32 = 1 << 13; /* request to free when no longer in use */
 // c:219
+/// `ZLE_NOLAST` constant.
 pub const ZLE_NOLAST: i32 = 1 << 14; /* widget should not alter lbindk */
 // c:220
 
@@ -541,36 +558,49 @@ pub struct modifier {
     /// numeric base for digit arguments (usually 10).
     pub base: i32, // c:250
 }
+/// `MOD_MULT` constant.
 
 pub const MOD_MULT: i32 = 1 << 0; /* a repeat count has been selected */
 // c:253
+/// `MOD_TMULT` constant.
 pub const MOD_TMULT: i32 = 1 << 1; /* a repeat count is being entered */
 // c:254
+/// `MOD_VIBUF` constant.
 pub const MOD_VIBUF: i32 = 1 << 2; /* a vi cut buffer has been selected */
 // c:255
+/// `MOD_VIAPP` constant.
 pub const MOD_VIAPP: i32 = 1 << 3; /* appending to the vi cut buffer */
 // c:256
+/// `MOD_NEG` constant.
 pub const MOD_NEG: i32 = 1 << 4; /* last command was negate argument */
 // c:257
+/// `MOD_NULL` constant.
 pub const MOD_NULL: i32 = 1 << 5; /* throw away text for the vi cut buffer */
 // c:258
+/// `MOD_CHAR` constant.
 pub const MOD_CHAR: i32 = 1 << 6; /* force character-wise movement */
 // c:259
+/// `MOD_LINE` constant.
 pub const MOD_LINE: i32 = 1 << 7; /* force line-wise movement */
 // c:260
+/// `MOD_PRI` constant.
 pub const MOD_PRI: i32 = 1 << 8; /* OS primary selection for the vi cut buffer */
 // c:261
+/// `MOD_CLIP` constant.
 pub const MOD_CLIP: i32 = 1 << 9; /* OS clipboard for the vi cut buffer */
 // c:262
+/// `MOD_OSSEL` constant.
 pub const MOD_OSSEL: i32 = MOD_PRI | MOD_CLIP; /* either system selection */
 // c:263
 
 // =====================================================================
 // Cut-buffer flag bits — `Src/Zle/zle.h:271-280`.
 // =====================================================================
+/// `CUT_FRONT` constant.
 
 pub const CUT_FRONT: i32 = 1 << 0; /* Text goes in front of cut buffer */
 // c:271
+/// `CUT_REPLACE` constant.
 pub const CUT_REPLACE: i32 = 1 << 1; /* Text replaces cut buffer */
 // c:272
 /// `CUT_RAW` (zle.h:273-279). Raw character counts (not used in
@@ -578,6 +608,7 @@ pub const CUT_REPLACE: i32 = 1 << 1; /* Text replaces cut buffer */
 /// the zleline array rather than numbers of visible characters
 /// directly input by the user.
 pub const CUT_RAW: i32 = 1 << 2; // c:273
+/// `CUT_YANK` constant.
 pub const CUT_YANK: i32 = 1 << 3; /* vi yank: use register 0 instead of 1-9 */
 // c:280
 
@@ -615,9 +646,11 @@ pub struct change {
     /// unique number of this change (`zlong`).
     pub changeno: i64, // c:294
 }
+/// `CH_NEXT` constant.
 
 pub const CH_NEXT: i32 = 1 << 0; /* next structure is also part of this change */
 // c:297
+/// `CH_PREV` constant.
 pub const CH_PREV: i32 = 1 << 1; /* previous structure is also part of this change */
 // c:298
 
@@ -690,21 +723,29 @@ pub struct cutbuffer {
 
 /// Port of `typedef struct cutbuffer *Cutbuffer` from zle.h:348.
 pub type CutbufferPtr = Box<cutbuffer>; // c:348
+/// `CUTBUFFER_LINE` constant.
 
 pub const CUTBUFFER_LINE: u8 = 1; /* for vi: buffer contains whole lines of data */
 // c:350
+/// `KRINGCTDEF` constant.
 pub const KRINGCTDEF: i32 = 8; /* default number of buffers in the kill ring */
 // c:352
 
 // =====================================================================
 // Completion modes — `Src/Zle/zle.h:354-362`.
 // =====================================================================
+/// `COMP_COMPLETE` constant.
 
 pub const COMP_COMPLETE: i32 = 0; // c:356
+/// `COMP_LIST_COMPLETE` constant.
 pub const COMP_LIST_COMPLETE: i32 = 1; // c:357
+/// `COMP_SPELL` constant.
 pub const COMP_SPELL: i32 = 2; // c:358
+/// `COMP_EXPAND` constant.
 pub const COMP_EXPAND: i32 = 3; // c:359
+/// `COMP_EXPAND_COMPLETE` constant.
 pub const COMP_EXPAND_COMPLETE: i32 = 4; // c:360
+/// `COMP_LIST_EXPAND` constant.
 pub const COMP_LIST_EXPAND: i32 = 5; // c:361
 
 /// Port of `COMP_ISEXPAND(X)` from zle.h:362.
@@ -741,12 +782,18 @@ pub struct brinfo {
 // =====================================================================
 // Hook offsets — `Src/Zle/zle.h:377-402`.
 // =====================================================================
+/// `LISTMATCHESHOOK` constant.
 
 pub const LISTMATCHESHOOK: i32 = 0; // c:379
+/// `COMPLETEHOOK` constant.
 pub const COMPLETEHOOK: i32 = 1; // c:380
+/// `BEFORECOMPLETEHOOK` constant.
 pub const BEFORECOMPLETEHOOK: i32 = 2; // c:381
+/// `AFTERCOMPLETEHOOK` constant.
 pub const AFTERCOMPLETEHOOK: i32 = 3; // c:382
+/// `ACCEPTCOMPHOOK` constant.
 pub const ACCEPTCOMPHOOK: i32 = 4; // c:383
+/// `INVALIDATELISTHOOK` constant.
 pub const INVALIDATELISTHOOK: i32 = 5; // c:384
 
 // =====================================================================
@@ -808,9 +855,11 @@ pub fn invalidatelist() {
 // =====================================================================
 // setline flags — `Src/Zle/zle.h:404-408`.
 // =====================================================================
+/// `ZSL_COPY` constant.
 
 pub const ZSL_COPY: i32 = 1; /* Copy the argument, don't modify it */
 // c:406
+/// `ZSL_TOEND` constant.
 pub const ZSL_TOEND: i32 = 2; /* Go to the end of the new line */
 // c:407
 
@@ -822,10 +871,13 @@ pub const ZSL_TOEND: i32 = 2; /* Go to the end of the new line */
 /// `addsuffix()`).
 pub const SUFTYP_POSSTR: i32 = 0; /* String of characters to match */
 // c:413
+/// `SUFTYP_NEGSTR` constant.
 pub const SUFTYP_NEGSTR: i32 = 1; /* String of characters not to match */
 // c:414
+/// `SUFTYP_POSRNG` constant.
 pub const SUFTYP_POSRNG: i32 = 2; /* Range of characters to match */
 // c:415
+/// `SUFTYP_NEGRNG` constant.
 pub const SUFTYP_NEGRNG: i32 = 3; /* Range of characters not to match */
 // c:416
 
@@ -878,31 +930,52 @@ pub const N_SPECIAL_HIGHLIGHTS: i32 = 4; // c:473
 
 /// Port of `enum cursorcontext` from zle.h:476.
 pub const CURC_EDIT: i32 = 0; // c:477
+/// `CURC_COMMAND` constant.
 pub const CURC_COMMAND: i32 = 1; // c:478
+/// `CURC_INSERT` constant.
 pub const CURC_INSERT: i32 = 2; // c:479
+/// `CURC_OVERWRITE` constant.
 pub const CURC_OVERWRITE: i32 = 3; // c:480
+/// `CURC_PENDING` constant.
 pub const CURC_PENDING: i32 = 4; // c:481
+/// `CURC_REGION_START` constant.
 pub const CURC_REGION_START: i32 = 5; // c:482
+/// `CURC_REGION_END` constant.
 pub const CURC_REGION_END: i32 = 6; // c:483
+/// `CURC_VISUAL` constant.
 pub const CURC_VISUAL: i32 = 7; // c:484
+/// `CURC_DEFAULT` constant.
 pub const CURC_DEFAULT: i32 = 8; // c:485
 
 // =====================================================================
 // Cursor flag bits — `Src/Zle/zle.h:488-500`.
 // =====================================================================
+/// `CURF_DEFAULT` constant.
 
 pub const CURF_DEFAULT: i32 = 0; // c:488
+/// `CURF_UNDERLINE` constant.
 pub const CURF_UNDERLINE: i32 = 1; // c:489
+/// `CURF_BAR` constant.
 pub const CURF_BAR: i32 = 2; // c:490
+/// `CURF_BLOCK` constant.
 pub const CURF_BLOCK: i32 = 3; // c:491
+/// `CURF_SHAPE_MASK` constant.
 pub const CURF_SHAPE_MASK: i32 = 3; // c:492
+/// `CURF_BLINK` constant.
 pub const CURF_BLINK: i32 = 1 << 2; // c:493
+/// `CURF_STEADY` constant.
 pub const CURF_STEADY: i32 = 1 << 3; // c:494
+/// `CURF_HIDDEN` constant.
 pub const CURF_HIDDEN: i32 = 1 << 4; // c:495
+/// `CURF_COLOR` constant.
 pub const CURF_COLOR: i32 = 1 << 5; // c:496
+/// `CURF_COLOR_MASK` constant.
 pub const CURF_COLOR_MASK: u32 = (0xffffff_u32 << 8) | (CURF_COLOR as u32); // c:497
+/// `CURF_RED_SHIFT` constant.
 pub const CURF_RED_SHIFT: i32 = 24; // c:498
+/// `CURF_GREEN_SHIFT` constant.
 pub const CURF_GREEN_SHIFT: i32 = 16; // c:499
+/// `CURF_BLUE_SHIFT` constant.
 pub const CURF_BLUE_SHIFT: i32 = 8; // c:500
 
 // =====================================================================

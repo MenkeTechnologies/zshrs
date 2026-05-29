@@ -108,13 +108,18 @@ impl PtyHandle {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum JobState {
+    /// `Running` variant.
     Running,
+    /// `Exited` variant.
     Exited(i32),
+    /// `Killed` variant.
     Killed(i32), // signal number
+    /// `Failed` variant.
     Failed(String),
 }
 
 impl JobState {
+    /// `label` — see implementation.
     pub fn label(&self) -> &'static str {
         match self {
             JobState::Running => "running",
@@ -123,6 +128,7 @@ impl JobState {
             JobState::Failed(_) => "failed",
         }
     }
+    /// `exit_code` — see implementation.
 
     pub fn exit_code(&self) -> Option<i32> {
         match self {
@@ -131,6 +137,7 @@ impl JobState {
             _ => None,
         }
     }
+    /// `is_terminal` — see implementation.
 
     pub fn is_terminal(&self) -> bool {
         !matches!(self, JobState::Running)
@@ -141,19 +148,33 @@ impl JobState {
 /// the live registry, so it's safe to ship over IPC.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JobSnapshot {
+    /// `id` field.
     pub id: u64,
+    /// `command` field.
     pub command: Vec<String>,
+    /// `cwd` field.
     pub cwd: Option<String>,
+    /// `tags` field.
     pub tags: Vec<String>,
+    /// `state` field.
     pub state: String,
+    /// `exit_code` field.
     pub exit_code: Option<i32>,
+    /// `pid` field.
     pub pid: Option<i32>,
+    /// `started_by_shell` field.
     pub started_by_shell: u64,
+    /// `started_at` field.
     pub started_at: String,
+    /// `finished_at` field.
     pub finished_at: Option<String>,
+    /// `output_path` field.
     pub output_path: String,
+    /// `error_path` field.
     pub error_path: String,
+    /// `stdout_bytes` field.
     pub stdout_bytes: u64,
+    /// `stderr_bytes` field.
     pub stderr_bytes: u64,
     /// True if this job is running under a pty (submitted with `pty=true`).
     /// Drives `zjob attach`'s mode selection — pty jobs use the
@@ -165,6 +186,7 @@ pub struct JobSnapshot {
     /// attach` initialize its termios before the first SIGWINCH.
     #[serde(default)]
     pub pty_rows: Option<u16>,
+    /// `pty_cols` field.
     #[serde(default)]
     pub pty_cols: Option<u16>,
 }
@@ -227,7 +249,9 @@ impl JobMeta {
 /// Daemon-wide singleton owning the in-memory job registry. Held inside
 /// `DaemonState` as `Arc<Supervisor>`.
 pub struct Supervisor {
+    /// `inner` field.
     inner: Mutex<SupervisorInner>,
+    /// `paths` field.
     paths: CachePaths,
     /// Weak back-ref so background supervisor tasks can publish events without
     /// keeping DaemonState alive past its natural lifetime.
@@ -240,6 +264,7 @@ struct SupervisorInner {
 }
 
 impl Supervisor {
+    /// `new` — see implementation.
     pub fn new(paths: CachePaths) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(SupervisorInner {
@@ -250,6 +275,7 @@ impl Supervisor {
             state: parking_lot::RwLock::new(Weak::new()),
         })
     }
+    /// `bind_state` — see implementation.
 
     pub fn bind_state(&self, state: &Arc<DaemonState>) {
         *self.state.write() = Arc::downgrade(state);
@@ -774,6 +800,7 @@ impl Supervisor {
         // (or `job:*.complete`) match via Scope::matches_scope.
         let _ = state.publish(&job_scope, topic_kind, frame);
     }
+    /// `list` — see implementation.
 
     pub fn list(
         &self,
@@ -797,11 +824,13 @@ impl Supervisor {
         }
         out
     }
+    /// `status` — see implementation.
 
     pub fn status(&self, id: u64) -> Option<JobSnapshot> {
         let g = self.inner.lock();
         g.jobs.get(&id).map(JobMeta::snapshot)
     }
+    /// `output` — see implementation.
 
     pub fn output(&self, id: u64, stderr: bool, lines: Option<u64>) -> Result<String> {
         let path = {
@@ -828,6 +857,7 @@ impl Supervisor {
             Ok(content)
         }
     }
+    /// `kill` — see implementation.
 
     pub fn kill(&self, id: u64, signal: Option<&str>) -> Result<bool> {
         let pid = {

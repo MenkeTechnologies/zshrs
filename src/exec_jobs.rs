@@ -18,19 +18,28 @@ use std::process::Child;
 /// the executor's safe-Rust path doesn't manipulate the bitfield.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobState {
+    /// `Running` variant.
     Running,
+    /// `Stopped` variant.
     Stopped,
+    /// `Done` variant.
     Done,
 }
 
 /// One entry in the executor's bg-job registry.
 #[derive(Debug)]
 pub struct JobInfo {
+    /// `id` field.
     pub id: usize,
+    /// `pid` field.
     pub pid: i32,
+    /// `child` field.
     pub child: Option<Child>,
+    /// `command` field.
     pub command: String,
+    /// `state` field.
     pub state: JobState,
+    /// `is_current` field.
     pub is_current: bool,
 }
 
@@ -39,8 +48,11 @@ pub struct JobInfo {
 /// this table owns the `std::process::Child` handles needed for
 /// `try_wait` / `kill` on the safe-Rust path.
 pub struct JobTable {
+    /// `jobs` field.
     jobs: Vec<Option<JobInfo>>,
+    /// `current_id` field.
     current_id: Option<usize>,
+    /// `next_id` field.
     next_id: usize,
 }
 
@@ -51,6 +63,7 @@ impl Default for JobTable {
 }
 
 impl JobTable {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         JobTable {
             jobs: Vec::with_capacity(16),

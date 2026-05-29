@@ -124,6 +124,7 @@ impl TextStyling {
     pub const fn is_bold(self) -> bool {
         self.bold
     }
+    /// `underline_style` — see implementation.
 
     #[cfg(test)]
     pub const fn underline_style(self) -> ResettableStyle<UnderlineStyle> {
@@ -150,6 +151,7 @@ pub(crate) struct TextFace {
 }
 
 impl TextFace {
+    /// `terminal_default` — see implementation.
     pub const fn terminal_default() -> Self {
         Self {
             fg: Color::Normal,
@@ -158,6 +160,7 @@ impl TextFace {
             style: TextStyling::terminal_default(),
         }
     }
+    /// `unknown` — see implementation.
     pub const fn unknown() -> Self {
         Self {
             fg: Color::None,
@@ -166,6 +169,7 @@ impl TextFace {
             style: TextStyling::unknown(),
         }
     }
+    /// `new` — see implementation.
 
     pub fn new(fg: Color, bg: Color, underline_color: Color, style: TextStyling) -> Self {
         Self {

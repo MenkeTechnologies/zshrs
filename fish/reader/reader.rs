@@ -170,6 +170,7 @@ fn zeroed_termios() -> Termios {
     let termios: libc::termios = unsafe { std::mem::zeroed() };
     termios.into()
 }
+/// `SHELL_MODES` static.
 
 pub static SHELL_MODES: LazyLock<Mutex<Termios>> = LazyLock::new(|| Mutex::new(zeroed_termios()));
 
@@ -192,6 +193,7 @@ static INTERRUPTED: AtomicI32 = AtomicI32::new(0);
 static EXIT_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
 // Get the terminal mode on startup.
+/// `get_terminal_mode_on_startup` — see implementation.
 pub fn get_terminal_mode_on_startup() -> Option<&'static libc::termios> {
     TERMINAL_MODE_ON_STARTUP.get()
 }
@@ -243,11 +245,15 @@ fn querying_allowed(vars: &dyn Environment) -> bool {
             isatty(STDOUT_FILENO)
         }
 }
+/// `TerminalInitResult` — see fields for layout.
 
 pub struct TerminalInitResult {
+    /// `input_queue` field.
     pub input_queue: InputEventQueue,
+    /// `background_color` field.
     pub background_color: Option<xterm_color::Color>,
 }
+/// `terminal_init` — see implementation.
 
 pub fn terminal_init(vars: &dyn Environment, inputfd: RawFd) -> TerminalInitResult {
     assert!(isatty(inputfd));
@@ -351,6 +357,7 @@ fn reader_data_stack() -> &'static mut Vec<Pin<Box<ReaderData>>> {
     assert_is_main_thread();
     unsafe { &mut *READER_DATA_STACK.0.get() }
 }
+/// `reader_in_interactive_read` — see implementation.
 
 pub fn reader_in_interactive_read() -> bool {
     reader_data_stack()
@@ -420,6 +427,7 @@ pub fn reader_pop() {
         *commandline_state_snapshot() = CommandlineState::new();
     }
 }
+/// `fake_scoped_reader` — see implementation.
 
 pub fn fake_scoped_reader<'a>(parser: &'a Parser) -> impl ScopeGuarding<Target = Reader<'a>> + 'a {
     let inputfd = -1;
@@ -470,6 +478,7 @@ pub struct ReaderConfig {
 
     /// Whether to exit on interrupt (^C).
     pub exit_on_interrupt: bool,
+    /// `read_prompt_str_is_empty` field.
 
     pub read_prompt_str_is_empty: bool,
 
@@ -526,10 +535,13 @@ pub enum CursorSelectionMode {
     /// This is most useful with a block or underscore cursor shape.
     Inclusive,
 }
+/// `CursorEndMode` — see variants.
 
 #[derive(Eq, PartialEq)]
 pub enum CursorEndMode {
+    /// `Exclusive` variant.
     Exclusive,
+    /// `Inclusive` variant.
     Inclusive,
 }
 
@@ -540,16 +552,22 @@ enum Kill {
     /// In this mode, the new string is prepended to the current contents of the kill buffer.
     Prepend,
 }
+/// `JumpDirection` — see variants.
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum JumpDirection {
+    /// `Forward` variant.
     Forward,
+    /// `Backward` variant.
     Backward,
 }
+/// `JumpPrecision` — see variants.
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum JumpPrecision {
+    /// `Till` variant.
     Till,
+    /// `To` variant.
     To,
 }
 
@@ -689,6 +707,7 @@ pub struct ReaderData {
     /// Data associated with input events.
     /// This is made public so that InputEventQueuer can be implemented on us.
     pub input_data: InputData,
+    /// `queued_repaint` field.
     queued_repaint: bool,
     /// The history.
     history: Arc<History>,
@@ -699,12 +718,15 @@ pub struct ReaderData {
 
     /// The cursor selection mode.
     cursor_selection_mode: CursorSelectionMode,
+    /// `cursor_end_mode` field.
     cursor_end_mode: CursorEndMode,
 
     /// The selection data. If this is not none, then we have an active selection.
     selection: Option<SelectionData>,
+    /// `left_prompt_buff` field.
 
     left_prompt_buff: WString,
+    /// `mode_prompt_buff` field.
     mode_prompt_buff: WString,
     /// The output of the last evaluation of the right prompt command.
     right_prompt_buff: WString,
@@ -712,6 +734,7 @@ pub struct ReaderData {
     /// When navigating the pager, we modify the command line.
     /// This is the saved command line before modification.
     cycle_command_line: WString,
+    /// `cycle_cursor_pos` field.
     cycle_cursor_pos: usize,
 
     /// If set, a key binding or the 'exit' command has asked us to exit our read loop.
@@ -728,13 +751,17 @@ pub struct ReaderData {
 
     /// The target character of the last jump command.
     last_jump_target: Option<char>,
+    /// `last_jump_direction` field.
     last_jump_direction: JumpDirection,
+    /// `last_jump_precision` field.
     last_jump_precision: JumpPrecision,
 
     /// The text of the most recent asynchronous highlight and autosuggestion requests.
     /// If these differs from the text of the command line, then we must kick off a new request.
     in_flight_highlight_request: WString,
+    /// `in_flight_autosuggest_request` field.
     in_flight_autosuggest_request: WString,
+    /// `rls` field.
 
     rls: Option<ReadlineLoopState>,
 
@@ -745,7 +772,9 @@ pub struct ReaderData {
 /// Reader is ReaderData equipped with a Parser, so it can execute fish script.
 /// It also provides access to I/O threads.
 pub struct Reader<'a> {
+    /// `data` field.
     pub data: &'a mut ReaderData,
+    /// `parser` field.
     pub parser: &'a Parser,
 }
 
@@ -1027,6 +1056,7 @@ pub fn reader_init(will_restore_foreground_pgroup: bool) {
         term_donate(/*quiet=*/ true);
     }
 }
+/// `reader_deinit` — see implementation.
 
 pub fn reader_deinit(restore_foreground_pgroup: bool) {
     restore_term_mode();
@@ -1059,6 +1089,7 @@ pub fn reader_change_history(name: &wstr) {
     data.history = History::with_name(name);
     commandline_state_snapshot().history = Some(data.history.clone());
 }
+/// `reader_change_cursor_selection_mode` — see implementation.
 
 pub fn reader_change_cursor_selection_mode(selection_mode: CursorSelectionMode) {
     // We don't need to _change_ if we're not initialized yet.
@@ -1073,6 +1104,7 @@ pub fn reader_change_cursor_selection_mode(selection_mode: CursorSelectionMode) 
         }
     }
 }
+/// `reader_change_cursor_end_mode` — see implementation.
 
 pub fn reader_change_cursor_end_mode(end_mode: CursorEndMode) {
     // We don't need to _change_ if we're not initialized yet.
@@ -1123,6 +1155,7 @@ pub fn reader_schedule_prompt_repaint() {
     };
     data.schedule_prompt_repaint();
 }
+/// `reader_update_termsize` — see implementation.
 
 pub fn reader_update_termsize(parser: &Parser) {
     let last = termsize_last();
@@ -1136,6 +1169,7 @@ pub fn reader_update_termsize(parser: &Parser) {
     let mut data = Reader { parser, data };
     data.push_front(CharEvent::Implicit(ImplicitEvent::NewWindowHeight));
 }
+/// `reader_execute_readline_cmd` — see implementation.
 
 pub fn reader_execute_readline_cmd(parser: &Parser, ch: CharEvent) {
     if parser.scope().readonly_commandline {
@@ -1167,6 +1201,7 @@ pub fn reader_execute_readline_cmd(parser: &Parser, ch: CharEvent) {
     data.save_screen_state();
     let _ = data.handle_char_event(Some(ch));
 }
+/// `reader_jump` — see implementation.
 
 pub fn reader_jump(direction: JumpDirection, precision: JumpPrecision, target: char) -> bool {
     let Some(data) = current_data() else {
@@ -1176,6 +1211,7 @@ pub fn reader_jump(direction: JumpDirection, precision: JumpPrecision, target: c
     let elt = data.active_edit_line_tag();
     data.jump_and_remember_last_jump(direction, precision, elt, target, false)
 }
+/// `reader_showing_suggestion` — see implementation.
 
 pub fn reader_showing_suggestion(parser: &Parser) -> bool {
     if !is_interactive_session() {
@@ -1246,6 +1282,7 @@ pub fn commandline_set_buffer(parser: &Parser, text: Option<WString>, cursor_pos
     }
     current_data().map(|data| data.apply_commandline_state_changes());
 }
+/// `commandline_set_search_field` — see implementation.
 
 pub fn commandline_set_search_field(parser: &Parser, text: WString, cursor_pos: Option<usize>) {
     if parser.scope().readonly_commandline {
@@ -1414,6 +1451,7 @@ impl ReaderData {
     // We repaint our prompt if fstat reports the tty as having changed.
     // But don't react to tty changes that we initiated, because of commands or
     // on-variable events (e.g. for fish_bind_mode). See #3481.
+    /// `save_screen_state` — see implementation.
     pub fn save_screen_state(&mut self) {
         self.screen.save_status();
     }
@@ -1614,6 +1652,7 @@ impl ReaderData {
         }
         true
     }
+    /// `mouse_left_click` — see implementation.
 
     pub fn mouse_left_click(&mut self, click_position: ViewportPosition) {
         flogf!(
@@ -1633,6 +1672,7 @@ impl ReaderData {
             CharOffset::Pager(_) | CharOffset::None => {}
         }
     }
+    /// `schedule_prompt_repaint` — see implementation.
 
     pub fn schedule_prompt_repaint(&mut self) {
         if self.force_exec_prompt_and_repaint {
@@ -1643,6 +1683,7 @@ impl ReaderData {
             .queue_char(CharEvent::from_readline(ReadlineCmd::Repaint));
     }
 }
+/// `reader_save_screen_state` — see implementation.
 
 pub fn reader_save_screen_state() {
     current_data().map(|data| data.save_screen_state());
@@ -4832,6 +4873,7 @@ pub fn term_copy_modes() {
     shell_modes.input_flags =
         (shell_modes.input_flags & !FLOW_CONTROL_FLAGS) | external_flow_control;
 }
+/// `set_shell_modes` — see implementation.
 
 pub fn set_shell_modes(fd: RawFd, whence: &str) -> bool {
     loop {
@@ -4853,6 +4895,7 @@ pub fn set_shell_modes(fd: RawFd, whence: &str) -> bool {
         }
     }
 }
+/// `set_shell_modes_temporarily` — see implementation.
 
 pub fn set_shell_modes_temporarily(inputfd: RawFd) -> Option<Termios> {
     // It may happen that a command we ran when job control was disabled nevertheless stole the tty

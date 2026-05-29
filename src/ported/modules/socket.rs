@@ -17,6 +17,7 @@ use crate::ported::zsh_h::{
     features, module, options, FDT_EXTERNAL, FDT_UNUSED, OPT_ARG, OPT_ISSET,
 };
 use std::sync::{Mutex, OnceLock};
+/// `bin_zsocket` — see implementation.
 
 pub fn bin_zsocket(
     nam: &str,

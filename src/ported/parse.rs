@@ -102,6 +102,7 @@ thread_local! {
 // preserves the API contract (lookup by (nfunc, str) → offs) with
 // simpler ownership semantics.
 thread_local! {
+    /// `ECBUF` static.
     pub static ECBUF: std::cell::RefCell<Vec<u32>> = std::cell::RefCell::new(Vec::new());
     static ECLEN: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     static ECUSED: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
@@ -4209,6 +4210,7 @@ pub struct parse_stack {
 // Old uppercase Rust-only `ParseStack` is gone. Compat alias so
 // existing call sites (context.rs) keep resolving until the
 // rename ripples through.
+/// `ParseStack` type alias.
 #[allow(non_camel_case_types)]
 pub type ParseStack = parse_stack;
 

@@ -74,11 +74,13 @@ fn thread_id() -> usize {
     debug_assert_ne!(id, 0, "TLS storage not initialized!");
     id
 }
+/// `is_main_thread` — see implementation.
 
 #[inline(always)]
 pub fn is_main_thread() -> bool {
     thread_id() == main_thread_id()
 }
+/// `assert_is_main_thread` — see implementation.
 
 #[inline(always)]
 pub fn assert_is_main_thread() {
@@ -91,6 +93,7 @@ pub fn assert_is_main_thread() {
         not_main_thread();
     }
 }
+/// `assert_is_background_thread` — see implementation.
 
 #[inline(always)]
 pub fn assert_is_background_thread() {
@@ -103,10 +106,12 @@ pub fn assert_is_background_thread() {
         not_background_thread();
     }
 }
+/// `is_forked_child` — see implementation.
 
 pub fn is_forked_child() -> bool {
     IS_FORKED_PROC.load(Ordering::Relaxed)
 }
+/// `assert_is_not_forked_child` — see implementation.
 
 #[inline(always)]
 pub fn assert_is_not_forked_child() {
@@ -183,6 +188,7 @@ struct ThreadPoolProtected {
     /// The number of threads waiting for more work (i.e. idle threads)
     pub waiting_threads: usize,
 }
+/// `ThreadPool` — see fields for layout.
 
 pub struct ThreadPool {
     /// The mutex to access shared state between [`ThreadPool`] and [`WorkerThread`] instances. This
@@ -293,8 +299,10 @@ impl ThreadPool {
 /// A `Sync` and `Send` wrapper for non-`Sync`/`Send` types.
 /// Only allows access from the main thread.
 pub struct MainThread<T> {
+    /// `data` field.
     data: T,
     // Make type !Send and !Sync by default
+    /// `_marker` field.
     _marker: PhantomData<*const ()>,
 }
 
@@ -304,12 +312,14 @@ unsafe impl<T: 'static> Send for MainThread<T> {}
 unsafe impl<T: 'static> Sync for MainThread<T> {}
 
 impl<T> MainThread<T> {
+    /// `new` — see implementation.
     pub const fn new(value: T) -> Self {
         Self {
             data: value,
             _marker: PhantomData,
         }
     }
+    /// `get` — see implementation.
 
     pub fn get(&self) -> &T {
         assert_is_main_thread();

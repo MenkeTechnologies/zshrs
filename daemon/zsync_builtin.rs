@@ -75,6 +75,7 @@ fn connect() -> Result<Client, ()> {
         eprintln!("zshrs: zsync: daemon: {}", e);
     })
 }
+/// `zsync` — see implementation.
 
 pub fn zsync(args: &[String]) -> i32 {
     let verb = args.get(1).map(|s| s.as_str()).unwrap_or("");

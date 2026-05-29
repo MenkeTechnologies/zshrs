@@ -2,11 +2,15 @@
 
 use crate::prelude::*;
 use fish_fallback::{fish_wcswidth, fish_wcwidth};
+/// `SourceOffset` type alias.
 
 pub type SourceOffset = u32;
+/// `SOURCE_OFFSET_INVALID` constant.
 
 pub const SOURCE_OFFSET_INVALID: usize = SourceOffset::MAX as _;
+/// `SOURCE_LOCATION_UNKNOWN` constant.
 pub const SOURCE_LOCATION_UNKNOWN: usize = usize::MAX;
+/// `ParseTreeFlags` — see fields for layout.
 
 #[derive(Copy, Clone, Default)]
 pub struct ParseTreeFlags {
@@ -30,7 +34,9 @@ pub struct ParseTreeFlags {
 /// If this is returned as the error of a Result, then either `error` or `incomplete` (or both) is set.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct ParseIssue {
+    /// `error` field.
     pub error: bool,      // An error was found.
+    /// `incomplete` field.
     pub incomplete: bool, // Incomplete input, such as unclosed block or pipe.
 }
 
@@ -49,15 +55,19 @@ impl ParseIssue {
 /// A range of source code.
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Default)]
 pub struct SourceRange {
+    /// `start` field.
     pub start: u32,
+    /// `length` field.
     pub length: u32,
 }
 
 impl SourceRange {
+    /// `as_usize` — see implementation.
     pub fn as_usize(self) -> std::ops::Range<usize> {
         self.into()
     }
 }
+/// `ParseTokenType` — see variants.
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ParseTokenType {
@@ -65,106 +75,168 @@ pub enum ParseTokenType {
     Invalid = 1,
 
     // Terminal types.
+    /// `String` variant.
     String,
+    /// `Pipe` variant.
     Pipe,
+    /// `LeftBrace` variant.
     LeftBrace,
+    /// `RightBrace` variant.
     RightBrace,
+    /// `Redirection` variant.
     Redirection,
+    /// `Background` variant.
     Background,
+    /// `AndAnd` variant.
     AndAnd,
+    /// `OrOr` variant.
     OrOr,
+    /// `End` variant.
     End,
     // Special terminal type that means no more tokens forthcoming.
+    /// `Terminate` variant.
     Terminate,
     // Very special terminal types that don't appear in the production list.
+    /// `Error` variant.
     Error,
+    /// `TokenizerError` variant.
     TokenizerError,
+    /// `Comment` variant.
     Comment,
 }
+/// `ParseKeyword` — see variants.
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ParseKeyword {
     // 'None' is not a keyword, it is a sentinel indicating nothing.
     // Note it proves convenient to keep this as a value rather than using Option.
+    /// `None` variant.
     #[default]
     None,
+    /// `And` variant.
     And,
+    /// `Begin` variant.
     Begin,
+    /// `Builtin` variant.
     Builtin,
+    /// `Case` variant.
     Case,
+    /// `Command` variant.
     Command,
+    /// `Else` variant.
     Else,
+    /// `End` variant.
     End,
+    /// `Exclam` variant.
     Exclam,
+    /// `Exec` variant.
     Exec,
+    /// `For` variant.
     For,
+    /// `Function` variant.
     Function,
+    /// `If` variant.
     If,
+    /// `In` variant.
     In,
+    /// `Not` variant.
     Not,
+    /// `Or` variant.
     Or,
+    /// `Switch` variant.
     Switch,
+    /// `Time` variant.
     Time,
+    /// `While` variant.
     While,
 }
 
 // Statement decorations like 'command' or 'exec'.
+/// `StatementDecoration` — see variants.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StatementDecoration {
+    /// `None` variant.
     None,
+    /// `Command` variant.
     Command,
+    /// `Builtin` variant.
     Builtin,
+    /// `Exec` variant.
     Exec,
 }
 
 // Parse error code list.
+/// `ParseErrorCode` — see variants.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ParseErrorCode {
+    /// `None` variant.
     #[default]
     None,
 
     // Matching values from enum parser_error.
+    /// `Syntax` variant.
     Syntax,
+    /// `CmdSubst` variant.
     CmdSubst,
+    /// `Generic` variant.
 
     Generic, // unclassified error types
 
     // Tokenizer errors.
+    /// `TokenizerUnterminatedQuote` variant.
     TokenizerUnterminatedQuote,
+    /// `TokenizerUnterminatedSubshell` variant.
     TokenizerUnterminatedSubshell,
+    /// `TokenizerUnterminatedSlice` variant.
     TokenizerUnterminatedSlice,
+    /// `TokenizerUnterminatedEscape` variant.
     TokenizerUnterminatedEscape,
+    /// `TokenizerOther` variant.
     TokenizerOther,
+    /// `UnbalancingEnd` variant.
 
     UnbalancingEnd,         // end outside of block
+    /// `UnbalancingElse` variant.
     UnbalancingElse,        // else outside of if
+    /// `UnbalancingCase` variant.
     UnbalancingCase,        // case outside of switch
+    /// `UnbalancingBrace` variant.
     UnbalancingBrace,       // } outside of {
+    /// `BareVariableAssignment` variant.
     BareVariableAssignment, // a=b without command
+    /// `AndOrInPipeline` variant.
     AndOrInPipeline,        // "and" or "or" after a pipe
 }
 
 // The location of a pipeline.
+/// `PipelinePosition` — see variants.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum PipelinePosition {
+    /// `None` variant.
     None,       // not part of a pipeline
+    /// `First` variant.
     First,      // first command in a pipeline
+    /// `Subsequent` variant.
     Subsequent, // second or further command in a pipeline
 }
 
 impl SourceRange {
+    /// `new` — see implementation.
     pub fn new(start: usize, length: usize) -> Self {
         SourceRange {
             start: start.try_into().unwrap(),
             length: length.try_into().unwrap(),
         }
     }
+    /// `start` — see implementation.
     pub fn start(self) -> usize {
         self.start.try_into().unwrap()
     }
+    /// `length` — see implementation.
     pub fn length(self) -> usize {
         self.length.try_into().unwrap()
     }
+    /// `end` — see implementation.
     pub fn end(self) -> usize {
         self.start
             .checked_add(self.length)
@@ -172,6 +244,7 @@ impl SourceRange {
             .try_into()
             .unwrap()
     }
+    /// `combine` — see implementation.
     pub fn combine(self, other: Self) -> Self {
         let start = std::cmp::min(self.start, other.start);
         SourceRange {
@@ -185,6 +258,7 @@ impl SourceRange {
     }
 
     // Return true if a location is in this range, including one-past-the-end.
+    /// `contains_inclusive` — see implementation.
     pub fn contains_inclusive(self, loc: usize) -> bool {
         self.start() <= loc && loc - self.start() <= self.length()
     }
@@ -278,6 +352,7 @@ impl From<&wstr> for ParseKeyword {
         }
     }
 }
+/// `ParseError` — see fields for layout.
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ParseError {
@@ -287,6 +362,7 @@ pub struct ParseError {
     pub code: ParseErrorCode,
     /// Offset and length of the token in the source code that triggered this error.
     pub source_start: usize,
+    /// `source_length` field.
     pub source_length: usize,
 }
 
@@ -408,6 +484,7 @@ impl ParseError {
         result
     }
 }
+/// `token_type_user_presentable_description` — see implementation.
 
 pub fn token_type_user_presentable_description(
     type_: ParseTokenType,
@@ -433,6 +510,7 @@ pub fn token_type_user_presentable_description(
         _ => sprintf!("a %s", type_.to_wstr()),
     }
 }
+/// `ParseErrorList` type alias.
 
 pub type ParseErrorList = Vec<ParseError>;
 
@@ -456,6 +534,7 @@ pub const FISH_MAX_STACK_DEPTH: isize = 128;
 /// Reduced under TSAN: our CI test creates 500 jobs and this is very slow with TSAN.
 #[cfg(feature = "tsan")]
 pub const FISH_MAX_EVAL_DEPTH: isize = 250;
+/// `FISH_MAX_EVAL_DEPTH` constant.
 #[cfg(not(feature = "tsan"))]
 pub const FISH_MAX_EVAL_DEPTH: isize = 500;
 

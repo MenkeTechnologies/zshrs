@@ -29,14 +29,18 @@ pub struct ParseToken {
     /// Hackish: if TOK_END, whether the source is a newline.
     pub is_newline: bool,
     // Hackish: whether this token is a string like FOO=bar
+    /// `may_be_variable_assignment` field.
     pub may_be_variable_assignment: bool,
     /// If this is a tokenizer error, that error.
     pub tok_error: TokenizerError,
+    /// `source_start` field.
     source_start: SourceOffset,
+    /// `source_length` field.
     source_length: SourceOffset,
 }
 
 impl ParseToken {
+    /// `new` — see implementation.
     pub fn new(typ: ParseTokenType) -> Self {
         ParseToken {
             typ,
@@ -50,15 +54,19 @@ impl ParseToken {
             source_length: 0,
         }
     }
+    /// `set_source_start` — see implementation.
     pub fn set_source_start(&mut self, value: usize) {
         self.source_start = value.try_into().unwrap();
     }
+    /// `source_start` — see implementation.
     pub fn source_start(&self) -> usize {
         self.source_start.try_into().unwrap()
     }
+    /// `set_source_length` — see implementation.
     pub fn set_source_length(&mut self, value: usize) {
         self.source_length = value.try_into().unwrap();
     }
+    /// `source_length` — see implementation.
     pub fn source_length(&self) -> usize {
         self.source_length.try_into().unwrap()
     }
@@ -79,6 +87,7 @@ impl ParseToken {
         }
         result
     }
+    /// `user_presentable_description` — see implementation.
     pub fn user_presentable_description(&self) -> WString {
         token_type_user_presentable_description(self.typ, self.keyword)
     }
@@ -100,7 +109,9 @@ impl From<TokenizerError> for ParseErrorCode {
 
 /// A type wrapping up a parse tree and the original source behind it.
 pub struct ParsedSource {
+    /// `src` field.
     pub src: WString,
+    /// `ast` field.
     pub ast: Ast,
 }
 
@@ -149,15 +160,18 @@ impl ParsedSource {
 }
 
 impl ParsedSource {
+    /// `new` — see implementation.
     pub fn new(src: WString, ast: Ast) -> Self {
         ParsedSource { src, ast }
     }
 
     // Return the top NodeRef for the parse tree, which is of type JobList.
+    /// `top_job_list` — see implementation.
     pub fn top_job_list(self: &Arc<Self>) -> NodeRef<JobList> {
         NodeRef::new(Arc::clone(self), self.ast.top())
     }
 }
+/// `ParsedSourceRef` type alias.
 
 pub type ParsedSourceRef = Arc<ParsedSource>;
 
@@ -172,6 +186,7 @@ pub struct NodeRef<NodeType: Node> {
 }
 
 impl<NodeType: Node> NodeRef<NodeType> {
+    /// `new` — see implementation.
     pub fn new(parsed_source: ParsedSourceRef, node: *const NodeType) -> Self {
         NodeRef {
             parsed_source: Pin::new(parsed_source),
@@ -182,6 +197,7 @@ impl<NodeType: Node> NodeRef<NodeType> {
     // Given a NodeRef, map to a child of the Node.
     // The caller provides a closure to return a reference to the child node
     // from the parent.
+    /// `child_ref` — see implementation.
     pub fn child_ref<ChildType: Node>(
         &self,
         func: impl FnOnce(&NodeType) -> &ChildType,
@@ -193,11 +209,13 @@ impl<NodeType: Node> NodeRef<NodeType> {
     }
 
     // Return the source offset of this node, if any.
+    /// `source_offset` — see implementation.
     pub fn source_offset(&self) -> Option<usize> {
         self.try_source_range().map(|r| r.start())
     }
 
     // Return the source, as a string.
+    /// `source_str` — see implementation.
     pub fn source_str(&self) -> &wstr {
         &self.parsed_source.src
     }
@@ -221,9 +239,11 @@ impl<NodeType: Node> Deref for NodeRef<NodeType> {
 }
 
 impl<NodeType: Node> NodeRef<NodeType> {
+    /// `parsed_source` — see implementation.
     pub fn parsed_source(&self) -> &ParsedSource {
         &self.parsed_source
     }
+    /// `parsed_source_ref` — see implementation.
 
     pub fn parsed_source_ref(&self) -> ParsedSourceRef {
         Pin::into_inner(self.parsed_source.clone())

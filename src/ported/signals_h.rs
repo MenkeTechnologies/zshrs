@@ -35,9 +35,11 @@ use std::sync::atomic::{AtomicI32, Ordering};
 /// value `<signal.h>` would emit.
 #[cfg(target_os = "linux")]
 pub const SIGCOUNT: i32 = 64; // Linux NSIG = 65
+/// `SIGCOUNT` constant.
 
 #[cfg(target_os = "macos")]
 pub const SIGCOUNT: i32 = 31; // macOS NSIG = 32
+/// `SIGCOUNT` constant.
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub const SIGCOUNT: i32 = 31; // POSIX baseline
@@ -64,6 +66,7 @@ pub const VSIGCOUNT: i32 = SIGCOUNT + 3; // c:36
 /// `#else` arm (TRAPCOUNT = VSIGCOUNT) applies.
 #[cfg(target_os = "linux")]
 pub const TRAPCOUNT: i32 = VSIGCOUNT + 32; // c:38 (Linux RT range = 32)
+/// `TRAPCOUNT` constant.
 
 #[cfg(not(target_os = "linux"))]
 pub const TRAPCOUNT: i32 = VSIGCOUNT; // c:42

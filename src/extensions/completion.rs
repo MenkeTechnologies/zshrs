@@ -8,32 +8,49 @@
 
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
+/// `CompletionEngine` — see fields for layout.
 
 pub struct CompletionEngine {
+    /// `conn` field.
     conn: Connection,
 }
+/// `Completion` — see fields for layout.
 
 #[derive(Debug, Clone)]
 pub struct Completion {
+    /// `name` field.
     pub name: String,
+    /// `kind` field.
     pub kind: CompletionKind,
+    /// `description` field.
     pub description: Option<String>,
+    /// `frequency` field.
     pub frequency: u32,
 }
+/// `CompletionKind` — see variants.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionKind {
+    /// `Command` variant.
     Command,
+    /// `Builtin` variant.
     Builtin,
+    /// `Function` variant.
     Function,
+    /// `Alias` variant.
     Alias,
+    /// `File` variant.
     File,
+    /// `Directory` variant.
     Directory,
+    /// `Variable` variant.
     Variable,
+    /// `Option` variant.
     Option,
 }
 
 impl CompletionKind {
+    /// `as_str` — see implementation.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Command => "command",
@@ -63,6 +80,7 @@ impl CompletionKind {
 }
 
 impl CompletionEngine {
+    /// `new` — see implementation.
     pub fn new() -> rusqlite::Result<Self> {
         let db_path = Self::db_path();
         std::fs::create_dir_all(db_path.parent().unwrap()).ok();
@@ -72,6 +90,7 @@ impl CompletionEngine {
         engine.init_schema()?;
         Ok(engine)
     }
+    /// `in_memory` — see implementation.
 
     pub fn in_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
@@ -130,6 +149,7 @@ impl CompletionEngine {
         )?;
         Ok(())
     }
+    /// `add_completion` — see implementation.
 
     pub fn add_completion(
         &self,
@@ -143,6 +163,7 @@ impl CompletionEngine {
         )?;
         Ok(())
     }
+    /// `add_completions` — see implementation.
 
     pub fn add_completions(
         &self,
@@ -160,6 +181,7 @@ impl CompletionEngine {
         tx.commit()?;
         Ok(())
     }
+    /// `increment_frequency` — see implementation.
 
     pub fn increment_frequency(&self, name: &str) -> rusqlite::Result<()> {
         self.conn.execute(
@@ -168,6 +190,7 @@ impl CompletionEngine {
         )?;
         Ok(())
     }
+    /// `search` — see implementation.
 
     pub fn search(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<Completion>> {
         if query.is_empty() {
@@ -245,11 +268,13 @@ impl CompletionEngine {
 
         rows.collect()
     }
+    /// `count` — see implementation.
 
     pub fn count(&self) -> rusqlite::Result<usize> {
         self.conn
             .query_row("SELECT COUNT(*) FROM completions", [], |row| row.get(0))
     }
+    /// `index_system_commands` — see implementation.
 
     pub fn index_system_commands(&self) -> rusqlite::Result<usize> {
         let path = std::env::var("PATH").unwrap_or_default();
@@ -273,6 +298,7 @@ impl CompletionEngine {
         self.add_completions(&completions)?;
         Ok(count)
     }
+    /// `index_shell_builtins` — see implementation.
 
     pub fn index_shell_builtins(&self) -> rusqlite::Result<usize> {
         let builtins = [

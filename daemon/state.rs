@@ -25,14 +25,23 @@ use super::Result;
 
 /// One client/shell session.
 pub struct Session {
+    /// `client_id` field.
     pub client_id: u64,
+    /// `session_id` field.
     pub session_id: String,
+    /// `pid` field.
     pub pid: i32,
+    /// `tty` field.
     pub tty: Option<String>,
+    /// `cwd` field.
     pub cwd: Option<String>,
+    /// `argv0` field.
     pub argv0: Option<String>,
+    /// `tags` field.
     pub tags: BTreeSet<String>,
+    /// `connected_at` field.
     pub connected_at: Instant,
+    /// `login_time` field.
     pub login_time: chrono::DateTime<chrono::Utc>,
     /// Outbound channel — daemon writes async events / responses here, the connection
     /// handler task drains and sends them on the wire.
@@ -47,6 +56,7 @@ pub struct Session {
 }
 
 impl Session {
+    /// `snapshot` — see implementation.
     pub fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
             client_id: self.client_id,
@@ -61,25 +71,39 @@ impl Session {
         }
     }
 }
+/// `SessionSnapshot` — see fields for layout.
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct SessionSnapshot {
+    /// `client_id` field.
     pub client_id: u64,
+    /// `session_id` field.
     pub session_id: String,
+    /// `pid` field.
     pub pid: i32,
+    /// `tty` field.
     pub tty: Option<String>,
+    /// `cwd` field.
     pub cwd: Option<String>,
+    /// `argv0` field.
     pub argv0: Option<String>,
+    /// `tags` field.
     pub tags: Vec<String>,
+    /// `login_time` field.
     pub login_time: String,
+    /// `uptime_secs` field.
     pub uptime_secs: u64,
 }
 
 /// Inner mutable state behind a single mutex.
 pub struct DaemonStateInner {
+    /// `sessions` field.
     pub sessions: BTreeMap<u64, Session>,
+    /// `next_client_id` field.
     pub next_client_id: u64,
+    /// `subscriptions` field.
     pub subscriptions: BTreeMap<u64, Subscription>,
+    /// `next_subscription_id` field.
     pub next_subscription_id: u64,
     /// Pending zsend --wait responses, keyed by delivery_id. Sender side
     /// holds a oneshot::Receiver waiting for a `cmd_result` IPC from the
@@ -107,12 +131,19 @@ impl DaemonStateInner {
 
 /// Shared handle — clone freely; every clone holds the same Arc<Mutex<...>> + paths.
 pub struct DaemonState {
+    /// `inner` field.
     inner: Mutex<DaemonStateInner>,
+    /// `catalog` field.
     catalog: Mutex<Connection>,
+    /// `history_db` field.
     history_db: Mutex<Connection>,
+    /// `fs_watcher` field.
     pub fs_watcher: Arc<super::fsnotify::FsWatcher>,
+    /// `ask_inbox` field.
     pub ask_inbox: Arc<super::zask::AskInbox>,
+    /// `jobs` field.
     pub jobs: Arc<super::jobs::Supervisor>,
+    /// `canonical` field.
     pub canonical: Arc<super::canonical::CanonicalEngine>,
     /// Named cross-process locks (daemon.lock.* ops). In-memory only;
     /// daemon restart releases everything (intentional — locks held by
@@ -124,13 +155,18 @@ pub struct DaemonState {
     /// `ops::dispatch` after each call and from `http::handler_op`
     /// after each HTTP response.
     pub metrics: super::metrics::Metrics,
+    /// `paths` field.
     pub paths: CachePaths,
+    /// `started_at` field.
     pub started_at: Instant,
+    /// `start_wall` field.
     pub start_wall: chrono::DateTime<chrono::Utc>,
+    /// `pid` field.
     pub pid: i32,
 }
 
 impl DaemonState {
+    /// `new` — see implementation.
     pub fn new(paths: CachePaths) -> Result<Arc<Self>> {
         let catalog = catalog::open(&paths)?;
         let history_db = history::open(&paths)?;
@@ -206,6 +242,7 @@ impl DaemonState {
         let conn = self.catalog.lock();
         f(&conn)
     }
+    /// `uptime_ms` — see implementation.
 
     pub fn uptime_ms(&self) -> u64 {
         self.started_at.elapsed().as_millis() as u64
@@ -242,6 +279,7 @@ impl DaemonState {
 
         (client_id, session_id)
     }
+    /// `unregister_session` — see implementation.
 
     pub fn unregister_session(&self, client_id: u64) {
         {
@@ -370,11 +408,13 @@ impl DaemonState {
             job_id: None,
         })
     }
+    /// `snapshot_sessions` — see implementation.
 
     pub fn snapshot_sessions(&self) -> Vec<SessionSnapshot> {
         let g = self.inner.lock();
         g.sessions.values().map(Session::snapshot).collect()
     }
+    /// `session_count` — see implementation.
 
     pub fn session_count(&self) -> usize {
         self.inner.lock().sessions.len()
@@ -461,6 +501,7 @@ impl DaemonState {
         }
         Some(s.snapshot())
     }
+    /// `add_tags` — see implementation.
 
     pub fn add_tags(&self, client_id: u64, tags: &[String]) -> Option<Vec<String>> {
         let mut g = self.inner.lock();
@@ -470,6 +511,7 @@ impl DaemonState {
         }
         Some(s.tags.iter().cloned().collect())
     }
+    /// `remove_tags` — see implementation.
 
     pub fn remove_tags(&self, client_id: u64, tags: &[String]) -> Option<Vec<String>> {
         let mut g = self.inner.lock();
@@ -503,6 +545,7 @@ impl DaemonState {
             None => false,
         }
     }
+    /// `shells_with_tag` — see implementation.
 
     pub fn shells_with_tag(&self, tag: &str) -> Vec<u64> {
         let g = self.inner.lock();

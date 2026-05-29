@@ -4,6 +4,7 @@ use crate::prelude::*;
 use crate::reader::is_backslashed;
 use crate::tokenizer::tok_is_string_character;
 use fish_widestring::word_char::{is_blank, WordCharClass};
+/// `MoveWordStyle` — see variants.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MoveWordStyle {
@@ -14,15 +15,21 @@ pub enum MoveWordStyle {
     /// stops at whitespace
     Whitespace,
 }
+/// `MoveWordDir` — see variants.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MoveWordDir {
+    /// `Left` variant.
     Left,
+    /// `Right` variant.
     Right,
 }
+/// `MoveWordStateMachine` — see fields for layout.
 
 pub struct MoveWordStateMachine {
+    /// `direction` field.
     direction: MoveWordDir,
+    /// `state` field.
     state: MoveWordState,
 }
 
@@ -57,6 +64,7 @@ trait HasNextState {
 }
 
 impl MoveWordStateMachine {
+    /// `new` — see implementation.
     pub fn new(style: MoveWordStyle, direction: MoveWordDir) -> Self {
         use MoveWordState as MWS;
         use MoveWordStyle as Style;
@@ -70,6 +78,7 @@ impl MoveWordStateMachine {
         };
         Self { direction, state }
     }
+    /// `consume_char` — see implementation.
     pub fn consume_char(&mut self, text: &wstr, idx: usize) -> bool {
         use MoveWordState as MWS;
         let direction = self.direction;
@@ -129,6 +138,7 @@ impl HasNextState for SmallWordMovementState {
 struct BigWordMovementState {
     last_char_class: WordCharClass,
 }
+/// `bigword_class` — see implementation.
 pub fn bigword_class(c: char) -> WordCharClass {
     if c == '\n' {
         WordCharClass::Newline

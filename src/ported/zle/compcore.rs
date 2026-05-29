@@ -3645,12 +3645,18 @@ fn goto_compend(ret: i32) -> i32 {
 // inststr dropped the i32 return + duplicated inststrlen's body) and
 // violated Rule C (every decl in its mirroring C file). Callers in
 // this module now route through the canonical ported.
+/// `IN_NOTHING_LW` constant.
 
 pub const IN_NOTHING_LW: i32 = 0; // lex.h
+/// `IN_CMD_LW` constant.
 pub const IN_CMD_LW: i32 = 1; // lex.h
+/// `IN_COND_LW` constant.
 pub const IN_COND_LW: i32 = 2; // lex.h
+/// `IN_MATH_LW` constant.
 pub const IN_MATH_LW: i32 = 3; // lex.h
+/// `IN_PAR_LW` constant.
 pub const IN_PAR_LW: i32 = 4; // lex.h
+/// `IN_ENV_LW` constant.
 pub const IN_ENV_LW: i32 = 5; // lex.h
                               // `origline_stub` / `origcs_stub` deleted — Rust-only 1-line
                               // accessors for the `ORIGLINE` / `ORIGCS` globals (ports of C

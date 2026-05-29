@@ -26,6 +26,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Largest single frame the daemon will accept. Guards against runaway client.
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
+/// `ProtocolVersion` — see fields for layout.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtocolVersion(pub u32);
@@ -33,31 +34,44 @@ pub struct ProtocolVersion(pub u32);
 /// First message client sends after connect.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Hello {
+    /// `version` field.
     pub version: u32,
+    /// `client_pid` field.
     pub client_pid: i32,
+    /// `tty` field.
     pub tty: Option<String>,
+    /// `cwd` field.
     pub cwd: Option<String>,
+    /// `argv0` field.
     pub argv0: Option<String>,
 }
 
 /// Daemon's response to a successful Hello.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Welcome {
+    /// `version` field.
     pub version: u32,
+    /// `client_id` field.
     pub client_id: u64,
+    /// `session_id` field.
     pub session_id: String,
+    /// `daemon_pid` field.
     pub daemon_pid: i32,
+    /// `daemon_uptime_ms` field.
     pub daemon_uptime_ms: u64,
 }
 
 /// Error payload — paired with `ok: false` on response, or `err: {...}` on welcome failure.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ErrPayload {
+    /// `code` field.
     pub code: String,
+    /// `msg` field.
     pub msg: String,
 }
 
 impl ErrPayload {
+    /// `new` — see implementation.
     pub fn new<C: Into<String>, M: Into<String>>(code: C, msg: M) -> Self {
         Self {
             code: code.into(),
@@ -88,28 +102,34 @@ impl From<super::DaemonError> for ErrPayload {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Frame {
+    /// `Hello` variant.
     Hello {
         hello: Hello,
     },
+    /// `Welcome` variant.
     Welcome {
         welcome: Welcome,
     },
+    /// `WelcomeErr` variant.
     WelcomeErr {
         welcome: serde_json::Value,
         err: ErrPayload,
     },
+    /// `Request` variant.
     Request {
         id: u64,
         op: String,
         #[serde(default)]
         args: serde_json::Value,
     },
+    /// `Response` variant.
     Response {
         id: u64,
         ok: bool,
         #[serde(flatten)]
         payload: serde_json::Value,
     },
+    /// `Event` variant.
     Event {
         event: String,
         #[serde(flatten)]
@@ -118,12 +138,15 @@ pub enum Frame {
 }
 
 impl Frame {
+    /// `hello` — see implementation.
     pub fn hello(h: Hello) -> Self {
         Frame::Hello { hello: h }
     }
+    /// `welcome` — see implementation.
     pub fn welcome(w: Welcome) -> Self {
         Frame::Welcome { welcome: w }
     }
+    /// `request` — see implementation.
     pub fn request(id: u64, op: impl Into<String>, args: serde_json::Value) -> Self {
         Frame::Request {
             id,
@@ -131,6 +154,7 @@ impl Frame {
             args,
         }
     }
+    /// `ok_response` — see implementation.
     pub fn ok_response(id: u64, payload: serde_json::Value) -> Self {
         Frame::Response {
             id,
@@ -138,6 +162,7 @@ impl Frame {
             payload,
         }
     }
+    /// `err_response` — see implementation.
     pub fn err_response(id: u64, err: ErrPayload) -> Self {
         let payload = serde_json::json!({ "err": err });
         Frame::Response {
@@ -146,6 +171,7 @@ impl Frame {
             payload,
         }
     }
+    /// `event` — see implementation.
     pub fn event(name: impl Into<String>, payload: serde_json::Value) -> Self {
         Frame::Event {
             event: name.into(),
@@ -158,19 +184,33 @@ impl Frame {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Event {
+    /// `ShardUpdated` variant.
     ShardUpdated,
+    /// `RebuildComplete` variant.
     RebuildComplete,
+    /// `CanonicalChanged` variant.
     CanonicalChanged,
+    /// `Match` variant.
     Match,
+    /// `CmdExecute` variant.
     CmdExecute,
+    /// `Notify` variant.
     Notify,
+    /// `DaemonShutdown` variant.
     DaemonShutdown,
+    /// `AskPending` variant.
     AskPending,
+    /// `AskDismissed` variant.
     AskDismissed,
+    /// `AskProgress` variant.
     AskProgress,
+    /// `LongCmdComplete` variant.
     LongCmdComplete,
+    /// `LongCmdStarted` variant.
     LongCmdStarted,
+    /// `LongCmdFailed` variant.
     LongCmdFailed,
+    /// `LongCmdSignaled` variant.
     LongCmdSignaled,
 }
 

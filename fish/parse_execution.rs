@@ -80,17 +80,21 @@ pub enum EndExecutionReason {
     /// A parse error or failed expansion (but not an error exit status from a command).
     Error,
 }
+/// `ExecutionContext` — see fields for layout.
 
 pub struct ExecutionContext<'a> {
     // The parsed source and its AST.
+    /// `pstree` field.
     pstree: ParsedSourceRef,
 
     // If set, one of our processes received a cancellation signal (INT or QUIT) so we are
     // unwinding.
+    /// `cancel_signal` field.
     cancel_signal: Option<Signal>,
 
     // The currently executing pipeline node.
     // This is shared with the Parser so that the Parser can access the current line.
+    /// `pipeline_node` field.
     pipeline_node: &'a ScopedRefCell<Option<NodeRef<ast::JobPipeline>>>,
 
     /// The block IO chain.
@@ -120,6 +124,7 @@ macro_rules! report_error_formatted {
         $self.report_errors($ctx, $status, &vec![error])
     }};
 }
+/// `varname_error` — see implementation.
 
 pub fn varname_error<'a>(command: &'a wstr, bad_name: &'a wstr) -> Error<'a> {
     err_fmt!(
@@ -147,10 +152,12 @@ impl<'a> ExecutionContext<'a> {
             test_only_suppress_stderr,
         }
     }
+    /// `pstree` — see implementation.
 
     pub fn pstree(&self) -> &ParsedSourceRef {
         &self.pstree
     }
+    /// `eval_node` — see implementation.
 
     pub fn eval_node(
         &mut self,

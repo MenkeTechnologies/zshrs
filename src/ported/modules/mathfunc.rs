@@ -140,53 +140,101 @@ pub fn finish_(m: *const module) -> i32 {
 // C `enum {}` with no typedef → untyped int constants. Rust
 // mirrors as `pub const ... : i32` (no Rust-only enum type).
 // ============================================================
+/// `MF_ABS` constant.
 pub const MF_ABS: i32 = 0; // c:35
+/// `MF_ACOS` constant.
 pub const MF_ACOS: i32 = 1; // c:36
+/// `MF_ACOSH` constant.
 pub const MF_ACOSH: i32 = 2;
+/// `MF_ASIN` constant.
 pub const MF_ASIN: i32 = 3;
+/// `MF_ASINH` constant.
 pub const MF_ASINH: i32 = 4;
+/// `MF_ATAN` constant.
 pub const MF_ATAN: i32 = 5;
+/// `MF_ATANH` constant.
 pub const MF_ATANH: i32 = 6;
+/// `MF_CBRT` constant.
 pub const MF_CBRT: i32 = 7;
+/// `MF_CEIL` constant.
 pub const MF_CEIL: i32 = 8;
+/// `MF_COPYSIGN` constant.
 pub const MF_COPYSIGN: i32 = 9;
+/// `MF_COS` constant.
 pub const MF_COS: i32 = 10;
+/// `MF_COSH` constant.
 pub const MF_COSH: i32 = 11;
+/// `MF_ERF` constant.
 pub const MF_ERF: i32 = 12;
+/// `MF_ERFC` constant.
 pub const MF_ERFC: i32 = 13;
+/// `MF_EXP` constant.
 pub const MF_EXP: i32 = 14;
+/// `MF_EXPM1` constant.
 pub const MF_EXPM1: i32 = 15;
+/// `MF_FABS` constant.
 pub const MF_FABS: i32 = 16;
+/// `MF_FLOAT` constant.
 pub const MF_FLOAT: i32 = 17;
+/// `MF_FLOOR` constant.
 pub const MF_FLOOR: i32 = 18;
+/// `MF_FMOD` constant.
 pub const MF_FMOD: i32 = 19;
+/// `MF_GAMMA` constant.
 pub const MF_GAMMA: i32 = 20;
+/// `MF_HYPOT` constant.
 pub const MF_HYPOT: i32 = 21;
+/// `MF_ILOGB` constant.
 pub const MF_ILOGB: i32 = 22;
+/// `MF_INT` constant.
 pub const MF_INT: i32 = 23;
+/// `MF_ISINF` constant.
 pub const MF_ISINF: i32 = 24;
+/// `MF_ISNAN` constant.
 pub const MF_ISNAN: i32 = 25;
+/// `MF_J0` constant.
 pub const MF_J0: i32 = 26;
+/// `MF_J1` constant.
 pub const MF_J1: i32 = 27;
+/// `MF_JN` constant.
 pub const MF_JN: i32 = 28;
+/// `MF_LDEXP` constant.
 pub const MF_LDEXP: i32 = 29;
+/// `MF_LGAMMA` constant.
 pub const MF_LGAMMA: i32 = 30;
+/// `MF_LOG` constant.
 pub const MF_LOG: i32 = 31;
+/// `MF_LOG10` constant.
 pub const MF_LOG10: i32 = 32;
+/// `MF_LOG1P` constant.
 pub const MF_LOG1P: i32 = 33;
+/// `MF_LOG2` constant.
 pub const MF_LOG2: i32 = 34;
+/// `MF_LOGB` constant.
 pub const MF_LOGB: i32 = 35;
+/// `MF_NEXTAFTER` constant.
 pub const MF_NEXTAFTER: i32 = 36;
+/// `MF_RINT` constant.
 pub const MF_RINT: i32 = 37;
+/// `MF_SCALB` constant.
 pub const MF_SCALB: i32 = 38;
+/// `MF_SIGNGAM` constant.
 pub const MF_SIGNGAM: i32 = 39; // c:75 #ifdef HAVE_SIGNGAM
+/// `MF_SIN` constant.
 pub const MF_SIN: i32 = 40;
+/// `MF_SINH` constant.
 pub const MF_SINH: i32 = 41;
+/// `MF_SQRT` constant.
 pub const MF_SQRT: i32 = 42;
+/// `MF_TAN` constant.
 pub const MF_TAN: i32 = 43;
+/// `MF_TANH` constant.
 pub const MF_TANH: i32 = 44;
+/// `MF_Y0` constant.
 pub const MF_Y0: i32 = 45;
+/// `MF_Y1` constant.
 pub const MF_Y1: i32 = 46;
+/// `MF_YN` constant.
 pub const MF_YN: i32 = 47; // c:84
 
 // =====================================================================
@@ -198,15 +246,20 @@ pub const MF_YN: i32 = 47; // c:84
 // MS_* — port of the anonymous `enum {}` at mathfunc.c:90.
 // String-arg math-fn ids.
 // ============================================================
+/// `MS_RAND48` constant.
 pub const MS_RAND48: i32 = 0; // c:91
 
 // ============================================================
 // TF_* — port of the anonymous `enum {}` at mathfunc.c:104.
 // Type-flag bits, individually testable.
 // ============================================================
+/// `TF_NOCONV` constant.
 pub const TF_NOCONV: i32 = 1; // c:106 don't convert to float
+/// `TF_INT1` constant.
 pub const TF_INT1: i32 = 2; // c:107 first arg is integer
+/// `TF_INT2` constant.
 pub const TF_INT2: i32 = 4; // c:108 second arg is integer
+/// `TF_NOASS` constant.
 pub const TF_NOASS: i32 = 8; // c:109 don't assign result as double
 
 /// Port of the `TFLAG(x)` macro from `mathfunc.c:113`.

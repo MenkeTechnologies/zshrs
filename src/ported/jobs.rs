@@ -54,20 +54,35 @@ use std::time::{Duration, Instant};
 /// NOSTTY, SUBLEADER) and removed bogus ones (DISOWN, NOTIFY —
 /// not in C STAT_*).
 pub mod stat {
+    /// `CHANGED` constant.
     pub const CHANGED: i32 = 0x0001; // c:1073 status changed
+    /// `STOPPED` constant.
     pub const STOPPED: i32 = 0x0002; // c:1074 all procs stopped or exited
+    /// `TIMED` constant.
     pub const TIMED: i32 = 0x0004; // c:1075 job is being timed
+    /// `DONE` constant.
     pub const DONE: i32 = 0x0008; // c:1076 job is done
+    /// `LOCKED` constant.
     pub const LOCKED: i32 = 0x0010; // c:1077 shell finished creating
+    /// `NOPRINT` constant.
     pub const NOPRINT: i32 = 0x0020; // c:1079 killed internally
+    /// `INUSE` constant.
     pub const INUSE: i32 = 0x0040; // c:1081 entry in use
+    /// `SUPERJOB` constant.
     pub const SUPERJOB: i32 = 0x0080; // c:1082 job has a subjob
+    /// `SUBJOB` constant.
     pub const SUBJOB: i32 = 0x0100; // c:1083 job is a subjob
+    /// `WASSUPER` constant.
     pub const WASSUPER: i32 = 0x0200; // c:1084 was super-job
+    /// `CURSH` constant.
     pub const CURSH: i32 = 0x0400; // c:1086 last cmd in current shell
+    /// `NOSTTY` constant.
     pub const NOSTTY: i32 = 0x0800; // c:1087 tty settings not inherited
+    /// `ATTACH` constant.
     pub const ATTACH: i32 = 0x1000; // c:1089 delay reattach to tty
+    /// `SUBLEADER` constant.
     pub const SUBLEADER: i32 = 0x2000; // c:1090 super-job, leader is sub-shell
+    /// `BUILTIN` constant.
     pub const BUILTIN: i32 = 0x4000; // c:1092 tail is builtin
     /// `STAT_DISOWN` from `Src/zsh.h:1093`. SUPERJOB with disown pending.
     pub const DISOWN: i32 = 0x10000; // c:1093
@@ -1166,6 +1181,7 @@ pub fn sigmsg(sig: i32) -> &'static str {
 /// Print job with full detail (from jobs.c printjob)
 // find length of longest signame, check to see                             // c:1178
 // if we really need to print this job                                      // c:1179
+/// `printjob` — see implementation.
 pub fn printjob(
     job: &job,
     job_num: usize,
@@ -1294,6 +1310,7 @@ pub fn printjob(
 // Rust idiom replacement: `Vec::push` covers the C `LinkList`+
 // `zalloc(strlen+1)` add path; the `<fd:N>` sentinel string encodes
 // the same Jobfile.is_fd discriminant the C source uses inline.
+/// `addfilelist` — see implementation.
 pub fn addfilelist(job: &mut job, name: Option<&str>, fd: i32) {
     match name {
         Some(n) => job.filelist.push(n.to_string()),
@@ -1757,6 +1774,7 @@ pub fn waitjobs(jobtab: &mut [job], thisjob: usize) {
 // by the executor on subshell entry (`JobTable::new()`), so the C
 // `oldjobtab` snapshot + per-slot reset loop is structurally
 // replaced — no public reset method is needed.
+/// `clearjobtab` — see implementation.
 pub fn clearjobtab(table: &mut JobTable, monitor: i32) {
     // c:1780
     let _ = table; // legacy executor-side handle, unused now
@@ -3285,6 +3303,7 @@ pub fn sig_names_for_signals_param() -> Vec<String> {
     }
     out
 }
+/// `getsigidx` — see implementation.
 
 pub fn getsigidx(s: &str) -> Option<i32> {
     // c:3052-3058 — numeric-input branch: bounded by VSIGCOUNT + RT range.

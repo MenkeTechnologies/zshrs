@@ -72,6 +72,7 @@ use std::sync::{Mutex, OnceLock};
 /// WARNING: param names don't match C — Rust=(b) vs C=(a, b)
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
+/// `cpatterns_same` — see implementation.
 #[allow(unused_imports)]
 #[allow(unused_imports)]
 

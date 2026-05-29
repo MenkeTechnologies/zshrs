@@ -2495,6 +2495,7 @@ pub(crate) fn line_starts_comment_before(line: &str, end: usize) -> bool {
     }
     false
 }
+/// `lookup_doc` — see implementation.
 
 pub fn lookup_doc(name: &str) -> String {
     // Upstream-yodl-derived tables come first — they carry the real

@@ -72,11 +72,16 @@ pub enum zlimtype {
 /// Rust port renames `type` (Rust keyword) to `r#type`.
 #[derive(Debug, Clone)]
 pub struct resinfo_T {
+    /// `res` field.
     pub res: i32,
+    /// `name` field.
     pub name: &'static str,
     pub r#type: zlimtype,
+    /// `unit` field.
     pub unit: u32,
+    /// `opt` field.
     pub opt: char,
+    /// `descr` field.
     pub descr: &'static str,
 }
 

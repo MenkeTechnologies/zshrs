@@ -24,6 +24,7 @@ use std::{
     num::NonZeroU32,
     sync::{Arc, LazyLock, Mutex},
 };
+/// `FunctionProperties` — see fields for layout.
 
 #[derive(Clone)]
 pub struct FunctionProperties {

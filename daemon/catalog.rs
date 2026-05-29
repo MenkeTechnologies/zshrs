@@ -237,12 +237,19 @@ fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
 /// Diagnostic record returned by `summary` — used by `zcache info`.
 #[derive(serde::Serialize, Debug)]
 pub struct CatalogSummary {
+    /// `schema_version` field.
     pub schema_version: i64,
+    /// `plugin_count` field.
     pub plugin_count: i64,
+    /// `entries_count` field.
     pub entries_count: i64,
+    /// `hooks_count` field.
     pub hooks_count: i64,
+    /// `entry_stats_count` field.
     pub entry_stats_count: i64,
+    /// `compiled_files_count` field.
     pub compiled_files_count: i64,
+    /// `size_bytes` field.
     pub size_bytes: u64,
 }
 

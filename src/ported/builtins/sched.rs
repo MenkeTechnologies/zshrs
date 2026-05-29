@@ -692,6 +692,7 @@ pub fn finish_(m: *const module) -> i32 {
 
 // Port of `enum schedflags` from `Src/Builtins/sched.c:38`.
 // Trash zle if necessary when event is activated.
+/// `SCHEDFLAG_TRASH_ZLE` constant.
 pub const SCHEDFLAG_TRASH_ZLE: i32 = 1; // c:40
 
 // =====================================================================

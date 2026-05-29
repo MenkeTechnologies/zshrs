@@ -319,15 +319,23 @@ pub fn bin_rmdir(
 // =====================================================================
 // BIN_* / MV_* constants — `Src/Modules/files.c:170-178`.
 // =====================================================================
+/// `BIN_LN` constant.
 
 pub const BIN_LN: i32 = 0; // c:170
+/// `BIN_MV` constant.
 pub const BIN_MV: i32 = 1; // c:171
+/// `MV_NODIRS` constant.
 
 pub const MV_NODIRS: i32 = 1 << 0; // c:173
+/// `MV_FORCE` constant.
 pub const MV_FORCE: i32 = 1 << 1; // c:174
+/// `MV_INTERACTIVE` constant.
 pub const MV_INTERACTIVE: i32 = 1 << 2; // c:175
+/// `MV_ASKNW` constant.
 pub const MV_ASKNW: i32 = 1 << 3; // c:176
+/// `MV_ATOMIC` constant.
 pub const MV_ATOMIC: i32 = 1 << 4; // c:177
+/// `MV_NOCHASETARGET` constant.
 pub const MV_NOCHASETARGET: i32 = 1 << 5; // c:178
 
 /// Direct port of `bin_ln(char *nam, char **args, Options ops, int func)` from `Src/Modules/files.c:200`.
@@ -1179,6 +1187,7 @@ pub const BIN_CHOWN: i32 = 0; // c:719
 // =====================================================================
 // module entries — `Src/Modules/files.c:828-876`.
 // =====================================================================
+/// `BIN_CHGRP` constant.
 
 pub const BIN_CHGRP: i32 = 1; // c:719
 
@@ -1191,6 +1200,7 @@ pub const BIN_CHGRP: i32 = 1; // c:719
 // `Src/Modules/files.c:32`. Rust ports it directly as the same
 // function-pointer type alias below, so call sites can do
 // `movefn = mv_rename;` matching C's `movefn = rename;`.
+/// `MoveFunc` type alias.
 #[allow(non_camel_case_types)]
 pub type MoveFunc = fn(p: &std::ffi::CStr, q: &std::ffi::CStr) -> i32;
 

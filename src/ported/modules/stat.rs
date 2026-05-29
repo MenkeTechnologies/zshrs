@@ -621,40 +621,64 @@ pub fn finish_(m: *const module) -> i32 {
     //                    zstat builtin unregisters via cleanup_'s setfeatureenables.
     0
 }
+/// `ST_DEV` constant.
 
 pub const ST_DEV: i32 = 0; // c:33
+/// `ST_INO` constant.
 pub const ST_INO: i32 = 1;
+/// `ST_MODE` constant.
 pub const ST_MODE: i32 = 2;
+/// `ST_NLINK` constant.
 pub const ST_NLINK: i32 = 3;
+/// `ST_UID` constant.
 pub const ST_UID: i32 = 4;
+/// `ST_GID` constant.
 pub const ST_GID: i32 = 5;
+/// `ST_RDEV` constant.
 pub const ST_RDEV: i32 = 6;
+/// `ST_SIZE` constant.
 pub const ST_SIZE: i32 = 7;
+/// `ST_ATIM` constant.
 pub const ST_ATIM: i32 = 8;
+/// `ST_MTIM` constant.
 pub const ST_MTIM: i32 = 9;
+/// `ST_CTIM` constant.
 pub const ST_CTIM: i32 = 10;
+/// `ST_BLKSIZE` constant.
 pub const ST_BLKSIZE: i32 = 11;
+/// `ST_BLOCKS` constant.
 pub const ST_BLOCKS: i32 = 12;
+/// `ST_READLINK` constant.
 pub const ST_READLINK: i32 = 13;
+/// `ST_COUNT` constant.
 pub const ST_COUNT: i32 = 14; // c:34
 
 // ============================================================
 // Port of `enum statflags` from `Src/Modules/stat.c:36-38`.
 // Bitmask flags passed to the print ported + bin_stat dispatch.
 // ============================================================
+/// `STF_NAME` constant.
 pub const STF_NAME: i32 = 1; // c:36
+/// `STF_FILE` constant.
 pub const STF_FILE: i32 = 2;
+/// `STF_STRING` constant.
 pub const STF_STRING: i32 = 4;
+/// `STF_RAW` constant.
 pub const STF_RAW: i32 = 8;
 
 // =====================================================================
 // static struct builtin bintab[]                                    c:638
 // static struct features module_features                            c:642
 // =====================================================================
+/// `STF_PICK` constant.
 pub const STF_PICK: i32 = 16;
+/// `STF_ARRAY` constant.
 pub const STF_ARRAY: i32 = 32;
+/// `STF_GMT` constant.
 pub const STF_GMT: i32 = 64;
+/// `STF_HASH` constant.
 pub const STF_HASH: i32 = 128;
+/// `STF_OCTAL` constant.
 pub const STF_OCTAL: i32 = 256; // c:38
 
 /// Port of `statelts[]` from `Src/Modules/stat.c:39`. Names of the

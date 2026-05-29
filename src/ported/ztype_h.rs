@@ -24,26 +24,43 @@ use std::sync::Mutex;
 // `typtab[256]` lookup; `OR`-ing them together gives a per-character
 // classification bitmap.
 // ---------------------------------------------------------------------------
+/// `IDIGIT` constant.
 
 pub const IDIGIT: u16 = 1 << 0; // c:30
+/// `IALNUM` constant.
 pub const IALNUM: u16 = 1 << 1; // c:31
+/// `IBLANK` constant.
 pub const IBLANK: u16 = 1 << 2; // c:32
+/// `INBLANK` constant.
 pub const INBLANK: u16 = 1 << 3; // c:33
+/// `ITOK` constant.
 pub const ITOK: u16 = 1 << 4; // c:34
+/// `ISEP` constant.
 pub const ISEP: u16 = 1 << 5; // c:35
+/// `IALPHA` constant.
 pub const IALPHA: u16 = 1 << 6; // c:36
+/// `IIDENT` constant.
 pub const IIDENT: u16 = 1 << 7; // c:37
+/// `IUSER` constant.
 pub const IUSER: u16 = 1 << 8; // c:38
+/// `ICNTRL` constant.
 pub const ICNTRL: u16 = 1 << 9; // c:39
+/// `IWORD` constant.
 pub const IWORD: u16 = 1 << 10; // c:40
+/// `ISPECIAL` constant.
 pub const ISPECIAL: u16 = 1 << 11; // c:41
+/// `IMETA` constant.
 pub const IMETA: u16 = 1 << 12; // c:42
+/// `IWSEP` constant.
 pub const IWSEP: u16 = 1 << 13; // c:43
+/// `INULL` constant.
 pub const INULL: u16 = 1 << 14; // c:44
+/// `IPATTERN` constant.
 pub const IPATTERN: u16 = 1 << 15; // c:45
                                    // INAMESPC is `1 << 16` in C — overflows `short int` (16-bit) on the
                                    // C side, but C's `short` is at least 16-bit and `int` accumulates.
                                    // The Rust port widens TYPTAB to `u32` so this fits cleanly.
+/// `INAMESPC` constant.
 pub const INAMESPC: u32 = 1 << 16; // c:46
 
 // ---------------------------------------------------------------------------
@@ -62,9 +79,13 @@ pub static TYPTAB: Mutex<[u32; 256]> = Mutex::new([0; 256]); // utils.c:4148
 pub static TYPTAB_FLAGS: Mutex<u32> = Mutex::new(0); // utils.c:4149
 
 // ZTF_* state flags (c:69-72) preserved across `inittyptab()` calls.
+/// `ZTF_INIT` constant.
 pub const ZTF_INIT: u32 = 0x0001; // c:69
+/// `ZTF_INTERACT` constant.
 pub const ZTF_INTERACT: u32 = 0x0002; // c:70
+/// `ZTF_SP_COMMA` constant.
 pub const ZTF_SP_COMMA: u32 = 0x0004; // c:71
+/// `ZTF_BANGCHAR` constant.
 pub const ZTF_BANGCHAR: u32 = 0x0008; // c:72
 
 // ---------------------------------------------------------------------------
@@ -102,6 +123,7 @@ pub fn ialnum(x: u8) -> bool {
 /// Port of `#define iblank(X)` from `Src/ztype.h:50`. Blank, not
 /// including `\n`.
 // blank, not including \n                                                  // c:50
+/// `iblank` — see implementation.
 #[inline]
 pub fn iblank(x: u8) -> bool {
     zistype(x, IBLANK as u32)
@@ -109,6 +131,7 @@ pub fn iblank(x: u8) -> bool {
 
 /// Port of `#define inblank(X)` from `Src/ztype.h:51`. Blank or `\n`.
 // blank or \n                                                              // c:51
+/// `inblank` — see implementation.
 #[inline]
 pub fn inblank(x: u8) -> bool {
     zistype(x, INBLANK as u32)
@@ -140,6 +163,7 @@ pub fn iident(x: u8) -> bool {
 
 /// Port of `#define iuser(X)` from `Src/ztype.h:56`. Username char.
 // username char                                                            // c:56
+/// `iuser` — see implementation.
 #[inline]
 pub fn iuser(x: u8) -> bool {
     zistype(x, IUSER as u32)

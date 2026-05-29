@@ -658,6 +658,7 @@ impl gdbm_database {
     }
 
     // Port of `gdbmunsetfn(Param pm, UNUSED(int um))` from `Src/Modules/db_gdbm.c:399`.
+    /// `delete` — see implementation.
     #[cfg(feature = "gdbm")]
     pub fn delete(&self, key: &str) -> Result<(), String> {
         // c:399
@@ -804,8 +805,11 @@ unsafe impl Sync for gdbm_database {}
 /// extension matching C's per-param hidden state via `pm->u.hash`.
 #[allow(non_camel_case_types)]
 pub struct tied_gdbm_param {
+    /// `name` field.
     pub name: String,
+    /// `db` field.
     pub db: Arc<gdbm_database>,
+    /// `cache` field.
     pub cache: RwLock<HashMap<String, String>>,
 }
 
@@ -1067,11 +1071,15 @@ type GdbmFile = *mut c_void;
 // gdbm_database`; the equivalent C state is the bare `GDBM_FILE *`
 // stored in `myfreeparamnode()` (`Src/Modules/db_gdbm.c:45`). Rust
 // wraps it in a struct for RAII Drop + Send/Sync impls.
+/// `gdbm_database` — see fields for layout.
 #[allow(non_camel_case_types)]
 #[derive(Debug)]
 pub struct gdbm_database {
+    /// `dbf` field.
     dbf: GdbmFile,
+    /// `path` field.
     path: PathBuf,
+    /// `readonly` field.
     readonly: bool,
 }
 

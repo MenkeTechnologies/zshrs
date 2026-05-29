@@ -1327,9 +1327,13 @@ pub fn transposewords(_args: &[String]) -> i32 {
 /// Word style for `find_word_start` / `find_word_end`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WordStyle {
+    /// `Emacs` variant.
     Emacs,
+    /// `Vi` variant.
     Vi,
+    /// `Shell` variant.
     Shell,
+    /// `BlankDelimited` variant.
     BlankDelimited,
 }
 

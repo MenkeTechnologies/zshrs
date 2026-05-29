@@ -1,10 +1,15 @@
 use super::*;
+/// `Repeat` — see fields for layout.
 
 #[derive(Default)]
 pub struct Repeat {
+    /// `count` field.
     count: Option<usize>,
+    /// `max` field.
     max: Option<usize>,
+    /// `quiet` field.
     quiet: bool,
+    /// `no_newline` field.
     no_newline: bool,
 }
 

@@ -46,6 +46,7 @@
 /// path length. C falls back to MAXPATHLEN, _POSIX_PATH_MAX, then
 /// 1024; the Rust port uses libc's PATH_MAX.
 use std::os::unix::fs::MetadataExt;
+/// `PATH_MAX` constant.
 
 pub const PATH_MAX: usize = libc::PATH_MAX as usize; // c:298
 
@@ -82,6 +83,7 @@ pub const BDIGBUFSIZE: usize = (std::mem::size_of::<i64>() * 8) + 4; // c:570
 /// `_POSIX_VDISABLE` when defined, else 0. Rust pulls from libc.
 #[cfg(unix)]
 pub const VDISABLEVAL: u8 = libc::_POSIX_VDISABLE; // c:396
+/// `VDISABLEVAL` constant.
 
 #[cfg(not(unix))]
 pub const VDISABLEVAL: u8 = 0;
@@ -105,6 +107,7 @@ pub const VDISABLEVAL: u8 = 0;
 // if_available` (Src/compat.c:101 / :133) bind to the system
 // type with no field-shape mismatch.
 // ---------------------------------------------------------------------------
+/// `timespec` type alias.
 
 #[allow(non_camel_case_types)]
 pub type timespec = libc::timespec; // c:245
@@ -131,34 +134,59 @@ pub const S_IFMT: u32 = 0o170_000; // c:594
 
 // File-type bits — for the predicate macros below. Pulled from libc
 // where available so they match the host's `<sys/stat.h>` exactly.
+/// `S_IFBLK` constant.
 pub const S_IFBLK: u32 = libc::S_IFBLK as u32;
+/// `S_IFCHR` constant.
 pub const S_IFCHR: u32 = libc::S_IFCHR as u32;
+/// `S_IFDIR` constant.
 pub const S_IFDIR: u32 = libc::S_IFDIR as u32;
+/// `S_IFIFO` constant.
 pub const S_IFIFO: u32 = libc::S_IFIFO as u32;
+/// `S_IFLNK` constant.
 pub const S_IFLNK: u32 = libc::S_IFLNK as u32;
+/// `S_IFREG` constant.
 pub const S_IFREG: u32 = libc::S_IFREG as u32;
+/// `S_IFSOCK` constant.
 pub const S_IFSOCK: u32 = libc::S_IFSOCK as u32;
 
 // Permission bits (c:682-735). Octal values match POSIX exactly.
+/// `S_ISUID` constant.
 pub const S_ISUID: u32 = 0o4000; // c:682
+/// `S_ISGID` constant.
 pub const S_ISGID: u32 = 0o2000; // c:685
+/// `S_ISVTX` constant.
 pub const S_ISVTX: u32 = 0o1000; // c:688
+/// `S_IRUSR` constant.
 pub const S_IRUSR: u32 = 0o0400; // c:691
+/// `S_IWUSR` constant.
 pub const S_IWUSR: u32 = 0o0200; // c:694
+/// `S_IXUSR` constant.
 pub const S_IXUSR: u32 = 0o0100; // c:697
+/// `S_IRGRP` constant.
 pub const S_IRGRP: u32 = 0o0040; // c:700
+/// `S_IWGRP` constant.
 pub const S_IWGRP: u32 = 0o0020; // c:703
+/// `S_IXGRP` constant.
 pub const S_IXGRP: u32 = 0o0010; // c:706
+/// `S_IROTH` constant.
 pub const S_IROTH: u32 = 0o0004; // c:709
+/// `S_IWOTH` constant.
 pub const S_IWOTH: u32 = 0o0002; // c:712
+/// `S_IXOTH` constant.
 pub const S_IXOTH: u32 = 0o0001; // c:715
 
 // Aggregate masks (c:718-735).
+/// `S_IRWXU` constant.
 pub const S_IRWXU: u32 = S_IRUSR | S_IWUSR | S_IXUSR; // c:718
+/// `S_IRWXG` constant.
 pub const S_IRWXG: u32 = S_IRGRP | S_IWGRP | S_IXGRP; // c:721
+/// `S_IRWXO` constant.
 pub const S_IRWXO: u32 = S_IROTH | S_IWOTH | S_IXOTH; // c:724
+/// `S_IRUGO` constant.
 pub const S_IRUGO: u32 = S_IRUSR | S_IRGRP | S_IROTH; // c:727
+/// `S_IWUGO` constant.
 pub const S_IWUGO: u32 = S_IWUSR | S_IWGRP | S_IWOTH; // c:730
+/// `S_IXUGO` constant.
 pub const S_IXUGO: u32 = S_IXUSR | S_IXGRP | S_IXOTH; // c:733
 
 // ---------------------------------------------------------------------------
@@ -382,6 +410,7 @@ pub const R_OK: i32 = 4; // c:750
 /// constant directly (Linux/macOS/BSD all define it).
 #[cfg(unix)]
 pub const O_NOCTTY: i32 = libc::O_NOCTTY; // c:791
+/// `O_NOCTTY` constant.
 
 #[cfg(not(unix))]
 pub const O_NOCTTY: i32 = 0;

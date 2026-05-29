@@ -1,7 +1,10 @@
 use super::*;
+/// `Transform` — see fields for layout.
 
 pub struct Transform {
+    /// `quiet` field.
     pub quiet: bool,
+    /// `func` field.
     pub func: fn(&wstr) -> WString,
 }
 

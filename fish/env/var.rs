@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 /// The character used to delimit path and non-path variables in exporting and in string expansion.
 pub const PATH_ARRAY_SEP: char = ':';
+/// `NONPATH_ARRAY_SEP` constant.
 pub const NONPATH_ARRAY_SEP: char = ' ';
 
 bitflags! {
@@ -47,9 +48,11 @@ impl From<EnvMode> for u16 {
         val.bits()
     }
 }
+/// `EnvSetMode` — see fields for layout.
 
 #[derive(Copy, Clone, Default)]
 pub struct EnvSetMode {
+    /// `mode` field.
     pub mode: EnvMode,
 
     /// Flag for variable update request from the user. All variable changes that are made directly
@@ -57,14 +60,17 @@ pub struct EnvSetMode {
     /// serves to indicate that an error should be returned if the user is attempting to modify
     /// a var that should not be modified by direct user action; e.g., a read-only var.
     pub user: bool,
+    /// `is_repainting` field.
 
     pub is_repainting: bool,
 }
 
 impl EnvSetMode {
+    /// `new` — see implementation.
     pub fn new(mode: EnvMode, is_repainting: bool) -> Self {
         Self::new_with(mode, false, is_repainting)
     }
+    /// `new_with` — see implementation.
     pub fn new_with(mode: EnvMode, user: bool, is_repainting: bool) -> Self {
         Self {
             mode,
@@ -72,6 +78,7 @@ impl EnvSetMode {
             is_repainting,
         }
     }
+    /// `new_at_early_startup` — see implementation.
     pub fn new_at_early_startup(mode: EnvMode) -> Self {
         Self::new_with(mode, false, false)
     }
@@ -109,6 +116,7 @@ impl Default for Statuses {
 }
 
 bitflags! {
+    /// `EnvVarFlags` — see fields for layout.
     #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
     pub struct EnvVarFlags: u8 {
         const EXPORT = 1 << 0;    // whether the variable is exported
@@ -247,6 +255,7 @@ impl EnvVar {
         result
     }
 }
+/// `VarTable` type alias.
 
 pub type VarTable = HashMap<WString, EnvVar>;
 
@@ -256,11 +265,15 @@ mod electric {
     pub(super) const EXPORTS: u8 = 1 << 2; // Exported to child processes.
     pub(super) type ElectricVarFlags = u8;
 }
+/// `ElectricVar` — see fields for layout.
 
 pub struct ElectricVar {
+    /// `name` field.
     pub name: &'static wstr,
+    /// `flags` field.
     flags: electric::ElectricVarFlags,
 }
+/// `FISH_TERMINAL_COLOR_THEME_VAR` constant.
 
 pub const FISH_TERMINAL_COLOR_THEME_VAR: &wstr = L!("fish_terminal_color_theme");
 
@@ -293,14 +306,17 @@ impl ElectricVar {
             Err(_) => None,
         }
     }
+    /// `readonly` — see implementation.
 
     pub fn readonly(&self) -> bool {
         self.flags & electric::READONLY != 0
     }
+    /// `computed` — see implementation.
 
     pub fn computed(&self) -> bool {
         self.flags & electric::COMPUTED != 0
     }
+    /// `exports` — see implementation.
 
     pub fn exports(&self) -> bool {
         self.flags & electric::EXPORTS != 0

@@ -50,6 +50,7 @@ struct DebounceData<R> {
 }
 
 impl<R: Send + 'static> Debounce<R> {
+    /// `new` — see implementation.
     pub fn new(
         pool: &Arc<ThreadPool>,
         event_signaller: &Arc<FdEventSignaller>,

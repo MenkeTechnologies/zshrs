@@ -43,9 +43,13 @@ pub struct CompMatch {
 /// Completion group bundling multiple match candidates.
 #[derive(Debug, Clone, Default)]
 pub struct CompGroup {
+    /// `name` field.
     pub name: String,
+    /// `matches` field.
     pub matches: Vec<CompMatch>,
+    /// `explanation` field.
     pub explanation: Option<String>,
+    /// `sorted` field.
     pub sorted: bool,
 }
 

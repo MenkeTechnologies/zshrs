@@ -14,43 +14,78 @@
 // =====================================================================
 // Builtin function numbers — Src/hashtable.h:34-66.
 // =====================================================================
+/// `BIN_TYPESET` constant.
 
 pub const BIN_TYPESET: i32 = 0; // c:34
+/// `BIN_BG` constant.
 pub const BIN_BG: i32 = 1; // c:35
+/// `BIN_FG` constant.
 pub const BIN_FG: i32 = 2; // c:36
+/// `BIN_JOBS` constant.
 pub const BIN_JOBS: i32 = 3; // c:37
+/// `BIN_WAIT` constant.
 pub const BIN_WAIT: i32 = 4; // c:38
+/// `BIN_DISOWN` constant.
 pub const BIN_DISOWN: i32 = 5; // c:39
+/// `BIN_BREAK` constant.
 pub const BIN_BREAK: i32 = 6; // c:40
+/// `BIN_CONTINUE` constant.
 pub const BIN_CONTINUE: i32 = 7; // c:41
+/// `BIN_EXIT` constant.
 pub const BIN_EXIT: i32 = 8; // c:42
+/// `BIN_RETURN` constant.
 pub const BIN_RETURN: i32 = 9; // c:43
+/// `BIN_CD` constant.
 pub const BIN_CD: i32 = 10; // c:44
+/// `BIN_POPD` constant.
 pub const BIN_POPD: i32 = 11; // c:45
+/// `BIN_PUSHD` constant.
 pub const BIN_PUSHD: i32 = 12; // c:46
+/// `BIN_PRINT` constant.
 pub const BIN_PRINT: i32 = 13; // c:47
+/// `BIN_EVAL` constant.
 pub const BIN_EVAL: i32 = 14; // c:48
+/// `BIN_SCHED` constant.
 pub const BIN_SCHED: i32 = 15; // c:49
+/// `BIN_FC` constant.
 pub const BIN_FC: i32 = 16; // c:50
+/// `BIN_R` constant.
 pub const BIN_R: i32 = 17; // c:51
+/// `BIN_PUSHLINE` constant.
 pub const BIN_PUSHLINE: i32 = 18; // c:52
+/// `BIN_LOGOUT` constant.
 pub const BIN_LOGOUT: i32 = 19; // c:53
+/// `BIN_TEST` constant.
 pub const BIN_TEST: i32 = 20; // c:54
+/// `BIN_BRACKET` constant.
 pub const BIN_BRACKET: i32 = 21; // c:55
+/// `BIN_READONLY` constant.
 pub const BIN_READONLY: i32 = 22; // c:56
+/// `BIN_ECHO` constant.
 pub const BIN_ECHO: i32 = 23; // c:57
+/// `BIN_DISABLE` constant.
 pub const BIN_DISABLE: i32 = 24; // c:58
+/// `BIN_ENABLE` constant.
 pub const BIN_ENABLE: i32 = 25; // c:59
+/// `BIN_PRINTF` constant.
 pub const BIN_PRINTF: i32 = 26; // c:60
+/// `BIN_COMMAND` constant.
 pub const BIN_COMMAND: i32 = 27; // c:61
+/// `BIN_UNHASH` constant.
 pub const BIN_UNHASH: i32 = 28; // c:62
+/// `BIN_UNALIAS` constant.
 pub const BIN_UNALIAS: i32 = 29; // c:63
+/// `BIN_UNFUNCTION` constant.
 pub const BIN_UNFUNCTION: i32 = 30; // c:64
+/// `BIN_UNSET` constant.
 pub const BIN_UNSET: i32 = 31; // c:65
+/// `BIN_EXPORT` constant.
 pub const BIN_EXPORT: i32 = 32; // c:66
 
 // c:69-70 — These currently depend on being 0 and 1.
+/// `BIN_SETOPT` constant.
 pub const BIN_SETOPT: i32 = 0; // c:69
+/// `BIN_UNSETOPT` constant.
 pub const BIN_UNSETOPT: i32 = 1; // c:70
 
 #[cfg(test)]

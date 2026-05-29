@@ -8,6 +8,7 @@
 //! shell, not loaded via `zmodload`.
 
 pub mod rlimits;
+/// `sched` submodule.
 pub mod sched;
 
 #[cfg(test)]

@@ -29,6 +29,7 @@ impl WaitHandle {
     pub fn is_completed(&self) -> bool {
         self.status.get().is_some()
     }
+    /// `set_status_and_complete` — see implementation.
     pub fn set_status_and_complete(&self, status: i32) {
         assert!(!self.is_completed(), "wait handle already completed");
         self.status.set(Some(status));
@@ -51,6 +52,7 @@ impl WaitHandle {
         })
     }
 }
+/// `WaitHandleRef` type alias.
 
 pub type WaitHandleRef = Rc<WaitHandle>;
 
@@ -60,6 +62,7 @@ const WAIT_HANDLE_STORE_DEFAULT_LIMIT: usize = 1024;
 /// Note this class is not safe for concurrent access.
 pub struct WaitHandleStore {
     // Map from pid to wait handles.
+    /// `cache` field.
     cache: lru::LruCache<Pid, WaitHandleRef>,
 }
 
@@ -71,6 +74,7 @@ impl Default for WaitHandleStore {
 }
 
 impl WaitHandleStore {
+    /// `new_with_capacity` — see implementation.
     pub fn new_with_capacity(capacity: usize) -> Self {
         let capacity = std::num::NonZeroUsize::new(capacity).unwrap();
         WaitHandleStore {

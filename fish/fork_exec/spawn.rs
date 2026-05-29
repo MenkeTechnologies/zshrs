@@ -94,11 +94,14 @@ impl Drop for FileActions {
 
 /// A RAII type which wraps up posix_spawn's data structures.
 pub struct PosixSpawner {
+    /// `attr` field.
     attr: Attr,
+    /// `actions` field.
     actions: FileActions,
 }
 
 impl PosixSpawner {
+    /// `new` — see implementation.
     pub fn new(
         j: &Job,
         pgroup_policy: PgroupPolicy,

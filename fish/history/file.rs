@@ -113,6 +113,7 @@ impl Drop for MmapRegion {
 
 /// RawHistoryFile holds the read-only contents of a file, before decoding it.
 pub struct RawHistoryFile {
+    /// `region` field.
     region: MmapRegion,
 }
 
@@ -204,8 +205,10 @@ impl RawHistoryFile {
 /// A combination of a history file and its offsets.
 pub struct HistoryFile {
     // Contents of the file. May be None if there was no file.
+    /// `contents` field.
     contents: Option<RawHistoryFile>,
     // Offsets of items within the file. Always empty if contents is None.
+    /// `offsets` field.
     offsets: Vec<usize>,
 }
 
@@ -314,6 +317,7 @@ fn should_mmap() -> bool {
     // mmap only if we are known not-remote.
     path_get_data_remoteness() != DirRemoteness::Remote
 }
+/// `time_to_seconds` — see implementation.
 
 pub fn time_to_seconds(ts: SystemTime) -> i64 {
     match ts.duration_since(UNIX_EPOCH) {

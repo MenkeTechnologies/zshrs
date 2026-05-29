@@ -122,10 +122,15 @@ pub fn wc_data(c: u32) -> u32 {
 /// compiled function to a `.zwc` cache file.
 #[derive(Debug)]
 pub struct ZwcHeader {
+    /// `magic` field.
     pub magic: u32,
+    /// `flags` field.
     pub flags: u8,
+    /// `version` field.
     pub version: String,
+    /// `header_len` field.
     pub header_len: u32,
+    /// `other_offset` field.
     pub other_offset: u32,
 }
 
@@ -135,11 +140,17 @@ pub struct ZwcHeader {
 /// cache.
 #[derive(Debug)]
 pub struct ZwcFunction {
+    /// `name` field.
     pub name: String,
+    /// `start` field.
     pub start: u32,
+    /// `len` field.
     pub len: u32,
+    /// `npats` field.
     pub npats: u32,
+    /// `strs_offset` field.
     pub strs_offset: u32,
+    /// `flags` field.
     pub flags: u32,
 }
 
@@ -149,13 +160,18 @@ pub struct ZwcFunction {
 /// before caching the parsed eprog.
 #[derive(Debug)]
 pub struct ZwcFile {
+    /// `header` field.
     pub header: ZwcHeader,
+    /// `functions` field.
     pub functions: Vec<ZwcFunction>,
+    /// `wordcode` field.
     pub wordcode: Vec<u32>,
+    /// `strings` field.
     pub strings: Vec<u8>,
 }
 
 impl ZwcFile {
+    /// `load` — see implementation.
     pub fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let mut file = File::open(path)?;
         let mut buf = vec![0u8; (FD_PRELEN + 1) * 4];
@@ -279,10 +295,12 @@ impl ZwcFile {
             strings,
         })
     }
+    /// `list_functions` — see implementation.
 
     pub fn list_functions(&self) -> Vec<&str> {
         self.functions.iter().map(|f| f.name.as_str()).collect()
     }
+    /// `function_count` — see implementation.
 
     pub fn function_count(&self) -> usize {
         self.functions.len()
@@ -292,12 +310,14 @@ impl ZwcFile {
     pub fn new_builder() -> ZwcBuilder {
         ZwcBuilder::new()
     }
+    /// `get_function` — see implementation.
 
     pub fn get_function(&self, name: &str) -> Option<&ZwcFunction> {
         self.functions
             .iter()
             .find(|f| f.name == name || f.name.ends_with(&format!("/{}", name)))
     }
+    /// `decode_function` — see implementation.
 
     pub fn decode_function(&self, func: &ZwcFunction) -> Option<DecodedFunction> {
         let header_words = self.header.header_len as usize;
@@ -343,6 +363,7 @@ impl Default for ZwcBuilder {
 }
 
 impl ZwcBuilder {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Self {
             functions: Vec::new(),
@@ -444,7 +465,9 @@ impl ZwcBuilder {
 /// per-op tree.
 #[derive(Debug, Clone)]
 pub struct DecodedFunction {
+    /// `name` field.
     pub name: String,
+    /// `body` field.
     pub body: Vec<DecodedOp>,
 }
 
@@ -455,107 +478,134 @@ pub struct DecodedFunction {
 /// source's `WC_*` opcodes.
 #[derive(Debug, Clone)]
 pub enum DecodedOp {
+    /// `End` variant.
     End,
+    /// `LineNo` variant.
     LineNo(u32),
+    /// `List` variant.
     List {
         list_type: u32,
         is_end: bool,
         ops: Vec<DecodedOp>,
     },
+    /// `Sublist` variant.
     Sublist {
         sublist_type: u32,
         negated: bool,
         ops: Vec<DecodedOp>,
     },
+    /// `Pipe` variant.
     Pipe {
         lineno: u32,
         ops: Vec<DecodedOp>,
     },
+    /// `Redir` variant.
     Redir {
         redir_type: u32,
         fd: i32,
         target: String,
         varid: Option<String>,
     },
+    /// `Assign` variant.
     Assign {
         name: String,
         value: String,
     },
+    /// `AssignArray` variant.
     AssignArray {
         name: String,
         values: Vec<String>,
     },
+    /// `Simple` variant.
     Simple {
         args: Vec<String>,
     },
+    /// `Typeset` variant.
     Typeset {
         args: Vec<String>,
         assigns: Vec<DecodedOp>,
     },
+    /// `Subsh` variant.
     Subsh {
         ops: Vec<DecodedOp>,
     },
+    /// `Cursh` variant.
     Cursh {
         ops: Vec<DecodedOp>,
     },
+    /// `Timed` variant.
     Timed {
         cmd: Option<Box<DecodedOp>>,
     },
+    /// `FuncDef` variant.
     FuncDef {
         name: String,
         body: Vec<DecodedOp>,
     },
+    /// `For` variant.
     For {
         var: String,
         list: Vec<String>,
         body: Vec<DecodedOp>,
     },
+    /// `ForCond` variant.
     ForCond {
         init: String,
         cond: String,
         step: String,
         body: Vec<DecodedOp>,
     },
+    /// `Select` variant.
     Select {
         var: String,
         list: Vec<String>,
         body: Vec<DecodedOp>,
     },
+    /// `While` variant.
     While {
         cond: Vec<DecodedOp>,
         body: Vec<DecodedOp>,
         is_until: bool,
     },
+    /// `Repeat` variant.
     Repeat {
         count: String,
         body: Vec<DecodedOp>,
     },
+    /// `Case` variant.
     Case {
         word: String,
         cases: Vec<(String, Vec<DecodedOp>)>,
     },
+    /// `CaseItem` variant.
     CaseItem {
         pattern: String,
         terminator: u32,
         body: Vec<DecodedOp>,
     },
+    /// `If` variant.
     If {
         if_type: u32,
         conditions: Vec<(Vec<DecodedOp>, Vec<DecodedOp>)>,
         else_body: Option<Vec<DecodedOp>>,
     },
+    /// `Cond` variant.
     Cond {
         cond_type: u32,
         args: Vec<String>,
     },
+    /// `Arith` variant.
     Arith {
         expr: String,
     },
+    /// `AutoFn` variant.
     AutoFn,
+    /// `Try` variant.
     Try {
         try_body: Vec<DecodedOp>,
         always_body: Vec<DecodedOp>,
     },
+    /// `Unknown` variant.
     Unknown {
         code: u32,
         data: u32,
@@ -567,13 +617,18 @@ pub enum DecodedOp {
 /// walks the same WC_* dispatch tree as `gettext2()` (Src/text.c)
 /// but emits the typed `DecodedOp` AST instead of source text.
 pub struct WordcodeDecoder<'a> {
+    /// `code` field.
     code: &'a [u32],
+    /// `strings` field.
     strings: &'a [u8],
+    /// `strs_base` field.
     strs_base: usize,
+    /// `pos` field.
     pub pos: usize,
 }
 
 impl<'a> WordcodeDecoder<'a> {
+    /// `new` — see implementation.
     pub fn new(code: &'a [u32], strings: &'a [u8], strs_base: usize) -> Self {
         Self {
             code,
@@ -582,14 +637,17 @@ impl<'a> WordcodeDecoder<'a> {
             pos: 0,
         }
     }
+    /// `at_end` — see implementation.
 
     pub fn at_end(&self) -> bool {
         self.pos >= self.code.len()
     }
+    /// `peek` — see implementation.
 
     pub fn peek(&self) -> Option<u32> {
         self.code.get(self.pos).copied()
     }
+    /// `next` — see implementation.
 
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u32> {
@@ -599,11 +657,13 @@ impl<'a> WordcodeDecoder<'a> {
         }
         val
     }
+    /// `read_string` — see implementation.
 
     pub fn read_string(&mut self) -> String {
         let wc = self.next().unwrap_or(0);
         self.decode_string(wc)
     }
+    /// `decode_string` — see implementation.
 
     pub fn decode_string(&self, wc: u32) -> String {
         // Zsh string encoding from ecrawstr():
@@ -1194,6 +1254,7 @@ pub fn dump_zwc_function<P: AsRef<Path>>(path: P, func_name: &str) -> io::Result
 
 /// Convert decoded ZWC ops to our shell AST for execution
 impl DecodedOp {
+    /// `to_shell_command` — see implementation.
     pub fn to_shell_command(&self) -> Option<ShellCommand> {
         match self {
             DecodedOp::Simple { args } => {

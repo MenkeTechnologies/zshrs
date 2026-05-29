@@ -42,6 +42,7 @@ fn main() {
     let dest = out_dir.join("zsh_version.rs");
     let generated = format!(
         "/// Vendored zsh source `Config/version.mk` `VERSION=...` value.\n\
+         /// `ZSH_VERSION` constant.
          pub const ZSH_VERSION: &str = {:?};\n\
          /// Vendored zsh source `Config/version.mk` `VERSION_DATE=...` value.\n\
          pub const ZSH_VERSION_DATE: &str = {:?};\n\

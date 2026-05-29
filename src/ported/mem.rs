@@ -48,6 +48,7 @@ impl Default for heap_arena {
 }
 
 impl heap_arena {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         heap_arena {
             generations: vec![Generation {
@@ -638,6 +639,7 @@ pub fn arrlen_gt<T>(s: &[T], lower_bound: usize) -> bool {
 
 // `next_heap_id` from Src/mem.c:178 — monotonically incrementing counter
 // for heap-arena identification under ZSH_MEM_DEBUG.
+/// `NEXT_HEAP_ID` static.
 pub static NEXT_HEAP_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Port of `mod_export Heapid last_heap_id` from `Src/mem.c:194`.
@@ -680,8 +682,10 @@ pub fn bicat(s1: &str, s2: &str) -> String {
 
 // `heaps` / `fheap` from Src/mem.c:526 — head of the current arena
 // chain and free-list pointer respectively.
+/// `HEAPS` static.
 pub static HEAPS: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+/// `FHEAP` static.
 pub static FHEAP: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 

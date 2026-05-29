@@ -27,38 +27,62 @@ use std::sync::{LazyLock, Mutex};
 /// fish-shell innovation we port here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum HighlightRole {
+    /// `Normal` variant.
     #[default]
     Normal,
+    /// `Command` variant.
     Command,
+    /// `Keyword` variant.
     Keyword,
+    /// `Statement` variant.
     Statement,
+    /// `Param` variant.
     Param,
+    /// `Option` variant.
     Option,
+    /// `Comment` variant.
     Comment,
+    /// `Error` variant.
     Error,
+    /// `String` variant.
     String,
+    /// `Escape` variant.
     Escape,
+    /// `Operator` variant.
     Operator,
+    /// `Redirection` variant.
     Redirection,
+    /// `Path` variant.
     Path,
+    /// `PathValid` variant.
     PathValid,
+    /// `Autosuggestion` variant.
     Autosuggestion,
+    /// `Selection` variant.
     Selection,
+    /// `Search` variant.
     Search,
+    /// `Variable` variant.
     Variable,
+    /// `Quote` variant.
     Quote,
 }
 
 /// A highlight specification for a character
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct HighlightSpec {
+    /// `foreground` field.
     pub foreground: HighlightRole,
+    /// `background` field.
     pub background: HighlightRole,
+    /// `valid_path` field.
     pub valid_path: bool,
+    /// `force_underline` field.
     pub force_underline: bool,
 }
 
 impl HighlightSpec {
+    /// `with_fg` — see implementation.
     pub fn with_fg(fg: HighlightRole) -> Self {
         Self {
             foreground: fg,
@@ -373,20 +397,27 @@ pub fn colorize_line(line: &str, colors: &[HighlightSpec]) -> String {
 /// Adapted from fish-shell. No C zsh counterpart — C zsh has
 /// `setopt EXPANDABBREV` only via the `zsh-abbr` plugin, not natively.
 pub enum AbbrPosition {
+    /// `Command` variant.
     Command,  // Only in command position
+    /// `Anywhere` variant.
     Anywhere, // Anywhere in the line
 }
 
 /// An abbreviation definition
 #[derive(Debug, Clone)]
 pub struct Abbreviation {
+    /// `name` field.
     pub name: String,
+    /// `key` field.
     pub key: String,
+    /// `replacement` field.
     pub replacement: String,
+    /// `position` field.
     pub position: AbbrPosition,
 }
 
 impl Abbreviation {
+    /// `new` — see implementation.
     pub fn new(name: &str, key: &str, replacement: &str, position: AbbrPosition) -> Self {
         Self {
             name: name.to_string(),
@@ -395,6 +426,7 @@ impl Abbreviation {
             position,
         }
     }
+    /// `matches` — see implementation.
 
     pub fn matches(&self, token: &str, is_command_position: bool) -> bool {
         let position_ok = match self.position {
@@ -408,20 +440,25 @@ impl Abbreviation {
 /// Global abbreviation set
 static ABBRS: LazyLock<Mutex<AbbreviationSet>> =
     LazyLock::new(|| Mutex::new(AbbreviationSet::default()));
+/// `with_abbrs` — see implementation.
 
 pub fn with_abbrs<R>(cb: impl FnOnce(&AbbreviationSet) -> R) -> R {
     let abbrs = ABBRS.lock().unwrap();
     cb(&abbrs)
 }
+/// `with_abbrs_mut` — see implementation.
 
 pub fn with_abbrs_mut<R>(cb: impl FnOnce(&mut AbbreviationSet) -> R) -> R {
     let mut abbrs = ABBRS.lock().unwrap();
     cb(&mut abbrs)
 }
+/// `AbbreviationSet` — see fields for layout.
 
 #[derive(Default)]
 pub struct AbbreviationSet {
+    /// `abbrs` field.
     abbrs: Vec<Abbreviation>,
+    /// `used_names` field.
     used_names: HashSet<String>,
 }
 
@@ -507,17 +544,21 @@ pub fn expand_abbreviation(line: &str, cursor: usize) -> Option<(String, usize)>
 
 /// History-based autosuggestion
 pub struct Autosuggestion {
+    /// `text` field.
     pub text: String,
+    /// `is_from_history` field.
     pub is_from_history: bool,
 }
 
 impl Autosuggestion {
+    /// `empty` — see implementation.
     pub fn empty() -> Self {
         Self {
             text: String::new(),
             is_from_history: false,
         }
     }
+    /// `is_empty` — see implementation.
 
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
@@ -600,12 +641,16 @@ static KILLRING: LazyLock<Mutex<KillRing>> = LazyLock::new(|| Mutex::new(KillRin
 /// Src/Zle/zle_misc.c — the `kringnum` array drives `yank-pop`.
 /// We keep a separate kill-ring here for fish-style yank cycling.
 pub struct KillRing {
+    /// `entries` field.
     entries: Vec<String>,
+    /// `max_size` field.
     max_size: usize,
+    /// `yank_index` field.
     yank_index: usize,
 }
 
 impl KillRing {
+    /// `new` — see implementation.
     pub fn new(max_size: usize) -> Self {
         Self {
             entries: Vec::with_capacity(max_size),
@@ -659,18 +704,22 @@ impl KillRing {
         self.yank_index = 0;
     }
 }
+/// `kill_add` — see implementation.
 
 pub fn kill_add(text: String) {
     KILLRING.lock().unwrap().add(text);
 }
+/// `kill_replace` — see implementation.
 
 pub fn kill_replace(text: String) {
     KILLRING.lock().unwrap().replace(text);
 }
+/// `kill_yank` — see implementation.
 
 pub fn kill_yank() -> Option<String> {
     KILLRING.lock().unwrap().yank().map(|s| s.to_string())
 }
+/// `kill_yank_rotate` — see implementation.
 
 pub fn kill_yank_rotate() -> Option<String> {
     KILLRING.lock().unwrap().rotate().map(|s| s.to_string())
@@ -740,11 +789,15 @@ pub fn validate_command(line: &str) -> ValidationStatus {
 
     ValidationStatus::Valid
 }
+/// `ValidationStatus` — see variants.
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValidationStatus {
+    /// `Valid` variant.
     Valid,
+    /// `Incomplete` variant.
     Incomplete,
+    /// `Invalid` variant.
     Invalid(String),
 }
 
@@ -753,10 +806,12 @@ pub enum ValidationStatus {
 // ============================================================================
 
 static PRIVATE_MODE: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+/// `is_private_mode` — see implementation.
 
 pub fn is_private_mode() -> bool {
     *PRIVATE_MODE.lock().unwrap()
 }
+/// `set_private_mode` — see implementation.
 
 pub fn set_private_mode(enabled: bool) {
     *PRIVATE_MODE.lock().unwrap() = enabled;

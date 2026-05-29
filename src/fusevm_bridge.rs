@@ -1094,6 +1094,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // -n, -p (chown + utimensat), -v. ID 263 is the first slot
     // past fusevm's built-in range (260-262) and before BUILTIN_MAX
     // (280).
+    /// `BUILTIN_CP` constant.
     pub const BUILTIN_CP: u16 = 263;
     reg_overridable!(vm, BUILTIN_CP, "cp", builtin_cp);
 
@@ -4682,6 +4683,7 @@ pub const BUILTIN_WORD_SPLIT: u16 = 304;
 /// register functions parsed via parse_init+parse without going through the
 /// ShellCommand JSON serialization path.
 pub const BUILTIN_REGISTER_COMPILED_FN: u16 = 305;
+/// `BUILTIN_VAR_EXISTS` constant.
 pub const BUILTIN_VAR_EXISTS: u16 = 306;
 /// Native param-modifier builtins. Each takes a fixed argv shape and
 /// returns the modified value as Value::Str.
@@ -4770,6 +4772,7 @@ pub const BUILTIN_IS_BLOCKDEV: u16 = 333;
 pub const BUILTIN_IS_FIFO: u16 = 334;
 /// `[[ -S path ]]` — socket.
 pub const BUILTIN_IS_SOCKET: u16 = 335;
+/// `BUILTIN_ERREXIT_CHECK` constant.
 pub const BUILTIN_ERREXIT_CHECK: u16 = 336;
 /// Post-`always`-arm checks for the canonical RETFLAG / BREAKS /
 /// CONTFLAG atomics that mark try-block escapes. Each returns
@@ -4778,7 +4781,9 @@ pub const BUILTIN_ERREXIT_CHECK: u16 = 336;
 /// Paired with JumpIfFalse + Jump to outer return_patches /
 /// break_patches / continue_patches by compile_zsh's `Try` arm.
 pub const BUILTIN_RETFLAG_CHECK: u16 = 600;
+/// `BUILTIN_BREAKS_CHECK` constant.
 pub const BUILTIN_BREAKS_CHECK: u16 = 601;
+/// `BUILTIN_CONTFLAG_CHECK` constant.
 pub const BUILTIN_CONTFLAG_CHECK: u16 = 602;
 /// Fire the DEBUG trap (SIGDEBUG) before each statement.
 /// c:Src/exec.c:1357-1500 DEBUGBEFORECMD — when a "DEBUG" entry is
@@ -4825,9 +4830,13 @@ pub const BUILTIN_DOT: u16 = 608;
 /// which only fires when bin_break sees BIN_LOGOUT funcid. Dedicated
 /// opcode dispatches via BUILTINS table by literal name "logout".
 pub const BUILTIN_LOGOUT: u16 = 610;
+/// `BUILTIN_PARAM_SUBSTRING_EXPR` constant.
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
+/// `BUILTIN_XTRACE_LINE` constant.
 pub const BUILTIN_XTRACE_LINE: u16 = 338;
+/// `BUILTIN_ARRAY_JOIN_STAR` constant.
 pub const BUILTIN_ARRAY_JOIN_STAR: u16 = 339;
+/// `BUILTIN_SET_RAW_OPT` constant.
 pub const BUILTIN_SET_RAW_OPT: u16 = 340;
 
 /// `time { compound; ... }` — wall-clock-time the sub-chunk and print
@@ -4867,8 +4876,11 @@ pub const BUILTIN_CONCAT_DISTRIBUTE_FORCED: u16 = 522;
 /// Emitted between the try block and the always block of `{ … } always
 /// { … }` so the finally arm can read $TRY_BLOCK_ERROR.
 pub const BUILTIN_SET_TRY_BLOCK_ERROR: u16 = 320;
+/// `BUILTIN_RESTORE_TRY_BLOCK_STATUS` constant.
 pub const BUILTIN_RESTORE_TRY_BLOCK_STATUS: u16 = 432;
+/// `BUILTIN_BEGIN_INLINE_ENV` constant.
 pub const BUILTIN_BEGIN_INLINE_ENV: u16 = 433;
+/// `BUILTIN_END_INLINE_ENV` constant.
 pub const BUILTIN_END_INLINE_ENV: u16 = 434;
 
 /// `[[ -o option ]]` — shell-option-set test. Stack: \[option_name\].
@@ -5808,6 +5820,7 @@ impl ShellExecutor {
             }
         }
     }
+    /// `host_apply_redirect` — see implementation.
 
     pub fn host_apply_redirect(&mut self, fd: u8, op_byte: u8, target: &str) {
         // `&>` / `&>>` always target both fd 1 and fd 2 regardless of the

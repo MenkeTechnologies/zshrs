@@ -26,13 +26,19 @@
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
+/// `Subscription` — see fields for layout.
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Subscription {
+    /// `id` field.
     pub id: u64,
+    /// `client_id` field.
     pub client_id: u64,
+    /// `pattern` field.
     pub pattern: String,
+    /// `scope_pat` field.
     pub scope_pat: String,
+    /// `topic_pat` field.
     pub topic_pat: String,
     /// When true, the daemon's publish path skips this subscription. Lets users
     /// silence noisy patterns temporarily without losing the subscription
@@ -42,6 +48,7 @@ pub struct Subscription {
 }
 
 impl Subscription {
+    /// `parse` — see implementation.
     pub fn parse(client_id: u64, id: u64, pattern: &str) -> Result<Self, String> {
         // Pattern is `<scope>.<topic>`. The first `.` separates scope from topic; topic
         // may itself contain `.` (we use the LAST dot). Reasoning: scopes don't contain
@@ -75,8 +82,11 @@ impl Subscription {
 /// Concrete origin of an event — the sender's identifying scope.
 #[derive(Clone, Debug)]
 pub struct Scope {
+    /// `shell_id` field.
     pub shell_id: u64,
+    /// `tags` field.
     pub tags: BTreeSet<String>,
+    /// `user` field.
     pub user: Option<String>,
     /// Set when the event originates from a daemon-managed job rather than a
     /// shell session. Subscribers can target jobs via `job:N.stdout` etc.

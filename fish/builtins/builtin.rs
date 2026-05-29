@@ -7,6 +7,7 @@ struct builtin_cmd_opts_t {
     query: bool,
     list_names: bool,
 }
+/// `r` — see implementation.
 
 pub fn r#builtin(parser: &Parser, streams: &mut IoStreams, argv: &mut [&wstr]) -> BuiltinResult {
     let cmd = argv[0];

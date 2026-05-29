@@ -87,6 +87,7 @@ fn now_ns_i64() -> i64 {
 }
 
 // ---- IPC op handlers ----
+/// `op_push_canonical` — see implementation.
 
 pub async fn op_push_canonical(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     let subsystem = args
@@ -323,6 +324,7 @@ fn validate_push_payload(
 
     Ok(())
 }
+/// `op_pull_canonical` — see implementation.
 
 pub async fn op_pull_canonical(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let subsystem = args
@@ -343,6 +345,7 @@ pub async fn op_pull_canonical(state: &Arc<DaemonState>, args: Value) -> OpResul
         })).collect::<Vec<_>>(),
     }))
 }
+/// `op_diff_canonical` — see implementation.
 
 pub async fn op_diff_canonical(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let subsystem = args
@@ -391,9 +394,13 @@ pub async fn op_diff_canonical(state: &Arc<DaemonState>, args: Value) -> OpResul
 /// in-memory state via `state.canonical.rows_for(...)`.
 #[derive(serde::Serialize, Debug)]
 pub struct CanonicalRow {
+    /// `key` field.
     pub key: String,
+    /// `value` field.
     pub value: String,
+    /// `set_at_ns` field.
     pub set_at_ns: i64,
+    /// `set_by_shell` field.
     pub set_by_shell: Option<i64>,
 }
 

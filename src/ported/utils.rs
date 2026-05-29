@@ -95,6 +95,7 @@ use crate::ported::ztype_h::{
 // Rust idiom replacement: `unmetafy` + `str::chars` covers the C
 // `mbsrtowcs`+`mbstate_t` conversion; the C `wca` out-param drops
 // since the Vec is returned by value.
+/// `set_widearray` — see implementation.
 pub fn set_widearray(mb_array: &str) -> Vec<char> {
     let mut bytes = mb_array.as_bytes().to_vec();
     unmetafy(&mut bytes);
@@ -358,6 +359,7 @@ pub fn zz_plural_z_alpha() {} // c:282
 // Rust idiom replacement: pre-formatted `msg: &str` covers the C
 // va_list expansion; the C `file`+`fmt`+`ap` triplet collapses
 // because callers (zerr/zwarning) pre-format via Rust's `format!`.
+/// `zerrmsg` — see implementation.
 pub fn zerrmsg(msg: &str, errno: Option<i32>) {
     // c:289
     // c:296 — `lineno` is the parser-advanced line counter. The
@@ -830,6 +832,7 @@ pub fn pathprog(prog: &str) -> Option<PathBuf> {
 /// matches C: takes `&str`, returns `Option<String>` (xsymlink can
 /// return NULL).
 // get a symlink-free pathname for s relative to PWD                        // c:792
+/// `findpwd` — see implementation.
 pub fn findpwd(s: &str) -> Option<String> {
     // c:792
     if s.starts_with('/') {
@@ -2638,6 +2641,7 @@ pub fn arrlen_lt<T>(arr: &[T], n: usize) -> bool {
 
 /// Skip balanced parentheses (from utils.c skipparens)
 // Skip over a balanced pair of parenthesis.                                // c:2409
+/// `skipparens` — see implementation.
 pub fn skipparens(s: &str, open: char, close: char) -> usize {
     // c:2409
     let mut depth = 0;
@@ -4182,6 +4186,7 @@ pub fn ztrftimebuf(bufsizeptr: &mut i32, decr: i32) -> i32 {
 // 192-line body builds the fmt-walk by hand because C has no
 // strftime extension support — Rust delegates to libc::strftime via
 // the strftime crate equivalent inline.
+/// `ztrftime` — see implementation.
 pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
     let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
     let secs = duration.as_secs() as i64;
@@ -4402,6 +4407,7 @@ pub fn skipwsep(s: &str) -> (&str, usize) {
 // Rust idiom replacement: `str::split` / `split_whitespace` collapse
 // the C tokenizer (Inull-skip + quote-aware advance + zalloc per
 // segment); the `heap` / `quote` C params drop with the C buffer.
+/// `spacesplit` — see implementation.
 pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
     // c:3711
     if allownull {
@@ -4582,6 +4588,7 @@ pub fn wordcount(s: &str, sep: Option<&str>, mul: i32) -> i32 {
 // Rust idiom replacement: `slice::join` covers the C `zalloc`+`strcpy`
 // loop with running length pre-compute; the `heap` arg drops since
 // String owns its own allocation.
+/// `sepjoin` — see implementation.
 pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
     // c:3928
     // c:3934-3935 — if (!*s) return heap ? dupstring("") : ztrdup("");
@@ -5236,6 +5243,7 @@ pub fn wcsitype(c: char, itype: u32) -> bool {
 // covers the C `itype` table-lookup loop; the `once`/`itype` args
 // collapse into the boolean `allow_digits_start` since callers in
 // zshrs only use IDENT/IFS classifications.
+/// `itype_end` — see implementation.
 pub fn itype_end(s: &str, allow_digits_start: bool) -> usize {
     let mut chars = s.chars().peekable();
     let mut pos = 0;
@@ -5736,6 +5744,7 @@ pub fn metalen(s: &str, len: usize) -> usize {
 // Rust idiom replacement: byte-scan fast path + `unmetafy` covers
 // the C in-place decode + alloc-on-copy dance; String owns its own
 // allocation so no `heap` flag needed.
+/// `unmeta` — see implementation.
 pub fn unmeta(s: &str) -> String {
     // c:4994
     let bytes = s.as_bytes();
@@ -6101,6 +6110,7 @@ pub fn niceztrlen(s: &str) -> usize {
 // Rust idiom replacement: `chars()` + `wcs_nicechar` covers the C
 // mbrtowc loop with `MB_INVALID` fallback (Rust UTF-8 guarantees
 // valid scalars, so the invalid-byte arm collapses).
+/// `mb_niceformat` — see implementation.
 pub fn mb_niceformat(
     s: &str,
     mut stream: Option<&mut dyn std::io::Write>,
@@ -6399,6 +6409,7 @@ pub fn is_mb_niceformat(s: &str) -> i32 {
 // Rust idiom replacement: Rust strings are UTF-8 with valid scalar
 // values, so `chars().next()` covers the mbrtowc state machine; no
 // mbstate_t threading required.
+/// `mb_metacharlenconv_r` — see implementation.
 pub fn mb_metacharlenconv_r(s: &str, pos: usize) -> (usize, Option<char>) {
     if let Some(c) = s[pos..].chars().next() {
         (c.len_utf8(), Some(c))
@@ -6439,6 +6450,7 @@ pub fn mb_metacharlenconv(s: &str) -> (usize, Option<char>) {
 /// Port of `mb_metastrlenend(char *ptr, int width, char *eptr)` from `Src/utils.c:5655`.
 // Rust idiom replacement: `chars().count()` / unicode-width replaces
 // the C mbrtowc loop + wcwidth fallback.
+/// `mb_metastrlenend` — see implementation.
 pub fn mb_metastrlenend(ptr: &str, width: bool, eptr: usize) -> usize {
     if width {
         ptr[..eptr.min(ptr.len())]
@@ -7565,12 +7577,14 @@ pub fn getkeystring(s: &str) -> (String, usize) {
 
 /// Check if s is a prefix of t (from utils.c strpfx)
 // Return non-zero if s is a prefix of t.                                  // c:7345
+/// `strpfx` — see implementation.
 pub fn strpfx(s: &str, t: &str) -> bool {
     t.starts_with(s)
 }
 
 /// Check if s is a suffix of t (from utils.c strsfx)
 // Return non-zero if s is a suffix of t.                                  // c:7345
+/// `strsfx` — see implementation.
 pub fn strsfx(s: &str, t: &str) -> bool {
     t.ends_with(s)
 }
@@ -8129,8 +8143,11 @@ pub static WINCHANGED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI
 ///   - GETKEY_EMACS: unknown `\<char>` drops the backslash (1<<1)
 ///   - GETKEY_BACKSLASH_C: `\c` truncates the result (1<<3)
 pub const GETKEY_OCTAL_ESC: u32 = 1 << 0; // c:zsh.h:3143
+/// `GETKEY_EMACS` constant.
 pub const GETKEY_EMACS: u32 = 1 << 1; // c:zsh.h:3150
+/// `GETKEY_CTRL` constant.
 pub const GETKEY_CTRL: u32 = 1 << 2; // c:zsh.h:3152
+/// `GETKEY_BACKSLASH_C` constant.
 pub const GETKEY_BACKSLASH_C: u32 = 1 << 3; // c:zsh.h:3154
 
 /// `GETKEYS_PRINT = GETKEY_OCTAL_ESC | GETKEY_BACKSLASH_C |

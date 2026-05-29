@@ -9,8 +9,10 @@ use std::{
     },
     time::Duration,
 };
+/// `AT_EXIT` static.
 
 pub static AT_EXIT: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+/// `panic_handler` — see implementation.
 
 pub fn panic_handler(main: impl FnOnce() -> i32 + UnwindSafe) -> ! {
     // The isatty() check will stop us from hanging in most fish tests, but not those

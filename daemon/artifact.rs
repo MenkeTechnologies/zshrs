@@ -117,6 +117,7 @@ fn decode_value(args: &Value) -> std::result::Result<Vec<u8>, ErrPayload> {
         )),
     }
 }
+/// `op_artifact_put` — see implementation.
 
 pub async fn op_artifact_put(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let name = name_arg(&args)?;
@@ -159,6 +160,7 @@ pub async fn op_artifact_put(state: &Arc<DaemonState>, args: Value) -> OpResult 
         "bytes": bytes.len(),
     }))
 }
+/// `op_artifact_get` — see implementation.
 
 pub async fn op_artifact_get(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let name = name_arg(&args)?;
@@ -179,6 +181,7 @@ pub async fn op_artifact_get(state: &Arc<DaemonState>, args: Value) -> OpResult 
     );
     fetch_blob(state, &digest, Some(&name))
 }
+/// `op_artifact_get_by_digest` — see implementation.
 
 pub async fn op_artifact_get_by_digest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let digest = digest_arg(&args)?;
@@ -203,6 +206,7 @@ fn fetch_blob(state: &DaemonState, digest: &str, name: Option<&str>) -> OpResult
         "value_base64": value_b64,
     }))
 }
+/// `op_artifact_gc` — see implementation.
 
 pub async fn op_artifact_gc(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let max_age_secs = args.get("max_age_secs").and_then(Value::as_i64);
@@ -298,6 +302,7 @@ pub async fn op_artifact_gc(state: &Arc<DaemonState>, args: Value) -> OpResult {
         "freed_bytes": freed_bytes,
     }))
 }
+/// `op_artifact_list` — see implementation.
 
 pub async fn op_artifact_list(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let prefix = args

@@ -29,6 +29,7 @@ use sha2::{Digest, Sha256};
 use super::ipc::ErrPayload;
 use super::ops::OpResult;
 use super::state::DaemonState;
+/// `op_source_resolve` — see implementation.
 
 pub async fn op_source_resolve(state: &std::sync::Arc<DaemonState>, args: Value) -> OpResult {
     let path = args

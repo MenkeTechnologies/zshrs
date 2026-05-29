@@ -75,13 +75,19 @@ fn current_binary_mtime() -> Option<i64> {
 pub struct PluginDelta {
     pub functions: Vec<(String, Vec<u8>)>, // name → bincode-serialized bytecode
     pub aliases: Vec<(String, String, AliasKind)>, // name → value, kind
+    /// `global_aliases` field.
     pub global_aliases: Vec<(String, String)>,
+    /// `suffix_aliases` field.
     pub suffix_aliases: Vec<(String, String)>,
+    /// `variables` field.
     pub variables: Vec<(String, String)>,
     pub exports: Vec<(String, String)>, // also set in env
+    /// `arrays` field.
     pub arrays: Vec<(String, Vec<String>)>,
+    /// `assoc_arrays` field.
     pub assoc_arrays: Vec<(String, HashMap<String, String>)>,
     pub completions: Vec<(String, String)>, // command → function
+    /// `fpath_additions` field.
     pub fpath_additions: Vec<String>,
     pub hooks: Vec<(String, String)>, // hook_name → function
     pub bindkeys: Vec<(String, String, String)>, // keyseq, widget, keymap
@@ -89,11 +95,15 @@ pub struct PluginDelta {
     pub options_changed: Vec<(String, bool)>, // option → on/off
     pub autoloads: Vec<(String, String)>, // function → flags
 }
+/// `AliasKind` — see variants.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AliasKind {
+    /// `Regular` variant.
     Regular,
+    /// `Global` variant.
     Global,
+    /// `Suffix` variant.
     Suffix,
 }
 
@@ -116,10 +126,12 @@ impl AliasKind {
 
 /// SQLite-backed plugin cache.
 pub struct PluginCache {
+    /// `conn` field.
     conn: Connection,
 }
 
 impl PluginCache {
+    /// `open` — see implementation.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;

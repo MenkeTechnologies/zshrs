@@ -16,6 +16,7 @@ use crate::ported::zle::{
 /// vi blank-word class predicate. Returns 0 for blanks, 1 otherwise.
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
+/// `blankwordclass` — see implementation.
 #[allow(unused_imports)]
 #[allow(unused_imports)]
 

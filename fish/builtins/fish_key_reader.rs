@@ -237,6 +237,7 @@ fn parse_flags(
 
     ControlFlow::Continue(())
 }
+/// `fish_key_reader` — see implementation.
 
 pub fn fish_key_reader(
     parser: &Parser,
@@ -270,6 +271,7 @@ pub fn fish_key_reader(
         InputEventQueue::new(streams.stdin_fd(), None),
     )
 }
+/// `main` — see implementation.
 
 pub fn main() {
     PROGRAM_NAME.set(L!("fish_key_reader")).unwrap();

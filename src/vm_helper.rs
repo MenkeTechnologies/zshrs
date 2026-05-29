@@ -196,8 +196,11 @@ pub struct SubshellSnapshot {
     /// parent via paramtab (e.g. `x=outer; (x=inner); echo $x` returned
     /// `inner` because paramsubst reads through paramtab).
     pub paramtab: HashMap<String, crate::ported::zsh_h::Param>,
+    /// `paramtab_hashed_storage` field.
     pub paramtab_hashed_storage: HashMap<String, IndexMap<String, String>>,
+    /// `positional_params` field.
     pub positional_params: Vec<String>,
+    /// `env_vars` field.
     pub env_vars: HashMap<String, String>,
     /// Process working directory at subshell entry. `cd` inside the
     /// subshell shouldn't leak to the parent; we restore on End.
@@ -280,8 +283,11 @@ pub struct ShellExecutor {
     /// shell on any unmatched glob even with multi-statement input.
     /// `Cell` because the no-match site only has a `&self` borrow.
     pub current_command_glob_failed: std::cell::Cell<bool>,
+    /// `jobs` field.
     pub jobs: JobTable,
+    /// `fpath` field.
     pub fpath: Vec<PathBuf>,
+    /// `history` field.
     pub history: Option<HistoryEngine>,
     pub(crate) process_sub_counter: u32,
     pub completions: HashMap<String, CompSpec>, // command -> completion spec
@@ -310,17 +316,22 @@ pub struct ShellExecutor {
     /// original separator (newlines) instead of re-joining with
     /// IFS-first-char (space).
     pub in_scalar_assign: u32,
+    /// `profiling_enabled` field.
     pub profiling_enabled: bool,
     // compsys - completion system cache
+    /// `compsys_cache` field.
     pub compsys_cache: Option<CompsysCache>,
     // Background compinit — receiver for async fpath scan result
+    /// `compinit_pending` field.
     pub compinit_pending: Option<(
         std::sync::mpsc::Receiver<CompInitBgResult>,
         std::time::Instant,
     )>,
     // Plugin source cache — stores side effects of source/. in SQLite
+    /// `plugin_cache` field.
     pub plugin_cache: Option<crate::plugin_cache::PluginCache>,
     // cdreplay - deferred compdef calls for zinit turbo mode
+    /// `deferred_compdefs` field.
     pub deferred_compdefs: Vec<Vec<String>>,
     // Control flow signals
     pub returning: Option<i32>, // Set by return builtin, cleared after function returns
@@ -613,6 +624,7 @@ impl ShellExecutor {
     pub fn unset_scalar(&mut self, name: &str) {
         unsetparam(name);
     }
+    /// `new` — see implementation.
 
     pub fn new() -> Self {
         tracing::debug!("ShellExecutor::new() initializing");
@@ -1292,6 +1304,7 @@ impl ShellExecutor {
         let _ = status;
         Ok(self.last_status())
     }
+    /// `execute_script` — see implementation.
 
     #[tracing::instrument(skip(self, script), fields(len = script.len()))]
     pub fn execute_script(&mut self, script: &str) -> Result<i32, String> {
@@ -1583,6 +1596,7 @@ impl ShellExecutor {
             Vec::new()
         }
     }
+    /// `run_command_substitution` — see implementation.
 
     pub fn run_command_substitution(&mut self, cmd_str: &str) -> String {
         // `$(< FILE)` — zsh shorthand for "read FILE contents". Faster
@@ -1998,7 +2012,9 @@ bitflags::bitflags! {
 /// `fork()` outcome (parent / child / error).
 /// Mirrors the integer return of `zfork()` from Src/exec.c:349.
 pub enum ForkResult {
+    /// `Parent` variant.
     Parent(i32), // Contains child PID
+    /// `Child` variant.
     Child,
 }
 
@@ -2007,7 +2023,9 @@ pub enum ForkResult {
 /// File-redirection mode (`>` / `>>` / `<` / etc.).
 /// Mirrors the `REDIR_*` enum from Src/zsh.h.
 pub enum RedirMode {
+    /// `Dup` variant.
     Dup,
+    /// `Close` variant.
     Close,
 }
 
@@ -2017,7 +2035,9 @@ pub enum RedirMode {
 /// Mirrors the `BINF_*` flag set Src/builtin.c uses to
 /// classify special vs regular builtins.
 pub enum BuiltinType {
+    /// `Normal` variant.
     Normal,
+    /// `Disabled` variant.
     Disabled,
 }
 
@@ -2387,6 +2407,7 @@ pub fn init_partab_params() {
     }
 }
 impl ShellExecutor {
+    /// `enter_posix_mode` — see implementation.
     pub fn enter_posix_mode(&mut self) {
         self.posix_mode = true;
         self.plugin_cache = None;
@@ -2400,6 +2421,7 @@ impl ShellExecutor {
         // time; the underlying emulate() doesn't need one.
         crate::ported::options::emulate("sh", true);
     }
+    /// `enter_ksh_mode` — see implementation.
     pub fn enter_ksh_mode(&mut self) {
         self.plugin_cache = None;
         self.compsys_cache = None;

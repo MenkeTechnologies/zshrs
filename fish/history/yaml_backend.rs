@@ -66,6 +66,7 @@ fn maybe_unescape_yaml_fish_2_0(s: &[u8]) -> Cow<'_, [u8]> {
 // and this implementation (chunk_loop_box) won out. Make changes with care!
 //
 // Benchmarks and code: https://github.com/mqudsi/fish-yaml-unescape-benchmark
+/// `unescape_yaml_fish_2_0` — see implementation.
 pub fn unescape_yaml_fish_2_0(s: &[u8]) -> Vec<u8> {
     // This function is in a very hot loop and the usage of boxed uninit memory benchmarks around 8%
     // faster on real-world escaped yaml samples from the fish history file.
@@ -111,6 +112,7 @@ fn trim_leading_spaces(s: &[u8]) -> (usize, &[u8]) {
     let count = s.iter().take_while(|c| **c == b' ').count();
     (count, &s[count..])
 }
+/// `extract_prefix_and_unescape_yaml` — see implementation.
 
 #[inline(always)]
 #[allow(clippy::type_complexity)]

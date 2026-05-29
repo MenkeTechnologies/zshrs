@@ -40,8 +40,11 @@ use super::Result;
 /// Outcome of one debounced fsnotify cycle — used by tests + observability.
 #[derive(Clone, Debug, serde::Serialize, Default)]
 pub struct WatcherStats {
+    /// `events_received` field.
     pub events_received: u64,
+    /// `events_routed` field.
     pub events_routed: u64,
+    /// `watched_path_count` field.
     pub watched_path_count: usize,
 }
 
@@ -62,15 +65,20 @@ pub enum WatchKind {
 /// One watched-path registration: maps a filesystem path to the shard it belongs to.
 #[derive(Clone, Debug)]
 pub struct WatchedPath {
+    /// `path` field.
     pub path: PathBuf,
+    /// `shard_slug` field.
     pub shard_slug: String,
+    /// `source_root` field.
     pub source_root: String,
+    /// `kind` field.
     pub kind: WatchKind,
 }
 
 /// Top-level fsnotify state owned by DaemonState. Holds the debouncer + the
 /// registry; the actual events are dispatched in a tokio task spawned by `start`.
 pub struct FsWatcher {
+    /// `inner` field.
     inner: Mutex<FsWatcherInner>,
 }
 
@@ -102,6 +110,7 @@ impl Default for FsWatcher {
 }
 
 impl FsWatcher {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(FsWatcherInner {
@@ -182,6 +191,7 @@ impl FsWatcher {
         g.stats.watched_path_count = g.registered.len();
         Ok(())
     }
+    /// `stats` — see implementation.
 
     pub fn stats(&self) -> WatcherStats {
         let g = self.inner.lock();
@@ -199,6 +209,7 @@ impl FsWatcher {
             "watched_path_count": g.stats.watched_path_count,
         })
     }
+    /// `registered_paths` — see implementation.
 
     pub fn registered_paths(&self) -> Vec<WatchedPath> {
         let g = self.inner.lock();

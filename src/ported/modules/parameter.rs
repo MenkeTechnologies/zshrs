@@ -3325,6 +3325,7 @@ pub struct pardef {
 /// Function-pointer types matching C's `GetNodeFunc` / `ScanTabFunc`
 /// for the magic-assoc table dispatch.
 pub type HashGetFn = fn(*mut HashTable, &str) -> Option<Param>;
+/// `HashScanFn` type alias.
 pub type HashScanFn = fn(*mut HashTable, Option<crate::ported::zsh_h::ScanFunc>, i32);
 
 /// Strongly-typed PARTAB entry. C's `paramdef` keeps these as opaque
@@ -3748,12 +3749,15 @@ static ALIAS_GSU_HANDLER: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::n
 // File-static globals for parameter.c port — c:38-44, src/init.c.
 // `dirstack` lives in src/exec.c globals; `funcstack` in src/init.c.
 // Mirror as Mutex<Vec<...>> for cross-thread safety.
+/// `DIRSTACK` static.
 pub static DIRSTACK: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// `INCLEANUP` static.
 pub static INCLEANUP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 // `funcstack` global from Src/exec.c:340 — head of the active shell
 // function call stack. Rust port mirrors the chain as Vec snapshot
 // (the C source walks `funcstack->prev` to produce array params).
+/// `FUNCSTACK` static.
 pub static FUNCSTACK: Mutex<Vec<crate::ported::zsh_h::funcstack>> = Mutex::new(Vec::new());
 
 // =====================================================================

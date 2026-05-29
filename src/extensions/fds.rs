@@ -26,7 +26,9 @@ pub const FIRST_HIGH_FD: RawFd = 10;
 /// (Src/exec.c) which gets manual `close(2)` calls on every error
 /// path; the OwnedFd pair makes that automatic.
 pub struct AutoClosePipes {
+    /// `read` field.
     pub read: OwnedFd,
+    /// `write` field.
     pub write: OwnedFd,
 }
 
@@ -226,13 +228,16 @@ impl Clone for BorrowedFdFile {
 }
 
 impl BorrowedFdFile {
+    /// `stdin` — see implementation.
     pub fn stdin() -> Self {
         unsafe { Self::from_raw_fd(libc::STDIN_FILENO) }
     }
+    /// `stdout` — see implementation.
 
     pub fn stdout() -> Self {
         unsafe { Self::from_raw_fd(libc::STDOUT_FILENO) }
     }
+    /// `stderr` — see implementation.
 
     pub fn stderr() -> Self {
         unsafe { Self::from_raw_fd(libc::STDERR_FILENO) }

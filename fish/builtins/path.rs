@@ -31,6 +31,7 @@ fn arguments<'iter, 'args>(
 }
 
 bitflags! {
+    /// `TypeFlags` — see fields for layout.
     #[derive(Copy, Clone, Default)]
     pub struct TypeFlags: u32 {
         /// A block device
@@ -70,6 +71,7 @@ impl TryFrom<&wstr> for TypeFlags {
 }
 
 bitflags! {
+    /// `PermFlags` — see fields for layout.
     #[derive(Copy, Clone, Default)]
     pub struct PermFlags: u32 {
         const READ = 1 << 0;

@@ -33,9 +33,13 @@ use super::state::DaemonState;
 /// Per-op counters. `op_total[name]` and `op_failures_total[name]`.
 /// Bumped from `ops::dispatch` after every call.
 pub struct Metrics {
+    /// `op_total` field.
     pub op_total: Mutex<HashMap<String, u64>>,
+    /// `op_failures` field.
     pub op_failures: Mutex<HashMap<String, u64>>,
+    /// `http_total` field.
     pub http_total: Mutex<HashMap<(String, u16), u64>>,
+    /// `recorder_events_total` field.
     pub recorder_events_total: AtomicU64,
 }
 
@@ -46,6 +50,7 @@ impl Default for Metrics {
 }
 
 impl Metrics {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Self {
             op_total: Mutex::new(HashMap::new()),
@@ -54,12 +59,14 @@ impl Metrics {
             recorder_events_total: AtomicU64::new(0),
         }
     }
+    /// `record_op` — see implementation.
     pub fn record_op(&self, op: &str, ok: bool) {
         *self.op_total.lock().entry(op.to_string()).or_insert(0) += 1;
         if !ok {
             *self.op_failures.lock().entry(op.to_string()).or_insert(0) += 1;
         }
     }
+    /// `record_http` — see implementation.
     pub fn record_http(&self, path: &str, code: u16) {
         *self
             .http_total
@@ -67,6 +74,7 @@ impl Metrics {
             .entry((path.to_string(), code))
             .or_insert(0) += 1;
     }
+    /// `record_recorder_events` — see implementation.
     pub fn record_recorder_events(&self, n: u64) {
         self.recorder_events_total.fetch_add(n, Ordering::Relaxed);
     }

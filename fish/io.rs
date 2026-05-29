@@ -36,19 +36,24 @@ pub enum SeparationType {
     /// this element is explicitly separated and should not be further split
     explicitly,
 }
+/// `BufferElement` — see fields for layout.
 
 pub struct BufferElement {
+    /// `contents` field.
     pub contents: Vec<u8>,
+    /// `separation` field.
     pub separation: SeparationType,
 }
 
 impl BufferElement {
+    /// `new` — see implementation.
     pub fn new(contents: Vec<u8>, separation: SeparationType) -> Self {
         BufferElement {
             contents,
             separation,
         }
     }
+    /// `is_explicitly_separated` — see implementation.
     pub fn is_explicitly_separated(&self) -> bool {
         self.separation == SeparationType::explicitly
     }
@@ -68,6 +73,7 @@ pub struct SeparatedBuffer {
 }
 
 impl SeparatedBuffer {
+    /// `new` — see implementation.
     pub fn new(limit: usize) -> Self {
         SeparatedBuffer {
             buffer_limit: limit,
@@ -160,10 +166,15 @@ impl SeparatedBuffer {
 /// Describes what type of IO operation an io_data_t represents.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IoMode {
+    /// `File` variant.
     File,
+    /// `Pipe` variant.
     Pipe,
+    /// `Fd` variant.
     Fd,
+    /// `Close` variant.
     Close,
+    /// `BufferFill` variant.
     BufferFill,
 }
 
@@ -183,11 +194,14 @@ pub trait IoData: Send + Sync {
         None
     }
 }
+/// `IoClose` — see fields for layout.
 
 pub struct IoClose {
+    /// `fd` field.
     fd: RawFd,
 }
 impl IoClose {
+    /// `new` — see implementation.
     pub fn new(fd: RawFd) -> Self {
         IoClose { fd }
     }
@@ -206,9 +220,12 @@ impl IoData for IoClose {
         eprintf!("close %d\n", self.fd);
     }
 }
+/// `IoFd` — see fields for layout.
 
 pub struct IoFd {
+    /// `fd` field.
     fd: RawFd,
+    /// `source_fd` field.
     source_fd: RawFd,
 }
 impl IoFd {
@@ -235,11 +252,14 @@ impl IoData for IoFd {
 
 /// Represents a redirection to or from an opened file.
 pub struct IoFile {
+    /// `fd` field.
     fd: RawFd,
     // The file which we are writing to or reading from.
+    /// `file` field.
     file: File,
 }
 impl IoFile {
+    /// `new` — see implementation.
     pub fn new(fd: RawFd, file: File) -> Self {
         IoFile { fd, file }
         // Invalid file redirections are replaced with a closed fd, so the following
@@ -264,13 +284,16 @@ impl IoData for IoFile {
 
 /// Represents (one end) of a pipe.
 pub struct IoPipe {
+    /// `fd` field.
     fd: RawFd,
     // The pipe's fd. Conceptually this is dup2'd to io_data_t::fd.
+    /// `pipe_fd` field.
     pipe_fd: OwnedFd,
     /// Whether this is an input pipe. This is used only for informational purposes.
     is_input: bool,
 }
 impl IoPipe {
+    /// `new` — see implementation.
     pub fn new(fd: RawFd, is_input: bool, pipe_fd: OwnedFd) -> Self {
         IoPipe {
             fd,
@@ -301,6 +324,7 @@ impl IoData for IoPipe {
 
 /// Represents filling an IoBuffer. Very similar to IoPipe.
 pub struct IoBufferfill {
+    /// `target` field.
     target: RawFd,
 
     /// Write end. The other end is connected to an IoBuffer.
@@ -348,10 +372,12 @@ impl IoBufferfill {
             item_id,
         }))
     }
+    /// `buffer` — see implementation.
 
     pub fn buffer(&self) -> &IoBuffer {
         &self.buffer
     }
+    /// `read_all_available` — see implementation.
 
     pub fn read_all_available(&self) {
         fd_monitor().with_fd(self.item_id, |fd| self.buffer.read_all_available(fd));
@@ -435,6 +461,7 @@ impl IoBuffer {
         }
         amt
     }
+    /// `read_all_available` — see implementation.
 
     pub fn read_all_available(&self, fd: BorrowedFd) {
         let mut locked_buff = self.0.lock().unwrap();
@@ -496,16 +523,20 @@ fn begin_filling(iobuffer: IoBuffer, fd: OwnedFd) -> FdMonitorItemId {
 
     fd_monitor().add(fd, item_callback)
 }
+/// `IoDataRef` type alias.
 
 pub type IoDataRef = Arc<dyn IoData>;
+/// `IoChain` — see fields for layout.
 
 #[derive(Clone, Default)]
 pub struct IoChain(pub Vec<IoDataRef>);
 
 impl IoChain {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Default::default()
     }
+    /// `remove` — see implementation.
     pub fn remove(&mut self, element: &dyn IoData) {
         // Discard vtable pointers when comparing.
         let e1 = std::ptr::from_ref(element).cast::<()>();
@@ -516,12 +547,15 @@ impl IoChain {
             .expect("Element not found");
         self.0.remove(idx);
     }
+    /// `clear` — see implementation.
     pub fn clear(&mut self) {
         self.0.clear();
     }
+    /// `push` — see implementation.
     pub fn push(&mut self, element: IoDataRef) {
         self.0.push(element);
     }
+    /// `append` — see implementation.
     pub fn append(&mut self, chain: &IoChain) -> bool {
         self.0.extend_from_slice(&chain.0);
         true
@@ -653,8 +687,11 @@ impl IoChain {
 pub enum OutputStream {
     /// A null output stream which ignores all writes.
     Null,
+    /// `Fd` variant.
     Fd(FdOutputStream),
+    /// `String` variant.
     String(StringOutputStream),
+    /// `Buffered` variant.
     Buffered(BufferedOutputStream),
 }
 
@@ -728,6 +765,7 @@ impl OutputStream {
     }
 
     // Append data from a narrow buffer, widening it.
+    /// `append_narrow_buffer` — see implementation.
     pub fn append_narrow_buffer(&mut self, buffer: &SeparatedBuffer) -> bool {
         for rhs_elem in buffer.elements() {
             if !self.append_with_separation(
@@ -781,9 +819,11 @@ impl FdOutputStream {
 /// A simple output stream which buffers into a wcstring.
 #[derive(Default)]
 pub struct StringOutputStream {
+    /// `contents` field.
     contents: WString,
 }
 impl StringOutputStream {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Default::default()
     }
@@ -810,6 +850,7 @@ pub struct BufferedOutputStream {
     buffer: IoBuffer,
 }
 impl BufferedOutputStream {
+    /// `new` — see implementation.
     pub fn new(buffer: IoBuffer) -> Self {
         Self { buffer }
     }
@@ -831,41 +872,53 @@ impl BufferedOutputStream {
         0
     }
 }
+/// `IoStreams` — see fields for layout.
 
 pub struct IoStreams<'a> {
     // Streams for out and err.
+    /// `out` field.
     pub out: &'a mut OutputStream,
+    /// `err` field.
     pub err: &'a mut OutputStream,
 
     // File representing stdin.
     // Note: if stdin is explicitly closed by `<&-` then this is None!
+    /// `stdin_file` field.
     pub stdin_file: Option<BorrowedFdFile>,
 
     // Whether stdin is "directly redirected," meaning it is the recipient of a pipe (foo | cmd) or
     // direct redirection (cmd < foo.txt). An "indirect redirection" would be e.g.
     //    begin ; cmd ; end < foo.txt
     // If stdin is closed (cmd <&-) this is false.
+    /// `stdin_is_directly_redirected` field.
     pub stdin_is_directly_redirected: bool,
 
     // Indicates whether stdout and stderr are specifically piped.
     // If this is set, then the is_redirected flags must also be set.
+    /// `out_is_piped` field.
     pub out_is_piped: bool,
+    /// `err_is_piped` field.
     pub err_is_piped: bool,
 
     // Indicates whether stdout and stderr are at all redirected (e.g. to a file or piped).
+    /// `out_is_redirected` field.
     pub out_is_redirected: bool,
+    /// `err_is_redirected` field.
     pub err_is_redirected: bool,
 
     // Actual IO redirections. This is only used by the source builtin.
+    /// `io_chain` field.
     pub io_chain: &'a IoChain,
 
     // The job group of the job, if any. This enables builtins which run more code like eval() to
     // share pgid.
     // FIXME: this is awkwardly placed.
+    /// `job_group` field.
     pub job_group: Option<JobGroupRef>,
 }
 
 impl<'a> IoStreams<'a> {
+    /// `new` — see implementation.
     pub fn new(
         out: &'a mut OutputStream,
         err: &'a mut OutputStream,
@@ -884,6 +937,7 @@ impl<'a> IoStreams<'a> {
             job_group: None,
         }
     }
+    /// `out_is_terminal` — see implementation.
 
     pub fn out_is_terminal(&self) -> bool {
         !self.out_is_redirected && isatty(STDOUT_FILENO)
@@ -912,6 +966,7 @@ const OPEN_MASK: Mode = Mode::from_bits_truncate(0o666);
 
 /// Provide the fd monitor used for background fillthread operations.
 static FD_MONITOR: LazyLock<FdMonitor> = LazyLock::new(FdMonitor::new);
+/// `fd_monitor` — see implementation.
 
 pub fn fd_monitor() -> &'static FdMonitor {
     &FD_MONITOR

@@ -44,10 +44,14 @@ pub enum Topic {
 }
 
 // XXX: Is it correct to use the default or should the default be invalid_generation?
+/// `GenerationsList` — see fields for layout.
 #[derive(Clone, Debug, Default, PartialEq, PartialOrd, Eq, Ord)]
 pub struct GenerationsList {
+    /// `sighupintterm` field.
     pub sighupintterm: Cell<u64>,
+    /// `sigchld` field.
     pub sigchld: Cell<u64>,
+    /// `internal_exit` field.
     pub internal_exit: Cell<u64>,
 }
 
@@ -61,6 +65,7 @@ impl GenerationsList {
         self.internal_exit.set(other.internal_exit.get());
     }
 }
+/// `Generation` type alias.
 
 pub type Generation = u64;
 
@@ -68,12 +73,14 @@ impl FloggableDebug for Topic {}
 
 /// A generation value which indicates the topic is not of interest.
 pub const INVALID_GENERATION: Generation = u64::MAX;
+/// `all_topics` — see implementation.
 
 pub fn all_topics() -> [Topic; 3] {
     [Topic::SigHupIntTerm, Topic::SigChld, Topic::InternalExit]
 }
 
 impl GenerationsList {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Self::default()
     }
@@ -167,6 +174,7 @@ pub enum BinarySemaphore {
 }
 
 impl BinarySemaphore {
+    /// `new` — see implementation.
     pub fn new() -> BinarySemaphore {
         // sem_init always fails with ENOSYS on Mac and has an annoying deprecation warning.
         // On BSD sem_init uses a file descriptor under the hood which doesn't get CLOEXEC (see #7304).
@@ -258,6 +266,7 @@ impl BinarySemaphore {
             }
         }
     }
+    /// `die` — see implementation.
 
     pub fn die(&self, msg: &str) {
         perror(msg);
@@ -314,9 +323,11 @@ struct data_t {
 /// Note it is an error for this bit to be set and also any topic bit.
 const STATUS_NEEDS_WAKEUP: u8 = 128;
 type StatusBits = u8;
+/// `TopicMonitor` — see fields for layout.
 
 #[derive(Default)]
 pub struct TopicMonitor {
+    /// `data_` field.
     data_: Mutex<data_t>,
 
     /// Condition variable for broadcasting notifications.
@@ -357,6 +368,7 @@ impl TopicMonitor {
             &*PRINCIPAL
         }
     }
+    /// `post` — see implementation.
 
     pub fn post(&self, topic: Topic) {
         // Beware, we may be in a signal handler!
@@ -590,10 +602,12 @@ impl TopicMonitor {
         changed
     }
 }
+/// `topic_monitor_init` — see implementation.
 
 pub fn topic_monitor_init() {
     TopicMonitor::initialize();
 }
+/// `topic_monitor_principal` — see implementation.
 
 pub fn topic_monitor_principal() -> &'static TopicMonitor {
     unsafe {

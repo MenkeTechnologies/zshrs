@@ -68,57 +68,109 @@ const OP_OPF: u16 = 0x0100; // followed by operator (after this, next is operato
 /// `static int mtok` (math.c:305) can be a plain `i32` and the
 /// C precedence/type tables index by the literal numbers.
 pub const M_INPAR: i32 = 0; // c:109  '('
+/// `M_OUTPAR` constant.
 pub const M_OUTPAR: i32 = 1; // c:110  ')'
+/// `NOT` constant.
 pub const NOT: i32 = 2; // c:111  '!'
+/// `COMP` constant.
 pub const COMP: i32 = 3; // c:112  '~'
+/// `POSTPLUS` constant.
 pub const POSTPLUS: i32 = 4; // c:113  x++
+/// `POSTMINUS` constant.
 pub const POSTMINUS: i32 = 5; // c:114  x--
+/// `UPLUS` constant.
 pub const UPLUS: i32 = 6; // c:115  +x
+/// `UMINUS` constant.
 pub const UMINUS: i32 = 7; // c:116  -x
+/// `AND` constant.
 pub const AND: i32 = 8; // c:117  &
+/// `XOR` constant.
 pub const XOR: i32 = 9; // c:118  ^
+/// `OR` constant.
 pub const OR: i32 = 10; // c:119  |
+/// `MUL` constant.
 pub const MUL: i32 = 11; // c:120  *
+/// `DIV` constant.
 pub const DIV: i32 = 12; // c:121  /
+/// `MOD` constant.
 pub const MOD: i32 = 13; // c:122  %
+/// `PLUS` constant.
 pub const PLUS: i32 = 14; // c:123  +
+/// `MINUS` constant.
 pub const MINUS: i32 = 15; // c:124  -
+/// `SHLEFT` constant.
 pub const SHLEFT: i32 = 16; // c:125  <<
+/// `SHRIGHT` constant.
 pub const SHRIGHT: i32 = 17; // c:126  >>
+/// `LES` constant.
 pub const LES: i32 = 18; // c:127  <
+/// `LEQ` constant.
 pub const LEQ: i32 = 19; // c:128  <=
+/// `GRE` constant.
 pub const GRE: i32 = 20; // c:129  >
+/// `GEQ` constant.
 pub const GEQ: i32 = 21; // c:130  >=
+/// `DEQ` constant.
 pub const DEQ: i32 = 22; // c:131  ==
+/// `NEQ` constant.
 pub const NEQ: i32 = 23; // c:132  !=
+/// `DAND` constant.
 pub const DAND: i32 = 24; // c:133  &&
+/// `DOR` constant.
 pub const DOR: i32 = 25; // c:134  ||
+/// `DXOR` constant.
 pub const DXOR: i32 = 26; // c:135  ^^
+/// `QUEST` constant.
 pub const QUEST: i32 = 27; // c:136  ? (ternary)
+/// `COLON` constant.
 pub const COLON: i32 = 28; // c:137  :
+/// `EQ` constant.
 pub const EQ: i32 = 29; // c:138  =
+/// `PLUSEQ` constant.
 pub const PLUSEQ: i32 = 30; // c:139  +=
+/// `MINUSEQ` constant.
 pub const MINUSEQ: i32 = 31; // c:140  -=
+/// `MULEQ` constant.
 pub const MULEQ: i32 = 32; // c:141  *=
+/// `DIVEQ` constant.
 pub const DIVEQ: i32 = 33; // c:142  /=
+/// `MODEQ` constant.
 pub const MODEQ: i32 = 34; // c:143  %=
+/// `ANDEQ` constant.
 pub const ANDEQ: i32 = 35; // c:144  &=
+/// `XOREQ` constant.
 pub const XOREQ: i32 = 36; // c:145  ^=
+/// `OREQ` constant.
 pub const OREQ: i32 = 37; // c:146  |=
+/// `SHLEFTEQ` constant.
 pub const SHLEFTEQ: i32 = 38; // c:147  <<=
+/// `SHRIGHTEQ` constant.
 pub const SHRIGHTEQ: i32 = 39; // c:148  >>=
+/// `DANDEQ` constant.
 pub const DANDEQ: i32 = 40; // c:149  &&=
+/// `DOREQ` constant.
 pub const DOREQ: i32 = 41; // c:150  ||=
+/// `DXOREQ` constant.
 pub const DXOREQ: i32 = 42; // c:151  ^^=
+/// `COMMA` constant.
 pub const COMMA: i32 = 43; // c:152  ,
+/// `EOI` constant.
 pub const EOI: i32 = 44; // c:153  end of input
+/// `PREPLUS` constant.
 pub const PREPLUS: i32 = 45; // c:154  ++x
+/// `PREMINUS` constant.
 pub const PREMINUS: i32 = 46; // c:155  --x
+/// `NUM` constant.
 pub const NUM: i32 = 47; // c:156  number literal
+/// `ID` constant.
 pub const ID: i32 = 48; // c:157  identifier
+/// `POWER` constant.
 pub const POWER: i32 = 49; // c:158  **
+/// `CID` constant.
 pub const CID: i32 = 50; // c:159  #identifier (char value)
+/// `POWEREQ` constant.
 pub const POWEREQ: i32 = 51; // c:160  **=
+/// `FUNC` constant.
 pub const FUNC: i32 = 52; // c:161  function call
 /// Total token count — Src/math.c:162 `#define TOKCOUNT 53`. The
 /// `c_prec`/`z_prec`/`type` arrays are sized by this.

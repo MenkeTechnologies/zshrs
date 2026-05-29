@@ -71,10 +71,12 @@ impl Token {
 /// access pattern.
 #[derive(Debug, Clone, Default)]
 pub struct ScopeMatcher {
+    /// `patterns` field.
     pub patterns: Vec<String>,
 }
 
 impl ScopeMatcher {
+    /// `from_strings` — see implementation.
     pub fn from_strings<I, S>(iter: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -84,6 +86,7 @@ impl ScopeMatcher {
             patterns: iter.into_iter().map(Into::into).collect(),
         }
     }
+    /// `matches` — see implementation.
 
     pub fn matches(&self, op_scope: &str) -> bool {
         for p in &self.patterns {
@@ -116,19 +119,23 @@ impl ScopeMatcher {
 /// state without cloning every token.
 #[derive(Debug, Clone, Default)]
 pub struct TokenRegistry {
+    /// `tokens` field.
     tokens: Arc<Vec<Token>>,
 }
 
 impl TokenRegistry {
+    /// `new` — see implementation.
     pub fn new(tokens: Vec<Token>) -> Self {
         Self {
             tokens: Arc::new(tokens),
         }
     }
+    /// `is_empty` — see implementation.
 
     pub fn is_empty(&self) -> bool {
         self.tokens.is_empty()
     }
+    /// `len` — see implementation.
 
     pub fn len(&self) -> usize {
         self.tokens.len()

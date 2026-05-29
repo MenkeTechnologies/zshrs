@@ -2,6 +2,7 @@
 //! library.rs) so the `ported/` tree stands alone.
 
 use std::path::Path;
+/// `is_executable` — see implementation.
 
 pub fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]

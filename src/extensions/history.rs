@@ -32,6 +32,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// history but with FTS5 search, frequency tracking, and
 /// per-directory context.
 pub struct HistoryEngine {
+    /// `conn` field.
     conn: Connection,
 }
 
@@ -42,16 +43,24 @@ pub struct HistoryEngine {
 /// the `precmd`/`preexec` hooks.
 #[derive(Debug, Clone)]
 pub struct HistoryEntry {
+    /// `id` field.
     pub id: i64,
+    /// `command` field.
     pub command: String,
+    /// `timestamp` field.
     pub timestamp: i64,
+    /// `duration_ms` field.
     pub duration_ms: Option<i64>,
+    /// `exit_code` field.
     pub exit_code: Option<i32>,
+    /// `cwd` field.
     pub cwd: Option<String>,
+    /// `frequency` field.
     pub frequency: u32,
 }
 
 impl HistoryEngine {
+    /// `new` — see implementation.
     pub fn new() -> rusqlite::Result<Self> {
         let path = Self::db_path();
         if let Some(parent) = path.parent() {
@@ -129,6 +138,7 @@ impl HistoryEngine {
         }
         Ok(engine)
     }
+    /// `in_memory` — see implementation.
 
     pub fn in_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
@@ -644,12 +654,16 @@ fn rewrite_last_text_line(ts: i64, duration_secs: i64, command: &str) -> std::io
 /// up-arrow plumbing in Src/Zle/zle_hist.c that walks the
 /// `histent` linked list directly.
 pub struct ReedlineHistory {
+    /// `engine` field.
     engine: HistoryEngine,
+    /// `session_history` field.
     session_history: Vec<String>,
+    /// `cursor` field.
     cursor: usize,
 }
 
 impl ReedlineHistory {
+    /// `new` — see implementation.
     pub fn new() -> rusqlite::Result<Self> {
         Ok(Self {
             engine: HistoryEngine::new()?,
@@ -657,6 +671,7 @@ impl ReedlineHistory {
             cursor: 0,
         })
     }
+    /// `add` — see implementation.
 
     pub fn add(&mut self, command: &str) -> rusqlite::Result<i64> {
         self.session_history.push(command.to_string());
@@ -666,6 +681,7 @@ impl ReedlineHistory {
             .map(|p| p.to_string_lossy().to_string());
         self.engine.add(command, cwd.as_deref())
     }
+    /// `search` — see implementation.
 
     pub fn search(&self, query: &str) -> Vec<String> {
         self.engine
@@ -675,6 +691,7 @@ impl ReedlineHistory {
             .map(|e| e.command)
             .collect()
     }
+    /// `previous` — see implementation.
 
     pub fn previous(&mut self, prefix: &str) -> Option<String> {
         if self.cursor == 0 {
@@ -696,6 +713,7 @@ impl ReedlineHistory {
             .and_then(|v| v.into_iter().next())
             .map(|e| e.command)
     }
+    /// `next` — see implementation.
 
     pub fn next(&mut self, prefix: &str) -> Option<String> {
         if self.cursor >= self.session_history.len() {
@@ -712,6 +730,7 @@ impl ReedlineHistory {
         self.cursor = self.session_history.len();
         None
     }
+    /// `reset_cursor` — see implementation.
 
     pub fn reset_cursor(&mut self) {
         self.cursor = self.session_history.len();

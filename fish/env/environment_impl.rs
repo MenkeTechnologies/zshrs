@@ -314,23 +314,29 @@ struct PerprocData {
     pwd: WString,
     statuses: Statuses,
 }
+/// `EnvScopedImpl` — see fields for layout.
 
 #[derive(Clone)]
 pub struct EnvScopedImpl {
     // A linked list of scopes.
+    /// `locals` field.
     locals: EnvNodeRef,
 
     // Global scopes. There is no parent here.
+    /// `globals` field.
     globals: EnvNodeRef,
 
     // Per process data.
+    /// `perproc_data` field.
     perproc_data: PerprocData,
 
     // Exported variable array used by execv.
+    /// `export_array` field.
     export_array: Option<Arc<OwningNullTerminatedArray>>,
 
     // Cached list of export generations corresponding to the above export_array.
     // If this differs from the current export generations then we need to regenerate the array.
+    /// `export_array_generations` field.
     export_array_generations: Vec<ExportGeneration>,
 }
 
@@ -345,10 +351,12 @@ impl EnvScopedImpl {
             export_array_generations: Vec::new(),
         }
     }
+    /// `get_last_statuses` — see implementation.
 
     pub fn get_last_statuses(&self) -> &Statuses {
         &self.perproc_data.statuses
     }
+    /// `set_last_statuses` — see implementation.
 
     pub fn set_last_statuses(&mut self, s: Statuses) {
         self.perproc_data.statuses = s;
@@ -465,6 +473,7 @@ impl EnvScopedImpl {
     fn try_get_universal(&self, key: &wstr) -> Option<EnvVar> {
         return uvars().get(key);
     }
+    /// `getf` — see implementation.
 
     pub fn getf(&self, key: &wstr, mode: EnvMode) -> Option<EnvVar> {
         let query = Query::from(mode);
@@ -495,6 +504,7 @@ impl EnvScopedImpl {
         }
         result
     }
+    /// `get_names` — see implementation.
 
     pub fn get_names(&self, flags: EnvMode) -> Vec<WString> {
         let query = Query::from(flags);
@@ -658,6 +668,7 @@ impl EnvScopedImpl {
     }
 
     // Exported variable array used by execv.
+    /// `export_array` — see implementation.
     pub fn export_array(&mut self) -> Arc<OwningNullTerminatedArray> {
         assert!(!is_forked_child());
         if self.export_array_needs_regeneration() {
@@ -684,6 +695,7 @@ struct VarFlags {
     /// Whether the variable is exported by some parent.
     pub parent_exports: bool,
 }
+/// `ModResult` — see fields for layout.
 
 #[derive(Copy, Clone, Default)]
 pub struct ModResult {
@@ -710,6 +722,7 @@ impl ModResult {
 /// A mutable "subclass" of EnvScopedImpl.
 #[derive(Clone)]
 pub struct EnvStackImpl {
+    /// `base` field.
     pub base: EnvScopedImpl,
 
     /// The scopes of caller functions, which are currently shadowed.
@@ -1094,14 +1107,17 @@ impl EnvStackImpl {
         }
         None
     }
+    /// `getf` — see implementation.
 
     pub fn getf(&self, key: &wstr, mode: EnvMode) -> Option<EnvVar> {
         self.base.getf(key, mode)
     }
+    /// `get_names` — see implementation.
 
     pub fn get_names(&self, flags: EnvMode) -> Vec<WString> {
         self.base.get_names(flags)
     }
+    /// `get_pwd_slash` — see implementation.
 
     pub fn get_pwd_slash(&self) -> WString {
         self.base.get_pwd_slash()
@@ -1116,8 +1132,11 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// Like MutexGuard but for our global lock.
 pub struct EnvMutexGuard<'a, T: 'a> {
+    /// `_guard` field.
     _guard: MutexGuard<'static, ()>,
+    /// `value` field.
     value: *mut T,
+    /// `_phantom` field.
     _phantom: PhantomData<&'a T>,
 }
 
@@ -1137,16 +1156,20 @@ impl<'a, T: 'a> DerefMut for EnvMutexGuard<'a, T> {
 }
 
 // Like Mutex, but references the global lock.
+/// `EnvMutex` — see fields for layout.
 pub struct EnvMutex<T> {
+    /// `inner` field.
     inner: UnsafeCell<T>,
 }
 
 impl<T> EnvMutex<T> {
+    /// `new` — see implementation.
     pub fn new(inner: T) -> Self {
         Self {
             inner: UnsafeCell::new(inner),
         }
     }
+    /// `lock` — see implementation.
 
     pub fn lock(&self) -> EnvMutexGuard<'_, T> {
         let guard = ENV_LOCK.lock().unwrap();

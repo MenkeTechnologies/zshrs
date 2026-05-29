@@ -1717,29 +1717,41 @@ fn try_read_byte(buf: &mut [u8]) -> io::Result<bool> {
 /// to pull per-cmd args from the va_list at lines 2128-2197.
 pub enum zle_main_entry_args<'a> {
     // c:2123 va_list ap shape
+    /// `GetLine` variant.
     GetLine {
         ll: &'a mut i32,
         cs: &'a mut i32,
     }, // c:2127
+    /// `Read` variant.
     Read {
         lp: &'a mut Option<String>,
         rp: &'a mut Option<String>,
         flags: i32,
         context: i32,
     }, // c:2135
+    /// `AddToLine` variant.
     AddToLine(i32), // c:2149
+    /// `Trash` variant.
     Trash,          // c:2152
+    /// `ResetPrompt` variant.
     ResetPrompt,    // c:2156
+    /// `Refresh` variant.
     Refresh,        // c:2160
+    /// `SetKeymap` variant.
     SetKeymap(i32), // c:2164
+    /// `GetKey` variant.
     GetKey {
         do_keytmout: i64,
         timeout: &'a mut i32,
         chrp: &'a mut i32,
     }, // c:2168
+    /// `SetHistLine` variant.
     SetHistLine(i64), // c:2180
+    /// `Preexec` variant.
     Preexec,        // c:2187
+    /// `Postexec` variant.
     Postexec,       // c:2191
+    /// `Chpwd` variant.
     Chpwd,          // c:2195
 }
 
@@ -1905,13 +1917,16 @@ mod termios {
     pub use libc::{ECHO, ICANON, TCSANOW, VEOF, VMIN, VTIME};
     use std::io;
     use std::os::unix::io::RawFd;
+    /// `Termios` — see fields for layout.
 
     #[derive(Clone)]
     pub struct Termios {
+        /// `inner` field.
         inner: libc::termios,
     }
 
     impl Termios {
+        /// `from_fd` — see implementation.
         pub fn from_fd(fd: RawFd) -> io::Result<Self> {
             let mut termios = std::mem::MaybeUninit::uninit();
             let ret = unsafe { libc::tcgetattr(fd, termios.as_mut_ptr()) };
@@ -2572,18 +2587,22 @@ pub static HIGHLIGHT: std::sync::OnceLock<std::sync::Mutex<HighlightManager>> =
 // here so the body of this file reads in C source order without
 // the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/// `vibuf` — see implementation.
 
 pub fn vibuf() -> &'static std::sync::Mutex<[Vec<char>; 36]> {
     VIBUF.get_or_init(|| std::sync::Mutex::new(std::array::from_fn(|_| Vec::new())))
 }
+/// `history` — see implementation.
 
 pub fn history() -> &'static std::sync::Mutex<History> {
     HISTORY.get_or_init(|| std::sync::Mutex::new(History::new(2000)))
 }
+/// `vimarks` — see implementation.
 
 pub fn vimarks() -> &'static std::sync::Mutex<[Option<(usize, i32)>; 27]> {
     VIMARKS.get_or_init(|| std::sync::Mutex::new([None; 27]))
 }
+/// `highlight` — see implementation.
 
 pub fn highlight() -> &'static std::sync::Mutex<HighlightManager> {
     HIGHLIGHT.get_or_init(|| std::sync::Mutex::new(HighlightManager::new()))

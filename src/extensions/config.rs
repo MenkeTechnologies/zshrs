@@ -44,12 +44,18 @@ use std::path::{Path, PathBuf};
 #[serde(default)]
 #[derive(Default)]
 pub struct ZshrsConfig {
+    /// `worker_pool` field.
     pub worker_pool: WorkerPoolConfig,
+    /// `completion` field.
     pub completion: CompletionConfig,
+    /// `history` field.
     pub history: HistoryConfig,
+    /// `glob` field.
     pub glob: GlobConfig,
+    /// `log` field.
     pub log: LogConfig,
 }
+/// `WorkerPoolConfig` — see fields for layout.
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -58,21 +64,29 @@ pub struct WorkerPoolConfig {
     /// Number of worker threads. 0 = auto (num_cpus clamped [2, 18]).
     pub size: usize,
 }
+/// `CompletionConfig` — see fields for layout.
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct CompletionConfig {
+    /// `max_matches` field.
     pub max_matches: usize,
+    /// `fts_enabled` field.
     pub fts_enabled: bool,
+    /// `ast_cache` field.
     pub ast_cache: bool,
 }
+/// `HistoryConfig` — see fields for layout.
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HistoryConfig {
+    /// `async_writes` field.
     pub async_writes: bool,
+    /// `max_entries` field.
     pub max_entries: usize,
 }
+/// `GlobConfig` — see fields for layout.
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -82,10 +96,12 @@ pub struct GlobConfig {
     /// Fan out **/ recursive globs across worker pool.
     pub recursive_parallel: bool,
 }
+/// `LogConfig` — see fields for layout.
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct LogConfig {
+    /// `level` field.
     pub level: String,
 }
 

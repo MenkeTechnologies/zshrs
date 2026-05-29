@@ -5,16 +5,21 @@ use fish_util::write_to_fd;
 use fish_widestring::wcs2bytes;
 use libc::c_int;
 use std::sync::atomic::{AtomicI32, Ordering};
+/// `categories` submodule.
 
 #[rustfmt::skip::macros(category)]
 pub mod categories {
     use super::wstr;
     use crate::prelude::*;
     use std::sync::atomic::AtomicBool;
+    /// `Category` — see fields for layout.
 
     pub struct Category {
+        /// `name` field.
         pub name: &'static wstr,
+        /// `description` field.
         pub description: LocalizableString,
+        /// `enabled` field.
         pub enabled: AtomicBool,
     }
 
@@ -62,6 +67,7 @@ pub mod categories {
             )*
 
             // Define a function which gives you a Vector of all categories.
+            /// `all_categories` — see implementation.
             pub fn all_categories() -> Vec<&'static Category> {
                 vec![
                     $(
@@ -200,6 +206,7 @@ default_flog_impls! {
 default_flog_impls_lifetimes! {
     std::path::Display<'a>, std::borrow::Cow<'a, str>
 }
+/// `FloggableDebug` trait.
 
 pub trait FloggableDebug: std::fmt::Debug {
     fn to_flog_str(&self) -> Vec<u8> {
@@ -292,15 +299,18 @@ pub fn activate_flog_categories_by_pattern(wc_ptr: &wstr) {
 
 /// The flog output fd. Defaults to stderr. A value < 0 disables flog.
 static FLOG_FD: AtomicI32 = AtomicI32::new(libc::STDERR_FILENO);
+/// `set_flog_file_fd` — see implementation.
 
 pub fn set_flog_file_fd(fd: c_int) {
     FLOG_FD.store(fd, Ordering::Relaxed);
 }
+/// `get_flog_file_fd` — see implementation.
 
 #[inline]
 pub fn get_flog_file_fd() -> c_int {
     FLOG_FD.load(Ordering::Relaxed)
 }
+/// `log_extra_to_flog_file` — see implementation.
 
 pub fn log_extra_to_flog_file(s: &wstr) {
     unescape_bytes_and_write_to_fd(s, get_flog_file_fd());

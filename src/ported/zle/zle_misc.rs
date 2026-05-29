@@ -1885,6 +1885,7 @@ pub fn fixsuffix() {
     suffixlist().lock().unwrap().clear();
     SUFFIXLEN.store(0, SeqCst);
 }
+/// `DONE` static.
 
 pub static DONE: AtomicI32 = AtomicI32::new(0); // c:79
 
@@ -1909,6 +1910,7 @@ pub static VFINDCHAR: AtomicI32 = AtomicI32::new(0); // c:734
 /// vfinddir = +1 forward, -1 backward; tailadd = +1 land just after,
 /// -1 land just before, 0 land on the char itself.
 pub static VFINDDIR: AtomicI32 = AtomicI32::new(0); // c:735
+/// `TAILADD` static.
 pub static TAILADD: AtomicI32 = AtomicI32::new(0); // c:735
 
 /// Port of `static int kct` from `Src/Zle/zle_misc.c:523`. Index into

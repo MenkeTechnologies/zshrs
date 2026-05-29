@@ -57,6 +57,7 @@ where
     *consumed = s.len();
     Some(res)
 }
+/// `parse_inf_nan` — see implementation.
 
 #[cold]
 #[inline(never)]
@@ -277,6 +278,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{wcstod, Error};
+    /// `tests` — see implementation.
 
     #[test]
     #[allow(clippy::all)]

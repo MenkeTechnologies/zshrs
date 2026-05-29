@@ -85,6 +85,7 @@ pub fn r#return(parser: &Parser, streams: &mut IoStreams, args: &mut [&wstr]) ->
 
     retval
 }
+/// `parse_return_value` — see implementation.
 
 pub fn parse_return_value(
     args: &mut [&wstr],

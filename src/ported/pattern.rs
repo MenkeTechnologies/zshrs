@@ -95,33 +95,60 @@ pub const NSUBEXP: usize = 9;
 // the C source's bytecode-cache format byte-for-byte (modulo native
 // endianness; we pin LE — see file header).
 // =====================================================================
+/// `P_END` constant.
 
 pub const P_END: u8 = 0x00; // c:97  End of program.
+/// `P_EXCSYNC` constant.
 pub const P_EXCSYNC: u8 = 0x01; // c:98  Test if following exclude already failed
+/// `P_EXCEND` constant.
 pub const P_EXCEND: u8 = 0x02; // c:99  Test if exclude matched orig branch
+/// `P_BACK` constant.
 pub const P_BACK: u8 = 0x03; // c:100 Match "", "next" ptr points backward.
+/// `P_EXACTLY` constant.
 pub const P_EXACTLY: u8 = 0x04; // c:101 lstr — match this string.
+/// `P_NOTHING` constant.
 pub const P_NOTHING: u8 = 0x05; // c:102 Match empty string.
+/// `P_ONEHASH` constant.
 pub const P_ONEHASH: u8 = 0x06; // c:103 node — match 0 or more of preceding simple.
+/// `P_TWOHASH` constant.
 pub const P_TWOHASH: u8 = 0x07; // c:104 node — match 1 or more of preceding simple.
+/// `P_GFLAGS` constant.
 pub const P_GFLAGS: u8 = 0x08; // c:105 long — match nothing and set globbing flags.
+/// `P_ISSTART` constant.
 pub const P_ISSTART: u8 = 0x09; // c:106 Match start of string.
+/// `P_ISEND` constant.
 pub const P_ISEND: u8 = 0x0a; // c:107 Match end of string.
+/// `P_COUNTSTART` constant.
 pub const P_COUNTSTART: u8 = 0x0b; // c:108 Initialise P_COUNT.
+/// `P_COUNT` constant.
 pub const P_COUNT: u8 = 0x0c; // c:109 3*long uc* node — match a number of repetitions.
+/// `P_BRANCH` constant.
 pub const P_BRANCH: u8 = 0x20; // c:112 node — match this alternative, or the next.
+/// `P_WBRANCH` constant.
 pub const P_WBRANCH: u8 = 0x21; // c:113 uc* node — P_BRANCH, but match at least 1 char.
+/// `P_EXCLUDE` constant.
 pub const P_EXCLUDE: u8 = 0x30; // c:114 uc* node — exclude this from previous branch.
+/// `P_EXCLUDP` constant.
 pub const P_EXCLUDP: u8 = 0x31; // c:115 uc* node — exclude, using full file path so far.
+/// `P_ANY` constant.
 pub const P_ANY: u8 = 0x40; // c:117 Match any one character.
+/// `P_ANYOF` constant.
 pub const P_ANYOF: u8 = 0x41; // c:118 str — match any character in this string.
+/// `P_ANYBUT` constant.
 pub const P_ANYBUT: u8 = 0x42; // c:119 str — match any character not in this string.
+/// `P_STAR` constant.
 pub const P_STAR: u8 = 0x43; // c:120 Match any set of characters.
+/// `P_NUMRNG` constant.
 pub const P_NUMRNG: u8 = 0x44; // c:121 zr,zr — match a numeric range.
+/// `P_NUMFROM` constant.
 pub const P_NUMFROM: u8 = 0x45; // c:122 zr — match a number >= X.
+/// `P_NUMTO` constant.
 pub const P_NUMTO: u8 = 0x46; // c:123 zr — match a number <= X.
+/// `P_NUMANY` constant.
 pub const P_NUMANY: u8 = 0x47; // c:124 Match any set of decimal digits.
+/// `P_OPEN` constant.
 pub const P_OPEN: u8 = 0x80; // c:126 Mark this point in input as start of n.
+/// `P_CLOSE` constant.
 pub const P_CLOSE: u8 = 0x90; // c:127 Analogous to OPEN.
 
 /// `P_ISBRANCH(p)` macro from pattern.c:200 — `(p->l & 0x20)`.
@@ -146,9 +173,12 @@ pub fn P_NOTDOT(op: u8) -> bool {
 // 3. Flag-bit constants returned via flagp out-params during compile.
 // pattern.c:216-218
 // =====================================================================
+/// `P_SIMPLE` constant.
 
 pub const P_SIMPLE: i32 = 0x01; // c:216 Simple enough to be # / ## operand.
+/// `P_HSTART` constant.
 pub const P_HSTART: i32 = 0x02; // c:217 Starts with # or ##'d pattern.
+/// `P_PURESTR` constant.
 pub const P_PURESTR: i32 = 0x04; // c:218 Can be matched with a strcmp.
 
 // =====================================================================
@@ -251,6 +281,7 @@ pub fn metacharinc(s: &str, pos: usize) -> usize {
 /// from `Src/pattern.c:405-408`. Flags passed as the `paflags` arg
 /// to `patadd`.
 pub const PA_NOALIGN: i32 = 1; // c:406
+/// `PA_UNMETA` constant.
 pub const PA_UNMETA: i32 = 2; // c:407
 
 /// Direct port of `static void patadd(char *add, int ch, long n,
@@ -4411,6 +4442,7 @@ pub fn patallocstr(
 // from the previous AST-based port). Alias them to `Patprog` so the
 // build doesn't break; future cleanup commit renames callers.
 // =====================================================================
+/// `PatProg` type alias.
 
 #[deprecated(note = "use Patprog instead")]
 pub type PatProg = Patprog;

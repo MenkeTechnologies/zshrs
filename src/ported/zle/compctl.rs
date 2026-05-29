@@ -3057,6 +3057,7 @@ pub const Snull: char = '\u{9d}'; // Single-quote null
 pub const Dnull: char = '\u{9e}'; // Double-quote null
 pub const Bnull: char = '\u{9f}'; // Backslash null
 pub const Stringg: char = '\u{85}'; // META-$
+/// `QSTRING_TOK` constant.
 pub const QSTRING_TOK: char = '\u{84}'; // Qstring (for $'...')
 
 // =================================================================

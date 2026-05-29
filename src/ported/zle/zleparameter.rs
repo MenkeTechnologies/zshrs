@@ -24,6 +24,7 @@ use crate::ported::zle::{
 /// WARNING: param names don't match C — Rust=(name, is_user, is_completion) vs C=(w)
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
+/// `widgetstr` — see implementation.
 #[allow(unused_imports)]
 
 pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String {

@@ -13,6 +13,7 @@ use errno::errno;
 use fish_common::{assert_sorted_by_name, escape, get_by_sorted_name, Named};
 use fish_widestring::{bytes2wcstring, str2wcstring, L};
 use std::io::{BufRead as _, BufReader, Read as _};
+/// `BuiltinCmd` type alias.
 
 pub type BuiltinCmd = fn(&Parser, &mut IoStreams, &mut [&wstr]) -> BuiltinResult;
 
@@ -30,9 +31,11 @@ localizable_consts!(
 );
 
 // Return values (`$status` values for fish scripts) for various situations.
+/// `Success` — see fields for layout.
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Success {
+    /// `preserve_failure_exit_status` field.
     pub preserve_failure_exit_status: bool,
 }
 
@@ -41,9 +44,12 @@ pub const SUCCESS: Success = Success {
 };
 
 // To-do: this should be a nonzero type.
+/// `ErrorCode` type alias.
 pub type ErrorCode = c_int;
+/// `BuiltinResult` type alias.
 
 pub type BuiltinResult = Result<Success, ErrorCode>;
+/// `BuiltinResultExt` trait.
 
 pub trait BuiltinResultExt {
     fn from_dynamic(code: c_int) -> Self;
@@ -93,6 +99,7 @@ pub const STATUS_ILLEGAL_CMD: c_int = 123;
 pub const STATUS_READ_TOO_MUCH: c_int = 122;
 /// The status code when an expansion fails, for example, "$foo["
 pub const STATUS_EXPAND_ERROR: c_int = 121;
+/// `STATUS_NO_VARIABLES_GIVEN` constant.
 
 pub const STATUS_NO_VARIABLES_GIVEN: c_int = 255;
 
@@ -641,17 +648,22 @@ pub fn builtin_print_error_trailer(parser: &Parser, b: &mut OutputStream, cmd: &
         cmd
     ));
 }
+/// `builtin_strerror` — see implementation.
 
 pub fn builtin_strerror() -> WString {
     str2wcstring(errno().to_string())
 }
+/// `HelpOnlyCmdOpts` — see fields for layout.
 
 pub struct HelpOnlyCmdOpts {
+    /// `print_help` field.
     pub print_help: bool,
+    /// `optind` field.
     pub optind: usize,
 }
 
 impl HelpOnlyCmdOpts {
+    /// `parse` — see implementation.
     pub fn parse(
         args: &mut [&wstr],
         parser: &Parser,
@@ -713,24 +725,32 @@ impl HelpOnlyCmdOpts {
         })
     }
 }
+/// `SplitBehavior` — see variants.
 
 #[derive(PartialEq)]
 pub enum SplitBehavior {
+    /// `Newline` variant.
     Newline,
     /// The default behavior of the -z or --null-in switch,
     /// Automatically start splitting on NULL if one appears in the first PATH_MAX bytes.
     /// Otherwise on newline
     InferNull,
+    /// `Null` variant.
     Null,
+    /// `Never` variant.
     Never,
 }
+/// `InputValue` — see fields for layout.
 
 pub struct InputValue<'args> {
+    /// `arg` field.
     pub arg: Cow<'args, wstr>,
+    /// `want_newline` field.
     pub want_newline: bool,
 }
 
 impl<'args> InputValue<'args> {
+    /// `new` — see implementation.
     pub fn new(arg: Cow<'args, wstr>, want_newline: bool) -> Self {
         Self { arg, want_newline }
     }
@@ -738,7 +758,9 @@ impl<'args> InputValue<'args> {
 
 /// A helper type for extracting arguments from either argv or stdin.
 pub struct Arguments<'args, 'iter> {
+    /// `split_behavior` field.
     split_behavior: SplitBehavior,
+    /// `source` field.
     source: ArgvSource<'args, 'iter>,
 }
 
@@ -761,6 +783,7 @@ enum ArgvSource<'args, 'iter> {
 }
 
 impl<'args, 'iter> Arguments<'args, 'iter> {
+    /// `new` — see implementation.
     pub fn new(
         args: &'iter [&'args wstr],
         argidx: &'iter mut usize,
@@ -784,6 +807,7 @@ impl<'args, 'iter> Arguments<'args, 'iter> {
             source,
         }
     }
+    /// `with_split_behavior` — see implementation.
 
     pub fn with_split_behavior(mut self, split_behavior: SplitBehavior) -> Self {
         self.split_behavior = split_behavior;
@@ -871,10 +895,12 @@ impl<'args> Iterator for Arguments<'args, '_> {
         }
     }
 }
+/// `parse_pid` — see implementation.
 
 pub fn parse_pid(streams: &mut IoStreams, cmd: &wstr, arg: &wstr) -> Result<Pid, ErrorCode> {
     parsed_pid(streams, cmd, arg, fish_wcstoi(arg))
 }
+/// `parse_pid_may_be_zero` — see implementation.
 
 pub fn parse_pid_may_be_zero(
     streams: &mut IoStreams,
@@ -980,12 +1006,16 @@ pub fn builtin_break_continue(
 
 /// Option character for --color flag
 pub const COLOR_OPTION_CHAR: char = '\x10';
+/// `ColorEnabled` — see variants.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ColorEnabled {
+    /// `Auto` variant.
     #[default]
     Auto,
+    /// `Always` variant.
     Always,
+    /// `Never` variant.
     Never,
 }
 
@@ -1002,6 +1032,7 @@ impl TryFrom<&wstr> for ColorEnabled {
 }
 
 impl ColorEnabled {
+    /// `enabled` — see implementation.
     pub fn enabled(&self, streams: &crate::io::IoStreams) -> bool {
         match self {
             ColorEnabled::Always => true,
@@ -1009,6 +1040,7 @@ impl ColorEnabled {
             ColorEnabled::Auto => streams.out_is_terminal(),
         }
     }
+    /// `parse_from_opt` — see implementation.
 
     pub fn parse_from_opt(
         streams: &mut IoStreams,

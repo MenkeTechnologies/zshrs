@@ -1,6 +1,9 @@
+/// `config_paths` submodule.
 pub mod config_paths;
+/// `environment` submodule.
 pub mod environment;
 mod environment_impl;
+/// `var` submodule.
 pub mod var;
 
 pub use environment::*;

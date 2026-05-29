@@ -36,6 +36,7 @@ use std::ops::{ControlFlow, Deref};
  *    let mut v = MyNodeVisitor{};
  *    node.accept(&mut v);
  */
+/// `NodeVisitor` trait.
 pub trait NodeVisitor<'a> {
     fn visit(&mut self, node: &'a dyn Node);
 }
@@ -46,6 +47,7 @@ pub trait NodeVisitor<'a> {
  * It generally invokes the visitor's visit() method on each of its children.
  *
  */
+/// `Acceptor` trait.
 pub trait Acceptor {
     fn accept<'a>(&'a self, visitor: &mut dyn NodeVisitor<'a>);
 }
@@ -85,11 +87,15 @@ impl<N: Node + NodeMut + CheckParse> VisitableField for Option<N> {
         visitor.visit_optional_mut(self)
     }
 }
+/// `MissingEndError` — see fields for layout.
 
 pub struct MissingEndError {
+    /// `allowed_keywords` field.
     allowed_keywords: &'static [ParseKeyword],
+    /// `token` field.
     token: ParseToken,
 }
+/// `VisitResult` type alias.
 
 pub type VisitResult = ControlFlow<MissingEndError>;
 
@@ -209,6 +215,7 @@ pub trait Node: Acceptor + AsNode + std::fmt::Debug {
 }
 
 // Convert to the dynamic Node type.
+/// `AsNode` trait.
 pub trait AsNode {
     fn as_node(&self) -> &dyn Node;
 }
@@ -267,88 +274,166 @@ impl<T> NodeMut for T where T: Node + AcceptorMut {}
 /// The different kinds of nodes. Note that Token and Keyword have different subtypes.
 #[derive(Debug, Copy, Clone)]
 pub enum Kind<'a> {
+    /// `Redirection` variant.
     Redirection(&'a Redirection),
+    /// `Token` variant.
     Token(&'a dyn Token),
+    /// `Keyword` variant.
     Keyword(&'a dyn Keyword),
+    /// `VariableAssignment` variant.
     VariableAssignment(&'a VariableAssignment),
+    /// `VariableAssignmentList` variant.
     VariableAssignmentList(&'a VariableAssignmentList),
+    /// `ArgumentOrRedirection` variant.
     ArgumentOrRedirection(&'a ArgumentOrRedirection),
+    /// `ArgumentOrRedirectionList` variant.
     ArgumentOrRedirectionList(&'a ArgumentOrRedirectionList),
+    /// `Statement` variant.
     Statement(&'a Statement),
+    /// `JobPipeline` variant.
     JobPipeline(&'a JobPipeline),
+    /// `JobConjunction` variant.
     JobConjunction(&'a JobConjunction),
+    /// `BlockStatementHeader` variant.
     BlockStatementHeader(&'a BlockStatementHeader),
+    /// `ForHeader` variant.
     ForHeader(&'a ForHeader),
+    /// `WhileHeader` variant.
     WhileHeader(&'a WhileHeader),
+    /// `FunctionHeader` variant.
     FunctionHeader(&'a FunctionHeader),
+    /// `BeginHeader` variant.
     BeginHeader(&'a BeginHeader),
+    /// `BlockStatement` variant.
     BlockStatement(&'a BlockStatement),
+    /// `BraceStatement` variant.
     BraceStatement(&'a BraceStatement),
+    /// `IfClause` variant.
     IfClause(&'a IfClause),
+    /// `ElseifClause` variant.
     ElseifClause(&'a ElseifClause),
+    /// `ElseifClauseList` variant.
     ElseifClauseList(&'a ElseifClauseList),
+    /// `ElseClause` variant.
     ElseClause(&'a ElseClause),
+    /// `IfStatement` variant.
     IfStatement(&'a IfStatement),
+    /// `CaseItem` variant.
     CaseItem(&'a CaseItem),
+    /// `SwitchStatement` variant.
     SwitchStatement(&'a SwitchStatement),
+    /// `DecoratedStatement` variant.
     DecoratedStatement(&'a DecoratedStatement),
+    /// `NotStatement` variant.
     NotStatement(&'a NotStatement),
+    /// `JobContinuation` variant.
     JobContinuation(&'a JobContinuation),
+    /// `JobContinuationList` variant.
     JobContinuationList(&'a JobContinuationList),
+    /// `JobConjunctionContinuation` variant.
     JobConjunctionContinuation(&'a JobConjunctionContinuation),
+    /// `AndorJob` variant.
     AndorJob(&'a AndorJob),
+    /// `AndorJobList` variant.
     AndorJobList(&'a AndorJobList),
+    /// `FreestandingArgumentList` variant.
     FreestandingArgumentList(&'a FreestandingArgumentList),
+    /// `JobConjunctionContinuationList` variant.
     JobConjunctionContinuationList(&'a JobConjunctionContinuationList),
+    /// `MaybeNewlines` variant.
     MaybeNewlines(&'a MaybeNewlines),
+    /// `CaseItemList` variant.
     CaseItemList(&'a CaseItemList),
+    /// `Argument` variant.
     Argument(&'a Argument),
+    /// `ArgumentList` variant.
     ArgumentList(&'a ArgumentList),
+    /// `JobList` variant.
     JobList(&'a JobList),
 }
+/// `KindMut` — see variants.
 
 pub enum KindMut<'a> {
+    /// `Redirection` variant.
     Redirection(&'a mut Redirection),
+    /// `Token` variant.
     Token(&'a mut dyn Token),
+    /// `Keyword` variant.
     Keyword(&'a mut dyn Keyword),
+    /// `VariableAssignment` variant.
     VariableAssignment(&'a mut VariableAssignment),
+    /// `VariableAssignmentList` variant.
     VariableAssignmentList(&'a mut VariableAssignmentList),
+    /// `ArgumentOrRedirection` variant.
     ArgumentOrRedirection(&'a mut ArgumentOrRedirection),
+    /// `ArgumentOrRedirectionList` variant.
     ArgumentOrRedirectionList(&'a mut ArgumentOrRedirectionList),
+    /// `Statement` variant.
     Statement(&'a mut Statement),
+    /// `JobPipeline` variant.
     JobPipeline(&'a mut JobPipeline),
+    /// `JobConjunction` variant.
     JobConjunction(&'a mut JobConjunction),
+    /// `BlockStatementHeader` variant.
     BlockStatementHeader(&'a mut BlockStatementHeader),
+    /// `ForHeader` variant.
     ForHeader(&'a mut ForHeader),
+    /// `WhileHeader` variant.
     WhileHeader(&'a mut WhileHeader),
+    /// `FunctionHeader` variant.
     FunctionHeader(&'a mut FunctionHeader),
+    /// `BeginHeader` variant.
     BeginHeader(&'a mut BeginHeader),
+    /// `BlockStatement` variant.
     BlockStatement(&'a mut BlockStatement),
+    /// `BraceStatement` variant.
     BraceStatement(&'a mut BraceStatement),
+    /// `IfClause` variant.
     IfClause(&'a mut IfClause),
+    /// `ElseifClause` variant.
     ElseifClause(&'a mut ElseifClause),
+    /// `ElseifClauseList` variant.
     ElseifClauseList(&'a mut ElseifClauseList),
+    /// `ElseClause` variant.
     ElseClause(&'a mut ElseClause),
+    /// `IfStatement` variant.
     IfStatement(&'a mut IfStatement),
+    /// `CaseItem` variant.
     CaseItem(&'a mut CaseItem),
+    /// `SwitchStatement` variant.
     SwitchStatement(&'a mut SwitchStatement),
+    /// `DecoratedStatement` variant.
     DecoratedStatement(&'a mut DecoratedStatement),
+    /// `NotStatement` variant.
     NotStatement(&'a mut NotStatement),
+    /// `JobContinuation` variant.
     JobContinuation(&'a mut JobContinuation),
+    /// `JobContinuationList` variant.
     JobContinuationList(&'a mut JobContinuationList),
+    /// `JobConjunctionContinuation` variant.
     JobConjunctionContinuation(&'a mut JobConjunctionContinuation),
+    /// `AndorJob` variant.
     AndorJob(&'a mut AndorJob),
+    /// `AndorJobList` variant.
     AndorJobList(&'a mut AndorJobList),
+    /// `FreestandingArgumentList` variant.
     FreestandingArgumentList(&'a mut FreestandingArgumentList),
+    /// `JobConjunctionContinuationList` variant.
     JobConjunctionContinuationList(&'a mut JobConjunctionContinuationList),
+    /// `MaybeNewlines` variant.
     MaybeNewlines(&'a mut MaybeNewlines),
+    /// `CaseItemList` variant.
     CaseItemList(&'a mut CaseItemList),
+    /// `Argument` variant.
     Argument(&'a mut Argument),
+    /// `ArgumentList` variant.
     ArgumentList(&'a mut ArgumentList),
+    /// `JobList` variant.
     JobList(&'a mut JobList),
 }
 
 // Support casting to this type.
+/// `Castable` trait.
 pub trait Castable {
     fn cast(node: &dyn Node) -> Option<&Self>;
 }
@@ -373,6 +458,7 @@ pub trait Leaf: Node {
 }
 
 // A token node is a node which contains a token, which must be one of a fixed set.
+/// `Token` trait.
 pub trait Token: Leaf {
     /// The token type which was parsed.
     fn token_type(&self) -> ParseTokenType;
@@ -630,7 +716,9 @@ macro_rules! Acceptor {
 /// Note that pipes are not redirections.
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct Redirection {
+    /// `oper` field.
     pub oper: TokenRedirection,
+    /// `target` field.
     pub target: String_,
 }
 
@@ -641,10 +729,13 @@ impl CheckParse for Redirection {
 }
 
 define_list_node!(VariableAssignmentList, VariableAssignment);
+/// `ArgumentOrRedirection` — see variants.
 
 #[derive(Debug, Node!)]
 pub enum ArgumentOrRedirection {
+    /// `Argument` variant.
     Argument(Argument),
+    /// `Redirection` variant.
     Redirection(Box<Redirection>), // Boxed because it's bigger
 }
 
@@ -710,11 +801,17 @@ define_list_node!(ArgumentOrRedirectionList, ArgumentOrRedirection);
 /// A statement is a normal command, or an if / while / etc
 #[derive(Debug, Node!)]
 pub enum Statement {
+    /// `Decorated` variant.
     Decorated(DecoratedStatement),
+    /// `Not` variant.
     Not(Box<NotStatement>),
+    /// `Block` variant.
     Block(Box<BlockStatement>),
+    /// `Brace` variant.
     Brace(Box<BraceStatement>),
+    /// `If` variant.
     If(Box<IfStatement>),
+    /// `Switch` variant.
     Switch(Box<SwitchStatement>),
 }
 
@@ -726,6 +823,7 @@ impl Default for Statement {
 
 impl Statement {
     // Convenience function to get this statement as a decorated statement, if it is one.
+    /// `as_decorated_statement` — see implementation.
     pub fn as_decorated_statement(&self) -> Option<&DecoratedStatement> {
         match self {
             Self::Decorated(child) => Some(child),
@@ -803,6 +901,7 @@ impl CheckParse for JobConjunction {
                 ))
     }
 }
+/// `ForHeader` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct ForHeader {
@@ -817,31 +916,41 @@ pub struct ForHeader {
     /// newline or semicolon
     pub semi_nl: SemiNl,
 }
+/// `WhileHeader` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct WhileHeader {
     /// 'while'
     pub kw_while: KeywordWhile,
+    /// `condition` field.
     pub condition: JobConjunction,
+    /// `andor_tail` field.
     pub andor_tail: AndorJobList,
 }
+/// `FunctionHeader` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct FunctionHeader {
+    /// `kw_function` field.
     pub kw_function: KeywordFunction,
     /// functions require at least one argument.
     pub first_arg: Argument,
+    /// `args` field.
     pub args: ArgumentList,
+    /// `semi_nl` field.
     pub semi_nl: SemiNl,
 }
+/// `BeginHeader` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct BeginHeader {
+    /// `kw_begin` field.
     pub kw_begin: KeywordBegin,
     /// Note that 'begin' does NOT require a semi or nl afterwards.
     /// This is valid: begin echo hi; end
     pub semi_nl: Option<SemiNl>,
 }
+/// `BlockStatement` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct BlockStatement {
@@ -854,6 +963,7 @@ pub struct BlockStatement {
     /// Arguments and redirections associated with the block.
     pub args_or_redirs: ArgumentOrRedirectionList,
 }
+/// `BraceStatement` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct BraceStatement {
@@ -866,6 +976,7 @@ pub struct BraceStatement {
     /// Arguments and redirections associated with the block.
     pub args_or_redirs: ArgumentOrRedirectionList,
 }
+/// `IfClause` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct IfClause {
@@ -878,6 +989,7 @@ pub struct IfClause {
     /// The body to execute if the condition is true.
     pub body: JobList,
 }
+/// `ElseifClause` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct ElseifClause {
@@ -894,12 +1006,15 @@ impl CheckParse for ElseifClause {
 }
 
 define_list_node!(ElseifClauseList, ElseifClause);
+/// `ElseClause` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct ElseClause {
     /// else ; body
     pub kw_else: KeywordElse,
+    /// `semi_nl` field.
     pub semi_nl: Option<SemiNl>,
+    /// `body` field.
     pub body: JobList,
 }
 impl CheckParse for ElseClause {
@@ -907,6 +1022,7 @@ impl CheckParse for ElseClause {
         pop.peek_token(0).keyword == ParseKeyword::Else
     }
 }
+/// `IfStatement` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct IfStatement {
@@ -921,13 +1037,17 @@ pub struct IfStatement {
     /// block args / redirs
     pub args_or_redirs: ArgumentOrRedirectionList,
 }
+/// `CaseItem` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct CaseItem {
     /// case \<arguments\> ; body
     pub kw_case: KeywordCase,
+    /// `arguments` field.
     pub arguments: ArgumentList,
+    /// `semi_nl` field.
     pub semi_nl: SemiNl,
+    /// `body` field.
     pub body: JobList,
 }
 impl CheckParse for CaseItem {
@@ -935,15 +1055,21 @@ impl CheckParse for CaseItem {
         pop.peek_token(0).keyword == ParseKeyword::Case
     }
 }
+/// `SwitchStatement` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct SwitchStatement {
     /// switch \<argument\> ; body ; end args_redirs
     pub kw_switch: KeywordSwitch,
+    /// `argument` field.
     pub argument: Argument,
+    /// `semi_nl` field.
     pub semi_nl: SemiNl,
+    /// `cases` field.
     pub cases: CaseItemList,
+    /// `end` field.
     pub end: KeywordEnd,
+    /// `args_or_redirs` field.
     pub args_or_redirs: ArgumentOrRedirectionList,
 }
 
@@ -964,16 +1090,24 @@ pub struct DecoratedStatement {
 pub struct NotStatement {
     /// Keyword, either not or exclam.
     pub kw: KeywordNot,
+    /// `time` field.
     pub time: Option<KeywordTime>,
+    /// `variables` field.
     pub variables: VariableAssignmentList,
+    /// `contents` field.
     pub contents: Statement,
 }
+/// `JobContinuation` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct JobContinuation {
+    /// `pipe` field.
     pub pipe: TokenPipe,
+    /// `newlines` field.
     pub newlines: MaybeNewlines,
+    /// `variables` field.
     pub variables: VariableAssignmentList,
+    /// `statement` field.
     pub statement: Statement,
 }
 impl CheckParse for JobContinuation {
@@ -983,11 +1117,13 @@ impl CheckParse for JobContinuation {
 }
 
 define_list_node!(JobContinuationList, JobContinuation);
+/// `JobConjunctionContinuation` — see fields for layout.
 
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct JobConjunctionContinuation {
     /// The && or || token.
     pub conjunction: TokenConjunction,
+    /// `newlines` field.
     pub newlines: MaybeNewlines,
     /// The job itself.
     pub job: JobPipeline,
@@ -1004,6 +1140,7 @@ impl CheckParse for JobConjunctionContinuation {
 /// instances of this.
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct AndorJob {
+    /// `job` field.
     pub job: JobConjunction,
 }
 impl CheckParse for AndorJob {
@@ -1029,6 +1166,7 @@ define_list_node!(AndorJobList, AndorJob);
 /// In practice the tok_ends are ignored by fish code so we do not bother to store them.
 #[derive(Default, Debug, Node!, Acceptor!)]
 pub struct FreestandingArgumentList {
+    /// `arguments` field.
     pub arguments: ArgumentList,
 }
 
@@ -1044,6 +1182,7 @@ define_list_node!(CaseItemList, CaseItem);
 /// A variable_assignment contains a source range like FOO=bar.
 #[derive(Default, Debug, Node!, Leaf!)]
 pub struct VariableAssignment {
+    /// `range` field.
     range: Option<SourceRange>,
 }
 impl CheckParse for VariableAssignment {
@@ -1069,6 +1208,7 @@ impl CheckParse for VariableAssignment {
 /// Zero or more newlines.
 #[derive(Default, Debug, Node!, Leaf!)]
 pub struct MaybeNewlines {
+    /// `range` field.
     range: Option<SourceRange>,
 }
 
@@ -1076,6 +1216,7 @@ pub struct MaybeNewlines {
 /// This is a separate type because it is sometimes useful to find all arguments.
 #[derive(Default, Debug, Node!, Leaf!)]
 pub struct Argument {
+    /// `range` field.
     range: Option<SourceRange>,
 }
 impl CheckParse for Argument {
@@ -1164,12 +1305,17 @@ impl DecoratedStatement {
         }
     }
 }
+/// `BlockStatementHeader` — see variants.
 
 #[derive(Debug, Node!)]
 pub enum BlockStatementHeader {
+    /// `Begin` variant.
     Begin(BeginHeader),
+    /// `For` variant.
     For(ForHeader),
+    /// `While` variant.
     While(WhileHeader),
+    /// `Function` variant.
     Function(FunctionHeader),
 }
 
@@ -1180,6 +1326,7 @@ impl Default for BlockStatementHeader {
 }
 
 impl BlockStatementHeader {
+    /// `embedded_node` — see implementation.
     pub fn embedded_node(&self) -> &dyn Node {
         match self {
             Self::Begin(child) => child,
@@ -1260,12 +1407,15 @@ enum TraversalEntry<'a> {
 // Example:
 //    let tv = Traversal::new(start);
 //    while let Some(node) = tv.next() {...}
+/// `Traversal` — see fields for layout.
 pub struct Traversal<'a> {
+    /// `stack` field.
     stack: Vec<TraversalEntry<'a>>,
 }
 
 impl<'a> Traversal<'a> {
     // Construct starting with a node
+    /// `new` — see implementation.
     pub fn new(n: &'a dyn Node) -> Self {
         Self {
             stack: vec![TraversalEntry::NeedsVisit(n)],
@@ -1276,6 +1426,7 @@ impl<'a> Traversal<'a> {
     // Parents are returned in reverse order (immediate parent, grandparent, etc).
     // The most recently visited node is first; that is first parent node will be the node most recently
     // returned by next();
+    /// `parent_nodes` — see implementation.
     pub fn parent_nodes(&self) -> impl Iterator<Item = &'a dyn Node> + '_ {
         self.stack.iter().rev().filter_map(|entry| match entry {
             TraversalEntry::Visited(node) => Some(*node),
@@ -1288,6 +1439,7 @@ impl<'a> Traversal<'a> {
     // Note this does NOT return parents of nodes that have not yet been yielded by the iterator;
     // for example `traversal.parent(&current.child)` will panic because `current.child` has not been
     // yielded yet.
+    /// `parent` — see implementation.
     pub fn parent(&self, node: &dyn Node) -> &'a dyn Node {
         let mut iter = self.parent_nodes();
         while let Some(n) = iter.next() {
@@ -1304,6 +1456,7 @@ impl<'a> Traversal<'a> {
     // Skip the children of the last visited node, which must be passed
     // as a sanity check. This node must be the last visited node on the stack.
     // For convenience, also remove the (visited) node itself.
+    /// `skip_children` — see implementation.
     pub fn skip_children(&mut self, node: &dyn Node) {
         for idx in (0..self.stack.len()).rev() {
             if let TraversalEntry::Visited(n) = self.stack[idx] {
@@ -1348,6 +1501,7 @@ impl<'a, 'v: 'a> NodeVisitor<'v> for Traversal<'a> {
         self.stack.push(TraversalEntry::NeedsVisit(node));
     }
 }
+/// `SourceRangeList` type alias.
 
 pub type SourceRangeList = Vec<SourceRange>;
 
@@ -1413,6 +1567,7 @@ fn finalize_parse<N: Node>(mut pops: Populator<'_>, top: N) -> Ast<N> {
 /// The ast type itself.
 pub struct Ast<N: Node = JobList> {
     // The top node.
+    /// `top` field.
     top: N,
     /// Whether any errors were encountered during parsing.
     any_error: bool,

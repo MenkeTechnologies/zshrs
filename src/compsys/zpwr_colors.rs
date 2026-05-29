@@ -26,10 +26,15 @@ pub struct ZstyleColors {
 /// Header colors from ZPWR_DESC_* env vars
 #[derive(Clone, Debug)]
 pub struct HeaderColors {
+    /// `pre` field.
     pub pre: String,
+    /// `post` field.
     pub post: String,
+    /// `pre_color` field.
     pub pre_color: String,
+    /// `text_color` field.
     pub text_color: String,
+    /// `post_color` field.
     pub post_color: String,
 }
 
@@ -46,6 +51,7 @@ impl Default for HeaderColors {
 }
 
 impl HeaderColors {
+    /// `from_env` — see implementation.
     pub fn from_env() -> Self {
         Self {
             pre: std::env::var("ZPWR_DESC_PRE").unwrap_or_else(|_| "-<<".into()),
@@ -55,6 +61,7 @@ impl HeaderColors {
             post_color: std::env::var("ZPWR_DESC_POST_COLOR").unwrap_or_else(|_| "1;31".into()),
         }
     }
+    /// `format` — see implementation.
 
     pub fn format(&self, text: &str) -> String {
         format!(
@@ -585,9 +592,13 @@ zstyle ':completion:*' verbose yes
 /// Parsed zstyle entry
 #[derive(Debug, Clone)]
 pub struct ParsedZstyle {
+    /// `pattern` field.
     pub pattern: String,
+    /// `style` field.
     pub style: String,
+    /// `values` field.
     pub values: Vec<String>,
+    /// `eval` field.
     pub eval: bool,
 }
 

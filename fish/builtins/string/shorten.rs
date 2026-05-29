@@ -1,12 +1,19 @@
 use super::*;
 use fish_widestring::{decoded_width, ELLIPSIS_CHAR};
+/// `Shorten` — see fields for layout.
 
 pub struct Shorten<'args> {
+    /// `ellipsis` field.
     ellipsis: &'args wstr,
+    /// `ellipsis_width` field.
     ellipsis_width: usize,
+    /// `max` field.
     max: Option<usize>,
+    /// `no_newline` field.
     no_newline: bool,
+    /// `quiet` field.
     quiet: bool,
+    /// `shorten_from` field.
     shorten_from: Direction,
 }
 /// The character to use where the text has been truncated, in a [`wstr`].

@@ -239,6 +239,7 @@ pub fn signal_set_handlers(interactive: bool) {
         let _ = kill(getpid(), nix::sys::signal::Signal::SIGCHLD);
     }
 }
+/// `signal_set_handlers_once` — see implementation.
 
 pub fn signal_set_handlers_once(interactive: bool) {
     static NONINTER_ONCE: std::sync::Once = std::sync::Once::new();
@@ -272,6 +273,7 @@ pub fn signal_handle(sig: Signal) {
     act.sa_sigaction = fish_signal_handler as *const () as libc::sighandler_t;
     sigaction(sig, &act, std::ptr::null_mut());
 }
+/// `SIGNALS_TO_DEFAULT` static.
 
 pub static SIGNALS_TO_DEFAULT: LazyLock<libc::sigset_t> = LazyLock::new(|| {
     let mut set = MaybeUninit::uninit();
@@ -300,6 +302,7 @@ pub fn signal_unblock_all() {
 
 /// A Sigchecker can be used to check if a SIGINT (or SIGHUP) has been delivered.
 pub struct SigChecker {
+    /// `topic` field.
     topic: Topic,
     r#gen: Generation,
 }
@@ -508,6 +511,7 @@ impl Signal {
             None => wgettext!("Unknown"),
         }
     }
+    /// `code` — see implementation.
 
     pub fn code(&self) -> i32 {
         self.0.into()

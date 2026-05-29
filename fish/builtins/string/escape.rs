@@ -1,9 +1,12 @@
 use super::*;
 use fish_common::{escape_string, EscapeFlags, EscapeStringStyle};
+/// `Escape` — see fields for layout.
 
 #[derive(Default)]
 pub struct Escape {
+    /// `no_quoted` field.
     no_quoted: bool,
+    /// `style` field.
     style: EscapeStringStyle,
 }
 

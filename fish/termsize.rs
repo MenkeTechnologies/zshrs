@@ -9,6 +9,7 @@ use std::mem::MaybeUninit;
 use std::num::NonZeroU16;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
+/// `Termsize` — see fields for layout.
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Termsize {
@@ -60,23 +61,28 @@ fn read_termsize_from_tty() -> Option<Termsize> {
 impl Termsize {
     /// Default width and height.
     pub const DEFAULT_WIDTH: NonZeroU16 = NonZeroU16::new(80).unwrap();
+    /// `DEFAULT_HEIGHT` constant.
     pub const DEFAULT_HEIGHT: NonZeroU16 = NonZeroU16::new(24).unwrap();
 
     /// Construct from width and height.
     pub fn new(width: NonZeroU16, height: NonZeroU16) -> Self {
         Self { width, height }
     }
+    /// `width_u16` — see implementation.
 
     pub fn width_u16(&self) -> NonZeroU16 {
         self.width
     }
+    /// `height_u16` — see implementation.
     pub fn height_u16(&self) -> NonZeroU16 {
         self.height
     }
+    /// `width` — see implementation.
 
     pub fn width(&self) -> usize {
         usize::from(self.width.get())
     }
+    /// `height` — see implementation.
     pub fn height(&self) -> usize {
         usize::from(self.height.get())
     }
@@ -130,10 +136,12 @@ impl TermsizeData {
 /// SIGWINCH.
 pub struct TermsizeContainer {
     // Our lock-protected data.
+    /// `data` field.
     data: Mutex<TermsizeData>,
 
     // An indication that we are currently in the process of setting COLUMNS and LINES, and so do
     // not react to any changes.
+    /// `setting_env_vars` field.
     setting_env_vars: AtomicBool,
 
     /// A function used for accessing the termsize from the tty.
@@ -232,6 +240,7 @@ impl TermsizeContainer {
             .mark_override_from_env(new_termsize);
     }
 }
+/// `SHARED_CONTAINER` static.
 
 pub static SHARED_CONTAINER: TermsizeContainer = TermsizeContainer {
     data: Mutex::new(TermsizeData::defaults()),
@@ -250,6 +259,7 @@ pub fn termsize_last() -> Termsize {
 pub fn handle_columns_lines_var_change(vars: &dyn Environment) {
     SHARED_CONTAINER.handle_columns_lines_var_change(vars);
 }
+/// `termsize_update` — see implementation.
 
 pub fn termsize_update(parser: &Parser) -> Termsize {
     SHARED_CONTAINER.updating(parser)

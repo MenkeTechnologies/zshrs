@@ -27,11 +27,15 @@ use std::collections::HashMap;
 /// C zsh evaluates inline via `mathevall()` (Src/math.c) and has
 /// no compile-then-run path.
 pub struct ArithCompiler<'a> {
+    /// `input` field.
     pub input: &'a str,
+    /// `pos` field.
     pub pos: usize,
+    /// `builder` field.
     pub builder: ChunkBuilder,
     /// Variable name → slot index
     pub slots: HashMap<String, u16>,
+    /// `next_slot` field.
     pub next_slot: u16,
 }
 
@@ -83,6 +87,7 @@ enum Tok {
 }
 
 impl<'a> ArithCompiler<'a> {
+    /// `new` — see implementation.
     pub fn new(input: &'a str) -> Self {
         Self {
             input,
@@ -545,6 +550,7 @@ impl<'a> ArithCompiler<'a> {
     // ── Recursive descent → emit ops ──
     // Precedence climbing: comma < assign < ternary < logor < logand <
     // bitor < bitxor < bitand < eq < cmp < shift < add < mul < pow < unary
+    /// `expr` — see implementation.
 
     pub fn expr(&mut self) {
         self.assign_expr();

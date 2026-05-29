@@ -41,12 +41,19 @@ pub const SHARD_FORMAT_VERSION: u32 = 1;
 #[derive(Archive, Deserialize, Serialize, Clone, Debug)]
 #[archive(check_bytes)]
 pub struct IndexEntry {
+    /// `slug` field.
     pub slug: String,
+    /// `source_root` field.
     pub source_root: String,
+    /// `generation` field.
     pub generation: u64,
+    /// `built_at_ns` field.
     pub built_at_ns: u64,
+    /// `entry_count` field.
     pub entry_count: u32,
+    /// `byte_size` field.
     pub byte_size: u64,
+    /// `path` field.
     pub path: String,
 }
 
@@ -59,11 +66,15 @@ pub struct IndexEntry {
 #[derive(Archive, Deserialize, Serialize, Clone, Debug)]
 #[archive(check_bytes)]
 pub struct IndexShard {
+    /// `magic` field.
     pub magic: u32,
+    /// `format_version` field.
     pub format_version: u32,
     /// Monotonic generation across the entire index. Each rebuild bumps it.
     pub generation: u64,
+    /// `built_at_ns` field.
     pub built_at_ns: u64,
+    /// `entries` field.
     pub entries: Vec<IndexEntry>,
 }
 
@@ -83,12 +94,19 @@ impl Default for IndexShard {
 #[derive(Archive, Deserialize, Serialize, Clone, Debug)]
 #[archive(check_bytes)]
 pub struct ShardHeader {
+    /// `magic` field.
     pub magic: u32,
+    /// `format_version` field.
     pub format_version: u32,
+    /// `generation` field.
     pub generation: u64,
+    /// `built_at_ns` field.
     pub built_at_ns: u64,
+    /// `slug` field.
     pub slug: String,
+    /// `source_root` field.
     pub source_root: String,
+    /// `entry_count` field.
     pub entry_count: u32,
 }
 
@@ -96,7 +114,9 @@ pub struct ShardHeader {
 #[derive(Archive, Deserialize, Serialize, Clone, Debug)]
 #[archive(check_bytes)]
 pub struct Shard {
+    /// `header` field.
     pub header: ShardHeader,
+    /// `entries` field.
     pub entries: HashMap<String, Vec<u8>>,
 }
 
@@ -111,9 +131,13 @@ pub struct Shard {
 #[derive(Archive, Deserialize, Serialize, Clone, Debug)]
 #[archive(check_bytes)]
 pub struct CanonicalShard {
+    /// `header` field.
     pub header: ShardHeader,
+    /// `aliases` field.
     pub aliases: HashMap<String, String>,
+    /// `global_aliases` field.
     pub global_aliases: HashMap<String, String>,
+    /// `suffix_aliases` field.
     pub suffix_aliases: HashMap<String, String>,
     /// Inline-defined functions captured from `.zshrc` + transitively
     /// sourced files. Replaced on every fsnotify reanalysis.
@@ -123,19 +147,33 @@ pub struct CanonicalShard {
     /// these instead of reading $FPATH files at runtime. Never touched by
     /// .zshrc reanalysis (so a `.zshrc` save doesn't wipe 18k bodies).
     pub autoload_functions: HashMap<String, String>,
+    /// `setopts` field.
     pub setopts: Vec<String>,
+    /// `unsetopts` field.
     pub unsetopts: Vec<String>,
+    /// `bindkeys` field.
     pub bindkeys: HashMap<String, String>,
+    /// `named_dirs` field.
     pub named_dirs: HashMap<String, String>,
+    /// `compdef` field.
     pub compdef: HashMap<String, String>,
+    /// `zstyle` field.
     pub zstyle: Vec<(String, String)>,
+    /// `zmodload` field.
     pub zmodload: Vec<String>,
+    /// `env_exports` field.
     pub env_exports: HashMap<String, String>,
+    /// `params` field.
     pub params: HashMap<String, String>,
+    /// `path` field.
     pub path: Vec<String>,
+    /// `fpath` field.
     pub fpath: Vec<String>,
+    /// `manpath` field.
     pub manpath: Vec<String>,
+    /// `plugins` field.
     pub plugins: Vec<(String, String)>, // (manager, name)
+    /// `sourced_files` field.
     pub sourced_files: Vec<String>,
     /// Catch-all for subsystems not enumerated above (zcompdump_raw, service,
     /// patcomp, postpatcomp, autoload_completion, …). Keyed by subsystem
@@ -181,6 +219,7 @@ impl Default for CanonicalShard {
 }
 
 impl Shard {
+    /// `new` — see implementation.
     pub fn new(slug: impl Into<String>, source_root: impl Into<String>, generation: u64) -> Self {
         Self {
             header: ShardHeader {
@@ -195,15 +234,18 @@ impl Shard {
             entries: HashMap::new(),
         }
     }
+    /// `insert` — see implementation.
 
     pub fn insert(&mut self, fq_name: impl Into<String>, bytecode: Vec<u8>) {
         self.entries.insert(fq_name.into(), bytecode);
         self.header.entry_count = self.entries.len() as u32;
     }
+    /// `len` — see implementation.
 
     pub fn len(&self) -> usize {
         self.entries.len()
     }
+    /// `is_empty` — see implementation.
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
@@ -353,7 +395,9 @@ pub fn write_shard(paths: &CachePaths, shard: &Shard) -> Result<PathBuf> {
 /// mmap and validate a shard from disk. Returns an MmappedShard which holds the mmap
 /// alive — drop it to release the mapping.
 pub struct MmappedShard {
+    /// `_mmap` field.
     _mmap: Mmap,
+    /// `path` field.
     path: PathBuf,
     /// SAFETY-relevant: the archived reference points into `_mmap`, which lives as long
     /// as this struct. The pointer is valid for the lifetime of the struct.
@@ -379,6 +423,7 @@ unsafe impl Send for MmappedShard {}
 unsafe impl Sync for MmappedShard {}
 
 impl MmappedShard {
+    /// `open` — see implementation.
     pub fn open(path: &Path) -> Result<Self> {
         let file = std::fs::File::open(path)?;
         let mmap = unsafe { Mmap::map(&file)? };
@@ -424,18 +469,22 @@ impl MmappedShard {
         // SAFETY: archived_ptr points into _mmap, which lives as long as Self.
         unsafe { &*self.archived }
     }
+    /// `header` — see implementation.
 
     pub fn header(&self) -> &ArchivedShardHeader {
         &self.shard().header
     }
+    /// `generation` — see implementation.
 
     pub fn generation(&self) -> u64 {
         self.shard().header.generation.into()
     }
+    /// `slug` — see implementation.
 
     pub fn slug(&self) -> &str {
         self.shard().header.slug.as_str()
     }
+    /// `entry_count` — see implementation.
 
     pub fn entry_count(&self) -> u32 {
         self.shard().header.entry_count.into()
@@ -451,6 +500,7 @@ impl MmappedShard {
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.shard().entries.keys().map(|s| s.as_str())
     }
+    /// `path` — see implementation.
 
     pub fn path(&self) -> &Path {
         &self.path

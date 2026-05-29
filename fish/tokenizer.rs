@@ -39,42 +39,64 @@ pub enum TokenType {
     /// comment token
     Comment,
 }
+/// `TokenizerError` — see variants.
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum TokenizerError {
+    /// `None` variant.
     None,
+    /// `UnterminatedQuote` variant.
     UnterminatedQuote,
+    /// `UnterminatedSubshell` variant.
     UnterminatedSubshell,
+    /// `UnterminatedSlice` variant.
     UnterminatedSlice,
+    /// `UnterminatedEscape` variant.
     UnterminatedEscape,
+    /// `InvalidRedirect` variant.
     InvalidRedirect,
+    /// `InvalidPipe` variant.
     InvalidPipe,
+    /// `ClosingUnopenedSubshell` variant.
     ClosingUnopenedSubshell,
+    /// `IllegalSlice` variant.
     IllegalSlice,
+    /// `ClosingUnopenedBrace` variant.
     ClosingUnopenedBrace,
+    /// `UnterminatedBrace` variant.
     UnterminatedBrace,
+    /// `ExpectedPcloseFoundBclose` variant.
     ExpectedPcloseFoundBclose,
+    /// `ExpectedBcloseFoundPclose` variant.
     ExpectedBcloseFoundPclose,
 }
+/// `Tok` — see fields for layout.
 
 #[derive(Debug)]
 pub struct Tok {
     // Offset of the token.
+    /// `offset` field.
     pub offset: u32,
     // Length of the token.
+    /// `length` field.
     pub length: u32,
 
     // If an error, this is the offset of the error within the token. A value of 0 means it occurred
     // at 'offset'.
+    /// `error_offset_within_token` field.
     pub error_offset_within_token: u32,
+    /// `error_length` field.
     pub error_length: u32,
 
     // If an error, this is the error code.
+    /// `error` field.
     pub error: TokenizerError,
+    /// `is_unterminated_brace` field.
 
     pub is_unterminated_brace: bool,
 
     // The type of the token.
+    /// `type_` field.
     pub type_: TokenType,
 }
 // TODO static_assert(sizeof(Tok) <= 32, "Tok expected to be 32 bytes or less");
@@ -84,22 +106,28 @@ pub struct PipeOrRedir {
     // The redirected fd, or -1 on overflow.
     // In the common case of a pipe, this is 1 (STDOUT_FILENO).
     // For example, in the case of "3>&1" this will be 3.
+    /// `fd` field.
     pub fd: i32,
 
     // Whether we are a pipe (true) or redirection (false).
+    /// `is_pipe` field.
     pub is_pipe: bool,
 
     // The redirection mode if the type is redirect.
     // Ignored for pipes.
+    /// `mode` field.
     pub mode: RedirectionMode,
 
     // Whether, in addition to this redirection, stderr should also be dup'd to stdout
     // For example &|, |& or &>
+    /// `stderr_merge` field.
     pub stderr_merge: bool,
 
     // Number of characters consumed when parsing the string.
+    /// `consumed` field.
     pub consumed: usize,
 }
+/// `TokFlags` — see fields for layout.
 
 #[derive(Clone, Copy)]
 pub struct TokFlags(pub u8);
@@ -203,40 +231,52 @@ impl Tok {
             type_: r#type,
         }
     }
+    /// `location_in_or_at_end_of_source_range` — see implementation.
     pub fn location_in_or_at_end_of_source_range(self: &Tok, loc: usize) -> bool {
         let loc = loc as u32;
         self.offset <= loc && loc - self.offset <= self.length
     }
+    /// `get_source` — see implementation.
     pub fn get_source<'a, 'b>(self: &'a Tok, str: &'b wstr) -> &'b wstr {
         &str[self.offset as usize..(self.offset + self.length) as usize]
     }
+    /// `set_offset` — see implementation.
     pub fn set_offset(&mut self, value: usize) {
         self.offset = value.try_into().unwrap();
     }
+    /// `offset` — see implementation.
     pub fn offset(&self) -> usize {
         self.offset.try_into().unwrap()
     }
+    /// `length` — see implementation.
     pub fn length(&self) -> usize {
         self.length.try_into().unwrap()
     }
+    /// `set_length` — see implementation.
     pub fn set_length(&mut self, value: usize) {
         self.length = value.try_into().unwrap();
     }
+    /// `end` — see implementation.
     pub fn end(&self) -> usize {
         self.offset() + self.length()
     }
+    /// `range` — see implementation.
     pub fn range(&self) -> Range<usize> {
         self.offset()..self.end()
     }
+    /// `set_error_offset_within_token` — see implementation.
     pub fn set_error_offset_within_token(&mut self, value: usize) {
         self.error_offset_within_token = value.try_into().unwrap();
     }
+    /// `error_offset_within_token` — see implementation.
     pub fn error_offset_within_token(&self) -> usize {
         self.error_offset_within_token.try_into().unwrap()
     }
+    /// `error_length` — see implementation.
     pub fn error_length(&self) -> usize {
         self.error_length.try_into().unwrap()
     }
+    /// `set_error_length` — see implementation.
     pub fn set_error_length(&mut self, value: usize) {
         self.error_length = value.try_into().unwrap();
     }
@@ -282,6 +322,7 @@ impl<'c> Tokenizer<'c> {
     pub fn new(start: &'c wstr, flags: TokFlags) -> Self {
         Self::new_impl(start, flags, None)
     }
+    /// `with_quote_events` — see implementation.
     pub fn with_quote_events(
         start: &'c wstr,
         flags: TokFlags,
@@ -841,6 +882,7 @@ impl<'c> Tokenizer<'c> {
         result
     }
 }
+/// `quote_end` — see implementation.
 
 pub fn quote_end(s: &wstr, mut pos: usize, quote: char) -> Option<usize> {
     loop {
@@ -858,6 +900,7 @@ pub fn quote_end(s: &wstr, mut pos: usize, quote: char) -> Option<usize> {
         }
     }
 }
+/// `comment_end` — see implementation.
 
 pub fn comment_end(s: &wstr, mut pos: usize) -> usize {
     loop {
@@ -1124,11 +1167,13 @@ impl PipeOrRedir {
 
     // Return if we are "valid". Here "valid" means only that the source fd did not overflow.
     // For example 99999999999> is invalid.
+    /// `is_valid` — see implementation.
     pub fn is_valid(&self) -> bool {
         self.fd >= 0
     }
 
     // Return the token type for this redirection.
+    /// `token_type` — see implementation.
     pub fn token_type(&self) -> TokenType {
         if self.is_pipe {
             TokenType::Pipe

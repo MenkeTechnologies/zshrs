@@ -42,6 +42,7 @@ pub fn push_timer() -> PrintElapsedOnDrop {
 }
 
 impl TimerSnapshot {
+    /// `take` — see implementation.
     pub fn take() -> TimerSnapshot {
         TimerSnapshot {
             // getrusage should never fail.
@@ -134,6 +135,7 @@ impl TimerSnapshot {
 
 /// When dropped, prints to stderr the time that has elapsed since it was initialized.
 pub struct PrintElapsedOnDrop {
+    /// `start` field.
     start: TimerSnapshot,
 }
 

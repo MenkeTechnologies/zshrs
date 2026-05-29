@@ -36,11 +36,16 @@
 // should still aim for clippy-clean, but at file/function scope, not
 // crate-wide.
 #![allow(clippy::all)]
+/// `compsys` submodule.
 
 pub mod compsys;
+/// `exec_jobs` submodule.
 pub mod exec_jobs;
+/// `extensions` submodule.
 pub mod extensions;
+/// `ported` submodule.
 pub mod ported;
+/// `test_util` submodule.
 
 #[cfg(test)]
 pub mod test_util;
@@ -51,27 +56,38 @@ pub mod test_util;
 // continue to resolve unchanged after the physical move into
 // `src/ported/`. New code should prefer `crate::ported::<name>`.
 pub use ported::*;
+/// `aot` submodule.
 
 #[path = "extensions/aot.rs"]
 pub mod aot;
+/// `arith_compiler` submodule.
 #[path = "extensions/arith_compiler.rs"]
 pub mod arith_compiler;
+/// `autoload_cache` submodule.
 #[path = "extensions/autoload_cache.rs"]
 pub mod autoload_cache;
+/// `bash_complete` submodule.
 #[path = "extensions/bash_complete.rs"]
 pub mod bash_complete;
+/// `canonical_apply` submodule.
 #[path = "extensions/canonical_apply.rs"]
 pub mod canonical_apply;
+/// `compile_zsh` submodule.
 #[path = "extensions/compile_zsh.rs"]
 pub mod compile_zsh;
+/// `completion` submodule.
 #[path = "extensions/completion.rs"]
 pub mod completion;
+/// `config` submodule.
 #[path = "extensions/config.rs"]
 pub mod config;
+/// `daemon_presence` submodule.
 #[path = "extensions/daemon_presence.rs"]
 pub mod daemon_presence;
+/// `overlay_snapshot` submodule.
 #[path = "extensions/overlay_snapshot.rs"]
 pub mod overlay_snapshot;
+/// `script_cache` submodule.
 #[path = "extensions/script_cache.rs"]
 pub mod script_cache;
 // Daemon lives in the `zshrs-daemon` workspace crate. Re-export it as `daemon`
@@ -84,6 +100,7 @@ pub mod script_cache;
 // being refactored in a concurrent session.
 #[cfg(feature = "daemon")]
 pub use zshrs_daemon as daemon;
+/// `daemon` submodule.
 
 #[cfg(not(feature = "daemon"))]
 pub mod daemon {
@@ -92,33 +109,45 @@ pub mod daemon {
     //! implementation lives in the `zshrs-daemon` workspace crate.
     pub mod builtins {
         pub const ZSHRS_BUILTIN_NAMES: &[&str] = &[];
+        /// `is_zshrs_builtin` — see implementation.
         pub fn is_zshrs_builtin(_name: &str) -> bool {
             false
         }
+        /// `try_dispatch` — see implementation.
         pub fn try_dispatch(_name: &str, _argv: &[String]) -> Option<i32> {
             None
         }
+        /// `dispatch` — see implementation.
         pub fn dispatch(_name: &str, _args: &[String]) -> Option<i32> {
             None
         }
     }
 }
+/// `ast_sexp` submodule.
 #[path = "extensions/ast_sexp.rs"]
 pub mod ast_sexp;
+/// `dap` submodule.
 #[path = "extensions/dap.rs"]
 pub mod dap;
+/// `dumpers` submodule.
 #[path = "extensions/dumpers.rs"]
 pub mod dumpers;
+/// `ext_builtins` submodule.
 #[path = "extensions/ext_builtins.rs"]
 pub mod ext_builtins;
+/// `fds` submodule.
 #[path = "extensions/fds.rs"]
 pub mod fds;
+/// `fish_features` submodule.
 #[path = "extensions/fish_features.rs"]
 pub mod fish_features;
+/// `func_body_fmt` submodule.
 #[path = "extensions/func_body_fmt.rs"]
 pub mod func_body_fmt;
+/// `lsp` submodule.
 #[path = "extensions/lsp.rs"]
 pub mod lsp;
+/// `lsp_symbols` submodule.
 #[path = "extensions/lsp_symbols.rs"]
 pub mod lsp_symbols;
 // Lexer + parser live in `src/ported/lex.rs` and `src/ported/parse.rs`.
@@ -131,12 +160,16 @@ pub mod lsp_symbols;
 pub use ported::lex;
 pub use ported::lex as tokens;
 pub use ported::parse;
+/// `heredoc_ast` submodule.
 #[path = "extensions/heredoc_ast.rs"]
 pub mod heredoc_ast;
+/// `history` submodule.
 #[path = "extensions/history.rs"]
 pub mod history;
+/// `log` submodule.
 #[path = "extensions/log.rs"]
 pub mod log;
+/// `zsh_ast` submodule.
 #[path = "extensions/zsh_ast.rs"]
 pub mod zsh_ast;
 // Backwards-compat flat re-exports — call sites that still write
@@ -177,41 +210,59 @@ pub use modules::zprof;
 pub use modules::zpty;
 pub use modules::zselect;
 pub use modules::zutil;
+/// `compinit_bg` submodule.
 #[path = "extensions/compinit_bg.rs"]
 pub mod compinit_bg;
+/// `fusevm_bridge` submodule.
 pub mod fusevm_bridge;
+/// `fusevm_disasm` submodule.
 pub mod fusevm_disasm;
+/// `intercepts` submodule.
 #[path = "extensions/intercepts.rs"]
 pub mod intercepts;
+/// `plugin_cache` submodule.
 #[path = "extensions/plugin_cache.rs"]
 pub mod plugin_cache;
+/// `recorder_ext` submodule.
 #[path = "extensions/recorder.rs"]
 pub mod recorder_ext;
 // Plugin-Framework-Agnostic State-Modification Recorder. Entire module
 // is `#![cfg(feature = "recorder")]` so it disappears from the default
 // `zshrs` build at the rustc-expansion stage. See docs/RECORDER.md.
+/// `gen_docs` submodule.
 #[path = "extensions/gen_docs.rs"]
 pub mod gen_docs;
+/// `recorder` submodule.
 #[cfg(feature = "recorder")]
 pub mod recorder;
+/// `regex_mod` submodule.
 #[path = "extensions/regex_mod.rs"]
 pub mod regex_mod;
+/// `stringsort` submodule.
 #[path = "extensions/stringsort.rs"]
 pub mod stringsort;
+/// `worker` submodule.
 #[path = "extensions/worker.rs"]
 pub mod worker;
+/// `zsh_builtin_docs` submodule.
 #[path = "extensions/zsh_builtin_docs.rs"]
 pub mod zsh_builtin_docs;
+/// `zsh_ext_builtin_docs` submodule.
 #[path = "extensions/zsh_ext_builtin_docs.rs"]
 pub mod zsh_ext_builtin_docs;
+/// `zsh_keyword_docs` submodule.
 #[path = "extensions/zsh_keyword_docs.rs"]
 pub mod zsh_keyword_docs;
+/// `zsh_option_docs` submodule.
 #[path = "extensions/zsh_option_docs.rs"]
 pub mod zsh_option_docs;
+/// `zsh_special_var_docs` submodule.
 #[path = "extensions/zsh_special_var_docs.rs"]
 pub mod zsh_special_var_docs;
+/// `zwc` submodule.
 #[path = "extensions/zwc.rs"]
 pub mod zwc;
+/// `zwc_decode` submodule.
 #[path = "extensions/zwc_decode.rs"]
 pub mod zwc_decode;
 // Backwards-compat re-export so `crate::rlimits::…` keeps resolving.
@@ -220,6 +271,7 @@ pub use builtins::rlimits;
 // Top-level shell executor state + fusevm bridge glue. Not a port of
 // any single Src/*.c file — zsh's native wordcode VM lives in `Src/exec.c`;
 // zshrs runs fusevm instead (see src/fusevm_bridge.rs).
+/// `vm_helper` submodule.
 pub mod vm_helper;
 
 pub use fish_features::{

@@ -89,6 +89,7 @@ static NL_TABLE: &[(&str, libc::nl_item)] = &[
     ("ERA_T_FMT", libc::ERA_T_FMT),
     ("ALT_DIGITS", libc::ALT_DIGITS),
 ];
+/// `liitem` — see implementation.
 
 #[cfg(unix)]
 pub fn liitem(name: &str) -> Option<libc::nl_item> {
@@ -225,6 +226,7 @@ pub fn finish_(m: *const module) -> i32 {
     // c:508
     0 // c:508
 }
+/// `NL_NAMES` static.
 pub static NL_NAMES: &[&str] = &[
     // c:65 nl_names
     "CODESET",

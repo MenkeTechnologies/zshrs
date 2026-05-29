@@ -9,18 +9,25 @@ use std::sync::OnceLock;
 /// A struct of configuration directories, determined in main() that fish will optionally pass to
 /// env_init.
 pub struct ConfigPaths {
+    /// `sysconf` field.
     pub sysconf: PathBuf,      // e.g., /usr/local/etc
+    /// `bin` field.
     pub bin: Option<PathBuf>,  // e.g., /usr/local/bin
+    /// `data` field.
     pub data: Option<PathBuf>, // e.g., /usr/local/share
+    /// `man` field.
     pub man: Option<PathBuf>,  // e.g., /usr/local/share/fish/man
+    /// `doc` field.
     pub doc: Option<PathBuf>,  // e.g., /usr/local/share/doc/fish
 }
+/// `PREFIX` constant.
 
 pub const PREFIX: &str = env!("PREFIX");
 const SYSCONF_DIR: &str = env!("SYSCONFDIR");
 const DATADIR: Option<&str> = option_env!("DATADIR");
 
 impl ConfigPaths {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         FISH_PATH.get_or_init(compute_fish_path);
         let exec_path = get_fish_path();
@@ -161,9 +168,12 @@ impl ConfigPaths {
         }
     }
 }
+/// `FishPath` — see variants.
 
 pub enum FishPath {
+    /// `Absolute` variant.
     Absolute(PathBuf),
+    /// `LookUpInPath` variant.
     LookUpInPath,
 }
 

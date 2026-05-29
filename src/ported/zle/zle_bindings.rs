@@ -30,6 +30,7 @@ use crate::ported::zle::{
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, len, how, misc)
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
+/// `getkeystring` — see implementation.
 #[allow(unused_imports)]
 #[allow(unused_imports)]
 

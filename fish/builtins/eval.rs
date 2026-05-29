@@ -5,6 +5,7 @@ use crate::io::IoBufferfill;
 use crate::parser::BlockType;
 use fish_wcstringutil::join_strings;
 use libc::{STDERR_FILENO, STDOUT_FILENO};
+/// `eval` — see implementation.
 
 pub fn eval(parser: &Parser, streams: &mut IoStreams, args: &mut [&wstr]) -> BuiltinResult {
     let argc = args.len();

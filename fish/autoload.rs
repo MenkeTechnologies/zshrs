@@ -36,11 +36,13 @@ pub struct Autoload {
     /// The autoload cache.
     cache: AutoloadFileCache,
 }
+/// `Asset` — see fields for layout.
 
 #[derive(RustEmbed)]
 #[folder = "share"]
 #[exclude = "__fish_build_paths.fish.in"]
 pub struct Asset;
+/// `has_asset` — see implementation.
 
 pub fn has_asset(cmd: &str) -> bool {
     Asset::get(cmd).is_some()
@@ -51,18 +53,26 @@ enum AssetDir {
     Functions,
     Completions,
 }
+/// `AutoloadPath` — see variants.
 
 #[derive(Debug)]
 pub enum AutoloadPath {
+    /// `Embedded` variant.
     Embedded(String),
+    /// `Path` variant.
     Path(WString),
 }
+/// `AutoloadResult` — see variants.
 
 #[derive(Debug)]
 pub enum AutoloadResult {
+    /// `Path` variant.
     Path(AutoloadPath),
+    /// `Loaded` variant.
     Loaded,
+    /// `Pending` variant.
     Pending,
+    /// `None` variant.
     None,
 }
 

@@ -5,14 +5,21 @@ use crate::prelude::*;
 use crate::wutil::fish_wcstoi;
 use nix::fcntl::OFlag;
 use std::os::fd::RawFd;
+/// `RedirectionMode` — see variants.
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum RedirectionMode {
+    /// `Overwrite` variant.
     Overwrite, // normal redirection: > file.txt
+    /// `Append` variant.
     Append,    // appending redirection: >> file.txt
+    /// `Input` variant.
     Input,     // input redirection: < file.txt
+    /// `TryInput` variant.
     TryInput,  // try-input redirection: <? file.txt
+    /// `Fd` variant.
     Fd,        // fd redirection: 2>&1
+    /// `NoClob` variant.
     NoClob,    // noclobber redirection: >? file.txt
 }
 
@@ -21,7 +28,9 @@ pub enum RedirectionMode {
 /// Note none of the fds here are considered 'owned'.
 #[derive(Clone, Copy)]
 pub struct Dup2Action {
+    /// `src` field.
     pub src: i32,
+    /// `target` field.
     pub target: i32,
 }
 
@@ -64,6 +73,7 @@ pub struct RedirectionSpec {
 }
 
 impl RedirectionSpec {
+    /// `new` — see implementation.
     pub fn new(fd: RawFd, mode: RedirectionMode, target: WString) -> Self {
         Self { fd, mode, target }
     }
@@ -85,6 +95,7 @@ impl RedirectionSpec {
         }
     }
 }
+/// `RedirectionSpecList` type alias.
 
 pub type RedirectionSpecList = Vec<RedirectionSpec>;
 
@@ -104,6 +115,7 @@ pub fn dup2_list_resolve_chain(io_chain: &IoChain) -> Dup2List {
 }
 
 impl Dup2List {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Default::default()
     }

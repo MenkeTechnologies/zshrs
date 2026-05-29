@@ -204,6 +204,7 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
 /// glob expansion to fully resolve `${...}` / `$(...)` /
 /// `$((...))` / `~user` / `=cmd` / `{a,b}`.
 // Do substitutions before fork.                                            // c:100
+/// `prefork` — see implementation.
 pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
     // c:100
     // c:100
@@ -1337,6 +1338,7 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
 /// Single-string substitution.
 /// Port of `singsub(char **s)` from Src/subst.c:514.
 // perform substitution on a single word                                    // c:514
+/// `singsub` — see implementation.
 pub fn singsub(s: &str) -> String {
     // c:514
     // c:516 — `local_list1(foo);` (Rust analogue: stack-local list).
@@ -1657,6 +1659,7 @@ fn filesub(namptr: &str, assign: i32) -> String {
 ///   4. If trailing chars exist (e.g. `=cmd:rest`), concat path
 ///      with the suffix.
 // do =foo substitution, or equivalent.                                     // c:715
+/// `equalsubstr` — see implementation.
 pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
     // c:715
     // C: `for (pp = str; !isend2(*pp); pp++);` — find end of cmd
@@ -2661,6 +2664,7 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
 /// Parameter substitution
 /// Port of paramsubst(LinkList l, LinkNode n, char **str, int qt, int pf_flags, int *ret_flags) from subst.c lines 1600-4922 (THIS IS THE BIG ONE)
 // parameter substitution                                                   // c:1601
+/// `paramsubst` — see implementation.
 pub fn paramsubst(
     // c:1625
     s: &str,             // c:1625
@@ -9710,6 +9714,7 @@ fn errflag_set_error() {
 // no-shellexecutor-in-src/ported rule.
 // =====================================================================
 thread_local! {
+    /// `IN_PARAMSUBST_NEST` static.
     pub static IN_PARAMSUBST_NEST: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
 }
 
@@ -9728,6 +9733,7 @@ thread_local! {
 // removed" directive.
 // =====================================================================
 thread_local! {
+    /// `SKIP_FILESUB` static.
     pub static SKIP_FILESUB: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -9744,6 +9750,7 @@ thread_local! {
 // live VM frame).
 // =====================================================================
 thread_local! {
+    /// `SUB_FLAGS` static.
     pub static SUB_FLAGS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
 }
 

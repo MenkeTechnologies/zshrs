@@ -58,6 +58,7 @@ impl Debug for Function {
 }
 
 impl Function {
+    /// `arity` — see implementation.
     pub fn arity(&self) -> Option<usize> {
         match self {
             Function::Constant(_) => Some(0),
@@ -66,6 +67,7 @@ impl Function {
             Function::FnN(_) => None,
         }
     }
+    /// `call` — see implementation.
 
     pub fn call(&self, args: &[f64]) -> f64 {
         match (self, args) {
@@ -77,22 +79,34 @@ impl Function {
         }
     }
 }
+/// `ErrorKind` — see variants.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorKind {
+    /// `UnknownFunction` variant.
     UnknownFunction,
+    /// `MissingClosingParen` variant.
     MissingClosingParen,
+    /// `TooFewArgs` variant.
     TooFewArgs,
+    /// `TooManyArgs` variant.
     TooManyArgs,
+    /// `MissingOperator` variant.
     MissingOperator,
+    /// `UnexpectedToken` variant.
     UnexpectedToken,
+    /// `LogicalOperator` variant.
     LogicalOperator,
+    /// `DivByZero` variant.
     DivByZero,
+    /// `NumberTooLarge` variant.
     NumberTooLarge,
+    /// `Unknown` variant.
     Unknown,
 }
 
 impl ErrorKind {
+    /// `describe_wstr` — see implementation.
     pub fn describe_wstr(&self) -> &'static wstr {
         match self {
             ErrorKind::UnknownFunction => wgettext!("Unknown function"),
@@ -110,25 +124,37 @@ impl ErrorKind {
         }
     }
 }
+/// `Error` — see fields for layout.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Error {
+    /// `kind` field.
     pub kind: ErrorKind,
+    /// `position` field.
     pub position: usize,
+    /// `len` field.
     pub len: usize,
 }
+/// `Operator` — see variants.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operator {
+    /// `Add` variant.
     Add,
+    /// `Sub` variant.
     Sub,
+    /// `Mul` variant.
     Mul,
+    /// `Div` variant.
     Div,
+    /// `Pow` variant.
     Pow,
+    /// `Rem` variant.
     Rem,
 }
 
 impl Operator {
+    /// `eval` — see implementation.
     pub fn eval(&self, a: f64, b: f64) -> f64 {
         match self {
             Operator::Add => a + b,
@@ -327,6 +353,7 @@ fn find_builtin(name: &wstr) -> Option<Function> {
 }
 
 impl<'s> State<'s> {
+    /// `new` — see implementation.
     pub fn new(input: &'s wstr) -> Self {
         let mut state = Self {
             start: input,
@@ -337,6 +364,7 @@ impl<'s> State<'s> {
         state.next_token();
         state
     }
+    /// `error` — see implementation.
 
     pub fn error(&self) -> Result<(), Error> {
         if let Token::End = self.current {
@@ -353,6 +381,7 @@ impl<'s> State<'s> {
             })
         }
     }
+    /// `eval` — see implementation.
 
     pub fn eval(&mut self) -> f64 {
         self.expr()
@@ -693,6 +722,7 @@ impl<'s> State<'s> {
         ret
     }
 }
+/// `te_interp` — see implementation.
 
 pub fn te_interp(expression: &wstr) -> Result<f64, Error> {
     let mut s = State::new(expression);

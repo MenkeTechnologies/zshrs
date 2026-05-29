@@ -39,6 +39,7 @@ pub fn path_get_data() -> Option<WString> {
 pub fn path_get_cache() -> Option<WString> {
     CACHE_DIRECTORY.path()
 }
+/// `DirRemoteness` — see variants.
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum DirRemoteness {
@@ -178,7 +179,9 @@ pub fn path_get_path(cmd: &wstr, vars: &dyn Environment) -> Option<WString> {
 /// If no candidate path is found, path will be empty and err will be set to ENOENT.
 /// Possible err values are taken from access().
 pub struct GetPathResult {
+    /// `err` field.
     pub err: Option<Errno>,
+    /// `path` field.
     pub path: WString,
 }
 impl GetPathResult {
@@ -186,6 +189,7 @@ impl GetPathResult {
         Self { err, path }
     }
 }
+/// `path_try_get_path` — see implementation.
 
 pub fn path_try_get_path(cmd: &wstr, vars: &dyn Environment) -> GetPathResult {
     if let Some(path) = vars.get(L!("PATH")) {
@@ -466,6 +470,7 @@ pub fn paths_are_equivalent(p1: &wstr, p2: &wstr) -> bool {
     // We matched if we consumed all of the characters in both strings.
     idx1 == len1 && idx2 == len2
 }
+/// `path_is_valid` — see implementation.
 
 pub fn path_is_valid(path: &wstr, working_directory: &wstr) -> bool {
     // Some special paths are always valid.

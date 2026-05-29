@@ -1,12 +1,17 @@
 use std::num::NonZeroI64;
 
 use super::*;
+/// `Sub` — see fields for layout.
 
 #[derive(Default)]
 pub struct Sub {
+    /// `length` field.
     length: Option<usize>,
+    /// `quiet` field.
     quiet: bool,
+    /// `start` field.
     start: Option<NonZeroI64>,
+    /// `end` field.
     end: Option<NonZeroI64>,
 }
 

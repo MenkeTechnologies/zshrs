@@ -12,6 +12,7 @@ use super::prelude::*;
 localizable_consts! {
     BUILTIN_ULIMIT_UNLIMITED "unlimited"
 }
+/// `limits` submodule.
 
 pub mod limits {
     /// Constants that exist everywhere (except perhaps Cygwin).
@@ -20,23 +21,33 @@ pub mod limits {
     pub mod common {
         use cfg_if::cfg_if;
         use libc;
+        /// `CORE` constant.
         pub const CORE: libc::c_int = libc::RLIMIT_CORE as _;
+        /// `DATA` constant.
         pub const DATA: libc::c_int = libc::RLIMIT_DATA as _;
+        /// `FSIZE` constant.
         pub const FSIZE: libc::c_int = libc::RLIMIT_FSIZE as _;
         cfg_if!(
             if #[cfg(any(cygwin, target_os = "illumos"))] {
+                /// `MEMLOCK` constant.
                 pub const MEMLOCK: libc::c_int = -1;
             } else {
+                /// `MEMLOCK` constant.
                 pub const MEMLOCK: libc::c_int = libc::RLIMIT_MEMLOCK as _;
             }
         );
+        /// `NOFILE` constant.
         pub const NOFILE: libc::c_int = libc::RLIMIT_NOFILE as _;
+        /// `STACK` constant.
         pub const STACK: libc::c_int = libc::RLIMIT_STACK as _;
+        /// `CPU` constant.
         pub const CPU: libc::c_int = libc::RLIMIT_CPU as _;
         cfg_if!(
             if #[cfg(any(cygwin, target_os = "illumos"))] {
+                /// `NPROC` constant.
                 pub const NPROC: libc::c_int = -1;
             } else {
+                /// `NPROC` constant.
                 pub const NPROC: libc::c_int = libc::RLIMIT_NPROC as _;
             }
         );
@@ -69,6 +80,7 @@ pub mod limits {
         target_os = "dragonfly",
         cygwin
     ))]
+    /// `AS` constant.
     pub const AS: libc::c_int = libc::RLIMIT_AS as _;
     // TODO(MSRV >= 1.86): target_os = "cygwin" triggers a warning on Rust 1.85.
     #[cfg(not(any(
@@ -80,6 +92,7 @@ pub mod limits {
         target_os = "dragonfly",
         cygwin
     )))]
+    /// `AS` constant.
     pub const AS: libc::c_int = -1;
     define_on!(SBSIZE, RLIMIT_SBSIZE; "freebsd", "netbsd", "dragonfly");
     define_on!(NICE, RLIMIT_NICE; "linux");
@@ -249,6 +262,7 @@ impl Default for Options {
         }
     }
 }
+/// `ulimit` — see implementation.
 
 pub fn ulimit(parser: &Parser, streams: &mut IoStreams, args: &mut [&wstr]) -> BuiltinResult {
     let cmd = args[0];

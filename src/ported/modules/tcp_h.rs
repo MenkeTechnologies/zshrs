@@ -29,6 +29,7 @@
 // + HAVE_INET_PTON are all present. Since libc::AF_INET6 is
 // unconditionally available on every platform zshrs supports
 // (macOS, Linux, *BSD), we treat IPv6 support as always-on.
+/// `SUPPORT_IPV6` constant.
 pub const SUPPORT_IPV6: bool = true; // c:71
 
 // =====================================================================
@@ -50,6 +51,7 @@ pub const SUPPORT_IPV6: bool = true; // c:71
 // of the three sockaddr shapes depending on the family bit. Rust port
 // uses #[repr(C)] union with a sockaddr_storage backing field so the
 // allocation is at least as wide as any sockaddr family.
+/// `tcp_sockaddr` union.
 #[allow(non_camel_case_types)]
 #[repr(C)]
 pub union tcp_sockaddr {
@@ -99,6 +101,7 @@ pub const ZTCP_ZFTP: i32 = 16; // c:85
 //     int flags;
 // };
 // ```
+/// `tcp_session` — see fields for layout.
 
 #[allow(non_camel_case_types)]
 #[repr(C)]

@@ -5,6 +5,7 @@
 pub struct FuncBodyFmt;
 
 impl FuncBodyFmt {
+    /// `render` — see implementation.
     pub fn render(body: &str) -> String {
         let mut lines: Vec<String> = Vec::new();
         let mut current = String::new();

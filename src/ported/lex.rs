@@ -866,7 +866,9 @@ thread_local! {
     /// `hgetc()` (lex.c:input.c); zshrs P7 collapses to an owned String
     /// until the inputstack subsystem is ported.
     pub static LEX_INPUT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    /// `LEX_POS` static.
     pub static LEX_POS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// `LEX_UNGET_BUF` static.
     pub static LEX_UNGET_BUF: std::cell::RefCell<std::collections::VecDeque<char>>
         = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
     /// `char *tokstr` (lex.c:170).
@@ -877,6 +879,7 @@ thread_local! {
     pub static LEX_TOKFD: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
     /// `zlong toklineno` (lex.c:198).
     pub static LEX_TOKLINENO: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+    /// `LEX_LINENO` static.
     pub static LEX_LINENO: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
     /// `int lexstop` (lex.c:175).
     pub static LEX_LEXSTOP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -3578,58 +3581,76 @@ pub fn lextok2_get(c: char) -> u8 {
 // `tokstr()`, `set_tok(v)`, etc.) provide read/write into LEX_*.
 
 // ─── Accessor ported for the LEX_* thread_locals (Src/lex.c file-statics) ───
+/// `toklineno` — see implementation.
 
 pub fn toklineno() -> u64 {
     LEX_TOKLINENO.get()
 }
+/// `set_toklineno` — see implementation.
 pub fn set_toklineno(v: u64) {
     LEX_TOKLINENO.set(v);
 }
+/// `tokfd` — see implementation.
 pub fn tokfd() -> i32 {
     LEX_TOKFD.get()
 }
+/// `set_tokfd` — see implementation.
 pub fn set_tokfd(v: i32) {
     LEX_TOKFD.set(v);
 }
+/// `isnewlin` — see implementation.
 pub fn isnewlin() -> i32 {
     LEX_ISNEWLIN.get()
 }
+/// `set_isnewlin` — see implementation.
 pub fn set_isnewlin(v: i32) {
     LEX_ISNEWLIN.set(v);
 }
+/// `inrepeat` — see implementation.
 pub fn inrepeat() -> i32 {
     LEX_INREPEAT.get()
 }
+/// `set_inrepeat` — see implementation.
 pub fn set_inrepeat(v: i32) {
     LEX_INREPEAT.set(v);
 }
+/// `infor` — see implementation.
 pub fn infor() -> i32 {
     LEX_INFOR.get()
 }
+/// `set_infor` — see implementation.
 pub fn set_infor(v: i32) {
     LEX_INFOR.set(v);
 }
+/// `inredir` — see implementation.
 pub fn inredir() -> bool {
     LEX_INREDIR.get()
 }
+/// `set_inredir` — see implementation.
 pub fn set_inredir(v: bool) {
     LEX_INREDIR.set(v);
 }
+/// `intypeset` — see implementation.
 pub fn intypeset() -> bool {
     LEX_INTYPESET.get()
 }
+/// `set_intypeset` — see implementation.
 pub fn set_intypeset(v: bool) {
     LEX_INTYPESET.set(v);
 }
+/// `lineno` — see implementation.
 pub fn lineno() -> u64 {
     LEX_LINENO.get()
 }
+/// `set_lineno` — see implementation.
 pub fn set_lineno(v: u64) {
     LEX_LINENO.set(v);
 }
+/// `incmdpos` — see implementation.
 pub fn incmdpos() -> bool {
     LEX_INCMDPOS.get()
 }
+/// `set_incmdpos` — see implementation.
 pub fn set_incmdpos(v: bool) {
     LEX_INCMDPOS.set(v);
 }
@@ -3639,6 +3660,7 @@ pub fn set_incmdpos(v: bool) {
 pub fn nocorrect() -> i32 {
     LEX_NOCORRECT.get()
 }
+/// `set_nocorrect` — see implementation.
 pub fn set_nocorrect(v: i32) {
     LEX_NOCORRECT.set(v);
 }
@@ -3648,12 +3670,15 @@ pub fn set_nocorrect(v: i32) {
 pub fn noaliases() -> bool {
     LEX_NOALIASES.get()
 }
+/// `set_noaliases` — see implementation.
 pub fn set_noaliases(v: bool) {
     LEX_NOALIASES.set(v);
 }
+/// `incond` — see implementation.
 pub fn incond() -> i32 {
     LEX_INCOND.get()
 }
+/// `set_incond` — see implementation.
 pub fn set_incond(v: i32) {
     LEX_INCOND.set(v);
 }
@@ -3664,9 +3689,11 @@ pub fn set_incond(v: i32) {
 // `AtomicI32` so `histcharssetfn` (`Src/params.c:5095-5097`) can
 // update them when `$HISTCHARS` changes. Local stale-const copies
 // removed — readers now go through the atomic load directly.
+/// `incasepat` — see implementation.
 pub fn incasepat() -> i32 {
     LEX_INCASEPAT.get()
 }
+/// `set_incasepat` — see implementation.
 pub fn set_incasepat(v: i32) {
     LEX_INCASEPAT.set(v);
 }
@@ -3674,6 +3701,7 @@ pub fn set_incasepat(v: i32) {
 pub fn tokstr() -> Option<String> {
     LEX_TOKSTR.with_borrow(|t| t.clone())
 }
+/// `set_tokstr` — see implementation.
 pub fn set_tokstr(v: Option<String>) {
     LEX_TOKSTR.with_borrow_mut(|t| *t = v);
 }
@@ -3681,12 +3709,15 @@ pub fn set_tokstr(v: Option<String>) {
 pub fn tok() -> lextok {
     LEX_TOK.get()
 }
+/// `set_tok` — see implementation.
 pub fn set_tok(v: lextok) {
     LEX_TOK.set(v);
 }
+/// `pos` — see implementation.
 pub fn pos() -> usize {
     LEX_POS.get()
 }
+/// `set_pos` — see implementation.
 pub fn set_pos(v: usize) {
     LEX_POS.set(v);
 }
@@ -3752,8 +3783,11 @@ pub fn lex_init(input: &str) {
 // `cmd_or_math()` and `cmd_or_math_sub()` return one of these as `int`.
 // Following the same flat-const pattern zshrs uses for lextok
 // (zsh_h.rs:198-251) so call sites read the C identifier verbatim.
+/// `CMD_OR_MATH_CMD` constant.
 pub const CMD_OR_MATH_CMD: i32 = 0;
+/// `CMD_OR_MATH_MATH` constant.
 pub const CMD_OR_MATH_MATH: i32 = 1;
+/// `CMD_OR_MATH_ERR` constant.
 pub const CMD_OR_MATH_ERR: i32 = 2;
 
 /// Check recursion depth; returns true if exceeded
@@ -4150,6 +4184,7 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
     }
     (out, i)
 }
+/// `untokenize` — see implementation.
 
 pub fn untokenize(s: &str) -> String {
     let mut result = String::with_capacity(s.len());

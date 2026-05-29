@@ -5,6 +5,7 @@ use fish_common::escape;
 
 static DO_TRACE: RelaxedAtomicBool = RelaxedAtomicBool::new(false);
 static DO_TRACE_ALL: RelaxedAtomicBool = RelaxedAtomicBool::new(false);
+/// `trace_set_enabled` — see implementation.
 
 pub fn trace_set_enabled(enable: Vec<WString>) {
     DO_TRACE.store(!enable.is_empty());
@@ -24,6 +25,7 @@ pub fn trace_enabled(parser: &Parser) -> bool {
 
 /// Trace an "argv": a list of arguments where the first is the command.
 // Allow the `&Vec` parameter as this function only exists temporarily for the FFI
+/// `trace_argv` — see implementation.
 pub fn trace_argv<S: AsRef<wstr>>(parser: &Parser, command: &wstr, args: &[S]) {
     // Format into a string to prevent interleaving with flog in other threads.
     // Add the + prefix.

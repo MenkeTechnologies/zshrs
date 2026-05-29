@@ -114,6 +114,7 @@ pub struct stypat {
     pub eval: Option<Eprog>,       // c:102 Eprog eval
     pub vals: Vec<String>,         // c:103 char **vals
 }
+/// `Stypat` type alias.
 pub type Stypat = Box<stypat>;
 
 /// `Style` mirroring Src/Modules/zutil.c:91-94.
@@ -122,6 +123,7 @@ pub struct style {
     pub node: hashnode,       // c:92 struct hashnode node
     pub pats: Option<Stypat>, // c:93 Stypat pats (sorted by weight)
 }
+/// `Style` type alias.
 pub type Style = Box<style>;
 
 /// Global `zstyletab` mirror — port of the static
@@ -2099,7 +2101,9 @@ pub struct zoptdesc {
     pub arr: Option<String>,
     pub next: Option<Box<zoptdesc>>,
 }
+/// `Zoptdesc` type alias.
 pub type Zoptdesc = Box<zoptdesc>;
+/// `zoptarr` — see fields for layout.
 #[derive(Clone)]
 #[allow(non_camel_case_types)]
 pub struct zoptarr {
@@ -2108,6 +2112,7 @@ pub struct zoptarr {
     pub num: i32,
     pub next: Option<Box<zoptarr>>,
 }
+/// `Zoptarr` type alias.
 pub type Zoptarr = Box<zoptarr>;
 
 /// Port of `static Zoptdesc opt_descs` from
@@ -2120,6 +2125,7 @@ pub static OPT_DESCS: std::sync::Mutex<Option<Zoptdesc>> = std::sync::Mutex::new
 /// `Src/Modules/zutil.c:1555`. Head of the array-slot linked list
 /// each `Zoptdesc.arr` points into.
 pub static OPT_ARRS: std::sync::Mutex<Option<Zoptarr>> = std::sync::Mutex::new(None); // c:1555
+/// `zoptval` — see fields for layout.
 
 #[allow(non_camel_case_types)]
 
@@ -2127,6 +2133,7 @@ pub struct zoptval {
     pub name: String,
     pub arg: String,
 }
+/// `Zoptval` type alias.
 pub type Zoptval = Box<zoptval>;
 
 // =====================================================================
@@ -3013,7 +3020,9 @@ pub fn finish_(m: *const module) -> i32 {
 /// — `None` means the var was unset.
 pub struct MatchData {
     pub r#match: Option<Vec<String>>,
+    /// `mbegin` field.
     pub mbegin: Option<Vec<String>>,
+    /// `mend` field.
     pub mend: Option<Vec<String>>,
 }
 
@@ -3029,9 +3038,11 @@ pub struct MatchData {
 // uses a `HashMap<String, Vec<stypat>>` while the canonical
 // `hashtable` port lands; the canonical `style` / `stypat` structs
 // already exist at lines 1608 / 1596 below.
+/// `style_table` — see fields for layout.
 #[allow(non_camel_case_types)]
 #[derive(Default)]
 pub struct style_table {
+    /// `styles` field.
     styles: HashMap<String, Vec<stypat>>,
 }
 
@@ -3050,8 +3061,11 @@ struct ZFormat;
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
 pub struct zstyle_entry {
+    /// `pattern` field.
     pub pattern: String,
+    /// `style` field.
     pub style: String,
+    /// `values` field.
     pub values: Vec<String>,
 }
 
@@ -3068,6 +3082,7 @@ pub struct RParseState {
     // (Box<(patprog, Vec<u8>)>) — the byte buffer holds the compiled
     // pattern image referenced by `patprog::p`. Use the canonical
     // pattern::Patprog so pattry() reads the right shape end-to-end.
+    /// `patprog` field.
     pub patprog: Option<crate::ported::pattern::Patprog>,
     pub guard: Option<String>,  // c:1097
     pub action: Option<String>, // c:1098
@@ -3097,6 +3112,7 @@ pub struct RParseResult {
 /// `rparseargs` — C global at zutil.c:1113. Cursor into the input
 /// argv being parsed. Thread-local per zsh evaluator.
 thread_local! {
+    /// `RPARSEARGS` static.
     pub static RPARSEARGS: std::cell::RefCell<std::collections::VecDeque<String>>
         = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
 }
@@ -3105,6 +3121,7 @@ thread_local! {
 /// allocated during a parse run (so they can be freed by popheap).
 /// Rust drops the Rc'd states when this list is cleared.
 thread_local! {
+    /// `RPARSESTATES` static.
     pub static RPARSESTATES: std::cell::RefCell<Vec<std::rc::Rc<std::cell::RefCell<RParseState>>>>
         = const { std::cell::RefCell::new(Vec::new()) };
 }
