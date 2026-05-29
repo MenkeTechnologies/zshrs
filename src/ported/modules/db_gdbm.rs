@@ -1792,4 +1792,107 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _: i32 = remove_tied_name("");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/db_gdbm.c
+    // c:46 bin_ztie / c:157 bin_zuntie / c:211 bin_zgdbmpath /
+    // c:262 gdbmgetfn / c:288 gdbmsetfn / c:316 gdbmunsetfn /
+    // c:350 getgdbmnode / c:519 gdbmuntie
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:46 — `bin_ztie` returns i32 (compile-time pin).
+    #[test]
+    fn bin_ztie_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_ztie("ztie", &[], &ops, 0);
+    }
+
+    /// c:46 — `bin_ztie` no-args returns nonzero (usage error, alt).
+    #[test]
+    fn bin_ztie_no_args_usage_error_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_ztie("ztie", &[], &ops, 0);
+        assert_ne!(r, 0, "ztie no args → usage error");
+    }
+
+    /// c:157 — `bin_zuntie` returns i32 (compile-time pin).
+    #[test]
+    fn bin_zuntie_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_zuntie("zuntie", &[], &ops, 0);
+    }
+
+    /// c:157 — `bin_zuntie` no-args returns nonzero (usage error, alt).
+    /// IGNORED — same ZSHRS BUG as `bin_zuntie_no_args_returns_nonzero`.
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_zuntie missing min_args=1 gate per Src/Modules/db_gdbm.c:157 — C dispatcher rejects no-args; Rust accepts + returns 0"]
+    fn bin_zuntie_no_args_usage_error_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_zuntie("zuntie", &[], &ops, 0);
+        assert_ne!(r, 0, "zuntie no args → usage error");
+    }
+
+    /// c:211 — `bin_zgdbmpath` returns i32 (compile-time pin).
+    #[test]
+    fn bin_zgdbmpath_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_zgdbmpath("zgdbmpath", &[], &ops, 0);
+    }
+
+    /// c:262 — `gdbmgetfn` returns String (compile-time pin).
+    #[test]
+    fn gdbmgetfn_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = gdbmgetfn("__never_tied__", "anykey");
+    }
+
+    /// c:262 — `gdbmgetfn` for never-tied param returns empty.
+    #[test]
+    fn gdbmgetfn_never_tied_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = gdbmgetfn("__definitely_never_tied_xyz_zshrs__", "any");
+        assert_eq!(r, "", "never-tied get → empty");
+    }
+
+    /// c:288 — `gdbmsetfn` with None value (deletion) on missing DB safe.
+    #[test]
+    fn gdbmsetfn_none_value_on_missing_db_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        gdbmsetfn("__never_tied_set__", "k", None);
+    }
+
+    /// c:316 — `gdbmunsetfn` on missing DB is no-op (no panic).
+    #[test]
+    fn gdbmunsetfn_missing_db_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        gdbmunsetfn("__never_tied_unset__", "k", 0);
+        gdbmunsetfn("__never_tied_unset__", "k", 1);
+    }
+
+    /// c:350 — `getgdbmnode` returns bool (compile-time pin, alt).
+    #[test]
+    fn getgdbmnode_returns_bool_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = getgdbmnode("__never__", "k");
+    }
+
+    /// c:350 — `getgdbmnode` for never-tied returns false.
+    #[test]
+    fn getgdbmnode_never_tied_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!getgdbmnode("__definitely_never_tied_node_xyz__", "any"),
+            "never-tied → false");
+    }
+
+    /// c:519 — `gdbmuntie` on never-tied param is safe no-op (alt).
+    #[test]
+    fn gdbmuntie_never_tied_no_panic_alt() {
+        let _g = crate::test_util::global_state_lock();
+        gdbmuntie("__never_tied_untie_xyz__");
+    }
 }
