@@ -1305,4 +1305,126 @@ mod tests {
                 "CGF_* flag {} must be a single bit", v);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/comp.h
+    // c:364-440 CPN_*/CP_* completion-param flags + hook offsets c:447-451
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:364-440 — every CP_* equals 1 << CPN_* (definition contract).
+    #[test]
+    fn cp_flags_match_cpn_shift_definition() {
+        assert_eq!(CP_WORDS, 1u32 << CPN_WORDS, "c:365");
+        assert_eq!(CP_REDIRS, 1u32 << CPN_REDIRS, "c:367");
+        assert_eq!(CP_CURRENT, 1u32 << CPN_CURRENT, "c:369");
+        assert_eq!(CP_PREFIX, 1u32 << CPN_PREFIX, "c:371");
+        assert_eq!(CP_SUFFIX, 1u32 << CPN_SUFFIX, "c:373");
+    }
+
+    /// c:419-440 — high-bit CP_* still match `1 << CPN_*`.
+    #[test]
+    fn cp_high_bit_flags_match_cpn_shift_definition() {
+        assert_eq!(CP_UNAMBIGP, 1u32 << CPN_UNAMBIGP, "c:420");
+        assert_eq!(CP_INSERTP, 1u32 << CPN_INSERTP, "c:422");
+        assert_eq!(CP_LISTMAX, 1u32 << CPN_LISTMAX, "c:424");
+        assert_eq!(CP_LASTPROMPT, 1u32 << CPN_LASTPROMPT, "c:426");
+        assert_eq!(CP_TOEND, 1u32 << CPN_TOEND, "c:428");
+        assert_eq!(CP_OLDLIST, 1u32 << CPN_OLDLIST, "c:430");
+        assert_eq!(CP_OLDINS, 1u32 << CPN_OLDINS, "c:432");
+        assert_eq!(CP_VARED, 1u32 << CPN_VARED, "c:434");
+        assert_eq!(CP_LISTLINES, 1u32 << CPN_LISTLINES, "c:436");
+        assert_eq!(CP_QUOTES, 1u32 << CPN_QUOTES, "c:438");
+        assert_eq!(CP_IGNORED, 1u32 << CPN_IGNORED, "c:440");
+    }
+
+    /// c:364-440 — CPN_* indices are pairwise distinct and in 0..=25.
+    #[test]
+    fn cpn_indices_pairwise_distinct_and_in_range() {
+        let cpns: Vec<i32> = vec![
+            CPN_WORDS, CPN_REDIRS, CPN_CURRENT, CPN_PREFIX, CPN_SUFFIX,
+            CPN_UNAMBIGP, CPN_INSERTP, CPN_LISTMAX, CPN_LASTPROMPT,
+            CPN_TOEND, CPN_OLDLIST, CPN_OLDINS, CPN_VARED, CPN_LISTLINES,
+            CPN_QUOTES, CPN_IGNORED,
+        ];
+        let unique: std::collections::HashSet<_> = cpns.iter().copied().collect();
+        assert_eq!(unique.len(), cpns.len(), "CPN_* must be pairwise distinct");
+        for &v in &cpns {
+            assert!(v >= 0 && v <= 25,
+                "CPN_* index {} must be in 0..=25 range", v);
+        }
+    }
+
+    /// c:443 — `CP_ALLKEYS = 0x3ffffff` (low 26 bits set).
+    #[test]
+    fn cp_allkeys_is_low_26_bits() {
+        assert_eq!(CP_ALLKEYS, (1u32 << 26) - 1,
+            "CP_ALLKEYS must be (1<<26)-1 = 0x3ffffff");
+    }
+
+    /// c:442 — `CP_KEYPARAMS = 26` (matches the bit-count of CP_ALLKEYS).
+    #[test]
+    fn cp_keyparams_count_matches_allkeys_bit_width() {
+        assert_eq!(CP_KEYPARAMS, 26,
+            "CP_KEYPARAMS must equal CP_ALLKEYS bit count");
+        assert_eq!((CP_ALLKEYS + 1).trailing_zeros() as i32, CP_KEYPARAMS,
+            "CP_ALLKEYS+1 leading bit position = CP_KEYPARAMS");
+    }
+
+    /// c:447-451 — hook offsets are contiguous 0..=4.
+    #[test]
+    fn hook_offsets_contiguous_zero_through_four() {
+        assert_eq!(INSERTMATCHHOOK_OFFSET, 0, "c:447");
+        assert_eq!(MENUSTARTHOOK_OFFSET, 1, "c:448");
+        assert_eq!(COMPCTLMAKEHOOK_OFFSET, 2, "c:449");
+        assert_eq!(COMPCTLCLEANUPHOOK_OFFSET, 3, "c:450");
+        assert_eq!(COMPLISTMATCHESHOOK_OFFSET, 4, "c:451");
+    }
+
+    /// c:447-451 — hook offsets are pairwise distinct.
+    #[test]
+    fn hook_offsets_pairwise_distinct() {
+        let offs = [INSERTMATCHHOOK_OFFSET, MENUSTARTHOOK_OFFSET,
+                    COMPCTLMAKEHOOK_OFFSET, COMPCTLCLEANUPHOOK_OFFSET,
+                    COMPLISTMATCHESHOOK_OFFSET];
+        let unique: std::collections::HashSet<_> = offs.iter().copied().collect();
+        assert_eq!(unique.len(), offs.len(),
+            "hook offsets must be pairwise distinct");
+    }
+
+    /// c:474 — CM_SPACE = 2 (canonical match-spec flag).
+    #[test]
+    fn cm_space_canonical_value() {
+        assert_eq!(CM_SPACE, 2, "c:474");
+    }
+
+    /// c:364-440 — every CPN_* fits the u32 shift width (< 32).
+    #[test]
+    fn cpn_indices_fit_in_u32_shift() {
+        for &v in &[CPN_WORDS, CPN_REDIRS, CPN_CURRENT, CPN_PREFIX,
+                    CPN_SUFFIX, CPN_UNAMBIGP, CPN_INSERTP, CPN_LISTMAX,
+                    CPN_LASTPROMPT, CPN_TOEND, CPN_OLDLIST, CPN_OLDINS,
+                    CPN_VARED, CPN_LISTLINES, CPN_QUOTES, CPN_IGNORED] {
+            assert!((v as u32) < 32, "CPN_* index {} must fit u32 shift", v);
+        }
+    }
+
+    /// c:447-451 — every hook offset is a usize (compile-time type pin).
+    #[test]
+    fn hook_offsets_are_valid_usize_indices() {
+        let _: usize = INSERTMATCHHOOK_OFFSET;
+        let _: usize = MENUSTARTHOOK_OFFSET;
+        let _: usize = COMPCTLMAKEHOOK_OFFSET;
+        let _: usize = COMPCTLCLEANUPHOOK_OFFSET;
+        let _: usize = COMPLISTMATCHESHOOK_OFFSET;
+    }
+
+    /// c:443 — CP_WORDS (bit 0) and CP_IGNORED (bit 25) are both inside
+    /// CP_ALLKEYS — bitwise AND yields the flag itself.
+    #[test]
+    fn cp_allkeys_contains_endpoints() {
+        assert_eq!(CP_WORDS & CP_ALLKEYS, CP_WORDS,
+            "CP_WORDS (bit 0) ⊆ CP_ALLKEYS");
+        assert_eq!(CP_IGNORED & CP_ALLKEYS, CP_IGNORED,
+            "CP_IGNORED (bit 25) ⊆ CP_ALLKEYS");
+    }
 }
