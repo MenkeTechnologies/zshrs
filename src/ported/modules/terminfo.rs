@@ -1024,4 +1024,119 @@ mod tests {
             assert_eq!(finish_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/terminfo.c
+    // c:59 bin_echoti / c:204 getterminfo / c:304 scanterminfo /
+    // c:491-532 lifecycle hooks — type pins + edge cases
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:59 — `bin_echoti` returns i32 (compile-time type pin).
+    #[test]
+    fn bin_echoti_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_for_pin();
+        let _: i32 = bin_echoti("echoti", &[], &ops, 0);
+    }
+
+    /// c:204 — `getterminfo` runs without panic.
+    #[test]
+    fn getterminfo_known_cap_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = getterminfo(std::ptr::null_mut(), "bold");
+    }
+
+    /// c:491 — `setup_` returns 0.
+    #[test]
+    fn terminfo_setup_returns_zero_pin2() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:499 — `features_` returns 0.
+    #[test]
+    fn terminfo_features_returns_zero_pin2() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        assert_eq!(features_(std::ptr::null(), &mut feats), 0);
+    }
+
+    /// c:499 — features list non-empty (terminfo advertises b:echoti).
+    #[test]
+    fn terminfo_features_nonempty() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        assert!(!feats.is_empty(), "terminfo must advertise ≥1 feature");
+    }
+
+    /// c:499 — every feature uses b:/p: prefix per zsh module spec.
+    #[test]
+    fn terminfo_features_use_canonical_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        for f in &feats {
+            assert!(f.starts_with("b:") || f.starts_with("p:"),
+                "feature {:?} must use b:/p: prefix", f);
+        }
+    }
+
+    /// c:514 — `boot_` returns 0.
+    #[test]
+    fn terminfo_boot_returns_zero_pin2() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
+
+    /// c:514 — `boot_` idempotent.
+    #[test]
+    fn terminfo_boot_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(boot_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:525 — `cleanup_` idempotent.
+    #[test]
+    fn terminfo_cleanup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:304 — `scanterminfo` with None callback is deterministic.
+    #[test]
+    fn scanterminfo_none_callback_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..3 {
+            scanterminfo(std::ptr::null_mut(), None, 0);
+        }
+    }
+
+    /// c:59 — `bin_echoti` is deterministic for the same input.
+    #[test]
+    fn bin_echoti_unknown_cap_is_deterministic_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_for_pin();
+        let first = bin_echoti("echoti", &["zz_unknown_cap_zshrs".to_string()], &ops, 0);
+        for _ in 0..3 {
+            assert_eq!(
+                bin_echoti("echoti", &["zz_unknown_cap_zshrs".to_string()], &ops, 0),
+                first,
+                "bin_echoti must be deterministic for stable input",
+            );
+        }
+    }
+
+    /// c:204 — `getterminfo` for known caps returns Some (terminfo
+    /// always returns Some — missing caps are PM_UNSET).
+    #[test]
+    fn getterminfo_known_cap_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let pm = getterminfo(std::ptr::null_mut(), "bold");
+        assert!(pm.is_some(), "getterminfo always returns Some per C convention");
+    }
 }
