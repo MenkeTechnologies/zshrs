@@ -5331,4 +5331,106 @@ mod tests {
         assert_eq!(lastbase(), 8);
         set_lastbase(saved);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/math.c
+    // c:889 outputradix / c:894 outputunderscore / c:901 reset_output_format
+    // c:1022 m_noeval / c:1049 lastbase / c:2952 matheval / c:2995 mathevali
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:889 — `outputradix` returns i32 (compile-time type pin).
+    #[test]
+    fn outputradix_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = outputradix();
+    }
+
+    /// c:894 — `outputunderscore` returns i32 (compile-time type pin).
+    #[test]
+    fn outputunderscore_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = outputunderscore();
+    }
+
+    /// c:1022 — `m_noeval` returns i32 (compile-time type pin).
+    #[test]
+    fn m_noeval_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = m_noeval();
+    }
+
+    /// c:1022 + c:1029 — `m_noeval` set/get round-trip preserves value.
+    #[test]
+    fn m_noeval_set_get_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = m_noeval();
+        m_noeval_set(42);
+        assert_eq!(m_noeval(), 42, "m_noeval round-trips");
+        m_noeval_set(saved);
+    }
+
+    /// c:1049 — `lastbase` returns i32 (compile-time type pin).
+    #[test]
+    fn lastbase_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = lastbase();
+    }
+
+    /// c:2952 — `matheval("")` empty returns Result<mnumber, String> type.
+    #[test]
+    fn matheval_returns_result_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<mnumber, String> = matheval("");
+    }
+
+    /// c:2995 — `mathevali("")` empty returns Result<i64, String>.
+    #[test]
+    fn mathevali_returns_result_i64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<i64, String> = mathevali("");
+    }
+
+    /// c:2952 — `matheval("0")` returns Ok with l=0.
+    #[test]
+    fn matheval_zero_returns_ok_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = matheval("0").expect("0 must parse");
+        assert_eq!(r.l, 0, "matheval('0').l = 0");
+    }
+
+    /// c:2995 — `mathevali("1+1")` returns Ok(2).
+    #[test]
+    fn mathevali_simple_addition_returns_two() {
+        let _g = crate::test_util::global_state_lock();
+        let r = mathevali("1+1").expect("1+1 must parse");
+        assert_eq!(r, 2, "1+1 must equal 2");
+    }
+
+    /// c:2952 — `matheval` is pure for the same input (no side effects).
+    #[test]
+    fn matheval_is_pure_for_constants() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["0", "1", "42", "100"] {
+            let first = matheval(s).map(|r| r.l).unwrap_or(0);
+            for _ in 0..3 {
+                let r = matheval(s).map(|r| r.l).unwrap_or(0);
+                assert_eq!(r, first, "matheval({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:2995 — `mathevali` accepts an undefined identifier as 0/parameter
+    /// lookup per zsh math semantics (unset → 0); pin the deterministic
+    /// fallback behavior rather than expecting Err. C body c:3030+
+    /// passes unknown idents through `getmathparam` which returns 0 for
+    /// unset names by zsh-default contract.
+    #[test]
+    fn mathevali_undefined_ident_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = mathevali("__never_real_var_xyz__");
+        for _ in 0..3 {
+            assert_eq!(mathevali("__never_real_var_xyz__"), first,
+                "mathevali on undefined ident must be deterministic");
+        }
+    }
 }
