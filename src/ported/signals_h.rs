@@ -922,4 +922,128 @@ mod tests {
         assert_ne!(t, h);
         assert_ne!(k, q);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/signals.h macros + helpers.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `sigs_name(0)` returns "EXIT" (pseudo-signal slot 0).
+    #[test]
+    fn sigs_name_zero_returns_exit_pseudo() {
+        assert_eq!(sigs_name(0), Some("EXIT"));
+    }
+
+    /// `sigs_name(SIGZERR)` returns "ZERR" (pseudo-signal SIGCOUNT+1).
+    #[test]
+    fn sigs_name_sigzerr_returns_zerr() {
+        assert_eq!(sigs_name(SIGZERR), Some("ZERR"));
+    }
+
+    /// `sigs_name(SIGDEBUG)` returns "DEBUG" (pseudo-signal SIGCOUNT+2).
+    #[test]
+    fn sigs_name_sigdebug_returns_debug() {
+        assert_eq!(sigs_name(SIGDEBUG), Some("DEBUG"));
+    }
+
+    /// `sigs_name(-1)` returns None (no such signal).
+    #[test]
+    fn sigs_name_neg_one_returns_none() {
+        assert!(sigs_name(-1).is_none());
+    }
+
+    /// `sigs_name(99999)` returns None (unknown signal).
+    #[test]
+    fn sigs_name_out_of_range_returns_none_pin() {
+        assert!(sigs_name(99999).is_none());
+    }
+
+    /// `sigs_number` strips leading "SIG" prefix.
+    #[test]
+    fn sigs_number_strips_sig_prefix() {
+        let bare = sigs_number("INT").expect("INT");
+        let prefixed = sigs_number("SIGINT").expect("SIGINT");
+        assert_eq!(bare, prefixed, "SIG prefix must be transparent");
+    }
+
+    /// `sigs_number` for canonical POSIX signals returns Some.
+    #[test]
+    fn sigs_number_posix_signals_resolve() {
+        for s in &["HUP", "INT", "QUIT", "TERM", "KILL", "USR1", "USR2"] {
+            assert!(sigs_number(s).is_some(), "{:?} must resolve", s);
+        }
+    }
+
+    /// `sigs_number` for unknown name returns None.
+    #[test]
+    fn sigs_number_unknown_returns_none_pin() {
+        assert!(sigs_number("NEVER_REAL_SIGNAL").is_none());
+        assert!(sigs_number("").is_none(), "empty string → None");
+    }
+
+    /// `sigs_number` is deterministic.
+    #[test]
+    fn sigs_number_is_deterministic() {
+        for s in &["INT", "TERM", "NEVER_REAL", ""] {
+            let first = sigs_number(s);
+            for _ in 0..5 {
+                assert_eq!(sigs_number(s), first, "{:?} must be pure", s);
+            }
+        }
+    }
+
+    /// SIGNUM (non-Linux): identity for any input.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn signum_non_linux_is_identity() {
+        for x in &[0i32, 1, 10, 100, 1000, -1] {
+            assert_eq!(SIGNUM(*x), *x, "non-Linux SIGNUM is identity");
+        }
+    }
+
+    /// SIGIDX (non-Linux): identity for any input.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn sigidx_non_linux_is_identity() {
+        for x in &[0i32, 1, 10, 100, 1000, -1] {
+            assert_eq!(SIGIDX(*x), *x, "non-Linux SIGIDX is identity");
+        }
+    }
+
+    /// queue_signals / unqueue_signals round-trip safely.
+    #[test]
+    fn queue_unqueue_signals_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        queue_signals();
+        unqueue_signals();
+    }
+
+    /// queue_signal_level returns the queue depth.
+    #[test]
+    fn queue_signal_level_returns_nonneg() {
+        let _g = crate::test_util::global_state_lock();
+        let lvl = queue_signal_level();
+        assert!(lvl >= 0, "queue level must be ≥ 0, got {}", lvl);
+    }
+
+    /// queue_signals → unqueue_signals → level returns to where it was.
+    #[test]
+    fn queue_unqueue_preserves_level() {
+        let _g = crate::test_util::global_state_lock();
+        let before = queue_signal_level();
+        queue_signals();
+        unqueue_signals();
+        let after = queue_signal_level();
+        assert_eq!(before, after, "round-trip preserves queue level");
+    }
+
+    /// `dont_queue_signals()` + `restore_queue_signals(q)` round-trip.
+    #[test]
+    fn dont_queue_restore_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let before = queue_signal_level();
+        dont_queue_signals();
+        restore_queue_signals(before);
+        let after = queue_signal_level();
+        assert_eq!(before, after);
+    }
 }
