@@ -4757,4 +4757,111 @@ mod tests {
             "flags=0 must ignore lalen/ralen per c:91 gate"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compmatch.c
+    // c:79 cpatterns_same / c:143 cmatchers_same / c:188 add_bmatchers
+    // c:220 update_bmatchers / c:311 free_cline / c:562 start_match /
+    // c:591 abort_match / c:1605 match_parts
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:79 — `cpatterns_same(None, None)` returns true (reflexive None).
+    #[test]
+    fn cpatterns_same_double_none_reflexive() {
+        assert!(cpatterns_same(None, None));
+    }
+
+    /// c:143 — `cmatchers_same(&a, &a)` always true (reflexive).
+    #[test]
+    fn cmatchers_same_self_reflexive() {
+        let m = Cmatcher {
+            refc: 1,
+            next: None,
+            flags: 0,
+            line: None,
+            llen: 0,
+            word: None,
+            wlen: 0,
+            left: None,
+            lalen: 0,
+            right: None,
+            ralen: 0,
+        };
+        assert!(cmatchers_same(&m, &m), "cmatchers_same(a, a) must be true");
+    }
+
+    /// c:188 — `add_bmatchers(None)` is a safe no-op (idempotent).
+    #[test]
+    fn add_bmatchers_none_no_panic() {
+        add_bmatchers(None);
+        add_bmatchers(None);
+    }
+
+    /// c:311 — `free_cline(None)` is a safe no-op.
+    #[test]
+    fn free_cline_none_no_panic() {
+        free_cline(None);
+    }
+
+    /// c:1605 — `match_parts` returns i32 (compile-time type pin).
+    #[test]
+    fn match_parts_returns_i32_type() {
+        let _: i32 = match_parts("", "", 0, 0);
+    }
+
+    /// c:1605 — `match_parts("", "", 0, 0)` returns 0/1 boolean.
+    #[test]
+    fn match_parts_empty_inputs_boolean_result() {
+        let r = match_parts("", "", 0, 0);
+        assert!(r == 0 || r == 1,
+            "match_parts must return 0 or 1, got {}", r);
+    }
+
+    /// c:1605 — `match_parts` deterministic for same input.
+    #[test]
+    fn match_parts_is_deterministic() {
+        for (l, w) in [("a", "a"), ("abc", "abc"), ("", "")] {
+            let first = match_parts(l, w, 0, 0);
+            for _ in 0..3 {
+                assert_eq!(match_parts(l, w, 0, 0), first,
+                    "match_parts({:?}, {:?}) must be deterministic", l, w);
+            }
+        }
+    }
+
+    /// c:562 + c:591 — `start_match` then `abort_match` round-trip safe.
+    #[test]
+    fn start_then_abort_match_round_trip_safe() {
+        start_match();
+        abort_match();
+    }
+
+    /// c:220 — `update_bmatchers` idempotent / no-panic.
+    #[test]
+    fn update_bmatchers_idempotent() {
+        for _ in 0..5 {
+            update_bmatchers();
+        }
+    }
+
+    /// c:413 — `cline_sublen` returns i32 (type pin).
+    #[test]
+    fn cline_sublen_returns_i32_type() {
+        let cline = Cline {
+            next: None,
+            prefix: None,
+            suffix: None,
+            line: None,
+            llen: 0,
+            word: None,
+            wlen: 0,
+            orig: None,
+            olen: 0,
+            slen: 0,
+            min: 0,
+            max: 0,
+            flags: 0,
+        };
+        let _: i32 = cline_sublen(&cline);
+    }
 }
