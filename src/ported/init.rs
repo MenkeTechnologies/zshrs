@@ -2067,4 +2067,97 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(zleentry(0), None, "cmd=0 unwired without live ZLE");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/init.c
+    // c:464 tccap_get_name / c:1081 source / c:1116 sourcehome /
+    // c:1159 zleentry / c:1199 fallback_compctlread / c:1149 noop_function /
+    // c:1154 noop_function_int / c:1143 init_bltinmods
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:464 — `tccap_get_name` returns &'static str (compile-time type pin).
+    #[test]
+    fn tccap_get_name_returns_static_str_type() {
+        let _: &'static str = tccap_get_name(0);
+    }
+
+    /// c:1081 — `source("")` empty path returns i32 (compile-time pin).
+    #[test]
+    fn source_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = source("");
+    }
+
+    /// c:1081 — `source` is deterministic for the same nonexistent path.
+    #[test]
+    fn source_nonexistent_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = source("/__never_exists_zshrs_source__");
+        for _ in 0..3 {
+            assert_eq!(source("/__never_exists_zshrs_source__"), first,
+                "source must be deterministic");
+        }
+    }
+
+    /// c:1116 — `sourcehome("")` empty arg is safe.
+    #[test]
+    fn sourcehome_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        sourcehome("");
+    }
+
+    /// c:1159 — `zleentry` returns Option<String> (compile-time type pin).
+    #[test]
+    fn zleentry_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = zleentry(0);
+    }
+
+    /// c:1199 — `fallback_compctlread` returns i32.
+    #[test]
+    fn fallback_compctlread_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = fallback_compctlread("");
+    }
+
+    /// c:1199 — `fallback_compctlread` is deterministic for any name.
+    #[test]
+    fn fallback_compctlread_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for n in ["", "name", "anything"] {
+            let first = fallback_compctlread(n);
+            for _ in 0..3 {
+                assert_eq!(fallback_compctlread(n), first,
+                    "fallback_compctlread({:?}) must be deterministic", n);
+            }
+        }
+    }
+
+    /// c:1143 — `init_bltinmods` returns void (no panic check).
+    #[test]
+    fn init_bltinmods_no_panic_full_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            init_bltinmods();
+        }
+    }
+
+    /// c:1149 — `noop_function` returns void (compile-time void type).
+    #[test]
+    fn noop_function_signature_void() {
+        let _: () = noop_function();
+    }
+
+    /// c:1154 — `noop_function_int(N)` returns void.
+    #[test]
+    fn noop_function_int_signature_void() {
+        let _: () = noop_function_int(0);
+    }
+
+    /// c:1116 — `sourcehome("/")` root dir safe.
+    #[test]
+    fn sourcehome_root_dir_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        sourcehome("/");
+    }
 }
