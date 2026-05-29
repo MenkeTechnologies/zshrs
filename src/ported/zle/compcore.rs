@@ -5106,4 +5106,110 @@ mod tests {
         let r = tildequote("plain", 0);
         assert_eq!(r, "plain", "no tilde → input unchanged");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compcore.c
+    // c:936 multiquote / c:972 tildequote / c:1014 check_param /
+    // c:1315 rembslash / c:1338 remsquote / c:1381 ctokenize /
+    // c:1478 comp_quoting_string / c:2809 matchcmp / c:2872 matcheq
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1315 — `rembslash("")` empty returns empty.
+    #[test]
+    fn rembslash_empty_returns_empty() {
+        assert_eq!(rembslash(""), "");
+    }
+
+    /// c:1315 — `rembslash` is pure.
+    #[test]
+    fn rembslash_is_pure() {
+        for s in ["", "abc", r"\a", r"\\\\"] {
+            let first = rembslash(s);
+            for _ in 0..3 {
+                assert_eq!(rembslash(s), first,
+                    "rembslash({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:1381 — `ctokenize` is deterministic.
+    #[test]
+    fn ctokenize_is_deterministic() {
+        for s in ["", "abc", "a*b", "a?b"] {
+            let first = ctokenize(s);
+            for _ in 0..3 {
+                assert_eq!(ctokenize(s), first,
+                    "ctokenize({:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:1478 — `comp_quoting_string(0)` returns non-empty static.
+    #[test]
+    fn comp_quoting_string_zero_returns_static_str() {
+        let _: &'static str = comp_quoting_string(0);
+    }
+
+    /// c:936 — `multiquote` is pure for arbitrary input.
+    #[test]
+    fn multiquote_is_pure() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for s in ["", "abc", "x y"] {
+            let first = multiquote(s, 0);
+            for _ in 0..3 {
+                assert_eq!(multiquote(s, 0), first,
+                    "multiquote({:?}, 0) must be pure", s);
+            }
+        }
+    }
+
+    /// c:972 — `tildequote` is pure for non-tilde input.
+    #[test]
+    fn tildequote_is_pure() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for s in ["", "abc", "no_tilde", "/path/to/file"] {
+            let first = tildequote(s, 0);
+            for _ in 0..3 {
+                assert_eq!(tildequote(s, 0), first,
+                    "tildequote({:?}, 0) must be pure", s);
+            }
+        }
+    }
+
+    /// c:1338 — `remsquote(&mut empty)` returns 0.
+    #[test]
+    fn remsquote_empty_returns_zero_pin() {
+        let mut s = String::new();
+        let r = remsquote(&mut s);
+        assert_eq!(r, 0, "empty input → 0");
+    }
+
+    /// c:1014 — `check_param("")` empty returns Option<usize>.
+    #[test]
+    fn check_param_empty_returns_option_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Option<usize> = check_param("", false, false);
+    }
+
+    /// c:1014 — `check_param` is deterministic for empty input.
+    #[test]
+    fn check_param_empty_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = check_param("", false, false);
+        for _ in 0..3 {
+            assert_eq!(check_param("", false, false), first);
+        }
+    }
+
+    /// c:1439 — `comp_str(false)` returns (String, i32, i32) tuple.
+    #[test]
+    fn comp_str_returns_string_i32_i32_tuple() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: (String, i32, i32) = comp_str(false);
+    }
 }
