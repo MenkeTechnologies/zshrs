@@ -9511,4 +9511,145 @@ esac"#;
         let r = parse_event(crate::ported::lex::ENDINPUT);
         assert!(r.is_none(), "no tokens → no event");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/parse.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:399 — `ecadd(c)` returns the index where `c` was placed,
+    /// not the post-increment value. Sequential ecadd calls return
+    /// strictly increasing indices.
+    #[test]
+    fn ecadd_returns_strictly_increasing_indices() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let i0 = ecadd(0xDEAD);
+        let i1 = ecadd(0xBEEF);
+        let i2 = ecadd(0xC0DE);
+        assert!(i1 > i0, "ecadd indices must strictly increase, got {i0} then {i1}");
+        assert!(i2 > i1, "ecadd indices must strictly increase, got {i1} then {i2}");
+        assert_eq!(i1, i0 + 1, "consecutive ecadds advance by 1");
+        assert_eq!(i2, i1 + 1, "consecutive ecadds advance by 1");
+    }
+
+    /// c:413 — `ecdel(p)` removes one wordcode, shrinks ecused by 1.
+    /// Pin: subsequent ecadd reuses freed slot (ecused decreased).
+    #[test]
+    fn ecdel_shrinks_ecused_by_one() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let _i0 = ecadd(0xA);
+        let i1 = ecadd(0xB);
+        let _i2 = ecadd(0xC);
+        let next_before = ECUSED.get();
+        ecdel(i1);
+        let next_after = ECUSED.get();
+        assert_eq!(
+            next_after, next_before - 1,
+            "ecdel must decrement ecused by exactly 1"
+        );
+    }
+
+    /// c:399-405 — `ecadd` after exhausting buffer must grow it (no
+    /// panic on push past current eclen). Pin: 1000 adds don't crash.
+    #[test]
+    fn ecadd_grows_buffer_on_demand() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        for i in 0..1000 {
+            ecadd(i as u32);
+        }
+        // No panic = grow path works.
+        assert!(ECUSED.get() >= 1000, "1000 adds → ecused ≥ 1000");
+    }
+
+    /// c:426 — `ecstrcode` of short strings (≤4 bytes) returns a
+    /// packed inline wordcode (not an offset into the string region).
+    /// Pin: identical short strings get identical codes.
+    #[test]
+    fn ecstrcode_short_strings_are_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let a = ecstrcode("ab");
+        let b = ecstrcode("ab");
+        assert_eq!(a, b, "same short string must intern to same code");
+    }
+
+    /// c:426 — long strings (>4 bytes) hit the deduped string region.
+    /// Pin: same long string returns same code on repeat (registry
+    /// dedupes).
+    #[test]
+    fn ecstrcode_long_strings_dedupe_in_registry() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let a = ecstrcode("a-much-longer-test-string");
+        let b = ecstrcode("a-much-longer-test-string");
+        assert_eq!(a, b, "registry must dedupe identical long strings");
+    }
+
+    /// `clear_hdocs()` is idempotent — calling twice in a row leaves
+    /// HDOCS = None and LEX_HEREDOCS empty.
+    #[test]
+    fn clear_hdocs_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        clear_hdocs();
+        clear_hdocs();
+        HDOCS.with_borrow(|h| assert!(h.is_none(), "HDOCS must be None"));
+        LEX_HEREDOCS.with_borrow(|v| assert!(v.is_empty(), "LEX_HEREDOCS must be empty"));
+    }
+
+    /// `init_parse()` resets parse state to known empty defaults.
+    /// Multiple init_parse calls are safe (idempotent).
+    #[test]
+    fn init_parse_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        init_parse();
+        // No panic = pass.
+    }
+
+    /// `empty_eprog` returns true for a default-constructed eprog
+    /// (empty prog vec).
+    #[test]
+    fn empty_eprog_true_for_empty_prog() {
+        let _g = crate::test_util::global_state_lock();
+        let p = eprog {
+            prog: Vec::new(),
+            ..Default::default()
+        };
+        assert!(empty_eprog(&p), "empty prog vec → empty eprog");
+    }
+
+    /// `empty_eprog` returns true when prog[0] == WCB_END().
+    #[test]
+    fn empty_eprog_true_for_end_only_prog() {
+        let _g = crate::test_util::global_state_lock();
+        let p = eprog {
+            prog: vec![WCB_END()],
+            ..Default::default()
+        };
+        assert!(empty_eprog(&p), "WCB_END as first opcode → empty");
+    }
+
+    /// `ecadjusthere(p, d)` is safe to call when HDOCS is None.
+    #[test]
+    fn ecadjusthere_safe_when_hdocs_none() {
+        let _g = crate::test_util::global_state_lock();
+        clear_hdocs();
+        // No panic = pass.
+        ecadjusthere(0, 0);
+        ecadjusthere(100, -5);
+        ecadjusthere(0, 10);
+    }
+
+    /// `ecispace(p, n)` with n=0 is a no-op.
+    #[test]
+    fn ecispace_zero_n_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let before = ECUSED.get();
+        ecispace(0, 0);
+        let after = ECUSED.get();
+        assert_eq!(before, after, "ecispace(_, 0) must not advance ecused");
+    }
 }
