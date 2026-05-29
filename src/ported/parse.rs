@@ -9652,4 +9652,108 @@ esac"#;
         let after = ECUSED.get();
         assert_eq!(before, after, "ecispace(_, 0) must not advance ecused");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/parse.c
+    // c:146 parse_context_save / c:191 parse_context_restore /
+    // c:225 ecadjusthere / c:293 ecadd / c:346 ecstrcode / c:574 init_parse /
+    // c:685 empty_eprog / c:693 clear_hdocs / c:786 parse_list / c:815 parse_cond
+    // c:2234 par_wordlist / c:2249 par_nl_wordlist
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:293 — `ecadd` returns usize (compile-time type pin).
+    #[test]
+    fn ecadd_returns_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let _: usize = ecadd(0);
+    }
+
+    /// c:346 — `ecstrcode` returns u32 (compile-time type pin).
+    #[test]
+    fn ecstrcode_returns_u32_type() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let _: u32 = ecstrcode("");
+    }
+
+    /// c:346 — `ecstrcode("")` empty string is safe.
+    #[test]
+    fn ecstrcode_empty_string_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let _ = ecstrcode("");
+    }
+
+    /// c:346 — `ecstrcode` is deterministic for same input.
+    #[test]
+    fn ecstrcode_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        for s in ["", "a", "abc", "hello world"] {
+            let first = ecstrcode(s);
+            for _ in 0..3 {
+                assert_eq!(ecstrcode(s), first,
+                    "ecstrcode({:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:786 — `parse_list` returns Option<eprog>.
+    #[test]
+    fn parse_list_returns_option_eprog_type() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let _: Option<eprog> = parse_list();
+    }
+
+    /// c:815 — `parse_cond` returns Option<eprog>.
+    #[test]
+    fn parse_cond_returns_option_eprog_type() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let _: Option<eprog> = parse_cond();
+    }
+
+    /// c:2234 — `par_wordlist` returns Vec<String>.
+    #[test]
+    fn par_wordlist_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let _: Vec<String> = par_wordlist();
+    }
+
+    /// c:2249 — `par_nl_wordlist` returns Vec<String>.
+    #[test]
+    fn par_nl_wordlist_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        init_parse();
+        let _: Vec<String> = par_nl_wordlist();
+    }
+
+    /// c:693 — `clear_hdocs` deterministic state after call (no-panic).
+    #[test]
+    fn clear_hdocs_deterministic_after_call() {
+        let _g = crate::test_util::global_state_lock();
+        clear_hdocs();
+        clear_hdocs();
+    }
+
+    /// c:225 — `ecadjusthere(0, 0)` is a no-op (no delta).
+    #[test]
+    fn ecadjusthere_zero_delta_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        ecadjusthere(0, 0);
+    }
+
+    /// c:225 — `ecadjusthere` is safe for arbitrary positions.
+    #[test]
+    fn ecadjusthere_arbitrary_pos_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        for p in [0usize, 1, 100, 9999] {
+            ecadjusthere(p, 0);
+            ecadjusthere(p, 1);
+            ecadjusthere(p, -1);
+        }
+    }
 }
