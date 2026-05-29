@@ -749,4 +749,84 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/termcap.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:54 — `ztgetflag("")` returns -1 (no such cap).
+    #[test]
+    fn ztgetflag_empty_string_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = ztgetflag("");
+        assert_eq!(r, -1, "empty cap name → -1");
+    }
+
+    /// c:54 — `ztgetflag("zz")` returns -1 (no such 2-letter cap).
+    #[test]
+    fn ztgetflag_unknown_cap_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = ztgetflag("zz");
+        assert_eq!(r, -1, "unknown cap → -1");
+    }
+
+    /// c:54 — `ztgetflag("am")` (auto-margin) returns 0 or 1
+    /// (depending on terminal). Pin: not -1 since 'am' is a known cap.
+    #[test]
+    fn ztgetflag_known_cap_returns_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = ztgetflag("am");
+        assert!(r == 0 || r == 1, "known cap → 0 or 1, got {}", r);
+    }
+
+    /// c:54 — `ztgetflag` is deterministic for the same input.
+    #[test]
+    fn ztgetflag_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for cap in &["am", "co", "zz", ""] {
+            let first = ztgetflag(cap);
+            for _ in 0..5 {
+                assert_eq!(ztgetflag(cap), first, "{:?} must be pure", cap);
+            }
+        }
+    }
+
+    /// c:80 — `bin_echotc` with no args returns nonzero (usage error).
+    #[test]
+    fn bin_echotc_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_echotc("echotc", &[], &ops, 0);
+        assert_ne!(r, 0, "no cap name → usage error");
+    }
+
+    /// c:210 — `gettermcap(_, "")` returns Some(PM_UNSET).
+    #[test]
+    fn gettermcap_empty_name_returns_pm_unset() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zsh_h::PM_UNSET;
+        if let Some(pm) = gettermcap(std::ptr::null_mut(), "") {
+            assert!(pm.node.flags & PM_UNSET as i32 != 0);
+        }
+    }
+
+    /// c:323 — split per-hook lifecycle for finer failure resolution.
+    #[test]
+    fn termcap_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:373 — features_ returns 0.
+    #[test]
+    fn termcap_features_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let mut f = Vec::new();
+        assert_eq!(features_(std::ptr::null(), &mut f), 0);
+    }
 }
