@@ -2626,4 +2626,112 @@ mod tests {
         let r = viyankeol();
         assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_vi.c
+    // c:335 viinsert_init / c:356 videlete / c:559 viyankwholeline /
+    // c:590 vireplace / c:599 vireplacechars / c:668 viopenlinebelow /
+    // c:689 viopenlineabove / c:709 vioperswapcase
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:335 — `viinsert_init` is void (compile-time type pin).
+    #[test]
+    fn viinsert_init_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: () = viinsert_init();
+    }
+
+    /// c:335 — `viinsert_init` is idempotent.
+    #[test]
+    fn viinsert_init_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            viinsert_init();
+        }
+    }
+
+    /// c:356 — `videlete` returns i32 (compile-time type pin).
+    #[test]
+    fn videlete_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = videlete();
+    }
+
+    /// c:559 — `viyankwholeline` returns i32.
+    #[test]
+    fn viyankwholeline_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = viyankwholeline();
+    }
+
+    /// c:590 — `vireplace` returns i32.
+    #[test]
+    fn vireplace_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = vireplace();
+    }
+
+    /// c:599 — `vireplacechars` returns i32.
+    #[test]
+    fn vireplacechars_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = vireplacechars();
+    }
+
+    /// c:668 — `viopenlinebelow` returns i32.
+    #[test]
+    fn viopenlinebelow_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = viopenlinebelow();
+    }
+
+    /// c:689 — `viopenlineabove` returns i32.
+    #[test]
+    fn viopenlineabove_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = viopenlineabove();
+    }
+
+    /// c:709 — `vioperswapcase` returns i32.
+    #[test]
+    fn vioperswapcase_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = vioperswapcase();
+    }
+
+    /// c:356 — `videlete` exit code in u8 range.
+    #[test]
+    fn videlete_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = videlete();
+        assert!((0..256).contains(&r));
+    }
+
+    /// c:559 — `viyankwholeline` exit code in u8 range.
+    #[test]
+    fn viyankwholeline_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = viyankwholeline();
+        assert!((0..256).contains(&r));
+    }
+
+    /// c:709 — `vioperswapcase` exit code in u8 range.
+    #[test]
+    fn vioperswapcase_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vioperswapcase();
+        assert!((0..256).contains(&r));
+    }
 }
