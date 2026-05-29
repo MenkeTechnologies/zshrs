@@ -558,4 +558,111 @@ mod tests {
         assert_eq!(errno_get(), libc::EACCES, "errno round-trips");
         errno_set(saved);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/openssh-compat/bsd-setres_id.c
+    // c:41 setresgid / c:95 setresuid / c:142+ build flags / c:242 errno_str
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:41 — `setresgid(SAME, SAME, SAME)` with all-equal-current values
+    /// succeeds (no-op identity) — exercises c:44 short-circuit.
+    #[cfg(unix)]
+    #[test]
+    fn setresgid_all_equal_current_gid_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        let g = unsafe { libc::getgid() };
+        let r = unsafe { setresgid(g, g, g) };
+        assert_eq!(r, 0, "current gid all-equal triple is a no-op success");
+    }
+
+    /// c:95 — `setresuid(SAME, SAME, SAME)` with all-equal-current values is no-op.
+    #[cfg(unix)]
+    #[test]
+    fn setresuid_all_equal_current_uid_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        let u = unsafe { libc::getuid() };
+        let r = unsafe { setresuid(u, u, u) };
+        assert_eq!(r, 0, "current uid all-equal triple is a no-op success");
+    }
+
+    /// c:41 — `setresgid` returns c_int (compile-time pin, alt).
+    #[cfg(unix)]
+    #[test]
+    fn setresgid_returns_c_int_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: libc::c_int = unsafe { setresgid(0, 1, 999) };
+    }
+
+    /// c:95 — `setresuid` returns c_int (compile-time pin, alt).
+    #[cfg(unix)]
+    #[test]
+    fn setresuid_returns_c_int_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: libc::c_int = unsafe { setresuid(0, 1, 999) };
+    }
+
+    /// c:142+ — all build-config flags return bool (compile-time pin).
+    #[test]
+    fn build_config_flags_return_bool_type() {
+        let _: bool = broken_setregid();
+        let _: bool = broken_setreuid();
+        let _: bool = have_native_setregid();
+        let _: bool = have_native_setreuid();
+        let _: bool = seteuid_breaks_setuid();
+    }
+
+    /// c:142+ — `broken_setregid` and `have_native_setregid` are
+    /// mutually exclusive (can't be both broken AND native-supported).
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn broken_and_native_mutually_exclusive_setregid() {
+        if have_native_setregid() {
+            assert!(!broken_setregid(),
+                "having native setregid implies not broken");
+        }
+    }
+
+    /// c:142+ — `broken_setreuid` and `have_native_setreuid` mutually exclusive.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn broken_and_native_mutually_exclusive_setreuid() {
+        if have_native_setreuid() {
+            assert!(!broken_setreuid(),
+                "having native setreuid implies not broken");
+        }
+    }
+
+    /// c:242 — `errno_str` returns String (compile-time pin).
+    #[cfg(unix)]
+    #[test]
+    fn errno_str_returns_string_type() {
+        let _: String = errno_str(0);
+    }
+
+    /// c:242 — `errno_str(0)` returns non-empty (success message
+    /// or "Undefined error: 0" — but always something).
+    #[cfg(unix)]
+    #[test]
+    fn errno_str_zero_returns_non_empty() {
+        let s = errno_str(0);
+        assert!(!s.is_empty(), "errno_str(0) must be non-empty");
+    }
+
+    /// c:182 — `errno_get` returns c_int (compile-time pin).
+    #[cfg(unix)]
+    #[test]
+    fn errno_get_returns_c_int_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: libc::c_int = errno_get();
+    }
+
+    /// c:193 — `errno_set` returns void (compile-time pin).
+    #[cfg(unix)]
+    #[test]
+    fn errno_set_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = errno_get();
+        let _: () = errno_set(0);
+        errno_set(saved);
+    }
 }
