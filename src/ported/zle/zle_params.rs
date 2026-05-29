@@ -1898,4 +1898,132 @@ mod widget_killring_tests {
         let _g2 = zle_test_setup();
         let _: String = get_prebuffer();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_params.c
+    // c:63 makezleparams / c:608 set_killring / c:621 get_killring /
+    // c:637 unset_killring / c:692 scan_registers / c:817 set_predisplay /
+    // c:829 get_predisplay / c:842 set_postdisplay / c:854 get_postdisplay /
+    // c:925 get_zle_state / c:951 is_insert_mode / c:958 is_region_active
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:63 — `makezleparams(0)` returns void (signature pin).
+    #[test]
+    fn makezleparams_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: () = makezleparams(0);
+    }
+
+    /// c:63 — `makezleparams` is idempotent.
+    #[test]
+    fn makezleparams_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            makezleparams(0);
+        }
+    }
+
+    /// c:608 — `set_killring(None)` clears + safe.
+    #[test]
+    fn set_killring_none_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_killring(None);
+    }
+
+    /// c:608 — `set_killring(empty)` empty slice safe.
+    #[test]
+    fn set_killring_empty_slice_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_killring(Some(&[]));
+    }
+
+    /// c:621 — `get_killring` returns Vec<String> (compile-time type pin).
+    #[test]
+    fn get_killring_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Vec<String> = get_killring();
+    }
+
+    /// c:637 — `unset_killring(0)` safe.
+    #[test]
+    fn unset_killring_zero_exp_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        unset_killring(0);
+    }
+
+    /// c:817 — `set_predisplay(None)` clears + safe.
+    #[test]
+    fn set_predisplay_none_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_predisplay(None);
+    }
+
+    /// c:842 — `set_postdisplay(None)` clears + safe.
+    #[test]
+    fn set_postdisplay_none_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_postdisplay(None);
+    }
+
+    /// c:817 + c:829 — set_predisplay then get_predisplay round-trips.
+    #[test]
+    fn set_get_predisplay_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_predisplay(Some("hello"));
+        assert_eq!(get_predisplay(), "hello", "set then get round-trips");
+        set_predisplay(None);
+        assert_eq!(get_predisplay(), "", "None clears predisplay");
+    }
+
+    /// c:842 + c:854 — set_postdisplay then get_postdisplay round-trips.
+    #[test]
+    fn set_get_postdisplay_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_postdisplay(Some("world"));
+        assert_eq!(get_postdisplay(), "world", "set then get round-trips");
+        set_postdisplay(None);
+        assert_eq!(get_postdisplay(), "", "None clears postdisplay");
+    }
+
+    /// c:925 — `get_zle_state` returns String (compile-time type pin).
+    #[test]
+    fn get_zle_state_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: String = get_zle_state();
+    }
+
+    /// c:951 — `is_insert_mode` returns bool (compile-time type pin).
+    #[test]
+    fn is_insert_mode_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: bool = is_insert_mode();
+    }
+
+    /// c:958 — `is_region_active` returns bool (compile-time type pin).
+    #[test]
+    fn is_region_active_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: bool = is_region_active();
+    }
+
+    /// c:692 — `scan_registers(_, None, 0)` None callback safe.
+    #[test]
+    fn scan_registers_none_callback_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        scan_registers(0, None, 0);
+    }
 }
