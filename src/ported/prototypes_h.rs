@@ -36,4 +36,94 @@ mod tests {
         let _: unsafe extern "C" fn() -> libc::pid_t = libc::getppid;
         let _: unsafe extern "C" fn(libc::c_int) -> *mut libc::c_char = libc::strerror;
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional contract pins — every legacy extern in Src/prototypes.h
+    // must be available through libc, NOT redeclared here.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// libc provides malloc/realloc/calloc (legacy fallback trio).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_malloc_realloc_calloc() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(libc::size_t) -> *mut libc::c_void = libc::malloc;
+        let _: unsafe extern "C" fn(*mut libc::c_void, libc::size_t) -> *mut libc::c_void =
+            libc::realloc;
+        let _: unsafe extern "C" fn(libc::size_t, libc::size_t) -> *mut libc::c_void = libc::calloc;
+    }
+
+    /// libc provides mkstemp (mktemp removed from macOS libc as insecure;
+    /// the modern equivalent is mkstemp).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_mkstemp() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*mut libc::c_char) -> libc::c_int = libc::mkstemp;
+    }
+
+    /// libc provides nice.
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_nice() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(libc::c_int) -> libc::c_int = libc::nice;
+    }
+
+    /// libc provides getrlimit/setrlimit.
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_get_set_rlimit() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(libc::c_int, *mut libc::rlimit) -> libc::c_int =
+            libc::getrlimit;
+        let _: unsafe extern "C" fn(libc::c_int, *const libc::rlimit) -> libc::c_int =
+            libc::setrlimit;
+    }
+
+    /// libc provides getrusage.
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_getrusage() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(libc::c_int, *mut libc::rusage) -> libc::c_int =
+            libc::getrusage;
+    }
+
+    /// libc provides gethostname.
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_gethostname() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*mut libc::c_char, libc::size_t) -> libc::c_int =
+            libc::gethostname;
+    }
+
+    /// libc provides difftime.
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_difftime() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(libc::time_t, libc::time_t) -> libc::c_double = libc::difftime;
+    }
+
+    /// libc provides strstr.
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_strstr() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*const libc::c_char, *const libc::c_char) -> *mut libc::c_char =
+            libc::strstr;
+    }
+
+    /// This file MUST NOT export any fns — pin via source self-inspection.
+    #[test]
+    fn prototypes_h_exports_no_functions() {
+        let src = include_str!("prototypes_h.rs");
+        let pub_fn_count = src.lines().filter(|l| l.starts_with("pub fn ")).count();
+        assert_eq!(
+            pub_fn_count, 0,
+            "prototypes_h.rs MUST export no fns — legacy fallbacks live in libc"
+        );
+    }
 }
