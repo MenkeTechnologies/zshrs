@@ -689,4 +689,102 @@ mod tests {
         assert!(above >= n / 10,
             "{} out of {} should be > 0.1, got {}", n / 10, n, above);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/random_real.c
+    // c:25 _zclz64 / c:83 random_64bit / c:119 random_real / c:216 clz64
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:25 — `_zclz64(0)` returns 64 (all bits zero).
+    #[test]
+    fn zclz64_zero_returns_64_pin() {
+        assert_eq!(_zclz64(0), 64, "all zeros → 64 leading zeros");
+    }
+
+    /// c:25 — `_zclz64(u64::MAX)` returns 0 (no leading zeros).
+    #[test]
+    fn zclz64_max_returns_zero_pin() {
+        assert_eq!(_zclz64(u64::MAX), 0, "u64::MAX has 0 leading zeros");
+    }
+
+    /// c:25 — `_zclz64` matches stdlib `leading_zeros` for diverse inputs.
+    #[test]
+    fn zclz64_matches_stdlib_leading_zeros_pin() {
+        for x in [0u64, 1, 0xff, 0x10000, 0x80000000, u64::MAX, 42] {
+            let our = _zclz64(x);
+            let std = x.leading_zeros() as i32;
+            assert_eq!(our, std,
+                "_zclz64({:#x}) = {} but stdlib leading_zeros = {}",
+                x, our, std);
+        }
+    }
+
+    /// c:83 — `random_64bit` is non-zero (vanishingly rare to hit 0).
+    /// Across 100 calls, at least one must be non-zero.
+    #[test]
+    fn random_64bit_has_at_least_one_nonzero_in_100() {
+        let any_nonzero = (0..100).any(|_| random_64bit() != 0);
+        assert!(any_nonzero, "100 random u64s must contain ≥ 1 non-zero");
+    }
+
+    /// c:119 — `random_real` never returns exactly 1.0 (half-open [0,1)).
+    #[test]
+    fn random_real_never_equals_one_in_1000_samples() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..1000 {
+            assert!(random_real() < 1.0, "random_real must be < 1.0");
+        }
+    }
+
+    /// c:119 — `random_real` never negative.
+    #[test]
+    fn random_real_never_negative_in_1000_samples() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..1000 {
+            assert!(random_real() >= 0.0, "random_real must be ≥ 0");
+        }
+    }
+
+    /// c:25 — `_zclz64` is pure (deterministic across many calls).
+    #[test]
+    fn zclz64_full_sweep_pure() {
+        for x in [0u64, 1, 2, 7, 0xff, 0x10000, 0x80000000, u64::MAX] {
+            let first = _zclz64(x);
+            for _ in 0..5 {
+                assert_eq!(_zclz64(x), first,
+                    "_zclz64({:#x}) must be pure", x);
+            }
+        }
+    }
+
+    /// c:216 — `clz64` is just an alias — must agree with `_zclz64` always.
+    #[test]
+    fn clz64_full_sweep_agrees_with_zclz64() {
+        for x in 0u32..256u32 {
+            let v = x as u64;
+            assert_eq!(clz64(v), _zclz64(v),
+                "clz64({:#x}) must match _zclz64", v);
+        }
+    }
+
+    /// c:83 — `random_64bit` returns u64 type (compile-time pin).
+    #[test]
+    fn random_64bit_returns_u64_type_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: u64 = random_64bit();
+    }
+
+    /// c:119 — `random_real` distribution: across 500 samples, mean ~ 0.5.
+    #[test]
+    fn random_real_mean_is_approximately_half() {
+        let _g = crate::test_util::global_state_lock();
+        let n = 500;
+        let sum: f64 = (0..n).map(|_| random_real()).sum();
+        let mean = sum / n as f64;
+        // Weak check: mean must be in (0.3, 0.7) — extremely loose
+        // statistical bound to avoid flake.
+        assert!(mean > 0.3 && mean < 0.7,
+            "random_real mean across {} samples = {} should be in (0.3, 0.7)",
+            n, mean);
+    }
 }
