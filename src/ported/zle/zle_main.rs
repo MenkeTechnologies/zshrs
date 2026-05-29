@@ -3201,4 +3201,111 @@ mod tests {
         let _g2 = zle_test_setup();
         let _: Option<char> = getfullchar(false);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_main.c
+    // c:131 ungetbyte / c:142 ungetbytes / c:406 getbyte / c:484 getrestchar /
+    // c:712 execimmortal / c:856 initmodifier / c:874 handleprefixes /
+    // c:1087 describekeybriefly / c:1142 whereis / c:1173 recursiveedit
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:131 — `ungetbyte` returns void (compile-time pin).
+    #[test]
+    fn ungetbyte_signature_void() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: () = ungetbyte(b'x');
+    }
+
+    /// c:142 — `ungetbytes` returns void (compile-time pin).
+    #[test]
+    fn ungetbytes_signature_void() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: () = ungetbytes(&[]);
+    }
+
+    /// c:169 — `ungetbytes_unmeta` returns void (compile-time pin).
+    #[test]
+    fn ungetbytes_unmeta_signature_void() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: () = ungetbytes_unmeta(&[]);
+    }
+
+    /// c:484 — `getrestchar` returns i32 (compile-time type pin).
+    #[test]
+    fn getrestchar_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        // For an ASCII char (single-byte UTF-8), no further read needed.
+        let _: i32 = getrestchar(b'a' as i32);
+    }
+
+    /// c:856 — `initmodifier` is idempotent / safe.
+    #[test]
+    fn initmodifier_idempotent_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            initmodifier();
+        }
+    }
+
+    /// c:874 — `handleprefixes` is idempotent / safe.
+    #[test]
+    fn handleprefixes_idempotent_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            handleprefixes();
+        }
+    }
+
+    /// c:1087 — `describekeybriefly` returns i32 (compile-time type pin).
+    #[test]
+    fn describekeybriefly_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = describekeybriefly();
+    }
+
+    /// c:1142 — `whereis("")` empty widget returns empty Vec.
+    #[test]
+    fn whereis_empty_widget_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = whereis("");
+        assert!(r.is_empty(), "empty widget → empty Vec");
+    }
+
+    /// c:1173 — `recursiveedit` returns i32 (compile-time type pin).
+    #[test]
+    fn recursiveedit_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = recursiveedit();
+    }
+
+    /// c:712 — `execimmortal("", &[])` returns i32 (compile-time type pin).
+    #[test]
+    fn execimmortal_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = execimmortal("", &[]);
+    }
+
+    /// c:1142 — `whereis` is deterministic for stable lookup.
+    #[test]
+    fn whereis_stable_lookup_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for w in ["", "forward-char", "__nonexistent_widget__"] {
+            let first = whereis(w);
+            for _ in 0..3 {
+                assert_eq!(whereis(w), first,
+                    "whereis({:?}) must be deterministic", w);
+            }
+        }
+    }
 }
