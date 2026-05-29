@@ -1043,4 +1043,133 @@ mod tests {
             assert!(imeta(0x83));
         });
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/ztype.h
+    // c:47 zistype / c:52 itok / c:75 WC_ZISTYPE / c:89 ZISPRINT
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:47 — every predicate returns bool (compile-time type pin).
+    #[test]
+    fn all_predicates_return_bool_type() {
+        let _: bool = idigit(b'5');
+        let _: bool = ialnum(b'a');
+        let _: bool = iblank(b' ');
+        let _: bool = inblank(b'\n');
+        let _: bool = itok(0);
+        let _: bool = isep(b' ');
+        let _: bool = ialpha(b'a');
+        let _: bool = iident(b'_');
+        let _: bool = iuser(b'.');
+        let _: bool = icntrl(0);
+        let _: bool = iword(b'a');
+        let _: bool = ispecial(b'$');
+        let _: bool = imeta(0x83);
+        let _: bool = iwsep(b' ');
+        let _: bool = inull(0);
+        let _: bool = ipattern(b'*');
+    }
+
+    /// c:52 — `itok` returns false for plain ASCII letters/digits.
+    /// Token bytes are zsh-internal sentinels in the Meta range.
+    #[test]
+    fn itok_false_for_plain_ascii() {
+        with_typtab(|| {
+            for b in [b'a', b'Z', b'5', b' ', b'\t', b'\n', b'.', b'_'] {
+                assert!(!itok(b),
+                    "plain ASCII byte {:?} (0x{:02x}) must NOT be a token", b as char, b);
+            }
+        });
+    }
+
+    /// c:47 — `zistype(byte, 0)` always returns false (no bits → no match).
+    #[test]
+    fn zistype_zero_bits_always_false() {
+        with_typtab(|| {
+            for b in 0u8..=127 {
+                assert!(!zistype(b, 0),
+                    "byte 0x{:02x} with bits=0 must be false", b);
+            }
+        });
+    }
+
+    /// c:89 — `ZISPRINT(NUL)` returns false (NUL is not printable).
+    #[test]
+    fn zisprint_nul_returns_false() {
+        assert!(!ZISPRINT(0), "NUL byte never printable");
+    }
+
+    /// c:89 — `ZISPRINT(DEL)` returns false (DEL is control).
+    #[test]
+    fn zisprint_del_returns_false() {
+        assert!(!ZISPRINT(0x7f), "DEL is control char");
+    }
+
+    /// c:89 — `ZISPRINT` is deterministic for the same byte.
+    #[test]
+    fn zisprint_is_deterministic() {
+        for b in 0u8..=127 {
+            let first = ZISPRINT(b);
+            for _ in 0..3 {
+                assert_eq!(ZISPRINT(b), first,
+                    "ZISPRINT(0x{:02x}) must be deterministic", b);
+            }
+        }
+    }
+
+    /// c:79 — `WC_ISPRINT` is deterministic for fixed char.
+    #[test]
+    fn wc_isprint_is_deterministic() {
+        for c in ['a', ' ', '0', '\n', '\t', 'é', '日', '\0', '\u{0007}'] {
+            let first = WC_ISPRINT(c);
+            for _ in 0..3 {
+                assert_eq!(WC_ISPRINT(c), first,
+                    "WC_ISPRINT({:?}) must be deterministic", c);
+            }
+        }
+    }
+
+    /// c:75 — `WC_ZISTYPE` ASCII path matches `zistype` on the byte.
+    #[test]
+    fn wc_zistype_ascii_matches_zistype() {
+        with_typtab(|| {
+            for b in 0u8..128 {
+                let c = b as char;
+                for bits in [IDIGIT, IALPHA, IBLANK, IIDENT] {
+                    assert_eq!(
+                        WC_ZISTYPE(c, bits as u32),
+                        zistype(b, bits as u32),
+                        "WC_ZISTYPE({:?}, {}) must match zistype on ASCII",
+                        c, bits
+                    );
+                }
+            }
+        });
+    }
+
+    /// c:75 — `WC_ZISTYPE` on high CJK char `日` matches IALPHA/IALNUM/IWORD.
+    #[test]
+    fn wc_zistype_cjk_alphabetic_matches_word_bits() {
+        assert!(WC_ZISTYPE('日', IALPHA as u32), "CJK char is alphabetic");
+        assert!(WC_ZISTYPE('日', IALNUM as u32), "CJK char is alphanumeric");
+        assert!(WC_ZISTYPE('日', IWORD as u32), "CJK char is a word char");
+        assert!(!WC_ZISTYPE('日', IDIGIT as u32), "CJK char is NOT a digit");
+    }
+
+    /// c:62 — `inull(0)` (NUL byte) reflects whatever typtab says — pin no-panic.
+    #[test]
+    fn inull_nul_byte_no_panic() {
+        with_typtab(|| {
+            let _: bool = inull(0);
+        });
+    }
+
+    /// c:75 — `WC_ZISTYPE` empty bits = 0 → always false (no matched class).
+    #[test]
+    fn wc_zistype_zero_bits_always_false() {
+        for c in ['a', ' ', '0', 'é', '日'] {
+            assert!(!WC_ZISTYPE(c, 0),
+                "WC_ZISTYPE({:?}, 0) must be false", c);
+        }
+    }
 }
