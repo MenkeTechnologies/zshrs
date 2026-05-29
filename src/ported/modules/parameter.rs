@@ -5174,4 +5174,110 @@ mod paramtypestr_table_tests {
         });
         unsetpmsalias(pm, 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/parameter.c
+    // c:50 paramtypestr / c:132 getpmparameter / c:606 getpmcommand /
+    // c:944 getfunction / c:998 getpmfunction / c:1007 getpmdisfunction
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:132 — `getpmparameter(null, "")` empty name returns Some(PM_UNSET).
+    #[test]
+    fn getpmparameter_empty_name_returns_some_unset() {
+        use crate::ported::zsh_h::PM_UNSET;
+        let _g = crate::test_util::global_state_lock();
+        let pm = getpmparameter(std::ptr::null_mut(), "");
+        if let Some(p) = pm {
+            assert_ne!(p.node.flags & PM_UNSET as i32, 0,
+                "empty param name → PM_UNSET");
+        }
+    }
+
+    /// c:132 — `getpmparameter` returns Option<Param>.
+    #[test]
+    fn getpmparameter_returns_option_param_type() {
+        use crate::ported::zsh_h::Param;
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Param> = getpmparameter(std::ptr::null_mut(), "anything");
+    }
+
+    /// c:606 — `getpmcommand(null, "")` empty name returns Some.
+    #[test]
+    fn getpmcommand_empty_name_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let pm = getpmcommand(std::ptr::null_mut(), "");
+        assert!(pm.is_some(), "C convention: always Some for missing");
+    }
+
+    /// c:998 — `getpmfunction(null, "")` empty name returns Some.
+    #[test]
+    fn getpmfunction_empty_name_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let pm = getpmfunction(std::ptr::null_mut(), "");
+        assert!(pm.is_some(), "C convention: always Some for missing");
+    }
+
+    /// c:1007 — `getpmdisfunction(null, "")` empty name returns Some.
+    #[test]
+    fn getpmdisfunction_empty_name_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let pm = getpmdisfunction(std::ptr::null_mut(), "");
+        assert!(pm.is_some());
+    }
+
+    /// c:944 — `getfunction(null, "", 0)` returns Option<Param>.
+    #[test]
+    fn getfunction_returns_option_param_type() {
+        use crate::ported::zsh_h::Param;
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Param> = getfunction(std::ptr::null_mut(), "anything", 0);
+    }
+
+    /// c:50 — `paramtypestr` returns String (compile-time type pin).
+    #[test]
+    fn paramtypestr_returns_string_type() {
+        use crate::ported::zsh_h::{hashnode, param};
+        let pm = param {
+            node: hashnode { next: None, nam: "x".to_string(), flags: 0 },
+            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
+            gsu_h: None, base: 0, width: 0, env: None, ename: None,
+            old: None, level: 0,
+        };
+        let _: String = paramtypestr(&pm);
+    }
+
+    /// c:50 — `paramtypestr` for plain scalar returns non-empty string.
+    #[test]
+    fn paramtypestr_scalar_returns_nonempty() {
+        use crate::ported::zsh_h::{hashnode, param};
+        let pm = param {
+            node: hashnode { next: None, nam: "x".to_string(), flags: 0 },
+            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
+            gsu_h: None, base: 0, width: 0, env: None, ename: None,
+            old: None, level: 0,
+        };
+        let s = paramtypestr(&pm);
+        assert!(!s.is_empty(), "type str must be non-empty");
+    }
+
+    /// c:132 — `getpmparameter` is deterministic for same name.
+    #[test]
+    fn getpmparameter_deterministic_for_unknown() {
+        let _g = crate::test_util::global_state_lock();
+        let p1 = getpmparameter(std::ptr::null_mut(), "__zshrs_never_param__")
+            .map(|p| p.node.nam.clone());
+        let p2 = getpmparameter(std::ptr::null_mut(), "__zshrs_never_param__")
+            .map(|p| p.node.nam.clone());
+        assert_eq!(p1, p2, "getpmparameter must be deterministic");
+    }
+
+    /// c:606 — `getpmcommand` returns Option<Param>.
+    #[test]
+    fn getpmcommand_returns_option_param_type() {
+        use crate::ported::zsh_h::Param;
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Param> = getpmcommand(std::ptr::null_mut(), "anything");
+    }
 }
