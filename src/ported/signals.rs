@@ -1619,7 +1619,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         let num = format!("{}", sig); // c:1151 sprintf(num, "%d", sig)
         args.push(num); // c:1152
 
-        TRAP_RETURN.store(-1, Ordering::SeqCst); // c:1154 trap_return = -1
+        TRAP_RETURN.store(-1, Ordering::SeqCst); // c:1154 trap_return = -1; /* incremented by doshfunc */
         TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst); // c:1155
         trapisfunc.store(1, Ordering::SeqCst); // c:1156
         isfunc = 1;
@@ -1630,18 +1630,31 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
                                                        // `compadd` etc. without being mis-detected as inside a
                                                        // completion widget.
         crate::ported::zle::complete::INCOMPFUNC.store(0, Ordering::Relaxed);
-        // c:1160 — `doshfunc((Shfunc)sigfn, args, 1);` — dispatch
-        // through execshfunc (exec.rs:5009) for PPARAMS save/swap/
-        // restore. doshfunc itself isn't ported; execshfunc routes
-        // through runshfunc with the trap-args list (args[0]=name,
-        // args[1..]=signum etc.) per C convention.
-        let fn_name = sigfn.unwrap_or("");
+        // c:1160 — `doshfunc((Shfunc)sigfn, args, 1);`. Direct
+        // doshfunc call mirrors C — argv[0] = TRAP name, argv[1..]
+        // = signum etc. body_runner routes through the host's
+        // body-only entry so we don't double-wrap the scope.
+        let fn_name = sigfn.unwrap_or("").to_string();
         let shf_clone: Option<crate::ported::zsh_h::shfunc> = {
             let tab = crate::ported::hashtable::shfunctab_lock().read();
-            tab.ok().and_then(|t| t.get(fn_name).cloned())
+            tab.ok().and_then(|t| t.get(&fn_name).cloned())
         };
         if let Some(mut shf) = shf_clone {
-            crate::ported::exec::execshfunc(&mut shf, &mut args);
+            let body_args = args.clone();
+            let name_for_body = fn_name.clone();
+            let body_runner = move || -> i32 {
+                crate::ported::exec_hooks::run_function_body(
+                    &name_for_body,
+                    &body_args[1..],
+                )
+                .unwrap_or(0)
+            };
+            let _ = crate::ported::exec::doshfunc(
+                &mut shf,
+                args.clone(),
+                true,
+                body_runner,
+            );
         }
         SFCONTEXT.store(osc, Ordering::SeqCst); // c:1161
                                                 // c:1162 — `incompfunc = old_incompfunc;` — restore the

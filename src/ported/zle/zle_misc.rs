@@ -1822,10 +1822,26 @@ pub fn iremovesuffix(c: i32, keep: i32) -> i32 {
         .unwrap_or_default();
     if !sf.is_empty() {
         // c:1701
-        // c:1703 — `getshfunc(suffixfunc)`. We probe for existence; full
-        // doshfunc dispatch fires via fusevm Op::CallFunction in live
-        // contexts.
-        let _exists = crate::ported::utils::getshfunc(&sf);
+        // c:1703 — `getshfunc(suffixfunc)`.
+        if let Some(mut shfunc) = crate::ported::utils::getshfunc(&sf) {
+            // c:1720-1728 — build args [suffixfunc, suffixlen] and
+            // fire the suffix-function hook under SFC_COMPLETE.
+            let suffix_len = SUFFIXLEN.load(Ordering::Relaxed);
+            let largs: Vec<String> = vec![sf.clone(), suffix_len.to_string()];
+            // c:1728 — `doshfunc(shfunc, args, 1);`.
+            let name_for_body = sf.clone();
+            let body_args: Vec<String> = vec![suffix_len.to_string()];
+            let body_runner = move || -> i32 {
+                crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args)
+                    .unwrap_or(0)
+            };
+            let _ = crate::ported::exec::doshfunc(
+                &mut shfunc,
+                largs,
+                true,
+                body_runner,
+            );
+        }
         // c:1729 — `zsfree(suffixfunc); suffixfunc = NULL`.
         if let Ok(mut g) = SUFFIXFUNC
             .get_or_init(|| std::sync::Mutex::new(String::new()))

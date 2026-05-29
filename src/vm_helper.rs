@@ -1356,64 +1356,71 @@ impl ShellExecutor {
     ///
     /// Returns `None` when the name isn't a known function so the caller
     /// can fall through to external dispatch.
+    /// Body-only counterpart to [`dispatch_function_call`] — runs
+    /// the function body WITHOUT wrapping in `doshfunc`. Used as the
+    /// `body_runner` closure target by `src/ported/` callers that
+    /// already wrap their own `crate::ported::exec::doshfunc(...)`
+    /// call (so going back through `dispatch_function_call` would
+    /// double-wrap the scope). Mirrors C's `runshfunc(prog, wrappers,
+    /// name)` at `exec.c:6042` from doshfunc's perspective.
+    pub fn run_function_body_only(&mut self, name: &str, args: &[String]) -> Option<i32> {
+        // Same Rust-port short-circuit as dispatch_function_call,
+        // sans the doshfunc wrap.
+        if let Some(rust_fn) = crate::compsys::router::try_rust_dispatch(name) {
+            return Some(rust_fn(args));
+        }
+        // Autoload prelude (same as dispatch_function_call's).
+        if !self.functions_compiled.contains_key(name) {
+            if let Some(stub) = crate::ported::utils::getshfunc(name) {
+                if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
+                    let boxed = Box::new(stub.clone());
+                    let ptr = Box::into_raw(boxed);
+                    let _ = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
+                    unsafe {
+                        let _ = Box::from_raw(ptr);
+                    }
+                    if let Some(body) =
+                        crate::ported::utils::getshfunc(name).and_then(|f| f.body)
+                    {
+                        let wrapped = format!("{name}() {{\n{body}\n}}");
+                        let _ = self.execute_script_zsh_pipeline(&wrapped);
+                    }
+                } else if let Some(body) = stub.body.clone() {
+                    let wrapped = format!("{name}() {{\n{body}\n}}");
+                    let _ = self.execute_script_zsh_pipeline(&wrapped);
+                }
+            }
+        }
+        let chunk = self.functions_compiled.get(name).cloned()?;
+        let seed_status = self.last_status();
+        let _ = args; // fusevm body reads $1..$N from PPARAMS
+        let mut vm = fusevm::VM::new(chunk);
+        register_builtins(&mut vm);
+        vm.last_status = seed_status;
+        let _ = vm.run();
+        Some(vm.last_status)
+    }
+
     pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
         // zshrs-original: `[compsys] backend = "rust"` short-circuit.
-        // Routes `_NAME` calls to the in-repo Rust ports under
-        // `src/compsys/ported/` when the user opted in (default).
-        // The Rust port runs as the `body_runner` closure INSIDE
-        // doshfunc's scope so the C-faithful prologue/epilogue
-        // (locallevel++, FUNCSTACK push, BREAKS/CONTFLAG/LASTVAL
-        // save+restore, trap_state, noerrexit clear, pipestats
-        // deep-copy) applies identically to shell-fn body and Rust
-        // port. Router returns None for names without a Rust port →
-        // graceful fallback to the shfunc autoload path below.
-        if let Some(rust_fn) = crate::compsys::router::try_rust_dispatch(name) {
-            let display_name = name.to_string();
-            self.prompt_funcstack
-                .push((display_name.clone(), 0, None));
-            self.local_scope_depth += 1;
-            let mut synth_shf = crate::ported::zsh_h::shfunc {
-                node: crate::ported::zsh_h::hashnode {
-                    next: None,
-                    nam: display_name.clone(),
-                    flags: 0,
-                },
-                filename: None,
-                lineno: 0,
-                funcdef: None,
-                redir: None,
-                sticky: None,
-                body: None,
-            };
-            // C convention: argv[0] = function name (for FUNCTIONARGZERO
-            // `$0` propagation), argv[1..] = real positional args.
-            let mut doshargs: Vec<String> = vec![display_name.clone()];
-            doshargs.extend(args.iter().cloned());
-            let args_owned: Vec<String> = args.to_vec();
-            let body_runner = move || -> i32 { rust_fn(&args_owned) };
-            let _ctx = ExecutorContext::enter(self);
-            let status = crate::ported::exec::doshfunc(
-                &mut synth_shf,
-                doshargs,
-                false,
-                body_runner,
-            );
-            drop(_ctx);
-            self.prompt_funcstack.pop();
-            self.local_scope_depth -= 1;
-            // Honor explicit `return N` from inside the Rust port (the
-            // port can set `self.returning` via an executor reach-in
-            // when it needs early exit; otherwise the body status wins).
-            if let Some(ret) = self.returning.take() {
-                self.set_last_status(ret);
-                return Some(ret);
-            }
-            self.set_last_status(status);
-            return Some(status);
-        }
-
-        // Autoload prelude: PM_UNDEFINED stub → loadautofn → wrap + eval.
-        if !self.functions_compiled.contains_key(name) {
+        // When a `_NAME` has a Rust port AND the user opted into the
+        // rust backend, run the Rust fn directly here — but still
+        // through the canonical doshfunc scope-management path below
+        // (we synthesize a body_runner from the fn pointer). Router
+        // returns None for names without a Rust port → graceful
+        // fallback to the shfunc autoload path.
+        //
+        // Note: `compcore::callcompfunc` (the compsys entry hit by
+        // Tab) wraps doshfunc itself per C `compcore.c:835`, so the
+        // Rust _main_complete dispatch lands HERE only when called
+        // from a non-compcore caller (e.g. a user shell script
+        // directly invoking `_main_complete`). The doshfunc scope
+        // wrap below applies uniformly to both.
+        let direct_rust_fn: Option<fn(&[String]) -> i32> =
+            crate::compsys::router::try_rust_dispatch(name);
+        // Autoload prelude skipped when a Rust port wins — no upstream
+        // shell function to load.
+        if direct_rust_fn.is_none() && !self.functions_compiled.contains_key(name) {
             if let Some(stub) = crate::ported::utils::getshfunc(name) {
                 if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
                     let boxed = Box::new(stub.clone());
@@ -1439,7 +1446,15 @@ impl ShellExecutor {
                 }
             }
         }
-        let chunk = self.functions_compiled.get(name).cloned()?;
+        // When a Rust port is registered, skip the fusevm Chunk
+        // lookup entirely — the body_runner closure below will run
+        // the Rust fn pointer directly. Otherwise require a compiled
+        // chunk for the autoloaded body.
+        let chunk_opt = if direct_rust_fn.is_some() {
+            None
+        } else {
+            Some(self.functions_compiled.get(name).cloned()?)
+        };
 
         // zshrs-specific bookkeeping that doshfunc doesn't own:
         // - prompt_funcstack (PS4 trace) push/pop
@@ -1488,8 +1503,6 @@ impl ShellExecutor {
         let mut doshargs: Vec<String> = vec![display_name.clone()];
         doshargs.extend(args.iter().cloned());
 
-        crate::fusevm_disasm::maybe_print_stdout(&format!("function:{name}"), &chunk);
-        let chunk_for_run = chunk.clone();
         // Seed `$?` with the parent's last status — C zsh's
         // doshfunc inherits lastval automatically because it's a
         // process-global; the fusevm VM creates a fresh
@@ -1497,8 +1510,22 @@ impl ShellExecutor {
         // explicitly. Without this, a function reading `$?` BEFORE
         // running any command sees 0 instead of the caller's status.
         let seed_status = self.last_status();
+        let body_args: Vec<String> = args.to_vec();
         let body_runner = move || -> i32 {
-            let mut vm = fusevm::VM::new(chunk_for_run.clone());
+            // Branch: Rust port (direct fn call) or fusevm Chunk
+            // (autoloaded shell body). Both run INSIDE doshfunc's
+            // scope so prologue/epilogue applies identically.
+            if let Some(f) = direct_rust_fn {
+                return f(&body_args);
+            }
+            let chunk = chunk_opt
+                .as_ref()
+                .expect("chunk_opt must be Some when direct_rust_fn is None");
+            crate::fusevm_disasm::maybe_print_stdout(
+                &format!("function:{}", body_args.first().map(|s| s.as_str()).unwrap_or("")),
+                chunk,
+            );
+            let mut vm = fusevm::VM::new(chunk.clone());
             register_builtins(&mut vm);
             vm.last_status = seed_status;
             let _ = vm.run();

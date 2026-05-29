@@ -1770,9 +1770,32 @@ pub fn tcout_via_func(cap: i32, arg: i32) -> i32 {
             //                                addlinknode(l, buf);`
             argv.push(arg.to_string());
         }
-        // c:2316 — `doshfunc(tcout_func, l, 1)`. callhookfunc routes
-        //          through the same path under SFC_SUBST.
-        let _ = callhookfunc(&func_name, Some(&argv), 0, std::ptr::null_mut());
+        // c:2316 — `(void)doshfunc(tcout_func, l, 1);`. Direct
+        // doshfunc call mirrors C exactly.
+        let shf_clone: Option<crate::ported::zsh_h::shfunc> =
+            crate::ported::hashtable::shfunctab_lock()
+                .read()
+                .ok()
+                .and_then(|t| t.get(&func_name).cloned());
+        if let Some(mut shf) = shf_clone {
+            let name_for_body = func_name.clone();
+            let body_args = argv.clone();
+            let body_runner = move || -> i32 {
+                crate::ported::exec_hooks::run_function_body(
+                    &name_for_body,
+                    &body_args[1..],
+                )
+                .unwrap_or(0)
+            };
+            let _ = crate::ported::exec::doshfunc(
+                &mut shf,
+                argv.clone(),
+                true,
+                body_runner,
+            );
+        } else {
+            let _ = callhookfunc(&func_name, Some(&argv), 0, std::ptr::null_mut());
+        }
 
         // c:2318-2331 — pull $REPLY and emit each byte (Meta-decoded)
         //               via outc().
