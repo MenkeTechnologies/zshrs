@@ -3819,4 +3819,117 @@ mod tests {
         let b: Vec<REFRESH_ELEMENT> = vec![REFRESH_ELEMENT { chr: 'z', atr: 0 }];
         assert_eq!(ZR_strncmp(&a, &b, 0), 0, "n=0 → no comparison");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_refresh.c
+    // c:33 ZR_memset / c:96 ZR_strcpy / c:143 ZR_strlen / c:230 ZR_strncmp
+    // c:448 zle_free_highlight / c:465 tcoutclear / c:476 zwcputc /
+    // c:708 scrollwindow / c:909 zrefresh / c:1097 wpfxlen
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:143 — `ZR_strlen` returns usize (compile-time type pin).
+    #[test]
+    fn zr_strlen_returns_usize_type() {
+        let _: usize = ZR_strlen(&[]);
+    }
+
+    /// c:143 — `ZR_strlen(empty)` returns 0.
+    #[test]
+    fn zr_strlen_empty_slice_returns_zero() {
+        assert_eq!(ZR_strlen(&[]), 0);
+    }
+
+    /// c:230 — `ZR_strncmp` is reflexive for same input.
+    #[test]
+    fn zr_strncmp_reflexive_returns_zero() {
+        let a: Vec<REFRESH_ELEMENT> = vec![
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'b', atr: 0 },
+        ];
+        assert_eq!(ZR_strncmp(&a, &a, 2), 0, "self-compare must be 0");
+    }
+
+    /// c:230 — `ZR_strncmp(empty, empty, 0)` returns 0.
+    #[test]
+    fn zr_strncmp_both_empty_zero_len_returns_zero() {
+        let empty: Vec<REFRESH_ELEMENT> = vec![];
+        assert_eq!(ZR_strncmp(&empty, &empty, 0), 0);
+    }
+
+    /// c:448 — `zle_free_highlight` idempotent.
+    #[test]
+    fn zle_free_highlight_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            zle_free_highlight();
+        }
+    }
+
+    /// c:465 — `tcoutclear(true)` + `tcoutclear(false)` safe both modes.
+    #[test]
+    fn tcoutclear_both_modes_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        tcoutclear(true);
+        tcoutclear(false);
+    }
+
+    /// c:708 — `scrollwindow(0)` no-op (zero lines).
+    #[test]
+    fn scrollwindow_zero_lines_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        scrollwindow(0);
+    }
+
+    /// c:708 — `scrollwindow(N)` for typical N doesn't panic.
+    /// i32::MIN excluded — covered by the ZSHRS BUG pin below.
+    #[test]
+    fn scrollwindow_typical_lines_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for n in [-100, -1, 0, 1, 100, i32::MAX] {
+            scrollwindow(n);
+        }
+    }
+
+    /// c:708 — `scrollwindow(i32::MIN)` PANICS in debug build with
+    /// "attempt to negate with overflow". C body negates `lines` to
+    /// scroll the opposite direction; C silently wraps via two's
+    /// complement, Rust debug build traps on the overflow.
+    #[test]
+    #[ignore = "ZSHRS BUG: scrollwindow(i32::MIN) panics 'attempt to negate with overflow' in debug build; C wraps silently via two's complement. See Src/Zle/zle_refresh.c:708 negate"]
+    fn scrollwindow_i32_min_panics_zshrs_bug() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        scrollwindow(i32::MIN);
+    }
+
+    /// c:1097 — `wpfxlen(empty, empty)` returns 0.
+    #[test]
+    fn wpfxlen_both_empty_returns_zero() {
+        assert_eq!(wpfxlen(&[], &[]), 0);
+    }
+
+    /// c:1097 — `wpfxlen(a, a)` returns slice len (full match).
+    #[test]
+    fn wpfxlen_identical_returns_full_len() {
+        let s: Vec<REFRESH_ELEMENT> = vec![
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'b', atr: 0 },
+            REFRESH_ELEMENT { chr: 'c', atr: 0 },
+        ];
+        assert_eq!(wpfxlen(&s, &s), s.len(), "identical → full prefix");
+    }
+
+    /// c:476 — `zwcputc` is safe for any char (including high codepoints).
+    #[test]
+    fn zwcputc_any_char_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for c in ['\0', 'a', '日', '\u{1F600}', '\u{10FFFF}'] {
+            zwcputc(c);
+        }
+    }
 }
