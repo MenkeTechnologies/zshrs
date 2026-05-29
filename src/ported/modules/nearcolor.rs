@@ -1068,4 +1068,115 @@ mod tests {
             assert_eq!(setup_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/nearcolor.c
+    // c:53 deltae (CIE76 ΔE metric) / c:73 RGBtoLAB / c:141 mapRGBto88 /
+    // c:218 mapRGBto256
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:53 — `deltae` returns f64 (compile-time pin).
+    #[test]
+    fn deltae_returns_f64_type() {
+        let a = cielab::default();
+        let b = cielab::default();
+        let _: f64 = deltae(&a, &b);
+    }
+
+    /// c:53 — `deltae(lab, lab)` of identical labs = 0 (CIE76 distance).
+    #[test]
+    fn deltae_identical_labs_is_zero() {
+        let lab = cielab { L: 50.0, a: 25.0, b: -10.0 };
+        let d = deltae(&lab, &lab);
+        assert_eq!(d, 0.0, "deltae(x, x) = 0; got {}", d);
+    }
+
+    /// c:53 — `deltae` is symmetric: deltae(a, b) == deltae(b, a)
+    /// (alt-name pin to coexist with sibling test).
+    #[test]
+    fn deltae_symmetric_alt_pin() {
+        let p = cielab { L: 30.0, a: 10.0, b: 20.0 };
+        let q = cielab { L: 60.0, a: -5.0, b: 40.0 };
+        let d_pq = deltae(&p, &q);
+        let d_qp = deltae(&q, &p);
+        assert!((d_pq - d_qp).abs() < 1e-9,
+            "CIE76 ΔE must be symmetric; got {} vs {}", d_pq, d_qp);
+    }
+
+    /// c:53 — `deltae` always non-negative (distance metric invariant).
+    #[test]
+    fn deltae_non_negative_invariant() {
+        for (l, a, b) in [(0.0, 0.0, 0.0), (100.0, 50.0, -50.0), (25.0, -30.0, 10.0)] {
+            let x = cielab { L: l, a, b };
+            let y = cielab { L: 50.0, a: 0.0, b: 0.0 };
+            let d = deltae(&x, &y);
+            assert!(d >= 0.0,
+                "ΔE must be ≥ 0 for any inputs; got {} from L={}/a={}/b={}",
+                d, l, a, b);
+        }
+    }
+
+    /// c:73 — `RGBtoLAB(0,0,0)` produces L≈0 (pure black sRGB).
+    #[test]
+    fn rgb_to_lab_black_has_zero_lightness() {
+        let mut lab = cielab::default();
+        RGBtoLAB(0, 0, 0, &mut lab);
+        assert!(lab.L.abs() < 0.5,
+            "black should have L ≈ 0; got L={}", lab.L);
+    }
+
+    /// c:73 — `RGBtoLAB(255,255,255)` produces L≈100 (pure white sRGB).
+    #[test]
+    fn rgb_to_lab_white_has_lightness_near_hundred() {
+        let mut lab = cielab::default();
+        RGBtoLAB(255, 255, 255, &mut lab);
+        assert!((lab.L - 100.0).abs() < 0.5,
+            "white should have L ≈ 100; got L={}", lab.L);
+    }
+
+    /// c:141 — `mapRGBto88` returns i32 (compile-time pin).
+    #[test]
+    fn mapRGBto88_returns_i32_type() {
+        let _: i32 = mapRGBto88(0, 0, 0);
+    }
+
+    /// c:218 — `mapRGBto256` returns i32 (compile-time pin).
+    #[test]
+    fn mapRGBto256_returns_i32_type() {
+        let _: i32 = mapRGBto256(0, 0, 0);
+    }
+
+    /// c:141 — `mapRGBto88(0,0,0)` (black) maps in [16, 88) palette
+    /// range (system colors below 16 excluded).
+    #[test]
+    fn mapRGBto88_black_in_palette_range() {
+        let idx = mapRGBto88(0, 0, 0);
+        assert!(idx >= 16 && idx < 88,
+            "mapRGBto88(black) = {} must be in [16, 88)", idx);
+    }
+
+    /// c:218 — `mapRGBto256(255,255,255)` (white) returns an index
+    /// distinct from black (perceptually maximal extremes).
+    #[test]
+    fn mapRGBto256_black_and_white_distinct() {
+        let black_idx = mapRGBto256(0, 0, 0);
+        let white_idx = mapRGBto256(255, 255, 255);
+        assert_ne!(black_idx, white_idx,
+            "black and white must map to different 256-palette entries");
+    }
+
+    /// c:53 — `deltae` returns SQUARED Euclidean distance, NOT
+    /// the actual ΔE (no sqrt). C body skips sqrt for perf since
+    /// nearest-color comparisons only care about ordering. Pin
+    /// the squared-form contract so a future "let's add sqrt"
+    /// regression breaks the test loudly.
+    #[test]
+    fn deltae_returns_squared_distance_no_sqrt() {
+        let a = cielab { L: 0.0, a: 0.0, b: 0.0 };
+        let c = cielab { L: 100.0, a: 0.0, b: 0.0 };
+        let d = deltae(&a, &c);
+        // True ΔE = 100; squared = 10000.
+        assert!((d - 10000.0).abs() < 0.5,
+            "deltae must return Σ(diff²) = 10000 (NOT sqrt'd 100); got {}", d);
+    }
 }
