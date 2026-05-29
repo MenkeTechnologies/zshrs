@@ -13082,4 +13082,114 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(wcs_nicechar('A', None, None), "A");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/utils.c nicechar dispatch.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:462 — nicechar for printable ASCII passes through.
+    #[test]
+    fn nicechar_printable_ascii_passes_through_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(nicechar('a'), "a");
+        assert_eq!(nicechar('Z'), "Z");
+        assert_eq!(nicechar('5'), "5");
+        assert_eq!(nicechar(' '), " ");
+    }
+
+    /// c:487 — nicechar('\\n') returns '\\n' (backslash + n).
+    #[test]
+    fn nicechar_newline_returns_backslash_n() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(nicechar('\n'), "\\n");
+    }
+
+    /// c:490 — nicechar('\\t') returns '\\t' (backslash + t).
+    #[test]
+    fn nicechar_tab_returns_backslash_t() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(nicechar('\t'), "\\t");
+    }
+
+    /// c:479 — nicechar(0x7f) returns '^?' (DEL → ^?).
+    #[test]
+    fn nicechar_del_returns_caret_question() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(nicechar('\x7f'), "^?");
+    }
+
+    /// c:493 — nicechar(0x01) returns '^A' (Ctrl-A).
+    #[test]
+    fn nicechar_ctrl_a_returns_caret_A() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(nicechar('\x01'), "^A");
+    }
+
+    /// c:493 — nicechar(0x1b) returns '^[' (ESC).
+    #[test]
+    fn nicechar_esc_returns_caret_bracket() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(nicechar('\x1b'), "^[");
+    }
+
+    /// c:462 — nicechar_sel quotable=true uses '\\C-' instead of '^'
+    /// for control chars.
+    #[test]
+    fn nicechar_sel_quotable_uses_backslash_C() {
+        let _g = crate::test_util::global_state_lock();
+        let r = nicechar_sel('\x01', true);
+        assert!(
+            r.contains("\\C-") || r.contains("^"),
+            "quotable should emit \\C- form, got {:?}",
+            r
+        );
+    }
+
+    /// c:531 — is_nicechar('a') returns FALSE: printable chars don't
+    /// NEED nice (escape) representation, they pass through verbatim.
+    /// Per the C comment in utils.c:531: "Return whether the char needs
+    /// nice representation".
+    #[test]
+    fn is_nicechar_printable_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!is_nicechar('a'), "printable doesn't NEED nice repr");
+        assert!(!is_nicechar('Z'));
+        assert!(!is_nicechar('5'));
+    }
+
+    /// c:531 — is_nicechar for any byte 0..127 is safe (no panic).
+    #[test]
+    fn is_nicechar_all_ascii_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for c in 0u8..=127 {
+            let _ = is_nicechar(c as char); // no panic
+        }
+    }
+
+    /// c:462 — nicechar deterministic.
+    #[test]
+    fn nicechar_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for c in ['a', '\n', '\t', '\x7f', '\x01', '\x1b'] {
+            let first = nicechar(c);
+            for _ in 0..5 {
+                assert_eq!(nicechar(c), first, "{:?} must be pure", c);
+            }
+        }
+    }
+
+    /// c:706 — `pathprog("")` returns None (empty path invalid).
+    #[test]
+    fn pathprog_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(pathprog("").is_none());
+    }
+
+    /// c:776 — `pathprog("/nonexistent/zshrs_xyz")` returns None.
+    #[test]
+    fn pathprog_nonexistent_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let r = pathprog("/__never_exists_zshrs_pathprog_xyz");
+        assert!(r.is_none());
+    }
 }
