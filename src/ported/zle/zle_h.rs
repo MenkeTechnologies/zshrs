@@ -1362,4 +1362,80 @@ mod tests {
     fn zle_h_corpus_th_immortal_value() {
         assert_eq!(TH_IMMORTAL, 1 << 1);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/zle.h ZS_*/ZC_* macros.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `ZS_strlen("abc")` returns 3. C `#define ZS_strlen wcslen`.
+    #[test]
+    fn ZS_strlen_three_chars_returns_three() {
+        let v: Vec<ZLE_CHAR_T> = "abc".chars().collect();
+        assert_eq!(ZS_strlen(&v), 3);
+    }
+
+    /// `ZS_strlen("")` returns 0.
+    #[test]
+    fn ZS_strlen_empty_returns_zero() {
+        let v: Vec<ZLE_CHAR_T> = Vec::new();
+        assert_eq!(ZS_strlen(&v), 0);
+    }
+
+    /// `ZS_memcmp` equal slices return Equal. C `wmemcmp == 0`.
+    #[test]
+    fn ZS_memcmp_equal_returns_equal() {
+        let a: Vec<ZLE_CHAR_T> = "abc".chars().collect();
+        let b: Vec<ZLE_CHAR_T> = "abc".chars().collect();
+        assert_eq!(ZS_memcmp(&a, &b, 3), std::cmp::Ordering::Equal);
+    }
+
+    /// `ZS_memcmp("abc","abd",3)` returns Less.
+    #[test]
+    fn ZS_memcmp_less_returns_less() {
+        let a: Vec<ZLE_CHAR_T> = "abc".chars().collect();
+        let b: Vec<ZLE_CHAR_T> = "abd".chars().collect();
+        assert_eq!(ZS_memcmp(&a, &b, 3), std::cmp::Ordering::Less);
+    }
+
+    /// `ZS_strchr("hello",'l')` finds first 'l' at index 2.
+    #[test]
+    fn ZS_strchr_finds_first_occurrence() {
+        let v: Vec<ZLE_CHAR_T> = "hello".chars().collect();
+        assert_eq!(ZS_strchr(&v, 'l'), Some(2));
+    }
+
+    /// `ZS_strchr` absent returns None.
+    #[test]
+    fn ZS_strchr_absent_returns_none() {
+        let v: Vec<ZLE_CHAR_T> = "abc".chars().collect();
+        assert!(ZS_strchr(&v, 'z').is_none());
+    }
+
+    /// `ZC_ialpha('a')` true (alpha).
+    #[test]
+    fn ZC_ialpha_letter_returns_true() {
+        assert!(ZC_ialpha('a'));
+        assert!(ZC_ialpha('Z'));
+    }
+
+    /// `ZC_ialpha('5')` false (digit).
+    #[test]
+    fn ZC_ialpha_digit_returns_false() {
+        assert!(!ZC_ialpha('5'));
+        assert!(!ZC_ialpha(' '));
+    }
+
+    /// `ZC_ialnum('a')`, `ZC_ialnum('5')` both true.
+    #[test]
+    fn ZC_ialnum_letter_and_digit_return_true() {
+        assert!(ZC_ialnum('a'));
+        assert!(ZC_ialnum('5'));
+    }
+
+    /// `ZC_ialnum(' ')`, `ZC_ialnum('.')` both false.
+    #[test]
+    fn ZC_ialnum_space_and_punct_return_false() {
+        assert!(!ZC_ialnum(' '));
+        assert!(!ZC_ialnum('.'));
+    }
 }

@@ -5339,4 +5339,42 @@ mod tests {
         assert_eq!(ZFST_TYPE(0), 0);
         assert_eq!(ZFST_MODE(0), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Modules/zftp.c macros + status bits.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `ZFST_TYPE(ZFST_TMSK | ZFST_BLOC)` masks out only type bit.
+    /// C `#define ZFST_TYPE(x) (x & ZFST_TMSK)` (c:267).
+    #[test]
+    fn ZFST_TYPE_masks_only_type_bit() {
+        let mixed = ZFST_TMSK | ZFST_BLOC;
+        assert_eq!(ZFST_TYPE(mixed), ZFST_TMSK, "type extracted, mode dropped");
+    }
+
+    /// `ZFST_MODE(ZFST_TMSK | ZFST_BLOC)` masks out only mode bit.
+    /// C `#define ZFST_MODE(x) (x & ZFST_MMSK)` (c:273).
+    #[test]
+    fn ZFST_MODE_masks_only_mode_bit() {
+        let mixed = ZFST_TMSK | ZFST_BLOC;
+        assert_eq!(ZFST_MODE(mixed), ZFST_BLOC, "mode extracted, type dropped");
+    }
+
+    /// `ZFST_TYPE | ZFST_MODE` reconstruct the original status.
+    /// No bit overlap between masks.
+    #[test]
+    fn ZFST_TYPE_and_MODE_reconstruct_original_status() {
+        let original = ZFST_TMSK | ZFST_BLOC;
+        let t = ZFST_TYPE(original);
+        let m = ZFST_MODE(original);
+        assert_eq!(t | m, original, "TYPE | MODE = original status");
+    }
+
+    /// `ZFST_ASCI` is the zero/default type value.
+    /// C `#define ZFST_ASCI 0x0000`.
+    #[test]
+    fn ZFST_ASCI_is_zero_default() {
+        assert_eq!(ZFST_ASCI, 0);
+        assert_eq!(ZFST_TYPE(ZFST_ASCI), 0, "ASCII type = zero default");
+    }
 }
