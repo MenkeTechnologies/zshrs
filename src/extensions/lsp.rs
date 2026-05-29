@@ -693,7 +693,38 @@ fn diagnose(text: &str) -> Vec<Value> {
                         }
                     }
                 }
-                '{' => stack.push(('{', line_no, i)),
+                '{' => {
+                    // `${...}` parameter substitution can contain glob
+                    // patterns with unbalanced `[` / `]` etc. inside
+                    // the pattern body (e.g. `${log#\[}`, `${log%%\]*}`).
+                    // Skip the whole `${...}` span without recursing
+                    // so the inner brackets don't trip the bracket
+                    // tracker. Without this, lines like
+                    //   date_part=${log_line#*\][}; date_part=${date_part%%\]*}
+                    // (`examples/demos/117_backref_replacement.zsh:56`)
+                    // raised false "unmatched `}`" / "unclosed `[`".
+                    let preceded_by_dollar = i > 0 && bytes[i - 1] == b'$';
+                    if preceded_by_dollar {
+                        let mut depth = 1i32;
+                        let mut j = i + 1;
+                        while j < bytes.len() && depth > 0 {
+                            match bytes[j] {
+                                b'\\' if j + 1 < bytes.len() => {
+                                    j += 2;
+                                    continue;
+                                }
+                                b'{' => depth += 1,
+                                b'}' => depth -= 1,
+                                _ => {}
+                            }
+                            j += 1;
+                        }
+                        // Jump past the whole `${...}` span.
+                        i = j;
+                        continue;
+                    }
+                    stack.push(('{', line_no, i))
+                }
                 '}' => {
                     if stack.last().map(|x| x.0) == Some('{') {
                         stack.pop();
@@ -804,6 +835,17 @@ fn diagnose(text: &str) -> Vec<Value> {
             // onto block_stack when same line has a `do` token (block form
             // `repeat N; do ... done` or `repeat N do CMD done`).
             if kw_static == "repeat"
+                && !code_only.split_whitespace().any(|t| t == "do")
+            {
+                continue;
+            }
+            // `select` can appear as a bareword ARGUMENT to other
+            // builtins (e.g. `zstyle ':completion:*' menu select` —
+            // `examples/demos/133_zstyle_demo.zsh:6,15`), where it's
+            // NOT opening a `select VAR in WORDS; do ... done` block.
+            // Only treat as a block opener when the same line also
+            // has a `do` token (block form). Same heuristic as repeat.
+            if kw_static == "select"
                 && !code_only.split_whitespace().any(|t| t == "do")
             {
                 continue;
@@ -6330,6 +6372,63 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                         // the matching close paren counting depth.
                         let var_start = p;
                         let mut q2 = p + 1;
+                        // Detect $((arith)) up front so we can emit the
+                        // INTERIOR as proper number/operator/identifier
+                        // tokens rather than one opaque variable-colored
+                        // blob. Without this, `"$(( -7 % 3 ))"` inside
+                        // a double-quoted string had its arithmetic body
+                        // colored like a string-internal variable.
+                        let is_arith = q2 + 1 < inner_end
+                            && bb[q2] == b'(' && bb[q2 + 1] == b'(';
+                        if is_arith {
+                            // Scan to matching `))` (paren-depth aware).
+                            let mut depth = 2i32; // already past `$((`
+                            let arith_start = q2 + 2;
+                            q2 = arith_start;
+                            while q2 < inner_end && depth > 0 {
+                                match bb[q2] {
+                                    b'(' => depth += 1,
+                                    b')' => depth -= 1,
+                                    _ => {}
+                                }
+                                if depth == 0 { break; }
+                                q2 += 1;
+                            }
+                            // q2 now points at the first `)` of the
+                            // closing `))`. Compute spans:
+                            //   `$((` at var_start..arith_start
+                            //   interior at arith_start..arith_end
+                            //   `))`   at arith_end..(arith_end+2)
+                            let arith_end = if q2 > 0 && q2 < bb.len() && bb[q2] == b')' {
+                                // Move back to the `)` that closes the
+                                // OUTER paren (one before q2 — but here
+                                // q2 already IS the first `)` of `))`).
+                                q2.saturating_sub(0)
+                            } else {
+                                q2
+                            };
+                            // Emit `$((` as operator.
+                            push_tok(&mut data, &mut last_line, &mut last_col,
+                                ln, (col + var_start) as u32, 3, 4);
+                            // Tokenize the arithmetic interior into
+                            // numbers / identifiers / operators.
+                            emit_arith_interior(&mut data, &mut last_line,
+                                &mut last_col, ln, col, bb, arith_start, arith_end);
+                            // Emit `))` as operator (2 bytes) if present.
+                            if arith_end + 1 < bb.len()
+                                && bb[arith_end] == b')'
+                                && bb[arith_end + 1] == b')'
+                            {
+                                push_tok(&mut data, &mut last_line, &mut last_col,
+                                    ln, (col + arith_end) as u32, 2, 4);
+                                q2 = arith_end + 2;
+                            } else {
+                                q2 = arith_end;
+                            }
+                            seg_start = q2;
+                            p = q2;
+                            continue;
+                        }
                         if q2 < inner_end && bb[q2] == b'{' {
                             // ${...} — find matching close brace, allowing
                             // one level of nested braces (e.g. `${(@)arr}`,
@@ -6685,6 +6784,82 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
         }
     }
     json!({ "data": data })
+}
+
+/// Walk the interior of a `$((...))` arithmetic expression and emit
+/// per-atom semantic tokens (numbers / identifiers / operators) so
+/// the IDE colors the inside as CODE rather than as one opaque
+/// variable-colored span. Mirrors the C arithmetic-lexer's atom set
+/// in `Src/math.c`: digit runs are numbers, alnum-starting runs are
+/// identifiers (vars), and everything else is an operator atom.
+///
+/// `bb` is the raw line bytes; `arith_start..arith_end` is the
+/// half-open range inside `bb` covering the arithmetic body (between
+/// `$((` and `))`). `col` is the column of the enclosing string's
+/// opening quote, used as the base for the emitted token positions.
+fn emit_arith_interior(
+    data: &mut Vec<u32>,
+    last_line: &mut u32,
+    last_col: &mut u32,
+    ln: u32,
+    col: usize,
+    bb: &[u8],
+    arith_start: usize,
+    arith_end: usize,
+) {
+    let mut p = arith_start;
+    while p < arith_end {
+        let c = bb[p];
+        // Whitespace — skip.
+        if c == b' ' || c == b'\t' {
+            p += 1;
+            continue;
+        }
+        // Digit run → number (type 2).
+        if c.is_ascii_digit() {
+            let mut end = p + 1;
+            while end < arith_end && (bb[end].is_ascii_digit() || bb[end] == b'.') {
+                end += 1;
+            }
+            push_tok(data, last_line, last_col,
+                ln, (col + p) as u32, (end - p) as u32, 2);
+            p = end;
+            continue;
+        }
+        // Identifier (alpha or `_`) → variable (type 6).
+        if c.is_ascii_alphabetic() || c == b'_' {
+            let mut end = p + 1;
+            while end < arith_end
+                && (bb[end].is_ascii_alphanumeric() || bb[end] == b'_')
+            {
+                end += 1;
+            }
+            push_tok(data, last_line, last_col,
+                ln, (col + p) as u32, (end - p) as u32, 6);
+            p = end;
+            continue;
+        }
+        // Multi-char operator (longest match): `**`, `++`, `--`, `<<`,
+        // `>>`, `&&`, `||`, `==`, `!=`, `<=`, `>=`, `+=`, `-=`, `*=`,
+        // `/=`, `%=`. Single-char fallbacks: `+`, `-`, `*`, `/`, `%`,
+        // `=`, `<`, `>`, `?`, `:`, `&`, `|`, `^`, `~`, `!`, `(`, `)`,
+        // `,`. All emit as operator (type 4).
+        let two = if p + 1 < arith_end {
+            Some(&bb[p..p + 2])
+        } else {
+            None
+        };
+        let span = match two {
+            Some(b"**") | Some(b"++") | Some(b"--") | Some(b"<<") | Some(b">>")
+            | Some(b"&&") | Some(b"||") | Some(b"==") | Some(b"!=")
+            | Some(b"<=") | Some(b">=") | Some(b"+=") | Some(b"-=")
+            | Some(b"*=") | Some(b"/=") | Some(b"%=") => 2,
+            _ => 1,
+        };
+        push_tok(data, last_line, last_col,
+            ln, (col + p) as u32, span as u32, 4);
+        p += span;
+    }
 }
 
 fn push_tok(
@@ -9092,6 +9267,48 @@ mod tests {
         assert!(d.is_empty(), "one-liner case-arm `)` flagged: {:?}", d);
     }
 
+    /// `${var#PATTERN}` parameter-substitution patterns can contain
+    /// unbalanced `[` / `]` (literal-escaped via `\[` / `\]`). The
+    /// bracket scanner must skip the whole `${...}` span as opaque,
+    /// otherwise it flags bogus 'unmatched }' / 'unclosed [' on
+    /// `${log_line#\[}; date=${log_line#*\][}` patterns. Reported on
+    /// `examples/demos/117_backref_replacement.zsh:56`.
+    #[test]
+    fn diagnose_param_subst_with_escaped_brackets_no_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "level=${log_line#\\[}; date=${log_line#*\\][}\n";
+        let d = diagnose(src);
+        assert!(d.is_empty(),
+            "param-subst with escaped brackets flagged: {:?}", d);
+    }
+
+    /// `select` as an ARGUMENT to another builtin (e.g.
+    /// `zstyle ':completion:*' menu select`) must NOT push onto
+    /// block_stack — only the block form
+    /// `select var in words; do …; done` opens a block.
+    /// Pinned because the original implementation flagged
+    /// `examples/demos/133_zstyle_demo.zsh:6` as an unclosed
+    /// `select` block.
+    #[test]
+    fn diagnose_select_as_argument_not_block_opener() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "zstyle ':completion:*' menu select\n";
+        let d = diagnose(src);
+        assert!(d.is_empty(),
+            "`select` as builtin arg flagged: {:?}", d);
+    }
+
+    /// Real `select VAR in WORDS; do …; done` block form still
+    /// works (positive control for the above test).
+    #[test]
+    fn diagnose_select_block_form_balances() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "select x in a b c; do echo $x; break; done\n";
+        let d = diagnose(src);
+        assert!(d.is_empty(),
+            "block-form `select … do … done` flagged: {:?}", d);
+    }
+
     // ── Hover regressions: UDF + user-variable fall-back & priority ──
 
     /// User-defined function with NO `##` doc-block must still produce
@@ -9185,6 +9402,46 @@ mod tests {
         }
         assert!(found,
             "brace range `{{A..E}}` must emit a single 6-byte operator token, got data={:?}", data);
+    }
+
+    /// `$((arith))` inside a double-quoted string must NOT emit one
+    /// opaque variable-colored span over the entire `$((expr))`.
+    /// Before fix, the string-interpolation handler caught `$(` and
+    /// counted parens to find the matching `))` then emitted ONE
+    /// token-type-6 covering everything — so `"$(( -7 % 3 ))"` had
+    /// `-7 % 3` colored as if it were a variable name. Fix breaks
+    /// the interior into number/identifier/operator atoms and emits
+    /// `$((` and `))` as operator brackets.
+    #[test]
+    fn semantic_tokens_arith_in_string_breaks_interior_into_atoms() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        let uri = "file:///t.zsh";
+        state.docs.insert(uri.to_string(),
+            "echo \"$(( -7 % 3 ))\"\n".to_string());
+        let r = semantic_tokens(&state, &json!({ "textDocument": { "uri": uri } }));
+        let data = r["data"].as_array().expect("data array");
+        // We expect to see at least:
+        //   * one type-2 (number) token for `7` (the digit run after `-`)
+        //   * one type-4 (operator) token for `%`
+        //   * one type-2 (number) token for `3`
+        // Before fix: zero numbers, zero operators (everything was one
+        // type-6 variable token across the whole `$((…))` span).
+        let mut numbers = 0usize;
+        let mut operators = 0usize;
+        for chunk in data.chunks(5) {
+            if chunk.len() == 5 {
+                match chunk[3].as_u64() {
+                    Some(2) => numbers += 1,
+                    Some(4) => operators += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert!(numbers >= 2,
+            "expected ≥2 number tokens inside $((…)), got {numbers}; data={:?}", data);
+        assert!(operators >= 3,
+            "expected ≥3 operator tokens ($((, %, )) ) inside $((…)), got {operators}; data={:?}", data);
     }
 
     /// Long-form CLI flags `--verbose` / `--debug` emit a single
