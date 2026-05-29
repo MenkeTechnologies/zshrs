@@ -5164,4 +5164,68 @@ mod tests {
         let n = mathevali("4 - - 3 * 7 << 1 & 7 ^ 1 | 16 ** 2").unwrap();
         assert_eq!(n, 1591, "ztst:50 — default zsh precedence = 1591");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/math.c output-format + lastbase
+    // accessor helpers.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `outputradix()` returns the current `$OUTPUT_RADIX` value.
+    /// C: reads the global `outputradix` int.
+    #[test]
+    fn outputradix_returns_int_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _r = outputradix();
+    }
+
+    /// `outputunderscore()` returns the current digit-group setting.
+    #[test]
+    fn outputunderscore_returns_int_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _r = outputunderscore();
+    }
+
+    /// `reset_output_format()` is a no-panic clearing call.
+    #[test]
+    fn reset_output_format_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_output_format();
+        reset_output_format();
+    }
+
+    /// `lastbase()` returns the integer base of the last math
+    /// literal parsed (C's `lastbase` global).
+    #[test]
+    fn lastbase_returns_int_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _r = lastbase();
+    }
+
+    /// `set_lastbase(N)` then `lastbase()` returns N.
+    #[test]
+    fn set_lastbase_round_trips() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = lastbase();
+        set_lastbase(16);
+        assert_eq!(lastbase(), 16);
+        set_lastbase(saved);
+    }
+
+    /// `m_noeval_set(0)` then `m_noeval()` returns 0.
+    #[test]
+    fn m_noeval_default_is_zero() {
+        let _g = crate::test_util::global_state_lock();
+        m_noeval_set(0);
+        assert_eq!(m_noeval(), 0);
+    }
+
+    /// `m_noeval_set(N)` round-trips through getter.
+    #[test]
+    fn m_noeval_set_round_trips() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = m_noeval();
+        m_noeval_set(3);
+        assert_eq!(m_noeval(), 3);
+        m_noeval_set(saved);
+    }
 }
