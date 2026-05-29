@@ -1061,4 +1061,97 @@ mod tests {
         assert_eq!(cleanup_(null), 0);
         assert_eq!(finish_(null), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/hlgroup.c
+    // c:58 convertattr / c:210 getgroup / c:283 scangroup /
+    // c:297 getpmesc / c:313 getpmsgr / c:305 scanpmesc / c:321 scanpmsgr
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:58 — `convertattr` returns String (compile-time pin, alt).
+    #[test]
+    fn convertattr_returns_string_pin_alt() {
+        let _: String = convertattr("fg=red", false);
+    }
+
+    /// c:58 — `convertattr` empty input is deterministic across modes.
+    #[test]
+    fn convertattr_empty_input_both_modes_deterministic() {
+        let a1 = convertattr("", false);
+        let a2 = convertattr("", false);
+        assert_eq!(a1, a2, "empty(false) must be pure");
+        let b1 = convertattr("", true);
+        let b2 = convertattr("", true);
+        assert_eq!(b1, b2, "empty(true) must be pure");
+    }
+
+    /// c:210 — `getgroup` for empty name is deterministic.
+    #[test]
+    fn getgroup_empty_name_deterministic() {
+        let a = getgroup("", false);
+        let b = getgroup("", false);
+        assert_eq!(a.is_some(), b.is_some(),
+            "getgroup('') must be deterministic");
+    }
+
+    /// c:210 — `getgroup` returns Option<String> for sgr=true too.
+    #[test]
+    fn getgroup_sgr_mode_returns_option_string_type() {
+        let _: Option<String> = getgroup("name", true);
+    }
+
+    /// c:283 — `scangroup(true)` returns Vec (sgr-mode pin).
+    #[test]
+    fn scangroup_sgr_mode_returns_vec_type() {
+        let _: Vec<(String, String)> = scangroup(true);
+    }
+
+    /// c:283 — `scangroup(sgr=false)` and `scangroup(sgr=true)` are
+    /// both deterministic per call.
+    #[test]
+    fn scangroup_both_modes_deterministic() {
+        let f1 = scangroup(false);
+        let f2 = scangroup(false);
+        assert_eq!(f1, f2, "scangroup(false) must be deterministic");
+        let t1 = scangroup(true);
+        let t2 = scangroup(true);
+        assert_eq!(t1, t2, "scangroup(true) must be deterministic");
+    }
+
+    /// c:297 — `getpmesc` returns Option<String> (compile-time pin).
+    #[test]
+    fn getpmesc_returns_option_string_type() {
+        let _: Option<String> = getpmesc("anykey");
+    }
+
+    /// c:313 — `getpmsgr` returns Option<String> (compile-time pin).
+    #[test]
+    fn getpmsgr_returns_option_string_type() {
+        let _: Option<String> = getpmsgr("anykey");
+    }
+
+    /// c:305 — `scanpmesc` is deterministic.
+    #[test]
+    fn scanpmesc_is_deterministic() {
+        let a = scanpmesc();
+        let b = scanpmesc();
+        assert_eq!(a, b, "scanpmesc must be deterministic");
+    }
+
+    /// c:321 — `scanpmsgr` is deterministic.
+    #[test]
+    fn scanpmsgr_is_deterministic() {
+        let a = scanpmsgr();
+        let b = scanpmsgr();
+        assert_eq!(a, b, "scanpmsgr must be deterministic");
+    }
+
+    /// c:283 — `scangroup` results: all keys non-empty (every group has a name).
+    #[test]
+    fn scangroup_keys_all_non_empty() {
+        for (k, _) in scangroup(false) {
+            assert!(!k.is_empty(),
+                "scangroup must not yield entries with empty key");
+        }
+    }
 }
