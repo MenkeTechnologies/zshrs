@@ -3681,4 +3681,60 @@ mod tests {
         let (decoded, _) = getcolval(r"a\_b", 0);
         assert_eq!(decoded, "a b");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/complist.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `getcolval("")` returns empty + unchanged input cursor.
+    #[test]
+    fn getcolval_empty_returns_empty_pair() {
+        let _g = crate::test_util::global_state_lock();
+        let (decoded, rest) = getcolval("", 0);
+        assert!(decoded.is_empty(), "empty in → empty decoded");
+        assert!(rest.is_empty(), "empty in → empty rest");
+    }
+
+    /// `getcolval("abc", 0)` with multi=0 returns full "abc"
+    /// (plain chars pass through).
+    #[test]
+    fn getcolval_plain_chars_pass_through() {
+        let _g = crate::test_util::global_state_lock();
+        let (decoded, _rest) = getcolval("abc", 0);
+        assert_eq!(decoded, "abc", "plain chars pass through unchanged");
+    }
+
+    /// `getcoldef("")` on empty input returns None.
+    /// C: starts with `*s == '('` check; empty falls through.
+    #[test]
+    fn getcoldef_empty_input_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let r = getcoldef("");
+        assert!(r.is_none(), "empty input → no coldef");
+    }
+
+    /// `zcoff()` runs without panic — clears color state.
+    /// C `Src/Zle/complist.c:597` emits `\x1b[m` (reset SGR).
+    #[test]
+    fn zcoff_runs_without_panic() {
+        let _g = crate::test_util::global_state_lock();
+        zcoff();
+        zcoff();
+    }
+
+    /// `cleareol()` runs without panic. C emits termcap `ce`.
+    #[test]
+    fn cleareol_runs_without_panic() {
+        let _g = crate::test_util::global_state_lock();
+        cleareol();
+    }
+
+    /// `zcputs(group, None)` returns empty SGR string.
+    #[test]
+    #[ignore = "ZSHRS BUG: zcputs() Rust returns String, C is void (writes to stdout) — sig divergence"]
+    fn zcputs_no_color_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zcputs("group", None);
+        assert!(r.is_empty(), "None color → empty SGR");
+    }
 }

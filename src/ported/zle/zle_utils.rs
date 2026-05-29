@@ -2618,4 +2618,59 @@ mod findbol_findeol_tests {
         assert_eq!(outll, 3);
         assert_eq!(outcs, 2); // c:483-484 — cursor at byte 3 → codepoint 2
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/zle_utils.c helper fns.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `sizeline(0)` is a no-op (already-sized buffer).
+    /// C `Src/Zle/zle_utils.c:sizeline` — `while (sz > cursz)`.
+    #[test]
+    fn sizeline_zero_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        sizeline(0);
+        sizeline(0);
+    }
+
+    /// `sizeline(N)` for moderate N completes without panic.
+    #[test]
+    fn sizeline_moderate_size_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        sizeline(100);
+        sizeline(1024);
+    }
+
+    /// `zle_save_positions` / `zle_free_positions` round-trip.
+    #[test]
+    fn zle_save_then_free_positions_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        zle_save_positions();
+        zle_free_positions();
+    }
+
+    /// `zle_save_positions` / `zle_restore_positions` round-trip.
+    #[test]
+    fn zle_save_then_restore_positions_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        zle_save_positions();
+        zle_restore_positions();
+    }
+
+    /// `zle_free_positions` on empty stack is safe (no-op).
+    #[test]
+    fn zle_free_positions_empty_stack_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        zle_free_positions();
+        zle_free_positions();
+        zle_free_positions();
+    }
+
+    /// `free_region_highlights_memos` on empty REGION_HIGHLIGHTS
+    /// is a no-op.
+    #[test]
+    fn free_region_highlights_memos_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        free_region_highlights_memos();
+        free_region_highlights_memos();
+    }
 }
