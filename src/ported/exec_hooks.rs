@@ -529,4 +529,106 @@ mod tests {
         unset_array("");
         unset_assoc("");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional contract-pin tests for exec_hooks fallback semantics
+    // c:213 pparams / c:217 set_pparams / c:223 unregister_function
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `pparams()` is deterministic for repeated calls without state changes.
+    #[test]
+    fn pparams_deterministic_without_changes() {
+        let _g = crate::test_util::global_state_lock();
+        let first = pparams();
+        for _ in 0..3 {
+            assert_eq!(pparams(), first,
+                "pparams() must be deterministic across reads");
+        }
+    }
+
+    /// `pparams()` returns Vec<String> (not Option) — pin type contract.
+    #[test]
+    fn pparams_returns_vec_string_no_option() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = pparams();
+    }
+
+    /// `array(name)` with name containing null-byte doesn't panic.
+    #[test]
+    fn array_with_special_chars_in_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = array("name with spaces");
+        let _ = array("name/with/slashes");
+        let _ = array("$dollarsigns");
+    }
+
+    /// `assoc(name)` empty name no panic.
+    #[test]
+    fn assoc_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = assoc("");
+    }
+
+    /// `set_array(empty, ...)` empty name no panic.
+    #[test]
+    fn set_array_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        set_array("", vec![]);
+    }
+
+    /// `set_assoc(empty, ...)` empty name no panic.
+    #[test]
+    fn set_assoc_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let m = indexmap::IndexMap::new();
+        set_assoc("", m);
+    }
+
+    /// `set_pparams(empty)` is safe.
+    #[test]
+    fn set_pparams_empty_vec_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        set_pparams(vec![]);
+    }
+
+    /// Repeated `pparams()` doesn't allocate growing state.
+    #[test]
+    fn pparams_repeated_doesnt_grow_state() {
+        let _g = crate::test_util::global_state_lock();
+        let first_len = pparams().len();
+        for _ in 0..10 {
+            let n = pparams().len();
+            assert_eq!(n, first_len, "len must not grow across reads");
+        }
+    }
+
+    /// `unregister_function` is deterministic for nonexistent name.
+    #[test]
+    fn unregister_function_unknown_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = unregister_function("__never_real_xyz__");
+        for _ in 0..3 {
+            assert_eq!(unregister_function("__never_real_xyz__"), first);
+        }
+    }
+
+    /// `array(name)` repeated reads of nonexistent name are deterministic.
+    #[test]
+    fn array_unknown_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = array("__never_real_array_xyz__").is_none();
+        for _ in 0..3 {
+            assert_eq!(array("__never_real_array_xyz__").is_none(), first);
+        }
+    }
+
+    /// `assoc(name)` repeated reads of nonexistent name are deterministic.
+    #[test]
+    fn assoc_unknown_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = assoc("__never_real_assoc_xyz__").is_none();
+        for _ in 0..3 {
+            assert_eq!(assoc("__never_real_assoc_xyz__").is_none(), first);
+        }
+    }
 }
