@@ -7277,4 +7277,102 @@ mod tests {
         let range = &[Meta + PP_UPPER as u8];
         assert_eq!(mb_patmatchindex(range, 0), Some((None, PP_UPPER)));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/pattern.c bit-flag predicates.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:200 — P_ISBRANCH checks bit 0x20.
+    #[test]
+    fn P_ISBRANCH_recognizes_bit_0x20() {
+        assert!(P_ISBRANCH(0x20));
+        assert!(P_ISBRANCH(0x20 | 0x01));
+        assert!(P_ISBRANCH(0xFF));
+        assert!(!P_ISBRANCH(0x00));
+        assert!(!P_ISBRANCH(0x1F));
+    }
+
+    /// c:201 — P_ISEXCLUDE checks bits 0x30 = 0x10 | 0x20 (BOTH must be set).
+    #[test]
+    fn P_ISEXCLUDE_requires_both_bits() {
+        assert!(P_ISEXCLUDE(0x30));
+        assert!(P_ISEXCLUDE(0x30 | 0x01));
+        assert!(!P_ISEXCLUDE(0x10), "only 0x10 — must require both");
+        assert!(!P_ISEXCLUDE(0x20), "only 0x20 — must require both");
+        assert!(!P_ISEXCLUDE(0x00));
+    }
+
+    /// c:202 — P_NOTDOT checks bit 0x40.
+    #[test]
+    fn P_NOTDOT_recognizes_bit_0x40() {
+        assert!(P_NOTDOT(0x40));
+        assert!(P_NOTDOT(0x40 | 0x01));
+        assert!(P_NOTDOT(0xFF));
+        assert!(!P_NOTDOT(0x00));
+        assert!(!P_NOTDOT(0x3F));
+    }
+
+    /// c:216-218 — P_SIMPLE/HSTART/PURESTR are distinct bits.
+    #[test]
+    fn p_flag_constants_are_distinct() {
+        assert_eq!(P_SIMPLE & P_HSTART, 0);
+        assert_eq!(P_SIMPLE & P_PURESTR, 0);
+        assert_eq!(P_HSTART & P_PURESTR, 0);
+    }
+
+    /// c:216 — P_SIMPLE is bit 0 (= 0x01).
+    #[test]
+    fn p_simple_is_bit_zero() {
+        assert_eq!(P_SIMPLE, 0x01);
+    }
+
+    /// c:217 — P_HSTART is bit 1 (= 0x02).
+    #[test]
+    fn p_hstart_is_bit_one() {
+        assert_eq!(P_HSTART, 0x02);
+    }
+
+    /// c:218 — P_PURESTR is bit 2 (= 0x04).
+    #[test]
+    fn p_purestr_is_bit_two() {
+        assert_eq!(P_PURESTR, 0x04);
+    }
+
+    /// c:406-407 — PA_NOALIGN=1, PA_UNMETA=2 (single-bit flags).
+    #[test]
+    fn pa_flag_constants_canonical() {
+        assert_eq!(PA_NOALIGN, 1);
+        assert_eq!(PA_UNMETA, 2);
+    }
+
+    /// PA_NOALIGN | PA_UNMETA combine without overlap.
+    #[test]
+    fn pa_flags_pairwise_disjoint() {
+        assert_eq!(PA_NOALIGN & PA_UNMETA, 0);
+    }
+
+    /// c:336 — metacharinc on ASCII char advances by 1 byte.
+    #[test]
+    fn metacharinc_ascii_advances_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(metacharinc("hello", 0), 1);
+        assert_eq!(metacharinc("hello", 4), 5);
+    }
+
+    /// c:336 — metacharinc at end-of-string returns same pos.
+    #[test]
+    fn metacharinc_end_of_string_returns_same() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(metacharinc("abc", 3), 3, "at end → no advance");
+    }
+
+    /// c:336 — metacharinc on multibyte char advances by codepoint width.
+    #[test]
+    fn metacharinc_multibyte_advances_by_codepoint_len() {
+        let _g = crate::test_util::global_state_lock();
+        // 'é' is 2 bytes in UTF-8.
+        assert_eq!(metacharinc("é", 0), 2);
+        // '日' is 3 bytes.
+        assert_eq!(metacharinc("日", 0), 3);
+    }
 }
