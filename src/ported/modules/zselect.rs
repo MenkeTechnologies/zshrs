@@ -1005,4 +1005,124 @@ mod tests {
             assert_eq!(boot_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zselect.c
+    // c:25 handle_digits / c:68 bin_zselect + lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:25 — `handle_digits` returns i32 (compile-time pin, alt).
+    #[test]
+    fn handle_digits_returns_i32_pin_alt() {
+        let (mut set, mut fdmax) = fresh_set();
+        let _: i32 = handle_digits("zselect", "0", &mut set, &mut fdmax);
+    }
+
+    /// c:25 — `handle_digits` "0" (stdin) returns 0 (success).
+    #[test]
+    fn handle_digits_stdin_zero_succeeds() {
+        let (mut set, mut fdmax) = fresh_set();
+        let r = handle_digits("zselect", "0", &mut set, &mut fdmax);
+        assert_eq!(r, 0, "fd 0 (stdin) must succeed");
+    }
+
+    /// c:25 — `handle_digits` is deterministic for the same input.
+    #[test]
+    fn handle_digits_deterministic_for_stdin() {
+        let (mut s1, mut f1) = fresh_set();
+        let first = handle_digits("zselect", "0", &mut s1, &mut f1);
+        for _ in 0..5 {
+            let (mut s, mut f) = fresh_set();
+            assert_eq!(handle_digits("zselect", "0", &mut s, &mut f), first,
+                "handle_digits('0') must be pure");
+        }
+    }
+
+    /// c:25 — `handle_digits` huge fd value MUST NOT panic.
+    /// C source rejects with usage error: `zerr("file descriptor out of range")`.
+    /// In zshrs the port panics via libc::FD_SET when fd > FD_SETSIZE.
+    #[test]
+    #[ignore = "ZSHRS BUG: handle_digits panics in libc::FD_SET when fd > FD_SETSIZE; C source `Src/Modules/zselect.c:25` should usage-error"]
+    fn handle_digits_huge_fd_no_panic() {
+        let (mut set, mut fdmax) = fresh_set();
+        let _ = handle_digits("zselect", "99999999", &mut set, &mut fdmax);
+    }
+
+    /// c:68 — `bin_zselect` returns i32 (compile-time pin).
+    /// IGNORED — bin_zselect no-args hangs in select(2); see pre-existing
+    /// ZSHRS BUG citation on `bin_zselect_no_args_returns_nonzero`.
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_zselect with no args hangs in select(2) with empty fdset; C should reject early per Src/Modules/zselect.c:68"]
+    fn bin_zselect_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_zs();
+        let _: i32 = bin_zselect("zselect", &[], &ops, 0);
+    }
+
+    /// c:68 — `bin_zselect` no-args returns nonzero (usage error, alt).
+    /// IGNORED — same ZSHRS BUG as `bin_zselect_no_args_returns_nonzero`.
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_zselect with no args hangs in select(2); see Src/Modules/zselect.c:68"]
+    fn bin_zselect_no_args_usage_error_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_zs();
+        let r = bin_zselect("zselect", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// c:68 — `bin_zselect` exit code is non-negative for usage-error paths.
+    /// IGNORED — same ZSHRS BUG (no-args + -X both hit select(2) hang).
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_zselect hangs in select(2) on empty/unknown-flag argv; see Src/Modules/zselect.c:68"]
+    fn bin_zselect_usage_error_exit_codes_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_zs();
+        for argv in [
+            vec![],
+            vec!["bogus".into()],
+            vec!["-X".into()],
+        ] {
+            let r = bin_zselect("zselect", &argv, &ops, 0);
+            assert!(r >= 0, "exit code must be non-negative; got {} for {:?}",
+                r, argv);
+        }
+    }
+
+    /// c:312 — `features_` returns i32 (compile-time pin).
+    #[test]
+    fn zselect_features_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = Vec::new();
+        let _: i32 = features_(std::ptr::null(), &mut v);
+    }
+
+    /// c:320 — `enables_` returns i32 + None enables-out safe.
+    #[test]
+    fn zselect_enables_with_none_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:341 — `finish_` returns 0 (success sentinel).
+    #[test]
+    fn zselect_finish_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
+
+    /// c:295/312/320/327/334/341 — each lifecycle hook returns 0 individually.
+    #[test]
+    fn zselect_each_lifecycle_hook_returns_zero_individually() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v: Vec<String> = Vec::new();
+        let mut e: Option<Vec<i32>> = None;
+        assert_eq!(setup_(null), 0, "c:295 setup_");
+        assert_eq!(features_(null, &mut v), 0, "c:312 features_");
+        assert_eq!(enables_(null, &mut e), 0, "c:320 enables_");
+        assert_eq!(boot_(null), 0, "c:327 boot_");
+        assert_eq!(cleanup_(null), 0, "c:334 cleanup_");
+        assert_eq!(finish_(null), 0, "c:341 finish_");
+    }
 }
