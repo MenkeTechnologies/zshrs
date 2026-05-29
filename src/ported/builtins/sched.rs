@@ -1259,4 +1259,118 @@ mod tests {
         let ops = empty_ops();
         let _: i32 = bin_sched("sched", &[], &ops, 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Builtins/sched.c
+    // c:95 schedaddtimed / c:123 scheddeltimed / c:143 checksched /
+    // c:245 bin_sched / c:582 schedgetfn + lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:143 — `checksched` returns i32 (compile-time pin, alt).
+    #[test]
+    fn checksched_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        let _: i32 = checksched();
+    }
+
+    /// c:143 — `checksched` on empty schedule is deterministic.
+    #[test]
+    fn checksched_empty_schedule_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        let first = checksched();
+        for _ in 0..5 {
+            assert_eq!(checksched(), first,
+                "checksched on empty must be pure");
+        }
+    }
+
+    /// c:582 — `schedgetfn(NULL)` returns Vec<String> (compile-time pin, alt).
+    #[test]
+    fn schedgetfn_returns_vec_string_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = schedgetfn(std::ptr::null());
+    }
+
+    /// c:582 — `schedgetfn(NULL)` on empty schedule returns empty Vec.
+    #[test]
+    fn schedgetfn_empty_schedule_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        let v = schedgetfn(std::ptr::null());
+        assert!(v.is_empty(),
+            "empty schedule must yield empty Vec; got {:?}", v);
+    }
+
+    /// c:95 — `schedaddtimed` is callable without panic.
+    #[test]
+    fn schedaddtimed_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        schedaddtimed();
+    }
+
+    /// c:123 — `scheddeltimed` is callable without panic.
+    #[test]
+    fn scheddeltimed_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        scheddeltimed();
+    }
+
+    /// c:245 — `bin_sched` no-args is the listing form (returns 0/1
+    /// per zsh's `sched` builtin spec; no-args lists current schedule).
+    #[test]
+    fn bin_sched_no_args_returns_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        let ops = empty_ops();
+        let r = bin_sched("sched", &[], &ops, 0);
+        assert!(r == 0 || r == 1,
+            "no-args is the listing form; result 0/1, got {}", r);
+    }
+
+    /// c:245 — `bin_sched` non-negative exit code.
+    #[test]
+    fn bin_sched_exit_code_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        let ops = empty_ops();
+        for argv in [
+            vec![],
+            vec![s("+5"), s("echo hi")],
+            vec![s("-1")],
+        ] {
+            let r = bin_sched("sched", &argv, &ops, 0);
+            assert!(r >= 0, "exit code must be non-negative, got {} for {:?}",
+                r, argv);
+        }
+    }
+
+    /// c:639 — `enables_(NULL)` returns i32 + None-out safe.
+    #[test]
+    fn sched_enables_with_none_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:659 — `cleanup_` is idempotent across many calls (alt-many).
+    #[test]
+    fn sched_cleanup_idempotent_many_call_alt() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..20 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:646 — `boot_` is idempotent across many calls (alt-many).
+    #[test]
+    fn sched_boot_idempotent_many_call_alt() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..20 {
+            assert_eq!(boot_(std::ptr::null()), 0);
+        }
+    }
 }
