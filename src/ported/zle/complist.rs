@@ -3737,4 +3737,177 @@ mod tests {
         let r = zcputs("group", None);
         assert!(r.is_empty(), "None color → empty SGR");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/complist.c getcolval escape
+    // decoder. Each backslash-escape branch tested independently per
+    // c:283-303 / ^X shorthand per c:305-316.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:280 — `getcolval` stops at `:` (terminator), leaves tail intact.
+    #[test]
+    fn getcolval_stops_at_colon() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, rest) = getcolval("abc:def", 0);
+        assert_eq!(val, "abc");
+        assert_eq!(rest, ":def", "tail preserves colon for caller");
+    }
+
+    /// c:280 — multi=0, `=` is NOT a terminator (only `:` is).
+    #[test]
+    fn getcolval_multi_zero_ignores_equals() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("a=b:c", 0);
+        assert_eq!(val, "a=b", "= is verbatim when multi=0");
+    }
+
+    /// c:280 — multi=1, `=` IS a terminator alongside `:`.
+    #[test]
+    fn getcolval_multi_nonzero_stops_at_equals() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, rest) = getcolval("key=val", 1);
+        assert_eq!(val, "key");
+        assert_eq!(rest, "=val");
+    }
+
+    /// c:258 — `\a` → 0x07 (bell).
+    #[test]
+    fn getcolval_backslash_a_is_bell() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("\\a", 0);
+        assert_eq!(val.as_bytes(), b"\x07");
+    }
+
+    /// c:259 — `\n` → newline (0x0a).
+    #[test]
+    fn getcolval_backslash_n_is_newline() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("\\n", 0);
+        assert_eq!(val.as_bytes(), b"\n");
+    }
+
+    /// c:260 — `\b` → backspace (0x08).
+    #[test]
+    fn getcolval_backslash_b_is_backspace() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("\\b", 0);
+        assert_eq!(val.as_bytes(), b"\x08");
+    }
+
+    /// c:261 — `\t` → tab.
+    #[test]
+    fn getcolval_backslash_t_is_tab() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("\\t", 0);
+        assert_eq!(val.as_bytes(), b"\t");
+    }
+
+    /// c:265 — `\e` → escape (0x1b — the SGR escape lead-in!).
+    #[test]
+    fn getcolval_backslash_e_is_escape() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("\\e", 0);
+        assert_eq!(val.as_bytes(), b"\x1b");
+    }
+
+    /// c:266 — `\_` → space (LS_COLORS-specific shorthand so values
+    /// with spaces don't need quoting).
+    #[test]
+    fn getcolval_backslash_underscore_is_space() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("\\_", 0);
+        assert_eq!(val.as_bytes(), b" ");
+    }
+
+    /// c:267 — `\?` → DEL (0x7f).
+    #[test]
+    fn getcolval_backslash_question_is_del() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("\\?", 0);
+        assert_eq!(val.as_bytes(), b"\x7f");
+    }
+
+    /// c:296-303 — `\033` → 0x1b (3-digit octal escape, common SGR lead).
+    #[test]
+    fn getcolval_octal_033_is_escape() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("\\033", 0);
+        assert_eq!(val.as_bytes(), b"\x1b", "octal \\033 → 0x1b");
+    }
+
+    /// c:296-303 — `\7` → 0x07 (single-digit octal).
+    #[test]
+    fn getcolval_single_digit_octal() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("\\7", 0);
+        assert_eq!(val.as_bytes(), b"\x07");
+    }
+
+    /// c:296-303 — `\77` → 0o77 = 0x3f (two-digit octal).
+    #[test]
+    fn getcolval_two_digit_octal() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("\\77", 0);
+        assert_eq!(val.as_bytes(), &[0o77]);
+    }
+
+    /// c:305-316 — `^A` → 0x01 (Ctrl-A, `n & !0x60` strips high bits).
+    #[test]
+    fn getcolval_caret_uppercase_ctrl_a() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("^A", 0);
+        assert_eq!(val.as_bytes(), b"\x01");
+    }
+
+    /// c:305-316 — `^[` → 0x1b (Ctrl-[, the SGR escape).
+    #[test]
+    fn getcolval_caret_bracket_is_escape() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("^[", 0);
+        assert_eq!(val.as_bytes(), b"\x1b", "^[ is Ctrl-[ = ESC");
+    }
+
+    /// c:305-316 — `^a` → 0x01 (lowercase also maps to Ctrl-A).
+    #[test]
+    fn getcolval_caret_lowercase_ctrl_a() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("^a", 0);
+        assert_eq!(val.as_bytes(), b"\x01", "^a is Ctrl-A (case-insensitive)");
+    }
+
+    /// c:305-316 — `^?` → 0x7f (DEL, special-cased).
+    #[test]
+    fn getcolval_caret_question_is_del() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("^?", 0);
+        assert_eq!(val.as_bytes(), b"\x7f");
+    }
+
+    /// c:317 — verbatim copy of plain ASCII chars.
+    #[test]
+    fn getcolval_plain_ascii_verbatim() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, _) = getcolval("hello", 0);
+        assert_eq!(val, "hello");
+    }
+
+    /// c:488-497 — `filecol(col)` returns a struct with col field set
+    /// and prog=None, next=None (fresh chain head).
+    #[test]
+    fn filecol_constructs_with_col_set_others_none() {
+        let _g = crate::test_util::global_state_lock();
+        let f = filecol("01;31");
+        assert_eq!(f.col, "01;31");
+        assert!(f.prog.is_none());
+        assert!(f.next.is_none());
+    }
+
+    /// `getcolval("")` returns empty value, empty rest (corpus-pin).
+    #[test]
+    fn getcolval_empty_returns_empty_pair_corpus_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let (val, rest) = getcolval("", 0);
+        assert!(val.is_empty());
+        assert!(rest.is_empty());
+    }
 }
