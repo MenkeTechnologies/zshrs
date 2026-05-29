@@ -907,4 +907,142 @@ mod tests {
         let b = nameddirtab() as *const _;
         assert_eq!(a, b, "nameddirtab must return singleton");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hashnameddir.c
+    // c:35 createnameddirtable / c:53 emptynameddirtable / c:72 fillnameddirtable /
+    // c:117 addnameddirnode / c:136 removenameddirnode / c:153 freenameddirnode /
+    // c:162 printnameddirnode
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:35 — `createnameddirtable` is idempotent (callable repeatedly).
+    #[test]
+    fn createnameddirtable_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        for _ in 0..10 {
+            createnameddirtable();
+        }
+    }
+
+    /// c:53 — `emptynameddirtable` is idempotent.
+    #[test]
+    fn emptynameddirtable_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        for _ in 0..10 {
+            emptynameddirtable();
+        }
+    }
+
+    /// c:53 — after `emptynameddirtable`, table is empty.
+    #[test]
+    fn emptynameddirtable_actually_empties_table() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        addnameddirnode("e_test", make_nd("e_test", "/tmp", 0));
+        emptynameddirtable();
+        assert_eq!(nameddirtab().lock().unwrap().len(), 0,
+            "empty must zero the table");
+    }
+
+    /// c:136 — `removenameddirnode` returns Option<nameddir> (alt pin).
+    #[test]
+    fn removenameddirnode_returns_option_nameddir_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _: Option<nameddir> = removenameddirnode("__never__");
+    }
+
+    /// c:136 — `removenameddirnode` of nonexistent returns None.
+    #[test]
+    fn removenameddirnode_nonexistent_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        assert!(removenameddirnode("__never_added_xyz__").is_none(),
+            "removing never-added returns None");
+    }
+
+    /// c:117 + c:136 — add then remove returns Some, then remove again None.
+    #[test]
+    fn add_then_remove_then_remove_again_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("rt_test", make_nd("rt_test", "/tmp", 0));
+        let first = removenameddirnode("rt_test");
+        assert!(first.is_some(), "first remove → Some");
+        let second = removenameddirnode("rt_test");
+        assert!(second.is_none(), "second remove → None");
+    }
+
+    /// c:162 — `printnameddirnode` for various flags doesn't panic.
+    #[test]
+    fn printnameddirnode_various_flags_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let nd = nameddir {
+            node: crate::zsh_h::hashnode { next: None, nam: "p_test".to_string(), flags: 0 },
+            dir: "/tmp".to_string(),
+            diff: 0,
+        };
+        for flags in [0i32, 1, 2, 0xff, -1] {
+            printnameddirnode(&nd, flags);
+        }
+    }
+
+    /// c:117 — add many distinct entries; final count equals number added.
+    #[test]
+    fn addnameddirnode_many_distinct_grows_by_count() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        let before = nameddirtab().lock().unwrap().len();
+        for i in 0..5 {
+            let name = format!("many_{}", i);
+            addnameddirnode(&name, make_nd(&name, "/p", 0));
+        }
+        let after = nameddirtab().lock().unwrap().len();
+        assert_eq!(after, before + 5, "5 distinct adds → grow by 5");
+    }
+
+    /// c:117 — addnameddirnode with empty name is safe.
+    #[test]
+    fn addnameddirnode_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        addnameddirnode("", make_nd("", "/tmp", 0));
+    }
+
+    /// c:121 — `addnameddirnode` COMPUTES `diff = dir.len - nam.len`
+    /// (overwrites whatever caller passed in `nd.diff`). Pin the
+    /// formula contract so a refactor that drops the computation
+    /// gets caught.
+    #[test]
+    fn addnameddirnode_computes_diff_from_dir_minus_nam_len() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        // Caller passes diff=42 — addnameddirnode MUST overwrite to
+        // dir.len() - nam.len() = 12 - 13 = -1.
+        addnameddirnode("preserve_test", make_nd("preserve_test", "/unique/path", 42));
+        let tab = nameddirtab().lock().unwrap();
+        let entry = tab.get("preserve_test").expect("entry exists");
+        assert_eq!(entry.dir, "/unique/path", "dir field preserved");
+        let expected = "/unique/path".len() as i32 - "preserve_test".len() as i32;
+        assert_eq!(entry.diff, expected,
+            "c:121 — diff = dir.len({}) - nam.len({}) = {}",
+            "/unique/path".len(), "preserve_test".len(), expected);
+    }
+
+    // NOTE: `fillnameddirtable` reads /etc/passwd and populates the
+    // table with real OS users, which would clobber other tests'
+    // count assertions. No test pin for it here — pre-existing test
+    // suite covers the relevant invariants in isolation. Replacement
+    // pin: simply confirms the fn exists (compile-time check).
+    /// c:72 — `fillnameddirtable` is exported (compile-time symbol pin).
+    #[test]
+    fn fillnameddirtable_symbol_exists_pin() {
+        let _: fn() = fillnameddirtable;
+    }
 }
