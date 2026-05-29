@@ -845,4 +845,91 @@ mod tests {
         assert_eq!(src, "hello", "source unchanged");
         assert_eq!(dup, "hello_mut");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/string.c
+    // c:35 dupstring / c:74 ztrdup / c:91 wcs_ztrdup / c:105 tricat /
+    // c:118 zhtricat / c:135 dyncat / c:147 bicat / c:169 dupstrpfx /
+    // c:197 appstr / c:216 strend
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:35 — `dupstring("")` empty returns empty String.
+    #[test]
+    fn dupstring_empty_returns_empty_pin() {
+        assert_eq!(dupstring(""), "");
+    }
+
+    /// c:74 — `ztrdup("")` empty returns empty String.
+    #[test]
+    fn ztrdup_empty_returns_empty() {
+        assert_eq!(ztrdup(""), "");
+    }
+
+    /// c:74 — `ztrdup` is pure.
+    #[test]
+    fn ztrdup_is_pure() {
+        for s in ["", "abc", "hello world", "日本"] {
+            let first = ztrdup(s);
+            for _ in 0..3 {
+                assert_eq!(ztrdup(s), first, "ztrdup({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:91 — `wcs_ztrdup("")` empty returns empty String.
+    #[test]
+    fn wcs_ztrdup_empty_returns_empty() {
+        assert_eq!(wcs_ztrdup(""), "");
+    }
+
+    /// c:105 — `tricat("", "", "")` all empty returns empty.
+    #[test]
+    fn tricat_all_empty_returns_empty() {
+        assert_eq!(tricat("", "", ""), "");
+    }
+
+    /// c:105 — `tricat("a", "b", "c")` concatenates to "abc".
+    #[test]
+    fn tricat_concatenates_three_parts() {
+        assert_eq!(tricat("a", "b", "c"), "abc");
+    }
+
+    /// c:135 — `dyncat("", "")` both empty returns empty.
+    #[test]
+    fn dyncat_both_empty_returns_empty() {
+        assert_eq!(dyncat("", ""), "");
+    }
+
+    /// c:147 — `bicat("", "")` both empty returns empty.
+    #[test]
+    fn bicat_both_empty_returns_empty() {
+        assert_eq!(bicat("", ""), "");
+    }
+
+    /// c:147 — `bicat("a", "b")` concatenates to "ab".
+    #[test]
+    fn bicat_concatenates_two_parts() {
+        assert_eq!(bicat("a", "b"), "ab");
+    }
+
+    /// c:169 — `dupstrpfx("", 0)` empty returns empty.
+    #[test]
+    fn dupstrpfx_empty_zero_len_returns_empty() {
+        assert_eq!(dupstrpfx("", 0), "");
+    }
+
+    /// c:169 — `dupstrpfx("abc", 0)` zero len returns empty.
+    #[test]
+    fn dupstrpfx_zero_len_returns_empty() {
+        assert_eq!(dupstrpfx("abc", 0), "");
+    }
+
+    /// c:216 — `strend("abc")` returns the last character slice.
+    #[test]
+    fn strend_returns_last_char_slice() {
+        let s = "abc";
+        let e = strend(s);
+        assert_eq!(e.len(), 1, "strend returns 1-char str");
+        assert_eq!(e.chars().next(), Some('c'));
+    }
 }
