@@ -868,4 +868,118 @@ mod tests {
         );
         assert_eq!(arr, vec!["10", "2", "1"]);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/sort.c
+    // c:55 eltpcmp / c:114 zstrcmp / c:283 strmetasort
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:114 — `zstrcmp(a, a)` is Equal (reflexive) for arbitrary input.
+    #[test]
+    fn zstrcmp_reflexive_full_sweep() {
+        for s in ["", "a", "abc", "1", "100", "Hello World", "日本"] {
+            assert_eq!(zstrcmp(s, s, 0), Ordering::Equal,
+                "zstrcmp({:?}, {:?}) must be Equal", s, s);
+        }
+    }
+
+    /// c:114 — `zstrcmp` is antisymmetric: if a<b then b>a.
+    #[test]
+    fn zstrcmp_antisymmetric() {
+        let pairs = [
+            ("a", "b"),
+            ("apple", "banana"),
+            ("", "x"),
+            ("abc", "abd"),
+        ];
+        for (a, b) in pairs {
+            let ab = zstrcmp(a, b, 0);
+            let ba = zstrcmp(b, a, 0);
+            assert_eq!(ab.reverse(), ba,
+                "zstrcmp must be antisymmetric for ({:?}, {:?})", a, b);
+        }
+    }
+
+    /// c:114 — `zstrcmp` is deterministic.
+    #[test]
+    fn zstrcmp_is_deterministic() {
+        for (a, b) in [("foo", "bar"), ("a", "z"), ("100", "20")] {
+            let first = zstrcmp(a, b, 0);
+            for _ in 0..5 {
+                assert_eq!(zstrcmp(a, b, 0), first,
+                    "zstrcmp({:?}, {:?}) must be deterministic", a, b);
+            }
+        }
+    }
+
+    /// c:114 — `zstrcmp` numeric mode: leading zeros differ from bare digits
+    /// (007 != 7 in zsh — uses string comparison after numeric prefix consumed).
+    #[test]
+    fn zstrcmp_numeric_leading_zeros_string_compare() {
+        let r = zstrcmp("007", "7", (SORTIT_NUMERICALLY | SORTIT_NUMERICALLY_SIGNED) as u32);
+        // zsh numeric mode compares the digit-runs as numbers first, but
+        // ties fall through to lex; "007" vs "7" both equal numeric 7 yet
+        // lex-order differs by leading zeros → non-Equal.
+        assert_ne!(r, Ordering::Equal,
+            "007 vs 7 differ after numeric tie via lex fallback");
+    }
+
+    /// c:114 — `zstrcmp` flag-0 (lex mode) is case-sensitive.
+    #[test]
+    fn zstrcmp_lex_mode_case_sensitive() {
+        let r = zstrcmp("abc", "ABC", 0);
+        assert_ne!(r, Ordering::Equal,
+            "lex mode must distinguish ABC from abc");
+    }
+
+    /// c:283 — `strmetasort` empty array is no-op.
+    #[test]
+    fn strmetasort_empty_array_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr: Vec<String> = vec![];
+        strmetasort(&mut arr, 0, None);
+        assert!(arr.is_empty());
+    }
+
+    /// c:283 — `strmetasort` single-element array is unchanged.
+    #[test]
+    fn strmetasort_single_element_unchanged() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr = vec!["only".to_string()];
+        strmetasort(&mut arr, 0, None);
+        assert_eq!(arr, vec!["only"]);
+    }
+
+    /// c:283 — `strmetasort` idempotent: sort-then-sort = sort.
+    #[test]
+    fn strmetasort_double_sort_idempotent_full_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr = vec!["c", "a", "b", "d"].iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        strmetasort(&mut arr, 0, None);
+        let after_first = arr.clone();
+        strmetasort(&mut arr, 0, None);
+        assert_eq!(arr, after_first, "double sort must be idempotent");
+    }
+
+    /// c:55 — `eltpcmp` is deterministic for the same input pair.
+    #[test]
+    fn eltpcmp_is_deterministic() {
+        let a = sortelt {
+            orig: "a".to_string(),
+            cmp: "a".to_string(),
+            origlen: 1,
+            len: 1,
+        };
+        let b = sortelt {
+            orig: "b".to_string(),
+            cmp: "b".to_string(),
+            origlen: 1,
+            len: 1,
+        };
+        let first = eltpcmp(&a, &b, 0);
+        for _ in 0..5 {
+            assert_eq!(eltpcmp(&a, &b, 0), first,
+                "eltpcmp must be deterministic");
+        }
+    }
 }
