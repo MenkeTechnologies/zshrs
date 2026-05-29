@@ -4864,4 +4864,113 @@ mod tests {
         };
         let _: i32 = cline_sublen(&cline);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compmatch.c
+    // c:188 add_bmatchers / c:220 update_bmatchers / c:311 free_cline /
+    // c:413 cline_sublen / c:562 start_match / c:591 abort_match /
+    // c:1605 match_parts
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:188 — `add_bmatchers(None)` is safe / idempotent.
+    #[test]
+    fn add_bmatchers_none_idempotent() {
+        for _ in 0..5 {
+            add_bmatchers(None);
+        }
+    }
+
+    /// c:311 — `free_cline(None)` is safe (early-return on empty).
+    #[test]
+    fn free_cline_none_no_panic_pin2() {
+        free_cline(None);
+    }
+
+    /// c:413 — `cline_sublen` is pure (multiple calls = same result).
+    #[test]
+    fn cline_sublen_is_pure() {
+        let cline = Cline {
+            next: None, prefix: None, suffix: None, line: None,
+            llen: 0, word: None, wlen: 0, orig: None, olen: 0,
+            slen: 0, min: 0, max: 0, flags: 0,
+        };
+        let first = cline_sublen(&cline);
+        for _ in 0..3 {
+            assert_eq!(cline_sublen(&cline), first,
+                "cline_sublen must be pure");
+        }
+    }
+
+    /// c:562 — `start_match` is idempotent / safe to call repeatedly.
+    #[test]
+    fn start_match_idempotent_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            start_match();
+        }
+    }
+
+    /// c:591 — `abort_match` is idempotent / safe to call repeatedly.
+    #[test]
+    fn abort_match_idempotent_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            abort_match();
+        }
+    }
+
+    /// c:562 + c:591 — `start_match` then `abort_match` round-trips
+    /// without panic.
+    #[test]
+    fn start_match_then_abort_match_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..3 {
+            start_match();
+            abort_match();
+        }
+    }
+
+    /// c:1605 — `match_parts("","",0,0)` returns boolean i32 (0 or 1).
+    #[test]
+    fn match_parts_empty_zero_args_returns_boolean() {
+        let r = match_parts("", "", 0, 0);
+        assert!(r == 0 || r == 1, "result must be 0 or 1, got {}", r);
+    }
+
+    /// c:1605 — `match_parts` is pure for stable input.
+    #[test]
+    fn match_parts_is_pure_full_sweep() {
+        for (l, w, n, p) in [("", "", 0, 0), ("a", "a", 0, 0),
+                              ("abc", "abc", 1, 0), ("x", "y", 0, 1)] {
+            let first = match_parts(l, w, n, p);
+            for _ in 0..3 {
+                assert_eq!(match_parts(l, w, n, p), first,
+                    "match_parts({:?},{:?},{},{}) must be pure", l, w, n, p);
+            }
+        }
+    }
+
+    /// c:79 — `cpatterns_same(None, None)` reflexive (true).
+    #[test]
+    fn cpatterns_same_double_none_true() {
+        assert!(cpatterns_same(None, None),
+            "double None is reflexive identity");
+    }
+
+    /// c:220 — `update_bmatchers` followed by `add_bmatchers(None)` safe.
+    #[test]
+    fn update_then_add_bmatchers_safe() {
+        update_bmatchers();
+        add_bmatchers(None);
+        update_bmatchers();
+    }
+
+    /// c:188 + c:220 — interleaved add/update is safe for many iters.
+    #[test]
+    fn interleaved_add_update_bmatchers_safe() {
+        for _ in 0..10 {
+            add_bmatchers(None);
+            update_bmatchers();
+        }
+    }
 }
