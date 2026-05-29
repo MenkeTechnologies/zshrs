@@ -365,12 +365,24 @@ pub fn bin_setattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 
 /// Port of `bin_delattr(char *nam, char **argv, Options ops, UNUSED(int func))` from `Src/Modules/attr.c:150`.
 #[allow(unused_variables)]
 pub fn bin_delattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 {
+    // c:222 BUILTIN spec — `BUILTIN("zdelattr", 0, bin_delattr, 2, -1, ...)`
+    // declares min_args=2 (file + ≥1 attr); both the C dispatcher
+    // (Src/builtin.c:432) and the Rust dispatcher (builtin.rs:591) reject
+    // shorter argv before calling this body, so the normal `zdelattr`
+    // command path never reaches an empty-argv slice. Direct calls into
+    // the body from unit tests or other Rust call sites bypass the
+    // dispatcher gate, so defend in depth — `&argv[1..]` below would
+    // OOB-panic on empty argv otherwise.
+    if argv.len() < 2 {
+        zwarnnam(nam, "not enough arguments");
+        return 1;
+    }
     // c:150 — `int ret = 0, slen;`
     let _slen: usize;
     // c:153 — `int symlink = OPT_ISSET(ops, 'h');`
     let symlink: i32 = if OPT_ISSET(ops, b'h') { 1 } else { 0 };
     // c:154 — `char *file = argv[0], **attr = argv;`
-    let file_arg = argv.get(0).map(|s| s.as_str()).unwrap_or("");
+    let file_arg = argv[0].as_str();
 
     // c:156 — `unmetafy(file, &slen);`
     let mut file_bytes = file_arg.as_bytes().to_vec();
@@ -867,18 +879,25 @@ mod tests {
     // Additional C-parity tests for Src/Modules/attr.c.
     // ═══════════════════════════════════════════════════════════════════
 
-    /// `bin_delattr` with no args. C does `while (*++attr)` which is
-    /// safe on NULL-terminated argv (the increment past argv[0] hits the
-    /// NULL terminator immediately). Rust port uses `&argv[1..]` which
-    /// PANICS on empty argv with "range start index 1 out of range".
-    /// Should return nonzero usage error per Src/Modules/attr.c:151.
+    /// `bin_delattr` with no args returns nonzero (usage error).
+    /// Fixed: bin_delattr now guards `argv.len() < 2` explicitly to
+    /// emulate the c:222 BUILTIN min_args=2 dispatcher gate.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_delattr panics on empty argv via &argv[1..] slice — C while(*++attr) is safe on NULL-terminated arrays; Rust needs argv.len()>=1 guard"]
     fn bin_delattr_no_args_errors() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_delattr("zdelattr", &[], &ops, 0);
         assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// `bin_delattr` with only file path (1 arg, missing attr) returns
+    /// nonzero per c:222 BUILTIN min_args=2.
+    #[test]
+    fn bin_delattr_one_arg_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_delattr("zdelattr", &["/tmp".into()], &ops, 0);
+        assert_ne!(r, 0, "file alone without attr name → usage error");
     }
 
     /// `bin_listattr` with no args returns nonzero (usage error).
