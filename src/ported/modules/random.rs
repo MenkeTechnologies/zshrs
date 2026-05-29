@@ -695,4 +695,111 @@ mod tests {
         let mut buf = [0u8; 1];
         getrandom_buffer(&mut buf).unwrap();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/random.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:161 — `math_zrand_int(None, None, false)` returns Ok value in
+    /// [0, u32::MAX) range (defaults: lower=0, upper=u32::MAX, exclusive).
+    #[test]
+    fn math_zrand_int_default_bounds_returns_ok() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_zrand_int(None, None, false).expect("default bounds → Ok");
+        assert!(r >= 0, "result must be ≥ 0");
+        assert!(r <= u32::MAX as i64, "result must fit in u32 range");
+    }
+
+    /// c:161 — `lower < 0` returns Err.
+    #[test]
+    fn math_zrand_int_negative_lower_returns_err() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_zrand_int(Some(100), Some(-1), false);
+        assert!(r.is_err(), "negative lower must error");
+        let msg = r.unwrap_err();
+        assert!(msg.contains("Lower bound"), "error mentions Lower bound");
+    }
+
+    /// c:161 — `upper > u32::MAX` returns Err on lower-check (since
+    /// lower defaults check runs first, but upper validation is also
+    /// pinned).
+    #[test]
+    fn math_zrand_int_lower_above_u32_max_returns_err() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_zrand_int(Some(100), Some((u32::MAX as i64) + 1), false);
+        assert!(r.is_err(), "lower > u32::MAX must error");
+    }
+
+    /// c:161 — `upper < lower` returns Err with "must be greater" msg.
+    #[test]
+    fn math_zrand_int_upper_below_lower_returns_err() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_zrand_int(Some(5), Some(10), false);
+        assert!(r.is_err());
+        let msg = r.unwrap_err();
+        assert!(msg.contains("greater"), "msg mentions 'greater', got: {}", msg);
+    }
+
+    /// c:161 — `upper == lower` with exclusive returns the bound
+    /// (diff=0 short-circuit branch).
+    #[test]
+    fn math_zrand_int_upper_equals_lower_returns_bound() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_zrand_int(Some(7), Some(7), false).expect("equal bounds OK");
+        assert_eq!(r, 7, "diff=0 → returns upper");
+    }
+
+    /// c:161 — `inclusive=true` with same lower=upper returns lower
+    /// (diff = 0 - 0 + 1 = 1, range [lower, upper]).
+    #[test]
+    fn math_zrand_int_inclusive_single_point_returns_lower() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_zrand_int(Some(42), Some(42), true).expect("OK");
+        assert_eq!(r, 42, "inclusive single-point → that point");
+    }
+
+    /// c:161 — result always within [lower, upper] (or upper-1 if exclusive).
+    #[test]
+    fn math_zrand_int_result_in_range() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..50 {
+            let r = math_zrand_int(Some(10), Some(0), false).unwrap();
+            assert!(r >= 0 && r < 10, "exclusive [0,10): got {}", r);
+        }
+        for _ in 0..50 {
+            let r = math_zrand_int(Some(10), Some(0), true).unwrap();
+            assert!(r >= 0 && r <= 10, "inclusive [0,10]: got {}", r);
+        }
+    }
+
+    /// c:204 — `math_zrand_float()` returns value in [0.0, 1.0).
+    #[test]
+    fn math_zrand_float_in_zero_one_range() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..50 {
+            let r = math_zrand_float();
+            assert!(r >= 0.0 && r < 1.0, "must be in [0,1): got {}", r);
+        }
+    }
+
+    /// c:204 — `math_zrand_float` is not always the same value
+    /// (basic randomness sanity — 100 calls should produce ≥ 2
+    /// distinct values).
+    #[test]
+    fn math_zrand_float_produces_varied_output() {
+        let _g = crate::test_util::global_state_lock();
+        let first = math_zrand_float();
+        let any_different = (0..100).any(|_| math_zrand_float() != first);
+        assert!(any_different, "100 calls should produce ≥ 1 different value");
+    }
+
+    /// c:58 — `get_srandom()` returns u32, repeated calls produce
+    /// varied values (PRNG behavior pin).
+    #[test]
+    fn get_srandom_produces_varied_values() {
+        let _g = crate::test_util::global_state_lock();
+        let first = get_srandom();
+        let any_different = (0..100).any(|_| get_srandom() != first);
+        assert!(any_different, "100 calls should produce ≥ 1 different value");
+    }
 }
