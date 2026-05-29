@@ -388,4 +388,63 @@ mod tests {
             s
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/openssh_bsd_setres_id.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// errno_str(EACCES) returns readable text.
+    #[test]
+    fn errno_str_eacces_returns_readable_text() {
+        let _g = crate::test_util::global_state_lock();
+        let s = errno_str(libc::EACCES);
+        assert!(!s.is_empty(), "EACCES must format to non-empty");
+        assert!(!s.contains("{}"), "format placeholder must be expanded");
+    }
+
+    /// errno_str(EPERM) returns readable text.
+    #[test]
+    fn errno_str_eperm_returns_readable_text() {
+        let _g = crate::test_util::global_state_lock();
+        let s = errno_str(libc::EPERM);
+        assert!(!s.is_empty());
+    }
+
+    /// errno_str(0) returns a string.
+    #[test]
+    fn errno_str_zero_returns_nonempty() {
+        let _g = crate::test_util::global_state_lock();
+        let s = errno_str(0);
+        assert!(!s.is_empty());
+    }
+
+    /// errno_str is deterministic for any errno.
+    #[test]
+    fn errno_str_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for e in [0, libc::EACCES, libc::EPERM, libc::EINVAL, libc::ENOMEM] {
+            let first = errno_str(e);
+            for _ in 0..5 {
+                assert_eq!(errno_str(e), first, "errno {} must be pure", e);
+            }
+        }
+    }
+
+    /// errno_str for arbitrary invalid errno (-1) returns string.
+    #[test]
+    fn errno_str_negative_errno_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let s = errno_str(-1);
+        assert!(!s.is_empty());
+    }
+
+    /// Build-config const fns are callable + return bool.
+    #[test]
+    fn build_config_const_fns_are_callable() {
+        let _br: bool = broken_setregid();
+        let _bu: bool = broken_setreuid();
+        let _hr: bool = have_native_setregid();
+        let _hu: bool = have_native_setreuid();
+        let _sb: bool = seteuid_breaks_setuid();
+    }
 }
