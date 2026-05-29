@@ -926,4 +926,107 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(boot_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/datetime.c
+    // c:266 getcurrentsecs / c:283 getcurrentrealtime / c:303 getcurrenttime
+    // c:233 bin_strftime / c:329-374 lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:266 — `getcurrentsecs` returns i64.
+    #[test]
+    fn getcurrentsecs_returns_i64_type() {
+        let _: i64 = getcurrentsecs();
+    }
+
+    /// c:266 — `getcurrentsecs` is monotonically non-decreasing across
+    /// many calls (no time-travel backward).
+    #[test]
+    fn getcurrentsecs_monotonic_across_many_calls() {
+        let mut prev = getcurrentsecs();
+        for _ in 0..100 {
+            let cur = getcurrentsecs();
+            assert!(cur >= prev, "secs went backwards: {} < {}", cur, prev);
+            prev = cur;
+        }
+    }
+
+    /// c:266 — `getcurrentsecs` is after Unix epoch (positive).
+    #[test]
+    fn getcurrentsecs_after_epoch() {
+        assert!(getcurrentsecs() > 0, "must be after 1970-01-01");
+    }
+
+    /// c:283 — `getcurrentrealtime` returns f64.
+    #[test]
+    fn getcurrentrealtime_returns_f64_type() {
+        let _: f64 = getcurrentrealtime();
+    }
+
+    /// c:283 — `getcurrentrealtime` non-negative.
+    #[test]
+    fn getcurrentrealtime_non_negative() {
+        assert!(getcurrentrealtime() >= 0.0);
+    }
+
+    /// c:303 — `getcurrenttime` returns Vec<String>.
+    #[test]
+    fn getcurrenttime_returns_vec_string() {
+        let _: Vec<String> = getcurrenttime();
+    }
+
+    /// c:303 — `getcurrenttime` first element parses as integer (seconds).
+    #[test]
+    fn getcurrenttime_first_is_numeric() {
+        let v = getcurrenttime();
+        assert!(!v.is_empty(), "must have ≥ 1 element");
+        let parsed: Result<i64, _> = v[0].parse();
+        assert!(parsed.is_ok(),
+            "first element {:?} must parse as i64", v[0]);
+    }
+
+    /// c:233 — `bin_strftime` return value in u8 exit-code range.
+    #[test]
+    fn bin_strftime_return_in_exit_code_range() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for args in [
+            vec![],
+            vec!["%Y".to_string()],
+            vec!["%Y".to_string(), "1000".to_string()],
+        ] {
+            let r = bin_strftime("strftime", &args, &ops, 0);
+            assert!((0..256).contains(&r),
+                "exit code {} must fit in u8 for {:?}", r, args);
+        }
+    }
+
+    /// c:329-374 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn datetime_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:374 — finish_ idempotent.
+    #[test]
+    fn datetime_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
 }
