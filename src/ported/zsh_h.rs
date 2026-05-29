@@ -5659,4 +5659,101 @@ mod tests {
         assert!(!QT_IS_SINGLE(0));
         assert!(!QT_IS_SINGLE(-1));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/zsh.h wordcode WC_* helpers.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:970 — `WCB_SIMPLE(N) / WC_SIMPLE_ARGC` round-trip preserves argc.
+    #[test]
+    fn WCB_SIMPLE_round_trips_argc() {
+        for n in [0u32, 1, 42, 1000, 0xFFFF] {
+            let w = WCB_SIMPLE(n);
+            assert_eq!(WC_SIMPLE_ARGC(w), n, "argc {} must round-trip", n);
+        }
+    }
+
+    /// c:973 — `WCB_TYPESET / WC_TYPESET_ARGC` round-trip.
+    #[test]
+    fn WCB_TYPESET_round_trips_argc() {
+        for n in [0u32, 5, 100, 1000] {
+            let w = WCB_TYPESET(n);
+            assert_eq!(WC_TYPESET_ARGC(w), n);
+        }
+    }
+
+    /// c:976 — `WCB_SUBSH / WC_SUBSH_SKIP` round-trip preserves skip offset.
+    #[test]
+    fn WCB_SUBSH_round_trips_skip() {
+        for o in [0u32, 1, 100, 0x10000] {
+            let w = WCB_SUBSH(o);
+            assert_eq!(WC_SUBSH_SKIP(w), o);
+        }
+    }
+
+    /// c:979 — `WCB_CURSH / WC_CURSH_SKIP` round-trip.
+    #[test]
+    fn WCB_CURSH_round_trips_skip() {
+        for o in [0u32, 1, 50, 500] {
+            let w = WCB_CURSH(o);
+            assert_eq!(WC_CURSH_SKIP(w), o);
+        }
+    }
+
+    /// c:982 — `WCB_TIMED / WC_TIMED_TYPE` round-trip.
+    #[test]
+    fn WCB_TIMED_round_trips_type() {
+        for t in [0u32, 1, 2] {
+            let w = WCB_TIMED(t);
+            assert_eq!(WC_TIMED_TYPE(w), t);
+        }
+    }
+
+    /// c:987 — `WCB_FUNCDEF / WC_FUNCDEF_SKIP` round-trip.
+    #[test]
+    fn WCB_FUNCDEF_round_trips_skip() {
+        for o in [0u32, 10, 100] {
+            let w = WCB_FUNCDEF(o);
+            assert_eq!(WC_FUNCDEF_SKIP(w), o);
+        }
+    }
+
+    /// c:990 — `WCB_FOR(type, skip)` encodes type in low 2 bits, skip
+    /// in upper bits.
+    #[test]
+    fn WCB_FOR_packs_type_low_skip_high() {
+        // type fits in 2 bits (0..3)
+        for t in [0u32, 1, 2, 3] {
+            for o in [0u32, 10, 100] {
+                let w = WCB_FOR(t, o);
+                assert_eq!(WC_FOR_TYPE(w), t, "type round-trip for ({}, {})", t, o);
+                assert_eq!(WC_FOR_SKIP(w), o, "skip round-trip for ({}, {})", t, o);
+            }
+        }
+    }
+
+    /// c:997 — `WC_SELECT_TYPE(c)` masks low bit only.
+    #[test]
+    fn WC_SELECT_TYPE_masks_low_bit() {
+        // wc_bld with 0b11 in data → SELECT_TYPE = 1 (low bit).
+        let w = wc_bld(WC_SELECT, 3);
+        assert_eq!(WC_SELECT_TYPE(w), 1);
+        let w0 = wc_bld(WC_SELECT, 4);
+        assert_eq!(WC_SELECT_TYPE(w0), 0, "0b100 & 1 = 0");
+    }
+
+    /// c:997 — `WC_SELECT_SKIP(c)` is data >> 1.
+    #[test]
+    fn WC_SELECT_SKIP_shifts_right_one() {
+        let w = wc_bld(WC_SELECT, 42);
+        assert_eq!(WC_SELECT_SKIP(w), 42 >> 1);
+    }
+
+    /// c:990 — WC_FOR_TYPE only reads 2 bits — high bits ignored.
+    #[test]
+    fn WC_FOR_TYPE_only_uses_low_2_bits() {
+        // 0b1011 → 0b11 = 3 (low 2 bits).
+        let w = wc_bld(WC_FOR, 0b1011);
+        assert_eq!(WC_FOR_TYPE(w), 3);
+    }
 }
