@@ -10690,4 +10690,157 @@ mod tests {
             "unreadable dir with EACCES should NOT be 'good error'"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/exec.c basic accessors/predicates.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:658 — `isgooderr(ENOENT, _)` always false (regardless of dir).
+    /// Pin: ENOENT is NEVER a "good error" because the path itself
+    /// doesn't exist — caller should suppress the warning.
+    #[test]
+    fn isgooderr_enoent_always_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isgooderr(libc::ENOENT, "/tmp"));
+        assert!(!isgooderr(libc::ENOENT, "/no/such/dir"));
+        assert!(!isgooderr(libc::ENOENT, ""));
+    }
+
+    /// c:658 — `isgooderr(ENOTDIR, _)` always false. A path component
+    /// being a non-dir is a structural error, not a permission issue.
+    #[test]
+    fn isgooderr_enotdir_always_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isgooderr(libc::ENOTDIR, "/tmp"));
+        assert!(!isgooderr(libc::ENOTDIR, "/"));
+    }
+
+    /// c:658 — Other errnos (EPERM, EIO, ENOMEM) are "good errors"
+    /// because they're not the suppressed three (EACCES/ENOENT/ENOTDIR).
+    #[test]
+    fn isgooderr_other_errno_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isgooderr(libc::EPERM, "/tmp"));
+        assert!(isgooderr(libc::EIO, "/tmp"));
+        assert!(isgooderr(libc::ENOMEM, "/tmp"));
+    }
+
+    /// c:962 — `iscom("/tmp")` returns false (directory, not S_ISREG).
+    #[test]
+    fn iscom_directory_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!iscom("/tmp"));
+        assert!(!iscom("/"));
+    }
+
+    /// c:962 — `iscom` on non-existent path returns false (access
+    /// X_OK fails).
+    #[test]
+    fn iscom_nonexistent_path_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!iscom("/no/such/path/zshrs_iscom_test"));
+        assert!(!iscom(""));
+    }
+
+    /// c:962 — `iscom("/bin/sh")` returns true on every POSIX system.
+    #[test]
+    #[cfg(unix)]
+    fn iscom_bin_sh_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        // /bin/sh is a POSIX-required executable.
+        assert!(iscom("/bin/sh"), "/bin/sh must be executable on POSIX");
+    }
+
+    /// c:5300 — anonymous function name is exactly "(anon)" — must
+    /// not match prefixes/suffixes/case variants.
+    #[test]
+    fn is_anonymous_function_name_strict_match_only() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(is_anonymous_function_name("(anon"), 0, "no trailing paren");
+        assert_eq!(is_anonymous_function_name("anon)"), 0, "no leading paren");
+        assert_eq!(is_anonymous_function_name("(ANON)"), 0, "wrong case");
+        assert_eq!(is_anonymous_function_name(" (anon) "), 0, "leading/trailing space");
+        assert_eq!(is_anonymous_function_name("(anon) "), 0, "trailing space");
+        assert_eq!(is_anonymous_function_name(" (anon)"), 0, "leading space");
+    }
+
+    /// c:5289 — `ANONYMOUS_FUNCTION_NAME` constant is exactly `"(anon)"`.
+    /// Pin so a regen that flips parens / changes case / adds prefix
+    /// would be caught.
+    #[test]
+    fn anonymous_function_name_const_is_literal_anon() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(ANONYMOUS_FUNCTION_NAME, "(anon)");
+    }
+
+    /// c:147-148 — `isrelative("./")` returns 1 (dot-slash prefix
+    /// is the canonical relative-path form).
+    #[test]
+    fn isrelative_dot_slash_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative("./foo"), 1);
+        assert_eq!(isrelative("./"), 1);
+    }
+
+    /// c:147-148 — `isrelative("../foo")` returns 1.
+    #[test]
+    fn isrelative_dotdot_slash_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative("../foo"), 1);
+        assert_eq!(isrelative("../"), 1);
+    }
+
+    /// c:147-148 — `/.foo` (hidden file under root) is absolute.
+    /// Pin: only `/.` (with trailing `/`) or end-of-string counts as
+    /// a `.` component, NOT `/.foo` (which is a normal file `.foo`).
+    #[test]
+    fn isrelative_root_hidden_file_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative("/.foo"), 0, "/.foo is absolute path to dotfile");
+        assert_eq!(isrelative("/.bashrc"), 0, "/.bashrc is absolute");
+    }
+
+    /// c:147-148 — `/..bar` (file named `..bar`) is also absolute,
+    /// since `..bar` is a regular file name, not a `..` component.
+    #[test]
+    fn isrelative_root_double_dot_file_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative("/..bar"), 0);
+    }
+
+    /// c:2652 — `setunderscore("")` clears `zunderscore` and resets
+    /// `underscoreused` to 1 (null terminator only).
+    #[test]
+    fn setunderscore_empty_clears_state() {
+        let _g = crate::test_util::global_state_lock();
+        setunderscore(""); // initialize to known empty state
+        let zu = zunderscore.lock().unwrap();
+        assert!(zu.is_empty(), "zunderscore must be empty after clear");
+        drop(zu);
+        let used = underscoreused.load(Ordering::Relaxed);
+        assert_eq!(used, 1, "underscoreused must be 1 (NUL only) after clear");
+    }
+
+    /// c:2652 — `setunderscore(str)` sets `zunderscore=str` and
+    /// `underscoreused = str.len()+1` (string + null terminator).
+    #[test]
+    fn setunderscore_with_value_stores_string_and_length() {
+        let _g = crate::test_util::global_state_lock();
+        setunderscore("hello");
+        let zu = zunderscore.lock().unwrap();
+        assert_eq!(*zu, "hello");
+        drop(zu);
+        let used = underscoreused.load(Ordering::Relaxed);
+        assert_eq!(used, 6, "len('hello')+1 = 6");
+    }
+
+    /// c:2656 — `underscorelen` is rounded up to 32-byte boundary
+    /// for the bump-allocator-friendly buffer growth.
+    #[test]
+    fn setunderscore_rounds_underscorelen_to_32() {
+        let _g = crate::test_util::global_state_lock();
+        setunderscore("ab"); // len 2 + 1 = 3 → ceil(32) = 32
+        let nl = underscorelen.load(Ordering::Relaxed);
+        assert_eq!(nl, 32, "(2+1+31) & !31 = 32");
+    }
 }
