@@ -1194,4 +1194,116 @@ mod tests {
             edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/ksh93.c
+    // c:47 edcharsetfn / c:83 matchgetfn / c:212 ksh93_wrapper + lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:83 — `matchgetfn(null)` is deterministic across calls (alt).
+    #[test]
+    fn matchgetfn_null_deterministic_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let first = matchgetfn(std::ptr::null_mut());
+        for _ in 0..5 {
+            assert_eq!(matchgetfn(std::ptr::null_mut()), first,
+                "matchgetfn(null) must be pure");
+        }
+    }
+
+    /// c:83 — `matchgetfn(null)` length is exactly 0 (empty Vec).
+    #[test]
+    fn matchgetfn_null_length_is_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let v = matchgetfn(std::ptr::null_mut());
+        assert_eq!(v.len(), 0, "matchgetfn(null) must have len=0");
+    }
+
+    /// c:212 — `ksh93_wrapper` exit code is non-negative.
+    #[test]
+    fn ksh93_wrapper_exit_code_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let r = ksh93_wrapper(std::ptr::null(), std::ptr::null(),
+            std::ptr::null_mut());
+        assert!(r >= 0, "exit code must be non-negative, got {}", r);
+    }
+
+    /// c:212 — `ksh93_wrapper` exit code fits in u8 range (canonical
+    /// shell exit code 0..256).
+    #[test]
+    fn ksh93_wrapper_exit_code_fits_u8() {
+        let _g = crate::test_util::global_state_lock();
+        let r = ksh93_wrapper(std::ptr::null(), std::ptr::null(),
+            std::ptr::null_mut());
+        assert!((0..256).contains(&r),
+            "exit code {} must fit in u8 range", r);
+    }
+
+    /// c:499 — `features_` returns i32 (compile-time pin).
+    #[test]
+    fn ksh93_features_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = Vec::new();
+        let _: i32 = features_(std::ptr::null(), &mut v);
+    }
+
+    /// c:507 — `enables_` returns i32 (compile-time pin).
+    #[test]
+    fn ksh93_enables_with_none_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:491 — `setup_` is idempotent across many calls (alt).
+    #[test]
+    fn ksh93_setup_idempotent_many_call_alt() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..20 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:514 — `boot_` is idempotent across many calls (alt).
+    #[test]
+    fn ksh93_boot_idempotent_many_call_alt() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..20 {
+            assert_eq!(boot_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:536 — `cleanup_` is idempotent across many calls (alt).
+    #[test]
+    fn ksh93_cleanup_idempotent_many_call_alt() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..20 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:595 — `finish_` is idempotent across many calls (alt).
+    #[test]
+    fn ksh93_finish_idempotent_many_call_alt() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..20 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:491/499/507/514/536/595 — each lifecycle hook returns 0
+    /// individually (tighter failure resolution).
+    #[test]
+    fn ksh93_each_lifecycle_hook_returns_zero_individually() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v: Vec<String> = Vec::new();
+        let mut e: Option<Vec<i32>> = None;
+        assert_eq!(setup_(null), 0, "c:491 setup_");
+        assert_eq!(features_(null, &mut v), 0, "c:499 features_");
+        assert_eq!(enables_(null, &mut e), 0, "c:507 enables_");
+        assert_eq!(boot_(null), 0, "c:514 boot_");
+        assert_eq!(cleanup_(null), 0, "c:536 cleanup_");
+        assert_eq!(finish_(null), 0, "c:595 finish_");
+    }
 }
