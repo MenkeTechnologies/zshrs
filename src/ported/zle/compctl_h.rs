@@ -712,4 +712,85 @@ mod tests {
             );
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compctl.h constants.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:76-89 — CCT_* values are sequential 0..14 (no holes).
+    #[test]
+    fn cct_values_pairwise_distinct() {
+        let all = [
+            CCT_UNUSED, CCT_POS, CCT_CURSTR, CCT_CURPAT, CCT_WORDSTR,
+            CCT_WORDPAT, CCT_CURSUF, CCT_CURPRE, CCT_CURSUB, CCT_CURSUBC,
+            CCT_NUMWORDS, CCT_RANGESTR, CCT_RANGEPAT, CCT_QUOTE,
+        ];
+        let unique: std::collections::HashSet<_> = all.iter().copied().collect();
+        assert_eq!(unique.len(), all.len(), "CCT_* must be pairwise distinct");
+    }
+
+    /// c:76-89 — CCT_* canonical mid-table values (spot-check).
+    #[test]
+    fn cct_canonical_mid_values() {
+        assert_eq!(CCT_WORDSTR, 4);
+        assert_eq!(CCT_WORDPAT, 5);
+        assert_eq!(CCT_CURSUF, 6);
+        assert_eq!(CCT_CURPRE, 7);
+        assert_eq!(CCT_NUMWORDS, 10);
+        assert_eq!(CCT_RANGESTR, 11);
+        assert_eq!(CCT_RANGEPAT, 12);
+    }
+
+    /// c:118 — CC_FILES is bit 0 (the most common file-completion flag,
+    /// hot-path bit). Pin so a regen flipping bit assignments doesn't
+    /// silently break Tab completion of filenames.
+    #[test]
+    fn cc_files_is_bit_zero() {
+        assert_eq!(CC_FILES, 1);
+    }
+
+    /// c:118-128 — first 10 CC_* mask bits are pairwise disjoint
+    /// single-bit values.
+    #[test]
+    fn cc_first_10_flags_are_pairwise_disjoint_single_bits() {
+        let flags = [
+            CC_FILES, CC_COMMPATH, CC_REMOVE, CC_OPTIONS, CC_VARS,
+            CC_BINDINGS, CC_ARRAYS, CC_INTVARS, CC_SHFUNCS, CC_PARAMS,
+        ];
+        for (i, &a) in flags.iter().enumerate() {
+            assert!(a.is_power_of_two(), "CC_* flag {} must be single bit", a);
+            for &b in flags.iter().skip(i + 1) {
+                assert_eq!(a & b, 0, "{} and {} overlap", a, b);
+            }
+        }
+    }
+
+    /// c:118-128 — first 10 CC_* mask bits in canonical 1<<N positions.
+    #[test]
+    fn cc_first_10_flags_canonical_positions() {
+        assert_eq!(CC_FILES, 1 << 0);
+        assert_eq!(CC_COMMPATH, 1 << 1);
+        assert_eq!(CC_REMOVE, 1 << 2);
+        assert_eq!(CC_OPTIONS, 1 << 3);
+        assert_eq!(CC_VARS, 1 << 4);
+        assert_eq!(CC_BINDINGS, 1 << 5);
+        assert_eq!(CC_ARRAYS, 1 << 6);
+        assert_eq!(CC_INTVARS, 1 << 7);
+        assert_eq!(CC_SHFUNCS, 1 << 8);
+        assert_eq!(CC_PARAMS, 1 << 9);
+    }
+
+    /// c:152-158 — CC_NOSORT/XORCONT canonical positions in secondary
+    /// mask namespace (separate u64 from CC_FILES etc.).
+    #[test]
+    fn cc_secondary_low_bits_canonical() {
+        assert_eq!(CC_NOSORT, 1);
+        assert_eq!(CC_XORCONT, 2);
+    }
+
+    /// c:155 — CC_UNIQALL = 1 << 6.
+    #[test]
+    fn cc_uniqall_is_bit_6_in_secondary() {
+        assert_eq!(CC_UNIQALL, 1 << 6);
+    }
 }
