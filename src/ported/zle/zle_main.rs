@@ -773,25 +773,63 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
     // of the call — `_save_lbindk` holds it.
     let _ = set_lbindk; // c:1435 — captured via _save_lbindk lifetime
 
-    // c:1437 — `if (func->widget->flags & WIDGET_INT)` — internal
-    // widget dispatch. Without the Widget union in scope we route
-    // through the shell-function path which exercises the user-
-    // visible side effects.
+    // c:1437 — `if ((w = func->widget)->flags & (WIDGET_INT|WIDGET_NCOMP))`.
+    // Resolve the widget bound to this thingy via the thingytab; if
+    // present, dispatch per the C three-way switch (NCOMP →
+    // completecall; INT → call u.fn directly; else → shfunc).
+    let widget_opt = crate::ported::zle::zle_thingy::thingytab()
+        .lock()
+        .ok()
+        .and_then(|tab| tab.get(name).and_then(|t| t.widget.clone()));
 
-    // c:1490 — `doshfunc(shf, args, …)` — invoke the user's shfunc.
-    // Real dispatch via the canonical exec_hooks::dispatch_function_call
-    // fn-ptr installed by fusevm_bridge at startup. Direct ShellExecutor
-    // reach-in from src/ported/ is forbidden — see memory
+    if let Some(w) = widget_opt.as_ref() {
+        let wflags = w.flags;
+        // c:1455-1469 — WIDGET_INT | WIDGET_NCOMP branch.
+        if (wflags
+            & (crate::ported::zle::zle_h::WIDGET_INT
+                | crate::ported::zle::zle_h::WIDGET_NCOMP))
+            != 0
+        {
+            let rc = if (wflags & crate::ported::zle::zle_h::WIDGET_NCOMP) != 0 {
+                // c:1481-1486 — `compwidget = w; ret = completecall(args)`.
+                *COMPWIDGET.lock().unwrap() = Some((**w).clone()); // c:1483
+                let r = crate::ported::zle::zle_tricky::completecall(args); // c:1484
+                *COMPWIDGET.lock().unwrap() = None;
+                r
+            } else {
+                // c:1487-1489 — `if (!w->u.fn) handlefeep; else ret = w->u.fn(args)`.
+                match &w.u {
+                    crate::ported::zle::zle_h::WidgetImpl::Internal(f) => f(args), // c:1489
+                    _ => 0,
+                }
+            };
+            LASTVAL.store(rc, Ordering::Relaxed);
+            if set_bindk != 0 {
+                *BINDK.lock().unwrap() = save_bindk; // c:1597
+            }
+            return rc;
+        }
+    }
+
+    // c:1490-1530 — else branch: user-defined shfunc widget. Route
+    // via the canonical exec_hooks::dispatch_function_call fn-ptr
+    // installed by fusevm_bridge at startup; direct ShellExecutor
+    // reach-in from src/ported/ is forbidden per
     // feedback_no_exec_script_from_ported.
-    if getshfunc(name).is_some() {
+    let shfunc_name = widget_opt.as_ref().and_then(|w| match &w.u {
+        crate::ported::zle::zle_h::WidgetImpl::UserFunc(s) => Some(s.clone()),
+        _ => None,
+    });
+    let call_name = shfunc_name.as_deref().unwrap_or(name);
+    if getshfunc(call_name).is_some() {
         // c:1490
-        let rc = crate::ported::exec_hooks::dispatch_function_call(name, args).unwrap_or(0);
-        // c:1530 — capture LASTVAL after the call. dispatch_function_call
-        // sets LASTVAL itself; mirror the return through.
+        let rc =
+            crate::ported::exec_hooks::dispatch_function_call(call_name, args).unwrap_or(0);
+        // c:1530 — capture LASTVAL after the call.
         LASTVAL.store(rc, Ordering::Relaxed);
-        // c:1596-1598 — restore BINDK on exit. C: `bindk = save_bindk;`
+        // c:1597 — restore BINDK.
         if set_bindk != 0 {
-            *BINDK.lock().unwrap() = save_bindk; // c:1597
+            *BINDK.lock().unwrap() = save_bindk;
         }
         return rc;
     }

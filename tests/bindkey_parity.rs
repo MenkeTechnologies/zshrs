@@ -116,6 +116,90 @@ fn bindkey_dash_M_viins_byte_identical() {
 }
 
 #[test]
+fn bindkey_dash_M_safe_byte_identical() {
+    // `.safe` is the fallback keymap (all `.self-insert` + `\n`/`\r`
+    // → `.accept-line`) per `zle_keymap.c:1352-1358`.
+    assert_parity("bindkey -M .safe");
+}
+
+#[test]
+fn bindkey_dash_M_command_byte_identical() {
+    // `command` keymap: `\n`/`\r` → accept-line, `^G` → send-break.
+    // Created at `zle_keymap.c:1468-1472`.
+    assert_parity("bindkey -M command");
+}
+
+#[test]
+fn bindkey_dash_M_viopp_byte_identical() {
+    // `viopp` (vi operator-pending) — cursor keys + j/k + ax/ix
+    // selectors + ESC vi-cmd-mode. Created at `zle_keymap.c:1314,1388`.
+    assert_parity("bindkey -M viopp");
+}
+
+#[test]
+fn bindkey_dash_M_visual_byte_identical() {
+    // `visual` selection mode — cursor keys + j/k + ax/ix + ESC
+    // deactivate-region + o/p/u/U/x/~. Created at `zle_keymap.c:1315,1389-1395`.
+    assert_parity("bindkey -M visual");
+}
+
+#[test]
+fn bindkey_dash_M_isearch_byte_identical() {
+    // `isearch` keymap is intentionally empty per `zle_keymap.c:1464`.
+    assert_parity("bindkey -M isearch");
+}
+
+// ─── zle -C completion widget wire-up ──────────────────────────────
+
+#[test]
+fn zle_dash_C_creates_completion_widget() {
+    // `zle -C complete-word .complete-word _main_complete` — the
+    // canonical compinit dispatch wiring. The BASE arg (`.complete-word`)
+    // must resolve to a ZLE_ISCOMP widget per `zle_thingy.c:612`; the
+    // wrapper widget gets WIDGET_NCOMP per `zle_thingy.c:616`. Both
+    // zsh and zshrs should accept this with exit 0.
+    assert_parity("zle -C my-comp .complete-word _my_comp_fn");
+}
+
+#[test]
+fn zle_dash_C_rejects_non_iscomp_base() {
+    // BASE widget must have ZLE_ISCOMP set — `.self-insert` doesn't,
+    // so `zle -C name .self-insert handler` must fail with exit 1.
+    if !zsh_available() {
+        return;
+    }
+    let z = run_zsh("zle -C nope .self-insert hndlr");
+    let r = run_zshrs("zle -C nope .self-insert hndlr");
+    assert_eq!(z.exit, 1);
+    assert_eq!(r.exit, 1);
+}
+
+#[test]
+fn zle_dash_C_rejects_unknown_base() {
+    // BASE must resolve to a thingy — bogus name fails.
+    if !zsh_available() {
+        return;
+    }
+    let z = run_zsh("zle -C nope .nosuch hndlr");
+    let r = run_zshrs("zle -C nope .nosuch hndlr");
+    assert_eq!(z.exit, 1);
+    assert_eq!(r.exit, 1);
+}
+
+#[test]
+fn zle_dash_l_lists_dotted_internal_widgets() {
+    // Per `zle_thingy.c:thingies.list`, every internal widget is
+    // registered under both bare `name` and `.name` (TH_IMMORTAL).
+    // `.complete-word` is the canonical base for compsys compinit
+    // (zle -C complete-word .complete-word _main_complete).
+    if !zsh_available() {
+        return;
+    }
+    let r = run_zshrs("zle -lL .complete-word");
+    assert_eq!(r.exit, 0, "`.complete-word` must be registered");
+}
+
+#[test]
 fn bindkey_dash_l_lists_keymap_names_substring() {
     // `bindkey -l` lists keymap names — lex-sorted, one per line.
     // We can't byte-compare the full list because zsh 5.9 ships

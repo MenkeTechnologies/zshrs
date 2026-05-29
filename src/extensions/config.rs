@@ -20,6 +20,12 @@
 //! fts_enabled = true  # use SQLite FTS5 for completion search
 //! ast_cache = true    # pre-parse autoload functions to AST blobs
 //!
+//! [compsys]
+//! backend = "rust"    # "rust" → src/compsys/ported/ ports;
+//!                     # "shell" → upstream Completion/ shell funcs
+//!                     # via autoload (use this if you've patched
+//!                     # any _X in .zshrc).
+//!
 //! [history]
 //! async_writes = true # write history on worker pool (don't block prompt)
 //! max_entries = 100000
@@ -48,6 +54,9 @@ pub struct ZshrsConfig {
     pub worker_pool: WorkerPoolConfig,
     /// `completion` field.
     pub completion: CompletionConfig,
+    /// `compsys` field — backend selector (rust vs shell) for the
+    /// `_main_complete` function tree. See [`CompsysConfig`].
+    pub compsys: CompsysConfig,
     /// `history` field.
     pub history: HistoryConfig,
     /// `glob` field.
@@ -55,6 +64,45 @@ pub struct ZshrsConfig {
     /// `log` field.
     pub log: LogConfig,
 }
+/// Compsys backend selection — Rust port vs upstream shell functions.
+///
+/// `_main_complete` and the rest of the compsys function tree
+/// (`Completion/Base/Core/*`, `Zsh/Type/*`, `Zsh/Command/*`, ...)
+/// exist in two parallel forms in this repo:
+///
+/// 1. **Rust ports** under `src/compsys/ported/` — JIT-fast, no
+///    fork-exec, deterministic. Used when `backend = "rust"`.
+/// 2. **Upstream shell sources** under `src/zsh/Completion/` —
+///    autoloaded via `fpath` exactly like real zsh. Used when
+///    `backend = "shell"`. Required if you've patched a `_X`
+///    function in `.zshrc` and need the user override to win.
+///
+/// Default `"rust"`. Override per-machine in `~/.config/zshrs/config.toml`:
+/// ```toml
+/// [compsys]
+/// backend = "shell"
+/// ```
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct CompsysConfig {
+    /// Either `"rust"` (default) or `"shell"`. Any other value falls
+    /// back to `"rust"` with a one-shot tracing::warn at load time.
+    pub backend: CompsysBackend,
+}
+
+/// Strong-typed backend selector. Maps to the `backend = "..."`
+/// string in the TOML.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CompsysBackend {
+    /// Route every `_NAME` call through `src/compsys/ported/`.
+    #[default]
+    Rust,
+    /// Route every `_NAME` call through the upstream shell function
+    /// at `Completion/.../$NAME` via the standard shfunc/autoload path.
+    Shell,
+}
+
 /// `WorkerPoolConfig` — see fields for layout.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -140,15 +188,16 @@ impl Default for LogConfig {
 
 // ── Loading ──
 
-/// Config file path: `~/.zshrs/zshrs.toml`.
-/// zshrs-original — C zsh has no analog. Closest C equivalent is
-/// the `ZDOTDIR`/`HOME` lookup chain Src/init.c uses for `.zshrc`,
-/// but that's a shell-script path, not a runtime config.
+/// Config file path: `$ZSHRS_HOME/zshrs.toml` or
+/// `~/.zshrs/zshrs.toml`. Single file for the whole zshrs config
+/// surface — shares the path with `daemon_presence::load_zshrs_toml`
+/// (which parses the orthogonal `[log]/[daemon]/[shell]/[builtins]`
+/// sections). Unknown sections are ignored by serde (`#[serde(default)]`
+/// on every field), so the two loaders coexist in one file.
+/// zshrs-original — C zsh has no analog.
 pub fn config_path() -> PathBuf {
     crate::daemon_presence::config_file_path()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("zshrs")
-        .join("config.toml")
+        .unwrap_or_else(|| PathBuf::from("/tmp/zshrs.toml"))
 }
 
 /// Load config from disk. Returns defaults if the file doesn't
@@ -156,6 +205,15 @@ pub fn config_path() -> PathBuf {
 /// zshrs-original — no C counterpart.
 pub fn load() -> ZshrsConfig {
     load_from(&config_path())
+}
+
+/// Process-cached config snapshot. Read once on first access; the
+/// disk file is NOT re-read on each call (no reload-on-write). Hot
+/// paths like `dispatch_function_call` consult this without
+/// stat'ing / re-parsing the TOML.
+pub fn current() -> &'static ZshrsConfig {
+    static CACHED: std::sync::OnceLock<ZshrsConfig> = std::sync::OnceLock::new();
+    CACHED.get_or_init(load)
 }
 
 /// Load config from a specific path.
@@ -302,9 +360,33 @@ parallel_threshold = 64
         let d = ZshrsConfig::default();
         assert_eq!(cfg.worker_pool.size, d.worker_pool.size);
         assert_eq!(cfg.completion.max_matches, d.completion.max_matches);
+        assert_eq!(cfg.compsys.backend, d.compsys.backend);
         assert_eq!(cfg.history.max_entries, d.history.max_entries);
         assert_eq!(cfg.glob.parallel_threshold, d.glob.parallel_threshold);
         assert_eq!(cfg.log.level, d.log.level);
+    }
+
+    #[test]
+    fn compsys_backend_defaults_to_rust() {
+        let _g = crate::test_util::global_state_lock();
+        let cfg = ZshrsConfig::default();
+        assert_eq!(cfg.compsys.backend, CompsysBackend::Rust);
+    }
+
+    #[test]
+    fn compsys_backend_parses_explicit_shell() {
+        let _g = crate::test_util::global_state_lock();
+        let cfg: ZshrsConfig =
+            toml::from_str("[compsys]\nbackend = \"shell\"\n").unwrap();
+        assert_eq!(cfg.compsys.backend, CompsysBackend::Shell);
+    }
+
+    #[test]
+    fn compsys_backend_parses_explicit_rust() {
+        let _g = crate::test_util::global_state_lock();
+        let cfg: ZshrsConfig =
+            toml::from_str("[compsys]\nbackend = \"rust\"\n").unwrap();
+        assert_eq!(cfg.compsys.backend, CompsysBackend::Rust);
     }
 
     #[test]

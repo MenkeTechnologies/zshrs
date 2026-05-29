@@ -662,6 +662,17 @@ pub fn bin_zle(
     ops: &options,
     _func: i32,
 ) -> i32 {
+    // c:zle_main.c setup_ — in zsh proper, `init_thingies()` runs
+    // when zsh/zle is autoloaded on first ZLE access. zshrs in
+    // non-interactive (`-fc`) mode never loads zsh/zle through that
+    // path, so user `zle -C`/`zle -l`/etc. calls fail because the
+    // thingytab is empty. Lazy-init on first `zle` call — idempotent
+    // (the per-name `contains_key` check inside init_thingies makes
+    // re-entry safe).
+    static THINGIES_INIT: std::sync::Once = std::sync::Once::new();
+    THINGIES_INIT.call_once(|| {
+        init_thingies();
+    });
     // c:345-364 — dispatch table: `static const struct opn opns[]`.
     // (flag_char, handler_fn, min_args, max_args). All sub-handlers
     // take the C canonical `(name, args, ops, func)` signature, so
@@ -1163,14 +1174,27 @@ pub fn bin_zle_complete(_name: &str, args: &[String], _ops: &options, _func: i32
     if (cw.flags & ZLE_ISCOMP) == 0 {
         return 1;
     }
-    // c:616-625 — alloc new completion widget and bind to args[0].
+    // c:619 — `w->u.comp.fn = cw->u.fn`. Extract the base widget's
+    // internal fn pointer; bail if the base isn't WIDGET_INT (the
+    // C check `cw->flags & ZLE_ISCOMP` guarantees this in practice
+    // because every ZLE_ISCOMP widget in iwidgets.list is internal).
+    let base_fn = match &cw.u {
+        WidgetImpl::Internal(f) => *f,
+        _ => return 1,
+    };
+    // c:616-621 — alloc new completion widget:
+    //   w->flags = WIDGET_NCOMP | ZLE_MENUCMP | ZLE_KEEPSUFFIX;
+    //   w->u.comp.fn   = cw->u.fn;
+    //   w->u.comp.wid  = ztrdup(args[1]);
+    //   w->u.comp.func = ztrdup(args[2]);
     let w = Arc::new(widget {
         flags: WIDGET_NCOMP | ZLE_MENUCMP | ZLE_KEEPSUFFIX,
         first: None,
-        // c:619-621 — fn from cw + comp.wid/func from args[1]/args[2].
-        // Current widget::Comp variant collapsed; use UserFunc with the
-        // function name.
-        u: WidgetImpl::UserFunc(args[2].clone()),
+        u: WidgetImpl::Comp {
+            fn_: base_fn,         // c:619
+            wid: args[1].clone(), // c:620
+            func: args[2].clone(), // c:621
+        },
     });
     rthingy(&args[0]);
     if bindwidget(w.clone(), &args[0]) != 0 {
@@ -1769,28 +1793,57 @@ pub fn bin_zle_transform(_name: &str, args: &[String], ops: &options, _func: i32
 /// each into the table marked TH_IMMORTAL.
 pub fn init_thingies() -> i32 {
     // c:1022
-    // c:1024 — `Thingy t;`.
-    // c:1026 — `createthingytab();` create the empty hash table.
-    createthingytab(); // c:1026
-                       // c:1027-1028 — `for (t = thingies; t->nam; t++)
-                       //                  thingytab->addnode(thingytab, t->nam, t);`.
-                       // The C `thingies[]` array is generated from
-                       // `Src/Zle/thingies.list` (391 names). Rust uses the parallel
-                       // `IWIDGET_NAMES` slice in `zle_bindings.rs` — the subset of
-                       // those names that have a fn-pointer port via `iwidget_lookup`.
-                       // Walking only the ported subset matches what `zle -N` /
-                       // `bindkey` can actually dispatch.
+    // c:1026 — `createthingytab();`.
+    createthingytab();
+    // c:1027-1028 — `for (t = thingies; t->nam; t++)
+    //                  thingytab->addnode(thingytab, t->nam, t);`.
+    // The C `thingies[]` array at zle_bindings.c:72 is generated from
+    // `Src/Zle/thingies.list`, which itself is generated from
+    // `iwidgets.list` (`Makefile:1057-1075`). Each iwidgets.list line
+    // produces TWO thingy entries: a bare `name` (mortal, can be
+    // rebound by `zle -A`/`zle -C`) and a `.name` (TH_IMMORTAL, the
+    // internal anchor). Both point at the same shared widget.
     let names = crate::ported::zle::zle_bindings::IWIDGET_NAMES;
     let mut tab = thingytab().lock().unwrap();
     for nam in names {
-        // c:1028 addnode — insert a Thingy for each builtin widget
-        // name. Use makethingynode directly to avoid the re-locking
-        // that the public `rthingy` path performs.
+        // Build the shared widget for this name.
+        // c:widgets.list — each iwidgets.list line emits a
+        // `W(ZLE_FLAGS, t_firstname, functionname)` widget entry.
+        // The Rust analog: WIDGET_INT + iwidget_flags(name) +
+        // u = Internal(iwidget_lookup(name)).
+        let fn_ptr = crate::ported::zle::zle_bindings::iwidget_lookup(nam);
+        // c:widgets.list — look up the per-widget ZLE_FLAGS column
+        // for this name.
+        let extra_flags = crate::ported::zle::zle_bindings::IWIDGET_FLAGS
+            .iter()
+            .find(|(n, _)| *n == *nam)
+            .map(|(_, f)| *f)
+            .unwrap_or(0);
+        let w = fn_ptr.map(|f| {
+            Arc::new(widget {
+                flags: WIDGET_INT | extra_flags,
+                first: None,
+                u: WidgetImpl::Internal(f),
+            })
+        });
+
+        // Bare `name` thingy — mortal.
         if !tab.contains_key(*nam) {
             let mut t = makethingynode();
             t.nam = nam.to_string(); // c:163 ztrdup(nam)
-            t.flags |= TH_IMMORTAL; // c:1027 immortal
+            t.widget = w.clone(); // c:229
             tab.insert(nam.to_string(), t);
+        }
+        // Dotted `.name` thingy — TH_IMMORTAL, the internal anchor
+        // used by `zle -C BASE` lookups (`bin_zle_complete` c:610
+        // prepends `.` when looking up the base widget).
+        let dotted = format!(".{}", nam);
+        if !tab.contains_key(&dotted) {
+            let mut t = makethingynode();
+            t.nam = dotted.clone();
+            t.flags |= TH_IMMORTAL; // c:1027 — `.NAME` entries are immortal
+            t.widget = w;
+            tab.insert(dotted, t);
         }
     }
     0
@@ -1976,13 +2029,33 @@ mod tests {
             tab.contains_key("undefined-key"),
             "c:1028 — undefined-key must be in THINGYTAB"
         );
-        // Every entry should be marked TH_IMMORTAL.
+        // Per C's thingies.list generator (`Makefile:1057-1075`), each
+        // iwidgets.list line emits two entries: bare `name` (mortal,
+        // can be rebound by `zle -A`/`zle -C`) and `.name`
+        // (TH_IMMORTAL, the internal anchor).
         let al = tab.get("accept-line").unwrap();
-        assert_ne!(
+        assert_eq!(
             al.flags & TH_IMMORTAL,
             0,
-            "c:1027 — TH_IMMORTAL bit must be set"
+            "c:thingies.list — bare name must be mortal",
         );
+        let dot_al = tab.get(".accept-line").expect(
+            "c:thingies.list — dotted name must be registered alongside bare",
+        );
+        assert_ne!(
+            dot_al.flags & TH_IMMORTAL,
+            0,
+            "c:thingies.list — `.name` form is TH_IMMORTAL",
+        );
+        // Both forms must point at the same widget Arc.
+        let (al_w, dot_al_w) = (al.widget.clone(), dot_al.widget.clone());
+        match (al_w, dot_al_w) {
+            (Some(a), Some(b)) => assert!(
+                Arc::ptr_eq(&a, &b),
+                "c:thingies.list — bare and dotted thingies share the widget Arc",
+            ),
+            _ => panic!("c:widgets.list — both bare and dotted thingies must have widgets"),
+        }
     }
 
     /// `Src/Zle/zle_thingy.c:865-867` — `bin_zle_fd` rejects negative
