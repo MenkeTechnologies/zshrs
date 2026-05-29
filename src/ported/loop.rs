@@ -340,4 +340,65 @@ mod tests {
             assert_eq!(selectlist(&items, 0), first);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/loop.c
+    // c:347 selectlist + statics (LOOP_DEPTH/CONT_FLAG/BREAK_LEVEL/try_tryflag)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:347 — `selectlist` return value ≤ items.len() (valid next-start).
+    #[test]
+    fn selectlist_return_bounded_by_items_len() {
+        let _g = crate::test_util::global_state_lock();
+        for sz in [1usize, 3, 5, 20] {
+            let items: Vec<String> = (0..sz).map(|i| format!("i{}", i)).collect();
+            let refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
+            let r = selectlist(&refs, 0);
+            assert!(r <= sz, "selectlist({} items, 0) = {} > {}", sz, r, sz);
+        }
+    }
+
+    /// c:347 — `selectlist` returns usize (compile-time type pin).
+    #[test]
+    fn selectlist_returns_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: usize = selectlist(&["x"], 0);
+    }
+
+    /// c:347 — `selectlist` two-item list doesn't panic.
+    #[test]
+    fn selectlist_two_items_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = selectlist(&["a", "b"], 0);
+    }
+
+    /// c:347 — `selectlist` with entries containing tabs doesn't panic.
+    #[test]
+    fn selectlist_entries_with_tabs_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = selectlist(&["a\tb", "c\td"], 0);
+    }
+
+    /// c:731 — `try_tryflag` is AtomicI64 (compile-time type pin).
+    #[test]
+    fn try_tryflag_is_atomic_i64() {
+        use std::sync::atomic::Ordering;
+        let v: i64 = try_tryflag.load(Ordering::SeqCst);
+        // Just verify it loads — any i64 is a valid initial state.
+        let _ = v;
+    }
+
+    /// c:347 — `selectlist` with entries containing ANSI escape doesn't panic.
+    #[test]
+    fn selectlist_ansi_escape_entries_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = selectlist(&["\x1b[31mred\x1b[0m", "plain"], 0);
+    }
+
+    /// c:347 — `selectlist` with single space entry doesn't panic.
+    #[test]
+    fn selectlist_single_space_entry_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = selectlist(&[" "], 0);
+    }
 }
