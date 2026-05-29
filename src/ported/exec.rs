@@ -10843,4 +10843,110 @@ mod tests {
         let nl = underscorelen.load(Ordering::Relaxed);
         assert_eq!(nl, 32, "(2+1+31) & !31 = 32");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/exec.c cancd2 +
+    // quote_tokenized_output.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:6411 — `cancd2("/tmp")` returns 1 (directory with X_OK exists).
+    #[test]
+    #[cfg(unix)]
+    fn cancd2_existing_dir_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cancd2("/tmp"), 1, "/tmp is a valid cd target");
+    }
+
+    /// c:6411 — `cancd2("/nonexistent")` returns 0.
+    #[test]
+    fn cancd2_nonexistent_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cancd2("/__never_exists_zshrs_cancd2__"), 0);
+    }
+
+    /// c:6411 — `cancd2` for a file (not dir) returns 0.
+    #[test]
+    #[cfg(unix)]
+    fn cancd2_regular_file_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("regular_file");
+        std::fs::write(&p, "x").unwrap();
+        assert_eq!(cancd2(p.to_str().unwrap()), 0, "regular file not a cd target");
+    }
+
+    /// c:2114 — `quote_tokenized_output` on empty string writes nothing.
+    #[test]
+    fn quote_tokenized_output_empty_writes_nothing() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = Vec::new();
+        quote_tokenized_output("", &mut buf).unwrap();
+        assert!(buf.is_empty());
+    }
+
+    /// c:2114 — plain ASCII passes through unchanged.
+    #[test]
+    fn quote_tokenized_output_plain_ascii_unchanged() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = Vec::new();
+        quote_tokenized_output("hello", &mut buf).unwrap();
+        assert_eq!(buf, b"hello");
+    }
+
+    /// c:2143 — space gets backslash-quoted.
+    #[test]
+    fn quote_tokenized_output_space_backslash_quoted() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = Vec::new();
+        quote_tokenized_output("a b", &mut buf).unwrap();
+        assert_eq!(buf, b"a\\ b");
+    }
+
+    /// c:2147 — tab → $'\\t'.
+    #[test]
+    fn quote_tokenized_output_tab_dollar_escape() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = Vec::new();
+        quote_tokenized_output("a\tb", &mut buf).unwrap();
+        assert_eq!(buf, b"a$'\\t'b");
+    }
+
+    /// c:2151 — newline → $'\\n'.
+    #[test]
+    fn quote_tokenized_output_newline_dollar_escape() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = Vec::new();
+        quote_tokenized_output("a\nb", &mut buf).unwrap();
+        assert_eq!(buf, b"a$'\\n'b");
+    }
+
+    /// c:2155 — CR → $'\\r'.
+    #[test]
+    fn quote_tokenized_output_cr_dollar_escape() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = Vec::new();
+        quote_tokenized_output("a\rb", &mut buf).unwrap();
+        assert_eq!(buf, b"a$'\\r'b");
+    }
+
+    /// c:2128 — shell metacharacters all get backslash-quoted.
+    #[test]
+    fn quote_tokenized_output_shell_metas_get_backslash() {
+        let _g = crate::test_util::global_state_lock();
+        for c in &[b'<', b'>', b'(', b')', b'|', b'#', b'$', b'*', b'?', b'~'] {
+            let mut buf = Vec::new();
+            let s = String::from_utf8(vec![b'a', *c, b'b']).unwrap();
+            quote_tokenized_output(&s, &mut buf).unwrap();
+            assert_eq!(buf, vec![b'a', b'\\', *c, b'b'], "char {:?}", *c as char);
+        }
+    }
+
+    /// c:2158 — `=` at position 0 gets quoted (path-spec).
+    #[test]
+    fn quote_tokenized_output_equals_at_start_quoted() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = Vec::new();
+        quote_tokenized_output("=foo", &mut buf).unwrap();
+        assert_eq!(buf, b"\\=foo");
+    }
 }
