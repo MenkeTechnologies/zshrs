@@ -1142,4 +1142,115 @@ mod tests {
         let _: i32 = cleanup_(std::ptr::null());
         let _: i32 = finish_(std::ptr::null());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/mapfile.c
+    // c:52 setpmmapfile / c:181 unsetpmmapfile / c:206 setpmmapfiles /
+    // c:239 get_contents / c:329 getpmmapfile / c:384 scanpmmapfile
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:239 — `get_contents` returns Option<String> (compile-time pin, alt).
+    #[test]
+    fn get_contents_returns_option_string_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = get_contents("/__nonexistent__");
+    }
+
+    /// c:239 — `get_contents("")` empty path returns None (alt-name pin).
+    #[test]
+    fn get_contents_empty_path_returns_none_alt() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(get_contents("").is_none(), "empty path → None");
+    }
+
+    /// c:239 — `get_contents` for nonexistent path returns None (alt-name pin).
+    #[test]
+    fn get_contents_nonexistent_returns_none_alt() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(get_contents("/__definitely_no_such_xyz_zshrs__").is_none());
+    }
+
+    /// c:239 — `get_contents("/dev/null")` returns Some("") on POSIX
+    /// (empty file readable).
+    #[cfg(unix)]
+    #[test]
+    fn get_contents_dev_null_returns_some_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = get_contents("/dev/null");
+        assert_eq!(r.as_deref(), Some(""),
+            "/dev/null must read as Some(empty); got {:?}", r);
+    }
+
+    /// c:52 — `setpmmapfile` with empty name doesn't panic.
+    #[test]
+    fn setpmmapfile_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        setpmmapfile("", "/tmp/__nonexistent__", false);
+    }
+
+    /// c:52 — `setpmmapfile` with both readonly flag values is safe.
+    #[test]
+    fn setpmmapfile_both_readonly_flags_safe() {
+        let _g = crate::test_util::global_state_lock();
+        setpmmapfile("__test_mapfile_a__", "/tmp/__nonexistent_a__", false);
+        setpmmapfile("__test_mapfile_b__", "/tmp/__nonexistent_b__", true);
+    }
+
+    /// c:181 — `unsetpmmapfile` non-existent name + both exp values safe.
+    #[test]
+    fn unsetpmmapfile_nonexistent_name_safe() {
+        let _g = crate::test_util::global_state_lock();
+        unsetpmmapfile("__never_mapped_xyz__", false);
+        unsetpmmapfile("__never_mapped_xyz__", true);
+    }
+
+    /// c:329 — `getpmmapfile` is deterministic for the same name.
+    #[test]
+    fn getpmmapfile_deterministic_for_anything_name() {
+        let _g = crate::test_util::global_state_lock();
+        let a = getpmmapfile(std::ptr::null_mut(), "anything");
+        let b = getpmmapfile(std::ptr::null_mut(), "anything");
+        assert_eq!(a.is_some(), b.is_some(),
+            "getpmmapfile must be deterministic");
+    }
+
+    /// c:384 — `scanpmmapfile` various flag values are safe.
+    #[test]
+    fn scanpmmapfile_various_flags_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        for flags in [0i32, 1, 2, 0xff, -1] {
+            scanpmmapfile(std::ptr::null_mut(), None, flags);
+        }
+    }
+
+    /// c:461 — `features_` returns i32 (compile-time pin).
+    #[test]
+    fn mapfile_features_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = Vec::new();
+        let _: i32 = features_(std::ptr::null(), &mut v);
+    }
+
+    /// c:469 — `enables_` returns i32 (compile-time pin).
+    #[test]
+    fn mapfile_enables_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:453/461/469/476/485/492 — each lifecycle hook returns 0 individually.
+    #[test]
+    fn mapfile_each_lifecycle_hook_returns_zero_individually() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v: Vec<String> = Vec::new();
+        let mut e: Option<Vec<i32>> = None;
+        assert_eq!(setup_(null), 0, "c:453 setup_");
+        assert_eq!(features_(null, &mut v), 0, "c:461 features_");
+        assert_eq!(enables_(null, &mut e), 0, "c:469 enables_");
+        assert_eq!(boot_(null), 0, "c:476 boot_");
+        assert_eq!(cleanup_(null), 0, "c:485 cleanup_");
+        assert_eq!(finish_(null), 0, "c:492 finish_");
+    }
 }
