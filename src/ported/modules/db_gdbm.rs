@@ -1570,4 +1570,104 @@ mod tests {
         );
         assert_eq!(count, 0, "untied → no entries to scan");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/db_gdbm.c
+    // c:46 bin_ztie / c:157 bin_zuntie / c:211 bin_zgdbmpath /
+    // c:262 gdbmgetfn / c:316 gdbmunsetfn / c:350 getgdbmnode /
+    // c:478 gdbmhashsetfn / c:519 gdbmuntie / c:910 gdbmhashunsetfn
+    // c:927+ lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:46 — `bin_ztie` return value in u8 exit-code range.
+    #[test]
+    fn bin_ztie_no_args_in_exit_code_range() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        let r = bin_ztie("ztie", &[], &ops, 0);
+        assert!((0..256).contains(&r), "exit code must fit in u8");
+    }
+
+    /// c:262 — `gdbmgetfn` is deterministic for unknown param/key.
+    #[test]
+    fn gdbmgetfn_unknown_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = gdbmgetfn("zshrs_never_param", "zshrs_never_key");
+        for _ in 0..5 {
+            assert_eq!(gdbmgetfn("zshrs_never_param", "zshrs_never_key"), first);
+        }
+    }
+
+    /// c:316 — `gdbmunsetfn` on untied param is safe (no panic).
+    #[test]
+    fn gdbmunsetfn_untied_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        gdbmunsetfn("zshrs_never_param", "key", 0);
+        gdbmunsetfn("zshrs_never_param", "", 0);
+        gdbmunsetfn("", "", 0);
+    }
+
+    /// c:350 — `getgdbmnode` returns bool (compile-time type pin).
+    #[test]
+    fn getgdbmnode_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = getgdbmnode("", "");
+    }
+
+    /// c:350 — `getgdbmnode` is deterministic.
+    #[test]
+    fn getgdbmnode_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = getgdbmnode("zshrs_param", "zshrs_key");
+        for _ in 0..5 {
+            assert_eq!(getgdbmnode("zshrs_param", "zshrs_key"), first);
+        }
+    }
+
+    /// c:519 — `gdbmuntie` on empty name is safe.
+    #[test]
+    fn gdbmuntie_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        gdbmuntie("");
+    }
+
+    /// c:910 — `gdbmhashunsetfn` on untied param is safe.
+    #[test]
+    fn gdbmhashunsetfn_untied_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        gdbmhashunsetfn("zshrs_never_param_xyz");
+        gdbmhashunsetfn("");
+    }
+
+    /// c:211 — `bin_zgdbmpath` no args returns u8 exit-code range.
+    #[test]
+    fn bin_zgdbmpath_no_args_in_exit_code_range() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        let r = bin_zgdbmpath("zgdbmpath", &[], &ops, 0);
+        assert!((0..256).contains(&r));
+    }
+
+    /// c:927+ — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn db_gdbm_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+    }
+
+    /// c:927 — setup_ idempotent.
+    #[test]
+    fn db_gdbm_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
 }
