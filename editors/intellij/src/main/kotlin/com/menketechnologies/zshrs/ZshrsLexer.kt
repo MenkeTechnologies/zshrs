@@ -556,11 +556,50 @@ class ZshrsLexer : LexerBase() {
             emit(2, ZshrsTokenTypes.PARAM_EXPANSION)
             return
         }
-        // $(...) command substitution — punctuation-only; treat as variable
+        // $((arith)) and $(cmd) — must consume the WHOLE expansion as
+        // a single non-STRING token. Before this fix, $(arith)) emitted
+        // only `$` as SIGIL and the outer lexer's string-resume state
+        // re-absorbed the `((arith))` into the next STRING literal
+        // segment, so the arithmetic interior inherited string color.
+        // Pre-scan: $(( → match `))`, $( → match `)` with paren depth.
         if (nxt == '(') {
-            // Let outer flow handle ( separately; emit just `$`
-            tokenEnd = p; pos = p
-            tokenType = ZshrsTokenTypes.SIGIL
+            // Two-char `$((` → arithmetic.
+            val isArith = p + 1 < endOffset && buf[p + 1] == '('
+            if (isArith) {
+                // Pre-scan past matching `))`.
+                var pp = p + 2  // past `$((`
+                var depth = 2
+                while (pp < endOffset && depth > 0) {
+                    val cc = buf[pp]
+                    if (cc == '\\' && pp + 1 < endOffset) { pp += 2; continue }
+                    when (cc) {
+                        '(' -> depth++
+                        ')' -> depth--
+                    }
+                    pp++
+                }
+                tokenEnd = pp; pos = pp
+                // PARAM_EXPANSION is the closest existing token type
+                // (a non-STRING color reserved for ${...}); reusing it
+                // here keeps the IDE's color scheme single-source.
+                tokenType = ZshrsTokenTypes.PARAM_EXPANSION
+                return
+            }
+            // Single-paren `$(cmd)` → command substitution.
+            var pp = p + 1  // past `$(`
+            var depth = 1
+            while (pp < endOffset && depth > 0) {
+                val cc = buf[pp]
+                if (cc == '\\' && pp + 1 < endOffset) { pp += 2; continue }
+                // Allow nested `$(...)` / `$((...))` inside.
+                when (cc) {
+                    '(' -> depth++
+                    ')' -> depth--
+                }
+                pp++
+            }
+            tokenEnd = pp; pos = pp
+            tokenType = ZshrsTokenTypes.PARAM_EXPANSION
             return
         }
         // Special single-char variables: $0..$9, $?, $!, $$, $#, $*, $@, $-, $_
