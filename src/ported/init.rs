@@ -2160,4 +2160,112 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         sourcehome("/");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/init.c
+    // c:464 tccap_get_name / c:491 init_term / c:1081 source /
+    // c:1159 zleentry / c:1199 fallback_compctlread + lifecycle pins
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:464 — `tccap_get_name` returns `&'static str` (compile-time pin, alt).
+    #[test]
+    fn tccap_get_name_returns_static_str_pin_alt() {
+        let _: &'static str = tccap_get_name(0);
+    }
+
+    /// c:464 — `tccap_get_name(TC_COUNT)` and beyond return empty.
+    /// C source: `if (cap >= 39 /* TC_COUNT */) return "";`.
+    #[test]
+    fn tccap_get_name_oob_returns_empty() {
+        assert_eq!(tccap_get_name(39), "", "TC_COUNT itself returns empty");
+        assert_eq!(tccap_get_name(100), "", "way past TC_COUNT returns empty");
+        assert_eq!(tccap_get_name(usize::MAX), "", "MAX returns empty (no panic)");
+    }
+
+    /// c:464 — `tccap_get_name` is deterministic for in-range indices.
+    #[test]
+    fn tccap_get_name_deterministic_for_valid_indices() {
+        for cap in 0..39usize {
+            let first = tccap_get_name(cap);
+            for _ in 0..3 {
+                assert_eq!(tccap_get_name(cap), first,
+                    "tccap_get_name({}) must be pure", cap);
+            }
+        }
+    }
+
+    /// c:464 — every in-range cap returns non-empty (zsh ships a name
+    /// for every TC_* slot; an empty entry would be a corpus drift).
+    #[test]
+    fn tccap_get_name_all_in_range_caps_non_empty() {
+        for cap in 0..39usize {
+            assert!(!tccap_get_name(cap).is_empty(),
+                "TC_{} (cap idx {}) must have a non-empty cap name", cap, cap);
+        }
+    }
+
+    /// c:491 — `init_term` returns i32 (compile-time pin).
+    #[test]
+    fn init_term_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = init_term();
+    }
+
+    /// c:1081 — `source(empty)` returns i32 (compile-time pin, alt).
+    #[test]
+    fn source_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = source("");
+    }
+
+    /// c:1081 — `source("/__nonexistent_xyz__")` is non-fatal (returns).
+    #[test]
+    fn source_nonexistent_file_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = source("/__definitely_not_a_file_zshrs_xyz__");
+    }
+
+    /// c:1159 — `zleentry` is deterministic (pure dispatch).
+    #[test]
+    fn zleentry_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for cmd in 0..5i32 {
+            let first = zleentry(cmd);
+            for _ in 0..3 {
+                assert_eq!(zleentry(cmd), first,
+                    "zleentry({}) must be deterministic", cmd);
+            }
+        }
+    }
+
+    /// c:1199 — `fallback_compctlread("")` is safe (empty name no-op).
+    #[test]
+    fn fallback_compctlread_empty_name_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = fallback_compctlread("");
+    }
+
+    /// c:1149 — `noop_function` called repeatedly is safe.
+    #[test]
+    fn noop_function_repeated_calls_safe() {
+        for _ in 0..100 {
+            noop_function();
+        }
+    }
+
+    /// c:1154 — `noop_function_int` for various ints is safe + void.
+    #[test]
+    fn noop_function_int_various_inputs_safe() {
+        for n in [-1, 0, 1, i32::MIN, i32::MAX] {
+            let _: () = noop_function_int(n);
+        }
+    }
+
+    /// c:1116 — `sourcehome("nonexistent_file_xyz")` safe (no-op when
+    /// the home-relative path doesn't exist).
+    #[test]
+    fn sourcehome_nonexistent_file_safe() {
+        let _g = crate::test_util::global_state_lock();
+        sourcehome("__definitely_no_such_zshrc_xyz__");
+    }
 }
