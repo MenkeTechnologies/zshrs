@@ -560,4 +560,120 @@ mod tests {
         assert!(t.get("a").is_none(), "user entry a cleared");
         assert!(t.get("b").is_none(), "user entry b cleared");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hashnameddir.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:121 — `diff` = `len(dir) - len(nam)` allows negative (dir
+    /// shorter than name). Pin: short dir gives negative diff.
+    #[test]
+    fn addnameddirnode_diff_can_be_negative_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        // name='verylongname' (12 chars), dir='/x' (2 chars) → diff = -10
+        addnameddirnode("verylongname", make_nd("verylongname", "/x", 0));
+        let t = nameddirtab().lock().unwrap();
+        let nd = t.get("verylongname").unwrap();
+        assert_eq!(nd.diff, -10, "diff = 2 - 12 = -10");
+    }
+
+    /// c:121 — `diff = 0` when dir.len() == nam.len() (equal-length).
+    #[test]
+    fn addnameddirnode_diff_zero_when_lengths_equal_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("xyz", make_nd("xyz", "abc", 0));
+        let t = nameddirtab().lock().unwrap();
+        let nd = t.get("xyz").unwrap();
+        assert_eq!(nd.diff, 0, "diff = 3 - 3 = 0");
+    }
+
+    /// c:121 — `addnameddirnode` sets node.nam to the input name.
+    #[test]
+    fn addnameddirnode_sets_node_nam() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        // Construct nd with empty name; addnameddirnode must overwrite.
+        addnameddirnode("real_name", make_nd("", "/x", 0));
+        let t = nameddirtab().lock().unwrap();
+        let nd = t.get("real_name").unwrap();
+        assert_eq!(nd.node.nam, "real_name", "node.nam set by addnameddirnode");
+    }
+
+    /// c:135 — `removenameddirnode("missing")` returns None.
+    #[test]
+    fn removenameddirnode_missing_returns_none_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        let r = removenameddirnode("zshrs_never_dir");
+        assert!(r.is_none(), "missing entry → None");
+    }
+
+    /// c:135 — `removenameddirnode` actually removes from the table.
+    #[test]
+    fn removenameddirnode_existing_removes_entry() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("rmme", make_nd("rmme", "/rmme", 0));
+        // Confirm present before remove.
+        assert!(nameddirtab().lock().unwrap().contains_key("rmme"));
+        let removed = removenameddirnode("rmme");
+        assert!(removed.is_some(), "returned the removed entry");
+        assert!(!nameddirtab().lock().unwrap().contains_key("rmme"));
+    }
+
+    /// c:148 — `freenameddirnode` is a no-op (Rust drop handles strings).
+    #[test]
+    fn freenameddirnode_is_drop_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let nd = make_nd("ok", "/ok", 0);
+        freenameddirnode(nd);
+        // Drop cascade frees the strings; no assertion possible beyond no panic.
+    }
+
+    /// c:59 — `createnameddirtable` is idempotent (lazy init).
+    #[test]
+    fn createnameddirtable_is_idempotent_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createnameddirtable();
+        createnameddirtable();
+        createnameddirtable();
+        // No panic = pass.
+    }
+
+    /// c:84 — `emptynameddirtable` resets `allusersadded` flag to 0
+    /// (so subsequent `fillnameddirtable` re-runs).
+    #[test]
+    fn emptynameddirtable_resets_allusersadded() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        allusersadded.store(1, Ordering::Relaxed); // simulate filled state
+        emptynameddirtable();
+        assert_eq!(
+            allusersadded.load(Ordering::Relaxed),
+            0,
+            "emptynameddirtable must reset allusersadded → 0"
+        );
+    }
+
+    /// c:121 — `addnameddirnode` overwrites existing entry (same name).
+    #[test]
+    fn addnameddirnode_overwrites_existing() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("dup", make_nd("dup", "/first", 0));
+        addnameddirnode("dup", make_nd("dup", "/second", 0));
+        let t = nameddirtab().lock().unwrap();
+        let nd = t.get("dup").unwrap();
+        assert_eq!(nd.dir, "/second", "second insert wins");
+    }
 }
