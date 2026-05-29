@@ -4005,4 +4005,101 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = zlrputs("");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/complist.c
+    // c:366 getcols / c:523 zcputs / c:573 initiscol / c:632 doiscol /
+    // c:901 asklistscroll / c:1191 compprintlist / c:2207 complistmatches /
+    // c:2647 msearchpush / c:2662 msearchpop / c:3039 menuselect /
+    // c:3051-3165 lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:366 — `getcols` returns i32 (compile-time type pin).
+    #[test]
+    fn getcols_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = getcols("");
+    }
+
+    /// c:523 — `zcputs` returns String (compile-time type pin).
+    #[test]
+    fn zcputs_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = zcputs("", None);
+    }
+
+    /// c:573 — `initiscol` returns i32 (compile-time type pin).
+    #[test]
+    fn initiscol_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = initiscol();
+    }
+
+    /// c:632 — `doiscol(N)` returns i32 (compile-time type pin).
+    #[test]
+    fn doiscol_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = doiscol(0);
+    }
+
+    /// c:901 — `asklistscroll(0)` returns i32 (compile-time type pin).
+    #[test]
+    fn asklistscroll_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = asklistscroll(0);
+    }
+
+    /// c:1191 — `compprintlist` returns i32 (compile-time type pin).
+    #[test]
+    fn compprintlist_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = compprintlist(0);
+    }
+
+    /// c:2207 — `complistmatches` returns i32 (compile-time type pin).
+    #[test]
+    fn complistmatches_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = complistmatches();
+    }
+
+    /// c:2647 — `msearchpush` returns i32.
+    #[test]
+    fn msearchpush_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = msearchpush();
+    }
+
+    /// c:2662 — `msearchpop` returns i32.
+    #[test]
+    fn msearchpop_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = msearchpop();
+    }
+
+    /// c:3039 — `menuselect` returns i32.
+    #[test]
+    fn menuselect_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = menuselect();
+    }
+
+    /// c:3051-3165 — every lifecycle hook returns 0 (success sentinel).
+    #[test]
+    fn complist_lifecycle_all_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(), 0);
+        assert_eq!(features_(), 0);
+        assert_eq!(enables_(), 0);
+        assert_eq!(boot_(), 0);
+        assert_eq!(cleanup_(), 0);
+        assert_eq!(finish_(), 0);
+    }
+
+    /// c:3083 — `menuselect_bindings` returns i32.
+    #[test]
+    fn menuselect_bindings_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = menuselect_bindings();
+    }
 }
