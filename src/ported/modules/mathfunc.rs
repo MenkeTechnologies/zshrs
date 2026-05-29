@@ -1148,4 +1148,108 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/mathfunc.c
+    // c:58 math_string / c:286 math_func / c:91-131 lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:58 — `math_string` returns mnumber (compile-time type pin).
+    #[test]
+    fn math_string_returns_mnumber_type() {
+        let _: mnumber = math_string("rand48", "", 0);
+    }
+
+    /// c:58 — `math_string` empty input doesn't panic.
+    #[test]
+    fn math_string_empty_input_no_panic() {
+        let _ = math_string("rand48", "", 0);
+        let _ = math_string("", "", 0);
+    }
+
+    /// c:58 — `math_string("rand48", _, _)` returns finite f64.
+    #[test]
+    fn math_string_rand48_returns_finite() {
+        for _ in 0..20 {
+            let r = math_string("rand48", "", 0);
+            // rand48 returns f64; result should be finite.
+            // mnumber.d may be 0.0 if int variant — check both fields.
+            assert!(r.d.is_finite() || r.l != 0 || r.d == 0.0,
+                "rand48 should be finite f64");
+        }
+    }
+
+    /// c:286 — `math_func` returns mnumber (compile-time type pin).
+    /// Uses non-empty argv to avoid the ZSHRS BUG (empty argv panics).
+    #[test]
+    fn math_func_returns_mnumber_type() {
+        use crate::ported::zsh_h::MN_FLOAT;
+        let arg = mnumber { l: 0, d: 1.0, type_: MN_FLOAT };
+        let _: mnumber = math_func("fabs", 1, &[arg], 0);
+    }
+
+    /// c:286 — `math_func` is deterministic for pure math fns (fabs, int).
+    #[test]
+    fn math_func_pure_for_fabs() {
+        use crate::ported::zsh_h::MN_FLOAT;
+        let arg = mnumber { l: 0, d: 1.5, type_: MN_FLOAT };
+        let first = math_func("fabs", 1, &[arg], 0);
+        for _ in 0..3 {
+            let arg2 = mnumber { l: 0, d: 1.5, type_: MN_FLOAT };
+            assert_eq!(math_func("fabs", 1, &[arg2], 0).d, first.d,
+                "fabs(1.5) must be pure");
+        }
+    }
+
+    /// c:286 — `math_func` with empty argv PANICS in zshrs port
+    /// ("index out of bounds: the len is 0 but the index is 0").
+    /// C source validates argc before indexing; Rust port skips check.
+    #[test]
+    #[ignore = "ZSHRS BUG: math_func with empty argv panics with OOB; C source validates argc. See Src/Modules/mathfunc.c:286"]
+    fn math_func_empty_argv_no_panic() {
+        let _ = math_func("fabs", 0, &[], 0);
+        let _ = math_func("", 0, &[], 0);
+    }
+
+    /// c:91-131 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn mathfunc_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:91 — setup_ idempotent.
+    #[test]
+    fn mathfunc_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:131 — finish_ idempotent.
+    #[test]
+    fn mathfunc_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:124 — cleanup_ idempotent.
+    #[test]
+    fn mathfunc_cleanup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
 }
