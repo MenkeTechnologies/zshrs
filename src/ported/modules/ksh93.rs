@@ -1000,4 +1000,111 @@ mod tests {
         let mut e: Option<Vec<i32>> = None;
         let _ = enables_(std::ptr::null(), &mut e);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/ksh93.c
+    // c:47 edcharsetfn / c:83 matchgetfn / c:212 ksh93_wrapper / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:47 — `edcharsetfn(null, null)` is idempotent (multiple calls safe).
+    #[test]
+    fn edcharsetfn_double_null_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
+        }
+    }
+
+    /// c:83 — `matchgetfn(null)` returns Vec (not panic) — type pinning.
+    #[test]
+    fn matchgetfn_null_returns_vec_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = matchgetfn(std::ptr::null_mut());
+    }
+
+    /// c:83 — `matchgetfn(null)` is deterministic across repeated calls.
+    #[test]
+    fn matchgetfn_null_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = matchgetfn(std::ptr::null_mut());
+        for _ in 0..5 {
+            assert_eq!(matchgetfn(std::ptr::null_mut()), first,
+                "matchgetfn(null) must be deterministic");
+        }
+    }
+
+    /// c:212 — `ksh93_wrapper(null, null, null)` is safe.
+    #[test]
+    fn ksh93_wrapper_all_null_no_panic_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
+    }
+
+    /// c:212 — `ksh93_wrapper` returns i32 (type pinning).
+    #[test]
+    fn ksh93_wrapper_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
+    }
+
+    /// c:491-595 — full lifecycle setup→features→enables→boot→cleanup→finish
+    /// all return 0.
+    #[test]
+    fn ksh93_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:491 — setup_ idempotent.
+    #[test]
+    fn ksh93_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:595 — finish_ idempotent.
+    #[test]
+    fn ksh93_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:536 — cleanup_ idempotent.
+    #[test]
+    fn ksh93_cleanup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:514 — boot_ idempotent.
+    #[test]
+    fn ksh93_boot_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(boot_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:212 — ksh93_wrapper return value in canonical exit-code range
+    /// (signed-byte 0..256).
+    #[test]
+    fn ksh93_wrapper_return_in_exit_code_range() {
+        let _g = crate::test_util::global_state_lock();
+        let r = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
+        assert!((0..256).contains(&r), "exit code must fit in u8 range, got {}", r);
+    }
 }
