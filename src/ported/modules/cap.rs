@@ -578,4 +578,81 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/cap.c builtins.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:62 — `bin_cap` with no args queries current caps;
+    /// platform-dependent result. Pin no-panic only.
+    #[test]
+    fn bin_cap_no_args_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _ = bin_cap("cap", &[], &ops, 0);
+    }
+
+    /// c:147 — `bin_getcap` with no args returns nonzero (usage error).
+    #[test]
+    fn bin_getcap_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_getcap("getcap", &[], &ops, 0);
+        assert_ne!(r, 0, "no path arg → usage error");
+    }
+
+    /// c:205 — `bin_setcap` with no args returns nonzero.
+    #[test]
+    fn bin_setcap_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_setcap("setcap", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// c:205 — `bin_setcap` with only one arg returns nonzero.
+    #[test]
+    fn bin_setcap_one_arg_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_setcap("setcap", &["cap_net_admin+ep".into()], &ops, 0);
+        assert_ne!(r, 0, "missing path arg → usage error");
+    }
+
+    /// c:147 — `bin_getcap` on nonexistent path returns nonzero.
+    #[test]
+    fn bin_getcap_nonexistent_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_getcap(
+            "getcap",
+            &["/__never_exists_zshrs_xyz__".into()],
+            &ops,
+            0,
+        );
+        assert_ne!(r, 0, "nonexistent path → error");
+    }
+
+    /// c:274 — split per-hook setup_ pin.
+    #[test]
+    fn cap_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:281 — features_ returns 0.
+    #[test]
+    fn cap_features_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let mut features = Vec::new();
+        assert_eq!(features_(std::ptr::null(), &mut features), 0);
+    }
+
+    /// c:289 — enables_ no panic.
+    #[test]
+    fn cap_enables_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
 }
