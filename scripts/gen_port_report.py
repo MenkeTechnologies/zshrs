@@ -337,6 +337,121 @@ def walk_rs() -> tuple[dict[str, list[tuple[str,int]]], dict[str, set[str]], dic
                             port_mentions[nm].add(rel)
     return fn_defs, port_mentions, cfile_cites
 
+# ── Call-site counting ──────────────────────────────────────────────────────
+#
+# For every C fn name, count how many times it's *called* across the
+# zsh C tree (excluding the definition line itself + comments) and
+# how many times it's called across the Rust port tree (excluding
+# Rust `fn NAME(` definitions + doc/single-line comments).
+#
+# Drives the call-coverage column on the HTML report. The point: a
+# port that defines the right fn but doesn't actually call it at any
+# of the C caller's counterpart sites is fakery (the doshfunc
+# precedent: C had 17 external call sites, Rust had 1).
+
+# Generic-ish C identifiers that match a TON of unrelated callers
+# (e.g. zsh's `length` is a struct field on dozens of types). Skip
+# the call-count scan for these to keep the report meaningful.
+CALL_COUNT_SKIP_NAMES = {
+    "length", "name", "type", "free", "init", "main", "size", "value",
+    "data", "key", "next", "prev", "node", "list", "hash", "buf", "len",
+    "ret", "arg", "fn", "ptr", "p", "s", "t", "n", "i", "j", "k", "x", "y",
+}
+
+# Pre-compile per-name call regex on demand. `\b<name>\s*\(`.
+def _call_re(name: str) -> re.Pattern:
+    return re.compile(rf"\b{re.escape(name)}\s*\(")
+
+# Read every C / Rust file once into memory keyed by rel path so the
+# inner per-name loop is O(N) instead of O(N * file-read).
+def _slurp_c_files() -> list[tuple[str, list[str]]]:
+    out: list[tuple[str, list[str]]] = []
+    for c in sorted(ZSH_SRC.rglob("*.c")):
+        if c.stem in C_EXCLUDE_STEMS:
+            continue
+        rel = c.relative_to(ROOT).as_posix()
+        try:
+            out.append((rel, c.read_text(errors="replace").splitlines()))
+        except Exception:
+            continue
+    return out
+
+def _slurp_rs_files() -> list[tuple[str, list[str]]]:
+    out: list[tuple[str, list[str]]] = []
+    for d in RS_DIRS:
+        for f in sorted(d.rglob("*.rs")):
+            rel = f.relative_to(ROOT).as_posix()
+            try:
+                out.append((rel, f.read_text(errors="replace").splitlines()))
+            except Exception:
+                continue
+    return out
+
+# Single-pass aggregation: walk every C/Rust file ONCE and accumulate
+# all `name(` counts per name in one scan. Per-name lookups then read
+# the dict in O(1). Per-file cost: one regex pass with a single broad
+# `\b[A-Za-z_]\w+\s*\(` pattern that captures every fn-call-shaped
+# token, then dict-increment. Avoids the O(names × files) blowup that
+# made the previous per-name implementation hang on the full tree.
+
+_RE_ANY_CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
+def _all_call_counts(files: list[tuple[str, list[str]]],
+                     def_index: dict[str, set[tuple[str, int]]],
+                     ) -> dict[str, int]:
+    """name -> total call sites across `files`, excluding def lines
+    and obvious comment lines. `def_index` maps name → set of
+    (rel_path, line) tuples that are def sites (skip on count)."""
+    counts: dict[str, int] = defaultdict(int)
+    for rel, lines in files:
+        for i, line in enumerate(lines, 1):
+            ls = line.lstrip()
+            # Single-line C / Rust comments.
+            if ls.startswith("//") or ls.startswith("///") or ls.startswith("//!"):
+                continue
+            if ls.startswith("*"):  # C block-continuation
+                continue
+            for m in _RE_ANY_CALL.finditer(line):
+                name = m.group(1)
+                if name in C_KEYWORDS:
+                    continue
+                if name in CALL_COUNT_SKIP_NAMES:
+                    continue
+                # Drop the def line itself so `fn foo(...)` /
+                # `int foo(...)` doesn't count as a call.
+                defs = def_index.get(name)
+                if defs is not None and (rel, i) in defs:
+                    continue
+                counts[name] += 1
+    return counts
+
+_c_call_counts: dict[str, int] | None = None
+_rs_call_counts: dict[str, int] | None = None
+
+def count_c_calls(name: str, c_def_locs: list[tuple[str, int]],
+                  all_c_defs: dict[str, set[tuple[str, int]]] | None = None,
+                  ) -> int:
+    """Per-name lookup against the pre-built C call-count dict."""
+    if name in CALL_COUNT_SKIP_NAMES:
+        return 0
+    global _c_call_counts
+    if _c_call_counts is None:
+        assert all_c_defs is not None, "must pass all_c_defs on first call"
+        _c_call_counts = _all_call_counts(_slurp_c_files(), all_c_defs)
+    return _c_call_counts.get(name, 0)
+
+def count_rust_calls(name: str, rust_def_locs: list[tuple[str, int]],
+                     all_rs_defs: dict[str, set[tuple[str, int]]] | None = None,
+                     ) -> int:
+    """Per-name lookup against the pre-built Rust call-count dict."""
+    if name in CALL_COUNT_SKIP_NAMES:
+        return 0
+    global _rs_call_counts
+    if _rs_call_counts is None:
+        assert all_rs_defs is not None, "must pass all_rs_defs on first call"
+        _rs_call_counts = _all_call_counts(_slurp_rs_files(), all_rs_defs)
+    return _rs_call_counts.get(name, 0)
+
 # ── Expected destination map ─────────────────────────────────────────────────
 def expected_for(c_path: str) -> list[str]:
     """zsh/Src/foo.c -> the Rust path. Strict 1:1, byte-for-byte stem.
@@ -368,6 +483,22 @@ def main() -> int:
     rs_defs, port_mentions, cfile_cites = walk_rs()
     print(f"  {len(rs_defs)} unique Rust fn names, {len(port_mentions)} port-comment mentions, "
           f"{len(cfile_cites)} cited C paths", file=sys.stderr)
+
+    # Prime the call-count caches via a single sweep over each tree.
+    # Per-name `count_c_calls` / `count_rust_calls` calls below then
+    # read the pre-built dict in O(1).
+    print("scanning C call sites (single pass)...", file=sys.stderr)
+    all_c_defs: dict[str, set[tuple[str, int]]] = {
+        n: {(p, ln) for p, ln in locs} for n, locs in c_idx.items()
+    }
+    count_c_calls("__prime", [], all_c_defs)  # forces _c_call_counts init
+    print(f"  {len(_c_call_counts):,} distinct call-target names in C", file=sys.stderr)
+    print("scanning Rust call sites (single pass)...", file=sys.stderr)
+    all_rs_defs: dict[str, set[tuple[str, int]]] = {
+        n: {(p, ln) for p, ln in locs} for n, locs in rs_defs.items()
+    }
+    count_rust_calls("__prime", [], all_rs_defs)
+    print(f"  {len(_rs_call_counts):,} distinct call-target names in Rust", file=sys.stderr)
 
     # Names with 4+ unrelated rust-file definitions are treated as "generic"
     # (e.g. `free`, `init`, `cleanup_`) — only port-comment mentions count.
@@ -434,11 +565,27 @@ def main() -> int:
         else:
             placement = "—"
             status = "unported"
+        # Call-site coverage: how many C callers vs Rust callers.
+        # `c_calls` = total `name(` occurrences across the upstream C
+        # tree (excluding the def line itself). `rust_calls` = the
+        # same across `src/ported/`. A C fn with 17 callers in C and
+        # 1 in Rust is the canonical fakery signal (doshfunc was
+        # exactly this).
+        c_calls = count_c_calls(name, c_locs)
+        rs_calls = count_rust_calls(name, rust_locs)
+        # Caller-coverage ratio (Rust calls / C calls, percent).
+        # Only meaningful when C actually has callers; otherwise show
+        # —.
+        if c_calls > 0:
+            call_pct = round(rs_calls * 100 / c_calls)
+        else:
+            call_pct = None
         rows.append({
             "status": status, "placement": placement, "cfile": cf_short,
             "name": name,
             "c_locs": c_locs, "rust_locs": rust_locs,
             "c_body": c_body, "rust_body": rs_body,
+            "c_calls": c_calls, "rust_calls": rs_calls, "call_pct": call_pct,
             "rust_pointer_files": sorted(port_mentions.get(name, set()) - {p for p,_ in rust_locs}),
             "expected": expected,
         })
@@ -451,10 +598,12 @@ def main() -> int:
             continue
         rust_locs = sorted(rs_defs[name])
         rs_body = rs_body_lines(rust_locs[0][0], name) if rust_locs else 0
+        rs_calls = count_rust_calls(name, rust_locs)
         rows.append({
             "status": "rust-only", "placement": "—", "cfile": "(rust-only)",
             "name": name, "c_locs": [], "rust_locs": rust_locs,
             "c_body": 0, "rust_body": rs_body,
+            "c_calls": 0, "rust_calls": rs_calls, "call_pct": None,
             "rust_pointer_files": [], "expected": [],
         })
 
@@ -462,6 +611,17 @@ def main() -> int:
     total = len(rows)
     n_ported    = sum(1 for r in rows if r["status"]=="ported")
     n_stub      = sum(1 for r in rows if r["status"]=="stub")
+    # Call-coverage fakery detector: rows where Rust port exists
+    # (status != unported) AND C has callers AND Rust has <30% of
+    # them. doshfunc was the canonical case (17 C callers / 1 Rust
+    # before this audit).
+    n_under_wired = sum(
+        1 for r in rows
+        if r["status"] in ("ported", "stub")
+        and (r.get("c_calls") or 0) > 0
+        and r.get("call_pct") is not None
+        and r["call_pct"] < 30
+    )
     n_missing   = sum(1 for r in rows if r["status"]=="missing")
     n_unported  = sum(1 for r in rows if r["status"]=="unported")
     n_rustonly  = sum(1 for r in rows if r["status"]=="rust-only")
@@ -470,6 +630,7 @@ def main() -> int:
     n_misplaced = sum(1 for r in rows if r["placement"]=="misplaced")
     n_unmapped  = sum(1 for r in rows if r["placement"]=="unmapped")
     print(f"  rows: {total} (ported={n_ported}, stub={n_stub}, missing={n_missing}, unported={n_unported}, rust-only={n_rustonly})", file=sys.stderr)
+    print(f"  call-coverage fakery (Rust port exists, called at <30% of C sites): {n_under_wired}", file=sys.stderr)
     print(f"  placement: correct={n_correct}, split={n_split}, misplaced={n_misplaced}, unmapped={n_unmapped}", file=sys.stderr)
 
     cfiles = sorted({r["cfile"] for r in rows})
@@ -715,6 +876,29 @@ def main() -> int:
                 f'</tr>'
             )
             continue
+        # Call-coverage column — surfaces the doshfunc-style fakery
+        # where a Rust port exists but isn't actually called at the
+        # C-equivalent sites.
+        c_calls = r.get("c_calls", 0)
+        rs_calls = r.get("rust_calls", 0)
+        call_pct = r.get("call_pct")
+        if call_pct is None:
+            call_pct_cell = '<span class="expected">—</span>'
+            call_pct_attr = ""
+        else:
+            # Color rule: <30% = red ribbon, 30-79% = yellow, ≥80% = green.
+            # Only meaningful when c_calls > 0 AND rust port exists
+            # (status != unported); for unported rows, gray it out.
+            if r["status"] == "unported":
+                cp_cls = "cp-na"
+            elif call_pct < 30:
+                cp_cls = "cp-low"
+            elif call_pct < 80:
+                cp_cls = "cp-mid"
+            else:
+                cp_cls = "cp-ok"
+            call_pct_cell = f'<span class="{cp_cls}">{call_pct}%</span>'
+            call_pct_attr = f'data-callpct="{call_pct}" '
         # exec.c rows go to their own table — the C tree-walker is
         # replaced by fusevm bytecode, so per-fn ratios there are
         # noise (a `walk_*` fn with 200 lines of C and no Rust hit
@@ -729,13 +913,18 @@ def main() -> int:
             f'data-status="{r["status"]}" '
             f'data-cbody="{c_body}" data-rbody="{r_body}" '
             f'data-cline="{c_line}" data-rline="{rs_line}" '
-            f'data-ratio="{ratio}">'
+            f'data-ratio="{ratio}" '
+            f'data-ccalls="{c_calls}" data-rcalls="{rs_calls}" '
+            f'{call_pct_attr}>'
             f'<td><b>{html.escape(r["name"])}</b></td>'
             f'<td>{c_cell}</td>'
             f'<td class="num">{c_body}</td>'
             f'<td>{rs_cell}</td>'
             f'<td class="num">{r_body}</td>'
             f'<td class="num">{ratio}%</td>'
+            f'<td class="num">{c_calls}</td>'
+            f'<td class="num">{rs_calls}</td>'
+            f'<td class="num">{call_pct_cell}</td>'
             f'<td class="status">{r["status"]}</td>'
             f'</tr>'
         )
@@ -823,6 +1012,9 @@ Excluded from this report by design:
                 "rust_locs": r["rust_locs"],
                 "c_body": r.get("c_body", 0),
                 "rust_body": r.get("rust_body", 0),
+                "c_calls": r.get("c_calls", 0),
+                "rust_calls": r.get("rust_calls", 0),
+                "call_pct": r.get("call_pct"),
                 "rust_pointer_files": list(r["rust_pointer_files"]),
                 "expected": list(r["expected"]),
             }
@@ -948,6 +1140,15 @@ Excluded from this report by design:
   table.file-map tr.cov-mid  td:first-child {{ border-left:3px solid #ffb800; }}
   table.file-map tr.cov-low  td:first-child {{ border-left:3px solid #ff8c66; }}
   table.file-map tr.cov-none td:first-child {{ border-left:3px solid #ff6b6b; }}
+  /* Call-coverage column on the per-symbol fn table. Same palette as
+     the file-map cov-pct so a glance lines up. The `cp-na` class
+     gray-outs the ratio for `unported` rows where Rust-call=0 just
+     means "Rust port doesn't exist yet" — not the doshfunc-style
+     "port exists but isn't being called" signal that cp-low surfaces. */
+  table.fn-table .cp-ok   {{ color:var(--green); font-weight:700; }}
+  table.fn-table .cp-mid  {{ color:#ffb800;       font-weight:700; }}
+  table.fn-table .cp-low  {{ color:#ff6b6b;       font-weight:700; }}
+  table.fn-table .cp-na   {{ color:var(--text-dim); }}
   .legend {{ font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);margin:0.6rem 0;line-height:1.7; }}
   .legend b {{ color:var(--cyan);font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px; }}
 </style>
@@ -994,6 +1195,7 @@ Excluded from this report by design:
       <div class="stat-card"><div class="stat-val yellow">{n_split:,}</div><div class="stat-label">Placement: Split</div></div>
       <div class="stat-card"><div class="stat-val red">{n_misplaced:,}</div><div class="stat-label">Placement: Misplaced</div></div>
       <div class="stat-card"><div class="stat-val gray">{n_unmapped:,}</div><div class="stat-label">Placement: Unmapped</div></div>
+      <div class="stat-card" title="Rust port exists but is called at <30% of the C call sites (doshfunc fakery detector). 0 is the goal."><div class="stat-val {('red' if n_under_wired > 0 else 'green')}">{n_under_wired:,}</div><div class="stat-label">Under-wired (call &lt;30%)</div></div>
     </div>
 
     <p class="legend">
@@ -1069,6 +1271,9 @@ Excluded from this report by design:
         <th data-sort="rline"     onclick="lcs('rline')">Rust file:line</th>
         <th data-sort="rbody"     onclick="lcs('rbody')">Rust lines</th>
         <th data-sort="ratio"     class="sort-asc" onclick="lcs('ratio')">ratio</th>
+        <th data-sort="ccalls"    onclick="lcs('ccalls')" title="C call sites (excludes def line)">C calls</th>
+        <th data-sort="rcalls"    onclick="lcs('rcalls')" title="Rust call sites in src/ported/ (excludes def line + comments)">Rust calls</th>
+        <th data-sort="callpct"   onclick="lcs('callpct')" title="Rust calls / C calls; red = under-wired (Rust port exists but isn't being called at the C-equivalent sites; the doshfunc fakery signal).">call %</th>
         <th data-sort="status"    onclick="lcs('status')">status</th>
       </tr></thead>
       <tbody id="lc-tbody">
@@ -1097,6 +1302,9 @@ Excluded from this report by design:
         <th data-sort="rline"  onclick="exs('rline')">Rust file:line</th>
         <th data-sort="rbody"  onclick="exs('rbody')">Rust lines</th>
         <th data-sort="ratio"  onclick="exs('ratio')">ratio</th>
+        <th data-sort="ccalls" onclick="exs('ccalls')">C calls</th>
+        <th data-sort="rcalls" onclick="exs('rcalls')">Rust calls</th>
+        <th data-sort="callpct" onclick="exs('callpct')">call %</th>
         <th data-sort="status" onclick="exs('status')">status</th>
       </tr></thead>
       <tbody id="ex-tbody">
@@ -1250,7 +1458,7 @@ function lcs(key){{
   else {{ lcSortKey = key; lcSortDir = 1; }}
   const tbody = document.getElementById('lc-tbody');
   const rows = Array.from(tbody.querySelectorAll('tr.lc-row'));
-  const num = ['cbody','rbody','cline','rline','ratio'].includes(key);
+  const num = ['cbody','rbody','cline','rline','ratio','ccalls','rcalls','callpct'].includes(key);
   rows.sort((a, b) => {{
     let va, vb;
     if (key === 'name')   {{ va = a.dataset.name;   vb = b.dataset.name; }}
@@ -1260,6 +1468,10 @@ function lcs(key){{
     else if (key === 'cline')  {{ va = +a.dataset.cline; vb = +b.dataset.cline; }}
     else if (key === 'rline')  {{ va = +a.dataset.rline; vb = +b.dataset.rline; }}
     else if (key === 'ratio')  {{ va = +a.dataset.ratio; vb = +b.dataset.ratio; }}
+    else if (key === 'ccalls') {{ va = +a.dataset.ccalls; vb = +b.dataset.ccalls; }}
+    else if (key === 'rcalls') {{ va = +a.dataset.rcalls; vb = +b.dataset.rcalls; }}
+    else if (key === 'callpct'){{ va = a.dataset.callpct ? +a.dataset.callpct : -1;
+                                  vb = b.dataset.callpct ? +b.dataset.callpct : -1; }}
     if (num) return (va - vb) * lcSortDir;
     return va.localeCompare(vb) * lcSortDir;
   }});
@@ -1295,7 +1507,7 @@ function exs(key){{
   else {{ exSortKey = key; exSortDir = 1; }}
   const tbody = document.getElementById('ex-tbody');
   const rows = Array.from(tbody.querySelectorAll('tr.ex-row'));
-  const num = ['cbody','rbody','cline','rline','ratio'].includes(key);
+  const num = ['cbody','rbody','cline','rline','ratio','ccalls','rcalls','callpct'].includes(key);
   rows.sort((a, b) => {{
     let va, vb;
     if (key === 'name')        {{ va = a.dataset.name;     vb = b.dataset.name; }}
@@ -1305,6 +1517,10 @@ function exs(key){{
     else if (key === 'cline')  {{ va = +a.dataset.cline;   vb = +b.dataset.cline; }}
     else if (key === 'rline')  {{ va = +a.dataset.rline;   vb = +b.dataset.rline; }}
     else if (key === 'ratio')  {{ va = +a.dataset.ratio;   vb = +b.dataset.ratio; }}
+    else if (key === 'ccalls') {{ va = +a.dataset.ccalls;  vb = +b.dataset.ccalls; }}
+    else if (key === 'rcalls') {{ va = +a.dataset.rcalls;  vb = +b.dataset.rcalls; }}
+    else if (key === 'callpct'){{ va = a.dataset.callpct ? +a.dataset.callpct : -1;
+                                  vb = b.dataset.callpct ? +b.dataset.callpct : -1; }}
     if (num) return (va - vb) * exSortDir;
     return va.localeCompare(vb) * exSortDir;
   }});
