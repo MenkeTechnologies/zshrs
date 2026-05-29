@@ -2673,4 +2673,147 @@ mod findbol_findeol_tests {
         free_region_highlights_memos();
         free_region_highlights_memos();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests for Src/Zle/zle_utils.c findbol/findeol + zlecharas
+    // string + sizeline edge cases.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1158 — `findbol()` at cursor=0 returns 0 (already at BOL).
+    #[test]
+    fn findbol_at_cursor_zero_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "hello".chars().collect();
+        ZLELL.store(5, Ordering::SeqCst);
+        ZLECS.store(0, Ordering::SeqCst);
+        assert_eq!(findbol(), 0, "cursor at 0 → BOL=0");
+    }
+
+    /// c:1158 — `findbol()` on single-line buffer with cursor in
+    /// middle returns 0 (BOL is start of buffer).
+    #[test]
+    fn findbol_single_line_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "hello world".chars().collect();
+        ZLELL.store(11, Ordering::SeqCst);
+        ZLECS.store(7, Ordering::SeqCst);
+        assert_eq!(findbol(), 0, "no newline before cursor → BOL=0");
+    }
+
+    /// c:1158 — `findbol()` after a newline finds the byte after it.
+    #[test]
+    fn findbol_after_newline_finds_post_newline_pos() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "abc\ndef".chars().collect();
+        ZLELL.store(7, Ordering::SeqCst);
+        ZLECS.store(6, Ordering::SeqCst);
+        // BOL of second line = pos 4 (after \n at index 3).
+        assert_eq!(findbol(), 4, "BOL after \\n is at the byte after it");
+    }
+
+    /// c:1169 — `findeol()` at cursor=ZLELL returns ZLELL (already at EOL).
+    #[test]
+    fn findeol_at_end_returns_zlell_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "hello".chars().collect();
+        ZLELL.store(5, Ordering::SeqCst);
+        ZLECS.store(5, Ordering::SeqCst);
+        assert_eq!(findeol(), 5, "cursor at EOL → returns ZLELL");
+    }
+
+    /// c:1169 — `findeol()` on single-line buffer returns ZLELL
+    /// (no newline ahead → EOL is end of buffer).
+    #[test]
+    fn findeol_single_line_returns_zlell() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "hello world".chars().collect();
+        ZLELL.store(11, Ordering::SeqCst);
+        ZLECS.store(0, Ordering::SeqCst);
+        assert_eq!(findeol(), 11, "no \\n ahead → EOL=ZLELL");
+    }
+
+    /// c:1169 — `findeol()` before a newline stops AT the newline pos.
+    #[test]
+    fn findeol_before_newline_stops_at_newline_pos() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "abc\ndef".chars().collect();
+        ZLELL.store(7, Ordering::SeqCst);
+        ZLECS.store(1, Ordering::SeqCst);
+        // First newline at index 3 — EOL of first line = 3.
+        assert_eq!(findeol(), 3, "EOL = newline position itself");
+    }
+
+    /// c:1158/1169 — `findbol()` and `findeol()` at same cursor must
+    /// satisfy `findbol() <= cursor <= findeol()` (positional invariant).
+    #[test]
+    fn findbol_findeol_invariant() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "line1\nline2\nline3".chars().collect();
+        ZLELL.store(17, Ordering::SeqCst);
+        ZLECS.store(8, Ordering::SeqCst); // middle of "line2"
+        let bol = findbol();
+        let eol = findeol();
+        let cs = ZLECS.load(Ordering::SeqCst);
+        assert!(bol <= cs, "BOL ({}) must be <= cursor ({})", bol, cs);
+        assert!(cs <= eol, "cursor ({}) must be <= EOL ({})", cs, eol);
+    }
+
+    /// c:117 — `zlecharasstring('a', buf)` appends ASCII verbatim and
+    /// returns 1 (one byte added).
+    #[test]
+    fn zlecharasstring_ascii_appends_one_byte() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = String::new();
+        let n = zlecharasstring('a', &mut buf);
+        assert_eq!(n, 1, "ASCII 'a' = 1 byte");
+        assert_eq!(buf, "a");
+    }
+
+    /// c:117 — `zlecharasstring('\\n', buf)` returns 1 (newline is
+    /// not imeta — passes through verbatim).
+    #[test]
+    fn zlecharasstring_newline_passes_through() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = String::new();
+        let n = zlecharasstring('\n', &mut buf);
+        assert_eq!(n, 1);
+        assert_eq!(buf.as_bytes(), b"\n");
+    }
+
+    /// c:117 — `zlecharasstring` preserves existing buf content
+    /// (appends, doesn't replace).
+    #[test]
+    fn zlecharasstring_appends_to_existing_buf() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = String::from("prefix:");
+        let _ = zlecharasstring('X', &mut buf);
+        assert_eq!(buf, "prefix:X", "appends after existing content");
+    }
+
+    /// c:46 — `sizeline(N)` ensures ZLELINE has at least N+1 capacity.
+    /// Pin: subsequent operations don't panic on indexed access up to N.
+    #[test]
+    fn sizeline_grows_zleline_capacity() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        sizeline(100);
+        // No panic = capacity grew successfully.
+        let cap = ZLELINE.lock().unwrap().capacity();
+        assert!(cap >= 100, "sizeline(100) → ZLELINE capacity ≥ 100, got {}", cap);
+    }
+
+    /// `sizeline(0)` is safe.
+    #[test]
+    fn sizeline_zero_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        sizeline(0);
+    }
 }
