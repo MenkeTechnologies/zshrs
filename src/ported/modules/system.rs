@@ -2359,4 +2359,105 @@ mod tests {
             assert!(ok, "feature {:?} must use b:/p:/f:/c: prefix", f);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/system.c
+    // c:40 getposint / c:65 bin_sysread / c:264 bin_syswrite /
+    // c:345 bin_sysopen / c:534 bin_sysseek / c:598 math_systell /
+    // c:631 bin_syserror / c:1085 errnosgetfn
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:40 — `getposint` returns i32 (compile-time pin).
+    #[test]
+    fn system_getposint_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = getposint("42", "test");
+    }
+
+    /// c:40 — `getposint("42", _)` returns 42.
+    #[test]
+    fn system_getposint_42_returns_42() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("42", "test"), 42, "'42' parses to 42");
+    }
+
+    /// c:40 — `getposint("garbage", _)` is non-positive.
+    #[test]
+    fn system_getposint_garbage_non_positive() {
+        let _g = crate::test_util::global_state_lock();
+        let r = getposint("garbage", "test");
+        assert!(r <= 0,
+            "garbage must return non-positive sentinel; got {}", r);
+    }
+
+    /// c:65 — `bin_sysread` no-args returns nonzero (usage error).
+    #[test]
+    fn bin_sysread_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let r = bin_sysread("sysread", &[], &ops, 0);
+        assert_ne!(r, 0, "sysread no args → usage error");
+    }
+
+    /// c:264 — `bin_syswrite` no-args returns nonzero (usage error).
+    #[test]
+    fn bin_syswrite_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let r = bin_syswrite("syswrite", &[], &ops, 0);
+        assert_ne!(r, 0, "syswrite no args → usage error");
+    }
+
+    /// c:345 — `bin_sysopen` no-args returns nonzero (usage error).
+    #[test]
+    fn bin_sysopen_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let r = bin_sysopen("sysopen", &[], &ops, 0);
+        assert_ne!(r, 0, "sysopen no args → usage error");
+    }
+
+    /// c:534 — `bin_sysseek` no-args returns nonzero (usage error).
+    #[test]
+    fn bin_sysseek_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let r = bin_sysseek("sysseek", &[], &ops, 0);
+        assert_ne!(r, 0, "sysseek no args → usage error");
+    }
+
+    /// c:598 — `math_systell` MUST safely return mnumber without
+    /// panicking; C source validates argc before argv[0] access.
+    /// In zshrs the port indexes `argv[0]` without bounds check at c:601.
+    #[test]
+    #[ignore = "ZSHRS BUG: math_systell indexes argv[0] without argc validation; panics OOB when argc=0 (Src/Modules/system.c:598 — should validate min_args)"]
+    fn math_systell_returns_mnumber_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: crate::ported::zsh_h::mnumber = math_systell("systell", 0, &[], 0);
+    }
+
+    /// c:1085 — `errnosgetfn(null)` returns Vec<String> (compile-time pin).
+    #[test]
+    fn errnosgetfn_null_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = errnosgetfn(std::ptr::null_mut());
+    }
+
+    /// c:1085 — `errnosgetfn(null)` is non-empty (POSIX errno table
+    /// has dozens of entries).
+    #[test]
+    fn errnosgetfn_null_non_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let v = errnosgetfn(std::ptr::null_mut());
+        assert!(!v.is_empty(),
+            "errnos table must have ≥1 entry on POSIX");
+    }
+
+    /// c:631 — `bin_syserror` returns i32 (compile-time pin, alt).
+    #[test]
+    fn bin_syserror_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_sys();
+        let _: i32 = bin_syserror("syserror", &[], &ops, 0);
+    }
 }
