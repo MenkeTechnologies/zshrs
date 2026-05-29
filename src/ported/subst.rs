@@ -13046,6 +13046,101 @@ mod tests {
             "${{(t)var}} on array starts with 'array', got: {result:?}",
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/subst.c
+    // c:1172 quotesubst / c:1357 singsub / c:2062 wcpadwidth /
+    // c:2295 get_strarg / c:2342 get_intarg / c:2479 substevalchar /
+    // c:2541 untok_and_escape / c:2612 check_colon_subscript /
+    // c:8863 arithsubst / c:13121 sub_flags_get / c:13140 sub_flags_set
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1172 — `quotesubst("")` empty returns empty String.
+    #[test]
+    fn quotesubst_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(quotesubst(""), "");
+    }
+
+    /// c:1172 — `quotesubst` is pure.
+    #[test]
+    fn quotesubst_is_pure() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["", "abc", "$var", "no-special"] {
+            let first = quotesubst(s);
+            for _ in 0..3 {
+                assert_eq!(quotesubst(s), first,
+                    "quotesubst({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:1357 — `singsub("")` empty returns empty String.
+    #[test]
+    fn singsub_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(singsub(""), "");
+    }
+
+    /// c:2062 — `wcpadwidth` returns i32 (compile-time type pin).
+    #[test]
+    fn wcpadwidth_returns_i32_type() {
+        let _: i32 = wcpadwidth('a', 0);
+    }
+
+    /// c:2062 — `wcpadwidth('a', _)` returns 1 (single-width ASCII).
+    #[test]
+    fn wcpadwidth_ascii_letter_returns_one() {
+        assert_eq!(wcpadwidth('a', 0), 1, "ASCII letter width = 1");
+    }
+
+    /// c:2062 — `wcpadwidth` is pure.
+    #[test]
+    fn wcpadwidth_is_pure() {
+        for c in ['a', '0', ' ', '\t', '日'] {
+            let first = wcpadwidth(c, 0);
+            for _ in 0..3 {
+                assert_eq!(wcpadwidth(c, 0), first,
+                    "wcpadwidth({:?}, 0) must be pure", c);
+            }
+        }
+    }
+
+    /// c:2295 — `get_strarg("")` empty returns None.
+    #[test]
+    fn get_strarg_empty_returns_none() {
+        assert!(get_strarg("").is_none(), "empty → None");
+    }
+
+    /// c:2342 — `get_intarg("")` empty returns None.
+    #[test]
+    fn get_intarg_empty_returns_none() {
+        assert!(get_intarg("").is_none(), "empty → None");
+    }
+
+    /// c:2541 — `untok_and_escape("", _, _)` empty returns empty.
+    #[test]
+    fn untok_and_escape_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(untok_and_escape("", false, false), "");
+    }
+
+    /// c:13121 + c:13140 — sub_flags get/set round-trip.
+    #[test]
+    fn sub_flags_get_set_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = sub_flags_get();
+        sub_flags_set(0x42);
+        assert_eq!(sub_flags_get(), 0x42, "sub_flags round-trips");
+        sub_flags_set(saved);
+    }
+
+    /// c:2612 — `check_colon_subscript("")` empty returns None.
+    #[test]
+    fn check_colon_subscript_empty_returns_none_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(check_colon_subscript("").is_none(), "empty → None");
+    }
 } // c:3193
 
 // ============================================================================
