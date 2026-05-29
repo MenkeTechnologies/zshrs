@@ -723,7 +723,8 @@ pub fn copyregionaskill(args: &[String]) -> i32 {
     // c:494
     // c:494-501 — `if (*args) { stringaszleline; cuttext(line, len, CUT_REPLACE) }`.
     if let Some(arg) = args.first() {
-        let text: Vec<char> = arg.chars().collect();
+        // c:499 — `line = stringaszleline(*args, 0, &len, NULL, NULL);`
+        let text: Vec<char> = crate::ported::zle::zle_utils::stringaszleline(arg);
         KILLRING.lock().unwrap().push_front(text);
         if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
             KILLRING.lock().unwrap().pop_back();
@@ -1068,7 +1069,8 @@ pub fn bracketedpaste(args: &[String]) -> i32 {
     } else {
         quotestring(&pbuf, QT_SINGLE_OPTIONAL) // c:824
     };
-    let wpaste: Vec<char> = payload.chars().collect();
+    // c:823 — `wpaste = stringaszleline((zmult==1) ? pbuf : quotestr, 0, &n, NULL, NULL);`
+    let wpaste: Vec<char> = crate::ported::zle::zle_utils::stringaszleline(&payload);
     // c:826-834 — !(zmod.flags & MOD_VIBUF) → reset kct, killregion if
     // region_active, then doinsert(wpaste).
     if !ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
