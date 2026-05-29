@@ -45,6 +45,11 @@ class ZshrsLexer : LexerBase() {
     // grammar, not string content); resuming string-content mode too
     // early would treat `HOME:-/tmp}y"` as a single string segment.
     private var pendingStringResumeState = STATE_NORMAL
+    /// Paren-depth tracker used by [lexInsideDqArith] and
+    /// [lexInsideDqCmdsub] to know when the matching `))` / `)` closes
+    /// the interpolation block and we should flip back to
+    /// STATE_DQ_RESUME. Reset on every `$((` / `$(` opener.
+    private var dqInterpParenDepth = 0
     /// When STATE_DQ_FORMAT / STATE_BT_FORMAT is set, this is the
     /// pre-computed byte length of the printf format spec starting
     /// at the current pos. The next advance() emits exactly that
@@ -92,6 +97,8 @@ class ZshrsLexer : LexerBase() {
             STATE_DQ_RESUME -> { state = STATE_NORMAL; consumeStringContent('"', ZshrsTokenTypes.STRING_DQ); return }
             STATE_BT_INTERP -> { consumeStringInterpolation('`'); return }
             STATE_BT_RESUME -> { state = STATE_NORMAL; consumeStringContent('`', ZshrsTokenTypes.BACKTICK); return }
+            STATE_DQ_ARITH -> { lexInsideDqArith(); return }
+            STATE_DQ_CMDSUB -> { lexInsideDqCmdsub(); return }
             // Pre-computed printf format spec — emit the cached span
             // as ONE STRING_FORMAT token, then flip back to the
             // corresponding string-resume state so the next advance()
@@ -399,9 +406,95 @@ class ZshrsLexer : LexerBase() {
         if (paramBraceDepth > depthBefore) {
             pendingStringResumeState = resume
             state = STATE_NORMAL
+        } else if (state == STATE_DQ_ARITH || state == STATE_DQ_CMDSUB) {
+            // consumeDollar entered a `$((arith))` / `$(cmd)` sub-lex
+            // block — keep its state (the sub-lex handlers know to
+            // flip back to DQ_RESUME on the matching `))` / `)`).
+            // Without this skip, the `state = resume` line below
+            // would overwrite the sub-lex state and the body would
+            // be re-absorbed into STRING_DQ on the next advance().
         } else {
             state = resume
         }
+    }
+
+    /// One `advance()` while we're inside the body of a `$((arith))`
+    /// interpolation that opened in a `"..."` string. Closes on the
+    /// matching `))` at paren depth 0 and flips back to STATE_DQ_RESUME
+    /// so the rest of the string lexes normally. Otherwise dispatches
+    /// one normal-state lex (numbers / operators / identifiers each
+    /// emitted as their own token, with their own color in the IDE)
+    /// while tracking paren depth via `dqInterpParenDepth` so a
+    /// nested `(…)` inside the body doesn't close the outer arith
+    /// prematurely.
+    ///
+    /// Modeled on strykelang's `lexInsideInterpolation`
+    /// (editors/intellij/.../stryke/StrykeLexer.kt:432-477).
+    private fun lexInsideDqArith() {
+        // Closing `))` at depth 0 — emit as one OPERATOR and return
+        // to string mode.
+        if (pos + 1 < endOffset
+            && buf[pos] == ')'
+            && buf[pos + 1] == ')'
+            && dqInterpParenDepth == 0
+        ) {
+            tokenStart = pos
+            tokenEnd = pos + 2
+            pos = tokenEnd
+            tokenType = ZshrsTokenTypes.OPERATOR
+            state = STATE_DQ_RESUME
+            return
+        }
+        // Otherwise run the normal dispatcher once; track depth so
+        // nested `(` / `)` inside the body don't end the arith block
+        // early. Saved/restored entry state so we can return to it.
+        val savedState = state
+        state = STATE_NORMAL
+        val saveStart = tokenStart
+        // Run one normal advance — re-enters this fn via the dispatch
+        // at the top of advance() but state is now STATE_NORMAL so the
+        // normal lex path executes.
+        advance()
+        // Track paren depth on the emitted token (might span multiple
+        // chars but only `(` / `)` single-char tokens affect depth).
+        if (tokenEnd == tokenStart + 1) {
+            when (buf[tokenStart]) {
+                '(' -> dqInterpParenDepth++
+                ')' -> dqInterpParenDepth--
+            }
+        }
+        // Stay in arith mode for the next advance().
+        state = savedState  // STATE_DQ_ARITH
+        tokenStart = saveStart  // preserve start of emitted token
+    }
+
+    /// One `advance()` while inside the body of a `$(cmd)` command
+    /// substitution that opened in a `"..."` string. Closes on the
+    /// matching `)` at paren depth 0. Mirrors [lexInsideDqArith] but
+    /// the closer is a single `)` instead of `))`.
+    private fun lexInsideDqCmdsub() {
+        // Closing `)` at depth 0 — emit as one OPERATOR and return.
+        if (pos < endOffset && buf[pos] == ')' && dqInterpParenDepth == 1) {
+            tokenStart = pos
+            tokenEnd = pos + 1
+            pos = tokenEnd
+            tokenType = ZshrsTokenTypes.OPERATOR
+            state = STATE_DQ_RESUME
+            dqInterpParenDepth = 0
+            return
+        }
+        val savedState = state
+        state = STATE_NORMAL
+        val saveStart = tokenStart
+        advance()
+        if (tokenEnd == tokenStart + 1) {
+            when (buf[tokenStart]) {
+                '(' -> dqInterpParenDepth++
+                ')' -> dqInterpParenDepth--
+            }
+        }
+        state = savedState  // STATE_DQ_CMDSUB
+        tokenStart = saveStart
     }
 
     private fun consumeString(quote: Char, tt: IElementType) {
@@ -556,50 +649,38 @@ class ZshrsLexer : LexerBase() {
             emit(2, ZshrsTokenTypes.PARAM_EXPANSION)
             return
         }
-        // $((arith)) and $(cmd) — must consume the WHOLE expansion as
-        // a single non-STRING token. Before this fix, $(arith)) emitted
-        // only `$` as SIGIL and the outer lexer's string-resume state
-        // re-absorbed the `((arith))` into the next STRING literal
-        // segment, so the arithmetic interior inherited string color.
-        // Pre-scan: $(( → match `))`, $( → match `)` with paren depth.
+        // $((arith)) / $(cmd) — open a sub-lex block so the interior
+        // re-tokenizes as full shell code (numbers / operators /
+        // identifiers each with their own color). Mirrors strykelang's
+        // `lexInsideInterpolation` pattern at
+        // editors/intellij/.../stryke/StrykeLexer.kt:432-477 — flip to
+        // a sub-state, emit the opener as OPERATOR, and on each
+        // subsequent `advance()` recursively dispatch normal lex while
+        // tracking paren depth so nested `(` / `)` don't close early.
+        // The matching `))` / `)` flips us back to STATE_DQ_RESUME.
+        //
+        // Without this the user saw the entire `((arith))` body
+        // re-absorbed into the next STRING-literal segment, so the
+        // arithmetic interior inherited italic-green string color.
         if (nxt == '(') {
-            // Two-char `$((` → arithmetic.
             val isArith = p + 1 < endOffset && buf[p + 1] == '('
             if (isArith) {
-                // Pre-scan past matching `))`.
-                var pp = p + 2  // past `$((`
-                var depth = 2
-                while (pp < endOffset && depth > 0) {
-                    val cc = buf[pp]
-                    if (cc == '\\' && pp + 1 < endOffset) { pp += 2; continue }
-                    when (cc) {
-                        '(' -> depth++
-                        ')' -> depth--
-                    }
-                    pp++
-                }
-                tokenEnd = pp; pos = pp
-                // PARAM_EXPANSION is the closest existing token type
-                // (a non-STRING color reserved for ${...}); reusing it
-                // here keeps the IDE's color scheme single-source.
-                tokenType = ZshrsTokenTypes.PARAM_EXPANSION
+                // Emit `$((` as OPERATOR (3 bytes). Next advance()
+                // dispatches into lexInsideDqArith via STATE_DQ_ARITH.
+                tokenEnd = p + 2  // p was at `(`, +2 covers `$((`
+                pos = tokenEnd
+                tokenType = ZshrsTokenTypes.OPERATOR
+                state = STATE_DQ_ARITH
+                dqInterpParenDepth = 0  // count `(` past the `$((` opener
                 return
             }
             // Single-paren `$(cmd)` → command substitution.
-            var pp = p + 1  // past `$(`
-            var depth = 1
-            while (pp < endOffset && depth > 0) {
-                val cc = buf[pp]
-                if (cc == '\\' && pp + 1 < endOffset) { pp += 2; continue }
-                // Allow nested `$(...)` / `$((...))` inside.
-                when (cc) {
-                    '(' -> depth++
-                    ')' -> depth--
-                }
-                pp++
-            }
-            tokenEnd = pp; pos = pp
-            tokenType = ZshrsTokenTypes.PARAM_EXPANSION
+            // Emit `$(` as OPERATOR (2 bytes) and flip to cmdsub mode.
+            tokenEnd = p + 1  // covers `$(`
+            pos = tokenEnd
+            tokenType = ZshrsTokenTypes.OPERATOR
+            state = STATE_DQ_CMDSUB
+            dqInterpParenDepth = 1  // we're 1 level past the `$( opener
             return
         }
         // Special single-char variables: $0..$9, $?, $!, $$, $#, $*, $@, $-, $_
@@ -738,6 +819,19 @@ class ZshrsLexer : LexerBase() {
         const val STATE_BT_RESUME = 4     // just lexed `$…`; resume `...` content
         const val STATE_DQ_FORMAT = 5     // about to emit one `%d`/`%s`/etc format-spec token inside "..."
         const val STATE_BT_FORMAT = 6     // same inside `...` backtick
+        /// Inside the body of a `$((arith))` interpolation that opened
+        /// while we were lexing a `"..."` double-quoted string. Each
+        /// `advance()` runs one normal-lex dispatch (numbers / operators
+        /// / identifiers each as separate tokens with their own color)
+        /// until the closing `))` flips back to STATE_DQ_RESUME so the
+        /// rest of the string lexes normally. Modeled on strykelang's
+        /// STATE_IN_DQ_INTERP. Paren depth tracked via
+        /// `dqInterpParenDepth`.
+        const val STATE_DQ_ARITH = 7
+        /// Same as STATE_DQ_ARITH but for `$(cmd)` command-substitution
+        /// (one level of parens instead of two). On the matching `)`
+        /// at depth 0 we flip back to STATE_DQ_RESUME.
+        const val STATE_DQ_CMDSUB = 8
 
         // printf format-spec character classes. Mirrors
         // strykelang's FORMAT_FLAGS / FORMAT_LENGTH / FORMAT_CONV.
