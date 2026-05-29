@@ -549,4 +549,116 @@ mod tests {
         let mut e: Option<Vec<i32>> = None;
         let _ = enables_(std::ptr::null(), &mut e);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/clone.c
+    // c:37 bin_clone / c:213-249 lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:37 — `bin_clone` empty path arg returns 1 (error).
+    #[test]
+    fn bin_clone_empty_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_clone("clone", &["".to_string()], &ops, 0);
+        assert_ne!(r, 0, "empty path → error");
+    }
+
+    /// c:37 — `bin_clone` return value in u8 exit-code range.
+    #[test]
+    fn bin_clone_return_in_exit_code_range() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for args in [
+            vec![],
+            vec!["/tmp".to_string()],
+            vec!["".to_string()],
+            vec!["/dev/null".to_string()],
+        ] {
+            let r = bin_clone("clone", &args, &ops, 0);
+            assert!((0..256).contains(&r),
+                "exit code {} must fit in u8 range for {:?}", r, args);
+        }
+    }
+
+    /// c:37 — `bin_clone` is deterministic for no-args.
+    #[test]
+    fn bin_clone_no_args_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let first = bin_clone("clone", &[], &ops, 0);
+        for _ in 0..5 {
+            assert_eq!(bin_clone("clone", &[], &ops, 0), first);
+        }
+    }
+
+    /// c:37 — `bin_clone` with multibyte path doesn't panic.
+    #[test]
+    fn bin_clone_multibyte_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _ = bin_clone("clone", &["/dev/日本".to_string()], &ops, 0);
+        let _ = bin_clone("clone", &["包含中文".to_string()], &ops, 0);
+    }
+
+    /// c:213-249 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn clone_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:213 — setup_ idempotent.
+    #[test]
+    fn clone_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:249 — finish_ idempotent.
+    #[test]
+    fn clone_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:242 — cleanup_ idempotent.
+    #[test]
+    fn clone_cleanup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:235 — boot_ idempotent.
+    #[test]
+    fn clone_boot_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(boot_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:37 — `bin_clone` two-arg returns nonzero (usage error: only
+    /// 0 or 1 args accepted).
+    #[test]
+    fn bin_clone_two_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_clone("clone", &["/tmp".to_string(), "/etc".to_string()], &ops, 0);
+        assert_ne!(r, 0, "two args → usage error");
+    }
 }
