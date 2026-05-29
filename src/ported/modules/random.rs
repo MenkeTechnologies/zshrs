@@ -1024,4 +1024,117 @@ mod tests {
             assert_eq!(boot_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/random.c
+    // c:144 get_srandom / c:219 math_zrand_float / c:343 random_u32 /
+    // c:353 random_u64 / c:364 bounded / c:109 get_bound_random_buffer
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:144 — `get_srandom` returns u32 (compile-time pin, alt).
+    #[test]
+    fn get_srandom_returns_u32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: u32 = get_srandom();
+    }
+
+    /// c:144 — `get_srandom` is non-deterministic across two calls
+    /// (probability of equal = 1/2^32 ≈ 2.3e-10 — cosmically unlikely).
+    #[test]
+    fn get_srandom_two_calls_differ() {
+        let _g = crate::test_util::global_state_lock();
+        let a = get_srandom();
+        let b = get_srandom();
+        assert_ne!(a, b, "two get_srandom() calls must differ");
+    }
+
+    /// c:343 — `random_u32` returns u32 (compile-time pin, alt).
+    #[test]
+    fn random_u32_returns_u32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: u32 = random_u32();
+    }
+
+    /// c:353 — `random_u64` returns u64 (compile-time pin, alt).
+    #[test]
+    fn random_u64_returns_u64_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: u64 = random_u64();
+    }
+
+    /// c:353 — `random_u64` eventually exceeds u32::MAX threshold
+    /// (proves it's a full 64-bit value, not a u32 zero-extended).
+    #[test]
+    fn random_u64_eventually_exceeds_u32_max() {
+        let _g = crate::test_util::global_state_lock();
+        let any_large = (0..200).any(|_| random_u64() > (u32::MAX as u64));
+        assert!(any_large,
+            "200 random_u64 values must include ≥ 1 above u32::MAX");
+    }
+
+    /// c:219 — `math_zrand_float` returns f64 (compile-time pin).
+    #[test]
+    fn math_zrand_float_returns_f64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: f64 = math_zrand_float();
+    }
+
+    /// c:219 — `math_zrand_float` outputs always finite (no NaN/Inf).
+    #[test]
+    fn math_zrand_float_always_finite() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..500 {
+            let v = math_zrand_float();
+            assert!(v.is_finite(),
+                "math_zrand_float must always be finite, got {}", v);
+        }
+    }
+
+    /// c:364 — `bounded(1)` always returns 0 (only one valid value).
+    #[test]
+    fn bounded_one_always_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..50 {
+            assert_eq!(bounded(1), 0,
+                "bounded(1) must always return 0 (only valid value)");
+        }
+    }
+
+    /// c:364 — `bounded(2)` returns only 0 or 1.
+    #[test]
+    fn bounded_two_returns_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..50 {
+            let v = bounded(2);
+            assert!(v < 2, "bounded(2) must be 0 or 1; got {}", v);
+        }
+    }
+
+    /// c:109 — `get_bound_random_buffer` fills entire buffer with
+    /// values strictly less than max.
+    #[test]
+    fn get_bound_random_buffer_all_under_max() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = vec![0u32; 100];
+        get_bound_random_buffer(&mut buf, 10);
+        for &v in &buf {
+            assert!(v < 10, "buffer value {} must be < max=10", v);
+        }
+    }
+
+    /// c:226/249/256/263/296/303 — each lifecycle hook returns 0 individually
+    /// (tighter failure resolution).
+    #[test]
+    fn random_each_lifecycle_hook_returns_zero_individually() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v: Vec<String> = Vec::new();
+        let mut e: Option<Vec<i32>> = None;
+        assert_eq!(setup_(null), 0, "c:226 setup_");
+        assert_eq!(features_(null, &mut v), 0, "c:249 features_");
+        assert_eq!(enables_(null, &mut e), 0, "c:256 enables_");
+        assert_eq!(boot_(null), 0, "c:263 boot_");
+        assert_eq!(cleanup_(null), 0, "c:296 cleanup_");
+        assert_eq!(finish_(null), 0, "c:303 finish_");
+    }
 }
