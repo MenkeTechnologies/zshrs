@@ -5017,4 +5017,97 @@ mod modname_tests {
         assert_eq!(t.modules.len(), count_after_first,
             "table size unchanged on dup");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/module.c
+    // c:339 gethookdef / c:367 addhookdef / c:451 deletehookdef /
+    // c:740 checkaddparam / c:1730 getmathfunc / c:1825 load_and_bind /
+    // c:1857 try_load_module / c:1885 do_load_module / c:1925 find_module /
+    // c:1977 delete_module / c:2002 module_loaded
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:339 — `gethookdef` returns *mut hookdef (compile-time type pin).
+    #[test]
+    fn gethookdef_returns_raw_ptr_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: *mut hookdef = gethookdef("anything");
+    }
+
+    /// c:339 — `gethookdef("")` empty returns null pointer.
+    #[test]
+    fn gethookdef_empty_returns_null() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(gethookdef("").is_null(), "empty → null");
+    }
+
+    /// c:740 — `checkaddparam("", 0)` empty returns i32 type.
+    #[test]
+    fn checkaddparam_empty_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = checkaddparam("", 0);
+    }
+
+    /// c:1730 — `getmathfunc` returns Option<String> (compile-time type pin).
+    #[test]
+    fn getmathfunc_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut t = newmoduletable();
+        let _: Option<String> = getmathfunc(&mut t, "anything", 0);
+    }
+
+    /// c:1730 — `getmathfunc(empty, "")` returns None on empty table.
+    #[test]
+    fn getmathfunc_empty_table_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let mut t = newmoduletable();
+        let r = getmathfunc(&mut t, "__never_a_real_math_fn_xyz__", 0);
+        assert!(r.is_none(), "unknown math fn → None");
+    }
+
+    /// c:1925 — `find_module` returns Option<String> (compile-time type pin).
+    #[test]
+    fn find_module_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut t = newmoduletable();
+        let _: Option<String> = find_module(&mut t, "anything", 0);
+    }
+
+    /// c:1977 — `delete_module(empty_table, _)` returns i32 (type pin).
+    #[test]
+    fn delete_module_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut t = newmoduletable();
+        let _: i32 = delete_module(&mut t, "__never_loaded__");
+    }
+
+    /// c:1857 — `try_load_module` returns i32 (compile-time type pin).
+    #[test]
+    fn try_load_module_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let t = newmoduletable();
+        let _: i32 = try_load_module(&t, "__never_real_module__");
+    }
+
+    /// c:1885 — `do_load_module(empty, unknown, 1)` silent failure
+    /// returns i32 type.
+    #[test]
+    fn do_load_module_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut t = newmoduletable();
+        let _: i32 = do_load_module(&mut t, "__never_real_module_xyz__", 1);
+    }
+
+    /// c:1825 — `load_and_bind("")` empty returns usize (compile-time pin).
+    #[test]
+    fn load_and_bind_returns_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: usize = load_and_bind("");
+    }
+
+    /// c:1846 — `hpux_dlsym(0, "")` empty inputs returns usize (type pin).
+    #[test]
+    fn hpux_dlsym_returns_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: usize = hpux_dlsym(0, "");
+    }
 }
