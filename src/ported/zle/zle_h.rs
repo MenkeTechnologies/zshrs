@@ -1567,4 +1567,119 @@ mod tests {
             assert_eq!(ZC_toupper(ZC_tolower(c)), c);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle.h ZS_* string fns.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:42 — `ZS_memset(dst, 'X', 3)` fills first 3 with 'X', rest untouched.
+    #[test]
+    fn ZS_memset_fills_n_leaves_rest() {
+        let mut buf: Vec<char> = vec!['_'; 5];
+        ZS_memset(&mut buf, 'X', 3);
+        assert_eq!(buf, vec!['X', 'X', 'X', '_', '_']);
+    }
+
+    /// c:43 — `ZS_memcmp` equal slices → Equal.
+    #[test]
+    fn ZS_memcmp_equal_returns_equal_pin() {
+        let a: Vec<char> = vec!['a', 'b', 'c'];
+        let b: Vec<char> = vec!['a', 'b', 'c'];
+        assert_eq!(ZS_memcmp(&a, &b, 3), std::cmp::Ordering::Equal);
+    }
+
+    /// c:43 — different slices return non-Equal.
+    #[test]
+    fn ZS_memcmp_different_returns_non_equal() {
+        let a: Vec<char> = vec!['a', 'b', 'c'];
+        let b: Vec<char> = vec!['a', 'b', 'd'];
+        assert_ne!(ZS_memcmp(&a, &b, 3), std::cmp::Ordering::Equal);
+    }
+
+    /// c:45 — `ZS_strcpy` copies + NUL-terminates when room.
+    #[test]
+    fn ZS_strcpy_copies_and_nul_terminates() {
+        let src: Vec<char> = vec!['h', 'i', '\0'];
+        let mut dst: Vec<char> = vec!['_'; 5];
+        ZS_strcpy(&mut dst, &src);
+        assert_eq!(dst[0], 'h');
+        assert_eq!(dst[1], 'i');
+        assert_eq!(dst[2], '\0', "NUL terminator added when room");
+    }
+
+    /// c:46 — `ZS_strncpy` pads shorter src with NUL up to n.
+    #[test]
+    fn ZS_strncpy_pads_short_src_with_nul() {
+        let src: Vec<char> = vec!['a', '\0']; // 1-char string
+        let mut dst: Vec<char> = vec!['X'; 5];
+        ZS_strncpy(&mut dst, &src, 4);
+        assert_eq!(dst[0], 'a');
+        assert_eq!(dst[1], '\0', "padded with NUL");
+        assert_eq!(dst[2], '\0');
+        assert_eq!(dst[3], '\0');
+        // Index 4 untouched.
+    }
+
+    /// c:50 — `ZS_strchr` finds existing char.
+    #[test]
+    fn ZS_strchr_finds_existing() {
+        let s: Vec<char> = vec!['h', 'e', 'l', 'l', 'o'];
+        assert_eq!(ZS_strchr(&s, 'l'), Some(2), "first 'l' at index 2");
+        assert_eq!(ZS_strchr(&s, 'h'), Some(0));
+        assert_eq!(ZS_strchr(&s, 'o'), Some(4));
+    }
+
+    /// c:50 — `ZS_strchr` missing char returns None.
+    #[test]
+    fn ZS_strchr_missing_returns_none() {
+        let s: Vec<char> = vec!['h', 'i'];
+        assert_eq!(ZS_strchr(&s, 'x'), None);
+        assert_eq!(ZS_strchr(&[], 'a'), None);
+    }
+
+    /// c:51 — `ZS_memchr` respects bounded length.
+    #[test]
+    fn ZS_memchr_bounded_by_n() {
+        let s: Vec<char> = vec!['a', 'b', 'c', 'd', 'e'];
+        assert_eq!(ZS_memchr(&s, 'd', 5), Some(3), "found at 3 within range 5");
+        assert_eq!(ZS_memchr(&s, 'd', 3), None, "n=3 stops before 'd' at idx 3");
+    }
+
+    /// c:49 — `ZS_width` returns char count (matches ZS_strlen).
+    #[test]
+    fn ZS_width_matches_strlen() {
+        let s: Vec<char> = vec!['a', 'b', 'c', '\0'];
+        assert_eq!(ZS_width(&s), ZS_strlen(&s));
+    }
+
+    /// c:40 — `ZS_memcpy` does NOT overflow dst when n < dst.len().
+    #[test]
+    fn ZS_memcpy_respects_n_bound() {
+        let src: Vec<char> = vec!['a', 'b', 'c', 'd', 'e'];
+        let mut dst: Vec<char> = vec!['_'; 5];
+        ZS_memcpy(&mut dst, &src, 3);
+        assert_eq!(dst[0], 'a');
+        assert_eq!(dst[1], 'b');
+        assert_eq!(dst[2], 'c');
+        assert_eq!(dst[3], '_', "untouched past n");
+        assert_eq!(dst[4], '_');
+    }
+
+    /// c:47 — `ZS_strncmp` of "ab" vs "ab" with n=2 returns Equal.
+    #[test]
+    fn ZS_strncmp_equal_bounded() {
+        let a: Vec<char> = vec!['a', 'b', '\0'];
+        let b: Vec<char> = vec!['a', 'b', '\0'];
+        assert_eq!(ZS_strncmp(&a, &b, 2), std::cmp::Ordering::Equal);
+    }
+
+    /// c:47 — `ZS_strncmp("abc", "abd", 2)` Equal (both stop at idx 2).
+    #[test]
+    fn ZS_strncmp_n_clamps_comparison() {
+        let a: Vec<char> = vec!['a', 'b', 'c', '\0'];
+        let b: Vec<char> = vec!['a', 'b', 'd', '\0'];
+        assert_eq!(ZS_strncmp(&a, &b, 2), std::cmp::Ordering::Equal);
+        // With n=3, differs.
+        assert_ne!(ZS_strncmp(&a, &b, 3), std::cmp::Ordering::Equal);
+    }
 }
