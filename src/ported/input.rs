@@ -1416,4 +1416,104 @@ mod tests {
         inputsetline("b", 0);
         assert_eq!(ingetc(), Some('b'), "lexstop reset by inputsetline");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/input.c
+    // c:63 shinbufreset / c:247 ingetc / c:326 inputline / c:441 stuff /
+    // c:467 inpush / c:594 inpopalias / etc.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:247 — `ingetc` returns Option<char> (compile-time type pin).
+    #[test]
+    fn ingetc_returns_option_char_type() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inputsetline("x", 0);
+        let _: Option<char> = ingetc();
+    }
+
+    /// c:326 — `inputline` returns String (compile-time type pin).
+    #[test]
+    fn inputline_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        let _: String = inputline();
+    }
+
+    /// c:603 — `ingetptr` returns String.
+    #[test]
+    fn ingetptr_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        let _: String = ingetptr();
+    }
+
+    /// c:594 — `inpopalias()` is safe on empty stack.
+    #[test]
+    fn inpopalias_empty_stack_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inpopalias();
+        inpopalias();
+    }
+
+    /// c:467 — `inpush(empty, 0, None)` is safe.
+    #[test]
+    fn inpush_empty_string_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inpush("", 0, None);
+        inpush("", 0, Some("alias_name".to_string()));
+    }
+
+    /// c:63 — `shinbufreset` is idempotent.
+    #[test]
+    fn shinbufreset_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            shinbufreset();
+        }
+    }
+
+    /// c:144 — `shinbufalloc` is idempotent.
+    #[test]
+    fn shinbufalloc_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            shinbufalloc();
+        }
+    }
+
+    /// c:156-168 — shinbufsave + shinbufrestore round-trip safe.
+    #[test]
+    fn shinbufsave_restore_round_trip_safe() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        shinbufsave();
+        shinbufrestore();
+    }
+
+    /// c:441 — `stuff(nonexistent)` returns nonzero (file not found).
+    #[test]
+    fn stuff_nonexistent_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = stuff("/__nonexistent_zshrs_xyz__");
+        assert_ne!(r, 0, "nonexistent path → error");
+    }
+
+    /// c:392 — `zstuff(nonexistent)` returns Err.
+    #[test]
+    fn zstuff_nonexistent_path_returns_err() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zstuff("/__nonexistent_zshrs_xyz__");
+        assert!(r.is_err(), "nonexistent path → Err");
+    }
+
+    /// c:213 — `shingetline` returns String.
+    #[test]
+    fn shingetline_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        let _: String = shingetline();
+    }
 }
