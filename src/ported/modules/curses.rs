@@ -2872,4 +2872,127 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(boot_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/curses.c
+    // c:293 zcurses_pairs_to_array / c:437 zcurses_colorget /
+    // c:525 zcurses_colorget_reverse / c:544 freecolorpairnode /
+    // c:1420/1427/1436/1453 *getfn determinism + lifecycle types
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:293 — `zcurses_pairs_to_array(empty)` returns empty Vec.
+    #[test]
+    fn zcurses_pairs_to_array_empty_returns_empty() {
+        let r = zcurses_pairs_to_array(&[]);
+        assert!(r.is_empty(), "empty input → empty Vec");
+    }
+
+    /// c:293 — `zcurses_pairs_to_array` returns Vec<String> (type pin).
+    #[test]
+    fn zcurses_pairs_to_array_returns_vec_string_type() {
+        let _: Vec<String> = zcurses_pairs_to_array(&[]);
+    }
+
+    /// c:437 — `zcurses_colorget("", "")` returns Option<i16>.
+    #[test]
+    fn zcurses_colorget_returns_option_i16_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i16> = zcurses_colorget("", "");
+    }
+
+    /// c:525 — `zcurses_colorget_reverse(N)` returns Option<String>.
+    #[test]
+    fn zcurses_colorget_reverse_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = zcurses_colorget_reverse(0);
+    }
+
+    /// c:525 — `zcurses_colorget_reverse(invalid)` returns None
+    /// (i16::MAX is never a valid color pair index).
+    #[test]
+    fn zcurses_colorget_reverse_invalid_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(zcurses_colorget_reverse(i16::MAX).is_none(),
+            "invalid color pair → None");
+    }
+
+    /// c:544 — `freecolorpairnode("")` empty name is safe.
+    #[test]
+    fn freecolorpairnode_empty_name_safe() {
+        let _g = crate::test_util::global_state_lock();
+        freecolorpairnode("");
+    }
+
+    /// c:1420 — `zcurses_colorsarrgetfn` is deterministic.
+    #[test]
+    fn zcurses_colorsarrgetfn_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = zcurses_colorsarrgetfn();
+        for _ in 0..3 {
+            assert_eq!(zcurses_colorsarrgetfn(), first,
+                "zcurses_colorsarrgetfn must be deterministic");
+        }
+    }
+
+    /// c:1427 — `zcurses_attrgetfn` is deterministic.
+    #[test]
+    fn zcurses_attrgetfn_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = zcurses_attrgetfn();
+        for _ in 0..3 {
+            assert_eq!(zcurses_attrgetfn(), first,
+                "zcurses_attrgetfn must be deterministic");
+        }
+    }
+
+    /// c:1436 — `zcurses_keycodesgetfn` is deterministic.
+    #[test]
+    fn zcurses_keycodesgetfn_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = zcurses_keycodesgetfn();
+        for _ in 0..3 {
+            assert_eq!(zcurses_keycodesgetfn(), first,
+                "zcurses_keycodesgetfn must be deterministic");
+        }
+    }
+
+    /// c:1461 — `zcurses_colorsintgetfn` returns i64 (type pin).
+    #[test]
+    fn zcurses_colorsintgetfn_returns_i64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i64 = zcurses_colorsintgetfn();
+    }
+
+    /// c:1475 — `zcurses_colorpairsintgetfn` returns i64 (type pin).
+    #[test]
+    fn zcurses_colorpairsintgetfn_returns_i64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i64 = zcurses_colorpairsintgetfn();
+    }
+
+    /// c:1493 — `setup_` returns i32 (compile-time type pin).
+    #[test]
+    fn curses_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:1499 — features list non-empty.
+    #[test]
+    fn curses_features_nonempty() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        assert!(!feats.is_empty(), "curses must advertise ≥1 feature");
+    }
+
+    /// c:1519 + c:1526 — cleanup/finish idempotent.
+    #[test]
+    fn curses_cleanup_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
 }
