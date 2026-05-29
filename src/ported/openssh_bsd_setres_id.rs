@@ -447,4 +447,115 @@ mod tests {
         let _hu: bool = have_native_setreuid();
         let _sb: bool = seteuid_breaks_setuid();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/openssh_bsd_setres_id.c
+    // c:70 setresgid / c:95 setresuid + build-config helpers
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:70 — `setresgid` returns c_int (compile-time type pin).
+    #[cfg(unix)]
+    #[test]
+    fn setresgid_returns_c_int_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: libc::c_int = unsafe {
+            let gid = libc::getgid();
+            setresgid(gid, gid, gid)
+        };
+    }
+
+    /// c:95 — `setresuid` returns c_int (compile-time type pin).
+    #[cfg(unix)]
+    #[test]
+    fn setresuid_returns_c_int_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: libc::c_int = unsafe {
+            let uid = libc::getuid();
+            setresuid(uid, uid, uid)
+        };
+    }
+
+    /// c:70 — `setresgid(rgid, egid, sgid)` with rgid != sgid sets
+    /// errno = ENOSYS and returns -1. C body c:73-75 first guard.
+    #[cfg(unix)]
+    #[test]
+    fn setresgid_split_rgid_sgid_sets_enosys() {
+        let _g = crate::test_util::global_state_lock();
+        let r = unsafe { setresgid(0, 1, 999) };
+        assert_eq!(r, -1, "rgid != sgid → -1");
+        let e = errno_get();
+        assert_eq!(e, libc::ENOSYS, "rgid != sgid sets errno=ENOSYS");
+    }
+
+    /// c:95 — `setresuid(ruid, euid, suid)` with ruid != suid sets
+    /// errno = ENOSYS and returns -1. C body c:98-100 first guard.
+    #[cfg(unix)]
+    #[test]
+    fn setresuid_split_ruid_suid_sets_enosys() {
+        let _g = crate::test_util::global_state_lock();
+        let r = unsafe { setresuid(0, 1, 999) };
+        assert_eq!(r, -1, "ruid != suid → -1");
+        let e = errno_get();
+        assert_eq!(e, libc::ENOSYS, "ruid != suid sets errno=ENOSYS");
+    }
+
+    /// Build-config flags are deterministic (same across calls).
+    #[test]
+    fn build_config_flags_deterministic() {
+        for _ in 0..5 {
+            assert_eq!(broken_setregid(), broken_setregid());
+            assert_eq!(broken_setreuid(), broken_setreuid());
+            assert_eq!(have_native_setregid(), have_native_setregid());
+            assert_eq!(have_native_setreuid(), have_native_setreuid());
+            assert_eq!(seteuid_breaks_setuid(), seteuid_breaks_setuid());
+        }
+    }
+
+    /// On macOS/Linux modern targets, `have_native_set*` is true.
+    /// Pin the platform contract.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn modern_platforms_have_native_set_res_id() {
+        // macOS has setreuid/setregid; Linux has both setre* and setres*.
+        // The "have_native_*" check covers the setre* path used as fallback.
+        assert!(have_native_setregid(),
+            "modern target should have native setregid");
+        assert!(have_native_setreuid(),
+            "modern target should have native setreuid");
+    }
+
+    /// `errno_str` is deterministic for fixed input.
+    #[cfg(unix)]
+    #[test]
+    fn errno_str_full_sweep_deterministic() {
+        for e in [0, libc::EPERM, libc::ENOENT, libc::EACCES, libc::EINVAL, 99999] {
+            let first = errno_str(e);
+            for _ in 0..3 {
+                assert_eq!(errno_str(e), first,
+                    "errno_str({}) must be deterministic", e);
+            }
+        }
+    }
+
+    /// `errno_str(N)` for any common errno returns non-empty string.
+    #[cfg(unix)]
+    #[test]
+    fn errno_str_common_codes_non_empty() {
+        for e in [libc::EPERM, libc::ENOENT, libc::EACCES, libc::EINVAL,
+                  libc::EBUSY, libc::EIO] {
+            assert!(!errno_str(e).is_empty(),
+                "errno_str({}) must return non-empty", e);
+        }
+    }
+
+    /// `errno_get` / `errno_set` round-trip preserves value.
+    #[cfg(unix)]
+    #[test]
+    fn errno_get_set_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = errno_get();
+        errno_set(libc::EACCES);
+        assert_eq!(errno_get(), libc::EACCES, "errno round-trips");
+        errno_set(saved);
+    }
 }
