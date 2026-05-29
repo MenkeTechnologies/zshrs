@@ -1426,4 +1426,67 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(ppi_getfn(std::ptr::null_mut()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Modules/param_private.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `pps_setfn(null, "x")` is safe — no panic on null pm.
+    /// C: `pps_setfn` writes to pm->u.s via the private-closure GSU.
+    /// Null guard ensures Rust port doesn't deref null.
+    #[test]
+    fn pps_setfn_on_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        pps_setfn(std::ptr::null_mut(), "anything");
+    }
+
+    /// `pps_unsetfn(null, 0)` is safe.
+    #[test]
+    fn pps_unsetfn_on_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        pps_unsetfn(std::ptr::null_mut(), 0);
+    }
+
+    /// `ppi_setfn(null, 42)` is safe.
+    #[test]
+    fn ppi_setfn_on_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        ppi_setfn(std::ptr::null_mut(), 42);
+    }
+
+    /// `ppi_unsetfn(null, 0)` is safe.
+    #[test]
+    fn ppi_unsetfn_on_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        ppi_unsetfn(std::ptr::null_mut(), 0);
+    }
+
+    /// `ppf_setfn(null, 3.14)` is safe.
+    #[test]
+    fn ppf_setfn_on_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        ppf_setfn(std::ptr::null_mut(), 3.14);
+    }
+
+    /// `ppf_unsetfn(null, 0)` is safe.
+    #[test]
+    fn ppf_unsetfn_on_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        ppf_unsetfn(std::ptr::null_mut(), 0);
+    }
+
+    /// `ppa_setfn(null, vec)` is safe.
+    #[test]
+    fn ppa_setfn_on_null_is_safe() {
+        let _g = crate::test_util::global_state_lock();
+        ppa_setfn(std::ptr::null_mut(), vec!["x".to_string()]);
+    }
+
+    /// `is_private(null)` returns 0 — already covered, pin again
+    /// for symmetry with the new null-safe series.
+    #[test]
+    fn is_private_null_returns_zero_redundant_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(is_private(std::ptr::null()), 0);
+    }
 }
