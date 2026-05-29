@@ -262,10 +262,10 @@ file conflicts with the freeze below, the freeze wins.
 - ❌ **You may NOT create any new `.rs` file under `src/ported/`.** Not
   for a port that doesn't have a Rust home yet, not for a "tiny one,"
   not even if the matching `Src/<x>.c` is sitting right there.
-- The legal file set is the **89 files currently checked in** under
+- The legal file set is the **107 files currently checked in** under
   `src/ported/` (run `find src/ported -name '*.rs' | sort` to see the
   exhaustive list). That set is the universe. New ports either land in
-  one of those 89 files or they do not land at all.
+  one of those 107 files or they do not land at all.
 - ❌ No new directories under `src/ported/` either. The directory tree
   is frozen identically to the file tree.
 - If a C function genuinely belongs in `src/ported/<x>.rs` and that file
@@ -884,7 +884,7 @@ uses an out-of-allowlist name, it is treated as adhoc and deleted on
 sight.
 
 **Inside `src/ported/`, you may not create any Rust file at all** —
-not even one that mirrors a real `Src/<x>.c`. The 89 files currently
+not even one that mirrors a real `Src/<x>.c`. The 107 files currently
 checked in are the closed legal set (see ABSOLUTE FREEZE above). New
 non-port files belong only in `src/extensions/` (features zsh lacks)
 or `src/recorder/` (the recorder feature). See Rule 1.
