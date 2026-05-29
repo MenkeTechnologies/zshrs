@@ -5212,4 +5212,119 @@ mod tests {
         let _g2 = zle_test_setup();
         let _: (String, i32, i32) = comp_str(false);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compcore.c
+    // c:1505 set_comp_sep / c:1544 set_list_array / c:1555 get_user_var /
+    // c:1645 get_data_arr / c:2681 begcmgroup / c:2735 endcmgroup /
+    // c:2749 addexpl / c:1478 comp_quoting_string
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1505 — `set_comp_sep` returns i32 (compile-time type pin).
+    #[test]
+    fn set_comp_sep_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = set_comp_sep();
+    }
+
+    /// c:1555 — `get_user_var(None)` returns Option<Vec<String>>.
+    #[test]
+    fn get_user_var_returns_option_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Option<Vec<String>> = get_user_var(None);
+    }
+
+    /// c:1555 — `get_user_var(None)` is deterministic.
+    #[test]
+    fn get_user_var_none_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = get_user_var(None);
+        for _ in 0..3 {
+            assert_eq!(get_user_var(None), first,
+                "get_user_var(None) must be deterministic");
+        }
+    }
+
+    /// c:1645 — `get_data_arr("", false)` returns Option<Vec<String>>.
+    #[test]
+    fn get_data_arr_returns_option_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Option<Vec<String>> = get_data_arr("", false);
+    }
+
+    /// c:1645 — `get_data_arr("", _)` empty name returns None.
+    #[test]
+    fn get_data_arr_empty_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(get_data_arr("", false).is_none(),
+            "empty name → None");
+        assert!(get_data_arr("", true).is_none(),
+            "empty name (keys=true) → None");
+    }
+
+    /// c:2681 — `begcmgroup(None, 0)` safe.
+    #[test]
+    fn begcmgroup_none_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        begcmgroup(None, 0);
+    }
+
+    /// c:2735 — `endcmgroup(None)` safe.
+    #[test]
+    fn endcmgroup_none_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        endcmgroup(None);
+    }
+
+    /// c:2681 + c:2735 — beg/end cmgroup round-trip safe.
+    #[test]
+    fn begcmgroup_endcmgroup_round_trip_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..3 {
+            begcmgroup(None, 0);
+            endcmgroup(None);
+        }
+    }
+
+    /// c:2749 — `addexpl(false)` safe.
+    #[test]
+    fn addexpl_false_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        addexpl(false);
+    }
+
+    /// c:1544 — `set_list_array("", &[])` empty inputs is safe.
+    #[test]
+    fn set_list_array_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_list_array("", &[]);
+    }
+
+    /// c:1478 — `comp_quoting_string(N)` returns &'static str (type pin).
+    #[test]
+    fn comp_quoting_string_returns_static_str_type() {
+        let _: &'static str = comp_quoting_string(0);
+    }
+
+    /// c:1478 — `comp_quoting_string` is pure across stypes.
+    #[test]
+    fn comp_quoting_string_pure_across_stypes() {
+        for stype in 0..10 {
+            let first = comp_quoting_string(stype);
+            for _ in 0..3 {
+                assert_eq!(comp_quoting_string(stype), first,
+                    "comp_quoting_string({}) must be pure", stype);
+            }
+        }
+    }
 }
