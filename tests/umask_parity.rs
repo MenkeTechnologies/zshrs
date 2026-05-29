@@ -180,3 +180,93 @@ mod read_only {
         assert_parity(r#"umask 022; umask"#);
     }
 }
+
+// ── C-parity pins: additional symbolic/octal edge cases ─────────────
+
+mod octal_3_digit_pins {
+    use super::*;
+
+    /// 4-digit octal with leading zero is a common form.
+    #[test]
+    fn set_0022_leading_zero_form() {
+        assert_parity(r#"umask 0022; umask"#);
+    }
+
+    /// Smallest non-zero mask.
+    #[test]
+    fn set_001_minimal_mask() {
+        assert_parity(r#"umask 001; umask"#);
+    }
+
+    /// Asymmetric mask: 027 = group has read+execute, other none.
+    #[test]
+    fn set_027_asymmetric_mask() {
+        assert_parity(r#"umask 027; umask"#);
+    }
+
+    /// Re-setting same mask is idempotent — observable via two prints.
+    #[test]
+    fn set_022_twice_is_idempotent() {
+        assert_parity(r#"umask 022; umask; umask 022; umask"#);
+    }
+}
+
+mod symbolic_a_class {
+    use super::*;
+
+    /// `a=rx` sets all three classes (user/group/other) to rx — mask 333.
+    #[test]
+    fn symbolic_a_equals_rx() {
+        assert_parity(r#"umask a=rx; umask"#);
+    }
+
+    /// `a-w` removes write from all three classes — adds 222 to mask.
+    #[test]
+    fn symbolic_a_minus_w() {
+        assert_parity(r#"umask 000; umask a-w; umask"#);
+    }
+
+    /// `+x` (no class prefix) → `a+x` per POSIX.
+    #[test]
+    fn symbolic_bare_plus_x_means_all() {
+        assert_parity(r#"umask 777; umask +x; umask"#);
+    }
+}
+
+mod symbolic_S_round_trip {
+    use super::*;
+
+    /// `umask -S` after symbolic set: u=rwx,g=rx,o=rx (i.e. 022).
+    #[test]
+    fn dash_S_after_symbolic_022() {
+        assert_parity(r#"umask u=rwx,g=rx,o=rx; umask -S"#);
+    }
+
+    /// `umask -S` after symbolic restrictive set: 077.
+    #[test]
+    fn dash_S_after_symbolic_077() {
+        assert_parity(r#"umask u=rwx,g=,o=; umask -S"#);
+    }
+}
+
+mod invalid_extra {
+    use super::*;
+
+    /// Negative-looking argument → error.
+    #[test]
+    fn negative_octal_errors() {
+        assert_parity(r#"umask -1 2>/dev/null; echo exit=$?"#);
+    }
+
+    /// Trailing garbage after octal → error.
+    #[test]
+    fn octal_with_trailing_garbage_errors() {
+        assert_parity(r#"umask 022xyz 2>/dev/null; echo exit=$?"#);
+    }
+
+    /// Symbolic with invalid class letter → error.
+    #[test]
+    fn symbolic_invalid_class_errors() {
+        assert_parity(r#"umask q=r 2>/dev/null; echo exit=$?"#);
+    }
+}
