@@ -1640,4 +1640,155 @@ mod widget_killring_tests {
         set_cursor(99);
         assert!(get_cursor() <= 3, "cursor clamps to buffer length");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_params.c getter/setter
+    // contracts. Each verifies a single round-trip / clamp invariant.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:245 — `set_buffer(s)` + `get_buffer()` round-trips.
+    #[test]
+    fn set_get_buffer_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("hello world");
+        assert_eq!(get_buffer(), "hello world");
+    }
+
+    /// c:245 — `set_buffer` updates ZLELL to match new content length.
+    #[test]
+    fn set_buffer_updates_zlell() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("12345");
+        assert_eq!(ZLELL.load(Ordering::SeqCst), 5, "ZLELL must reflect new length");
+        set_buffer("");
+        assert_eq!(ZLELL.load(Ordering::SeqCst), 0, "empty buffer → ZLELL=0");
+    }
+
+    /// c:245 — `set_buffer` clamps existing cursor to new length.
+    #[test]
+    fn set_buffer_clamps_existing_cursor_to_new_length() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("hello world");
+        set_cursor(10);
+        // Shrink the buffer to 3 chars — cursor must clamp.
+        set_buffer("abc");
+        assert!(get_cursor() <= 3, "cursor clamped after shrink");
+    }
+
+    /// c:245 — `set_buffer` signals ZLE_RESET_NEEDED.
+    #[test]
+    fn set_buffer_signals_reset_needed() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ZLE_RESET_NEEDED.store(0, Ordering::SeqCst);
+        set_buffer("trigger");
+        assert_eq!(
+            ZLE_RESET_NEEDED.load(Ordering::SeqCst),
+            1,
+            "set_buffer must signal reset"
+        );
+    }
+
+    /// c:267 — `set_cursor(N)` for N ≤ ZLELL stores N exactly.
+    #[test]
+    fn set_cursor_within_buffer_stores_exact_value() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("hello");
+        set_cursor(2);
+        assert_eq!(get_cursor(), 2);
+        set_cursor(0);
+        assert_eq!(get_cursor(), 0);
+        set_cursor(5);
+        assert_eq!(get_cursor(), 5, "cursor at EOL exact");
+    }
+
+    /// c:267 — `set_cursor` signals ZLE_RESET_NEEDED.
+    #[test]
+    fn set_cursor_signals_reset_needed() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("hello");
+        ZLE_RESET_NEEDED.store(0, Ordering::SeqCst);
+        set_cursor(2);
+        assert_eq!(ZLE_RESET_NEEDED.load(Ordering::SeqCst), 1);
+    }
+
+    /// c:299 — `set_mark` clamps to ZLELL like set_cursor does.
+    #[test]
+    fn set_mark_clamps_past_zlell() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("hi");
+        set_mark(99);
+        assert!(get_mark() <= 2, "mark must clamp to ZLELL=2");
+    }
+
+    /// c:299 — `set_mark(N)` within buffer stores N exactly.
+    #[test]
+    fn set_mark_within_buffer_stores_exact() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("abcdef");
+        set_mark(3);
+        assert_eq!(get_mark(), 3);
+        set_mark(0);
+        assert_eq!(get_mark(), 0);
+    }
+
+    /// c:320 — `set_region_active(0)` clears, non-zero sets to 1
+    /// (C double-bang idiom !!x).
+    #[test]
+    fn set_region_active_clears_on_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_region_active(1);
+        assert_eq!(get_region_active(), 1);
+        set_region_active(0);
+        assert_eq!(get_region_active(), 0);
+    }
+
+    /// c:320 — `set_region_active(N)` for any N != 0 stores 1
+    /// (not the raw value). Pins the !!x coercion.
+    #[test]
+    fn set_region_active_coerces_nonzero_to_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_region_active(99);
+        assert_eq!(get_region_active(), 1, "99 → 1 (not 99)");
+        set_region_active(-5);
+        assert_eq!(get_region_active(), 1, "negative non-zero → 1");
+        set_region_active(i64::MAX);
+        assert_eq!(get_region_active(), 1);
+    }
+
+    /// c:332 — `set_lbuffer(s)` replaces pre-cursor text; cursor lands
+    /// at new lbuffer end.
+    #[test]
+    fn set_lbuffer_places_cursor_at_new_lbuffer_end() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("XYZworld");
+        set_cursor(3); // after "XYZ", before "world"
+        set_lbuffer("PREFIX");
+        assert_eq!(get_lbuffer(), "PREFIX");
+        assert_eq!(get_rbuffer(), "world", "rbuffer preserved");
+        assert_eq!(get_cursor(), 6, "cursor at end of new lbuffer");
+    }
+
+    /// c:364 — `set_rbuffer(s)` replaces post-cursor text; cursor
+    /// stays put.
+    #[test]
+    fn set_rbuffer_preserves_cursor() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_buffer("hello world");
+        set_cursor(5);
+        set_rbuffer(" everyone");
+        assert_eq!(get_lbuffer(), "hello", "lbuffer preserved");
+        assert_eq!(get_cursor(), 5, "cursor unchanged");
+    }
 }
