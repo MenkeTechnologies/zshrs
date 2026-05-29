@@ -932,4 +932,109 @@ mod tests {
         assert_eq!(e.len(), 1, "strend returns 1-char str");
         assert_eq!(e.chars().next(), Some('c'));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/string.c
+    // c:35 dupstring / c:74 ztrdup / c:105 tricat / c:135 dyncat
+    // c:147 bicat / c:169 dupstrpfx / c:216 strend + determinism pins
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:35 — `dupstring` returns String (compile-time type pin).
+    #[test]
+    fn dupstring_returns_string_type() {
+        let _: String = dupstring("anything");
+    }
+
+    /// c:74 — `ztrdup` returns String (compile-time type pin).
+    #[test]
+    fn ztrdup_returns_string_type() {
+        let _: String = ztrdup("anything");
+    }
+
+    /// c:105 — `tricat` returns String (compile-time type pin).
+    #[test]
+    fn tricat_returns_string_type() {
+        let _: String = tricat("a", "b", "c");
+    }
+
+    /// c:147 — `bicat` returns String (compile-time type pin).
+    #[test]
+    fn bicat_returns_string_type() {
+        let _: String = bicat("a", "b");
+    }
+
+    /// c:216 — `strend` returns &str (compile-time type pin).
+    #[test]
+    fn strend_returns_str_type() {
+        let s = "abc";
+        let _: &str = strend(s);
+    }
+
+    /// c:35 — `dupstring` is deterministic (pure function).
+    #[test]
+    fn dupstring_is_deterministic() {
+        for s in ["", "a", "hello world", "café"] {
+            let first = dupstring(s);
+            for _ in 0..3 {
+                assert_eq!(dupstring(s), first,
+                    "dupstring({:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:105 — `tricat` is deterministic.
+    #[test]
+    fn tricat_is_deterministic() {
+        let first = tricat("foo", "bar", "baz");
+        for _ in 0..3 {
+            assert_eq!(tricat("foo", "bar", "baz"), first,
+                "tricat must be deterministic");
+        }
+    }
+
+    /// c:118 — `zhtricat` is identical to `tricat` (same body, different
+    /// storage lane). Verify byte-for-byte parity.
+    #[test]
+    fn zhtricat_matches_tricat_byte_for_byte_pin() {
+        for (a, b, c) in [
+            ("", "", ""),
+            ("foo", "bar", "baz"),
+            ("x", "", "y"),
+            ("a", "b", ""),
+            ("café", "日", "中"),
+        ] {
+            assert_eq!(zhtricat(a, b, c), tricat(a, b, c),
+                "zhtricat({:?},{:?},{:?}) must match tricat", a, b, c);
+        }
+    }
+
+    /// c:55 — `dupstring_wlen(s, len)` length-bounded copy returns
+    /// String (compile-time type pin).
+    #[test]
+    fn dupstring_wlen_returns_string_type() {
+        let _: String = dupstring_wlen("hello", 3);
+    }
+
+    /// c:55 — `dupstring_wlen` with len == s.len() returns whole string.
+    #[test]
+    fn dupstring_wlen_exact_len_returns_whole_string() {
+        assert_eq!(dupstring_wlen("hello", 5), "hello",
+            "len == s.len() must return whole string");
+    }
+
+    /// c:197 — `appstr(base, "")` empty append leaves base unchanged.
+    #[test]
+    fn appstr_empty_append_leaves_base_unchanged() {
+        let mut s = "base".to_string();
+        appstr(&mut s, "");
+        assert_eq!(s, "base", "empty append is no-op");
+    }
+
+    /// c:197 — `appstr("", x)` append-to-empty equals just x.
+    #[test]
+    fn appstr_to_empty_yields_appendage() {
+        let mut s = String::new();
+        appstr(&mut s, "added");
+        assert_eq!(s, "added", "append to empty base = appendage");
+    }
 }
