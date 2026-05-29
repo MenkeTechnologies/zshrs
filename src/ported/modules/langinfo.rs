@@ -569,4 +569,82 @@ mod tests {
             "scanlanginfo should return some entries"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/langinfo.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:379 — `liitem` for canonical POSIX names returns Some.
+    #[test]
+    #[cfg(unix)]
+    fn liitem_canonical_posix_names_resolve() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(liitem("CODESET").is_some(), "CODESET is POSIX-required");
+        assert!(liitem("D_FMT").is_some(), "D_FMT is POSIX-required");
+        assert!(liitem("T_FMT").is_some(), "T_FMT is POSIX-required");
+    }
+
+    /// c:379 — `liitem` deterministic for same input.
+    #[test]
+    #[cfg(unix)]
+    fn liitem_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for name in &["CODESET", "BOGUS_XYZ", "", "AM_STR"] {
+            let first = liitem(name);
+            for _ in 0..5 {
+                assert_eq!(liitem(name), first, "{:?} must be pure", name);
+            }
+        }
+    }
+
+    /// c:396 — `getlanginfo("")` returns None (empty name not in table).
+    #[test]
+    #[cfg(unix)]
+    fn getlanginfo_empty_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getlanginfo("").is_none());
+    }
+
+    /// c:396 — `getlanginfo` of unknown name returns None.
+    #[test]
+    #[cfg(unix)]
+    fn getlanginfo_unknown_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getlanginfo("zzz_never_a_real_key").is_none());
+    }
+
+    /// c:430 — `scanlanginfo` output contains CODESET on every system
+    /// (POSIX-required cap).
+    #[test]
+    #[cfg(unix)]
+    fn scanlanginfo_includes_codeset() {
+        let _g = crate::test_util::global_state_lock();
+        let entries = scanlanginfo();
+        let has_codeset = entries.iter().any(|(k, _)| k == "CODESET");
+        assert!(has_codeset, "POSIX CODESET must appear in scan output");
+    }
+
+    /// c:430 — `scanlanginfo` deterministic (same locale → same output).
+    #[test]
+    #[cfg(unix)]
+    fn scanlanginfo_is_deterministic_for_static_locale() {
+        let _g = crate::test_util::global_state_lock();
+        let a = scanlanginfo();
+        let b = scanlanginfo();
+        assert_eq!(a, b, "two consecutive scans must agree");
+    }
+
+    /// Lifecycle (c:183/210/217) split per-hook.
+    #[test]
+    fn langinfo_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:210 — boot_(NULL) = 0.
+    #[test]
+    fn langinfo_boot_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
 }
