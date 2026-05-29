@@ -3943,25 +3943,43 @@ fn is_valid_assignment_target(s: &str) -> bool {
         }
     }
 
-    // Check identifier
+    // c:1233 — `t = itype_end(t, INAMESPC, 0);` — walk past
+    // identifier chars (alpha/digit/_).
     let mut has_ident = false;
-    while let Some(&c) = chars.peek() {
-        if c == Inbrack || c == '[' {
-            break;
+    let mut after_ident_byte = 0usize;
+    {
+        let mut sub_chars = s.chars().peekable();
+        let mut consumed_bytes = 0usize;
+        while let Some(&c) = sub_chars.peek() {
+            if c == Inbrack || c == '[' || c == '+' {
+                break;
+            }
+            if !crate::ztype_h::iident(c as u8) && c != Stringg && !itok(c as u8) {
+                return false;
+            }
+            has_ident = true;
+            consumed_bytes += c.len_utf8();
+            sub_chars.next();
         }
-        if c == '+' {
-            // foo+=value
-            chars.next();
-            return chars.peek().is_none() || chars.peek() == Some(&'=');
-        }
-        if !crate::ztype_h::iident(c as u8) && c != Stringg && !itok(c as u8) {
-            return false;
-        }
-        has_ident = true;
-        chars.next();
+        after_ident_byte = consumed_bytes;
     }
-
-    has_ident
+    // c:1236-1238 — `if (t < lexbuf.ptr) skipparens(Inbrack, Outbrack, &t);`.
+    // When the identifier doesn't span the whole buffer, the remainder
+    // must be a `[index]` subscript — balanced via skipparens.
+    let mut cursor: &str = &s[after_ident_byte..];
+    if cursor.starts_with(Inbrack) || cursor.starts_with('[') {
+        let bal = crate::ported::utils::skipparens(Inbrack, Outbrack, &mut cursor);
+        let _ = bal; // C ignores the return value here — `t` is advanced regardless.
+    }
+    // c:1241-1242 — `if (*t == '+') t++;` — optional `+=` form.
+    if let Some(c) = cursor.chars().next() {
+        if c == '+' {
+            cursor = &cursor[1..];
+        }
+    }
+    // c:1243 — `if (t == lexbuf.ptr) ...` — full buffer consumed means
+    // this is a valid assignment target.
+    has_ident && cursor.is_empty()
 }
 
 /// Untokenize a string - convert tokenized chars back to original
