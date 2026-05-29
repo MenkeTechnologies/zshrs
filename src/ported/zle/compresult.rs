@@ -2167,4 +2167,109 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(comp_mod(0, 5), 4, "(0-1) wrapped to [0,5) = 4");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compresult.c utilities.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:46 — `cut_cline(s, n)` where len(s) ≤ n is identity.
+    #[test]
+    fn cut_cline_short_string_is_identity() {
+        assert_eq!(cut_cline("abc", 10), "abc");
+        assert_eq!(cut_cline("", 5), "");
+    }
+
+    /// c:46 — `cut_cline(s, n)` where len(s) > n truncates to (n-3)+"...".
+    #[test]
+    fn cut_cline_long_string_truncates_with_ellipsis() {
+        let r = cut_cline("abcdefghij", 6);
+        assert_eq!(r, "abc...", "(6-3)=3 chars + ... = 6 chars total");
+        assert_eq!(r.len(), 6);
+    }
+
+    /// c:46 — `cut_cline(s, len(s))` is identity (boundary, len == max).
+    #[test]
+    fn cut_cline_at_exact_length_is_identity() {
+        assert_eq!(cut_cline("hello", 5), "hello");
+    }
+
+    /// c:489 — `build_pos_string(0, 10)` = "1/10" (1-indexed display).
+    #[test]
+    fn build_pos_string_1_indexed_display() {
+        assert_eq!(build_pos_string(0, 10), "1/10");
+        assert_eq!(build_pos_string(4, 10), "5/10");
+        assert_eq!(build_pos_string(9, 10), "10/10");
+    }
+
+    /// c:489 — `build_pos_string(0, 1)` = "1/1" for single match.
+    #[test]
+    fn build_pos_string_single_match() {
+        assert_eq!(build_pos_string(0, 1), "1/1");
+    }
+
+    /// c:165 — `cline_str(None)` returns empty string (corpus pin).
+    #[test]
+    fn cline_str_none_returns_empty_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cline_str(None), "");
+    }
+
+    /// c:379 — `valid_match("foo", "", "")` returns true (empty prefix/
+    /// suffix → anything matches).
+    #[test]
+    fn valid_match_empty_pfx_sfx_accepts_anything() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(valid_match("foo", "", ""));
+        assert!(valid_match("", "", ""));
+    }
+
+    /// c:379 — `valid_match("foobar", "foo", "")` returns true
+    /// (prefix matches, no suffix required).
+    #[test]
+    fn valid_match_prefix_only() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(valid_match("foobar", "foo", ""));
+        assert!(valid_match("foo", "foo", ""), "exact prefix match");
+    }
+
+    /// c:379 — `valid_match("xx_bar", "", "bar")` returns true (suffix
+    /// matches, no prefix required).
+    #[test]
+    fn valid_match_suffix_only() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(valid_match("xx_bar", "", "bar"));
+    }
+
+    /// c:1364 — `comp_mod` for positive v ≥ m wraps correctly via
+    /// (v-1) % m.
+    #[test]
+    fn comp_mod_v_above_m_wraps() {
+        assert_eq!(comp_mod(10, 3), 0, "(10-1)%3 = 9%3 = 0");
+        assert_eq!(comp_mod(11, 3), 1, "(11-1)%3 = 10%3 = 1");
+        assert_eq!(comp_mod(12, 3), 2, "(12-1)%3 = 11%3 = 2");
+    }
+
+    /// c:1364 — `comp_mod(-1, 5)` = -1 + 5 = 4 (already negative, no
+    /// pre-decrement; loop just adds m).
+    #[test]
+    fn comp_mod_negative_v_wraps_via_loop() {
+        assert_eq!(comp_mod(-1, 5), 4);
+        assert_eq!(comp_mod(-3, 5), 2);
+        assert_eq!(comp_mod(-7, 5), 3, "-7 + 5 + 5 = 3");
+    }
+
+    /// c:180 — `unambig_data` on empty matches returns empty (corpus pin).
+    #[test]
+    fn unambig_data_empty_matches_returns_empty_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(unambig_data(&[]), "");
+    }
+
+    /// c:180 — `unambig_data` on single match returns that match.
+    #[test]
+    fn unambig_data_single_match_returns_it() {
+        let _g = crate::test_util::global_state_lock();
+        let r = unambig_data(&["single".to_string()]);
+        assert_eq!(r, "single", "single match → common prefix is itself");
+    }
 }
