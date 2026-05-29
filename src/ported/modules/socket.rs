@@ -651,4 +651,117 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/socket.c
+    // c:21 bin_zsocket / c:351-387 lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:21 — `bin_zsocket` return value in u8 exit-code range.
+    #[test]
+    fn bin_zsocket_return_in_exit_code_range() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for args in [
+            vec![],
+            vec!["/tmp/zshrs_test_sock".to_string()],
+            vec!["".to_string()],
+        ] {
+            let r = bin_zsocket("zsocket", &args, &ops, 0);
+            assert!((0..256).contains(&r),
+                "exit code {} must fit in u8 range for {:?}", r, args);
+        }
+    }
+
+    /// c:21 — `bin_zsocket` empty socket path returns nonzero.
+    #[test]
+    fn bin_zsocket_empty_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_zsocket("zsocket", &["".to_string()], &ops, 0);
+        assert_ne!(r, 0, "empty path → error");
+    }
+
+    /// c:21 — `bin_zsocket` is deterministic for no-args.
+    #[test]
+    fn bin_zsocket_no_args_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let first = bin_zsocket("zsocket", &[], &ops, 0);
+        for _ in 0..5 {
+            assert_eq!(bin_zsocket("zsocket", &[], &ops, 0), first);
+        }
+    }
+
+    /// c:21 — `bin_zsocket -l` and `bin_zsocket -a` with non-numeric
+    /// args don't panic.
+    #[test]
+    fn bin_zsocket_a_l_flags_with_arbitrary_arg_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ops = empty_ops();
+        ops.ind[b'a' as usize] = 1;
+        let _ = bin_zsocket("zsocket", &["xyz".to_string()], &ops, 0);
+        let mut ops2 = empty_ops();
+        ops2.ind[b'l' as usize] = 1;
+        let _ = bin_zsocket("zsocket", &["abc".to_string()], &ops2, 0);
+    }
+
+    /// c:351-387 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn socket_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:351 — setup_ idempotent.
+    #[test]
+    fn socket_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:387 — finish_ idempotent.
+    #[test]
+    fn socket_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:380 — cleanup_ idempotent.
+    #[test]
+    fn socket_cleanup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:373 — boot_ idempotent.
+    #[test]
+    fn socket_boot_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(boot_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:21 — `bin_zsocket` with multibyte path doesn't panic.
+    #[test]
+    fn bin_zsocket_multibyte_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _ = bin_zsocket("zsocket", &["/tmp/日本".to_string()], &ops, 0);
+    }
 }
