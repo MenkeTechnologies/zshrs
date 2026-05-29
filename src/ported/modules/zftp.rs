@@ -5377,4 +5377,89 @@ mod tests {
         assert_eq!(ZFST_ASCI, 0);
         assert_eq!(ZFST_TYPE(ZFST_ASCI), 0, "ASCII type = zero default");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zftp.c utilities.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:546-570 — `zfargstring("CMD", &[])` returns just the cmd
+    /// (no trailing space, no extra chars).
+    #[test]
+    fn zfargstring_no_args_returns_cmd_verbatim() {
+        assert_eq!(zfargstring("RETR", &[]), "RETR");
+        assert_eq!(zfargstring("", &[]), "");
+    }
+
+    /// c:546-570 — single arg joined with single space.
+    #[test]
+    fn zfargstring_one_arg_joins_with_single_space() {
+        assert_eq!(zfargstring("CWD", &["/tmp"]), "CWD /tmp");
+        assert_eq!(zfargstring("USER", &["anonymous"]), "USER anonymous");
+    }
+
+    /// c:546-570 — multiple args joined with single space each.
+    #[test]
+    fn zfargstring_multiple_args_each_space_separated() {
+        let r = zfargstring("FOO", &["a", "b", "c"]);
+        assert_eq!(r, "FOO a b c", "exactly one space between each arg");
+    }
+
+    /// c:546-570 — empty arg becomes empty word with surrounding
+    /// spaces preserved (matches C sprintf "%s %s" with "" arg).
+    #[test]
+    fn zfargstring_empty_arg_preserves_separators() {
+        let r = zfargstring("CMD", &["", "after"]);
+        // C: "CMD" + " " + "" + " " + "after" = "CMD  after"
+        assert_eq!(r, "CMD  after", "empty arg → double space");
+    }
+
+    /// c:267, c:273 — type and mode masks are non-overlapping bit
+    /// fields. Pin: AND of the masks is exactly 0.
+    #[test]
+    fn ZFST_TMSK_and_MMSK_have_no_overlap() {
+        assert_eq!(ZFST_TMSK & ZFST_MMSK, 0, "type/mode masks must not overlap");
+    }
+
+    /// c:267 — `ZFST_TYPE` is idempotent: applying twice == once.
+    #[test]
+    fn ZFST_TYPE_is_idempotent() {
+        let s = ZFST_TMSK | ZFST_BLOC;
+        assert_eq!(ZFST_TYPE(ZFST_TYPE(s)), ZFST_TYPE(s));
+    }
+
+    /// c:273 — `ZFST_MODE` is idempotent.
+    #[test]
+    fn ZFST_MODE_is_idempotent() {
+        let s = ZFST_TMSK | ZFST_BLOC;
+        assert_eq!(ZFST_MODE(ZFST_MODE(s)), ZFST_MODE(s));
+    }
+
+    /// `ZFST_TYPE` of a value with only mode bits returns 0 (no
+    /// type bits to extract).
+    #[test]
+    fn ZFST_TYPE_of_mode_only_returns_zero() {
+        assert_eq!(ZFST_TYPE(ZFST_BLOC), 0);
+    }
+
+    /// `ZFST_MODE` of a value with only type bits returns 0 (no
+    /// mode bits to extract).
+    #[test]
+    fn ZFST_MODE_of_type_only_returns_zero() {
+        assert_eq!(ZFST_MODE(ZFST_TMSK), 0);
+    }
+
+    /// `zfargstring` does NOT add a trailing space after the last
+    /// arg (would corrupt FTP commands which are CRLF-terminated).
+    #[test]
+    fn zfargstring_no_trailing_space() {
+        let r = zfargstring("STOR", &["file.txt"]);
+        assert!(!r.ends_with(' '), "no trailing space: {:?}", r);
+    }
+
+    /// `zfargstring` does NOT add a leading space before the cmd.
+    #[test]
+    fn zfargstring_no_leading_space() {
+        let r = zfargstring("STOR", &["file.txt"]);
+        assert!(!r.starts_with(' '), "no leading space: {:?}", r);
+    }
 }
