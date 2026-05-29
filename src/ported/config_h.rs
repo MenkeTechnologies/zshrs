@@ -1717,4 +1717,88 @@ mod tests {
             assert!(s.is_ascii(), "config string must be ASCII: {:?}", s);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for src/zsh/config.h second-half constants
+    // c:959 LONG_IS_64_BIT / c:962 MACHTYPE / c:967 MAX_FUNCTION_DEPTH /
+    // c:970 MULTIBYTE_SUPPORT / c:979 OSTYPE / c:1000 PATH_DEV_FD /
+    // c:1003 PATH_UTMPX_FILE / c:1012 POSIX_SIGNALS / c:1088 VENDOR
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:959 — LONG_IS_64_BIT = 1 on 64-bit arm/x86_64 platforms.
+    #[test]
+    fn long_is_64_bit_enabled() {
+        assert_eq!(LONG_IS_64_BIT, 1, "modern targets use 64-bit long");
+    }
+
+    /// c:967 — MAX_FUNCTION_DEPTH = 500 (zsh default recursion limit).
+    #[test]
+    fn max_function_depth_is_500() {
+        assert_eq!(MAX_FUNCTION_DEPTH, 500, "zsh canonical recursion limit");
+    }
+
+    /// c:970 — MULTIBYTE_SUPPORT = 1 (UTF-8 support is mandatory).
+    #[test]
+    fn multibyte_support_enabled() {
+        assert_eq!(MULTIBYTE_SUPPORT, 1, "UTF-8 must be enabled");
+    }
+
+    /// c:1012 — POSIX_SIGNALS = 1 (modern OS uses POSIX signals).
+    #[test]
+    fn posix_signals_enabled() {
+        assert_eq!(POSIX_SIGNALS, 1, "POSIX signal API mandatory");
+    }
+
+    /// c:962 — MACHTYPE is non-empty ASCII string (e.g. "arm" / "x86_64").
+    #[test]
+    fn machtype_non_empty_ascii() {
+        assert!(!MACHTYPE.is_empty(), "MACHTYPE must be non-empty");
+        assert!(MACHTYPE.is_ascii(), "MACHTYPE must be ASCII");
+    }
+
+    /// c:979 — OSTYPE is non-empty ASCII string (e.g. "darwin23.6.0").
+    #[test]
+    fn ostype_non_empty_ascii() {
+        assert!(!OSTYPE.is_empty(), "OSTYPE must be non-empty");
+        assert!(OSTYPE.is_ascii(), "OSTYPE must be ASCII");
+    }
+
+    /// c:1088 — VENDOR is non-empty ASCII (e.g. "apple" / "pc").
+    #[test]
+    fn vendor_non_empty_ascii() {
+        assert!(!VENDOR.is_empty(), "VENDOR must be non-empty");
+        assert!(VENDOR.is_ascii(), "VENDOR must be ASCII");
+    }
+
+    /// c:1000 — PATH_DEV_FD = "/dev/fd" (canonical fd file system path).
+    #[test]
+    fn path_dev_fd_is_canonical() {
+        assert_eq!(PATH_DEV_FD, "/dev/fd",
+            "canonical fd filesystem path per POSIX");
+    }
+
+    /// c:1003 — PATH_UTMPX_FILE is absolute path.
+    #[test]
+    fn path_utmpx_file_absolute() {
+        assert!(PATH_UTMPX_FILE.starts_with('/'),
+            "PATH_UTMPX_FILE must be absolute");
+    }
+
+    /// c:962+979+1088 — MACHTYPE/OSTYPE/VENDOR all have no whitespace.
+    #[test]
+    fn machtype_ostype_vendor_no_whitespace() {
+        for s in &[MACHTYPE, OSTYPE, VENDOR] {
+            assert!(!s.chars().any(|c| c.is_whitespace()),
+                "config target string must not contain whitespace: {:?}", s);
+        }
+    }
+
+    /// PACKAGE_* fields are all defined (may be empty per autoconf default).
+    #[test]
+    fn package_fields_are_ascii_strings() {
+        for s in &[PACKAGE_BUGREPORT, PACKAGE_NAME, PACKAGE_STRING,
+                   PACKAGE_TARNAME, PACKAGE_URL, PACKAGE_VERSION] {
+            assert!(s.is_ascii(), "PACKAGE_* must be ASCII: {:?}", s);
+        }
+    }
 }
