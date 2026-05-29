@@ -5848,4 +5848,107 @@ mod tests {
         assert_eq!(PM_SCALAR & (PM_ARRAY | PM_INTEGER | PM_HASHED), 0,
             "PM_SCALAR=0 by design: clear-all-bits state");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/zsh.h PRINT_* + HIST_* flag bits
+    // c:3400-3428 PRINT_* / c:3452-3464 HIST_*
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:3400-3418 — PRINT_NAMEONLY/TYPE/LIST/KV_PAIR/INCLUDEVALUE/TYPESET/
+    /// LINE/POSIX_EXPORT/POSIX_READONLY/WITH_NAMESPACE canonical bits 0-9.
+    #[test]
+    fn print_canonical_bit_positions() {
+        assert_eq!(PRINT_NAMEONLY, 1 << 0, "c:3400");
+        assert_eq!(PRINT_TYPE, 1 << 1, "c:3402");
+        assert_eq!(PRINT_LIST, 1 << 2, "c:3404");
+        assert_eq!(PRINT_KV_PAIR, 1 << 3, "c:3406");
+        assert_eq!(PRINT_INCLUDEVALUE, 1 << 4, "c:3408");
+        assert_eq!(PRINT_TYPESET, 1 << 5, "c:3410");
+        assert_eq!(PRINT_LINE, 1 << 6, "c:3412");
+        assert_eq!(PRINT_POSIX_EXPORT, 1 << 7, "c:3414");
+        assert_eq!(PRINT_POSIX_READONLY, 1 << 8, "c:3416");
+        assert_eq!(PRINT_WITH_NAMESPACE, 1 << 9, "c:3418");
+    }
+
+    /// c:3420 — PRINT_WHENCE_CSH INTENTIONALLY aliases PRINT_POSIX_EXPORT
+    /// (both bit 7). Per c:2191 comment: typeset and whence are separate
+    /// builtins, so flag-bit reuse is safe.
+    #[test]
+    fn print_whence_csh_aliases_print_posix_export() {
+        assert_eq!(PRINT_WHENCE_CSH, PRINT_POSIX_EXPORT,
+            "c:3420 INTENTIONAL alias: whence vs typeset disambiguated by builtin");
+    }
+
+    /// c:3422 — PRINT_WHENCE_VERBOSE aliases PRINT_POSIX_READONLY.
+    #[test]
+    fn print_whence_verbose_aliases_print_posix_readonly() {
+        assert_eq!(PRINT_WHENCE_VERBOSE, PRINT_POSIX_READONLY,
+            "c:3422 INTENTIONAL alias");
+    }
+
+    /// c:3424 — PRINT_WHENCE_SIMPLE aliases PRINT_WITH_NAMESPACE.
+    #[test]
+    fn print_whence_simple_aliases_print_with_namespace() {
+        assert_eq!(PRINT_WHENCE_SIMPLE, PRINT_WITH_NAMESPACE,
+            "c:3424 INTENTIONAL alias");
+    }
+
+    /// c:3400-3428 — every PRINT_* flag is i32 type (compile-time pin).
+    #[test]
+    fn print_flags_are_i32_type() {
+        let _: i32 = PRINT_NAMEONLY;
+        let _: i32 = PRINT_TYPE;
+        let _: i32 = PRINT_WHENCE_CSH;
+    }
+
+    /// c:3452-3464 — HIST_MAKEUNIQUE/OLD/READ/DUP/FOREIGN/TMPSTORE/NOWRITE
+    /// canonical bit values match upstream zsh-source positions.
+    #[test]
+    fn hist_canonical_bit_positions() {
+        assert_eq!(HIST_MAKEUNIQUE, 0x01, "c:3452");
+        assert_eq!(HIST_OLD, 0x02, "c:3454");
+        assert_eq!(HIST_READ, 0x04, "c:3456");
+        assert_eq!(HIST_DUP, 0x08, "c:3458");
+        assert_eq!(HIST_FOREIGN, 0x10, "c:3460");
+        assert_eq!(HIST_TMPSTORE, 0x20, "c:3462");
+        assert_eq!(HIST_NOWRITE, 0x40, "c:3464");
+    }
+
+    /// c:3452-3464 — all HIST_* are u32 type (compile-time pin).
+    #[test]
+    fn hist_flags_are_u32_type() {
+        let _: u32 = HIST_MAKEUNIQUE;
+        let _: u32 = HIST_OLD;
+        let _: u32 = HIST_NOWRITE;
+    }
+
+    /// c:3452-3464 — HIST_* are all single bits.
+    #[test]
+    fn hist_flags_all_single_bits() {
+        for &v in &[HIST_MAKEUNIQUE, HIST_OLD, HIST_READ, HIST_DUP,
+                    HIST_FOREIGN, HIST_TMPSTORE, HIST_NOWRITE] {
+            assert!(v.is_power_of_two(),
+                "HIST_* {:#x} must be a single bit", v);
+        }
+    }
+
+    /// c:3452-3464 — HIST_* are pairwise distinct.
+    #[test]
+    fn hist_flags_pairwise_distinct() {
+        let codes = [HIST_MAKEUNIQUE, HIST_OLD, HIST_READ, HIST_DUP,
+                     HIST_FOREIGN, HIST_TMPSTORE, HIST_NOWRITE];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(),
+            "HIST_* must be pairwise distinct");
+    }
+
+    /// c:3400-3418 — first 7 non-aliased PRINT_* bits are pairwise distinct.
+    #[test]
+    fn print_non_aliased_pairwise_distinct() {
+        let codes = [PRINT_NAMEONLY, PRINT_TYPE, PRINT_LIST, PRINT_KV_PAIR,
+                     PRINT_INCLUDEVALUE, PRINT_TYPESET, PRINT_LINE];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(),
+            "non-aliased PRINT_* must be pairwise distinct");
+    }
 }
