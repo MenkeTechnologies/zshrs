@@ -934,10 +934,13 @@ fn stringsubst(
                 } // c:237
                 continue; // c:237
             } else if next_is(Inbrack, '[') {
-                // c:237
-                // $[...] arithmetic
-                // $[...] arith substitution. Walk to matching ]
-                // tracking depth so $[$[a+b]+c] nests correctly.
+                // c:293 — `$[...]` arithmetic. C does
+                // `skipparens(Inbrack, Outbrack, &str2)` against the
+                // tokenized form. Rust callers may pass either
+                // tokenized (Inbrack) or raw (`[`); when the tail has
+                // only one form we route through the canonical
+                // skipparens entry, otherwise fall back to a mixed-
+                // form depth walk that tracks both.
                 let start = pos + 2; // c:237
                 let open = if next_c == Some(Inbrack) {
                     Inbrack
@@ -946,26 +949,47 @@ fn stringsubst(
                 }; // c:237
                 let close = if open == Inbrack { Outbrack } else { ']' }; // c:237
                 let chars: Vec<char> = str3.chars().collect(); // c:237
-                let mut depth = 1_i32; // c:237
                 let mut end_off: Option<usize> = None; // c:237
-                let mut p = start; // c:237
-                while p < chars.len() {
-                    // c:237
-                    let ch = chars[p]; // c:237
-                    if ch == open || ch == '[' {
-                        depth += 1;
+                let tail_only_tokenized = open == Inbrack
+                    && chars[start.saturating_sub(1)..]
+                        .iter()
+                        .all(|&c| c != '[' && c != ']');
+                if tail_only_tokenized {
+                    // c:293 — `skipparens(Inbrack, Outbrack, &str2)`.
+                    let open_byte_off: usize =
+                        chars[..start - 1].iter().map(|c| c.len_utf8()).sum();
+                    let mut cursor: &str = &str3[open_byte_off..];
+                    let bal = crate::ported::utils::skipparens(
+                        Inbrack, Outbrack, &mut cursor,
+                    );
+                    if bal == 0 {
+                        let after_close_byte = str3.len() - cursor.len();
+                        let after_close_char =
+                            str3[..after_close_byte].chars().count();
+                        end_off = Some(
+                            after_close_char
+                                .saturating_sub(1)
+                                .saturating_sub(start),
+                        );
                     }
-                    // c:237
-                    else if ch == close || ch == ']' {
-                        // c:237
-                        depth -= 1; // c:237
-                        if depth == 0 {
-                            end_off = Some(p - start);
-                            break;
-                        } // c:237
-                    } // c:237
-                    p += 1; // c:237
-                } // c:237
+                } else {
+                    // Mixed-form fallback. Original Rust depth walk.
+                    let mut depth = 1_i32;
+                    let mut p = start;
+                    while p < chars.len() {
+                        let ch = chars[p];
+                        if ch == open || ch == '[' {
+                            depth += 1;
+                        } else if ch == close || ch == ']' {
+                            depth -= 1;
+                            if depth == 0 {
+                                end_off = Some(p - start);
+                                break;
+                            }
+                        }
+                        p += 1;
+                    }
+                }
                 if let Some(end) = end_off {
                     // c:237
                     let expr: String = chars[start..start + end].iter().collect(); // c:237
