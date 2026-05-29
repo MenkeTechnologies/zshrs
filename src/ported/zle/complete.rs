@@ -3103,4 +3103,151 @@ mod tests {
         let r = parse_ordering("", &mut flags);
         assert_eq!(r, -1, "empty input has no valid ordering token");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/complete.c free/copy
+    // chain walkers.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:115 — `freecmatcher(None)` is a safe no-op.
+    #[test]
+    fn freecmatcher_none_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        freecmatcher(None);
+    }
+
+    /// c:137 — `freecpattern(None)` is a safe no-op.
+    #[test]
+    fn freecpattern_none_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        freecpattern(None);
+    }
+
+    /// c:98 — `freecmlist(None)` is a safe no-op.
+    #[test]
+    fn freecmlist_none_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        freecmlist(None);
+    }
+
+    /// c:218 — `cpcpattern(None)` returns None (no source chain).
+    #[test]
+    fn cpcpattern_none_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = cpcpattern(None);
+        assert!(r.is_none(), "None source → None copy");
+    }
+
+    /// c:155 — `cpcmatcher(None)` returns None.
+    #[test]
+    fn cpcmatcher_none_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = cpcmatcher(None);
+        assert!(r.is_none());
+    }
+
+    /// c:189 — `cp_cpattern_element` copies the `tp` field verbatim.
+    #[test]
+    fn cp_cpattern_element_copies_tp() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let src = Cpattern {
+            tp: CPAT_CHAR,
+            chr: 'A' as u32,
+            ..Default::default()
+        };
+        let dup = cp_cpattern_element(&src);
+        assert_eq!(dup.tp, CPAT_CHAR, "tp must round-trip");
+    }
+
+    /// c:218 — `cp_cpattern_element` on CPAT_CHAR copies `chr` field.
+    #[test]
+    fn cp_cpattern_element_copies_chr_for_cpat_char() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let src = Cpattern {
+            tp: CPAT_CHAR,
+            chr: 0x42,
+            ..Default::default()
+        };
+        let dup = cp_cpattern_element(&src);
+        assert_eq!(dup.chr, 0x42);
+    }
+
+    /// c:199 — `cp_cpattern_element` on CPAT_CCLASS copies `str` field.
+    #[test]
+    fn cp_cpattern_element_copies_str_for_cclass() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let src = Cpattern {
+            tp: CPAT_CCLASS,
+            str: Some(b"a-z".to_vec()),
+            ..Default::default()
+        };
+        let dup = cp_cpattern_element(&src);
+        assert_eq!(dup.str.as_deref(), Some(&b"a-z"[..]));
+    }
+
+    /// c:191 — `cp_cpattern_element` always initializes `next = None`
+    /// (caller chains them via cpcpattern, not by carrying source's
+    /// next forward).
+    #[test]
+    fn cp_cpattern_element_resets_next_to_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let src = Cpattern {
+            tp: CPAT_CHAR,
+            chr: 'x' as u32,
+            next: Some(Box::new(Cpattern::default())), // source has next
+            ..Default::default()
+        };
+        let dup = cp_cpattern_element(&src);
+        assert!(dup.next.is_none(), "copy element MUST reset next to None");
+    }
+
+    /// c:218 — `cpcpattern` of a 3-node chain produces a 3-node chain
+    /// (chain walker advances tail_ref per element).
+    #[test]
+    fn cpcpattern_preserves_chain_length() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let src = Cpattern {
+            tp: CPAT_CHAR,
+            chr: 'a' as u32,
+            next: Some(Box::new(Cpattern {
+                tp: CPAT_CHAR,
+                chr: 'b' as u32,
+                next: Some(Box::new(Cpattern {
+                    tp: CPAT_CHAR,
+                    chr: 'c' as u32,
+                    ..Default::default()
+                })),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let dup = cpcpattern(Some(&src)).expect("should copy");
+        // Count: head + 2 next.
+        let mut cnt = 1;
+        let mut cur = &dup.next;
+        while let Some(n) = cur {
+            cnt += 1;
+            cur = &n.next;
+        }
+        assert_eq!(cnt, 3, "3-node source → 3-node copy");
+    }
+
+    /// c:242 — `parse_cmatcher(_, "")` returns None per c:249 guard.
+    #[test]
+    fn parse_cmatcher_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = parse_cmatcher("test", "");
+        assert!(r.is_none(), "empty matcher spec → None per c:249");
+    }
 }
