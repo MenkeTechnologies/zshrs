@@ -157,4 +157,93 @@ mod tests {
         let mut m = TestModule { booted: false };
         assert_eq!(modentry(6, &mut m), 1, "op=6 just past valid range → 1");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/modentry.c c:7 switch.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:7 — `modentry` repeated calls don't leak state between modules.
+    /// Pin module-isolation: a sequence of modentry calls on module A
+    /// must not poison subsequent modentry calls on module B.
+    #[test]
+    fn modentry_module_isolation() {
+        let _g = crate::test_util::global_state_lock();
+        let mut a = TestModule { booted: false };
+        assert_eq!(modentry(1, &mut a), 0); // boot A
+        assert!(a.booted);
+
+        let mut b = TestModule { booted: false };
+        assert_eq!(modentry(0, &mut b), 0); // setup B
+        assert!(!b.booted, "B must NOT be booted via A's modentry");
+    }
+
+    /// c:14 — calling setup multiple times is safe (no side-effect lock).
+    /// ModuleLifecycle::setup default returns 0.
+    #[test]
+    fn modentry_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        for _ in 0..10 {
+            assert_eq!(modentry(0, &mut m), 0);
+        }
+        assert!(!m.booted);
+    }
+
+    /// c:22 — calling cleanup multiple times is safe.
+    #[test]
+    fn modentry_cleanup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        for _ in 0..10 {
+            assert_eq!(modentry(2, &mut m), 0);
+        }
+    }
+
+    /// c:7 — return value is always either 0 or 1, never anything else.
+    #[test]
+    fn modentry_return_value_in_0_or_1_for_all_inputs() {
+        let _g = crate::test_util::global_state_lock();
+        for op in -5..=15 {
+            let mut m = TestModule { booted: false };
+            let r = modentry(op, &mut m);
+            assert!(r == 0 || r == 1, "modentry({}) = {} not in {{0,1}}", op, r);
+        }
+    }
+
+    /// c:7 — the lifecycle sequence setup→boot→cleanup→finish all succeed
+    /// in order without leaking unknown-op error.
+    #[test]
+    fn modentry_canonical_lifecycle_sequence_all_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(0, &mut m), 0); // setup
+        assert_eq!(modentry(1, &mut m), 0); // boot
+        assert_eq!(modentry(2, &mut m), 0); // cleanup
+        assert_eq!(modentry(3, &mut m), 0); // finish
+        assert!(m.booted, "boot side effect must survive cleanup/finish");
+    }
+
+    /// c:30/34 — features_/enables_ ops do NOT call any trait method
+    /// (they short-circuit pre-dispatch per the c:30,34 case arms).
+    /// Verified by ensuring boot side effect is NOT triggered.
+    #[test]
+    fn modentry_features_op_does_not_call_module_boot() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(4, &mut m), 0);
+        assert!(!m.booted, "features_ op MUST NOT side-effect boot");
+        assert_eq!(modentry(5, &mut m), 0);
+        assert!(!m.booted, "enables_ op MUST NOT side-effect boot");
+    }
+
+    /// c:38 — out-of-range op doesn't call any trait method.
+    #[test]
+    fn modentry_unknown_op_does_not_invoke_trait() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        for op in [99, 1000, -42] {
+            assert_eq!(modentry(op, &mut m), 1);
+            assert!(!m.booted, "op {} must NOT trigger boot", op);
+        }
+    }
 }
