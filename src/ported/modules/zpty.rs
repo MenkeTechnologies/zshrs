@@ -1307,4 +1307,124 @@ mod tests {
         let mut ti: libc::termios = unsafe { std::mem::zeroed() };
         assert_ne!(ptygettyinfo(-1, &mut ti), 0, "negative fd → nonzero");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zpty.c
+    // c:97 ptynonblock / c:119 ptygettyinfo / c:159 getptycmd /
+    // c:748 ptyhook / c:761-803 lifecycle — type pins + edge cases
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:97 — `ptynonblock` returns io::Result<()> (compile-time type pin).
+    #[test]
+    fn ptynonblock_returns_io_result_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: io::Result<()> = ptynonblock(-1);
+    }
+
+    /// c:119 — `ptygettyinfo` returns i32 (compile-time type pin).
+    #[test]
+    fn ptygettyinfo_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ti: libc::termios = unsafe { std::mem::zeroed() };
+        let _: i32 = ptygettyinfo(-1, &mut ti);
+    }
+
+    /// c:159 — `getptycmd` returns Option<&ptycmd> (compile-time type pin).
+    #[test]
+    fn getptycmd_returns_option_type() {
+        let _g = crate::test_util::global_state_lock();
+        let cmds = HashMap::new();
+        let _: Option<&ptycmd> = getptycmd(&cmds, "anything");
+    }
+
+    /// c:748 — `ptyhook` returns i32 (compile-time type pin).
+    #[test]
+    fn ptyhook_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cmds = HashMap::new();
+        let _: i32 = ptyhook(&mut cmds);
+    }
+
+    /// c:761 — `setup_` returns i32 (compile-time type pin).
+    #[test]
+    fn zpty_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:97 — `ptynonblock` is deterministic for bad fd.
+    #[test]
+    fn ptynonblock_negative_fd_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = ptynonblock(-1).is_err();
+        for _ in 0..3 {
+            assert_eq!(ptynonblock(-1).is_err(), first,
+                "ptynonblock(-1) must be deterministic");
+        }
+    }
+
+    /// c:159 — `getptycmd` is deterministic.
+    #[test]
+    fn getptycmd_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let cmds = HashMap::new();
+        for name in ["", "x", "any", "definitely_missing_xyz"] {
+            let first = getptycmd(&cmds, name).is_none();
+            for _ in 0..3 {
+                assert_eq!(getptycmd(&cmds, name).is_none(), first,
+                    "getptycmd({:?}) must be deterministic", name);
+            }
+        }
+    }
+
+    /// c:768 — features list non-empty.
+    #[test]
+    fn zpty_features_nonempty() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        assert!(!feats.is_empty(), "zpty must advertise ≥1 feature");
+    }
+
+    /// c:768 — every feature uses b:/p: prefix per zsh module spec.
+    #[test]
+    fn zpty_features_use_canonical_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        for f in &feats {
+            assert!(f.starts_with("b:") || f.starts_with("p:"),
+                "feature {:?} must use b:/p: prefix", f);
+        }
+    }
+
+    /// c:791 — `cleanup_` idempotent.
+    #[test]
+    fn zpty_cleanup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:782 — `boot_` idempotent.
+    #[test]
+    fn zpty_boot_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(boot_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:748 — `ptyhook` is deterministic on empty cmds map.
+    #[test]
+    fn ptyhook_empty_cmds_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cmds = HashMap::new();
+        let first = ptyhook(&mut cmds);
+        for _ in 0..3 {
+            assert_eq!(ptyhook(&mut cmds), first,
+                "ptyhook on empty cmds must be deterministic");
+        }
+    }
 }
