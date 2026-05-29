@@ -447,4 +447,98 @@ mod tests {
             );
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hashtable.h
+    // c:34-66 BIN_* per-family canonical groupings + sub-family checks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:40-43 — break/continue/exit/return canonical 6/7/8/9.
+    #[test]
+    fn bin_break_continue_exit_return_sequential_six_through_nine() {
+        assert_eq!(BIN_BREAK, 6, "c:40");
+        assert_eq!(BIN_CONTINUE, 7, "c:41");
+        assert_eq!(BIN_EXIT, 8, "c:42");
+        assert_eq!(BIN_RETURN, 9, "c:43");
+    }
+
+    /// c:44-46 — cd/popd/pushd canonical 10/11/12.
+    #[test]
+    fn bin_cd_popd_pushd_sequential_ten_through_twelve() {
+        assert_eq!(BIN_CD, 10, "c:44");
+        assert_eq!(BIN_POPD, 11, "c:45");
+        assert_eq!(BIN_PUSHD, 12, "c:46");
+    }
+
+    /// c:47-48 — print/eval canonical 13/14.
+    #[test]
+    fn bin_print_eval_canonical() {
+        assert_eq!(BIN_PRINT, 13, "c:47");
+        assert_eq!(BIN_EVAL, 14, "c:48");
+    }
+
+    /// c:49-52 — sched/fc/r/pushline canonical 15/16/17/18.
+    #[test]
+    fn bin_sched_fc_r_pushline_canonical() {
+        assert_eq!(BIN_SCHED, 15, "c:49");
+        assert_eq!(BIN_FC, 16, "c:50");
+        assert_eq!(BIN_R, 17, "c:51");
+        assert_eq!(BIN_PUSHLINE, 18, "c:52");
+    }
+
+    /// c:53-55 — logout/test/bracket canonical 19/20/21.
+    #[test]
+    fn bin_logout_test_bracket_canonical() {
+        assert_eq!(BIN_LOGOUT, 19, "c:53");
+        assert_eq!(BIN_TEST, 20, "c:54");
+        assert_eq!(BIN_BRACKET, 21, "c:55");
+    }
+
+    /// c:34-66 — all BIN_* fit in i8 signed range (positive).
+    #[test]
+    fn all_bin_codes_fit_in_i8_positive_range() {
+        for c in [BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT,
+                  BIN_DISOWN, BIN_BREAK, BIN_CONTINUE, BIN_EXIT,
+                  BIN_RETURN, BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT,
+                  BIN_EVAL, BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE,
+                  BIN_LOGOUT, BIN_TEST, BIN_BRACKET, BIN_READONLY,
+                  BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
+                  BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
+                  BIN_UNSET, BIN_EXPORT] {
+            assert!((0..=i8::MAX as i32).contains(&c),
+                "BIN_* code {} must fit in i8 positive range", c);
+        }
+    }
+
+    /// c:34-66 — all BIN_* are i32 (compile-time type pin).
+    #[test]
+    fn all_bin_codes_are_i32_type() {
+        let _: i32 = BIN_TYPESET;
+        let _: i32 = BIN_SETOPT;
+        let _: i32 = BIN_EXPORT;
+    }
+
+    /// c:34-66 — BIN_TYPESET is canonical first slot.
+    #[test]
+    fn bin_typeset_is_canonical_first_slot() {
+        assert_eq!(BIN_TYPESET, 0, "TYPESET claims slot 0");
+    }
+
+    /// c:34-39 — job control family (TYPESET..DISOWN) covers slots 0-5.
+    #[test]
+    fn bin_job_control_family_slots_zero_through_five() {
+        assert_eq!(BIN_TYPESET, 0);
+        assert_eq!(BIN_BG, 1);
+        assert_eq!(BIN_FG, 2);
+        assert_eq!(BIN_JOBS, 3);
+        assert_eq!(BIN_WAIT, 4);
+        assert_eq!(BIN_DISOWN, 5);
+    }
+
+    /// c:69-70 — BIN_SETOPT/BIN_UNSETOPT are 0/1 (intentional overlap).
+    #[test]
+    fn bin_setopt_unsetopt_canonical_zero_one() {
+        assert_eq!(BIN_SETOPT, 0, "c:69");
+        assert_eq!(BIN_UNSETOPT, 1, "c:70");
+    }
 }
