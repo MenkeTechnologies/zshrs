@@ -585,7 +585,10 @@ fn strip_comments_and_strings(line: &str) -> String {
                 let prev = if i == 0 { None } else { Some(bytes[i - 1] as char) };
                 let is_comment_start = match prev {
                     None => true,
-                    Some(p) => p.is_whitespace() || p == ';' || p == '&' || p == '|' || p == '(',
+                    // Note: `(` removed from prev-chars — zsh glob
+                    // qualifiers `(#i)`/`(#a)` would otherwise truncate
+                    // the line at `#` and orphan the trailing `)` etc.
+                    Some(p) => p.is_whitespace() || p == ';' || p == '&' || p == '|',
                 };
                 if is_comment_start {
                     break;
@@ -627,6 +630,43 @@ fn diagnose(text: &str) -> Vec<Value> {
                 let bare = t.trim_end_matches(|c: char| matches!(c, ';' | '&' | '|'));
                 bare == "case"
             });
+        // Pre-scan: find positions where `done`/`fi`/`esac` appear as
+        // BARE VALUE tokens (not as block terminators). They're
+        // terminators only when the previous token is a statement-
+        // separator (`;`/`&&`/`||`) or a block-body opener
+        // (`do`/`then`/`else`/`elif`). Otherwise they're literal
+        // arguments / comparison operands:
+        //   * `[[ $x == done ]]`         — comparison right-operand
+        //   * `todo_list done`           — CLI arg to a function
+        //   * `local status=done`        — assignment value
+        // Conservative detector: build a set of token-indices where
+        // the previous code-only token does NOT terminate a statement
+        // / open a block-body. Used in the loop below to skip those
+        // token-positions. Pinned by
+        // examples/demos/143_todo_app.zsh:50,90.
+        let mut bareword_value_positions: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        {
+            let toks: Vec<&str> = line_code_only.split_whitespace().collect();
+            for (i, t) in toks.iter().enumerate() {
+                if i == 0 { continue; }
+                let prev_bare = toks[i - 1]
+                    .trim_end_matches(|c: char| matches!(c, ';' | '&' | '|'));
+                let prev_ends_with_separator = toks[i - 1]
+                    .ends_with(|c: char| matches!(c, ';' | '&' | '|'));
+                let bare = t.trim_end_matches(|c: char| matches!(c, ';' | '&' | '|'));
+                let prev_is_body_opener = matches!(
+                    prev_bare,
+                    "do" | "then" | "else" | "elif" | "&&" | "||" | ";" | "&" | "|"
+                );
+                if matches!(bare, "done" | "fi" | "esac")
+                    && !prev_ends_with_separator
+                    && !prev_is_body_opener
+                {
+                    bareword_value_positions.insert(i);
+                }
+            }
+        }
         // Token-level scan. Pairings tracked on `stack`:
         //   '('  — single paren            ')'
         //   '{'  — single brace            '}'
@@ -659,6 +699,19 @@ fn diagnose(text: &str) -> Vec<Value> {
                             // pair balances cleanly with its `)`.
                             stack.push(('(', line_no, i));     // outer $(
                             stack.push(('(', line_no, i + 1)); // inner (
+                            i += 2;
+                            continue;
+                        }
+                        // INSIDE an arithmetic block (`stack` already has
+                        // 'A'), `((expr) + …)` is NOT a nested arithmetic
+                        // — it's two single `(` opening a grouped sub-
+                        // expression. Pin the inner `((` as two single
+                        // `(` so `((hash << 5) + hash)` inside `$((…))`
+                        // balances cleanly (reported on
+                        // examples/demos/195_sha_simple_hash.zsh:25).
+                        if stack.iter().any(|x| x.0 == 'A') {
+                            stack.push(('(', line_no, i));
+                            stack.push(('(', line_no, i + 1));
                             i += 2;
                             continue;
                         }
@@ -790,7 +843,13 @@ fn diagnose(text: &str) -> Vec<Value> {
                     let is_comment_start = match prev {
                         None => true,
                         Some(p) => {
-                            p.is_whitespace() || p == ';' || p == '&' || p == '|' || p == '('
+                            // Note: `(` removed from the prev-chars list
+                            // because `(#i)` / `(#a1)` etc. are zsh glob
+                            // qualifiers / extended-glob flags where `#`
+                            // immediately after `(` is NOT a comment.
+                            // `( # cmt)` style is still recognized via
+                            // the whitespace test before `#`.
+                            p.is_whitespace() || p == ';' || p == '&' || p == '|'
                         }
                     };
                     if is_comment_start {
@@ -806,7 +865,7 @@ fn diagnose(text: &str) -> Vec<Value> {
         // `echo "if you like"` push spurious entries onto block_stack
         // and surface as "unclosed `case` block" / "unclosed `if`".
         let code_only = strip_comments_and_strings(line);
-        for kw_raw in code_only.split_whitespace() {
+        for (tok_idx, kw_raw) in code_only.split_whitespace().enumerate() {
             // Strip trailing shell-statement-separator punctuation
             // (`;` / `&` / `|`) so tokens like `done;` and `fi;` and
             // `done;` still match the block-terminator keyword.
@@ -848,6 +907,14 @@ fn diagnose(text: &str) -> Vec<Value> {
             if kw_static == "select"
                 && !code_only.split_whitespace().any(|t| t == "do")
             {
+                continue;
+            }
+            // `done`/`fi`/`esac` as the RIGHT operand of a comparison
+            // (e.g. `[[ $status == done ]]`) is a literal value being
+            // compared, NOT a block terminator. The pre-scan above
+            // populated `bareword_value_positions` with these token
+            // indices. Pinned by examples/demos/143_todo_app.zsh:50.
+            if bareword_value_positions.contains(&tok_idx) {
                 continue;
             }
             match kw_static {
