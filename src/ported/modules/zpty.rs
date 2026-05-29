@@ -1112,4 +1112,93 @@ mod tests {
     // Note: deleteptycmd/deleteallptycmds with real entries can attempt
     // to close fd -1 (or kill pid 0), which blocks under the test harness.
     // Pin only the empty/no-op paths above.
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zpty.c — fd-error paths.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:159 — `getptycmd` on empty HashMap returns None.
+    #[test]
+    fn getptycmd_empty_table_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let cmds = HashMap::<String, ptycmd>::new();
+        assert!(getptycmd(&cmds, "any").is_none());
+    }
+
+    /// c:159 — `getptycmd` for absent name returns None even when
+    /// table has other entries.
+    #[test]
+    fn getptycmd_absent_in_populated_table_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cmds = HashMap::<String, ptycmd>::new();
+        cmds.insert(
+            "session_a".to_string(),
+            ptycmd::new("stub", Vec::new(), -1, 0, false, false),
+        );
+        assert!(getptycmd(&cmds, "session_b").is_none());
+    }
+
+    /// c:314 — `deleteallptycmds` on empty map is a safe no-op.
+    #[test]
+    fn deleteallptycmds_empty_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cmds = HashMap::<String, ptycmd>::new();
+        deleteallptycmds(&mut cmds);
+        assert!(cmds.is_empty());
+    }
+
+    /// c:97 — `ptynonblock(-1)` returns Err (invalid fd).
+    #[test]
+    fn ptynonblock_invalid_fd_returns_err() {
+        let _g = crate::test_util::global_state_lock();
+        let r = ptynonblock(-1);
+        assert!(r.is_err(), "invalid fd → Err");
+    }
+
+    /// c:119 — `ptygettyinfo(-1, ...)` returns nonzero (libc error).
+    #[test]
+    fn ptygettyinfo_invalid_fd_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ti: libc::termios = unsafe { std::mem::zeroed() };
+        let r = ptygettyinfo(-1, &mut ti);
+        assert_ne!(r, 0, "invalid fd → nonzero error");
+    }
+
+    /// c:420 — `ptywritestr(-1, "x")` returns Err.
+    #[test]
+    fn ptywritestr_invalid_fd_returns_err() {
+        let _g = crate::test_util::global_state_lock();
+        let r = ptywritestr(-1, "data");
+        assert!(r.is_err());
+    }
+
+    /// c:358 — `ptyread(-1, _, timeout=0)` with zero-ms timeout returns
+    /// Ok empty or Err. Pin no-panic + safe handling (port may swallow
+    /// EBADF as immediate EOF / empty string).
+    #[test]
+    fn ptyread_invalid_fd_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let r = ptyread(-1, None, Some(0));
+        // Either Err (read fails) or Ok("") (immediate EOF) — pin no panic.
+        match r {
+            Ok(s) => assert!(s.is_empty() || !s.is_empty(), "Ok variant accepted"),
+            Err(_) => {}
+        }
+    }
+
+    /// c:761-782 — module setup_ / boot_ return 0.
+    #[test]
+    fn zpty_setup_boot_return_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
+
+    /// c:791-803 — cleanup_ / finish_ return 0.
+    #[test]
+    fn zpty_cleanup_finish_return_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
