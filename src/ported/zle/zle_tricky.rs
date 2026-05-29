@@ -1177,7 +1177,7 @@ pub fn inststrlen(
     }
     // c:2244-2253 — non-meta wide path.
     let instr = &str[..(len as usize).min(str.len())]; // c:2247 ztrduppfx(str, len)
-    let zlestr: Vec<char> = stringaszleline(instr); // c:2248
+    let zlestr: Vec<char> = stringaszleline(instr, 0, None, None, None); // c:2248
     let zlelen = zlestr.len();
     spaceinline(zlelen as i32); // c:2249
     {

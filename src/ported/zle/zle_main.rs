@@ -1844,15 +1844,12 @@ pub fn zle_main_entry(cmd: i32, ap: &mut zle_main_entry_args) -> Option<String> 
             // c:2126
             if let zle_main_entry_args::GetLine { ll, cs } = ap {
                 // c:2128-2130
-                let mut ll_u: usize = 0;
-                let mut cs_u: usize = 0;
-                let line = zlegetline(
-                    // c:2131
-                    &mut ll_u, &mut cs_u,
-                );
-                **ll = ll_u as i32;
-                **cs = cs_u as i32;
-                return Some(line.into_iter().collect()); // c:2131 return char*
+                let mut ll_i: i32 = 0;
+                let mut cs_i: i32 = 0;
+                let line = zlegetline(&mut ll_i, &mut cs_i); // c:2131
+                **ll = ll_i;
+                **cs = cs_i;
+                return Some(line); // c:2131 return char*
             }
         }
         x if x == ZLE_CMD_READ => {
