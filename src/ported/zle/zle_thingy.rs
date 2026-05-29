@@ -2737,4 +2737,64 @@ mod tests {
         assert_eq!(rc, 1);
         let _ = thingytab().lock().unwrap().remove(name);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_thingy.c
+    // c:48 createthingytab / c:127 emptythingytab / c:208 freethingynode /
+    // c:280 rthingy / c:307 rthingy_nocreate / c:351 bindwidget /
+    // c:417 unbindwidget / c:752 bin_zle_list / c:792 bin_zle_refresh /
+    // c:860 bin_zle_mesg
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:307 — `rthingy_nocreate` returns bool (compile-time type pin).
+    #[test]
+    fn rthingy_nocreate_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _: bool = rthingy_nocreate("anything");
+    }
+
+    /// c:417 — `unbindwidget` returns i32 (compile-time type pin).
+    #[test]
+    fn unbindwidget_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _: i32 = unbindwidget("self-insert", 0);
+    }
+
+    /// c:417 — `unbindwidget("", _)` empty name returns 0 (missing → no-op).
+    /// C body checks `tab.get(t)` and returns 0 for None — empty name
+    /// can't match any registered widget, so it's treated as missing.
+    #[test]
+    fn unbindwidget_empty_name_returns_zero_missing() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let r = unbindwidget("", 0);
+        assert_eq!(r, 0, "empty name treated as missing → 0 (per c:427)");
+    }
+
+    /// c:752+792+860 — bin_zle_* builtins return in u8 exit-code range.
+    #[test]
+    fn bin_zle_subcommands_return_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for r in [
+            bin_zle_list("zle", &[], &ops, 0),
+            bin_zle_refresh("zle", &[], &ops, 0),
+            bin_zle_mesg("zle", &[], &ops, 0),
+        ] {
+            assert!((0..256).contains(&r),
+                "exit code {} must fit in u8", r);
+        }
+    }
 }
