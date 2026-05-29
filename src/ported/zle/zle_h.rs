@@ -1682,4 +1682,101 @@ mod tests {
         // With n=3, differs.
         assert_ne!(ZS_strncmp(&a, &b, 3), std::cmp::Ordering::Equal);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle.h
+    // c:34 ZLE_CHAR_SIZE / c:37 ZLEEOF / c:71 Th / c:122 invicmdmode /
+    // c:155 ZS_memset / c:225 ZS_strchr / c:233 ZS_memchr / c:242 ZS_width /
+    // c:256-303 ZC_* classifiers
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:34 — `ZLE_CHAR_SIZE` is 4 (per Unicode codepoint size).
+    #[test]
+    fn zle_char_size_is_four() {
+        assert_eq!(ZLE_CHAR_SIZE, 4, "wide-char size is 4 bytes");
+    }
+
+    /// c:37 — `ZLEEOF` is -1 (WEOF sentinel).
+    #[test]
+    fn zleeof_is_minus_one() {
+        assert_eq!(ZLEEOF, -1, "WEOF sentinel = -1");
+    }
+
+    /// c:71 — `Th(-1)` returns None (out-of-range index).
+    #[test]
+    fn th_negative_index_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(Th(-1).is_none());
+    }
+
+    /// c:71 — `Th(99999)` returns None (far-out-of-range index).
+    #[test]
+    fn th_huge_index_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(Th(99999).is_none());
+    }
+
+    /// c:122 — `invicmdmode("emacs")` returns false.
+    #[test]
+    fn invicmdmode_emacs_returns_false() {
+        assert!(!invicmdmode("emacs"), "emacs keymap is NOT vi cmd mode");
+    }
+
+    /// c:122 — `invicmdmode("vicmd")` returns true.
+    #[test]
+    fn invicmdmode_vicmd_returns_true() {
+        assert!(invicmdmode("vicmd"), "vicmd keymap IS vi cmd mode");
+    }
+
+    /// c:122 — `invicmdmode("")` returns false.
+    #[test]
+    fn invicmdmode_empty_returns_false() {
+        assert!(!invicmdmode(""), "empty keymap is NOT vi cmd mode");
+    }
+
+    /// c:155 — `ZS_memset(empty, _, 0)` is safe.
+    #[test]
+    fn zs_memset_zero_n_empty_buf_safe() {
+        let mut empty: Vec<char> = vec![];
+        ZS_memset(&mut empty, 'x', 0);
+        assert!(empty.is_empty());
+    }
+
+    /// c:225 — `ZS_strchr(empty, _)` returns None.
+    #[test]
+    fn zs_strchr_empty_returns_none() {
+        let empty: Vec<char> = vec![];
+        assert_eq!(ZS_strchr(&empty, 'a'), None);
+    }
+
+    /// c:233 — `ZS_memchr(empty, _, 0)` returns None.
+    #[test]
+    fn zs_memchr_empty_zero_n_returns_none() {
+        let empty: Vec<char> = vec![];
+        assert_eq!(ZS_memchr(&empty, 'a', 0), None);
+    }
+
+    /// c:242 — `ZS_width(empty)` returns 0.
+    #[test]
+    fn zs_width_empty_returns_zero() {
+        let empty: Vec<char> = vec![];
+        assert_eq!(ZS_width(&empty), 0);
+    }
+
+    /// c:256-303 — ZC_* classifiers pure for ASCII range.
+    #[test]
+    fn zc_classifiers_pure_for_ascii() {
+        for c in ['a', 'A', '0', ' ', '\t', '\n', '!'] {
+            let first_alpha = ZC_ialpha(c);
+            let first_digit = ZC_idigit(c);
+            for _ in 0..3 {
+                assert_eq!(ZC_ialpha(c), first_alpha,
+                    "ZC_ialpha({:?}) must be pure", c);
+                assert_eq!(ZC_idigit(c), first_digit,
+                    "ZC_idigit({:?}) must be pure", c);
+            }
+        }
+    }
 }
