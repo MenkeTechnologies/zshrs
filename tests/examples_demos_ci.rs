@@ -241,6 +241,31 @@ demo_test!(d82_brace_advanced, "82_brace_advanced.zsh");
 demo_test!(d83_history_modifiers, "83_history_modifiers.zsh");
 demo_test!(d84_subst_split_complex, "84_subst_split_complex.zsh");
 demo_test!(d85_zcalc_repl, "85_zcalc_repl.zsh");
+demo_test!(d86_setopt_exhaustive, "86_setopt_exhaustive.zsh");
+demo_test!(d87_read_advanced, "87_read_advanced.zsh");
+demo_test!(d88_printf_format_advanced, "88_printf_format_advanced.zsh");
+demo_test!(d89_regex_match, "89_regex_match.zsh");
+demo_test!(d90_type_whence, "90_type_whence.zsh");
+demo_test!(d91_hash_builtin, "91_hash_builtin.zsh");
+demo_test!(d92_arithmetic_for, "92_arithmetic_for.zsh");
+demo_test!(d93_nested_assoc, "93_nested_assoc.zsh");
+demo_test!(d94_case_advanced, "94_case_advanced.zsh");
+demo_test!(d95_fd_redirection, "95_fd_redirection.zsh");
+demo_test!(d96_strict_mode, "96_strict_mode.zsh");
+demo_test!(d97_indirection, "97_indirection.zsh");
+demo_test!(d98_coreutils_builtins, "98_coreutils_builtins.zsh");
+demo_test!(d99_negative_indexing, "99_negative_indexing.zsh");
+demo_test!(d100_zsh_features_summary, "100_zsh_features_summary.zsh");
+demo_test!(d101_subshell_grouping, "101_subshell_grouping.zsh");
+demo_test!(d102_function_introspection, "102_function_introspection.zsh");
+demo_test!(d103_exit_traps_advanced, "103_exit_traps_advanced.zsh");
+demo_test!(d104_strict_arithmetic, "104_strict_arithmetic.zsh");
+demo_test!(d105_dispatch_table, "105_dispatch_table.zsh");
+demo_test!(d106_pipe_chains, "106_pipe_chains.zsh");
+demo_test!(d107_eval_metaprogramming, "107_eval_metaprogramming.zsh");
+demo_test!(d108_globsubst_globalias, "108_globsubst_globalias.zsh");
+demo_test!(d109_arith_truth_tables, "109_arith_truth_tables.zsh");
+demo_test!(d110_misc_advanced, "110_misc_advanced.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -333,6 +358,31 @@ fn every_demo_in_dir_has_a_test() {
         "83_history_modifiers.zsh",
         "84_subst_split_complex.zsh",
         "85_zcalc_repl.zsh",
+        "86_setopt_exhaustive.zsh",
+        "87_read_advanced.zsh",
+        "88_printf_format_advanced.zsh",
+        "89_regex_match.zsh",
+        "90_type_whence.zsh",
+        "91_hash_builtin.zsh",
+        "92_arithmetic_for.zsh",
+        "93_nested_assoc.zsh",
+        "94_case_advanced.zsh",
+        "95_fd_redirection.zsh",
+        "96_strict_mode.zsh",
+        "97_indirection.zsh",
+        "98_coreutils_builtins.zsh",
+        "99_negative_indexing.zsh",
+        "100_zsh_features_summary.zsh",
+        "101_subshell_grouping.zsh",
+        "102_function_introspection.zsh",
+        "103_exit_traps_advanced.zsh",
+        "104_strict_arithmetic.zsh",
+        "105_dispatch_table.zsh",
+        "106_pipe_chains.zsh",
+        "107_eval_metaprogramming.zsh",
+        "108_globsubst_globalias.zsh",
+        "109_arith_truth_tables.zsh",
+        "110_misc_advanced.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
