@@ -839,4 +839,83 @@ mod tests {
         assert_eq!(S_IWUGO, S_IWUSR | S_IWGRP | S_IWOTH, "c:730");
         assert_eq!(S_IXUGO, S_IXUSR | S_IXGRP | S_IXOTH, "c:733");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/zsh_system.h size constants +
+    // file-mode constants + access mode + IS_DIRSEP additional sweep.
+    // c:298 PATH_MAX / c:307 ZSH_INITIAL_OPEN_MAX / c:313 OPEN_MAX /
+    // c:594 S_IFMT / c:818 IS_DIRSEP
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:298 — `PATH_MAX` is positive non-zero size.
+    #[test]
+    fn path_max_positive_non_zero() {
+        assert!(PATH_MAX > 0, "PATH_MAX must be > 0");
+    }
+
+    /// c:298 — `PATH_MAX` is at least 256 (legacy POSIX guarantee).
+    #[test]
+    fn path_max_at_least_256() {
+        assert!(PATH_MAX >= 256, "PATH_MAX must be ≥ 256 POSIX min");
+    }
+
+    /// c:307 — `ZSH_INITIAL_OPEN_MAX = 64` (canonical zsh default).
+    #[test]
+    fn zsh_initial_open_max_canonical_64() {
+        assert_eq!(ZSH_INITIAL_OPEN_MAX, 64, "canonical zsh default");
+    }
+
+    /// c:313 — `OPEN_MAX` ≥ `ZSH_INITIAL_OPEN_MAX` (start size never exceeds cap).
+    #[test]
+    fn open_max_at_least_initial() {
+        assert!(OPEN_MAX >= ZSH_INITIAL_OPEN_MAX,
+            "OPEN_MAX {} must be ≥ ZSH_INITIAL_OPEN_MAX {}",
+            OPEN_MAX, ZSH_INITIAL_OPEN_MAX);
+    }
+
+    /// c:569 — `DIGBUFSIZE` is positive (i64 decimal digits + sign + NUL).
+    #[test]
+    fn digbufsize_positive() {
+        assert!(DIGBUFSIZE > 0, "DIGBUFSIZE must hold at least 1 byte");
+    }
+
+    /// c:570 — `BDIGBUFSIZE` is positive (i64 binary digits + padding).
+    #[test]
+    fn bdigbufsize_positive() {
+        assert!(BDIGBUFSIZE > 0, "BDIGBUFSIZE must hold at least 1 byte");
+    }
+
+    /// c:570 — `BDIGBUFSIZE > DIGBUFSIZE` (binary needs more bytes than decimal).
+    #[test]
+    fn bdigbufsize_greater_than_digbufsize() {
+        assert!(BDIGBUFSIZE > DIGBUFSIZE,
+            "binary {} must need more bytes than decimal {}",
+            BDIGBUFSIZE, DIGBUFSIZE);
+    }
+
+    /// c:594 — `S_IFMT` is non-zero file-type mask.
+    #[test]
+    fn s_ifmt_is_nonzero() {
+        assert!(S_IFMT > 0);
+    }
+
+    /// c:818 — `IS_DIRSEP(NUL)` returns false (no NUL as separator).
+    #[test]
+    fn is_dirsep_nul_returns_false() {
+        assert!(!IS_DIRSEP('\0'));
+    }
+
+    /// c:818 — `IS_DIRSEP` only matches `/` (full ASCII sweep).
+    #[test]
+    fn is_dirsep_only_matches_slash_full_ascii() {
+        for b in 0u8..128 {
+            let c = b as char;
+            let r = IS_DIRSEP(c);
+            if c == '/' {
+                assert!(r, "'/' must match");
+            } else {
+                assert!(!r, "{:?} must NOT match", c);
+            }
+        }
+    }
 }
