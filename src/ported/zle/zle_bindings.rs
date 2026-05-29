@@ -1410,4 +1410,93 @@ mod tests {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_bindings.c
+    // c:37 getkeystring / c:191 bindkey_by_name / c:225 bindlistout /
+    // c:746 iwidget_lookup
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:37 — `getkeystring` returns Vec<u8> (compile-time type pin).
+    #[test]
+    fn getkeystring_returns_vec_u8_type() {
+        let _: Vec<u8> = getkeystring("abc");
+    }
+
+    /// c:37 — `getkeystring("")` returns empty Vec.
+    #[test]
+    fn getkeystring_empty_returns_empty_vec() {
+        assert_eq!(getkeystring(""), Vec::<u8>::new());
+    }
+
+    /// c:37 — `getkeystring("a")` single ASCII passes through unchanged.
+    #[test]
+    fn getkeystring_single_ascii_passthrough() {
+        assert_eq!(getkeystring("a"), vec![b'a']);
+    }
+
+    /// c:37 — `getkeystring(\\n)` produces 0x0a (newline).
+    #[test]
+    fn getkeystring_backslash_n_is_newline() {
+        assert_eq!(getkeystring(r"\n"), vec![b'\n']);
+    }
+
+    /// c:37 — `getkeystring(\\r)` produces 0x0d.
+    #[test]
+    fn getkeystring_backslash_r_is_carriage_return() {
+        assert_eq!(getkeystring(r"\r"), vec![b'\r']);
+    }
+
+    /// c:191 — `bindkey_by_name` returns bool (compile-time type pin).
+    #[test]
+    fn bindkey_by_name_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: bool = bindkey_by_name("emacs", "x", "self-insert");
+    }
+
+    /// c:225 — `bindlistout` returns Vec<(String, String)>.
+    #[test]
+    fn bindlistout_returns_vec_tuple_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Vec<(String, String)> = bindlistout("emacs");
+    }
+
+    /// c:225 — `bindlistout(unknown_keymap)` returns empty Vec.
+    #[test]
+    fn bindlistout_unknown_keymap_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = bindlistout("__never_real_keymap_xyz__");
+        assert!(r.is_empty(), "unknown keymap → empty");
+    }
+
+    /// c:225 — `bindlistout("")` returns empty Vec (no empty-name keymap).
+    #[test]
+    fn bindlistout_empty_keymap_name_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = bindlistout("");
+        assert!(r.is_empty(), "empty name → empty");
+    }
+
+    /// c:746 — `iwidget_lookup(unknown)` returns None.
+    #[test]
+    fn iwidget_lookup_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(iwidget_lookup("__never_a_real_widget_xyz__").is_none());
+    }
+
+    /// c:746 — `iwidget_lookup` is deterministic.
+    #[test]
+    fn iwidget_lookup_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = iwidget_lookup("self-insert").is_some();
+        for _ in 0..5 {
+            assert_eq!(iwidget_lookup("self-insert").is_some(), first);
+        }
+    }
 }
