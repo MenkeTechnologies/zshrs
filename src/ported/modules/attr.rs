@@ -955,4 +955,118 @@ mod tests {
         assert_eq!(cleanup_(std::ptr::null()), 0);
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/attr.c
+    // c:39 xgetxattr / c:92 xlistxattr / c:140 xsetxattr / c:210 xremovexattr
+    // c:254 bin_getattr / c:327 bin_setattr / c:367 bin_delattr / c:407 bin_listattr
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:39 — `xgetxattr` is deterministic for same input.
+    #[test]
+    fn xgetxattr_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 4];
+        let first = xgetxattr("/nonexistent_path", "user.x", &mut buf, 0);
+        for _ in 0..3 {
+            let mut buf2 = [0u8; 4];
+            let r = xgetxattr("/nonexistent_path", "user.x", &mut buf2, 0);
+            assert_eq!(r.signum(), first.signum(),
+                "xgetxattr must be deterministic in sign");
+        }
+    }
+
+    /// c:39 — `xgetxattr` with symlink flag = 1 also returns negative for
+    /// nonexistent path.
+    #[test]
+    fn xgetxattr_with_symlink_flag_nonexistent_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 4];
+        let r = xgetxattr("/nonexistent_path", "user.x", &mut buf, 1);
+        assert!(r < 0, "symlink mode on nonexistent path → negative");
+    }
+
+    /// c:92 — `xlistxattr` with symlink flag also returns negative for
+    /// nonexistent path.
+    #[test]
+    fn xlistxattr_with_symlink_flag_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 4];
+        assert!(xlistxattr("/nonexistent_path", &mut buf, 1) < 0);
+    }
+
+    /// c:140 — `xsetxattr` with all-zero buf works (empty value set).
+    /// On nonexistent path still fails.
+    #[test]
+    fn xsetxattr_empty_value_on_nonexistent_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let r = xsetxattr("/nonexistent_path", "user.empty", &[], 0, 0);
+        assert!(r < 0, "nonexistent path → negative regardless of value");
+    }
+
+    /// c:140 — `xsetxattr` with various flags doesn't panic on bad path.
+    #[test]
+    fn xsetxattr_various_flags_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        for flag in [0i32, 1, 2, 0xff] {
+            let _ = xsetxattr("/nonexistent_path", "user.x", b"val", flag, 0);
+        }
+    }
+
+    /// c:210 — `xremovexattr` with both symlink flag values doesn't panic.
+    #[test]
+    fn xremovexattr_both_symlink_modes_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = xremovexattr("/nonexistent_path", "user.x", 0);
+        let _ = xremovexattr("/nonexistent_path", "user.x", 1);
+    }
+
+    /// c:254 — `bin_getattr` empty path arg → nonzero.
+    #[test]
+    fn bin_getattr_empty_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_getattr("getattr", &["".into(), "user.x".into()], &ops, 0);
+        assert_ne!(r, 0, "empty path → error");
+    }
+
+    /// c:407 — `bin_listattr` empty path returns nonzero.
+    #[test]
+    fn bin_listattr_empty_path_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_listattr("listattr", &["".into()], &ops, 0);
+        assert_ne!(r, 0, "empty path → error");
+    }
+
+    /// c:254-407 — all four attr builtin return values fit in u8 exit-code
+    /// range (0..256).
+    #[test]
+    fn attr_builtins_return_in_exit_code_range() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for r in [
+            bin_getattr("getattr", &["/tmp".into(), "user.x".into()], &ops, 0),
+            bin_setattr("setattr", &["/tmp".into(), "user.x".into(), "v".into()], &ops, 0),
+            bin_listattr("listattr", &["/tmp".into()], &ops, 0),
+        ] {
+            assert!((0..256).contains(&r),
+                "exit code must fit in u8 range, got {}", r);
+        }
+    }
+
+    /// c:507-... — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn attr_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
 }
