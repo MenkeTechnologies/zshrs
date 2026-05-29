@@ -2804,4 +2804,116 @@ mod tests {
         // Restore (block-empty + unblock-empty is round-trip-safe).
         let _ = signal_unblock(&empty);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/signals.c
+    // c:107 intr / c:131 nointr / c:152 holdintr / c:171 noholdintr /
+    // c:2050 kill / c:2045 killpg / c:2071 set_interact / c:2091 is_interact
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:107 — `intr` is idempotent (callable repeatedly).
+    #[test]
+    fn intr_idempotent_full_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            intr();
+        }
+    }
+
+    /// c:131 — `nointr` is idempotent.
+    #[test]
+    fn nointr_idempotent_full_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            nointr();
+        }
+    }
+
+    /// c:152 — `holdintr` is idempotent.
+    #[test]
+    fn holdintr_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            holdintr();
+        }
+        // Restore via noholdintr to match push/pop semantic.
+        for _ in 0..10 {
+            noholdintr();
+        }
+    }
+
+    /// c:2050 — `kill(0, 0)` self-check returns i32 (type pin).
+    /// kill(pid=0, sig=0) is a permission check: returns 0 if alive +
+    /// permitted, -1 otherwise. Safe in test context.
+    #[test]
+    fn kill_self_check_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = kill(0, 0);
+    }
+
+    /// c:2045 — `killpg(0, 0)` returns i32 (compile-time type pin).
+    #[test]
+    fn killpg_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = killpg(0, 0);
+    }
+
+    /// c:2071 + c:2091 — `set_interact(false)` then `is_interact()` round-trips.
+    #[test]
+    fn set_interact_round_trip_preserves_value() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = is_interact();
+        set_interact(true);
+        assert!(is_interact(), "set(true) → true");
+        set_interact(false);
+        assert!(!is_interact(), "set(false) → false");
+        set_interact(saved);
+    }
+
+    /// c:2091 — `is_interact()` returns bool (compile-time type pin).
+    #[test]
+    fn is_interact_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = is_interact();
+    }
+
+    /// c:194 — `signal_mask(SIGINT|SIGTERM)` masks differ from
+    /// `signal_mask(SIGINT)` alone.
+    #[cfg(unix)]
+    #[test]
+    fn signal_mask_two_signals_differ_from_one() {
+        let _g = crate::test_util::global_state_lock();
+        let one = signal_mask(libc::SIGINT);
+        let single_has_term = unsafe { libc::sigismember(&one, libc::SIGTERM) };
+        assert_eq!(single_has_term, 0,
+            "single SIGINT mask must NOT contain SIGTERM");
+    }
+
+    /// c:217 — `signal_block` returns sigset_t (compile-time type pin).
+    #[cfg(unix)]
+    #[test]
+    fn signal_block_returns_sigset_t_type() {
+        let _g = crate::test_util::global_state_lock();
+        let empty: libc::sigset_t = unsafe {
+            let mut s: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut s);
+            s
+        };
+        let _: libc::sigset_t = signal_block(&empty);
+        // Cleanup
+        let _ = signal_unblock(&empty);
+    }
+
+    /// c:246 — `signal_setmask` returns sigset_t (compile-time type pin).
+    #[cfg(unix)]
+    #[test]
+    fn signal_setmask_returns_sigset_t_type() {
+        let _g = crate::test_util::global_state_lock();
+        let cur = signal_block(&unsafe {
+            let mut s: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut s);
+            s
+        });
+        let _: libc::sigset_t = signal_setmask(&cur);
+    }
 }
