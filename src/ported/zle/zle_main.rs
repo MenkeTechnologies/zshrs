@@ -3086,4 +3086,119 @@ mod tests {
         let n = KUNGETBUF.lock().unwrap().len();
         assert_eq!(n, 2, "2 bytes pushed → KUNGETBUF len 2");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_main.c
+    // c:131 ungetbyte / c:142 ungetbytes / c:169 ungetbytes_unmeta /
+    // c:1142 whereis / c:1173 recursiveedit / c:1280 resetprompt /
+    // c:439 getfullchar / c:712 execimmortal / c:550 redrawhook
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:131 — `ungetbyte` push appends a single byte.
+    #[test]
+    fn ungetbyte_pushes_single_byte() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        KUNGETBUF.lock().unwrap().clear();
+        ungetbyte(b'X');
+        assert_eq!(KUNGETBUF.lock().unwrap().len(), 1);
+    }
+
+    /// c:142 — `ungetbytes(empty)` is no-op.
+    #[test]
+    fn ungetbytes_empty_no_op() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        KUNGETBUF.lock().unwrap().clear();
+        ungetbytes(b"");
+        assert_eq!(KUNGETBUF.lock().unwrap().len(), 0);
+    }
+
+    /// c:169 — `ungetbytes_unmeta(empty)` is no-op.
+    #[test]
+    fn ungetbytes_unmeta_empty_no_op() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        KUNGETBUF.lock().unwrap().clear();
+        ungetbytes_unmeta(b"");
+        assert_eq!(KUNGETBUF.lock().unwrap().len(), 0);
+    }
+
+    /// c:142 — `ungetbytes` repeated pushes accumulate.
+    #[test]
+    fn ungetbytes_repeated_pushes_accumulate() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        KUNGETBUF.lock().unwrap().clear();
+        ungetbytes(b"A");
+        ungetbytes(b"BC");
+        ungetbytes(b"DEF");
+        assert_eq!(KUNGETBUF.lock().unwrap().len(), 6);
+    }
+
+    /// c:1142 — `whereis(unknown)` returns empty Vec.
+    #[test]
+    fn whereis_unknown_widget_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = whereis("__definitely_not_a_widget_xyz__");
+        assert!(r.is_empty(), "unknown widget → empty");
+    }
+
+    /// c:1142 — `whereis` returns Vec<String> (type pin).
+    #[test]
+    fn whereis_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Vec<String> = whereis("any");
+    }
+
+    /// c:1142 — `whereis` is deterministic.
+    #[test]
+    fn whereis_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = whereis("unknown_xyz");
+        for _ in 0..5 {
+            assert_eq!(whereis("unknown_xyz"), first);
+        }
+    }
+
+    /// c:1280 — `resetprompt` is idempotent / safe.
+    #[test]
+    fn resetprompt_idempotent_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            resetprompt();
+        }
+    }
+
+    /// c:1189 — `reexpandprompt` is idempotent / safe.
+    #[test]
+    fn reexpandprompt_idempotent_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            reexpandprompt();
+        }
+    }
+
+    /// c:550 — `redrawhook` is idempotent / safe.
+    #[test]
+    fn redrawhook_idempotent_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            redrawhook();
+        }
+    }
+
+    /// c:439 — `getfullchar` returns Option<char> (type pin).
+    #[test]
+    fn getfullchar_returns_option_char_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Option<char> = getfullchar(false);
+    }
 }
