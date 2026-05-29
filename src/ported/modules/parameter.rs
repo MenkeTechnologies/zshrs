@@ -4967,4 +4967,94 @@ mod paramtypestr_table_tests {
         let v = funcsourcetracegetfn(std::ptr::null_mut());
         assert!(v.is_empty());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/parameter.c accessors.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:911 — `patcharsgetfn` returns Vec (may be empty if getpatchars
+    /// stub isn't populated). Pin: no panic + return type Vec<String>.
+    #[test]
+    fn patcharsgetfn_returns_vec_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _v: Vec<String> = patcharsgetfn(std::ptr::null_mut());
+    }
+
+    /// c:917 — `dispatcharsgetfn` returns Vec (no panic).
+    #[test]
+    fn dispatcharsgetfn_returns_vec_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _v: Vec<String> = dispatcharsgetfn(std::ptr::null_mut());
+    }
+
+    /// c:1255 — `pmjobtext(_, -1)` for out-of-range job returns empty.
+    #[test]
+    fn pmjobtext_out_of_range_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let s = pmjobtext(std::ptr::null_mut(), 99999);
+        assert!(s.is_empty(), "out-of-range job → empty");
+    }
+
+    /// c:1340 — `pmjobstate(_, -1)` for invalid job returns empty.
+    #[test]
+    fn pmjobstate_out_of_range_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let s = pmjobstate(std::ptr::null_mut(), 99999);
+        assert!(s.is_empty());
+    }
+
+    /// c:1277 — `getpmjobtext` for non-numeric name returns None or
+    /// PM_UNSET param (no panic).
+    #[test]
+    fn getpmjobtext_non_numeric_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = getpmjobtext(std::ptr::null_mut(), "not_a_number");
+    }
+
+    /// c:1277 — `getpmjobtext` empty name no panic.
+    #[test]
+    fn getpmjobtext_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = getpmjobtext(std::ptr::null_mut(), "");
+    }
+
+    /// c:1083 — `getpmmodule(_, "")` no panic.
+    #[test]
+    fn getpmmodule_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = getpmmodule(std::ptr::null_mut(), "");
+    }
+
+    /// c:1083 — `getpmmodule` unknown module name → returns Some
+    /// (PM_UNSET) or None per C convention.
+    #[test]
+    fn getpmmodule_unknown_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = getpmmodule(std::ptr::null_mut(), "zshrs_never_real_module_xyz");
+    }
+
+    /// c:1677 — `getpmoption(_, "")` no panic.
+    #[test]
+    fn getpmoption_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = getpmoption(std::ptr::null_mut(), "");
+    }
+
+    /// c:1947 — `dirsgetfn` returns the dirstack (may be empty).
+    #[test]
+    fn dirsgetfn_returns_vec_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = dirsgetfn(std::ptr::null_mut());
+    }
+
+    /// c:911 — patcharsgetfn deterministic (whatever it returns must
+    /// be consistent across calls).
+    #[test]
+    fn patcharsgetfn_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = patcharsgetfn(std::ptr::null_mut());
+        for _ in 0..3 {
+            assert_eq!(patcharsgetfn(std::ptr::null_mut()), first);
+        }
+    }
 }
