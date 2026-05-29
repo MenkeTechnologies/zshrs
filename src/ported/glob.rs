@@ -1253,7 +1253,11 @@ pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> {
         // c:1090
         // c:1092 — `tt = itype_end(s, IIDENT, 0);`
         // c:1093-1097 — `if (tt == s) { zerr("missing identifier after `+'"); return NULL; }`
-        let tt = crate::ported::utils::itype_end(s, false);
+        let tt = crate::ported::utils::itype_end(
+            s,
+            crate::ported::ztype_h::IIDENT as u32,
+            false,
+        );
         if tt == 0 {
             // c:1093
             zerr("missing identifier after `+'"); // c:1095

@@ -664,7 +664,12 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
             // a simpler signature; INAMESPC matches identifier-name
             // chars (alpha/digit/_).
             let _ = INAMESPC;
-            let span = crate::ported::utils::itype_end(&s[e..], false);
+            // c:zle_tricky.c:579 — `e = itype_end(e, INAMESPC, 0);`
+            let span = crate::ported::utils::itype_end(
+                &s[e..],
+                crate::ported::ztype_h::INAMESPC,
+                false,
+            );
             e += span;
         }
     }
