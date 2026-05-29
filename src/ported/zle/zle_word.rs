@@ -1912,4 +1912,111 @@ mod tests {
             assert!(cls >= 0 && cls <= 3, "wordclass({:?})={} out of range", c, cls);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_word.c
+    // c:82 wordclass / c:106 forwardword / c:510 backwardword /
+    // c:974 upcaseword / c:1015 downcaseword / c:1054 capitalizeword /
+    // c:1198 transposewords
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:82 — `wordclass` returns i32 (compile-time type pin).
+    #[test]
+    fn wordclass_returns_i32_type() {
+        let _: i32 = wordclass('a');
+    }
+
+    /// c:82 — `wordclass` is pure on full ASCII range.
+    #[test]
+    fn wordclass_pure_full_ascii_range() {
+        for b in 0u8..128 {
+            let c = b as char;
+            let first = wordclass(c);
+            for _ in 0..3 {
+                assert_eq!(wordclass(c), first,
+                    "wordclass(0x{:02x}) must be pure", b);
+            }
+        }
+    }
+
+    /// c:106 — `forwardword(empty)` return in u8 exit-code range.
+    #[test]
+    fn forwardword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = forwardword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:510 — `backwardword(empty)` return in u8 exit-code range.
+    #[test]
+    fn backwardword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = backwardword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:974 — `upcaseword(empty)` return in u8 exit-code range.
+    #[test]
+    fn upcaseword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = upcaseword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:1015 — `downcaseword(empty)` return in u8 exit-code range.
+    #[test]
+    fn downcaseword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = downcaseword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:1054 — `capitalizeword(empty)` return in u8 exit-code range.
+    #[test]
+    fn capitalizeword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = capitalizeword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:1198 — `transposewords(empty)` return in u8 exit-code range.
+    #[test]
+    fn transposewords_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = transposewords(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:925 — `backwardkillword(empty)` return in u8 exit-code range.
+    #[test]
+    fn backwardkillword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = backwardkillword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:1108 — `deleteword(empty)` return in u8 exit-code range.
+    #[test]
+    fn deleteword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = deleteword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:1153 — `killword(empty)` return in u8 exit-code range.
+    #[test]
+    fn killword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = killword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
 }
