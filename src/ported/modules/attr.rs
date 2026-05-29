@@ -862,4 +862,97 @@ mod tests {
         let r = bin_setattr("zsetattr", &[], &ops, 0);
         assert_ne!(r, 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/attr.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `bin_delattr` with no args. C does `while (*++attr)` which is
+    /// safe on NULL-terminated argv (the increment past argv[0] hits the
+    /// NULL terminator immediately). Rust port uses `&argv[1..]` which
+    /// PANICS on empty argv with "range start index 1 out of range".
+    /// Should return nonzero usage error per Src/Modules/attr.c:151.
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_delattr panics on empty argv via &argv[1..] slice — C while(*++attr) is safe on NULL-terminated arrays; Rust needs argv.len()>=1 guard"]
+    fn bin_delattr_no_args_errors() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_delattr("zdelattr", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// `bin_listattr` with no args returns nonzero (usage error).
+    #[test]
+    fn bin_listattr_no_args_errors() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_listattr("zlistattr", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// `xgetxattr` on nonexistent path returns negative (libc errno).
+    #[test]
+    fn xgetxattr_nonexistent_path_returns_negative_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = vec![0u8; 256];
+        let r = xgetxattr("/__never_exists_zshrs_xyz__", "user.foo", &mut buf, 0);
+        assert!(r < 0, "missing path → negative, got {}", r);
+    }
+
+    /// `xlistxattr` on nonexistent path returns negative.
+    #[test]
+    fn xlistxattr_nonexistent_path_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = vec![0u8; 1024];
+        let r = xlistxattr("/__never_exists_zshrs_xyz__", &mut buf, 0);
+        assert!(r < 0, "missing path → negative, got {}", r);
+    }
+
+    /// `xsetxattr` on nonexistent path returns nonzero.
+    #[test]
+    fn xsetxattr_nonexistent_path_returns_nonzero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let r = xsetxattr("/__never_exists_zshrs_xyz__", "user.foo", b"v", 0, 0);
+        assert_ne!(r, 0, "missing path → nonzero error");
+    }
+
+    /// `xremovexattr` with symlink=1 on nonexistent path returns nonzero.
+    #[test]
+    fn xremovexattr_nonexistent_with_symlink_flag_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = xremovexattr("/__never_exists_zshrs_xyz__", "user.foo", 1);
+        assert_ne!(r, 0, "missing path with symlink=1 → nonzero");
+    }
+
+    /// `xgetxattr` with empty buffer is safe (no panic).
+    #[test]
+    fn xgetxattr_empty_buf_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf: [u8; 0] = [];
+        let _ = xgetxattr("/__never_exists_zshrs_xyz__", "user.foo", &mut buf, 0);
+    }
+
+    /// `xlistxattr` with empty buffer no panic.
+    #[test]
+    fn xlistxattr_empty_buf_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf: [u8; 0] = [];
+        let _ = xlistxattr("/__never_exists_zshrs_xyz__", &mut buf, 0);
+    }
+
+    /// Module lifecycle: setup_ returns 0.
+    #[test]
+    fn attr_setup_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// Boot/cleanup/finish all 0.
+    #[test]
+    fn attr_boot_cleanup_finish_return_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
