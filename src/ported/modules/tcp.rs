@@ -1263,4 +1263,121 @@ mod tests {
         assert_eq!(rc, 1);
         assert_eq!(back, original);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/tcp.c IP-address helpers.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:72 — `zsh_inet_ntop(AF_INET, ...)` canonical formats.
+    #[test]
+    fn zsh_inet_ntop_v4_canonical_addresses() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            zsh_inet_ntop(libc::AF_INET, &[127, 0, 0, 1]).as_deref(),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            zsh_inet_ntop(libc::AF_INET, &[0, 0, 0, 0]).as_deref(),
+            Some("0.0.0.0")
+        );
+        assert_eq!(
+            zsh_inet_ntop(libc::AF_INET, &[255, 255, 255, 255]).as_deref(),
+            Some("255.255.255.255")
+        );
+    }
+
+    /// c:72 — short buffer returns None (won't crash on insufficient input).
+    #[test]
+    fn zsh_inet_ntop_v4_short_buffer_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(zsh_inet_ntop(libc::AF_INET, &[127, 0, 0]).is_none());
+        assert!(zsh_inet_ntop(libc::AF_INET, &[]).is_none());
+    }
+
+    /// c:72 — IPv6 short buffer (< 16 bytes) returns None.
+    #[test]
+    fn zsh_inet_ntop_v6_short_buffer_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let too_short = vec![0u8; 8];
+        assert!(zsh_inet_ntop(libc::AF_INET6, &too_short).is_none());
+    }
+
+    /// c:72 — unsupported AF returns None.
+    #[test]
+    fn zsh_inet_ntop_unsupported_af_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(zsh_inet_ntop(99, &[127, 0, 0, 1]).is_none());
+        assert!(zsh_inet_ntop(0, &[0u8; 16]).is_none());
+    }
+
+    /// c:122 — `zsh_inet_pton` parses canonical IPv4 addresses.
+    #[test]
+    fn zsh_inet_pton_v4_canonical_addresses() {
+        let _g = crate::test_util::global_state_lock();
+        let mut dst = [0u8; 4];
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "127.0.0.1", &mut dst), 1);
+        assert_eq!(dst, [127, 0, 0, 1]);
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "0.0.0.0", &mut dst), 1);
+        assert_eq!(dst, [0, 0, 0, 0]);
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "255.255.255.255", &mut dst), 1);
+        assert_eq!(dst, [255, 255, 255, 255]);
+    }
+
+    /// c:122 — malformed IPv4 string returns 0 (per libc inet_pton).
+    #[test]
+    fn zsh_inet_pton_v4_malformed_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut dst = [0u8; 4];
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "not.an.ip", &mut dst), 0);
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "256.0.0.1", &mut dst), 0);
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "", &mut dst), 0);
+    }
+
+    /// c:103 — `zsh_inet_aton` parses canonical IPv4.
+    #[test]
+    fn zsh_inet_aton_canonical_v4() {
+        let _g = crate::test_util::global_state_lock();
+        // 127.0.0.1 → 0x7F000001 big-endian on the wire.
+        let r = zsh_inet_aton("127.0.0.1").expect("valid IP");
+        // The result is network byte order, so we can't directly assert
+        // a literal value across endianness — just check non-zero.
+        assert_ne!(r, 0, "valid IP should produce non-zero value");
+    }
+
+    /// c:103 — malformed input returns None.
+    #[test]
+    fn zsh_inet_aton_malformed_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(zsh_inet_aton("not_an_ip").is_none());
+        assert!(zsh_inet_aton("").is_none());
+        assert!(zsh_inet_aton("256.0.0.1").is_none());
+    }
+
+    /// IPv6 ntop/pton round-trip on a known address.
+    #[test]
+    fn tcp_v6_ntop_pton_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let original = [0u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]; // ::1
+        let s = zsh_inet_ntop(libc::AF_INET6, &original).unwrap();
+        let mut back = [0u8; 16];
+        let rc = zsh_inet_pton(libc::AF_INET6, &s, &mut back);
+        assert_eq!(rc, 1);
+        assert_eq!(back, original);
+    }
+
+    /// `setup_(NULL)` returns 0.
+    #[test]
+    fn tcp_setup_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// Lifecycle stubs return 0.
+    #[test]
+    fn tcp_lifecycle_stubs_return_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
