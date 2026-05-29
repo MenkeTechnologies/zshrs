@@ -670,11 +670,17 @@ pub fn viopenlinebelow() -> i32 {
     // C body (c:700-707): `zlecs = findeol(); spaceinline(1);
     //                     zleline[zlecs++] = '\\n'; startvitext(1);
     //                     clearlist = 1; return 0`.
-    ZLECS.store(findeol(), SeqCst);
-    ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), '\n');
-    ZLECS.fetch_add(1, SeqCst);
-    ZLELL.fetch_add(1, SeqCst);
-    startvitext(1);
+    use crate::ported::zle::zle_utils::spaceinline;
+    ZLECS.store(findeol(), SeqCst); // c:701
+    spaceinline(1); // c:702
+    {
+        let cs = ZLECS.load(SeqCst);
+        if let Some(slot) = ZLELINE.lock().unwrap().get_mut(cs) {
+            *slot = '\n'; // c:703 `zleline[zlecs++] = '\n'`
+        }
+    }
+    ZLECS.fetch_add(1, SeqCst); // c:703 post-inc
+    startvitext(1); // c:704
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0
 }
@@ -685,10 +691,16 @@ pub fn viopenlineabove() -> i32 {
     // C body (c:712-718): `zlecs = findbol(); spaceinline(1);
     //                     zleline[zlecs] = '\\n'; startvitext(1);
     //                     clearlist = 1; return 0`.
-    ZLECS.store(findbol(), SeqCst);
-    ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), '\n');
-    ZLELL.fetch_add(1, SeqCst);
-    startvitext(1);
+    use crate::ported::zle::zle_utils::spaceinline;
+    ZLECS.store(findbol(), SeqCst); // c:713
+    spaceinline(1); // c:714
+    {
+        let cs = ZLECS.load(SeqCst);
+        if let Some(slot) = ZLELINE.lock().unwrap().get_mut(cs) {
+            *slot = '\n'; // c:715
+        }
+    }
+    startvitext(1); // c:716
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0
 }
@@ -829,18 +841,38 @@ pub fn virepeatchange() -> i32 {
 /// Port of `viindent(UNUSED(char **args))` from Src/Zle/zle_vi.c:820.
 pub fn viindent() -> i32 {
     // c:820
-    // C body (c:822-855): startvichange(1); insert SHIFTWIDTH spaces
-    //                    at start of each line in range. Default
-    //                    SHIFTWIDTH = 4 (per zsh's iwidgets.list).
+    // C body (c:822-855): startvichange(1); insert tab at start of
+    //                    each line in range. Iterates with findeol+1.
+    use crate::ported::zle::zle_utils::spaceinline;
     startvichange(1);
-    let bol = findbol();
-    for _ in 0..4 {
-        ZLELINE.lock().unwrap().insert(bol, ' ');
-        ZLELL.fetch_add(1, SeqCst);
+    let saved_cs = ZLECS.load(SeqCst);
+    ZLECS.store(findbol(), SeqCst);
+    // c:842-849 — `while (zlecs <= c2 + 1) { if (zleline[zlecs] == '\n')
+    //                ++zlecs; else { spaceinline(1); zleline[zlecs] = '\t';
+    //                zlecs = findeol() + 1; } }`.
+    let line_len = ZLELL.load(SeqCst);
+    while ZLECS.load(SeqCst) < line_len {
+        let at_nl = ZLELINE
+            .lock()
+            .unwrap()
+            .get(ZLECS.load(SeqCst))
+            .copied()
+            == Some('\n');
+        if at_nl {
+            ZLECS.fetch_add(1, SeqCst); // c:844
+            continue;
+        }
+        spaceinline(1); // c:843
+        if let Some(slot) = ZLELINE.lock().unwrap().get_mut(ZLECS.load(SeqCst)) {
+            *slot = '\t'; // c:844
+        }
+        let eol = findeol();
+        if eol >= ZLELL.load(SeqCst) {
+            break;
+        }
+        ZLECS.store(eol + 1, SeqCst); // c:845
     }
-    if ZLECS.load(SeqCst) >= bol {
-        ZLECS.fetch_add(4, SeqCst);
-    }
+    ZLECS.store(saved_cs, SeqCst);
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0
 }
