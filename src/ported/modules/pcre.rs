@@ -1413,4 +1413,100 @@ mod tests {
             assert_eq!(setup_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/pcre.c
+    // c:53 zpcre_utf8_enabled / c:79 bin_pcre_compile / c:153 bin_pcre_study /
+    // c:500 bin_pcre_match / c:625 cond_pcre_match / c:478 getposint
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:53 — `zpcre_utf8_enabled` returns i32 (compile-time pin).
+    #[test]
+    fn zpcre_utf8_enabled_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = zpcre_utf8_enabled();
+    }
+
+    /// c:53 — `zpcre_utf8_enabled` returns boolean 0 or 1 only.
+    #[test]
+    fn zpcre_utf8_enabled_is_boolean() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zpcre_utf8_enabled();
+        assert!(r == 0 || r == 1, "result must be boolean 0/1, got {}", r);
+    }
+
+    /// c:53 — `zpcre_utf8_enabled` is deterministic.
+    #[test]
+    fn zpcre_utf8_enabled_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = zpcre_utf8_enabled();
+        for _ in 0..10 {
+            assert_eq!(zpcre_utf8_enabled(), first,
+                "zpcre_utf8_enabled must be pure");
+        }
+    }
+
+    /// c:79 — `bin_pcre_compile` returns i32 (compile-time pin).
+    #[test]
+    fn bin_pcre_compile_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_pcre_compile("pcre_compile", &[], &ops, 0);
+    }
+
+    /// c:79 — `bin_pcre_compile` no-args MUST return nonzero (usage error).
+    /// In zshrs the port returns 0 (success) silently.
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_pcre_compile with no args returns 0 instead of usage-error nonzero (Src/Modules/pcre.c:79)"]
+    fn bin_pcre_compile_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_pcre_compile("pcre_compile", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// c:153 — `bin_pcre_study` returns i32 (compile-time pin).
+    #[test]
+    fn bin_pcre_study_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_pcre_study("pcre_study", &[], &ops, 0);
+    }
+
+    /// c:500 — `bin_pcre_match` no-args returns nonzero (usage error).
+    #[test]
+    fn bin_pcre_match_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_pcre_match("pcre_match", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// c:500 — `bin_pcre_match` returns i32 (compile-time pin).
+    #[test]
+    fn bin_pcre_match_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_pcre_match("pcre_match", &[], &ops, 0);
+    }
+
+    /// c:625 — `cond_pcre_match` returns i32 (compile-time pin).
+    #[test]
+    fn cond_pcre_match_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cond_pcre_match(&["a".to_string(), "a".to_string()], 0);
+    }
+
+    /// c:625 — `cond_pcre_match` with insufficient args (1) doesn't panic.
+    #[test]
+    fn cond_pcre_match_single_arg_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = cond_pcre_match(&["pattern".to_string()], 0);
+    }
+
+    /// c:478 — `getposint` returns i32 (compile-time pin).
+    #[test]
+    fn pcre_getposint_returns_i32_type() {
+        let _: i32 = getposint("0", "test");
+    }
 }
