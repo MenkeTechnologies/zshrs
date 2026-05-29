@@ -609,4 +609,108 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         crate::regex_module::zregex_regerrwarn("test", "bad regex");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/regex.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:60 — `zcond_regex_match([])` returns 0 (insufficient args).
+    #[test]
+    fn zcond_regex_match_empty_args_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcond_regex_match(&[], ZREGEX_EXTENDED), 0);
+    }
+
+    /// c:60 — `zcond_regex_match(["x"])` returns 0 (only 1 arg).
+    #[test]
+    fn zcond_regex_match_single_arg_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcond_regex_match(&["x"], ZREGEX_EXTENDED), 0);
+    }
+
+    /// c:89 — empty pattern is rejected (POSIX REG_EMPTY equivalent).
+    #[test]
+    fn zcond_regex_match_empty_pattern_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcond_regex_match(&["hello", ""], ZREGEX_EXTENDED), 0);
+    }
+
+    /// c:68 — `zcond_regex_match` with bad id returns 0 (DPUTS path).
+    #[test]
+    fn zcond_regex_match_bad_id_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // 999 is not ZREGEX_EXTENDED — must hit the DPUTS branch.
+        assert_eq!(zcond_regex_match(&["hello", "h"], 999), 0);
+    }
+
+    /// c:74 — case-sensitive match by default (CASEMATCH typically set
+    /// to on at startup). Pin: 'A' against 'a' doesn't match unless
+    /// CASEMATCH is unset.
+    #[test]
+    fn zcond_regex_match_exact_lower_matches_lower() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcond_regex_match(&["abc", "abc"], ZREGEX_EXTENDED), 1);
+    }
+
+    /// c:74 — anchored pattern works (^h matches at start).
+    #[test]
+    fn zcond_regex_match_anchored_start() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcond_regex_match(&["hello", "^h"], ZREGEX_EXTENDED), 1);
+        assert_eq!(zcond_regex_match(&["xhello", "^h"], ZREGEX_EXTENDED), 0);
+    }
+
+    /// c:74 — anchored end pattern works (o$ matches at end).
+    #[test]
+    fn zcond_regex_match_anchored_end() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcond_regex_match(&["hello", "o$"], ZREGEX_EXTENDED), 1);
+        assert_eq!(zcond_regex_match(&["hellox", "o$"], ZREGEX_EXTENDED), 0);
+    }
+
+    /// c:74 — character class matches.
+    #[test]
+    fn zcond_regex_match_character_class() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcond_regex_match(&["abc123", "[0-9]+"], ZREGEX_EXTENDED), 1);
+        assert_eq!(zcond_regex_match(&["abcdef", "[0-9]+"], ZREGEX_EXTENDED), 0);
+    }
+
+    /// c:97 — invalid regex pattern returns 0 (compile fail).
+    #[test]
+    fn zcond_regex_match_invalid_pattern_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // Unclosed bracket — POSIX ERE rejects.
+        assert_eq!(zcond_regex_match(&["hello", "[abc"], ZREGEX_EXTENDED), 0);
+    }
+
+    /// c:54 — `zcond_regex_match` is deterministic for fixed input.
+    #[test]
+    fn zcond_regex_match_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let inputs: [(&[&str], i32, i32); 3] = [
+            (&["abc", "b"], ZREGEX_EXTENDED, 1),
+            (&["xyz", "abc"], ZREGEX_EXTENDED, 0),
+            (&["hello", "^h"], ZREGEX_EXTENDED, 1),
+        ];
+        for (args, id, expected) in inputs.iter() {
+            for _ in 0..5 {
+                assert_eq!(zcond_regex_match(args, *id), *expected);
+            }
+        }
+    }
+
+    /// Lifecycle (c:215/234/242/248) split per-hook.
+    #[test]
+    fn regex_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(crate::regex_module::setup_(std::ptr::null()), 0);
+    }
+
+    /// c:234 — boot_(NULL) = 0.
+    #[test]
+    fn regex_boot_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(crate::regex_module::boot_(std::ptr::null()), 0);
+    }
 }
