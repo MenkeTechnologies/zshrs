@@ -5462,4 +5462,88 @@ mod tests {
         let r = zfargstring("STOR", &["file.txt"]);
         assert!(!r.starts_with(' '), "no leading space: {:?}", r);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zftp.c sessions + lifecycle.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:2814 — `newsession("name")` returns Box<zftp_session> with
+    /// name preserved.
+    #[test]
+    fn newsession_returns_session_with_name() {
+        let sess = newsession("test_sess_xyz_zshrs");
+        assert_eq!(sess.name, "test_sess_xyz_zshrs");
+    }
+
+    /// c:2816 — fresh session has dfd = -1 (no data fd open).
+    #[test]
+    fn newsession_fresh_has_no_data_fd() {
+        let sess = newsession("test_dfd_xyz");
+        assert_eq!(sess.dfd, -1, "fresh session must have dfd=-1");
+    }
+
+    /// c:2817 — fresh session has empty params.
+    #[test]
+    fn newsession_fresh_has_empty_params() {
+        let sess = newsession("test_params_xyz");
+        assert!(sess.params.is_empty(), "fresh params must be empty");
+    }
+
+    /// c:2806 — newsession called twice with same name doesn't duplicate
+    /// the registered session.
+    #[test]
+    fn newsession_idempotent_for_same_name() {
+        let _g = crate::test_util::global_state_lock();
+        // Get baseline count.
+        let _sess1 = newsession("zshrs_dup_test_session");
+        let count1 = zftp_state().lock().unwrap().sessions.len();
+        let _sess2 = newsession("zshrs_dup_test_session");
+        let count2 = zftp_state().lock().unwrap().sessions.len();
+        assert_eq!(count1, count2, "duplicate newsession must not grow table");
+    }
+
+    /// c:3090 — `zftp_close(_, [], _)` no panic.
+    #[test]
+    fn zftp_close_empty_args_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = zftp_close("close", &[], 0);
+    }
+
+    /// c:3200 — `zftp_rmsession(_, [], _)` no panic.
+    #[test]
+    fn zftp_rmsession_empty_args_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = zftp_rmsession("rmsession", &[], 0);
+    }
+
+    /// c:2937 — `zftp_mkdir(_, [], _)` returns nonzero (needs arg).
+    #[test]
+    fn zftp_mkdir_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zftp_mkdir("mkdir", &[], 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// c:2958 — `zftp_rename(_, [], _)` returns nonzero.
+    #[test]
+    fn zftp_rename_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zftp_rename("rename", &[], 0);
+        assert_ne!(r, 0, "no args → usage error");
+    }
+
+    /// c:2987 — `zftp_quote(_, [], _)` returns nonzero.
+    #[test]
+    fn zftp_quote_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zftp_quote("quote", &[], 0);
+        assert_ne!(r, 0);
+    }
+
+    /// c:4243 — setup_(NULL) returns 0.
+    #[test]
+    fn zftp_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
 }
