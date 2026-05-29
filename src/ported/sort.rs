@@ -982,4 +982,107 @@ mod tests {
                 "eltpcmp must be deterministic");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/sort.c
+    // c:55 eltpcmp / c:114 zstrcmp / c:283 strmetasort
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:55 — `eltpcmp` returns Ordering (compile-time pin).
+    #[test]
+    fn eltpcmp_returns_ordering_type() {
+        let a = sortelt { orig: "a".into(), cmp: "a".into(), origlen: 1, len: 1 };
+        let b = sortelt { orig: "b".into(), cmp: "b".into(), origlen: 1, len: 1 };
+        let _: Ordering = eltpcmp(&a, &b, 0);
+    }
+
+    /// c:55 — `eltpcmp(a, a, _)` (same element) returns Equal.
+    #[test]
+    fn eltpcmp_same_element_returns_equal() {
+        let a = sortelt { orig: "x".into(), cmp: "x".into(), origlen: 1, len: 1 };
+        assert_eq!(eltpcmp(&a, &a, 0), Ordering::Equal,
+            "comparing element with itself must return Equal");
+    }
+
+    /// c:55 — `eltpcmp(a, b, _)` and `eltpcmp(b, a, _)` are opposites
+    /// (antisymmetry property of cmp functions).
+    #[test]
+    fn eltpcmp_antisymmetric() {
+        let a = sortelt { orig: "a".into(), cmp: "a".into(), origlen: 1, len: 1 };
+        let b = sortelt { orig: "b".into(), cmp: "b".into(), origlen: 1, len: 1 };
+        let ab = eltpcmp(&a, &b, 0);
+        let ba = eltpcmp(&b, &a, 0);
+        assert_eq!(ab.reverse(), ba,
+            "cmp(a,b) must be reverse of cmp(b,a); got {:?} vs {:?}", ab, ba);
+    }
+
+    /// c:114 — `zstrcmp` returns Ordering (compile-time pin).
+    #[test]
+    fn zstrcmp_returns_ordering_type() {
+        let _: Ordering = zstrcmp("a", "b", 0);
+    }
+
+    /// c:114 — `zstrcmp("", "")` returns Equal (empty=empty, alt).
+    #[test]
+    fn zstrcmp_both_empty_returns_equal_alt() {
+        assert_eq!(zstrcmp("", "", 0), Ordering::Equal);
+    }
+
+    /// c:114 — `zstrcmp(x, x, _)` returns Equal (identity).
+    #[test]
+    fn zstrcmp_identity_returns_equal() {
+        for s in ["", "a", "abc", "hello world", "日本"] {
+            assert_eq!(zstrcmp(s, s, 0), Ordering::Equal,
+                "identity zstrcmp({:?}, {:?}, 0) must be Equal", s, s);
+        }
+    }
+
+    /// c:114 — `zstrcmp` antisymmetric: cmp(a, b) == reverse(cmp(b, a)) (alt).
+    #[test]
+    fn zstrcmp_antisymmetric_alt() {
+        for (a, b) in &[("a", "b"), ("abc", "abd"), ("", "x"), ("xy", "x")] {
+            let ab = zstrcmp(a, b, 0);
+            let ba = zstrcmp(b, a, 0);
+            assert_eq!(ab.reverse(), ba,
+                "antisymmetry: zstrcmp({:?},{:?}) = {:?} ≠ reverse({:?})",
+                a, b, ab, ba);
+        }
+    }
+
+    /// c:283 — `strmetasort` returns void (compile-time pin).
+    #[test]
+    fn strmetasort_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr: Vec<String> = vec![];
+        let _: () = strmetasort(&mut arr, 0, None);
+    }
+
+    /// c:283 — `strmetasort` sorts ascending lexically by default.
+    #[test]
+    fn strmetasort_sorts_lex_ascending() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr = vec!["c".to_string(), "a".to_string(), "b".to_string()];
+        strmetasort(&mut arr, 0, None);
+        assert_eq!(arr, vec!["a", "b", "c"], "default lex ascending");
+    }
+
+    /// c:283 — `strmetasort` preserves length (no element drop/duplicate).
+    #[test]
+    fn strmetasort_preserves_length() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr: Vec<String> = (0..20).map(|i| format!("item_{}", i)).collect();
+        let before_len = arr.len();
+        strmetasort(&mut arr, 0, None);
+        assert_eq!(arr.len(), before_len, "length must be preserved");
+    }
+
+    /// c:283 — `strmetasort` of already-sorted is no-op.
+    #[test]
+    fn strmetasort_already_sorted_unchanged() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr: Vec<String> = vec!["a".into(), "b".into(), "c".into(), "d".into()];
+        let before = arr.clone();
+        strmetasort(&mut arr, 0, None);
+        assert_eq!(arr, before, "already-sorted unchanged");
+    }
 }
