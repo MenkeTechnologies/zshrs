@@ -90,4 +90,71 @@ mod tests {
                                             // Confirm boot() wasn't invoked as side effect.
         assert!(!m.booted);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/modentry.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:38 — `modentry` rejects MANY out-of-range op codes with 1.
+    #[test]
+    fn modentry_far_out_of_range_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        for op in [-100, -50, 7, 10, 100, i32::MAX, i32::MIN] {
+            assert_eq!(modentry(op, &mut m), 1, "op {} must return 1", op);
+        }
+    }
+
+    /// c:14 — `setup_` op (boot=0) dispatches without invoking boot().
+    /// Pin orthogonality: setup ≠ boot.
+    #[test]
+    fn modentry_setup_does_not_invoke_boot() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(0, &mut m), 0);
+        assert!(!m.booted, "setup must NOT trigger boot side effect");
+    }
+
+    /// c:18 — `boot_` op (boot=1) sets booted=true on our TestModule.
+    /// Pin: side effect is observable.
+    #[test]
+    fn modentry_boot_triggers_module_boot() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(1, &mut m), 0);
+        assert!(m.booted, "boot op must invoke module.boot()");
+    }
+
+    /// c:7 — `modentry` is deterministic for known ops on a stateless
+    /// fresh module instance.
+    #[test]
+    fn modentry_is_deterministic_for_known_ops() {
+        let _g = crate::test_util::global_state_lock();
+        for op in [0, 2, 3, 4, 5, 6, -1] {
+            let mut m = TestModule { booted: false };
+            let first = modentry(op, &mut m);
+            // Second call on fresh module should give same return.
+            let mut m2 = TestModule { booted: false };
+            let second = modentry(op, &mut m2);
+            assert_eq!(first, second, "op {} must be pure", op);
+        }
+    }
+
+    /// c:7 — every defined op (0..=5) returns 0 (no error).
+    #[test]
+    fn modentry_known_ops_return_zero() {
+        let _g = crate::test_util::global_state_lock();
+        for op in 0..=5 {
+            let mut m = TestModule { booted: false };
+            assert_eq!(modentry(op, &mut m), 0, "op {} must succeed", op);
+        }
+    }
+
+    /// c:38-40 — unknown op returns 1 for boundary values around 5/6.
+    #[test]
+    fn modentry_boundary_op_6_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(6, &mut m), 1, "op=6 just past valid range → 1");
+    }
 }
