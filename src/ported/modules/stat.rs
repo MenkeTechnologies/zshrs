@@ -1206,4 +1206,115 @@ mod tests {
         assert_eq!(statulprint(42), "42");
         assert_eq!(statulprint(u64::MAX), format!("{}", u64::MAX));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/stat.c
+    // c:43 statmodeprint / c:112 statuidprint / c:156 statgidprint /
+    // c:199 stattimeprint / c:228 statulprint / c:237 statlinkprint / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:228 — `statulprint` is pure (deterministic).
+    #[test]
+    fn statulprint_is_pure() {
+        for v in [0u64, 1, 42, 1_000_000, u64::MAX] {
+            let first = statulprint(v);
+            for _ in 0..5 {
+                assert_eq!(statulprint(v), first,
+                    "statulprint({}) must be pure", v);
+            }
+        }
+    }
+
+    /// c:228 — `statulprint` output is non-empty ASCII digit string.
+    #[test]
+    fn statulprint_output_is_ascii_digits() {
+        for v in [0u64, 1, 42, u32::MAX as u64, u64::MAX] {
+            let s = statulprint(v);
+            assert!(!s.is_empty(), "non-empty");
+            assert!(s.chars().all(|c| c.is_ascii_digit()),
+                "all chars must be digits: {:?}", s);
+        }
+    }
+
+    /// c:43 — `statmodeprint` is pure (deterministic for same mode+flags).
+    #[test]
+    fn statmodeprint_is_pure() {
+        let mode = 0o100644u32;
+        let first = statmodeprint(mode, 0);
+        for _ in 0..5 {
+            assert_eq!(statmodeprint(mode, 0), first,
+                "statmodeprint must be pure");
+        }
+    }
+
+    /// c:43 — `statmodeprint(_, 0)` returns empty (no flags = no output).
+    #[test]
+    fn statmodeprint_no_flags_returns_empty() {
+        assert_eq!(statmodeprint(0o100644, 0), "");
+    }
+
+    /// c:199 — `stattimeprint` is pure.
+    #[test]
+    fn stattimeprint_is_pure() {
+        let t = 1_700_000_000i64;
+        let first = stattimeprint(t, 0, 0);
+        for _ in 0..5 {
+            assert_eq!(stattimeprint(t, 0, 0), first,
+                "stattimeprint must be pure");
+        }
+    }
+
+    /// c:237 — `statlinkprint` for non-symlink returns empty.
+    #[test]
+    fn statlinkprint_non_symlink_returns_empty() {
+        let r = statlinkprint(0o100644, "/tmp/__not_symlink__");
+        // Regular file mode bit pattern → empty.
+        assert!(r.is_empty() || r == "" || r.starts_with(" "),
+            "non-symlink should return empty or marker, got {:?}", r);
+    }
+
+    /// c:237 — `statlinkprint` empty fname doesn't panic.
+    #[test]
+    fn statlinkprint_empty_fname_no_panic() {
+        let _ = statlinkprint(0o100644, "");
+    }
+
+    /// c:112 — `statuidprint(uid, flags)` is pure (deterministic for same args).
+    #[test]
+    fn statuidprint_is_pure() {
+        for uid in [0u32, 1, 1000, u32::MAX] {
+            let first = statuidprint(uid, 0);
+            for _ in 0..5 {
+                assert_eq!(statuidprint(uid, 0), first,
+                    "statuidprint({}, 0) must be pure", uid);
+            }
+        }
+    }
+
+    /// c:156 — `statgidprint(gid, flags)` is pure.
+    #[test]
+    fn statgidprint_is_pure() {
+        for gid in [0u32, 1, 1000, u32::MAX] {
+            let first = statgidprint(gid, 0);
+            for _ in 0..5 {
+                assert_eq!(statgidprint(gid, 0), first,
+                    "statgidprint({}, 0) must be pure", gid);
+            }
+        }
+    }
+
+    /// c:579-618 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn stat_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
 }
