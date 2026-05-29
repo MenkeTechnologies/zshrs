@@ -1588,4 +1588,133 @@ mod tests {
     fn use_suspended_enabled() {
         assert_eq!(USE_SUSPENDED, 1);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for src/zsh/config.h constants
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// DEFAULT_HISTSIZE = 30 (upstream default).
+    #[test]
+    fn default_histsize_is_thirty() {
+        assert_eq!(DEFAULT_HISTSIZE, 30, "upstream zsh default");
+    }
+
+    /// DEFAULT_HISTSIZE is positive (else `fc -l` breaks).
+    #[test]
+    fn default_histsize_positive() {
+        assert!(DEFAULT_HISTSIZE > 0, "history size must be > 0");
+    }
+
+    /// PASSWD_FILE is absolute path.
+    #[test]
+    fn passwd_file_absolute_path() {
+        assert!(PASSWD_FILE.starts_with('/'), "PASSWD_FILE must be absolute");
+    }
+
+    /// PASSWD_MAP follows NIS dotted-name convention.
+    #[test]
+    fn passwd_map_dotted_nis_name() {
+        assert!(
+            PASSWD_MAP.contains('.'),
+            "NIS map names use dot: passwd.byname"
+        );
+    }
+
+    /// DL_EXT is short and ASCII (file extension stem).
+    #[test]
+    fn dl_ext_short_ascii() {
+        assert!(DL_EXT.is_ascii(), "DL_EXT must be ASCII");
+        assert!(!DL_EXT.is_empty(), "DL_EXT must be non-empty");
+        assert!(DL_EXT.len() <= 5, "DL_EXT must be a short ext stem");
+    }
+
+    /// DL_EXT contains no dots (autoconf strips leading '.').
+    #[test]
+    fn dl_ext_has_no_dots() {
+        assert!(!DL_EXT.contains('.'), "DL_EXT stem must not contain dots");
+    }
+
+    /// All GLOBAL_Z* paths share /etc prefix.
+    #[test]
+    fn all_global_z_paths_under_etc() {
+        for path in &[GLOBAL_ZLOGIN, GLOBAL_ZLOGOUT, GLOBAL_ZPROFILE, GLOBAL_ZSHENV, GLOBAL_ZSHRC] {
+            assert!(
+                path.starts_with("/etc/"),
+                "GLOBAL_Z* path must start with /etc/, got {:?}",
+                path
+            );
+        }
+    }
+
+    /// DEFAULT_PATH has at least 2 colon-separated entries.
+    #[test]
+    fn default_path_has_multiple_entries() {
+        let entries: Vec<&str> = DEFAULT_PATH.split(':').collect();
+        assert!(entries.len() >= 2, "DEFAULT_PATH must have ≥ 2 entries, got {:?}", entries);
+    }
+
+    /// DEFAULT_PATH entries are all absolute.
+    #[test]
+    fn default_path_entries_all_absolute() {
+        for entry in DEFAULT_PATH.split(':') {
+            assert!(
+                entry.starts_with('/'),
+                "DEFAULT_PATH entry must be absolute: {:?}",
+                entry
+            );
+        }
+    }
+
+    /// DEFAULT_TMPPREFIX has no trailing slash (used as path prefix).
+    #[test]
+    fn default_tmpprefix_no_trailing_slash() {
+        assert!(
+            !DEFAULT_TMPPREFIX.ends_with('/'),
+            "DEFAULT_TMPPREFIX is a prefix; trailing slash would be wrong"
+        );
+    }
+
+    /// All file-path config strings are non-empty.
+    #[test]
+    fn all_path_strings_non_empty() {
+        for s in &[
+            PASSWD_FILE,
+            DEFAULT_PATH,
+            DEFAULT_TMPPREFIX,
+            DEFAULT_FCEDIT,
+            DEFAULT_READNULLCMD,
+            DL_EXT,
+            GLOBAL_ZLOGIN,
+            GLOBAL_ZLOGOUT,
+            GLOBAL_ZPROFILE,
+            GLOBAL_ZSHENV,
+            GLOBAL_ZSHRC,
+        ] {
+            assert!(!s.is_empty(), "config path string must not be empty: {:?}", s);
+        }
+    }
+
+    /// All boolean-flag config constants are 0 or 1.
+    #[test]
+    fn boolean_flags_all_zero_or_one() {
+        for &v in &[
+            CACHE_USERNAMES, JOB_CONTROL, USE_SUSPENDED, BROKEN_ISPRINT,
+            CONFIG_LOCALE, DYNAMIC, DYNAMIC_NAME_CLASH_OK,
+            GETCWD_CALLS_MALLOC, GETPGRP_VOID,
+        ] {
+            assert!(v == 0 || v == 1, "flag must be 0/1, got {}", v);
+        }
+    }
+
+    /// All path strings are ASCII (filesystem-safe).
+    #[test]
+    fn config_path_strings_are_ascii() {
+        for s in &[
+            PASSWD_FILE, PASSWD_MAP, DEFAULT_PATH, DEFAULT_TMPPREFIX,
+            DEFAULT_FCEDIT, DEFAULT_READNULLCMD, DL_EXT,
+            GLOBAL_ZLOGIN, GLOBAL_ZLOGOUT, GLOBAL_ZPROFILE, GLOBAL_ZSHENV, GLOBAL_ZSHRC,
+        ] {
+            assert!(s.is_ascii(), "config string must be ASCII: {:?}", s);
+        }
+    }
 }
