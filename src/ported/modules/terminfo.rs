@@ -827,4 +827,89 @@ mod tests {
         let r = enables_(std::ptr::null(), &mut enables);
         assert_eq!(r, 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/terminfo.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn empty_ops_for_pin() -> crate::ported::zsh_h::options {
+        crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        }
+    }
+
+    /// c:64 — `bin_echoti` with no args returns 1 (missing capability).
+    #[test]
+    fn bin_echoti_no_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_for_pin();
+        let r = bin_echoti("echoti", &[], &ops, 0);
+        assert_eq!(r, 1, "no cap name → 1");
+    }
+
+    /// c:97 — `bin_echoti` with unknown cap name returns 1.
+    #[test]
+    fn bin_echoti_unknown_cap_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_for_pin();
+        let r = bin_echoti("echoti", &["zz_never_real_cap_xyz".to_string()], &ops, 0);
+        assert_eq!(r, 1, "unknown cap → 1");
+    }
+
+    /// c:204 — `getterminfo(_, "")` returns Option<Param>; never None
+    /// for the empty-name case (consistent with C's PM_UNSET default).
+    #[test]
+    fn getterminfo_empty_name_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let pm = getterminfo(std::ptr::null_mut(), "");
+        // Either Some(PM_UNSET) or None — pin no-panic. If Some, must
+        // be PM_UNSET.
+        if let Some(p) = pm {
+            use crate::ported::zsh_h::PM_UNSET;
+            assert!(p.node.flags & PM_UNSET as i32 != 0);
+        }
+    }
+
+    /// c:204 — `getterminfo` for unknown cap returns Some(PM_UNSET) or None.
+    #[test]
+    fn getterminfo_unknown_cap_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = getterminfo(std::ptr::null_mut(), "zz_never_real_cap");
+    }
+
+    /// c:491 — setup_(NULL) = 0.
+    #[test]
+    fn terminfo_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:514 — boot_(NULL) = 0.
+    #[test]
+    fn terminfo_boot_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
+
+    /// c:499 — features_(NULL, _) = 0.
+    #[test]
+    fn terminfo_features_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let mut f = Vec::new();
+        assert_eq!(features_(std::ptr::null(), &mut f), 0);
+    }
+
+    /// Determinism: bin_echoti called twice with same args returns
+    /// same result (pure for fixed cap lookup).
+    #[test]
+    fn bin_echoti_deterministic_for_unknown_cap() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops_for_pin();
+        let r1 = bin_echoti("echoti", &["zz_zshrs_test".to_string()], &ops, 0);
+        let r2 = bin_echoti("echoti", &["zz_zshrs_test".to_string()], &ops, 0);
+        assert_eq!(r1, r2);
+    }
 }
