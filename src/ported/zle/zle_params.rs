@@ -1791,4 +1791,111 @@ mod widget_killring_tests {
         assert_eq!(get_lbuffer(), "hello", "lbuffer preserved");
         assert_eq!(get_cursor(), 5, "cursor unchanged");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_params.c
+    // c:127 get_buffer / c:144 get_cursor / c:160 get_mark / c:193 get_region_active
+    // c:259 get_widget / c:271 get_widgetfunc / c:332 get_keymap / c:338 get_keys
+    // c:348 get_keys_queued_count / c:372 get_numeric / c:248 get_prebuffer
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:127 — `get_buffer` returns String (compile-time type pin).
+    #[test]
+    fn get_buffer_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: String = get_buffer();
+    }
+
+    /// c:144 — `get_cursor` returns usize (compile-time type pin).
+    #[test]
+    fn get_cursor_returns_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: usize = get_cursor();
+    }
+
+    /// c:160 — `get_mark` returns usize (compile-time type pin).
+    #[test]
+    fn get_mark_returns_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: usize = get_mark();
+    }
+
+    /// c:193 — `get_region_active` returns i64 in {0, 1, 2} range.
+    #[test]
+    fn get_region_active_in_canonical_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = get_region_active();
+        assert!((0..=2).contains(&r),
+            "region_active must be in {{0,1,2}}, got {}", r);
+    }
+
+    /// c:259 — `get_widget` returns String.
+    #[test]
+    fn get_widget_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: String = get_widget();
+    }
+
+    /// c:271 — `get_widgetfunc` returns String.
+    #[test]
+    fn get_widgetfunc_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: String = get_widgetfunc();
+    }
+
+    /// c:332 — `get_keymap` returns String.
+    #[test]
+    fn get_keymap_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: String = get_keymap();
+    }
+
+    /// c:338 — `get_keys` returns Vec<u8>.
+    #[test]
+    fn get_keys_returns_vec_u8_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Vec<u8> = get_keys();
+    }
+
+    /// c:348 — `get_keys_queued_count` returns i64 non-negative.
+    #[test]
+    fn get_keys_queued_count_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let n = get_keys_queued_count();
+        assert!(n >= 0, "queued count must be ≥ 0, got {}", n);
+    }
+
+    /// c:372 — `get_numeric` returns i32.
+    #[test]
+    fn get_numeric_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = get_numeric();
+    }
+
+    /// c:355 + c:392 — set_numeric + unset_numeric round-trip safe.
+    #[test]
+    fn set_unset_numeric_round_trip_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        set_numeric(42);
+        unset_numeric(0);
+    }
+
+    /// c:248 — `get_prebuffer` returns String.
+    #[test]
+    fn get_prebuffer_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: String = get_prebuffer();
+    }
 }
