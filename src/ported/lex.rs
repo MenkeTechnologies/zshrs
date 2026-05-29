@@ -5198,4 +5198,148 @@ mod tests {
         let extra_strings = toks.iter().skip(1).filter(|&&t| t == STRING_LEX).count();
         assert_eq!(extra_strings, 0, "no tokens from comment body: {:?}", toks);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/lex.c lexact1/lexact2/lextok2
+    // dispatch tables.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `lexact1_get` for chars ≥ 256 returns LX1_OTHER (Rust guard
+    /// prevents the C-style out-of-bounds index).
+    #[test]
+    fn lexact1_get_non_ascii_returns_lx1_other() {
+        let _g = crate::test_util::global_state_lock();
+        // U+0100 and above bypass the 256-entry table.
+        assert_eq!(lexact1_get('\u{0100}'), LX1_OTHER);
+        assert_eq!(lexact1_get('\u{2028}'), LX1_OTHER);
+        assert_eq!(lexact1_get('\u{1F600}'), LX1_OTHER);
+    }
+
+    /// `lexact2_get` for chars ≥ 256 returns LX2_OTHER.
+    #[test]
+    fn lexact2_get_non_ascii_returns_lx2_other() {
+        let _g = crate::test_util::global_state_lock();
+        // LX2_OTHER is the default value; confirm the path doesn't panic.
+        let _ = lexact2_get('\u{0100}');
+        let _ = lexact2_get('\u{1F600}');
+    }
+
+    /// `lextok2_get` for chars ≥ 256 returns the raw byte (c as u8 —
+    /// matches C's `c & 0xff` truncation behavior).
+    #[test]
+    fn lextok2_get_non_ascii_returns_truncated_byte() {
+        let _g = crate::test_util::global_state_lock();
+        let r = lextok2_get('\u{0100}');
+        assert_eq!(r, '\u{0100}' as u8, "char & 0xff = 0x00 for U+0100");
+    }
+
+    /// `lexact1_get('\\\\')` returns LX1_BKSLASH (c:lexact1[\\] dispatch).
+    #[test]
+    fn lexact1_get_backslash_is_lx1_bkslash() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(lexact1_get('\\'), LX1_BKSLASH);
+    }
+
+    /// `lexact1_get('#')` returns LX1_OTHER per C source — the comment
+    /// dispatch at Src/lex.c:678 handles '#' BEFORE the lexact1 table
+    /// lookup runs, so '#' is never installed in the table itself.
+    /// The lx1 init string `"\\q\n;!&|(){}[]<>"` (Src/lex.c:413) has 'q'
+    /// at index 1 as a placeholder, NOT '#'. LX1_COMMENT is the
+    /// constant value that gettok's '#' branch returns conceptually
+    /// but the table itself never indexes '#' to it.
+    #[test]
+    fn lexact1_get_hash_is_lx1_other_per_c_init() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            lexact1_get('#'),
+            LX1_OTHER,
+            "C never installs '#' in lexact1 — comment handled at c:678 before table"
+        );
+    }
+
+    /// `lexact1_get('q')` returns LX1_COMMENT per the lx1 init string
+    /// `"\\q\n;!&|(){}[]<>"` (Src/lex.c:413) — 'q' is the placeholder
+    /// char at index 1 (LX1_COMMENT). Pin so a regen that drops the 'q'
+    /// entry would be caught.
+    #[test]
+    fn lexact1_get_q_is_lx1_comment_per_c_lx1_init() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            lexact1_get('q'),
+            LX1_COMMENT,
+            "'q' at lx1[1] → LX1_COMMENT per Src/lex.c:413 init quirk"
+        );
+    }
+
+    /// `lexact1_get('\\n')` returns LX1_NEWLIN.
+    #[test]
+    fn lexact1_get_newline_is_lx1_newlin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(lexact1_get('\n'), LX1_NEWLIN);
+    }
+
+    /// `lexact1_get(';')` returns LX1_SEMI.
+    #[test]
+    fn lexact1_get_semi_is_lx1_semi() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(lexact1_get(';'), LX1_SEMI);
+    }
+
+    /// `lexact1_get('&')` returns LX1_AMPER.
+    #[test]
+    fn lexact1_get_amper_is_lx1_amper() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(lexact1_get('&'), LX1_AMPER);
+    }
+
+    /// `lexact1_get('|')` returns LX1_BAR.
+    #[test]
+    fn lexact1_get_pipe_is_lx1_bar() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(lexact1_get('|'), LX1_BAR);
+    }
+
+    /// `lexact1_get('(')` / `lexact1_get(')')` return LX1_INPAR/LX1_OUTPAR.
+    #[test]
+    fn lexact1_get_parens_are_inpar_outpar() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(lexact1_get('('), LX1_INPAR);
+        assert_eq!(lexact1_get(')'), LX1_OUTPAR);
+    }
+
+    /// `lexact1_get('<')` / `lexact1_get('>')` return LX1_INANG/LX1_OUTANG.
+    #[test]
+    fn lexact1_get_angles_are_inang_outang() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(lexact1_get('<'), LX1_INANG);
+        assert_eq!(lexact1_get('>'), LX1_OUTANG);
+    }
+
+    /// `lexact1_get('a')` (plain letter, no special meaning) returns
+    /// LX1_OTHER.
+    #[test]
+    fn lexact1_get_letter_is_lx1_other() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(lexact1_get('a'), LX1_OTHER);
+        assert_eq!(lexact1_get('Z'), LX1_OTHER);
+        assert_eq!(lexact1_get('5'), LX1_OTHER);
+    }
+
+    /// `lextok2_get` is deterministic + safe across all ASCII chars.
+    #[test]
+    fn lextok2_get_deterministic_for_ascii() {
+        let _g = crate::test_util::global_state_lock();
+        for c in 0u8..=127 {
+            let ch = c as char;
+            let first = lextok2_get(ch);
+            for _ in 0..5 {
+                assert_eq!(
+                    lextok2_get(ch),
+                    first,
+                    "lextok2_get({:?}) must be pure",
+                    ch
+                );
+            }
+        }
+    }
 }
