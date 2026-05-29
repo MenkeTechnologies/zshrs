@@ -1813,4 +1813,110 @@ mod tests {
         ppa_setfn(std::ptr::null_mut(), vec![]);
         ppa_setfn(std::ptr::null_mut(), vec!["a".into(), "b".into()]);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/param_private.c
+    // c:200 is_private / c:403 pps_getfn / c:497 ppi_getfn /
+    // c:557 ppf_getfn / c:617 ppa_getfn / c:468 unsetfn variants /
+    // c:766 scopeprivate / c:875 getprivatenode + lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:200 — `is_private(null)` returns 0 (not private).
+    #[test]
+    fn is_private_null_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(is_private(std::ptr::null()), 0,
+            "null param is not private; got nonzero");
+    }
+
+    /// c:200 — `is_private` returns i32 (compile-time pin, alt).
+    #[test]
+    fn is_private_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = is_private(std::ptr::null());
+    }
+
+    /// c:403 — `pps_getfn(null)` returns String (compile-time pin).
+    #[test]
+    fn pps_getfn_null_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = pps_getfn(std::ptr::null_mut());
+    }
+
+    /// c:497 — `ppi_getfn(null)` returns i64 (compile-time pin).
+    #[test]
+    fn ppi_getfn_null_returns_i64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i64 = ppi_getfn(std::ptr::null_mut());
+    }
+
+    /// c:557 — `ppf_getfn(null)` returns f64 (compile-time pin).
+    #[test]
+    fn ppf_getfn_null_returns_f64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: f64 = ppf_getfn(std::ptr::null_mut());
+    }
+
+    /// c:617 — `ppa_getfn(null)` returns Vec<String> (compile-time pin).
+    #[test]
+    fn ppa_getfn_null_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = ppa_getfn(std::ptr::null_mut());
+    }
+
+    /// c:468/530/590/650/727 — every unsetfn variant accepts null + both
+    /// explicit flag values without panic.
+    #[test]
+    fn all_unsetfn_variants_null_both_explicit_flags_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for explicit in [0i32, 1] {
+            pps_unsetfn(std::ptr::null_mut(), explicit);
+            ppi_unsetfn(std::ptr::null_mut(), explicit);
+            ppf_unsetfn(std::ptr::null_mut(), explicit);
+            ppa_unsetfn(std::ptr::null_mut(), explicit);
+            pph_unsetfn(std::ptr::null_mut(), explicit);
+        }
+    }
+
+    /// c:766 — `scopeprivate(null, _)` is safe for both onoff values (alt).
+    #[test]
+    fn scopeprivate_null_both_onoff_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        scopeprivate(std::ptr::null_mut(), 0);
+        scopeprivate(std::ptr::null_mut(), 1);
+    }
+
+    /// c:875 — `getprivatenode(null)` returns null (deterministic).
+    #[test]
+    fn getprivatenode_null_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert!(getprivatenode(std::ptr::null_mut()).is_null());
+        }
+    }
+
+    /// c:922 — `getprivatenode2(null)` returns null (deterministic, alt fn).
+    #[test]
+    fn getprivatenode2_null_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert!(getprivatenode2(std::ptr::null_mut()).is_null());
+        }
+    }
+
+    /// c:1005/1020/1035/1041/1058/1064 — each lifecycle hook returns 0
+    /// individually (tighter failure resolution).
+    #[test]
+    fn param_private_each_lifecycle_hook_returns_zero_individually() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v: Vec<String> = Vec::new();
+        let mut e: Option<Vec<i32>> = None;
+        assert_eq!(setup_(null), 0, "c:1005 setup_");
+        assert_eq!(features_(null, &mut v), 0, "c:1020 features_");
+        assert_eq!(enables_(null, &mut e), 0, "c:1035 enables_");
+        assert_eq!(boot_(null), 0, "c:1041 boot_");
+        assert_eq!(cleanup_(null), 0, "c:1058 cleanup_");
+        assert_eq!(finish_(null), 0, "c:1064 finish_");
+    }
 }
