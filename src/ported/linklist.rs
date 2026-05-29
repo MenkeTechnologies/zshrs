@@ -985,4 +985,110 @@ mod tests {
         assert_eq!(linknodebydatum(&l, &20), Some(1));
         assert_eq!(linknodebydatum(&l, &99), None);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/linklist.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:30 — `newlinklist()` returns empty list.
+    #[test]
+    fn newlinklist_returns_empty_pin() {
+        let l = newlinklist();
+        assert!(l.is_empty());
+        assert_eq!(l.len(), 0);
+    }
+
+    /// c:285 — `znewlinklist()` returns empty (permanent alloc).
+    #[test]
+    fn znewlinklist_returns_empty_pin() {
+        let l = znewlinklist();
+        assert!(l.is_empty());
+    }
+
+    /// c:375 — `countlinknodes` returns 0 on empty list.
+    #[test]
+    fn countlinknodes_empty_is_zero_pin() {
+        let l = LinkList::<i32>::new();
+        assert_eq!(countlinknodes(&l), 0);
+    }
+
+    /// c:375 — `countlinknodes` matches len on populated list.
+    #[test]
+    fn countlinknodes_matches_length_pin() {
+        let mut l = LinkList::<i32>::new();
+        l.push_back(1);
+        l.push_back(2);
+        l.push_back(3);
+        assert_eq!(countlinknodes(&l), 3);
+    }
+
+    /// c:340 — `getlinknode` empty → None.
+    #[test]
+    fn getlinknode_empty_returns_none_pin() {
+        let mut l = LinkList::<i32>::new();
+        assert!(getlinknode(&mut l).is_none());
+    }
+
+    /// c:347 — `ugetnode` empty → None.
+    #[test]
+    fn ugetnode_empty_returns_none_pin() {
+        let mut l = LinkList::<i32>::new();
+        assert!(ugetnode(&mut l).is_none());
+    }
+
+    /// c:368 — `freelinklist` clears list.
+    #[test]
+    fn freelinklist_clears_list_pin() {
+        let mut l = LinkList::<i32>::new();
+        l.push_back(1);
+        l.push_back(2);
+        freelinklist(&mut l);
+        assert!(l.is_empty());
+    }
+
+    /// c:429 — `linknodebystring` finds string.
+    #[test]
+    fn linknodebystring_finds_string_pin() {
+        let mut l = LinkList::<String>::new();
+        l.push_back("alpha".to_string());
+        l.push_back("beta".to_string());
+        l.push_back("gamma".to_string());
+        assert_eq!(linknodebystring(&l, "beta"), Some(1));
+        assert_eq!(linknodebystring(&l, "delta"), None);
+    }
+
+    /// c:429 — finds first match on duplicates.
+    #[test]
+    fn linknodebystring_first_match_pin() {
+        let mut l = LinkList::<String>::new();
+        l.push_back("x".to_string());
+        l.push_back("x".to_string());
+        assert_eq!(linknodebystring(&l, "x"), Some(0));
+    }
+
+    /// c:436 — `hlinklist2array` preserves order.
+    #[test]
+    fn hlinklist2array_preserves_order_pin() {
+        let mut l = LinkList::<String>::new();
+        l.push_back("a".to_string());
+        l.push_back("b".to_string());
+        l.push_back("c".to_string());
+        let v = hlinklist2array(&l);
+        assert_eq!(v, vec!["a", "b", "c"]);
+    }
+
+    /// c:436 — empty list → empty Vec.
+    #[test]
+    fn hlinklist2array_empty_returns_empty_vec_pin() {
+        let l = LinkList::<String>::new();
+        let v = hlinklist2array(&l);
+        assert!(v.is_empty());
+    }
+
+    /// c:406 — `newsizedlist(0)` returns empty list.
+    #[test]
+    fn newsizedlist_zero_returns_empty_pin() {
+        let l: LinkList<i32> = newsizedlist(0);
+        assert!(l.is_empty());
+    }
 }
