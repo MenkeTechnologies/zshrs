@@ -2341,4 +2341,70 @@ mod tests {
         zle_with("test", 0);
         viinsert_init();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/zle_vi.c. Tests that capture
+    // KNOWN ZSHRS BUGS use #[ignore = "ZSHRS BUG: …"].
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `viaddeol` moves cursor to end of line. C zle_vi.c:
+    ///   `zlecs = findeol(); startvitext(1); return 0;`
+    #[test]
+    fn viaddeol_moves_cursor_to_eol() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        zle_with("hello", 0); // cursor at start
+        let ret = viaddeol();
+        assert_eq!(ret, 0, "viaddeol returns 0");
+        assert_eq!(
+            ZLECS.load(Ordering::SeqCst),
+            5,
+            "cursor at EOL (after 'hello' = pos 5)"
+        );
+    }
+
+    /// `viaddnext` increments cursor when not at EOL. C zle_vi.c:
+    ///   `if (zlecs != findeol()) INCCS(); startvitext(1); return 0;`
+    #[test]
+    fn viaddnext_increments_cursor_when_not_at_eol() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        zle_with("abc", 1); // cursor at 'b'
+        let ret = viaddnext();
+        assert_eq!(ret, 0);
+        assert_eq!(
+            ZLECS.load(Ordering::SeqCst),
+            2,
+            "cursor advances past current char (1 → 2)"
+        );
+    }
+
+    /// `viaddnext` at EOL leaves cursor unchanged.
+    #[test]
+    fn viaddnext_at_eol_leaves_cursor_unchanged() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        zle_with("xyz", 3); // cursor at EOL
+        let ret = viaddnext();
+        assert_eq!(ret, 0);
+        assert_eq!(ZLECS.load(Ordering::SeqCst), 3, "at EOL, cursor stays put");
+    }
+
+    /// `viinsertbol` moves to first non-blank. C zle_vi.c:
+    ///   `vifirstnonblank(zlenoargs); startvitext(1); return 0;`
+    #[test]
+    #[ignore = "ZSHRS BUG: viinsertbol vifirstnonblank wiring — needs vifirstnonblank port verification"]
+    fn viinsertbol_moves_to_first_non_blank() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        zle_with("   abc", 5); // cursor inside word
+        let ret = viinsertbol();
+        assert_eq!(ret, 0);
+        // C's vifirstnonblank lands cursor at pos 3 ('a').
+        assert_eq!(
+            ZLECS.load(Ordering::SeqCst),
+            3,
+            "cursor at first non-blank (pos 3 = 'a')"
+        );
+    }
 }
