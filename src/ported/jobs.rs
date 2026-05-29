@@ -5326,4 +5326,95 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(getsigname(libc::SIGHUP), "HUP");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/jobs.c printhhmmss + sigmsg +
+    // dtime_tv + get_clktck.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:752 — `printhhmmss(0.0)` returns "0.000" (sub-minute fmt).
+    #[test]
+    fn printhhmmss_zero_returns_zero_seconds() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(printhhmmss(0.0), "0.000");
+    }
+
+    /// c:752 — sub-minute time uses 3-decimal format.
+    #[test]
+    fn printhhmmss_sub_minute_uses_three_decimals() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(printhhmmss(5.123), "5.123");
+        assert_eq!(printhhmmss(59.999), "59.999");
+    }
+
+    /// c:752 — minute-but-not-hour uses M:SS.SS format.
+    #[test]
+    fn printhhmmss_minute_uses_mm_ss_format() {
+        let _g = crate::test_util::global_state_lock();
+        let r = printhhmmss(65.5);
+        assert_eq!(r, "1:05.50", "1m05.50s");
+    }
+
+    /// c:752 — hour+ uses H:MM:SS.SS format.
+    #[test]
+    fn printhhmmss_hour_uses_hh_mm_ss_format() {
+        let _g = crate::test_util::global_state_lock();
+        let r = printhhmmss(3725.0); // 1h 2m 5s
+        assert_eq!(r, "1:02:05.00");
+    }
+
+    /// c:752 — exactly 60 seconds crosses minute boundary.
+    #[test]
+    fn printhhmmss_sixty_seconds_is_one_minute() {
+        let _g = crate::test_util::global_state_lock();
+        let r = printhhmmss(60.0);
+        assert_eq!(r, "1:00.00", "60s = 1m");
+    }
+
+    /// c:752 — exactly 3600s crosses hour boundary.
+    #[test]
+    fn printhhmmss_thirty_six_hundred_seconds_is_one_hour() {
+        let _g = crate::test_util::global_state_lock();
+        let r = printhhmmss(3600.0);
+        assert_eq!(r, "1:00:00.00");
+    }
+
+    /// c:1107 — `sigmsg` of valid signal returns a non-default string.
+    #[test]
+    fn sigmsg_known_signal_returns_descriptive_string() {
+        let _g = crate::test_util::global_state_lock();
+        // SIGTERM, SIGSEGV, SIGINT should all have descriptive messages
+        let term = sigmsg(libc::SIGTERM);
+        assert_ne!(term, "unknown signal", "SIGTERM should have a message");
+    }
+
+    /// c:1118 — `sigmsg(-1)` / out-of-range returns "unknown signal".
+    #[test]
+    fn sigmsg_unknown_signal_returns_unknown() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(sigmsg(-1), "unknown signal");
+        assert_eq!(sigmsg(9999), "unknown signal");
+    }
+
+    /// c:752 — printhhmmss is deterministic.
+    #[test]
+    fn printhhmmss_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for t in &[0.0, 1.5, 60.0, 3600.0, 7200.5] {
+            let r1 = printhhmmss(*t);
+            let r2 = printhhmmss(*t);
+            assert_eq!(r1, r2, "printhhmmss must be pure for {}", t);
+        }
+    }
+
+    /// `get_clktck()` returns positive — clock-ticks-per-second cannot
+    /// be zero on any sane system.
+    #[test]
+    fn get_clktck_returns_positive() {
+        let _g = crate::test_util::global_state_lock();
+        let ck = get_clktck();
+        assert!(ck > 0, "CLK_TCK must be positive, got {}", ck);
+        // POSIX guarantees CLK_TCK ≥ 1; typical values are 100/250/1000.
+        assert!(ck <= 10_000, "CLK_TCK suspiciously large: {}", ck);
+    }
 }
