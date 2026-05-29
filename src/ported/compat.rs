@@ -1252,4 +1252,90 @@ mod tests {
         assert_eq!(v, 0xff);
         assert_eq!(n, 2);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/compat.c
+    // c:26 zgettime / c:69 zgettime_monotonic_if_available / c:225 zgetdir
+    // c:340 zchdir / c:463 u9_wcwidth / c:472 u9_iswprint / c:589 zpathmax
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:26 — `zgettime` returns 0 on success (POSIX clock_gettime convention).
+    #[test]
+    fn zgettime_returns_zero_on_success() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ts: timespec = unsafe { std::mem::zeroed() };
+        let r = zgettime(&mut ts);
+        assert_eq!(r, 0, "zgettime success → 0");
+    }
+
+    /// c:26 — `zgettime` populates ts with positive secs.
+    #[test]
+    fn zgettime_populates_positive_secs() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ts: timespec = unsafe { std::mem::zeroed() };
+        zgettime(&mut ts);
+        assert!(ts.tv_sec > 0, "secs must be > 0 after gettime");
+    }
+
+    /// c:69 — `zgettime_monotonic_if_available` returns i32 (type pin).
+    #[test]
+    fn zgettime_monotonic_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ts: timespec = unsafe { std::mem::zeroed() };
+        let _: i32 = zgettime_monotonic_if_available(&mut ts);
+    }
+
+    /// c:225 — `zgetdir(None)` returns Option<String>.
+    #[test]
+    fn zgetdir_none_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = zgetdir(None);
+    }
+
+    /// c:340 — `zchdir("/__nonexistent_xyz")` returns -1 (failure).
+    #[test]
+    fn zchdir_nonexistent_returns_minus_one_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zchdir("/__nonexistent_zshrs_xyz_compat__");
+        assert_eq!(r, -1, "nonexistent dir → -1");
+    }
+
+    /// c:463 — `u9_wcwidth('a')` ASCII letter returns 1.
+    #[test]
+    fn u9_wcwidth_ascii_letter_returns_one() {
+        assert_eq!(u9_wcwidth('a'), 1, "ASCII letter width = 1");
+    }
+
+    /// c:463 — `u9_wcwidth` returns i32 (compile-time type pin).
+    #[test]
+    fn u9_wcwidth_returns_i32_type() {
+        let _: i32 = u9_wcwidth('a');
+    }
+
+    /// c:472 — `u9_iswprint('a')` ASCII letter returns true.
+    #[test]
+    fn u9_iswprint_ascii_letter_returns_true() {
+        assert!(u9_iswprint('a'), "ASCII letter is printable");
+    }
+
+    /// c:472 — `u9_iswprint('\\0')` NUL returns false.
+    #[test]
+    fn u9_iswprint_nul_returns_false() {
+        assert!(!u9_iswprint('\0'), "NUL is NOT printable");
+    }
+
+    /// c:589 — `zpathmax("")` empty returns i64 (compile-time type pin).
+    #[test]
+    fn zpathmax_returns_i64_type() {
+        let _: i64 = zpathmax("");
+    }
+
+    /// c:589 — `zpathmax` is pure for the same input.
+    #[test]
+    fn zpathmax_is_pure_for_root() {
+        let first = zpathmax("/");
+        for _ in 0..3 {
+            assert_eq!(zpathmax("/"), first, "zpathmax must be pure");
+        }
+    }
 }
