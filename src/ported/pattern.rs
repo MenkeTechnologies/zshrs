@@ -7375,4 +7375,104 @@ mod tests {
         // '日' is 3 bytes.
         assert_eq!(metacharinc("日", 0), 3);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/pattern.c
+    // c:155 P_ISBRANCH / c:161 P_ISEXCLUDE / c:167 P_NOTDOT /
+    // c:262 metacharinc / c:502 patcompstart / c:536 patcompile /
+    // c:1008 patgetglobflags / c:1129 range_type / c:1152 pattern_range_to_string
+    // c:2059 charref / c:2066 charnext / c:2153 pattry / c:2304 patmatchlen
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:262 — `metacharinc` is pure for ASCII input.
+    #[test]
+    fn metacharinc_is_pure_for_ascii() {
+        for s in ["", "a", "abc", "hello"] {
+            for pos in 0..s.len() {
+                let first = metacharinc(s, pos);
+                for _ in 0..3 {
+                    assert_eq!(metacharinc(s, pos), first,
+                        "metacharinc({:?}, {}) must be pure", s, pos);
+                }
+            }
+        }
+    }
+
+    /// c:536 — `patcompile("", 0, None)` returns Option<Patprog>.
+    #[test]
+    fn patcompile_returns_option_patprog_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Patprog> = patcompile("", 0, None);
+    }
+
+    /// c:1008 — `patgetglobflags("")` empty returns None.
+    #[test]
+    fn patgetglobflags_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(patgetglobflags("").is_none(), "empty → None");
+    }
+
+    /// c:1008 — `patgetglobflags` returns Option<(i32, i64, usize)> type.
+    #[test]
+    fn patgetglobflags_returns_option_tuple_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<(i32, i64, usize)> = patgetglobflags("abc");
+    }
+
+    /// c:1129 — `range_type("")` empty returns None.
+    #[test]
+    fn range_type_empty_returns_none() {
+        assert!(range_type("").is_none(), "empty → None");
+    }
+
+    /// c:1129 — `range_type` returns Option<usize>.
+    #[test]
+    fn range_type_returns_option_usize_type() {
+        let _: Option<usize> = range_type("abc");
+    }
+
+    /// c:1152 — `pattern_range_to_string("")` empty returns empty String.
+    #[test]
+    fn pattern_range_to_string_empty_returns_empty() {
+        assert_eq!(pattern_range_to_string(""), "");
+    }
+
+    /// c:1152 — `pattern_range_to_string` is pure.
+    #[test]
+    fn pattern_range_to_string_is_pure() {
+        for s in ["", "abc", "a-z"] {
+            let first = pattern_range_to_string(s);
+            for _ in 0..3 {
+                assert_eq!(pattern_range_to_string(s), first,
+                    "pattern_range_to_string({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:2059 — `charref("", 0)` empty returns None.
+    #[test]
+    fn charref_empty_returns_none() {
+        assert!(charref("", 0).is_none(), "empty → None");
+    }
+
+    /// c:2066 — `charnext("", 0)` empty returns 0 (no advance).
+    #[test]
+    fn charnext_empty_returns_zero() {
+        assert_eq!(charnext("", 0), 0);
+    }
+
+    /// c:2304 — `patmatchlen` returns i32 (compile-time type pin).
+    #[test]
+    fn patmatchlen_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = patmatchlen();
+    }
+
+    /// c:155 — P_ISBRANCH/P_ISEXCLUDE/P_NOTDOT all return bool (type pin).
+    #[test]
+    fn p_predicates_return_bool_type() {
+        let _: bool = P_ISBRANCH(0);
+        let _: bool = P_ISEXCLUDE(0);
+        let _: bool = P_NOTDOT(0);
+    }
 }
