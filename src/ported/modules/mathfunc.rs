@@ -1052,4 +1052,100 @@ mod tests {
         assert_eq!(r.type_, MN_FLOAT, "result is float-typed");
         assert!((r.d - 5.0).abs() < 1e-9);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/mathfunc.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:286 — math_func MF_FABS for positive value preserves it.
+    #[test]
+    fn math_func_fabs_positive_unchanged() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("fabs", 1, &[mn_float(3.5)], MF_FABS);
+        assert!((r.d - 3.5).abs() < 1e-9);
+    }
+
+    /// c:286 — math_func MF_FABS for zero returns 0.
+    #[test]
+    fn math_func_fabs_zero_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("fabs", 1, &[mn_float(0.0)], MF_FABS);
+        assert_eq!(r.d, 0.0);
+    }
+
+    /// c:286 — math_func MF_INT on already-int returns same value.
+    #[test]
+    fn math_func_int_on_int_returns_same() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("int", 1, &[mn_int(42)], MF_INT);
+        assert_eq!(r.l, 42);
+    }
+
+    /// c:286 — math_func MF_INT on 0.0 returns 0.
+    #[test]
+    fn math_func_int_zero_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("int", 1, &[mn_float(0.0)], MF_INT);
+        assert_eq!(r.l, 0);
+    }
+
+    /// c:286 — math_func MF_FLOAT on already-float returns same.
+    #[test]
+    fn math_func_float_on_float_returns_same() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("float", 1, &[mn_float(3.14)], MF_FLOAT);
+        assert!((r.d - 3.14).abs() < 1e-9);
+        assert_eq!(r.type_, MN_FLOAT);
+    }
+
+    /// c:286 — math_func MF_FLOAT on 0 → 0.0 float.
+    #[test]
+    fn math_func_float_zero_int_returns_zero_float() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("float", 1, &[mn_int(0)], MF_FLOAT);
+        assert_eq!(r.d, 0.0);
+        assert_eq!(r.type_, MN_FLOAT);
+    }
+
+    /// c:439 — math_string MS_RAND48 returns float in [0, 1).
+    #[test]
+    fn math_string_rand48_in_range() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..30 {
+            let r = math_string("rand48", "", MS_RAND48);
+            assert!(r.d >= 0.0 && r.d < 1.0, "out of [0,1): got {}", r.d);
+            assert_eq!(r.type_, MN_FLOAT);
+        }
+    }
+
+    /// c:439 — math_string for unknown id returns zero mnumber.
+    #[test]
+    fn math_string_unknown_id_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_string("never", "", 9999);
+        assert_eq!(r.l, 0);
+        assert_eq!(r.d, 0.0);
+        assert_eq!(r.type_, MN_INTEGER);
+    }
+
+    /// c:548 — setup_(NULL) = 0.
+    #[test]
+    fn mathfunc_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:570 — boot_(NULL) = 0.
+    #[test]
+    fn mathfunc_boot_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
+
+    /// c:131 — finish_(NULL) = 0.
+    #[test]
+    fn mathfunc_finish_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
