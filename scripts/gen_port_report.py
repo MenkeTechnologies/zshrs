@@ -395,13 +395,46 @@ def _slurp_rs_files() -> list[tuple[str, list[str]]]:
 # made the previous per-name implementation hang on the full tree.
 
 _RE_ANY_CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+# Method-call detection: `.foo(` / `::foo(` are Rust-side method-call
+# / qualified-path syntax. The metric counts FUNCTION calls — methods
+# are a different abstraction. Counting `vec.push(x)` as a hit for the
+# C `push()` fn (which exists in some zsh modules) inflates the Rust
+# count by 10000%+. Same for `.add(x)` vs the lex.c `add(c)` fn etc.
+# Track the char immediately before the matched name; if it's `.` or
+# `:` (the second `:` of `::`), treat as a method/qualified path call
+# NOT counted against the C fn.
+def _is_method_call_prefix(line: str, name_start: int) -> bool:
+    """True if `line[name_start]` is preceded by `.` (method call) but
+    NOT preceded by `..` (Rust range). Qualified-path `::name(` calls
+    are REAL function calls — `crate::ported::exec::doshfunc(...)` is
+    a doshfunc call, not a method call — so we don't exclude them.
+    """
+    if name_start == 0:
+        return False
+    prev = line[name_start - 1]
+    if prev != '.':
+        return False
+    # `..name(` is a Rust range expression terminus, not a method call —
+    # but the preceding `.` will have already triggered exclusion. That's
+    # fine in practice (the parse-tree wouldn't have a fn-call shape
+    # with `..` immediately before).
+    return True
 
 def _all_call_counts(files: list[tuple[str, list[str]]],
                      def_index: dict[str, set[tuple[str, int]]],
                      ) -> dict[str, int]:
-    """name -> total call sites across `files`, excluding def lines
-    and obvious comment lines. `def_index` maps name → set of
-    (rel_path, line) tuples that are def sites (skip on count)."""
+    """name -> total call sites across `files`, excluding def lines,
+    method-call shapes (`.name(` and `::name(`), and obvious comment
+    lines. `def_index` maps name → set of (rel_path, line) tuples
+    that are def sites (skip on count).
+
+    Method-call exclusion matters most for Rust where `Vec::push`,
+    `.unwrap()`, `.clone()`, `s.add(x)`, etc. would otherwise inflate
+    counts for any C fn named `push`/`unwrap`/`clone`/`add`. The C
+    side also benefits — `obj->method(x)` doesn't exist in C, but
+    `Class::method(x)` could (`Type::method` is rare in zsh C but
+    appears in some macro-expanded contexts).
+    """
     counts: dict[str, int] = defaultdict(int)
     for rel, lines in files:
         for i, line in enumerate(lines, 1):
@@ -416,6 +449,9 @@ def _all_call_counts(files: list[tuple[str, list[str]]],
                 if name in C_KEYWORDS:
                     continue
                 if name in CALL_COUNT_SKIP_NAMES:
+                    continue
+                # Skip method-call shapes — see _is_method_call_prefix.
+                if _is_method_call_prefix(line, m.start(1)):
                     continue
                 # Drop the def line itself so `fn foo(...)` /
                 # `int foo(...)` doesn't count as a call.
