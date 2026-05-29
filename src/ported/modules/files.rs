@@ -1693,4 +1693,38 @@ mod tests {
         let r = domkdir("mkdir", dir.path().to_str().unwrap(), 0o755, 0);
         assert_ne!(r, 0, "mkdir on existing dir without -p = error");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Modules/files.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `domkdir` creates a fresh dir and returns 0.
+    /// C `Src/Modules/files.c:domkdir` — mkdir() syscall path.
+    #[test]
+    fn domkdir_fresh_path_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let parent = tempfile::tempdir().unwrap();
+        let path = parent.path().join("newdir");
+        let r = domkdir("mkdir", path.to_str().unwrap(), 0o755, 0);
+        assert_eq!(r, 0, "fresh mkdir returns 0 (success)");
+        assert!(path.exists(), "directory should exist after mkdir");
+    }
+
+    /// `domkdir -p` creates parents as needed.
+    /// C `Src/Modules/files.c:domkdir` with `p=1` flag:
+    ///   recursively creates each intermediate directory if missing.
+    /// ZSHRS BUG: Rust port at modules/files.rs:222 does NOT walk
+    /// intermediate dirs — `mkdir -p a/b/c` fails when `a` and `b`
+    /// don't exist. C-compatible `mkdir -p` is mandatory shell
+    /// behavior; this breaks any script that relies on it.
+    #[test]
+    #[ignore = "ZSHRS BUG: domkdir(-p) doesn't create intermediate dirs — `mkdir -p a/b/c` fails when a/b don't exist; C creates each level"]
+    fn domkdir_with_p_creates_parents() {
+        let _g = crate::test_util::global_state_lock();
+        let parent = tempfile::tempdir().unwrap();
+        let nested = parent.path().join("a/b/c");
+        let r = domkdir("mkdir", nested.to_str().unwrap(), 0o755, 1);
+        assert_eq!(r, 0, "mkdir -p with nested path returns 0");
+        assert!(nested.exists(), "nested dir should exist after mkdir -p");
+    }
 }
