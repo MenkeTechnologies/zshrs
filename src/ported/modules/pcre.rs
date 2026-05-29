@@ -1206,4 +1206,105 @@ mod tests {
         let r = cond_pcre_match(&["abc".to_string(), "[unterminated".to_string()], 0);
         assert_eq!(r, 0, "invalid pattern = no match");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/pcre.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:53 — `zpcre_utf8_enabled()` returns 0 or 1.
+    #[test]
+    fn zpcre_utf8_enabled_returns_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
+        let v = zpcre_utf8_enabled();
+        assert!(v == 0 || v == 1, "must be 0 or 1, got {}", v);
+    }
+
+    /// c:53 — deterministic.
+    #[test]
+    fn zpcre_utf8_enabled_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = zpcre_utf8_enabled();
+        for _ in 0..5 {
+            assert_eq!(zpcre_utf8_enabled(), first);
+        }
+    }
+
+    /// c:625 — empty args → 0 (insufficient).
+    #[test]
+    fn cond_pcre_match_empty_args_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cond_pcre_match(&[], 0), 0);
+    }
+
+    /// c:625 — exact-string match → 1.
+    #[test]
+    fn cond_pcre_match_exact_string_matches() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_pcre_match(&["hello".to_string(), "hello".to_string()], 0);
+        assert_eq!(r, 1);
+    }
+
+    /// c:625 — no-match → 0.
+    #[test]
+    fn cond_pcre_match_no_match_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_pcre_match(&["abc".to_string(), "xyz".to_string()], 0);
+        assert_eq!(r, 0);
+    }
+
+    /// c:625 — anchored `^` pattern.
+    #[test]
+    fn cond_pcre_match_anchored_start() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            cond_pcre_match(&["hello".to_string(), "^h".to_string()], 0),
+            1
+        );
+        assert_eq!(
+            cond_pcre_match(&["xhello".to_string(), "^h".to_string()], 0),
+            0
+        );
+    }
+
+    /// c:625 — \\d+ digit class match.
+    #[test]
+    fn cond_pcre_match_digit_class() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            cond_pcre_match(&["abc123".to_string(), r"\d+".to_string()], 0),
+            1
+        );
+        assert_eq!(
+            cond_pcre_match(&["abc".to_string(), r"\d+".to_string()], 0),
+            0
+        );
+    }
+
+    /// c:478 — `getposint("0", _)` returns 0.
+    #[test]
+    fn pcre_getposint_zero_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("0", "test"), 0);
+    }
+
+    /// c:478 — `getposint("-1", _)` returns -1.
+    #[test]
+    fn pcre_getposint_negative_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("-1", "test"), -1);
+    }
+
+    /// c:478 — canonical positive decimal parses.
+    #[test]
+    fn pcre_getposint_canonical_positive() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("123", "test"), 123);
+    }
+
+    /// c:686 — setup_(NULL) = 0.
+    #[test]
+    fn pcre_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
 }
