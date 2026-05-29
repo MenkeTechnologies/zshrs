@@ -312,4 +312,121 @@ mod tests {
         let size = std::mem::size_of::<tcp_session>();
         assert!(size >= 8, "must hold fd+flags pair (≥ 8 bytes), got {}", size);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/tcp.h structural invariants.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:74-79 — `tcp_sockaddr` union size ≥ `sockaddr_storage` (since
+    /// the union has a `storage` field for that purpose). Pin the
+    /// allocation-width contract.
+    #[test]
+    fn tcp_sockaddr_union_at_least_sockaddr_storage_size() {
+        let union_sz = std::mem::size_of::<tcp_sockaddr>();
+        let storage_sz = std::mem::size_of::<libc::sockaddr_storage>();
+        assert!(union_sz >= storage_sz,
+            "tcp_sockaddr union ({}) must hold sockaddr_storage ({})",
+            union_sz, storage_sz);
+    }
+
+    /// c:74-79 — `tcp_sockaddr` union must be at least as big as each
+    /// of its variants (sockaddr/sockaddr_in/sockaddr_in6).
+    #[test]
+    fn tcp_sockaddr_union_holds_every_variant() {
+        let union_sz = std::mem::size_of::<tcp_sockaddr>();
+        assert!(union_sz >= std::mem::size_of::<libc::sockaddr>(),
+            "must hold sockaddr ({})", std::mem::size_of::<libc::sockaddr>());
+        assert!(union_sz >= std::mem::size_of::<libc::sockaddr_in>(),
+            "must hold sockaddr_in ({})", std::mem::size_of::<libc::sockaddr_in>());
+        assert!(union_sz >= std::mem::size_of::<libc::sockaddr_in6>(),
+            "must hold sockaddr_in6 ({})", std::mem::size_of::<libc::sockaddr_in6>());
+    }
+
+    /// c:87 — `tcp_session.fd` is i32 (compile-time access).
+    /// Note: union field access is unsafe; this only pins the struct
+    /// layout by constructing one through a known-zero pattern.
+    #[test]
+    fn tcp_session_fd_field_is_i32() {
+        // SAFETY: We construct a tcp_session purely to read the `fd`
+        // i32 field — the sockaddr unions are zero-init storage.
+        let sess: tcp_session = unsafe { std::mem::zeroed() };
+        let _: i32 = sess.fd;
+        let _: i32 = sess.flags;
+    }
+
+    /// c:83/84/85 — sum of LISTEN + INBOUND + ZFTP equals their OR
+    /// (proves no overlapping bits across all three flags).
+    #[test]
+    fn ztcp_flags_no_pairwise_overlap_across_all_three() {
+        let sum = ZTCP_LISTEN + ZTCP_INBOUND + ZTCP_ZFTP;
+        let or  = ZTCP_LISTEN | ZTCP_INBOUND | ZTCP_ZFTP;
+        assert_eq!(sum, or,
+            "sum==OR proves no shared bits between LISTEN/INBOUND/ZFTP");
+    }
+
+    /// c:83 — ZTCP_LISTEN does not overlap ZTCP_INBOUND (subset of the
+    /// triple-disjointness test but pinned individually for tighter
+    /// failure resolution).
+    #[test]
+    fn ztcp_listen_disjoint_from_inbound() {
+        assert_eq!(ZTCP_LISTEN & ZTCP_INBOUND, 0,
+            "LISTEN and INBOUND must not share bits");
+    }
+
+    /// c:85 — ZTCP_ZFTP must occupy a bit higher than INBOUND so
+    /// a sequential bit allocation pattern survives future ZTCP_* adds.
+    #[test]
+    fn ztcp_zftp_bit_higher_than_inbound() {
+        assert!(ZTCP_ZFTP > ZTCP_INBOUND,
+            "ZTCP_ZFTP ({}) must be > ZTCP_INBOUND ({}) for clean bitfield growth",
+            ZTCP_ZFTP, ZTCP_INBOUND);
+    }
+
+    /// c:97 — INET_ADDRSTRLEN matches POSIX RFC value (16).
+    /// libc crate doesn't expose this as `pub const` on every target;
+    /// pin to the RFC-mandated numeric value directly.
+    #[test]
+    fn inet_addrstrlen_matches_posix_rfc_value() {
+        assert_eq!(INET_ADDRSTRLEN, 16,
+            "INET_ADDRSTRLEN must equal 16 per RFC 4291 + POSIX (max IPv4 + NUL)");
+    }
+
+    /// c:101 — INET6_ADDRSTRLEN matches POSIX RFC value (46).
+    #[test]
+    fn inet6_addrstrlen_matches_posix_rfc_value() {
+        assert_eq!(INET6_ADDRSTRLEN, 46,
+            "INET6_ADDRSTRLEN must equal 46 per RFC 4291 + POSIX");
+    }
+
+    /// c:87 — `tcp_session` layout: two sockaddr unions sandwiched
+    /// between fd (head) and flags (tail). Size must be ≥
+    /// 4 + 2*storage + 4 (the field bound).
+    #[test]
+    fn tcp_session_size_holds_two_sockaddr_unions() {
+        let sz = std::mem::size_of::<tcp_session>();
+        let storage_sz = std::mem::size_of::<libc::sockaddr_storage>();
+        let minimum = 4 + 2 * storage_sz + 4;
+        assert!(sz >= minimum,
+            "tcp_session ({} bytes) must hold fd+2*storage+flags (≥ {})",
+            sz, minimum);
+    }
+
+    /// `Tcp_session` type alias points at owned `Box<tcp_session>`
+    /// (zshrs's ownership wrapper over the C bare pointer).
+    #[test]
+    fn tcp_session_typedef_is_box() {
+        // Compile-time check: build a Tcp_session and verify it
+        // dereferences to tcp_session.
+        let sess: Tcp_session = Box::new(unsafe { std::mem::zeroed::<tcp_session>() });
+        let _: &tcp_session = &*sess;
+    }
+
+    /// c:83/84/85 — all three flags must be > 0 (positive sentinel
+    /// for any flag set; zero means "no flags").
+    #[test]
+    fn ztcp_flags_all_strictly_positive() {
+        assert!(ZTCP_LISTEN > 0);
+        assert!(ZTCP_INBOUND > 0);
+        assert!(ZTCP_ZFTP > 0);
+    }
 }
