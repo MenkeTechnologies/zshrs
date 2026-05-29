@@ -240,4 +240,114 @@ mod tests {
     fn deltochar_finish_returns_zero() {
         assert_eq!(finish_(), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/deltochar.c
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:38 — `deltochar` is deterministic for the "no input"
+    /// short-circuit (multiple calls return the same value).
+    #[test]
+    fn deltochar_no_input_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = deltochar();
+        for _ in 0..5 {
+            assert_eq!(deltochar(), first, "must be deterministic");
+        }
+    }
+
+    /// c:38 — `deltochar` returns boolean i32 (0 or 1).
+    #[test]
+    fn deltochar_return_value_is_boolean() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = deltochar();
+        assert!(r == 0 || r == 1, "must be 0 or 1; got {}", r);
+    }
+
+    /// c:90 — `setup_` is idempotent (callable repeatedly).
+    #[test]
+    fn deltochar_setup_idempotent() {
+        for _ in 0..10 {
+            assert_eq!(setup_(), 0);
+        }
+    }
+
+    /// c:138 — `finish_` is idempotent.
+    #[test]
+    fn deltochar_finish_idempotent() {
+        for _ in 0..10 {
+            assert_eq!(finish_(), 0);
+        }
+    }
+
+    /// c:129 — `cleanup_` is idempotent.
+    #[test]
+    fn deltochar_cleanup_idempotent() {
+        for _ in 0..10 {
+            assert_eq!(cleanup_(), 0);
+        }
+    }
+
+    /// c:112 — `boot_` is idempotent.
+    #[test]
+    fn deltochar_boot_idempotent() {
+        for _ in 0..10 {
+            assert_eq!(boot_(), 0);
+        }
+    }
+
+    /// c:97 — `features_` is idempotent.
+    #[test]
+    fn deltochar_features_idempotent() {
+        for _ in 0..10 {
+            assert_eq!(features_(), 0);
+        }
+    }
+
+    /// c:105 — `enables_` is idempotent.
+    #[test]
+    fn deltochar_enables_idempotent() {
+        for _ in 0..10 {
+            assert_eq!(enables_(), 0);
+        }
+    }
+
+    /// c:90-138 — full lifecycle setup→boot→cleanup→finish sequence is safe.
+    #[test]
+    fn deltochar_full_lifecycle_sequence_safe() {
+        assert_eq!(setup_(), 0);
+        assert_eq!(features_(), 0);
+        assert_eq!(enables_(), 0);
+        assert_eq!(boot_(), 0);
+        assert_eq!(cleanup_(), 0);
+        assert_eq!(finish_(), 0);
+    }
+
+    /// c:90-138 — repeated load/unload cycles (setup/boot/cleanup/finish ×3).
+    #[test]
+    fn deltochar_repeated_load_unload_cycles_safe() {
+        for _ in 0..3 {
+            assert_eq!(setup_(), 0);
+            assert_eq!(boot_(), 0);
+            assert_eq!(cleanup_(), 0);
+            assert_eq!(finish_(), 0);
+        }
+    }
+
+    /// c:38 — `deltochar` with no input doesn't mutate ZLELL/ZLECS
+    /// (early-return path before any line edit).
+    #[test]
+    fn deltochar_no_input_does_not_mutate_zle_state() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let cs_before = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+        let ll_before = ZLELL.load(std::sync::atomic::Ordering::SeqCst);
+        let _ = deltochar();
+        let cs_after = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+        let ll_after = ZLELL.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(cs_before, cs_after, "ZLECS unchanged on early-return");
+        assert_eq!(ll_before, ll_after, "ZLELL unchanged on early-return");
+    }
 }
