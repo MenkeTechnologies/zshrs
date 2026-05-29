@@ -3458,4 +3458,117 @@ mod tests {
             "unlinking missing keymap must return error"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests for Src/Zle/zle_keymap.c keybind/keyisprefix/
+    // newkeymap contracts.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:683 — `keyisprefix(km, "")` returns 1 (empty seq is trivially
+    /// a prefix of every binding).
+    #[test]
+    fn keyisprefix_empty_seq_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let km = newkeymap(None, "test");
+        assert_eq!(keyisprefix(&km, b""), 1, "empty seq is trivially a prefix");
+    }
+
+    /// c:683 — `keyisprefix` on a fresh empty keymap for any non-prefix
+    /// sequence returns 0 (no bindings exist).
+    #[test]
+    fn keyisprefix_unbound_seq_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let km = newkeymap(None, "test");
+        // No bindings in km → no sequence is a prefix.
+        assert_eq!(keyisprefix(&km, b"unbound"), 0);
+    }
+
+    /// c:659 — `keybind(km, single_byte)` on an unbound byte returns
+    /// (None, None) — no binding, no string.
+    #[test]
+    fn keybind_unbound_single_byte_returns_none_pair() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let km = newkeymap(None, "test");
+        let (bind, s) = keybind(&km, &[0x42]); // 'B' — unbound on fresh km
+        assert!(bind.is_none(), "no binding on fresh km");
+        assert!(s.is_none(), "no string on fresh km");
+    }
+
+    /// c:659 — `keybind(km, &[])` on empty seq returns (None, None)
+    /// (no single byte to look up, no multi-byte hash hit).
+    #[test]
+    fn keybind_empty_seq_returns_none_pair() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let km = newkeymap(None, "test");
+        let (bind, s) = keybind(&km, b"");
+        assert!(bind.is_none());
+        assert!(s.is_none());
+    }
+
+    /// c:659 — `keybind(km, &[0x83, x])` decodes Meta-pair before
+    /// looking up: byte[1]^32 is the actual key. Pin: empty km → None.
+    #[test]
+    fn keybind_meta_pair_unbound_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let km = newkeymap(None, "test");
+        // Meta-encoded escape sequence (0x83 + 'a'^32) — unbound on fresh.
+        let (bind, _) = keybind(&km, &[0x83, b'a' ^ 32]);
+        assert!(bind.is_none(), "unbound Meta-pair on fresh km");
+    }
+
+    /// c:517 — `newkeymap(None, _)` creates a fresh keymap with all
+    /// 256 first[] slots unbound.
+    #[test]
+    fn newkeymap_fresh_has_no_first_bindings() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let km = newkeymap(None, "test");
+        for (i, slot) in km.first.iter().enumerate() {
+            assert!(slot.is_none(), "first[{}] must be unbound on fresh keymap", i);
+        }
+    }
+
+    /// c:517 — `newkeymap(None, _)` creates a fresh keymap with empty
+    /// multi-byte binding table.
+    #[test]
+    fn newkeymap_fresh_has_empty_multi_table() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let km = newkeymap(None, "test");
+        assert!(km.multi.is_empty(), "multi table must be empty on fresh km");
+    }
+
+    /// c:287 — `newkeytab()` is independent across calls (each call
+    /// returns a fresh empty HashMap, not a shared reference).
+    #[test]
+    fn newkeytab_returns_owned_independent_table() {
+        let _g = crate::test_util::global_state_lock();
+        let kt1 = newkeytab();
+        let kt2 = newkeytab();
+        assert!(kt1.is_empty());
+        assert!(kt2.is_empty());
+        // Independent owned values — no shared backing.
+    }
+
+    /// c:886 — `selectkeymap("")` returns nonzero (empty name is invalid).
+    #[test]
+    fn selectkeymap_empty_name_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_ne!(selectkeymap("", 0), 0, "empty name = invalid");
+    }
+
+    /// c:886 — `selectkeymap("emacs", 0)` returns 0 (success).
+    /// The default startup keymaps must be selectable.
+    #[test]
+    fn selectkeymap_default_emacs_succeeds() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_eq!(selectkeymap("emacs", 0), 0, "default 'emacs' keymap must exist");
+    }
 }
