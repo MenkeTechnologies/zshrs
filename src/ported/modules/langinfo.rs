@@ -748,4 +748,110 @@ mod tests {
         assert_eq!(setup_(std::ptr::null()), 0);
         assert_eq!(cleanup_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/langinfo.c
+    // c:94 liitem / c:119 getlanginfo / c:163 scanlanginfo + lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:94 — `liitem("")` empty input returns None (not a known item).
+    #[cfg(unix)]
+    #[test]
+    fn liitem_empty_string_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(liitem("").is_none(), "empty langinfo item must be None");
+    }
+
+    /// c:94 — `liitem` returns None for nonsense names.
+    #[cfg(unix)]
+    #[test]
+    fn liitem_nonsense_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(liitem("___definitely_not_a_langinfo_item_xyz___").is_none(),
+            "unknown langinfo name must be None");
+    }
+
+    /// c:94 — `liitem` returns Some for known POSIX items.
+    /// CODESET is the most universally-supported langinfo item per POSIX.
+    #[cfg(unix)]
+    #[test]
+    fn liitem_codeset_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(liitem("CODESET").is_some(),
+            "CODESET must resolve on every POSIX libc");
+    }
+
+    /// c:119 — `getlanginfo("")` for empty name returns None (alt pin).
+    #[cfg(unix)]
+    #[test]
+    fn getlanginfo_empty_name_returns_none_alt() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getlanginfo("").is_none(),
+            "empty langinfo name must yield None");
+    }
+
+    /// c:119 — `getlanginfo` for nonsense name returns None.
+    #[cfg(unix)]
+    #[test]
+    fn getlanginfo_nonsense_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getlanginfo("___bogus_langinfo_xyz___").is_none());
+    }
+
+    /// c:163 — `scanlanginfo` no-args is fast (deterministic snapshot).
+    /// Pin: result must not contain empty keys (every entry has a name).
+    #[cfg(unix)]
+    #[test]
+    fn scanlanginfo_no_empty_keys() {
+        let _g = crate::test_util::global_state_lock();
+        for (k, _v) in scanlanginfo() {
+            assert!(!k.is_empty(), "no scanlanginfo entry may have empty key");
+        }
+    }
+
+    /// c:163 — `scanlanginfo` entries have no duplicate keys.
+    #[cfg(unix)]
+    #[test]
+    fn scanlanginfo_no_duplicate_keys() {
+        let _g = crate::test_util::global_state_lock();
+        let entries = scanlanginfo();
+        let mut seen = std::collections::HashSet::new();
+        for (k, _) in &entries {
+            assert!(seen.insert(k.clone()),
+                "duplicate langinfo key {:?} in scanlanginfo output", k);
+        }
+    }
+
+    /// c:163 — `scanlanginfo` keys are uppercase ASCII (POSIX item names).
+    #[cfg(unix)]
+    #[test]
+    fn scanlanginfo_keys_are_uppercase_ascii() {
+        let _g = crate::test_util::global_state_lock();
+        for (k, _) in scanlanginfo() {
+            assert!(k.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
+                "langinfo key {:?} must be uppercase ASCII + digits + underscore", k);
+        }
+    }
+
+    /// c:183 — `setup_` returns i32 (compile-time pin).
+    #[test]
+    fn langinfo_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:195 — `features_` returns i32 (compile-time pin).
+    #[test]
+    fn langinfo_features_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = Vec::new();
+        let _: i32 = features_(std::ptr::null(), &mut v);
+    }
+
+    /// c:210 — `boot_` returns i32 (compile-time pin).
+    #[test]
+    fn langinfo_boot_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = boot_(std::ptr::null());
+    }
 }
