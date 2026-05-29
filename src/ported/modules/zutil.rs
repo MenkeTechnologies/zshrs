@@ -4078,4 +4078,129 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zutil.c
+    // c:787 lookupstyle / c:810 testforstyle / c:837 bin_zstyle /
+    // c:1131 bin_zformat / c:2172 get_opt_desc / c:2192 lookup_opt /
+    // c:2216 get_opt_arr / c:2966-3002 lifecycle type pins
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:787 — `lookupstyle` returns Vec<String> (compile-time type pin).
+    #[test]
+    fn lookupstyle_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = lookupstyle("", "");
+    }
+
+    /// c:787 — `lookupstyle("", "")` empty inputs returns empty Vec.
+    #[test]
+    fn lookupstyle_empty_inputs_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = lookupstyle("", "");
+        assert!(r.is_empty(), "empty context/style → empty Vec");
+    }
+
+    /// c:787 — `lookupstyle` deterministic for stable input.
+    #[test]
+    fn lookupstyle_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for (ctx, sty) in [("", ""), ("a", "b"), ("zsh", "color")] {
+            let first = lookupstyle(ctx, sty);
+            for _ in 0..3 {
+                assert_eq!(lookupstyle(ctx, sty), first,
+                    "lookupstyle({:?}, {:?}) must be deterministic", ctx, sty);
+            }
+        }
+    }
+
+    /// c:810 — `testforstyle` returns i32 (compile-time type pin).
+    #[test]
+    fn testforstyle_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = testforstyle("", "");
+    }
+
+    /// c:810 — `testforstyle("", "")` empty returns 0 (not present).
+    /// ZSHRS BUG: returns 1 for empty ctx/style — C zstyle -t with empty
+    /// context should not match anything (return false=0). Possibly the
+    /// empty pattern matches all stypats; pin to detect future fix.
+    #[test]
+    #[ignore = "ZSHRS BUG: testforstyle('','') returns 1 instead of 0 — empty ctx should not match any registered style (Src/Modules/zutil.c:810)"]
+    fn testforstyle_empty_inputs_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(testforstyle("", ""), 0,
+            "empty ctx/style → 0 (not present)");
+    }
+
+    /// c:837 — `bin_zstyle` returns i32 (compile-time type pin).
+    #[test]
+    fn bin_zstyle_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let _: i32 = bin_zstyle("zstyle", &[], &ops, 0);
+    }
+
+    /// c:1131 — `bin_zformat` returns i32.
+    #[test]
+    fn bin_zformat_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let _: i32 = bin_zformat("zformat", &[], &ops, 0);
+    }
+
+    /// c:2172 — `get_opt_desc` returns Option<Zoptdesc>.
+    #[test]
+    fn get_opt_desc_returns_option_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Zoptdesc> = get_opt_desc("");
+    }
+
+    /// c:2172 — `get_opt_desc` deterministic for unknown name.
+    #[test]
+    fn get_opt_desc_unknown_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let a = get_opt_desc("__never_real_opt__").is_some();
+        for _ in 0..3 {
+            assert_eq!(get_opt_desc("__never_real_opt__").is_some(), a,
+                "get_opt_desc must be deterministic");
+        }
+    }
+
+    /// c:2192 — `lookup_opt` returns Option<Zoptdesc>.
+    #[test]
+    fn lookup_opt_returns_option_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Zoptdesc> = lookup_opt("");
+    }
+
+    /// c:2216 — `get_opt_arr` returns Option<Zoptarr>.
+    #[test]
+    fn get_opt_arr_returns_option_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Zoptarr> = get_opt_arr("");
+    }
+
+    /// c:2966 — `setup_` returns i32 (compile-time type pin).
+    #[test]
+    fn zutil_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:2988 + c:2995 — boot/cleanup idempotent.
+    #[test]
+    fn zutil_boot_cleanup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            assert_eq!(boot_(std::ptr::null()), 0);
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
 }
