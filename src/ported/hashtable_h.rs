@@ -330,4 +330,121 @@ mod tests {
             assert_eq!(*c, i as i32, "BIN_* must form contiguous 0..N range");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hashtable.h c:34-70 BIN_* slots
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:58-66 — BIN_DISABLE..BIN_EXPORT form contiguous 24..32 (extends
+    /// the prior 0..24 contiguity check to cover the full overload table).
+    #[test]
+    fn bin_codes_24_through_32_contiguous() {
+        let extras: Vec<i32> = vec![
+            BIN_DISABLE,    // 24 c:58
+            BIN_ENABLE,     // 25 c:59
+            BIN_PRINTF,     // 26 c:60
+            BIN_COMMAND,    // 27 c:61
+            BIN_UNHASH,     // 28 c:62
+            BIN_UNALIAS,    // 29 c:63
+            BIN_UNFUNCTION, // 30 c:64
+            BIN_UNSET,      // 31 c:65
+            BIN_EXPORT,     // 32 c:66
+        ];
+        for (i, &c) in extras.iter().enumerate() {
+            assert_eq!(c, 24 + i as i32, "BIN_* tail must be contiguous 24..32");
+        }
+    }
+
+    /// c:62-66 — `un*` family BIN_* (BIN_UNHASH..BIN_UNSET) are
+    /// sequential 28..31.
+    #[test]
+    fn bin_un_family_sequential() {
+        assert_eq!(BIN_UNHASH, 28, "c:62");
+        assert_eq!(BIN_UNALIAS, 29, "c:63");
+        assert_eq!(BIN_UNFUNCTION, 30, "c:64");
+        assert_eq!(BIN_UNSET, 31, "c:65");
+    }
+
+    /// c:60-61 — output/exec family BIN_PRINTF, BIN_COMMAND sequential 26,27.
+    #[test]
+    fn bin_output_exec_family_sequential() {
+        assert_eq!(BIN_PRINTF, 26, "c:60");
+        assert_eq!(BIN_COMMAND, 27, "c:61");
+    }
+
+    /// c:58-59 — enable/disable BIN_* are sequential 24,25.
+    #[test]
+    fn bin_enable_disable_sequential() {
+        assert_eq!(BIN_DISABLE, 24, "c:58");
+        assert_eq!(BIN_ENABLE, 25, "c:59");
+    }
+
+    /// c:66 — BIN_EXPORT is the highest non-overlapped BIN_* code (= 32).
+    /// Pin so adding new entries can't silently push past this without
+    /// updating the overload-family assumption.
+    #[test]
+    fn bin_export_is_max_non_overlapping() {
+        let all = [
+            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
+            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
+            BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT, BIN_EVAL,
+            BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE, BIN_LOGOUT,
+            BIN_TEST, BIN_BRACKET, BIN_READONLY, BIN_ECHO, BIN_DISABLE,
+            BIN_ENABLE, BIN_PRINTF, BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS,
+            BIN_UNFUNCTION, BIN_UNSET, BIN_EXPORT,
+        ];
+        let max = *all.iter().max().unwrap();
+        assert_eq!(max, BIN_EXPORT, "BIN_EXPORT must be max non-overlapping slot");
+        assert_eq!(BIN_EXPORT, 32, "c:66 = 32");
+    }
+
+    /// c:69-70 — BIN_SETOPT/BIN_UNSETOPT INTENTIONALLY overlap with
+    /// BIN_TYPESET/BIN_BG slots 0/1; the comment at c:67 calls this out
+    /// explicitly. Pin the overlap because removing it would be a
+    /// behavioral break the C source has carried for decades.
+    #[test]
+    fn bin_setopt_unsetopt_overlap_typeset_bg_is_intentional() {
+        assert_eq!(BIN_SETOPT, BIN_TYPESET, "c:69 SETOPT overlaps TYPESET");
+        assert_eq!(BIN_UNSETOPT, BIN_BG, "c:70 UNSETOPT overlaps BG");
+    }
+
+    /// c:34-66 — full BIN_* enumeration has exactly 33 entries
+    /// (TYPESET..EXPORT inclusive, plus SETOPT/UNSETOPT which overlap).
+    #[test]
+    fn bin_overload_family_has_33_distinct_slots() {
+        let ids = [
+            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
+            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
+            BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT, BIN_EVAL,
+            BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE, BIN_LOGOUT,
+            BIN_TEST, BIN_BRACKET, BIN_READONLY, BIN_ECHO, BIN_DISABLE,
+            BIN_ENABLE, BIN_PRINTF, BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS,
+            BIN_UNFUNCTION, BIN_UNSET, BIN_EXPORT,
+        ];
+        assert_eq!(ids.len(), 33, "33 explicitly numbered BIN_* overload slots");
+        let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), ids.len(), "all 33 must be pairwise distinct");
+    }
+
+    /// c:34-66 — every BIN_* value fits in an i32 (used as funcid).
+    /// All values must be < 256 to fit a hypothetical u8 funcid table.
+    #[test]
+    fn all_bin_codes_fit_in_u8_range() {
+        let all = [
+            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
+            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
+            BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT, BIN_EVAL,
+            BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE, BIN_LOGOUT,
+            BIN_TEST, BIN_BRACKET, BIN_READONLY, BIN_ECHO, BIN_DISABLE,
+            BIN_ENABLE, BIN_PRINTF, BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS,
+            BIN_UNFUNCTION, BIN_UNSET, BIN_EXPORT, BIN_SETOPT, BIN_UNSETOPT,
+        ];
+        for c in all {
+            assert!(
+                (0..256).contains(&c),
+                "BIN_* code {} must fit in 0..256 (u8 funcid headroom)",
+                c
+            );
+        }
+    }
 }
