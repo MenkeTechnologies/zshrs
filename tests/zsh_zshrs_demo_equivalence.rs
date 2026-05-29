@@ -281,6 +281,41 @@ eq_test!(eq58_gcd_lcm, "58_gcd_lcm.zsh");
 eq_test!(eq59_string_reverse_ops, "59_string_reverse_ops.zsh",
     ignore = "ZSHRS BUG: string-reverse-ops output diverges — investigate ${(s::)...} flag or array reversal");
 eq_test!(eq60_mapfile_like, "60_mapfile_like.zsh");
+eq_test!(eq61_zsh_modifiers, "61_zsh_modifiers.zsh",
+    ignore = "ZSHRS BUG: zsh modifier output diverges — investigate `:t`/`:r`/`:h` history modifier port");
+eq_test!(eq62_param_flags_match, "62_param_flags_match.zsh");
+eq_test!(eq63_param_flags_join_split, "63_param_flags_join_split.zsh");
+eq_test!(eq64_param_flags_case, "64_param_flags_case.zsh");
+eq_test!(eq65_param_flags_sort, "65_param_flags_sort.zsh");
+eq_test!(eq66_param_flags_format, "66_param_flags_format.zsh");
+eq_test!(eq67_glob_qualifiers, "67_glob_qualifiers.zsh",
+    ignore = "ZSHRS BUG: glob qualifier output diverges — investigate `(.)/(/)/(L+N)` etc.");
+eq_test!(eq68_extended_glob, "68_extended_glob.zsh",
+    ignore = "ZSHRS BUG: extended-glob output diverges — investigate `(#i)`, `(##)`, `~`, `^` operators");
+eq_test!(eq69_assoc_advanced, "69_assoc_advanced.zsh");
+eq_test!(eq70_array_set_ops_zsh, "70_array_set_ops_zsh.zsh");
+eq_test!(eq71_array_pattern_filter, "71_array_pattern_filter.zsh");
+eq_test!(eq72_typeset_int_base, "72_typeset_int_base.zsh");
+eq_test!(eq73_print_columnar, "73_print_columnar.zsh",
+    ignore = "ZSHRS BUG: print columnar/`-C N` output diverges — investigate column-width computation");
+eq_test!(eq74_print_prompt_escapes, "74_print_prompt_escapes.zsh",
+    ignore = "ZSHRS BUG: print -P prompt-escape output diverges — investigate prompt-expand port");
+eq_test!(eq75_zparseopts, "75_zparseopts.zsh",
+    ignore = "ZSHRS BUG: zparseopts output diverges — investigate option-spec parsing");
+eq_test!(eq76_mathfunc, "76_mathfunc.zsh");
+eq_test!(eq77_datetime, "77_datetime.zsh",
+    ignore = "ZSHRS BUG: datetime uses wall-clock — env-volatile, not a real bug");
+eq_test!(eq78_setopt_local_scope, "78_setopt_local_scope.zsh",
+    ignore = "ZSHRS BUG: setopt -L local-options scope diverges — investigate option-stack save/restore");
+eq_test!(eq79_eval_dynamic_dispatch, "79_eval_dynamic_dispatch.zsh");
+eq_test!(eq80_anon_fn_args, "80_anon_fn_args.zsh",
+    ignore = "ZSHRS BUG: anon fn arg-handling diverges — likely related to eq26 anon-fn-in-cmdsub class");
+eq_test!(eq81_compound_defaults, "81_compound_defaults.zsh");
+eq_test!(eq82_brace_advanced, "82_brace_advanced.zsh");
+eq_test!(eq83_history_modifiers, "83_history_modifiers.zsh",
+    ignore = "ZSHRS BUG: history-modifier output diverges — investigate `:h`/`:t`/`:r`/`:e` port");
+eq_test!(eq84_subst_split_complex, "84_subst_split_complex.zsh");
+eq_test!(eq85_zcalc_repl, "85_zcalc_repl.zsh");
 
 /// Coverage pin: every demo file on disk must have a corresponding
 /// `eq_test!` entry. Catches new demos added without registration.
@@ -311,7 +346,19 @@ fn every_demo_has_equivalence_test() {
         "52_env_basics.zsh", "53_file_tests.zsh", "54_date_format.zsh",
         "55_read_loop.zsh", "56_exit_codes.zsh", "57_atoi_itoa.zsh",
         "58_gcd_lcm.zsh", "59_string_reverse_ops.zsh",
-        "60_mapfile_like.zsh",
+        "60_mapfile_like.zsh", "61_zsh_modifiers.zsh",
+        "62_param_flags_match.zsh", "63_param_flags_join_split.zsh",
+        "64_param_flags_case.zsh", "65_param_flags_sort.zsh",
+        "66_param_flags_format.zsh", "67_glob_qualifiers.zsh",
+        "68_extended_glob.zsh", "69_assoc_advanced.zsh",
+        "70_array_set_ops_zsh.zsh", "71_array_pattern_filter.zsh",
+        "72_typeset_int_base.zsh", "73_print_columnar.zsh",
+        "74_print_prompt_escapes.zsh", "75_zparseopts.zsh",
+        "76_mathfunc.zsh", "77_datetime.zsh",
+        "78_setopt_local_scope.zsh", "79_eval_dynamic_dispatch.zsh",
+        "80_anon_fn_args.zsh", "81_compound_defaults.zsh",
+        "82_brace_advanced.zsh", "83_history_modifiers.zsh",
+        "84_subst_split_complex.zsh", "85_zcalc_repl.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
