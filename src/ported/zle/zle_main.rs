@@ -1319,17 +1319,83 @@ pub fn zle_resetprompt() {
 /// belongs to the live widget tick.
 pub fn trashzle() {
     // c:2068
-    // c:2089 — emit `\r` then `cleareol` (CSI K) to wipe the
-    //          current line. C drives this via tcout(TCCR) +
-    //          tcout(TCCLEAREOL); our simplified Rust uses the
-    //          raw CSI directly.
-    // c:2091 — applytextattributes(0) → CSI 0m resets all SGR.
-    // Write both blobs to SHTTY (stdout fallback) so the prompt
-    // teardown reaches the same destination as the prompt write.
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out = if fd >= 0 { fd } else { 1 };
-    let _ = write_loop(out, b"\r\x1b[K\x1b[0m");
-    ZLE_RESET_NEEDED.store(1, SeqCst);
+    use crate::ported::prompt::{applytextattributes, treplaceattrs};
+    use crate::ported::utils::errflag;
+    use crate::ported::zle::zle_refresh::{
+        moveto, tcout, NLNCT, PROMPT_ATTR, SHOWINGLIST, TRASHEDZLE,
+    };
+    use crate::ported::zsh_h::{TCCLEAREOD, ZLRF_NOSETTY};
+
+    // c:2072 — `if (zleactive && !trashedzle)`. Both gates required.
+    if zleactive.load(Ordering::Relaxed) != 0 && TRASHEDZLE.load(Ordering::Relaxed) == 0 {
+        // c:2078-2081 — `int sl = showinglist; showinglist = 0;
+        //                trashedzle = 1; zrefresh(); showinglist = sl;`
+        // Suppress list-display in the redraw to prevent infinite
+        // recursion (zrefresh would re-call trashzle for the list).
+        let sl = SHOWINGLIST.load(Ordering::Relaxed); // c:2078
+        SHOWINGLIST.store(0, Ordering::Relaxed); // c:2079
+        TRASHEDZLE.store(1, Ordering::Relaxed); // c:2080
+        crate::ported::zle::zle_refresh::zrefresh(); // c:2081
+        SHOWINGLIST.store(sl, Ordering::Relaxed); // c:2082
+
+        // c:2083 — `treplaceattrs(prompt_attr);`. Restore the prompt
+        // attribute set (so post-edit output inherits the right SGR).
+        treplaceattrs(PROMPT_ATTR.load(Ordering::Relaxed));
+        // c:2084 — `applytextattributes(0);`. Emit the SGR diff bytes
+        // to take the pending attrs live.
+        applytextattributes(0);
+        // c:2085 — `moveto(nlnct, 0);`. Park cursor one row past the
+        // last drawn line, column 0.
+        moveto(NLNCT.load(Ordering::Relaxed) as usize, 0);
+
+        // c:2086-2087 — `if (clearflag && tccan(TCCLEAREOD))
+        //                  { tcout(TCCLEAREOD); clearflag = listshown = 0; }`
+        // tcout() short-circuits on absent caps in the Rust port so
+        // the tccan guard collapses into the call itself.
+        if crate::ported::zle::zle_refresh::CLEARFLAG.load(Ordering::Relaxed) != 0 {
+            tcout(TCCLEAREOD); // c:2087
+            crate::ported::zle::zle_refresh::CLEARFLAG.store(0, Ordering::Relaxed);
+            crate::ported::zle::zle_refresh::LISTSHOWN.store(0, Ordering::Relaxed);
+        }
+
+        // c:2088-2089 — `if (postedit) fprintf(shout, "%s", unmeta(postedit));`
+        // Emit $POSTEDIT from the param table (typically empty;
+        // users override to clean up modes / colors after editing).
+        let postedit = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get("POSTEDIT").and_then(|p| p.u_str.clone()))
+            .unwrap_or_default();
+        if !postedit.is_empty() {
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out = if fd >= 0 { fd } else { 1 };
+            let _ = write_loop(out, postedit.as_bytes());
+        }
+        // c:2090 — `fflush(shout);`. write_loop calls libc::write
+        // directly (unbuffered), so no fflush analog is needed.
+
+        // c:2091 — `resetneeded = 1;`. Mark for full redraw on the
+        // next zlecore iteration.
+        ZLE_RESET_NEEDED.store(1, SeqCst);
+
+        // c:2092-2093 — `if (!(zlereadflags & ZLRF_NOSETTY))
+        //                  settyinfo(&shttyinfo);`
+        // Rust port: `shttyinfo` (the saved termios snapshot) is not
+        // ported as a Rust global yet — only `settyinfo()` exists
+        // (utils.rs:1964) and it takes a `&libc::termios`. Without
+        // the saved snapshot we cannot honestly restore arbitrary
+        // tty state. Documented gap — bucket-3 substrate-port for
+        // the tty-save side (init.c:setupshttyinfo) lands first.
+        if (ZLEREADFLAGS.load(Ordering::Relaxed) & ZLRF_NOSETTY) == 0 {
+            // bucket-3 stub — no-op until shttyinfo lands
+        }
+    }
+
+    // c:2095-2096 — `if (errflag) kungetct = 0;`. Discard pending
+    // input on error so the next prompt starts clean.
+    if errflag.load(Ordering::Relaxed) != 0 {
+        KUNGETCT.store(0, Ordering::Relaxed);
+    }
 }
 
 /// Port of `zlebeforetrap(UNUSED(Hookdef dummy), UNUSED(void *dat))` from `Src/Zle/zle_main.c:2103`.
@@ -2415,6 +2481,13 @@ pub static ZLEREADFLAGS: std::sync::atomic::AtomicI32 =
 /// vs continuation-line vs vared etc.
 pub static ZLECONTEXT: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(ZLCON_LINE_START);
+
+/// Port of `int kungetct` from `Src/Zle/zle_main.c:187`. Unget-
+/// buffer fill: number of bytes pushed back via `kungetbyte()`/
+/// `ungetkey()` and not yet consumed by `getbyte()`. Read by
+/// `$KEYS_QUEUED_COUNT` parameter (zle_params.c:470) and reset
+/// by `trashzle()` on errflag.
+pub static KUNGETCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `int zle_recursive` from `Src/Zle/zle_main.c`. Depth of
 /// nested `recursive-edit` invocations; non-zero inhibits outer
