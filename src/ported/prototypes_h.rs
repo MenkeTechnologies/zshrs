@@ -126,4 +126,108 @@ mod tests {
             "prototypes_h.rs MUST export no fns — legacy fallbacks live in libc"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/prototypes.h legacy externs
+    // — every one of the 24+ externs in the C header must be present
+    // in libc on a modern Unix; tests pin that contract.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// libc provides memcpy (modern equivalent of bcopy from the C
+    /// header — bcopy was deprecated by POSIX 2001 and removed from
+    /// recent libc bindings, memcpy is the supported successor).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_memcpy_as_bcopy_successor() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*mut libc::c_void, *const libc::c_void, libc::size_t)
+            -> *mut libc::c_void = libc::memcpy;
+    }
+
+    /// libc provides gettimeofday.
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_gettimeofday() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*mut libc::timeval, *mut libc::c_void) -> libc::c_int =
+            libc::gettimeofday;
+    }
+
+    /// libc provides select (legacy IO multiplexing).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_select() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(
+            libc::c_int,
+            *mut libc::fd_set,
+            *mut libc::fd_set,
+            *mut libc::fd_set,
+            *mut libc::timeval,
+        ) -> libc::c_int = libc::select;
+    }
+
+    /// libc provides mknod.
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_mknod() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*const libc::c_char, libc::mode_t, libc::dev_t) -> libc::c_int =
+            libc::mknod;
+    }
+
+    /// libc provides ioctl. Note: ioctl is variadic so we only check
+    /// presence via address-of, not signature cast.
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_ioctl() {
+        let _g = crate::test_util::global_state_lock();
+        let p = libc::ioctl as *const ();
+        assert!(!p.is_null(), "libc::ioctl must resolve");
+    }
+
+    /// libc provides getppid.
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_getppid_extern() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn() -> libc::pid_t = libc::getppid;
+    }
+
+    /// libc provides strerror.
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_strerror_extern() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(libc::c_int) -> *mut libc::c_char = libc::strerror;
+    }
+
+    /// File contents pin: no extern declarations allowed.
+    #[test]
+    fn prototypes_h_has_no_extern_declarations() {
+        let src = include_str!("prototypes_h.rs");
+        let extern_decl_lines: Vec<&str> = src
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                t.starts_with("extern \"C\"") && t.contains("fn ")
+            })
+            .collect();
+        assert!(
+            extern_decl_lines.is_empty(),
+            "prototypes_h.rs MUST NOT redeclare externs — use libc::* at call sites instead. Found: {:?}",
+            extern_decl_lines
+        );
+    }
+
+    /// File contents pin: no static extern blocks either.
+    #[test]
+    fn prototypes_h_has_no_static_externs() {
+        let src = include_str!("prototypes_h.rs");
+        let count = src.matches("extern \"C\" {").count();
+        assert_eq!(
+            count, 0,
+            "prototypes_h.rs MUST NOT contain `extern \"C\" {{}}` blocks"
+        );
+    }
 }
