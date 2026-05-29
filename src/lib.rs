@@ -11,6 +11,12 @@
 //! - Fish-style features (`fish_features` module)
 //! - Mathematical expression evaluation (`math` module)
 
+// Many doc comments reference C-source pages, shell constructs, and
+// zsh-internal identifiers by name in `[...]` form; they don't resolve as
+// rustdoc intra-doc links. Silence so docs build clean on CI.
+#![allow(rustdoc::broken_intra_doc_links)]
+#![allow(rustdoc::private_intra_doc_links)]
+#![allow(rustdoc::invalid_html_tags)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
