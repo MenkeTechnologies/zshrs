@@ -1837,4 +1837,123 @@ mod tests {
         let result = tpending.with(|p| p.borrow().clone());
         assert_eq!(result.as_deref(), Some(b"a\nb" as &[u8]));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/text.c
+    // c:128 taddchr / c:146 taddstr / c:163 taddnl / c:1356 zoutputtab
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:89 — `taddpending` with str1 alone (no second part).
+    #[test]
+    fn taddpending_str1_only_buffers_literal_bytes() {
+        let _g = crate::test_util::global_state_lock();
+        tpending.with(|p| *p.borrow_mut() = None);
+        taddpending("hello", "");
+        let result = tpending.with(|p| p.borrow().clone());
+        assert_eq!(result.as_deref(), Some(b"hello" as &[u8]));
+    }
+
+    /// c:89 — `taddpending` concatenates str1+str2 within single call.
+    #[test]
+    fn taddpending_concats_str1_str2_within_single_call() {
+        let _g = crate::test_util::global_state_lock();
+        tpending.with(|p| *p.borrow_mut() = None);
+        taddpending("foo", "bar");
+        let result = tpending.with(|p| p.borrow().clone());
+        assert_eq!(result.as_deref(), Some(b"foobar" as &[u8]));
+    }
+
+    /// c:89 — three-call accumulation produces "a\nb\nc".
+    #[test]
+    fn taddpending_three_calls_inserts_two_newlines() {
+        let _g = crate::test_util::global_state_lock();
+        tpending.with(|p| *p.borrow_mut() = None);
+        taddpending("a", "");
+        taddpending("b", "");
+        taddpending("c", "");
+        let result = tpending.with(|p| p.borrow().clone());
+        assert_eq!(result.as_deref(), Some(b"a\nb\nc" as &[u8]));
+    }
+
+    /// c:70 — `dec_tindent` floors at zero (saturating).
+    #[test]
+    fn dec_tindent_floors_at_zero_multiple_calls() {
+        let _g = crate::test_util::global_state_lock();
+        tindent.with(|t| *t.borrow_mut() = 0);
+        // Multiple decrements from zero must not underflow.
+        for _ in 0..5 {
+            dec_tindent();
+        }
+        tindent.with(|t| assert_eq!(*t.borrow(), 0));
+    }
+
+    /// c:114 — `tdopending` clears pending after draining.
+    #[test]
+    fn tdopending_clears_pending_buffer() {
+        let _g = crate::test_util::global_state_lock();
+        tpending.with(|p| *p.borrow_mut() = Some(b"deferred".to_vec()));
+        tdopending();
+        let after = tpending.with(|p| p.borrow().clone());
+        assert!(after.is_none(), "tdopending must clear pending");
+    }
+
+    /// c:114 — `tdopending` is no-op when pending is None.
+    #[test]
+    fn tdopending_noop_when_pending_none() {
+        let _g = crate::test_util::global_state_lock();
+        tpending.with(|p| *p.borrow_mut() = None);
+        tdopending();
+        let after = tpending.with(|p| p.borrow().clone());
+        assert!(after.is_none(), "tdopending on None stays None");
+    }
+
+    /// c:58 — every COND_BINARY_OPS entry is non-empty, no NULs.
+    #[test]
+    fn cond_binary_ops_entries_well_formed() {
+        for &op in COND_BINARY_OPS {
+            assert!(!op.is_empty(), "no empty entries");
+            assert!(!op.contains('\0'), "no NUL bytes in entries");
+        }
+    }
+
+    /// c:58 — `is_cond_binary_op` always returns 0 or 1 (boolean i32).
+    #[test]
+    fn is_cond_binary_op_returns_boolean_i32_only() {
+        let inputs = ["=", "!=", "garbage", "", "==", "-eq", "if"];
+        for s in inputs {
+            let r = is_cond_binary_op(s);
+            assert!(r == 0 || r == 1, "result is 0/1 for {:?} (got {})", s, r);
+        }
+    }
+
+    /// c:58 — empty string is NOT a binary cond op.
+    #[test]
+    fn is_cond_binary_op_empty_returns_zero() {
+        assert_eq!(is_cond_binary_op(""), 0);
+    }
+
+    /// c:163 — `taddnl(0)` in newlins=false mode appends "; ".
+    #[test]
+    fn taddnl_no_newlins_mode_appends_semicolon_space() {
+        let _g = crate::test_util::global_state_lock();
+        tbuf.with(|tb| tb.borrow_mut().clear());
+        tnewlins.with(|c| *c.borrow_mut() = false);
+        taddnl(0);
+        let got = tbuf.with(|tb| tb.borrow().clone());
+        tnewlins.with(|c| *c.borrow_mut() = true); // restore
+        assert_eq!(&got[..], b"; ", "non-newlins mode appends \"; \"");
+    }
+
+    /// c:163 — `taddnl(1)` in newlins=false mode appends single space
+    /// (no-semicolon variant).
+    #[test]
+    fn taddnl_no_semicolon_mode_appends_single_space() {
+        let _g = crate::test_util::global_state_lock();
+        tbuf.with(|tb| tb.borrow_mut().clear());
+        tnewlins.with(|c| *c.borrow_mut() = false);
+        taddnl(1);
+        let got = tbuf.with(|tb| tb.borrow().clone());
+        tnewlins.with(|c| *c.borrow_mut() = true);
+        assert_eq!(&got[..], b" ", "no-semicolon mode appends single space");
+    }
 }
