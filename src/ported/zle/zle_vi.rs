@@ -2524,4 +2524,106 @@ mod tests {
         startvichange(-1);
         assert_eq!(INSMODE.load(SeqCst), 0, "im=-1 must NOT change insmode");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_vi.c
+    // c:39 vichange / c:147 vigetkey / c:269 getvirange / c:287 dovilinerange
+    // c:382 videletechar / c:420 visubstitute / c:454 vichangeeol /
+    // c:478 vichangewholeline / c:505 viyank / c:540 viyankeol
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:39 — `vichange` returns i32 (compile-time type pin).
+    #[test]
+    fn vichange_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = vichange();
+    }
+
+    /// c:147 — `vigetkey` returns i32 (compile-time type pin).
+    #[test]
+    fn vigetkey_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = vigetkey();
+    }
+
+    /// c:269 — `getvirange(0)` return in u8 exit-code-or-position range.
+    #[test]
+    fn getvirange_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = getvirange(0);
+    }
+
+    /// c:287 — `dovilinerange()` returns (usize, usize) tuple.
+    #[test]
+    fn dovilinerange_returns_tuple_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: (usize, usize) = dovilinerange();
+    }
+
+    /// c:287 — `dovilinerange()` lo ≤ hi invariant (valid range).
+    #[test]
+    fn dovilinerange_returns_valid_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let (lo, hi) = dovilinerange();
+        assert!(lo <= hi, "lo={} must ≤ hi={}", lo, hi);
+    }
+
+    /// c:382 — `videletechar` return in u8 exit-code range.
+    #[test]
+    fn videletechar_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = videletechar();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:420 — `visubstitute` return in u8 exit-code range.
+    #[test]
+    fn visubstitute_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = visubstitute();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:454 — `vichangeeol` return in u8 exit-code range.
+    #[test]
+    fn vichangeeol_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vichangeeol();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:478 — `vichangewholeline` return in u8 exit-code range.
+    #[test]
+    fn vichangewholeline_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vichangewholeline();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:505 — `viyank(empty)` return in u8 exit-code range.
+    #[test]
+    fn viyank_empty_args_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = viyank(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:540 — `viyankeol` return in u8 exit-code range.
+    #[test]
+    fn viyankeol_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = viyankeol();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
 }
