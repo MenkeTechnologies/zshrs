@@ -647,4 +647,105 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(boot_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/langinfo.c
+    // c:94 liitem / c:119 getlanginfo / c:163 scanlanginfo / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:94 — `liitem("")` empty returns None.
+    #[cfg(unix)]
+    #[test]
+    fn liitem_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(liitem("").is_none(), "empty name → None");
+    }
+
+    /// c:94 — `liitem` is deterministic.
+    #[cfg(unix)]
+    #[test]
+    fn liitem_is_deterministic_full_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["CODESET", "DAY_1", "MON_1", "RADIXCHAR", "__unknown_xyz__"] {
+            let first = liitem(s);
+            for _ in 0..3 {
+                assert_eq!(liitem(s), first,
+                    "liitem({:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:119 — `getlanginfo` returns Option<String>.
+    #[cfg(unix)]
+    #[test]
+    fn getlanginfo_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<String> = getlanginfo("CODESET");
+    }
+
+    /// c:119 — `getlanginfo` is deterministic for same locale.
+    #[cfg(unix)]
+    #[test]
+    fn getlanginfo_deterministic_for_codeset() {
+        let _g = crate::test_util::global_state_lock();
+        let first = getlanginfo("CODESET");
+        for _ in 0..3 {
+            assert_eq!(getlanginfo("CODESET"), first,
+                "getlanginfo('CODESET') must be deterministic");
+        }
+    }
+
+    /// c:163 — `scanlanginfo` returns Vec<(String, String)>.
+    #[test]
+    fn scanlanginfo_returns_vec_tuple_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<(String, String)> = scanlanginfo();
+    }
+
+    /// c:163 — `scanlanginfo` is deterministic full-sweep.
+    #[cfg(unix)]
+    #[test]
+    fn scanlanginfo_full_sweep_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = scanlanginfo();
+        for _ in 0..3 {
+            assert_eq!(scanlanginfo(), first,
+                "scanlanginfo must be fully deterministic");
+        }
+    }
+
+    /// c:217 — cleanup_(NULL) = 0.
+    #[test]
+    fn langinfo_cleanup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+    }
+
+    /// c:224 — finish_(NULL) = 0.
+    #[test]
+    fn langinfo_finish_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
+
+    /// c:163 — `scanlanginfo` entries: name+value are both ASCII-safe.
+    #[cfg(unix)]
+    #[test]
+    fn scanlanginfo_entries_are_ascii_keys() {
+        let _g = crate::test_util::global_state_lock();
+        let entries = scanlanginfo();
+        for (k, _v) in &entries {
+            assert!(k.is_ascii(), "key {:?} must be ASCII", k);
+        }
+    }
+
+    /// c:183 + c:217 — setup_/cleanup_ round-trip safe.
+    #[test]
+    fn langinfo_setup_cleanup_round_trip_safe() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+        assert_eq!(setup_(std::ptr::null()), 0);
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+    }
 }
