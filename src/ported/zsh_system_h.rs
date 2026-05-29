@@ -717,4 +717,126 @@ mod tests {
             );
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/zsh_system.h c:594 + c:347-365.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:594 — S_IFMT covers all file-type bits used by predicates.
+    /// Every S_IF* family bit must be a subset of S_IFMT.
+    #[test]
+    fn s_ifmt_covers_all_file_type_bits() {
+        for &bits in &[S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK] {
+            assert_eq!(
+                bits & S_IFMT,
+                bits,
+                "S_IF* bits {:o} must be subset of S_IFMT {:o}",
+                bits,
+                S_IFMT
+            );
+        }
+    }
+
+    /// c:347-365 — wait-status decoders are mutually exclusive:
+    /// at most ONE of WIFEXITED/WIFSIGNALED/WIFSTOPPED true per status.
+    #[test]
+    fn wait_decoders_mutually_exclusive() {
+        for status in [42 << 8, 15, 11 | 0o200, (20 << 8) | 0o177] {
+            let exited = WIFEXITED(status);
+            let signaled = WIFSIGNALED(status);
+            let stopped = WIFSTOPPED(status);
+            let count = (exited as i32) + (signaled as i32) + (stopped as i32);
+            assert_eq!(
+                count, 1,
+                "exactly one of W{{IFEXITED/IFSIGNALED/IFSTOPPED}} must be true for status {:o}",
+                status
+            );
+        }
+    }
+
+    /// c:350 — WEXITSTATUS extracts high byte (0..256).
+    #[test]
+    fn wexitstatus_always_in_byte_range() {
+        for code in [0i32, 1, 42, 127, 200, 255] {
+            let status = code << 8;
+            assert_eq!(WEXITSTATUS(status), code & 0xff);
+        }
+    }
+
+    /// c:356 — WTERMSIG extracts low 7 bits (signal number space).
+    #[test]
+    fn wtermsig_low_seven_bits() {
+        for sig in [1i32, 2, 9, 11, 15, 31, 63, 127] {
+            let status = sig;
+            assert_eq!(WTERMSIG(status), sig);
+        }
+    }
+
+    /// c:347 — WIFEXITED(0) is true (clean exit-0).
+    #[test]
+    fn wifexited_zero_status_is_true() {
+        assert!(WIFEXITED(0), "exit 0 must satisfy WIFEXITED");
+        assert_eq!(WEXITSTATUS(0), 0);
+    }
+
+    /// c:347-365 — exit + signal can't both be encoded simultaneously
+    /// (encoding-wise impossible).
+    #[test]
+    fn wait_signal_and_exit_not_simultaneously_encoded() {
+        // Signal-encoding: low byte nonzero non-0177.
+        // Exit-encoding: low byte 0.
+        // They're disjoint by construction.
+        for sig in [1, 11, 15] {
+            assert!(WIFSIGNALED(sig));
+            assert!(!WIFEXITED(sig));
+        }
+        for code in [0, 42, 200] {
+            assert!(WIFEXITED(code << 8));
+            assert!(!WIFSIGNALED(code << 8));
+        }
+    }
+
+    /// c:818 — IS_DIRSEP is `const fn` (compile-time evaluable).
+    #[test]
+    fn is_dirsep_const_fn_compiles() {
+        const SLASH_IS_SEP: bool = IS_DIRSEP('/');
+        const BACK_IS_NOT_SEP: bool = IS_DIRSEP('\\');
+        assert!(SLASH_IS_SEP);
+        assert!(!BACK_IS_NOT_SEP);
+    }
+
+    /// c:746-750 — access(2) constants are all distinct (so OR'ing
+    /// combos works correctly).
+    #[test]
+    fn access_constants_pairwise_distinct() {
+        let codes = [F_OK, X_OK, W_OK, R_OK];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "all access codes must differ");
+    }
+
+    /// c:748-750 — X_OK|W_OK|R_OK = 7 (canonical "test all" combo).
+    #[test]
+    fn access_all_perms_combine_to_seven() {
+        assert_eq!(X_OK | W_OK | R_OK, 7, "canonical R|W|X = 7");
+    }
+
+    /// c:682-715 — every permission bit is a single bit (power of two).
+    #[test]
+    fn permission_bits_are_single_bits() {
+        for &b in &[S_ISUID, S_ISGID, S_ISVTX, S_IRUSR, S_IWUSR, S_IXUSR,
+                    S_IRGRP, S_IWGRP, S_IXGRP, S_IROTH, S_IWOTH, S_IXOTH] {
+            assert!(b.is_power_of_two(), "{:o} must be a single bit", b);
+        }
+    }
+
+    /// c:718-735 — aggregate masks correctly OR their constituents.
+    #[test]
+    fn aggregate_masks_match_constituents() {
+        assert_eq!(S_IRWXU, S_IRUSR | S_IWUSR | S_IXUSR, "c:718");
+        assert_eq!(S_IRWXG, S_IRGRP | S_IWGRP | S_IXGRP, "c:721");
+        assert_eq!(S_IRWXO, S_IROTH | S_IWOTH | S_IXOTH, "c:724");
+        assert_eq!(S_IRUGO, S_IRUSR | S_IRGRP | S_IROTH, "c:727");
+        assert_eq!(S_IWUGO, S_IWUSR | S_IWGRP | S_IWOTH, "c:730");
+        assert_eq!(S_IXUGO, S_IXUSR | S_IXGRP | S_IXOTH, "c:733");
+    }
 }
