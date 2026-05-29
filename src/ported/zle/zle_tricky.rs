@@ -2458,4 +2458,114 @@ mod tests {
         let _g2 = zle_test_setup();
         assert_eq!(cmphaswilds("hello/world"), 0, "slash is literal");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_tricky.c
+    // c:51 usetab / c:98 completecall / c:144 completeword / c:180 menucomplete
+    // c:206 listchoices / c:268 expandorcomplete / c:429 cmphaswilds /
+    // c:917 dupstrspace
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:51 — `usetab` return strictly boolean i32 (0/1).
+    #[test]
+    fn usetab_returns_boolean_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = usetab();
+        assert!(r == 0 || r == 1, "usetab must return 0 or 1, got {}", r);
+    }
+
+    /// c:429 — `cmphaswilds` is deterministic.
+    #[test]
+    fn cmphaswilds_is_deterministic_full_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for s in ["abc", "", "hello/world", "a.b"] {
+            let first = cmphaswilds(s);
+            for _ in 0..5 {
+                assert_eq!(cmphaswilds(s), first,
+                    "cmphaswilds({:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:429 — `cmphaswilds` return strictly boolean i32.
+    #[test]
+    fn cmphaswilds_returns_boolean_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for s in ["abc", "*.txt", "[a-z]", "?", "|", ""] {
+            let r = cmphaswilds(s);
+            assert!(r == 0 || r == 1,
+                "cmphaswilds({:?}) = {} not in {{0,1}}", s, r);
+        }
+    }
+
+    /// c:917 — `dupstrspace(empty)` returns " ".
+    #[test]
+    fn dupstrspace_empty_returns_space_pin() {
+        assert_eq!(dupstrspace(""), " ", "empty + trailing space = ' '");
+    }
+
+    /// c:917 — `dupstrspace` always ends in space.
+    #[test]
+    fn dupstrspace_always_ends_in_space() {
+        for s in ["", "x", "hello", "包含中文"] {
+            let r = dupstrspace(s);
+            assert!(r.ends_with(' '),
+                "dupstrspace({:?}) = {:?} must end in space", s, r);
+        }
+    }
+
+    /// c:917 — `dupstrspace` is a pure function.
+    #[test]
+    fn dupstrspace_is_pure() {
+        for s in ["", "abc", "hello"] {
+            let first = dupstrspace(s);
+            for _ in 0..5 {
+                assert_eq!(dupstrspace(s), first,
+                    "dupstrspace({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:206 — `listchoices(empty)` returns i32 in exit-code range.
+    #[test]
+    fn listchoices_empty_args_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = listchoices(&[]);
+        assert!((0..256).contains(&r),
+            "exit code {} must fit in u8 range", r);
+    }
+
+    /// c:233 — `spellword(empty)` returns i32 in exit-code range.
+    #[test]
+    fn spellword_empty_args_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = spellword(&[]);
+        assert!((0..256).contains(&r),
+            "exit code {} must fit in u8 range", r);
+    }
+
+    /// c:331 — `listexpand(empty)` returns i32 in exit-code range.
+    #[test]
+    fn listexpand_empty_args_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = listexpand(&[]);
+        assert!((0..256).contains(&r),
+            "exit code {} must fit in u8 range", r);
+    }
+
+    /// c:950 — `freebrinfo(None)` is idempotent.
+    #[test]
+    fn freebrinfo_none_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            freebrinfo(None);
+        }
+    }
 }
