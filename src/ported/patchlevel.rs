@@ -194,4 +194,108 @@ mod tests {
             mm
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/patchlevel.h + Config/version.mk.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// ZSH_PATCHLEVEL hash after 'g' is a hex commit prefix.
+    #[test]
+    fn patchlevel_hash_after_g_is_hex() {
+        let last = ZSH_PATCHLEVEL.rsplit('-').next().unwrap_or("");
+        let hash = last.trim_start_matches('g');
+        assert!(!hash.is_empty(), "hash must be non-empty after 'g'");
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "git-describe hash {:?} must be hex",
+            hash
+        );
+    }
+
+    /// ZSH_PATCHLEVEL hash prefix length is reasonable (≥7 for git short SHA).
+    #[test]
+    fn patchlevel_hash_short_sha_length() {
+        let last = ZSH_PATCHLEVEL.rsplit('-').next().unwrap_or("");
+        let hash = last.trim_start_matches('g');
+        assert!(
+            hash.len() >= 7 && hash.len() <= 40,
+            "git short SHA must be 7-40 chars, got {} ({:?})",
+            hash.len(),
+            hash
+        );
+    }
+
+    /// ZSH_PATCHLEVEL commit count is non-negative (no negative numbers).
+    #[test]
+    fn patchlevel_commit_count_non_negative() {
+        let parts: Vec<&str> = ZSH_PATCHLEVEL.split('-').collect();
+        if parts.len() >= 4 {
+            let count: i32 = parts[2].parse().unwrap_or(-1);
+            assert!(count >= 0, "commit count must be non-negative: {}", count);
+        }
+    }
+
+    /// ZSH_VERSION components all parse as numeric (except possible `-tag` tail).
+    #[test]
+    fn zsh_version_components_numeric_until_tag() {
+        let no_tag = ZSH_VERSION.split('-').next().unwrap_or("");
+        for (i, comp) in no_tag.split('.').enumerate() {
+            let parsed: Result<u32, _> = comp.parse();
+            assert!(
+                parsed.is_ok(),
+                "ZSH_VERSION component[{}] = {:?} must parse as u32",
+                i,
+                comp
+            );
+        }
+    }
+
+    /// ZSH_VERSION MAJOR.MINOR is at least 5.9 (current upstream minimum).
+    #[test]
+    fn zsh_version_meets_minimum_5_9() {
+        let no_tag = ZSH_VERSION.split('-').next().unwrap_or("");
+        let parts: Vec<u32> = no_tag.split('.').filter_map(|s| s.parse().ok()).collect();
+        assert!(parts.len() >= 2, "MAJOR.MINOR required");
+        let major = parts[0];
+        let minor = parts[1];
+        assert!(
+            major > 5 || (major == 5 && minor >= 9),
+            "ZSH_VERSION must be ≥ 5.9, got {}.{}",
+            major,
+            minor
+        );
+    }
+
+    /// ZSH_PATCHLEVEL has no NUL bytes (C-string safety).
+    #[test]
+    fn zsh_patchlevel_has_no_nul_bytes() {
+        assert!(!ZSH_PATCHLEVEL.contains('\0'));
+    }
+
+    /// ZSH_VERSION has no NUL bytes (C-string safety).
+    #[test]
+    fn zsh_version_has_no_nul_bytes() {
+        assert!(!ZSH_VERSION.contains('\0'));
+    }
+
+    /// ZSH_PATCHLEVEL doesn't start with whitespace.
+    #[test]
+    fn zsh_patchlevel_no_leading_whitespace() {
+        assert!(!ZSH_PATCHLEVEL.starts_with(char::is_whitespace));
+    }
+
+    /// ZSH_VERSION doesn't start with whitespace.
+    #[test]
+    fn zsh_version_no_leading_whitespace() {
+        assert!(!ZSH_VERSION.starts_with(char::is_whitespace));
+    }
+
+    /// Both constants are stable across reads (compile-time const).
+    #[test]
+    fn version_constants_are_stable() {
+        for _ in 0..100 {
+            assert_eq!(ZSH_PATCHLEVEL, "zsh-5.9-465-g6b9704e");
+            assert_eq!(ZSH_VERSION, "5.9.0.3-test");
+        }
+    }
 }
