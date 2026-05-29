@@ -2092,4 +2092,131 @@ mod tests {
         assert_eq!(cleanup_(std::ptr::null()), 0);
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Builtins/rlimits.c
+    // c:244 find_resource / c:291 zstrtorlimt / c:699 bin_limit /
+    // c:965 bin_unlimit / c:1079 bin_ulimit + lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:244 — `find_resource` returns i32 (compile-time pin).
+    #[cfg(unix)]
+    #[test]
+    fn find_resource_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = find_resource('c');
+    }
+
+    /// c:244 — `find_resource('f')` (file size) resolves to known limit.
+    #[cfg(unix)]
+    #[test]
+    fn find_resource_file_size_resolves() {
+        let _g = crate::test_util::global_state_lock();
+        let r = find_resource('f');
+        assert!(r >= 0, "file-size 'f' limit must resolve, got {}", r);
+    }
+
+    /// c:244 — `find_resource('t')` (cpu time) resolves to known limit.
+    #[cfg(unix)]
+    #[test]
+    fn find_resource_cpu_time_resolves() {
+        let _g = crate::test_util::global_state_lock();
+        let r = find_resource('t');
+        assert!(r >= 0, "cpu-time 't' limit must resolve, got {}", r);
+    }
+
+    /// c:291 — `zstrtorlimt("100", 10)` returns (100, 3).
+    #[cfg(unix)]
+    #[test]
+    fn zstrtorlimt_three_digit_returns_value_and_count() {
+        let _g = crate::test_util::global_state_lock();
+        let (v, n) = zstrtorlimt("100", 10);
+        assert_eq!(v, 100, "100 parses to 100");
+        assert_eq!(n, 3, "consumed 3 bytes");
+    }
+
+    /// c:699 — `bin_limit` returns i32 (compile-time pin).
+    #[cfg(unix)]
+    #[test]
+    fn bin_limit_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let _: i32 = bin_limit("limit", &[], &ops, 0);
+    }
+
+    /// c:965 — `bin_unlimit` returns i32 (compile-time pin).
+    #[cfg(unix)]
+    #[test]
+    fn bin_unlimit_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let _: i32 = bin_unlimit("unlimit", &[], &ops, 0);
+    }
+
+    /// c:1079 — `bin_ulimit` returns i32 (compile-time pin).
+    #[cfg(unix)]
+    #[test]
+    fn bin_ulimit_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let _: i32 = bin_ulimit("ulimit", &[], &ops, 0);
+    }
+
+    /// c:699/965/1079 — all rlimit builtin exit codes non-negative.
+    #[cfg(unix)]
+    #[test]
+    fn rlimit_builtins_exit_codes_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        for r in [
+            bin_limit("limit", &[], &ops, 0),
+            bin_unlimit("unlimit", &[], &ops, 0),
+            bin_ulimit("ulimit", &[], &ops, 0),
+        ] {
+            assert!(r >= 0, "exit code must be non-negative, got {}", r);
+        }
+    }
+
+    /// c:244 — `find_resource` for full a-z/A-Z sweep deterministic.
+    /// Pins the lookup table stability across the full option-char alphabet.
+    #[cfg(unix)]
+    #[test]
+    fn find_resource_full_alphabet_sweep_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for c in ('a'..='z').chain('A'..='Z') {
+            let first = find_resource(c);
+            for _ in 0..3 {
+                assert_eq!(find_resource(c), first,
+                    "find_resource({:?}) must be pure", c);
+            }
+        }
+    }
+
+    /// c:1336 — `features_` returns i32 (compile-time pin).
+    #[test]
+    fn rlimits_features_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v: Vec<String> = Vec::new();
+        let _: i32 = features_(std::ptr::null(), &mut v);
+    }
+
+    /// c:1343 — `enables_` returns i32 + None-out safe.
+    #[test]
+    fn rlimits_enables_with_none_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = enables_(std::ptr::null(), &mut e);
+    }
 }
