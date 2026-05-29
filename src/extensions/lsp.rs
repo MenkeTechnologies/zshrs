@@ -4093,7 +4093,9 @@ fn is_known_builtin_with_flag_docs(name: &str) -> bool {
 /// body. The yodl→markdown converter emits each documented option
 /// as a markdown bullet:
 ///
-///     - **`-X`** — description text
+/// ```text
+/// - **`-X`** — description text
+/// ```
 ///
 /// (with a Unicode em-dash `\u{2014}`). For options that take an
 /// argument, the bullet is `- **\`-X _arg_\`** — desc`. This walks
