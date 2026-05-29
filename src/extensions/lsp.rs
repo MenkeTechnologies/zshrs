@@ -1729,15 +1729,20 @@ fn hover(state: &State, params: &Value) -> Value {
         );
         return Value::Null;
     }
-    let mut doc = lookup_doc(&word);
+    // Priority: user-defined symbols in the current document WIN over
+    // generic builtin / keyword / option docs. When the cursor's word
+    // is a function / alias / variable defined here, the user wants
+    // "what does MY `end`/`load`/`start` do" — not the Csh-style `end`
+    // keyword card or the `load` builtin doc. Falling back to builtin
+    // lookup only when the word is NOT defined locally avoids the
+    // surprising "I hover on my local var, get a zsh-keyword card."
+    let mut doc = if let Some(user_doc) = find_user_symbol_doc(text, &word) {
+        user_doc
+    } else {
+        String::new()
+    };
     if doc.is_empty() {
-        // Fallback: scan the current document for a user-defined
-        // function / alias / variable named `word` and surface any
-        // `##` doc-comment block that sits immediately above the
-        // definition.
-        if let Some(user_doc) = find_user_symbol_doc(text, &word) {
-            doc = user_doc;
-        }
+        doc = lookup_doc(&word);
     }
     if doc.is_empty() {
         // Module-level fallback: if the cursor is on the shebang
@@ -1789,21 +1794,41 @@ fn hover(state: &State, params: &Value) -> Value {
 /// those are routine code comments, not doc strings.
 pub(crate) fn find_user_symbol_doc(text: &str, name: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
+    // Two passes: prefer the first definition WITH a `##` doc-block
+    // (richer card); if none has docs, fall back to the first
+    // definition WITHOUT docs and render a minimal card so hover still
+    // tells the user "yes, this symbol IS defined here." Without this
+    // fallback, hovering on any UDF that lacks a doc-string yields
+    // null and the editor silently goes blank.
+    let mut undocumented: Option<(usize, &'static str, &str)> = None;
     for (i, line) in lines.iter().enumerate() {
         let kind = match symbol_decl_kind(line, name) {
             Some(k) => k,
             None => continue,
         };
         let doc_block = collect_doc_block_above(&lines, i);
-        if doc_block.is_empty() {
-            // Definition exists but has no `##` doc — fall back so the
-            // hover can still try other lookups. Continue scanning in
-            // case there's a later definition WITH a doc.
-            continue;
+        if !doc_block.is_empty() {
+            return Some(render_user_doc_card(name, kind, line.trim(), &doc_block));
         }
-        return Some(render_user_doc_card(name, kind, line.trim(), &doc_block));
+        if undocumented.is_none() {
+            undocumented = Some((i, kind, line));
+        }
     }
-    None
+    undocumented.map(|(_, kind, line)| {
+        render_user_doc_card_no_block(name, kind, line.trim())
+    })
+}
+
+/// Render a minimal hover card for a user-defined symbol that has no
+/// `##` doc-comment block above its definition. Surfaces the kind and
+/// the definition-line snippet so the user gets confirmation the
+/// symbol is real (not a typo) plus a one-glance pointer to where it
+/// lives.
+fn render_user_doc_card_no_block(name: &str, kind: &str, def_line: &str) -> String {
+    format!(
+        "**user-defined {kind} `{name}`**\n\n```zsh\n{def_line}\n```\n\n\
+         *(no `## …` doc-comment block above the definition)*"
+    )
 }
 
 /// Recognise whether `line` declares `name` as a user-defined symbol.
@@ -8891,6 +8916,66 @@ mod tests {
         let d = diagnose(src);
         assert!(d.is_empty(),
             "terminator keywords in comments flagged: {:?}", d);
+    }
+
+    // ── Hover regressions: UDF + user-variable fall-back & priority ──
+
+    /// User-defined function with NO `##` doc-block must still produce
+    /// a hover card (minimal kind + def-line snippet). Before fix:
+    /// hover returned null and the IDE went blank on every UDF that
+    /// didn't carry a doc-string.
+    #[test]
+    fn find_user_symbol_doc_returns_minimal_card_when_no_docblock() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "greet() {\n    echo hello\n}\n";
+        let r = find_user_symbol_doc(src, "greet").expect("UDF must hover");
+        assert!(r.contains("user-defined function"),
+            "card must label kind, got {:?}", r);
+        assert!(r.contains("greet"),
+            "card must include the symbol name, got {:?}", r);
+    }
+
+    /// User-defined variable (local/typeset/etc.) with no doc-block
+    /// also gets a minimal card. Before fix: silent blank hover.
+    #[test]
+    fn find_user_symbol_doc_minimal_card_for_user_variable() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "fn() {\n    local start=$EPOCHREALTIME\n}\n";
+        let r = find_user_symbol_doc(src, "start").expect("user var must hover");
+        assert!(r.contains("user-defined parameter")
+                || r.contains("user-defined variable"),
+            "card must label parameter/variable kind, got {:?}", r);
+        assert!(r.contains("start"),
+            "card must include the var name, got {:?}", r);
+    }
+
+    /// User-defined symbol with a doc-block beats the minimal-card
+    /// fallback (the documented form is richer).
+    #[test]
+    fn find_user_symbol_doc_prefers_documented_definition() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "## says hi\ngreet() {\n    echo hi\n}\n";
+        let r = find_user_symbol_doc(src, "greet").expect("UDF must hover");
+        assert!(r.contains("says hi"),
+            "documented form must include the doc block, got {:?}", r);
+    }
+
+    /// Two definitions of the same name: the documented one wins even
+    /// when it appears AFTER the undocumented one in source order.
+    /// Pinned because the fallback-collector pass must defer the
+    /// undocumented hit until the whole file is scanned.
+    #[test]
+    fn find_user_symbol_doc_documented_wins_over_earlier_undocumented() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "\
+fn foo() { echo first }\n\
+\n\
+## second def with docs\n\
+foo() { echo second }\n\
+";
+        let r = find_user_symbol_doc(src, "foo").expect("UDF must hover");
+        assert!(r.contains("second def with docs"),
+            "documented later-def must win, got {:?}", r);
     }
 
     /// Every `examples/demos/*.zsh` file must pass `diagnose()` with
