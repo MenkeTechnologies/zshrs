@@ -6274,39 +6274,43 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                 // Find first of Inbrack / '=' / '+' (the C scan at
                 // c:1851-1853). Inside Inbrack we skipparens — i.e.
                 // skip `name[...]` index, then continue.
+                // c:1851-1853 — `for (ptr = tokstr; *ptr && *ptr != Inbrack
+                // && *ptr != '=' && *ptr != '+'; ptr++); if (*ptr == Inbrack)
+                // skipparens(Inbrack, Outbrack, &ptr);`. Walk to the first
+                // `[`/`=`/`+`/Equals-token, then if we landed on `[`, skip
+                // the balanced `name[index]` pair via skipparens.
                 let bytes: Vec<char> = raw.chars().collect();
+                let raw_str: String = bytes.iter().collect();
                 let mut idx = 0usize;
                 while idx < bytes.len() {
                     let ch = bytes[idx];
-                    if ch == '\u{91}'
-                    /* Inbrack */
-                    {
-                        // Skip matched Inbrack…Outbrack pair.
-                        let mut depth = 1;
-                        idx += 1;
-                        while idx < bytes.len() && depth > 0 {
-                            match bytes[idx] {
-                                '\u{91}' => depth += 1,
-                                '\u{92}' => depth -= 1,
-                                _ => {}
-                            }
-                            idx += 1;
-                        }
-                        continue;
-                    }
-                    // c:1851-1853 — `*ptr != '=' && *ptr != '+'` —
-                    // C scan stops on either literal `=` / `+` OR the
-                    // Equals marker (`\u{8d}`) the lexer emits for
-                    // unquoted `=`. Without the marker check, the
-                    // ENVSTRING split scans past the `=` (since it's
-                    // already tokenised) and the whole `name=value`
-                    // ends up in one ecstr.
-                    if ch == '=' || ch == '+' || ch == '\u{8d}'
-                    /* Equals */
+                    if ch == '\u{91}' /* Inbrack */
+                        || ch == '=' || ch == '+' || ch == '\u{8d}' /* Equals */
                     {
                         break;
                     }
                     idx += 1;
+                }
+                if idx < bytes.len() && bytes[idx] == '\u{91}' /* Inbrack */ {
+                    // c:1855 — `skipparens(Inbrack, Outbrack, &ptr);`.
+                    let byte_off: usize = bytes[..idx].iter().map(|c| c.len_utf8()).sum();
+                    let mut cursor: &str = &raw_str[byte_off..];
+                    let _ = crate::ported::utils::skipparens(
+                        '\u{91}', '\u{92}', &mut cursor,
+                    );
+                    let consumed = raw_str.len() - byte_off - cursor.len();
+                    let advance_chars = raw_str[byte_off..byte_off + consumed]
+                        .chars()
+                        .count();
+                    idx += advance_chars;
+                    // Continue scanning for `=` / `+` after the `]`.
+                    while idx < bytes.len() {
+                        let ch = bytes[idx];
+                        if ch == '=' || ch == '+' || ch == '\u{8d}' {
+                            break;
+                        }
+                        idx += 1;
+                    }
                 }
                 let is_inc = idx < bytes.len() && bytes[idx] == '+';
                 // c:1856-1858 — `if (*ptr == '+') { *ptr++ = '\0';
@@ -6536,32 +6540,38 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                     ppost = ecadd(0);
                 }
                 postassigns += 1;
+                // c:2010-2014 — `for (ptr = tokstr; *ptr && *ptr != Inbrack
+                // && *ptr != '=' && *ptr != '+'; ptr++); if (*ptr == Inbrack)
+                // skipparens(Inbrack, Outbrack, &ptr);`.
                 let raw = tokstr().unwrap_or_default();
                 let bytes: Vec<char> = raw.chars().collect();
                 let mut idx = 0usize;
                 while idx < bytes.len() {
                     let ch = bytes[idx];
-                    if ch == '\u{91}'
-                    /* Inbrack */
-                    {
-                        let mut depth = 1;
-                        idx += 1;
-                        while idx < bytes.len() && depth > 0 {
-                            match bytes[idx] {
-                                '\u{91}' => depth += 1,
-                                '\u{92}' => depth -= 1,
-                                _ => {}
-                            }
-                            idx += 1;
-                        }
-                        continue;
-                    }
-                    if ch == '=' || ch == '+' || ch == '\u{8d}'
-                    /* Equals */
+                    if ch == '\u{91}' /* Inbrack */
+                        || ch == '=' || ch == '+' || ch == '\u{8d}' /* Equals */
                     {
                         break;
                     }
                     idx += 1;
+                }
+                if idx < bytes.len() && bytes[idx] == '\u{91}' /* Inbrack */ {
+                    // c:2014 — `skipparens(Inbrack, Outbrack, &ptr);`.
+                    let byte_off: usize = bytes[..idx].iter().map(|c| c.len_utf8()).sum();
+                    let mut cursor: &str = &raw[byte_off..];
+                    let _ = crate::ported::utils::skipparens(
+                        '\u{91}', '\u{92}', &mut cursor,
+                    );
+                    let consumed = raw.len() - byte_off - cursor.len();
+                    let advance_chars = raw[byte_off..byte_off + consumed].chars().count();
+                    idx += advance_chars;
+                    while idx < bytes.len() {
+                        let ch = bytes[idx];
+                        if ch == '=' || ch == '+' || ch == '\u{8d}' {
+                            break;
+                        }
+                        idx += 1;
+                    }
                 }
                 let name: String = bytes[..idx].iter().collect();
                 let str_off = if idx < bytes.len() && (bytes[idx] == '=' || bytes[idx] == '\u{8d}')
