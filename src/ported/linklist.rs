@@ -1215,4 +1215,128 @@ mod tests {
             assert_eq!(linknodebydatum(&ll, &2), b);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/linklist.c
+    // c:292 insertlinknode / c:340 getlinknode / c:354 remnode /
+    // c:368 freelinklist / c:375 countlinknodes / c:382 rolllist /
+    // c:406 newsizedlist / c:417 joinlists
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:340 — `getlinknode` returns Option<T> (compile-time type pin).
+    #[test]
+    fn getlinknode_returns_option_t_type() {
+        let mut l: LinkList<i32> = LinkList::new();
+        let _: Option<i32> = getlinknode(&mut l);
+    }
+
+    /// c:340 — `getlinknode` on empty list returns None.
+    #[test]
+    fn getlinknode_empty_returns_none() {
+        let mut l: LinkList<i32> = LinkList::new();
+        assert!(getlinknode(&mut l).is_none());
+    }
+
+    /// c:340 — `getlinknode` drains list to empty.
+    #[test]
+    fn getlinknode_drains_list_to_empty() {
+        let mut l: LinkList<i32> = LinkList::new();
+        for i in 1..=5 {
+            l.push_back(i);
+        }
+        for _ in 0..5 {
+            assert!(getlinknode(&mut l).is_some());
+        }
+        assert!(getlinknode(&mut l).is_none(), "after 5 pops → None");
+        assert!(l.is_empty());
+    }
+
+    /// c:368 — `freelinklist` empties the list.
+    #[test]
+    fn freelinklist_empties_list() {
+        let mut l: LinkList<i32> = LinkList::new();
+        for i in 1..=10 {
+            l.push_back(i);
+        }
+        freelinklist(&mut l);
+        assert!(l.is_empty(), "freelinklist empties");
+    }
+
+    /// c:375 — `countlinknodes` returns usize.
+    #[test]
+    fn countlinknodes_returns_usize_type() {
+        let l: LinkList<i32> = LinkList::new();
+        let _: usize = countlinknodes(&l);
+    }
+
+    /// c:375 — `countlinknodes(empty)` returns 0.
+    #[test]
+    fn countlinknodes_empty_returns_zero_pin() {
+        let l: LinkList<i32> = LinkList::new();
+        assert_eq!(countlinknodes(&l), 0);
+    }
+
+    /// c:417 — `joinlists` is associative: (a+b)+c == a+(b+c) on len.
+    #[test]
+    fn joinlists_associative_on_length() {
+        let make = |xs: &[i32]| -> LinkList<i32> {
+            let mut l = LinkList::new();
+            for &x in xs {
+                l.push_back(x);
+            }
+            l
+        };
+        // (a + b) + c
+        let mut a1 = make(&[1, 2]);
+        let mut b1 = make(&[3, 4]);
+        let mut c1 = make(&[5, 6]);
+        joinlists(&mut a1, &mut b1);
+        joinlists(&mut a1, &mut c1);
+
+        // a + (b + c)
+        let mut a2 = make(&[1, 2]);
+        let mut b2 = make(&[3, 4]);
+        let mut c2 = make(&[5, 6]);
+        joinlists(&mut b2, &mut c2);
+        joinlists(&mut a2, &mut b2);
+
+        assert_eq!(a1.len(), a2.len(),
+            "joinlists associative: (a+b)+c.len = a+(b+c).len");
+    }
+
+    /// c:382 — `rolllist` on 1-element list is no-op for any index.
+    #[test]
+    fn rolllist_single_element_is_noop() {
+        let mut l: LinkList<i32> = LinkList::new();
+        l.push_back(42);
+        for n in [0usize, 1, 5, 100] {
+            rolllist(&mut l, n);
+            assert_eq!(l.len(), 1);
+        }
+    }
+
+    /// c:406 — `newsizedlist::<i32>(N)` returns Vec of N zeros.
+    #[test]
+    fn newsizedlist_i32_fills_with_default_zero() {
+        for n in [1usize, 3, 10] {
+            let l: LinkList<i32> = newsizedlist(n);
+            assert_eq!(l.len(), n);
+            for v in l.iter() {
+                assert_eq!(*v, 0, "i32 default = 0");
+            }
+        }
+    }
+
+    /// c:417 — `joinlists` with second containing one element appends.
+    #[test]
+    fn joinlists_single_elem_second_appends() {
+        let mut a: LinkList<i32> = LinkList::new();
+        a.push_back(1);
+        a.push_back(2);
+        let mut b: LinkList<i32> = LinkList::new();
+        b.push_back(3);
+        joinlists(&mut a, &mut b);
+        assert_eq!(a.len(), 3);
+        assert!(b.is_empty(), "second emptied after join");
+    }
 }
