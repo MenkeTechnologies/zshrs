@@ -2675,4 +2675,103 @@ mod tests {
         // Either matches at pos 2 or doesn't match; pin no panic.
         let _ = r;
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_hist.c zlinecmp/zlinefind.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:135-143 — `zlinecmp(s, s)` returns 0 (exact byte-for-byte match
+    /// short-circuits via the first while loop's `!*iptr` exit).
+    #[test]
+    fn zlinecmp_identical_strings_return_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zlinecmp("hello", "hello"), 0);
+        assert_eq!(zlinecmp("", ""), 0);
+        assert_eq!(zlinecmp("ABCdef", "ABCdef"), 0);
+    }
+
+    /// c:146 — `zlinecmp("longer", "long")` returns -1 (input is prefix
+    /// of history but history continues).
+    #[test]
+    fn zlinecmp_input_is_prefix_returns_neg_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zlinecmp("hello world", "hello"), -1);
+        assert_eq!(zlinecmp("abc", "ab"), -1);
+        assert_eq!(zlinecmp("x", ""), -1, "empty input is prefix of any non-empty");
+    }
+
+    /// c:174 — `zlinecmp("HELLO", "hello")` returns 1 (case-folded match
+    /// in the second loop, history is uppercase but input lowercase).
+    #[test]
+    fn zlinecmp_case_folded_same_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        // History is the haystack (folded to lower); input is already lower.
+        assert_eq!(zlinecmp("HELLO", "hello"), 1, "case-fold match");
+        assert_eq!(zlinecmp("AbC", "abc"), 1);
+    }
+
+    /// c:174,183 — `zlinecmp` reverse direction: input lowercase, history
+    /// in mixed case where lowering history still equals input.
+    #[test]
+    fn zlinecmp_case_folded_prefix_returns_two() {
+        let _g = crate::test_util::global_state_lock();
+        // tolower(history) → lowercase; input is shorter lowercase prefix.
+        let r = zlinecmp("HelloWorld", "hello");
+        assert_eq!(r, 2, "case-fold prefix returns 2 per c:183");
+    }
+
+    /// c:142,186 — `zlinecmp` returns 3 when strings genuinely differ
+    /// (input is not a prefix of history and case-fold also fails).
+    #[test]
+    fn zlinecmp_different_strings_return_three() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zlinecmp("alpha", "beta"), 3);
+        assert_eq!(zlinecmp("xyz", "abc"), 3);
+    }
+
+    /// c:203 — `zlinefind` finds at exact pos when there's a match.
+    #[test]
+    fn zlinefind_forward_at_pos_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // Forward search starting at pos 0 for "hello" in "hello world"
+        // — should find at offset 0 immediately.
+        let r = zlinefind("hello world", 0, "hello", 1, 2);
+        assert_eq!(r, Some(0), "exact match at pos 0");
+    }
+
+    /// c:208 — `zlinefind` backward from end finds last occurrence.
+    #[test]
+    fn zlinefind_backward_searches_from_pos_down_to_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // Backward search with sens=2 (case-fold-allowed) finds first
+        // match working backward.
+        let r = zlinefind("hello there", 6, "there", 0, 2);
+        assert_eq!(r, Some(6), "backward search starts at pos and walks");
+    }
+
+    /// c:215-220 — `zlinefind` backward with pos=0 only checks position 0.
+    #[test]
+    fn zlinefind_backward_pos_zero_only_checks_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zlinefind("hello world", 0, "world", 0, 2);
+        assert_eq!(r, None, "from pos 0 backward, 'world' (not at 0) → None");
+    }
+
+    /// c:215 — `zlinefind` backward with very-permissive sens=4 (above
+    /// max return 3) matches always at the starting position.
+    #[test]
+    fn zlinefind_sens_too_permissive_matches_at_start() {
+        let _g = crate::test_util::global_state_lock();
+        // sens=4 means < 4 always true (zlinecmp max return is 3).
+        let r = zlinefind("hello", 0, "zzz", 1, 4);
+        assert_eq!(r, Some(0), "sens > 3 always matches → returns initial pos");
+    }
+
+    /// c:204 — `zlinefind` forward past end of haystack returns None.
+    #[test]
+    fn zlinefind_forward_past_end_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zlinefind("hello", 5, "x", 1, 2);
+        assert_eq!(r, None, "starting past end → no match");
+    }
 }
