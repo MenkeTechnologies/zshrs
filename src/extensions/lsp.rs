@@ -542,6 +542,63 @@ fn publish_diagnostics<W: Write>(
     let _ = write_message(writer, &msg);
 }
 
+/// Strip line-end comments and the *contents* of quoted strings from
+/// `line`, returning a string whose `split_whitespace()` only yields
+/// real code tokens. Keeps the quotes themselves so column positions
+/// of any surviving tokens line up with the source. Used by the
+/// block-keyword scan in `diagnose()` so keywords inside comments
+/// (`# foo case bar`) or strings (`echo "if x"`) don't push spurious
+/// entries onto the block stack.
+fn strip_comments_and_strings(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut out = String::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        match c {
+            '\\' if i + 1 < bytes.len() => {
+                out.push(c);
+                out.push(bytes[i + 1] as char);
+                i += 2;
+                continue;
+            }
+            '"' | '\'' | '`' => {
+                let q = c;
+                out.push(q);
+                i += 1;
+                while i < bytes.len() {
+                    let cc = bytes[i] as char;
+                    if cc == '\\' && q != '\'' && i + 1 < bytes.len() {
+                        i += 2;
+                        continue;
+                    }
+                    if cc == q {
+                        out.push(q);
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            '#' => {
+                let prev = if i == 0 { None } else { Some(bytes[i - 1] as char) };
+                let is_comment_start = match prev {
+                    None => true,
+                    Some(p) => p.is_whitespace() || p == ';' || p == '&' || p == '|' || p == '(',
+                };
+                if is_comment_start {
+                    break;
+                }
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Run a quick structural pass over the document to surface obvious
 /// errors. This is intentionally lightweight: it complements (does not
 /// replace) the deeper diagnostics from a full parse.
@@ -671,11 +728,31 @@ fn diagnose(text: &str) -> Vec<Value> {
             }
             i += 1;
         }
-        // Block keyword scan
-        for kw in line.split_whitespace() {
-            match kw {
+        // Block keyword scan — must ignore tokens inside comments and
+        // quoted strings, otherwise lines like `# foo case bar` or
+        // `echo "if you like"` push spurious entries onto block_stack
+        // and surface as "unclosed `case` block" / "unclosed `if`".
+        let code_only = strip_comments_and_strings(line);
+        for kw in code_only.split_whitespace() {
+            // Map matched tokens back to &'static str literals so the
+            // borrows pushed onto block_stack don't outlive `code_only`
+            // (which drops at end of this loop iteration).
+            let kw_static: &'static str = match kw {
+                "if" => "if",
+                "for" => "for",
+                "while" => "while",
+                "until" => "until",
+                "case" => "case",
+                "select" => "select",
+                "repeat" => "repeat",
+                "fi" => "fi",
+                "done" => "done",
+                "esac" => "esac",
+                _ => continue,
+            };
+            match kw_static {
                 "if" | "for" | "while" | "until" | "case" | "select" | "repeat" => {
-                    block_stack.push((kw, line_no, 0));
+                    block_stack.push((kw_static, line_no, 0));
                 }
                 "fi" => {
                     if block_stack.last().map(|x| x.0) == Some("if") {
@@ -8747,6 +8824,45 @@ mod tests {
             "string-internal braces tripped diagnose: {:?}",
             d
         );
+    }
+
+    /// Block keywords inside comments must NOT push onto block_stack.
+    /// Before fix: `# operations — length, case, slice, search.` in
+    /// examples/demos/03_strings.zsh produced "unclosed `case` block"
+    /// because split_whitespace() yielded "case" as a token and the
+    /// scan didn't filter comments.
+    #[test]
+    fn diagnose_ignores_block_keywords_inside_comments() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "# operations — length, case, slice, concat, search.\nx=1\n";
+        let d = diagnose(src);
+        assert!(d.is_empty(),
+            "block keyword `case` inside comment flagged: {:?}", d);
+    }
+
+    /// Same for `if` / `for` / `while` / `until` / `select` / `repeat`
+    /// in comments and strings — none should push onto block_stack.
+    #[test]
+    fn diagnose_ignores_all_block_keywords_in_comments_and_strings() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "# if for while until case select repeat\n\
+                   echo \"if for while until case select repeat\"\n\
+                   x=1\n";
+        let d = diagnose(src);
+        assert!(d.is_empty(),
+            "block keywords in comments/strings flagged: {:?}", d);
+    }
+
+    /// Loop-terminator keywords in comments must NOT pop block_stack
+    /// or generate spurious "unmatched `done`" / "unmatched `fi`" /
+    /// "unmatched `esac`" diagnostics.
+    #[test]
+    fn diagnose_ignores_terminators_inside_comments() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "# fi done esac comment\nx=1\n";
+        let d = diagnose(src);
+        assert!(d.is_empty(),
+            "terminator keywords in comments flagged: {:?}", d);
     }
 
     // Pins for the four false-positive classes that flagged 197
