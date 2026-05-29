@@ -366,6 +366,31 @@ demo_test!(d207_lru_with_ttl, "207_lru_with_ttl.zsh");
 demo_test!(d208_directory_walker, "208_directory_walker.zsh");
 demo_test!(d209_command_pipeline, "209_command_pipeline.zsh");
 demo_test!(d210_quine, "210_quine.zsh");
+demo_test!(d211_csv_to_md, "211_csv_to_md.zsh");
+demo_test!(d212_markdown_table, "212_markdown_table.zsh");
+demo_test!(d213_ssh_config_parser, "213_ssh_config_parser.zsh");
+demo_test!(d214_chess_board, "214_chess_board.zsh");
+demo_test!(d215_tic_tac_toe, "215_tic_tac_toe.zsh");
+demo_test!(d216_deck_of_cards, "216_deck_of_cards.zsh");
+demo_test!(d217_guess_number, "217_guess_number.zsh");
+demo_test!(d218_quiz_game, "218_quiz_game.zsh");
+demo_test!(d219_madlibs, "219_madlibs.zsh");
+demo_test!(d220_expense_tracker, "220_expense_tracker.zsh");
+demo_test!(d221_zsh_xtrace, "221_zsh_xtrace.zsh");
+demo_test!(d222_zsh_psvars, "222_zsh_psvars.zsh");
+demo_test!(d223_funcstack, "223_funcstack.zsh");
+demo_test!(d224_git_log_parser, "224_git_log_parser.zsh");
+demo_test!(d225_nginx_log_analyze, "225_nginx_log_analyze.zsh");
+demo_test!(d226_todo_categories, "226_todo_categories.zsh");
+demo_test!(d227_hashtable_oa, "227_hashtable_oa.zsh");
+demo_test!(d228_stack_machine, "228_stack_machine.zsh");
+demo_test!(d229_search_filter, "229_search_filter.zsh");
+demo_test!(d230_menu_system, "230_menu_system.zsh");
+demo_test!(d231_text_adventure, "231_text_adventure.zsh");
+demo_test!(d232_time_tracker, "232_time_tracker.zsh");
+demo_test!(d233_word_chain, "233_word_chain.zsh");
+demo_test!(d234_simple_kvs, "234_simple_kvs.zsh");
+demo_test!(d235_grand_finale, "235_grand_finale.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -583,6 +608,31 @@ fn every_demo_in_dir_has_a_test() {
         "208_directory_walker.zsh",
         "209_command_pipeline.zsh",
         "210_quine.zsh",
+        "211_csv_to_md.zsh",
+        "212_markdown_table.zsh",
+        "213_ssh_config_parser.zsh",
+        "214_chess_board.zsh",
+        "215_tic_tac_toe.zsh",
+        "216_deck_of_cards.zsh",
+        "217_guess_number.zsh",
+        "218_quiz_game.zsh",
+        "219_madlibs.zsh",
+        "220_expense_tracker.zsh",
+        "221_zsh_xtrace.zsh",
+        "222_zsh_psvars.zsh",
+        "223_funcstack.zsh",
+        "224_git_log_parser.zsh",
+        "225_nginx_log_analyze.zsh",
+        "226_todo_categories.zsh",
+        "227_hashtable_oa.zsh",
+        "228_stack_machine.zsh",
+        "229_search_filter.zsh",
+        "230_menu_system.zsh",
+        "231_text_adventure.zsh",
+        "232_time_tracker.zsh",
+        "233_word_chain.zsh",
+        "234_simple_kvs.zsh",
+        "235_grand_finale.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
