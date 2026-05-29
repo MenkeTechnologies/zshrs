@@ -1307,4 +1307,107 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(getkeystring("abc"), vec![b'a', b'b', b'c']);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/utils.c:getkeystring (port).
+    // Each escape branch covered independently per c:6993-7019.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:6995 — `\a` → 0x07 (BEL).
+    #[test]
+    fn getkeystring_backslash_a_is_bell() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring(r"\a"), vec![0x07]);
+    }
+
+    /// c:7003 — `\b` → 0x08 (BS).
+    #[test]
+    fn getkeystring_backslash_b_is_backspace() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring(r"\b"), vec![0x08]);
+    }
+
+    /// c:7019 — `\e` and `\E` both → 0x1b (ESC).
+    #[test]
+    fn getkeystring_backslash_e_and_capital_E_both_esc() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring(r"\e"), vec![0x1b]);
+        assert_eq!(getkeystring(r"\E"), vec![0x1b]);
+    }
+
+    /// c:7013 — `\f` → 0x0c (FF).
+    #[test]
+    fn getkeystring_backslash_f_is_form_feed() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring(r"\f"), vec![0x0c]);
+    }
+
+    /// c:7006 — `\t` → 0x09 (TAB).
+    #[test]
+    fn getkeystring_backslash_t_is_tab() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring(r"\t"), vec![0x09]);
+    }
+
+    /// c:7009 — `\v` → 0x0b (VT).
+    #[test]
+    fn getkeystring_backslash_v_is_vt() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring(r"\v"), vec![0x0b]);
+    }
+
+    /// `^?` → 0x7f (DEL).
+    #[test]
+    fn getkeystring_caret_question_is_del() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring("^?"), vec![0x7f]);
+    }
+
+    /// `^[` → 0x1b (ESC).
+    #[test]
+    fn getkeystring_caret_bracket_is_escape() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring("^["), vec![0x1b]);
+    }
+
+    /// `^A` → 0x01 (Ctrl-A) via `&0x1f` mask.
+    #[test]
+    fn getkeystring_caret_A_is_ctrl_a() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring("^A"), vec![0x01]);
+    }
+
+    /// `^a` → 0x01 too (case-insensitive Ctrl).
+    #[test]
+    fn getkeystring_caret_lowercase_a_is_ctrl_a() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring("^a"), vec![0x01]);
+    }
+
+    /// `\M-X` → 0x1b + 'X' (Meta-prefix).
+    #[test]
+    fn getkeystring_meta_dash_X_is_esc_X() {
+        let _g = crate::test_util::global_state_lock();
+        let r = getkeystring(r"\M-X");
+        assert_eq!(r, vec![0x1b, b'X']);
+    }
+
+    /// Mixed: `\eOA` (escape + literal OA).
+    #[test]
+    fn getkeystring_esc_plus_literals() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring(r"\eOA"), vec![0x1b, b'O', b'A']);
+    }
+
+    /// `getkeystring` is deterministic.
+    #[test]
+    fn getkeystring_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for input in [r"\a", r"\b", "^?", "^A", r"\eOA", "abc"] {
+            let first = getkeystring(input);
+            for _ in 0..5 {
+                assert_eq!(getkeystring(input), first, "{:?} must be pure", input);
+            }
+        }
+    }
 }
