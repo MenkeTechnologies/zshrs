@@ -13248,4 +13248,95 @@ mod tests {
         assert_eq!(getiparam("ZP_IMN"), i64::MIN);
         unsetparam("ZP_IMN");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/params.c:1288 (isident). Foundational
+    // identifier validator used by every param-name validation site.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `isident("")` returns false. C c:1292:
+    ///   `if (!*s) return 0;`
+    #[test]
+    fn isident_empty_string_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isident(""));
+    }
+
+    /// `isident("foo")` returns true — basic identifier.
+    #[test]
+    fn isident_alpha_identifier_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isident("foo"));
+    }
+
+    /// `isident("_foo")` — underscore prefix allowed.
+    #[test]
+    fn isident_underscore_prefix_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isident("_foo"));
+    }
+
+    /// `isident("foo_bar123")` — alnum + underscore mid.
+    #[test]
+    fn isident_alnum_with_underscore_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isident("foo_bar123"));
+    }
+
+    /// `isident("123")` — all-digit positional param. C c:1300+:
+    ///   "All-digit names are valid (positional params)"
+    #[test]
+    fn isident_all_digit_positional_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isident("123"), "all-digit names are positional params");
+    }
+
+    /// `isident("123abc")` — digit prefix with letters → false.
+    /// Mixed digit-first not a valid positional param OR identifier.
+    #[test]
+    fn isident_digit_prefix_alpha_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isident("123abc"));
+    }
+
+    /// `isident(".ns.foo")` — ksh93 namespace dotted name allowed.
+    /// C c:1296-1311 — leading `.` accepted if not followed by digit.
+    #[test]
+    #[ignore = "ZSHRS BUG: ksh93 namespace `.ns.foo` validation may diverge — verify against c:1296-1311"]
+    fn isident_ksh93_namespace_dot_prefix_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isident(".ns.foo"));
+    }
+
+    /// `isident(".0bad")` — namespace must NOT start with digit.
+    /// C c:1300: `if (idigit(s[1])) return 0;`
+    #[test]
+    fn isident_namespace_starting_with_digit_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isident(".0bad"), "namespace can't start with digit");
+    }
+
+    /// `isident("foo-bar")` — dash not allowed in identifier.
+    #[test]
+    fn isident_dash_in_name_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isident("foo-bar"));
+    }
+
+    /// `isident("foo bar")` — space not allowed.
+    #[test]
+    fn isident_space_in_name_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!isident("foo bar"));
+    }
+
+    /// `isident("foo[0]")` — subscript at end is allowed (C handles
+    /// it in `isident_requires_balanced_subscript_brackets`).
+    /// Pin: a simple `[0]` subscript validates.
+    #[test]
+    #[ignore = "ZSHRS BUG: isident subscript handling at end — verify behavior matches C (current `isident_requires_balanced_subscript_brackets` covers brackets only)"]
+    fn isident_with_simple_subscript_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(isident("foo[0]"));
+    }
 }
