@@ -2831,8 +2831,10 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, s: &str, _incmd: bool, _compa
             if in_compfunc != 1 {
                 INCOMPCTLFUNC.with(|c| c.set(true));
             }
-            let osc = crate::ported::builtin::SFCONTEXT
-                .swap(crate::ported::zsh_h::SFC_COMPLETE, std::sync::atomic::Ordering::Relaxed);
+            let osc = crate::ported::builtin::SFCONTEXT.swap(
+                crate::ported::zsh_h::SFC_COMPLETE,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             // c:3725 — `doshfunc(shfunc, args, 1);`.
             let name_for_body = func_name.clone();
             let body_args: Vec<String> = vec![s.to_string()];
@@ -2840,12 +2842,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, s: &str, _incmd: bool, _compa
                 crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args)
                     .unwrap_or(0)
             };
-            let _ = crate::ported::exec::doshfunc(
-                &mut shfunc,
-                largs,
-                true,
-                body_runner,
-            );
+            let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
             // c:3726-3727 — `sfcontext = osc; incompctlfunc = 0;`.
             crate::ported::builtin::SFCONTEXT.store(osc, std::sync::atomic::Ordering::Relaxed);
             INCOMPCTLFUNC.with(|c| c.set(false));
@@ -2887,17 +2884,10 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, s: &str, _incmd: bool, _compa
                 // c:3901 — `doshfunc(shfunc, args, 1);`.
                 let name_for_body = ylist.clone();
                 let body_runner = move || -> i32 {
-                    crate::ported::exec_hooks::run_function_body(&name_for_body, &[])
-                        .unwrap_or(0)
+                    crate::ported::exec_hooks::run_function_body(&name_for_body, &[]).unwrap_or(0)
                 };
-                let _ = crate::ported::exec::doshfunc(
-                    &mut shfunc,
-                    largs,
-                    true,
-                    body_runner,
-                );
-                crate::ported::builtin::SFCONTEXT
-                    .store(osc, std::sync::atomic::Ordering::Relaxed);
+                let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
+                crate::ported::builtin::SFCONTEXT.store(osc, std::sync::atomic::Ordering::Relaxed);
                 INCOMPCTLFUNC.with(|c| c.set(false));
             }
         }

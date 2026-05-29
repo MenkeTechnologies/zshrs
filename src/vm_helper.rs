@@ -1379,9 +1379,7 @@ impl ShellExecutor {
                     unsafe {
                         let _ = Box::from_raw(ptr);
                     }
-                    if let Some(body) =
-                        crate::ported::utils::getshfunc(name).and_then(|f| f.body)
-                    {
+                    if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let wrapped = format!("{name}() {{\n{body}\n}}");
                         let _ = self.execute_script_zsh_pipeline(&wrapped);
                     }
@@ -1522,7 +1520,10 @@ impl ShellExecutor {
                 .as_ref()
                 .expect("chunk_opt must be Some when direct_rust_fn is None");
             crate::fusevm_disasm::maybe_print_stdout(
-                &format!("function:{}", body_args.first().map(|s| s.as_str()).unwrap_or("")),
+                &format!(
+                    "function:{}",
+                    body_args.first().map(|s| s.as_str()).unwrap_or("")
+                ),
                 chunk,
             );
             let mut vm = fusevm::VM::new(chunk.clone());

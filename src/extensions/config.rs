@@ -196,8 +196,7 @@ impl Default for LogConfig {
 /// on every field), so the two loaders coexist in one file.
 /// zshrs-original — C zsh has no analog.
 pub fn config_path() -> PathBuf {
-    crate::daemon_presence::config_file_path()
-        .unwrap_or_else(|| PathBuf::from("/tmp/zshrs.toml"))
+    crate::daemon_presence::config_file_path().unwrap_or_else(|| PathBuf::from("/tmp/zshrs.toml"))
 }
 
 /// Load config from disk. Returns defaults if the file doesn't
@@ -376,16 +375,14 @@ parallel_threshold = 64
     #[test]
     fn compsys_backend_parses_explicit_shell() {
         let _g = crate::test_util::global_state_lock();
-        let cfg: ZshrsConfig =
-            toml::from_str("[compsys]\nbackend = \"shell\"\n").unwrap();
+        let cfg: ZshrsConfig = toml::from_str("[compsys]\nbackend = \"shell\"\n").unwrap();
         assert_eq!(cfg.compsys.backend, CompsysBackend::Shell);
     }
 
     #[test]
     fn compsys_backend_parses_explicit_rust() {
         let _g = crate::test_util::global_state_lock();
-        let cfg: ZshrsConfig =
-            toml::from_str("[compsys]\nbackend = \"rust\"\n").unwrap();
+        let cfg: ZshrsConfig = toml::from_str("[compsys]\nbackend = \"rust\"\n").unwrap();
         assert_eq!(cfg.compsys.backend, CompsysBackend::Rust);
     }
 

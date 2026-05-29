@@ -1191,8 +1191,8 @@ pub fn bin_zle_complete(_name: &str, args: &[String], _ops: &options, _func: i32
         flags: WIDGET_NCOMP | ZLE_MENUCMP | ZLE_KEEPSUFFIX,
         first: None,
         u: WidgetImpl::Comp {
-            fn_: base_fn,         // c:619
-            wid: args[1].clone(), // c:620
+            fn_: base_fn,          // c:619
+            wid: args[1].clone(),  // c:620
             func: args[2].clone(), // c:621
         },
     });
@@ -2039,9 +2039,9 @@ mod tests {
             0,
             "c:thingies.list — bare name must be mortal",
         );
-        let dot_al = tab.get(".accept-line").expect(
-            "c:thingies.list — dotted name must be registered alongside bare",
-        );
+        let dot_al = tab
+            .get(".accept-line")
+            .expect("c:thingies.list — dotted name must be registered alongside bare");
         assert_ne!(
             dot_al.flags & TH_IMMORTAL,
             0,

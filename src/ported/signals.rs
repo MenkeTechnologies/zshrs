@@ -1643,18 +1643,10 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
             let body_args = args.clone();
             let name_for_body = fn_name.clone();
             let body_runner = move || -> i32 {
-                crate::ported::exec_hooks::run_function_body(
-                    &name_for_body,
-                    &body_args[1..],
-                )
-                .unwrap_or(0)
+                crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args[1..])
+                    .unwrap_or(0)
             };
-            let _ = crate::ported::exec::doshfunc(
-                &mut shf,
-                args.clone(),
-                true,
-                body_runner,
-            );
+            let _ = crate::ported::exec::doshfunc(&mut shf, args.clone(), true, body_runner);
         }
         SFCONTEXT.store(osc, Ordering::SeqCst); // c:1161
                                                 // c:1162 — `incompfunc = old_incompfunc;` — restore the

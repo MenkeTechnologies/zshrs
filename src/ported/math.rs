@@ -2047,23 +2047,16 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         let name_for_body = name.to_string();
         let body_args = argv_str.clone();
         let body_runner = move || -> i32 {
-            crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args)
-                .unwrap_or(0)
+            crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args).unwrap_or(0)
         };
         // c:1114 — `doshfunc(shfunc, l, 1);`. Body's last math
         // assignment lands in `lastmathval`.
-        let _ = crate::ported::exec::doshfunc(
-            &mut shfunc,
-            largs,
-            true,
-            body_runner,
-        );
+        let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
         // c:Src/math.c:53 — `mnumber lastmathval` global. Rust port
         // doesn't yet have it as a free static; return the body's
         // last-status as int for now.
         return mnumber {
-            l: crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed)
-                as i64,
+            l: crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed) as i64,
             d: 0.0,
             type_: MN_INTEGER,
         };

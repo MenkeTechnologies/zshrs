@@ -694,17 +694,12 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         // c:6042 — `runshfunc(prog, wrappers, name)`. zshrs runs the
         // body via either the Rust compsys port (direct fn call) or
         // the fusevm Chunk dispatch (via exec_hooks).
-        if let Some(rust_fn) =
-            crate::compsys::router::try_rust_dispatch(&fn_name_owned)
-        {
+        if let Some(rust_fn) = crate::compsys::router::try_rust_dispatch(&fn_name_owned) {
             // C convention: largs[0] = fn name, [1..] = real argv.
             return rust_fn(&largs_for_body[1..]);
         }
-        crate::ported::exec_hooks::dispatch_function_call(
-            &fn_name_owned,
-            &largs_for_body[1..],
-        )
-        .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed))
+        crate::ported::exec_hooks::dispatch_function_call(&fn_name_owned, &largs_for_body[1..])
+            .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed))
     };
 
     // Look up the real shfunc; if missing we still want doshfunc's
@@ -722,10 +717,8 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         sticky: None,
         body: None,
     };
-    let cfret_val =
-        crate::ported::exec::doshfunc(&mut synth_shf, largs, true, body_runner);
-    crate::ported::zle::zle_tricky::cfret
-        .store(cfret_val, Ordering::Relaxed);
+    let cfret_val = crate::ported::exec::doshfunc(&mut synth_shf, largs, true, body_runner);
+    crate::ported::zle::zle_tricky::cfret.store(cfret_val, Ordering::Relaxed);
 
     // c:836 — `opts[XTRACE] = oxt;` restore xtrace state.
     crate::ported::options::opt_state_set(

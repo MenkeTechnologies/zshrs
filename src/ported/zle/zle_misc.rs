@@ -1835,12 +1835,7 @@ pub fn iremovesuffix(c: i32, keep: i32) -> i32 {
                 crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args)
                     .unwrap_or(0)
             };
-            let _ = crate::ported::exec::doshfunc(
-                &mut shfunc,
-                largs,
-                true,
-                body_runner,
-            );
+            let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
         }
         // c:1729 — `zsfree(suffixfunc); suffixfunc = NULL`.
         if let Ok(mut g) = SUFFIXFUNC

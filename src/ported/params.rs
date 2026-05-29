@@ -3140,9 +3140,7 @@ pub fn fetchvalue<'a>(
                 // c:2290
                 return Some(v); // c:2292
             }
-        } else if (scanflags & SCANPM_ASSIGNING as i32) == 0
-            && v.scanflags != 0
-            && isset(KSHARRAYS)
+        } else if (scanflags & SCANPM_ASSIGNING as i32) == 0 && v.scanflags != 0 && isset(KSHARRAYS)
         {
             // c:2294-2296 — KSHARRAYS implicit `[0]` for bare arr.
             v.end = 1;
