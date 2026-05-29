@@ -409,8 +409,8 @@ intercept before git { …; }       # AOP advice fires for both literal and dyna
 
 ### Runnable demos
 
-[`examples/demos/*.zsh`](examples/demos/) — 135 self-contained scripts, every
-one pinned to the same zshrs binary that runs CI. Five batches:
+[`examples/demos/*.zsh`](examples/demos/) — 160 self-contained scripts, every
+one pinned to the same zshrs binary that runs CI. Six batches:
 
 | Range | Theme |
 |---|---|
@@ -419,11 +419,12 @@ one pinned to the same zshrs binary that runs CI. Five batches:
 | 61–85 | zsh C-feature demos — each cites `Src/*.c`: `:h:t:r:e:a:A:s` modifiers (`Src/hist.c`), parameter flags `(M)(P)(Q)(V)(j)(s)(o)(O)(u)(L)(U)(C)(l)(r)` (`Src/subst.c paramsubst`), glob qualifiers `(.)(/)(@)(N)(om)(oL)` (`Src/glob.c`), extended glob `^pat ~ # ## (alt\|alt) **/*` (`Src/pattern.c`), associative-array advanced ops (`Src/params.c` PM_HASHED), array set ops `:\|`/`:*`, pattern-filter `${arr:#pat}` / `(M):#`, typeset -i base, `print -aC` columnar (`Src/builtin.c bin_print`), `print -P` prompt escapes (`Src/prompt.c`), `zparseopts` (`Src/Modules/zutil.c`), `zsh/mathfunc` (`Src/Modules/mathfunc.c`), `zsh/datetime` (`Src/Modules/datetime.c`), `setopt local_options`, `eval` + dynamic dispatch (`Src/builtin.c bin_eval`), anonymous fns (`Src/exec.c is_anonymous_function_name`), compound defaults, advanced brace expansion (`Src/glob.c bracecomplete`), history-style word modifiers, complex split/join, mini calc REPL |
 | 86–110 | advanced runtime patterns — `setopt` exhaustive (`Src/options.c`), `read -A -d` (`Src/builtin.c bin_read`), printf format dispatch, `[[ … =~ … ]]` + `$match` (`Src/cond.c cond_match` + `Src/Modules/regex.c`), `type`/`whence`/`which` (`Src/builtin.c bin_whence`), `hash` cmd cache (`Src/builtin.c bin_hash`), C-style for with multi-counter (`Src/parse.c`), 2D-assoc emulation, case alternation + fallthrough `;&` (`Src/exec.c execcase`), fd redirection + `&>` + `tee` (`Src/exec.c addfd`), strict mode `set -euo pipefail`, variable indirection `(P)` + `eval`, coreutils builtins (anti-fork extension), negative+ranged indexing, zsh-features summary, subshell-vs-group scope, function introspection (`functions[]` assoc), EXIT/ERR/ZERR traps, arithmetic edge cases, dispatch table via assoc, 3-stage pipelines + `pipefail`, eval metaprogramming, globsubst/`=cmd`/nullglob, boolean truth tables, `getopts`+`until`+`repeat`+`time`+`break N` |
 | 111–135 | extension + utility patterns — `let` builtin (`Src/builtin.c bin_let`), assignment forms (`Src/exec.c addvars`), `typeset -T` tied colon-arrays (`Src/params.c` PM_TIED), `local -x -g -i -r -a -A` modifiers, greedy `##`/`%%` strips (`Src/subst.c`), conditional numeric ops `-eq`/`-gt` (`Src/cond.c cond_val`), capture-aware replacement, recursive `**/` globs (`Src/glob.c`), background `&` + `wait` (`Src/jobs.c`), UTF-8 string handling, mini-cat/mini-grep/mini-wc (pure-zsh coreutils), URL encode/decode, JSON pretty-printer, XML entity escape, string trim/pad/center, CSV writer with proper quoting, assoc serialize/deserialize, INI file parser, `emulate -L sh\|ksh` (`Src/options.c bin_emulate`), ksh-style `@()/+()/!()` patterns (`Src/pattern.c`), `zstyle` context store (`Src/Modules/zutil.c bin_zstyle`), `compdef` completion signatures (`Src/Zle/compsys.c`), `bindkey` keymap API (`Src/Zle/zle_keymap.c`) |
+| 136–160 | systems + algorithms + apps — `path[]` tied to `$PATH` (`Src/params.c` PM_TIED), named pipes via `mkfifo`, file-lock via `mkdir`-atomic, env manipulation deep, `kill -USR1/USR2` signal handling (`Src/signals.c`), ANSI 256-color + `print -P %F`, calculator engine over `$((…))`, todo-list CRUD, BFS over adjacency-list graph, finite state machine via transition map, topological sort over DAG, pomodoro timer w/ `EPOCHREALTIME`, inventory system, append-only event log with filter/aggregate, LRU cache w/ eviction, sorted-output priority queue, Bloom filter w/ 3-hash, trie (prefix tree), Levenshtein edit distance (DP), line-level + word-level diff, `{{var}}` template renderer, observer pattern w/ subscriber registry, deterministic `$RANDOM` (`Src/params.c randomgetfn` / seed + Fisher-Yates shuffle), bank-account ledger w/ journal, self-introspecting capabilities report |
 
 ```bash
 cargo build --bin zshrs
 target/debug/zshrs --zsh examples/demos/10_fizzbuzz.zsh
-cargo test --test examples_demos_ci          # full sweep, ~8s
+cargo test --test examples_demos_ci          # full sweep, ~11s
 ```
 
 ---
