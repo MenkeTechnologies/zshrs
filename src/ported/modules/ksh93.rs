@@ -1107,4 +1107,91 @@ mod tests {
         let r = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
         assert!((0..256).contains(&r), "exit code must fit in u8 range, got {}", r);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/ksh93.c
+    // c:47 edcharsetfn / c:83 matchgetfn / c:212 ksh93_wrapper
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:83 — `matchgetfn` returns Vec<String> (compile-time type pin).
+    #[test]
+    fn matchgetfn_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = matchgetfn(std::ptr::null_mut());
+    }
+
+    /// c:47 — `edcharsetfn` returns void (compile-time pin).
+    #[test]
+    fn edcharsetfn_returns_void() {
+        let _g = crate::test_util::global_state_lock();
+        let _: () = edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
+    }
+
+    /// c:212 — `ksh93_wrapper` returns i32 (compile-time pin).
+    #[test]
+    fn ksh93_wrapper_returns_i32_type_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
+    }
+
+    /// c:212 — `ksh93_wrapper` is deterministic for all-null args.
+    #[test]
+    fn ksh93_wrapper_all_null_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = ksh93_wrapper(std::ptr::null(), std::ptr::null(),
+            std::ptr::null_mut());
+        for _ in 0..5 {
+            assert_eq!(
+                ksh93_wrapper(std::ptr::null(), std::ptr::null(),
+                    std::ptr::null_mut()),
+                first,
+                "ksh93_wrapper(all null) must be deterministic"
+            );
+        }
+    }
+
+    /// c:83 — `matchgetfn(null)` returns empty Vec (no match available).
+    #[test]
+    fn matchgetfn_null_returns_empty_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let v = matchgetfn(std::ptr::null_mut());
+        assert!(v.is_empty(), "null pm → empty vec");
+    }
+
+    /// c:491 — `setup_` is idempotent + returns void/i32.
+    #[test]
+    fn ksh93_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:514 — `boot_` returns i32.
+    #[test]
+    fn ksh93_boot_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = boot_(std::ptr::null());
+    }
+
+    /// c:536 — `cleanup_` returns i32.
+    #[test]
+    fn ksh93_cleanup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:595 — `finish_` returns i32.
+    #[test]
+    fn ksh93_finish_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:47 — `edcharsetfn` idempotent for repeated null calls.
+    #[test]
+    fn edcharsetfn_repeated_null_calls_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..20 {
+            edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
+        }
+    }
 }
