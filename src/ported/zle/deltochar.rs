@@ -199,4 +199,45 @@ mod tests {
         // c:137-140 — `finish_(UNUSED(Module m)) { return 0; }`.
         assert_eq!(finish_(), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/deltochar.c — one per lifecycle
+    // hook for finer failure resolution.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `setup_()` returns 0 — no-op setup hook.
+    #[test]
+    fn deltochar_setup_returns_zero() {
+        assert_eq!(setup_(), 0);
+    }
+
+    /// `features_()` returns 0 — static-link module-init.
+    #[test]
+    fn deltochar_features_returns_zero() {
+        assert_eq!(features_(), 0);
+    }
+
+    /// `enables_()` returns 0.
+    #[test]
+    fn deltochar_enables_returns_zero() {
+        assert_eq!(enables_(), 0);
+    }
+
+    /// `boot_()` returns 0.
+    #[test]
+    fn deltochar_boot_returns_zero() {
+        assert_eq!(boot_(), 0);
+    }
+
+    /// `cleanup_()` returns 0.
+    #[test]
+    fn deltochar_cleanup_returns_zero() {
+        assert_eq!(cleanup_(), 0);
+    }
+
+    /// `finish_()` returns 0.
+    #[test]
+    fn deltochar_finish_returns_zero() {
+        assert_eq!(finish_(), 0);
+    }
 }
