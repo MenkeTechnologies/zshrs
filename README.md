@@ -409,17 +409,23 @@ intercept before git { …; }       # AOP advice fires for both literal and dyna
 
 ### Runnable demos
 
-[`examples/demos/*.zsh`](examples/demos/) — 30 self-contained scripts covering
-arithmetic, arrays, assoc arrays, control flow, functions, recursion, brace /
-parameter expansion, parameter flags, heredocs, command/process substitution,
-pipes, printf, traps, IFS-splitting, anonymous fns, positional args, typeset,
-quicksort, prime sieve, fibonacci, fizzbuzz, pattern match. Every demo runs in
-CI via `tests/examples_demos_ci.rs`:
+[`examples/demos/*.zsh`](examples/demos/) — 60 self-contained scripts covering
+shell language fundamentals (arithmetic, arrays, assoc arrays, control flow,
+functions, recursion, brace + parameter expansion, parameter flags, heredocs,
+command/process substitution, pipes, printf, traps, IFS-splitting, anonymous
+fns, positional args, typeset, pattern match, env vars, file tests, date
+formatting, exit codes), data structures (stack, queue, set ops, linked-list
+via arrays), sorting (quicksort, bubble, insertion, selection, counting),
+search (binary), and classic algorithms (fizzbuzz, fibonacci, prime sieve,
+matrix multiply, GCD/LCM, tower of hanoi, collatz, happy numbers, armstrong
+numbers, perfect numbers, roman numerals, base conversion, ROT13, atbash,
+CSV parse, histograms, word frequency). Every demo runs in CI via
+`tests/examples_demos_ci.rs`:
 
 ```bash
 cargo build --bin zshrs
 target/debug/zshrs --zsh examples/demos/10_fizzbuzz.zsh
-cargo test --test examples_demos_ci          # full sweep, ~2s
+cargo test --test examples_demos_ci          # full sweep, ~5s
 ```
 
 ---
