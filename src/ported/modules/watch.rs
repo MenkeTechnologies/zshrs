@@ -1478,4 +1478,120 @@ mod tests {
         assert!(watchlog_match("", ""));
         assert!(!watchlog_match("", "x"));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/watch.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:434 — `watchlog_match("*", anything)` returns true (star matches all).
+    #[test]
+    fn watchlog_match_star_matches_anything() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(watchlog_match("*", "anything"));
+        assert!(watchlog_match("*", ""), "* should match empty too");
+        assert!(watchlog_match("*", "hello world"));
+    }
+
+    /// c:434 — `watchlog_match("a*", "alice")` matches prefix.
+    #[test]
+    fn watchlog_match_prefix_star() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(watchlog_match("a*", "alice"));
+        assert!(watchlog_match("a*", "a"));
+        assert!(!watchlog_match("a*", "bob"));
+    }
+
+    /// c:434 — `watchlog_match("*ice", "alice")` matches suffix.
+    #[test]
+    fn watchlog_match_suffix_star() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(watchlog_match("*ice", "alice"));
+        assert!(watchlog_match("*ice", "ice"));
+        assert!(!watchlog_match("*ice", "bob"));
+    }
+
+    /// c:434 — exact equality returns true immediately (no glob walk).
+    #[test]
+    fn watchlog_match_exact_match_short_circuits() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(watchlog_match("alice", "alice"));
+        assert!(watchlog_match("user@host", "user@host"));
+    }
+
+    /// c:434 — `watchlog_match` is deterministic.
+    #[test]
+    fn watchlog_match_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for (p, v) in &[("a*", "alice"), ("xyz", "abc"), ("", "")] {
+            let first = watchlog_match(p, v);
+            for _ in 0..5 {
+                assert_eq!(watchlog_match(p, v), first);
+            }
+        }
+    }
+
+    /// c:817 — `utmp_user` on default-zeroed utmpx returns empty.
+    #[test]
+    #[cfg(unix)]
+    fn utmp_user_zeroed_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let u: libc::utmpx = unsafe { std::mem::zeroed() };
+        assert!(utmp_user(&u).is_empty(), "zero-initialized utmpx has empty user");
+    }
+
+    /// c:828 — `utmp_line` on default-zeroed utmpx returns empty.
+    #[test]
+    #[cfg(unix)]
+    fn utmp_line_zeroed_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let u: libc::utmpx = unsafe { std::mem::zeroed() };
+        assert!(utmp_line(&u).is_empty());
+    }
+
+    /// c:839 — `utmp_host` on default-zeroed utmpx returns empty.
+    #[test]
+    #[cfg(unix)]
+    fn utmp_host_zeroed_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let u: libc::utmpx = unsafe { std::mem::zeroed() };
+        assert!(utmp_host(&u).is_empty());
+    }
+
+    /// c:851 — `utmp_is_active` on default-zeroed utmpx returns false
+    /// (zero type isn't USER_PROCESS).
+    #[test]
+    #[cfg(unix)]
+    fn utmp_is_active_zeroed_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        let u: libc::utmpx = unsafe { std::mem::zeroed() };
+        assert!(!utmp_is_active(&u), "zero type != USER_PROCESS");
+    }
+
+    /// c:658 — `bin_log` with no args returns a valid status code
+    /// (may return 0 since C log builtin lists current users).
+    #[test]
+    fn bin_log_no_args_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let _ = bin_log("log", &[], &ops, 0);
+    }
+
+    /// Lifecycle (c:693/735/758/769):
+    #[test]
+    fn watch_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:758 — cleanup_(NULL) = 0.
+    #[test]
+    fn watch_cleanup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+    }
 }
