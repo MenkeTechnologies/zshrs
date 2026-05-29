@@ -736,4 +736,113 @@ mod tests {
         assert_eq!(ztrdup("hello"), "hello");
         assert_eq!(ztrdup(""), "");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/string.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:91 — `wcs_ztrdup` round-trip on ASCII.
+    #[test]
+    fn wcs_ztrdup_ascii_round_trip() {
+        assert_eq!(wcs_ztrdup("hello"), "hello");
+        assert_eq!(wcs_ztrdup(""), "");
+    }
+
+    /// c:118 — `zhtricat("a", "b", "c")` returns "abc" (3-string concat
+    /// via heap arena).
+    #[test]
+    fn zhtricat_joins_three_strings() {
+        assert_eq!(zhtricat("a", "b", "c"), "abc");
+        assert_eq!(zhtricat("", "middle", ""), "middle");
+        assert_eq!(zhtricat("pre", "", "suf"), "presuf");
+    }
+
+    /// c:118 — `zhtricat` matches `tricat` (heap-arena vs permanent
+    /// distinction collapses in Rust).
+    #[test]
+    fn zhtricat_matches_tricat() {
+        for (a, b, c) in &[("x", "y", "z"), ("", "", ""), ("foo", "bar", "baz")] {
+            assert_eq!(zhtricat(a, b, c), tricat(a, b, c));
+        }
+    }
+
+    /// c:135/147 — `dyncat` matches `bicat` for any input pair.
+    #[test]
+    fn dyncat_matches_bicat() {
+        for (a, b) in &[("foo", "bar"), ("", ""), ("hello", "")] {
+            assert_eq!(dyncat(a, b), bicat(a, b));
+        }
+    }
+
+    /// c:161 — `dupstrpfx("hello", 3)` returns "hel".
+    #[test]
+    fn dupstrpfx_takes_byte_prefix() {
+        assert_eq!(dupstrpfx("hello", 3), "hel");
+        assert_eq!(dupstrpfx("hello", 0), "");
+        // Overflow clamps to len.
+        assert_eq!(dupstrpfx("hi", 100), "hi");
+    }
+
+    /// c:172 — `ztrduppfx` matches `dupstrpfx` (lanes collapse).
+    #[test]
+    fn ztrduppfx_matches_dupstrpfx() {
+        for (s, n) in &[("hello", 3), ("", 0), ("foo", 100)] {
+            assert_eq!(ztrduppfx(s, *n), dupstrpfx(s, *n));
+        }
+    }
+
+    /// c:186 — `appstr` accumulates across multiple calls.
+    #[test]
+    fn appstr_accumulates_multiple_pushes() {
+        let mut s = String::from("a");
+        appstr(&mut s, "b");
+        appstr(&mut s, "c");
+        appstr(&mut s, "d");
+        assert_eq!(s, "abcd");
+    }
+
+    /// c:186 — `appstr(_, "")` is no-op.
+    #[test]
+    fn appstr_empty_append_is_noop() {
+        let mut s = String::from("hello");
+        appstr(&mut s, "");
+        assert_eq!(s, "hello");
+    }
+
+    /// c:196 — `strend("")` returns empty &str.
+    #[test]
+    fn strend_empty_returns_empty() {
+        assert_eq!(strend(""), "");
+    }
+
+    /// c:196 — `strend("a")` returns "a" (single char).
+    #[test]
+    fn strend_single_char_returns_self_pin() {
+        assert_eq!(strend("a"), "a");
+    }
+
+    /// c:196 — `strend("abc")` returns "c" (last char).
+    #[test]
+    fn strend_returns_last_ascii_char() {
+        assert_eq!(strend("abc"), "c");
+        assert_eq!(strend("hello"), "o");
+    }
+
+    /// c:55 — `dupstring_wlen("hello", 100)` clamps to byte length.
+    #[test]
+    fn dupstring_wlen_overlong_clamps() {
+        assert_eq!(dupstring_wlen("hi", 100), "hi");
+        assert_eq!(dupstring_wlen("", 100), "");
+    }
+
+    /// c:35 — `dupstring` returns OWNED String (caller can mutate
+    /// without affecting source).
+    #[test]
+    fn dupstring_returns_owned_independent_copy() {
+        let src = "hello";
+        let mut dup = dupstring(src);
+        dup.push_str("_mut");
+        assert_eq!(src, "hello", "source unchanged");
+        assert_eq!(dup, "hello_mut");
+    }
 }
