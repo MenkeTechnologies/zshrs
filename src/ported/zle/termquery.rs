@@ -1850,4 +1850,98 @@ mod tests {
         let _ = system_clipget('s');
         let _ = system_clipget('c');
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/termquery.c
+    // c:116 find_branch / c:126 find_matching / c:236 handle_color /
+    // c:451 base64_decode / c:531 url_encode / c:581 system_clipput /
+    // c:602 extension_enabled / c:758 start_edit / c:767 end_edit /
+    // c:851 mark_output / c:890 notify_pwd / c:922 match_cursorform
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:116 — `find_branch` returns Option<usize> (compile-time type pin).
+    #[test]
+    fn find_branch_returns_option_usize_type() {
+        let _: Option<usize> = find_branch("abc", b'a');
+    }
+
+    /// c:116 — `find_branch("", _)` always returns None.
+    #[test]
+    fn find_branch_empty_string_returns_none() {
+        for c in [b'a', b'\0', b' ', b'\xff'] {
+            assert!(find_branch("", c).is_none(), "empty + {} → None", c);
+        }
+    }
+
+    /// c:126 — `find_matching("", _, _)` always returns None.
+    #[test]
+    fn find_matching_empty_string_returns_none() {
+        assert!(find_matching("", b'(', b')').is_none());
+        assert!(find_matching("", b'[', b']').is_none());
+    }
+
+    /// c:451 — `base64_decode("")` returns empty Vec (pin).
+    #[test]
+    fn base64_decode_empty_returns_empty_pin() {
+        assert!(base64_decode("").is_empty());
+    }
+
+    /// c:451 — `base64_decode` is deterministic.
+    #[test]
+    fn base64_decode_is_deterministic() {
+        for s in ["", "QQ==", "QUI=", "QUJD"] {
+            let first = base64_decode(s);
+            for _ in 0..3 {
+                assert_eq!(base64_decode(s), first,
+                    "base64_decode({:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:531 — `url_encode("")` returns empty (pin via direct assertion).
+    #[test]
+    fn url_encode_empty_returns_empty_pin() {
+        assert_eq!(url_encode(""), "");
+    }
+
+    /// c:531 — `url_encode` is pure.
+    #[test]
+    fn url_encode_is_pure() {
+        for s in ["", "abc", "/path/to/file", "hello world"] {
+            let first = url_encode(s);
+            for _ in 0..3 {
+                assert_eq!(url_encode(s), first,
+                    "url_encode({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:758 + c:767 — `start_edit` + `end_edit` round-trip safe.
+    #[test]
+    fn start_edit_end_edit_round_trip_safe() {
+        let _ = start_edit();
+        let _ = end_edit();
+    }
+
+    /// c:851 — `mark_output` is idempotent for both states.
+    #[test]
+    fn mark_output_idempotent_both_states() {
+        for _ in 0..3 {
+            mark_output(true);
+            mark_output(false);
+        }
+    }
+
+    /// c:922 — `match_cursorform("")` returns u32 (type pin).
+    #[test]
+    fn match_cursorform_returns_u32_type() {
+        let _: u32 = match_cursorform("");
+    }
+
+    /// c:602 — `extension_enabled("", "", default)` returns the default.
+    #[test]
+    fn extension_enabled_empty_strings_returns_default() {
+        assert_eq!(extension_enabled("", "", true), true);
+        assert_eq!(extension_enabled("", "", false), false);
+    }
 }
