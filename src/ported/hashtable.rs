@@ -3560,4 +3560,126 @@ mod tests {
         addhashnode(&mut h, "k", "second".into());
         assert_eq!(gethashnode2(&h, "k"), Some(&"second".to_string()));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hashtable.c
+    // c:55 hasher / c:85 newhashtable / c:97 deletehashtable /
+    // c:150 addhashnode2 / c:343 gethashnode2 / c:355 removehashnode /
+    // c:715 hnamcmp / c:876 expandhashtable / c:887 resizehashtable /
+    // c:916 printhashtabinfo
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:55 — `hasher("")` empty string returns u32 (type pin).
+    #[test]
+    fn hasher_empty_returns_u32_type() {
+        let _: u32 = hasher("");
+    }
+
+    /// c:55 — `hasher` is pure.
+    #[test]
+    fn hasher_is_pure_full_sweep() {
+        for s in ["", "a", "abc", "hello world", "日本"] {
+            let first = hasher(s);
+            for _ in 0..5 {
+                assert_eq!(hasher(s), first,
+                    "hasher({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:85 — `newhashtable(0, "")` returns (String, i32) tuple type pin.
+    #[test]
+    fn newhashtable_returns_string_i32_tuple_type() {
+        let _: (String, i32) = newhashtable(0, "");
+    }
+
+    /// c:97 — `deletehashtable` on empty table is safe no-op.
+    #[test]
+    fn deletehashtable_empty_no_panic() {
+        let mut empty: HashMap<String, String> = HashMap::new();
+        deletehashtable(&mut empty);
+        assert!(empty.is_empty(), "still empty after delete");
+    }
+
+    /// c:150 — `addhashnode2` returns Option<T> (replaced value).
+    #[test]
+    fn addhashnode2_returns_option_type() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        let _: Option<i32> = addhashnode2(&mut h, "k", 1);
+    }
+
+    /// c:150 — `addhashnode2` first insert returns None.
+    #[test]
+    fn addhashnode2_first_insert_returns_none() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        let r = addhashnode2(&mut h, "k", 42);
+        assert!(r.is_none(), "first insert → None (no replacement)");
+    }
+
+    /// c:150 — `addhashnode2` overwrite returns Some(old).
+    #[test]
+    fn addhashnode2_overwrite_returns_some_old() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        addhashnode2(&mut h, "k", 1);
+        let r = addhashnode2(&mut h, "k", 2);
+        assert_eq!(r, Some(1), "overwrite returns previous value");
+    }
+
+    /// c:343 — `gethashnode2(empty, _)` returns None.
+    #[test]
+    fn gethashnode2_empty_table_returns_none() {
+        let h: HashMap<String, String> = HashMap::new();
+        assert!(gethashnode2(&h, "anything").is_none());
+    }
+
+    /// c:355 — `removehashnode(empty, _)` returns None.
+    #[test]
+    fn removehashnode_empty_table_returns_none() {
+        let mut h: HashMap<String, String> = HashMap::new();
+        assert!(removehashnode(&mut h, "anything").is_none());
+    }
+
+    /// c:715 — `hnamcmp` is antisymmetric.
+    #[test]
+    fn hnamcmp_antisymmetric() {
+        use std::cmp::Ordering;
+        for (a, b) in [("a", "b"), ("abc", "xyz"), ("", "x")] {
+            let ab = hnamcmp(a, b);
+            let ba = hnamcmp(b, a);
+            assert_eq!(ab.reverse(), ba,
+                "hnamcmp must be antisymmetric for ({:?}, {:?})", a, b);
+            // ab cannot be Equal AND ba Equal unless both Equal
+            if ab == Ordering::Equal {
+                assert_eq!(ba, Ordering::Equal);
+            }
+        }
+    }
+
+    /// c:887 — `resizehashtable` with same size is no-op.
+    #[test]
+    fn resizehashtable_same_size_no_panic() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        h.insert("a".to_string(), 1);
+        h.insert("b".to_string(), 2);
+        resizehashtable(&mut h, 2);
+        assert_eq!(h.len(), 2, "entries preserved after same-size resize");
+    }
+
+    /// c:876 — `expandhashtable` is idempotent.
+    #[test]
+    fn expandhashtable_idempotent() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        h.insert("a".to_string(), 1);
+        for _ in 0..5 {
+            expandhashtable(&mut h);
+        }
+        assert_eq!(h.get("a"), Some(&1), "value preserved across expansions");
+    }
+
+    /// c:916 — `printhashtabinfo("", empty)` returns String type.
+    #[test]
+    fn printhashtabinfo_returns_string_type() {
+        let empty: HashMap<String, String> = HashMap::new();
+        let _: String = printhashtabinfo("test", &empty);
+    }
 }
