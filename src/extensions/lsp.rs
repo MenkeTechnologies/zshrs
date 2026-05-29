@@ -6423,6 +6423,66 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                 col += end;
                 continue;
             }
+            // Brace-range expansion `{X..Y}` / `{X..Y..N}` — emit as
+            // a single OPERATOR token so the editor colors the whole
+            // span uniformly. Without this, the word-classifier below
+            // would treat the inner `a`/`e`/`A`/`E` letter endpoints
+            // as single-char identifiers and color them with the
+            // VARIABLE style (token-type 6 → italic green) — which
+            // makes `{A..E}` look like a variable reference, not a
+            // brace expansion. Detection is conservative: must see
+            // `{` then 1+ alnum chars then literal `..` then 1+ alnum
+            // chars (optionally `..N`) then `}` all on the same line.
+            // List-form `{a,b,c}` is not handled here (the commas and
+            // identifiers already render readably); only the range form
+            // produced the false variable-coloring.
+            if rest.starts_with('{') {
+                let bb = rest.as_bytes();
+                let mut p = 1usize;
+                let scan_run = |bb: &[u8], mut p: usize| -> usize {
+                    while p < bb.len() {
+                        let c = bb[p];
+                        if c.is_ascii_alphanumeric() || c == b'-' || c == b'_' {
+                            p += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    p
+                };
+                let after_a = scan_run(bb, p);
+                let has_dotdot = after_a > p
+                    && bb.get(after_a) == Some(&b'.')
+                    && bb.get(after_a + 1) == Some(&b'.');
+                if has_dotdot {
+                    p = after_a + 2;
+                    let after_b = scan_run(bb, p);
+                    if after_b > p {
+                        // Optional `..N` step.
+                        let mut close = after_b;
+                        if bb.get(close) == Some(&b'.') && bb.get(close + 1) == Some(&b'.') {
+                            let after_step = scan_run(bb, close + 2);
+                            if after_step > close + 2 {
+                                close = after_step;
+                            }
+                        }
+                        if bb.get(close) == Some(&b'}') {
+                            let span = close + 1;
+                            push_tok(
+                                &mut data,
+                                &mut last_line,
+                                &mut last_col,
+                                ln,
+                                col as u32,
+                                span as u32,
+                                4, // operator
+                            );
+                            col += span;
+                            continue;
+                        }
+                    }
+                }
+            }
             // Multi-char operators — emit as OPERATOR (token type 4).
             // Longest-match-first so `&&` doesn't lex as `&` + `&`.
             //
@@ -8958,6 +9018,82 @@ mod tests {
         let r = find_user_symbol_doc(src, "greet").expect("UDF must hover");
         assert!(r.contains("says hi"),
             "documented form must include the doc block, got {:?}", r);
+    }
+
+    /// Brace-range expansion `{a..e}` / `{A..E}` / `{1..10}` /
+    /// `{1..10..2}` must emit a single OPERATOR token (type 4) for
+    /// the whole span. Before fix the inner letter endpoints were
+    /// classified as single-char identifiers → token-type 6
+    /// (VARIABLE) → italic-green color in the IDE, making
+    /// `echo {A..E}` look like a variable reference.
+    #[test]
+    fn semantic_tokens_brace_range_emits_single_operator_span() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        let uri = "file:///t.zsh";
+        state.docs.insert(uri.to_string(), "echo {a..e}\n".to_string());
+        let r = semantic_tokens(&state, &json!({ "textDocument": { "uri": uri } }));
+        let data = r["data"].as_array().expect("data array");
+        // Token stream layout includes `{a..e}` = 6 bytes, type 4 (operator).
+        // Each token = 5 u32s (delta_line, delta_col, len, ty, mods).
+        let mut found = false;
+        for chunk in data.chunks(5) {
+            if chunk.len() == 5 && chunk[2].as_u64() == Some(6)
+                && chunk[3].as_u64() == Some(4)
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found,
+            "brace range `{{a..e}}` must emit a single 6-byte operator token, got data={:?}", data);
+    }
+
+    /// Uppercase letter brace ranges `{A..E}` get the same treatment
+    /// (the exact case shown in the user's screenshot reporting the
+    /// italic-green mis-coloring of `E`).
+    #[test]
+    fn semantic_tokens_brace_range_uppercase_endpoints_emit_operator() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        let uri = "file:///t.zsh";
+        state.docs.insert(uri.to_string(), "echo {A..E}\n".to_string());
+        let r = semantic_tokens(&state, &json!({ "textDocument": { "uri": uri } }));
+        let data = r["data"].as_array().expect("data array");
+        let mut found = false;
+        for chunk in data.chunks(5) {
+            if chunk.len() == 5 && chunk[2].as_u64() == Some(6)
+                && chunk[3].as_u64() == Some(4)
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found,
+            "brace range `{{A..E}}` must emit a single 6-byte operator token, got data={:?}", data);
+    }
+
+    /// Stepped brace range `{1..10..2}` covers the full 10-byte span
+    /// including the optional step component.
+    #[test]
+    fn semantic_tokens_brace_range_with_step_emits_operator() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        let uri = "file:///t.zsh";
+        state.docs.insert(uri.to_string(), "echo {1..10..2}\n".to_string());
+        let r = semantic_tokens(&state, &json!({ "textDocument": { "uri": uri } }));
+        let data = r["data"].as_array().expect("data array");
+        let mut found = false;
+        for chunk in data.chunks(5) {
+            if chunk.len() == 5 && chunk[2].as_u64() == Some(10)
+                && chunk[3].as_u64() == Some(4)
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found,
+            "brace range `{{1..10..2}}` must emit a single 10-byte operator token, got data={:?}", data);
     }
 
     /// Two definitions of the same name: the documented one wins even
