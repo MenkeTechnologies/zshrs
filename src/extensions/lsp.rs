@@ -612,6 +612,21 @@ fn diagnose(text: &str) -> Vec<Value> {
         if trimmed.starts_with('#') {
             continue;
         }
+        // Pre-scan: does this line contain a `case` keyword (in code,
+        // not in a comment / string)? If yes, any bare `)` on the same
+        // line is a case-arm pattern terminator and must NOT be flagged
+        // as an unmatched paren. Without this, lines like
+        //   case foo in foo|bar) echo yes ;; *) echo no ;; esac
+        // produced two false "unmatched `)`" diagnostics because the
+        // bracket scan runs in lexical order and `case` hasn't been
+        // pushed onto block_stack yet when the `)` is seen.
+        let line_code_only = strip_comments_and_strings(line);
+        let line_has_case_keyword = line_code_only
+            .split_whitespace()
+            .any(|t| {
+                let bare = t.trim_end_matches(|c: char| matches!(c, ';' | '&' | '|'));
+                bare == "case"
+            });
         // Token-level scan. Pairings tracked on `stack`:
         //   '('  — single paren            ')'
         //   '{'  — single brace            '}'
@@ -665,7 +680,14 @@ fn diagnose(text: &str) -> Vec<Value> {
                     } else {
                         // Bare `)` inside an open `case ... esac` is a
                         // pattern-arm terminator, not a paren mismatch.
-                        let in_case = block_stack.iter().any(|(kw, _, _)| *kw == "case");
+                        // Two recognition modes:
+                        //   1. `block_stack` already has `case` (multi-line
+                        //      `case … in\n PAT) cmd ;;\n esac`).
+                        //   2. The CURRENT line has the `case` keyword
+                        //      anywhere left of this `)` (one-liner
+                        //      `case x in y) … esac`).
+                        let in_case = block_stack.iter().any(|(kw, _, _)| *kw == "case")
+                            || line_has_case_keyword;
                         if !in_case {
                             diags.push(diagnostic(line_no, i, 1, "unmatched `)`", 1));
                         }
@@ -753,7 +775,15 @@ fn diagnose(text: &str) -> Vec<Value> {
         // `echo "if you like"` push spurious entries onto block_stack
         // and surface as "unclosed `case` block" / "unclosed `if`".
         let code_only = strip_comments_and_strings(line);
-        for kw in code_only.split_whitespace() {
+        for kw_raw in code_only.split_whitespace() {
+            // Strip trailing shell-statement-separator punctuation
+            // (`;` / `&` / `|`) so tokens like `done;` and `fi;` and
+            // `done;` still match the block-terminator keyword.
+            // Without this, `for ((;;)); do echo $i; done;` left
+            // `for` orphaned on block_stack → false "unclosed `for`
+            // block" diagnostic on every one-liner that ends the
+            // statement with a semicolon.
+            let kw = kw_raw.trim_end_matches(|c: char| matches!(c, ';' | '&' | '|'));
             // Map matched tokens back to &'static str literals so the
             // borrows pushed onto block_stack don't outlive `code_only`
             // (which drops at end of this loop iteration).
@@ -9012,6 +9042,54 @@ mod tests {
         let d = diagnose(src);
         assert!(d.is_empty(),
             "terminator keywords in comments flagged: {:?}", d);
+    }
+
+    /// `done;` (terminator with trailing `;`) must still pop the `for`
+    /// off block_stack — otherwise one-liner loops like
+    /// `for ((;;)); do …; done; }` left `for` orphaned and flagged.
+    /// Reported false-positive on
+    /// `examples/demos/106_pipe_chains.zsh:24` and
+    /// `examples/demos/109_arith_truth_tables.zsh:54-55`.
+    #[test]
+    fn diagnose_done_with_trailing_semicolon_pops_for() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "for i in 1 2 3; do echo $i; done;\n";
+        let d = diagnose(src);
+        assert!(d.is_empty(), "`done;` must pop for: {:?}", d);
+    }
+
+    /// `done; done; done` (three terminators on one line) must pop
+    /// all three nested `for`s. Pins the
+    /// `109_arith_truth_tables.zsh:54-55` `for…; for…; for…; do…done; done; done`
+    /// triple-nest pattern.
+    #[test]
+    fn diagnose_three_done_with_trailing_semicolon_pops_three_fors() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "for a in 1; do for b in 1; do for c in 1; do echo $a$b$c; done; done; done\n";
+        let d = diagnose(src);
+        assert!(d.is_empty(), "three `done;` must pop three `for`: {:?}", d);
+    }
+
+    /// `fi;` (if-terminator with trailing `;`) similarly pops the
+    /// open `if` even when written `if …; then …; fi;`.
+    #[test]
+    fn diagnose_fi_with_trailing_semicolon_pops_if() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "if true; then echo hi; fi;\n";
+        let d = diagnose(src);
+        assert!(d.is_empty(), "`fi;` must pop if: {:?}", d);
+    }
+
+    /// One-liner `case … in PAT) cmd ;; *) cmd ;; esac` must NOT
+    /// flag the `)` bare-paren terminators. Pins the
+    /// `100_zsh_features_summary.zsh:49` false-positive
+    /// `case foo in foo|bar) echo yes ;; *) echo no ;; esac`.
+    #[test]
+    fn diagnose_oneliner_case_arm_paren_not_flagged() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "case foo in foo|bar) echo yes ;; *) echo no ;; esac\n";
+        let d = diagnose(src);
+        assert!(d.is_empty(), "one-liner case-arm `)` flagged: {:?}", d);
     }
 
     // ── Hover regressions: UDF + user-variable fall-back & priority ──
