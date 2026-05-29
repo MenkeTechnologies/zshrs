@@ -627,6 +627,26 @@ fn diagnose(text: &str) -> Vec<Value> {
                     // `((` opens an arithmetic expression — paired with `))`,
                     // not two single parens.
                     if bytes.get(i + 1) == Some(&b'(') {
+                        // Distinguish `$((arith))` from `$( () { fn } N )`
+                        // (anonymous-fn call inside command substitution).
+                        // The latter has `()` immediately after `$(`:
+                        // `$((` + `)` + non-`)` is `$( (...` not arithmetic.
+                        // Empty arithmetic `$(())` (rare) still works because
+                        // the third char IS `)`, satisfying the original check.
+                        let prev_is_dollar = i > 0 && bytes[i - 1] == b'$';
+                        let next2 = bytes.get(i + 2).copied();
+                        let next3 = bytes.get(i + 3).copied();
+                        if prev_is_dollar
+                            && next2 == Some(b')')
+                            && next3 != Some(b')')
+                        {
+                            // Treat as two separate `(` so the inner `()`
+                            // pair balances cleanly with its `)`.
+                            stack.push(('(', line_no, i));     // outer $(
+                            stack.push(('(', line_no, i + 1)); // inner (
+                            i += 2;
+                            continue;
+                        }
                         stack.push(('A', line_no, i));
                         i += 2;
                         continue;
@@ -750,6 +770,14 @@ fn diagnose(text: &str) -> Vec<Value> {
                 "esac" => "esac",
                 _ => continue,
             };
+            // `repeat N CMD` is a one-liner with no `do`/`done`; only push
+            // onto block_stack when same line has a `do` token (block form
+            // `repeat N; do ... done` or `repeat N do CMD done`).
+            if kw_static == "repeat"
+                && !code_only.split_whitespace().any(|t| t == "do")
+            {
+                continue;
+            }
             match kw_static {
                 "if" | "for" | "while" | "until" | "case" | "select" | "repeat" => {
                     block_stack.push((kw_static, line_no, 0));
@@ -8863,6 +8891,42 @@ mod tests {
         let d = diagnose(src);
         assert!(d.is_empty(),
             "terminator keywords in comments flagged: {:?}", d);
+    }
+
+    /// Every `examples/demos/*.zsh` file must pass `diagnose()` with
+    /// zero diagnostics. This is the LSP-accepts-all-demos contract.
+    /// Any new false positive surfaced by a demo addition fails this
+    /// test, forcing a real LSP fix rather than silent IDE noise.
+    #[test]
+    fn diagnose_accepts_every_examples_demo_zsh_file() {
+        let _g = crate::test_util::global_state_lock();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let demos_dir = manifest_dir.join("examples").join("demos");
+        let mut failures: Vec<(String, Vec<Value>)> = Vec::new();
+        let entries = std::fs::read_dir(&demos_dir)
+            .expect("examples/demos must exist");
+        let mut total = 0usize;
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|s| s.to_str()) != Some("zsh") {
+                continue;
+            }
+            total += 1;
+            let text = std::fs::read_to_string(&path).unwrap();
+            let d = diagnose(&text);
+            if !d.is_empty() {
+                failures.push((
+                    path.file_name().unwrap().to_string_lossy().into_owned(),
+                    d,
+                ));
+            }
+        }
+        assert!(total > 0, "no demos found under {}", demos_dir.display());
+        assert!(
+            failures.is_empty(),
+            "{}/{} demos flagged by LSP diagnose():\n{:#?}",
+            failures.len(), total, failures,
+        );
     }
 
     // Pins for the four false-positive classes that flagged 197
