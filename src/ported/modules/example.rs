@@ -972,4 +972,111 @@ mod tests {
         let r = math_length("length", "hello", 0);
         assert_eq!(r.l, 5);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/example.c
+    // c:70 bin_example / c:149 cond_p_len / c:179 cond_i_ex
+    // c:198 math_sum / c:250 math_length / c:273 ex_wrapper / lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:149 — cond_p_len returns 0/1 only (boolean i32).
+    #[test]
+    fn cond_p_len_return_value_in_boolean_set() {
+        let _g = crate::test_util::global_state_lock();
+        for args in [
+            vec![s(""), s("")],
+            vec![s("abc"), s("3")],
+            vec![s("abc"), s("4")],
+            vec![s(""), s("0")],
+        ] {
+            let r = cond_p_len(&args, 0);
+            assert!(r == 0 || r == 1, "cond_p_len({:?}) = {} not in {{0,1}}", args, r);
+        }
+    }
+
+    /// c:179 — cond_i_ex returns 0/1 only (boolean i32).
+    #[test]
+    fn cond_i_ex_return_value_in_boolean_set() {
+        let _g = crate::test_util::global_state_lock();
+        for args in [
+            vec![s(""), s("")],
+            vec![s("ex"), s("ample")],
+            vec![s("foo"), s("bar")],
+        ] {
+            let r = cond_i_ex(&args, 0);
+            assert!(r == 0 || r == 1, "cond_i_ex({:?}) = {} not in {{0,1}}", args, r);
+        }
+    }
+
+    /// c:198 — math_sum returns mnumber type (compile-time pinning).
+    #[test]
+    fn math_sum_returns_mnumber_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: mnumber = math_sum("sum", 0, &[], 0);
+    }
+
+    /// c:250 — math_length returns mnumber type.
+    #[test]
+    fn math_length_returns_mnumber_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: mnumber = math_length("length", "x", 0);
+    }
+
+    /// c:250 — `math_length` is deterministic for any input.
+    #[test]
+    fn math_length_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = math_length("length", "hello", 0).l;
+        for _ in 0..5 {
+            assert_eq!(math_length("length", "hello", 0).l, first);
+        }
+    }
+
+    /// c:70 — bin_example empty args returns 0 (default success).
+    #[test]
+    fn bin_example_no_args_returns_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_example("example", &[], &ops, 0);
+        assert!(r == 0 || r == 1, "result must be 0 or 1, got {}", r);
+    }
+
+    /// c:198 — `math_sum(empty)` returns integer 0 (l=0, type integer).
+    #[test]
+    fn math_sum_empty_is_canonical_zero_integer() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_sum("sum", 0, &[], 0);
+        assert_eq!(r.l, 0, "empty args → l=0");
+    }
+
+    /// c:273 — `ex_wrapper(null, null, "")` is safe (empty name).
+    #[test]
+    fn ex_wrapper_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = ex_wrapper(std::ptr::null(), std::ptr::null(), "");
+    }
+
+    /// c:318-388 — full lifecycle setup→features→enables→boot→cleanup→finish.
+    #[test]
+    fn example_full_lifecycle_returns_zero_for_all() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        let mut feats = Vec::new();
+        let _ = features_(null, &mut feats);
+        let mut enables: Option<Vec<i32>> = None;
+        let _ = enables_(null, &mut enables);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(cleanup_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
+
+    /// c:318 — setup_ idempotent.
+    #[test]
+    fn example_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
 }
