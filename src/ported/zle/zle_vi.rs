@@ -2407,4 +2407,121 @@ mod tests {
             "cursor at first non-blank (pos 3 = 'a')"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_vi.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:445 — `viaddeol` puts cursor at line-end. Pin: cursor lands
+    /// at ZLELL on a single-line buffer.
+    #[test]
+    fn viaddeol_moves_cursor_to_zlell() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        zle_with("hello", 0); // cursor at start
+        let ret = viaddeol();
+        assert_eq!(ret, 0);
+        assert_eq!(
+            ZLECS.load(Ordering::SeqCst),
+            5,
+            "viaddeol moves cursor to end of line"
+        );
+    }
+
+    /// c:679 — `vicmdmode` when already in vicmd returns 1 (no-op).
+    #[test]
+    fn vicmdmode_already_in_vicmd_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        // Switch to vicmd first, then call vicmdmode again.
+        if selectkeymap("vicmd", 0) == 0 {
+            let r = vicmdmode();
+            assert_eq!(r, 1, "vicmdmode on existing vicmd → 1 (no-op signal)");
+        }
+    }
+
+    /// c:679 — `vicmdmode` from non-vicmd selects vicmd and returns 0.
+    #[test]
+    fn vicmdmode_from_emacs_succeeds() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        selectkeymap("emacs", 0);
+        zle_with("abc", 1);
+        let r = vicmdmode();
+        assert_eq!(r, 0, "vicmdmode from non-vicmd → 0 (selected)");
+    }
+
+    /// c:319 — `viaddnext` always returns 0 (success).
+    #[test]
+    fn viaddnext_always_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        zle_with("a", 0);
+        assert_eq!(viaddnext(), 0);
+        zle_with("", 0); // empty buffer
+        assert_eq!(viaddnext(), 0);
+    }
+
+    /// c:445 — `viaddeol` always returns 0 (success).
+    #[test]
+    fn viaddeol_always_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        zle_with("xyz", 1);
+        assert_eq!(viaddeol(), 0);
+        zle_with("", 0);
+        assert_eq!(viaddeol(), 0);
+    }
+
+    /// c:326 — `viinsert` always returns 0.
+    #[test]
+    fn viinsert_always_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        zle_with("xyz", 0);
+        assert_eq!(viinsert(), 0);
+    }
+
+    /// c:343 — `viinsertbol` always returns 0.
+    #[test]
+    fn viinsertbol_always_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        zle_with("xyz", 1);
+        assert_eq!(viinsertbol(), 0);
+    }
+
+    /// c:90 — `startvichange(0)` clears INSMODE (im=0 → overwrite).
+    /// Pin: `im > -1` branch in c:91.
+    #[test]
+    fn startvichange_im_zero_clears_insmode() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        INSMODE.store(1, SeqCst); // start in insert
+        startvichange(0);
+        assert_eq!(INSMODE.load(SeqCst), 0, "im=0 → insmode=0 (overwrite)");
+    }
+
+    /// c:90 — `startvichange(1)` sets INSMODE.
+    #[test]
+    fn startvichange_im_one_sets_insmode() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        INSMODE.store(0, SeqCst); // start in overwrite
+        startvichange(1);
+        assert_eq!(INSMODE.load(SeqCst), 1, "im=1 → insmode=1 (insert)");
+    }
+
+    /// c:91 — `startvichange(-1)` does NOT touch INSMODE (im > -1 gate).
+    #[test]
+    fn startvichange_im_neg_one_preserves_insmode() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        INSMODE.store(1, SeqCst);
+        startvichange(-1);
+        assert_eq!(INSMODE.load(SeqCst), 1, "im=-1 must NOT change insmode");
+        INSMODE.store(0, SeqCst);
+        startvichange(-1);
+        assert_eq!(INSMODE.load(SeqCst), 0, "im=-1 must NOT change insmode");
+    }
 }
