@@ -1205,10 +1205,9 @@ pub fn quotesubst(str: &str) -> String {
             pos += 1; // c:472
         } // c:473
     }
-    // C: `remnulargs(str);` — strip Bnull / NUL tokens. Use the
-    // inline equivalent the rest of subst.rs uses (\u{0} only;
-    // glob.rs'str full port operates on Vec<GlobToken>).
-    result.replace('\u{0}', "") // c:474
+    // C: `remnulargs(str);` — strip Bnull / NUL tokens. c:474
+    crate::ported::glob::remnulargs(&mut result);
+    result
 } // c:475
 
 // `pub mod prefork_flags { … }` — DELETED per user directive.
@@ -1703,8 +1702,8 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
     // C: `cmdstr = dupstrpfx(str, pp-str);
     //     untokenize(cmdstr); remnulargs(cmdstr);`
     let cmdstr_raw: String = s.chars().take(end).collect(); // c:721
-    let cmdstr = untokenize(&cmdstr_raw); // c:722
-    let cmdstr = cmdstr.replace('\u{0}', ""); // c:723
+    let mut cmdstr = untokenize(&cmdstr_raw); // c:722
+    crate::ported::glob::remnulargs(&mut cmdstr); // c:723
 
     // C: `cnam = findcmd(cmdstr, 1, 0)` (Src/exec.c:723) — `1` is
     // do_hash, `0` is not-just-builtins. Routes through the
@@ -2672,12 +2671,12 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
     // C lines 1585-1591: `parsestr` + `singsub` + `remnulargs` +
     // `untokenize` on the captured expression.
     let parsed = subst_parse_str(&expr, false, true)?; // c:1587
-    let expanded = singsub(&parsed); // c:1589
+    let mut expanded = singsub(&parsed); // c:1589
     if errflag_set() {
         return None;
     } // c:1590
-    let stripped = expanded.replace('\u{0}', ""); // c:1590
-    let untoked = untokenize(&stripped); // c:1591
+    crate::ported::glob::remnulargs(&mut expanded); // c:1590
+    let untoked = untokenize(&expanded); // c:1591
 
     let rest: String = chars[end..].iter().collect(); // c:1593
     Some((untoked, rest)) // c:1596
