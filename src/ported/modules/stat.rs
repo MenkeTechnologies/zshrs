@@ -1303,6 +1303,116 @@ mod tests {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/stat.c
+    // c:43 statmodeprint / c:112 statuidprint / c:156 statgidprint /
+    // c:199 stattimeprint / c:228 statulprint / c:237 statlinkprint /
+    // c:300 bin_stat + lifecycle type pins
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:43 — `statmodeprint` returns String (compile-time type pin).
+    #[test]
+    fn statmodeprint_returns_string_type() {
+        let _: String = statmodeprint(0o100644, 0);
+    }
+
+    /// c:112 — `statuidprint` returns String.
+    #[test]
+    fn statuidprint_returns_string_type() {
+        let _: String = statuidprint(0, 0);
+    }
+
+    /// c:156 — `statgidprint` returns String.
+    #[test]
+    fn statgidprint_returns_string_type() {
+        let _: String = statgidprint(0, 0);
+    }
+
+    /// c:199 — `stattimeprint` returns String.
+    #[test]
+    fn stattimeprint_returns_string_type() {
+        let _: String = stattimeprint(0, 0, 0);
+    }
+
+    /// c:228 — `statulprint` returns String.
+    #[test]
+    fn statulprint_returns_string_type() {
+        let _: String = statulprint(0);
+    }
+
+    /// c:237 — `statlinkprint` returns String.
+    #[test]
+    fn statlinkprint_returns_string_type() {
+        let _: String = statlinkprint(0o100644, "");
+    }
+
+    /// c:228 — `statulprint(0)` returns "0".
+    #[test]
+    fn statulprint_zero_returns_zero_digit() {
+        assert_eq!(statulprint(0), "0",
+            "0 → \"0\" canonical");
+    }
+
+    /// c:228 — `statulprint(u64::MAX)` returns max decimal repr.
+    #[test]
+    fn statulprint_u64_max_returns_canonical_decimal() {
+        let s = statulprint(u64::MAX);
+        assert_eq!(s, u64::MAX.to_string(),
+            "u64::MAX matches std decimal");
+    }
+
+    /// c:300 — `bin_stat` returns i32 (compile-time type pin).
+    #[test]
+    fn bin_stat_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let _: i32 = bin_stat("stat", &[], &ops, 0);
+    }
+
+    /// c:579 — `setup_` returns i32 (compile-time type pin).
+    #[test]
+    fn stat_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:587 — features non-empty.
+    #[test]
+    fn stat_features_nonempty() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        assert!(!feats.is_empty(), "stat must advertise ≥1 feature");
+    }
+
+    /// c:587 — features use b:/p: prefix per zsh module spec.
+    #[test]
+    fn stat_features_use_canonical_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        for f in &feats {
+            assert!(f.starts_with("b:") || f.starts_with("p:"),
+                "feature {:?} must use b:/p: prefix", f);
+        }
+    }
+
+    /// c:228 — `statulprint` is monotonically non-decreasing-length
+    /// for monotonically increasing input (10 → 100 → 1000).
+    #[test]
+    fn statulprint_length_grows_with_magnitude() {
+        let a = statulprint(10).len();
+        let b = statulprint(100).len();
+        let c = statulprint(1000).len();
+        assert!(a <= b, "len(10) ≤ len(100), got {} vs {}", a, b);
+        assert!(b <= c, "len(100) ≤ len(1000), got {} vs {}", b, c);
+    }
+
     /// c:579-618 — full lifecycle setup→features→enables→boot→cleanup→finish.
     #[test]
     fn stat_full_lifecycle_returns_zero_for_all() {
