@@ -420,34 +420,122 @@ pub fn checkparams(p: &str) -> i32 {
     }
 }
 
-/// Port of `cmphaswilds(char *str)` from Src/Zle/zle_tricky.c:457.
+/// Direct port of `int cmphaswilds(char *str)` from
+/// `Src/Zle/zle_tricky.c:457`. Walks `str` looking for an
+/// unescaped glob metachar; dispatches on the parser's tokenized
+/// chars (`Inbrack`, `Inpar`, `Inbrace`, `Inang`, `String`,
+/// `Qstring`, `Star`, `Quest`, `Pound`, `Hat`, `Bar`, `Tilde`)
+/// using `skipparens` to walk balanced brackets.
+///
+/// Returns 1 if a wildcard is found, 0 otherwise.
 pub fn cmphaswilds(str: &str) -> i32 {
     // c:457
-    // C body c:459-481 — Inbrack/Outbrack as standalone return 0;
-    //                    skip leading "%?"; scan for any unescaped
-    //                    glob meta. We approximate "glob meta" as
-    //                    `* ? [`.
-    let bytes = str.as_bytes();
-    if bytes.len() == 1 && (bytes[0] == b'[' || bytes[0] == b']') {
+    use crate::ported::zsh_h::{
+        isset, Equals, Hat, Inang, Inbrace, Inbrack, Inpar, Outang, Outbrace,
+        Outbrack, Outpar, Pound, Qstring, Quest, Star, Stringg, Tilde,
+        EXTENDEDGLOB, IGNOREBRACES,
+    };
+    let mut s = str;
+    let bar_byte = b'|' as char;
+    // c:459-460 — `if ((*str == Inbrack || *str == Outbrack) && !str[1])
+    //                return 0;`
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() == 1
+        && (chars[0] == Inbrack as char || chars[0] == Outbrack as char)
+    {
         return 0;
     }
-    let mut idx = 0;
-    if bytes.len() >= 2 && bytes[0] == b'%' && bytes[1] == b'?' {
-        idx = 2;
+    // c:465-467 — `if (str[0] == '%' && str[1] == Quest) str += 2;`
+    if chars.len() >= 2 && chars[0] == '%' && chars[1] == Quest as char {
+        // 2 chars (`%` + one Quest) — both ASCII so byte == char.
+        s = &s[2..];
     }
-    let mut esc = false;
-    while idx < bytes.len() {
-        let c = bytes[idx];
-        if esc {
-            esc = false;
-        } else if c == b'\\' {
-            esc = true;
-        } else if c == b'*' || c == b'?' || c == b'[' {
-            return 1;
+    // c:472-475 — `if (*str == Tilde && str[1] == Inbrack &&
+    //                  (ptr = strchr(str+2, Outbrack))) str = ptr+1;`.
+    let chars2: Vec<char> = s.chars().collect();
+    if chars2.len() >= 2 && chars2[0] == Tilde as char && chars2[1] == Inbrack as char {
+        if let Some(pos) = s[2..].find(Outbrack as char) {
+            // pos is byte offset within s[2..]; advance past Outbrack.
+            let advance = 2 + pos + (Outbrack as char).len_utf8();
+            s = &s[advance..];
         }
-        idx += 1;
     }
-    0
+    // c:477-509 — main scan loop.
+    while let Some(c) = s.chars().next() {
+        if c == Stringg as char || c == Qstring as char {
+            // c:478 — parameter expression `$...`.
+            // c:481 — `if (*++str == Inbrace) skipparens(Inbrace, Outbrace, &str);`
+            s = &s[c.len_utf8()..];
+            let next_c = s.chars().next();
+            if next_c == Some(Inbrace as char) {
+                // c:482 — skip past `${...}`.
+                let _ = crate::ported::utils::skipparens(
+                    Inbrace as char,
+                    Outbrace as char,
+                    &mut s,
+                );
+            } else if next_c == Some(Stringg as char) || next_c == Some(Qstring as char) {
+                // c:484 — nested `$$`.
+                s = &s[next_c.unwrap().len_utf8()..];
+            } else {
+                // c:487-499 — skip parameter-expression prefix chars.
+                while let Some(p) = s.chars().next() {
+                    if p != '^' && p != Hat as char && p != '=' && p != Equals as char
+                        && p != '~' && p != Tilde as char
+                    {
+                        break;
+                    }
+                    s = &s[p.len_utf8()..];
+                }
+                let p = s.chars().next();
+                if p == Some('#') || p == Some(Pound as char) {
+                    s = &s[p.unwrap().len_utf8()..];
+                }
+                let p = s.chars().next();
+                if p == Some(Star as char) || p == Some(Quest as char) {
+                    s = &s[p.unwrap().len_utf8()..];
+                }
+            }
+        } else {
+            // c:501-508 — wildcard / balanced-bracket detection.
+            let is_extglob_meta =
+                (c == Pound as char || c == Hat as char) && isset(EXTENDEDGLOB);
+            let is_simple_wild =
+                c == Star as char || c == bar_byte || c == Quest as char;
+            let mut s_try = s;
+            let brack_balanced =
+                crate::ported::utils::skipparens(Inbrack as char, Outbrack as char, &mut s_try)
+                    == 0;
+            let mut s_try = s;
+            let ang_balanced =
+                crate::ported::utils::skipparens(Inang as char, Outang as char, &mut s_try) == 0;
+            let mut s_try = s;
+            let brace_balanced = !isset(IGNOREBRACES)
+                && crate::ported::utils::skipparens(
+                    Inbrace as char,
+                    Outbrace as char,
+                    &mut s_try,
+                ) == 0;
+            let mut s_try = s;
+            let pchars: Vec<char> = s.chars().collect();
+            let pair_colon = pchars.first() == Some(&(Inpar as char))
+                && pchars.get(1) == Some(&':')
+                && crate::ported::utils::skipparens(Inpar as char, Outpar as char, &mut s_try)
+                    == 0;
+            if is_extglob_meta
+                || is_simple_wild
+                || brack_balanced
+                || ang_balanced
+                || brace_balanced
+                || pair_colon
+            {
+                return 1;
+            }
+            // c:510-511 — `if (*str) str++;`
+            s = &s[c.len_utf8()..];
+        }
+    }
+    0 // c:513
 }
 
 /// Port of `parambeg(char *s)` from Src/Zle/zle_tricky.c:521.
