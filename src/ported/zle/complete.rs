@@ -3250,4 +3250,98 @@ mod tests {
         let r = parse_cmatcher("test", "");
         assert!(r.is_none(), "empty matcher spec → None per c:249");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/complete.c
+    // c:75 freecmlist / c:101 freecmatcher / c:124 freecpattern /
+    // c:142 cpcmatcher / c:181 cp_cpattern_element / c:203 cpcpattern /
+    // c:294 parse_cmatcher / c:791 parse_ordering / c:1069 ignore_prefix /
+    // c:1087 ignore_suffix / c:1111 restrict_range / c:1598 get_compstate
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:75 — `freecmlist(None)` is safe idempotent.
+    #[test]
+    fn freecmlist_none_idempotent() {
+        for _ in 0..5 {
+            freecmlist(None);
+        }
+    }
+
+    /// c:101 — `freecmatcher(None)` is safe idempotent.
+    #[test]
+    fn freecmatcher_none_idempotent() {
+        for _ in 0..5 {
+            freecmatcher(None);
+        }
+    }
+
+    /// c:124 — `freecpattern(None)` is safe idempotent.
+    #[test]
+    fn freecpattern_none_idempotent() {
+        for _ in 0..5 {
+            freecpattern(None);
+        }
+    }
+
+    /// c:142 — `cpcmatcher(None)` returns None (type pin).
+    #[test]
+    fn cpcmatcher_none_returns_none_type_pin() {
+        let r: Option<Box<Cmatcher>> = cpcmatcher(None);
+        assert!(r.is_none());
+    }
+
+    /// c:203 — `cpcpattern(None)` returns None (type pin).
+    #[test]
+    fn cpcpattern_none_returns_none_type_pin() {
+        let r: Option<Box<Cpattern>> = cpcpattern(None);
+        assert!(r.is_none());
+    }
+
+    /// c:294 — `parse_cmatcher` is deterministic for empty input.
+    #[test]
+    fn parse_cmatcher_empty_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..3 {
+            assert!(parse_cmatcher("test", "").is_none());
+        }
+    }
+
+    /// c:791 — `parse_ordering(empty, _)` returns i32 (type pin).
+    #[test]
+    fn parse_ordering_returns_i32_type() {
+        let mut flags: Option<i32> = None;
+        let _: i32 = parse_ordering("name", &mut flags);
+    }
+
+    /// c:1069 — `ignore_prefix(0)` is safe.
+    #[test]
+    fn ignore_prefix_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ignore_prefix(0);
+    }
+
+    /// c:1087 — `ignore_suffix(0)` is safe.
+    #[test]
+    fn ignore_suffix_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ignore_suffix(0);
+    }
+
+    /// c:1111 — `restrict_range(0, 0)` is safe (zero-width).
+    #[test]
+    fn restrict_range_zero_zero_no_panic_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        restrict_range(0, 0);
+    }
+
+    /// c:1598 — `get_compstate(null)` returns Option<usize> type.
+    #[test]
+    fn get_compstate_null_returns_option_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<usize> = get_compstate(std::ptr::null_mut());
+    }
 }
