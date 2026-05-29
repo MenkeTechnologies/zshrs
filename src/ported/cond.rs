@@ -1823,4 +1823,121 @@ mod tests {
         let args: Vec<String> = vec![];
         let _ = cond_match(&args, 0, "anything");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/cond.c
+    // c:513 doaccess / c:538 getstat / c:570 dostat / c:583 dolstat
+    // c:594 optison / c:653 cond_str / c:685 cond_val / c:716 cond_match
+    // c:758 tracemodcond
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:513 — `doaccess` returns i32 (compile-time type pin).
+    #[test]
+    fn doaccess_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = doaccess("/tmp", 0);
+    }
+
+    /// c:513 — `doaccess` is deterministic.
+    #[test]
+    fn doaccess_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for (p, c) in [("/tmp", 0), ("/nonexistent_xyz", 0), ("", 0)] {
+            let first = doaccess(p, c);
+            for _ in 0..3 {
+                assert_eq!(doaccess(p, c), first,
+                    "doaccess({:?}, {}) must be deterministic", p, c);
+            }
+        }
+    }
+
+    /// c:570 — `dostat("")` empty path returns 0 (file not found).
+    #[test]
+    fn dostat_empty_path_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(dostat(""), 0, "empty path → 0");
+    }
+
+    /// c:583 — `dolstat("")` empty path returns 0.
+    #[test]
+    fn dolstat_empty_path_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(dolstat(""), 0, "empty path → 0");
+    }
+
+    /// c:570 — `dostat` returns u32 (compile-time type pin).
+    #[test]
+    fn dostat_returns_u32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: u32 = dostat("/tmp");
+    }
+
+    /// c:594 — `optison` returns i32 (compile-time type pin).
+    #[test]
+    fn optison_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = optison("test", "x");
+    }
+
+    /// c:594 — `optison` is deterministic.
+    #[test]
+    fn optison_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["x", "y", "v"] {
+            let first = optison("test", s);
+            for _ in 0..3 {
+                assert_eq!(optison("test", s), first,
+                    "optison(test, {:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:653 — `cond_str` returns String (compile-time type pin).
+    #[test]
+    fn cond_str_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec!["x".to_string()];
+        let _: String = cond_str(&args, 0, false);
+    }
+
+    /// c:685 — `cond_val` returns i64 (compile-time type pin).
+    #[test]
+    fn cond_val_returns_i64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec!["42".to_string()];
+        let _: i64 = cond_val(&args, 0);
+    }
+
+    /// c:716 — `cond_match` returns bool (compile-time type pin).
+    #[test]
+    fn cond_match_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec!["*".to_string()];
+        let _: bool = cond_match(&args, 0, "abc");
+    }
+
+    /// c:758 — `tracemodcond` empty args no panic.
+    #[test]
+    fn tracemodcond_empty_args_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        tracemodcond("test", &[], false);
+        tracemodcond("test", &[], true);
+    }
+
+    /// c:653 — `cond_str` with empty args returns empty (no out-of-range).
+    #[test]
+    fn cond_str_empty_args_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let args: Vec<String> = vec![];
+        let r = cond_str(&args, 0, false);
+        assert!(r.is_empty(), "empty args + idx 0 → empty");
+    }
+
+    /// c:685 — `cond_val` with empty args returns 0.
+    #[test]
+    fn cond_val_empty_args_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let args: Vec<String> = vec![];
+        assert_eq!(cond_val(&args, 0), 0, "empty args + idx 0 → 0");
+    }
 }
