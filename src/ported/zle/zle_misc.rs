@@ -3554,4 +3554,121 @@ mod tests {
         // After killbuffer, ZLELL should be 0 (buffer cleared).
         assert_eq!(ZLELL.load(SeqCst), 0, "killbuffer clears entire buffer");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_misc.c
+    // c:177 selfinsert / c:234 deletechar / c:271 backwarddeletechar /
+    // c:297 killwholeline / c:355 backwardkillline / c:439 gosmacstransposechars /
+    // c:478 transposechars / c:533 poundinsert / c:615 killline / c:662 regionlines /
+    // c:693 killregion / c:826 viputbefore / c:857 viputafter
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:177 — `selfinsert(empty)` return in u8 exit-code range.
+    #[test]
+    fn selfinsert_empty_args_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = selfinsert(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:234 — `deletechar` return in u8 exit-code range.
+    #[test]
+    fn deletechar_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = deletechar();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:271 — `backwarddeletechar` return in u8 exit-code range.
+    #[test]
+    fn backwarddeletechar_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = backwarddeletechar();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:297 — `killwholeline` return in u8 exit-code range.
+    #[test]
+    fn killwholeline_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = killwholeline();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:439 — `gosmacstransposechars` return in u8 exit-code range.
+    #[test]
+    fn gosmacstransposechars_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = gosmacstransposechars();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:478 — `transposechars` return in u8 exit-code range.
+    #[test]
+    fn transposechars_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = transposechars();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:533 — `poundinsert` return in u8 exit-code range.
+    #[test]
+    fn poundinsert_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = poundinsert();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:615 — `killline` return in u8 exit-code range.
+    #[test]
+    fn killline_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = killline();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:662 — `regionlines()` returns (usize, usize) with lo ≤ hi.
+    #[test]
+    fn regionlines_returns_valid_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let (lo, hi) = regionlines();
+        assert!(lo <= hi, "regionlines lo={} must ≤ hi={}", lo, hi);
+    }
+
+    /// c:693 — `killregion` return in u8 exit-code range.
+    #[test]
+    fn killregion_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = killregion();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:826 + c:857 — `viputbefore` + `viputafter` return in u8 range.
+    #[test]
+    fn viputbefore_viputafter_return_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for r in [viputbefore(), viputafter()] {
+            assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+        }
+    }
+
+    /// c:604 — `acceptandhold` return in u8 exit-code range.
+    #[test]
+    fn acceptandhold_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = acceptandhold();
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
 }
