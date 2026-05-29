@@ -541,4 +541,124 @@ mod tests {
         assert_eq!(BIN_SETOPT, 0, "c:69");
         assert_eq!(BIN_UNSETOPT, 1, "c:70");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hashtable.h BIN_* constants.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:56-60 — readonly/echo/disable/enable/printf canonical 22..26.
+    #[test]
+    fn bin_readonly_through_printf_canonical() {
+        assert_eq!(BIN_READONLY, 22, "c:56");
+        assert_eq!(BIN_ECHO, 23, "c:57");
+        assert_eq!(BIN_DISABLE, 24, "c:58");
+        assert_eq!(BIN_ENABLE, 25, "c:59");
+        assert_eq!(BIN_PRINTF, 26, "c:60");
+    }
+
+    /// c:61-66 — command..export canonical 27..32.
+    #[test]
+    fn bin_command_through_export_canonical() {
+        assert_eq!(BIN_COMMAND, 27, "c:61");
+        assert_eq!(BIN_UNHASH, 28, "c:62");
+        assert_eq!(BIN_UNALIAS, 29, "c:63");
+        assert_eq!(BIN_UNFUNCTION, 30, "c:64");
+        assert_eq!(BIN_UNSET, 31, "c:65");
+        assert_eq!(BIN_EXPORT, 32, "c:66");
+    }
+
+    /// c:34-66 — overload family covers exactly slots 0..=32 (33 entries).
+    /// No gaps, no duplicates within the family.
+    #[test]
+    fn bin_overload_family_is_dense_0_through_32() {
+        let mut codes: Vec<i32> = vec![
+            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT,
+            BIN_DISOWN, BIN_BREAK, BIN_CONTINUE, BIN_EXIT,
+            BIN_RETURN, BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT,
+            BIN_EVAL, BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE,
+            BIN_LOGOUT, BIN_TEST, BIN_BRACKET, BIN_READONLY,
+            BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
+            BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
+            BIN_UNSET, BIN_EXPORT,
+        ];
+        codes.sort();
+        let expected: Vec<i32> = (0..=32).collect();
+        assert_eq!(codes, expected,
+            "overload family must cover exactly 0..=32 with no gaps/dups");
+    }
+
+    /// c:69-70 — BIN_SETOPT/BIN_UNSETOPT family is its OWN dispatch
+    /// space; the overlap with TYPESET/BG (= 0/1) is intentional per
+    /// the c:69 comment "depend on being 0 and 1".
+    #[test]
+    fn bin_setopt_family_has_distinct_pair() {
+        assert_ne!(BIN_SETOPT, BIN_UNSETOPT,
+            "SETOPT and UNSETOPT must differ to drive bin_setopt's branch");
+    }
+
+    /// c:34 / c:40 — BIN_TYPESET (0) and BIN_BREAK (6) are in different
+    /// halves of the overload table — overload[0..6] = job/typeset
+    /// family, overload[6..10] = control-flow family.
+    #[test]
+    fn bin_break_starts_control_flow_family() {
+        assert_eq!(BIN_BREAK, 6, "c:40 — BREAK leads control-flow family");
+        assert_eq!(BIN_CONTINUE, 7, "c:41");
+        assert_eq!(BIN_EXIT, 8, "c:42");
+        assert_eq!(BIN_RETURN, 9, "c:43");
+    }
+
+    /// c:44-46 — cd/popd/pushd canonical 10/11/12 (dir-stack family).
+    #[test]
+    fn bin_dir_stack_family_canonical() {
+        assert_eq!(BIN_CD, 10, "c:44");
+        assert_eq!(BIN_POPD, 11, "c:45");
+        assert_eq!(BIN_PUSHD, 12, "c:46");
+    }
+
+    /// c:62-64 — unhash/unalias/unfunction family canonical 28/29/30.
+    #[test]
+    fn bin_un_family_canonical() {
+        assert_eq!(BIN_UNHASH, 28, "c:62");
+        assert_eq!(BIN_UNALIAS, 29, "c:63");
+        assert_eq!(BIN_UNFUNCTION, 30, "c:64");
+    }
+
+    /// c:34-66 — BIN_EXPORT is the canonical max (slot 32 — sentinel
+    /// for "highest registered overload code").
+    #[test]
+    fn bin_export_is_canonical_max_slot() {
+        for c in [BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT,
+                  BIN_DISOWN, BIN_BREAK, BIN_CONTINUE, BIN_EXIT,
+                  BIN_RETURN, BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT,
+                  BIN_EVAL, BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE,
+                  BIN_LOGOUT, BIN_TEST, BIN_BRACKET, BIN_READONLY,
+                  BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
+                  BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
+                  BIN_UNSET] {
+            assert!(c <= BIN_EXPORT,
+                "BIN_EXPORT (32) must be the max overload code; {} > 32", c);
+        }
+    }
+
+    /// c:34-66 — overload codes are all non-negative.
+    #[test]
+    fn bin_overload_codes_all_non_negative() {
+        for c in [BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT,
+                  BIN_DISOWN, BIN_BREAK, BIN_CONTINUE, BIN_EXIT,
+                  BIN_RETURN, BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT,
+                  BIN_EVAL, BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE,
+                  BIN_LOGOUT, BIN_TEST, BIN_BRACKET, BIN_READONLY,
+                  BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
+                  BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
+                  BIN_UNSET, BIN_EXPORT] {
+            assert!(c >= 0, "BIN_* must be non-negative; got {}", c);
+        }
+    }
+
+    /// c:69-70 — both setopt-family codes also non-negative.
+    #[test]
+    fn bin_setopt_family_codes_non_negative() {
+        assert!(BIN_SETOPT >= 0);
+        assert!(BIN_UNSETOPT >= 0);
+    }
 }
