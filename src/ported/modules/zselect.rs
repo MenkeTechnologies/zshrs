@@ -674,4 +674,103 @@ mod tests {
         let r = handle_digits("zselect", "-3", &mut fdset, &mut fdmax);
         assert_eq!(r, 1, "leading minus not a digit");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/zselect.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn fresh_set() -> (libc::fd_set, libc::c_int) {
+        let mut s: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut s) };
+        (s, 0)
+    }
+
+    /// c:40 — `handle_digits` accepts "0" (valid fd: stdin).
+    #[test]
+    fn handle_digits_zero_succeeds() {
+        let _g = crate::test_util::global_state_lock();
+        let (mut s, mut max) = fresh_set();
+        let r = handle_digits("zselect", "0", &mut s, &mut max);
+        assert_eq!(r, 0, "fd 0 (stdin) valid");
+        assert_eq!(max, 1, "fdmax = fd + 1");
+    }
+
+    /// c:40 — `handle_digits` for "2" sets fdmax to 3 (fd+1).
+    #[test]
+    fn handle_digits_two_sets_fdmax_to_three() {
+        let _g = crate::test_util::global_state_lock();
+        let (mut s, mut max) = fresh_set();
+        let r = handle_digits("zselect", "2", &mut s, &mut max);
+        assert_eq!(r, 0);
+        assert_eq!(max, 3, "fdmax = 2 + 1");
+    }
+
+    /// c:56 — `handle_digits` only RAISES fdmax, never lowers it.
+    #[test]
+    fn handle_digits_only_raises_fdmax() {
+        let _g = crate::test_util::global_state_lock();
+        let (mut s, mut max) = fresh_set();
+        max = 10; // start high
+        let r = handle_digits("zselect", "2", &mut s, &mut max);
+        assert_eq!(r, 0);
+        assert_eq!(max, 10, "fdmax stays at 10 (not lowered to 3)");
+    }
+
+    /// c:55 — `handle_digits` registers fd in the fd_set.
+    #[test]
+    fn handle_digits_registers_fd_in_set() {
+        let _g = crate::test_util::global_state_lock();
+        let (mut s, mut max) = fresh_set();
+        let r = handle_digits("zselect", "7", &mut s, &mut max);
+        assert_eq!(r, 0);
+        let isset = unsafe { libc::FD_ISSET(7, &s) };
+        assert!(isset, "fd 7 must be set in fdset after handle_digits");
+    }
+
+    /// c:45 — `handle_digits` rejects empty string (no leading digit).
+    #[test]
+    fn handle_digits_empty_rejected() {
+        let _g = crate::test_util::global_state_lock();
+        let (mut s, mut max) = fresh_set();
+        let r = handle_digits("zselect", "", &mut s, &mut max);
+        assert_eq!(r, 1, "empty string → 1");
+    }
+
+    /// c:65 — `bin_zselect` with no args HANGS in zshrs port: it
+    /// calls select(2) on an empty fd set with no timeout. C handles
+    /// this differently — pin as ZSHRS BUG.
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_zselect with no args hangs in select(2) with empty fdset; C should reject early or honor implicit timeout per Src/Modules/zselect.c:65"]
+    fn bin_zselect_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zselect("zselect", &[], &ops, 0);
+        assert_ne!(r, 0, "no args → error");
+    }
+
+    /// Lifecycle (c:295/327/334/341) split per-hook.
+    #[test]
+    fn zselect_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:327 — boot_(NULL) = 0.
+    #[test]
+    fn zselect_boot_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
+
+    /// c:341 — finish_(NULL) = 0.
+    #[test]
+    fn zselect_finish_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }
