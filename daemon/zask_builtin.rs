@@ -49,6 +49,7 @@ fn connect() -> Result<Client, ()> {
         eprintln!("zshrs: zask: daemon: {}", e);
     })
 }
+/// `zask` — see implementation.
 
 pub fn zask(args: &[String]) -> i32 {
     // Top-level routing — `zask --target ...` (push form) routes to `ask`,

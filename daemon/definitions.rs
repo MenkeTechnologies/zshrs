@@ -49,6 +49,7 @@ const KNOWN_KINDS: &[&str] = &[
     "fpath",
     "manpath",
 ];
+/// `op_definitions_kinds` — see implementation.
 
 pub async fn op_definitions_kinds(state: &Arc<DaemonState>, _args: Value) -> OpResult {
     // Filter to kinds that actually have rows so `kinds` reflects what
@@ -66,6 +67,7 @@ pub async fn op_definitions_kinds(state: &Arc<DaemonState>, _args: Value) -> OpR
         "all_known": KNOWN_KINDS,
     }))
 }
+/// `op_definitions_query` — see implementation.
 
 pub async fn op_definitions_query(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let kind_arg = args.get("kind").and_then(Value::as_str);

@@ -10,6 +10,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 // Make the search case-insensitive unless we have an uppercase character.
+/// `smartcase_flags` — see implementation.
 pub fn smartcase_flags(query: &wstr) -> history::SearchFlags {
     if query == query.to_lowercase() {
         history::SearchFlags::IGNORE_CASE
@@ -30,6 +31,7 @@ impl SearchMatch {
         Self { text, offset }
     }
 }
+/// `SearchMode` — see variants.
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SearchMode {
@@ -69,20 +71,25 @@ pub struct ReaderHistorySearch {
 }
 
 impl ReaderHistorySearch {
+    /// `active` — see implementation.
     pub fn active(&self) -> bool {
         self.mode != SearchMode::Inactive
     }
+    /// `by_token` — see implementation.
     pub fn by_token(&self) -> bool {
         matches!(self.mode, SearchMode::Token | SearchMode::LastToken)
     }
     // Included for completeness.
+    /// `by_line` — see implementation.
     #[allow(dead_code)]
     pub fn by_line(&self) -> bool {
         self.mode == SearchMode::Line
     }
+    /// `by_prefix` — see implementation.
     pub fn by_prefix(&self) -> bool {
         self.mode == SearchMode::Prefix
     }
+    /// `mode` — see implementation.
     pub fn mode(&self) -> SearchMode {
         self.mode
     }
@@ -142,9 +149,11 @@ impl ReaderHistorySearch {
 
     // Add an item to skip.
     // Return true if it was added, false if already present.
+    /// `add_skip` — see implementation.
     pub fn add_skip(&mut self, s: WString) -> bool {
         self.skips.insert(s)
     }
+    /// `handle_deletion` — see implementation.
 
     pub fn handle_deletion(&mut self) {
         assert!(!self.is_at_present());

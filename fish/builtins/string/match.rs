@@ -11,18 +11,29 @@ use crate::{
     wildcard::wildcard_match,
 };
 use fish_widestring::{str2wcstring, ANY_STRING};
+/// `Match` — see fields for layout.
 
 #[derive(Default)]
 pub struct Match<'args> {
+    /// `all` field.
     all: bool,
+    /// `entire` field.
     entire: bool,
+    /// `groups_only` field.
     groups_only: bool,
+    /// `ignore_case` field.
     ignore_case: bool,
+    /// `invert_match` field.
     invert_match: bool,
+    /// `quiet` field.
     quiet: bool,
+    /// `regex` field.
     regex: bool,
+    /// `index` field.
     index: bool,
+    /// `pattern` field.
     pattern: &'args wstr,
+    /// `max_matches` field.
     max_matches: Option<NonZeroUsize>,
 }
 

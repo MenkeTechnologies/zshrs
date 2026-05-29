@@ -68,6 +68,7 @@ use crate::ported::zsh_h::{
 /// callers can name-match the C entry point.
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
+/// `freecmlist` — see implementation.
 #[allow(unused_imports)]
 #[allow(unused_imports)]
 
@@ -650,6 +651,7 @@ pub fn parse_pattern<'a>(
     }
     (ret, rest, len, false)
 }
+/// `parse_class` — see implementation.
 
 pub fn parse_class<'a>(
     p: &mut Cpattern, // c:480
@@ -1705,12 +1707,18 @@ pub fn get_complist(pm: *mut param) -> String {
 /// parameter created by `callcompfunc` so user widgets can read +
 /// mutate completion state via `${compstate[...]}`.
 pub const COMPSTATENAME: &str = "compstate"; // c:1294
+/// `CVT_RANGENUM` constant.
 
 pub const CVT_RANGENUM: i32 = 0; // c:855
+/// `CVT_RANGEPAT` constant.
 pub const CVT_RANGEPAT: i32 = 1; // c:856
+/// `CVT_PRENUM` constant.
 pub const CVT_PRENUM: i32 = 2; // c:857
+/// `CVT_PREPAT` constant.
 pub const CVT_PREPAT: i32 = 3; // c:858
+/// `CVT_SUFNUM` constant.
 pub const CVT_SUFNUM: i32 = 4; // c:859
+/// `CVT_SUFPAT` constant.
 pub const CVT_SUFPAT: i32 = 5; // c:860
 
 // =====================================================================

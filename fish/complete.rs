@@ -63,11 +63,13 @@ localizable_consts!(
     /// Description for abbreviations.
     ABBR_DESC "Abbreviation: %s"
 );
+/// `CompletionMode` — see fields for layout.
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct CompletionMode {
     /// If set, skip file completions.
     pub no_files: bool,
+    /// `force_files` field.
     pub force_files: bool,
 
     /// If set, require a parameter after completion.
@@ -78,6 +80,7 @@ pub struct CompletionMode {
 pub const PROG_COMPLETE_SEP: char = '\t';
 
 bitflags! {
+    /// `CompleteFlags` — see fields for layout.
     #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
     pub struct CompleteFlags: u16 {
         /// Do not insert space afterwards if this is the only completion. (The default is to try insert
@@ -115,6 +118,7 @@ pub fn const_desc(s: &wstr) -> DescriptionFunc {
     let s = s.to_owned();
     Box::new(move |_| s.clone())
 }
+/// `CompletionList` type alias.
 
 pub type CompletionList = Vec<Completion>;
 
@@ -152,6 +156,7 @@ impl From<WString> for Completion {
 }
 
 impl Completion {
+    /// `new` — see implementation.
     pub fn new(
         completion: WString,
         description: WString,
@@ -169,10 +174,12 @@ impl Completion {
             flags,
         }
     }
+    /// `from_completion` — see implementation.
 
     pub fn from_completion(completion: WString) -> Self {
         Self::with_desc(completion, WString::new())
     }
+    /// `with_desc` — see implementation.
 
     pub fn with_desc(completion: WString, description: WString) -> Self {
         Self::new(
@@ -340,6 +347,7 @@ impl CompletionReceiver {
         Self::new(remaining_capacity)
     }
 }
+/// `CompleteOptionType` — see variants.
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CompleteOptionType {
@@ -384,6 +392,7 @@ struct CompleteEntryOpt {
 }
 
 impl CompleteEntryOpt {
+    /// `expected_dash_count` — see implementation.
     pub fn expected_dash_count(&self) -> usize {
         match self.typ {
             CompleteOptionType::ArgsOnly => 0,
@@ -405,6 +414,7 @@ struct CompletionEntry {
 }
 
 impl CompletionEntry {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Self {
             options: vec![],
@@ -571,6 +581,7 @@ struct CustomArgData<'a> {
 }
 
 impl<'a> CustomArgData<'a> {
+    /// `new` — see implementation.
     pub fn new(var_assignments: &'a mut Vec<WString>) -> Self {
         Self {
             previous_argument: WString::new(),
@@ -603,6 +614,7 @@ static COMPLETION_AUTOLOADER: LazyLock<Mutex<Autoload>> =
     LazyLock::new(|| Mutex::new(Autoload::new(L!("fish_complete_path"))));
 
 impl<'ctx> Completer<'ctx> {
+    /// `new` — see implementation.
     pub fn new(ctx: &'ctx OperationContext<'ctx>, flags: CompletionRequestOptions) -> Self {
         Self {
             ctx,
@@ -847,10 +859,12 @@ impl<'ctx> Completer<'ctx> {
         // Lastly mark any completions that appear to already be present in arguments.
         self.mark_completions_duplicating_arguments(&cmdline, current_token, tokens);
     }
+    /// `acquire_completions` — see implementation.
 
     pub fn acquire_completions(&mut self) -> Vec<Completion> {
         self.completions.take()
     }
+    /// `acquire_needs_load` — see implementation.
 
     pub fn acquire_needs_load(&mut self) -> Vec<WString> {
         mem::take(&mut self.needs_load)
@@ -2603,6 +2617,7 @@ pub fn complete_get_wrap_targets(command: &wstr) -> Vec<WString> {
     let wrappers = WRAPPER_MAP.lock().expect("poisoned mutex");
     wrappers.get(command).cloned().unwrap_or_default()
 }
+/// `CompletionRequestOptions` — see fields for layout.
 
 #[derive(Clone, Copy, Default)]
 pub struct CompletionRequestOptions {

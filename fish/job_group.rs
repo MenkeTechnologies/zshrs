@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct JobId(NonZeroU32);
+/// `MaybeJobId` — see fields for layout.
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct MaybeJobId(pub Option<JobId>);
@@ -25,6 +26,7 @@ impl std::ops::Deref for MaybeJobId {
 }
 
 impl MaybeJobId {
+    /// `as_num` — see implementation.
     pub fn as_num(&self) -> i64 {
         self.0.map_or(-1, |j| i64::from(u32::from(j.0)))
     }
@@ -166,7 +168,9 @@ impl JobGroup {
 static CONSUMED_JOB_IDS: Mutex<Vec<JobId>> = Mutex::new(Vec::new());
 
 impl JobId {
+    /// `NONE` constant.
     pub const NONE: MaybeJobId = MaybeJobId(None);
+    /// `new` — see implementation.
 
     pub fn new(value: NonZeroU32) -> Self {
         JobId(value)
@@ -203,6 +207,7 @@ impl JobId {
 }
 
 impl JobGroup {
+    /// `new` — see implementation.
     pub fn new(command: WString, id: MaybeJobId, job_control: bool, wants_term: bool) -> Self {
         // We *can* have a job ID without job control, but not the reverse.
         if job_control {

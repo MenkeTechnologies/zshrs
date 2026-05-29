@@ -52,6 +52,7 @@ fn connect() -> Result<Client, ()> {
         eprintln!("zshrs: zjob: daemon: {}", e);
     })
 }
+/// `zjob` — see implementation.
 
 pub fn zjob(args: &[String]) -> i32 {
     let verb = args.get(1).map(|s| s.as_str()).unwrap_or("");

@@ -189,6 +189,7 @@ mod o_search {
         target_os = "android",
         target_os = "freebsd",
     )))]
+    /// `BEST_O_SEARCH` constant.
     pub const BEST_O_SEARCH: OFlag = OFlag::O_RDONLY;
 }
 

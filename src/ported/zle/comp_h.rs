@@ -20,39 +20,67 @@
 // ---------------------------------------------------------------------------
 // Group-flag constants (c:85-95) — flags on `cmgroup.flags`.
 // ---------------------------------------------------------------------------
+/// `CGF_NOSORT` constant.
 
 pub const CGF_NOSORT: i32 = 1; // c:85
+/// `CGF_LINES` constant.
 pub const CGF_LINES: i32 = 2; // c:86
+/// `CGF_HASDL` constant.
 pub const CGF_HASDL: i32 = 4; // c:87
+/// `CGF_UNIQALL` constant.
 pub const CGF_UNIQALL: i32 = 8; // c:88
+/// `CGF_UNIQCON` constant.
 pub const CGF_UNIQCON: i32 = 16; // c:89
+/// `CGF_PACKED` constant.
 pub const CGF_PACKED: i32 = 32; // c:90
+/// `CGF_ROWS` constant.
 pub const CGF_ROWS: i32 = 64; // c:91
+/// `CGF_FILES` constant.
 pub const CGF_FILES: i32 = 128; // c:92
+/// `CGF_MATSORT` constant.
 pub const CGF_MATSORT: i32 = 256; // c:93
+/// `CGF_NUMSORT` constant.
 pub const CGF_NUMSORT: i32 = 512; // c:94
+/// `CGF_REVSORT` constant.
 pub const CGF_REVSORT: i32 = 1024; // c:95
 
 // ---------------------------------------------------------------------------
 // Match-flag constants (c:127-143) — flags on `cmatch.flags`.
 // ---------------------------------------------------------------------------
+/// `CMF_FILE` constant.
 
 pub const CMF_FILE: i32 = 1 << 0; // c:127
+/// `CMF_REMOVE` constant.
 pub const CMF_REMOVE: i32 = 1 << 1; // c:128
+/// `CMF_ISPAR` constant.
 pub const CMF_ISPAR: i32 = 1 << 2; // c:129
+/// `CMF_PARBR` constant.
 pub const CMF_PARBR: i32 = 1 << 3; // c:130
+/// `CMF_PARNEST` constant.
 pub const CMF_PARNEST: i32 = 1 << 4; // c:131
+/// `CMF_NOLIST` constant.
 pub const CMF_NOLIST: i32 = 1 << 5; // c:132
+/// `CMF_DISPLINE` constant.
 pub const CMF_DISPLINE: i32 = 1 << 6; // c:133
+/// `CMF_HIDE` constant.
 pub const CMF_HIDE: i32 = 1 << 7; // c:134
+/// `CMF_NOSPACE` constant.
 pub const CMF_NOSPACE: i32 = 1 << 8; // c:135
+/// `CMF_PACKED` constant.
 pub const CMF_PACKED: i32 = 1 << 9; // c:136
+/// `CMF_ROWS` constant.
 pub const CMF_ROWS: i32 = 1 << 10; // c:137
+/// `CMF_MULT` constant.
 pub const CMF_MULT: i32 = 1 << 11; // c:138
+/// `CMF_FMULT` constant.
 pub const CMF_FMULT: i32 = 1 << 12; // c:139
+/// `CMF_ALL` constant.
 pub const CMF_ALL: i32 = 1 << 13; // c:140
+/// `CMF_DUMMY` constant.
 pub const CMF_DUMMY: i32 = 1 << 14; // c:141
+/// `CMF_MORDER` constant.
 pub const CMF_MORDER: i32 = 1 << 15; // c:142
+/// `CMF_DELETE` constant.
 pub const CMF_DELETE: i32 = 1 << 16; // c:143
 
 // ---------------------------------------------------------------------------
@@ -65,10 +93,14 @@ pub const CMF_DELETE: i32 = 1 << 16; // c:143
 // preserves both verbatim — the per-struct dispatch context tells
 // callers which set applies.
 // ---------------------------------------------------------------------------
+/// `CMF_LINE` constant.
 
 pub const CMF_LINE: i32 = 1; // c:172
+/// `CMF_LEFT` constant.
 pub const CMF_LEFT: i32 = 2; // c:174
+/// `CMF_RIGHT` constant.
 pub const CMF_RIGHT: i32 = 4; // c:176
+/// `CMF_INTER` constant.
 pub const CMF_INTER: i32 = 8; // c:178
 
 // ---------------------------------------------------------------------------
@@ -80,46 +112,72 @@ pub const CMF_INTER: i32 = 8; // c:178
 /// to avoid a Rust-only enum type. The discriminator drives
 /// `freecpattern()` and `cpattern.tp` dispatch (see `Cpattern` below).
 pub const CPAT_CCLASS: i32 = 0; // c:185
+/// `CPAT_NCLASS` constant.
 pub const CPAT_NCLASS: i32 = 1; // c:186
+/// `CPAT_EQUIV` constant.
 pub const CPAT_EQUIV: i32 = 2; // c:187
+/// `CPAT_ANY` constant.
 pub const CPAT_ANY: i32 = 3; // c:188
+/// `CPAT_CHAR` constant.
 pub const CPAT_CHAR: i32 = 4; // c:189
 
 // ---------------------------------------------------------------------------
 // Cline flag constants (c:259-267) — flags on `cline.flags`.
 // ---------------------------------------------------------------------------
+/// `CLF_MISS` constant.
 
 pub const CLF_MISS: i32 = 1; // c:259
+/// `CLF_DIFF` constant.
 pub const CLF_DIFF: i32 = 2; // c:260
+/// `CLF_SUF` constant.
 pub const CLF_SUF: i32 = 4; // c:261
+/// `CLF_MID` constant.
 pub const CLF_MID: i32 = 8; // c:262
+/// `CLF_NEW` constant.
 pub const CLF_NEW: i32 = 16; // c:263
+/// `CLF_LINE` constant.
 pub const CLF_LINE: i32 = 32; // c:264
+/// `CLF_JOIN` constant.
 pub const CLF_JOIN: i32 = 64; // c:265
+/// `CLF_MATCHED` constant.
 pub const CLF_MATCHED: i32 = 128; // c:266
+/// `CLF_SKIP` constant.
 pub const CLF_SKIP: i32 = 256; // c:267
 
 // ---------------------------------------------------------------------------
 // compadd / addmatches() flag constants (c:299-309).
 // ---------------------------------------------------------------------------
+/// `CAF_QUOTE` constant.
 
 pub const CAF_QUOTE: i32 = 1; // c:299
+/// `CAF_NOSORT` constant.
 pub const CAF_NOSORT: i32 = 2; // c:300
+/// `CAF_MATCH` constant.
 pub const CAF_MATCH: i32 = 4; // c:301
+/// `CAF_UNIQCON` constant.
 pub const CAF_UNIQCON: i32 = 8; // c:302
+/// `CAF_UNIQALL` constant.
 pub const CAF_UNIQALL: i32 = 16; // c:303
+/// `CAF_ARRAYS` constant.
 pub const CAF_ARRAYS: i32 = 32; // c:304
+/// `CAF_KEYS` constant.
 pub const CAF_KEYS: i32 = 64; // c:305
+/// `CAF_ALL` constant.
 pub const CAF_ALL: i32 = 128; // c:306
+/// `CAF_MATSORT` constant.
 pub const CAF_MATSORT: i32 = 256; // c:307
+/// `CAF_NUMSORT` constant.
 pub const CAF_NUMSORT: i32 = 512; // c:308
+/// `CAF_REVSORT` constant.
 pub const CAF_REVSORT: i32 = 1024; // c:309
 
 // ---------------------------------------------------------------------------
 // Fromcomp flags (c:359-360).
 // ---------------------------------------------------------------------------
+/// `FC_LINE` constant.
 
 pub const FC_LINE: i32 = 1; // c:359
+/// `FC_INWORD` constant.
 pub const FC_INWORD: i32 = 2; // c:360
 
 // ---------------------------------------------------------------------------
@@ -127,26 +185,46 @@ pub const FC_INWORD: i32 = 2; // c:360
 // (c:364-386). For each parameter there's a `CPN_*` index and a
 // `CP_*` bitmask `(1 << CPN_*)`.
 // ---------------------------------------------------------------------------
+/// `CPN_WORDS` constant.
 
 pub const CPN_WORDS: i32 = 0; // c:364
+/// `CP_WORDS` constant.
 pub const CP_WORDS: u32 = 1 << CPN_WORDS; // c:365
+/// `CPN_REDIRS` constant.
 pub const CPN_REDIRS: i32 = 1; // c:366
+/// `CP_REDIRS` constant.
 pub const CP_REDIRS: u32 = 1 << CPN_REDIRS; // c:367
+/// `CPN_CURRENT` constant.
 pub const CPN_CURRENT: i32 = 2; // c:368
+/// `CP_CURRENT` constant.
 pub const CP_CURRENT: u32 = 1 << CPN_CURRENT; // c:369
+/// `CPN_PREFIX` constant.
 pub const CPN_PREFIX: i32 = 3; // c:370
+/// `CP_PREFIX` constant.
 pub const CP_PREFIX: u32 = 1 << CPN_PREFIX; // c:371
+/// `CPN_SUFFIX` constant.
 pub const CPN_SUFFIX: i32 = 4; // c:372
+/// `CP_SUFFIX` constant.
 pub const CP_SUFFIX: u32 = 1 << CPN_SUFFIX; // c:373
+/// `CPN_IPREFIX` constant.
 pub const CPN_IPREFIX: i32 = 5; // c:374
+/// `CP_IPREFIX` constant.
 pub const CP_IPREFIX: u32 = 1 << CPN_IPREFIX; // c:375
+/// `CPN_ISUFFIX` constant.
 pub const CPN_ISUFFIX: i32 = 6; // c:376
+/// `CP_ISUFFIX` constant.
 pub const CP_ISUFFIX: u32 = 1 << CPN_ISUFFIX; // c:377
+/// `CPN_QIPREFIX` constant.
 pub const CPN_QIPREFIX: i32 = 7; // c:378
+/// `CP_QIPREFIX` constant.
 pub const CP_QIPREFIX: u32 = 1 << CPN_QIPREFIX; // c:379
+/// `CPN_QISUFFIX` constant.
 pub const CPN_QISUFFIX: i32 = 8; // c:380
+/// `CP_QISUFFIX` constant.
 pub const CP_QISUFFIX: u32 = 1 << CPN_QISUFFIX; // c:381
+/// `CPN_COMPSTATE` constant.
 pub const CPN_COMPSTATE: i32 = 9; // c:382
+/// `CP_COMPSTATE` constant.
 pub const CP_COMPSTATE: u32 = 1 << CPN_COMPSTATE; // c:383
 
 /// Port of `#define CP_REALPARAMS` from `Src/Zle/comp.h:385`. Total
@@ -161,58 +239,110 @@ pub const CP_ALLREALS: u32 = 0x3ff; // c:386
 // Special-parameter index constants — `compkpms` / "key params"
 // (c:389-442).
 // ---------------------------------------------------------------------------
+/// `CPN_NMATCHES` constant.
 
 pub const CPN_NMATCHES: i32 = 0; // c:389
+/// `CP_NMATCHES` constant.
 pub const CP_NMATCHES: u32 = 1 << CPN_NMATCHES; // c:390
+/// `CPN_CONTEXT` constant.
 pub const CPN_CONTEXT: i32 = 1; // c:391
+/// `CP_CONTEXT` constant.
 pub const CP_CONTEXT: u32 = 1 << CPN_CONTEXT; // c:392
+/// `CPN_PARAMETER` constant.
 pub const CPN_PARAMETER: i32 = 2; // c:393
+/// `CP_PARAMETER` constant.
 pub const CP_PARAMETER: u32 = 1 << CPN_PARAMETER; // c:394
+/// `CPN_REDIRECT` constant.
 pub const CPN_REDIRECT: i32 = 3; // c:395
+/// `CP_REDIRECT` constant.
 pub const CP_REDIRECT: u32 = 1 << CPN_REDIRECT; // c:396
+/// `CPN_QUOTE` constant.
 pub const CPN_QUOTE: i32 = 4; // c:397
+/// `CP_QUOTE` constant.
 pub const CP_QUOTE: u32 = 1 << CPN_QUOTE; // c:398
+/// `CPN_QUOTING` constant.
 pub const CPN_QUOTING: i32 = 5; // c:399
+/// `CP_QUOTING` constant.
 pub const CP_QUOTING: u32 = 1 << CPN_QUOTING; // c:400
+/// `CPN_RESTORE` constant.
 pub const CPN_RESTORE: i32 = 6; // c:401
+/// `CP_RESTORE` constant.
 pub const CP_RESTORE: u32 = 1 << CPN_RESTORE; // c:402
+/// `CPN_LIST` constant.
 pub const CPN_LIST: i32 = 7; // c:403
+/// `CP_LIST` constant.
 pub const CP_LIST: u32 = 1 << CPN_LIST; // c:404
+/// `CPN_INSERT` constant.
 pub const CPN_INSERT: i32 = 8; // c:405
+/// `CP_INSERT` constant.
 pub const CP_INSERT: u32 = 1 << CPN_INSERT; // c:406
+/// `CPN_EXACT` constant.
 pub const CPN_EXACT: i32 = 9; // c:407
+/// `CP_EXACT` constant.
 pub const CP_EXACT: u32 = 1 << CPN_EXACT; // c:408
+/// `CPN_EXACTSTR` constant.
 pub const CPN_EXACTSTR: i32 = 10; // c:409
+/// `CP_EXACTSTR` constant.
 pub const CP_EXACTSTR: u32 = 1 << CPN_EXACTSTR; // c:410
+/// `CPN_PATMATCH` constant.
 pub const CPN_PATMATCH: i32 = 11; // c:411
+/// `CP_PATMATCH` constant.
 pub const CP_PATMATCH: u32 = 1 << CPN_PATMATCH; // c:412
+/// `CPN_PATINSERT` constant.
 pub const CPN_PATINSERT: i32 = 12; // c:413
+/// `CP_PATINSERT` constant.
 pub const CP_PATINSERT: u32 = 1 << CPN_PATINSERT; // c:414
+/// `CPN_UNAMBIG` constant.
 pub const CPN_UNAMBIG: i32 = 13; // c:415
+/// `CP_UNAMBIG` constant.
 pub const CP_UNAMBIG: u32 = 1 << CPN_UNAMBIG; // c:416
+/// `CPN_UNAMBIGC` constant.
 pub const CPN_UNAMBIGC: i32 = 14; // c:417
+/// `CP_UNAMBIGC` constant.
 pub const CP_UNAMBIGC: u32 = 1 << CPN_UNAMBIGC; // c:418
+/// `CPN_UNAMBIGP` constant.
 pub const CPN_UNAMBIGP: i32 = 15; // c:419
+/// `CP_UNAMBIGP` constant.
 pub const CP_UNAMBIGP: u32 = 1 << CPN_UNAMBIGP; // c:420
+/// `CPN_INSERTP` constant.
 pub const CPN_INSERTP: i32 = 16; // c:421
+/// `CP_INSERTP` constant.
 pub const CP_INSERTP: u32 = 1 << CPN_INSERTP; // c:422
+/// `CPN_LISTMAX` constant.
 pub const CPN_LISTMAX: i32 = 17; // c:423
+/// `CP_LISTMAX` constant.
 pub const CP_LISTMAX: u32 = 1 << CPN_LISTMAX; // c:424
+/// `CPN_LASTPROMPT` constant.
 pub const CPN_LASTPROMPT: i32 = 18; // c:425
+/// `CP_LASTPROMPT` constant.
 pub const CP_LASTPROMPT: u32 = 1 << CPN_LASTPROMPT; // c:426
+/// `CPN_TOEND` constant.
 pub const CPN_TOEND: i32 = 19; // c:427
+/// `CP_TOEND` constant.
 pub const CP_TOEND: u32 = 1 << CPN_TOEND; // c:428
+/// `CPN_OLDLIST` constant.
 pub const CPN_OLDLIST: i32 = 20; // c:429
+/// `CP_OLDLIST` constant.
 pub const CP_OLDLIST: u32 = 1 << CPN_OLDLIST; // c:430
+/// `CPN_OLDINS` constant.
 pub const CPN_OLDINS: i32 = 21; // c:431
+/// `CP_OLDINS` constant.
 pub const CP_OLDINS: u32 = 1 << CPN_OLDINS; // c:432
+/// `CPN_VARED` constant.
 pub const CPN_VARED: i32 = 22; // c:433
+/// `CP_VARED` constant.
 pub const CP_VARED: u32 = 1 << CPN_VARED; // c:434
+/// `CPN_LISTLINES` constant.
 pub const CPN_LISTLINES: i32 = 23; // c:435
+/// `CP_LISTLINES` constant.
 pub const CP_LISTLINES: u32 = 1 << CPN_LISTLINES; // c:436
+/// `CPN_QUOTES` constant.
 pub const CPN_QUOTES: i32 = 24; // c:437
+/// `CP_QUOTES` constant.
 pub const CP_QUOTES: u32 = 1 << CPN_QUOTES; // c:438
+/// `CPN_IGNORED` constant.
 pub const CPN_IGNORED: i32 = 25; // c:439
+/// `CP_IGNORED` constant.
 pub const CP_IGNORED: u32 = 1 << CPN_IGNORED; // c:440
 
 /// Port of `#define CP_KEYPARAMS` from `Src/Zle/comp.h:442`. Total
@@ -226,11 +356,16 @@ pub const CP_ALLKEYS: u32 = 0x3ffffff; // c:443
 // ---------------------------------------------------------------------------
 // Hook indexes (c:447-451).
 // ---------------------------------------------------------------------------
+/// `INSERTMATCHHOOK_OFFSET` constant.
 
 pub const INSERTMATCHHOOK_OFFSET: usize = 0; // c:447
+/// `MENUSTARTHOOK_OFFSET` constant.
 pub const MENUSTARTHOOK_OFFSET: usize = 1; // c:448
+/// `COMPCTLMAKEHOOK_OFFSET` constant.
 pub const COMPCTLMAKEHOOK_OFFSET: usize = 2; // c:449
+/// `COMPCTLCLEANUPHOOK_OFFSET` constant.
 pub const COMPCTLCLEANUPHOOK_OFFSET: usize = 3; // c:450
+/// `COMPLISTMATCHESHOOK_OFFSET` constant.
 pub const COMPLISTMATCHESHOOK_OFFSET: usize = 4; // c:451
 
 // ---------------------------------------------------------------------------

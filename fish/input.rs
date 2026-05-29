@@ -19,22 +19,30 @@ use std::{
         Mutex, MutexGuard,
     },
 };
+/// `FISH_BIND_MODE_VAR` constant.
 
 pub const FISH_BIND_MODE_VAR: &wstr = L!("fish_bind_mode");
+/// `DEFAULT_BIND_MODE` constant.
 pub const DEFAULT_BIND_MODE: &wstr = L!("default");
 
 /// A name for our own key mapping for nul.
 pub const NUL_MAPPING_NAME: &wstr = L!("nul");
+/// `InputMappingName` — see fields for layout.
 
 #[derive(Debug, Clone)]
 pub struct InputMappingName {
+    /// `seq` field.
     pub seq: Vec<Key>,
+    /// `mode` field.
     pub mode: WString,
 }
+/// `KeyNameStyle` — see variants.
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum KeyNameStyle {
+    /// `Plain` variant.
     Plain,
+    /// `RawEscapeSequence` variant.
     RawEscapeSequence,
 }
 
@@ -238,7 +246,9 @@ const _: () = _assert_sizes_match();
 /// The input mapping set is the set of mappings from character sequences to commands.
 #[derive(Debug, Default)]
 pub struct InputMappingSet {
+    /// `mapping_list` field.
     mapping_list: Vec<InputMapping>,
+    /// `preset_mapping_list` field.
     preset_mapping_list: Vec<InputMapping>,
 }
 
@@ -319,6 +329,7 @@ impl InputMappingSet {
     }
 
     // Like add(), but takes a single command.
+    /// `add1` — see implementation.
     pub fn add1(
         &mut self,
         sequence: Vec<Key>,
@@ -418,6 +429,7 @@ pub struct EventQueuePeeker<'q, Queuer: InputEventQueuer + ?Sized> {
 }
 
 impl<'q, Queuer: InputEventQueuer + ?Sized> EventQueuePeeker<'q, Queuer> {
+    /// `new` — see implementation.
     pub fn new(event_queue: &'q mut Queuer) -> Self {
         EventQueuePeeker {
             peeked: Vec::new(),
@@ -880,6 +892,7 @@ impl<'a> Reader<'a> {
     fn function_push_arg(&mut self, arg: char) {
         self.get_input_data_mut().input_function_args.push(arg);
     }
+    /// `function_pop_arg` — see implementation.
 
     pub fn function_pop_arg(&mut self) -> Option<char> {
         self.get_input_data_mut().input_function_args.pop()
@@ -1000,6 +1013,7 @@ pub fn input_function_get_names() -> Vec<&'static wstr> {
         .map(|md| md.name)
         .collect()
 }
+/// `input_function_get_code` — see implementation.
 
 pub fn input_function_get_code(name: &wstr) -> Option<ReadlineCmd> {
     // `input_function_metadata` is required to be kept in asciibetical order, making it OK to do

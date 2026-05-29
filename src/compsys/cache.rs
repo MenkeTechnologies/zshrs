@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 /// SQLite cache for completion system
 pub struct CompsysCache {
+    /// `conn` field.
     conn: Connection,
 }
 
@@ -807,9 +808,13 @@ impl CompsysCache {
 /// Autoload stub info
 #[derive(Debug, Clone)]
 pub struct AutoloadStub {
+    /// `name` field.
     pub name: String,
+    /// `source` field.
     pub source: String,
+    /// `offset` field.
     pub offset: i64,
+    /// `size` field.
     pub size: i64,
     /// Cached function body - if present, no need to read from source file
     pub body: Option<String>,
@@ -818,19 +823,28 @@ pub struct AutoloadStub {
 /// zstyle entry
 #[derive(Debug, Clone)]
 pub struct ZStyleEntry {
+    /// `values` field.
     pub values: Vec<String>,
+    /// `eval` field.
     pub eval: bool,
 }
 
 /// Cache statistics
 #[derive(Debug)]
 pub struct CacheStats {
+    /// `autoloads` field.
     pub autoloads: i64,
+    /// `zstyles` field.
     pub zstyles: i64,
+    /// `comps` field.
     pub comps: i64,
+    /// `patcomps` field.
     pub patcomps: i64,
+    /// `keycomps` field.
     pub keycomps: i64,
+    /// `services` field.
     pub services: i64,
+    /// `cache_entries` field.
     pub cache_entries: i64,
 }
 

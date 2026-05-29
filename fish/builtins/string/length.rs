@@ -1,8 +1,11 @@
 use super::*;
+/// `Length` — see fields for layout.
 
 #[derive(Default)]
 pub struct Length {
+    /// `quiet` field.
     quiet: bool,
+    /// `visible` field.
     visible: bool,
 }
 

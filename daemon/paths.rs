@@ -139,15 +139,25 @@ level = \"info\"
 /// All cache-related paths for the running user.
 #[derive(Clone, Debug)]
 pub struct CachePaths {
+    /// `root` field.
     pub root: PathBuf,
+    /// `images` field.
     pub images: PathBuf,
+    /// `catalog_db` field.
     pub catalog_db: PathBuf,
+    /// `history_db` field.
     pub history_db: PathBuf,
+    /// `log` field.
     pub log: PathBuf,
+    /// `log_dir` field.
     pub log_dir: PathBuf,
+    /// `log_file_name` field.
     pub log_file_name: String,
+    /// `socket` field.
     pub socket: PathBuf,
+    /// `pid_file` field.
     pub pid_file: PathBuf,
+    /// `index_rkyv` field.
     pub index_rkyv: PathBuf,
     /// `replay/` — per-shell scripts holding the non-deterministic
     /// fragments of `.zshrc` that the daemon couldn't bake into canonical
@@ -408,6 +418,7 @@ pub fn load_log_directive(paths: &CachePaths) -> String {
         .map(str::to_string)
         .unwrap_or_else(|| DEFAULT.into())
 }
+/// `load_http_config` — see implementation.
 
 pub fn load_http_config() -> Result<super::http::HttpConfig> {
     let path = daemon_config_file()?;

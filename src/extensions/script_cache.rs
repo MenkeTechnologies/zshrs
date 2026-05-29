@@ -55,38 +55,55 @@ use std::os::unix::fs::MetadataExt;
 pub const SHARD_MAGIC: u32 = 0x5A525343;
 /// Bumped on incompatible rkyv schema changes.
 pub const SHARD_FORMAT_VERSION: u32 = 1;
+/// `ShardHeader` — see fields for layout.
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct ShardHeader {
+    /// `magic` field.
     pub magic: u32,
+    /// `format_version` field.
     pub format_version: u32,
+    /// `zshrs_version` field.
     pub zshrs_version: String,
+    /// `pointer_width` field.
     pub pointer_width: u32,
+    /// `built_at_secs` field.
     pub built_at_secs: u64,
 }
+/// `ScriptEntry` — see fields for layout.
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct ScriptEntry {
+    /// `mtime_secs` field.
     pub mtime_secs: i64,
+    /// `mtime_nsecs` field.
     pub mtime_nsecs: i64,
+    /// `binary_mtime_at_cache` field.
     pub binary_mtime_at_cache: i64,
+    /// `cached_at_secs` field.
     pub cached_at_secs: i64,
+    /// `chunk_blob` field.
     pub chunk_blob: Vec<u8>,
 }
+/// `ScriptShard` — see fields for layout.
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct ScriptShard {
+    /// `header` field.
     pub header: ShardHeader,
+    /// `entries` field.
     pub entries: HashMap<String, ScriptEntry>,
 }
 
 /// mmap + validated `*const ArchivedScriptShard`. Self-referential — the pointer
 /// is valid for the lifetime of the wrapping struct.
 pub struct MmappedShard {
+    /// `_mmap` field.
     _mmap: Mmap,
+    /// `archived` field.
     archived: *const ArchivedScriptShard,
 }
 
@@ -96,6 +113,7 @@ unsafe impl Send for MmappedShard {}
 unsafe impl Sync for MmappedShard {}
 
 impl MmappedShard {
+    /// `open` — see implementation.
     pub fn open(path: &Path) -> Option<Self> {
         let file = File::open(path).ok()?;
         let mmap = unsafe { Mmap::map(&file).ok()? };
@@ -134,12 +152,16 @@ impl MmappedShard {
 
 /// Shard cache keyed by canonical script path. One per shard file.
 pub struct ScriptCache {
+    /// `path` field.
     path: PathBuf,
+    /// `lock_path` field.
     lock_path: PathBuf,
+    /// `mmap` field.
     mmap: Mutex<Option<MmappedShard>>,
 }
 
 impl ScriptCache {
+    /// `open` — see implementation.
     pub fn open(path: &Path) -> std::io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -302,6 +324,7 @@ impl ScriptCache {
         }
         evicted
     }
+    /// `clear` — see implementation.
 
     pub fn clear(&self) -> std::io::Result<()> {
         let _lock = acquire_lock(&self.lock_path);
@@ -388,6 +411,7 @@ fn format_local_ts(secs: i64) -> String {
     );
     dt.format("%Y-%m-%d %H:%M:%S").to_string()
 }
+/// `file_mtime` — see implementation.
 
 pub fn file_mtime(path: &Path) -> Option<(i64, i64)> {
     let meta = std::fs::metadata(path).ok()?;
@@ -454,14 +478,17 @@ pub fn try_save_bytes(path: &Path, chunk_blob: &[u8]) -> Result<(), String> {
     };
     cache.put(&path_str, mtime_s, mtime_ns, chunk_blob.to_vec())
 }
+/// `stats` — see implementation.
 
 pub fn stats() -> Option<(i64, i64)> {
     CACHE.as_ref().map(|c| c.stats())
 }
+/// `evict_stale` — see implementation.
 
 pub fn evict_stale() -> usize {
     CACHE.as_ref().map(|c| c.evict_stale()).unwrap_or(0)
 }
+/// `clear` — see implementation.
 
 pub fn clear() -> bool {
     CACHE.as_ref().map(|c| c.clear().is_ok()).unwrap_or(false)

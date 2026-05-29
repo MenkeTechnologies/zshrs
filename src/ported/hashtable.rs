@@ -131,6 +131,7 @@ pub fn deletehashtable<T>(ht: &mut HashMap<String, T>) {
 /// equivalent of `freenode`). For typed table-specific entry
 /// shapes use the table's own `add()` method.
 // Add a node to a hash table, returning the old node on replacement.      // c:168
+/// `addhashnode` — see implementation.
 pub fn addhashnode<T>(ht: &mut HashMap<String, T>, nam: &str, value: T) {
     // c:157
     ht.insert(nam.to_string(), value);
@@ -165,6 +166,7 @@ pub fn gethashnode<'a, T: HashNodeFlags>(
 }
 
 impl cmdnam_table {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Self {
             table: HashMap::new(),
@@ -173,42 +175,51 @@ impl cmdnam_table {
             hash_executables_only: false,
         }
     }
+    /// `set_path` — see implementation.
 
     pub fn set_path(&mut self, path: Vec<String>) {
         self.path = path;
         self.path_checked_index = 0;
     }
+    /// `set_hash_executables_only` — see implementation.
 
     pub fn set_hash_executables_only(&mut self, value: bool) {
         self.hash_executables_only = value;
     }
+    /// `add` — see implementation.
 
     pub fn add(&mut self, cmd: cmdnam) {
         self.table.insert(cmd.node.nam.clone(), cmd);
     }
+    /// `get` — see implementation.
 
     pub fn get(&self, name: &str) -> Option<&cmdnam> {
         self.table
             .get(name)
             .filter(|c| (c.node.flags & DISABLED as i32) == 0)
     }
+    /// `get_including_disabled` — see implementation.
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&cmdnam> {
         self.table.get(name)
     }
+    /// `remove` — see implementation.
 
     pub fn remove(&mut self, name: &str) -> Option<cmdnam> {
         self.table.remove(name)
     }
+    /// `clear` — see implementation.
 
     pub fn clear(&mut self) {
         self.table.clear();
         self.path_checked_index = 0;
     }
+    /// `len` — see implementation.
 
     pub fn len(&self) -> usize {
         self.table.len()
     }
+    /// `is_empty` — see implementation.
 
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
@@ -365,17 +376,20 @@ pub fn disablehashnode<T: HashNodeFlags>(hn: &mut HashMap<String, T>, flags: &st
 }
 
 impl shfunc_table {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Self {
             table: HashMap::new(),
         }
     }
+    /// `add` — see implementation.
 
     pub fn add(&mut self, func: shfunc) -> Option<shfunc> {
         self.table
             .insert(func.node.nam.clone(), Box::new(func))
             .map(|b| *b)
     }
+    /// `get` — see implementation.
 
     pub fn get(&self, name: &str) -> Option<&shfunc> {
         self.table
@@ -383,10 +397,12 @@ impl shfunc_table {
             .map(|b| b.as_ref())
             .filter(|f| (f.node.flags & DISABLED as i32) == 0)
     }
+    /// `get_including_disabled` — see implementation.
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&shfunc> {
         self.table.get(name).map(|b| b.as_ref())
     }
+    /// `get_mut` — see implementation.
 
     pub fn get_mut(&mut self, name: &str) -> Option<&mut shfunc> {
         self.table
@@ -394,10 +410,12 @@ impl shfunc_table {
             .map(|b| b.as_mut())
             .filter(|f| (f.node.flags & DISABLED as i32) == 0)
     }
+    /// `remove` — see implementation.
 
     pub fn remove(&mut self, name: &str) -> Option<shfunc> {
         self.table.remove(name).map(|b| *b)
     }
+    /// `contains_key` — see implementation.
 
     pub fn contains_key(&self, name: &str) -> bool {
         self.table.contains_key(name)
@@ -442,6 +460,7 @@ impl shfunc_table {
             .map(|b| b.as_ref() as *const shfunc as *mut shfunc)
             .unwrap_or(std::ptr::null_mut())
     }
+    /// `disable` — see implementation.
 
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(func) = self.table.get_mut(name) {
@@ -451,6 +470,7 @@ impl shfunc_table {
             false
         }
     }
+    /// `enable` — see implementation.
 
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(func) = self.table.get_mut(name) {
@@ -460,18 +480,22 @@ impl shfunc_table {
             false
         }
     }
+    /// `len` — see implementation.
 
     pub fn len(&self) -> usize {
         self.table.len()
     }
+    /// `is_empty` — see implementation.
 
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
     }
+    /// `iter` — see implementation.
 
     pub fn iter(&self) -> impl Iterator<Item = (&String, &shfunc)> {
         self.table.iter().map(|(k, b)| (k, b.as_ref()))
     }
+    /// `iter_sorted` — see implementation.
 
     pub fn iter_sorted(&self) -> Vec<(&String, &shfunc)> {
         let mut entries: Vec<(&String, &shfunc)> =
@@ -479,6 +503,7 @@ impl shfunc_table {
         entries.sort_by(|a, b| a.0.cmp(b.0));
         entries
     }
+    /// `clear` — see implementation.
 
     pub fn clear(&mut self) {
         self.table.clear();
@@ -565,6 +590,7 @@ pub fn enablehashnode<T: HashNodeFlags>(hn: &mut HashMap<String, T>, flags: &str
 }
 
 impl reswd_table {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         let mut table = HashMap::new();
 
@@ -635,16 +661,19 @@ impl reswd_table {
 
         Self { table }
     }
+    /// `get` — see implementation.
 
     pub fn get(&self, name: &str) -> Option<&reswd> {
         self.table
             .get(name)
             .filter(|r| (r.node.flags & DISABLED as i32) == 0)
     }
+    /// `get_including_disabled` — see implementation.
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&reswd> {
         self.table.get(name)
     }
+    /// `disable` — see implementation.
 
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(rw) = self.table.get_mut(name) {
@@ -654,6 +683,7 @@ impl reswd_table {
             false
         }
     }
+    /// `enable` — see implementation.
 
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(rw) = self.table.get_mut(name) {
@@ -663,10 +693,12 @@ impl reswd_table {
             false
         }
     }
+    /// `is_reserved` — see implementation.
 
     pub fn is_reserved(&self, name: &str) -> bool {
         self.get(name).is_some()
     }
+    /// `iter` — see implementation.
 
     pub fn iter(&self) -> impl Iterator<Item = (&String, &reswd)> {
         self.table.iter()
@@ -756,11 +788,13 @@ pub fn scanmatchtable<T: HashNodeFlags, F: FnMut(&str, &T)>(
 }
 
 impl alias_table {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Self {
             table: indexmap::IndexMap::new(),
         }
     }
+    /// `with_defaults` — see implementation.
 
     pub fn with_defaults() -> Self {
         let mut table = Self::new();
@@ -770,30 +804,36 @@ impl alias_table {
         table.add(createaliasnode("which-command", "whence", 0)); // c:1216
         table
     }
+    /// `add` — see implementation.
 
     pub fn add(&mut self, alias: alias) -> Option<alias> {
         self.table.insert(alias.node.nam.clone(), alias)
     }
+    /// `get` — see implementation.
 
     pub fn get(&self, name: &str) -> Option<&alias> {
         self.table
             .get(name)
             .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
+    /// `get_including_disabled` — see implementation.
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&alias> {
         self.table.get(name)
     }
+    /// `get_mut` — see implementation.
 
     pub fn get_mut(&mut self, name: &str) -> Option<&mut alias> {
         self.table
             .get_mut(name)
             .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
+    /// `remove` — see implementation.
 
     pub fn remove(&mut self, name: &str) -> Option<alias> {
         self.table.remove(name)
     }
+    /// `disable` — see implementation.
 
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(alias) = self.table.get_mut(name) {
@@ -803,6 +843,7 @@ impl alias_table {
             false
         }
     }
+    /// `enable` — see implementation.
 
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(alias) = self.table.get_mut(name) {
@@ -812,22 +853,27 @@ impl alias_table {
             false
         }
     }
+    /// `len` — see implementation.
 
     pub fn len(&self) -> usize {
         self.table.len()
     }
+    /// `is_empty` — see implementation.
 
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
     }
+    /// `clear` — see implementation.
 
     pub fn clear(&mut self) {
         self.table.clear();
     }
+    /// `iter` — see implementation.
 
     pub fn iter(&self) -> impl Iterator<Item = (&String, &alias)> {
         self.table.iter()
     }
+    /// `iter_sorted` — see implementation.
 
     pub fn iter_sorted(&self) -> Vec<(&String, &alias)> {
         let mut entries: Vec<_> = self.table.iter().collect();
@@ -2296,9 +2342,13 @@ pub struct dircache_entry {
 /// cmdnam_table/shfunc_table/reswd_table/alias_table get deleted
 /// in favor of typed views over the shared `HashTable` storage.
 pub struct cmdnam_table {
+    /// `table` field.
     table: HashMap<String, cmdnam>,
+    /// `path_checked_index` field.
     path_checked_index: usize,
+    /// `path` field.
     path: Vec<String>,
+    /// `hash_executables_only` field.
     hash_executables_only: bool,
 }
 
@@ -2325,6 +2375,7 @@ pub struct cmdnam_table {
 /// (`fusevm_bridge.rs:8378`) and the C-style `bin_functions`
 /// port (`builtin.rs:3689+`) write to the same canonical table.
 pub struct shfunc_table {
+    /// `table` field.
     table: HashMap<String, Box<shfunc>>,
 }
 
@@ -2337,6 +2388,7 @@ pub struct shfunc_table {
 /// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
 /// `cmdnam_table` for the canonical-port direction.
 pub struct reswd_table {
+    /// `table` field.
     table: HashMap<String, reswd>,
 }
 
@@ -2358,6 +2410,7 @@ pub struct alias_table {
     // see in practice with small alias counts. IndexMap preserves
     // insertion order — closer to zsh's observed behavior than the
     // previous HashMap (randomized).
+    /// `table` field.
     table: indexmap::IndexMap<String, alias>,
 }
 

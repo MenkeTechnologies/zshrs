@@ -42,12 +42,17 @@ use std::sync::atomic::Ordering;
 /// AST → fusevm bytecode compiler.
 /// zshrs-original. Closest C analog is `bld_eprog()` from\n/// Src/parse.c:547 which emits wordcode for `.zwc` files; the\n/// difference is that this compiler emits typed VM ops the JIT can\n/// then specialize, rather than wordcode the runtime walks.
 pub struct ZshCompiler {
+    /// `builder` field.
     builder: ChunkBuilder,
     /// Variable name → slot index. Shared with arith sub-compilations.
     pub slots: HashMap<String, u16>,
+    /// `next_slot` field.
     pub next_slot: u16,
+    /// `break_patches` field.
     break_patches: Vec<Vec<usize>>,
+    /// `continue_patches` field.
     continue_patches: Vec<Vec<usize>>,
+    /// `return_patches` field.
     return_patches: Vec<usize>,
     /// Depth tracker for errexit (`set -e`) suppression. Incremented
     /// when entering a context where a non-zero status is part of the
@@ -123,6 +128,7 @@ impl Default for ZshCompiler {
 }
 
 impl ZshCompiler {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Self {
             builder: ChunkBuilder::new(),

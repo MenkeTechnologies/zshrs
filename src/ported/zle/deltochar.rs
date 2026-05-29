@@ -26,6 +26,7 @@ use crate::ported::zle::{
 /// WARNING: param names don't match C — Rust=(zle) vs C=(args)
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
+/// `deltochar` — see implementation.
 #[allow(unused_imports)]
 
 pub fn deltochar() -> i32 {

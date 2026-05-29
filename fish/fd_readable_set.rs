@@ -1,14 +1,18 @@
 use libc::c_int;
 use std::os::unix::prelude::*;
 use std::time::Duration;
+/// `Timeout` — see variants.
 
 #[derive(Clone, Copy)]
 pub enum Timeout {
+    /// `Duration` variant.
     Duration(Duration),
+    /// `Forever` variant.
     Forever,
 }
 
 impl Timeout {
+    /// `ZERO` constant.
     pub const ZERO: Timeout = Timeout::Duration(Duration::ZERO);
 
     /// Convert from usecs to poll-friendly msecs.
@@ -46,7 +50,9 @@ pub fn poll_fd_readable(fd: i32) -> bool {
 #[cfg(apple)]
 pub struct FdReadableSet {
     // The underlying fdset and nfds value to pass to select().
+    /// `fdset_` field.
     fdset_: libc::fd_set,
+    /// `nfds_` field.
     nfds_: c_int,
 }
 
@@ -124,9 +130,11 @@ impl FdReadableSet {
         Self::is_fd_readable(fd, Timeout::ZERO)
     }
 }
+/// `FdReadableSet` — see fields for layout.
 
 #[cfg(not(apple))]
 pub struct FdReadableSet {
+    /// `pollfds_` field.
     pollfds_: Vec<libc::pollfd>,
 }
 

@@ -49,8 +49,11 @@ use serde::{Deserialize, Serialize};
 /// `processed == false` and writes the body there.
 #[derive(Debug, Clone)]
 pub struct HereDoc {
+    /// `terminator` field.
     pub terminator: String,
+    /// `strip_tabs` field.
     pub strip_tabs: bool,
+    /// `content` field.
     pub content: String,
     /// True if the terminator was originally quoted (`<<'EOF'`,
     /// `<<"EOF"`, or `<<\EOF`). Disables variable expansion / command
@@ -72,7 +75,9 @@ pub struct HereDoc {
 /// `Op::HereDoc(idx)` referencing the body verbatim.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HereDocInfo {
+    /// `content` field.
     pub content: String,
+    /// `terminator` field.
     pub terminator: String,
     /// Originally-quoted terminator (`<<'EOF'`, `<<"EOF"`). When true
     /// the body is passed verbatim — no `$var` / `$(cmd)` / `$((expr))`

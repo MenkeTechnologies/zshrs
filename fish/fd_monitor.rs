@@ -32,7 +32,9 @@ cfg_if!(
 /// Importantly this is async signal safe. Of course it is `CLO_EXEC` as well.
 pub struct FdEventSignaller {
     // Always the read end of the fd; maybe the write end as well.
+    /// `fd` field.
     fd: OwnedFd,
+    /// `write` field.
     #[cfg(not(have_eventfd))]
     write: OwnedFd,
 }
@@ -277,6 +279,7 @@ impl FdMonitor {
 
         item_id
     }
+    /// `with_fd` — see implementation.
 
     pub fn with_fd(&self, item_id: FdMonitorItemId, cb: impl FnOnce(BorrowedFd)) {
         let data = self.data.lock().expect("Mutex poisoned!");
@@ -298,6 +301,7 @@ impl FdMonitor {
         self.change_signaller.post();
         removed.fd
     }
+    /// `new` — see implementation.
 
     pub fn new() -> Self {
         Self {
@@ -494,9 +498,11 @@ mod tests {
     }
 
     impl ItemMaker {
+        /// `insert_new_into` — see implementation.
         pub fn insert_new_into(monitor: &FdMonitor) -> Arc<Self> {
             Self::insert_new_into2(monitor, |_| {})
         }
+        /// `insert_new_into2` — see implementation.
 
         pub fn insert_new_into2<F: Fn(&mut Self)>(monitor: &FdMonitor, config: F) -> Arc<Self> {
             let pipes = make_autoclose_pipes().expect("fds exhausted!");

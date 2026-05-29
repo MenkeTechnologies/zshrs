@@ -40,9 +40,11 @@ pub(crate) static SCROLL_CONTENT_UP_SUPPORTED: OnceLock<bool> = OnceLock::new();
 pub(crate) const SCROLL_CONTENT_UP_TERMINFO_CODE: &str = "indn";
 
 // Get the support capability for kitty keyboard protocol.
+/// `get_scroll_content_up_capability` — see implementation.
 pub fn get_scroll_content_up_capability() -> Option<bool> {
     SCROLL_CONTENT_UP_SUPPORTED.get().copied()
 }
+/// `maybe_set_scroll_content_up_capability` — see implementation.
 
 pub fn maybe_set_scroll_content_up_capability() {
     SCROLL_CONTENT_UP_SUPPORTED.get_or_init(|| {
@@ -50,27 +52,35 @@ pub fn maybe_set_scroll_content_up_capability() {
         true
     });
 }
+/// `TERMINAL_OS_NAME` static.
 
 pub static TERMINAL_OS_NAME: OnceLock<Option<WString>> = OnceLock::new();
 pub(crate) const XTGETTCAP_QUERY_OS_NAME: &str = "query-os-name";
+/// `XTVERSION` static.
 
 pub static XTVERSION: OnceLock<WString> = OnceLock::new();
+/// `xtversion` — see implementation.
 
 pub fn xtversion() -> Option<&'static wstr> {
     XTVERSION.get().as_ref().map(|s| s.as_utfstr())
 }
 
 // Facts that affect how we communicate with the TTY.
+/// `TtyQuirks` — see variants.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum TtyQuirks {
+    /// `None` variant.
     None,
     // Running Midnight Commander which can't parse CSI yet.
+    /// `PreCsiMidnightCommander` variant.
     PreCsiMidnightCommander,
     // Running in iTerm2 before 3.5.12, which causes issues when using the kitty keyboard protocol.
+    /// `PreKittyIterm2` variant.
     PreKittyIterm2,
     // Whether we are running under tmux.
     Tmux((u32, u32)),
     // Whether we are running under WezTerm.
+    /// `Wezterm` variant.
     Wezterm,
 }
 
@@ -234,6 +244,7 @@ fn tty_protocols() -> Option<&'static TtyProtocolsSet> {
 }
 
 // Initialize serialized commands for enabling/disabling TTY protocols.
+/// `initialize_tty_protocols` — see implementation.
 pub fn initialize_tty_protocols(vars: &dyn Environment) {
     // Default missing query responses.
     KITTY_KEYBOARD_SUPPORTED.get_or_init(|| false);
@@ -303,11 +314,13 @@ fn set_tty_protocols_active(on_write: fn(), enable: bool) {
 }
 
 // Helper to check if TTY protocols are active.
+/// `get_tty_protocols_active` — see implementation.
 pub fn get_tty_protocols_active() -> bool {
     TTY_PROTOCOLS_ACTIVE.load()
 }
 
 // Deactivate TTY protocols before exiting.
+/// `deactivate_tty_protocols` — see implementation.
 pub fn deactivate_tty_protocols() {
     if !cfg!(test) {
         assert_is_main_thread();
@@ -335,6 +348,7 @@ pub fn deactivate_tty_protocols() {
 
 // Called from a signal handler to mark the tty as invalid (e.g. SIGHUP).
 // This suppresses any further attempts to write protocols to the tty,
+/// `signal_safe_mark_tty_invalid` — see implementation.
 pub fn signal_safe_mark_tty_invalid() {
     TTY_INVALID.store(true);
 }
@@ -348,21 +362,27 @@ pub fn signal_safe_mark_tty_invalid() {
 //     it has in the job, so that we can restore them when the job is resumed.
 //   - Managing enabling and disabling terminal protocols (bracketed paste, etc).
 //  Note it only ever makes sense to run this on the main thread.
+/// `TtyHandoff` — see fields for layout.
 pub struct TtyHandoff {
     // The job group which owns the tty, or empty if none.
+    /// `owner` field.
     owner: Option<JobGroupRef>,
     // Whether terminal protocols were initially enabled.
     // Restored on drop.
+    /// `tty_protocols_initial` field.
     tty_protocols_initial: bool,
     // The state of terminal protocols that we set.
     // Note we track this separately from TTY_PROTOCOLS_ACTIVE. We undo the changes
     // we make.
+    /// `tty_protocols_applied` field.
     tty_protocols_applied: bool,
     // Called after writing to the TTY.
+    /// `on_write` field.
     on_write: fn(),
 }
 
 impl TtyHandoff {
+    /// `new` — see implementation.
     pub fn new(on_write: fn()) -> Self {
         let protocols_active = get_tty_protocols_active();
         TtyHandoff {

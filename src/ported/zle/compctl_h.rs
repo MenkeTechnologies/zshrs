@@ -20,20 +20,34 @@
 // ---------------------------------------------------------------------------
 // `-x` condition type constants (c:76-89).
 // ---------------------------------------------------------------------------
+/// `CCT_UNUSED` constant.
 
 pub const CCT_UNUSED: i32 = 0; // c:76
+/// `CCT_POS` constant.
 pub const CCT_POS: i32 = 1; // c:77
+/// `CCT_CURSTR` constant.
 pub const CCT_CURSTR: i32 = 2; // c:78
+/// `CCT_CURPAT` constant.
 pub const CCT_CURPAT: i32 = 3; // c:79
+/// `CCT_WORDSTR` constant.
 pub const CCT_WORDSTR: i32 = 4; // c:80
+/// `CCT_WORDPAT` constant.
 pub const CCT_WORDPAT: i32 = 5; // c:81
+/// `CCT_CURSUF` constant.
 pub const CCT_CURSUF: i32 = 6; // c:82
+/// `CCT_CURPRE` constant.
 pub const CCT_CURPRE: i32 = 7; // c:83
+/// `CCT_CURSUB` constant.
 pub const CCT_CURSUB: i32 = 8; // c:84
+/// `CCT_CURSUBC` constant.
 pub const CCT_CURSUBC: i32 = 9; // c:85
+/// `CCT_NUMWORDS` constant.
 pub const CCT_NUMWORDS: i32 = 10; // c:86
+/// `CCT_RANGESTR` constant.
 pub const CCT_RANGESTR: i32 = 11; // c:87
+/// `CCT_RANGEPAT` constant.
 pub const CCT_RANGEPAT: i32 = 12; // c:88
+/// `CCT_QUOTE` constant.
 pub const CCT_QUOTE: i32 = 13; // c:89
 
 // ---------------------------------------------------------------------------
@@ -41,49 +55,87 @@ pub const CCT_QUOTE: i32 = 13; // c:89
 // Each bit selects one completion-source kind (files, vars, jobs, ...)
 // the compctl spec expands.
 // ---------------------------------------------------------------------------
+/// `CC_FILES` constant.
 
 pub const CC_FILES: u64 = 1 << 0; // c:118
+/// `CC_COMMPATH` constant.
 pub const CC_COMMPATH: u64 = 1 << 1; // c:119
+/// `CC_REMOVE` constant.
 pub const CC_REMOVE: u64 = 1 << 2; // c:120
+/// `CC_OPTIONS` constant.
 pub const CC_OPTIONS: u64 = 1 << 3; // c:121
+/// `CC_VARS` constant.
 pub const CC_VARS: u64 = 1 << 4; // c:122
+/// `CC_BINDINGS` constant.
 pub const CC_BINDINGS: u64 = 1 << 5; // c:123
+/// `CC_ARRAYS` constant.
 pub const CC_ARRAYS: u64 = 1 << 6; // c:124
+/// `CC_INTVARS` constant.
 pub const CC_INTVARS: u64 = 1 << 7; // c:125
+/// `CC_SHFUNCS` constant.
 pub const CC_SHFUNCS: u64 = 1 << 8; // c:126
+/// `CC_PARAMS` constant.
 pub const CC_PARAMS: u64 = 1 << 9; // c:127
+/// `CC_ENVVARS` constant.
 pub const CC_ENVVARS: u64 = 1 << 10; // c:128
+/// `CC_JOBS` constant.
 pub const CC_JOBS: u64 = 1 << 11; // c:129
+/// `CC_RUNNING` constant.
 pub const CC_RUNNING: u64 = 1 << 12; // c:130
+/// `CC_STOPPED` constant.
 pub const CC_STOPPED: u64 = 1 << 13; // c:131
+/// `CC_BUILTINS` constant.
 pub const CC_BUILTINS: u64 = 1 << 14; // c:132
+/// `CC_ALREG` constant.
 pub const CC_ALREG: u64 = 1 << 15; // c:133
+/// `CC_ALGLOB` constant.
 pub const CC_ALGLOB: u64 = 1 << 16; // c:134
+/// `CC_USERS` constant.
 pub const CC_USERS: u64 = 1 << 17; // c:135
+/// `CC_DISCMDS` constant.
 pub const CC_DISCMDS: u64 = 1 << 18; // c:136
+/// `CC_EXCMDS` constant.
 pub const CC_EXCMDS: u64 = 1 << 19; // c:137
+/// `CC_SCALARS` constant.
 pub const CC_SCALARS: u64 = 1 << 20; // c:138
+/// `CC_READONLYS` constant.
 pub const CC_READONLYS: u64 = 1 << 21; // c:139
+/// `CC_SPECIALS` constant.
 pub const CC_SPECIALS: u64 = 1 << 22; // c:140
+/// `CC_DELETE` constant.
 pub const CC_DELETE: u64 = 1 << 23; // c:141
+/// `CC_NAMED` constant.
 pub const CC_NAMED: u64 = 1 << 24; // c:142
+/// `CC_QUOTEFLAG` constant.
 pub const CC_QUOTEFLAG: u64 = 1 << 25; // c:143
+/// `CC_EXTCMDS` constant.
 pub const CC_EXTCMDS: u64 = 1 << 26; // c:144
+/// `CC_RESWDS` constant.
 pub const CC_RESWDS: u64 = 1 << 27; // c:145
+/// `CC_DIRS` constant.
 pub const CC_DIRS: u64 = 1 << 28; // c:146
+/// `CC_EXPANDEXPL` constant.
 pub const CC_EXPANDEXPL: u64 = 1 << 30; // c:148
+/// `CC_RESERVED` constant.
 pub const CC_RESERVED: u64 = 1 << 31; // c:149
 
 // ---------------------------------------------------------------------------
 // Secondary completion-target flags (`mask2`, c:152-158).
 // ---------------------------------------------------------------------------
+/// `CC_NOSORT` constant.
 
 pub const CC_NOSORT: u64 = 1 << 0; // c:152
+/// `CC_XORCONT` constant.
 pub const CC_XORCONT: u64 = 1 << 1; // c:153
+/// `CC_CCCONT` constant.
 pub const CC_CCCONT: u64 = 1 << 2; // c:154
+/// `CC_PATCONT` constant.
 pub const CC_PATCONT: u64 = 1 << 3; // c:155
+/// `CC_DEFCONT` constant.
 pub const CC_DEFCONT: u64 = 1 << 4; // c:156
+/// `CC_UNIQCON` constant.
 pub const CC_UNIQCON: u64 = 1 << 5; // c:157
+/// `CC_UNIQALL` constant.
 pub const CC_UNIQALL: u64 = 1 << 6; // c:158
 
 // ---------------------------------------------------------------------------

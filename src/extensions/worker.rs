@@ -40,8 +40,11 @@ type Task = Box<dyn FnOnce() + Send + 'static>;
 /// multi-consumer dispatch — each worker calls `recv()` directly,
 /// no mutex.
 pub struct WorkerPool {
+    /// `workers` field.
     workers: Vec<Worker>,
+    /// `sender` field.
     sender: Option<crossbeam_channel::Sender<Task>>,
+    /// `size` field.
     size: usize,
     /// Shared cancellation flag — when set, workers drop pending tasks
     cancelled: Arc<AtomicBool>,

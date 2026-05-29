@@ -905,6 +905,7 @@ pub fn bufswap(state: &mut RefreshState) {
     // MULTIBYTE_SUPPORT). Rust just swaps the Option<VideoBuffer>.
     std::mem::swap(&mut state.old_video, &mut state.new_video);
 }
+/// `zrefresh` — see implementation.
 
 pub fn zrefresh() {
     // c:975
@@ -1043,6 +1044,7 @@ pub fn zrefresh() {
 }
 
 impl HighlightManager {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         HighlightManager {
             regions: Vec::new(),
@@ -2321,11 +2323,17 @@ pub fn zle_refresh_finish() {
 /// pre-unpacks to a 6-field struct for ergonomic access.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TextAttr {
+    /// `bold` field.
     pub bold: bool,
+    /// `underline` field.
     pub underline: bool,
+    /// `standout` field.
     pub standout: bool,
+    /// `blink` field.
     pub blink: bool,
+    /// `fg_color` field.
     pub fg_color: Option<u8>,
+    /// `bg_color` field.
     pub bg_color: Option<u8>,
 }
 
@@ -2336,8 +2344,11 @@ pub struct TextAttr {
 /// `atr` instead of the C `zattr` bitmap.
 #[derive(Debug, Clone, Default)]
 pub struct RefreshElement {
+    /// `chr` field.
     pub chr: char,
+    /// `atr` field.
     pub atr: TextAttr,
+    /// `width` field.
     pub width: u8,
 }
 
@@ -2408,9 +2419,13 @@ pub struct RefreshState {
 /// different fields: start/end/atr/flags/memo/layer).
 #[derive(Debug, Clone)]
 pub struct RegionHighlight {
+    /// `start` field.
     pub start: usize,
+    /// `end` field.
     pub end: usize,
+    /// `attr` field.
     pub attr: TextAttr,
+    /// `memo` field.
     pub memo: Option<String>,
 }
 
@@ -2422,12 +2437,19 @@ pub struct RegionHighlight {
 /// integer indexing — no enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HighlightCategory {
+    /// `Region` variant.
     Region,
+    /// `Isearch` variant.
     Isearch,
+    /// `Suffix` variant.
     Suffix,
+    /// `Paste` variant.
     Paste,
+    /// `Default` variant.
     Default,
+    /// `Special` variant.
     Special,
+    /// `Ellipsis` variant.
     Ellipsis,
 }
 
@@ -2436,6 +2458,7 @@ pub enum HighlightCategory {
 /// zle_refresh.c) into one container.
 #[derive(Debug, Default)]
 pub struct HighlightManager {
+    /// `regions` field.
     pub regions: Vec<RegionHighlight>,
     /// Per-category attrs from `$zle_highlight`. Index by
     /// `HighlightCategory`. Equivalent to the per-slot atr storage
@@ -2806,7 +2829,9 @@ pub static TCOUT_FUNC_NAME: std::sync::Mutex<Option<String>> = // c:246
 /// `zattr` is `u64` (zsh.h:2689); AtomicU64 with Relaxed ordering
 /// matches C's plain global-int read/write shape.
 pub static PMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:152
+/// `RPMPT_ATTR` static.
 pub static RPMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:152
+/// `PROMPT_ATTR` static.
 pub static PROMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:152
 
 /// Port of `static int cleareol` from `Src/Zle/zle_refresh.c:827`.

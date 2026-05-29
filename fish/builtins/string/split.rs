@@ -2,15 +2,24 @@ use std::ops::Deref;
 
 use super::*;
 use fish_wcstringutil::split_about;
+/// `Split` — see fields for layout.
 
 pub struct Split<'args> {
+    /// `quiet` field.
     quiet: bool,
+    /// `split_from` field.
     split_from: Direction,
+    /// `max` field.
     max: usize,
+    /// `no_empty` field.
     no_empty: bool,
+    /// `fields` field.
     fields: Fields,
+    /// `allow_empty` field.
     allow_empty: bool,
+    /// `is_split0` field.
     pub is_split0: bool,
+    /// `sep` field.
     sep: &'args wstr,
 }
 

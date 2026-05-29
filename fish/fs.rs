@@ -68,25 +68,34 @@ pub struct LockedFile {
     /// but the alternative of not being able to access the file at all is not desirable either.
     _locked_fd: File,
 }
+/// `LOCKED_FILE_MODE` constant.
 
 pub const LOCKED_FILE_MODE: Mode = Mode::from_bits_truncate(0o600);
+/// `LockingMode` — see variants.
 
 pub enum LockingMode {
+    /// `Shared` variant.
     Shared,
+    /// `Exclusive` variant.
     Exclusive(WriteMethod),
 }
+/// `WriteMethod` — see variants.
 pub enum WriteMethod {
+    /// `Append` variant.
     Append,
+    /// `RenameIntoPlace` variant.
     RenameIntoPlace,
 }
 
 impl LockingMode {
+    /// `flock_op` — see implementation.
     pub fn flock_op(&self) -> c_int {
         match self {
             Self::Shared => LOCK_SH,
             Self::Exclusive(_) => LOCK_EX,
         }
     }
+    /// `file_flags` — see implementation.
 
     pub fn file_flags(&self) -> OFlag {
         match self {
@@ -147,10 +156,12 @@ impl LockedFile {
             _locked_fd: dir_fd,
         })
     }
+    /// `get` — see implementation.
 
     pub fn get(&self) -> &File {
         &self.data_file
     }
+    /// `get_mut` — see implementation.
 
     pub fn get_mut(&mut self) -> &mut File {
         &mut self.data_file
@@ -252,9 +263,12 @@ where
         "Failed to update the file. Locking is disabled, and the fallback code did not succeed within the permissible number of attempts.",
     ))
 }
+/// `PotentialUpdate` — see fields for layout.
 
 pub struct PotentialUpdate<UserData> {
+    /// `do_save` field.
     pub do_save: bool,
+    /// `data` field.
     pub data: UserData,
 }
 

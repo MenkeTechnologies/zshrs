@@ -25,15 +25,19 @@ use serde::{Deserialize, Serialize};
 /// AST node for a complete program (list of commands)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshProgram {
+    /// `lists` field.
     pub lists: Vec<ZshList>,
 }
 
 /// A list is a sequence of sublists separated by ; or & or newline
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshList {
+    /// `sublist` field.
     pub sublist: ZshSublist,
+    /// `flags` field.
     pub flags: ListFlags,
 }
+/// `ListFlags` — see fields for layout.
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct ListFlags {
@@ -46,16 +50,23 @@ pub struct ListFlags {
 /// A sublist is pipelines connected by && or ||
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshSublist {
+    /// `pipe` field.
     pub pipe: ZshPipe,
+    /// `next` field.
     pub next: Option<(SublistOp, Box<ZshSublist>)>,
+    /// `flags` field.
     pub flags: SublistFlags,
 }
+/// `SublistOp` — see variants.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SublistOp {
+    /// `And` variant.
     And, // &&
+    /// `Or` variant.
     Or,  // ||
 }
+/// `SublistFlags` — see fields for layout.
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct SublistFlags {
@@ -68,8 +79,11 @@ pub struct SublistFlags {
 /// A pipeline is commands connected by |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshPipe {
+    /// `cmd` field.
     pub cmd: ZshCommand,
+    /// `next` field.
     pub next: Option<Box<ZshPipe>>,
+    /// `lineno` field.
     pub lineno: u64,
     /// `|&` between this stage and the next — merge stderr into the
     /// pipe so the next stage's stdin sees both stdout AND stderr from
@@ -81,19 +95,33 @@ pub struct ZshPipe {
 /// A command
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ZshCommand {
+    /// `Simple` variant.
     Simple(ZshSimple),
+    /// `Subsh` variant.
     Subsh(Box<ZshProgram>), // (list)
+    /// `Cursh` variant.
     Cursh(Box<ZshProgram>), // {list}
+    /// `For` variant.
     For(ZshFor),
+    /// `Case` variant.
     Case(ZshCase),
+    /// `If` variant.
     If(ZshIf),
+    /// `While` variant.
     While(ZshWhile),
+    /// `Until` variant.
     Until(ZshWhile),
+    /// `Repeat` variant.
     Repeat(ZshRepeat),
+    /// `FuncDef` variant.
     FuncDef(ZshFuncDef),
+    /// `Time` variant.
     Time(Option<Box<ZshSublist>>),
+    /// `Cond` variant.
     Cond(ZshCond), // [[ ... ]]
+    /// `Arith` variant.
     Arith(String), // (( ... ))
+    /// `Try` variant.
     Try(ZshTry),   // { ... } always { ... }
     /// Compound command with trailing redirects:
     /// `{ cmd } 2>&1`, `(...) >file`, `if ...; fi >file`, etc.
@@ -105,31 +133,43 @@ pub enum ZshCommand {
 /// A simple command (assignments, words, redirections)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshSimple {
+    /// `assigns` field.
     pub assigns: Vec<ZshAssign>,
+    /// `words` field.
     pub words: Vec<String>,
+    /// `redirs` field.
     pub redirs: Vec<ZshRedir>,
 }
 
 /// An assignment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshAssign {
+    /// `name` field.
     pub name: String,
+    /// `value` field.
     pub value: ZshAssignValue,
     pub append: bool, // +=
 }
+/// `ZshAssignValue` — see variants.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ZshAssignValue {
+    /// `Scalar` variant.
     Scalar(String),
+    /// `Array` variant.
     Array(Vec<String>),
 }
 
 /// A redirection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshRedir {
+    /// `rtype` field.
     pub rtype: i32,
+    /// `fd` field.
     pub fd: i32,
+    /// `name` field.
     pub name: String,
+    /// `heredoc` field.
     pub heredoc: Option<HereDocInfo>,
     pub varid: Option<String>, // {var}>file
     /// Index into the lexer-side `HEREDOCS` thread_local for body lookup. Filled in by
@@ -143,76 +183,105 @@ pub struct ZshRedir {
 /// For loop
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshFor {
+    /// `var` field.
     pub var: String,
+    /// `list` field.
     pub list: ForList,
+    /// `body` field.
     pub body: Box<ZshProgram>,
     /// True if this was parsed as `select` rather than `for`. Both share
     /// the same parser, so the compiler routes on this flag.
     #[serde(default)]
     pub is_select: bool,
 }
+/// `ForList` — see variants.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ForList {
+    /// `Words` variant.
     Words(Vec<String>),
+    /// `CStyle` variant.
     CStyle {
         init: String,
         cond: String,
         step: String,
     },
+    /// `Positional` variant.
     Positional,
 }
 
 /// Case statement
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshCase {
+    /// `word` field.
     pub word: String,
+    /// `arms` field.
     pub arms: Vec<CaseArm>,
 }
+/// `CaseArm` — see fields for layout.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaseArm {
+    /// `patterns` field.
     pub patterns: Vec<String>,
+    /// `body` field.
     pub body: ZshProgram,
+    /// `terminator` field.
     pub terminator: CaseTerm,
 }
+/// `CaseTerm` — see variants.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CaseTerm {
+    /// `Break` variant.
     Break,    // ;;
+    /// `Continue` variant.
     Continue, // ;&
+    /// `TestNext` variant.
     TestNext, // ;|
 }
 
 /// If statement
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshIf {
+    /// `cond` field.
     pub cond: Box<ZshProgram>,
+    /// `then` field.
     pub then: Box<ZshProgram>,
+    /// `elif` field.
     pub elif: Vec<(ZshProgram, ZshProgram)>,
+    /// `else_` field.
     pub else_: Option<Box<ZshProgram>>,
 }
 
 /// While/Until loop
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshWhile {
+    /// `cond` field.
     pub cond: Box<ZshProgram>,
+    /// `body` field.
     pub body: Box<ZshProgram>,
+    /// `until` field.
     pub until: bool,
 }
 
 /// Repeat loop
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshRepeat {
+    /// `count` field.
     pub count: String,
+    /// `body` field.
     pub body: Box<ZshProgram>,
 }
 
 /// Function definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshFuncDef {
+    /// `names` field.
     pub names: Vec<String>,
+    /// `body` field.
     pub body: Box<ZshProgram>,
+    /// `tracing` field.
     pub tracing: bool,
     /// Anonymous-function call args. `() { body } a b` parses as a
     /// FuncDef (auto-named) with `auto_call_args = Some(vec!["a", "b"])`.
@@ -234,62 +303,109 @@ pub struct ZshFuncDef {
 /// Conditional expression [[ ... ]]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ZshCond {
+    /// `Not` variant.
     Not(Box<ZshCond>),
+    /// `And` variant.
     And(Box<ZshCond>, Box<ZshCond>),
+    /// `Or` variant.
     Or(Box<ZshCond>, Box<ZshCond>),
+    /// `Unary` variant.
     Unary(String, String),          // -f file, -n str, etc.
+    /// `Binary` variant.
     Binary(String, String, String), // str = pat, a -eq b, etc.
+    /// `Regex` variant.
     Regex(String, String),          // str =~ regex
 }
 
 /// Try/always block
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshTry {
+    /// `try_block` field.
     pub try_block: Box<ZshProgram>,
+    /// `always` field.
     pub always: Box<ZshProgram>,
 }
 
 /// Zsh parameter expansion flags
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ZshParamFlag {
+    /// `Lower` variant.
     Lower,                 // L - lowercase
+    /// `Upper` variant.
     Upper,                 // U - uppercase
+    /// `Capitalize` variant.
     Capitalize,            // C - capitalize words
+    /// `Join` variant.
     Join(String),          // j:sep: - join array with separator
+    /// `JoinNewline` variant.
     JoinNewline,           // F - join with newlines
+    /// `Split` variant.
     Split(String),         // s:sep: - split string into array
+    /// `SplitLines` variant.
     SplitLines,            // f - split on newlines
+    /// `SplitWords` variant.
     SplitWords,            // z - split into words (shell parsing)
+    /// `Type` variant.
     Type,                  // t - type of variable
+    /// `Words` variant.
     Words,                 // w - word splitting
+    /// `Quote` variant.
     Quote,                 // qq - single-quote always
+    /// `QuoteIfNeeded` variant.
     QuoteIfNeeded,         // q+ - single-quote only if needed
+    /// `DoubleQuote` variant.
     DoubleQuote,           // qqq - double-quote
+    /// `DollarQuote` variant.
     DollarQuote,           // qqqq - $'...' style
+    /// `QuoteBackslash` variant.
     QuoteBackslash,        // q / b / B - backslash-escape special chars
+    /// `Unique` variant.
     Unique,                // u - unique elements only
+    /// `Reverse` variant.
     Reverse,               // O - reverse sort
+    /// `Sort` variant.
     Sort,                  // o - sort
+    /// `NumericSort` variant.
     NumericSort,           // n - numeric sort
+    /// `IndexSort` variant.
     IndexSort,             // a - sort in array index order
+    /// `Keys` variant.
     Keys,                  // k - associative array keys
+    /// `Values` variant.
     Values,                // v - associative array values
+    /// `Length` variant.
     Length,                // # - length (character codes)
+    /// `CountChars` variant.
     CountChars,            // c - count total characters
+    /// `Expand` variant.
     Expand,                // e - perform shell expansions
+    /// `PromptExpand` variant.
     PromptExpand,          // % - expand prompt escapes
+    /// `PromptExpandFull` variant.
     PromptExpandFull,      // %% - full prompt expansion
+    /// `Visible` variant.
     Visible,               // V - make non-printable chars visible
+    /// `Directory` variant.
     Directory,             // D - substitute directory names
+    /// `Head` variant.
     Head(usize),           // [1,n] - first n elements
+    /// `Tail` variant.
     Tail(usize),           // [-n,-1] - last n elements
+    /// `PadLeft` variant.
     PadLeft(usize, char),  // l:len:fill: - pad left
+    /// `PadRight` variant.
     PadRight(usize, char), // r:len:fill: - pad right
+    /// `Width` variant.
     Width(usize),          // m - use width for padding
+    /// `Match` variant.
     Match,                 // M - include matched portion
+    /// `Remove` variant.
     Remove,                // R - include non-matched portion (complement of M)
+    /// `Subscript` variant.
     Subscript,             // S - subscript scanning
+    /// `Parameter` variant.
     Parameter,             // P - use value as parameter name (indirection)
+    /// `Glob` variant.
     Glob,                  // ~ - glob patterns in pattern
     /// `@` flag — force array-context behavior even inside DQ. zsh's
     /// `"${(@o)arr}"` keeps the sort active and splices each element as
@@ -301,10 +417,15 @@ pub enum ZshParamFlag {
 /// List operator (for shell command lists)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ListOp {
+    /// `And` variant.
     And,     // &&
+    /// `Or` variant.
     Or,      // ||
+    /// `Semi` variant.
     Semi,    // ;
+    /// `Amp` variant.
     Amp,     // &
+    /// `Newline` variant.
     Newline, // \n
 }
 
@@ -324,17 +445,29 @@ pub enum ShellWord {
 /// Variable modifier for parameter expansion
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VarModifier {
+    /// `Default` variant.
     Default(ShellWord),
+    /// `DefaultAssign` variant.
     DefaultAssign(ShellWord),
+    /// `Error` variant.
     Error(ShellWord),
+    /// `Alternate` variant.
     Alternate(ShellWord),
+    /// `Length` variant.
     Length,
+    /// `Substring` variant.
     Substring(i64, Option<i64>),
+    /// `RemovePrefix` variant.
     RemovePrefix(ShellWord),
+    /// `RemovePrefixLong` variant.
     RemovePrefixLong(ShellWord),
+    /// `RemoveSuffix` variant.
     RemoveSuffix(ShellWord),
+    /// `RemoveSuffixLong` variant.
     RemoveSuffixLong(ShellWord),
+    /// `Replace` variant.
     Replace(ShellWord, ShellWord),
+    /// `ReplaceAll` variant.
     ReplaceAll(ShellWord, ShellWord),
     /// `${var/#pat/repl}` — anchored at start (prefix only).
     /// Per Src/subst.c paramsubst's `/`-arm with SUB_START.
@@ -342,91 +475,126 @@ pub enum VarModifier {
     /// `${var/%pat/repl}` — anchored at end (suffix only).
     /// Per Src/subst.c paramsubst's `/`-arm with SUB_END.
     ReplaceSuffix(ShellWord, ShellWord),
+    /// `Upper` variant.
     Upper,
+    /// `Lower` variant.
     Lower,
 }
 
 /// Shell command - the old shell_ast compatible type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ShellCommand {
+    /// `Simple` variant.
     Simple(SimpleCommand),
+    /// `Pipeline` variant.
     Pipeline(Vec<ShellCommand>, bool),
     List(Vec<(ShellCommand, ListOp)>),
+    /// `Compound` variant.
     Compound(CompoundCommand),
+    /// `FunctionDef` variant.
     FunctionDef(String, Box<ShellCommand>),
 }
 
 /// Simple command with assignments, words, and redirects
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimpleCommand {
+    /// `assignments` field.
     pub assignments: Vec<(String, ShellWord, bool)>,
+    /// `words` field.
     pub words: Vec<ShellWord>,
+    /// `redirects` field.
     pub redirects: Vec<Redirect>,
 }
 
 /// Redirect
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Redirect {
+    /// `fd` field.
     pub fd: Option<i32>,
+    /// `op` field.
     pub op: RedirectOp,
+    /// `target` field.
     pub target: ShellWord,
+    /// `heredoc_content` field.
     pub heredoc_content: Option<String>,
+    /// `fd_var` field.
     pub fd_var: Option<String>,
 }
 
 /// Redirect operator
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RedirectOp {
+    /// `Write` variant.
     Write,
+    /// `Append` variant.
     Append,
+    /// `Read` variant.
     Read,
+    /// `ReadWrite` variant.
     ReadWrite,
+    /// `Clobber` variant.
     Clobber,
+    /// `DupRead` variant.
     DupRead,
+    /// `DupWrite` variant.
     DupWrite,
+    /// `HereDoc` variant.
     HereDoc,
+    /// `HereString` variant.
     HereString,
+    /// `WriteBoth` variant.
     WriteBoth,
+    /// `AppendBoth` variant.
     AppendBoth,
 }
 
 /// Compound command
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CompoundCommand {
+    /// `BraceGroup` variant.
     BraceGroup(Vec<ShellCommand>),
+    /// `Subshell` variant.
     Subshell(Vec<ShellCommand>),
+    /// `If` variant.
     If {
         conditions: Vec<(Vec<ShellCommand>, Vec<ShellCommand>)>,
         else_part: Option<Vec<ShellCommand>>,
     },
+    /// `For` variant.
     For {
         var: String,
         words: Option<Vec<ShellWord>>,
         body: Vec<ShellCommand>,
     },
+    /// `ForArith` variant.
     ForArith {
         init: String,
         cond: String,
         step: String,
         body: Vec<ShellCommand>,
     },
+    /// `While` variant.
     While {
         condition: Vec<ShellCommand>,
         body: Vec<ShellCommand>,
     },
+    /// `Until` variant.
     Until {
         condition: Vec<ShellCommand>,
         body: Vec<ShellCommand>,
     },
+    /// `Case` variant.
     Case {
         word: ShellWord,
         cases: Vec<(Vec<ShellWord>, Vec<ShellCommand>, CaseTerminator)>,
     },
+    /// `Select` variant.
     Select {
         var: String,
         words: Option<Vec<ShellWord>>,
         body: Vec<ShellCommand>,
     },
+    /// `Coproc` variant.
     Coproc {
         name: Option<String>,
         body: Box<ShellCommand>,
@@ -441,15 +609,20 @@ pub enum CompoundCommand {
         try_body: Vec<ShellCommand>,
         always_body: Vec<ShellCommand>,
     },
+    /// `Arith` variant.
     Arith(String),
+    /// `WithRedirects` variant.
     WithRedirects(Box<ShellCommand>, Vec<Redirect>),
 }
 
 /// Case terminator
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum CaseTerminator {
+    /// `Break` variant.
     Break,
+    /// `Fallthrough` variant.
     Fallthrough,
+    /// `Continue` variant.
     Continue,
 }
 

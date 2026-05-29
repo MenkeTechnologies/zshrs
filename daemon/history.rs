@@ -21,6 +21,7 @@ use super::ops::OpResult;
 use super::paths::CachePaths;
 use super::state::DaemonState;
 use super::Result;
+/// `SCHEMA_VERSION` constant.
 
 pub const SCHEMA_VERSION: i64 = 1;
 
@@ -28,6 +29,7 @@ pub const SCHEMA_VERSION: i64 = 1;
 pub fn open(paths: &CachePaths) -> Result<Connection> {
     open_at(&paths.history_db)
 }
+/// `open_at` — see implementation.
 
 pub fn open_at(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
@@ -90,16 +92,26 @@ fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
 /// One history row (returned by `history_query`).
 #[derive(serde::Serialize, Debug, Clone)]
 pub struct HistoryRow {
+    /// `id` field.
     pub id: i64,
+    /// `line` field.
     pub line: String,
+    /// `ts_ns` field.
     pub ts_ns: i64,
+    /// `exit_code` field.
     pub exit_code: Option<i64>,
+    /// `cwd` field.
     pub cwd: Option<String>,
+    /// `duration_ns` field.
     pub duration_ns: Option<i64>,
+    /// `sessid` field.
     pub sessid: Option<String>,
+    /// `hostname` field.
     pub hostname: Option<String>,
+    /// `shell_id` field.
     pub shell_id: Option<i64>,
 }
+/// `append` — see implementation.
 
 #[allow(clippy::too_many_arguments)]
 pub fn append(
@@ -120,6 +132,7 @@ pub fn append(
     )?;
     Ok(conn.last_insert_rowid())
 }
+/// `count` — see implementation.
 
 pub fn count(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0))
@@ -219,6 +232,7 @@ pub fn query(
 }
 
 // ---- IPC op handlers ----
+/// `op_history_append` — see implementation.
 
 pub async fn op_history_append(state: &std::sync::Arc<DaemonState>, args: Value) -> OpResult {
     let line = args
@@ -311,6 +325,7 @@ pub async fn op_history_append(state: &std::sync::Arc<DaemonState>, args: Value)
     // envelope's `id` field (untagged-enum dispatch breaks on duplicate keys).
     Ok(json!({ "history_id": id }))
 }
+/// `op_history_query` — see implementation.
 
 pub async fn op_history_query(state: &std::sync::Arc<DaemonState>, args: Value) -> OpResult {
     let filter = args

@@ -20,8 +20,11 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A live connection to the daemon, post-handshake.
 pub struct Client {
+    /// `stream` field.
     stream: UnixStream,
+    /// `welcome` field.
     pub welcome: Welcome,
+    /// `next_id` field.
     next_id: u64,
 }
 

@@ -1421,6 +1421,7 @@ pub fn set_undo_limit_change(value: i64) -> i32 {
     UNDO_LIMITNO.store(clamped as u64, Ordering::SeqCst);
     0
 }
+/// `insert_str` — see implementation.
 
 pub fn insert_str(s: &str) {
     for c in s.chars() {

@@ -125,6 +125,7 @@ pub use crate::ported::hashtable_h::{
 /// C `hasher` callback and the `HashMap` itself replaces all the
 /// per-table function pointers (`addnode`/`getnode`/`removenode`/...).
 // Builtin Command Hash Table Functions                                      // c:150
+/// `createbuiltintable` — see implementation.
 pub fn createbuiltintable() -> &'static HashMap<String, &'static builtin> {
     // c:150
     builtintab.get_or_init(|| {
@@ -1485,6 +1486,7 @@ pub fn set_pwd_env() {
 /// return 0;
 /// ```
 // cd, chdir, pushd, popd                                                   // c:796
+/// `bin_cd` — see implementation.
 pub fn bin_cd(
     nam: &str,
     argv: &[String], // c:840
@@ -9480,6 +9482,7 @@ pub fn bin_notavail(
 // column points at the canonical Rust port that the dispatcher in
 // `Executor::register_builtins` (`src/ported/vm_helper`) wires up.
 // ---------------------------------------------------------------------------
+/// `BUILTINS` static.
 
 pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::new(|| {
     vec![
@@ -11115,12 +11118,15 @@ pub static BUILTINS_DISABLED: std::sync::LazyLock<
 // methods (Src/zsh.h:281+ HashTable GSU pointers).
 
 // `matchednodes` global from Src/builtin.c:4550.
+/// `MATCHEDNODES` static.
 pub static MATCHEDNODES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 // `stopmsg` global from Src/jobs.c — non-zero when checkjobs() printed.
+/// `STOPMSG` static.
 pub static STOPMSG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 // `sfcontext` global from Src/exec.c:239 — current shell-function
 // dispatch context (SFC_NONE / SFC_BUILTIN / SFC_FUNC / SFC_SUBST...).
+/// `SFCONTEXT` static.
 pub static SFCONTEXT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:exec.c:239
                                                                                            // `maxjob` / `thisjob` globals from Src/jobs.c:62/63 — canonical
                                                                                            // storage lives in jobs.rs (`OnceLock<Mutex<i32>>`). The previous
@@ -11133,11 +11139,15 @@ pub static SFCONTEXT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI3
                                                                                            // lives in src/ported/jobs.rs's JobTable; this mirror is updated by
                                                                                            // the spawn/wait paths that already touch STOPMSG. Empty → no jobs,
                                                                                            // matching the post-init state of `jobtab[]`.
+/// `JOBSTATS` static.
 pub static JOBSTATS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 
 // File-static globals for [_]realexit/zexit — c:5945+, init.c, signals.c.
+/// `SHELL_EXITING` static.
 pub static SHELL_EXITING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// `EXIT_PENDING` static.
 pub static EXIT_PENDING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// `EXIT_VAL` static.
 pub static EXIT_VAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 /// Port of `mod_export volatile int exit_level;` from `Src/builtin.c:5796`.
 ///
@@ -11174,11 +11184,14 @@ pub static EXIT_LEVEL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI
 // forklevel` is FALSE at subshell-top precisely so the fork can
 // exit the child via realexit. Without fork, we need this extra
 // gate.
+/// `SUBSHELL_DEPTH` static.
 pub static SUBSHELL_DEPTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// `LASTVAL` static.
 pub static LASTVAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 // `tok` for the test builtin — Src/builtin.c:7000 ranges. The full enum
 // lives in src/ported/lex.rs; we mirror the few values testlex() touches.
+/// `TEST_TOK` static.
 pub static TEST_TOK: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 const TEST_LEXERR: i32 = -1; // c:7209
 const TEST_NULLTOK: i32 = 0;
@@ -11193,25 +11206,33 @@ const TEST_STRING: i32 = 9; // c:7227
 
 // `testargs` / `curtestarg` / `tokstr` globals from Src/builtin.c — the
 // argv-style cursor that bin_test seeds and testlex() advances.
+/// `TESTARGS` static.
 pub static TESTARGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// `TESTARGS_IDX` static.
 pub static TESTARGS_IDX: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// `TOKSTR` static.
 pub static TOKSTR: Mutex<String> = Mutex::new(String::new());
 
 // int doprintdir = 0; set in exec.c (for autocd, cdpath, etc.)            // c:722
 // `doprintdir` from Src/exec.c — set when an autocd'd command should
 // echo the new directory before executing.
+/// `DOPRINTDIR` static.
 pub static DOPRINTDIR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 // set if we are resolving links to their true paths                       // c:829
 // `chasinglinks` from Src/exec.c — non-zero when CHASELINKS / -P
 // resolution is active.
+/// `CHASINGLINKS` static.
 pub static CHASINGLINKS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 // `pparams` global from Src/init.c — positional parameters $1..$N.
+/// `PPARAMS` static.
 pub static PPARAMS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 // `zoptind` (Src/builtin.c:5667) and `optcind` (c:5670) — the two
 // pieces of getopts state. zoptind backs the user-visible $OPTIND.
+/// `ZOPTIND` static.
 pub static ZOPTIND: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1);
+/// `OPTCIND` static.
 pub static OPTCIND: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 // `ttyfrozen` global lives canonically in jobs.rs (`OnceLock<Mutex<i32>>`
@@ -11228,9 +11249,13 @@ pub static INEVAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::
 // `loops` / `breaks` / `contflag` / `retflag` / `locallevel` / `sourcelevel`
 // globals from Src/loop.c + Src/init.c — control-flow state consulted by
 // the bin_break dispatcher.
+/// `LOOPS` static.
 pub static LOOPS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// `BREAKS` static.
 pub static BREAKS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// `CONTFLAG` static.
 pub static CONTFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// `RETFLAG` static.
 pub static RETFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 // Same single-storage rationale as locallevel_param above — C zsh has
 // only ONE `int sourcelevel;` global (Src/init.c:60). The canonical
@@ -11267,6 +11292,7 @@ pub static RETFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32:
 // `execbuiltin`'s c:506 `(*handlerfunc)(...)` dispatch was unreachable.
 // Now the descriptor carries the actual port-side `HandlerFunc` so
 // `execbuiltin` can parse flags and call through to the real builtin.
+/// `BUILTIN` — see implementation.
 #[allow(non_snake_case)]
 pub fn BUILTIN(
     name: &str,
@@ -11895,6 +11921,7 @@ fn pat_enables(name: &str, argv: &[String], on: bool) -> i32 {
 // here so the body of this file reads in C source order without
 // the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/// `traps_table` — see implementation.
 
 pub fn traps_table() -> &'static Mutex<HashMap<String, String>> {
     TRAPS_INNER.get_or_init(|| Mutex::new(HashMap::new()))

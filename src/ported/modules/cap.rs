@@ -31,12 +31,19 @@ mod ffi {
 
     #[link(name = "cap")]
     extern "C" {
+        /// `cap_get_proc` — see implementation.
         pub fn cap_get_proc() -> CapT;
+        /// `cap_set_proc` — see implementation.
         pub fn cap_set_proc(cap_p: CapT) -> c_int;
+        /// `cap_get_file` — see implementation.
         pub fn cap_get_file(path: *const c_char) -> CapT;
+        /// `cap_set_file` — see implementation.
         pub fn cap_set_file(path: *const c_char, cap_p: CapT) -> c_int;
+        /// `cap_from_text` — see implementation.
         pub fn cap_from_text(buf: *const c_char) -> CapT;
+        /// `cap_to_text` — see implementation.
         pub fn cap_to_text(caps: CapT, length: *mut ssize_t) -> *mut c_char;
+        /// `cap_free` — see implementation.
         pub fn cap_free(obj: *mut c_void) -> c_int;
     }
 }

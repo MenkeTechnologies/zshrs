@@ -27,7 +27,9 @@ use super::{paths::CachePaths, DaemonError, Result};
 /// Guard that holds the exclusive lock on the daemon.pid file.
 #[derive(Debug)]
 pub struct PidLock {
+    /// `file` field.
     file: File,
+    /// `path` field.
     path: PathBuf,
 }
 

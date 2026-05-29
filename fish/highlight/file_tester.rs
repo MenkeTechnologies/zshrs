@@ -27,35 +27,45 @@ use std::{
 };
 
 // This is used only internally to this file, and is exposed only for testing.
+/// `PathFlags` — see fields for layout.
 #[derive(Clone, Copy, Default)]
 pub struct PathFlags {
     // The path must be to a directory.
+    /// `require_dir` field.
     pub require_dir: bool,
     // Expand any leading tilde in the path.
+    /// `expand_tilde` field.
     pub expand_tilde: bool,
     // Normalize directories before resolving, as "cd".
+    /// `for_cd` field.
     pub for_cd: bool,
 }
 
 // When a file test is OK, we may also return whether this was a file.
 // This is used for underlining and is dependent on the particular file test.
+/// `IsFile` — see fields for layout.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct IsFile(pub bool);
+/// `IsErr` — see fields for layout.
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct IsErr;
 
 /// The result of a file test.
 pub type FileTestResult = Result<IsFile, IsErr>;
+/// `FileTester` — see fields for layout.
 
 pub struct FileTester<'s> {
     // The working directory, for resolving paths against.
+    /// `working_directory` field.
     working_directory: WString,
     // The operation context.
+    /// `ctx` field.
     ctx: &'s OperationContext<'s>,
 }
 
 impl<'s> FileTester<'s> {
+    /// `new` — see implementation.
     pub fn new(working_directory: WString, ctx: &'s OperationContext<'s>) -> Self {
         Self {
             working_directory,
@@ -102,6 +112,7 @@ impl<'s> FileTester<'s> {
     // Test if the string is a prefix of a valid path we could cd into, or is some other token
     // we recognize (primarily --help).
     // If is_prefix is true, we test if the string is a prefix of a valid path we could cd into.
+    /// `test_cd_path` — see implementation.
     pub fn test_cd_path(&self, token: &wstr, is_prefix: bool) -> FileTestResult {
         let mut param = token.to_owned();
         if !expand_one(&mut param, ExpandFlags::FAIL_ON_CMDSUBST, self.ctx, None) {
@@ -133,6 +144,7 @@ impl<'s> FileTester<'s> {
 
     // Test if a the given string is a valid redirection target, and if so, whether
     // it is a path to an existing file.
+    /// `test_redirection_target` — see implementation.
     pub fn test_redirection_target(&self, target: &wstr, mode: RedirectionMode) -> FileTestResult {
         // Skip targets exceeding PATH_MAX. See #7837.
         if target.len() > (PATH_MAX as usize) {
@@ -353,6 +365,7 @@ pub fn is_potential_path(
 
 // Given a string, return whether it prefixes a path that we could cd into. Return that path in
 // out_path. Expects path to be unescaped.
+/// `is_potential_cd_path` — see implementation.
 pub fn is_potential_cd_path(
     path: &wstr,
     at_cursor: bool,
@@ -414,6 +427,7 @@ fn fs_is_case_insensitive(
     case_sensitivity_cache.insert(path.to_owned(), icase);
     icase
 }
+/// `fs_is_case_insensitive` — see implementation.
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 pub fn fs_is_case_insensitive(

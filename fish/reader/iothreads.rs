@@ -29,6 +29,7 @@ pub(super) struct Debouncers {
 }
 
 impl Debouncers {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         let pool = ThreadPool::new(1, IO_MAX_THREADS);
         // These timeouts control how long until a thread is considered abandoned and

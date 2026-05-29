@@ -38,21 +38,30 @@ use std::ops::Range;
 use std::sync::atomic::AtomicU32;
 use std::sync::Mutex;
 use std::time::SystemTime;
+/// `CharOffset` — see variants.
 
 #[derive(Copy, Clone, Default)]
 pub enum CharOffset {
+    /// `None` variant.
     #[default]
     None,
+    /// `Cmd` variant.
     Cmd(usize),
+    /// `Pointer` variant.
     Pointer(usize),
+    /// `Pager` variant.
     Pager(usize),
 }
+/// `HighlightedChar` — see fields for layout.
 
 #[derive(Clone, Default)]
 pub struct HighlightedChar {
+    /// `highlight` field.
     highlight: HighlightSpec,
+    /// `character` field.
     character: char,
     // Logical offset within the command line.
+    /// `offset_in_cmdline` field.
     offset_in_cmdline: CharOffset,
 }
 
@@ -61,11 +70,14 @@ pub struct HighlightedChar {
 pub struct Line {
     /// A pair of a character, and the color with which to draw it.
     pub text: Vec<HighlightedChar>,
+    /// `is_soft_wrapped` field.
     pub is_soft_wrapped: bool,
+    /// `indentation` field.
     pub indentation: usize,
 }
 
 impl Line {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Default::default()
     }
@@ -141,13 +153,16 @@ impl Line {
 /// Where the cursor is in (x, y) coordinates.
 #[derive(Clone, Copy, Default)]
 pub struct Cursor {
+    /// `x` field.
     x: usize,
+    /// `y` field.
     y: usize,
 }
 
 /// A class representing screen contents.
 #[derive(Clone, Default)]
 pub struct ScreenData {
+    /// `line_datas` field.
     line_datas: Vec<Line>,
 
     /// The width of the screen once we have rendered.
@@ -162,18 +177,22 @@ pub struct ScreenData {
 }
 
 impl ScreenData {
+    /// `add_line` — see implementation.
     pub fn add_line(&mut self) -> &mut Line {
         self.line_datas.push(Line::new());
         self.line_datas.last_mut().unwrap()
     }
+    /// `clear_lines` — see implementation.
 
     pub fn clear_lines(&mut self) {
         self.line_datas.clear();
     }
+    /// `resize` — see implementation.
 
     pub fn resize(&mut self, size: usize) {
         self.line_datas.resize(size, Default::default());
     }
+    /// `create_line` — see implementation.
 
     pub fn create_line(&mut self, idx: usize) -> &mut Line {
         if idx >= self.line_datas.len() {
@@ -181,28 +200,34 @@ impl ScreenData {
         }
         self.line_mut(idx)
     }
+    /// `insert_line_at_index` — see implementation.
 
     pub fn insert_line_at_index(&mut self, idx: usize) -> &mut Line {
         assert!(idx <= self.line_datas.len());
         self.line_datas.insert(idx, Default::default());
         &mut self.line_datas[idx]
     }
+    /// `line` — see implementation.
 
     pub fn line(&self, idx: usize) -> &Line {
         &self.line_datas[idx]
     }
+    /// `line_mut` — see implementation.
 
     pub fn line_mut(&mut self, idx: usize) -> &mut Line {
         &mut self.line_datas[idx]
     }
+    /// `line_count` — see implementation.
 
     pub fn line_count(&self) -> usize {
         self.line_datas.len()
     }
+    /// `append_lines` — see implementation.
 
     pub fn append_lines(&mut self, d: &ScreenData) {
         self.line_datas.extend_from_slice(&d.line_datas);
     }
+    /// `is_empty` — see implementation.
 
     pub fn is_empty(&self) -> bool {
         self.line_datas.is_empty()
@@ -556,6 +581,7 @@ impl Screen {
 
         self.save_status();
     }
+    /// `push_to_scrollback` — see implementation.
 
     pub fn push_to_scrollback(&mut self) {
         let Some(lines_to_scroll) = self.viewport_y else {
@@ -574,6 +600,7 @@ impl Screen {
         out.write_command(CursorMove(CardinalDirection::Up, lines_to_scroll));
         self.set_position_in_viewport("scrollback-push", Some(0));
     }
+    /// `set_position_in_viewport` — see implementation.
 
     pub fn set_position_in_viewport(&mut self, whence: &str, viewport_y: Option<usize>) {
         flogf!(
@@ -584,6 +611,7 @@ impl Screen {
         );
         self.viewport_y = viewport_y;
     }
+    /// `autoscroll` — see implementation.
 
     pub fn autoscroll(&mut self, screen_height: usize) {
         let Some(viewport_y) = self.viewport_y else {
@@ -604,6 +632,7 @@ impl Screen {
             self.set_position_in_viewport("autoscroll", Some(remaining_vertical_space));
         }
     }
+    /// `command_line_y_given_cursor_y` — see implementation.
 
     pub fn command_line_y_given_cursor_y(&mut self, viewport_cursor_y: usize) -> usize {
         let prompt_y = viewport_cursor_y.checked_sub(self.actual.cursor.y);
@@ -618,6 +647,7 @@ impl Screen {
             0
         })
     }
+    /// `offset_in_cmdline_given_cursor` — see implementation.
 
     pub fn offset_in_cmdline_given_cursor(
         &mut self,
@@ -1368,13 +1398,16 @@ struct PromptCacheEntry {
 }
 
 // Maintain a mapping of escape sequences to their widths for fast lookup.
+/// `LayoutCache` — see fields for layout.
 #[derive(Default)]
 pub struct LayoutCache {
     // Cached escape sequences we've already detected in the prompt and similar strings, ordered
     // lexicographically.
+    /// `esc_cache` field.
     esc_cache: Vec<WString>,
     // LRU-list of prompts and their layouts.
     // Use a list so we can promote to the front on a cache hit.
+    /// `prompt_cache` field.
     prompt_cache: LinkedList<PromptCacheEntry>,
 }
 
@@ -1382,12 +1415,14 @@ pub struct LayoutCache {
 static LAYOUT_CACHE_SHARED: Mutex<LayoutCache> = Mutex::new(LayoutCache::new());
 
 impl LayoutCache {
+    /// `new` — see implementation.
     pub const fn new() -> Self {
         Self {
             esc_cache: vec![],
             prompt_cache: LinkedList::new(),
         }
     }
+    /// `PROMPT_CACHE_MAX_SIZE` constant.
 
     pub const PROMPT_CACHE_MAX_SIZE: usize = 12;
 
@@ -1499,6 +1534,7 @@ impl LayoutCache {
         });
         layout
     }
+    /// `clear` — see implementation.
 
     pub fn clear(&mut self) {
         self.esc_cache.clear();
@@ -2064,9 +2100,11 @@ fn rendered_character(c: char) -> char {
 fn wcwidth_rendered_min_0(c: char) -> usize {
     wcwidth_rendered(c).unwrap_or_default()
 }
+/// `wcwidth_rendered` — see implementation.
 pub fn wcwidth_rendered(c: char) -> Option<usize> {
     fish_wcwidth(rendered_character(c))
 }
+/// `wcswidth_rendered` — see implementation.
 pub fn wcswidth_rendered(s: &wstr) -> usize {
     fish_wcswidth_canonicalizing(s, rendered_character).unwrap_or_default()
 }

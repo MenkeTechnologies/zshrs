@@ -91,6 +91,7 @@ fn key_arg(args: &Value) -> std::result::Result<String, ErrPayload> {
         .map(str::to_string)
         .ok_or_else(|| ErrPayload::new("bad_args", "missing `key`"))
 }
+/// `op_cache_put` — see implementation.
 
 pub async fn op_cache_put(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let ns = ns_arg(&args)?;
@@ -128,6 +129,7 @@ pub async fn op_cache_put(state: &Arc<DaemonState>, args: Value) -> OpResult {
         "expires_at": expires_at,
     }))
 }
+/// `op_cache_get` — see implementation.
 
 pub async fn op_cache_get(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let ns = ns_arg(&args)?;
@@ -177,6 +179,7 @@ pub async fn op_cache_get(state: &Arc<DaemonState>, args: Value) -> OpResult {
         "expires_at": row.3,
     }))
 }
+/// `op_cache_del` — see implementation.
 
 pub async fn op_cache_del(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let ns = ns_arg(&args)?;
@@ -187,6 +190,7 @@ pub async fn op_cache_del(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .map_err(|e| ErrPayload::new("cache_del", e.to_string()))?;
     Ok(json!({ "ns": ns, "key": key, "deleted": n > 0 }))
 }
+/// `op_cache_list` — see implementation.
 
 pub async fn op_cache_list(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let ns = ns_arg(&args)?;
@@ -214,6 +218,7 @@ pub async fn op_cache_list(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let count = keys.len();
     Ok(json!({ "ns": ns, "keys": keys, "count": count }))
 }
+/// `op_cache_stats` — see implementation.
 
 pub async fn op_cache_stats(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let now = now_ns();

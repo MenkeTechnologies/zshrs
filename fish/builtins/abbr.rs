@@ -454,6 +454,7 @@ fn abbr_erase(opts: &Options, parser: &Parser) -> BuiltinResult {
         result
     })
 }
+/// `abbr` — see implementation.
 
 pub fn abbr(parser: &Parser, streams: &mut IoStreams, argv: &mut [&wstr]) -> BuiltinResult {
     let mut argv_read = Vec::with_capacity(argv.len());

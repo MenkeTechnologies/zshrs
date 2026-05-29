@@ -453,9 +453,11 @@ pub fn loadparamnode(
 #[allow(non_camel_case_types)]
 #[derive(Clone, Debug)]
 pub struct special_paramdef {
+    /// `name` field.
     pub name: &'static str,
     pub pm_type: u32,  // PM_INTEGER | PM_SCALAR | PM_ARRAY
     pub pm_flags: u32, // PM_READONLY_SPECIAL, PM_DONTIMPORT, etc.
+    /// `tied_name` field.
     pub tied_name: Option<&'static str>,
 }
 
@@ -2311,6 +2313,7 @@ pub fn copyparam(
 
 /// Check if string is valid identifier (from params.c isident)
 // Return 1 if the string s is a valid identifier, else return 0.         // c:1288
+/// `isident` — see implementation.
 pub fn isident(s: &str) -> bool {
     // c:1288
     if s.is_empty() {
@@ -4579,6 +4582,7 @@ pub fn check_warn_pm(pm: &param, pmtype: &str, created: i32, may_warn_about_nest
 // from the pprog/pattry arms at c:1581-1660 (hash) / c:1672-1719
 // (array). Naming kept lowercase to mark this as a port-shape helper
 // rather than a C-mirrored struct.
+/// `getarg_out` — see variants.
 #[allow(non_camel_case_types)]
 pub enum getarg_out<'a> {
     Flags { flags: &'a str, rest: &'a str },
@@ -6732,6 +6736,7 @@ pub fn uidgetfn() -> i64 {
 
 // `termflags` from Src/init.c — bitmap of terminal-state flags. Set
 // from term_reinit_from_pm and consulted by ZLE before first paint.
+/// `TERMFLAGS` static.
 pub static TERMFLAGS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 // `TERM_UNKNOWN` re-exported from canonical zsh_h.rs (port of
 // `Src/zsh.h:1986`). The local declaration here had the value
@@ -9181,6 +9186,7 @@ pub fn setscope_base(pm: &mut param, base: i32) {
 /// One Vec<String> (param names) per scope index. Per-evaluator (bucket 1)
 /// because each worker thread has its own nameref-resolution context.
 thread_local! {
+    /// `SCOPEREFS` static.
     pub static SCOPEREFS: std::cell::RefCell<Vec<Vec<String>>>
         = const { std::cell::RefCell::new(Vec::new()) };
 }
@@ -9507,9 +9513,13 @@ fn cached_username_lock() -> &'static Mutex<String> {
 //   c:638  static char *scanstr;
 //   c:639  static char **paramvals;
 //   c:640  static Param foundparam;   <-- exposed earlier as FOUNDPARAM
+/// `NUMPARAMVALS` static.
 pub static NUMPARAMVALS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0); // c:626
+/// `SCANPROG` static.
 pub static SCANPROG: OnceLock<Mutex<Option<String>>> = OnceLock::new(); // c:637
+/// `SCANSTR` static.
 pub static SCANSTR: OnceLock<Mutex<Option<String>>> = OnceLock::new(); // c:638
+/// `PARAMVALS` static.
 pub static PARAMVALS: OnceLock<Mutex<Vec<String>>> = OnceLock::new(); // c:639
 
 /// Resolve the current user's name. Mirrors C's `get_username()`
@@ -9541,6 +9551,7 @@ fn pipestats_lock() -> &'static Mutex<Vec<i32>> {
     static PIPESTATS_VAR: OnceLock<Mutex<Vec<i32>>> = OnceLock::new();
     PIPESTATS_VAR.get_or_init(|| Mutex::new(Vec::new()))
 }
+/// `shtimer_lock` — see implementation.
 
 pub fn shtimer_lock() -> &'static Mutex<Duration> {
     static SHTIMER_VAR: OnceLock<Mutex<Duration>> = OnceLock::new();

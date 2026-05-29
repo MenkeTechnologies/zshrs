@@ -9,16 +9,19 @@ use crate::parse_constants::SourceRange;
 use pcre2::utf32::Regex;
 
 static ABBRS: LazyLock<Mutex<AbbreviationSet>> = LazyLock::new(|| Mutex::new(Default::default()));
+/// `with_abbrs` — see implementation.
 
 pub fn with_abbrs<R>(cb: impl FnOnce(&AbbreviationSet) -> R) -> R {
     let abbrs_g = ABBRS.lock().unwrap();
     cb(&abbrs_g)
 }
+/// `with_abbrs_mut` — see implementation.
 
 pub fn with_abbrs_mut<R>(cb: impl FnOnce(&mut AbbreviationSet) -> R) -> R {
     let mut abbrs_g = ABBRS.lock().unwrap();
     cb(&mut abbrs_g)
 }
+/// `abbrs_get_set` — see implementation.
 
 pub fn abbrs_get_set() -> MutexGuard<'static, AbbreviationSet> {
     ABBRS.lock().unwrap()
@@ -27,14 +30,18 @@ pub fn abbrs_get_set() -> MutexGuard<'static, AbbreviationSet> {
 /// Controls where in the command line abbreviations may expand.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Position {
+    /// `Command` variant.
     Command,  // expand in command position
+    /// `Anywhere` variant.
     Anywhere, // expand in any token
 }
+/// `Abbreviation` — see fields for layout.
 
 #[derive(Debug)]
 pub struct Abbreviation {
     // Abbreviation name. This is unique within the abbreviation set.
     // This is used as the token to match unless we have a regex.
+    /// `name` field.
     pub name: WString,
 
     /// The key (recognized token) - either a literal or a regex pattern.
@@ -68,6 +75,7 @@ pub struct Abbreviation {
 impl Abbreviation {
     // Construct from a name, a key which matches a token, a replacement token, a position, and
     // whether we are derived from a universal variable.
+    /// `new` — see implementation.
     pub fn new(
         name: WString,
         key: WString,
@@ -89,11 +97,13 @@ impl Abbreviation {
     }
 
     // Return true if this is a regex abbreviation.
+    /// `is_regex` — see implementation.
     pub fn is_regex(&self) -> bool {
         self.regex.is_some()
     }
 
     // Return true if we match a token at a given position.
+    /// `matches` — see implementation.
     pub fn matches(&self, token: &wstr, position: Position, command: &wstr) -> bool {
         if !self.matches_position(position) {
             return false;
@@ -129,6 +139,7 @@ pub struct Replacer {
     /// If set, the cursor should be moved to the first instance of this string in the expansion.
     pub set_cursor_marker: Option<WString>,
 }
+/// `Replacement` — see fields for layout.
 
 pub struct Replacement {
     /// The original range of the token in the command line.
@@ -166,6 +177,7 @@ impl Replacement {
         }
     }
 }
+/// `AbbreviationSet` — see fields for layout.
 
 #[derive(Default)]
 pub struct AbbreviationSet {

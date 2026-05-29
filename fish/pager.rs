@@ -20,43 +20,65 @@ use std::{
 /// Represents rendering from the pager.
 #[derive(Default)]
 pub struct PageRendering {
+    /// `term_width` field.
     pub term_width: Option<usize>,
+    /// `term_height` field.
     pub term_height: Option<usize>,
+    /// `rows` field.
     pub rows: usize,
+    /// `cols` field.
     pub cols: usize,
+    /// `row_start` field.
     pub row_start: usize,
+    /// `row_end` field.
     pub row_end: usize,
+    /// `selected_completion_idx` field.
     pub selected_completion_idx: Option<usize>,
+    /// `screen_data` field.
     pub screen_data: ScreenData,
+    /// `remaining_to_disclose` field.
 
     pub remaining_to_disclose: usize,
+    /// `search_field_shown` field.
 
     pub search_field_shown: bool,
+    /// `search_field_line` field.
     pub search_field_line: EditableLine,
 }
 
 impl PageRendering {
     // Returns a rendering with invalid data, useful to indicate "no rendering".
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Default::default()
     }
 }
+/// `SelectionMotion` — see variants.
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SelectionMotion {
     // Visual directions.
+    /// `North` variant.
     North,
+    /// `East` variant.
     East,
+    /// `South` variant.
     South,
+    /// `West` variant.
     West,
+    /// `PageNorth` variant.
     PageNorth,
+    /// `PageSouth` variant.
     PageSouth,
 
     // Logical directions.
+    /// `Next` variant.
     Next,
+    /// `Prev` variant.
     Prev,
 
     // Special value that means deselect.
+    /// `Deselect` variant.
     Deselect,
 }
 
@@ -85,38 +107,52 @@ localizable_consts!(
 );
 
 const PAGER_SELECTION_NONE: usize = usize::MAX;
+/// `Pager` — see fields for layout.
 
 #[derive(Default)]
 pub struct Pager {
+    /// `available_term_width` field.
     pub available_term_width: usize,
+    /// `available_term_height` field.
     pub available_term_height: usize,
+    /// `selected_completion_idx` field.
 
     pub selected_completion_idx: Option<usize>,
+    /// `suggested_row_start` field.
     pub suggested_row_start: usize,
 
     // Fully disclosed means that we show all completions.
+    /// `fully_disclosed` field.
     pub fully_disclosed: bool,
 
     // Whether we show the search field.
+    /// `search_field_shown` field.
     pub search_field_shown: bool,
 
     // The filtered list of completion infos.
+    /// `completion_infos` field.
     completion_infos: Vec<PagerComp>,
 
     // The unfiltered list. Note there's a lot of duplication here.
+    /// `unfiltered_completion_infos` field.
     unfiltered_completion_infos: Vec<PagerComp>,
 
     // This tracks if the completion list has been changed since we last rendered. If yes,
     // then we definitely need to re-render.
+    /// `have_unrendered_completions` field.
     have_unrendered_completions: bool,
+    /// `prefix` field.
 
     prefix: Cow<'static, wstr>,
+    /// `highlight_prefix` field.
     highlight_prefix: bool,
 
     // The text of the search field.
+    /// `search_field_line` field.
     pub search_field_line: EditableLine,
 
     // Extra text to display at the bottom of the pager.
+    /// `extra_progress_text` field.
     pub extra_progress_text: WString,
 }
 
@@ -129,6 +165,7 @@ struct Column {
 impl Pager {
     // Returns the index of the completion that should draw selected, using the given number of
     // columns.
+    /// `visual_selected_completion_index` — see implementation.
     pub fn visual_selected_completion_index(&self, rows: usize, cols: usize) -> Option<usize> {
         // No completions -> no selection.
         if self.completion_infos.is_empty() {
@@ -661,6 +698,7 @@ impl Pager {
     }
 
     // Sets the set of completions.
+    /// `set_completions` — see implementation.
     pub fn set_completions(&mut self, raw_completions: &[Completion], enable_refilter: bool) {
         self.selected_completion_idx = None;
         // Get completion infos out of it.
@@ -684,12 +722,14 @@ impl Pager {
     }
 
     // Sets the prefix.
+    /// `set_prefix` — see implementation.
     pub fn set_prefix(&mut self, prefix: Cow<'static, wstr>, highlight: bool /* = true */) {
         self.prefix = prefix;
         self.highlight_prefix = highlight;
     }
 
     // Sets the terminal size.
+    /// `set_term_size` — see implementation.
     pub fn set_term_size(&mut self, ts: &Termsize) {
         self.available_term_width = ts.width();
         self.available_term_height = ts.height();
@@ -697,6 +737,7 @@ impl Pager {
 
     // Changes the selected completion in the given direction according to the layout of the given
     // rendering. Returns true if the selection changed.
+    /// `select_next_completion_in_direction` — see implementation.
     pub fn select_next_completion_in_direction(
         &mut self,
         direction: SelectionMotion,
@@ -892,14 +933,17 @@ impl Pager {
     }
 
     // Returns the currently selected completion for the given rendering.
+    /// `selected_completion` — see implementation.
     pub fn selected_completion(&'_ self, rendering: &PageRendering) -> Option<&'_ Completion> {
         self.visual_selected_completion_index(rendering.rows, rendering.cols)
             .map(|idx| &self.completion_infos[idx].representative)
     }
+    /// `selected_completion_index` — see implementation.
 
     pub fn selected_completion_index(&self) -> Option<usize> {
         self.selected_completion_idx
     }
+    /// `set_selected_completion_index` — see implementation.
     pub fn set_selected_completion_index(&mut self, mut new_index: Option<usize>) {
         // Current users are off by one at most.
         assert!(new_index.is_none_or(|new_index| new_index <= self.completion_infos.len()));
@@ -913,6 +957,7 @@ impl Pager {
     }
 
     // Indicates the row and column for the given rendering. Returns -1 if no selection.
+    /// `get_selected_row` — see implementation.
     pub fn get_selected_row(&self, rendering: &PageRendering) -> Option<usize> {
         if rendering.rows == 0 {
             return None;
@@ -922,6 +967,7 @@ impl Pager {
             .selected_completion_idx
             .map(|idx| idx % rendering.rows)
     }
+    /// `get_selected_column` — see implementation.
     pub fn get_selected_column(&self, rendering: &PageRendering) -> Option<usize> {
         if rendering.rows == 0 {
             return None;
@@ -931,6 +977,7 @@ impl Pager {
             .map(|idx| idx / rendering.rows)
     }
     // Indicates the row assuming we render this many rows. Returns -1 if no selection.
+    /// `get_selected_row_given_rows` — see implementation.
     pub fn get_selected_row_given_rows(&self, rows: usize) -> Option<usize> {
         if rows == 0 {
             return None;
@@ -940,6 +987,7 @@ impl Pager {
     }
 
     // Produces a rendering of the completions, at the given term size.
+    /// `render` — see implementation.
     pub fn render(&self) -> PageRendering {
         // Try to print the completions. Start by trying to print the list in PAGER_MAX_COLS columns,
         // if the completions won't fit, reduce the number of columns by one. Printing a single column
@@ -986,6 +1034,7 @@ impl Pager {
     }
 
     // Return true if the given rendering needs to be updated.
+    /// `rendering_needs_update` — see implementation.
     pub fn rendering_needs_update(&self, rendering: &PageRendering) -> bool {
         if self.have_unrendered_completions {
             return true;
@@ -1007,6 +1056,7 @@ impl Pager {
     }
 
     // Updates the rendering.
+    /// `update_rendering` — see implementation.
     pub fn update_rendering(&mut self, rendering: &mut PageRendering) {
         if self.rendering_needs_update(rendering) {
             *rendering = self.render();
@@ -1015,11 +1065,13 @@ impl Pager {
     }
 
     // Indicates if there are no completions, and therefore nothing to render.
+    /// `is_empty` — see implementation.
     pub fn is_empty(&self) -> bool {
         self.unfiltered_completion_infos.is_empty()
     }
 
     // Clears all completions and the prefix.
+    /// `clear` — see implementation.
     pub fn clear(&mut self) {
         self.unfiltered_completion_infos.clear();
         self.completion_infos.clear();
@@ -1033,6 +1085,7 @@ impl Pager {
     }
 
     // Updates the completions list per the filter.
+    /// `refilter_completions` — see implementation.
     pub fn refilter_completions(&mut self) {
         self.completion_infos.clear();
         for comp in &self.unfiltered_completion_infos {
@@ -1043,11 +1096,13 @@ impl Pager {
     }
 
     // Sets whether the search field is shown.
+    /// `set_search_field_shown` — see implementation.
     pub fn set_search_field_shown(&mut self, flag: bool) {
         self.search_field_shown = flag;
     }
 
     // Gets whether the search field shown.
+    /// `is_search_field_shown` — see implementation.
     pub fn is_search_field_shown(&self) -> bool {
         self.search_field_shown
     }
@@ -1055,16 +1110,19 @@ impl Pager {
     // Indicates if we are navigating our contents.
     // It's possible we have no visual selection but are still navigating the contents, e.g. every
     // completion is filtered.
+    /// `is_navigating_contents` — see implementation.
     pub fn is_navigating_contents(&self) -> bool {
         self.selected_completion_idx.is_some()
     }
 
     // Become fully disclosed.
+    /// `set_fully_disclosed` — see implementation.
     pub fn set_fully_disclosed(&mut self) {
         self.fully_disclosed = true;
     }
 
     // Position of the cursor.
+    /// `cursor_position` — see implementation.
     pub fn cursor_position(&self) -> usize {
         let mut result = decoded_width(&sprintf!(
             "%s %s",
@@ -1101,12 +1159,14 @@ impl PagerComp {
     // completion  (description)
     // Two spaces separating, plus parens, yields 4 total extra space
     // but only if we have a description of course
+    /// `description_punctuated_width` — see implementation.
     pub fn description_punctuated_width(&self) -> usize {
         self.desc_width + if self.desc_width != 0 { 4 } else { 0 }
     }
 
     // Returns the preferred width, containing the sum of the
     // width of the completion, separator, description
+    /// `preferred_width` — see implementation.
     pub fn preferred_width(&self) -> usize {
         self.comp_width + self.description_punctuated_width()
     }

@@ -29,26 +29,41 @@ use serde_json::{json, Value};
 use super::ipc::{ErrPayload, Frame};
 use super::ops::OpResult;
 use super::state::DaemonState;
+/// `AskRequest` — see fields for layout.
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AskRequest {
+    /// `request_id` field.
     pub request_id: String,
+    /// `from_shell` field.
     pub from_shell: u64,
+    /// `target_shell` field.
     pub target_shell: u64,
+    /// `kind` field.
     pub kind: AskKind,
+    /// `payload` field.
     pub payload: Value,
+    /// `urgency` field.
     pub urgency: String,
+    /// `created_at_ns` field.
     pub created_at_ns: i64,
+    /// `timeout_ms` field.
     pub timeout_ms: u64,
 }
+/// `AskKind` — see variants.
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AskKind {
+    /// `Picker` variant.
     Picker,
+    /// `Input` variant.
     Input,
+    /// `Dialog` variant.
     Dialog,
+    /// `Menu` variant.
     Menu,
+    /// `Progress` variant.
     Progress,
 }
 
@@ -83,11 +98,14 @@ impl AskKind {
 /// Per-target inbox of pending UI requests.
 #[derive(Default)]
 pub struct AskInbox {
+    /// `queues` field.
     queues: Mutex<std::collections::HashMap<u64, VecDeque<AskRequest>>>,
+    /// `next_request_id` field.
     next_request_id: Mutex<u64>,
 }
 
 impl AskInbox {
+    /// `new` — see implementation.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
@@ -97,16 +115,19 @@ impl AskInbox {
         *n += 1;
         format!("ask-{}", *n)
     }
+    /// `push` — see implementation.
 
     pub fn push(&self, req: AskRequest) {
         let mut g = self.queues.lock();
         g.entry(req.target_shell).or_default().push_back(req);
     }
+    /// `pending_count` — see implementation.
 
     pub fn pending_count(&self, shell_id: u64) -> usize {
         let g = self.queues.lock();
         g.get(&shell_id).map(|q| q.len()).unwrap_or(0)
     }
+    /// `pending` — see implementation.
 
     pub fn pending(&self, shell_id: u64) -> Vec<AskRequest> {
         let g = self.queues.lock();
@@ -128,6 +149,7 @@ impl AskInbox {
         let idx = critical_idx.unwrap_or(0);
         q.remove(idx)
     }
+    /// `take_specific` — see implementation.
 
     pub fn take_specific(&self, shell_id: u64, req_id: &str) -> Option<AskRequest> {
         let mut g = self.queues.lock();
@@ -135,6 +157,7 @@ impl AskInbox {
         let idx = q.iter().position(|r| r.request_id == req_id)?;
         q.remove(idx)
     }
+    /// `dismiss` — see implementation.
 
     pub fn dismiss(&self, shell_id: u64, req_id: &str) -> bool {
         let mut g = self.queues.lock();
@@ -148,6 +171,7 @@ impl AskInbox {
             false
         }
     }
+    /// `clear` — see implementation.
 
     pub fn clear(&self, shell_id: u64) -> usize {
         let mut g = self.queues.lock();
@@ -192,6 +216,7 @@ impl AskInbox {
 }
 
 // ---- IPC op handlers ----
+/// `op_ask_ask` — see implementation.
 
 pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     let kind_s = args
@@ -315,6 +340,7 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
     }
     Ok(resp)
 }
+/// `op_ask_pending` — see implementation.
 
 pub async fn op_ask_pending(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     let target_shell = match args.get("shell_id").and_then(Value::as_u64) {
@@ -335,6 +361,7 @@ pub async fn op_ask_pending(state: &Arc<DaemonState>, client_id: u64, args: Valu
         })).collect::<Vec<_>>(),
     }))
 }
+/// `op_ask_take` — see implementation.
 
 pub async fn op_ask_take(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     let req = if let Some(req_id) = args.get("request_id").and_then(Value::as_str) {
@@ -357,6 +384,7 @@ pub async fn op_ask_take(state: &Arc<DaemonState>, client_id: u64, args: Value) 
         })),
     }
 }
+/// `op_ask_dismiss` — see implementation.
 
 pub async fn op_ask_dismiss(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     if args.get("all").and_then(Value::as_bool).unwrap_or(false) {
@@ -370,6 +398,7 @@ pub async fn op_ask_dismiss(state: &Arc<DaemonState>, client_id: u64, args: Valu
     let removed = state.ask_inbox.dismiss(client_id, req_id);
     Ok(json!({ "dismissed": if removed { 1 } else { 0 } }))
 }
+/// `op_ask_response` — see implementation.
 
 pub async fn op_ask_response(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // The user picked / declined a UI request. Route the response back to the

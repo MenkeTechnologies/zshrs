@@ -20,16 +20,25 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     Arc, Mutex,
 };
+/// `EventType` — see variants.
 
 pub enum EventType {
+    /// `Any` variant.
     Any,
+    /// `Signal` variant.
     Signal,
+    /// `Variable` variant.
     Variable,
+    /// `ProcessExit` variant.
     ProcessExit,
+    /// `JobExit` variant.
     JobExit,
+    /// `CallerExit` variant.
     CallerExit,
+    /// `Generic` variant.
     Generic,
 }
+/// `EventDescription` — see variants.
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EventDescription {
@@ -122,6 +131,7 @@ impl From<&EventDescription> for EventType {
         }
     }
 }
+/// `EventHandler` — see fields for layout.
 
 #[derive(Debug)]
 pub struct EventHandler {
@@ -137,6 +147,7 @@ pub struct EventHandler {
 }
 
 impl EventHandler {
+    /// `new` — see implementation.
     pub fn new(desc: EventDescription, name: Option<WString>) -> Self {
         Self {
             desc,
@@ -199,20 +210,25 @@ impl EventHandler {
     }
 }
 type EventHandlerList = Vec<Arc<EventHandler>>;
+/// `Event` — see fields for layout.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
+    /// `desc` field.
     desc: EventDescription,
+    /// `arguments` field.
     arguments: Vec<WString>,
 }
 
 impl Event {
+    /// `generic` — see implementation.
     pub fn generic(desc: WString) -> Self {
         Self {
             desc: EventDescription::Generic { param: desc },
             arguments: vec![],
         }
     }
+    /// `variable_erase` — see implementation.
 
     pub fn variable_erase(name: WString) -> Self {
         Self {
@@ -220,6 +236,7 @@ impl Event {
             arguments: vec!["VARIABLE".into(), "ERASE".into(), name],
         }
     }
+    /// `variable_set` — see implementation.
 
     pub fn variable_set(name: WString) -> Self {
         Self {
@@ -227,6 +244,7 @@ impl Event {
             arguments: vec!["VARIABLE".into(), "SET".into(), name],
         }
     }
+    /// `process_exit` — see implementation.
 
     pub fn process_exit(pid: Pid, status: i32) -> Self {
         Self {
@@ -238,6 +256,7 @@ impl Event {
             ],
         }
     }
+    /// `job_exit` — see implementation.
 
     pub fn job_exit(pgid: Pid, jid: u64) -> Self {
         Self {
@@ -252,6 +271,7 @@ impl Event {
             ],
         }
     }
+    /// `caller_exit` — see implementation.
 
     pub fn caller_exit(internal_job_id: u64, job_id: MaybeJobId) -> Self {
         Self {
@@ -377,6 +397,7 @@ pub fn is_signal_observed(sig: libc::c_int) -> bool {
         .get(usize::try_from(sig).unwrap())
         .is_some_and(|s| s.load(Ordering::Relaxed) > 0)
 }
+/// `get_desc` — see implementation.
 
 pub fn get_desc(parser: &Parser, evt: &Event) -> WString {
     let s = match &evt.desc {

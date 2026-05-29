@@ -720,6 +720,7 @@ mod test_expressions {
                 _ => self.parse_combining_expression(start, end),
             }
         }
+        /// `parse_args` — see implementation.
 
         pub fn parse_args(args: &[WString]) -> Result<Box<dyn Expression>, error::Error<'_>> {
             let mut parser = TestParser {

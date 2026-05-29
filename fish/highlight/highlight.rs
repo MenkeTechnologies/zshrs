@@ -39,9 +39,11 @@ use strum_macros::Display;
 use super::file_tester::IsFile;
 
 impl HighlightSpec {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Self::default()
     }
+    /// `with_fg_bg` — see implementation.
     pub fn with_fg_bg(fg: HighlightRole, bg: HighlightRole) -> Self {
         Self {
             foreground: fg,
@@ -49,12 +51,15 @@ impl HighlightSpec {
             ..Default::default()
         }
     }
+    /// `with_fg` — see implementation.
     pub fn with_fg(fg: HighlightRole) -> Self {
         Self::with_fg_bg(fg, HighlightRole::normal)
     }
+    /// `with_bg` — see implementation.
     pub fn with_bg(bg: HighlightRole) -> Self {
         Self::with_fg_bg(HighlightRole::normal, bg)
     }
+    /// `with_both` — see implementation.
     pub fn with_both(role: HighlightRole) -> Self {
         Self::with_fg_bg(role, role)
     }
@@ -106,6 +111,7 @@ pub fn highlight_shell(
     let mut highlighter = Highlighter::new(buff, cursor, ctx, working_directory, io_ok);
     *color = highlighter.highlight();
 }
+/// `highlight_and_colorize` — see implementation.
 
 pub fn highlight_and_colorize(
     text: &wstr,
@@ -128,6 +134,7 @@ pub fn highlight_and_colorize(
 /// one screen redraw.
 #[derive(Default)]
 pub struct HighlightColorResolver {
+    /// `cache` field.
     cache: HashMap<HighlightSpec, TextFace>,
 }
 
@@ -135,6 +142,7 @@ pub struct HighlightColorResolver {
 /// It maintains a cache with no invalidation mechanism. The lifetime of these should typically be
 /// one screen redraw.
 impl HighlightColorResolver {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Default::default()
     }
@@ -332,6 +340,7 @@ fn autosuggest_parse_command(
 
     None
 }
+/// `is_veritable_cd` — see implementation.
 
 pub fn is_veritable_cd(expanded_command: &wstr) -> bool {
     expanded_command == L!("cd") && complete_wrap_map().get(L!("cd")).is_none()
@@ -682,6 +691,7 @@ fn color_string_internal(buffstr: &wstr, base_color: HighlightSpec, colors: &mut
         colors[unclosed_quote_offset.unwrap()] = HighlightSpec::with_fg(HighlightRole::error);
     }
 }
+/// `ColorArray` type alias.
 
 pub type ColorArray = Vec<HighlightSpec>;
 
@@ -708,6 +718,7 @@ struct Highlighter<'s> {
 }
 
 impl<'s> Highlighter<'s> {
+    /// `new` — see implementation.
     pub fn new(
         buff: &'s wstr,
         cursor: Option<usize>,
@@ -728,6 +739,7 @@ impl<'s> Highlighter<'s> {
             done: false,
         }
     }
+    /// `highlight` — see implementation.
 
     pub fn highlight(&mut self) -> ColorArray {
         assert!(!self.done);
@@ -1298,9 +1310,13 @@ pub enum HighlightRole {
 /// Simple value type describing how a character should be highlighted.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct HighlightSpec {
+    /// `foreground` field.
     pub foreground: HighlightRole,
+    /// `background` field.
     pub background: HighlightRole,
+    /// `valid_path` field.
     pub valid_path: bool,
+    /// `force_underline` field.
     pub force_underline: bool,
 }
 

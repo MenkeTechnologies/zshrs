@@ -568,6 +568,7 @@ impl BuiltinBind {
         Ok(SUCCESS)
     }
 }
+/// `bind` — see implementation.
 
 pub fn bind(parser: &Parser, streams: &mut IoStreams, args: &mut [&wstr]) -> BuiltinResult {
     BuiltinBind::new().bind(parser, streams, args)

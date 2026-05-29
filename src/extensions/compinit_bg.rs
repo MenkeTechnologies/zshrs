@@ -11,7 +11,9 @@ use std::{collections::HashMap, env, path::PathBuf};
 /// zshrs-original — Src/Modules/complete.c blocks on `compinit`
 /// inline. The Rust port runs it on the worker pool.
 pub struct CompInitBgResult {
+    /// `result` field.
     pub result: CompInitResult,
+    /// `cache` field.
     pub cache: CompsysCache,
 }
 

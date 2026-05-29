@@ -121,6 +121,7 @@ impl VarDispatchTable {
         let prev = self.table.insert(name, EnvCallback::Anon(callback));
         assert!(prev.is_none(), "Already observing {}", name);
     }
+    /// `dispatch` — see implementation.
 
     pub fn dispatch(&self, key: &wstr, vars: &EnvStack, suppress_repaint: bool) {
         match self.table.get(key) {
@@ -177,9 +178,12 @@ pub fn handle_emoji_width(vars: &EnvStack) {
         flog!(term_support, "default emoji width:", width);
     }
 }
+/// `VarChangeMilieu` — see fields for layout.
 
 pub struct VarChangeMilieu {
+    /// `is_repainting` field.
     pub is_repainting: bool,
+    /// `global_or_universal` field.
     pub global_or_universal: bool,
 }
 
@@ -346,6 +350,7 @@ fn handle_fish_trace(vars: &EnvStack) {
             .unwrap_or_default(),
     );
 }
+/// `env_dispatch_init` — see implementation.
 
 pub fn env_dispatch_init(vars: &EnvStack) {
     use once_cell::sync::Lazy;
@@ -448,6 +453,7 @@ fn update_fish_color_support(vars: &EnvStack) {
     color_support.set(ColorSupport::TERM_24BIT, supports_24bit);
     crate::terminal::set_color_support(color_support);
 }
+/// `MIDNIGHT_COMMANDER_SID` constant.
 
 pub const MIDNIGHT_COMMANDER_SID: &wstr = L!("MC_SID");
 
@@ -501,6 +507,7 @@ fn init_locale(vars: &EnvStack) {
     #[cfg(feature = "localize-messages")]
     crate::localization::update_from_env(vars);
 }
+/// `use_posix_spawn` — see implementation.
 
 pub fn use_posix_spawn() -> bool {
     USE_POSIX_SPAWN.load(Ordering::Relaxed)

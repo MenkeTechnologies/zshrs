@@ -4,16 +4,25 @@ use pcre2::utf32::{Regex, RegexBuilder};
 
 use super::*;
 use fish_feature_flags::{feature_test, FeatureFlag};
+/// `Replace` — see fields for layout.
 
 #[derive(Default)]
 pub struct Replace<'args> {
+    /// `all` field.
     all: bool,
+    /// `filter` field.
     filter: bool,
+    /// `ignore_case` field.
     ignore_case: bool,
+    /// `quiet` field.
     quiet: bool,
+    /// `regex` field.
     regex: bool,
+    /// `pattern` field.
     pattern: &'args wstr,
+    /// `replacement` field.
     replacement: &'args wstr,
+    /// `max_matches` field.
     max_matches: Option<NonZeroUsize>,
 }
 

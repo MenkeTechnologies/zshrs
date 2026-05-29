@@ -1009,6 +1009,7 @@ pub fn deleteparamdef(d: &mut paramdef) -> i32 {
 }
 
 impl modulestab {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         let mut table = Self::default();
         table.register_builtin_modules();
@@ -3847,9 +3848,13 @@ pub static MODULESTAB: Lazy<Mutex<modulestab>> = // c:zmodload.c:32
 /// Feature-type index passed to `features_()` (`Src/module.c:313+`).
 /// C ships bare ints; Rust adds names for readability.
 pub const FEATURE_TYPE_BUILTIN: i32 = 0;
+/// `FEATURE_TYPE_CONDITION` constant.
 pub const FEATURE_TYPE_CONDITION: i32 = 1;
+/// `FEATURE_TYPE_PARAMETER` constant.
 pub const FEATURE_TYPE_PARAMETER: i32 = 2;
+/// `FEATURE_TYPE_MATHFUNC` constant.
 pub const FEATURE_TYPE_MATHFUNC: i32 = 3;
+/// `FEATURE_TYPE_HOOK` constant.
 pub const FEATURE_TYPE_HOOK: i32 = 4;
 /// Module table (from module.c module hash table)
 #[derive(Debug, Default)]
@@ -3859,6 +3864,7 @@ pub const FEATURE_TYPE_HOOK: i32 = 4;
 /// (line 359) inserts entries, `printmodulenode()` (line 154)
 /// renders for `zmodload`.
 pub struct modulestab {
+    /// `modules` field.
     pub modules: HashMap<String, module>,
     /// Builtin name → module name mapping for autoload
     pub autoload_builtins: HashMap<String, String>,

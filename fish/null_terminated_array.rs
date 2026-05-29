@@ -52,7 +52,9 @@ unsafe impl Sync for NullTerminatedArray<'_> {}
 pub struct OwningNullTerminatedArray {
     // Note that null_terminated_array holds pointers into our boxed strings.
     // The 'static is a lie.
+    /// `strings` field.
     strings: Pin<Box<[CString]>>,
+    /// `null_terminated_array` field.
     null_terminated_array: NullTerminatedArray<'static>,
 }
 
@@ -60,9 +62,11 @@ const _: () = assert_send::<OwningNullTerminatedArray>();
 const _: () = assert_sync::<OwningNullTerminatedArray>();
 
 impl OwningNullTerminatedArray {
+    /// `get` — see implementation.
     pub fn get(&self) -> *mut *const c_char {
         self.null_terminated_array.get()
     }
+    /// `get_mut` — see implementation.
     pub fn get_mut(&self) -> *mut *mut c_char {
         self.get().cast()
     }
@@ -76,9 +80,11 @@ impl OwningNullTerminatedArray {
             null_terminated_array: NullTerminatedArray::new(string_slice),
         }
     }
+    /// `len` — see implementation.
     pub fn len(&self) -> usize {
         self.strings.len()
     }
+    /// `iter` — see implementation.
     pub fn iter(&self) -> impl Iterator<Item = &CString> {
         self.strings.iter()
     }

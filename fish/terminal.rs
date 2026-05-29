@@ -21,6 +21,7 @@ use std::{
 };
 
 bitflags! {
+    /// `ColorSupport` — see fields for layout.
     #[derive(Copy, Clone, Default)]
     pub struct ColorSupport: u8 {
         const TERM_256COLOR = 1<<0;
@@ -30,11 +31,13 @@ bitflags! {
 
 /// Whether term256 and term24bit are supported.
 static COLOR_SUPPORT: AtomicU8 = AtomicU8::new(0);
+/// `get_color_support` — see implementation.
 
 pub fn get_color_support() -> ColorSupport {
     let val = COLOR_SUPPORT.load(Ordering::Relaxed);
     ColorSupport::from_bits_truncate(val)
 }
+/// `set_color_support` — see implementation.
 
 pub fn set_color_support(val: ColorSupport) {
     COLOR_SUPPORT.store(val.bits(), Ordering::Relaxed);
@@ -237,6 +240,7 @@ fn index_for_color(c: Color) -> u8 {
     }
     c.to_term256_index()
 }
+/// `Outputter` — see fields for layout.
 
 pub struct Outputter {
     /// Storage for buffered contents.
@@ -270,6 +274,7 @@ impl Outputter {
     pub fn new_buffering() -> Self {
         Self::new_from_fd(-1)
     }
+    /// `new_buffering_no_assume_normal` — see implementation.
 
     pub fn new_buffering_no_assume_normal() -> Self {
         let mut zelf = Self::new_buffering();
@@ -336,6 +341,7 @@ impl Outputter {
             self.flush_to(self.fd);
         }
     }
+    /// `style_writer` — see implementation.
 
     pub fn style_writer(&mut self) -> OutputterStyleWriter<'_> {
         OutputterStyleWriter::new(self)
@@ -540,9 +546,11 @@ impl Outputter {
     pub fn contents(&self) -> &[u8] {
         &self.contents
     }
+    /// `contents_mut` — see implementation.
     pub fn contents_mut(&mut self) -> &mut Vec<u8> {
         &mut self.contents
     }
+    /// `take_contents` — see implementation.
     pub fn take_contents(self) -> Vec<u8> {
         self.contents
     }
@@ -568,6 +576,7 @@ impl Outputter {
         self.buffer_count -= 1;
         self.maybe_flush();
     }
+    /// `write_bytes` — see implementation.
 
     pub fn write_bytes(&mut self, buf: &[u8]) {
         self.contents.extend_from_slice(buf);
@@ -582,10 +591,12 @@ impl Outputter {
         STDOUTPUT.get()
     }
 }
+/// `BufferedOutputter` — see fields for layout.
 
 pub struct BufferedOutputter<'a>(RefMut<'a, Outputter>);
 
 impl<'a> BufferedOutputter<'a> {
+    /// `new` — see implementation.
     pub fn new(outputter: &'a RefCell<Outputter>) -> Self {
         let mut outputter = outputter.borrow_mut();
         outputter.begin_buffering();
@@ -640,9 +651,12 @@ pub fn best_color(candidates: impl Iterator<Item = Color>, support: ColorSupport
     })
     .or(first)
 }
+/// `OutputterStyleWriter` — see fields for layout.
 
 pub struct OutputterStyleWriter<'a> {
+    /// `out` field.
     out: &'a mut Outputter,
+    /// `param_count` field.
     param_count: u32,
 }
 

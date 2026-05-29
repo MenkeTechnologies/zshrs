@@ -89,7 +89,9 @@ pub struct zftpcmd {
     pub nam: &'static str,                  // c:129
     pub fun: fn(&str, &[&str], i32) -> i32, // c:130
     pub min: i32,                           // c:131
+    /// `max` field.
     pub max: i32,
+    /// `flags` field.
     pub flags: i32,
 }
 
@@ -163,8 +165,11 @@ pub struct zftp_session {
     pub pwd: Option<String>,  // C: params[ZFPM_PASSWORD]
     pub connected: bool,      // C: cin != NULL
     pub logged_in: bool,      // C: derived from greeting parse
+    /// `transfer_type` field.
     pub transfer_type: i32,
+    /// `transfer_mode` field.
     pub transfer_mode: i32,
+    /// `passive` field.
     pub passive: bool,
     /// Mirrors the ZFST_SYST bit of `zfstatusp[zfsessno]` (c:240).
     /// Set after a successful SYST probe so re-login on the same
@@ -4362,6 +4367,7 @@ pub static lastcodestr: Mutex<[u8; 4]> = Mutex::new([b'0', b'0', b'0', 0]);
 //
 // For ergonomic call sites the type alias below carries both halves
 // without inventing a new struct shape:
+/// `FtpResponse` type alias.
 #[allow(non_camel_case_types)]
 pub type FtpResponse = (i32, String);
 
@@ -4515,6 +4521,7 @@ pub const ZFPF_DUMB: i32 = 0x04; // c:282
 // zfsesscurrent`). Rust collapses these into one container accessed
 // via `ZFTP_STATE_INNER`; the suffix names this as a Rust extension
 // that bags the module's C-static state.
+/// `zftp_globals` — see fields for layout.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Default)]
 pub struct zftp_globals {
@@ -4624,8 +4631,10 @@ pub static ZFDRRRRING: std::sync::atomic::AtomicI32 = // c:340
 /// whether `zfalarm()` has installed the SIGALRM handler.
 pub static ZFALARMED: std::sync::atomic::AtomicI32 = // c:346
     std::sync::atomic::AtomicI32::new(0);
+/// `OALREMAIN` static.
 
 pub static OALREMAIN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// `OALTIME` static.
 pub static OALTIME: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
 // `zftp_cleanup` is defined above at c:3128; the exit hook calls it.

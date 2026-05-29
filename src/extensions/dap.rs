@@ -49,7 +49,9 @@ pub enum DebugAction {
 #[derive(Debug, Clone, Default)]
 pub struct PauseSnapshot {
     pub reason: String, // "breakpoint" | "step" | "pause" | "entry"
+    /// `file` field.
     pub file: String,
+    /// `line` field.
     pub line: u32,
 }
 
@@ -73,11 +75,17 @@ struct DapSharedInner {
 /// TCP writer, the request seq counter, the pause-cv, and the
 /// disconnected flag.
 pub struct DapShared {
+    /// `inner` field.
     inner: Mutex<DapSharedInner>,
+    /// `cv` field.
     cv: Condvar,
+    /// `seq` field.
     seq: AtomicU64,
+    /// `writer` field.
     writer: Mutex<TcpStream>,
+    /// `configuration_done` field.
     pub configuration_done: AtomicBool,
+    /// `disconnected` field.
     pub disconnected: AtomicBool,
     /// Absolute path of the launched program — set on `launch`, read
     /// by `check_line` to know which file's breakpoint set to check.
@@ -202,6 +210,7 @@ impl DapShared {
         tracing::trace!(target: "zshrs::dap::send", seq, %command, "response");
         self.write_message(msg)
     }
+    /// `emit_event` — see implementation.
 
     pub fn emit_event(&self, event: &str, body: Value) -> io::Result<()> {
         let seq = self.next_seq();

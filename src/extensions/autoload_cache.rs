@@ -47,35 +47,52 @@ use std::os::unix::fs::MetadataExt;
 
 /// "ZRAL" little-endian.
 pub const SHARD_MAGIC: u32 = 0x5A52414C;
+/// `SHARD_FORMAT_VERSION` constant.
 pub const SHARD_FORMAT_VERSION: u32 = 1;
+/// `ShardHeader` — see fields for layout.
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct ShardHeader {
+    /// `magic` field.
     pub magic: u32,
+    /// `format_version` field.
     pub format_version: u32,
+    /// `zshrs_version` field.
     pub zshrs_version: String,
+    /// `pointer_width` field.
     pub pointer_width: u32,
+    /// `built_at_secs` field.
     pub built_at_secs: u64,
 }
+/// `AutoloadEntry` — see fields for layout.
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct AutoloadEntry {
+    /// `binary_mtime_at_cache` field.
     pub binary_mtime_at_cache: i64,
+    /// `cached_at_secs` field.
     pub cached_at_secs: i64,
+    /// `chunk_blob` field.
     pub chunk_blob: Vec<u8>,
 }
+/// `AutoloadShard` — see fields for layout.
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct AutoloadShard {
+    /// `header` field.
     pub header: ShardHeader,
+    /// `entries` field.
     pub entries: HashMap<String, AutoloadEntry>,
 }
+/// `MmappedShard` — see fields for layout.
 
 pub struct MmappedShard {
+    /// `_mmap` field.
     _mmap: Mmap,
+    /// `archived` field.
     archived: *const ArchivedAutoloadShard,
 }
 
@@ -83,6 +100,7 @@ unsafe impl Send for MmappedShard {}
 unsafe impl Sync for MmappedShard {}
 
 impl MmappedShard {
+    /// `open` — see implementation.
     pub fn open(path: &Path) -> Option<Self> {
         let file = File::open(path).ok()?;
         let mmap = unsafe { Mmap::map(&file).ok()? };
@@ -113,14 +131,19 @@ impl MmappedShard {
         self.shard().entries.get(name)
     }
 }
+/// `AutoloadCache` — see fields for layout.
 
 pub struct AutoloadCache {
+    /// `path` field.
     path: PathBuf,
+    /// `lock_path` field.
     lock_path: PathBuf,
+    /// `mmap` field.
     mmap: Mutex<Option<MmappedShard>>,
 }
 
 impl AutoloadCache {
+    /// `open` — see implementation.
     pub fn open(path: &Path) -> std::io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -150,6 +173,7 @@ impl AutoloadCache {
         let mut guard = self.mmap.lock();
         *guard = None;
     }
+    /// `get` — see implementation.
 
     pub fn get(&self, name: &str) -> Option<Vec<u8>> {
         self.ensure_mmap();
@@ -268,6 +292,7 @@ impl AutoloadCache {
         self.invalidate_mmap();
         Ok(())
     }
+    /// `entry_count` — see implementation.
 
     pub fn entry_count(&self) -> usize {
         self.ensure_mmap();
@@ -291,6 +316,7 @@ impl AutoloadCache {
             .map(|k| k.as_str().to_string())
             .collect()
     }
+    /// `stats` — see implementation.
 
     pub fn stats(&self) -> (i64, i64) {
         self.ensure_mmap();
@@ -307,6 +333,7 @@ impl AutoloadCache {
             .sum();
         (count, bytes)
     }
+    /// `clear` — see implementation.
 
     pub fn clear(&self) -> std::io::Result<()> {
         let _lock = acquire_lock(&self.lock_path);
@@ -396,12 +423,14 @@ fn current_binary_mtime_secs() -> Option<i64> {
         Some(secs)
     })
 }
+/// `default_cache_path` — see implementation.
 
 pub fn default_cache_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join(".cache/zshrs/autoloads.rkyv")
 }
+/// `cache_enabled` — see implementation.
 
 pub fn cache_enabled() -> bool {
     !matches!(
@@ -409,6 +438,7 @@ pub fn cache_enabled() -> bool {
         Ok("0") | Ok("false") | Ok("no")
     )
 }
+/// `CACHE` static.
 
 pub static CACHE: once_cell::sync::Lazy<Option<AutoloadCache>> = once_cell::sync::Lazy::new(|| {
     if !cache_enabled() {
@@ -416,11 +446,13 @@ pub static CACHE: once_cell::sync::Lazy<Option<AutoloadCache>> = once_cell::sync
     }
     AutoloadCache::open(&default_cache_path()).ok()
 });
+/// `try_load` — see implementation.
 
 pub fn try_load(name: &str) -> Option<Vec<u8>> {
     let cache = CACHE.as_ref()?;
     cache.get(name)
 }
+/// `try_save_one` — see implementation.
 
 pub fn try_save_one(name: &str, chunk_blob: &[u8]) -> Result<(), String> {
     let Some(cache) = CACHE.as_ref() else {
@@ -448,18 +480,22 @@ pub fn try_merge_in(entries: HashMap<String, Vec<u8>>) -> Result<(), String> {
     };
     cache.merge_in(entries)
 }
+/// `cached_names` — see implementation.
 
 pub fn cached_names() -> std::collections::HashSet<String> {
     CACHE.as_ref().map(|c| c.cached_names()).unwrap_or_default()
 }
+/// `entry_count` — see implementation.
 
 pub fn entry_count() -> usize {
     CACHE.as_ref().map(|c| c.entry_count()).unwrap_or(0)
 }
+/// `stats` — see implementation.
 
 pub fn stats() -> Option<(i64, i64)> {
     CACHE.as_ref().map(|c| c.stats())
 }
+/// `clear` — see implementation.
 
 pub fn clear() -> bool {
     CACHE.as_ref().map(|c| c.clear().is_ok()).unwrap_or(false)

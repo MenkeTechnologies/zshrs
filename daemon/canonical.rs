@@ -60,9 +60,13 @@ fn composite_storage_key(key: &str, shell_id: Option<&str>) -> String {
 /// scalar / map values all round-trip cleanly through `unjson` in export.rs).
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct CanonicalRow {
+    /// `key` field.
     pub key: String,
+    /// `value` field.
     pub value: String, // already JSON-encoded
+    /// `set_at_ns` field.
     pub set_at_ns: i64,
+    /// `set_by_shell` field.
     pub set_by_shell: Option<i64>,
     /// Federated-catalog recording-shell identity. Filled by the
     /// recorder ingest path (zshrs_recorder bundle's top-level
@@ -99,11 +103,14 @@ struct InMemory {
 /// Canonical-state engine. One instance lives in DaemonState; clients address
 /// it through Arc.
 pub struct CanonicalEngine {
+    /// `inner` field.
     inner: RwLock<InMemory>,
+    /// `paths` field.
     paths: CachePaths,
 }
 
 impl CanonicalEngine {
+    /// `new` — see implementation.
     pub fn new(paths: CachePaths) -> Arc<Self> {
         Arc::new(Self {
             inner: RwLock::new(InMemory::default()),
@@ -548,6 +555,7 @@ impl CanonicalEngine {
     fn shard_path(&self) -> PathBuf {
         super::shard::shard_path(&self.paths, PROMOTIONS_SOURCE_ROOT, PROMOTIONS_SLUG)
     }
+    /// `last_persist_at_ns` — see implementation.
 
     pub fn last_persist_at_ns(&self) -> i64 {
         self.inner.read().last_persist_at_ns

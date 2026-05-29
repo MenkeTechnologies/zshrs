@@ -77,6 +77,7 @@ fn tag_arg(args: &Value) -> std::result::Result<String, ErrPayload> {
 fn snapshot_path(state: &DaemonState, tag: &str) -> PathBuf {
     state.paths.snapshots_dir.join(format!("{tag}.rkyv"))
 }
+/// `op_snapshot_save` — see implementation.
 
 pub async fn op_snapshot_save(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let tag = tag_arg(&args)?;
@@ -135,6 +136,7 @@ pub async fn op_snapshot_save(state: &Arc<DaemonState>, args: Value) -> OpResult
         "total_rows": total_rows,
     }))
 }
+/// `op_snapshot_list` — see implementation.
 
 pub async fn op_snapshot_list(state: &Arc<DaemonState>, _args: Value) -> OpResult {
     let mut entries: Vec<Value> = Vec::new();
@@ -174,6 +176,7 @@ pub async fn op_snapshot_list(state: &Arc<DaemonState>, _args: Value) -> OpResul
     let count = entries.len();
     Ok(json!({ "snapshots": entries, "count": count }))
 }
+/// `op_snapshot_load` — see implementation.
 
 pub async fn op_snapshot_load(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let tag = tag_arg(&args)?;
@@ -319,6 +322,7 @@ pub async fn op_snapshot_load(state: &Arc<DaemonState>, args: Value) -> OpResult
         "generation": shard.header.generation,
     }))
 }
+/// `op_snapshot_diff` — see implementation.
 
 pub async fn op_snapshot_diff(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let a_tag = args

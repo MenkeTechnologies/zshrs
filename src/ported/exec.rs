@@ -101,6 +101,7 @@ use crate::zsh_h::XTRACE;
 ///                                later (implicit local scope), so
 ///                                suppress `ASSPM_WARN`.
 pub const ADDVAR_EXPORT: i32 = 1 << 0; // c:37 (Src/exec.c)
+/// `ADDVAR_RESTORE` constant.
 pub const ADDVAR_RESTORE: i32 = 1 << 2; // c:39 (Src/exec.c)
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
@@ -474,6 +475,7 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
 /// which is the failure mode the `subst.rs:496` warning block flags.
 /* $(...) */
 // c:4709
+/// `getoutput` — see implementation.
 pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     // c:4713
     // c:4715 — `Eprog prog;`
@@ -4074,12 +4076,19 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
 /// Flag bits for `entersubsh(int flags, struct entersubsh_ret *retp)`.
 pub mod esub {
     // c:1056
+    /// `ASYNC` constant.
     pub const ASYNC: i32 = 0x01; // c:1058
+    /// `PGRP` constant.
     pub const PGRP: i32 = 0x02; // c:1063
+    /// `KEEPTRAP` constant.
     pub const KEEPTRAP: i32 = 0x04; // c:1065
+    /// `FAKE` constant.
     pub const FAKE: i32 = 0x08; // c:1067
+    /// `REVERTPGRP` constant.
     pub const REVERTPGRP: i32 = 0x10; // c:1069
+    /// `NOMONITOR` constant.
     pub const NOMONITOR: i32 = 0x20; // c:1071
+    /// `JOB_CONTROL` constant.
     pub const JOB_CONTROL: i32 = 0x40; // c:1073
 }
 

@@ -8,16 +8,24 @@ use std::collections::HashMap;
 /// Result of a regex match operation
 #[derive(Debug, Clone)]
 pub struct RegexMatch {
+    /// `matched` field.
     pub matched: bool,
+    /// `full_match` field.
     pub full_match: Option<String>,
+    /// `captures` field.
     pub captures: Vec<Option<String>>,
+    /// `match_start` field.
     pub match_start: Option<usize>,
+    /// `match_end` field.
     pub match_end: Option<usize>,
+    /// `capture_starts` field.
     pub capture_starts: Vec<Option<usize>>,
+    /// `capture_ends` field.
     pub capture_ends: Vec<Option<usize>>,
 }
 
 impl RegexMatch {
+    /// `no_match` — see implementation.
     pub fn no_match() -> Self {
         Self {
             matched: false,
@@ -34,8 +42,11 @@ impl RegexMatch {
 /// Options for regex matching
 #[derive(Debug, Clone, Default)]
 pub struct RegexOptions {
+    /// `case_insensitive` field.
     pub case_insensitive: bool,
+    /// `bash_rematch` field.
     pub bash_rematch: bool,
+    /// `ksh_arrays` field.
     pub ksh_arrays: bool,
 }
 

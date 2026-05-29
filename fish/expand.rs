@@ -84,9 +84,11 @@ bitflags! {
 }
 
 impl ExpandResult {
+    /// `new` — see implementation.
     pub fn new(result: ExpandResultCode) -> Self {
         Self { result, status: 0 }
     }
+    /// `ok` — see implementation.
     pub fn ok() -> Self {
         Self::new(ExpandResultCode::ok)
     }
@@ -1517,6 +1519,7 @@ impl<'a, 'b, 'c> Expander<'a, 'b, 'c> {
         }
     }
 }
+/// `ExpandResultCode` — see variants.
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ExpandResultCode {

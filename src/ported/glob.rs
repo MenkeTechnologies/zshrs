@@ -42,25 +42,43 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Port of `struct gmatch` from Src/glob.c — `gmatchcmp()`
 /// (line 936) sorts arrays of these for the `o`/`O` qualifier.
 pub struct gmatch {
+    /// `name` field.
     pub name: String,
+    /// `path` field.
     pub path: PathBuf,
+    /// `size` field.
     pub size: u64,
+    /// `atime` field.
     pub atime: i64,
+    /// `mtime` field.
     pub mtime: i64,
+    /// `ctime` field.
     pub ctime: i64,
+    /// `links` field.
     pub links: u64,
+    /// `mode` field.
     pub mode: u32,
+    /// `uid` field.
     pub uid: u32,
+    /// `gid` field.
     pub gid: u32,
+    /// `dev` field.
     pub dev: u64,
+    /// `ino` field.
     pub ino: u64,
     // For symlink targets (when following)
+    /// `target_size` field.
     pub target_size: u64,
+    /// `target_atime` field.
     pub target_atime: i64,
+    /// `target_mtime` field.
     pub target_mtime: i64,
+    /// `target_ctime` field.
     pub target_ctime: i64,
+    /// `target_links` field.
     pub target_links: u64,
     // For exec sort strings
+    /// `sort_strings` field.
     pub sort_strings: Vec<String>,
 }
 
@@ -201,10 +219,13 @@ pub const MAX_SORTS: usize = 12; // c:164
 /// `gd_gf_*` glob-flag bag into `options: GlobOptions`, but the
 /// 1:1 correspondence to `struct globdata` is otherwise faithful.
 // struct to easily save/restore current state                              // c:166
+/// `globdata` — see fields for layout.
 #[allow(non_camel_case_types)]
 pub struct globdata {
     // c:168
+    /// `matches` field.
     pub matches: Vec<gmatch>,
+    /// `qualifiers` field.
     pub qualifiers: Option<qualifier_set>,
     pub pathbuf: String,                    // c:170 gd_pathbuf
     pub pathpos: usize,                     // c:169 gd_pathpos
@@ -223,6 +244,7 @@ pub struct globdata {
 // C's single file-static glob state; macros at c:199-222 redirect
 // `pathbufsz`, `gf_noglobdots`, etc. to `curglobdata.gd_*`. Rust
 // mirror — accessed via lock for thread safety; C is single-threaded.
+/// `CURGLOBDATA` static.
 pub static CURGLOBDATA: std::sync::Mutex<globdata> = std::sync::Mutex::new(globdata {
     matches: Vec::new(),
     qualifiers: None,
@@ -938,6 +960,7 @@ pub fn qgetnum(s: &str) -> Option<(i64, &str)> {
 }
 
 impl globdata {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         globdata {
             matches: Vec::new(),
@@ -3259,84 +3282,99 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
 /// File qualifier test functions (from glob.c qual* functions)
 pub mod qualifiers {
     use std::os::unix::fs::MetadataExt;
+    /// `is_regular` — see implementation.
 
     pub fn is_regular(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| m.is_file())
             .unwrap_or(false)
     }
+    /// `is_directory` — see implementation.
 
     pub fn is_directory(path: &str) -> bool {
         std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
     }
+    /// `is_symlink` — see implementation.
 
     pub fn is_symlink(path: &str) -> bool {
         std::fs::symlink_metadata(path)
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false)
     }
+    /// `is_fifo` — see implementation.
 
     pub fn is_fifo(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFIFO as u32)
             .unwrap_or(false)
     }
+    /// `is_socket` — see implementation.
 
     pub fn is_socket(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFSOCK as u32)
             .unwrap_or(false)
     }
+    /// `is_block_device` — see implementation.
 
     pub fn is_block_device(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFBLK as u32)
             .unwrap_or(false)
     }
+    /// `is_char_device` — see implementation.
 
     pub fn is_char_device(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFCHR as u32)
             .unwrap_or(false)
     }
+    /// `is_setuid` — see implementation.
 
     pub fn is_setuid(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_ISUID as u32) != 0)
             .unwrap_or(false)
     }
+    /// `is_setgid` — see implementation.
 
     pub fn is_setgid(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_ISGID as u32) != 0)
             .unwrap_or(false)
     }
+    /// `is_sticky` — see implementation.
 
     pub fn is_sticky(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & libc::S_ISVTX as u32) != 0)
             .unwrap_or(false)
     }
+    /// `is_readable` — see implementation.
 
     pub fn is_readable(path: &str) -> bool {
         std::fs::metadata(path).is_ok() && std::fs::File::open(path).is_ok()
     }
+    /// `is_writable` — see implementation.
 
     pub fn is_writable(path: &str) -> bool {
         std::fs::OpenOptions::new().write(true).open(path).is_ok()
     }
+    /// `is_executable` — see implementation.
 
     pub fn is_executable(path: &str) -> bool {
         std::fs::metadata(path)
             .map(|m| (m.mode() & 0o111) != 0)
             .unwrap_or(false)
     }
+    /// `size_matches` — see implementation.
 
     pub fn size_matches(path: &str, size: u64, cmp: std::cmp::Ordering) -> bool {
         std::fs::metadata(path)
             .map(|m| m.len().cmp(&size) == cmp)
             .unwrap_or(false)
     }
+    /// `mtime_matches` — see implementation.
 
     pub fn mtime_matches(path: &str, secs: i64, cmp: std::cmp::Ordering) -> bool {
         std::fs::metadata(path)
@@ -3347,18 +3385,21 @@ pub mod qualifiers {
             })
             .unwrap_or(false)
     }
+    /// `uid_matches` — see implementation.
 
     pub fn uid_matches(path: &str, uid: u32) -> bool {
         std::fs::metadata(path)
             .map(|m| m.uid() == uid)
             .unwrap_or(false)
     }
+    /// `gid_matches` — see implementation.
 
     pub fn gid_matches(path: &str, gid: u32) -> bool {
         std::fs::metadata(path)
             .map(|m| m.gid() == gid)
             .unwrap_or(false)
     }
+    /// `nlinks_matches` — see implementation.
 
     pub fn nlinks_matches(path: &str, nlinks: u64, cmp: std::cmp::Ordering) -> bool {
         std::fs::metadata(path)
@@ -5190,6 +5231,7 @@ pub fn glob_path(pattern: &str) -> Vec<String> {
 
 // `g_range` from Src/glob.c — qualifier-comparison direction
 // (-1 = less than, 0 = equal, 1 = greater than).
+/// `G_RANGE` static.
 pub static G_RANGE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 // `mode_to_octal` lives at `crate::ported::utils::mode_to_octal`

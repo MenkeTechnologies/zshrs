@@ -51,10 +51,15 @@ pub fn strend(s: &str) -> Option<char> {
 
 /// Sort flags
 pub mod sort_flags {
+    /// `SORTIT_BACKWARDS` constant.
     pub const SORTIT_BACKWARDS: u32 = 1;
+    /// `SORTIT_NUMERICALLY` constant.
     pub const SORTIT_NUMERICALLY: u32 = 2;
+    /// `SORTIT_NUMERICALLY_SIGNED` constant.
     pub const SORTIT_NUMERICALLY_SIGNED: u32 = 4;
+    /// `SORTIT_IGNORING_CASE` constant.
     pub const SORTIT_IGNORING_CASE: u32 = 8;
+    /// `SORTIT_IGNORING_BACKSLASHES` constant.
     pub const SORTIT_IGNORING_BACKSLASHES: u32 = 16;
 }
 

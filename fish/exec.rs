@@ -693,8 +693,11 @@ fn run_internal_process_or_short_circuit(
 /// Different ways to assign a pgroup for a process.
 #[derive(Copy, Clone)]
 pub enum PgroupPolicy {
+    /// `Inherit` variant.
     Inherit,           // Inherit fish's pgroup.
+    /// `Join` variant.
     Join(libc::pid_t), // Join a specific pgroup.
+    /// `Lead` variant.
     Lead,              // The new process is the leader of a new pgroup.
 }
 

@@ -29,6 +29,7 @@ use std::{
 };
 
 // The range of key codes for inputrc-style keyboard functions.
+/// `R_END_INPUT_FUNCTIONS` constant.
 pub const R_END_INPUT_FUNCTIONS: usize = (ReadlineCmd::ReverseRepeatJump as usize) + 1;
 
 /// Hackish: the input style, which describes how char events (only) are applied to the command
@@ -36,134 +37,252 @@ pub const R_END_INPUT_FUNCTIONS: usize = (ReadlineCmd::ReverseRepeatJump as usiz
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum CharInputStyle {
     // Insert characters normally.
+    /// `Normal` variant.
     Normal,
 
     // Insert characters only if the cursor is not at the beginning. Otherwise, discard them.
+    /// `NotFirst` variant.
     NotFirst,
 }
+/// `ReadlineCmd` — see variants.
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ReadlineCmd {
+    /// `BeginningOfLine` variant.
     BeginningOfLine,
+    /// `EndOfLine` variant.
     EndOfLine,
+    /// `ForwardChar` variant.
     ForwardChar,
+    /// `BackwardChar` variant.
     BackwardChar,
+    /// `BackwardCharPassive` variant.
     BackwardCharPassive,
+    /// `ForwardSingleChar` variant.
     ForwardSingleChar,
+    /// `ForwardCharPassive` variant.
     ForwardCharPassive,
+    /// `BackwardWord` variant.
     BackwardWord,
+    /// `ForwardWordEmacs` variant.
     ForwardWordEmacs,
+    /// `ForwardBigwordEmacs` variant.
     ForwardBigwordEmacs,
+    /// `BackwardBigword` variant.
     BackwardBigword,
+    /// `ForwardWordEnd` variant.
     ForwardWordEnd,
+    /// `BackwardWordEnd` variant.
     BackwardWordEnd,
+    /// `ForwardBigwordEnd` variant.
     ForwardBigwordEnd,
+    /// `BackwardBigwordEnd` variant.
     BackwardBigwordEnd,
+    /// `ForwardWordVi` variant.
     ForwardWordVi,
+    /// `ForwardBigwordVi` variant.
     ForwardBigwordVi,
+    /// `ForwardPathComponent` variant.
     ForwardPathComponent,
+    /// `ForwardToken` variant.
     ForwardToken,
+    /// `BackwardPathComponent` variant.
     BackwardPathComponent,
+    /// `BackwardToken` variant.
     BackwardToken,
+    /// `NextdOrForwardWordEmacs` variant.
     NextdOrForwardWordEmacs,
+    /// `PrevdOrBackwardWord` variant.
     PrevdOrBackwardWord,
+    /// `HistoryDelete` variant.
     HistoryDelete,
+    /// `HistorySearchBackward` variant.
     HistorySearchBackward,
+    /// `HistorySearchForward` variant.
     HistorySearchForward,
+    /// `HistoryPrefixSearchBackward` variant.
     HistoryPrefixSearchBackward,
+    /// `HistoryPrefixSearchForward` variant.
     HistoryPrefixSearchForward,
+    /// `HistoryPager` variant.
     HistoryPager,
+    /// `HistoryPagerDelete` variant.
     #[deprecated]
     HistoryPagerDelete,
+    /// `DeleteChar` variant.
     DeleteChar,
+    /// `BackwardDeleteChar` variant.
     BackwardDeleteChar,
+    /// `KillLine` variant.
     KillLine,
+    /// `Yank` variant.
     Yank,
+    /// `YankPop` variant.
     YankPop,
+    /// `Complete` variant.
     Complete,
+    /// `CompleteAndSearch` variant.
     CompleteAndSearch,
+    /// `PagerToggleSearch` variant.
     PagerToggleSearch,
+    /// `BeginningOfHistory` variant.
     BeginningOfHistory,
+    /// `EndOfHistory` variant.
     EndOfHistory,
+    /// `BackwardKillLine` variant.
     BackwardKillLine,
+    /// `KillWholeLine` variant.
     KillWholeLine,
+    /// `KillInnerLine` variant.
     KillInnerLine,
+    /// `KillWordEmacs` variant.
     KillWordEmacs,
+    /// `KillBigwordEmacs` variant.
     KillBigwordEmacs,
+    /// `KillWordVi` variant.
     KillWordVi,
+    /// `KillBigwordVi` variant.
     KillBigwordVi,
+    /// `KillInnerWord` variant.
     KillInnerWord,
+    /// `KillInnerBigWord` variant.
     KillInnerBigWord,
+    /// `KillAWord` variant.
     KillAWord,
+    /// `KillABigWord` variant.
     KillABigWord,
+    /// `KillPathComponent` variant.
     KillPathComponent,
+    /// `KillToken` variant.
     KillToken,
+    /// `BackwardKillWord` variant.
     BackwardKillWord,
+    /// `BackwardKillPathComponent` variant.
     BackwardKillPathComponent,
+    /// `BackwardKillBigword` variant.
     BackwardKillBigword,
+    /// `BackwardKillToken` variant.
     BackwardKillToken,
+    /// `HistoryTokenSearchBackward` variant.
     HistoryTokenSearchBackward,
+    /// `HistoryTokenSearchForward` variant.
     HistoryTokenSearchForward,
+    /// `HistoryLastTokenSearchBackward` variant.
     HistoryLastTokenSearchBackward,
+    /// `HistoryLastTokenSearchForward` variant.
     HistoryLastTokenSearchForward,
+    /// `SelfInsert` variant.
     SelfInsert,
+    /// `SelfInsertNotFirst` variant.
     SelfInsertNotFirst,
+    /// `GetKey` variant.
     GetKey,
+    /// `TransposeChars` variant.
     TransposeChars,
+    /// `TransposeWords` variant.
     TransposeWords,
+    /// `UpcaseWord` variant.
     UpcaseWord,
+    /// `DowncaseWord` variant.
     DowncaseWord,
+    /// `CapitalizeWord` variant.
     CapitalizeWord,
+    /// `TogglecaseChar` variant.
     TogglecaseChar,
+    /// `UpcaseSelection` variant.
     UpcaseSelection,
+    /// `DowncaseSelection` variant.
     DowncaseSelection,
+    /// `TogglecaseSelection` variant.
     TogglecaseSelection,
+    /// `Execute` variant.
     Execute,
+    /// `BeginningOfBuffer` variant.
     BeginningOfBuffer,
+    /// `EndOfBuffer` variant.
     EndOfBuffer,
+    /// `RepaintMode` variant.
     RepaintMode,
+    /// `Repaint` variant.
     Repaint,
+    /// `ForceRepaint` variant.
     ForceRepaint,
+    /// `UpLine` variant.
     UpLine,
+    /// `DownLine` variant.
     DownLine,
+    /// `SuppressAutosuggestion` variant.
     SuppressAutosuggestion,
+    /// `AcceptAutosuggestion` variant.
     AcceptAutosuggestion,
+    /// `BeginSelection` variant.
     BeginSelection,
+    /// `SwapSelectionStartStop` variant.
     SwapSelectionStartStop,
+    /// `EndSelection` variant.
     EndSelection,
+    /// `KillSelection` variant.
     KillSelection,
+    /// `InsertLineUnder` variant.
     InsertLineUnder,
+    /// `InsertLineOver` variant.
     InsertLineOver,
+    /// `ForwardJump` variant.
     ForwardJump,
+    /// `BackwardJump` variant.
     BackwardJump,
+    /// `ForwardJumpTill` variant.
     ForwardJumpTill,
+    /// `BackwardJumpTill` variant.
     BackwardJumpTill,
+    /// `JumpToMatchingBracket` variant.
     JumpToMatchingBracket,
+    /// `JumpTillMatchingBracket` variant.
     JumpTillMatchingBracket,
+    /// `FuncAnd` variant.
     FuncAnd,
+    /// `FuncOr` variant.
     FuncOr,
+    /// `ExpandAbbr` variant.
     ExpandAbbr,
+    /// `DeleteOrExit` variant.
     DeleteOrExit,
+    /// `Exit` variant.
     Exit,
+    /// `ClearCommandline` variant.
     ClearCommandline,
+    /// `CancelCommandline` variant.
     CancelCommandline,
+    /// `Cancel` variant.
     Cancel,
+    /// `Undo` variant.
     Undo,
+    /// `Redo` variant.
     Redo,
+    /// `BeginUndoGroup` variant.
     BeginUndoGroup,
+    /// `EndUndoGroup` variant.
     EndUndoGroup,
+    /// `RepeatJump` variant.
     RepeatJump,
+    /// `ClearScreenAndRepaint` variant.
     ClearScreenAndRepaint,
+    /// `ScrollbackPush` variant.
     ScrollbackPush,
     // NOTE: This one has to be last.
+    /// `ReverseRepeatJump` variant.
     ReverseRepeatJump,
 }
+/// `KeyEvent` — see fields for layout.
 
 #[derive(Clone, Copy, Debug)]
 pub struct KeyEvent {
+    /// `key` field.
     pub key: Key,
+    /// `shifted_codepoint` field.
     pub shifted_codepoint: char,
+    /// `base_layout_codepoint` field.
     pub base_layout_codepoint: char,
 }
 
@@ -186,6 +305,7 @@ impl KeyEvent {
     pub(crate) fn from_raw(codepoint: char) -> Self {
         Self::from(Key::from_raw(codepoint))
     }
+    /// `from_single_byte` — see implementation.
     pub fn from_single_byte(c: u8) -> Self {
         Self::from(Key::from_single_byte(c))
     }
@@ -309,27 +429,33 @@ pub enum CharEventType {
     /// loop should exit.
     CheckExit,
 }
+/// `ReadlineCmdEvent` — see fields for layout.
 
 #[derive(Debug, Clone)]
 pub struct ReadlineCmdEvent {
+    /// `cmd` field.
     pub cmd: ReadlineCmd,
     /// The sequence of characters in the input mapping which generated this event.
     /// Note that the generic self-insert case does not have any characters, so this would be empty.
     /// This is also empty for invalid Unicode code points, which produce multiple characters.
     pub seq: WString,
 }
+/// `KeyInputEvent` — see fields for layout.
 
 #[derive(Debug, Clone)]
 pub struct KeyInputEvent {
     // The key.
+    /// `key` field.
     pub key: KeyEvent,
     // The style to use when inserting characters into the command line.
+    /// `input_style` field.
     pub input_style: CharInputStyle,
     /// The sequence of characters in the input mapping which generated this event.
     /// Note that the generic self-insert case does not have any characters, so this would be empty.
     /// This is also empty for invalid Unicode code points, which produce multiple characters.
     pub seq: WString,
 }
+/// `ImplicitEvent` — see variants.
 
 #[derive(Debug, Clone)]
 pub enum ImplicitEvent {
@@ -349,21 +475,29 @@ pub enum ImplicitEvent {
     /// Window height changed.
     NewWindowHeight,
 }
+/// `QueryResponse` — see variants.
 
 #[derive(Debug, Clone)]
 pub enum QueryResponse {
+    /// `PrimaryDeviceAttribute` variant.
     PrimaryDeviceAttribute,
+    /// `BackgroundColor` variant.
     BackgroundColor(xterm_color::Color),
+    /// `CursorPosition` variant.
     CursorPosition(ViewportPosition),
 }
+/// `QueryResultEvent` — see variants.
 
 #[derive(Debug, Clone)]
 pub enum QueryResultEvent {
+    /// `Response` variant.
     Response(QueryResponse),
+    /// `Timeout` variant.
     Timeout,
     /// Canceled with ctrl-c.
     Interrupted,
 }
+/// `CharEvent` — see variants.
 
 #[derive(Debug, Clone)]
 pub enum CharEvent {
@@ -378,23 +512,28 @@ pub enum CharEvent {
 
     /// Any event that has no user-visible representation.
     Implicit(ImplicitEvent),
+    /// `QueryResult` variant.
 
     QueryResult(QueryResultEvent),
 }
 impl FloggableDebug for CharEvent {}
 
 impl CharEvent {
+    /// `is_char` — see implementation.
     pub fn is_char(&self) -> bool {
         matches!(self, CharEvent::Key(_))
     }
+    /// `is_readline` — see implementation.
 
     pub fn is_readline(&self) -> bool {
         matches!(self, CharEvent::Readline(_))
     }
+    /// `is_readline_or_command` — see implementation.
 
     pub fn is_readline_or_command(&self) -> bool {
         matches!(self, CharEvent::Readline(_) | CharEvent::Command(_))
     }
+    /// `get_char` — see implementation.
 
     pub fn get_char(&self) -> char {
         let CharEvent::Key(kevt) = self else {
@@ -402,6 +541,7 @@ impl CharEvent {
         };
         kevt.key.codepoint
     }
+    /// `get_key` — see implementation.
 
     pub fn get_key(&self) -> Option<&KeyInputEvent> {
         match self {
@@ -409,6 +549,7 @@ impl CharEvent {
             _ => None,
         }
     }
+    /// `get_readline` — see implementation.
 
     pub fn get_readline(&self) -> ReadlineCmd {
         let CharEvent::Readline(c) = self else {
@@ -416,6 +557,7 @@ impl CharEvent {
         };
         c.cmd
     }
+    /// `get_command` — see implementation.
 
     pub fn get_command(&self) -> Option<&wstr> {
         match self {
@@ -423,14 +565,17 @@ impl CharEvent {
             _ => None,
         }
     }
+    /// `from_char` — see implementation.
 
     pub fn from_char(c: char) -> CharEvent {
         Self::from_key(KeyEvent::from_raw(c))
     }
+    /// `from_key` — see implementation.
 
     pub fn from_key(key: KeyEvent) -> CharEvent {
         Self::from_key_seq(key, WString::new())
     }
+    /// `from_key_seq` — see implementation.
 
     pub fn from_key_seq(key: KeyEvent, seq: WString) -> CharEvent {
         CharEvent::Key(KeyInputEvent {
@@ -439,14 +584,17 @@ impl CharEvent {
             seq,
         })
     }
+    /// `from_readline` — see implementation.
 
     pub fn from_readline(cmd: ReadlineCmd) -> CharEvent {
         Self::from_readline_seq(cmd, WString::new())
     }
+    /// `from_readline_seq` — see implementation.
 
     pub fn from_readline_seq(cmd: ReadlineCmd, seq: WString) -> CharEvent {
         CharEvent::Readline(ReadlineCmdEvent { cmd, seq })
     }
+    /// `from_check_exit` — see implementation.
 
     pub fn from_check_exit() -> CharEvent {
         CharEvent::Implicit(ImplicitEvent::CheckExit)
@@ -553,6 +701,7 @@ fn next_input_event(in_fd: RawFd, ioport_fd: RawFd, timeout: Timeout) -> InputEv
         }
     }
 }
+/// `check_fd_readable` — see implementation.
 
 pub fn check_fd_readable(in_fd: BorrowedFd, timeout: Duration) -> bool {
     // We are not prepared to handle a signal immediately; we only want to know if we get input on
@@ -587,6 +736,7 @@ pub fn check_fd_readable(in_fd: BorrowedFd, timeout: Duration) -> bool {
 
 // Update the wait_on_escape_ms value in response to the fish_escape_delay_ms user variable being
 // set.
+/// `update_wait_on_escape_ms` — see implementation.
 pub fn update_wait_on_escape_ms(vars: &EnvStack) {
     let fish_escape_delay_ms = vars.get_unless_empty(L!("fish_escape_delay_ms"));
     let Some(fish_escape_delay_ms) = fish_escape_delay_ms else {
@@ -612,6 +762,7 @@ pub fn update_wait_on_escape_ms(vars: &EnvStack) {
 
 // Update the wait_on_sequence_key_ms value in response to the fish_sequence_key_delay_ms user
 // variable being set.
+/// `update_wait_on_sequence_key_ms` — see implementation.
 pub fn update_wait_on_sequence_key_ms(vars: &EnvStack) {
     let sequence_key_time_ms = vars.get_unless_empty(L!("fish_sequence_key_delay_ms"));
     let Some(sequence_key_time_ms) = sequence_key_time_ms else {
@@ -647,30 +798,39 @@ fn parse_mask(mask: u32) -> (Modifiers, bool) {
 }
 
 // A data type used by the input machinery.
+/// `InputData` — see fields for layout.
 #[derive(Default)]
 pub struct InputData {
     // The file descriptor from which we read input, often stdin.
+    /// `in_fd` field.
     pub in_fd: RawFd,
 
     // Queue of unread characters.
+    /// `queue` field.
     pub queue: VecDeque<CharEvent>,
 
     // The current paste buffer, if any.
+    /// `paste_buffer` field.
     pub paste_buffer: Option<Vec<u8>>,
 
     // The arguments to the most recently invoked input function.
+    /// `input_function_args` field.
     pub input_function_args: Vec<char>,
 
     // The return status of the most recently invoked input function.
+    /// `function_status` field.
     pub function_status: bool,
 
     // Transient storage to avoid repeated allocations.
+    /// `event_storage` field.
     pub event_storage: Vec<CharEvent>,
 
     // How long to wait for responses for TTY queries.
+    /// `blocking_query_timeout` field.
     pub blocking_query_timeout: Option<Duration>,
 
     // If set, events will be buffered until the query finishes.
+    /// `blocking_query` field.
     pub blocking_query: RefCell<Option<TerminalQuery>>,
 }
 
@@ -700,25 +860,34 @@ impl InputData {
         self.function_status = status;
     }
 }
+/// `BackgroundColorQuery` — see fields for layout.
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BackgroundColorQuery {
+    /// `result` field.
     pub result: Option<xterm_color::Color>,
 }
+/// `CursorPositionQueryReason` — see variants.
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CursorPositionQueryReason {
+    /// `NewPrompt` variant.
     NewPrompt,
+    /// `WindowHeightChange` variant.
     WindowHeightChange,
 }
+/// `CursorPositionQuery` — see fields for layout.
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CursorPositionQuery {
+    /// `reason` field.
     pub reason: CursorPositionQueryReason,
+    /// `result` field.
     pub result: Option<ViewportPosition>,
 }
 
 impl CursorPositionQuery {
+    /// `new` — see implementation.
     pub fn new(reason: CursorPositionQueryReason) -> Self {
         Self {
             reason,
@@ -726,18 +895,25 @@ impl CursorPositionQuery {
         }
     }
 }
+/// `RecurrentQuery` — see fields for layout.
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RecurrentQuery {
+    /// `background_color` field.
     pub background_color: Option<BackgroundColorQuery>,
+    /// `cursor_position` field.
     pub cursor_position: Option<CursorPositionQuery>,
 }
+/// `TerminalQuery` — see variants.
 
 #[derive(Clone, Eq, PartialEq)]
 pub enum TerminalQuery {
+    /// `Initial` variant.
     Initial,
+    /// `Recurrent` variant.
     Recurrent(RecurrentQuery),
 }
+/// `LONG_READ_TIMEOUT` constant.
 
 pub const LONG_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -1741,10 +1917,12 @@ impl<'a> FloggableDisplay for DisplayBytes<'a> {}
 
 /// A simple, concrete implementation of InputEventQueuer.
 pub struct InputEventQueue {
+    /// `data` field.
     data: InputData,
 }
 
 impl InputEventQueue {
+    /// `new` — see implementation.
     pub fn new(in_fd: RawFd, blocking_query_timeout: Option<Duration>) -> Self {
         Self {
             data: InputData::new(in_fd, blocking_query_timeout),

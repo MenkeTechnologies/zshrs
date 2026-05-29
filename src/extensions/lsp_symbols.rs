@@ -33,6 +33,7 @@ use crate::extensions::zsh_ast::{
 /// Stable handle to a declaration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SymbolId(pub u32);
+/// `SymbolKind` — see variants.
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SymbolKind {
@@ -43,25 +44,36 @@ pub enum SymbolKind {
     /// `local`/`typeset` inside a function body.
     Local,
 }
+/// `Symbol` — see fields for layout.
 
 #[derive(Clone, Debug)]
 pub struct Symbol {
+    /// `id` field.
     pub id: SymbolId,
+    /// `name` field.
     pub name: String,
+    /// `kind` field.
     pub kind: SymbolKind,
     /// 0-based source line of the declaration.
     pub decl_line: u32,
 }
+/// `SymbolRef` — see fields for layout.
 
 #[derive(Clone, Debug)]
 pub struct SymbolRef {
+    /// `symbol` field.
     pub symbol: SymbolId,
+    /// `line` field.
     pub line: u32,
+    /// `name` field.
     pub name: String,
 }
+/// `SymbolTable` — see fields for layout.
 
 pub struct SymbolTable {
+    /// `symbols` field.
     pub symbols: Vec<Symbol>,
+    /// `refs` field.
     pub refs: Vec<SymbolRef>,
 }
 

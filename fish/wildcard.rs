@@ -29,6 +29,7 @@ localizable_consts!(
     COMPLETE_DIRECTORY_SYMLINK_DESC "dir symlink"
     COMPLETE_DIRECTORY_DESC "directory"
 );
+/// `WildcardResult` — see variants.
 
 #[derive(PartialEq)]
 pub enum WildcardResult {
@@ -252,6 +253,7 @@ fn wildcard_complete_internal(
         _ => unreachable!(),
     }
 }
+/// `wildcard_complete` — see implementation.
 
 pub fn wildcard_complete(
     s: &wstr,
@@ -471,6 +473,7 @@ mod expander {
     }
 
     impl<'e> WildCardExpander<'e> {
+        /// `new` — see implementation.
         pub fn new(
             working_directory: &'e wstr,
             flags: ExpandFlags,
@@ -644,6 +647,7 @@ mod expander {
                 );
             }
         }
+        /// `status_code` — see implementation.
 
         pub fn status_code(&self) -> WildcardResult {
             if self.did_interrupt {
@@ -1186,6 +1190,7 @@ pub fn wildcard_match(
 }
 
 // Check if the string has any unescaped wildcards (e.g. ANY_STRING).
+/// `wildcard_has_internal` — see implementation.
 #[inline]
 #[must_use]
 pub fn wildcard_has_internal(s: impl AsRef<wstr>) -> bool {

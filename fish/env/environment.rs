@@ -50,11 +50,16 @@ static UVARS_LOCALLY_MODIFIED: RelaxedAtomicBool = RelaxedAtomicBool::new(false)
 /// Return values for `EnvStack::set()`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum EnvStackSetResult {
+    /// `Ok` variant.
     #[default]
     Ok, // The variable was set successfully.
+    /// `Perm` variant.
     Perm,     // The variable is read-only.
+    /// `Scope` variant.
     Scope,    // Variable cannot be set in the given scope.
+    /// `Invalid` variant.
     Invalid,  // The variable's value is invalid (e.g. umask).
+    /// `NotFound` variant.
     NotFound, // The variable was not found (only possible when removing a variable).
 }
 
@@ -116,6 +121,7 @@ pub trait Environment {
 pub struct EnvNull;
 
 impl EnvNull {
+    /// `new` — see implementation.
     pub fn new() -> EnvNull {
         EnvNull
     }
@@ -158,6 +164,7 @@ impl Environment for EnvDyn {
 
 /// An immutable environment, used in snapshots.
 pub struct EnvScoped {
+    /// `inner` field.
     inner: EnvMutex<EnvScopedImpl>,
 }
 
@@ -174,6 +181,7 @@ impl EnvScoped {
 /// A mutable environment which allows scopes to be pushed and popped.
 /// This backs the parser's "vars".
 pub struct EnvStack {
+    /// `inner` field.
     inner: EnvMutex<EnvStackImpl>,
     can_push_pop: bool, // If false, panic on push/pop. Used for the global stack.
     dispatches_var_changes: bool, // controls whether we react to non-global variable changes, like to TZ
@@ -181,6 +189,7 @@ pub struct EnvStack {
 
 impl EnvStack {
     // Creates a new EnvStack which does not dispatch variable changes.
+    /// `new` — see implementation.
     pub fn new() -> EnvStack {
         EnvStack {
             inner: EnvStackImpl::new(),
@@ -192,6 +201,7 @@ impl EnvStack {
     // Create a "sub-stack" of the given stack.
     // This shares all nodes (variable scopes) with the parent stack.
     // can_push_pop is always set.
+    /// `create_child` — see implementation.
     pub fn create_child(&self, dispatches_var_changes: bool) -> EnvStack {
         let inner = EnvMutex::new(self.inner.lock().clone());
         EnvStack {
@@ -210,10 +220,12 @@ impl EnvStack {
     pub fn get_last_statuses(&self) -> Statuses {
         self.lock().base.get_last_statuses().clone()
     }
+    /// `get_last_status` — see implementation.
 
     pub fn get_last_status(&self) -> c_int {
         self.lock().base.get_last_statuses().status
     }
+    /// `set_last_statuses` — see implementation.
 
     pub fn set_last_statuses(&self, statuses: Statuses) {
         self.lock().base.set_last_statuses(statuses);
@@ -414,6 +426,7 @@ impl EnvStack {
             dispatches_var_changes: false,
         })
     }
+    /// `set_argv` — see implementation.
 
     pub fn set_argv(&self, argv: Vec<WString>, is_repainting: bool) {
         self.set(
@@ -563,6 +576,7 @@ fn setup_path(global_exported_mode: EnvSetMode) {
 /// The originally inherited variables and their values.
 /// This is a simple key->value map and not e.g. cut into paths.
 pub static INHERITED_VARS: OnceLock<HashMap<WString, WString>> = OnceLock::new();
+/// `env_init` — see implementation.
 
 pub fn env_init(paths: Option<&ConfigPaths>, do_uvars: bool, default_paths: bool) {
     let vars = EnvStack::globals();

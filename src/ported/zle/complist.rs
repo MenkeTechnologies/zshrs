@@ -72,30 +72,55 @@ pub const MAX_POS: usize = 11; // c:137
 // =====================================================================
 
 // `COL_*` — index into `mcolors.files[]` per `Src/Zle/complist.c:167-194`.
+/// `COL_NO` constant.
 pub const COL_NO: usize = 0; // c:167
+/// `COL_FI` constant.
 pub const COL_FI: usize = 1; // c:168
+/// `COL_DI` constant.
 pub const COL_DI: usize = 2; // c:169
+/// `COL_LN` constant.
 pub const COL_LN: usize = 3; // c:170
+/// `COL_PI` constant.
 pub const COL_PI: usize = 4; // c:171
+/// `COL_SO` constant.
 pub const COL_SO: usize = 5; // c:172
+/// `COL_BD` constant.
 pub const COL_BD: usize = 6; // c:173
+/// `COL_CD` constant.
 pub const COL_CD: usize = 7; // c:174
+/// `COL_OR` constant.
 pub const COL_OR: usize = 8; // c:175
+/// `COL_MI` constant.
 pub const COL_MI: usize = 9; // c:176
+/// `COL_SU` constant.
 pub const COL_SU: usize = 10; // c:177
+/// `COL_SG` constant.
 pub const COL_SG: usize = 11; // c:178
+/// `COL_TW` constant.
 pub const COL_TW: usize = 12; // c:179
+/// `COL_OW` constant.
 pub const COL_OW: usize = 13; // c:180
+/// `COL_ST` constant.
 pub const COL_ST: usize = 14; // c:181
+/// `COL_EX` constant.
 pub const COL_EX: usize = 15; // c:182
+/// `COL_LC` constant.
 pub const COL_LC: usize = 16; // c:183
+/// `COL_RC` constant.
 pub const COL_RC: usize = 17; // c:184
+/// `COL_EC` constant.
 pub const COL_EC: usize = 18; // c:185
+/// `COL_TC` constant.
 pub const COL_TC: usize = 19; // c:186
+/// `COL_SP` constant.
 pub const COL_SP: usize = 20; // c:187
+/// `COL_MA` constant.
 pub const COL_MA: usize = 21; // c:188
+/// `COL_HI` constant.
 pub const COL_HI: usize = 22; // c:189
+/// `COL_DU` constant.
 pub const COL_DU: usize = 23; // c:190
+/// `COL_SA` constant.
 pub const COL_SA: usize = 24; // c:191
 /// Port of `NUM_COLS` from `Src/Zle/complist.c:193`.
 pub const NUM_COLS: usize = 25; // c:193

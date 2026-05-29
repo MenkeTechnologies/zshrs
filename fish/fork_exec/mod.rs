@@ -1,9 +1,12 @@
 // A module concerned with the exec side of fork/exec.
 // This concerns posix_spawn support, and async-signal
 // safe code which happens in between fork and exec.
+/// `flog_safe` submodule.
 
 pub mod flog_safe;
+/// `postfork` submodule.
 pub mod postfork;
+/// `spawn` submodule.
 #[cfg(have_posix_spawn)]
 pub mod spawn;
 use crate::proc::Job;
@@ -25,8 +28,10 @@ pub fn blocked_signals_for_job(job: &Job, sigmask: &mut libc::sigset_t) -> bool 
 
 // Bravely define _PATH_BSHELL. On practice it's /bin/sh everywhere, except on Android.
 // NOTE: this is currently duplicated in __fish_posix_shell.
+/// `PATH_BSHELL` static.
 #[cfg(not(target_os = "android"))]
 pub static PATH_BSHELL: &[u8] = b"/bin/sh\0";
+/// `PATH_BSHELL` static.
 
 #[cfg(target_os = "android")]
 pub static PATH_BSHELL: &[u8] = b"/system/bin/sh\0";

@@ -121,6 +121,7 @@ pub const COMPSYS_FN_NAMES: &[&str] = &[
 // bin_zstyle/etc. Callers invoke `crate::ported::zle::complete::bin_*`,
 // `crate::ported::modules::zutil::bin_*`, `lookupstyle`, `testforstyle`
 // directly.
+/// `cache` submodule.
 pub mod cache;
 /// In-editor compsys completion entry point — see
 /// `docs/IN_EDITOR_COMPSYS_COMPLETION.md` for the design.
@@ -129,6 +130,7 @@ pub mod in_editor;
 // are dups of Cmatch/Cmgroup types in src/ported/zle/comp_h.rs.
 // menu.rs deleted — was a stub of what used to be a 3567-LOC dup of
 // src/ported/zle/complist.rs.
+/// `ported` submodule.
 pub mod ported;
 // state.rs deleted — dup of shell parameter table for completion
 // (PREFIX/SUFFIX/IPREFIX/ISUFFIX/QIPREFIX/QISUFFIX/CURRENT/words/
@@ -146,6 +148,7 @@ pub mod ported;
 // `bin_*`/state in `crate::ported::*`.
 // system.rs deleted — dup of completion-extension code that depended
 // on the deleted Completion/CompletionReceiver types.
+/// `zpwr_colors` submodule.
 pub mod zpwr_colors;
 
 // base::{CompleterResult, BaseCompletionContext, MainCompleteState,

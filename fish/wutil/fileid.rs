@@ -10,7 +10,9 @@ use std::{
 /// other things.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DevInode {
+    /// `device` field.
     pub device: u64,
+    /// `inode` field.
     pub inode: u64,
 }
 
@@ -19,15 +21,22 @@ pub struct DevInode {
 /// (ABA problem). Therefore we include richer information to detect file changes.
 #[derive(Debug, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FileId {
+    /// `dev_inode` field.
     pub dev_inode: DevInode,
+    /// `size` field.
     pub size: u64,
+    /// `change_seconds` field.
     pub change_seconds: i64,
+    /// `change_nanoseconds` field.
     pub change_nanoseconds: i64,
+    /// `mod_seconds` field.
     pub mod_seconds: i64,
+    /// `mod_nanoseconds` field.
     pub mod_nanoseconds: i64,
 }
 
 impl FileId {
+    /// `from_md` — see implementation.
     pub fn from_md(buf: &Metadata) -> Self {
         // These "into()" calls are because the various fields have different types
         // on different platforms.
@@ -77,6 +86,7 @@ pub fn file_id_for_file(file: &File) -> FileId {
 pub fn file_id_for_path(path: &wstr) -> FileId {
     file_id_for_path_narrow(&wcs2zstring(path))
 }
+/// `file_id_for_path_narrow` — see implementation.
 
 pub fn file_id_for_path_narrow(path: &CStr) -> FileId {
     let path = OsStr::from_bytes(path.to_bytes());
@@ -84,6 +94,7 @@ pub fn file_id_for_path_narrow(path: &CStr) -> FileId {
         .as_ref()
         .map_or(INVALID_FILE_ID, FileId::from_md)
 }
+/// `file_id_for_path_or_error` — see implementation.
 
 pub fn file_id_for_path_or_error(path: &wstr) -> std::io::Result<FileId> {
     let path = wcs2zstring(path);

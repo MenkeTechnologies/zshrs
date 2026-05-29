@@ -1,9 +1,14 @@
 use super::*;
+/// `Trim` — see fields for layout.
 
 pub struct Trim<'args> {
+    /// `chars_to_trim` field.
     chars_to_trim: &'args wstr,
+    /// `left` field.
     left: bool,
+    /// `right` field.
     right: bool,
+    /// `quiet` field.
     quiet: bool,
 }
 

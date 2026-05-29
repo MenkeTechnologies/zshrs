@@ -9,6 +9,7 @@ struct ParseResult {
     negative: bool,
     consumed: usize,
 }
+/// `Options` — see fields for layout.
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Options {

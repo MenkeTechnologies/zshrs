@@ -19,6 +19,7 @@ struct type_cmd_opts_t {
     query: bool,
     color: ColorEnabled,
 }
+/// `r` — see implementation.
 
 pub fn r#type(parser: &Parser, streams: &mut IoStreams, argv: &mut [&wstr]) -> BuiltinResult {
     let cmd = argv[0];

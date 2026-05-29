@@ -1,10 +1,16 @@
+/// `dir_iter` submodule.
 pub mod dir_iter;
+/// `errors` submodule.
 pub mod errors;
+/// `fileid` submodule.
 pub mod fileid;
 mod hex_float;
+/// `printf` submodule.
 #[macro_use]
 pub mod printf;
+/// `wcstod` submodule.
 pub mod wcstod;
+/// `wcstoi` submodule.
 pub mod wcstoi;
 
 use crate::{fds::BorrowedFdFile, flog, signal::SigChecker};
@@ -66,10 +72,12 @@ pub fn wunlink(file_name: &wstr) -> io::Result<()> {
     let tmp = wcs2osstring(file_name);
     fs::remove_file(tmp)
 }
+/// `perror_nix` — see implementation.
 
 pub fn perror_nix(s: &str, e: nix::errno::Errno) {
     eprintf!("%s: %s\n", s, e.desc());
 }
+/// `perror_io` — see implementation.
 
 pub fn perror_io(s: &str, e: &io::Error) {
     eprintf!("%s: %s\n", s, e);

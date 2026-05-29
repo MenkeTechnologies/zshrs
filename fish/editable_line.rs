@@ -8,6 +8,7 @@ use crate::prelude::*;
 pub struct Edit {
     /// When undoing the edit we use this to restore the previous cursor position.
     pub cursor_position_before_edit: usize,
+    /// `cursor_position_before_undo` field.
     pub cursor_position_before_undo: Option<usize>,
 
     /// The span of text that is replaced by this edit.
@@ -15,6 +16,7 @@ pub struct Edit {
 
     /// The strings that are removed and added by this edit, respectively.
     pub old: WString,
+    /// `replacement` field.
     pub replacement: WString,
 
     /// edit_t is only for contiguous changes, so to restore a group of arbitrary changes to the
@@ -23,6 +25,7 @@ pub struct Edit {
 }
 
 impl Edit {
+    /// `new` — see implementation.
     pub fn new(range: std::ops::Range<usize>, replacement: WString) -> Self {
         Self {
             cursor_position_before_edit: 0,
@@ -98,6 +101,7 @@ pub struct EditableLine {
     colors: Vec<HighlightSpec>,
     /// The current position of the cursor in the command line.
     position: usize,
+    /// `pending_position` field.
     pub pending_position: Option<usize>,
 
     /// The history of all edits.
@@ -110,38 +114,47 @@ pub struct EditableLine {
 }
 
 impl EditableLine {
+    /// `text` — see implementation.
     pub fn text(&self) -> &wstr {
         &self.text
     }
+    /// `colors` — see implementation.
 
     pub fn colors(&self) -> &[HighlightSpec] {
         &self.colors
     }
+    /// `set_colors` — see implementation.
     pub fn set_colors(&mut self, colors: Vec<HighlightSpec>) {
         assert_eq!(colors.len(), self.len());
         self.colors = colors;
     }
+    /// `position` — see implementation.
 
     pub fn position(&self) -> usize {
         self.position
     }
+    /// `set_position` — see implementation.
     pub fn set_position(&mut self, position: usize) {
         assert!(position <= self.len());
         self.position = position;
     }
 
     // Gets the length of the text.
+    /// `len` — see implementation.
     pub fn len(&self) -> usize {
         self.text.len()
     }
+    /// `is_empty` — see implementation.
 
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
+    /// `at` — see implementation.
 
     pub fn at(&self, idx: usize) -> char {
         self.text.char_at(idx)
     }
+    /// `offset_to_line` — see implementation.
 
     pub fn offset_to_line(&self, offset: usize) -> usize {
         self.text[0..offset].chars().filter(|&c| c == '\n').count()
@@ -340,6 +353,7 @@ fn cursor_position_after_edit(edit: &Edit) -> usize {
     let removed = chars_deleted_left_of_cursor(edit);
     cursor.saturating_sub(removed)
 }
+/// `range_of_line_at_cursor` — see implementation.
 
 pub fn range_of_line_at_cursor(buffer: &wstr, cursor: usize) -> Range<usize> {
     let start = buffer[0..cursor]
@@ -358,6 +372,7 @@ pub fn range_of_line_at_cursor(buffer: &wstr, cursor: usize) -> Range<usize> {
     }
     start..end
 }
+/// `line_at_cursor` — see implementation.
 
 pub fn line_at_cursor(buffer: &wstr, cursor: usize) -> &wstr {
     &buffer[range_of_line_at_cursor(buffer, cursor)]

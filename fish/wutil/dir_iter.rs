@@ -12,12 +12,19 @@ use std::{cell::Cell, io, mem::MaybeUninit, os::fd::RawFd, ptr::NonNull, rc::Rc}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DirEntryType {
     Fifo = 1, // FIFO file
+    /// `Chr` variant.
     Chr,      // character device
+    /// `Dir` variant.
     Dir,      // directory
+    /// `Blk` variant.
     Blk,      // block device
+    /// `Reg` variant.
     Reg,      // regular file
+    /// `Lnk` variant.
     Lnk,      // symlink
+    /// `Sock` variant.
     Sock,     // socket
+    /// `Whiteout` variant.
     Whiteout, // whiteout (from BSD)
 }
 
@@ -31,17 +38,21 @@ pub struct DirEntry {
     pub inode: libc::ino_t,
 
     // Device, inode pair for this entry, or none if not yet computed.
+    /// `dev_inode` field.
     dev_inode: Cell<Option<DevInode>>,
 
     // The type of the entry. This is initially none; it may be populated eagerly via readdir()
     // on some filesystems, or later via stat(). If stat() fails, the error is silently ignored
     // and the type is left as none(). Note this is an unavoidable race.
+    /// `typ` field.
     typ: Cell<Option<DirEntryType>>,
 
     // whether this could be a link, false if we know definitively it isn't.
+    /// `possible_link` field.
     possible_link: Option<bool>,
 
     // fd of the DIR*, used for fstatat().
+    /// `dirfd` field.
     dirfd: Rc<DirFd>,
 }
 
@@ -209,6 +220,7 @@ impl DirIter {
     pub fn new(path: &wstr) -> io::Result<Self> {
         Self::new_impl(path, false)
     }
+    /// `new_with_dots` — see implementation.
 
     pub fn new_with_dots(path: &wstr) -> io::Result<Self> {
         Self::new_impl(path, true)

@@ -54,6 +54,7 @@ pub struct KeymapName {
     pub flags: i32,          // c:57 int flags
     pub keymap: Arc<Keymap>, // c:58 Keymap keymap
 }
+/// `KMN_IMMORTAL` constant.
 
 pub const KMN_IMMORTAL: i32 = 1 << 1; // c:62
 
@@ -878,6 +879,7 @@ pub fn keybind(km: &Keymap, seq: &[u8]) -> (Option<Thingy>, Option<String>) {
         Some(k) => (k.bind.clone(), k.str.clone()), // c:673-674
     }
 }
+/// `keyisprefix` — see implementation.
 
 pub fn keyisprefix(km: &Keymap, seq: &[u8]) -> i32 {
     // c:683

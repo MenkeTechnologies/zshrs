@@ -1,9 +1,14 @@
 use super::*;
+/// `Join` — see fields for layout.
 
 pub struct Join<'args> {
+    /// `quiet` field.
     quiet: bool,
+    /// `no_empty` field.
     no_empty: bool,
+    /// `is_join0` field.
     pub is_join0: bool,
+    /// `sep` field.
     sep: &'args wstr,
 }
 

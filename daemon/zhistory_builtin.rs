@@ -46,6 +46,7 @@ fn connect() -> Result<Client, ()> {
         eprintln!("zshrs: zhistory: daemon: {}", e);
     })
 }
+/// `zhistory` — see implementation.
 
 pub fn zhistory(args: &[String]) -> i32 {
     let verb = args.get(1).map(|s| s.as_str()).unwrap_or("");

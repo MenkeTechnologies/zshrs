@@ -754,6 +754,7 @@ pub fn pph_unsetfn(pm: *mut param, explicit: i32) {
 /// from `Src/Modules/param_private.c:568` reusing existing PM_*
 /// flag bits the private-scope save/restore code repurposes.
 pub const PM_WAS_UNSET: u32 = PM_NORESTORE; // c:508
+/// `PM_WAS_RONLY` constant.
 pub const PM_WAS_RONLY: u32 = PM_RESTRICTED; // c:509
 
 /// Port of `scopeprivate(HashNode hn, int onoff)` from `Src/Modules/param_private.c:512`.
@@ -1092,12 +1093,14 @@ pub static MAKEPRIVATE_ERROR: std::sync::atomic::AtomicI32 = std::sync::atomic::
 // C tracks private-ness via PM_PRIVATE bit on each Param's
 // node.flags directly; this side-set is the bridge until paramtab
 // reads/writes use the real flag.
+/// `PRIVATE_PARAMS` static.
 pub static PRIVATE_PARAMS: std::sync::LazyLock<Mutex<std::collections::HashSet<String>>> =
     std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
 
 // `fakelevel` — file-scope global from `Src/Modules/param_private.c:215`.
 // Set by `bin_private` to the locallevel at which it ran, used by
 // `printprivatenode`'s scope-walking loop.
+/// `FAKELEVEL` static.
 pub static FAKELEVEL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();

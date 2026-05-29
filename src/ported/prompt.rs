@@ -193,16 +193,27 @@ pub struct buf_vars {
     // callers route through `prompt_tls::*` per-prompt thread_local
     // snapshots (hydrated from the canonical statics in utils.rs /
     // builtin.rs / hist.rs).
+    /// `buf` field.
     pub buf: Vec<u8>,
+    /// `bufspc` field.
     pub bufspc: usize,
+    /// `bp` field.
     pub bp: usize,
+    /// `bufline` field.
     pub bufline: usize,
+    /// `bp1` field.
     pub bp1: Option<usize>,
+    /// `fm` field.
     pub fm: String,
+    /// `fm_pos` field.
     pub fm_pos: usize,
+    /// `truncwidth` field.
     pub truncwidth: i32,
+    /// `dontcount` field.
     pub dontcount: i32,
+    /// `trunccount` field.
     pub trunccount: i32,
+    /// `rstring` field.
     pub rstring: Option<String>,
     pub Rstring: Option<String>,
     // WARNING: NOT IN PROMPT.C — Rust-only expander state.
@@ -211,6 +222,7 @@ pub struct buf_vars {
     // attribute set on the buf_vars so apply_attrs() / reset_attrs()
     // can emit incremental diffs instead of re-emitting the whole
     // SGR every step.
+    /// `attrs` field.
     attrs: zattr,
     // WARNING: NOT IN PROMPT.C — Rust-only readline `\x01`/`\x02`
     // prompt-width-ignore glue. C zsh's `%{ %}` nesting is tracked
@@ -218,6 +230,7 @@ pub struct buf_vars {
     // bool covers the readline-style RL_PROMPT_*_IGNORE byte
     // emissions that the host's readline-compat shim needs around
     // any escape-sequence span.
+    /// `in_escape` field.
     in_escape: bool,
     // `prompt_percent` / `prompt_bang` field copies deleted — these
     // are option-table flags in C (`isset(PROMPTPERCENT)` /
@@ -1295,6 +1308,7 @@ pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {
     *wp = w; // c:1273 *wp = w
     *hp = h; // c:1274 *hp = h
 }
+/// `match_named_colour` — see implementation.
 
 pub fn match_named_colour(teststrp: &str) -> Option<u8> {
     // c:1915
@@ -1361,6 +1375,7 @@ pub fn truecolor_terminal() -> bool {
 }
 
 impl buf_vars {
+    /// `new` — see implementation.
     pub fn new(input: &str) -> Self {
         Self {
             // Bag-of-globals fields removed — see struct def comment.
@@ -1512,6 +1527,7 @@ impl buf_vars {
         self.buf = v;
         self.bp = self.buf.len();
     }
+    /// `finish_expanded_string` — see implementation.
 
     pub fn finish_expanded_string(&mut self, keep_spacing_tokens: bool) -> String {
         if !keep_spacing_tokens {
@@ -2871,26 +2887,38 @@ pub static CMDNAMES: [&str; crate::ported::zsh_h::CS_COUNT as usize] = [
 //     low 8 bits hold a palette index 0..=255, where 8 is the
 //     "default" sentinel per Src/prompt.c:1909.
 // Not a new type — same encoding C packs into `TXT_ATTR_FG_COL_MASK`.
+/// `Color` type alias.
 pub type Color = u32; // c:Src/zsh.h:2718 (colour slot)
+/// `COLOR_24BIT` constant.
 pub const COLOR_24BIT: Color = 0x0100_0000; // c:zsh.h:2727 (TXT_ATTR_FG_24BIT)
 
 // Sentinel "no colour set" — palette index that lives in
 // TXT_ATTR_FG_COL_MASK when the colour is `default` (8 in
 // Src/prompt.c:1909). Bits 16-39 are at most 24 bits, so any
 // value 0..=255 fits comfortably for palette mode.
+/// `COLOUR_DEFAULT` constant.
 pub const COLOUR_DEFAULT: u8 = 8; // c:Src/prompt.c:1909
 
 // Named-colour palette constants. Indexes match `colour_names[]`
 // from `Src/prompt.c:1884-1887`. Used in place of the deleted
 // `Color::Black`..`Color::White`/`Color::Default` enum variants.
+/// `COLOR_BLACK` constant.
 pub const COLOR_BLACK: Color = 0; // c:1885
+/// `COLOR_RED` constant.
 pub const COLOR_RED: Color = 1; // c:1885
+/// `COLOR_GREEN` constant.
 pub const COLOR_GREEN: Color = 2; // c:1885
+/// `COLOR_YELLOW` constant.
 pub const COLOR_YELLOW: Color = 3; // c:1885
+/// `COLOR_BLUE` constant.
 pub const COLOR_BLUE: Color = 4; // c:1885
+/// `COLOR_MAGENTA` constant.
 pub const COLOR_MAGENTA: Color = 5; // c:1885
+/// `COLOR_CYAN` constant.
 pub const COLOR_CYAN: Color = 6; // c:1885
+/// `COLOR_WHITE` constant.
 pub const COLOR_WHITE: Color = 7; // c:1885
+/// `COLOR_DEFAULT` constant.
 pub const COLOR_DEFAULT: Color = COLOUR_DEFAULT as Color; // c:1909
 
 // Defines standard ANSI colour names in index order                        // c:1883
@@ -3050,6 +3078,7 @@ const CMDSTACKSZ: usize = 256;
 // for interior mutability since the contents are owned `Vec<u8>`.
 // the command stack for use with %_ in prompts                             // c:53
 thread_local! {
+    /// `CMDSTACK` static.
     pub static CMDSTACK: std::cell::RefCell<Vec<u8>> = const {              // c:56 (cmdstack[] global)
         std::cell::RefCell::new(Vec::new())
     };

@@ -73,12 +73,17 @@ pub(crate) const KEY_NAMES: &[(char, &wstr)] = &[
     (MENU, L!("menu")),
     (PRINT_SCREEN, L!("printscreen")),
 ];
+/// `Modifiers` — see fields for layout.
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Modifiers {
+    /// `ctrl` field.
     pub ctrl: bool,
+    /// `alt` field.
     pub alt: bool,
+    /// `shift` field.
     pub shift: bool,
+    /// `sup` field.
     pub sup: bool,
 }
 
@@ -118,14 +123,19 @@ impl Modifiers {
 /// Position in terminal coordinates, i.e. not starting from the prompt
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ViewportPosition {
+    /// `x` field.
     pub x: usize,
+    /// `y` field.
     pub y: usize,
 }
 impl FloggableDebug for ViewportPosition {}
+/// `Key` — see fields for layout.
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Key {
+    /// `modifiers` field.
     pub modifiers: Modifiers,
+    /// `codepoint` field.
     pub codepoint: char,
 }
 
@@ -160,13 +170,16 @@ pub(crate) const fn shift(codepoint: char) -> Key {
 }
 
 impl Key {
+    /// `from_single_char` — see implementation.
     pub fn from_single_char(c: char) -> Self {
         u8::try_from(c).map_or(Key::from_raw(c), Key::from_single_byte)
     }
+    /// `from_single_byte` — see implementation.
     pub fn from_single_byte(c: u8) -> Self {
         canonicalize_control_char(c).unwrap_or(Key::from_raw(char::from(c)))
     }
 }
+/// `canonicalize_control_char` — see implementation.
 
 pub fn canonicalize_control_char(c: u8) -> Option<Key> {
     let codepoint = canonicalize_keyed_control_char(char::from(c));
@@ -244,6 +257,7 @@ pub(crate) fn canonicalize_key(mut key: Key) -> Result<Key, WString> {
     }
     Ok(key)
 }
+/// `KEY_SEPARATOR` constant.
 
 pub const KEY_SEPARATOR: char = ',';
 

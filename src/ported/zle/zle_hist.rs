@@ -1761,6 +1761,7 @@ pub fn historybeginningsearchforward() -> i32 {
     // c:2117
     1
 }
+/// `ISEARCH_ACTIVE` static.
 
 pub static ISEARCH_ACTIVE: AtomicI32 = AtomicI32::new(0); // c:1078
 
@@ -1845,13 +1846,21 @@ pub struct History {
 #[allow(non_camel_case_types)]
 pub struct isrch_spot {
     // c:948
+    /// `hl` field.
     pub hl: i32,
+    /// `pos` field.
     pub pos: u16,
+    /// `pat_hl` field.
     pub pat_hl: i32,
+    /// `pat_pos` field.
     pub pat_pos: u16,
+    /// `end_pos` field.
     pub end_pos: u16,
+    /// `cs` field.
     pub cs: u16,
+    /// `len` field.
     pub len: u16,
+    /// `flags` field.
     pub flags: u16,
 }
 

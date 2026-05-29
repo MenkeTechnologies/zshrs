@@ -44,6 +44,7 @@ fn connect(name: &str) -> Result<Client, ()> {
         eprintln!("zshrs: {}: daemon: {}", name, e);
     })
 }
+/// `zcomplete` — see implementation.
 
 pub fn zcomplete(args: &[String]) -> i32 {
     let mut prefix: Option<String> = None;
@@ -87,6 +88,7 @@ pub fn zcomplete(args: &[String]) -> i32 {
         Err(e) => err_exit(&format!("zcomplete: {}", e)),
     }
 }
+/// `zsuggest` — see implementation.
 
 pub fn zsuggest(args: &[String]) -> i32 {
     let mut prefix: Option<String> = None;

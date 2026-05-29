@@ -118,6 +118,7 @@ fn parse_cmd_opts<'args>(
     *optind = w.wopt_index;
     Ok(SUCCESS)
 }
+/// `functions` — see implementation.
 
 pub fn functions(parser: &Parser, streams: &mut IoStreams, args: &mut [&wstr]) -> BuiltinResult {
     let Some(&cmd) = args.first() else {

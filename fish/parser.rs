@@ -48,15 +48,19 @@ use std::os::fd::OwnedFd;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+/// `BlockData` — see variants.
 
 pub enum BlockData {
+    /// `Function` variant.
     Function {
         /// Name of the function
         name: WString,
         /// Arguments passed to the function
         args: Vec<WString>,
     },
+    /// `Event` variant.
     Event(Rc<Event>),
+    /// `Source` variant.
     Source {
         /// The sourced file
         file: Arc<WString>,
@@ -86,10 +90,12 @@ pub struct Block {
 }
 
 impl Block {
+    /// `data` — see implementation.
     #[inline(always)]
     pub fn data(&self) -> Option<&BlockData> {
         self.data.as_deref()
     }
+    /// `wants_pop_env` — see implementation.
 
     #[inline(always)]
     pub fn wants_pop_env(&self) -> bool {
@@ -137,6 +143,7 @@ impl Block {
         }
         result
     }
+    /// `typ` — see implementation.
 
     pub fn typ(&self) -> BlockType {
         self.block_type
@@ -151,30 +158,37 @@ impl Block {
     pub fn if_block() -> Block {
         Block::new(BlockType::if_block)
     }
+    /// `event_block` — see implementation.
     pub fn event_block(event: Event) -> Block {
         let mut b = Block::new(BlockType::event);
         b.data = Some(Box::new(BlockData::Event(Rc::new(event))));
         b
     }
+    /// `function_block` — see implementation.
     pub fn function_block(name: WString, args: Vec<WString>, shadows: bool) -> Block {
         let mut b = Block::new(BlockType::function_call { shadows });
         b.data = Some(Box::new(BlockData::Function { name, args }));
         b
     }
+    /// `source_block` — see implementation.
     pub fn source_block(src: FilenameRef) -> Block {
         let mut b = Block::new(BlockType::source);
         b.data = Some(Box::new(BlockData::Source { file: src }));
         b
     }
+    /// `for_block` — see implementation.
     pub fn for_block() -> Block {
         Block::new(BlockType::for_block)
     }
+    /// `while_block` — see implementation.
     pub fn while_block() -> Block {
         Block::new(BlockType::while_block)
     }
+    /// `switch_block` — see implementation.
     pub fn switch_block() -> Block {
         Block::new(BlockType::switch_block)
     }
+    /// `scope_block` — see implementation.
     pub fn scope_block(typ: BlockType) -> Block {
         assert!(
             [BlockType::begin, BlockType::top, BlockType::subst].contains(&typ),
@@ -182,15 +196,18 @@ impl Block {
         );
         Block::new(typ)
     }
+    /// `breakpoint_block` — see implementation.
     pub fn breakpoint_block() -> Block {
         Block::new(BlockType::breakpoint)
     }
+    /// `variable_assignment_block` — see implementation.
     pub fn variable_assignment_block() -> Block {
         Block::new(BlockType::variable_assignment)
     }
 }
 
 type Microseconds = i64;
+/// `ProfileItem` — see fields for layout.
 
 #[derive(Default)]
 pub struct ProfileItem {
@@ -209,6 +226,7 @@ pub struct ProfileItem {
 }
 
 impl ProfileItem {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Default::default()
     }
@@ -326,6 +344,7 @@ pub struct LibraryData {
 }
 
 impl LibraryData {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Self {
             last_exec_run_counter: u64::MAX,
@@ -363,6 +382,7 @@ pub struct EvalRes {
 }
 
 impl EvalRes {
+    /// `new` — see implementation.
     pub fn new(status: ProcStatus) -> Self {
         Self {
             status,
@@ -370,6 +390,7 @@ impl EvalRes {
         }
     }
 }
+/// `ParserStatusVar` — see variants.
 
 pub enum ParserStatusVar {
     current_command,
@@ -393,8 +414,10 @@ pub enum CancelBehavior {
     /// Clear the signal
     Clear,
 }
+/// `Parser` — see fields for layout.
 
 pub struct Parser {
+    /// `interactive_initialized` field.
     pub interactive_initialized: RelaxedAtomicBool,
 
     /// The currently executing Node.
@@ -433,23 +456,30 @@ pub struct Parser {
 
     /// Global event blocks.
     pub global_event_blocks: AtomicU64,
+    /// `blocking_query` field.
 
     pub blocking_query: RefCell<Option<TerminalQuery>>,
 
     // Timeout for blocking terminal queries.
+    /// `blocking_query_timeout` field.
     pub blocking_query_timeout: RefCell<Option<Duration>>,
 }
+/// `ParserEnvSetMode` — see fields for layout.
 
 #[derive(Copy, Clone, Default)]
 pub struct ParserEnvSetMode {
+    /// `mode` field.
     pub mode: EnvMode,
+    /// `user` field.
     pub user: bool,
 }
 
 impl ParserEnvSetMode {
+    /// `new` — see implementation.
     pub fn new(mode: EnvMode) -> Self {
         Self { mode, user: false }
     }
+    /// `user` — see implementation.
     pub fn user(mode: EnvMode) -> Self {
         Self { mode, user: true }
     }
@@ -508,6 +538,7 @@ impl Parser {
             .take_while(|b| b.typ() != BlockType::source)
             .any(|b| b.typ() == BlockType::subst)
     }
+    /// `eval` — see implementation.
 
     pub fn eval(&self, cmd: &wstr, io: &IoChain) -> EvalRes {
         self.eval_with(cmd, io, None, BlockType::top, false)
@@ -594,6 +625,7 @@ impl Parser {
             }
         }
     }
+    /// `eval_wstr` — see implementation.
 
     pub fn eval_wstr(
         &self,
@@ -620,6 +652,7 @@ impl Parser {
         let ps = Arc::new(ParsedSource::new(src, ast));
         Ok(self.eval_parsed_source(&ps, io, job_group, block_type, false))
     }
+    /// `eval_file_wstr` — see implementation.
 
     pub fn eval_file_wstr(
         &self,
@@ -863,6 +896,7 @@ impl Parser {
 
     // Return an iterator over the blocks, in reverse order.
     // That is, the first block is the innermost block.
+    /// `blocks_iter_rev` — see implementation.
     pub fn blocks_iter_rev<'a>(&'a self) -> impl Iterator<Item = Ref<'a, Block>> {
         let blocks = self.block_list.borrow();
         let mut indices = (0..blocks.len()).rev();
@@ -874,6 +908,7 @@ impl Parser {
     }
 
     // Return the block at a given index, where 0 is the innermost block.
+    /// `block_at_index` — see implementation.
     pub fn block_at_index(&self, index: usize) -> Option<Ref<'_, Block>> {
         let block_list = self.block_list.borrow();
         let block_count = block_list.len();
@@ -885,6 +920,7 @@ impl Parser {
     }
 
     // Return the block at a given index, where 0 is the innermost block.
+    /// `block_at_index_mut` — see implementation.
     pub fn block_at_index_mut(&self, index: usize) -> Option<RefMut<'_, Block>> {
         let block_list = self.block_list.borrow_mut();
         let block_count = block_list.len();
@@ -898,9 +934,11 @@ impl Parser {
     }
 
     // Return the block with the given id, asserting it exists. Note ids are recycled.
+    /// `block_with_id` — see implementation.
     pub fn block_with_id(&self, id: BlockId) -> Ref<'_, Block> {
         Ref::map(self.block_list.borrow(), |bl| &bl[id.0])
     }
+    /// `blocks_size` — see implementation.
 
     pub fn blocks_size(&self) -> usize {
         self.block_list.borrow().len()
@@ -910,6 +948,7 @@ impl Parser {
     pub fn jobs(&self) -> Ref<'_, JobList> {
         self.job_list.borrow()
     }
+    /// `jobs_mut` — see implementation.
     pub fn jobs_mut(&self) -> RefMut<'_, JobList> {
         self.job_list.borrow_mut()
     }
@@ -949,6 +988,7 @@ impl Parser {
     pub fn get_wait_handles(&self) -> Ref<'_, WaitHandleStore> {
         self.wait_handles.borrow()
     }
+    /// `mut_wait_handles` — see implementation.
     pub fn mut_wait_handles(&self) -> RefMut<'_, WaitHandleStore> {
         self.wait_handles.borrow_mut()
     }
@@ -957,9 +997,11 @@ impl Parser {
     pub fn get_last_status(&self) -> c_int {
         self.vars().get_last_status()
     }
+    /// `get_last_statuses` — see implementation.
     pub fn get_last_statuses(&self) -> Statuses {
         self.vars().get_last_statuses()
     }
+    /// `set_last_statuses` — see implementation.
     pub fn set_last_statuses(&self, s: Statuses) {
         self.vars().set_last_statuses(s);
     }
@@ -977,10 +1019,12 @@ impl Parser {
         }
         res
     }
+    /// `is_repainting` — see implementation.
 
     pub fn is_repainting(&self) -> bool {
         self.libdata().is_repaint
     }
+    /// `convert_env_set_mode` — see implementation.
 
     pub fn convert_env_set_mode(&self, mode: ParserEnvSetMode) -> EnvSetMode {
         EnvSetMode::new_with(mode.mode, mode.user, self.is_repainting())
@@ -1136,6 +1180,7 @@ impl Parser {
         }
         None
     }
+    /// `profile_items_mut` — see implementation.
 
     pub fn profile_items_mut(&self) -> RefMut<'_, Vec<ProfileItem>> {
         self.profile_items.borrow_mut()
@@ -1166,6 +1211,7 @@ impl Parser {
         };
         print_profile(&self.profile_items.borrow(), &mut f);
     }
+    /// `get_backtrace` — see implementation.
 
     pub fn get_backtrace(&self, src: &wstr, errors: &ParseErrorList) -> WString {
         let Some(err) = errors.first() else {
@@ -1281,6 +1327,7 @@ impl Parser {
     pub fn is_eval_depth_exceeded(&self) -> bool {
         self.scope().eval_level >= FISH_MAX_EVAL_DEPTH
     }
+    /// `set_color_theme` — see implementation.
 
     pub fn set_color_theme(&self, background_color: Option<&xterm_color::Color>) {
         let color_theme = match background_color.map(|c| c.perceived_lightness()) {

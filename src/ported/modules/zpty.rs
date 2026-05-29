@@ -21,17 +21,26 @@ pub const READ_MAX: usize = 1024 * 1024; // c:44
 /// Same fields (name, args, master fd, pid, echo, nonblock).
 #[derive(Debug)]
 pub struct ptycmd {
+    /// `name` field.
     pub name: String,
+    /// `args` field.
     pub args: Vec<String>,
+    /// `master_fd` field.
     pub master_fd: RawFd,
+    /// `pid` field.
     pub pid: i32,
+    /// `echo` field.
     pub echo: bool,
+    /// `nonblock` field.
     pub nonblock: bool,
+    /// `finished` field.
     pub finished: bool,
+    /// `buffer` field.
     pub buffer: Vec<u8>,
 }
 
 impl ptycmd {
+    /// `new` — see implementation.
     pub fn new(
         name: &str,
         args: Vec<String>,

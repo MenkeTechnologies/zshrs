@@ -53,6 +53,7 @@ fn connect() -> Result<Client, ()> {
         eprintln!("zshrs: zsource: daemon: {}", e);
     })
 }
+/// `zsource` — see implementation.
 
 pub fn zsource(args: &[String]) -> i32 {
     let mut path: Option<String> = None;

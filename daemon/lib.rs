@@ -10,44 +10,82 @@
 //   ops.rs     — IPC operation dispatch
 //   client.rs  — client-side IPC helpers used by z* builtins
 //   firstrun.rs — first-run detection + 6-line stderr notice
+/// `artifact` submodule.
 
 pub mod artifact;
+/// `auth` submodule.
 pub mod auth;
+/// `builtins` submodule.
 pub mod builtins;
+/// `cache` submodule.
 pub mod cache;
+/// `canonical` submodule.
 pub mod canonical;
+/// `catalog` submodule.
 pub mod catalog;
+/// `client` submodule.
 pub mod client;
+/// `definitions` submodule.
 pub mod definitions;
+/// `export` submodule.
 pub mod export;
+/// `firstrun` submodule.
 pub mod firstrun;
+/// `fsnotify` submodule.
 pub mod fsnotify;
+/// `history` submodule.
 pub mod history;
+/// `http` submodule.
 pub mod http;
+/// `ipc` submodule.
 pub mod ipc;
+/// `jobs` submodule.
 pub mod jobs;
+/// `lock` submodule.
 pub mod lock;
+/// `log` submodule.
 pub mod log;
+/// `metrics` submodule.
 pub mod metrics;
+/// `ops` submodule.
 pub mod ops;
+/// `paths` submodule.
 pub mod paths;
+/// `pidlock` submodule.
 pub mod pidlock;
+/// `pubsub` submodule.
 pub mod pubsub;
+/// `schedule` submodule.
 pub mod schedule;
+/// `server` submodule.
 pub mod server;
+/// `shard` submodule.
 pub mod shard;
+/// `snapshot` submodule.
 pub mod snapshot;
+/// `source_resolver` submodule.
 pub mod source_resolver;
+/// `state` submodule.
 pub mod state;
+/// `ticker` submodule.
 pub mod ticker;
+/// `zask` submodule.
 pub mod zask;
+/// `zask_builtin` submodule.
 pub mod zask_builtin;
+/// `zcomplete_builtin` submodule.
 pub mod zcomplete_builtin;
+/// `zd_dispatch` submodule.
 pub mod zd_dispatch;
+/// `zhistory_builtin` submodule.
 pub mod zhistory_builtin;
+/// `zjob_builtin` submodule.
 pub mod zjob_builtin;
+/// `zsource_builtin` submodule.
 pub mod zsource_builtin;
+/// `zsync` submodule.
 pub mod zsync;
+/// `zsync_builtin` submodule.
 pub mod zsync_builtin;
 
 // The static AST-walk pipeline (`ast_walker`, `walk`, `plugin_walk`,
@@ -63,53 +101,66 @@ pub use paths::CachePaths;
 
 /// Result type used throughout the daemon.
 pub type Result<T> = std::result::Result<T, DaemonError>;
+/// `DaemonError` — see variants.
 
 #[derive(thiserror::Error, Debug)]
 pub enum DaemonError {
+    /// `Io` variant.
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    /// `Json` variant.
 
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
+    /// `Nix` variant.
 
     #[error("nix: {0}")]
     Nix(#[from] nix::Error),
+    /// `Sqlite` variant.
 
     #[error("rusqlite: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    /// `AlreadyRunning` variant.
 
     #[error("singleton: another daemon is running (pid {0})")]
     AlreadyRunning(i32),
 
     #[error("protocol: client v{client} incompatible with daemon v{daemon}")]
     ProtocolMismatch { client: u32, daemon: u32 },
+    /// `BadHandshake` variant.
 
     #[error("protocol: malformed handshake")]
     BadHandshake,
 
     #[error("protocol: frame too large ({size} > {max})")]
     FrameTooLarge { size: usize, max: usize },
+    /// `Shutdown` variant.
 
     #[error("daemon: shutting down")]
     Shutdown,
+    /// `UnknownOp` variant.
 
     #[error("op: unknown opcode {0:?}")]
     UnknownOp(String),
 
     #[error("op: bad args for {op}: {reason}")]
     BadArgs { op: String, reason: String },
+    /// `NotConnected` variant.
 
     #[error("client: not connected to daemon")]
     NotConnected,
+    /// `Timeout` variant.
 
     #[error("client: timed out after {0:?}")]
     Timeout(std::time::Duration),
+    /// `Other` variant.
 
     #[error("{0}")]
     Other(String),
 }
 
 impl DaemonError {
+    /// `other` — see implementation.
     pub fn other<S: Into<String>>(msg: S) -> Self {
         Self::Other(msg.into())
     }

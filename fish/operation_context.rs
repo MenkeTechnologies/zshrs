@@ -32,9 +32,11 @@ enum Vars<'a> {
 /// A operation_context_t is a simple property bag which wraps up data needed for highlighting,
 /// expansion, completion, and more.
 pub struct OperationContext<'a> {
+    /// `vars` field.
     vars: Vars<'a>,
 
     // The limit in the number of expansions which should be produced.
+    /// `expansion_limit` field.
     pub expansion_limit: usize,
 
     /// The job group of the parental job.
@@ -43,10 +45,12 @@ pub struct OperationContext<'a> {
     pub job_group: Option<JobGroupRef>,
 
     // A function which may be used to poll for cancellation.
+    /// `cancel_checker` field.
     pub cancel_checker: CancelChecker,
 }
 
 impl<'a> OperationContext<'a> {
+    /// `vars` — see implementation.
     pub fn vars(&self) -> &dyn Environment {
         match &self.vars {
             Vars::Parser(parser) => &parser.variables,
@@ -56,6 +60,7 @@ impl<'a> OperationContext<'a> {
     }
 
     // Return an "empty" context which contains no variables, no parser, and never cancels.
+    /// `empty` — see implementation.
     pub fn empty() -> OperationContext<'static> {
         use std::sync::OnceLock;
         static NULL_ENV: OnceLock<EnvStack> = OnceLock::new();
@@ -65,6 +70,7 @@ impl<'a> OperationContext<'a> {
 
     // Return an operation context that contains only global variables, no parser, and never
     // cancels.
+    /// `globals` — see implementation.
     pub fn globals() -> OperationContext<'static> {
         OperationContext::background(EnvStack::globals(), EXPANSION_LIMIT_DEFAULT)
     }
@@ -82,6 +88,7 @@ impl<'a> OperationContext<'a> {
             cancel_checker,
         }
     }
+    /// `test_only_foreground` — see implementation.
 
     pub fn test_only_foreground(
         parser: &'a Parser,
@@ -105,6 +112,7 @@ impl<'a> OperationContext<'a> {
             cancel_checker: Box::new(no_cancel),
         }
     }
+    /// `background_with_cancel_checker` — see implementation.
 
     pub fn background_with_cancel_checker(
         vars: &'a dyn Environment,
@@ -118,6 +126,7 @@ impl<'a> OperationContext<'a> {
             cancel_checker,
         }
     }
+    /// `background_interruptible` — see implementation.
 
     pub fn background_interruptible(env: &dyn Environment) -> OperationContext<'_> {
         OperationContext::background_with_cancel_checker(
@@ -126,10 +135,12 @@ impl<'a> OperationContext<'a> {
             EXPANSION_LIMIT_BACKGROUND,
         )
     }
+    /// `has_parser` — see implementation.
 
     pub fn has_parser(&self) -> bool {
         matches!(self.vars, Vars::Parser(_) | Vars::TestOnly(_, _))
     }
+    /// `maybe_parser` — see implementation.
     pub fn maybe_parser(&self) -> Option<&Parser> {
         match &self.vars {
             Vars::Parser(parser) => Some(parser),
@@ -137,6 +148,7 @@ impl<'a> OperationContext<'a> {
             Vars::TestOnly(parser, _) => Some(parser),
         }
     }
+    /// `parser` — see implementation.
     pub fn parser(&self) -> &Parser {
         match &self.vars {
             Vars::Parser(parser) => parser,
@@ -145,6 +157,7 @@ impl<'a> OperationContext<'a> {
         }
     }
     // Invoke the cancel checker. Return if we should cancel.
+    /// `check_cancel` — see implementation.
     pub fn check_cancel(&self) -> bool {
         (self.cancel_checker)()
     }

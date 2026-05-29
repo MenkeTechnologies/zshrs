@@ -69,12 +69,16 @@ pub enum ProcessType {
     /// The exec builtin.
     Exec,
 }
+/// `JobControl` — see variants.
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum JobControl {
+    /// `All` variant.
     All,
+    /// `Interactive` variant.
     Interactive,
+    /// `None` variant.
     None,
 }
 
@@ -106,6 +110,7 @@ pub fn clock_ticks_to_seconds(ticks: ClockTicks) -> f64 {
     }
     0.0
 }
+/// `JobGroupRef` type alias.
 
 pub type JobGroupRef = Arc<JobGroup>;
 
@@ -201,6 +206,7 @@ impl ProcStatus {
     pub fn signal_exited(&self) -> bool {
         WIFSIGNALED(self.status())
     }
+    /// `stop_signal` — see implementation.
 
     pub fn stop_signal(&self) -> libc::c_int {
         assert!(self.stopped(), "Process is not signal stopped");
@@ -252,6 +258,7 @@ pub struct InternalProc {
 }
 
 impl InternalProc {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         static NEXT_PROC_ID: AtomicU64 = AtomicU64::new(0);
         Self {
@@ -277,10 +284,12 @@ impl InternalProc {
             status.status_value()
         );
     }
+    /// `get_status` — see implementation.
 
     pub fn get_status(&self) -> ProcStatus {
         *self.status.get().expect("Process has not exited")
     }
+    /// `get_id` — see implementation.
 
     pub fn get_id(&self) -> u64 {
         self.internal_proc_id
@@ -293,6 +302,7 @@ impl InternalProc {
 pub struct Pid(NonZeroU32);
 
 impl Pid {
+    /// `new` — see implementation.
     #[inline(always)]
     pub fn new(pid: i32) -> Self {
         Self(
@@ -302,15 +312,18 @@ impl Pid {
                 .expect("PID must be greater than zero"),
         )
     }
+    /// `get` — see implementation.
     #[inline(always)]
     pub fn get(&self) -> i32 {
         self.0.get() as i32
     }
+    /// `as_pid_t` — see implementation.
     #[inline(always)]
     pub fn as_pid_t(&self) -> libc::pid_t {
         #[allow(clippy::useless_conversion)]
         self.get().into()
     }
+    /// `as_nix_pid` — see implementation.
 
     #[inline(always)]
     pub fn as_nix_pid(&self) -> nix::unistd::Pid {
@@ -321,6 +334,7 @@ impl Pid {
     // The nix Pid type does not guarantee non-zero values.
     // It is safe to use this on the result of nix's getpid, since getpid does not fail, and the ID
     // of the calling process is never 0.
+    /// `from_nix_pid_unchecked` — see implementation.
     pub fn from_nix_pid_unchecked(pid: nix::unistd::Pid) -> Self {
         Self::new(pid.as_raw())
     }
@@ -369,6 +383,7 @@ impl fish_printf::ToArg<'static> for Pid {
 pub struct Process {
     /// Note whether we are the first and/or last in the job
     pub is_first_in_job: bool,
+    /// `is_last_in_job` field.
     pub is_last_in_job: bool,
 
     /// Type of process.
@@ -407,16 +422,21 @@ pub struct Process {
 
     /// Reported status value.
     pub status: Cell<ProcStatus>,
+    /// `last_times` field.
 
     pub last_times: Cell<ProcTimes>,
+    /// `argv` field.
 
     argv: Vec<WString>,
+    /// `proc_redirection_specs` field.
     proc_redirection_specs: RedirectionSpecList,
 
     // The wait handle. This is constructed lazily, and cached.
     // This may be null.
+    /// `wait_handle` field.
     wait_handle: RefCell<Option<WaitHandleRef>>,
 }
+/// `ProcTimes` — see fields for layout.
 
 #[derive(Default, Clone, Copy)]
 pub struct ProcTimes {
@@ -425,13 +445,17 @@ pub struct ProcTimes {
     /// Number of jiffies spent in process at last cpu time check.
     pub jiffies: ClockTicks,
 }
+/// `ConcreteAssignment` — see fields for layout.
 
 pub struct ConcreteAssignment {
+    /// `variable_name` field.
     pub variable_name: WString,
+    /// `values` field.
     pub values: Vec<WString>,
 }
 
 impl ConcreteAssignment {
+    /// `new` — see implementation.
     pub fn new(variable_name: WString, values: Vec<WString>) -> Self {
         Self {
             variable_name,
@@ -441,6 +465,7 @@ impl ConcreteAssignment {
 }
 
 impl Process {
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Default::default()
     }
@@ -450,6 +475,7 @@ impl Process {
     pub fn pid(&self) -> Option<Pid> {
         self.pid.get().copied()
     }
+    /// `has_pid` — see implementation.
 
     #[inline(always)]
     pub fn has_pid(&self) -> bool {
@@ -488,9 +514,11 @@ impl Process {
     pub fn redirection_specs(&self) -> &RedirectionSpecList {
         &self.proc_redirection_specs
     }
+    /// `redirection_specs_mut` — see implementation.
     pub fn redirection_specs_mut(&mut self) -> &mut RedirectionSpecList {
         &mut self.proc_redirection_specs
     }
+    /// `set_redirection_specs` — see implementation.
     pub fn set_redirection_specs(&mut self, specs: RedirectionSpecList) {
         self.proc_redirection_specs = specs;
     }
@@ -527,15 +555,19 @@ impl Process {
     pub fn is_builtin(&self) -> bool {
         matches!(self.typ, ProcessType::Builtin)
     }
+    /// `is_function` — see implementation.
     pub fn is_function(&self) -> bool {
         matches!(self.typ, ProcessType::Function)
     }
+    /// `is_block_node` — see implementation.
     pub fn is_block_node(&self) -> bool {
         matches!(self.typ, ProcessType::BlockNode(_))
     }
+    /// `is_external` — see implementation.
     pub fn is_external(&self) -> bool {
         matches!(self.typ, ProcessType::External)
     }
+    /// `is_exec` — see implementation.
     pub fn is_exec(&self) -> bool {
         matches!(self.typ, ProcessType::Exec)
     }
@@ -544,10 +576,12 @@ impl Process {
     pub fn get_wait_handle(&self) -> Option<WaitHandleRef> {
         self.wait_handle.borrow().clone()
     }
+    /// `is_stopped` — see implementation.
 
     pub fn is_stopped(&self) -> bool {
         self.stopped.load()
     }
+    /// `is_completed` — see implementation.
 
     pub fn is_completed(&self) -> bool {
         self.completed.load()
@@ -604,6 +638,7 @@ pub struct JobFlags {
     pub disown_requested: bool,
 
     // Indicates that we are the "group root." Any other jobs using this tree are nested.
+    /// `is_group_root` field.
     pub is_group_root: bool,
 }
 
@@ -622,6 +657,7 @@ pub struct Job {
 
     // The group containing this job.
     // This is never cleared.
+    /// `group` field.
     pub group: Option<JobGroupRef>,
 
     /// A non-user-visible, never-recycled job ID.
@@ -632,6 +668,7 @@ pub struct Job {
 }
 
 impl Job {
+    /// `new` — see implementation.
     pub fn new(properties: JobProperties, command_str: WString) -> Self {
         static NEXT_INTERNAL_JOB_ID: AtomicU64 = AtomicU64::new(0);
         Job {
@@ -641,6 +678,7 @@ impl Job {
             ..Default::default()
         }
     }
+    /// `group` — see implementation.
 
     pub fn group(&self) -> &JobGroup {
         self.group.as_ref().unwrap()
@@ -729,6 +767,7 @@ impl Job {
     pub fn wants_job_control(&self) -> bool {
         self.group().wants_job_control()
     }
+    /// `entitled_to_terminal` — see implementation.
 
     pub fn entitled_to_terminal(&self) -> bool {
         self.group().is_foreground() && self.processes().iter().any(|p| !p.is_internal())
@@ -789,9 +828,11 @@ impl Job {
     pub fn is_visible(&self) -> bool {
         !self.is_completed() && self.is_constructed() && !self.flags().disown_requested
     }
+    /// `skip_notification` — see implementation.
     pub fn skip_notification(&self) -> bool {
         self.properties.skip_notification
     }
+    /// `from_event_handler` — see implementation.
     #[allow(clippy::wrong_self_convention)]
     pub fn from_event_handler(&self) -> bool {
         self.properties.from_event_handler
@@ -927,6 +968,7 @@ impl Job {
         Some(st)
     }
 }
+/// `JobRef` type alias.
 
 pub type JobRef = Rc<Job>;
 
@@ -934,6 +976,7 @@ pub type JobRef = Rc<Job>;
 pub fn is_interactive_session() -> bool {
     IS_INTERACTIVE_SESSION.load()
 }
+/// `set_interactive_session` — see implementation.
 pub fn set_interactive_session(flag: bool) {
     IS_INTERACTIVE_SESSION.store(flag);
 }
@@ -943,6 +986,7 @@ static IS_INTERACTIVE_SESSION: RelaxedAtomicBool = RelaxedAtomicBool::new(false)
 pub fn get_login() -> bool {
     IS_LOGIN.load()
 }
+/// `mark_login` — see implementation.
 pub fn mark_login() {
     IS_LOGIN.store(true);
 }
@@ -954,12 +998,14 @@ static IS_LOGIN: RelaxedAtomicBool = RelaxedAtomicBool::new(false);
 pub fn no_exec() -> bool {
     IS_NO_EXEC.load()
 }
+/// `mark_no_exec` — see implementation.
 pub fn mark_no_exec() {
     IS_NO_EXEC.store(true);
 }
 static IS_NO_EXEC: RelaxedAtomicBool = RelaxedAtomicBool::new(false);
 
 // List of jobs.
+/// `JobList` type alias.
 pub type JobList = Vec<JobRef>;
 
 /// The current job control mode.
@@ -968,6 +1014,7 @@ pub type JobList = Vec<JobRef>;
 pub fn get_job_control_mode() -> JobControl {
     unsafe { std::mem::transmute(JOB_CONTROL_MODE.load(Ordering::Relaxed)) }
 }
+/// `set_job_control_mode` — see implementation.
 pub fn set_job_control_mode(mode: JobControl) {
     JOB_CONTROL_MODE.store(mode as u8, Ordering::Relaxed);
 

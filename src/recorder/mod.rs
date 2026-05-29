@@ -73,29 +73,48 @@ static BUFFER: Lazy<Mutex<Vec<RecordEvent>>> = Lazy::new(|| Mutex::new(Vec::with
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DefKind {
+    /// `Alias` variant.
     Alias,
+    /// `GAlias` variant.
     GAlias,
+    /// `SAlias` variant.
     SAlias,
+    /// `Function` variant.
     Function,
+    /// `Assign` variant.
     Assign,
+    /// `Typeset` variant.
     Typeset,
+    /// `Export` variant.
     Export,
+    /// `PathMod` variant.
     PathMod,
+    /// `HashD` variant.
     HashD,
+    /// `Zstyle` variant.
     Zstyle,
+    /// `Bindkey` variant.
     Bindkey,
+    /// `Compdef` variant.
     Compdef,
+    /// `Zmodload` variant.
     Zmodload,
+    /// `Setopt` variant.
     Setopt,
+    /// `Unsetopt` variant.
     Unsetopt,
+    /// `Trap` variant.
     Trap,
+    /// `Sched` variant.
     Sched,
+    /// `Source` variant.
     Source,
     /// Removal events — RECORDER.md "Open question 4: Should we record
     /// `unalias` / `unset` / `disable` events?". Recorded so `zwhere -l`
     /// lineage can see "this name was defined at A:N, removed at B:M,
     /// redefined at C:K". Without these the override chain is invisible.
     Unalias,
+    /// `Unset` variant.
     Unset,
     /// `zle -N WIDGET [FUNC]` — define a new ZLE widget. Distinct from
     /// `bindkey` (which binds a key sequence to a widget) and from
@@ -115,6 +134,7 @@ pub enum DefKind {
 }
 
 impl DefKind {
+    /// `as_str` — see implementation.
     pub fn as_str(self) -> &'static str {
         match self {
             DefKind::Alias => "alias",
@@ -156,27 +176,42 @@ impl DefKind {
 pub struct ParamAttrs(pub u16);
 
 impl ParamAttrs {
+    /// `NONE` constant.
     pub const NONE: Self = Self(0);
+    /// `SCALAR` constant.
     pub const SCALAR: u16 = 1 << 0;
+    /// `INTEGER` constant.
     pub const INTEGER: u16 = 1 << 1;
+    /// `FLOAT` constant.
     pub const FLOAT: u16 = 1 << 2;
+    /// `ASSOC` constant.
     pub const ASSOC: u16 = 1 << 3;
+    /// `ARRAY` constant.
     pub const ARRAY: u16 = 1 << 4;
+    /// `READONLY` constant.
     pub const READONLY: u16 = 1 << 5;
+    /// `EXPORT` constant.
     pub const EXPORT: u16 = 1 << 6;
+    /// `GLOBAL` constant.
     pub const GLOBAL: u16 = 1 << 7;
+    /// `UNIQUE` constant.
     pub const UNIQUE: u16 = 1 << 8;
+    /// `TIED` constant.
     pub const TIED: u16 = 1 << 9;
+    /// `HIDE` constant.
     pub const HIDE: u16 = 1 << 10;
+    /// `HIDE_VAL` constant.
     pub const HIDE_VAL: u16 = 1 << 11;
     /// `+=` operation marker. Distinguishes `arr=(a b)` (replace) from
     /// `arr+=(c)` (extend). Replay needs this to drive the right
     /// codepath when reconstructing array state from the bundle.
     pub const APPEND: u16 = 1 << 12;
+    /// `set` — see implementation.
 
     pub fn set(&mut self, mask: u16) {
         self.0 |= mask;
     }
+    /// `has` — see implementation.
     pub fn has(self, mask: u16) -> bool {
         self.0 & mask != 0
     }
@@ -236,18 +271,29 @@ impl ParamAttrs {
 ///     determinism (zsh assocs are insertion-ordered).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordEvent {
+    /// `order_idx` field.
     pub order_idx: u64,
+    /// `ts_ns` field.
     pub ts_ns: u64,
+    /// `kind` field.
     pub kind: DefKind,
+    /// `name` field.
     pub name: String,
+    /// `value` field.
     pub value: Option<String>,
+    /// `file` field.
     pub file: Option<String>,
+    /// `line` field.
     pub line: Option<u32>,
+    /// `fn_chain` field.
     pub fn_chain: Option<String>,
+    /// `attrs` field.
     #[serde(default, skip_serializing_if = "is_default_attrs")]
     pub attrs: ParamAttrs,
+    /// `value_array` field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_array: Option<Vec<String>>,
+    /// `value_assoc` field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_assoc: Option<Vec<(String, String)>>,
     /// Recording-shell identity for the federated catalog (per
@@ -267,11 +313,17 @@ fn is_default_attrs(a: &ParamAttrs) -> bool {
 /// Bundle sent to the daemon at end-of-run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecorderBundle {
+    /// `started_at_ns` field.
     pub started_at_ns: u64,
+    /// `finished_at_ns` field.
     pub finished_at_ns: u64,
+    /// `cmdline` field.
     pub cmdline: String,
+    /// `zdotdir` field.
     pub zdotdir: Option<String>,
+    /// `home` field.
     pub home: Option<String>,
+    /// `events` field.
     pub events: Vec<RecordEvent>,
     /// Federated-catalog shell identity. Falls back to "zshrs" if not
     /// supplied. Per-event `shell_id` overrides this top-level value
@@ -279,6 +331,7 @@ pub struct RecorderBundle {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_id: Option<String>,
 }
+/// `enable` — see implementation.
 
 #[inline]
 pub fn enable() {
@@ -286,6 +339,7 @@ pub fn enable() {
     START_NS.store(now_ns(), Ordering::Relaxed);
     tracing::info!("recorder: enabled");
 }
+/// `is_enabled` — see implementation.
 
 #[inline]
 pub fn is_enabled() -> bool {
@@ -324,6 +378,7 @@ pub fn recorder_ctx_global() -> RecordCtx {
         fn_chain,
     }
 }
+/// `set_daemon_disabled` — see implementation.
 
 #[inline]
 pub fn set_daemon_disabled(v: bool) {
@@ -334,6 +389,7 @@ pub fn set_daemon_disabled(v: bool) {
 fn daemon_disabled() -> bool {
     DAEMON_DISABLED.load(Ordering::Relaxed)
 }
+/// `set_quiet` — see implementation.
 
 #[inline]
 pub fn set_quiet(v: bool) {
@@ -344,6 +400,7 @@ pub fn set_quiet(v: bool) {
 fn quiet() -> bool {
     QUIET.load(Ordering::Relaxed)
 }
+/// `set_json_summary` — see implementation.
 
 #[inline]
 pub fn set_json_summary(v: bool) {
@@ -354,6 +411,7 @@ pub fn set_json_summary(v: bool) {
 fn json_summary_enabled() -> bool {
     JSON_SUMMARY.load(Ordering::Relaxed)
 }
+/// `set_output_path` — see implementation.
 
 pub fn set_output_path(p: Option<String>) {
     if let Ok(mut g) = OUTPUT_PATH.lock() {
@@ -364,6 +422,7 @@ pub fn set_output_path(p: Option<String>) {
 fn output_path() -> Option<String> {
     OUTPUT_PATH.lock().ok().and_then(|g| g.clone())
 }
+/// `set_shell_id_override` — see implementation.
 
 pub fn set_shell_id_override(s: Option<String>) {
     if let Ok(mut g) = SHELL_ID_OVERRIDE.lock() {
@@ -386,8 +445,11 @@ fn now_ns() -> u64 {
 /// current source file, current `$funcstack`).
 #[derive(Debug, Clone, Default)]
 pub struct RecordCtx {
+    /// `file` field.
     pub file: Option<String>,
+    /// `line` field.
     pub line: Option<u32>,
+    /// `fn_chain` field.
     pub fn_chain: Option<String>,
 }
 
@@ -582,6 +644,7 @@ pub fn emit_alias(name: &str, value: Option<&str>, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_galias` — see implementation.
 pub fn emit_galias(name: &str, value: Option<&str>, ctx: RecordCtx) {
     emit(
         DefKind::GAlias,
@@ -592,6 +655,7 @@ pub fn emit_galias(name: &str, value: Option<&str>, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_salias` — see implementation.
 pub fn emit_salias(name: &str, value: Option<&str>, ctx: RecordCtx) {
     emit(
         DefKind::SAlias,
@@ -602,6 +666,7 @@ pub fn emit_salias(name: &str, value: Option<&str>, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_function` — see implementation.
 pub fn emit_function(name: &str, body: Option<&str>, ctx: RecordCtx) {
     emit(
         DefKind::Function,
@@ -612,6 +677,7 @@ pub fn emit_function(name: &str, body: Option<&str>, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_assign` — see implementation.
 pub fn emit_assign(name: &str, value: &str, ctx: RecordCtx) {
     emit(
         DefKind::Assign,
@@ -758,6 +824,7 @@ pub fn emit_typeset_attrs(name: &str, value: Option<&str>, attrs: ParamAttrs, ct
         attrs,
     );
 }
+/// `emit_export` — see implementation.
 pub fn emit_export(name: &str, value: Option<&str>, ctx: RecordCtx) {
     emit(
         DefKind::Export,
@@ -768,6 +835,7 @@ pub fn emit_export(name: &str, value: Option<&str>, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_path_mod` — see implementation.
 pub fn emit_path_mod(name: &str, op: &str, ctx: RecordCtx) {
     emit(
         DefKind::PathMod,
@@ -778,6 +846,7 @@ pub fn emit_path_mod(name: &str, op: &str, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_hash_d` — see implementation.
 pub fn emit_hash_d(name: &str, path: &str, ctx: RecordCtx) {
     emit(
         DefKind::HashD,
@@ -788,6 +857,7 @@ pub fn emit_hash_d(name: &str, path: &str, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_zstyle` — see implementation.
 pub fn emit_zstyle(pattern: &str, rest: &str, ctx: RecordCtx) {
     emit(
         DefKind::Zstyle,
@@ -798,6 +868,7 @@ pub fn emit_zstyle(pattern: &str, rest: &str, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_bindkey` — see implementation.
 pub fn emit_bindkey(seq: &str, widget: &str, ctx: RecordCtx) {
     emit(
         DefKind::Bindkey,
@@ -808,6 +879,7 @@ pub fn emit_bindkey(seq: &str, widget: &str, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_compdef` — see implementation.
 pub fn emit_compdef(func: &str, cmds: &str, ctx: RecordCtx) {
     emit(
         DefKind::Compdef,
@@ -818,6 +890,7 @@ pub fn emit_compdef(func: &str, cmds: &str, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_zmodload` — see implementation.
 pub fn emit_zmodload(module: &str, flags: &str, ctx: RecordCtx) {
     emit(
         DefKind::Zmodload,
@@ -828,9 +901,11 @@ pub fn emit_zmodload(module: &str, flags: &str, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_setopt` — see implementation.
 pub fn emit_setopt(opt: &str, ctx: RecordCtx) {
     emit(DefKind::Setopt, opt, None, ctx.file, ctx.line, ctx.fn_chain);
 }
+/// `emit_unsetopt` — see implementation.
 pub fn emit_unsetopt(opt: &str, ctx: RecordCtx) {
     emit(
         DefKind::Unsetopt,
@@ -841,6 +916,7 @@ pub fn emit_unsetopt(opt: &str, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_trap` — see implementation.
 pub fn emit_trap(sig: &str, handler: &str, ctx: RecordCtx) {
     emit(
         DefKind::Trap,
@@ -851,6 +927,7 @@ pub fn emit_trap(sig: &str, handler: &str, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_sched` — see implementation.
 pub fn emit_sched(when: &str, cmd: &str, ctx: RecordCtx) {
     emit(
         DefKind::Sched,
@@ -861,6 +938,7 @@ pub fn emit_sched(when: &str, cmd: &str, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_source` — see implementation.
 pub fn emit_source(path: &str, ctx: RecordCtx) {
     emit(
         DefKind::Source,
@@ -871,6 +949,7 @@ pub fn emit_source(path: &str, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_unalias` — see implementation.
 pub fn emit_unalias(name: &str, ctx: RecordCtx) {
     emit(
         DefKind::Unalias,
@@ -881,9 +960,11 @@ pub fn emit_unalias(name: &str, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_unset` — see implementation.
 pub fn emit_unset(name: &str, ctx: RecordCtx) {
     emit(DefKind::Unset, name, None, ctx.file, ctx.line, ctx.fn_chain);
 }
+/// `emit_zle` — see implementation.
 pub fn emit_zle(widget: &str, func: Option<&str>, ctx: RecordCtx) {
     emit(
         DefKind::Zle,
@@ -894,6 +975,7 @@ pub fn emit_zle(widget: &str, func: Option<&str>, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// `emit_completion` — see implementation.
 pub fn emit_completion(name: &str, abs_path: &str, ctx: RecordCtx) {
     emit(
         DefKind::Completion,
@@ -1091,6 +1173,7 @@ pub fn flush_to_daemon() -> bool {
         }
     }
 }
+/// `flush_to_daemon` — see implementation.
 
 #[cfg(not(feature = "daemon"))]
 pub fn flush_to_daemon() -> bool {

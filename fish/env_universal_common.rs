@@ -20,11 +20,14 @@ use std::mem::MaybeUninit;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallbackData {
     // The name of the variable.
+    /// `key` field.
     pub key: WString,
 
     // The value of the variable, or none if it is erased.
+    /// `val` field.
     pub val: Option<EnvVar>,
 }
+/// `CallbackDataList` type alias.
 
 pub type CallbackDataList = Vec<CallbackData>;
 
@@ -39,26 +42,33 @@ enum UvarFormat {
 /// Class representing universal variables.
 pub struct EnvUniversal {
     // Path that we save to. This is set in initialize(). If empty, initialize has not been called.
+    /// `vars_path` field.
     vars_path: WString,
+    /// `narrow_vars_path` field.
     narrow_vars_path: CString,
 
     // The table of variables.
+    /// `vars` field.
     vars: VarTable,
 
     // Keys that have been modified, and need to be written. A value here that is not present in
     // vars indicates a deleted value.
+    /// `modified` field.
     modified: HashSet<WString>,
 
     // A generation count which is incremented every time an exported variable is modified.
+    /// `export_generation` field.
     export_generation: u64,
 
     // Whether it's OK to save. This may be set to false if we discover that a future version of
     // fish wrote the uvars contents.
     // Only update if last_read_file_id is updated as well.
+    /// `ok_to_save` field.
     ok_to_save: bool,
 
     // File id from which we last read.
     // Only update if ok_to_save is updated as well.
+    /// `last_read_file_id` field.
     last_read_file_id: FileId,
 }
 
@@ -71,6 +81,7 @@ struct UniversalReadUpdate {
 
 impl EnvUniversal {
     // Construct an empty universal variables.
+    /// `new` — see implementation.
     pub fn new() -> Self {
         Self {
             vars_path: Default::default(),
@@ -83,14 +94,17 @@ impl EnvUniversal {
         }
     }
     // Get the value of the variable with the specified name.
+    /// `get` — see implementation.
     pub fn get(&self, name: &wstr) -> Option<EnvVar> {
         self.vars.get(name).cloned()
     }
     // Return flags from the variable with the given name.
+    /// `get_flags` — see implementation.
     pub fn get_flags(&self, name: &wstr) -> Option<EnvVarFlags> {
         self.vars.get(name).map(|var| var.get_flags())
     }
     // Sets a variable.
+    /// `set` — see implementation.
     pub fn set(&mut self, key: &wstr, var: EnvVar) {
         let exports = var.exports();
         match self.vars.entry(key.to_owned()) {
@@ -110,6 +124,7 @@ impl EnvUniversal {
         }
     }
     // Removes a variable. Returns true if it was found, false if not.
+    /// `remove` — see implementation.
     pub fn remove(&mut self, key: &wstr) -> bool {
         if let Some(var) = self.vars.remove(key) {
             if var.exports() {
@@ -122,6 +137,7 @@ impl EnvUniversal {
     }
 
     // Gets variable names.
+    /// `get_names` — see implementation.
     pub fn get_names(&self, show_exported: bool, show_unexported: bool) -> Vec<WString> {
         let mut result = vec![];
         for (key, var) in &self.vars {
@@ -333,6 +349,7 @@ impl EnvUniversal {
 
         contents
     }
+    /// `is_ok_to_save` — see implementation.
 
     #[cfg(test)]
     pub fn is_ok_to_save(&self) -> bool {

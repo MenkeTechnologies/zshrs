@@ -109,6 +109,7 @@ fn argv_arg(args: &Value) -> std::result::Result<Vec<String>, ErrPayload> {
     }
     Ok(v)
 }
+/// `op_schedule_add` — see implementation.
 
 pub async fn op_schedule_add(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let cron_expr = args
@@ -142,6 +143,7 @@ pub async fn op_schedule_add(state: &Arc<DaemonState>, args: Value) -> OpResult 
     let id = conn.last_insert_rowid();
     Ok(json!({ "schedule_id": id, "cron_expr": cron_expr }))
 }
+/// `op_schedule_add_once` — see implementation.
 
 pub async fn op_schedule_add_once(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let fire_at_unix_secs = args
@@ -177,6 +179,7 @@ pub async fn op_schedule_add_once(state: &Arc<DaemonState>, args: Value) -> OpRe
     let id = conn.last_insert_rowid();
     Ok(json!({ "schedule_id": id, "fire_at_ns": fire_at_ns }))
 }
+/// `op_schedule_remove` — see implementation.
 
 pub async fn op_schedule_remove(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let id = args
@@ -189,6 +192,7 @@ pub async fn op_schedule_remove(state: &Arc<DaemonState>, args: Value) -> OpResu
         .map_err(|e| ErrPayload::new("schedule_remove", e.to_string()))?;
     Ok(json!({ "id": id, "removed": n > 0 }))
 }
+/// `op_schedule_list` — see implementation.
 
 pub async fn op_schedule_list(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let enabled_only = args

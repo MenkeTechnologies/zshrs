@@ -13,33 +13,60 @@
 // Core ZLE types (old API for vm_helper compatibility)
 
 // New comprehensive ZLE port from C
+/// `comp_h` submodule.
 
 pub mod comp_h;
+/// `compcore` submodule.
 pub mod compcore;
+/// `compctl` submodule.
 pub mod compctl;
+/// `compctl_h` submodule.
 pub mod compctl_h;
+/// `complete` submodule.
 pub mod complete;
+/// `complist` submodule.
 pub mod complist;
+/// `compmatch` submodule.
 pub mod compmatch;
+/// `compresult` submodule.
 pub mod compresult;
+/// `computil` submodule.
 pub mod computil;
+/// `deltochar` submodule.
 pub mod deltochar;
+/// `termquery` submodule.
 pub mod termquery;
+/// `textobjects` submodule.
 pub mod textobjects;
+/// `zle_bindings` submodule.
 pub mod zle_bindings;
+/// `zle_h` submodule.
 pub mod zle_h;
+/// `zle_hist` submodule.
 pub mod zle_hist;
+/// `zle_keymap` submodule.
 pub mod zle_keymap;
+/// `zle_main` submodule.
 pub mod zle_main;
+/// `zle_misc` submodule.
 pub mod zle_misc;
+/// `zle_move` submodule.
 pub mod zle_move;
+/// `zle_params` submodule.
 pub mod zle_params;
+/// `zle_refresh` submodule.
 pub mod zle_refresh;
+/// `zle_thingy` submodule.
 pub mod zle_thingy;
+/// `zle_tricky` submodule.
 pub mod zle_tricky;
+/// `zle_utils` submodule.
 pub mod zle_utils;
+/// `zle_vi` submodule.
 pub mod zle_vi;
+/// `zle_word` submodule.
 pub mod zle_word;
+/// `zleparameter` submodule.
 pub mod zleparameter;
 
 pub use zle_h::{widget, WidgetImpl};

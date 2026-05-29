@@ -1573,6 +1573,7 @@ pub fn endoflist() -> i32 {
     }
     1 // c:3073
 }
+/// `USEMENU` static.
 
 pub static USEMENU: AtomicI32 = AtomicI32::new(0); // c:96
 

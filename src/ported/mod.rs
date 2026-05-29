@@ -16,7 +16,9 @@
 //! to resolve unchanged.
 
 pub mod compat;
+/// `cond` submodule.
 pub mod cond;
+/// `context` submodule.
 pub mod context;
 // Most of `Src/exec.c` is realised by the fusevm wordcode VM at the
 // crate root (`src/vm_helper`) rather than in `src/ported/`. The
@@ -26,46 +28,85 @@ pub mod context;
 // `crate::ported::vm_helper` stays as an alias for the runtime state
 // struct + impl methods that hang off it.
 pub use crate::vm_helper;
+/// `glob` submodule.
 pub mod glob;
+/// `hashnameddir` submodule.
 pub mod hashnameddir;
+/// `hashtable` submodule.
 pub mod hashtable;
+/// `hashtable_h` submodule.
 pub mod hashtable_h;
+/// `hist` submodule.
 pub mod hist;
+/// `init` submodule.
 pub mod init;
+/// `input` submodule.
 pub mod input;
+/// `jobs` submodule.
 pub mod jobs;
+/// `linklist` submodule.
 pub mod linklist;
+/// `r` submodule.
 pub mod r#loop;
+/// `math` submodule.
 pub mod math;
+/// `mem` submodule.
 pub mod mem;
+/// `modentry` submodule.
 pub mod modentry;
+/// `module` submodule.
 pub mod module;
+/// `modules` submodule.
 pub mod modules;
+/// `openssh_bsd_setres_id` submodule.
 pub mod openssh_bsd_setres_id;
+/// `options` submodule.
 pub mod options;
+/// `params` submodule.
 pub mod params;
+/// `pattern` submodule.
 pub mod pattern;
+/// `prompt` submodule.
 pub mod prompt;
+/// `signals` submodule.
 pub mod signals;
+/// `sort` submodule.
 pub mod sort;
+/// `string` submodule.
 pub mod string;
+/// `subst` submodule.
 pub mod subst;
+/// `text` submodule.
 pub mod text;
+/// `utils` submodule.
 pub mod utils;
+/// `builtin` submodule.
 
 pub mod builtin;
+/// `builtins` submodule.
 pub mod builtins;
+/// `config_h` submodule.
 pub mod config_h;
+/// `exec` submodule.
 pub mod exec;
+/// `exec_hooks` submodule.
 pub mod exec_hooks;
+/// `lex` submodule.
 pub mod lex;
+/// `parse` submodule.
 pub mod parse;
+/// `patchlevel` submodule.
 pub mod patchlevel;
 mod prototypes_h;
+/// `signals_h` submodule.
 pub mod signals_h;
+/// `zle` submodule.
 pub mod zle;
+/// `zsh_h` submodule.
 pub mod zsh_h;
+/// `zsh_system_h` submodule.
 pub mod zsh_system_h;
+/// `ztype_h` submodule.
 pub mod ztype_h;
 
 #[cfg(test)]

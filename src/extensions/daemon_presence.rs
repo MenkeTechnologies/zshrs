@@ -153,7 +153,9 @@ impl SkipConfigs {
 /// zshrs-original — no C counterpart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
+    /// `daemon` field.
     pub daemon: ConfigSetting,
+    /// `skip_configs` field.
     pub skip_configs: SkipConfigs,
     /// Absolute or `~`-prefixed path to a zsh script sourced after
     /// normal startup when set. `None` if the key is absent or empty.
@@ -192,6 +194,7 @@ fn resolve_startup_config_path(raw: &str) -> PathBuf {
     }
     PathBuf::from(s)
 }
+/// `read_config_full` — see implementation.
 
 pub fn read_config_full() -> Config {
     let defaults = Config {

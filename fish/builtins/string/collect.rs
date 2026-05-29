@@ -1,8 +1,11 @@
 use super::*;
+/// `Collect` — see fields for layout.
 
 #[derive(Default)]
 pub struct Collect {
+    /// `allow_empty` field.
     allow_empty: bool,
+    /// `no_trim_newlines` field.
     no_trim_newlines: bool,
 }
 

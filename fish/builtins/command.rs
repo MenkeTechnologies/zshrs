@@ -7,6 +7,7 @@ struct command_cmd_opts_t {
     quiet: bool,
     find_path: bool,
 }
+/// `r` — see implementation.
 
 pub fn r#command(parser: &Parser, streams: &mut IoStreams, argv: &mut [&wstr]) -> BuiltinResult {
     let cmd = argv[0];
