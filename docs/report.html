@@ -105,7 +105,7 @@
 
       <p class="tutorial-subtitle" style="margin-top:0.5rem;color:var(--accent-light);">
         <strong style="color:var(--accent);">Codebase split (NEW):</strong> the runtime crate now physically isolates ported code from non-port code so drift is mechanically detectable.
-        <code>src/ported/</code> (106 files) is the <strong>strict-port directory</strong> &mdash; every <code>.rs</code> mirrors a real <code>src/zsh/Src/&lt;x&gt;.c</code> file, every top-level <code>fn</code> carries a <code>/// Port of &lt;cname&gt;() from Src/&lt;file&gt;.c:NNNN</code> doc-comment, and the file set is <strong>FROZEN</strong> (no new files; PORT.md §"ABSOLUTE FREEZE").
+        <code>src/ported/</code> (107 files) is the <strong>strict-port directory</strong> &mdash; every <code>.rs</code> mirrors a real <code>src/zsh/Src/&lt;x&gt;.c</code> file, every top-level <code>fn</code> carries a <code>/// Port of &lt;cname&gt;() from Src/&lt;file&gt;.c:NNNN</code> doc-comment, and the file set is <strong>FROZEN</strong> (no new files; PORT.md §"ABSOLUTE FREEZE").
         <code>src/extensions/</code> (34 files) is the <strong>non-port directory</strong> &mdash; features zsh C does not have (AOT, daemon coordination, plugin/script/autoload caches, fish-style autosuggest/abbrev/highlight, persistent worker pools, ZWC byte-code helpers).
         <code>src/recorder/</code> (1 file) is feature-gated; deleted by rustc in the default build.
         Both invariants are enforced by <code>tests/port_purity.rs</code> &mdash; a regression of either rule fails CI.
