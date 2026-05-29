@@ -63,12 +63,12 @@ jobs:
           tar czf ../../../zshrs-all-${{ github.ref_name }}-${{ matrix.target }}.tar.gz zshrs zd zshrs-recorder zshrs-daemon
           cd ../../..
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: zshrs-${{ matrix.target }}
           path: zshrs-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: zshrs-all-${{ matrix.target }}
           path: zshrs-all-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
@@ -112,7 +112,7 @@ jobs:
           echo "path=$zip_path" >> "$GITHUB_OUTPUT"
           echo "name=$(basename $zip_path)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: zshrs-intellij-plugin
           path: editors/intellij/${{ steps.plugin_zip.outputs.path }}
