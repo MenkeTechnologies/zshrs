@@ -1141,4 +1141,122 @@ mod tests {
         let arr = schedgetfn(std::ptr::null());
         assert_eq!(arr.len(), 3, "3 entries after 3 adds, got {arr:?}");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Builtins/sched.c
+    // c:93 checksched / c:215 schedgetfn / c:624-684 lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:93 — `checksched` returns i32 (compile-time type pin). C body
+    /// is `void`; Rust port returns i32 so module hooks can propagate.
+    #[test]
+    fn checksched_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        let _: i32 = checksched();
+    }
+
+    /// c:98 — `checksched` on empty schedule returns 0 (C early-exit
+    /// at c:99 `return;`).
+    #[test]
+    fn checksched_empty_schedule_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        *schedcmds_lock().lock().unwrap() = None;
+        assert_eq!(checksched(), 0, "empty schedule → 0");
+    }
+
+    /// c:215 — `schedgetfn` returns Vec<String> (compile-time type pin).
+    #[test]
+    fn schedgetfn_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        let _: Vec<String> = schedgetfn(std::ptr::null());
+    }
+
+    /// c:624 — `setup_(NULL)` returns 0.
+    #[test]
+    fn sched_setup_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// c:646 — `boot_(NULL)` returns 0.
+    #[test]
+    fn sched_boot_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
+
+    /// c:684 — `finish_(NULL)` returns 0.
+    #[test]
+    fn sched_finish_returns_zero_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
+
+    /// c:624 — `setup_` idempotent.
+    #[test]
+    fn sched_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:684 — `finish_` idempotent.
+    #[test]
+    fn sched_finish_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:631 — `features_` returns 0 + populates a non-empty list
+    /// (zsh/sched has b:sched as advertised feature).
+    #[test]
+    fn sched_features_returns_zero_with_nonempty_list() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats: Vec<String> = Vec::new();
+        let r = features_(std::ptr::null(), &mut feats);
+        assert_eq!(r, 0, "features_ returns 0");
+        assert!(!feats.is_empty(), "features list must contain ≥1 entry");
+    }
+
+    /// c:631 — `features_` advertises only `b:` (builtin) entries
+    /// per zsh's module-feature naming convention.
+    #[test]
+    fn sched_features_use_b_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let mut feats: Vec<String> = Vec::new();
+        features_(std::ptr::null(), &mut feats);
+        for f in &feats {
+            assert!(f.starts_with("b:") || f.starts_with("p:"),
+                "feature {:?} must use b:/p: prefix per zsh module spec", f);
+        }
+    }
+
+    /// c:215 — `schedgetfn(NULL)` is deterministic on a stable schedule.
+    #[test]
+    fn schedgetfn_is_deterministic_for_static_schedule() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        let ops = empty_ops();
+        bin_sched("sched", &[s("+10"), s("alpha")], &ops, 0);
+        let first = schedgetfn(std::ptr::null());
+        for _ in 0..3 {
+            assert_eq!(schedgetfn(std::ptr::null()), first,
+                "schedgetfn must be deterministic on unchanged schedule");
+        }
+    }
+
+    /// c:245 — `bin_sched` returns i32 (compile-time type pin).
+    #[test]
+    fn bin_sched_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        let ops = empty_ops();
+        let _: i32 = bin_sched("sched", &[], &ops, 0);
+    }
 }
