@@ -144,4 +144,93 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(ZTCP_ZFTP & (ZTCP_LISTEN | ZTCP_INBOUND), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Modules/tcp.h constants.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:71 — SUPPORT_IPV6 = true for modern platforms.
+    #[test]
+    fn support_ipv6_enabled() {
+        assert!(SUPPORT_IPV6, "IPv6 must be enabled on modern platforms");
+    }
+
+    /// c:83 — ZTCP_LISTEN is bit 0 (= 1).
+    #[test]
+    fn ztcp_listen_is_bit_zero() {
+        assert_eq!(ZTCP_LISTEN, 1);
+    }
+
+    /// c:84 — ZTCP_INBOUND is bit 1 (= 2).
+    #[test]
+    fn ztcp_inbound_is_bit_one() {
+        assert_eq!(ZTCP_INBOUND, 2);
+    }
+
+    /// c:85 — ZTCP_ZFTP is bit 4 (= 16).
+    #[test]
+    fn ztcp_zftp_is_bit_four() {
+        assert_eq!(ZTCP_ZFTP, 16);
+    }
+
+    /// ZTCP_* all positive, single-bit values.
+    #[test]
+    fn ztcp_flags_are_single_bits() {
+        for &v in &[ZTCP_LISTEN, ZTCP_INBOUND, ZTCP_ZFTP] {
+            assert!(v > 0, "{} must be positive", v);
+            assert!(
+                (v as u32).is_power_of_two(),
+                "{} must be a power of 2 (single bit)",
+                v
+            );
+        }
+    }
+
+    /// ZTCP_LISTEN | ZTCP_INBOUND can OR together cleanly.
+    #[test]
+    fn ztcp_listen_inbound_can_combine() {
+        let combined = ZTCP_LISTEN | ZTCP_INBOUND;
+        assert_eq!(combined, 3, "1 | 2 = 3");
+        // Both bits readable from combined.
+        assert_ne!(combined & ZTCP_LISTEN, 0);
+        assert_ne!(combined & ZTCP_INBOUND, 0);
+    }
+
+    /// c:97 — INET_ADDRSTRLEN = 16 (canonical IPv4 max textual length:
+    /// "255.255.255.255" + NUL).
+    #[test]
+    fn inet_addrstrlen_is_16() {
+        assert_eq!(INET_ADDRSTRLEN, 16);
+    }
+
+    /// c:101 — INET6_ADDRSTRLEN = 46 (canonical IPv6 max textual length).
+    #[test]
+    fn inet6_addrstrlen_is_46() {
+        assert_eq!(INET6_ADDRSTRLEN, 46);
+    }
+
+    /// IPv6 textual length > IPv4 (sanity invariant).
+    #[test]
+    fn inet6_strlen_greater_than_inet_strlen() {
+        assert!(
+            INET6_ADDRSTRLEN > INET_ADDRSTRLEN,
+            "IPv6 string is longer than IPv4"
+        );
+    }
+
+    /// INET_ADDRSTRLEN matches IPv4 textual representation length.
+    /// "255.255.255.255" = 15 chars + NUL = 16.
+    #[test]
+    fn inet_addrstrlen_matches_max_ipv4_text() {
+        assert_eq!(INET_ADDRSTRLEN, "255.255.255.255".len() + 1);
+    }
+
+    /// tcp_session struct is non-zero size (has fields).
+    #[test]
+    fn tcp_session_struct_non_zero_size() {
+        let size = std::mem::size_of::<tcp_session>();
+        assert!(size > 0, "tcp_session must have non-zero size");
+        // Must hold at least: fd (i32) + 2 sockaddrs + flags (i32).
+        assert!(size >= 4 + 4, "tcp_session must hold fd + flags minimum");
+    }
 }
