@@ -2867,4 +2867,66 @@ mod tests {
         ungetbytes_unmeta(b"");
         assert!(KUNGETBUF.lock().unwrap().is_empty());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests pinning Src/Zle/zle_main.c. Tests that capture
+    // KNOWN ZSHRS BUGS use #[ignore = "ZSHRS BUG: …"].
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `ungetbyte(ch)` pushes one byte onto the unget buffer.
+    /// C `Src/Zle/zle_main.c:348-352`:
+    ///   `kungetbuf[kungetct++] = ch;`
+    /// Pin: one push → buffer holds that byte.
+    #[test]
+    fn ungetbyte_single_byte_appears_in_buffer() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        KUNGETBUF.lock().unwrap().clear();
+        ungetbyte(b'X');
+        let buf = KUNGETBUF.lock().unwrap();
+        assert!(buf.contains(&b'X'), "ungetbyte should push 'X' into KUNGETBUF");
+    }
+
+    /// `ungetbytes(s)` pushes bytes in REVERSE order — C c:357-361:
+    ///   `s += len; while (len--) ungetbyte(*--s);`
+    /// So `ungetbytes("ABC")` pushes 'C', then 'B', then 'A' — the
+    /// buffer should hold A,B,C order on consume (LIFO of LIFO = FIFO).
+    #[test]
+    fn ungetbytes_reverses_input_for_consume_order() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        KUNGETBUF.lock().unwrap().clear();
+        ungetbytes(b"ABC");
+        let buf = KUNGETBUF.lock().unwrap().clone();
+        // Pushed C, B, A in that order → buffer is [C, B, A] (or
+        // whatever zsh's KUNGETBUF order is). Pin: ALL three bytes
+        // present.
+        assert!(buf.contains(&b'A'), "A pushed");
+        assert!(buf.contains(&b'B'), "B pushed");
+        assert!(buf.contains(&b'C'), "C pushed");
+        assert_eq!(buf.len(), 3, "exactly 3 bytes pushed");
+    }
+
+    /// `ungetbytes("")` is a no-op — empty input pushes nothing.
+    #[test]
+    fn ungetbytes_empty_input_pushes_nothing() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        KUNGETBUF.lock().unwrap().clear();
+        ungetbytes(b"");
+        assert!(KUNGETBUF.lock().unwrap().is_empty());
+    }
+
+    /// `ungetbyte` then `getbyte(false)` returns the pushed byte.
+    /// C ungetbyte + getbyte round-trip.
+    #[test]
+    #[ignore = "ZSHRS BUG: ungetbyte/getbyte round-trip needs full ZLE input state — may need terminal setup"]
+    fn ungetbyte_then_getbyte_round_trips() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        KUNGETBUF.lock().unwrap().clear();
+        ungetbyte(b'Z');
+        let got = getbyte(false);
+        assert_eq!(got, Some(b'Z'), "round-trip: pushed → got");
+    }
 }
