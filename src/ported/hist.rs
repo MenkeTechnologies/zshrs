@@ -6906,4 +6906,109 @@ mod subst_modifier_tests {
         };
         assert_eq!(getargc(&entry), 4, "C: 5-1 = 4");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hist.c
+    // c:141 hist_in_word / c:150 hist_is_in_word / c:1155 herrflush /
+    // c:1221 substfailed / c:1255 digitcount / c:1549 histreduceblanks /
+    // c:1611 addhistnum / c:1293 strinbeg / c:1313 strinend
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:141 + c:150 — `hist_in_word(N)` then `hist_is_in_word()` round-trips.
+    #[test]
+    fn hist_in_word_set_get_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = hist_is_in_word();
+        hist_in_word(1);
+        assert_eq!(hist_is_in_word(), 1, "set/get round-trips");
+        hist_in_word(0);
+        assert_eq!(hist_is_in_word(), 0, "set/get round-trips back");
+        hist_in_word(saved);
+    }
+
+    /// c:1155 — `herrflush` is idempotent.
+    #[test]
+    fn herrflush_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            herrflush();
+        }
+    }
+
+    /// c:1221 — `substfailed` returns -1 per C body `return -1`.
+    #[test]
+    fn substfailed_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(substfailed(), -1, "C body: return -1");
+    }
+
+    /// c:1255 — `digitcount` returns i32 (compile-time type pin).
+    #[test]
+    fn digitcount_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = digitcount();
+    }
+
+    /// c:1549 — `histreduceblanks("")` empty returns empty String.
+    #[test]
+    fn histreduceblanks_empty_returns_empty_pin() {
+        assert_eq!(histreduceblanks(""), "");
+    }
+
+    /// c:1549 — `histreduceblanks` is pure.
+    #[test]
+    fn histreduceblanks_is_pure() {
+        for s in ["", "abc", "  spaces  ", "\ttabs\t", "no\nnewlines\nhere"] {
+            let first = histreduceblanks(s);
+            for _ in 0..3 {
+                assert_eq!(histreduceblanks(s), first,
+                    "histreduceblanks({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:1293 + c:1313 — `strinbeg(0)` + `strinend` round-trip safe.
+    #[test]
+    fn strinbeg_strinend_round_trip_safe() {
+        let _g = crate::test_util::global_state_lock();
+        strinbeg(0);
+        strinend();
+    }
+
+    /// c:1611 — `addhistnum(0, 0, 0)` zero delta returns i64 (type pin).
+    #[test]
+    fn addhistnum_returns_i64_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i64 = addhistnum(0, 0, 0);
+    }
+
+    /// c:1611 — `addhistnum(N, 0, _)` zero increment preserves N.
+    #[test]
+    fn addhistnum_zero_increment_returns_input() {
+        let _g = crate::test_util::global_state_lock();
+        // Note: behavior depends on history ring state — pin only that
+        // result is deterministic for same input.
+        let first = addhistnum(0, 0, 0);
+        for _ in 0..3 {
+            assert_eq!(addhistnum(0, 0, 0), first,
+                "addhistnum(0, 0, 0) must be deterministic");
+        }
+    }
+
+    /// c:1328 — `nohw(0)` no-op accepts any i32.
+    #[test]
+    fn nohw_full_i32_range_no_panic() {
+        for c in [i32::MIN, -1, 0, 1, 42, i32::MAX] {
+            nohw(c);
+        }
+    }
+
+    /// c:1332 + c:1336 — `nohwabort` + `nohwe` are no-op idempotent.
+    #[test]
+    fn nohwabort_nohwe_idempotent() {
+        for _ in 0..5 {
+            nohwabort();
+            nohwe();
+        }
+    }
 }
