@@ -362,4 +362,118 @@ mod tests {
         zcontext_save_partial(1);
         zcontext_restore_partial(1);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/context.c.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:80 — `zcontext_save` pushes onto stack (cstack becomes Some).
+    #[test]
+    fn zcontext_save_pushes_onto_stack() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save();
+        assert!(
+            cstack.lock().unwrap().is_some(),
+            "save should leave cstack with one frame"
+        );
+        zcontext_restore();
+    }
+
+    /// c:117 — `zcontext_restore` pops stack (cstack returns to None).
+    #[test]
+    fn zcontext_restore_pops_to_none_when_balanced() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save();
+        zcontext_restore();
+        assert!(
+            cstack.lock().unwrap().is_none(),
+            "single save+restore returns cstack to None"
+        );
+    }
+
+    /// c:80 — multiple saves build a stack of N frames.
+    #[test]
+    fn zcontext_save_multiple_builds_stack() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save();
+        zcontext_save();
+        zcontext_save();
+        // Walk the linked-list and count.
+        let head = cstack.lock().unwrap();
+        let mut count = 0;
+        let mut cur = head.as_ref();
+        while let Some(node) = cur {
+            count += 1;
+            cur = node.next.as_ref();
+        }
+        drop(head);
+        assert_eq!(count, 3, "3 saves → 3-deep stack");
+        zcontext_restore();
+        zcontext_restore();
+        zcontext_restore();
+    }
+
+    /// c:52 — `zcontext_save_partial(0)` saves NOTHING from the
+    /// constituent sub-stacks but still pushes a frame.
+    #[test]
+    fn zcontext_save_partial_zero_still_pushes_frame() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save_partial(0);
+        assert!(
+            cstack.lock().unwrap().is_some(),
+            "even parts=0 pushes a frame for restore symmetry"
+        );
+        zcontext_restore_partial(0);
+    }
+
+    /// c:89 — `zcontext_restore_partial(0)` on empty stack DPUTS warns
+    /// but doesn't panic.
+    #[test]
+    fn zcontext_restore_on_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        // No prior save — restore should not panic.
+        zcontext_restore_partial(0);
+    }
+
+    /// c:52 — `zcontext_save_partial(ZCONTEXT_HIST)` + restore round-trip.
+    #[test]
+    fn zcontext_save_hist_only_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
+        zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
+        assert!(cstack.lock().unwrap().is_none());
+    }
+
+    /// c:52 — `zcontext_save_partial(ZCONTEXT_LEX)` + restore round-trip.
+    #[test]
+    fn zcontext_save_lex_only_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save_partial(crate::ported::zsh_h::ZCONTEXT_LEX);
+        zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_LEX);
+        assert!(cstack.lock().unwrap().is_none());
+    }
+
+    /// c:52 — `zcontext_save_partial(ZCONTEXT_PARSE)` + restore round-trip.
+    #[test]
+    fn zcontext_save_parse_only_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save_partial(crate::ported::zsh_h::ZCONTEXT_PARSE);
+        zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_PARSE);
+        assert!(cstack.lock().unwrap().is_none());
+    }
 }
