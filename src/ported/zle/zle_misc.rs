@@ -3444,4 +3444,114 @@ mod tests {
         let got: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(got, "XYcdabZW", "surrounding chars XY,ZW must be preserved");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // C-parity tests for Src/Zle/zle_misc.c simple widgets.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:401 — `acceptline` sets DONE=1 and returns 0.
+    #[test]
+    fn acceptline_sets_done_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        DONE.store(0, SeqCst);
+        let r = acceptline();
+        assert_eq!(r, 0);
+        assert_eq!(DONE.load(SeqCst), 1, "acceptline must set DONE=1");
+    }
+
+    /// c:409 — `acceptandhold` sets DONE=1, returns 0, pushes line
+    /// to BUFSTACK, and saves cursor to STACKCS.
+    #[test]
+    fn acceptandhold_pushes_line_sets_done() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        DONE.store(0, SeqCst);
+        BUFSTACK.lock().unwrap().clear();
+        *ZLELINE.lock().unwrap() = "test line".chars().collect();
+        ZLELL.store(9, SeqCst);
+        ZLECS.store(4, SeqCst);
+        let r = acceptandhold();
+        assert_eq!(r, 0);
+        assert_eq!(DONE.load(SeqCst), 1);
+        assert_eq!(STACKCS.load(SeqCst), 4, "STACKCS must capture ZLECS");
+        let bs = BUFSTACK.lock().unwrap();
+        assert_eq!(bs[0], "test line", "BUFSTACK[0] must be the pushed line");
+    }
+
+    /// c:843 — `overwritemode` toggles INSMODE XOR 1 and returns 0.
+    #[test]
+    fn overwritemode_xor_toggles_insmode() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        INSMODE.store(1, SeqCst);
+        assert_eq!(overwritemode(), 0);
+        assert_eq!(INSMODE.load(SeqCst), 0, "1 ^ 1 = 0");
+        assert_eq!(overwritemode(), 0);
+        assert_eq!(INSMODE.load(SeqCst), 1, "0 ^ 1 = 1");
+    }
+
+    /// c:892 — `undefinedkey` returns 1 (signals beep to dispatcher).
+    #[test]
+    fn undefinedkey_returns_one_pin() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(undefinedkey(), 1, "undefined-key widget must return 1");
+    }
+
+    /// c:892 — `undefinedkey` is pure: repeated calls all return 1.
+    #[test]
+    fn undefinedkey_pure_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(undefinedkey(), 1);
+        }
+    }
+
+    /// c:851 — `whatcursorposition` returns 0 (success, no error).
+    #[test]
+    fn whatcursorposition_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "hello".chars().collect();
+        ZLELL.store(5, SeqCst);
+        ZLECS.store(2, SeqCst);
+        assert_eq!(whatcursorposition(), 0);
+    }
+
+    /// c:851 — `whatcursorposition` at EOF position is safe (covers
+    /// the `zlecs == zlell` → "EOF" branch c:858).
+    #[test]
+    fn whatcursorposition_at_eof_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "abc".chars().collect();
+        ZLELL.store(3, SeqCst);
+        ZLECS.store(3, SeqCst); // at EOF
+        assert_eq!(whatcursorposition(), 0);
+    }
+
+    /// c:355 — `backwardkillline` with cursor at 0 is a safe no-op.
+    #[test]
+    fn backwardkillline_at_bol_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "test".chars().collect();
+        ZLELL.store(4, SeqCst);
+        ZLECS.store(0, SeqCst);
+        // No panic = pass; behavior depends on cuttext path.
+        let _ = backwardkillline();
+    }
+
+    /// c:345 — `killbuffer` always returns 0 and clears buffer.
+    #[test]
+    fn killbuffer_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "to be killed".chars().collect();
+        ZLELL.store(12, SeqCst);
+        ZLECS.store(0, SeqCst);
+        assert_eq!(killbuffer(), 0);
+        // After killbuffer, ZLELL should be 0 (buffer cleared).
+        assert_eq!(ZLELL.load(SeqCst), 0, "killbuffer clears entire buffer");
+    }
 }
