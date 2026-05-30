@@ -2827,4 +2827,83 @@ mod tests {
     // the live ZLE input buffer and BLOCK on missing terminal input,
     // hanging the test runner. Type-pin tests for those widgets must
     // first set up a fake key-read substrate; deferred.
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_hist.c
+    // c:73 forget_edits / c:114 zlinecmp / c:190 zlinefind /
+    // c:1028 zle_setline / c:1052 setlocalhistory / c:1073 zle_goto_hist
+    // — only safe (non-blocking, no live-TTY) helpers.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1028 — `zle_setline` returns i32 (compile-time type pin).
+    #[test]
+    fn zle_setline_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = zle_setline();
+    }
+
+    /// c:1052 — `setlocalhistory` returns i32 (compile-time type pin).
+    #[test]
+    fn setlocalhistory_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = setlocalhistory();
+    }
+
+    /// c:1052 — `setlocalhistory` is idempotent / safe.
+    #[test]
+    fn setlocalhistory_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            let _ = setlocalhistory();
+        }
+    }
+
+    /// c:1073 — `zle_goto_hist(0, false)` returns bool (type pin).
+    #[test]
+    fn zle_goto_hist_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: bool = zle_goto_hist(0, false);
+    }
+
+    /// c:114 — `zlinecmp(s, s)` reflexive identity returns 0.
+    #[test]
+    fn zlinecmp_self_reflexive_zero() {
+        for s in ["", "a", "hello", "abc"] {
+            assert_eq!(zlinecmp(s, s), 0,
+                "zlinecmp({:?},{:?}) self-reflexive must be 0", s, s);
+        }
+    }
+
+    /// c:190 — `zlinefind` empty needle at pos 0 returns Some
+    /// (empty is a prefix of every string).
+    #[test]
+    fn zlinefind_empty_needle_forward_returns_some_zero() {
+        let r = zlinefind("anything", 0, "", 1, 2);
+        assert!(r.is_some(), "empty needle → Some");
+    }
+
+    /// c:190 — `zlinefind("", 0, "x", 1, 2)` empty haystack + nonempty
+    /// needle returns None.
+    #[test]
+    fn zlinefind_empty_haystack_nonempty_needle_returns_none() {
+        let r = zlinefind("", 0, "x", 1, 2);
+        assert!(r.is_none(), "empty haystack + nonempty needle → None");
+    }
+
+    /// c:114 — `zlinecmp` purity sweep across pairs.
+    #[test]
+    fn zlinecmp_pure_full_sweep() {
+        for (a, b) in [("", ""), ("a", "b"), ("hello", "world"),
+                       ("prefix", "prefix_more"), ("X", "x")] {
+            let first = zlinecmp(a, b);
+            for _ in 0..3 {
+                assert_eq!(zlinecmp(a, b), first,
+                    "zlinecmp({:?},{:?}) must be pure", a, b);
+            }
+        }
+    }
 }

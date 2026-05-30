@@ -1125,4 +1125,131 @@ mod tests {
         assert_eq!(cleanup_(null), 0, "c:334 cleanup_");
         assert_eq!(finish_(null), 0, "c:341 finish_");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/zselect.c
+    // c:25 handle_digits / c:68 bin_zselect /
+    // c:295-341 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:295 — `setup_` is idempotent (alt).
+    #[test]
+    fn zselect_setup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:334 — `cleanup_` is idempotent (alt).
+    #[test]
+    fn zselect_cleanup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:341 — `finish_` is idempotent (alt).
+    #[test]
+    fn zselect_finish_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:334 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn zselect_cleanup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:341 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn zselect_finish_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:327 — `boot_` return type i32 (compile-time pin).
+    #[test]
+    fn zselect_boot_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = boot_(std::ptr::null());
+    }
+
+    /// c:68 — `bin_zselect` empty args non-negative (alt).
+    #[test]
+    fn bin_zselect_empty_args_non_negative_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zselect("zselect", &[], &ops, 0);
+        assert!(r >= 0, "bin_zselect empty must be ≥ 0, got {}", r);
+    }
+
+    /// c:68 — `bin_zselect` various func values don't panic.
+    #[test]
+    fn bin_zselect_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_zselect("zselect", &[], &ops, func);
+        }
+    }
+
+    /// c:68 — `bin_zselect` deterministic for empty args.
+    #[test]
+    fn bin_zselect_deterministic_for_empty_args() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r1 = bin_zselect("zselect", &[], &ops, 0);
+        let r2 = bin_zselect("zselect", &[], &ops, 0);
+        assert_eq!(r1, r2, "bin_zselect empty args must be deterministic");
+    }
+
+    /// c:312 — `features_` deterministic on null module.
+    #[test]
+    fn zselect_features_deterministic_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v1: Vec<String> = Vec::new();
+        let mut v2: Vec<String> = Vec::new();
+        let _ = features_(std::ptr::null(), &mut v1);
+        let _ = features_(std::ptr::null(), &mut v2);
+        assert_eq!(v1, v2, "features_ must be deterministic");
+    }
+
+    /// c:320 — `enables_` with Some(non-empty) doesn't panic.
+    #[test]
+    fn zselect_enables_with_some_non_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = Some(vec![1, 2, 3]);
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:295/327/341 — setup→boot→finish chain returns 0 each.
+    #[test]
+    fn zselect_setup_boot_finish_chain_returns_zero_each() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
 }
