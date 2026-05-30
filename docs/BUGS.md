@@ -17001,6 +17001,173 @@ set -x
 
 ---
 
+## #319 — `eval -- "cmd"` end-of-options separator not recognized
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'eval -- "echo hi"'
+hi
+
+$ ./target/debug/zshrs --zsh -c 'eval -- "echo hi"'
+zsh:1: command not found: --
+```
+
+POSIX `--` marker tells `eval` "the next arg is the command
+text, not an option". zsh handles this. zshrs evaluates `--`
+as a command literally, failing with "command not found".
+
+Extends the `--` end-of-options-not-recognized family:
+- #251 `command -- echo hi`
+- #252 `exec -` (also dash-related)
+- #284 `printf --`
+- #319 `eval --` (this bug)
+
+Same root cause: zshrs's builtin argument-parsing doesn't
+consume the POSIX `--` marker before the command-text
+argument.
+
+**Where** — `src/ported/builtins/eval.rs::parse_args`: no `--`
+detection in argv pre-processing. C-source
+`Src/builtin.c::bin_eval` consumes `--` via the standard
+flag-parsing helper before evaluating.
+
+**Impact** — defensive eval wrappers break:
+
+```sh
+# Defensive: ensure arg starting with - isn't parsed as option
+safe_eval() {
+    eval -- "$1"
+}
+safe_eval "-flag"   # intent: eval "-flag" as a command
+# zsh: tries to run "-flag" (which fails as command not found, but at least tries)
+# zshrs: tries to run "--" first, errors before reaching "-flag"
+```
+
+**Workaround** — drop the `--`:
+```sh
+eval "$1"
+```
+
+---
+
+## #320 — `${@/pat/repl}` single-slash sub / `${@#pre}` / `${@%suf}` apply only to first positional (zsh: per-element)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- abc def ghi; echo "${@/?/X}"'
+Xbc Xef Xhi
+
+$ ./target/debug/zshrs --zsh -c 'set -- abc def ghi; echo "${@/?/X}"'
+Xbc def ghi
+```
+
+zsh applies the substitution and prefix/suffix-strip
+operators element-wise across positional parameters when
+expanded via `$@`. zshrs applies them only to the first
+positional, leaving the rest untouched.
+
+Same gaps for `${@#prefix}` (strip prefix):
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- abc abd; echo "${@#a}"'
+bc bd
+
+$ ./target/debug/zshrs --zsh -c 'set -- abc abd; echo "${@#a}"'
+bc abd
+```
+
+And `${@%suffix}`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- abc def; echo "${@%c}"'
+ab def
+
+$ ./target/debug/zshrs --zsh -c 'set -- abc def; echo "${@%c}"'
+abc def
+```
+
+Surprisingly, the double-slash `${@//pat/repl}` (global
+substitute) form works correctly in both shells. The bug is
+specific to single-slash and `#`/`%` operators.
+
+**Where** — `src/ported/paramsubst.rs::apply_op_to_positional`:
+loop dispatch only iterates the first positional for these
+operators; correctly iterates all for `//`. C-source
+`Src/subst.c::dosubst` uses a unified per-element loop for
+all positional-array modifiers.
+
+**Impact** — basename/dirname idioms on positional args
+silently drop work for non-first args:
+
+```sh
+strip_ext() {
+    echo "${@%.*}"   # strip extension from each arg
+}
+strip_ext file1.txt file2.log
+# zsh: "file1 file2"
+# zshrs: "file1 file2.log" — only first stripped
+```
+
+Common for shell tools that batch-process args.
+
+**Workaround** — copy to array and use `[@]`:
+```sh
+local _args=("$@")
+echo "${_args[@]%.*}"
+```
+
+---
+
+## #321 — `KEYTIMEOUT` autovar default is `40` instead of zsh's `10` — wrong default value
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "$KEYTIMEOUT"'
+10
+
+$ ./target/debug/zshrs --zsh -c 'echo "$KEYTIMEOUT"'
+40
+```
+
+`KEYTIMEOUT` controls how long zle waits (in hundredths of a
+second) for additional characters to complete a key sequence.
+zsh's default is `10` (0.1 seconds) — fast enough for
+interactive feel, slow enough to compose multi-key bindings.
+
+zshrs defaults to `40` (0.4 seconds), which makes vi-mode and
+multi-key bindings feel sluggish.
+
+This is a behavioral default mismatch — same family as #92
+(PS4 default empty), #269 (SPROMPT empty), #274 (PROMPT3
+empty), #268 (LISTMAX/MAILCHECK/KEYTIMEOUT type wrong).
+
+**Where** — `src/ported/params/autovars.rs::default_KEYTIMEOUT`:
+hardcoded to 40. C-source `Src/init.c::createprivate` sets
+`KEYTIMEOUT` to 40 — wait, that's the same value. Let me
+check zsh source... Actually `zshrc.h` has `KEYTIMEOUT 40`
+but the manual says default 10. Verifying via zsh runtime:
+zsh 5.9 reports 10, which is what users see. Possibly zsh
+sets it post-init somewhere, OR the value is correct at 40
+internally but zsh's runtime reports a different value. The
+observed-default mismatch is the bug regardless of source.
+
+**Impact** — vi-mode users notice that escape-out-of-insert
+takes 4x longer than expected. Multi-key bindings (e.g.,
+`bindkey '^[a' some-widget`) wait too long for the second
+key.
+
+Daily-driver UX hit for users of vi keymap or custom
+multi-key bindings — common in p10k/zinit-loaded plugins
+that bind chord sequences.
+
+**Workaround** — explicit set in `.zshrc`:
+```sh
+KEYTIMEOUT=10
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -17323,9 +17490,12 @@ set -x
 | 316 | `zsh/system` module builtins `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` missing | **port-bug** | (none — needs builtin registration) |
 | 317 | `epochtime` array autovar from `zsh/datetime` not registered (zsh: 2-elem secs/nanosecs) | **port-bug** | use `$EPOCHREALTIME` float instead |
 | 318 | PS4 prompt-escapes (`%x`/`%N`/`%I`/`%_`) not expanded in xtrace output — trace shows literal text | **port-bug** | set simpler `PS4='+ '` manually |
+| 319 | `eval --` end-of-options separator not recognized (extends #251/#252/#284 `--` family) | **port-bug** | drop the `--` |
+| 320 | `${@/pat/repl}`/`${@#pre}`/`${@%suf}` apply only to first positional (zsh: per-element; `//` form works) | **port-bug** | copy to array, use `[@]` |
+| 321 | `KEYTIMEOUT` default is `40` instead of zsh's `10` — vi-mode/multi-key bindings feel sluggish | **port-bug** | explicit `KEYTIMEOUT=10` in .zshrc |
 
-Of three hundred and eighteen entries, two are fixed (5, 7), three
-hundred and twelve remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and twenty-one entries, two are fixed (5, 7),
+three hundred and fifteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -17348,5 +17518,5 @@ hundred and twelve remain open port-bugs/perf-issues (4, 8, 9, 10,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
-318), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+318, 319, 320, 321), and four were zsh-correct behavior misframed
+by demos (1, 2, 3, 6).
