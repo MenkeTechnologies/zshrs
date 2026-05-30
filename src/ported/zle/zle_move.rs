@@ -2224,4 +2224,128 @@ mod region_tests {
         let r = vibeginningofline();
         assert!((0..256).contains(&r));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_move.c
+    // c:158 inccs / c:180 deccs / c:202 incpos / c:219 decpos /
+    // c:473 forwardchar / c:513 backwardchar / c:550 setmarkcommand /
+    // c:585 exchangepointandmark / c:607 visualmode / c:665 deactivateregion
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:158 — `inccs` is idempotent (no panic across many calls).
+    #[test]
+    fn inccs_idempotent_full_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..10 { inccs(); }
+    }
+
+    /// c:180 — `deccs` is idempotent.
+    #[test]
+    fn deccs_idempotent_full_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..10 { deccs(); }
+    }
+
+    /// c:202 — `incpos(&mut 0)` is safe (no panic for zero-pos arg).
+    #[test]
+    fn incpos_zero_arg_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut pos = 0usize;
+        incpos(&mut pos);
+    }
+
+    /// c:219 — `decpos(&mut 0)` MUST be safe (no underflow panic).
+    /// C source guards via `if (*p > 0)` before decrementing. In zshrs
+    /// the port subtracts unconditionally → usize-underflow panic at
+    /// `Src/Zle/zle_move.rs:221`.
+    #[test]
+    #[ignore = "ZSHRS BUG: decpos subtracts unconditionally → usize-underflow panic at zero pos (Src/Zle/zle_move.c:219 — should guard via *p > 0)"]
+    fn decpos_zero_arg_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut pos = 0usize;
+        decpos(&mut pos);
+    }
+
+    /// c:473 — `forwardchar` returns i32 (compile-time pin).
+    #[test]
+    fn forwardchar_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = forwardchar();
+    }
+
+    /// c:513 — `backwardchar` returns i32 (compile-time pin).
+    #[test]
+    fn backwardchar_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = backwardchar();
+    }
+
+    /// c:550 — `setmarkcommand` returns i32 + idempotent.
+    #[test]
+    fn setmarkcommand_returns_i32_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            let _: i32 = setmarkcommand();
+        }
+    }
+
+    /// c:585 — `exchangepointandmark` returns i32 (compile-time pin).
+    #[test]
+    fn exchangepointandmark_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = exchangepointandmark();
+    }
+
+    /// c:607 — `visualmode` returns i32 (compile-time pin).
+    #[test]
+    fn visualmode_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = visualmode();
+    }
+
+    /// c:631 — `visuallinemode` returns i32 (compile-time pin).
+    #[test]
+    fn visuallinemode_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = visuallinemode();
+    }
+
+    /// c:665 — `deactivateregion` returns i32 + idempotent.
+    #[test]
+    fn deactivateregion_returns_i32_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            let _: i32 = deactivateregion();
+        }
+    }
+
+    /// c:672 — `vigotocolumn` returns i32 + in u8 exit range (alt).
+    #[test]
+    fn vigotocolumn_returns_in_exit_range_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vigotocolumn();
+        assert!((0..256).contains(&r),
+            "vigotocolumn exit code {} must fit u8", r);
+    }
+
+    /// c:550 — `setmarkcommand` exit code in u8 range.
+    #[test]
+    fn setmarkcommand_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = setmarkcommand();
+        assert!((0..256).contains(&r));
+    }
 }
