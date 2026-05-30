@@ -1037,4 +1037,102 @@ mod tests {
         appstr(&mut s, "added");
         assert_eq!(s, "added", "append to empty base = appendage");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/string.c
+    // c:74 ztrdup / c:91 wcs_ztrdup / c:135 dyncat / c:147 bicat /
+    // c:169 dupstrpfx / c:180 ztrduppfx / c:216 strend
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:74 — `ztrdup` returns String (compile-time pin, alt).
+    #[test]
+    fn ztrdup_returns_string_pin_alt() {
+        let _: String = ztrdup("");
+    }
+
+    /// c:74 — `ztrdup(s)` preserves content for ASCII + multibyte.
+    #[test]
+    fn ztrdup_preserves_content() {
+        for s in ["", "x", "hello world", "日本語", "café"] {
+            assert_eq!(ztrdup(s), s,
+                "ztrdup must preserve {:?}", s);
+        }
+    }
+
+    /// c:91 — `wcs_ztrdup` returns String (compile-time pin).
+    #[test]
+    fn wcs_ztrdup_returns_string_type() {
+        let _: String = wcs_ztrdup("");
+    }
+
+    /// c:135 — `dyncat("", "")` returns empty (alt).
+    #[test]
+    fn dyncat_both_empty_returns_empty_alt() {
+        assert_eq!(dyncat("", ""), "", "empty + empty → empty");
+    }
+
+    /// c:135 — `dyncat(s, "")` equals s (right-identity).
+    #[test]
+    fn dyncat_right_identity_empty() {
+        for s in ["", "x", "hello"] {
+            assert_eq!(dyncat(s, ""), s,
+                "dyncat({:?}, '') must equal {:?}", s, s);
+        }
+    }
+
+    /// c:135 — `dyncat("", s)` equals s (left-identity).
+    #[test]
+    fn dyncat_left_identity_empty() {
+        for s in ["", "x", "hello"] {
+            assert_eq!(dyncat("", s), s,
+                "dyncat('', {:?}) must equal {:?}", s, s);
+        }
+    }
+
+    /// c:147 — `bicat("", "")` returns empty (alt).
+    #[test]
+    fn bicat_both_empty_returns_empty_alt() {
+        assert_eq!(bicat("", ""), "");
+    }
+
+    /// c:147 — `bicat` returns String (compile-time pin, alt).
+    #[test]
+    fn bicat_returns_string_pin_alt() {
+        let _: String = bicat("a", "b");
+    }
+
+    /// c:169 — `dupstrpfx(s, 0)` returns empty (zero-len prefix).
+    #[test]
+    fn dupstrpfx_zero_returns_empty() {
+        for s in ["", "x", "hello"] {
+            assert_eq!(dupstrpfx(s, 0), "",
+                "dupstrpfx({:?}, 0) must be empty", s);
+        }
+    }
+
+    /// c:180 — `ztrduppfx(s, 0)` returns empty (zero-len prefix).
+    #[test]
+    fn ztrduppfx_zero_returns_empty() {
+        for s in ["", "x", "hello"] {
+            assert_eq!(ztrduppfx(s, 0), "");
+        }
+    }
+
+    /// c:216 — `strend("")` returns "" (empty input has empty end, alt).
+    #[test]
+    fn strend_empty_returns_empty_alt() {
+        assert_eq!(strend(""), "", "empty → empty end");
+    }
+
+    /// c:216 — `strend` is deterministic (pure).
+    #[test]
+    fn strend_is_deterministic() {
+        for s in ["", "x", "abc", "hello"] {
+            let first = strend(s);
+            for _ in 0..3 {
+                assert_eq!(strend(s), first,
+                    "strend({:?}) must be pure", s);
+            }
+        }
+    }
 }
