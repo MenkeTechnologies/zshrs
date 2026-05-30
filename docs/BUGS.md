@@ -1849,6 +1849,85 @@ typeset -m '*' -p   # also works, matches all
 
 ---
 
+## #43 — `${#var:modifier}` / `${#var/pat/rep}` / `${#arr[a,b]}` length operator ignores the transform
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'p=/foo/bar/baz
+echo ":h len=${#p:h}"
+echo ":t len=${#p:t}"
+echo "subst len=${#p/foo/X}"
+echo "slice len=${#p[1,5]}"
+a=(one two three)
+echo "arr slice len=${#a[1,2]}"'
+:h len=8
+:t len=3
+subst len=10    # "X/bar/baz" length
+slice len=5     # "/foo/" length
+arr slice len=2
+
+$ zshrs --zsh -c 'p=/foo/bar/baz
+echo ":h len=${#p:h}"
+echo ":t len=${#p:t}"
+echo "subst len=${#p/foo/X}"
+echo "slice len=${#p[1,5]}"
+a=(one two three)
+echo "arr slice len=${#a[1,2]}"'
+:h len=12       # WRONG (should be 8) — ignored :h
+:t len=12       # WRONG (should be 3) — ignored :t
+subst len=12    # WRONG (should be 10)
+slice len=12    # WRONG (should be 5)
+arr slice len=3 # WRONG (should be 2)
+```
+
+zsh's `${#var<modifier>}` computes length of the **transformed**
+value. zshrs computes length of the **original** value, ignoring
+every kind of transform:
+
+  - history modifiers: `:h` `:t` `:r` `:e` `:a` `:A` `:s`
+  - pattern substitution: `${#var/pat/rep}` / `${#var//pat/rep}`
+  - string slice: `${#var[i,j]}` / `${#var:i:n}`
+  - array slice: `${#arr[i,j]}`
+  - prefix/suffix strip: `${#var#pat}` / `${#var%pat}` (likely; not tested)
+
+**Where** — `src/ported/subst.rs::paramsubst` applies the `#`
+length-operator BEFORE the modifier chain runs. The length should
+be computed as the LAST step after all transforms (or equivalently:
+apply `#` to the transformed result, not the raw param).
+
+C-zsh's `paramsubst` runs transforms in order and applies `#` on
+the final string value (see `Src/subst.c::singsub` chain).
+
+**Impact** — any defensive script checking "is the resulting path
+non-trivial":
+
+```sh
+path=/usr/local/bin/script.sh
+if (( ${#path:h} > 0 )); then       # zsh: 13, zshrs: 22 (same path length)
+    echo "head exists"
+fi
+
+# array bounds check after slice:
+if (( ${#words[2,5]} == 4 )); then  # zsh: 4 (length of slice)
+    process_them                    # zshrs: ${#words} (full array length)
+fi
+```
+
+**Workaround** — assign to a temporary then take its length:
+```sh
+local h="${p:h}"
+echo "len=${#h}"        # zshrs: correct (8 for /foo/bar)
+
+local slice=("${a[1,2]}")
+echo "len=${#slice}"    # correct array slice length
+```
+
+This single bug affects ALL parameter expansion modifiers in
+length context — a wide compat surface.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -1895,9 +1974,10 @@ typeset -m '*' -p   # also works, matches all
 | 40 | `print -aC N` ignores `-a` (column-major instead of row) | **port-bug** | sort input in advance |
 | 41 | Glob qualifier `Yn` (limit) returns all matches | **port-bug** | `head -n` or array slice |
 | 42 | Bare `typeset` prints `name=val` only, no attrs | **port-bug** | use `typeset -p` |
+| 43 | `${#var:mod}` / `${#var/pat/rep}` / `${#arr[i,j]}` ignores transform | **port-bug** | assign to temp first |
 
-Of forty-two entries, two are fixed (5, 7), thirty-six remain open
-port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
-19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-36, 37, 38, 39, 40, 41, 42), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+Of forty-three entries, two are fixed (5, 7), thirty-seven remain
+open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
+35, 36, 37, 38, 39, 40, 41, 42, 43), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
