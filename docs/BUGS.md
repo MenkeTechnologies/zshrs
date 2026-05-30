@@ -6751,6 +6751,169 @@ a=("$@")
 
 ---
 
+## #130 — `${var@X}` bash parameter-transform notation accepted (zsh errors)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'x="a b"; echo "[${x@Q}]"' 2>&1
+zsh:1: bad substitution
+
+$ ./target/debug/zshrs --zsh -c 'x="a b"; echo "[${x@Q}]"' 2>&1
+[a b]
+```
+
+`${var@X}` is **bash's** parameter-transformation notation
+(`@Q`, `@U`, `@L`, `@P`, `@A`, etc.). zsh has no such syntax —
+parses as "bad substitution". zshrs accepts and processes the
+form, often incorrectly:
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'x="hello"; echo "@U=[${x@U}]"; echo "@L=[${x@L}]"' 2>&1
+@U=[hello]    # @U should uppercase but returns original
+@L=[HELLO]    # @L should lowercase but returns uppercase
+```
+
+So zshrs both accepts the bash extension AND implements its
+semantics incorrectly (transforms inverted).
+
+**Where** — `src/ported/paramsubst.rs::parse_transform_op`:
+recognizes `@X` bash grammar; zsh-compat should reject as
+"bad substitution". C-source `Src/subst.c::dosubst` errors on
+unknown form.
+
+**Impact** — bash-only scripts using `${var@X}` work in zshrs
+but fail in real zsh — false sense of cross-shell portability.
+Plus incorrect implementations produce silently-wrong values.
+
+**Workaround** — use zsh-canonical flag syntax:
+```sh
+echo "${(U)x}"     # uppercase, both shells
+echo "${(L)x}"     # lowercase
+echo "${(q)x}"     # quote
+```
+
+---
+
+## #131 — `%(N~.A.B)` prompt-conditional evaluates path-depth wrong
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ pwd
+/Users/wizard/RustroverProjects/zshrs   # 2 components under $HOME
+
+$ /opt/homebrew/bin/zsh -fc 'print -P "%(1~.A.B)"'
+A
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%(1~.A.B)"'
+B
+```
+
+`%(N~.A.B)` ternary: outputs `A` if PWD has at least N components
+relative to `$HOME`, else `B`. PWD is 2 levels under HOME, so
+condition is true (≥1) → zsh prints `A`. zshrs evaluates as false,
+prints `B`.
+
+Same for `%(0~...)`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%(0~.A.B)"'
+A
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%(0~.A.B)"'
+B
+```
+
+Per `man zshmisc` § CONDITIONAL SUBSTRINGS:
+> `%(x.true.false)` — Ternary expression based on test `x`.
+> `~` — PWD home-relative has at least `n` components.
+
+**Where** — `src/ported/prompt.rs::eval_ternary`: the `~`
+discriminator returns wrong boolean. C-source
+`Src/prompt.c::pmptest` walks the home-stripped path counting
+components.
+
+**Impact** — every prompt theme using `%(N~...)` conditional
+chooses wrong branch. Common dotfile snippet:
+
+```sh
+PROMPT='%(3~.%F{red}.%F{green})%~%f $ '
+# zsh: red when 3+ levels deep, green otherwise
+# zshrs: always one branch
+```
+
+Family with #96 (`%N/`/`%N~` truncation), #115 (selective vs
+full reset), #38/#111 (prompt-escape coverage) — prompt
+expansion has systematic gaps.
+
+**Workaround** — manual depth check in `precmd`:
+```sh
+precmd() {
+    local n=${#${(s:/:)PWD#$HOME/}}
+    if (( n >= 3 )); then prompt_clr="%F{red}"
+    else prompt_clr="%F{green}"; fi
+}
+```
+
+---
+
+## #132 — `(( x = "5" + "3" ))` doesn't coerce quoted numeric strings to int
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '(( x = "5" + "3" )); echo "[$x]"'
+[8]
+
+$ ./target/debug/zshrs --zsh -c '(( x = "5" + "3" )); echo "[$x]"'
+[0]
+```
+
+In arith context `(( ))`, zsh strips quotes from `"5"` and
+`"3"` and recognizes the contents as numerics → `5 + 3 = 8`.
+zshrs treats quoted strings as opaque, returns 0.
+
+Bare numerics work in both:
+```sh
+$ both-shells -fc '(( x = 5 + 3 )); echo $x'
+8
+```
+
+So the bug is the **quoted-numeric-string** path inside `(( ))`.
+
+Related to bug #118 (`(( y = x ))` where `x` is non-numeric
+var). Both stem from arith-context coercion gaps.
+
+**Where** — `src/ported/math.rs::parse_quoted_string`: returns
+string-as-is; should call numeric-parse on the inner contents.
+C-source `Src/math.c::lexconstant` strips quotes and calls
+`zstrtol_underscore`.
+
+**Impact** — arithmetic from quoted-string sources (cmdsub
+output, json/csv parsed values) silently produces 0:
+
+```sh
+csv_field='42'
+total=0
+(( total += "$csv_field" ))   # zsh: 42  zshrs: 0
+```
+
+```sh
+prices=("19" "29" "39")
+total=0
+for p in "${prices[@]}"; do
+    (( total += "$p" ))
+done
+# zsh: total=87        zshrs: total=0
+```
+
+**Workaround** — drop quotes when arg is known-numeric:
+```sh
+(( total += $csv_field ))   # both shells: works
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -6884,15 +7047,18 @@ a=("$@")
 | 127 | `$'\xNN'` interpreted as Unicode codepoint + UTF-8 re-encode | **port-bug** | `printf '\xNN'` direct |
 | 128 | `${(C)arr[N]}` indexed-element case-flag errors "bad substitution" | **port-bug** | assign to scalar first |
 | 129 | `local -a a=("$@")` splits quoted args (without `-a` works) | **port-bug** | `local -a a; a=("$@")` |
+| 130 | `${var@X}` bash parameter-transform accepted (zsh errors) | **port-bug** | `${(U)x}`/`${(L)x}`/`${(q)x}` |
+| 131 | `%(N~.A.B)` prompt conditional evaluates path-depth wrong | **port-bug** | manual `precmd` depth check |
+| 132 | `(( x = "5" + "3" ))` quoted numeric strings not coerced | **port-bug** | drop quotes for known-numeric |
 
-Of one hundred twenty-nine entries, two are fixed (5, 7), one
-hundred twenty-three remain open port-bugs/perf-issues (4, 8, 9,
-10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
-78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
-95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108,
-109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
-122, 123, 124, 125, 126, 127, 128, 129), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+Of one hundred thirty-two entries, two are fixed (5, 7), one
+hundred twenty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
+62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
+79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
+110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
+123, 124, 125, 126, 127, 128, 129, 130, 131, 132), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
