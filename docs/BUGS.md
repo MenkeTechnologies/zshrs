@@ -2018,6 +2018,99 @@ length.
 
 ---
 
+## #46 — Nested backquotes `` `echo \`echo X\`` `` mishandled
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo `echo \`echo deep\``'
+deep
+
+$ zshrs --zsh -c 'echo `echo \`echo deep\``'
+echo deep``
+```
+
+Backquote command substitution with backslash-escaped inner
+backquotes (the classic POSIX way to nest before `$()` was added)
+doesn't evaluate the inner level. zshrs treats the inner ``\` ...\` ``
+as literal text including the trailing `` `` ``.
+
+The `$(...)` form works correctly in both shells for nesting:
+  - `$(echo $(echo deep))` → both: `deep`
+  - `$(echo \`echo deep\`)` → both: `deep` (mixed)
+  - `` `echo $(echo deep)` `` → both: `deep` (mixed reverse)
+  - `` `echo \`echo deep\`` `` → **zshrs: `echo deep\`\``; zsh: `deep`**
+
+**Where** — `src/ported/lex.rs::lex_bq` (the backquote-substitution
+lexer; ports `Src/lex.c::bquote`). Escape handling for `\`` inside
+a backquote context appears to suppress the backquote interpretation
+without then re-treating the escaped backquote as the START of a
+nested cmd-sub.
+
+POSIX-style nested backquotes are rarely written today (most code
+uses `$()` since the 1990s), but legacy `~/.zshrc` files and
+shellcheck-flagged third-party scripts still contain them. The
+`$()` workaround is universal.
+
+**Workaround** — use `$(...)`:
+```sh
+$(echo $(echo deep))    # works everywhere
+```
+
+---
+
+## #47 — `${(b)str}` quote-special-chars flag escapes more than C-zsh
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting. Possibly a
+spec compliance divergence rather than a clear bug — see analysis.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="hello world"; echo "${(b)a}"'
+hello world           # zsh does NOT escape space
+
+$ zshrs --zsh -c 'a="hello world"; echo "${(b)a}"'
+hello\ world          # zshrs escapes space
+```
+
+Char-by-char comparison of escaping:
+
+  | char     | zshrs           | zsh           | shell-special? |
+  |----------|-----------------|---------------|----------------|
+  | space    | `hello\ world`  | `hello world` | yes (IFS)      |
+  | `;`      | `with\;semi`    | `with;semi`   | yes (cmd sep)  |
+  | `*`      | `with\*glob`    | `with\*glob`  | yes (glob)     |
+  | `(` `)`  | `with\(paren\)` | `with\(paren\)` | yes (paren)  |
+
+Per `man zshexpn` for `(b)`:
+> Quote any characters from the resulting string that are special to
+> filename generation or shell syntax.
+
+By that spec wording, space and `;` ARE shell-syntax special, so
+zshrs's escaping is MORE-correct per the documentation. But the
+de facto C-zsh implementation doesn't escape them, so any script
+that relies on zsh's actual behavior (most do) breaks under zshrs.
+
+**Where** — `src/ported/subst.rs::apply_b_flag` (port of
+`Src/subst.c::quotestring` with `QT_BACKSLASH`). The escape set
+includes whitespace and command separators that the C
+implementation excludes from `quotestring`'s `QT_BACKSLASH` set.
+
+**Impact** — code that uses `(b)` to build literal patterns for
+later expansion:
+```sh
+file="my document.pdf"
+ls **/$~"${(b)file}"    # zsh: searches for "my document.pdf"
+                        # zshrs: searches for "my\ document.pdf" (no match)
+```
+
+**Workaround** — pre-process the escaped value to strip the unwanted
+backslash escapes, or use single quoting:
+```sh
+ls **/$~"$file"        # alt: skip the (b) flag entirely
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -2067,9 +2160,11 @@ length.
 | 43 | `${#var:mod}` / `${#var/pat/rep}` / `${#arr[i,j]}` ignores transform | **port-bug** | assign to temp first |
 | 44 | `set -x` PS4 doesn't expand `%x %N %I %_` | **port-bug** | `PS4="+ "` simple |
 | 45 | `${#$}` returns 0 (length of PID) | **port-bug** | `pid=$$; ${#pid}` |
+| 46 | nested `` `\`...\`` `` backquotes mishandled | **port-bug** | use `$(...)` instead |
+| 47 | `${(b)str}` escapes space/semi (C-zsh doesn't) | **port-bug** | drop `(b)` flag |
 
-Of forty-five entries, two are fixed (5, 7), thirty-nine remain
-open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
-35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45), and four were
+Of forty-seven entries, two are fixed (5, 7), forty-one remain open
+port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47), and four were
 zsh-correct behavior misframed by demos (1, 2, 3, 6).
