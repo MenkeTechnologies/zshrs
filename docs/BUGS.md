@@ -1363,6 +1363,103 @@ via `strftime $EPOCHSECONDS` (direct access path).
 
 ---
 
+## #32 — `hash -d name=~` doesn't expand `~` in the value
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'hash -d zh=~; hash -d'
+zh=/Users/wizard
+
+$ zshrs --zsh -c 'hash -d zh=~; hash -d'
+zh='~'
+```
+
+`hash -d` (named directory hash) should expand `~`, `~user`, `~+`,
+`~-` as paths when the value is being stored. zshrs stores the
+LITERAL tilde character — `'~'` quoted in the listing output
+proves the value is the unprocessed string.
+
+Same with `hash -d name=$VAR`:
+```sh
+$ zshrs --zsh -c 'foo=/tmp; hash -d zh=$foo; hash -d'
+zh=/tmp     # this works (variable expansion happens at parse)
+
+$ zshrs --zsh -c 'hash -d zh=~root; hash -d'
+zh='~root'  # but tilde expansion is skipped
+```
+
+**Where** — `src/ported/builtin.rs::bin_hash` `-d` branch should
+call the filename-expansion path (`tilde_expand` from
+`Src/glob.c::tilde_expand`) before storing the value in the named
+directory table.
+
+**Affected callers** — every user shell `~/.zshrc` that uses the
+common pattern:
+```sh
+hash -d proj=~/projects/main
+hash -d dl=~/Downloads
+cd ~proj    # works in zsh; in zshrs, "~proj" stays unexpanded literal
+```
+
+**Workaround** — pre-expand:
+```sh
+hash -d proj=$HOME/projects/main    # works
+# or use $HOME directly instead of ~
+```
+
+---
+
+## #33 — `set -e` (errexit) doesn't fire on `(( false_cond ))`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -e; (( 0 )); echo "still here"'
+# (no output — shell exits with status 1 BEFORE "still here")
+
+$ zshrs --zsh -c 'set -e; (( 0 )); echo "still here"'
+still here
+```
+
+`set -e` (errexit) should cause the shell to exit on any command
+returning non-zero status, including `(( expr ))` when `expr`
+evaluates to 0/false. zshrs treats `(( false_cond ))` as not
+triggering errexit.
+
+Confirmed working with same scaffolding:
+  - `set -e; false; echo "after"`           → both exit before "after" ✓
+  - `set -e; fn() { return 1; }; fn; echo`  → both exit ✓
+  - `set -e; let "0"; echo "after"`         → both exit ✓
+  - `set -e; (( 0 )); echo "after"`         → **zsh exits, zshrs continues**
+  - `set -e; (( 1 == 0 )); echo "after"`    → **zsh exits, zshrs continues**
+
+**Where** — `src/ported/exec.rs::exec_arith_or_test` (the `(( ))`
+execution path) doesn't propagate non-zero exit status to the
+errexit checker. The `let` and `false` paths do.
+
+**Affected scripts** — defensive scripts using `(( var > 0 ))`
+patterns under `set -euo pipefail` to abort early when a counter
+or guard variable is wrong:
+
+```sh
+set -euo pipefail
+load_config
+
+# zsh: exits here if count == 0 (correct)
+# zshrs: continues anyway (silent failure mode)
+(( count > 0 ))
+do_thing
+```
+
+**Workaround** — wrap in if/then with explicit exit:
+```sh
+set -e
+(( count > 0 )) || exit 1   # || branch fires correctly
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -1398,8 +1495,10 @@ via `strftime $EPOCHSECONDS` (direct access path).
 | 29 | `"argv[N]=..."` literal stripped inside double quotes | **port-bug** | escape `\[` `\]` |
 | 30 | `setopt no_clobber` rejects `> /dev/null` | **port-bug** | `>\|` force-clobber |
 | 31 | `${EPOCHSECONDS:-x}` always uses default | **port-bug** | direct `$EPOCHSECONDS` access |
+| 32 | `hash -d name=~` doesn't expand `~` in value | **port-bug** | use `$HOME` literal |
+| 33 | `set -e` doesn't fire on `(( false_cond ))` | **port-bug** | `\|\| exit 1` explicit |
 
-Of thirty-one entries, two are fixed (5, 7), twenty-five remain
+Of thirty-three entries, two are fixed (5, 7), twenty-seven remain
 open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31), and four
-were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33), and
+four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
