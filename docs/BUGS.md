@@ -14952,6 +14952,177 @@ esac
 
 ---
 
+## #283 — `[[ "!" == "..." ]]` misparses bare `!` token as negation operator (even when quoted/escaped)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ "!" == "!" ]] && echo Y'
+Y
+
+$ ./target/debug/zshrs --zsh -c '[[ "!" == "!" ]] && echo Y'
+zsh:1: : not found
+zsh:1: command not found: ]]
+```
+
+Inside `[[ ]]`, zshrs treats the bare `!` token as the
+negation prefix operator regardless of quoting. zsh handles
+quoted `"!"` as a literal-equality operand. Same bug for
+escaped form `\!`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ \! == \! ]] && echo Y'
+Y
+
+$ ./target/debug/zshrs --zsh -c '[[ \! == \! ]] && echo Y'
+zsh:1: : not found
+zsh:1: command not found: ]]
+```
+
+Control: `[[ "!abc" == "!abc" ]]` works in both (the `!`
+isn't a bare token). The bug fires specifically when the
+operand IS exactly `!` after quote stripping.
+
+The error message indicates zshrs misparses `[[ "!"` as
+`[[ !` (negation start) + empty literal — then chokes on
+the rest.
+
+**Where** — `src/ported/parse/dd_bracket.rs::parse_operand`:
+quote-stripping happens before negation-operator detection,
+so `"!"` post-strip is `!` which then matches the negation
+token. C-source `Src/parse.c::par_test` checks for `!` as a
+single argv slot AFTER quote-removal context, and only
+treats it as negation if no quotes were present.
+
+**Impact** — code that tests for literal `!` (less common
+than other chars but appears in user-input validation,
+password requirements checking, etc.):
+
+```sh
+case "$user_input" in
+    "!") echo "got bang" ;;
+esac
+# zsh: works
+# zshrs: would also work since case doesn't use [[, but the [[ form breaks:
+
+if [[ "$user_input" == "!" ]]; then    # zshrs: errors
+    echo "got bang"
+fi
+```
+
+**Workaround** — use `case` or `[ ]`-style single-bracket
+test instead of `[[ ]]`:
+```sh
+[ "$user_input" = "!" ] && echo "got bang"
+```
+
+---
+
+## #284 — `printf -- "%s\n" hi` doesn't recognize `--` end-of-options separator (extends #251 family)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'printf -- "%s\n" hi'
+hi
+
+$ ./target/debug/zshrs --zsh -c 'printf -- "%s\n" hi'
+--
+```
+
+POSIX `--` end-of-options marker. zsh's `printf` builtin
+strips `--` and treats the next arg as the format string.
+zshrs's `printf` treats `--` itself as the format string,
+emitting `--` followed by a literal newline (or just `--`).
+
+Same family as #251 (`command --` not recognized) and #252
+(`exec -`). The `--` argument-parsing convention is missing
+from several zshrs builtins.
+
+**Where** — `src/ported/builtins/printf.rs::parse_args`: no
+`--` detection in argv pre-processing. C-source
+`Src/builtin.c::bin_printf` consumes `--` via the standard
+flag-parsing helper.
+
+**Impact** — defensive printf wrappers break:
+
+```sh
+# Defensive against format starting with -
+safe_printf() {
+    printf -- "$1" "${@:2}"
+}
+safe_printf "-%s\n" "hi"
+# zsh: outputs "-hi\n"
+# zshrs: outputs "----%s\n" "hi" — wrong format, extra junk
+```
+
+**Workaround** — drop the `--` (works in common case, fails
+if format starts with `-`):
+```sh
+printf "%s\n" hi
+```
+
+---
+
+## #285 — `break`/`continue` outside loop silently succeed (zsh: errors with ec=1)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'break'
+zsh:break:1: not in while, until, select, or repeat loop
+$ echo $?
+1
+
+$ ./target/debug/zshrs --zsh -c 'break'
+$ echo $?
+0
+```
+
+`break` and `continue` are loop-control statements — using
+them outside an active loop context should error. zsh emits
+"not in while, until, select, or repeat loop" with exit code
+1. zshrs silently succeeds.
+
+Same gap inside a function with no loop:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { break; }; f'
+f:break: not in while, until, select, or repeat loop
+
+$ ./target/debug/zshrs --zsh -c 'f() { break; }; f'
+(empty — silent success)
+```
+
+**Where** — `src/ported/builtins/break.rs::handle_break`:
+doesn't check whether the current execution stack includes
+an active loop frame. C-source `Src/builtin.c::bin_break`
+checks `loops > 0` and errors if zero.
+
+**Impact** — scripts with logic bugs that use `break`/
+`continue` where they shouldn't (e.g., accidentally outside
+the loop, or after a `case` block exits the loop) silently
+mis-execute instead of failing fast:
+
+```sh
+process() {
+    case "$1" in
+        skip) continue ;;   # bug: continue makes no sense here
+        *)    do_work "$1" ;;
+    esac
+}
+for arg; do process "$arg"; done
+# zsh: errors immediately at the misuse, fail-fast diagnostic
+# zshrs: silently succeeds, debugging harder
+```
+
+This is a defensive-runtime gap — zsh's error catches a
+common scripting mistake; zshrs lets it pass.
+
+**Workaround** — none — depends on the runtime check being
+added.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -15238,9 +15409,12 @@ esac
 | 280 | `setopt typeset_to_unset` ignored — `typeset X` always creates parameter (set+empty) | **port-bug** | explicit `unset` after typeset |
 | 281 | `argv[N]=value`/`argv+=(x)`/`unset argv` don't sync with `$@` — argv is read-only mirror (data corruption on append) | **port-bug** | use `set -- ...` to rewrite positionals |
 | 282 | `$ZSH_VERSION` format diverges — `5.9.0.3-test` vs zsh's `5.9`; affects version-gate exact-match plugin guards | **port-bug** | fuzzy version-check patterns |
+| 283 | `[[ "!" == "..." ]]` misparses bare `!` token as negation operator even when quoted/escaped | **port-bug** | use `[ ]` single-bracket for `!` literal |
+| 284 | `printf -- "%s\n" hi` doesn't recognize `--` end-of-options (extends #251 family) | **port-bug** | drop the `--` if format doesn't start with `-` |
+| 285 | `break`/`continue` outside loop silently succeed (zsh: errors "not in ... loop", ec=1) | **port-bug** | (none — runtime check missing) |
 
-Of two hundred and eighty-two entries, two are fixed (5, 7), two
-hundred and seventy-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and eighty-five entries, two are fixed (5, 7), two
+hundred and seventy-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -15260,5 +15434,5 @@ hundred and seventy-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
-279, 280, 281, 282), and four were zsh-correct behavior misframed
-by demos (1, 2, 3, 6).
+279, 280, 281, 282, 283, 284, 285), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
