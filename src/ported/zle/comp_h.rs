@@ -1427,4 +1427,113 @@ mod tests {
         assert_eq!(CP_IGNORED & CP_ALLKEYS, CP_IGNORED,
             "CP_IGNORED (bit 25) ⊆ CP_ALLKEYS");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/comp.h
+    // c:85-95 CGF_* / c:127-140 CMF_*
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:85-95 — all CGF_* flags are i32 (compile-time type pin).
+    #[test]
+    fn cgf_flags_all_i32_type() {
+        let _: i32 = CGF_NOSORT;
+        let _: i32 = CGF_LINES;
+        let _: i32 = CGF_REVSORT;
+    }
+
+    /// c:85-95 — CGF_NOSORT (bit 0) through CGF_REVSORT (bit 10) cover
+    /// contiguous bits 0..=10.
+    #[test]
+    fn cgf_flags_dense_low_bits() {
+        let all = [
+            CGF_NOSORT, CGF_LINES, CGF_HASDL, CGF_UNIQALL,
+            CGF_UNIQCON, CGF_PACKED, CGF_ROWS, CGF_FILES,
+            CGF_MATSORT, CGF_NUMSORT, CGF_REVSORT,
+        ];
+        let or_all: i32 = all.iter().fold(0, |acc, &v| acc | v);
+        let expected = (1i32 << 11) - 1;
+        assert_eq!(or_all, expected,
+            "CGF_* must cover bits 0..=10 (no gaps)");
+    }
+
+    /// c:85-95 — all CGF_* are powers of 2 (single-bit flags).
+    #[test]
+    fn cgf_flags_all_powers_of_two() {
+        for &v in &[CGF_NOSORT, CGF_LINES, CGF_HASDL, CGF_UNIQALL,
+                    CGF_UNIQCON, CGF_PACKED, CGF_ROWS, CGF_FILES,
+                    CGF_MATSORT, CGF_NUMSORT, CGF_REVSORT] {
+            assert!((v as u32).is_power_of_two(),
+                "CGF_* {} must be a single bit", v);
+        }
+    }
+
+    /// c:85-95 — CGF_* pairwise distinct.
+    #[test]
+    fn cgf_flags_pairwise_distinct() {
+        let codes = [
+            CGF_NOSORT, CGF_LINES, CGF_HASDL, CGF_UNIQALL,
+            CGF_UNIQCON, CGF_PACKED, CGF_ROWS, CGF_FILES,
+            CGF_MATSORT, CGF_NUMSORT, CGF_REVSORT,
+        ];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(),
+            "CGF_* must be pairwise distinct");
+    }
+
+    /// c:85 — CGF_NOSORT is bit 0 (= 1) (alt name pin).
+    #[test]
+    fn cgf_nosort_is_bit_zero_alt() {
+        assert_eq!(CGF_NOSORT, 1, "c:85 — NOSORT is bit 0");
+    }
+
+    /// c:127-140 — all CMF_* are i32 (compile-time type pin).
+    #[test]
+    fn cmf_flags_all_i32_type() {
+        let _: i32 = CMF_FILE;
+        let _: i32 = CMF_ALL;
+    }
+
+    /// c:127 — CMF_FILE is bit 0 (alt name pin).
+    #[test]
+    fn cmf_file_is_bit_zero_alt() {
+        assert_eq!(CMF_FILE, 1i32 << 0, "c:127 — FILE is bit 0");
+    }
+
+    /// c:127-140 — CMF_FILE through CMF_ALL form contiguous bits 0..=13.
+    #[test]
+    fn cmf_flags_dense_bits_zero_through_13() {
+        let all = [
+            CMF_FILE, CMF_REMOVE, CMF_ISPAR, CMF_PARBR, CMF_PARNEST,
+            CMF_NOLIST, CMF_DISPLINE, CMF_HIDE, CMF_NOSPACE, CMF_PACKED,
+            CMF_ROWS, CMF_MULT, CMF_FMULT, CMF_ALL,
+        ];
+        let or_all: i32 = all.iter().fold(0, |acc, &v| acc | v);
+        let expected = (1i32 << 14) - 1;
+        assert_eq!(or_all, expected,
+            "CMF_* must cover bits 0..=13 (no gaps)");
+    }
+
+    /// c:127-140 — CMF_* pairwise distinct.
+    #[test]
+    fn cmf_flags_pairwise_distinct() {
+        let codes = [
+            CMF_FILE, CMF_REMOVE, CMF_ISPAR, CMF_PARBR, CMF_PARNEST,
+            CMF_NOLIST, CMF_DISPLINE, CMF_HIDE, CMF_NOSPACE, CMF_PACKED,
+            CMF_ROWS, CMF_MULT, CMF_FMULT, CMF_ALL,
+        ];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(),
+            "CMF_* must be pairwise distinct");
+    }
+
+    /// c:127-140 — all CMF_* powers of 2.
+    #[test]
+    fn cmf_flags_all_powers_of_two() {
+        for &v in &[CMF_FILE, CMF_REMOVE, CMF_ISPAR, CMF_PARBR, CMF_PARNEST,
+                    CMF_NOLIST, CMF_DISPLINE, CMF_HIDE, CMF_NOSPACE, CMF_PACKED,
+                    CMF_ROWS, CMF_MULT, CMF_FMULT, CMF_ALL] {
+            assert!((v as u32).is_power_of_two(),
+                "CMF_* {} must be a single bit", v);
+        }
+    }
 }
