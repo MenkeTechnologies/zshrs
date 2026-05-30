@@ -10982,6 +10982,152 @@ the mutation in the parent shell.
 
 ---
 
+## #211 — `$-` (current option chars) missing one or more flag letters
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "$-"'
+569Xf
+
+$ ./target/debug/zshrs --zsh -c 'echo "$-"'
+569X
+```
+
+`$-` reports the single-char codes of currently-set shell
+options. zsh's no-rcs default outputs `569Xf`. zshrs outputs
+`569X` — missing the `f` character.
+
+In zsh's option-letter map, `f` corresponds to one of the
+default-on options for non-interactive shells (likely `-f`
+itself, i.e. no-rcs-startup mode, which is set by the `-f`
+flag we passed). zshrs's `$-` parameter generation omits this
+letter.
+
+The leading `569X` are unusual entries that don't map to
+typical POSIX option letters either — both shells emit them
+but with the `f` divergence, indicating zshrs's option-to-char
+table is partial.
+
+**Where** — `src/ported/params/autovars.rs::compute_dash_dollar`:
+walks `OPTS` table but doesn't include the `NO_RCS` (`-f`)
+letter mapping. C-source `Src/params.c::dashgetfn` iterates
+all set opts and emits their option char from `optns[]`.
+
+**Impact** — POSIX-portable scripts that introspect `$-` to
+detect shell state (e.g., `case $- in *i*) interactive ;; *)
+not ;; esac`) get false negatives for any opt-char zshrs
+hasn't mapped:
+
+```sh
+case $- in
+    *f*) echo "started with -f / norcs" ;;
+    *)   echo "interactive or full-startup" ;;
+esac
+# zsh: prints "started with -f / norcs" when invoked with -f
+# zshrs: prints "interactive or full-startup" (false negative)
+```
+
+**Workaround** — check option directly via `setopt | grep
+norcs` instead of `$-`.
+
+---
+
+## #212 — `${(b)str}` over-escapes non-glob characters (tab)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc $'s=$\'a\\tb\'; echo "${(b)s}"' | od -c | head -1
+0000000    a  \t   b  \n
+
+$ ./target/debug/zshrs --zsh -c $'s=$\'a\\tb\'; echo "${(b)s}"' | od -c | head -1
+0000000    a   \  \t   b  \n
+```
+
+The `(b)` flag is supposed to make a string safe to use as a
+glob pattern by escaping glob metacharacters: `* ? [ ] ( ) | <
+> ^ # ~ = -`. Tab (`\t`) is NOT a glob metacharacter, so zsh
+leaves it unescaped. zshrs inserts a redundant `\` before tab.
+
+The bug is over-escaping — affecting any string containing
+non-metachar whitespace or control chars (tab, newline,
+carriage return).
+
+**Where** — `src/ported/paramflags.rs::escape_for_pattern`:
+escape table is too broad — includes characters that aren't
+zsh-glob metachars. C-source `Src/utils.c::quotestring` with
+`QT_BACKSLASH | QT_GLOB` only escapes documented metachars.
+
+**Impact** — when `(b)`-escaped strings are concatenated into
+patterns, the extra backslashes change pattern semantics:
+
+```sh
+suffix=$'\t'      # literal tab
+pattern="prefix${(b)suffix}*"
+[[ "prefix"$'\t'"x" == $pattern ]] && echo match
+# zsh: matches (pattern is "prefix\tab*", real tab in input)
+# zshrs: no match (pattern is "prefix\\\t*", requires literal backslash-tab)
+```
+
+**Workaround** — for whitespace-safe escaping, use `(q)`
+instead, which targets shell quoting (not glob escaping).
+
+---
+
+## #213 — `${assoc[(R)value]}` reverse-search-by-value rejected as bad substitution
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[a]=1; h[b]=2; h[c]=2; print -l "${(@k)h[(R)2]}"' | sort
+b
+c
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[a]=1; h[b]=2; h[c]=2; print -l "${(@k)h[(R)2]}"' 2>&1
+zsh:1: bad substitution
+```
+
+zsh's `${assoc[(R)value]}` syntax does reverse-search of an
+associative array: returns all elements where the *value*
+matches the pattern. Combined with `(@k)` it returns the keys
+of the matching elements — a common idiom for "find all keys
+whose value equals X."
+
+zshrs parses this as an invalid subscript and errors with
+"bad substitution."
+
+**Where** — `src/ported/paramsubst.rs::parse_assoc_subscript`:
+doesn't recognize `(R)`/`(I)` flags inside an assoc subscript.
+C-source `Src/subst.c::dosubst` recognizes `SCANPM_WANTVALS`
+when `(R)` flag is present in assoc context and runs the
+value-pattern scan.
+
+**Impact** — reverse-search-by-value, key/value scan idioms
+fail at runtime. Common patterns broken:
+
+```sh
+typeset -A status_map
+status_map=(api1 ok api2 fail api3 ok api4 fail)
+failed_services=("${(@k)status_map[(R)fail]}")
+# zsh: failed_services=(api2 api4)
+# zshrs: bad substitution error, script aborts
+```
+
+This is a meaningful gap for monitoring/config scripts that
+use assoc arrays as ad-hoc lookup tables and want to query
+them by value.
+
+**Workaround** — manual loop:
+```sh
+failed_services=()
+for key val in "${(@kv)status_map}"; do
+    [[ "$val" == "fail" ]] && failed_services+=("$key")
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -11196,9 +11342,12 @@ the mutation in the parent shell.
 | 208 | Function defined inside `(...)` subshell leaks into parent shell | **port-bug** | explicit `unfunction` after |
 | 209 | Alias defined inside `(...)` subshell leaks into parent shell | **port-bug** | explicit `unalias` after |
 | 210 | `(unfunction f)`/`(zmodload m)` in subshell mutate parent state (destructive) | **port-bug** | never use subshell for state-mutating builtins |
+| 211 | `$-` (option chars) missing `f`/other letters (option-to-char table incomplete) | **port-bug** | use `setopt \| grep ...` instead |
+| 212 | `${(b)str}` over-escapes non-glob chars (tab, etc) — extra `\` inserted | **port-bug** | use `(q)` for shell quoting instead |
+| 213 | `${assoc[(R)value]}` reverse-search-by-value errors `bad substitution` | **port-bug** | manual `for k v in "${(@kv)h}"` loop |
 
-Of two hundred and ten entries, two are fixed (5, 7), two
-hundred and four remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and thirteen entries, two are fixed (5, 7), two
+hundred and seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -11212,5 +11361,5 @@ hundred and four remain open port-bugs/perf-issues (4, 8, 9, 10,
 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174,
 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
-201, 202, 203, 204, 205, 206, 207, 208, 209, 210), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213),
+and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
