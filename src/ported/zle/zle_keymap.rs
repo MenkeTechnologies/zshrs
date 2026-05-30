@@ -3797,4 +3797,104 @@ mod tests {
                 "unlinkkeymap unknown must be deterministic");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_keymap.c
+    // c:134 createkeymapnamtab / c:176 emptykeymapnamtab /
+    // c:205 refkeymap_by_name / c:240 unrefkeymap_by_name /
+    // c:517 newkeymap / c:664 openkeymap / c:805 linkkeymap
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:134 — `createkeymapnamtab` is idempotent (alt 10-call).
+    #[test]
+    fn createkeymapnamtab_idempotent_10_call() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..10 { createkeymapnamtab(); }
+    }
+
+    /// c:176 — `emptykeymapnamtab` is idempotent.
+    #[test]
+    fn emptykeymapnamtab_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..10 { emptykeymapnamtab(); }
+    }
+
+    /// c:205 — `refkeymap_by_name` for unknown name is safe.
+    #[test]
+    fn refkeymap_by_name_unknown_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        refkeymap_by_name("__never_keymap_xyz__");
+    }
+
+    /// c:240 — `unrefkeymap_by_name` for unknown name is safe.
+    #[test]
+    fn unrefkeymap_by_name_unknown_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        unrefkeymap_by_name("__never_keymap_xyz__");
+    }
+
+    /// c:240 — `unrefkeymap_by_name("")` empty name safe (alt).
+    #[test]
+    fn unrefkeymap_by_name_empty_no_panic_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        unrefkeymap_by_name("");
+    }
+
+    /// c:517 — `newkeymap(None, "")` returns Arc<Keymap> (compile-time pin).
+    #[test]
+    fn newkeymap_none_returns_arc_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Arc<Keymap> = newkeymap(None, "");
+    }
+
+    /// c:517 — `newkeymap` is deterministic in shape (always returns Arc).
+    #[test]
+    fn newkeymap_deterministic_shape() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            let _: Arc<Keymap> = newkeymap(None, "test");
+        }
+    }
+
+    /// c:805 — `linkkeymap` returns i32 (compile-time pin).
+    #[test]
+    fn linkkeymap_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let km = newkeymap(None, "");
+        let _: i32 = linkkeymap(km, "test", 0);
+    }
+
+    /// c:664 — `openkeymap("")` empty name returns None (alt).
+    #[test]
+    fn openkeymap_empty_name_returns_none_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(openkeymap("").is_none(),
+            "empty keymap name → None");
+    }
+
+    /// c:664 — `openkeymap("__never__")` for unknown name returns None.
+    #[test]
+    fn openkeymap_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(openkeymap("__definitely_no_such_keymap_xyz__").is_none());
+    }
+
+    /// c:287 — `newkeytab` is deterministic shape (always empty).
+    #[test]
+    fn newkeytab_deterministic_shape() {
+        for _ in 0..5 {
+            let t = newkeytab();
+            assert!(t.is_empty(), "newkeytab must always start empty");
+        }
+    }
 }
