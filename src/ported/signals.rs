@@ -3010,4 +3010,121 @@ mod tests {
         assert!(is_interact(), "set(true) twice still true");
         set_interact(saved);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/signals.c
+    // c:194 signal_mask / c:1791 rtsigno / c:1868 rtsigname /
+    // c:2045 killpg / c:2050 kill / c:2071/2091 set/is_interact /
+    // c:107-194 intr/holdintr family / c:1326 queue_traps / c:1339 unqueue_traps
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1791 — `rtsigno` is for REAL-TIME signal names only (e.g.
+    /// `RTMIN+1`); regular signal names like `TERM`/`INT` are NOT
+    /// matched here. Pin the documented contract.
+    #[test]
+    fn rtsigno_rejects_regular_signal_names() {
+        assert_eq!(rtsigno("TERM"), None,
+            "rtsigno is rt-only; TERM (regular) must return None");
+        assert_eq!(rtsigno("INT"), None,
+            "rtsigno is rt-only; INT (regular) must return None");
+    }
+
+    /// c:1791 — `rtsigno("0")` empty signal name path doesn't panic.
+    #[test]
+    fn rtsigno_numeric_zero_no_panic() {
+        let _ = rtsigno("0");
+    }
+
+    /// c:1868 — `rtsigname(invalid)` (negative or huge) doesn't panic.
+    #[test]
+    fn rtsigname_extreme_values_no_panic() {
+        let _ = rtsigname(-1);
+        let _ = rtsigname(99999);
+        let _ = rtsigname(0);
+    }
+
+    /// c:1868 — `rtsigname` is deterministic for same input.
+    #[test]
+    fn rtsigname_deterministic() {
+        for sig in [1, 2, 9, 15, 0] {
+            let a = rtsigname(sig);
+            let b = rtsigname(sig);
+            assert_eq!(a, b, "rtsigname({}) must be deterministic", sig);
+        }
+    }
+
+    /// c:194 — `signal_mask(0)` doesn't panic.
+    #[test]
+    fn signal_mask_signal_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _: libc::sigset_t = signal_mask(0);
+    }
+
+    /// c:194 — `signal_mask` returns sigset_t (type pin).
+    #[test]
+    fn signal_mask_returns_sigset_t_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: libc::sigset_t = signal_mask(libc::SIGUSR1);
+    }
+
+    /// c:2071/2091 — set_interact(false) then is_interact() returns false.
+    #[test]
+    fn set_interact_false_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = is_interact();
+        set_interact(false);
+        assert!(!is_interact(), "after set(false), is_interact must be false");
+        set_interact(saved);
+    }
+
+    /// c:2071/2091 — set_interact() alternation is monotonic w.r.t. observed value.
+    #[test]
+    fn set_interact_alternation_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = is_interact();
+        set_interact(true);  assert!(is_interact());
+        set_interact(false); assert!(!is_interact());
+        set_interact(true);  assert!(is_interact());
+        set_interact(false); assert!(!is_interact());
+        set_interact(saved);
+    }
+
+    /// c:1326/1339 — queue_traps + unqueue_traps round-trip is safe.
+    #[test]
+    fn queue_unqueue_traps_round_trip_safe() {
+        let _g = crate::test_util::global_state_lock();
+        queue_traps(0);
+        unqueue_traps();
+        queue_traps(1);
+        unqueue_traps();
+    }
+
+    /// c:1339 — `unqueue_traps` on empty queue safe.
+    #[test]
+    fn unqueue_traps_on_empty_queue_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            unqueue_traps();
+        }
+    }
+
+    /// c:107/131 — intr/nointr alternation safe.
+    #[test]
+    fn intr_nointr_alternation_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            intr();
+            nointr();
+        }
+    }
+
+    /// c:152/171 — holdintr/noholdintr alternation safe.
+    #[test]
+    fn holdintr_noholdintr_alternation_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            holdintr();
+            noholdintr();
+        }
+    }
 }
