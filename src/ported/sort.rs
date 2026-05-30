@@ -1085,4 +1085,124 @@ mod tests {
         strmetasort(&mut arr, 0, None);
         assert_eq!(arr, before, "already-sorted unchanged");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/sort.c
+    // c:55 eltpcmp / c:114 zstrcmp / c:283 strmetasort /
+    // SORTIT_* flag invariants
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `Src/zsh.h:2993` — `SORTIT_ANYOLDHOW = 0` (sentinel for "no flags").
+    #[test]
+    fn sortit_anyoldhow_is_zero_sentinel() {
+        assert_eq!(SORTIT_ANYOLDHOW, 0);
+    }
+
+    /// `Src/zsh.h:2993` — SORTIT_* (excluding sentinel) are pairwise distinct.
+    #[test]
+    fn sortit_flags_pairwise_distinct() {
+        let bits = [SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY,
+                    SORTIT_NUMERICALLY_SIGNED, SORTIT_BACKWARDS,
+                    SORTIT_IGNORING_BACKSLASHES, SORTIT_SOMEHOW];
+        let unique: std::collections::HashSet<_> = bits.iter().copied().collect();
+        assert_eq!(unique.len(), bits.len(),
+            "SORTIT_* flags must be pairwise distinct");
+    }
+
+    /// `Src/zsh.h:2993` — every non-sentinel SORTIT_* is a single bit.
+    #[test]
+    fn sortit_flags_all_powers_of_two() {
+        for v in [SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY,
+                  SORTIT_NUMERICALLY_SIGNED, SORTIT_BACKWARDS,
+                  SORTIT_IGNORING_BACKSLASHES, SORTIT_SOMEHOW] {
+            assert!((v as u32).is_power_of_two(),
+                "SORTIT_* {} must be single bit", v);
+        }
+    }
+
+    /// `Src/zsh.h:2993` — SORTIT_* OR covers bits 0..=5 (63).
+    #[test]
+    fn sortit_flags_or_covers_low_6_bits() {
+        let or_all = SORTIT_IGNORING_CASE | SORTIT_NUMERICALLY
+            | SORTIT_NUMERICALLY_SIGNED | SORTIT_BACKWARDS
+            | SORTIT_IGNORING_BACKSLASHES | SORTIT_SOMEHOW;
+        assert_eq!(or_all, 63, "SORTIT_* must cover bits 0..=5");
+    }
+
+    /// c:114 — `zstrcmp` reflexivity for non-empty strings.
+    #[test]
+    fn zstrcmp_reflexive_non_empty() {
+        for s in ["a", "abc", "  ", "hello world"] {
+            assert_eq!(zstrcmp(s, s, 0), Ordering::Equal,
+                "zstrcmp({:?}, {:?}, 0) must be Equal", s, s);
+        }
+    }
+
+    /// c:114 — `zstrcmp` does NOT honor SORTIT_BACKWARDS; reversal is
+    /// applied by `eltpcmp` (Src/sort.c:55) BEFORE delegating to
+    /// `zstrcmp`. Pin the documented "flag is ignored here" contract.
+    #[test]
+    fn zstrcmp_does_not_honor_backwards_flag() {
+        let normal = zstrcmp("a", "b", 0);
+        let with_back = zstrcmp("a", "b", SORTIT_BACKWARDS as u32);
+        assert_eq!(normal, with_back,
+            "zstrcmp must not invert on BACKWARDS — that's eltpcmp's job");
+    }
+
+    /// c:114 — `zstrcmp` does NOT honor SORTIT_IGNORING_CASE; case
+    /// fold happens in `strmetasort` pre-pass (c:290-372). Pin the
+    /// documented "flag is ignored here" contract.
+    #[test]
+    fn zstrcmp_does_not_honor_ignoring_case_flag() {
+        let no_flag = zstrcmp("ABC", "abc", 0);
+        let with_flag = zstrcmp("ABC", "abc", SORTIT_IGNORING_CASE as u32);
+        assert_eq!(no_flag, with_flag,
+            "zstrcmp must not case-fold; flag is no-op at this level");
+    }
+
+    /// c:114 — `zstrcmp` numeric flag orders "2" < "10" (not lex).
+    #[test]
+    fn zstrcmp_numeric_orders_two_before_ten() {
+        let r = zstrcmp("2", "10", SORTIT_NUMERICALLY as u32);
+        assert_eq!(r, Ordering::Less,
+            "numeric sort: 2 < 10 (lex would say 1 < 2)");
+    }
+
+    /// c:283 — `strmetasort` sorts longer corpus correctly.
+    #[test]
+    fn strmetasort_corpus_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr: Vec<String> = vec!["zebra".into(), "apple".into(),
+                                         "mango".into(), "banana".into()];
+        strmetasort(&mut arr, 0, None);
+        assert_eq!(arr, vec!["apple".to_string(), "banana".into(),
+                              "mango".into(), "zebra".into()]);
+    }
+
+    /// c:283 — `strmetasort` empty input doesn't panic.
+    #[test]
+    fn strmetasort_empty_input_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr: Vec<String> = Vec::new();
+        strmetasort(&mut arr, 0, None);
+        assert!(arr.is_empty());
+    }
+
+    /// c:283 — `strmetasort` single-element input is no-op.
+    #[test]
+    fn strmetasort_single_element_no_op() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr: Vec<String> = vec!["only".into()];
+        strmetasort(&mut arr, 0, None);
+        assert_eq!(arr, vec!["only".to_string()]);
+    }
+
+    /// c:283 — `strmetasort` backwards flag reverses order (alt).
+    #[test]
+    fn strmetasort_backwards_reverses_lex_order_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let mut arr: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
+        strmetasort(&mut arr, SORTIT_BACKWARDS as u32, None);
+        assert_eq!(arr, vec!["c".to_string(), "b".into(), "a".into()]);
+    }
 }
