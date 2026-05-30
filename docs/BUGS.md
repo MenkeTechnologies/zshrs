@@ -1734,6 +1734,121 @@ done
 
 ---
 
+## #40 — `print -aC N` ignores `-a` flag — outputs column-major instead of row-major
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -aC 3 a b c d e f g h i'
+a  b  c     # zsh: row-major (across rows) because -a flag is set
+d  e  f
+g  h  i
+
+$ zshrs --zsh -c 'print -aC 3 a b c d e f g h i'
+a  d  g     # zshrs: column-major (down columns) — ignores -a
+b  e  h
+c  f  i
+```
+
+Per zsh docs, `print -C N` defaults to **column-major** (items
+flow down each column, then to next column). The `-a` flag
+overrides this to **row-major** (items flow across each row, then
+down to next row).
+
+zshrs honors `print -C N` correctly (column-major) but **ignores
+the `-a` flag** — both `print -C N` and `print -aC N` produce
+column-major output.
+
+**Where** — `src/ported/builtin.rs::bin_print` `-C` branch. After
+parsing `-a` flag (likely setting an `across_rows` boolean), the
+print path needs to switch the inner/outer loop order. Currently
+just always does column-major.
+
+**Affected demos** — 73, 88, 303, 325 use `print -aC N` for tabular
+output and show column-major where row-major was intended.
+
+**Workaround** — sort the input order manually before passing:
+```sh
+# To get row-major a b c / d e f / g h i,
+# pass items in zshrs's column-major sort order:
+print -aC 3 a d g b e h c f i   # zshrs renders as row-major
+```
+
+---
+
+## #41 — Glob qualifier `Yn` (limit count) returns ALL matches
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/g && touch /tmp/g/{a..j}; echo /tmp/g/*(Y3)'
+/tmp/g/i /tmp/g/g /tmp/g/a   # zsh: returns first 3 only
+
+$ zshrs --zsh -c 'mkdir -p /tmp/g && touch /tmp/g/{a..j}; echo /tmp/g/*(Y3)'
+/tmp/g/a /tmp/g/b /tmp/g/c /tmp/g/d /tmp/g/e /tmp/g/f /tmp/g/g /tmp/g/h /tmp/g/i /tmp/g/j   # zshrs: returns all 10
+```
+
+The `Yn` glob qualifier limits the number of matches to at most
+`n`. zshrs ignores the qualifier and returns all matches.
+
+**Where** — `src/ported/glob.rs::apply_qualifiers` should
+recognize the `Y<num>` qualifier (per `Src/glob.c` glob qualifier
+table) and slice the result list to the first `n` elements.
+
+**Workaround** — pipe through `head`:
+```sh
+echo /tmp/g/* | tr ' ' '\n' | head -3 | tr '\n' ' '
+# or array slice:
+files=(/tmp/g/*); echo "${files[1,3]}"
+```
+
+---
+
+## #42 — Bare `typeset` prints `var=val` instead of full declarations
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset' | head -5
+integer 10 readonly !=0
+integer 10 readonly '#'=0
+integer 10 readonly '$'=24105
+array readonly '*'=(  )
+readonly -=569Xf
+
+$ zshrs --zsh -c 'typeset' | head -5
+!=0
+#=0
+$=0
+*=(  )
+-=''
+```
+
+`typeset` without arguments should print every variable with its
+**full declaration** including attributes (`integer`, `readonly`,
+`array`, etc.) — the output should be valid shell code that could
+recreate the variable.
+
+zshrs prints just `name=value` without the type/attribute prefix.
+This breaks any tooling that parses `typeset` output to extract
+attributes, and also breaks the "round-trip" property where
+`eval "$(typeset)"` recreates the state.
+
+`typeset -p NAME` (with a specific name) DOES print the full
+declaration correctly in zshrs — only the bare form is wrong.
+
+**Where** — `src/ported/builtin.rs::bin_typeset`'s no-arg listing
+path. Should iterate all params and print using the same logic as
+`-p` mode.
+
+**Workaround** — pass explicit `-p`:
+```sh
+typeset -p   # zshrs: correct full declarations
+typeset -m '*' -p   # also works, matches all
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -1777,9 +1892,12 @@ done
 | 37 | `"${(z)str}"` quoted form splits fields | **port-bug** | `${(j: :)${(z)str}}` rejoin |
 | 38 | prompt escapes `%m`/`%C`/`%i`/`%l`/`%y`/`%E`/`%v`/`%b`/`%u`/`%s`/`%f`/`%k` missing | **port-bug** | use `$HOST`/`$PWD` etc |
 | 39 | `${arr:#"literal"}` quoted pat still globbed | **port-bug** | per-element iteration |
+| 40 | `print -aC N` ignores `-a` (column-major instead of row) | **port-bug** | sort input in advance |
+| 41 | Glob qualifier `Yn` (limit) returns all matches | **port-bug** | `head -n` or array slice |
+| 42 | Bare `typeset` prints `name=val` only, no attrs | **port-bug** | use `typeset -p` |
 
-Of thirty-nine entries, two are fixed (5, 7), thirty-three remain
-open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
-35, 36, 37, 38, 39), and four were zsh-correct behavior misframed by
-demos (1, 2, 3, 6).
+Of forty-two entries, two are fixed (5, 7), thirty-six remain open
+port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+36, 37, 38, 39, 40, 41, 42), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
