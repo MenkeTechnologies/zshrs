@@ -722,4 +722,108 @@ mod tests {
         set_pparams(vec!["a".into(), "b".into(), "c".into()]);
         set_pparams(vec![]);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional contract pins for exec_hooks.rs
+    // No-hook-installed contract: every accessor must be safe + deterministic
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `array("")` empty name returns deterministic value (no panic).
+    #[test]
+    fn array_empty_name_no_panic_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let a = array("");
+        let b = array("");
+        assert_eq!(a, b, "array(\"\") must be deterministic");
+    }
+
+    /// `set_array` then `array` without hook should not panic.
+    #[test]
+    fn set_array_then_get_no_hook_safe() {
+        let _g = crate::test_util::global_state_lock();
+        set_array("__test_hook_arr__", vec!["a".into(), "b".into()]);
+        let _ = array("__test_hook_arr__");
+    }
+
+    /// `set_assoc` then `assoc` without hook should not panic.
+    #[test]
+    fn set_assoc_then_get_no_hook_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = IndexMap::new();
+        m.insert("k".to_string(), "v".to_string());
+        set_assoc("__test_hook_assoc__", m);
+        let _ = assoc("__test_hook_assoc__");
+    }
+
+    /// `run_function_body` with no hook returns `Option<i32>` (type pin, alt).
+    #[test]
+    fn run_function_body_returns_option_i32_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i32> = run_function_body("foo", &[]);
+    }
+
+    /// `run_function_body` is deterministic for the same input when no hook.
+    #[test]
+    fn run_function_body_no_hook_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let a = run_function_body("__never__", &[]);
+        let b = run_function_body("__never__", &[]);
+        assert_eq!(a, b);
+    }
+
+    /// `dispatch_function_call` is deterministic across calls.
+    #[test]
+    fn dispatch_function_call_no_hook_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let a = dispatch_function_call("__never__", &[]);
+        let b = dispatch_function_call("__never__", &[]);
+        assert_eq!(a, b);
+    }
+
+    /// `pparams` returns `Vec<String>` (compile-time pin, alt).
+    #[test]
+    fn pparams_returns_vec_string_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = pparams();
+    }
+
+    /// `pparams` is deterministic across repeated reads when no hook installed
+    /// (this is observably true only if no other test has installed it; pin
+    /// the no-mutation invariant).
+    #[test]
+    fn pparams_repeated_reads_are_observable_type() {
+        let _g = crate::test_util::global_state_lock();
+        // Just type pin — value depends on whether another test installed a
+        // hook between these calls (PPARAMS_GET is OnceLock).
+        let _a = pparams();
+        let _b = pparams();
+    }
+
+    /// `run_command_substitution` returns `String` type pin (alt).
+    #[test]
+    fn run_command_substitution_returns_string_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = run_command_substitution("echo x");
+    }
+
+    /// `run_command_substitution` empty command doesn't panic.
+    #[test]
+    fn run_command_substitution_empty_cmd_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = run_command_substitution("");
+    }
+
+    /// `execute_script` returns `Result<i32, String>` type pin.
+    #[test]
+    fn execute_script_returns_result_i32_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<i32, String> = execute_script("foo");
+    }
+
+    /// `unregister_function("")` empty name returns bool safely.
+    #[test]
+    fn unregister_function_empty_name_returns_bool() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = unregister_function("");
+    }
 }
