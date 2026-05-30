@@ -2421,6 +2421,132 @@ echo "$val"           # works in both shells
 
 ---
 
+## #54 — `setopt warn_create_global` and `warn_nested_var` don't emit warnings
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt warn_create_global
+fn() { x=10; }
+fn'
+fn: scalar parameter x created globally in function fn
+
+$ zshrs --zsh -c 'setopt warn_create_global
+fn() { x=10; }
+fn'
+            # silent — no warning
+```
+
+Same with `warn_nested_var`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt warn_nested_var
+outer() { local y=outer
+    inner() { y=changed; }
+    inner
+}
+outer'
+inner: scalar parameter y set in enclosing scope in function inner
+
+$ zshrs --zsh -c 'setopt warn_nested_var
+outer() { local y=outer
+    inner() { y=changed; }
+    inner
+}
+outer'
+            # silent
+```
+
+Both options exist to catch ACCIDENTAL globals/shadowing — a class
+of bug very common in shell scripts. Real zsh emits a stderr
+warning naming the function and variable. zshrs accepts the
+option setopt silently (no error) but never produces any warning.
+
+**Where** — `src/ported/exec.rs::add_param_to_scope` should check
+`opts.warn_create_global` and `opts.warn_nested_var` flags
+when creating/modifying parameters across scope boundaries. Likely
+the option flags are recognized by `setopt` but never consulted
+elsewhere in the codebase.
+
+**Impact** — defensive scripts using these warnings catch nothing.
+Common pattern:
+```sh
+setopt warn_create_global
+source big_legacy_script.sh
+# zsh: emits warnings for every accidental global
+# zshrs: silent — scripts ship undetected globals
+```
+
+**Workaround** — adopt strict `local` discipline in code, since
+the safety net is missing. Or run periodic audits via real zsh.
+
+---
+
+## #55 — `setopt err_return` doesn't return from function on command failure
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt err_return
+fn() {
+    false
+    echo unreached
+}
+fn
+echo "after"'
+            # both prints suppressed — fn returns on false, script then
+            # exits on the propagated non-zero status
+
+$ zshrs --zsh -c 'setopt err_return
+fn() {
+    false
+    echo unreached
+}
+fn
+echo "after"'
+unreached
+after
+```
+
+`err_return` is the function-level equivalent of `set -e` /
+`err_exit`: any command returning non-zero inside a function
+should immediately return from that function. Real zsh implements
+this; zshrs ignores the option entirely.
+
+`err_exit` (`set -e`) is partially implemented in zshrs (works
+for `false`, see bug #33 where it doesn't work for `(( ))`), but
+`err_return` is silently inert.
+
+**Where** — `src/ported/exec.rs::execcmd` after every command
+execution should check `opts.err_return` and `funcdepth > 0`,
+unwinding to the function frame on non-zero exit.
+
+**Impact** — defensive functions relying on `err_return` to
+short-circuit on internal failure run their full body anyway:
+```sh
+setopt err_return
+deploy() {
+    validate || return 1     # works
+    build                     # zsh: bails if false; zshrs: continues
+    test                      # zsh: skipped if build failed
+    push                      # zsh: skipped
+}
+```
+
+**Workaround** — explicit `|| return $?` after every command:
+```sh
+deploy() {
+    build  || return $?
+    test   || return $?
+    push   || return $?
+}
+```
+
+Or use `set -e` (`err_exit`) which DOES work in zshrs (with the
+`(( ))` exception of bug #33).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -2478,10 +2604,12 @@ echo "$val"           # works in both shells
 | 51 | `${#*}` access corrupts `$@`/`$*` for rest of fn | **port-bug** | use `${#@}` or `$#` |
 | 52 | `${(q)arr}` per-element quote, doesn't quote join-sep | **port-bug** | `${(j: :)${(@q)a}}` explicit |
 | 53 | `${(P)$ref}` doesn't resolve `name[idx]` indirect | **port-bug** | `eval "val=\\${$ref}"` |
+| 54 | `warn_create_global` / `warn_nested_var` warnings silent | **port-bug** | strict `local` discipline |
+| 55 | `setopt err_return` doesn't fire on command failure | **port-bug** | explicit `\|\| return $?` |
 
-Of fifty-three entries, two are fixed (5, 7), forty-seven remain
-open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
-35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
-52, 53), and four were zsh-correct behavior misframed by demos
+Of fifty-five entries, two are fixed (5, 7), forty-nine remain open
+port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+53, 54, 55), and four were zsh-correct behavior misframed by demos
 (1, 2, 3, 6).
