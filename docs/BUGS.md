@@ -10822,6 +10822,166 @@ setopt ksh_arrays ksh_typeset bsd_echo
 
 ---
 
+## #208 — Function defined inside `(...)` subshell leaks into parent shell
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '(f() { echo defined; }; f); type f 2>&1'
+defined
+f not found
+
+$ ./target/debug/zshrs --zsh -c '(f() { echo defined; }; f); type f 2>&1'
+defined
+f is a shell function from zsh
+```
+
+In zsh, `(...)` runs in a subshell — state changes inside
+(functions, variables, options, current directory, traps) do
+not affect the parent. zshrs honors this isolation for plain
+variables (control test passes: `(X=value); echo "$X"` → empty
+in both shells), but NOT for function definitions.
+
+A function defined inside `(...)` leaks back into the parent.
+This is the function analog of "the subshell is not really a
+subshell" — likely the subshell is implemented as a saved/
+restored state context that doesn't include the function
+table.
+
+**Where** — `src/ported/exec.rs::run_subshell`: state save/
+restore doesn't snapshot the global function table. C-source
+`Src/exec.c::entersubsh` forks (or in `nofork` paths still
+saves shfunctab). The Rust impl skips fn-table cloning.
+
+**Impact** — common zsh idioms break in two ways:
+
+1. Helper functions defined for one-time use leak globally:
+```sh
+process_dir() {
+    (
+        helper() { ... }  # intended to be scoped
+        for x in *; do helper $x; done
+    )
+}
+# zsh: helper gone after process_dir returns
+# zshrs: helper visible to all subsequent code
+```
+
+2. Subshell function overrides bleed back:
+```sh
+(
+    g() { echo overridden; }  # intended subshell-local override
+    g
+)
+g  # zsh: original; zshrs: still overridden version from subshell
+```
+
+**Workaround** — explicit cleanup after subshell:
+```sh
+(helper() { ...; }; do_stuff)
+unfunction helper 2>/dev/null
+```
+
+---
+
+## #209 — Alias defined inside `(...)` subshell leaks into parent shell
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '(alias foo=bar); alias foo 2>&1; echo "ec=$?"'
+ec=1
+
+$ ./target/debug/zshrs --zsh -c '(alias foo=bar); alias foo 2>&1; echo "ec=$?"'
+foo=bar
+ec=0
+```
+
+Same subshell-isolation gap as #208, but for the alias table.
+`(alias foo=bar)` should not register `foo` in the parent
+shell's alias table. zshrs registers it permanently.
+
+**Where** — `src/ported/exec.rs::run_subshell`: alias table
+not snapshotted on subshell entry. Same fix scope as #208 (the
+entire shell state context — funcs, aliases, named refs,
+options — needs a proper clone on subshell enter).
+
+**Impact** — alias snippets that intentionally scope short-
+lived aliases (common in scripts that do `(alias rm=...; some
+work)` to avoid touching interactive rm) leak persistent
+aliases:
+
+```sh
+# Common zinit/oh-my-zsh pattern
+(alias install="zinit install"; install some-plugin)
+# zsh: install alias gone after the (...)
+# zshrs: install alias permanently in alias table, may shadow real install commands later
+```
+
+**Workaround** — explicit `unalias` after the subshell, or use
+a function instead of an alias.
+
+---
+
+## #210 — `(unfunction f)` / `(zmodload module)` mutate parent shell state
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo body; }; (unfunction f); echo "after"; type f 2>&1'
+after
+f is a shell function from zsh
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo body; }; (unfunction f); echo "after"; type f 2>&1'
+after
+f not found
+```
+
+`(unfunction f)` in a subshell should remove `f` only within
+the subshell. zsh correctly preserves `f` in the parent.
+zshrs's subshell `unfunction` mutates the parent function
+table — `f` is gone after the subshell.
+
+Same gap exists for `zmodload` (module loading leaks back):
+```sh
+$ /opt/homebrew/bin/zsh -fc '(zmodload zsh/datetime); zmodload | grep datetime; echo "ec=$?"'
+ec=1                              # module not loaded in parent
+
+$ ./target/debug/zshrs --zsh -c '(zmodload zsh/datetime); zmodload | grep datetime; echo "ec=$?"'
+zsh/datetime
+ec=0                              # module loaded in parent (leak)
+```
+
+This is the destructive-mutation surface of the [[#208]]/[[#209]]
+family — subshell scope isolation is missing for all shell-
+state operations, not just creation. Both add (function/alias
+definition) and remove (unfunction) operations leak across.
+
+**Where** — `src/ported/exec.rs::run_subshell`: subshell
+context doesn't save/restore the function table, alias table,
+or module-registration list. Every mutating builtin executed
+in the subshell hits the parent's tables directly.
+
+**Impact** — most destructive of the three:
+
+```sh
+# User intent: probe whether a fn is callable without affecting state
+(unfunction my_critical_fn; type my_critical_fn) 2>/dev/null
+# zsh: my_critical_fn still callable after this line
+# zshrs: my_critical_fn permanently gone — critical script function lost
+```
+
+Module side: scripts that test-load modules in a subshell to
+check availability silently leave the module loaded in the
+parent, potentially affecting subsequent option/feature
+checks.
+
+**Workaround** — never use `(...)` subshell for state-
+mutating operations on zshrs; do explicit save/restore around
+the mutation in the parent shell.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -11033,9 +11193,12 @@ setopt ksh_arrays ksh_typeset bsd_echo
 | 205 | `read -u N` doesn't read from numeric fd opened via `exec N<...` | **port-bug** | `read x <&N` redirect-form |
 | 206 | `setopt multios` only last target receives `cmd > a > b` (zsh: both) | **port-bug** | explicit `tee` pipe |
 | 207 | `emulate ksh` doesn't apply `KSH_ARRAYS`/`BSD_ECHO`/etc option bundle | **port-bug** | explicit `setopt ksh_arrays` after |
+| 208 | Function defined inside `(...)` subshell leaks into parent shell | **port-bug** | explicit `unfunction` after |
+| 209 | Alias defined inside `(...)` subshell leaks into parent shell | **port-bug** | explicit `unalias` after |
+| 210 | `(unfunction f)`/`(zmodload m)` in subshell mutate parent state (destructive) | **port-bug** | never use subshell for state-mutating builtins |
 
-Of two hundred and seven entries, two are fixed (5, 7), two
-hundred and one remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and ten entries, two are fixed (5, 7), two
+hundred and four remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -11049,5 +11212,5 @@ hundred and one remain open port-bugs/perf-issues (4, 8, 9, 10,
 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174,
 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
-201, 202, 203, 204, 205, 206, 207), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+201, 202, 203, 204, 205, 206, 207, 208, 209, 210), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
