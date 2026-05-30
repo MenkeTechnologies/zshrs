@@ -11430,6 +11430,161 @@ scores[alice]=95
 
 ---
 
+## #220 — `setopt err_return` doesn't abort function on failed command
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt err_return; f() { false; echo "in-fn"; }; f; echo "after"'
+(empty — function aborted on false, return propagated)
+
+$ ./target/debug/zshrs --zsh -c 'setopt err_return; f() { false; echo "in-fn"; }; f; echo "after"'
+in-fn
+after
+```
+
+`err_return` is the zsh-extension equivalent of `set -e` but
+scoped to function bodies — when a command returns non-zero
+inside a function, the function returns immediately (without
+killing the whole shell, unlike `errexit`).
+
+zsh aborts the function on the failed `false`; zshrs ignores
+the option and continues executing the function body.
+
+**Where** — `src/ported/exec.rs::run_function_body`: doesn't
+check `ERR_RETURN` opt after each command's exit status.
+C-source `Src/exec.c::doshfunc` checks `isset(ERRRETURN)` and
+sets `retflag` to bubble out of the function call.
+
+**Impact** — "function-scoped strict mode" pattern broken:
+
+```sh
+setopt err_return
+do_critical_workflow() {
+    validate_inputs || return 1   # zsh: redundant with err_return
+    fetch_remote
+    transform_data
+    upload_results
+    # zsh: err_return aborts immediately on any failure
+    # zshrs: continues through all four even if validate_inputs returns 1
+}
+```
+
+This is the function-scoped analog of #202 (`set -eo pipefail`
+ignored). Same root cause likely — error-propagation flags
+not consulted in command-completion path.
+
+**Workaround** — explicit `|| return $?` on every command
+inside the function (back to pre-err_return defensive style).
+
+---
+
+## #221 — `disable -f FNAME` doesn't actually disable the function
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'g() { echo body; }; disable -f g; echo "dis=[${dis_functions[g]:-empty}]"; g 2>&1'
+dis=[	echo body]
+zsh:1: command not found: g
+
+$ ./target/debug/zshrs --zsh -c 'g() { echo body; }; disable -f g; echo "dis=[${dis_functions[g]:-empty}]"; g 2>&1'
+dis=[empty]
+body
+```
+
+`disable -f FN` is supposed to:
+1. Move the function out of `functions` and into the
+   `dis_functions` table (preserving the body for later
+   re-enabling).
+2. Make subsequent calls to FN fail with "command not found".
+
+zshrs does neither — the function stays callable, and
+`dis_functions[FN]` remains empty.
+
+**Where** — `src/ported/builtins/disable.rs::disable_function`:
+doesn't transfer the entry to the disabled-function table.
+C-source `Src/builtin.c::bin_enable` (which handles both
+`enable`/`disable`) flips the `DISABLED` bit on the shfunc
+node and the `parameters` introspection routes the entry to
+`dis_functions[]`.
+
+**Impact** — `disable -f` is the standard zsh idiom for
+temporarily neutralizing a function (e.g., disabling a heavy
+chpwd hook during a bulk-cd operation, or testing a script's
+fallback path when a helper is missing). All such patterns
+silently no-op:
+
+```sh
+disable -f my_slow_hook
+heavy_directory_traversal  # zsh: hook doesn't fire; zshrs: still fires
+enable -f my_slow_hook
+```
+
+Combined with #214 (chpwd doesn't fire anyway), the impact on
+chpwd-disable patterns is double-broken — zshrs neither fires
+the hook NOR can disable it.
+
+**Workaround** — `unfunction FN` (destructive) and re-`source`
+the definition later to "re-enable".
+
+---
+
+## #222 — `zmodload -a` lists no auto-loaded modules (zsh: lists ~27 builtin→module bindings)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload -a | wc -l'
+      27
+
+$ ./target/debug/zshrs --zsh -c 'zmodload -a | wc -l'
+       0
+```
+
+`zmodload -a` (no args) lists all builtin → module auto-load
+bindings. zsh's output:
+```
+bindkey (zsh/zle)
+compadd (zsh/complete)
+comparguments (zsh/computil)
+...
+zstyle (zsh/zutil)
+```
+
+zshrs prints nothing — the auto-load binding table is either
+empty or the introspection command doesn't dispatch.
+
+**Where** — `src/ported/builtins/zmodload.rs::list_auto_binds`:
+either the binding registry is empty (modules are loaded
+on-demand without ever pre-registering builtin-to-module
+bindings) or the `-a` flag handler doesn't iterate the
+registry. C-source `Src/init.c::add_autobindings` populates
+the table at startup; `Src/builtin.c::bin_zmodload` with `-a`
+iterates it.
+
+**Impact** — config-introspection workflows lose a major piece
+of "what features are available" data. Tools like p10k's
+optional-feature detector use `zmodload -a` to check whether
+a module's builtins (e.g., `vared`, `zformat`, `zparseopts`)
+are available before invoking them.
+
+Without this info, plugins can't reliably probe shell
+capabilities. The fallback (calling the builtin and catching
+the error) is more expensive and uglier.
+
+**Workaround** — try-and-catch:
+```sh
+if zmodload -e zsh/zutil 2>/dev/null; then
+    use_zutil_features
+fi
+```
+
+(Note: `zmodload -e` for "is this module loadable" may also
+need verification — could be a separate gap.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -11653,9 +11808,12 @@ scores[alice]=95
 | 217 | `setopt cdable_vars` ignored — `cd VAR` doesn't deref VAR as path | **port-bug** | explicit `cd "$VAR"` deref |
 | 218 | `typeset NAME` for assoc array prints nothing (zsh: `h=( [k]=v ... )` form) | **port-bug** | `typeset -p h` explicit |
 | 219 | `typeset -i "h[k]"` integer-on-assoc-element silently accepted (zsh: rejects) | **port-bug** | apply attribute to whole assoc `typeset -iA` |
+| 220 | `setopt err_return` doesn't abort function on failed command (fn-scoped strict mode dead) | **port-bug** | explicit `\|\| return $?` per command |
+| 221 | `disable -f FN` doesn't disable — `FN` still callable, `dis_functions[FN]` empty | **port-bug** | `unfunction FN` destructive |
+| 222 | `zmodload -a` lists 0 auto-loaded modules (zsh: 27 builtin→module bindings) | **port-bug** | try-and-catch with `zmodload -e` |
 
-Of two hundred and nineteen entries, two are fixed (5, 7), two
-hundred and thirteen remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and twenty-two entries, two are fixed (5, 7), two
+hundred and sixteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -11670,5 +11828,5 @@ hundred and thirteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
-214, 215, 216, 217, 218, 219), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+214, 215, 216, 217, 218, 219, 220, 221, 222), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
