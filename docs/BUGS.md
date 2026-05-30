@@ -8950,6 +8950,136 @@ Cascading silent failures.
 
 ---
 
+## #172 — `${ }` (whitespace-only parameter name) silently empty
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${ }]"' 2>&1
+(empty - error)
+
+$ ./target/debug/zshrs --zsh -c 'echo "[${ }]"' 2>&1
+[]
+```
+
+A `${...}` parameter expansion requires a parameter name (or
+arithmetic/cmdsub). An empty or whitespace-only `${...}` is
+malformed. zsh rejects (with stderr error). zshrs silently
+treats it as empty expansion.
+
+Same with tab-only or other whitespace:
+```sh
+$ ./target/debug/zshrs --zsh -c 'echo "[${	}]"'
+[]
+```
+
+Permissive-parser family:
+- #141 (`;;`), #146 (`{} args`), #161 (case `in)`), #162 (pad
+  delim), #167 (unclosed `{`), #168 (extra `}`), #169 (chained
+  always), #170 (unclosed paren), #171 (empty pipe/and-or),
+  #172 (this — `${ }`).
+
+The list keeps growing — zshrs's parser is consistently more
+permissive than zsh's across multiple constructs.
+
+**Where** — `src/ported/paramsubst.rs::parse_param_name`: doesn't
+require a non-whitespace name token between `{` and `}`.
+C-source `Src/subst.c::parse_dollar_subst` errors on
+empty/whitespace name.
+
+**Impact** — typos that produce empty `${...}` silently return
+empty strings instead of catching the error.
+
+**Workaround** — careful syntax review.
+
+---
+
+## #173 — `${(t)$(cmdsub)}` returns `scalar` instead of cmdsub output
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "${(t)$(echo hi)}"'
+hi
+
+$ ./target/debug/zshrs --zsh -c 'echo "${(t)$(echo hi)}"'
+scalar
+```
+
+`${(t)X}` returns the type of X. When X is `$(cmdsub)` (a value,
+not a parameter), zsh has special-case behavior: returns the
+cmdsub's value itself (since there's no parameter to type-check).
+zshrs returns the literal `scalar` string, treating the cmdsub
+result as having scalar type.
+
+Per `man zshparam`:
+> `t` — Reports the type of the parameter being expanded as a
+> colon-separated list of attributes.
+
+The behavior on non-parameter expansion isn't documented, so
+this is an undocumented corner case where the shells diverge.
+zsh's behavior is more useful in practice (passes the value
+through).
+
+**Where** — `src/ported/paramsubst.rs::apply_t_flag`: when the
+operand is a cmdsub result (no actual parameter), returns
+`"scalar"` instead of passing the value through. C-source
+`Src/subst.c::dosubst` skips the `(t)` flag when there's no
+parameter to type.
+
+**Impact** — defensive code that uses `${(t)...}` as a no-op
+filter for safe value passthrough gets `"scalar"` substituted
+instead.
+
+**Workaround** — explicit cmdsub without `(t)`:
+```sh
+echo "${$(echo hi)}"   # zsh: hi, zshrs: empty (see #165)
+```
+
+Actually `${$(...)}` is itself buggy (#165), so the workaround
+is just `$(cmdsub)` directly.
+
+---
+
+## #174 — `type fn` (user-defined function) shows "from zsh" suffix
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'foo() { echo v1; }; functions[bar]="$functions[foo]"; type bar'
+bar is a shell function
+
+$ ./target/debug/zshrs --zsh -c 'foo() { echo v1; }; functions[bar]="$functions[foo]"; type bar'
+bar is a shell function from zsh
+```
+
+After cloning a function via the `$functions[fn]` magic
+assoc-array, `type bar` should report it as a regular shell
+function. zsh: `bar is a shell function`. zshrs: appends
+`from zsh` suffix.
+
+The `from zsh` suffix is normally used by zsh for autoloaded
+functions to show their source file (e.g., `compinit is a shell
+function from /usr/share/zsh/...`). For functions defined
+directly via `foo() {}`, no suffix is added in zsh. zshrs
+appends `from zsh` unconditionally for cloned functions.
+
+**Where** — `src/ported/builtin_type.rs::format_function`:
+appends `from zsh` for functions created via assoc-array
+assignment. Should distinguish user-defined (no suffix) from
+autoloaded (`from /path/to/file`). C-source
+`Src/builtin.c::printfunc` checks `Shfunc.filename` and emits
+the source-path only when non-NULL.
+
+**Impact** — `type`-output-parsing scripts that distinguish
+user-defined vs autoloaded functions misclassify cloned
+functions. Cross-shell test fixtures fail on the extra suffix.
+
+**Workaround** — match loosely against `*shell function*`
+prefix in any output-parsing.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -9125,18 +9255,22 @@ Cascading silent failures.
 | 169 | `{} always {} always {}` chained-always silently accepted | **port-bug** | careful review |
 | 170 | `echo (abc` unclosed paren treated as literal | **port-bug** | careful review |
 | 171 | `cmd \| \| cmd`/`&& &&`/`\|\| \|\|` empty operands silently accepted | **port-bug** | careful review |
+| 172 | `${ }` whitespace-only param name silently empty (zsh: error) | **port-bug** | careful review |
+| 173 | `${(t)$(cmdsub)}` returns `scalar` (zsh: cmdsub output) | **port-bug** | drop `(t)` flag |
+| 174 | `type fn` for user-defined function shows "from zsh" suffix | **port-bug** | match `*shell function*` loosely |
 
-Of one hundred seventy-one entries, two are fixed (5, 7), one
-hundred sixty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
-11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
-62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
-79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
-96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
-110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
-123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
-136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
-149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
-162, 163, 164, 165, 166, 167, 168, 169, 170, 171), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+Of one hundred seventy-four entries, two are fixed (5, 7), one
+hundred sixty-eight remain open port-bugs/perf-issues (4, 8, 9,
+10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
+78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
+95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108,
+109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
+122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134,
+135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147,
+148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160,
+161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173,
+174), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
