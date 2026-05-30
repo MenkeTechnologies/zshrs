@@ -7082,6 +7082,173 @@ done
 
 ---
 
+## #136 — `%E` prompt escape (clear-to-EOL) not expanded; returns literal `%E`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%E"' | od -c
+\033 [ K \n
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%E"' | od -c
+% E \n
+```
+
+`%E` should emit the terminal "erase to end of line" escape
+sequence (`\033[K` aka `tcout(TCLR_LINE)`). zsh emits the
+expected 3-byte sequence. zshrs returns literal `%E`.
+
+Other prompt escapes that work in both: `%M` (host), `%.`
+(basename), `%K{color}` (background), `%F{color}` (foreground).
+`%E` is specifically missing.
+
+Family with the prompt-escape coverage gap series:
+- #38 (`%m`/`%C`/`%i`/`%l`/`%y`/`%E`/`%v`/etc. missing)
+- #92 (PS4 default empty)
+- #96 (`%N/`/`%N~` truncation broken)
+- #111 (`%y` tty escape)
+- #131 (`%(N~.A.B)` conditional broken)
+- #136 (this — `%E` clear-EOL)
+
+The prompt-escape implementation has at least 6 distinct gaps.
+
+**Where** — `src/ported/prompt.rs::handle_escape`: missing the
+`'E'` arm in the escape-dispatch switch. C-source
+`Src/prompt.c::putprompt` case `'E'` calls
+`tcout(TCCLEAREOL)`.
+
+**Impact** — prompts that use `%E` for line-end clearing leak
+trailing characters when redrawn:
+
+```sh
+PROMPT='%~ %E$ '
+# zsh: ANSI clear-EOL emitted, redraws clean
+# zshrs: literal "%E" appears in prompt, no clearing
+```
+
+**Workaround** — manual termcap call:
+```sh
+PROMPT='%~ '$'\e[K''$ '
+```
+
+---
+
+## #137 — `(( "str" == "str" ))` returns false (string-equality coercion in arith)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '(( "abc" == "abc" )); echo "$?"'
+0
+
+$ ./target/debug/zshrs --zsh -c '(( "abc" == "abc" )); echo "$?"'
+1
+```
+
+In arith context `(( ))`, zsh coerces non-numeric strings to 0,
+then evaluates `0 == 0` as true → `(( ))` returns exit 0
+(success because expression is non-zero/truthy in arith sense).
+
+zshrs treats the strings differently — either preserves them as
+opaque values where equality fails, or coerces but then the
+boolean conversion is wrong. Result: exit 1 (failure).
+
+```sh
+# Both shells agree on integers:
+$ both-shells -fc '(( 5 == 5 )); echo $?'
+0
+$ both-shells -fc '(( 5 == 6 )); echo $?'
+1
+
+# Diverge on quoted strings:
+$ /opt/homebrew/bin/zsh -fc '(( "abc" == "abd" )); echo $?'
+0      # coerces both to 0, 0==0 → true → success
+$ ./target/debug/zshrs --zsh -c '(( "abc" == "abd" )); echo $?'
+1
+```
+
+Related to bug #118 (`(( y = x ))` doesn't coerce to int) and
+#132 (`(( "5" + "3" ))` doesn't coerce quoted nums). Same root
+gap: arith parser doesn't strip quotes and run numeric-coerce
+on string operands.
+
+**Where** — `src/ported/math.rs::eval_string_operand`: strings
+in arith context return string-type values; equality on them
+isn't the integer-equality semantic. C-source `Src/math.c::
+mathevall` coerces all values to `mnumber` (numeric type) at
+operand-read time.
+
+**Impact** — defensive arith-based string comparison broken:
+
+```sh
+status_str="OK"
+(( "$status_str" == "OK" )) && echo "good"
+# zsh: prints "good"  (both coerce to 0, 0==0 true, but the
+#                       comparison gives nonsense meaning anyway)
+# zshrs: prints nothing
+```
+
+(The zsh behavior is itself questionable — comparing strings in
+arith context shouldn't generally be meaningful — but the
+divergence is real.)
+
+**Workaround** — use proper string-comparison test:
+```sh
+[[ "$status_str" == "OK" ]] && echo "good"
+```
+
+---
+
+## #138 — `%i` prompt escape returns `0` instead of current input line
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%i"'
+1
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%i"'
+0
+```
+
+`%i` prompt escape = "current line number of input". When this
+is the first/only line of a `-c` invocation, the value should
+be `1`. zshrs returns `0`.
+
+Per `man zshmisc` § SIMPLE PROMPT ESCAPES:
+> `%i` — The line number currently being executed in the script
+> source or function.
+
+Inside a function, `%i` would track the local line. At top level
+of a `-c` invocation, the line is conceptually `1`.
+
+**Where** — `src/ported/prompt.rs::expand_line_num`: returns
+zero-indexed line counter. C-source `Src/exec.c` tracks
+`current_lineno` starting from 1.
+
+**Impact** — tracing-format `$PS4` and prompt diagnostics that
+include `%i` report off-by-one line numbers:
+
+```sh
+PS4='%N:%i> '
+set -x
+foo() { echo hi; }
+foo
+# zsh: "foo.zsh:1> echo hi" or similar
+# zshrs: "foo.zsh:0> echo hi"  (line 0 doesn't exist)
+```
+
+Family with the prompt-escape gaps (#38, #92, #96, #111, #131,
+#136) — zshrs's prompt-expansion has systematic issues.
+
+**Workaround** — `$LINENO` parameter (per-line update) instead
+of `%i` escape:
+```sh
+PS4='+$LINENO> '
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -7221,9 +7388,12 @@ done
 | 133 | `zstat -F "fmt"` format flag ignored | **port-bug** | external `stat -f`/`stat --format` |
 | 134 | `${"":h}` empty-string head modifier returns `/` (zsh: `.`) | **port-bug** | explicit empty-check |
 | 135 | `*(om)` glob qualifier mtime ordering broken | **port-bug** | external `ls -t` |
+| 136 | `%E` prompt escape (clear-EOL) not expanded; literal `%E` | **port-bug** | manual `$'\e[K'` |
+| 137 | `(( "str" == "str" ))` returns false (no string coerce) | **port-bug** | use `[[ == ]]` for strings |
+| 138 | `%i` prompt escape returns `0` instead of current line | **port-bug** | `$LINENO` parameter |
 
-Of one hundred thirty-five entries, two are fixed (5, 7), one
-hundred twenty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of one hundred thirty-eight entries, two are fixed (5, 7), one
+hundred thirty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -7231,5 +7401,6 @@ hundred twenty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
-123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135),
-and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
+136, 137, 138), and four were zsh-correct behavior misframed by
+demos (1, 2, 3, 6).
