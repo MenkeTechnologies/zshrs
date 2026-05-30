@@ -1179,4 +1179,120 @@ mod tests {
         assert!((d - 10000.0).abs() < 0.5,
             "deltae must return Σ(diff²) = 10000 (NOT sqrt'd 100); got {}", d);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/nearcolor.c
+    // c:53 deltae / c:73 RGBtoLAB / c:141 mapRGBto88 / c:218 mapRGBto256 /
+    // c:343-382 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:53 — `deltae` returns 0 for identical inputs.
+    #[test]
+    fn deltae_zero_for_identical_inputs() {
+        let a = cielab { L: 50.0, a: 10.0, b: -5.0 };
+        let b = a.clone();
+        assert_eq!(deltae(&a, &b), 0.0,
+            "deltae(x, x.clone()) must be exactly 0");
+    }
+
+    /// c:53 — `deltae` is symmetric (alt).
+    #[test]
+    fn deltae_is_symmetric_alt() {
+        let a = cielab { L: 10.0, a: 20.0, b: 30.0 };
+        let b = cielab { L: 40.0, a: 50.0, b: 60.0 };
+        let d1 = deltae(&a, &b);
+        let d2 = deltae(&b, &a);
+        assert!((d1 - d2).abs() < 1e-9,
+            "deltae must be symmetric, got {} vs {}", d1, d2);
+    }
+
+    /// c:53 — `deltae` is non-negative.
+    #[test]
+    fn deltae_is_non_negative() {
+        for ((l1, a1, b1), (l2, a2, b2)) in [
+            ((0.0, 0.0, 0.0), (100.0, 100.0, 100.0)),
+            ((50.0, -50.0, 50.0), (0.0, 0.0, 0.0)),
+            ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)),
+        ] {
+            let p = cielab { L: l1, a: a1, b: b1 };
+            let q = cielab { L: l2, a: a2, b: b2 };
+            assert!(deltae(&p, &q) >= 0.0,
+                "deltae must be ≥ 0");
+        }
+    }
+
+    /// c:73 — `RGBtoLAB(0,0,0,&lab)` → L=0 (black).
+    #[test]
+    fn rgb_to_lab_black_is_l_zero() {
+        let mut lab = cielab { L: -1.0, a: -1.0, b: -1.0 };
+        RGBtoLAB(0, 0, 0, &mut lab);
+        assert!(lab.L.abs() < 1.0, "black must produce L≈0, got {}", lab.L);
+    }
+
+    /// c:73 — `RGBtoLAB(255,255,255,&lab)` → L≈100 (white). RGB scale
+    /// is 0..255 per c:50 `R = red / 255.0`.
+    #[test]
+    fn rgb_to_lab_white_is_l_one_hundred() {
+        let mut lab = cielab { L: 0.0, a: 0.0, b: 0.0 };
+        RGBtoLAB(255, 255, 255, &mut lab);
+        assert!((lab.L - 100.0).abs() < 1.0,
+            "white must produce L≈100, got {}", lab.L);
+    }
+
+    /// c:141 — `mapRGBto88` for black (0,0,0) returns valid index in 0..88.
+    #[test]
+    fn map_rgb_to_88_black_in_range() {
+        let i = mapRGBto88(0, 0, 0);
+        assert!((0..88).contains(&i),
+            "mapRGBto88(0,0,0) = {} must be in 0..88", i);
+    }
+
+    /// c:218 — `mapRGBto256` for black returns valid index in 0..256.
+    #[test]
+    fn map_rgb_to_256_black_in_range() {
+        let i = mapRGBto256(0, 0, 0);
+        assert!((0..256).contains(&i),
+            "mapRGBto256(0,0,0) = {} must be in 0..256", i);
+    }
+
+    /// c:141/218 — both map fns are deterministic.
+    #[test]
+    fn map_rgb_functions_deterministic() {
+        for (r, g, b) in [(0, 0, 0), (255, 0, 0), (0, 255, 0), (0, 0, 255),
+                          (128, 128, 128)] {
+            let a1 = mapRGBto88(r, g, b);
+            let a2 = mapRGBto88(r, g, b);
+            assert_eq!(a1, a2);
+            let b1 = mapRGBto256(r, g, b);
+            let b2 = mapRGBto256(r, g, b);
+            assert_eq!(b1, b2);
+        }
+    }
+
+    /// c:343 — `setup_` is idempotent.
+    #[test]
+    fn nearcolor_setup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:374 — `cleanup_` is idempotent.
+    #[test]
+    fn nearcolor_cleanup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:382 — `finish_` is idempotent.
+    #[test]
+    fn nearcolor_finish_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
 }
