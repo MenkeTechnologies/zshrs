@@ -10470,6 +10470,198 @@ clear from env then re-bind as non-exported parameter.
 
 ---
 
+## #202 — `set -eo pipefail` doesn't abort on failed pipe component
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -eo pipefail; false | true; echo never'
+(no output — aborted on pipefail status)
+$ echo $?
+1
+
+$ ./target/debug/zshrs --zsh -c 'set -eo pipefail; false | true; echo never'
+never
+$ echo $?
+0
+```
+
+With `set -e` (errexit) AND `pipefail` enabled, zsh aborts the
+script when the pipeline returns non-zero (because pipefail
+makes `false | true` return 1, and errexit aborts on 1).
+zshrs's pipefail handling returns 0 from `false | true`, so
+errexit doesn't fire.
+
+Tested without errexit:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt pipefail; false | true; echo "ec=$?"'
+ec=1
+
+$ ./target/debug/zshrs --zsh -c 'setopt pipefail; false | true; echo "ec=$?"'
+ec=0
+```
+
+The root cause is that `pipefail` is being ignored entirely —
+the pipeline exit code is always the last command's status,
+not the leftmost-failing one.
+
+**Where** — `src/ported/exec.rs::execpline` (pipeline status
+finalization): no consultation of `PIPEFAIL` opt when setting
+`lastval`. C-source `Src/exec.c::execpline` checks
+`isset(PIPEFAIL)` and walks the pipeline status array for the
+leftmost non-zero.
+
+**Impact** — every script using `set -eo pipefail` (a near-
+universal idiom for "strict mode" zsh/bash scripts) silently
+loses error detection on pipelines. Critical for CI scripts,
+deployment pipelines, anything that processes external data
+through filters where the source might fail:
+
+```sh
+set -eo pipefail
+curl -sf https://example.com/data | jq '.field'
+# zsh: aborts if curl fails
+# zshrs: continues with jq's exit code (which may parse "" as null and succeed)
+```
+
+**Workaround** — explicit `${pipestatus[1]}` check after
+each pipeline:
+```sh
+cmd1 | cmd2
+[[ ${pipestatus[1]} -eq 0 ]] || exit 1
+```
+
+---
+
+## #203 — `trap EXIT` set inside function runs at shell exit instead of function return
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { trap "echo BYE" EXIT; echo "in-fn"; }; f; echo "after-call"; exit 0'
+in-fn
+BYE
+after-call
+
+$ ./target/debug/zshrs --zsh -c 'f() { trap "echo BYE" EXIT; echo "in-fn"; }; f; echo "after-call"; exit 0'
+in-fn
+after-call
+BYE
+```
+
+zsh documents (`man zshbuiltins`): "A trap on EXIT set inside
+a function is executed before the function completes." zshrs
+treats `trap EXIT` inside a function as a shell-level trap,
+firing on shell exit instead.
+
+This breaks the common "scoped cleanup" idiom — set a trap at
+function entry to clean up temp resources, knowing it'll fire
+on every exit path from the function:
+
+```sh
+process_file() {
+    local tmpfile=$(mktemp)
+    trap "rm -f $tmpfile" EXIT
+    work_with $tmpfile
+    # zsh: tmpfile gets removed when fn returns
+    # zshrs: tmpfile not removed until shell exit (leaks across calls)
+}
+process_file f1   # creates tmp1, doesn't clean up
+process_file f2   # creates tmp2, prior trap fires? unclear semantics
+```
+
+**Where** — `src/ported/builtins/trap.rs::install`: doesn't
+check function-scope when binding EXIT — installs into global
+sig-trap table. C-source `Src/signals.c::settrap` with
+`in_function` checks current func depth and pushes the trap
+onto the function-scoped LIFO that fires on `doshfunc` return.
+
+**Impact** — scoped-cleanup idioms (the standard zsh pattern
+for safe resource handling) don't work. Long-running shells
+(or interactive zshrs) accumulate trap actions from every
+function call, all firing in unpredictable order at shell
+exit.
+
+For interactive sessions, this means trap-based "temp file
+cleanup" patterns leak files for the entire session lifetime.
+
+**Workaround** — use explicit cleanup at all return points
+within the function, or use `local`-scoped traps via a
+sub-shell wrapper:
+```sh
+process_file() {
+    (
+        local tmpfile=$(mktemp)
+        trap "rm -f $tmpfile" EXIT
+        work_with $tmpfile
+    )  # subshell exit fires trap correctly
+}
+```
+
+---
+
+## #204 — `setopt promptsubst` doesn't enable `$(...)` / `${var}` expansion in prompts
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt promptsubst; PS1="\$(echo hi)"; print -P "$PS1"'
+hi
+
+$ ./target/debug/zshrs --zsh -c 'setopt promptsubst; PS1="\$(echo hi)"; print -P "$PS1"'
+$(echo hi)
+```
+
+With `promptsubst` enabled, zsh applies parameter/command/arith
+substitution to the prompt string before prompt-escape
+expansion. zshrs ignores the option — prompt strings only get
+`%` escape expansion, never `$()`/`${}`/`$((... ))` expansion.
+
+The bug also affects variable expansion in prompts:
+```sh
+$ both-shells -fc 'setopt promptsubst; x=hello; PS1="$x"; print -P "$PS1"'
+# zsh:   hello
+# zshrs: $x (literal — but actually $x expands at PS1 assignment, so this works)
+
+# Tighter test forcing late expansion:
+$ /opt/homebrew/bin/zsh -fc 'setopt promptsubst; PS1='"'"'${MY_VAR}'"'"'; MY_VAR=now; print -P "$PS1"'
+now
+
+$ ./target/debug/zshrs --zsh -c 'setopt promptsubst; PS1='"'"'${MY_VAR}'"'"'; MY_VAR=now; print -P "$PS1"'
+${MY_VAR}
+```
+
+**Where** — `src/ported/prompt.rs::promptexpand`: no
+`PROMPT_SUBST` opt check; never calls the param/cmdsub/arith
+substitution pre-pass. C-source `Src/prompt.c::promptexpand`
+runs `parsestr()` over the prompt when `isset(PROMPTSUBST)` is
+true, returning a substitution-applied string that then feeds
+the `%`-escape parser.
+
+**Impact** — every dynamic prompt setup that relies on
+promptsubst is broken. p10k, starship, oh-my-zsh themes, and
+nearly every modern .zshrc use this option to inject git
+status, exit code, async results, etc. All of those features
+go dead in zshrs:
+
+```sh
+# Common .zshrc pattern (broken in zshrs)
+setopt promptsubst
+PS1='%n@%m $(git_branch_indicator) %# '
+# zsh: shows current branch via dynamic cmdsub
+# zshrs: shows literal "$(git_branch_indicator)"
+```
+
+This is a blocker for daily-driver replacement on the user's
+real .zshrc, which uses promptsubst-based dynamic prompt
+construction extensively.
+
+**Workaround** — pre-compute prompt content in `precmd` and
+assign to a static-content variable; reference it via `%v`
+escape in PS1.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -10675,9 +10867,12 @@ clear from env then re-bind as non-exported parameter.
 | 199 | `${(qq)x}` with embedded newline emits mixed `'a'$'\n''b'` instead of literal | **port-bug** | use `(q+)` flag explicitly |
 | 200 | `${(k)assoc[key]}` key-flag with subscript returns empty (zsh: key when exists) | **port-bug** | `[[ -v assoc[key] ]]` existence test |
 | 201 | `typeset +x VAR` doesn't remove VAR from environment (security-relevant) | **port-bug** | `unset VAR; typeset VAR=$saved` re-bind |
+| 202 | `set -eo pipefail; false \| true` doesn't abort — pipefail ignored entirely | **port-bug** | `${pipestatus[1]}` explicit check |
+| 203 | `trap EXIT` in fn runs at shell exit instead of fn return (scope leak) | **port-bug** | wrap fn body in subshell `(...)` |
+| 204 | `setopt promptsubst` doesn't enable `$()`/`${}` substitution in prompts | **port-bug** | precompute prompt in `precmd` |
 
-Of two hundred and one entries, two are fixed (5, 7), one
-hundred ninety-five remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and four entries, two are fixed (5, 7), one
+hundred ninety-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -10691,5 +10886,5 @@ hundred ninety-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174,
 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
-201), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+201, 202, 203, 204), and four were zsh-correct behavior misframed
+by demos (1, 2, 3, 6).
