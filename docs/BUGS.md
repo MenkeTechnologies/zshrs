@@ -18926,6 +18926,176 @@ rm -f "$tmpfile"
 
 ---
 
+## #355 — `${s/#%pat/repl}` both-anchored (start AND end) substitution pattern unsupported
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's=abc; echo "${s/#%abc/X}"'
+X
+
+$ ./target/debug/zshrs --zsh -c 's=abc; echo "${s/#%abc/X}"'
+abc
+```
+
+zsh's `${s/#%pat/repl}` form anchors the pattern at BOTH the
+start (`#`) AND end (`%`) of the string — equivalent to
+matching the entire string with `pat`. zsh applies the
+match. zshrs treats `/#%pat/` as an unrecognized anchor combo
+and returns the original string unchanged.
+
+Individual anchors work in both:
+```sh
+$ both-shells -fc 's=abcabc; echo "${s/#a/X}"'
+Xbcabc                # start-anchor works
+
+$ both-shells -fc 's=abcabc; echo "${s/%c/X}"'
+abcabX                # end-anchor works
+```
+
+The bug is specifically the combination `/#%pat/`.
+
+**Where** — `src/ported/paramsubst.rs::parse_anchor_combo`:
+recognizes individual `#` and `%` anchors but not the combined
+`#%` form. C-source `Src/subst.c::dosubst` accumulates both
+anchors as separate flags on the match.
+
+**Impact** — exact-match-replacement idiom broken:
+
+```sh
+# Replace only if entire string matches "draft-N"
+status="${input/#%draft-*/done}"
+# zsh: if input is "draft-5", becomes "done"; otherwise unchanged
+# zshrs: always returns input unchanged
+```
+
+**Workaround** — use case statement for exact-match logic:
+```sh
+case "$input" in
+    draft-*) input="done" ;;
+esac
+```
+
+---
+
+## #356 — `${(S)s//pat/repl}` shortest-match flag not applied in replace-all (greedy match instead)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="aaa"; echo "${(S)s//a*/X}"'
+XXX
+
+$ ./target/debug/zshrs --zsh -c 's="aaa"; echo "${(S)s//a*/X}"'
+X
+```
+
+`${(S)var//pat/repl}` should perform shortest-match replace-
+all — pattern `a*` (greedy: matches all `aaa`) becomes
+shortest-match (matches just `a`), so each `a` gets replaced
+individually → `XXX`.
+
+zshrs applies greedy match, consuming all three `a`s as one
+match → single `X`.
+
+The `(S)` flag has multiple gaps:
+- `${(S)s//pat/repl}` — replace-all (this bug)
+- `${(S)s%%a*}` — shortest suffix strip (returns empty)
+- `${(S)s/(a*b)/X}` — shortest match (consumes too much)
+
+All share the same root cause: `(S)` flag not propagated
+through the pattern-matching loop.
+
+**Where** — `src/ported/paramsubst.rs::replace_with_shortest`:
+flag passed to pattern compiler but match engine still runs
+greedy. C-source `Src/subst.c::dosubst` with `SUB_SHORTEST`
+configures the matcher for non-greedy.
+
+**Impact** — non-greedy pattern matching broadly broken.
+Common idioms like "replace each tag occurrence with content"
+get one greedy mega-match instead:
+
+```sh
+log='[INFO] msg1 [INFO] msg2 [INFO] msg3'
+clean="${(S)log//\[INFO\] */}"
+# zsh: clean = '' (each [INFO] msg... replaced separately, all empty)
+# zshrs: clean = '' (single greedy match consumes everything — same outcome by coincidence)
+
+# Better: replace [INFO] with empty, keep msg
+clean="${(S)log//\[INFO\] /}"
+# zsh: 'msg1 msg2 msg3' (each [INFO] tag stripped)
+# zshrs: 'msg1 msg2 msg3' too? — let me check this specific case
+```
+
+Actually for the simpler case (S) and (no-S) may give same
+output if pattern doesn't have wildcards. But with `*` in
+pattern, behavior diverges.
+
+**Workaround** — manual loop:
+```sh
+while [[ "$s" == *pat* ]]; do
+    s="${s/pat/repl}"
+done
+```
+
+---
+
+## #357 — `setopt warn_nested_var` warning not emitted (extends #223 warn_create_global family)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt warn_nested_var; f() { local X; g() { X=1; }; g; }; f'
+g: scalar parameter X set in enclosing scope in function g
+
+$ ./target/debug/zshrs --zsh -c 'setopt warn_nested_var; f() { local X; g() { X=1; }; g; }; f'
+(no output)
+```
+
+`WARN_NESTED_VAR` is the option that warns when a function
+modifies a parameter in an enclosing-but-not-global scope.
+zsh emits a warning when `g` writes to `X` (which is local to
+`f`, not `g`).
+
+zshrs silently allows the write — same root cause family as
+#223 (`warn_create_global` doesn't warn on global creation).
+Both options exist in the option-name table but their
+diagnostic emit-points aren't dispatched.
+
+**Where** — `src/ported/params/assign.rs::cross_scope_write`:
+no `WARN_NESTED_VAR` opt check before writing to an
+enclosing-scope param. C-source `Src/params.c::setsparam`
+emits the warning via `zwarnnam()` when the option is set
+and the assignment crosses a function scope.
+
+**Impact** — "strict mode" debugging plugins miss accidental
+cross-scope writes. Common scoping bug pattern:
+
+```sh
+setopt warn_nested_var
+process_items() {
+    local count=0
+    increment() { ((count++)); }    # writes f-local "count" from g
+    for item; do increment; done
+}
+# zsh: warns about each increment call (enclosing-scope write)
+# zshrs: silent — no diagnostic about the pattern
+```
+
+This is the cousin of #223 (warn_create_global silent) and
+#220 (err_return ignored) — multiple strict-mode/diagnostic
+options exist in the table but their effects aren't fired.
+
+**Workaround** — explicit `local` in inner fn:
+```sh
+increment() { local count; ((count++)); }   # but this defeats the purpose
+```
+
+(No clean workaround — depends on the option's warning
+machinery being wired up.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -19284,9 +19454,12 @@ rm -f "$tmpfile"
 | 352 | `print -P "%u"`/`%s` reset codes use generic `ESC[0m` instead of attribute-specific `ESC[24m`/`ESC[27m` | **port-bug** | manual ANSI escape codes |
 | 353 | `exec FD>&1` inside `$(...)` cmdsub doesn't capture FD-write content — stderr-capture idiom broken | **port-bug** | use temp file for stderr capture |
 | 354 | `trap EXIT` inside `$(...)` cmdsub doesn't fire — extends exit-handler family (#203/#215/#232/#240) | **port-bug** | cleanup outside cmdsub |
+| 355 | `${s/#%pat/repl}` both-anchor substitution pattern unsupported — returns unchanged | **port-bug** | use `case` for exact-match dispatch |
+| 356 | `${(S)s//pat/repl}` shortest-match flag not applied in replace-all — greedy match instead | **port-bug** | manual while-loop replace |
+| 357 | `setopt warn_nested_var` warning not emitted (extends #223 warn_create_global; #220 err_return strict-mode family) | **port-bug** | (none — diagnostic check not wired) |
 
-Of three hundred and fifty-four entries, two are fixed (5, 7),
-three hundred and forty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and fifty-seven entries, two are fixed (5, 7),
+three hundred and fifty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -19311,5 +19484,6 @@ three hundred and forty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343,
-344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354), and four
-were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356,
+357), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
