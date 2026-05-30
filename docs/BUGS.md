@@ -3093,6 +3093,160 @@ secs=$(zmodload zsh/datetime; t=$EPOCHREALTIME; sleep 0.05; \
 
 ---
 
+## #67 — `pushd` with no args doesn't swap top of dir stack
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp; pushd $HOME 2>&1; dirs; pushd 2>&1; dirs'
+~ /tmp
+/tmp ~
+
+$ zshrs --zsh -c 'cd /tmp; pushd $HOME 2>&1; dirs; pushd 2>&1; dirs'
+~ /tmp
+/tmp ~ /tmp
+```
+
+`pushd` with no arguments should **swap** the top two entries on the
+directory stack (POSIX/zsh semantics). zshrs PUSHES a duplicate
+instead.
+
+Also broken when stack has only one entry:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp; pushd 2>&1; dirs'
+~ /tmp                    # pushed HOME and swapped
+
+$ zshrs --zsh -c 'cd /tmp; pushd 2>&1; dirs'
+/tmp                      # no-op, exit 1
+```
+
+Per `man zshbuiltins/pushd`:
+> `pushd` (without arguments) — exchange the top two entries of the
+> directory stack. If only one entry exists, an alternative to
+> `pushd $HOME` is performed.
+
+**Where** — `src/ported/builtin_pushd.rs::no_args_branch`: missing
+the "swap top two" code path and missing the "1-entry → push HOME"
+fallback. Implementation appears to treat `pushd` with no args as
+push-current-dir (which is wrong).
+
+**Impact** — interactive workflow `cd /a; pushd /b; pushd` to bounce
+between two directories doesn't work. Common shell ergonomics
+broken.
+
+**Workaround** — explicit two-arg `pushd $OLDPWD` to swap back:
+```sh
+cd /a
+pushd /b
+pushd $OLDPWD    # both shells: bounce back to /a
+```
+
+---
+
+## #68 — `trap` listing prints in insertion order, not signal number
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'trap "echo h" HUP; trap "echo u" USR1; trap "echo c" INT; trap "echo t" TERM; trap'
+trap -- 'echo h' HUP
+trap -- 'echo c' INT
+trap -- 'echo t' TERM
+trap -- 'echo u' USR1
+
+$ zshrs --zsh -c 'trap "echo h" HUP; trap "echo u" USR1; trap "echo c" INT; trap "echo t" TERM; trap'
+trap -- 'echo u' USR1
+trap -- 'echo h' HUP
+trap -- 'echo c' INT
+trap -- 'echo t' TERM
+```
+
+Signal numbers: HUP=1, INT=2, TERM=15, USR1=30 (macOS). zsh prints
+the trap table sorted by signal number, so HUP→INT→TERM→USR1.
+zshrs prints in some other order — possibly hash-iteration or
+insertion (the USR1 entry came out first despite being defined
+third).
+
+**Where** — `src/ported/builtin_trap.rs::list_traps`: iterates
+`HashMap<signal_name, action>` directly. C-source `Src/jobs.c`
+prints by walking signal-number array `SIGCOUNT` order.
+
+**Impact** — diff-based comparison of `trap` output between zsh
+and zshrs fails. Tests/scripts that capture `trap` for inspection
+or persistence (`trap_snapshot=$(trap)`) get non-deterministic
+results in zshrs (HashMap iteration is unspecified order in Rust).
+
+```sh
+# scripts comparing trap state across runs
+expected_traps=$(trap)
+... do stuff ...
+new_traps=$(trap)
+[[ "$expected_traps" == "$new_traps" ]] || alert "traps changed"
+# zsh: stable                  zshrs: false-positive on every run
+```
+
+**Workaround** — pipe through `sort` to normalize order:
+```sh
+new_traps=$(trap | sort)
+```
+
+---
+
+## #69 — `$sysparams` auto-loaded without `zmodload zsh/system`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "${+sysparams}"'
+0
+
+$ zshrs --zsh -c 'echo "${+sysparams}"'
+1
+```
+
+`$sysparams` is provided by the `zsh/system` module. In real zsh
+it's undefined until `zmodload zsh/system` runs. zshrs has it
+populated at startup unconditionally — exposing `sysparams[pid]`,
+`sysparams[ppid]`, etc., without the explicit module load.
+
+Same family as bug #64 (`$PIPESTATUS`): zshrs eagerly exports
+module-provided params into the global namespace.
+
+`(t)` type confirms:
+```sh
+$ zshrs --zsh -c 'echo "${(t)sysparams}"'
+association-hide-hideval-special
+
+$ /opt/homebrew/bin/zsh -fc 'echo "${(t)sysparams:-NOT_DEFINED}"'
+NOT_DEFINED
+```
+
+**Where** — `src/ported/init.rs` / `src/ported/params.rs`: special
+param table seeds `sysparams` (and likely `mapfile`, `usergroups`,
+etc.) at shell init instead of waiting for the `zmodload` of their
+parent module.
+
+**Impact** — same as #64. Code that defensively does:
+
+```sh
+if (( ! ${+sysparams} )); then
+    zmodload zsh/system 2>/dev/null
+fi
+```
+
+never enters the `then` branch under zshrs and may not realize the
+module-load step was needed. Cross-shell scripts that explicitly
+gate on the module-defined flag misbehave.
+
+Also: user code that uses `sysparams` as an own variable name gets
+clobbered by the auto-defined special.
+
+**Workaround** — always call `zmodload zsh/system` regardless of
+`${+sysparams}` check. The zmodload is idempotent and ensures
+correct semantics in both shells.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -3163,10 +3317,13 @@ secs=$(zmodload zsh/datetime; t=$EPOCHREALTIME; sleep 0.05; \
 | 64 | `$PIPESTATUS` (bash-style upper) exists in zshrs but not zsh | **port-bug** | use lowercase `$pipestatus` |
 | 65 | `${+EPOCHSECONDS}` returns 0 after `zmodload zsh/datetime` | **port-bug** | guard by `zmodload` rc |
 | 66 | `time` builtin ignores `TIMEFMT`, omits `%J` cmd name | **port-bug** | `/usr/bin/time -f` instead |
+| 67 | `pushd` no-args doesn't swap top of dir stack | **port-bug** | explicit `pushd $OLDPWD` |
+| 68 | `trap` listing in insertion order, not signal-number | **port-bug** | pipe through `sort` |
+| 69 | `$sysparams` auto-loaded w/o `zmodload zsh/system` | **port-bug** | call `zmodload` regardless |
 
-Of sixty-six entries, two are fixed (5, 7), sixty remain open
+Of sixty-nine entries, two are fixed (5, 7), sixty-three remain open
 port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
-53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66), and four
-were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69),
+and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
