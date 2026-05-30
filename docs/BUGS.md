@@ -22885,6 +22885,168 @@ can't fire.
 
 ---
 
+## #427 — `read` doesn't strip leading/trailing IFS chars from input
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'printf "  hello   \n" | read x; printf "[%s]\n" "$x"'
+[hello]
+
+$ ./target/debug/zshrs --zsh -c 'printf "  hello   \n" | read x; printf "[%s]\n" "$x"'
+[  hello   ]
+```
+
+POSIX `read` should treat leading and trailing characters
+in `$IFS` as field separators — they're stripped before
+the value is assigned to the variable. Default IFS is
+space/tab/newline.
+
+zshrs preserves the leading and trailing whitespace,
+treating the entire line (minus the terminating newline)
+as the variable's value.
+
+**Where** — `src/ported/builtins/read.rs::strip_field_sep`:
+must trim leading and trailing IFS chars from the input
+before assigning. C-source `Src/builtins.c::bin_read`
+calls `getword` with IFS-aware tokenization.
+
+**Impact** — user input with accidental leading spaces is
+NOT normalized. The most common pattern:
+
+```sh
+print -n "Enter name: "
+read name
+[[ "$name" == "admin" ]] && allow_login
+# zsh: works if user types "  admin  "
+# zshrs: $name is "  admin  " — comparison fails
+```
+
+Also affects parsing config files with whitespace
+indentation, CSV files with space-padded fields, and any
+"prompt user, compare to value" pattern.
+
+**Workaround** — explicit trim:
+```sh
+read name
+name="${name##[[:space:]]##}"
+name="${name%%[[:space:]]##}"
+```
+
+---
+
+## #428 — unquoted `${arr[*]}` joined with IFS but not word-split — half of join+split missing
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); IFS="-"; echo ${a[*]}'
+x y z
+
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); IFS="-"; echo ${a[*]}'
+x-y-z
+```
+
+POSIX semantics for unquoted `${a[*]}` (or `$*`):
+1. **Join** all elements with first char of IFS → `x-y-z`
+2. **Word-split** the result with IFS as separator →
+   `x`, `y`, `z`
+3. `echo`'s args are now three: `x`, `y`, `z` — output
+   joined by space: `x y z`
+
+zsh implements both steps. zshrs implements only step 1
+(join) but skips step 2 (word-split). Output retains the
+IFS separator.
+
+**Where** — `src/ported/paramsubst/star.rs::expand_unquoted`:
+after IFS-joining the array, must pass the result through
+word-splitter. C-source `Src/subst.c::paramsubst` calls
+`tokenize` and `prefork`-flagged-for-splitting after
+joining.
+
+**Impact** — argument lists corrupted when caller relies
+on unquoted-array-expand semantics:
+
+```sh
+args=(--verbose --output /tmp/out)
+my_command ${args[*]}    # intended: 3 args
+# zsh: my_command receives "--verbose" "--output" "/tmp/out"
+# zshrs: with default IFS, may still work (IFS=space joins
+#   then splits identically). But with any custom IFS:
+IFS=:
+my_command ${args[*]}
+# zsh: 3 args (joined with :, split by :, recovered)
+# zshrs: 1 arg "--verbose:--output:/tmp/out" — broken
+```
+
+Affects parser-style patterns that temporarily change IFS
+to reshape array expansion (common in zsh-completion
+internals).
+
+**Workaround** — use `[@]` form (which never joins):
+```sh
+my_command "${args[@]}"
+```
+
+But that requires the caller knows to use `[@]` not `[*]`,
+which inverts the standard idiom.
+
+---
+
+## #429 — `%m` prompt escape (short hostname) not expanded — printed literally
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "[%n][%m]"'
+[wizard][codelabs-arm]
+
+$ ./target/debug/zshrs --zsh -c 'print -P "[%n][%m]"'
+[wizard][%m]
+```
+
+`%n` (username) expands correctly in both shells.
+`%m` (short hostname — first dot-separated component)
+expands in zsh but is printed literally in zshrs.
+
+Related zshrs prompt-escape gaps now documented:
+- #390 — PS4 default empty
+- #391 — PS4 expander not invoked
+- #412 — PS3 default empty
+- #414 — unknown `%X` kept literal (zsh drops)
+- #429 — `%m` not expanded (this entry)
+
+Likely also broken (untested): `%M` (full hostname), `%y`
+(tty name), `%l` (tty without /dev/), `%j` (job count),
+`%i` (PS4 line number).
+
+**Where** — `src/ported/prompts/expand.rs::handle_m`:
+missing or stubbed handler for `%m`. C-source
+`Src/prompt.c::putpromptchar` reads `gethostname()` (or
+cached) and emits up to the first `.`.
+
+**Impact** — every default-style zsh prompt
+breaks visually:
+
+```sh
+PS1='%n@%m %~ %# '
+# zsh: "wizard@codelabs-arm ~/repo %"
+# zshrs: "wizard@%m ~/repo %"  (literal %m visible)
+```
+
+Affects oh-my-zsh themes, p10k, p9k, agnoster — every
+theme that uses `%m` for the hostname display.
+
+**Workaround** — replace with `$HOST` parameter expansion:
+```sh
+PS1="%n@$HOST %~ %# "
+```
+
+But `$HOST` is the full hostname (vs `%m`'s short form),
+so this introduces visual noise for FQDNs.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -23315,9 +23477,12 @@ can't fire.
 | 424 | **CRITICAL** scalar→array tie broken for MANPATH/FPATH/CDPATH — generalizes #423 to all tied params | **port-bug** | manual rebuild of `manpath`/`fpath`/`cdpath` after scalar assignment |
 | 425 | `(#cN)` glob exact-count flag not recognized — extends #409 family | **port-bug** | regex form `=~ "^a{3}$"` |
 | 426 | `command_not_found_handler` user-defined hook not invoked — entire ecosystem broken (apt/nix/asdf integration) | **port-bug** | none — without hook integration can't fire |
+| 427 | `read` doesn't strip leading/trailing IFS chars (zsh: trims `[hello]` from `"  hello  "`) | **port-bug** | explicit `${var##[[:space:]]##}` trim |
+| 428 | unquoted `${arr[*]}` joined with IFS but not re-word-split — half of join+split sequence missing | **port-bug** | use `${arr[@]}` form instead |
+| 429 | `%m` prompt escape (short hostname) not expanded — printed literally; likely also `%M`/`%y`/`%l`/`%j`/`%i` | **port-bug** | use `$HOST` parameter expansion |
 
-Of four hundred and twenty-six entries, two are fixed (5, 7),
-four hundred and twenty remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and twenty-nine entries, two are fixed (5, 7),
+four hundred and twenty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
