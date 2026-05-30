@@ -21818,6 +21818,176 @@ done
 
 ---
 
+## #409 — `(#i)PATTERN` glob case-folding flag not recognized — treated as literal filename
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/ABC; setopt extended_glob; echo /tmp/_zg/(#i)abc'
+/tmp/_zg/ABC
+
+$ ./target/debug/zshrs --zsh -c 'mkdir -p /tmp/_zg && touch /tmp/_zg/ABC; setopt extended_glob; echo /tmp/_zg/(#i)abc'
+/tmp/_zg/(#i)abc
+```
+
+`(#i)` is the zsh `EXTENDED_GLOB` flag that enables
+case-insensitive matching for the pattern that follows.
+With `extended_glob` set, `(#i)abc` should match `ABC`,
+`Abc`, `aBc`, etc.
+
+zshrs treats `(#i)abc` as a **literal filename**, not as
+a glob with case-folding flag. The match fails entirely
+because no file is literally named `(#i)abc`.
+
+Other `(#flag)` patterns likely affected: `(#m)` (match),
+`(#b)` (backreferences), `(#l)` (case-insensitive
+lowercase variant), `(#s)`/`(#e)` (start/end anchors).
+
+**Where** — `src/ported/glob/pattern.rs::parse_paren_flag`:
+should recognize `(#X)` as a flag prefix that modifies
+subsequent matching rules. C-source
+`Src/pattern.c::patcompile` handles `(#i)`, `(#l)`,
+`(#m)`, `(#b)`, `(#a)`, `(#qN)` as in-pattern flags.
+
+**Impact** — case-insensitive file matching broken:
+
+```sh
+# Common pattern in cross-platform scripts where filenames
+# might be capitalized (macOS HFS+ is case-insensitive)
+for f in *.(#i)txt; do
+    process "$f"
+done
+# zsh: matches .txt, .TXT, .Txt files
+# zshrs: matches only files literally named '*.(#i)txt'
+#        (i.e., nothing)
+```
+
+Also breaks `**/(#i)README*` patterns in repo-scanning
+scripts.
+
+**Workaround** — explicit case-variants in alternation:
+```sh
+for f in *.[tT][xX][tT]; do
+    process "$f"
+done
+```
+
+Heavier, but works.
+
+---
+
+## #410 — `typeset -p PATH` doesn't expose the tied scalar/array pair (zsh: `export -T PATH path=(...)`)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -p PATH' | head -1
+export -T PATH path=( /usr/bin /bin /usr/sbin /sbin )
+
+$ ./target/debug/zshrs --zsh -c 'typeset -p PATH' | head -1
+export -T PATH='/usr/bin:/bin:/usr/sbin:/sbin'
+```
+
+`PATH` is a "tied" parameter — same value exposed as both
+the colon-string scalar `$PATH` and the array `$path`.
+The `-T` flag in `typeset` declares this tie.
+
+zsh's `typeset -p` output preserves the tie metadata:
+shows BOTH the scalar name AND the array name, with the
+array value (the canonical "exposed-as-array" form).
+
+zshrs's output shows only the colon-string scalar form
+with no mention of the tied array `path`. This means a
+script that snapshots/restores parameter state via
+`typeset -p` would lose the tie:
+
+```sh
+# Backup-restore pattern
+state=$(typeset -p PATH)
+# ... modify PATH ...
+eval "$state"   # restore
+# zsh: restores both PATH and path
+# zshrs: restores only PATH; path may be stale/empty
+```
+
+**Where** — `src/ported/builtins/typeset.rs::print_param`:
+must check `PM_TIED` flag and emit the `name1 name2=(...)`
+two-name form. C-source `Src/builtins.c::printparamnode`
+walks `PM_TIED`/`isset(PARAM_TIED)` linkage.
+
+**Impact** — parameter-state serialization is lossy.
+Affects:
+- `typeset -p` based state-snapshots
+- Debug-dump introspection tools
+- Plugin-init code that probes "is this a tied param"
+
+**Workaround** — manually pair-emit:
+```sh
+print -r -- "export -T PATH path=( ${(@q)path} )"
+```
+
+---
+
+## #411 — `[ "abc" -eq 5 ]` silent rc=1 instead of `integer expression expected` + rc=2
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[ "abc" -eq 5 ]; echo rc=$?'
+zsh:[:1: integer expression expected: abc
+rc=2
+
+$ ./target/debug/zshrs --zsh -c '[ "abc" -eq 5 ]; echo rc=$?'
+rc=1
+```
+
+Posix `test` / `[` with a numeric operator (`-eq`, `-ne`,
+`-lt`, `-gt`, `-le`, `-ge`) on a non-numeric operand is a
+**type error** — zsh emits "integer expression expected"
+to stderr and exits with **rc=2** (canonical "syntax /
+usage error" for test).
+
+zshrs **silently** treats the non-numeric as 0
+(or similar coercion), evaluates `0 -eq 5` as false, and
+returns the regular "test failed" **rc=1** with no
+diagnostic.
+
+**Where** — `src/ported/builtins/test.rs::arith_compare`:
+when operand parse fails, should emit the canonical
+error string + return 2 instead of coercing-to-0 and
+returning 1. C-source `Src/test.c::expr_t::arith_test`
+calls `zwarnnam("test", "integer expression expected:
+%s", arg)` and sets `errflag = 1`.
+
+**Impact** — silent acceptance of type errors. Common
+scripts that branch on rc=1 (test failed) vs rc=2 (test
+errored) get the wrong branch:
+
+```sh
+[ "$user_input" -gt 100 ]
+case $? in
+    0) echo "high" ;;
+    1) echo "low" ;;
+    *) echo "BAD INPUT: $user_input not numeric" ;;
+esac
+# zsh user_input="abc": "BAD INPUT" branch (rc=2)
+# zshrs user_input="abc": "low" branch (rc=1) —
+#       silently treats junk as 0, claims "low"
+```
+
+Also breaks `set -e` interaction — zsh's rc=2 should
+still trigger errexit; zshrs's rc=1 also does, but the
+diagnostic is missing so debugging is hard.
+
+**Workaround** — pre-validate numeric:
+```sh
+if [[ "$input" =~ ^-?[0-9]+$ ]]; then
+    [ "$input" -gt 100 ] && ...
+fi
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -22230,9 +22400,12 @@ done
 | 406 | `${funcstack[@]}` returns empty despite `${#funcstack}` reporting correct length — `[@]`/`[*]` broken, individual subscripts work | **port-bug** | manual `for (( i=1; i<=${#funcstack}; i++ ))` |
 | 407 | `${a[(e)key]}` subscript flag treated as `(r)` find-by-value (zsh: literal-as-numeric) — security-relevant fallback | **port-bug** | explicit numeric coercion `${a[$((key))]}` |
 | 408 | `${a[1,5,2]}` 3-arg array slice silently accepted (zsh: bad substitution) — third arg ignored | **port-bug** | explicit step loop |
+| 409 | `(#i)PATTERN` glob case-folding flag not recognized — treated as literal filename component | **port-bug** | explicit case-variants `[xX]` |
+| 410 | `typeset -p PATH` doesn't expose tied scalar/array pair (zsh: `export -T PATH path=(...)`) — state-snapshot lossy | **port-bug** | manually pair-emit `path` array |
+| 411 | `[ "abc" -eq 5 ]` silent rc=1 instead of "integer expression expected" + rc=2 — type-error coerced to 0 | **port-bug** | pre-validate operand with `=~ ^-?[0-9]+$` |
 
-Of four hundred and eight entries, two are fixed (5, 7),
-four hundred and two remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and eleven entries, two are fixed (5, 7),
+four hundred and five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
