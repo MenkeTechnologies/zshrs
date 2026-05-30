@@ -5170,6 +5170,181 @@ option test instead:
 
 ---
 
+## #103 — `$0` inside sourced script returns shell binary path, not sourced file
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ echo 'echo "0=$0"' > /tmp/zsrc.zsh
+$ /opt/homebrew/bin/zsh -fc 'source /tmp/zsrc.zsh'
+0=/tmp/zsrc.zsh
+
+$ ./target/debug/zshrs --zsh -c 'source /tmp/zsrc.zsh'
+0=./target/debug/zshrs
+```
+
+Inside a sourced script, `$0` should reflect the path of the
+currently-sourced file (per zsh behavior, controlled by
+`POSIX_ARGZERO`). zsh returns `/tmp/zsrc.zsh`. zshrs returns the
+shell binary `./target/debug/zshrs`.
+
+Per `man zshparam`:
+> `$0` — Inside a function, $0 is the name of the function. When
+> a shell script is sourced via the `source` or `.` builtins, $0
+> is normally the name of the script.
+
+**Where** — `src/ported/builtin_source.rs::source_file`: doesn't
+push/pop the `$0` parameter to the script's name during sourcing.
+C-source `Src/builtin.c::bin_dot` saves the prior `$0`, sets to
+script path, executes, restores on return.
+
+**Impact** — common idiom in sourced library scripts:
+
+```sh
+# /lib/utils.sh
+SELF_DIR=${0:A:h}
+SELF_NAME=${0:t}
+# zsh: SELF_DIR=/lib, SELF_NAME=utils.sh
+# zshrs: SELF_DIR=., SELF_NAME=zshrs (wrong)
+```
+
+Breaks every sourced library that uses `$0` to find its own
+companion files (config, themes, sub-modules).
+
+**Workaround** — use `${(%):-%x}` (prompt expansion `%x` = current
+file) to get the script's own path:
+```sh
+SELF=${(%):-%x}    # both shells: path to the script being sourced
+```
+
+---
+
+## #104 — Signal sent via `kill -X $$` from inside function is lost (trap never fires)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'trap "echo TRAP" USR1; f() { kill -USR1 $$; }; f; echo "post-fn"'
+TRAP
+post-fn
+
+$ ./target/debug/zshrs --zsh -c 'trap "echo TRAP" USR1; f() { kill -USR1 $$; }; f; echo "post-fn"'
+post-fn
+```
+
+Direct `kill -USR1 $$` at top-level works in both shells (trap
+fires). But when wrapped in a function, the signal is delivered
+but zshrs's trap **never fires** — even after the function
+returns and execution continues.
+
+```sh
+# Direct (both shells work):
+$ /opt/homebrew/bin/zsh -fc 'trap "echo TRAP" USR1; kill -USR1 $$; echo post'
+TRAP
+post
+
+$ ./target/debug/zshrs --zsh -c 'trap "echo TRAP" USR1; kill -USR1 $$; echo post'
+TRAP
+post
+```
+
+So the bug is specifically the function-context path: signal
+delivered while executing a function gets lost in zshrs's signal
+handling.
+
+Related to bug #95 (signal from inside subshell fires immediately
+instead of being deferred). Both indicate zshrs's signal-handling
+state machine doesn't track function vs subshell vs top-level
+context correctly.
+
+**Where** — `src/ported/signal.rs::deliver_signal`: when receiving
+a signal while in function execution, the signal-pending flag is
+set but never checked at function-return boundary. C-source
+`Src/exec.c::execfuncdef` checks `errflag & ERRFLAG_SIGNAL` at
+each statement, runs trap if pending.
+
+**Impact** — signal-driven event handling broken whenever the
+signal source is inside a function call. Common pattern:
+
+```sh
+trap "save_state" USR1
+update_state() {
+    refresh_data
+    kill -USR1 $$    # tell ourselves to save after refresh
+}
+update_state
+# zsh: save_state runs after update_state returns
+# zshrs: save_state NEVER runs (signal lost)
+```
+
+Long-running daemons using self-signaling for "checkpoint after
+this section completes" silently never checkpoint.
+
+**Workaround** — explicit invocation after function call:
+```sh
+update_state
+save_state    # call directly instead of relying on signal
+```
+
+---
+
+## #105 — `(f<NNN>)` file-permission glob qualifier ignored (returns all files)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ mkdir -p /tmp/zgp; touch /tmp/zgp/{a,b,c}; chmod 644 /tmp/zgp/a; chmod 755 /tmp/zgp/b; chmod 600 /tmp/zgp/c
+
+$ /opt/homebrew/bin/zsh -fc 'print -l /tmp/zgp/*(f644)'
+/tmp/zgp/a
+
+$ ./target/debug/zshrs --zsh -c 'print -l /tmp/zgp/*(f644)'
+/tmp/zgp/a
+/tmp/zgp/b
+/tmp/zgp/c
+```
+
+The `(f<perms>)` glob qualifier filters files by exact permission
+match. zsh returns only the file with 644 perms (`a`). zshrs
+ignores the `f644` qualifier and returns all matching files.
+
+Per `man zshexpn` § Glob Qualifiers:
+> `f spec` — files with access rights matching `spec`. `spec` is
+> a numeric mode or a `chmod`-style mode spec.
+
+**Where** — `src/ported/glob.rs::apply_qualifier`: the `f` (and
+related `r`/`w`/`x` and `u`/`g`/`o` user/group/other perm
+qualifiers) appear to be unimplemented. C-source
+`Src/glob.c::qualflags::QC_MODE` filters by `st_mode & MASK`.
+
+**Impact** — permission-based file selection silently returns
+everything:
+
+```sh
+# find all world-readable config files
+print -l /etc/*(.f+004)
+# zsh: just files with world-read bit set
+# zshrs: everything in /etc
+
+# find executable files
+print -l /usr/local/bin/*(*)
+# zsh: only executables
+# zshrs: returns all (unverified, but same family — see #105's u/g/x cousins)
+```
+
+Related to #41 (`Yn` limit qualifier ignored), #62 (~ exclusion),
+#89/#99 (extended_glob quantifiers) — pattern of glob-qualifier
+implementations being thin or absent.
+
+**Workaround** — pipe through `test` or `stat`:
+```sh
+for f in /tmp/zgp/*; do
+    [[ "$(stat -f '%p' "$f" 2>/dev/null)" == *644 ]] && echo "$f"
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -5276,13 +5451,16 @@ option test instead:
 | 100 | `typeset -R N x="hello"` doesn't right-truncate (full string kept) | **port-bug** | `printf "%Ns"` instead |
 | 101 | `exec funcname` errors "not found" instead of running shell fn | **port-bug** | drop `exec`, call fn directly |
 | 102 | `$-` doesn't include `f` from `-f` startup flag | **port-bug** | `[[ -o no_rcs ]]` direct option test |
+| 103 | `$0` inside sourced script returns shell binary, not sourced file | **port-bug** | `${(%):-%x}` prompt-expansion |
+| 104 | Signal `kill -X $$` from inside fn is lost (trap never fires) | **port-bug** | direct invocation post-fn |
+| 105 | `(f<NNN>)` permission glob qualifier ignored | **port-bug** | `stat`-based loop |
 
-Of one hundred two entries, two are fixed (5, 7), ninety-six remain
+Of one hundred five entries, two are fixed (5, 7), ninety-nine remain
 open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85,
 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101,
-102), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+102, 103, 104, 105), and four were zsh-correct behavior misframed by
+demos (1, 2, 3, 6).
