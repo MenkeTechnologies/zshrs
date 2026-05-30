@@ -2547,6 +2547,97 @@ Or use `set -e` (`err_exit`) which DOES work in zshrs (with the
 
 ---
 
+## #56 — Signal trap fires INSIDE `$(...)` subshell instead of parent shell
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'trap "echo X" USR1
+result=$(kill -USR1 $$; sleep 0.05; echo done)
+echo "RESULT=[$result]"'
+X
+RESULT=[done]
+
+$ zshrs --zsh -c 'trap "echo X" USR1
+result=$(kill -USR1 $$; sleep 0.05; echo done)
+echo "RESULT=[$result]"'
+RESULT=[X
+done]
+```
+
+When `$$` (parent PID) is signaled from inside `$(...)`, real zsh
+delivers the signal to the PARENT — the trap fires there and `X`
+prints to the parent's stdout, leaving only `done` in `$result`.
+
+zshrs delivers/processes the signal inside the cmd-sub child
+group, so the trap output gets captured into `$result` along with
+the explicit echo.
+
+**Where** — `src/ported/exec.rs::cmd_subst` should set up the
+cmd-sub child as a separate process group such that `kill $$`
+from inside still targets the parent process, not the cmd-sub
+child group.
+
+**Impact** — corrupts captured-output processing when a script
+combines cmd-sub with defensive signal handling:
+```sh
+trap "echo 'CLEAN UP'" INT
+config=$(load_config_with_timeout)
+# zsh:  CLEAN UP prints to terminal if INT fires; config gets data
+# zshrs: CLEAN UP mixed INTO config; subsequent parse breaks
+```
+
+**Workaround** — guard against unexpected stderr/stdout content
+in cmd-sub results:
+```sh
+config=$(load_config_with_timeout 2>/dev/null)
+[[ $config == CLEAN\ UP* ]] && fail "interrupted"
+```
+
+---
+
+## #57 — `setopt octal_zeroes` doesn't trigger octal arith parsing
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt octal_zeroes; echo $((08))'
+zsh:1: bad math expression: operator expected at `8'
+
+$ zshrs --zsh -c 'setopt octal_zeroes; echo $((08))'
+8
+```
+
+`setopt octal_zeroes` makes the arith parser treat `0NN` prefixes
+as **octal**. So `08` is invalid (8 isn't a valid octal digit) and
+real zsh correctly errors. zshrs ignores the option and parses
+`08` as decimal 8.
+
+  - `$((010))` → zsh `8` (octal), zshrs `10` (decimal)
+  - `$((0755))` → zsh `493`, zshrs `755`
+
+Default (no `octal_zeroes`): both treat `0NN` as decimal — that's
+correct because `octal_zeroes` defaults off for ksh compatibility.
+
+**Where** — `src/ported/math.rs::parse_number` doesn't consult
+`opts.octal_zeroes` flag at the leading-`0` decision point.
+
+**Impact** — POSIX-strict scripts doing UNIX permission math get
+wrong values silently:
+```sh
+setopt octal_zeroes
+perms=$((0755 | 0010))   # zsh: 0765 octal = 501 decimal
+                          # zshrs: 755 | 10 decimal = 767 (wrong)
+chmod $(printf "%o" $perms) /tmp/file   # zshrs: wrong perms applied
+```
+
+**Workaround** — use explicit base prefix `8#`:
+```sh
+perms=$(( 8#755 | 8#10 ))   # both shells: 501 decimal
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -2606,10 +2697,12 @@ Or use `set -e` (`err_exit`) which DOES work in zshrs (with the
 | 53 | `${(P)$ref}` doesn't resolve `name[idx]` indirect | **port-bug** | `eval "val=\\${$ref}"` |
 | 54 | `warn_create_global` / `warn_nested_var` warnings silent | **port-bug** | strict `local` discipline |
 | 55 | `setopt err_return` doesn't fire on command failure | **port-bug** | explicit `\|\| return $?` |
+| 56 | Signal trap output captured into `$(...)` result | **port-bug** | guard cmd-sub output |
+| 57 | `setopt octal_zeroes` ignored by arith parser | **port-bug** | `8#NNN` explicit base |
 
-Of fifty-five entries, two are fixed (5, 7), forty-nine remain open
+Of fifty-seven entries, two are fixed (5, 7), fifty-one remain open
 port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
-53, 54, 55), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+53, 54, 55, 56, 57), and four were zsh-correct behavior misframed by
+demos (1, 2, 3, 6).
