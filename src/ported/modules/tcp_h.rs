@@ -429,4 +429,104 @@ mod tests {
         assert!(ZTCP_INBOUND > 0);
         assert!(ZTCP_ZFTP > 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/tcp.h
+    // c:71 SUPPORT_IPV6 / c:83-85 ZTCP_* flag verbatim values /
+    // c:97 INET_ADDRSTRLEN / c:101 INET6_ADDRSTRLEN /
+    // c:107 tcp_session struct layout
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:83-85 — verbatim positional pins: ZTCP_LISTEN=1, INBOUND=2, ZFTP=16.
+    #[test]
+    fn ztcp_flag_values_verbatim() {
+        assert_eq!(ZTCP_LISTEN, 1, "c:83 — ZTCP_LISTEN must be 1");
+        assert_eq!(ZTCP_INBOUND, 2, "c:84 — ZTCP_INBOUND must be 2");
+        assert_eq!(ZTCP_ZFTP, 16, "c:85 — ZTCP_ZFTP must be 16");
+    }
+
+    /// c:83-85 — all ZTCP_* flags are powers of 2 (single-bit masks).
+    #[test]
+    fn ztcp_flags_all_powers_of_two() {
+        for v in [ZTCP_LISTEN, ZTCP_INBOUND, ZTCP_ZFTP] {
+            assert!((v as u32).is_power_of_two(),
+                "ZTCP_* {} must be single bit", v);
+        }
+    }
+
+    /// c:83-85 — ZTCP_* flags pairwise distinct.
+    #[test]
+    fn ztcp_flags_pairwise_distinct() {
+        let flags = [ZTCP_LISTEN, ZTCP_INBOUND, ZTCP_ZFTP];
+        let unique: std::collections::HashSet<_> = flags.iter().copied().collect();
+        assert_eq!(unique.len(), flags.len(),
+            "ZTCP_* must be pairwise distinct");
+    }
+
+    /// c:83-85 — ZTCP_* flags fit in i8 (room for ≥2x growth).
+    #[test]
+    fn ztcp_flags_fit_in_i8() {
+        for v in [ZTCP_LISTEN, ZTCP_INBOUND, ZTCP_ZFTP] {
+            assert!(v < i8::MAX as i32, "ZTCP_* {} must fit in i8", v);
+        }
+    }
+
+    /// c:83-85 — ZTCP_ZFTP (16) is in the upper-bit reserved range —
+    /// bit 4 sits well above LISTEN/INBOUND (bits 0,1) so a future
+    /// bit 2,3 addition won't collide.
+    #[test]
+    fn ztcp_zftp_is_bit_4() {
+        assert_eq!(ZTCP_ZFTP, 1 << 4,
+            "ZTCP_ZFTP must be bit 4 (reserved gap from INBOUND)");
+    }
+
+    /// c:71 — SUPPORT_IPV6 is true on the platform zshrs targets.
+    #[test]
+    fn support_ipv6_is_enabled() {
+        assert!(SUPPORT_IPV6, "SUPPORT_IPV6 must be true on modern target");
+    }
+
+    /// c:97 — INET_ADDRSTRLEN = 16 (RFC 791 max IPv4, alt).
+    #[test]
+    fn inet_addrstrlen_is_16_alt() {
+        assert_eq!(INET_ADDRSTRLEN, 16,
+            "INET_ADDRSTRLEN must be 16 (RFC 791)");
+    }
+
+    /// c:101 — INET6_ADDRSTRLEN = 46 (RFC 4291, alt).
+    #[test]
+    fn inet6_addrstrlen_is_46_alt() {
+        assert_eq!(INET6_ADDRSTRLEN, 46,
+            "INET6_ADDRSTRLEN must be 46 (RFC 4291)");
+    }
+
+    /// c:97/101 — INET6_ADDRSTRLEN strictly larger than INET_ADDRSTRLEN.
+    #[test]
+    fn inet6_strlen_larger_than_inet_strlen() {
+        assert!(INET6_ADDRSTRLEN > INET_ADDRSTRLEN,
+            "IPv6 string must be longer than IPv4: {} vs {}",
+            INET6_ADDRSTRLEN, INET_ADDRSTRLEN);
+    }
+
+    /// c:107 — `tcp_session` struct is non-zero size.
+    #[test]
+    fn tcp_session_non_zero_size() {
+        assert!(std::mem::size_of::<tcp_session>() > 0,
+            "tcp_session must have a non-zero size");
+    }
+
+    /// c:107 — `tcp_session` has sane alignment (≥ 4 bytes for pointer/i32).
+    #[test]
+    fn tcp_session_min_alignment() {
+        assert!(std::mem::align_of::<tcp_session>() >= 4,
+            "tcp_session must be ≥ 4-byte aligned");
+    }
+
+    /// c:83-85 — OR of all ZTCP_* flags equals 0b10011 = 19.
+    #[test]
+    fn ztcp_flags_or_equals_nineteen() {
+        let or_all = ZTCP_LISTEN | ZTCP_INBOUND | ZTCP_ZFTP;
+        assert_eq!(or_all, 19,
+            "OR of all ZTCP_* must equal 0b10011 = 19");
+    }
 }
