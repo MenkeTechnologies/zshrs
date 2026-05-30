@@ -23210,6 +23210,162 @@ grep-and-parse workflows.
 
 ---
 
+## #433 — `time` builtin ignores `$TIMEFMT` — uses hardcoded format regardless
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TIMEFMT="ELAPSED=%E"; { time sleep 0.05; } 2>/tmp/_t; cat /tmp/_t'
+ELAPSED=0.05s
+
+$ ./target/debug/zshrs --zsh -c 'TIMEFMT="ELAPSED=%E"; { time sleep 0.05; } 2>/tmp/_t; cat /tmp/_t'
+0.04s user 0.01s system 80% cpu 0.059 total
+```
+
+`TIMEFMT` is the documented zsh parameter that customizes
+the format string used by the `time` builtin. zsh
+respects it; zshrs uses a hardcoded
+`"%U user %S system %P cpu %*E total"`-style output
+regardless of `$TIMEFMT`'s value.
+
+Together with #432 (command-label prefix missing), the
+`time` builtin in zshrs is essentially non-customizable.
+
+**Where** — `src/ported/builtins/time.rs::format_output`:
+must read `$TIMEFMT` and use its expansion of `%E`/`%U`/
+`%S`/`%P`/`%J`/`%R`/etc. C-source `Src/exec.c::printtime`
+formats based on `gettime_format()` which reads the
+`TIMEFMT` parameter.
+
+**Impact** — benchmarking and profiling scripts that
+expect parseable output break:
+
+```sh
+TIMEFMT='%R'    # just the elapsed-real
+elapsed=$(time mycommand 2>&1)
+# zsh: $elapsed is e.g., "0.123"
+# zshrs: $elapsed is "0.12s user 0.03s system ..."
+```
+
+Affects every shell-based perf harness, CI duration
+trackers, and report-generators that parse time output.
+
+**Workaround** — pipe `time` output through `sed`/`awk`
+to reformat:
+```sh
+time mycommand 2>&1 | awk '{print $NF " " $9}'
+```
+
+Brittle; depends on field positions in the hardcoded
+format.
+
+---
+
+## #434 — `read -e` echo-mode flag not recognized — input consumed silently
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo hello | read -e; echo done'
+hello
+done
+
+$ ./target/debug/zshrs --zsh -c 'echo hello | read -e; echo done'
+done
+```
+
+zsh's `read -e`: read input but **echo it to stdout
+instead of assigning to a variable**. Useful for "tee
+through read" pipelines, completion-mode probing, and
+debugging.
+
+zshrs accepts the flag but treats the read as a normal
+read into the default variable `$REPLY` (without printing
+the captured input).
+
+**Where** — `src/ported/builtins/read.rs::handle_e_flag`:
+missing handler that emits captured value to stdout
+instead of assigning. C-source `Src/builtins.c::bin_read`
+with `OPT_ISSET('e')` calls `zputs(value, ...)` instead
+of `assignsparam`.
+
+**Impact** — pipeline-tee patterns silently swallow data:
+
+```sh
+# Common: capture line + propagate to next stage
+producer | read -e | downstream
+# zsh: each line read by middle stage AND passed to
+#      downstream (tee-style)
+# zshrs: middle stage consumes lines silently;
+#      downstream gets nothing
+```
+
+Real instances in zsh-completion plumbing (`_main_complete`
+uses `read -e` in inspection mode).
+
+**Workaround** — use `tee /dev/stderr` or explicit
+`echo "$REPLY"` after read.
+
+---
+
+## #435 — `typeset -A` no-args lists internal introspection assocs instead of user-defined
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2); typeset -A 2>&1 | head -3'
+h=( [a]=1 [b]=2 )
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(a 1 b 2); typeset -A 2>&1 | head -3'
+aliases=(  )
+builtins=(  )
+commands=(  )
+```
+
+`typeset -A` with no arg should list all **associative-
+array** parameters with their values. zsh shows only
+user-visible assocs in `name=( [k]=v ... )` form.
+
+zshrs shows the **internal introspection assocs** that
+back features like `${aliases[X]}`/`${commands[X]}` —
+which are normally hidden from `typeset -A` listings —
+and at the same time misses the user's actual assoc `h`.
+
+Same root family as #371 (`typeset -A` no-args lists
+random assocs), #386 (`readonly` no-args dumps nothing),
+#395 (`compdef` exposed as builtin) — internal-state
+parameters bleed into user-visible introspection.
+
+**Where** — `src/ported/builtins/typeset.rs::list_assoc`:
+filter must exclude `PM_INTERNAL`/`PM_SPECIAL` assocs
+from the user-facing dump. C-source
+`Src/builtins.c::printparamnode` checks `PM_HIDE`/
+`PM_SPECIAL`/`PM_HIDEVAL` before printing.
+
+**Impact** — script introspection sees a mix of internal
+and user assocs, and may MISS user assocs entirely:
+
+```sh
+# Audit: "what assocs has my script declared?"
+typeset -A | awk -F= '/^[a-z]/ {print $1}'
+# zsh: prints user-visible assoc names
+# zshrs: prints aliases, builtins, commands, modules, etc.
+#        (internal noise); user's actual assocs may be
+#        listed too but mixed in
+```
+
+Combined with #371 (random-assoc listing), zshrs's
+typeset-A introspection is broken in multiple directions.
+
+**Workaround** — filter explicitly:
+```sh
+typeset -p +H | grep "^typeset -A"
+```
+
+(`-p +H` shows non-hidden parameters in declaration form.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -23646,9 +23802,12 @@ grep-and-parse workflows.
 | 430 | `%s`/`%u` prompt close-escapes emit `\\033[0m` (reset-all) instead of `\\033[27m`/`\\033[24m` (pair-specific) | **port-bug** | use explicit ANSI close codes inline |
 | 431 | `%y`/`%l` prompt escapes (tty name) printed literally — extends #429 prompt-escape gap family | **port-bug** | `$TTY` / `${TTY##*/}` parameter |
 | 432 | `time` builtin output omits command-label prefix — pipeline timing reads as anonymous | **port-bug** | wrap with `echo "--- $cmd ---"` |
+| 433 | `time` builtin ignores `$TIMEFMT` parameter — hardcoded format always used | **port-bug** | `awk` reformat the hardcoded output |
+| 434 | `read -e` echo-mode flag not recognized — input consumed silently instead of echoed to stdout | **port-bug** | `tee /dev/stderr` or explicit `echo "$REPLY"` |
+| 435 | `typeset -A` no-args lists internal introspection assocs (aliases/builtins/commands) instead of user-defined | **port-bug** | `typeset -p +H \| grep "typeset -A"` |
 
-Of four hundred and thirty-two entries, two are fixed (5, 7),
-four hundred and twenty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and thirty-five entries, two are fixed (5, 7),
+four hundred and twenty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
