@@ -202,11 +202,16 @@ pub fn collect_sourced_paths(src: &str, base_dir: &std::path::Path) -> Vec<std::
         } else {
             base_dir.join(trimmed)
         };
-        // Canonicalize when possible so symlinks dedup; fall back to
-        // the original path otherwise (canonicalize fails on missing
-        // files, which we DO want to skip).
+        // Canonicalize when possible so symlinks dedup. When canonicalize
+        // fails (missing-on-disk, e.g. virtual LSP test fixtures with
+        // `file:///lib.zsh` URIs that don't exist on the filesystem),
+        // fall back to the as-is path so the caller can still match by
+        // URI string. Real-world wired paths get the canon dedup; LSP
+        // test fixtures don't crash.
         if let Ok(canon) = std::fs::canonicalize(&path) {
             resolved.push(canon);
+        } else {
+            resolved.push(path);
         }
     }
     resolved
