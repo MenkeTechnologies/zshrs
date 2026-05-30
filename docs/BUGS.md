@@ -18594,6 +18594,174 @@ have gaps per #205).
 
 ---
 
+## #349 — `export ASSOC_VAR` for associative array adds malformed `NAME=` empty entry to environment
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A H=(k v); export H; env | grep "^H="'
+(no output)
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A H=(k v); export H; env | grep "^H="'
+H=
+```
+
+zsh refuses to export associative arrays — the env-var
+contract is "scalar string", so attempting to export an assoc
+silently does nothing (and `env` shows no entry).
+
+zshrs adds an entry `H=` (empty value) to env, since assoc
+can't be serialized as a single env value. This pollutes the
+environment of every child process with malformed entries.
+
+**Where** — `src/ported/builtins/export.rs::handle_assoc`:
+should refuse to export assoc, but currently inserts the
+NAME with empty value. C-source `Src/builtin.c::bin_export`
+checks `param->node.flags & PM_HASHED` and skips the env
+update.
+
+**Impact** — child processes inherit empty `H=` entries that
+confuse environment-parsing tools:
+
+```sh
+typeset -A api_endpoints=(prod x stage y)
+export api_endpoints
+# zsh: no env entry created
+# zshrs: env has "api_endpoints=" (empty), confuses other tools
+# subprocess sees the empty env var and may interpret as "unset" or fail
+```
+
+**Workaround** — explicitly serialize assoc before export:
+```sh
+typeset -A api_endpoints=(prod x stage y)
+export api_endpoints_serialized="$(typeset -p api_endpoints)"
+```
+
+---
+
+## #350 — Integer arithmetic at INT64 boundary returns `0` silently (zsh: truncates digit, returns approximation)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo $((-9223372036854775808))'
+-922337203685477580
+
+$ ./target/debug/zshrs --zsh -c 'echo $((-9223372036854775808))'
+0
+```
+
+INT64_MIN (-9223372036854775808) and INT64_MAX+1 both
+overflow. zsh truncates the last digit (likely a parser
+quirk that drops the final char on overflow, producing a
+not-quite-INT64_MIN value). zshrs silently returns 0.
+
+Same for `INT64_MAX + 1` and `INT64_MIN - 1`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo $((9223372036854775808))'
+922337203685477580       # truncated
+
+$ ./target/debug/zshrs --zsh -c 'echo $((9223372036854775808))'
+0                        # silent overflow to 0
+```
+
+Neither is correct — proper handling should error or saturate.
+But zshrs's silent 0 is worse than zsh's truncated value:
+- zsh's output is wrong but the magnitude is preserved (off
+  by 1 digit, recognizable as overflow).
+- zshrs's output (0) is indistinguishable from "the user
+  asked for zero."
+
+Companion to #258 (`printf "%d" $hugenum` returns 0 silently)
+— zshrs's integer-overflow handling is uniformly silent-0
+across multiple surfaces.
+
+**Where** — `src/ported/math.rs::parse_int_literal`: overflow
+catches without error, returns 0. C-source `Src/math.c::zstrtol`
+truncates the last digit when value exceeds capacity (also
+buggy but at least visible).
+
+**Impact** — boundary-arithmetic code that processes large
+numeric inputs (epoch nanoseconds, file sizes in bytes,
+crypto-derived numbers) silently corrupts to 0 in zshrs:
+
+```sh
+max_log_size=$(( 9223372036854775807 + 1 ))   # intent: overflow guard
+if (( file_size > max_log_size )); then
+    rotate_log
+fi
+# zsh: max_log_size is a large negative or truncated — comparison may misbehave
+# zshrs: max_log_size = 0; file_size > 0 always true; rotation triggers spuriously
+```
+
+**Workaround** — clamp inputs before arithmetic:
+```sh
+[[ "$value" =~ ^[0-9]{1,18}$ ]] || error "out of range"
+```
+
+---
+
+## #351 — `typeset -p arr` doesn't quote space-containing array elements — boundary loss in output
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=("x" 1 "a b"); typeset -p a'
+typeset -a a=( x 1 'a b' )
+
+$ ./target/debug/zshrs --zsh -c 'a=("x" 1 "a b"); typeset -p a'
+typeset -a a=( x 1 a b )
+```
+
+zsh's `typeset -p` quotes array elements containing
+whitespace so that the output is shell-parseable as the
+original 3-element array. zshrs emits unquoted elements,
+collapsing `"a b"` to two space-separated tokens
+indistinguishable from two separate elements.
+
+Same family as #290 (`(qq)`-quote flag drops empties) and
+#297 (bare `typeset` missing attributes) — display routines
+don't apply proper shell-escape quoting.
+
+The downstream effect is that re-parsing the output produces
+a different array:
+
+```sh
+saved=$(typeset -p a)
+unset a
+eval "$saved"
+echo "${#a}"
+# zsh: 3 (elements: "x", "1", "a b")
+# zshrs: 4 (elements: "x", "1", "a", "b" — "a b" split)
+```
+
+**Where** — `src/ported/builtins/typeset.rs::print_array_value`:
+elements emitted without quote-detection. C-source
+`Src/params.c::printparamnode` applies `quotedzputs()` to
+each element with auto-quote-when-needed logic.
+
+**Impact** — config-snapshot/restore patterns produce wrong
+array contents after round-trip:
+
+```sh
+# Snapshot
+typeset -p config_arr > /tmp/snapshot
+# Restore
+unset config_arr
+source /tmp/snapshot
+# zsh: faithful restore
+# zshrs: arrays with whitespace-containing elements get reshuffled
+```
+
+**Workaround** — manually quote via `(qq)`:
+```sh
+echo "typeset -a a=( ${(qq)a[@]} )"
+```
+
+(But `(qq)` also has gaps per #290.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -18946,9 +19114,12 @@ have gaps per #205).
 | 346 | `read -E` flag (echo input back to stdout) not implemented — tee-like read pipelines silently lose output | **port-bug** | use explicit `tee /dev/stderr` |
 | 347 | `read -z` flag (read from command buffer) returns empty — buffer-roundtrip broken | **port-bug** | (none — buffer not connected) |
 | 348 | `read -p VAR` flag semantics differ — zsh: read-from-coproc (errors when none), zshrs: parse-error/silent | **port-bug** | use `read <&p` (may also be broken per #205) |
+| 349 | `export ASSOC_VAR` for assoc adds malformed `NAME=` empty entry to env (zsh: refuses) | **port-bug** | serialize via `typeset -p` before export |
+| 350 | Integer arithmetic at INT64 boundary returns `0` silently — overflow indistinguishable from intended zero | **port-bug** | range-validate inputs before arith |
+| 351 | `typeset -p arr` doesn't quote space-containing elements — round-trip via eval splits "a b" into 2 elems | **port-bug** | manual `(qq)`-quote (also gappy per #290) |
 
-Of three hundred and forty-eight entries, two are fixed (5, 7),
-three hundred and forty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and fifty-one entries, two are fixed (5, 7),
+three hundred and forty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -18973,5 +19144,5 @@ three hundred and forty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343,
-344, 345, 346, 347, 348), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+344, 345, 346, 347, 348, 349, 350, 351), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
