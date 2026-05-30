@@ -22521,6 +22521,181 @@ removing source/eval lines one at a time.
 
 ---
 
+## #421 — `^` parsed as glob-negation even when `extended_glob` is off
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/{.h,v}; echo /tmp/_zg/^.* 2>&1'
+zsh:1: no matches found: /tmp/_zg/^.*
+
+$ ./target/debug/zshrs --zsh -c 'mkdir -p /tmp/_zg && touch /tmp/_zg/{.h,v}; echo /tmp/_zg/^.* 2>&1'
+zsh:1: bad pattern: ^.*
+```
+
+`^` is the EXTENDED_GLOB "negation" operator. With
+`extended_glob` **off** (the default under `-f`), `^`
+should be a literal character — `^.*` means "filename
+starting with literal `^` followed by literal `.` and
+anything". No file matches → zsh emits "no matches
+found".
+
+zshrs treats `^` as the negation operator regardless of
+the `extended_glob` setting — parses `^.*` as "everything
+EXCEPT files matching `.*`", but the parser apparently
+errors here with "bad pattern" instead of running the
+negation.
+
+Either way, zshrs's behavior is wrong:
+1. If treating as negation: should require
+   `extended_glob` opt
+2. If treating as literal: should not error "bad pattern"
+
+**Where** — `src/ported/glob/parser.rs`: `^` should be
+gated on `setopt.extended_glob` (and `~`, `#` likewise).
+C-source `Src/glob.c::patcompile` checks `isset(EXTENDEDGLOB)`
+before recognizing these operators.
+
+**Impact** — files with literal `^` in their names (rare
+but exist — common in Mac OS X .DS_Store-style metadata,
+and on Windows-shared filesystems) become unmatchable
+under default zshrs. Also breaks `echo *^backup*` (literal
+caret in filename) when extended_glob is off.
+
+More generally, extended-glob operators (`^`, `~`, `#`)
+should be **scoped to the setopt**. Failing to gate them
+means scripts that work under `setopt no_extended_glob`
+in zsh don't work in zshrs.
+
+**Workaround** — escape with backslash: `echo *\^*`.
+
+---
+
+## #422 — sourced-file errors prefixed `zsh:` instead of file-path — extends #420 to source contexts
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ echo "nonexistent_xyz" > /tmp/_src.zsh
+$ /opt/homebrew/bin/zsh -fc 'source /tmp/_src.zsh'
+/tmp/_src.zsh:1: command not found: nonexistent_xyz
+
+$ ./target/debug/zshrs --zsh -c 'source /tmp/_src.zsh'
+zsh:1: command not found: nonexistent_xyz
+```
+
+When an error originates inside a `source`d file, zsh's
+diagnostic prefix is the **file path** of the sourced
+file (e.g., `/tmp/_src.zsh:42:`). zshrs always uses
+`zsh:N:` regardless.
+
+Same family as #420 — the source-context-prefix table
+has a default for top-level, eval, and probably
+functions, but is wired to the same string regardless of
+context.
+
+**Where** — `src/ported/exec/source.rs::execute_sourced`:
+should push the source-file name onto the diagnostic-
+prefix stack for the duration of the source. C-source
+`Src/init.c::source` saves and replaces `scriptname` for
+the source's lifetime.
+
+**Impact** — `.zshrc` debugging at scale. Most users
+source 20-50 plugin files. When any one of them errors,
+the diagnostic should pinpoint which plugin:
+
+```sh
+# typical .zshrc
+source ~/.zsh/plugins/p10k.zsh
+source ~/.zsh/plugins/zinit.zsh
+source ~/.zsh/plugins/fzf.zsh
+# (one of these errors)
+
+# zsh diagnostic:
+#   ~/.zsh/plugins/zinit.zsh:142: bad pattern: ...
+# zshrs diagnostic:
+#   zsh:1: bad pattern: ...     <-- no file, no line
+```
+
+Even though the zshrs error gives a "1", that "1" is the
+zshrc-call-line — useless for debugging. Users have to
+bisect manually.
+
+**Workaround** — bisect by commenting out source lines.
+
+---
+
+## #423 — `PATH=str` assignment doesn't propagate to tied `path` array — one-way tie broken
+
+**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'PATH=/x:/y; echo "path=[${path[@]}]"'
+path=[/x /y]
+
+$ ./target/debug/zshrs --zsh -c 'PATH=/x:/y; echo "path=[${path[@]}]"'
+path=[/opt/homebrew/anaconda3/bin /Users/wizard/.opam/default/bin ...
+       (full stale pre-assignment path)]
+```
+
+`PATH` and `path` are bidirectionally tied:
+- Setting PATH (colon-string) should update path (array)
+- Setting path (array) should update PATH (colon-string)
+
+zsh implements both directions. zshrs implements only
+**path → PATH** (verified working):
+```sh
+path=(/a /b); echo "$PATH"   # "/a:/b" in both shells
+```
+
+But **PATH → path** is broken — assigning to PATH leaves
+the path array stale at its previous (typically large
+init-time) value.
+
+**Where** — `src/ported/params/path.rs::set_scalar`:
+the PATH-set callback must invalidate/rebuild the tied
+path array. C-source `Src/params.c::pathsetfn` calls
+`splitstring(value, ":", &path)` to rebuild the array
+side.
+
+**Impact** — **MAJOR fallout for compatibility**. The
+most common PATH modification pattern in shell scripts:
+
+```sh
+PATH="/usr/local/bin:$PATH"
+export PATH
+
+# Later code that uses $path (array form):
+for p in "${path[@]}"; do
+    [[ -x "$p/$cmd" ]] && resolved="$p/$cmd"
+done
+# zsh: path correctly includes /usr/local/bin
+# zshrs: path is stale; /usr/local/bin NOT in array;
+#        resolution fails or hits cached entries
+```
+
+Breaks:
+- `path+=(/new/dir)` after PATH= reassignment (works on
+  stale base)
+- zinit's path management (touches both forms)
+- p10k's path-color rendering (uses array form)
+- ALL command-resolution caching that uses `path` array
+  as source of truth
+
+Combined with #416 (unset PATH ignored) and #410
+(typeset -p doesn't show tied pair), zshrs's tied-
+parameter implementation is broadly broken.
+
+**Workaround** — always assign both forms:
+```sh
+PATH="/usr/local/bin:$PATH"
+path=("${(@s/:/)PATH}")  # manual rebuild
+```
+
+Tedious but covers the most common case.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -22945,9 +23120,12 @@ removing source/eval lines one at a time.
 | 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **port-bug** | `SECONDS=0` reassign instead of unset |
 | 419 | `unset LINENO` silently accepted — no "read-only variable" diagnostic (zsh: emits warning) | **port-bug** | none — manual `typeset -p LINENO` probe |
 | 420 | `eval` errors prefixed `zsh:` instead of `(eval):` — source-context lost (also affects funcname/sourced-file prefixes) | **port-bug** | manual bisect by removing source/eval lines |
+| 421 | `^` parsed as glob-negation even when `extended_glob` is off — gating missing on `^`/`~`/`#` extended-glob operators | **port-bug** | escape with backslash `\\^` |
+| 422 | sourced-file errors prefixed `zsh:` instead of `/path/to/file:` — extends #420, breaks .zshrc plugin-bisect debugging | **port-bug** | bisect by commenting out source lines |
+| 423 | **CRITICAL** `PATH=str` doesn't update tied `path` array — one-way tie broken (path=arr→PATH works) | **port-bug** | always also `path=("${(@s/:/)PATH}")` after PATH= |
 
-Of four hundred and twenty entries, two are fixed (5, 7),
-four hundred and fourteen remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and twenty-three entries, two are fixed (5, 7),
+four hundred and seventeen remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
