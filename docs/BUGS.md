@@ -13298,6 +13298,187 @@ exec my_cmd "$@"
 
 ---
 
+## #253 — `$0` inside sourced file isn't updated to sourced-file path (at top-level scope of the file)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ cat > /tmp/zs0.sh <<'EOF'
+echo "outside: [$0]"
+f() { echo "in-fn: [$0]"; }
+f
+EOF
+
+$ /opt/homebrew/bin/zsh -fc 'source /tmp/zs0.sh'
+outside: [/tmp/zs0.sh]
+in-fn: [f]
+
+$ ./target/debug/zshrs --zsh -c 'source /tmp/zs0.sh'
+outside: [/Users/wizard/RustroverProjects/zshrs/target/debug/zshrs]
+in-fn: [f]
+```
+
+When zsh sources a file, `$0` inside the file's top-level
+scope reflects the sourced file's path. zshrs leaves `$0` as
+the original shell binary path.
+
+Inside functions defined in the sourced file, `$0` is the
+function name in BOTH shells (correct). The bug is only the
+top-level scope context.
+
+Same gap applies to `.` (dot-source) form:
+```sh
+$ both-shells -fc '. /tmp/zs0.sh'
+outside: [/tmp/zs0.sh]   # zsh
+outside: [...zshrs]      # zshrs (same bug)
+```
+
+**Where** — `src/ported/builtins/source.rs::run_sourced_file`:
+doesn't push a new value onto the `argv0` stack for the
+duration of the source. C-source `Src/exec.c::source`
+temporarily sets `argv0 = filename` and restores on exit.
+
+**Impact** — common idioms in `.zshrc` / plugin files that
+introspect `$0` to find the file's own directory break:
+
+```sh
+# Plugin discovery pattern — VERY common in zsh ecosystem
+plugin_dir="${0:A:h}"   # directory of this sourced file
+source "$plugin_dir/helpers.zsh"
+# zsh: plugin_dir = directory of the sourced .zsh file
+# zshrs: plugin_dir = directory of the zshrs binary — wrong!
+```
+
+This is a major plugin-compatibility blocker — most zsh
+plugins (oh-my-zsh themes, zinit-loaded plugins, prezto
+modules, p10k) use `${0:A:h}` or similar to find their
+co-located resources. With this bug, every plugin will fail
+to locate its own resource files.
+
+**Workaround** — pass file path explicitly via parameter:
+```sh
+plugin_init() {
+    local plugin_dir="${1:A:h}"
+    # ... use plugin_dir ...
+}
+plugin_init "$1"   # caller passes the source path
+```
+
+(Awkward — requires plugin API change.)
+
+---
+
+## #254 — `UID=N` / `EUID=N` writes silently accepted (zsh: attempts setuid syscall)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'UID=999'
+zsh:1: failed to change user ID: operation not permitted
+$ echo $?
+1
+
+$ ./target/debug/zshrs --zsh -c 'UID=999'
+$ echo $?
+0
+```
+
+zsh's `UID` and `EUID` parameters are special — writing to
+them attempts to change the actual user ID via `setuid()` /
+`seteuid()` syscalls. zshrs treats them as plain writable
+parameters and silently accepts assignments without any
+side effect.
+
+Same likely gap for `GID`/`EGID` (group IDs).
+
+**Where** — `src/ported/params/uid.rs::uid_setfn`: assignment
+hook doesn't call the system setuid functions. C-source
+`Src/params.c::uidsetfn` calls `setuid(value)` or
+`seteuid(value)` and errors if it fails.
+
+**Impact** — security-sensitive code that relies on the
+setuid behavior is broken:
+1. Privilege-drop patterns (`EUID=$UID` to drop suid escalation)
+   silently no-op — script keeps elevated privileges.
+2. Setuid-related sanity checks (`UID=X || handle_error`)
+   pass without doing anything in zshrs.
+
+```sh
+# Privilege-drop pattern
+if (( EUID == 0 && UID != 0 )); then
+    EUID=$UID   # drop privilege
+    do_safer_work
+fi
+# zsh: drops privilege via seteuid
+# zshrs: no-op, do_safer_work still runs with elevated EUID
+```
+
+Real security gap if anyone uses zshrs for setuid scripts.
+
+**Workaround** — use external `setuid` C wrapper or `su -c`
+to drop privileges instead of relying on `UID=`/`EUID=`
+assignment.
+
+---
+
+## #255 — `local -h NAME` doesn't hide parent scope's value (`-h` flag ignored)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { local -h PATH; echo "[${PATH}]"; }; f'
+[]
+
+$ ./target/debug/zshrs --zsh -c 'f() { local -h PATH; echo "[${PATH}]"; }; f'
+[/opt/homebrew/anaconda3/bin:/Users/.../bin:...]
+```
+
+`local -h NAME` creates a fresh local parameter named NAME
+that *hides* the outer-scope value. Default zsh behavior
+(without `-h`) inherits the outer value into the local. With
+`-h`, the inherited value is suppressed — the local starts
+unset/empty.
+
+zshrs ignores the `-h` flag — the local PATH inherits the
+parent's value as if `-h` wasn't specified.
+
+This is the function-local analog of `typeset -H` (hidden in
+typeset -p output, see #233) but specifically for the
+inheritance behavior on function entry.
+
+**Where** — `src/ported/builtins/typeset.rs::handle_h_flag`:
+local declaration with `-h` doesn't initialize the new param
+empty. C-source `Src/builtin.c::typeset_single` checks
+`OPT_HIDE` and sets `PM_HIDE` flag which suppresses outer-
+scope inheritance via `PM_UPPERS_OFF`.
+
+**Impact** — sandboxing patterns broken. Common use:
+
+```sh
+# Run a subscript with a clean PATH
+run_isolated() {
+    local -h PATH
+    local -h LD_LIBRARY_PATH
+    PATH="/sbin:/bin:/usr/bin"
+    # ... do work ...
+}
+# zsh: $PATH inside fn is exactly what we set, no inherited extras
+# zshrs: $PATH inside fn starts with parent's full PATH inherited, then prepended
+```
+
+Common in tooling scripts that want hermetic environments
+(test runners, CI helpers, security-sensitive code paths).
+
+**Workaround** — explicit overwrite without `-h`:
+```sh
+run_isolated() {
+    local PATH=""
+    PATH="/sbin:/bin:/usr/bin"   # any prior value lost via explicit assignment
+}
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -13554,9 +13735,12 @@ exec my_cmd "$@"
 | 250 | `typeset -ia`/`typeset -Fa` accepted (zsh: errors "inconsistent type for assignment") | **port-bug** | split into `-a` then per-elem arith |
 | 251 | `command -- echo hi` doesn't recognize `--` end-of-options separator | **port-bug** | drop the `--` |
 | 252 | `exec -` (dash, no command) errors "exec: -: not found" instead of no-op | **port-bug** | drop the `exec -` |
+| 253 | `$0` inside sourced file (top-level) isn't updated — breaks `${0:A:h}` plugin-dir pattern | **port-bug** | pass file path as parameter explicitly |
+| 254 | `UID=N`/`EUID=N` writes silently accepted (zsh: attempts setuid syscall) — privilege-drop silent no-op | **port-bug** | use external setuid wrapper |
+| 255 | `local -h NAME` doesn't hide parent scope's value — `-h` flag ignored | **port-bug** | explicit `local NAME=""` before set |
 
-Of two hundred and fifty-two entries, two are fixed (5, 7), two
-hundred and forty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and fifty-five entries, two are fixed (5, 7), two
+hundred and forty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -13573,5 +13757,6 @@ hundred and forty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
-240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252),
-and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
+253, 254, 255), and four were zsh-correct behavior misframed by
+demos (1, 2, 3, 6).
