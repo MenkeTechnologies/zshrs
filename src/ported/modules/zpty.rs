@@ -1427,4 +1427,130 @@ mod tests {
                 "ptyhook on empty cmds must be deterministic");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/zpty.c
+    // c:159 getptycmd / c:290 deleteptycmd / c:314 deleteallptycmds /
+    // c:501 bin_zpty / c:748 ptyhook / c:761-803 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:761 — `setup_` is idempotent.
+    #[test]
+    fn zpty_setup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:803 — `finish_` is idempotent.
+    #[test]
+    fn zpty_finish_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:761 — `setup_` return type i32 (compile-time pin, alt).
+    #[test]
+    fn zpty_setup_returns_i32_type_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:791 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn zpty_cleanup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:803 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn zpty_finish_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:159 — `getptycmd` on empty map returns None.
+    #[test]
+    fn getptycmd_empty_map_returns_none() {
+        let cmds: HashMap<String, ptycmd> = HashMap::new();
+        assert!(getptycmd(&cmds, "anything").is_none(),
+            "empty map must return None");
+    }
+
+    /// c:159 — `getptycmd` with empty name returns None on empty map (alt).
+    #[test]
+    fn getptycmd_empty_name_returns_none_alt() {
+        let cmds: HashMap<String, ptycmd> = HashMap::new();
+        assert!(getptycmd(&cmds, "").is_none(),
+            "empty name on empty map must return None");
+    }
+
+    /// c:290 — `deleteptycmd` on empty map is safe (no panic).
+    #[test]
+    fn deleteptycmd_empty_map_no_panic() {
+        let mut cmds: HashMap<String, ptycmd> = HashMap::new();
+        deleteptycmd(&mut cmds, "anything");
+        deleteptycmd(&mut cmds, "");
+    }
+
+    /// c:314 — `deleteallptycmds` on empty map is safe and idempotent.
+    #[test]
+    fn deleteallptycmds_empty_map_idempotent_safe() {
+        let mut cmds: HashMap<String, ptycmd> = HashMap::new();
+        for _ in 0..10 {
+            deleteallptycmds(&mut cmds);
+            assert!(cmds.is_empty(), "must remain empty");
+        }
+    }
+
+    /// c:501 — `bin_zpty` empty args non-negative.
+    #[test]
+    fn bin_zpty_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zpty("zpty", &[], &ops, 0);
+        assert!(r >= 0, "bin_zpty empty must be ≥ 0, got {}", r);
+    }
+
+    /// c:501 — `bin_zpty` various func values don't panic.
+    #[test]
+    fn bin_zpty_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_zpty("zpty", &[], &ops, func);
+        }
+    }
+
+    /// c:748 — `ptyhook` returns i32 (compile-time pin, alt).
+    #[test]
+    fn ptyhook_returns_i32_type_alt() {
+        let mut cmds = HashMap::new();
+        let _: i32 = ptyhook(&mut cmds);
+    }
+
+    /// c:768 — `features_` is deterministic.
+    #[test]
+    fn zpty_features_deterministic_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v1: Vec<String> = Vec::new();
+        let mut v2: Vec<String> = Vec::new();
+        let _ = features_(std::ptr::null(), &mut v1);
+        let _ = features_(std::ptr::null(), &mut v2);
+        assert_eq!(v1, v2, "features_ must be deterministic");
+    }
 }
