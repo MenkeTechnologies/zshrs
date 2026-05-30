@@ -2916,4 +2916,98 @@ mod tests {
         });
         let _: libc::sigset_t = signal_setmask(&cur);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/signals.c
+    // c:107 intr/nointr / c:152 holdintr/noholdintr / c:194 signal_mask /
+    // c:1791 rtsigno / c:1868 rtsigname / c:2050 kill / c:2071 set_interact
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:107 — `intr` is idempotent.
+    #[test]
+    fn intr_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 { intr(); }
+    }
+
+    /// c:131 — `nointr` is idempotent.
+    #[test]
+    fn nointr_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 { nointr(); }
+    }
+
+    /// c:152 — `holdintr` is idempotent (alt with 10-call loop).
+    #[test]
+    fn holdintr_idempotent_alt() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 { holdintr(); }
+    }
+
+    /// c:171 — `noholdintr` is idempotent.
+    #[test]
+    fn noholdintr_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 { noholdintr(); }
+    }
+
+    /// c:194 — `signal_mask(SIGINT)` returns sigset containing SIGINT.
+    #[cfg(unix)]
+    #[test]
+    fn signal_mask_sigint_contains_sigint() {
+        let _g = crate::test_util::global_state_lock();
+        let m = signal_mask(libc::SIGINT);
+        let contains = unsafe { libc::sigismember(&m, libc::SIGINT) };
+        assert_eq!(contains, 1,
+            "signal_mask(SIGINT) must contain SIGINT");
+    }
+
+    /// c:1791 — `rtsigno` returns Option<i32> (compile-time pin).
+    #[test]
+    fn rtsigno_returns_option_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i32> = rtsigno("RTMIN");
+    }
+
+    /// c:1791 — `rtsigno("")` empty name returns None.
+    #[test]
+    fn rtsigno_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(rtsigno("").is_none(), "empty name → None");
+    }
+
+    /// c:1791 — `rtsigno` for nonsense name returns None.
+    #[test]
+    fn rtsigno_nonsense_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(rtsigno("__bogus_rtsig_xyz__").is_none());
+    }
+
+    /// c:1868 — `rtsigname` returns String (compile-time pin).
+    #[test]
+    fn rtsigname_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = rtsigname(0);
+    }
+
+    /// c:2050 — `kill(self, 0)` (existence check) returns i32.
+    #[cfg(unix)]
+    #[test]
+    fn kill_self_pid_zero_sig_returns_i32_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let pid = unsafe { libc::getpid() };
+        let _: i32 = kill(pid, 0);
+    }
+
+    /// c:2071/2091 — `set_interact(true)` twice still leaves true.
+    #[test]
+    fn set_interact_twice_true_still_true() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = is_interact();
+        set_interact(true);
+        assert!(is_interact());
+        set_interact(true);
+        assert!(is_interact(), "set(true) twice still true");
+        set_interact(saved);
+    }
 }
