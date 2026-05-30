@@ -9416,6 +9416,179 @@ echo "${(C):-default}"   # both shells: "Default"
 
 ---
 
+## #181 — `typeset -p` doesn't quote array elements containing spaces
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(red "blue green" yellow); typeset -p a'
+typeset -a a=( red 'blue green' yellow )
+
+$ ./target/debug/zshrs --zsh -c 'a=(red "blue green" yellow); typeset -p a'
+typeset -a a=( red blue green yellow )
+```
+
+`typeset -p` should produce **re-parseable** output. Elements
+containing whitespace must be quoted so the result can be fed
+back to `eval` and reconstruct the same array. zsh wraps
+`"blue green"` in single quotes → `'blue green'` so it remains
+one element when parsed. zshrs omits quoting; the output looks
+like a 4-element array (`red`, `blue`, `green`, `yellow`).
+
+Same for elements containing quotes/specials:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=("with \"quotes\"" "with '\''single'\''"); typeset -p a'
+typeset -a a=( 'with "quotes"' 'with '\''single'\'' )
+
+$ ./target/debug/zshrs --zsh -c 'a=("with \"quotes\"" "with '\''single'\''"); typeset -p a'
+typeset -a a=( with "quotes" with 'single' )
+```
+
+zshrs's output is unparseable — eval'ing it produces wrong
+array.
+
+**Where** — `src/ported/builtin_typeset.rs::format_array`:
+emits elements verbatim with space-separation. Should
+single-quote-wrap any element containing whitespace or shell
+metacharacters. C-source `Src/builtin.c::printparam` calls
+`quotedzputs` for each array element.
+
+**Impact** — snapshot/restore patterns break:
+
+```sh
+# save state
+output=$(typeset -p config_array)
+... do work ...
+# restore
+eval "$output"
+# zsh: config_array restored exactly
+# zshrs: array re-parsed with wrong element boundaries
+```
+
+Cross-shell test fixtures that compare typeset output also fail.
+
+**Workaround** — manual re-quoting via `${(qq)elem}` loop:
+```sh
+out="$(typeset -a config_array=("
+for el in "${config_array[@]}"; do
+    out+=" ${(qq)el}"
+done
+out+=" )"
+```
+
+---
+
+## #182 — `${${(P)name}[N]}` after-deref indexing returns full array
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); name=a; echo "${${(P)name}[1]}"; echo "${${(P)name}[2]}"'
+red
+blue
+
+$ ./target/debug/zshrs --zsh -c 'a=(red blue green); name=a; echo "${${(P)name}[1]}"; echo "${${(P)name}[2]}"'
+red blue green
+red blue green
+```
+
+When `${(P)name}` returns an array (because `$name`=`a` and `$a`
+is an array), the outer `[N]` subscript should index into the
+resolved array. zsh extracts element N correctly. zshrs ignores
+the subscript and returns the full array for any index.
+
+Same family as #53/#77 indirect-deref bugs and #63/#82 nested-
+expansion bugs — context propagation through nested `${...}`
+forms consistently broken.
+
+**Where** — `src/ported/paramsubst.rs::nested_index`: outer
+subscript applied to inner expansion not honored when the
+inner is array-context. C-source `Src/subst.c::dosubst`
+threads the subscript through to apply after the inner
+expansion resolves.
+
+**Impact** — indirect access patterns for picking out elements:
+
+```sh
+arrname=user_emails
+echo "primary: ${${(P)arrname}[1]}"
+# zsh: first email
+# zshrs: comma-or-space-joined all emails (wrong format)
+```
+
+**Workaround** — assign deref result to a temp array first:
+```sh
+local -a deref=("${(@P)arrname}")
+echo "primary: ${deref[1]}"
+```
+
+---
+
+## #183 — `"${@:1:2}"` positional slice returns full args instead of slicing
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- "a b" c; for x in "${@:1:2}"; do echo "[$x]"; done'
+[a b]
+[c]
+
+$ ./target/debug/zshrs --zsh -c 'set -- "a b" c; for x in "${@:1:2}"; do echo "[$x]"; done'
+[a b c]
+```
+
+`${@:START:LENGTH}` slices positional parameters: starting at
+position START, take LENGTH elements. zsh: 2 elements (preserves
+quoting of `"a b"` as first element). zshrs: returns a single
+joined string for all positional parameters.
+
+Same family as #155 (string slice ignores arith) and #147 (`@`
+flag + modifier dropped) — array-slice handling broken across
+multiple paths.
+
+Verified other slice forms:
+```sh
+$ both-shells -fc 'set -- a b c d e; echo "[${@:2:3}]"'
+[b c d]               # both shells: works (without quotes)
+
+$ /opt/homebrew/bin/zsh -fc 'set -- "x y" "z" w; echo "[${@:1:2}]"'
+[x y z]               # zsh: works with spaces preserved
+
+$ ./target/debug/zshrs --zsh -c 'set -- "x y" "z" w; echo "[${@:1:2}]"'
+[x y z w]             # zshrs: doesn't slice, returns all
+```
+
+So the bug specifically manifests when LENGTH < $#: zshrs
+returns all positional params instead of taking just LENGTH.
+
+**Where** — `src/ported/paramsubst.rs::slice_positionals`:
+ignores LENGTH parameter for `${@:N:M}` form. C-source
+`Src/subst.c::getarrelt` honors start+length pair.
+
+**Impact** — defensive positional-arg processing breaks:
+
+```sh
+my_wrapper() {
+    local -a opts=("${@:1:2}")     # take first 2 args as options
+    local -a rest=("${@:3}")        # rest as additional args
+    process_opts "${opts[@]}"
+    process_rest "${rest[@]}"
+}
+# zsh: correctly splits args
+# zshrs: opts gets all args; rest gets all args (overlap, no split)
+```
+
+**Workaround** — manual loop:
+```sh
+local -a opts=()
+local i
+for (( i=1; i<=2 && i<=$#; i++ )); do
+    opts+=("${argv[$i]}")
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -9600,19 +9773,22 @@ echo "${(C):-default}"   # both shells: "Default"
 | 178 | `IFS` doesn't affect cmdsub field-splitting in `for`/array | **port-bug** | `${(@f)$(...)}` explicit |
 | 179 | `${(S)pat}` shortest-match flag treated as no-op | **port-bug** | use `${var/pat/}` explicit |
 | 180 | `${(C)-text}` no-colon default with flag silently accepted | **port-bug** | use `${(C):-text}` colon-form |
+| 181 | `typeset -p` doesn't quote array elements with spaces | **port-bug** | manual `${(qq)}` loop |
+| 182 | `${${(P)name}[N]}` after-deref indexing returns full array | **port-bug** | temp `deref=("${(@P)name}")` |
+| 183 | `"${@:1:2}"` positional slice returns all instead of slicing | **port-bug** | manual loop |
 
-Of one hundred eighty entries, two are fixed (5, 7), one hundred
-seventy-four remain open port-bugs/perf-issues (4, 8, 9, 10, 11,
-12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
-46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
-63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
-80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
-97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
-111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
-124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
-137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149,
-150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162,
-163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175,
-176, 177, 178, 179, 180), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+Of one hundred eighty-three entries, two are fixed (5, 7), one
+hundred seventy-seven remain open port-bugs/perf-issues (4, 8, 9,
+10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
+78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
+95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108,
+109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
+122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134,
+135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147,
+148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160,
+161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173,
+174, 175, 176, 177, 178, 179, 180, 181, 182, 183), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
