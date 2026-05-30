@@ -7871,6 +7871,173 @@ or pair-check both:
 
 ---
 
+## #151 — `${(@qq)arr}` only quotes the first array element
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=("hello" "world"); echo "${(@qq)a}"'
+'hello' 'world'
+
+$ ./target/debug/zshrs --zsh -c 'a=("hello" "world"); echo "${(@qq)a}"'
+'hello' world
+```
+
+`${(@qq)arr}` is "preserve as array (`@`), quote each element
+with single-quote form (`qq`)". zsh quotes each element. zshrs
+quotes only the FIRST element; subsequent elements are output
+without quotes.
+
+Iterating to confirm per-element form:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=("hello" "world"); for x in "${(@qq)a}"; do echo "[$x]"; done'
+['hello']
+['world']
+
+$ ./target/debug/zshrs --zsh -c 'a=("hello" "world"); for x in "${(@qq)a}"; do echo "[$x]"; done'
+['hello']
+[world]      ← second element unquoted
+```
+
+So the `(qq)` flag is applied to element 1 but skipped for
+element 2+.
+
+**Where** — `src/ported/paramsubst.rs::apply_quote_flag_per_elem`:
+the per-element quote loop only processes the first element.
+Likely an early-break or missing iteration. C-source
+`Src/subst.c::quotedzputs` is called for each element.
+
+**Impact** — serializing array values for re-input via
+`${(@qq)arr}` produces malformed output:
+
+```sh
+hosts=("server-1" "server-2" "server-3")
+echo "valid_hosts=( ${(@qq)hosts} )" > /etc/myapp.conf
+# zsh: writes 'valid_hosts=( '\''server-1'\'' '\''server-2'\'' '\''server-3'\'' )'
+# zshrs: writes 'valid_hosts=( '\''server-1'\'' server-2 server-3 )'  (parse error on re-load)
+```
+
+**Workaround** — explicit loop:
+```sh
+quoted_parts=()
+for h in "${hosts[@]}"; do
+    quoted_parts+=("${(qq)h}")
+done
+echo "valid_hosts=( ${quoted_parts[*]} )" > /etc/myapp.conf
+```
+
+---
+
+## #152 — `${(qq)arr}` (no @) per-element-quotes when zsh joins-then-quotes
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=("hello" "world"); echo "${(qq)a}"'
+'hello world'
+
+$ ./target/debug/zshrs --zsh -c 'a=("hello" "world"); echo "${(qq)a}"'
+'hello' 'world'
+```
+
+`${(qq)arr}` (no `@` flag) — in zsh, the array is first joined
+with space into a scalar `"hello world"`, then quoted as a
+single token → `'hello world'`. zshrs quotes each element
+separately → `'hello' 'world'`.
+
+Compare with `(@qq)` (which is supposed to be per-element):
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=("hello" "world"); echo "${(@qq)a}"'
+'hello' 'world'              # per-element when @ is present
+```
+
+So in zsh:
+- `(qq)` alone: join-then-quote
+- `(@qq)`: quote-each-element
+
+In zshrs both produce element-by-element output (with the
+`@-flag` form being buggy per #151).
+
+Inverse of bug #82 family — there, scalar context wasn't applied
+inside `"..."`; here, scalar context isn't applied for `(qq)`
+without `@`.
+
+**Where** — `src/ported/paramsubst.rs::apply_quote_flag`:
+default-array-no-@-flag should collapse to scalar before
+applying quote. C-source `Src/subst.c::dosubst` chooses
+behavior based on whether `(@)` is in the flag list.
+
+**Impact** — config-file serialization that depends on the
+single-string form gets array-form output:
+
+```sh
+parts=("a b" "c d")
+echo "config=${(qq)parts}"
+# zsh: config='a b c d'
+# zshrs: config='a b' 'c d'  (different shape, may not parse)
+```
+
+**Workaround** — explicit scalar join:
+```sh
+echo "config=${(qq)${(j: :)parts}}"
+```
+
+---
+
+## #153 — `${#${(z)s}}` returns wrong count (5 vs 4 for 4-word input)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="hello world foo bar"; echo "${#${(z)s}}"'
+4
+
+$ ./target/debug/zshrs --zsh -c 's="hello world foo bar"; echo "${#${(z)s}}"'
+5
+```
+
+`${(z)s}` shell-token-splits "hello world foo bar" into 4 words.
+`${#...}` should return the count: 4. zsh does this. zshrs
+returns 5 (off-by-one or counting an extra phantom token).
+
+Iterating the split explicitly shows both shells produce 4
+elements:
+```sh
+$ both-shells -fc 's="hello world foo bar"; words=("${(@z)s}"); echo "${#words}"'
+4    # both shells agree
+```
+
+So the bug is specifically the inline-nested `${#${(z)s}}` form
+— intermediate array isn't materialized correctly for `${#...}`
+count.
+
+Same family as #63 (nested `${(j:s:)${(s:t:)var}}` returns first
+element only), #82 (`(s)` flag in quoted context), #108
+(`${arr/pat/X}` per-element).
+
+**Where** — `src/ported/paramsubst.rs::nested_count`: when
+`${#X}` wraps a `${(z)X}` expansion, the inner expansion's
+result count includes a trailing empty token. C-source
+`Src/subst.c::nrtokens` counts non-empty tokens.
+
+**Impact** — defensive count-based loop bounds are off:
+
+```sh
+cmdline="ls -la /tmp /var"
+tokens=("${(@z)cmdline}")
+echo "$((${#${(z)cmdline}}))"   # one-liner count
+# zsh: 4
+# zshrs: 5  (try to access token 5 fails)
+```
+
+**Workaround** — assign to intermediate array first:
+```sh
+tokens=("${(@z)cmdline}")
+echo "$((${#tokens}))"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -8025,16 +8192,20 @@ or pair-check both:
 | 148 | `zsh/mathfunc` missing cbrt/asinh/erfc/gamma/j0/rand48/... | **port-bug** | external `bc`/`python` |
 | 149 | `${(q)str}` with tab/control chars uses `\X` not `$'\X'` form | **port-bug** | `(qq)` double-quote form |
 | 150 | `$OPTERR` initialized to `1` (zsh: empty/unset) | **port-bug** | `(( OPTIND > 1 ))` check |
+| 151 | `${(@qq)arr}` only quotes first element (rest unquoted) | **port-bug** | explicit per-element loop |
+| 152 | `${(qq)arr}` per-element when zsh joins-then-quotes | **port-bug** | `${(qq)${(j: :)arr}}` |
+| 153 | `${#${(z)s}}` returns 5 vs 4 (off-by-one count) | **port-bug** | intermediate `arr=(...)` |
 
-Of one hundred fifty entries, two are fixed (5, 7), one hundred
-forty-four remain open port-bugs/perf-issues (4, 8, 9, 10, 11, 12,
-13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
-30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
-47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
-64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
-81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97,
-98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
-112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124,
-125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137,
-138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150),
-and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+Of one hundred fifty-three entries, two are fixed (5, 7), one
+hundred forty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
+11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
+62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
+79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
+110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
+123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
+136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
+149, 150, 151, 152, 153), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
