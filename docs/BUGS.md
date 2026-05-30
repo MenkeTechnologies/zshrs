@@ -17680,6 +17680,152 @@ done
 
 ---
 
+## #331 — ALL `${(FLAG)assoc[k]}` flags broken on subscripted-assoc-element (mirrors #328 for assoc)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+Same comprehensive failure as #328 but on assoc-array element
+subscripts instead of regular-array element subscripts.
+
+| Flag | zsh output | zshrs |
+|------|------------|-------|
+| `(C)h[k]` | `Hello` | empty |
+| `(L)h[k]` | `hello` | empty |
+| `(U)h[k]` | `HELLO` | empty |
+| `(t)h[k]` | `<empty>` | empty |
+| `(q)h[k]` | `a\ b` | empty |
+| `(P)h[k]` | `hello` (indirect) | empty |
+| `(l.N.)h[k]` | `   ab` | empty |
+| `(V)h[k]` | `a\tb` | empty |
+| `(D)h[k]` | `/path/to/file` | empty |
+| `(s./.)h[k]` | 3-element split | empty |
+| `(qL)h[k]` chain | `hello` | empty |
+
+Same root cause as #328 — flag dispatcher doesn't resolve
+subscript-to-scalar before applying the flag, regardless of
+whether the subscript is for array (#328) or assoc (this bug).
+
+**Where** — `src/ported/paramsubst.rs::flag_on_subscripted`:
+unified gap — same fix as #328 should resolve assoc-element
+case too. C-source `Src/subst.c::dosubst` treats array and
+assoc subscripts uniformly: resolve, then flag.
+
+**Impact** — same as #328 — every flag-on-element pattern
+broken, both arr[N] and assoc[k]. Combined with #328, the
+single flag-dispatch fix could resolve ~40 documented forms
+across array and assoc subscripts.
+
+**Workaround** — universal: copy element to temp scalar
+first:
+```sh
+elem="${h[$k]}"
+processed="${(qL)elem}"
+```
+
+---
+
+## #332 — `${(u)@}` unique flag on positionals not applied (extends #277 sort family)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- a b a c b; echo "[${(u)@}]"'
+[a b c]
+
+$ ./target/debug/zshrs --zsh -c 'set -- a b a c b; echo "[${(u)@}]"'
+[a b a c b]
+```
+
+zsh's `(u)` unique flag dedupes the result. On positional
+parameters via `$@`, zsh applies it; zshrs doesn't.
+
+Companion to #277 (`(o)@` sort not applied) — multiple
+array-aggregation flags silently no-op when target is
+positional. Tested flags that fail on `$@`:
+- `(o)` sort — #277
+- `(u)` unique — this bug
+- `(O)` reverse-sort — likely also broken
+- `(O*)`/`(o*)` sort-by-length — likely
+- `(n)` numeric sort — likely
+
+These all share a common gap: positional-param flag dispatch
+doesn't include the sort/dedup/transform stage.
+
+**Where** — `src/ported/paramflags.rs::apply_to_positional`:
+filter/sort/unique transformations not applied when target is
+the positional array. C-source `Src/subst.c::dosubst` treats
+positionals identically to arrays for these flags.
+
+**Impact** — common batch-arg-dedup pattern broken:
+
+```sh
+process() {
+    set -- "${(u)@}"   # dedup args before processing
+    for arg; do handle "$arg"; done
+}
+process file1 file2 file1 file3
+# zsh: dedupes to (file1 file2 file3), 3 iterations
+# zshrs: keeps duplicates, 4 iterations of which 2 are file1
+```
+
+**Workaround** — copy to array first:
+```sh
+local _args=("$@")
+set -- "${(u)_args[@]}"
+```
+
+---
+
+## #333 — `${(qL)*}` chained quote+lower on positional `$*` only applies lowercase, drops quote
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- HELLO WORLD; echo "[${(qL)*}]"'
+[hello\ world]
+
+$ ./target/debug/zshrs --zsh -c 'set -- HELLO WORLD; echo "[${(qL)*}]"'
+[hello world]
+```
+
+zsh's chained flag dispatcher applies both `(q)` quote AND
+`(L)` lower in sequence — first lowercase ("hello world"),
+then quote the spaces (`hello\ world`).
+
+zshrs applies only `(L)` (lowercase) but drops the `(q)`
+quote, producing `hello world` instead of `hello\ world`.
+
+So chained flags partially apply on `$*`/positional context.
+The `@` form works correctly (both produce `[hello world]`
+since `$@` array context doesn't need joining-quote for
+spaces between elements).
+
+**Where** — `src/ported/paramflags.rs::chain_dispatch_star`:
+chain only iterates one flag pass for `$*` positional;
+should iterate all flags in order. C-source
+`Src/subst.c::dosubst` applies flag chain regardless of
+positional/scalar/array context.
+
+**Impact** — `(qL)`-chain serialization patterns produce
+unquoted output, breaking round-trip:
+
+```sh
+saved="${(qL)*}"
+# zsh: saved is shell-escapable representation
+# zshrs: saved is just lowered, not escape-safe
+eval "set -- $saved"
+# zsh: round-trips correctly
+# zshrs: spaces in lowered values cause arg splits, wrong arg count
+```
+
+**Workaround** — apply flags sequentially via temp:
+```sh
+local _lowered=("${(L)@}")
+saved="${(q)_lowered[@]}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -18014,9 +18160,12 @@ done
 | 328 | ALL `${(FLAG)arr[N]}` flags broken on subscripted-array-element (20+ flags: case/type/pad/quote/sort/unique/join/eval/P/split/visible/D) | **port-bug** | universal: `elem="${arr[N]}"` then `(FLAG)elem` |
 | 329 | `setopt globsubst` doesn't enable variable-as-glob-pattern expansion (`${~var}` still works) | **port-bug** | use `${~var}` per-expansion |
 | 330 | `${~$(cmdsub)}` forced-glob marker on cmdsub doesn't trigger glob — returns empty | **port-bug** | temp var: `_pat="$(...)"; ${~_pat}` |
+| 331 | ALL `${(FLAG)assoc[k]}` flags broken on subscripted-assoc-element (mirrors #328 for assoc) | **port-bug** | universal: `elem="${h[k]}"` then `(FLAG)elem` |
+| 332 | `${(u)@}` unique flag on positionals not applied — extends #277 sort family | **port-bug** | copy to array, dedup via `[@]` |
+| 333 | `${(qL)*}` chained quote+lower on `$*` only applies lowercase, drops quote | **port-bug** | apply flags sequentially via temp array |
 
-Of three hundred and thirty entries, two are fixed (5, 7),
-three hundred and twenty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and thirty-three entries, two are fixed (5, 7),
+three hundred and twenty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -18039,5 +18188,6 @@ three hundred and twenty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
-318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330),
-and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
+331, 332, 333), and four were zsh-correct behavior misframed by
+demos (1, 2, 3, 6).
