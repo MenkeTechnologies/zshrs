@@ -1045,4 +1045,152 @@ mod tests {
     fn fillnameddirtable_symbol_exists_pin() {
         let _: fn() = fillnameddirtable;
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/hashnameddir.c
+    // c:117 addnameddirnode / c:136 removenameddirnode /
+    // c:153 freenameddirnode / c:162 printnameddirnode
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn mk_nd(dir: &str) -> nameddir {
+        nameddir {
+            node: crate::ported::zsh_h::hashnode::default(),
+            dir: dir.to_string(),
+            diff: 0,
+        }
+    }
+
+    /// c:117 — `addnameddirnode` overwrites an existing key (same name, new dir).
+    #[test]
+    fn addnameddirnode_overwrite_replaces_dir() {
+        let _g = crate::test_util::global_state_lock();
+        emptynameddirtable();
+        addnameddirnode("homed", mk_nd("/old/path"));
+        addnameddirnode("homed", mk_nd("/new/path"));
+        let tab = nameddirtab().lock().unwrap();
+        assert_eq!(tab.get("homed").map(|n| n.dir.clone()),
+            Some("/new/path".to_string()),
+            "overwrite must replace dir verbatim");
+        drop(tab);
+        emptynameddirtable();
+    }
+
+    /// c:117 — `addnameddirnode` overwrite does NOT grow the table.
+    #[test]
+    fn addnameddirnode_overwrite_does_not_grow() {
+        let _g = crate::test_util::global_state_lock();
+        emptynameddirtable();
+        addnameddirnode("key1", mk_nd("/a"));
+        let n1 = nameddirtab().lock().unwrap().len();
+        addnameddirnode("key1", mk_nd("/b"));
+        let n2 = nameddirtab().lock().unwrap().len();
+        assert_eq!(n1, n2, "overwrite must not grow table size");
+        emptynameddirtable();
+    }
+
+    /// c:136 — `removenameddirnode` returns the previously-stored nameddir
+    /// (Some payload).
+    #[test]
+    fn removenameddirnode_returns_payload_on_hit() {
+        let _g = crate::test_util::global_state_lock();
+        emptynameddirtable();
+        addnameddirnode("toremove", mk_nd("/path/x"));
+        let r = removenameddirnode("toremove");
+        assert!(r.is_some(), "remove must return Some payload");
+        assert_eq!(r.unwrap().dir, "/path/x");
+        emptynameddirtable();
+    }
+
+    /// c:136 — `removenameddirnode` shrinks the table by 1.
+    #[test]
+    fn removenameddirnode_shrinks_table_by_one() {
+        let _g = crate::test_util::global_state_lock();
+        emptynameddirtable();
+        addnameddirnode("a", mk_nd("/1"));
+        addnameddirnode("b", mk_nd("/2"));
+        addnameddirnode("c", mk_nd("/3"));
+        let before = nameddirtab().lock().unwrap().len();
+        let _ = removenameddirnode("b");
+        let after = nameddirtab().lock().unwrap().len();
+        assert_eq!(after, before - 1, "remove must shrink by 1");
+        emptynameddirtable();
+    }
+
+    /// c:136 — removing nonexistent name doesn't shrink table.
+    #[test]
+    fn removenameddirnode_miss_does_not_shrink() {
+        let _g = crate::test_util::global_state_lock();
+        emptynameddirtable();
+        addnameddirnode("a", mk_nd("/1"));
+        let before = nameddirtab().lock().unwrap().len();
+        let _ = removenameddirnode("__never__");
+        let after = nameddirtab().lock().unwrap().len();
+        assert_eq!(after, before, "miss must not change size");
+        emptynameddirtable();
+    }
+
+    /// c:153 — `freenameddirnode(nd)` returns void (compile-time pin).
+    #[test]
+    fn freenameddirnode_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: () = freenameddirnode(mk_nd("/x"));
+    }
+
+    /// c:162 — `printnameddirnode` empty-name node doesn't panic.
+    #[test]
+    fn printnameddirnode_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let nd = mk_nd("");
+        printnameddirnode(&nd, 0);
+    }
+
+    /// c:162 — `printnameddirnode` ND_USERNAME flag path doesn't panic.
+    #[test]
+    fn printnameddirnode_username_flag_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut nd = mk_nd("/home/u");
+        nd.node.nam = "u".to_string();
+        nd.node.flags = ND_USERNAME as i32;
+        printnameddirnode(&nd, 0);
+    }
+
+    /// c:162 — `printnameddirnode` PRINT_NAMEONLY | PRINT_LIST combo safe.
+    #[test]
+    fn printnameddirnode_combo_flags_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut nd = mk_nd("/dir");
+        nd.node.nam = "n".to_string();
+        printnameddirnode(&nd, (PRINT_NAMEONLY | PRINT_LIST) as i32);
+    }
+
+    /// c:117 — `addnameddirnode` computes `diff` as `dir.len() - nam.len()`.
+    /// Already pinned in pre-existing test; add a negative-diff case
+    /// (nam longer than dir).
+    #[test]
+    fn addnameddirnode_diff_negative_when_name_longer_than_dir() {
+        let _g = crate::test_util::global_state_lock();
+        emptynameddirtable();
+        addnameddirnode("very_long_name_xyz", mk_nd("/x"));
+        let tab = nameddirtab().lock().unwrap();
+        let nd = tab.get("very_long_name_xyz").unwrap();
+        // diff = dir.len() - nam.len() = 2 - 18 = -16
+        assert_eq!(nd.diff, 2i32 - "very_long_name_xyz".len() as i32,
+            "diff must be dir.len() - nam.len(), even when negative");
+        drop(tab);
+        emptynameddirtable();
+    }
+
+    /// c:53 — `emptynameddirtable` after adding entries clears them all.
+    #[test]
+    fn emptynameddirtable_clears_all_entries() {
+        let _g = crate::test_util::global_state_lock();
+        emptynameddirtable();
+        for i in 0..10 {
+            addnameddirnode(&format!("k{}", i), mk_nd(&format!("/d{}", i)));
+        }
+        assert_eq!(nameddirtab().lock().unwrap().len(), 10);
+        emptynameddirtable();
+        assert_eq!(nameddirtab().lock().unwrap().len(), 0,
+            "emptynameddirtable must remove every entry");
+    }
 }
