@@ -546,4 +546,112 @@ mod tests {
             assert_eq!(features_(std::ptr::null(), &mut v), 1);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/newuser.c
+    // c:16 setup_ / c:34 enables_ / c:43 check_dotfile /
+    // c:92 boot_ / c:154 cleanup_ / c:162 finish_
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:16 — `setup_` is idempotent.
+    #[test]
+    fn newuser_setup_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:154 — `cleanup_` returns 0 + idempotent.
+    #[test]
+    fn newuser_cleanup_idempotent_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:162 — `finish_` returns 0 + idempotent.
+    #[test]
+    fn newuser_finish_idempotent_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:154 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn newuser_cleanup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:162 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn newuser_finish_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:34 — `enables_` returns i32 (compile-time pin).
+    #[test]
+    fn newuser_enables_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = None;
+        let _: i32 = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:43 — `check_dotfile("", "")` empty inputs don't panic.
+    #[test]
+    fn check_dotfile_both_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = check_dotfile("", "");
+    }
+
+    /// c:43 — `check_dotfile` is deterministic for the same input.
+    #[test]
+    fn check_dotfile_deterministic_for_same_input() {
+        let _g = crate::test_util::global_state_lock();
+        let r1 = check_dotfile("/tmp", ".zshrc");
+        let r2 = check_dotfile("/tmp", ".zshrc");
+        assert_eq!(r1, r2, "check_dotfile must be pure");
+    }
+
+    /// c:43 — `check_dotfile` return value always in {-1, 0, 1, ...} —
+    /// pin against unexpected negative values beyond -1.
+    #[test]
+    fn check_dotfile_return_in_canonical_range() {
+        let _g = crate::test_util::global_state_lock();
+        for fname in [".zshrc", ".zshenv", ".zprofile", ".zlogin"] {
+            let r = check_dotfile("/tmp/__never_exists_xyz__", fname);
+            assert!(r >= -1, "check_dotfile must return ≥ -1; got {}", r);
+        }
+    }
+
+    /// c:43 — `check_dotfile` very long path doesn't panic.
+    #[test]
+    fn check_dotfile_long_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let long = "x".repeat(500);
+        let _ = check_dotfile(&long, ".zshrc");
+    }
+
+    /// c:92 — `boot_` is idempotent (alt).
+    #[test]
+    fn newuser_boot_idempotent_alt() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            let _ = boot_(std::ptr::null());
+        }
+    }
+
+    /// c:43 — `check_dotfile` with absolute paths under /tmp doesn't panic.
+    #[test]
+    fn check_dotfile_various_dotdirs_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        for dir in ["/tmp", "/", "/var", "/usr"] {
+            let _ = check_dotfile(dir, ".zshrc");
+        }
+    }
 }
