@@ -8808,6 +8808,148 @@ echo "main work" }
 
 ---
 
+## #169 — `{...} always {...} always {...}` chained-always silently accepted (zsh: parse error)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '{ echo a } always { echo b } always { echo c }' 2>&1
+zsh:1: parse error near `always'
+
+$ ./target/debug/zshrs --zsh -c '{ echo a } always { echo b } always { echo c }' 2>&1
+a
+b
+```
+
+The `{ try } always { handler }` construct in zsh allows
+exactly one `always` block. Chaining multiple `always` blocks
+is a parse error. zshrs silently runs the first try-block + the
+first always-block, then ignores the second `always`.
+
+Same permissive-parser family:
+- #141 (`;;` outside case)
+- #146 (`{ cmd; } arg` trailing args)
+- #161 (empty case pattern)
+- #162 (unclosed pad-delim)
+- #167 (unclosed `{`)
+- #168 (extra `}`)
+- #169 (this — chained `always`)
+
+Even worse: `{ a } always { b } extra` (trailing tokens after
+always) is also silently accepted in zshrs.
+
+**Where** — `src/ported/parse.rs::parse_always_block`: parses
+a single `always` block then returns, ignoring trailing tokens
+without erroring. C-source `Src/parse.c::par_event` errors on
+the second `always`.
+
+**Impact** — typos in `always`-chained code silently produce
+partial execution:
+
+```sh
+{ critical_section
+} always { cleanup1
+} always { cleanup2 }    # typo: meant to nest, not chain
+# zsh: parse error caught immediately
+# zshrs: cleanup1 runs, cleanup2 silently dropped
+```
+
+**Workaround** — careful syntax review.
+
+---
+
+## #170 — Unclosed `echo (abc` treated as literal arg (zsh: bad pattern error)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo (abc' 2>&1
+zsh:1: bad pattern: (abc
+
+$ ./target/debug/zshrs --zsh -c 'echo (abc' 2>&1
+(abc
+```
+
+In zsh, `(...)` opens either a subshell or a pattern-grouping
+context. An unclosed `(` is a parse/pattern error. zsh reports
+"bad pattern: (abc". zshrs treats `(abc` as a literal string
+argument to `echo` and prints it.
+
+Same permissive-parser family.
+
+**Where** — `src/ported/parse.rs::parse_paren`: when an
+unclosed `(` is encountered, falls back to treating it as a
+literal character instead of erroring. C-source
+`Src/parse.c::par_subsh` / `Src/pattern.c::patcompile` errors.
+
+**Impact** — common typo of missing close-paren passes silently:
+
+```sh
+echo "first" (forgot to close
+echo "second"
+# zsh: parse error caught immediately
+# zshrs: echo runs both lines literally
+```
+
+**Workaround** — careful syntax review.
+
+---
+
+## #171 — Empty pipeline/and-or operands (`a | | b`, `a && && b`) silently accepted
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo a | | echo b' 2>&1
+zsh:1: parse error near `|'
+
+$ ./target/debug/zshrs --zsh -c 'echo a | | echo b' 2>&1
+a
+```
+
+Doubled pipeline/conditional operators with empty operands
+should be parse errors. zsh errors. zshrs runs the first command
+(`echo a`) and silently drops the rest.
+
+Same for `&&` and `||`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo a && && echo b' 2>&1
+zsh:1: parse error near `&&'
+
+$ ./target/debug/zshrs --zsh -c 'echo a && && echo b' 2>&1
+a
+
+$ /opt/homebrew/bin/zsh -fc 'echo a || || echo b' 2>&1
+zsh:1: parse error near `||'
+
+$ ./target/debug/zshrs --zsh -c 'echo a || || echo b' 2>&1
+a
+```
+
+All three operators have the same permissive behavior in zshrs.
+
+**Where** — `src/ported/parse.rs::parse_pipeline` / `::parse_andor`:
+allows zero-token expression between consecutive operators.
+C-source `Src/parse.c::par_pline` requires at least one command
+between pipe-operators.
+
+**Impact** — typos with extra `|`/`&&`/`||` silently truncate
+script execution:
+
+```sh
+# user typo: extra | from copy-paste
+process_input | | filter_data | output
+# zsh: parse error (caught immediately)
+# zshrs: process_input runs, rest dropped — filter_data and
+#        output never execute
+```
+
+Cascading silent failures.
+
+**Workaround** — careful syntax review.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -8980,9 +9122,12 @@ echo "main work" }
 | 166 | `for x in $@` keeps empty elements (zsh: removes via IFS-split) | **port-bug** | `[[ -z $arg ]] continue` |
 | 167 | Unclosed `{ cmd` silently runs (zsh: parse error) | **port-bug** | careful review |
 | 168 | Extra `}` after command silently ignored (zsh: parse error) | **port-bug** | careful review |
+| 169 | `{} always {} always {}` chained-always silently accepted | **port-bug** | careful review |
+| 170 | `echo (abc` unclosed paren treated as literal | **port-bug** | careful review |
+| 171 | `cmd \| \| cmd`/`&& &&`/`\|\| \|\|` empty operands silently accepted | **port-bug** | careful review |
 
-Of one hundred sixty-eight entries, two are fixed (5, 7), one
-hundred sixty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of one hundred seventy-one entries, two are fixed (5, 7), one
+hundred sixty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -8993,5 +9138,5 @@ hundred sixty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
-162, 163, 164, 165, 166, 167, 168), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+162, 163, 164, 165, 166, 167, 168, 169, 170, 171), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
