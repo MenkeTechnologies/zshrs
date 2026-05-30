@@ -6,6 +6,7 @@ description = "The first compiled Unix shell — bytecode VM, worker pool, AOP i
 license = "MIT"
 authors = ["MenkeTechnologies"]
 repository = "https://github.com/MenkeTechnologies/zshrs"
+homepage = "https://menketechnologies.github.io/zshrs/"
 documentation = "https://menketechnologies.github.io/strykelang/zshrs.html"
 readme = "README.md"
 keywords = ["shell", "zsh", "bytecode", "terminal", "unix"]
