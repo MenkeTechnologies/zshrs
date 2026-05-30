@@ -5345,6 +5345,186 @@ done
 
 ---
 
+## #106 — `disable BUILTIN` doesn't actually disable the builtin
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'disable echo; type echo; echo hi'
+echo is /bin/echo
+hi
+
+$ ./target/debug/zshrs --zsh -c 'disable echo; type echo; echo hi'
+echo is a shell builtin
+hi
+```
+
+After `disable echo`, zsh removes the builtin from the dispatch
+table — `type echo` reports the external path `/bin/echo`, and
+`echo hi` invokes the external. zshrs's `disable` doesn't actually
+disable the builtin — `type echo` still reports "shell builtin"
+and execution still uses the builtin.
+
+Same for `cd`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'disable cd; cd /tmp 2>&1; pwd'
+/Users/wizard/RustroverProjects/zshrs   # cd failed silently, no movement
+
+$ ./target/debug/zshrs --zsh -c 'disable cd; cd /tmp 2>&1; pwd'
+/tmp   # cd still works
+```
+
+`disable cd` should make `cd` undefined (since there's no
+external `cd`), so subsequent `cd /tmp` should fail with
+command-not-found. zshrs ignores the disable.
+
+Per `man zshbuiltins`:
+> `disable [ -afmrs ] name ...` — disables the hash table elements
+> with the given names. By default, names are disabled as
+> builtins.
+
+**Where** — `src/ported/builtin_disable.rs::disable_builtin`:
+sets a flag in the builtin table but the dispatcher doesn't
+consult it. C-source `Src/builtin.c::execbuiltin` checks
+`PM_DISABLED` flag on lookup and falls through to PATH if set.
+
+**Impact** — `disable` is the standard mechanism to:
+1. Force PATH lookup for a name that's shadowed by a builtin
+   (e.g., `disable echo` to use GNU echo from coreutils).
+2. Test code paths that should error when a builtin is absent.
+3. Plugin systems that temporarily disable a builtin to provide
+   their own wrapper.
+
+All three patterns broken in zshrs.
+
+**Workaround** — `command` prefix forces external lookup:
+```sh
+command echo hi    # bypasses builtin, calls /bin/echo
+```
+
+---
+
+## #107 — `autoload -U +X funcname` doesn't validate function exists in fpath
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'autoload -U +X totally_fake_function_name; echo "ec=$?"'
+zsh:1: totally_fake_function_name: function definition file not found
+ec=1
+
+$ ./target/debug/zshrs --zsh -c 'autoload -U +X totally_fake_function_name; echo "ec=$?"'
+ec=0
+```
+
+`autoload -U +X funcname` should:
+1. Search `$fpath` for a file matching `funcname`.
+2. Load it immediately (the `+X` flag).
+3. Error if not found.
+
+zsh errors with "function definition file not found" + exit 1.
+zshrs silently succeeds with exit 0.
+
+Per `man zshbuiltins`:
+> `autoload ... +X` — Load the function immediately. If the
+> function definition is not found, the function is not defined
+> and `autoload` returns an error.
+
+Without `+X`, both shells register the function lazily without
+immediate validation (which IS correct — error only fires on
+first call). Bug is specifically the `+X` immediate-load path
+skipping the existence check.
+
+**Where** — `src/ported/builtin_autoload.rs::immediate_load`:
+calls the function-table registration regardless of file
+existence. C-source `Src/builtin.c::bin_autoload` calls
+`loadautofn(fmark, +1)` which fails when no fpath match exists.
+
+**Impact** — config validation scripts that use `autoload +X` to
+verify their function dependencies are available at startup get
+false positives:
+
+```sh
+# .zshrc snippet checking required functions
+for fn in compinit promptinit add-zsh-hook; do
+    autoload -U +X $fn 2>/dev/null || {
+        echo "WARN: $fn not in fpath; check zsh install"
+    }
+done
+# zsh: warns on missing fns      zshrs: never warns (all pass)
+```
+
+**Workaround** — explicit `[[ -f $fpath/funcname ]]` check before
+autoload:
+```sh
+local found=0
+for dir in "$fpath[@]"; do
+    [[ -f "$dir/$fn" ]] && { found=1; break; }
+done
+(( found )) || echo "WARN: $fn not found"
+```
+
+---
+
+## #108 — `${array/pat/repl}` treats as per-element instead of scalar-joined
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); echo "[${a/b*/X}]"'
+[red X]
+
+$ ./target/debug/zshrs --zsh -c 'a=(red blue green); echo "[${a/b*/X}]"'
+[red X green]
+```
+
+`${array/pat/X}` (no `[@]` subscript) — in zsh, the array is
+joined to a scalar first (`red blue green`), then `b*` matches
+"blue green" (greedy) → `[red X]`.
+
+zshrs applies the substitution per-element (treats it the same as
+`${array[@]/pat/X}`): each element substituted independently.
+"red" doesn't match. "blue" matches → "X". "green" doesn't match
+"b*". Result: `[red X green]`.
+
+For comparison, `${a[@]/b*/X}` IS per-element in both shells:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); echo "[${a[@]/b*/X}]"'
+[red X green]
+```
+
+So the bug is specifically: zshrs treats `${a/...}` (without
+`[@]`) as if it had `[@]` implicit. zsh requires `[@]` for
+per-element semantics; without it, the array is collapsed to a
+scalar first.
+
+**Where** — `src/ported/paramsubst.rs::apply_pattern_substitution`:
+forks into per-element mode based on the underlying parameter
+being an array, regardless of subscript form. C-source
+`Src/subst.c::getmatch` distinguishes `${arr/...}` (scalar context)
+from `${arr[@]/...}` (array context).
+
+**Impact** — same family as #82 (quoted-context array vs scalar)
+and #63 (nested split-then-join). Pattern-substitution-based
+transforms that intentionally use the scalar form produce wrong
+results:
+
+```sh
+csv=(red blue green)
+# replace the FIRST blue/green pair occurrence (whichever comes first as a substring)
+echo "${csv/blue green/COMBINED}"
+# zsh: "red COMBINED"            (matches across join)
+# zshrs: "red blue green"        (no per-element match)
+```
+
+**Workaround** — explicit scalar join + substitute:
+```sh
+joined="${csv[*]}"
+echo "${joined/blue green/COMBINED}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -5454,13 +5634,16 @@ done
 | 103 | `$0` inside sourced script returns shell binary, not sourced file | **port-bug** | `${(%):-%x}` prompt-expansion |
 | 104 | Signal `kill -X $$` from inside fn is lost (trap never fires) | **port-bug** | direct invocation post-fn |
 | 105 | `(f<NNN>)` permission glob qualifier ignored | **port-bug** | `stat`-based loop |
+| 106 | `disable BUILTIN` doesn't actually disable (echo/cd still work) | **port-bug** | `command BUILTIN` prefix |
+| 107 | `autoload -U +X funcname` doesn't validate fpath existence | **port-bug** | manual `[[ -f $fpath/fn ]]` check |
+| 108 | `${array/pat/X}` per-element (zsh treats as scalar-joined) | **port-bug** | `${arr[*]}` explicit join |
 
-Of one hundred five entries, two are fixed (5, 7), ninety-nine remain
-open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
-35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
-52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
-69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85,
-86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101,
-102, 103, 104, 105), and four were zsh-correct behavior misframed by
-demos (1, 2, 3, 6).
+Of one hundred eight entries, two are fixed (5, 7), one hundred two
+remain open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15,
+16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66,
+67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,
+84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100,
+101, 102, 103, 104, 105, 106, 107, 108), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
