@@ -9892,6 +9892,132 @@ echo "${()-fallback}"
 
 ---
 
+## #190 — `kill -L` lists signals (zsh: errors "unknown signal: SIGL")
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'kill -L 2>&1'
+zsh:kill:1: unknown signal: SIGL
+zsh:kill:1: type kill -l for a list of signals
+
+$ ./target/debug/zshrs --zsh -c 'kill -L 2>&1'
+ 1 HUP         2 INT         3 QUIT        4 ILL
+ 5 TRAP        6 ABRT        7 EMT         8 FPE
+ 9 KILL       10 BUS        11 SEGV       12 SYS
+...
+```
+
+zsh's `kill` builtin recognizes only `-l` (lowercase) as the
+"list signals" flag. `-L` (uppercase) is treated as a signal
+specifier — parses as `SIGL` (unknown).
+
+zshrs accepts `-L` as if it were `-l`. Different option-parsing
+behavior.
+
+Per `man zshbuiltins`:
+> `kill -l [ SIG ... ]` — List signal names, or print a signal
+> number's corresponding name.
+
+Only `-l` is documented. `-L` may be a Linux-procps extension
+that zshrs imports but isn't zsh-standard.
+
+**Where** — `src/ported/builtin_kill.rs::parse_flags`: accepts
+both `-l` and `-L` as the list flag. C-source
+`Src/Modules/kill.c::bin_kill` accepts only `-l`.
+
+**Impact** — scripts using `kill -L` work in zshrs but fail in
+zsh. Bash also has only `-l`, so cross-shell scripts shouldn't
+use `-L` (and the lowercase form works in both).
+
+**Workaround** — always use `kill -l` (lowercase).
+
+---
+
+## #191 — `${(l.5..)s}` empty-fill character accepted with garbage output
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's=hi; echo "[${(l.5..)s}]"' 2>&1
+zsh:1: error in flags near position 8 in '${(l.5..)s}]'
+
+$ ./target/debug/zshrs --zsh -c 's=hi; echo "[${(l.5..)s}]"' 2>&1
+[s)s)s]
+```
+
+The `(l.<width>.<fill1>.<fill2>.)` pad-flag syntax requires both
+fill characters between the dots. Empty fills `(l.5..)` are
+malformed. zsh rejects with clear error. zshrs accepts the
+malformed form and produces nonsense output `[s)s)s]` (apparently
+substituting `)s` repeatedly).
+
+Same family as #162 (pad-flag missing close delim).
+
+**Where** — `src/ported/paramsubst.rs::parse_pad_flag_args`:
+empty fill chars treated as zero-length string, padding logic
+uses bytes from the wrong source. C-source
+`Src/subst.c::parsesubst` errors on empty fill.
+
+**Impact** — typos in pad-flag syntax produce garbage values
+instead of clear errors:
+
+```sh
+echo "${(l.${col}..)val}"     # forgot to specify fill char
+# zsh: errors with position info
+# zshrs: produces nonsense output silently
+```
+
+**Workaround** — always specify both fill positions even if just
+spaces: `(l.5. . .)` or use the simpler `(l.5.X.)`.
+
+---
+
+## #192 — `${(P)name[N]:mod}` indirect-array-elem with modifier works in zshrs (zsh: errors)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'arr=(/a/b /c/d); name=arr; echo "${(P)name[1]:t}"; echo "${(P)name[2]:t}"' 2>&1
+(empty - errors)
+
+$ ./target/debug/zshrs --zsh -c 'arr=(/a/b /c/d); name=arr; echo "${(P)name[1]:t}"; echo "${(P)name[2]:t}"'
+b
+d
+```
+
+`${(P)name[N]:mod}` — indirect deref via `name`, take element N,
+apply modifier. zsh errors on this combined form. zshrs computes
+correctly and returns the tail of each indexed element.
+
+zshrs's behavior is arguably MORE useful (zsh's error seems
+overly strict). But the divergence is real — cross-shell scripts
+that work in zshrs error in zsh.
+
+This is the OPPOSITE polarity of most other bugs in this set:
+zshrs is more permissive AND more correct semantically, while
+zsh is strict-and-broken.
+
+**Where** — `src/ported/paramsubst.rs::indirect_array_modifier`:
+chains the modifier after the indirect-deref correctly. C-source
+`Src/subst.c::dosubst` doesn't allow modifier after `(P)+[N]`
+combo.
+
+**Impact** — code written for zshrs that uses this idiom fails
+in zsh. Cross-shell scripts should avoid:
+
+```sh
+# zshrs-only working form:
+basename="${(P)arr_name[1]:t}"
+# zsh equivalent (works in both):
+local deref="${(@P)arr_name}"
+basename="${deref[1]:t}"
+```
+
+**Workaround** — split into two steps via temp variable.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -10085,20 +10211,23 @@ echo "${()-fallback}"
 | 187 | `f() { :; } > /file` redirect on fn-def creates file at def time | **port-bug** | redirect at call site |
 | 188 | Empty-array slice `${a[@]:0:1}` iterates once with empty val | **port-bug** | `${#a} > 0` pre-check |
 | 189 | `${()-default}` empty-flag-paren silently returns `$-` | **port-bug** | careful syntax |
+| 190 | `kill -L` lists signals (zsh: errors "unknown signal: SIGL") | **port-bug** | always use `-l` lowercase |
+| 191 | `${(l.5..)s}` empty-fill silently accepted with garbage output | **port-bug** | always specify fill chars |
+| 192 | `${(P)name[N]:mod}` indirect-arr-elem with modifier works (zsh: errors) | **port-bug** | temp var split |
 
-Of one hundred eighty-nine entries, two are fixed (5, 7), one
-hundred eighty-three remain open port-bugs/perf-issues (4, 8, 9,
-10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
-78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
-95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108,
-109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
-122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134,
-135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147,
-148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160,
-161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173,
-174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186,
-187, 188, 189), and four were zsh-correct behavior misframed by
-demos (1, 2, 3, 6).
+Of one hundred ninety-two entries, two are fixed (5, 7), one
+hundred eighty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
+62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
+79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
+110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
+123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
+136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
+149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
+162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174,
+175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
+188, 189, 190, 191, 192), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
