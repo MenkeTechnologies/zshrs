@@ -1499,4 +1499,103 @@ mod tests {
             assert_eq!(iwidget_lookup("self-insert").is_some(), first);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_bindings.rs
+    // c:37 getkeystring (full escape table) / c:191 bindkey_by_name /
+    // c:225 bindlistout / c:746 iwidget_lookup
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:37 — `getkeystring` returns Vec<u8> (compile-time pin, alt).
+    #[test]
+    fn getkeystring_returns_vec_u8_pin_alt() {
+        let _: Vec<u8> = getkeystring("anything");
+    }
+
+    /// c:6995 — `getkeystring(\\a)` produces 0x07 (BEL).
+    #[test]
+    fn getkeystring_backslash_a_is_bel() {
+        assert_eq!(getkeystring(r"\a"), vec![0x07], "\\a → BEL (0x07)");
+    }
+
+    /// c:7003 — `getkeystring(\\b)` produces 0x08 (BS).
+    #[test]
+    fn getkeystring_backslash_b_is_bs() {
+        assert_eq!(getkeystring(r"\b"), vec![0x08], "\\b → BS (0x08)");
+    }
+
+    /// c:7013 — `getkeystring(\\f)` produces 0x0c (FF).
+    #[test]
+    fn getkeystring_backslash_f_is_ff() {
+        assert_eq!(getkeystring(r"\f"), vec![0x0c], "\\f → FF (0x0c)");
+    }
+
+    /// c:7006 — `getkeystring(\\t)` produces 0x09 (TAB, alt).
+    #[test]
+    fn getkeystring_backslash_t_is_tab_alt() {
+        assert_eq!(getkeystring(r"\t"), vec![0x09], "\\t → TAB (0x09)");
+    }
+
+    /// c:7009 — `getkeystring(\\v)` produces 0x0b (VT, alt).
+    #[test]
+    fn getkeystring_backslash_v_is_vt_alt() {
+        assert_eq!(getkeystring(r"\v"), vec![0x0b], "\\v → VT (0x0b)");
+    }
+
+    /// c:7019 — `getkeystring(\\e)` produces 0x1b (ESC).
+    #[test]
+    fn getkeystring_backslash_e_is_esc() {
+        assert_eq!(getkeystring(r"\e"), vec![0x1b], "\\e → ESC (0x1b)");
+    }
+
+    /// c:7026 — `getkeystring(\\E)` produces 0x1b (ESC) — synonym.
+    #[test]
+    fn getkeystring_backslash_E_is_esc() {
+        assert_eq!(getkeystring(r"\E"), vec![0x1b], "\\E → ESC (0x1b)");
+    }
+
+    /// c:44 — `getkeystring(^A)` (caret-A) → 0x01 (Ctrl-A, alt).
+    #[test]
+    fn getkeystring_caret_A_is_ctrl_a_alt() {
+        assert_eq!(getkeystring("^A"), vec![0x01], "^A → 0x01");
+    }
+
+    /// c:44 — `getkeystring(^?)` (caret-?) → 0x7f (DEL, alt).
+    #[test]
+    fn getkeystring_caret_question_is_del_alt() {
+        assert_eq!(getkeystring("^?"), vec![0x7f], "^? → 0x7f (DEL)");
+    }
+
+    /// c:44 — `getkeystring(^[)` (caret-[) → 0x1b (ESC).
+    #[test]
+    fn getkeystring_caret_bracket_is_esc() {
+        assert_eq!(getkeystring("^["), vec![0x1b], "^[ → 0x1b (ESC)");
+    }
+
+    /// c:37 — `getkeystring` is deterministic (alt name pin).
+    #[test]
+    fn getkeystring_is_deterministic_alt() {
+        for s in ["", "a", r"\n", "^A", r"\e^[abc"] {
+            let first = getkeystring(s);
+            for _ in 0..3 {
+                assert_eq!(getkeystring(s), first,
+                    "getkeystring({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:191 — `bindkey_by_name` is deterministic for unknown keymap.
+    #[test]
+    fn bindkey_by_name_unknown_keymap_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = bindkey_by_name("__never_keymap__", "x", "self-insert");
+        for _ in 0..3 {
+            assert_eq!(
+                bindkey_by_name("__never_keymap__", "x", "self-insert"),
+                first,
+                "bindkey_by_name on unknown keymap must be deterministic"
+            );
+        }
+    }
 }
