@@ -8526,6 +8526,152 @@ delimiter.
 
 ---
 
+## #163 — `${(t)1}` positional parameter returns `scalar` instead of `array-special`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- a b; echo "${(t)1}"'
+array-special
+
+$ ./target/debug/zshrs --zsh -c 'set -- a b; echo "${(t)1}"'
+scalar
+```
+
+`$1`, `$2`, etc. are zsh's POSITIONAL parameters — they're
+elements of the readonly special-array `$argv`. zsh's `(t)`
+flag returns `array-special` to reflect this. zshrs returns
+`scalar` (treating each positional as an independent scalar
+var).
+
+`${(t)@}` and `${(t)*}` (full positional array) are correct in
+both shells (`array-readonly-special`). Only the indexed form
+`${(t)N}` diverges.
+
+Per `man zshparam`:
+> `$argv` — Same as `$@` and `$*`. The positional parameters,
+> indexed from 1.
+> `$1, $2, ...` — Aliases for `${argv[1]}`, `${argv[2]}`, etc.
+
+**Where** — `src/ported/paramsubst.rs::type_of_positional`:
+returns `scalar` for `${(t)N}` when N is numeric. Should
+return `array-special` because positional indices reference
+elements of the `argv` special array. C-source
+`Src/subst.c::paramtype` walks back through the parameter
+descriptor and returns the parent type.
+
+**Impact** — type-introspection scripts that need to identify
+positional params vs regular scalars get wrong classification.
+Rarely-used but documented zsh feature broken.
+
+**Workaround** — check via `[[ "$#" -gt 0 ]]` or similar
+positional-presence test instead of relying on `(t)` for
+positional detection.
+
+---
+
+## #164 — Extended_glob `^pattern` (negation prefix) not recognized
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/zg; touch /tmp/zg/{a,b,c}; print -l /tmp/zg/^a'
+/tmp/zg/b
+/tmp/zg/c
+
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; mkdir -p /tmp/zg; touch /tmp/zg/{a,b,c}; print -l /tmp/zg/^a'
+/tmp/zg/^a
+```
+
+The `^pattern` extended_glob form matches "anything NOT matching
+pattern". zsh expands `^a` to "all files except `a`" → `b c`.
+zshrs returns the literal `^a` pattern.
+
+Family with the extended_glob coverage gap:
+- #62 (`~` and-not operator)
+- #81 (`~` exclusion duplicates)
+- #89 (`#`/`##` quantifiers)
+- #99 (`(#cN,M)` count flag)
+- #117 (`(group)#` group quantifier)
+- #164 (this — `^` negation prefix)
+
+The whole extended_glob operator set has at least 6 distinct
+gaps.
+
+**Where** — `src/ported/pattern.rs::compile_extglob_neg`:
+missing the `^` prefix handler. C-source `Src/pattern.c::patcompile`
+recognizes `^` as `PAT_NOT` when `isset(EXTENDEDGLOB)`.
+
+**Impact** — every script using `^` for negation fails to
+filter properly:
+
+```sh
+setopt extended_glob
+# delete all files except backup.log
+rm /var/log/^backup.log
+# zsh: deletes everything except backup.log
+# zshrs: tries to remove literal "^backup.log" file
+```
+
+Data-loss adjacent (like #81).
+
+**Workaround** — loop with `[[` continue:
+```sh
+for f in /var/log/*; do
+    [[ "$f" == */backup.log ]] && continue
+    rm "$f"
+done
+```
+
+---
+
+## #165 — `${$((expr))}` arith-result-as-name returns empty (zsh: returns expr value)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "${$((5 + 3))}"'
+8
+
+$ ./target/debug/zshrs --zsh -c 'echo "${$((5 + 3))}"'
+(empty)
+```
+
+`${$((expr))}` is the form "evaluate arithmetic, treat result as
+the value of the expansion". zsh evaluates `5 + 3 = 8` and
+returns `"8"`. zshrs returns empty (the inner expansion fails
+or returns nothing usable).
+
+Per `man zshexpn` § PARAMETER EXPANSION:
+> Inside the `${...}` form, any of the parameter expansion
+> syntax can appear, including arithmetic expansion. The result
+> is treated as if it were the value of the parameter.
+
+So `${$((5 + 3))}` should produce the same as `echo $((5 + 3))`.
+
+**Where** — `src/ported/paramsubst.rs::expand_nested_arith`:
+when the inner expansion is an arith `$((...))`, the result
+isn't propagated to the outer `${...}`. C-source
+`Src/subst.c::dosubst` handles nested arith as a special case.
+
+**Impact** — defensive arith-coerce patterns using
+`${$((expr))}` to force numeric-then-treat-as-string fail:
+
+```sh
+# zsh-idiomatic: stringify an arith result for further use
+result="${$((bytes * 8))}"
+log "size in bits: $result"
+# zsh: result = "8 * bytes_value"
+# zshrs: result = empty
+```
+
+**Workaround** — direct arith expansion:
+```sh
+result="$((bytes * 8))"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -8692,9 +8838,12 @@ delimiter.
 | 160 | `autoload -U +X funcname` doesn't actually load function body | **port-bug** | drop `+X`, lazy load |
 | 161 | `case x in)` empty pattern silently accepted (zsh: parse error) | **port-bug** | careful syntax |
 | 162 | `${(l.5)x}` missing close-delim silently accepted (zsh: error) | **port-bug** | careful syntax |
+| 163 | `${(t)1}` positional type returns `scalar` (zsh: `array-special`) | **port-bug** | `[[ "$#" -gt 0 ]]` test |
+| 164 | Extended_glob `^pat` (negation prefix) not recognized | **port-bug** | loop with `[[ == ]] continue` |
+| 165 | `${$((expr))}` arith-as-name returns empty (zsh: expr value) | **port-bug** | direct `$((expr))` |
 
-Of one hundred sixty-two entries, two are fixed (5, 7), one
-hundred fifty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of one hundred sixty-five entries, two are fixed (5, 7), one
+hundred fifty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -8705,5 +8854,5 @@ hundred fifty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
-162), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+162, 163, 164, 165), and four were zsh-correct behavior misframed
+by demos (1, 2, 3, 6).
