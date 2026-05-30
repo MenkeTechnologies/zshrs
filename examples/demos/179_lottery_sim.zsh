@@ -43,17 +43,17 @@ for ((p=1; p<=players; p++)); do
     printf "player %2d: %-18s matches=%d\n" $p "$pick" $matches
 done
 
-echo "── 1000-game match histogram ──"
+echo "── 200-game match histogram ──"
 typeset -A match_counts
-for ((g=0; g<1000; g++)); do
+for ((g=0; g<200; g++)); do
     p=$(draw_lottery 6 49)
     m=$(count_matches "$p" "$winning")
     (( match_counts[$m]++ ))
 done
 echo "match → count"
 for k in ${(ko)match_counts}; do
-    printf "  %d → %d (%.1f%%)\n" $k ${match_counts[$k]} $(( ${match_counts[$k]} * 100 ))
-done | head -8
+    printf "  %d → %d (%.1f%%)\n" $k ${match_counts[$k]} $(( ${match_counts[$k]} * 100 / 200 ))
+done
 
 echo "── multi-lottery results ──"
 echo "powerball-ish (5/69 + 1/26):"

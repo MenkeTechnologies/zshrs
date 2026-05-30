@@ -1,0 +1,103 @@
+#!/usr/bin/env zshrs
+# Vigenère cipher — classic poly-alphabetic substitution.
+
+# Convert char to 0-25 index (A=0..Z=25); -1 for non-letter.
+char_idx() {
+    local c=$1
+    case $c in
+        [A-Z]) printf "%d" $(( #c - 65 )) ;;
+        [a-z]) printf "%d" $(( #c - 97 )) ;;
+        *)     printf "%d" -1 ;;
+    esac
+}
+
+idx_to_char() {
+    local i=$1 case=$2  # case=u or l
+    if [[ $case == u ]]; then
+        printf "\\$(printf %03o $((i + 65)))"
+    else
+        printf "\\$(printf %03o $((i + 97)))"
+    fi
+}
+
+encrypt() {
+    local plain=$1 key=$2 out=""
+    local i kp pi ki shifted is_upper
+    local klen=${#key}
+    local pk_idx=0
+    for ((i=1; i<=${#plain}; i++)); do
+        local c=${plain[i]}
+        pi=$(char_idx "$c")
+        if (( pi < 0 )); then
+            out+="$c"  # passthrough non-letters
+            continue
+        fi
+        kp=${key[ pk_idx % klen + 1 ]}
+        ki=$(char_idx "$kp")
+        shifted=$(( (pi + ki) % 26 ))
+        case $c in
+            [A-Z]) is_upper=u ;;
+            *)     is_upper=l ;;
+        esac
+        out+=$(idx_to_char $shifted $is_upper)
+        (( pk_idx++ ))
+    done
+    echo "$out"
+}
+
+decrypt() {
+    local cipher=$1 key=$2 out=""
+    local i kp ci ki shifted is_upper
+    local klen=${#key}
+    local pk_idx=0
+    for ((i=1; i<=${#cipher}; i++)); do
+        local c=${cipher[i]}
+        ci=$(char_idx "$c")
+        if (( ci < 0 )); then
+            out+="$c"
+            continue
+        fi
+        kp=${key[ pk_idx % klen + 1 ]}
+        ki=$(char_idx "$kp")
+        shifted=$(( (ci - ki + 26) % 26 ))
+        case $c in
+            [A-Z]) is_upper=u ;;
+            *)     is_upper=l ;;
+        esac
+        out+=$(idx_to_char $shifted $is_upper)
+        (( pk_idx++ ))
+    done
+    echo "$out"
+}
+
+echo "── encrypt/decrypt round-trips ──"
+pairs=(
+    "HELLO|KEY"
+    "ATTACKATDAWN|LEMON"
+    "The quick brown fox|cipher"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ|A"   # key A = identity
+    "Cryptography is fun!|MENKE"
+)
+for p in "${pairs[@]}"; do
+    plain="${p%|*}"
+    key="${p#*|}"
+    cipher=$(encrypt "$plain" "$key")
+    back=$(decrypt "$cipher" "$key")
+    printf "  plain:  %s\n  key:    %s\n  cipher: %s\n  decrypt: %s   %s\n\n" \
+        "$plain" "$key" "$cipher" "$back" "$([[ $back == $plain ]] && echo ✓ || echo ✗)"
+done
+
+echo "── identity test (key=A) ──"
+plain="ZSHRS RUNS HOT"
+cipher=$(encrypt "$plain" "A")
+echo "  '$plain' with key 'A' → '$cipher'"
+
+echo
+echo "── tableau preview (first 5 rows) ──"
+for ((r=0; r<5; r++)); do
+    row=""
+    for ((c=0; c<26; c++)); do
+        row+=$(idx_to_char $(((r + c) % 26)) u)
+    done
+    echo "  $row"
+done
