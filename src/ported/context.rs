@@ -633,4 +633,146 @@ mod tests {
         );
         assert!(cstack.lock().unwrap().is_none());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/context.c
+    // c:52 zcontext_save_partial / c:80 zcontext_save /
+    // c:89 zcontext_restore_partial / c:126 zcontext_restore /
+    // zsh.h:491-495 ZCONTEXT_* flags
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:52 — `zcontext_save_partial(ZCONTEXT_HIST)` pushes exactly one frame.
+    #[test]
+    fn zcontext_save_partial_hist_pushes_one_frame() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        zcontext_save_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
+        assert!(cstack.lock().unwrap().is_some(), "frame must exist after save");
+        zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
+        assert!(cstack.lock().unwrap().is_none(), "frame must be drained");
+    }
+
+    /// c:80-83 — `zcontext_save()` saves all three (HIST|LEX|PARSE).
+    #[test]
+    fn zcontext_save_full_then_restore_full_clears_stack() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        zcontext_save();
+        assert!(cstack.lock().unwrap().is_some());
+        zcontext_restore();
+        assert!(cstack.lock().unwrap().is_none());
+    }
+
+    /// c:52 — three saves push three frames; three restores drain all.
+    #[test]
+    fn zcontext_save_three_then_restore_three_clears_stack() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        zcontext_save();
+        zcontext_save();
+        zcontext_save();
+        zcontext_restore();
+        zcontext_restore();
+        zcontext_restore();
+        assert!(cstack.lock().unwrap().is_none(),
+            "all 3 frames must drain (LIFO)");
+    }
+
+    /// c:80 — `zcontext_save` is the shorthand for the OR of all three.
+    #[test]
+    fn zcontext_save_equals_or_of_three_flags_behavior() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        zcontext_save();
+        let depth1 = cstack.lock().unwrap().is_some();
+        reset_cstack();
+        zcontext_save_partial(
+            crate::ported::zsh_h::ZCONTEXT_HIST
+                | crate::ported::zsh_h::ZCONTEXT_LEX
+                | crate::ported::zsh_h::ZCONTEXT_PARSE,
+        );
+        let depth2 = cstack.lock().unwrap().is_some();
+        assert_eq!(depth1, depth2,
+            "shorthand and explicit OR must produce same push behavior");
+        zcontext_restore();
+    }
+
+    /// zsh.h:491-495 — ZCONTEXT_HIST|LEX|PARSE = 0b111 = 7.
+    #[test]
+    fn zcontext_all_flags_or_equals_seven() {
+        let all = crate::ported::zsh_h::ZCONTEXT_HIST
+            | crate::ported::zsh_h::ZCONTEXT_LEX
+            | crate::ported::zsh_h::ZCONTEXT_PARSE;
+        assert_eq!(all, 7, "HIST|LEX|PARSE must equal 0b111 = 7");
+    }
+
+    /// zsh.h:491-495 — flags are pairwise distinct.
+    #[test]
+    fn zcontext_flags_pairwise_distinct() {
+        use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
+        let codes = [ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "ZCONTEXT_* must be distinct");
+    }
+
+    /// c:52 / c:89 — save/restore is LIFO (nested frames).
+    #[test]
+    fn zcontext_save_restore_is_lifo() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        zcontext_save();
+        zcontext_save();
+        assert!(cstack.lock().unwrap().is_some());
+        zcontext_restore();
+        assert!(cstack.lock().unwrap().is_some(), "one frame still on stack");
+        zcontext_restore();
+        assert!(cstack.lock().unwrap().is_none(), "all frames drained");
+    }
+
+    /// c:52 — `zcontext_save_partial(-1)` (all-bits) doesn't panic.
+    #[test]
+    fn zcontext_save_partial_all_bits_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        zcontext_save_partial(-1);
+        zcontext_restore_partial(-1);
+        assert!(cstack.lock().unwrap().is_none());
+    }
+
+    /// c:91 — `zcontext_restore_partial(-1)` on empty doesn't panic.
+    #[test]
+    fn zcontext_restore_partial_all_bits_on_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        zcontext_restore_partial(-1);
+        assert!(cstack.lock().unwrap().is_none());
+    }
+
+    /// c:52 — many saves then full drain leaves stack empty.
+    #[test]
+    fn zcontext_many_saves_then_full_drain_clean() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        for _ in 0..20 {
+            zcontext_save();
+        }
+        for _ in 0..20 {
+            zcontext_restore();
+        }
+        assert!(cstack.lock().unwrap().is_none(),
+            "after 20 paired save/restore, stack must be empty");
+    }
+
+    /// c:91 — restore with subset mask of saved flags still drains frame.
+    #[test]
+    fn zcontext_restore_with_subset_mask_drains_frame() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        zcontext_save_partial(
+            crate::ported::zsh_h::ZCONTEXT_HIST | crate::ported::zsh_h::ZCONTEXT_LEX,
+        );
+        zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
+        assert!(cstack.lock().unwrap().is_none(),
+            "restore with subset mask still pops the frame");
+    }
 }
