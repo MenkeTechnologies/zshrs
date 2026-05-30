@@ -635,59 +635,67 @@ Demos 332 uses the pre-compute pattern.
 
 ---
 
-## #19 — Quoted special-char / reserved-word case patterns fail (non-first branch in fn)
+## #19 — Quoted special-char / reserved-word case patterns fail in non-first branch
 
 **Status:** `port-bug` — surfaced 2026-05-29 writing demos 363, 365.
+Empirically narrowed 2026-05-30: the trigger condition is "non-first
+branch", NOT "inside function" (the latter was a misdiagnosis).
 
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'f() { case $1 in plain) echo p;; "!") echo b;; *) echo o;; esac; }; f "!"'
-b
+$ /opt/homebrew/bin/zsh -fc 'case x in plain) echo p;; "!") echo b;; *) echo o;; esac'
+o
 
-$ zshrs --zsh -c 'f() { case $1 in plain) echo p;; "!") echo b;; *) echo o;; esac; }; f "!"'
+$ zshrs --zsh -c 'case x in plain) echo p;; "!") echo b;; *) echo o;; esac'
 zsh:1: expected ')' in case pattern
 zshrs: parse error
 
-$ /opt/homebrew/bin/zsh -fc 'f() { case $1 in plain) echo p;; '\''if'\'') echo b;; *) echo o;; esac; }; f if'
-b
-
-$ zshrs --zsh -c 'f() { case $1 in plain) echo p;; '\''if'\'') echo b;; *) echo o;; esac; }; f if'
-zsh:1: expected ')' in case pattern
-zshrs: parse error
+# But move "!" to FIRST branch and it works:
+$ zshrs --zsh -c 'case x in "!") echo b;; plain) echo p;; *) echo o;; esac'
+o
 ```
 
-Two distinct fail-triggers share the same error message:
+**Affected tokens** (verified by enumeration):
 
-  1. **Quoted special chars**: `"!"`, `"?"`, `"*"`, `"["`, `"{"`, `"}"`
-  2. **Quoted reserved words**: `'if'`, `'while'`, `'do'`, `'then'`, `'else'`, `'let'`
+  | quoted char | first branch | non-first branch |
+  |-------------|--------------|-------------------|
+  | `"!"`       | works        | **FAILS**         |
+  | `"{"`       | works        | **FAILS**         |
+  | `"}"`       | works        | **FAILS**         |
+  | `'if'`      | works        | **FAILS**         |
+  | `'while'`   | works        | **FAILS**         |
+  | `'do'`      | works        | **FAILS**         |
+  | `'then'`    | works        | **FAILS**         |
+  | `'else'`    | works        | **FAILS**         |
+  | `'let'`     | works        | **FAILS**         |
+  | `"?"`       | works        | works (treated as glob char) |
+  | `"*"`       | works        | works (treated as glob char) |
+  | `"["` `"]"` | works        | works              |
+  | `"("` `")"` | works        | works              |
+  | `";"`       | works        | works              |
+  | `"@"` `"~"` `"^"` `"#"` | works | works              |
+  | `'foo'` (non-keyword) | works | works              |
+  | `plain` (bare) | works     | works              |
 
-Both fail **only when** the case branch is NOT the first branch in
-the `case` block AND the surrounding code is inside a function.
-The exact same patterns parse correctly when:
-  - the branch is FIRST in the case (no prior `;;` before it), OR
-  - the case is at top level outside any function
-
-| pattern    | inside fn, first branch | inside fn, after another | top level |
-|------------|------------------------|---------------------------|-----------|
-| `"!")`     | works                   | **FAILS**                  | works      |
-| `'if')`    | works                   | **FAILS**                  | works      |
-| `'while')` | works                   | **FAILS**                  | works      |
-| `'foo')`   | works                   | works                      | works      |
-| `plain)`   | works                   | works                      | works      |
+The failure is identical at top-level and inside functions (the
+earlier hypothesis that it required a function context was wrong —
+the simple `case x in plain) ... ;; "!") ... esac` at top level
+also triggers).
 
 Tested zsh 5.9 (`/opt/homebrew/bin/zsh`) handles all forms correctly.
 
-**Where** — likely `src/ported/parse.rs::par_case` interaction with
-the case-branch separator (`;;` or newline) processing inside the
-function-frame parser path. The lexer (`Src/lex.c::gettok` port at
-`src/ported/lex.rs`) appears to forget that a quoted token in case
-position should not be interpreted as a keyword/operator, but the
-forgetting only happens after the first branch boundary inside a
-function.
+**Where** — `src/ported/parse.rs::par_case`'s second-or-later
+branch parsing. After consuming `;;` and starting the next pattern,
+the lexer (`Src/lex.c::gettok` port at `src/ported/lex.rs`) appears
+to dequote the pattern and re-tokenize as if at command position,
+which re-recognizes reserved words and special tokens like `!`,
+`{`, `}` as keyword/grouping operators. The first branch escapes
+this because the parser is still in "fresh pattern" mode after the
+opening `in`.
 
 Related to bugs #13 (quoted `"?"` ignored in `[[ == ]]`) and #14
 (`[[ $ch == "{" ]]` parse error) — all share the same root cause:
-zshrs's lexer not respecting quote boundaries for special tokens
-in certain contexts.
+zshrs's lexer not respecting quote boundaries for tokens that have
+keyword/operator meaning at command position.
 
 **Workarounds**:
 
@@ -708,10 +716,22 @@ in certain contexts.
      fi
      ```
 
-Demo 363 dispatches unary `'!'`/`'~'` via `if/elif`. Demo 365
-moves all reserved-word case branches before any other branches and
-uses a leading `if [[ $head == ... ]]; then ...; return; fi` guard
-chain for `quote`, `if`, `let` to bypass the bug entirely.
+  3. Store the brace/special character in a variable and use the
+     variable as the pattern:
+     ```sh
+     local LBRC=$'\x7b'
+     case $v in
+         plain) ...;;
+         $LBRC) ...;;
+         *) ...;;
+     esac
+     ```
+
+Demo 363 dispatches unary `'!'`/`'~'` via `if/elif`. Demo 365 moves
+all reserved-word case branches before any other branches and uses
+a leading `if [[ $head == ... ]]; then ...; return; fi` guard chain
+for `quote`, `if`, `let`. Demos 361/362 use `local LC=$'\x7b'`
+variables to dodge the `'{' '}'` pattern crash.
 
 ---
 
@@ -755,6 +775,144 @@ arrays instead of nested hash structures. Demo 362 was trimmed from
 
 ---
 
+## #21 — Nested `$(( expr1 + $((expr2)) ))` garbles outer expansion
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'n=5; m=$(( n + $((n * 2)) )); echo "m: $m"'
+m: 15
+
+$ zshrs --zsh -c 'n=5; m=$(( n + $((n * 2)) )); echo "m: $m"'
+m: ( n + 10 ))
+```
+
+A `$(( ))` expression containing a nested `$(( ))` does not parse
+the inner correctly into the outer. The inner expression evaluates
+fine in isolation (`$((n * 2))` prints `10`), but when embedded
+inside the outer `$(( n + ... ))`, the outer expression captures
+the literal text `( n + 10 ))` instead of evaluating to `15`.
+
+**Where** — `src/ported/lex.rs::cmd_or_math_sub` (port of
+`Src/lex.c:540`'s math-vs-cmd-sub disambiguation). When the outer
+arith scan encounters `$((`, it tries to recursively parse a math
+expression but the inner `$((...))` confuses the bracket counter,
+leading to the outer `))` being consumed at the wrong nesting depth.
+Related to bug #4 (`$(() { … } arg)` silent abort) which lives in
+the same disambiguation path.
+
+**Workaround** — extract the inner expression to a temporary
+variable:
+```sh
+inner=$((n * 2))      # evaluate inner first
+m=$(( n + inner ))    # use as plain var in outer math
+echo "m: $m"          # → 15
+```
+
+Numerous demos that originally used nested arith were rewritten to
+this two-step form to fit zshrs.
+
+---
+
+## #22 — Heredoc `\$VAR` escape not honored (variable still expands)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'N=world; cat <<END
+> escaped: \$N
+> END'
+escaped: $N
+
+$ zshrs --zsh -c 'N=world; cat <<END
+escaped: \$N
+END'
+escaped: world
+```
+
+In a non-quoted heredoc (`<<END`, NOT `<<'END'`), variable expansion
+is normally enabled but `\$` should be honored as an escape to
+preserve the literal `$` character. C-zsh respects this:
+`\$N` → `$N`. zshrs strips the backslash AND expands the variable,
+producing `world` instead of `$N`.
+
+Same expected behavior for `\\` (backslash literal), `\\` , and
+`\<newline>` (line continuation).
+
+**Where** — `src/ported/lex.rs::lex_heredoc` or
+`src/ported/subst.rs::stringsubst`'s heredoc-body path. The
+backslash-escape consumer should fire BEFORE the `$VAR` expansion
+when the heredoc delimiter is unquoted; the escape recognition
+appears to be missing or fires in the wrong order.
+
+**Workaround** — use a quoted heredoc to suppress all expansion,
+then use cmd-sub for the parts that need it:
+```sh
+cat <<'END'
+literal: $N (preserved by quoted delim)
+END
+```
+Or escape via `\$` after first replacing `$` with a placeholder.
+Demos in batches 8-15 that use heredocs avoid the `\$` pattern;
+they either embed variables directly or use quoted delimiters.
+
+---
+
+## #23 — Worker-pool shutdown INFO leaks to stdout when fd is duped
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+# Minimal repro: script file mode + duped fd:
+$ cat > /tmp/min.zsh <<'EOF'
+exec 3>&1
+echo hi >&3
+EOF
+$ ./target/debug/zshrs --zsh /tmp/min.zsh 2>&1
+hi
+2026-05-30T05:14:29.343346Z  INFO main zsh::worker: worker pool shut down tasks_completed=0
+```
+
+The `tracing` INFO message `worker pool shut down tasks_completed=0`
+appears on stdout when a script duplicates stdout to a higher fd
+(e.g. `exec 3>&1`) without closing it before shell exit. Real zsh
+prints nothing extra at shutdown.
+
+C-zsh equivalent:
+```sh
+$ /opt/homebrew/bin/zsh /tmp/min.zsh
+hi
+```
+(no shutdown chatter)
+
+Per project rules (CLAUDE.md `## INVARIANTS` — "Informational chatter
+goes to log only", "No `println!`/`eprintln!` outside of error
+reporting/explicit-user-output"), this message should be routed to
+`~/.cache/zshrs/zshrs.log` via `tracing::info!`, not the real
+stdout/stderr.
+
+**Where** — the worker pool's `Drop` impl likely emits a
+`tracing::info!` that, when the global subscriber routes to
+stdout/stderr by default, finds the fd still open via the
+duplicated descriptor and writes there. The fix is either:
+  - Configure the tracing subscriber to write ONLY to the log file
+  - Suppress the shutdown info entirely (it's debug-grade)
+  - Use `tracing::debug!` so it's filtered by default
+
+**Doesn't trigger**:
+  - When using `-c` mode (no script file frame)
+  - When script closes the duped fd before exit (`exec 3>&-`)
+  - When stdout is plain (no `exec >fd` shenanigans)
+
+**Workaround** — close the duplicated fd before script ends:
+```sh
+exec 3>&1
+echo hi >&3
+exec 3>&-     # ← close to prevent the leak
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -777,10 +935,13 @@ arrays instead of nested hash structures. Demo 362 was trimmed from
 | 16 | `arr=("${arr[@]:0:-1}")` no-shrink in fn | **port-bug** | 311 uses `arr[${#arr}]=()` |
 | 17 | `var=${arr[-1]}` unquoted in fn while | **port-bug** | 311 quotes the RHS |
 | 18 | `arr[a + 1]=val` with space parsed as cmd | **port-bug** | 332 pre-computes `idx=$((..))` |
-| 19 | quoted special/keyword case pat (non-first branch in fn) | **port-bug** | 363/365 reorder branches or if/elif |
+| 19 | quoted special/keyword case pat (non-first branch) | **port-bug** | 363/365 reorder branches or if/elif |
 | 20 | recursive parsers very slow vs C-zsh | **perf-issue** | 362 trimmed test inputs |
+| 21 | nested `$(( a + $((b)) ))` garbles outer expansion | **port-bug** | extract inner to var first |
+| 22 | heredoc `\$VAR` escape not honored | **port-bug** | use `<<'END'` quoted form |
+| 23 | worker-pool shutdown INFO leaks to stdout | **port-bug** | close duped fd before exit |
 
-Of twenty entries, two are fixed (5, 7), fourteen remain open
-port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
-19, 20), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+Of twenty-three entries, two are fixed (5, 7), seventeen remain
+open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+18, 19, 20, 21, 22, 23), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
