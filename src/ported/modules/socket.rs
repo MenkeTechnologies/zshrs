@@ -887,4 +887,126 @@ mod tests {
         assert_eq!(cleanup_(null), 0, "c:380 cleanup_");
         assert_eq!(finish_(null), 0, "c:387 finish_");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/socket.c
+    // c:21 bin_zsocket / c:351-387 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:351 — `setup_` is idempotent.
+    #[test]
+    fn socket_setup_idempotent_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:380 — `cleanup_` is idempotent.
+    #[test]
+    fn socket_cleanup_idempotent_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:387 — `finish_` is idempotent.
+    #[test]
+    fn socket_finish_idempotent_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:380 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn socket_cleanup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:387 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn socket_finish_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:373 — `boot_` return type i32 (compile-time pin).
+    #[test]
+    fn socket_boot_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = boot_(std::ptr::null());
+    }
+
+    /// c:21 — `bin_zsocket` empty args returns non-negative.
+    #[test]
+    fn bin_zsocket_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zsocket("zsocket", &[], &ops, 0);
+        assert!(r >= 0, "bin_zsocket empty args must return ≥ 0, got {}", r);
+    }
+
+    /// c:21 — `bin_zsocket` various func values don't panic.
+    #[test]
+    fn bin_zsocket_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_zsocket("zsocket", &[], &ops, func);
+        }
+    }
+
+    /// c:21 — `bin_zsocket` deterministic for identical args.
+    #[test]
+    fn bin_zsocket_deterministic_identical_args() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let args = vec!["test".to_string()];
+        let r1 = bin_zsocket("zsocket", &args, &ops, 0);
+        let r2 = bin_zsocket("zsocket", &args, &ops, 0);
+        assert_eq!(r1, r2, "bin_zsocket must be deterministic");
+    }
+
+    /// c:351 — `setup_` returns i32 type.
+    #[test]
+    fn socket_setup_returns_i32_type_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:366 — `enables_` with Some(non-empty) doesn't panic.
+    #[test]
+    fn socket_enables_with_some_non_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = Some(vec![1, 2, 3]);
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:351/373 — setup_ then boot_ sequence returns 0 from both.
+    #[test]
+    fn socket_setup_then_boot_returns_zero_each() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        assert_eq!(boot_(null), 0);
+    }
 }
