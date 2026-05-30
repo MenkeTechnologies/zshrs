@@ -1220,4 +1220,112 @@ mod tests {
             assert!(r >= 0, "exit code must be non-negative, got {}", r);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/attr.c
+    // c:39 xgetxattr / c:92 xlistxattr / c:140 xsetxattr / c:210 xremovexattr /
+    // c:254-415 bin_* / c:515 setup_
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:515 — `setup_` is idempotent.
+    #[test]
+    fn attr_setup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:39 — `xgetxattr` for nonexistent path doesn't panic.
+    #[test]
+    fn xgetxattr_nonexistent_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 64];
+        let _ = xgetxattr("/__never_exists_xyz__", "user.test", &mut buf, 0);
+    }
+
+    /// c:39 — `xgetxattr` empty path doesn't panic.
+    #[test]
+    fn xgetxattr_empty_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 64];
+        let _ = xgetxattr("", "", &mut buf, 0);
+    }
+
+    /// c:92 — `xlistxattr` returns isize (alt).
+    #[test]
+    fn xlistxattr_returns_isize_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 64];
+        let _: isize = xlistxattr("/", &mut buf, 0);
+    }
+
+    /// c:92 — `xlistxattr` for nonexistent path doesn't panic.
+    #[test]
+    fn xlistxattr_nonexistent_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 64];
+        let _ = xlistxattr("/__never_exists_xyz__", &mut buf, 0);
+    }
+
+    /// c:140 — `xsetxattr` for nonexistent path doesn't panic.
+    #[test]
+    fn xsetxattr_nonexistent_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = xsetxattr("/__never_exists__", "user.test", b"v", 0, 0);
+    }
+
+    /// c:210 — `xremovexattr` for nonexistent path doesn't panic.
+    #[test]
+    fn xremovexattr_nonexistent_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = xremovexattr("/__never_exists__", "user.test", 0);
+    }
+
+    /// c:254 — `bin_getattr` various func values don't panic.
+    #[test]
+    fn bin_getattr_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_getattr("getattr", &[], &ops, func);
+        }
+    }
+
+    /// c:327 — `bin_setattr` various func values don't panic.
+    #[test]
+    fn bin_setattr_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_setattr("setattr", &[], &ops, func);
+        }
+    }
+
+    /// c:254 — `bin_getattr` empty args non-negative.
+    #[test]
+    fn bin_getattr_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_getattr("getattr", &[], &ops, 0);
+        assert!(r >= 0, "bin_getattr empty must be ≥ 0, got {}", r);
+    }
+
+    /// c:327 — `bin_setattr` empty args non-negative.
+    #[test]
+    fn bin_setattr_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_setattr("setattr", &[], &ops, 0);
+        assert!(r >= 0, "bin_setattr empty must be ≥ 0, got {}", r);
+    }
+
+    /// c:415 — `bin_listattr` empty args non-negative.
+    #[test]
+    fn bin_listattr_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_listattr("listattr", &[], &ops, 0);
+        assert!(r >= 0, "bin_listattr empty must be ≥ 0, got {}", r);
+    }
 }
