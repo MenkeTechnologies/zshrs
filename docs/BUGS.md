@@ -4159,6 +4159,154 @@ But the right fix is parity with zsh's `-R` collapsed output.
 
 ---
 
+## #85 — `"${(s. .)s[@]}"` on scalar with `[@]` subscript returns empty
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="a b c"; for x in "${(s. .)s[@]}"; do echo "[$x]"; done'
+[a]
+[b]
+[c]
+
+$ ./target/debug/zshrs --zsh -c 's="a b c"; for x in "${(s. .)s[@]}"; do echo "[$x]"; done'
+[]
+```
+
+The `"${(s.X.)var[@]}"` form is a documented zsh idiom for
+splitting a scalar with explicit per-element capture. zsh splits
+into 3 elements and `[@]` enumerates them. zshrs returns a single
+empty element.
+
+The equivalent `"${(@s.X.)var}"` form (flag-first, no subscript)
+works in both shells:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="a b c"; for x in "${(@s. .)s}"; do echo "[$x]"; done'
+[a]
+[b]
+[c]
+
+$ ./target/debug/zshrs --zsh -c 's="a b c"; for x in "${(@s. .)s}"; do echo "[$x]"; done'
+[a]
+[b]
+[c]
+```
+
+So the bug is specifically the `[@]` subscript path on a
+split-flagged scalar — applying `[@]` after the split should yield
+all elements, not collapse to empty.
+
+**Where** — `src/ported/paramsubst.rs::apply_subscript`: when a
+split flag has produced an array and `[@]` is then applied, the
+code returns the array's length-1 empty placeholder instead of the
+actual elements. Related to #63, #82, #83 in the
+context-propagation family.
+
+**Impact** — common splitting idioms break:
+
+```sh
+for ip in "${(s. .)ips[@]}"; do
+    ping -c 1 "$ip"
+done
+# zsh: pings each IP        zshrs: silent (0 iterations)
+```
+
+**Workaround** — `(@s.X.)` flag-first form:
+```sh
+for ip in "${(@s. .)ips}"; do ping -c 1 "$ip"; done
+```
+
+---
+
+## #86 — `${1:?msg}` parameter-required error format has spurious `:1:` line number
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "${1:?required}"; }; f'
+f: 1: required
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo "${1:?required}"; }; f'
+f:1: 1: required
+```
+
+zsh's error format for `${param:?message}` in a function:
+`<funcname>: <param>: <message>`. zshrs adds an extra `:1:` line
+number: `<funcname>:<lineno>: <param>: <message>`.
+
+The format string is documented in `man zshparam`:
+> If `message` is missing, a default message such as `parameter
+> null or not set` is printed. Otherwise, `message` is printed,
+> preceded by the name of the parameter.
+
+zshrs's format includes the function-relative line number, which
+isn't in the upstream format spec.
+
+**Where** — `src/ported/paramsubst.rs::format_required_error`:
+includes a `:line:` token. C-source `Src/subst.c::sferror` uses
+plain `"%s: %s: %s\n"` format without line.
+
+**Impact** — error-message-parsing scripts that grep for the
+specific format fail under zshrs. Diff-based test fixtures fail.
+Aesthetic noise in error reports.
+
+**Workaround** — strip with sed/awk if parity matters:
+```sh
+output=$(f 2>&1 | sed 's/:[0-9]*: \([0-9]*\):/: \1:/')
+```
+
+---
+
+## #87 — `setopt` (no args) outputs nothing under `-fc`; zsh shows defaults
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt'
+nohashdirs
+norcs
+
+$ ./target/debug/zshrs --zsh -c 'setopt'
+(empty)
+```
+
+zsh's `setopt` (no args) lists options whose state **differs from
+the default**. Under `-fc`:
+- `nohashdirs` — the `-f` flag disables HASH_DIRS (and lots of
+  others), so this differs from the default-on `hash_dirs`.
+- `norcs` — the `-f` flag sets NO_RCS (skip rc files), differs
+  from the default `rcs`.
+
+zshrs lists nothing, meaning it doesn't track the `-fc`-induced
+option flips. Either:
+1. `-f` doesn't actually flip those options (so they're at their
+   normal default state and don't show up).
+2. The default state itself differs from zsh's defaults.
+3. `setopt` listing logic is broken (lists only user-set, not
+   "differs from default").
+
+Most likely (1) + (3): `-fc` isn't fully wired AND the listing
+logic ignores `-f`'s side effects.
+
+**Where** — `src/ported/builtin_setopt.rs::list_options`: should
+walk option table comparing each option's current value to its
+zsh-spec default and emit non-defaults. `src/ported/init.rs::
+apply_f_flag` should flip RCS, HASH_DIRS, USE_ZLE etc. to off.
+
+**Impact** — diagnostic scripts can't tell what option state the
+shell is in. `setopt`-snapshot-based config persistence (a common
+pattern) returns empty, defeating the purpose. Plus `-f` may not be
+honored across other paths, breaking the contract that `-fc` means
+"plain shell, no user config".
+
+**Workaround** — query specific options directly via `$options[...]`:
+```sh
+echo "rcs=${options[rcs]} hashdirs=${options[hashdirs]}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -4247,11 +4395,15 @@ But the right fix is parity with zsh's `-R` collapsed output.
 | 82 | `"PREFIX${(s.X.)var}"` repeats prefix per element | **port-bug** | `arr=("${(s.X.)v}"); "P:${arr[*]}"` |
 | 83 | `${a[(s.,.)N,M]}` slice with flag returns full array | **port-bug** | drop subscript flag |
 | 84 | `bindkey -L` 117 entries vs zsh's 31 (default keymap differs) | **port-bug** | normalize via post-process |
+| 85 | `"${(s.X.)s[@]}"` on scalar with `[@]` returns empty | **port-bug** | `(@s.X.)s` flag-first form |
+| 86 | `${1:?msg}` error format has spurious `:1:` line | **port-bug** | sed-strip the line number |
+| 87 | `setopt` (no args) empty under `-fc`; zsh shows `nohashdirs/norcs` | **port-bug** | `$options[rcs]` direct query |
 
-Of eighty-four entries, two are fixed (5, 7), seventy-eight remain
+Of eighty-seven entries, two are fixed (5, 7), eighty-one remain
 open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
-69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84), and
-four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85,
+86, 87), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
