@@ -4831,6 +4831,166 @@ precmd() {
 
 ---
 
+## #97 — `typeset -r` listing doesn't include shell-internal readonly params
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -r' | grep -E '^!=|^#='
+!=0
+'#'=0
+
+$ ./target/debug/zshrs --zsh -c 'typeset -r' | grep -E '^!=|^#='
+(empty)
+```
+
+`typeset -r` (no args) lists every readonly parameter. zsh
+includes shell-internal readonly params like `$!` (last
+background PID, `!=0` before any bg job), `$#` (positional count,
+`'#'=0`), `$$` (PID), etc.
+
+zshrs's listing omits these internal-readonly params entirely. The
+flag is set internally (you can't assign `$$=42`) but the listing
+output doesn't reflect them.
+
+Full comparison:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -r' | head -5
+!=0
+'#'=0
+
+$ ./target/debug/zshrs --zsh -c 'typeset -r' | head -5
+(empty until user sets readonly explicitly)
+```
+
+**Where** — `src/ported/builtin_typeset.rs::list_readonly`: walks
+user-set readonly params only, doesn't iterate the shell-internal
+special-param table. C-source `Src/builtin.c::bin_typeset` walks
+the unified param table with `PM_READONLY` bit check.
+
+**Impact** — diagnostic scripts that audit shell readonly state
+miss the internal readonly set. Scripts that snapshot/restore
+shell state via `typeset -p` get inconsistent output between
+zsh and zshrs.
+
+Also: there's no easy way for a user to discover "what's readonly
+in this shell?" since the listing path is incomplete.
+
+**Workaround** — accept that `$!`, `$#`, `$$`, `$?` etc. are
+implicitly readonly per zsh spec; don't rely on `typeset -r`
+listing them.
+
+---
+
+## #98 — `[ "a" \< "b" ]` lexicographic comparison accepted (bash extension)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[ a \< b ]; echo "exit=$?"'
+zsh:1: condition expected: <
+exit=2
+
+$ ./target/debug/zshrs --zsh -c '[ a \< b ]; echo "exit=$?"'
+exit=0
+```
+
+The `\<` / `\>` operators in single-bracket `[ ]` for lexical
+string comparison are a **bash extension**, not POSIX or zsh
+standard. zsh refuses with "condition expected: <" syntax error.
+zshrs accepts and evaluates correctly (returns 0 for `a < b`,
+1 for `b < a`).
+
+```sh
+$ ./target/debug/zshrs --zsh -c '[ a \< b ]; echo "exit=$?"; [ b \< a ]; echo "exit=$?"'
+exit=0
+exit=1
+```
+
+In zsh you must use `[[ ... ]]` (double-bracket) for lex compare
+with `<`/`>`, no backslash needed:
+```sh
+[[ "a" < "b" ]] && echo "yes"   # zsh: works
+```
+
+**Where** — `src/ported/builtin_test.rs::parse_condition`: the
+single-bracket `[` test parser includes bash's `\<` and `\>`
+operators in the recognized-operators table. C-source
+`Src/test.c::test_expr` errors on `<` / `>` outside `[[ ]]`.
+
+**Impact** — bash-compat scripts using `[ \< ]` work in zshrs but
+break in zsh. False sense of cross-shell portability — scripts
+developed under zshrs (because "zshrs accepted it") then fail in
+production zsh.
+
+Worse: a `[ a \< b ]` that should be a hard syntax error in zsh
+becomes a silent runtime no-op (returns true even when meant
+otherwise) in zshrs if the author got the semantics wrong.
+
+**Workaround** — always use double-bracket for lex compare in
+zsh-portable code:
+```sh
+[[ "$a" < "$b" ]] && echo "less"
+```
+
+---
+
+## #99 — Extended-glob `(#cN,M)` count quantifier not recognized
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; touch /tmp/zg/a /tmp/zg/aa /tmp/zg/aaa; print -l /tmp/zg/a(#c1,2)'
+/tmp/zg/a
+/tmp/zg/aa
+
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; touch /tmp/zg/a /tmp/zg/aa /tmp/zg/aaa; print -l /tmp/zg/a(#c1,2)'
+(empty)
+```
+
+The `(#cN,M)` extended_glob quantifier matches the preceding
+character/group N-to-M times. zsh matches `a` and `aa` (1 to 2 a's).
+zshrs returns nothing — the count syntax isn't recognized.
+
+Same family as bug #89 (extended_glob `#`/`##` quantifiers
+missing) — the entire `(#...)` flag family is partially or fully
+unimplemented:
+- `(#c)` — count
+- `(#a)` — approximate match
+- `(#i)` — case-insensitive
+- `(#l)` — case-loose
+- `(#s)` — anchor at start
+- `(#e)` — anchor at end
+- `(#m)` — record match
+
+Per `man zshexpn` § FILENAME GENERATION:
+> `(#cN,M)` — Matches the preceding character or group between N
+> and M times.
+
+**Where** — `src/ported/pattern.rs::compile_extended_glob`: the
+`(#flag)` glob-flag parser table is missing entries for `c`, `a`,
+`i`, `l`, `s`, `e`, `m`. C-source `Src/pattern.c::patcompile`
+handles each `(#X...)` flag specifically.
+
+**Impact** — every script using `(#c)` count or other
+zsh-specific extended_glob flags silently fails to match:
+
+```sh
+setopt extended_glob
+# match passwords with 8-16 chars
+[[ "$pw" == [a-zA-Z0-9]##(#c8,16) ]] && echo "valid"
+# zsh: validates correctly
+# zshrs: always fails (no match)
+```
+
+**Workaround** — `[[ ... =~ ... ]]` regex with explicit character
+class and `{N,M}` quantifier:
+```sh
+[[ "$pw" =~ "^[a-zA-Z0-9]{8,16}$" ]] && echo "valid"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -4931,12 +5091,15 @@ precmd() {
 | 94 | `(exec cmd); cmd2` parent shell terminates with subshell | **port-bug** | drop `exec` inside subshell |
 | 95 | Signal trap from `kill -X $$` in subshell fires immediately | **port-bug** | avoid signal-IPC across sub |
 | 96 | `%N/` `%N~` prompt escape doesn't truncate path | **port-bug** | manual `precmd` truncation |
+| 97 | `typeset -r` listing omits shell-internal readonly params (`!=0` etc.) | **port-bug** | n/a — semantic still readonly |
+| 98 | `[ "a" \< "b" ]` lex-compare bash ext accepted (zsh errors) | **port-bug** | `[[ < ]]` double-bracket |
+| 99 | `(#cN,M)` count quantifier + other `(#x)` flags not recognized | **port-bug** | `=~ {N,M}` regex form |
 
-Of ninety-six entries, two are fixed (5, 7), ninety remain open
-port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+Of ninety-nine entries, two are fixed (5, 7), ninety-three remain
+open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85,
-86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99), and four
+were zsh-correct behavior misframed by demos (1, 2, 3, 6).
