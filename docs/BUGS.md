@@ -14620,6 +14620,157 @@ array updated on entry/exit (cumbersome).
 
 ---
 
+## #277 — `${(o)@}` sort flag not applied to positional parameters
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- c a b; echo "${(o)@}"'
+a b c
+
+$ ./target/debug/zshrs --zsh -c 'set -- c a b; echo "${(o)@}"'
+c a b
+```
+
+The `(o)` flag sorts the expansion result. zsh applies it to
+positional parameters expanded via `$@` or `$*`. zshrs
+ignores the flag for positional expansion — returns
+unsorted.
+
+Same applies to other flags via `(o)@`/`(u)@`/etc. — sort,
+unique, reverse-sort, etc., all silently no-op on
+positionals. The flag works correctly for regular arrays.
+
+**Where** — `src/ported/paramsubst.rs::expand_positional`:
+flag application path for `$@`/`$*` doesn't invoke the sort/
+dedup/etc. transformations. C-source `Src/subst.c::dosubst`
+treats positionals same as arrays for `(o)`/`(O)`/`(u)`/etc.
+
+**Impact** — scripts that process arg lists with zsh's
+inline-sort idiom break:
+
+```sh
+process_args() {
+    set -- "$@"
+    for arg in "${(o)@}"; do   # sort args alphabetically
+        echo "$arg"
+    done
+}
+process_args c a b
+# zsh: outputs a, b, c (sorted)
+# zshrs: outputs c, a, b (unsorted)
+```
+
+**Workaround** — copy to a regular array first:
+```sh
+sorted_args=("${(o)@}")   # may also not work if (o) ignores positionals
+# better:
+local _args=("$@")
+sorted_args=("${(o)_args[@]}")   # works (regular array)
+```
+
+---
+
+## #278 — `${@:t}` (and other modifiers) applied to only the last positional, dropping the rest
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- /a/b /c/d /e/f; echo "${@:t}"'
+b d f
+
+$ ./target/debug/zshrs --zsh -c 'set -- /a/b /c/d /e/f; echo "${@:t}"'
+f
+```
+
+zsh's history modifiers (`:t` basename, `:h` dirname, `:r`
+root, `:e` extension, `:s/old/new/` substitute, etc.) apply
+element-wise to array-expanded positionals. zsh applies `:t`
+to each positional, returning all three basenames. zshrs
+applies the modifier only to the last positional, AND drops
+the others — returning just `f`.
+
+Two sub-bugs:
+1. Modifier should apply element-wise; zshrs applies once.
+2. The other elements are silently dropped instead of passed
+   through unchanged.
+
+This is data-loss when iterating positionals with modifiers,
+a common path-manipulation pattern:
+
+```sh
+basenames=("${@:t}")
+# zsh: basenames = (b d f) — all 3 basenames
+# zshrs: basenames = (f) — only the last, others lost
+```
+
+**Where** — `src/ported/paramsubst.rs::apply_modifier_to_array`:
+when target is positionals, modifier loop runs only once
+instead of per-element. C-source `Src/subst.c::dosubst` after
+positional expansion applies the modifier via a per-element
+loop.
+
+**Impact** — script idioms for batch-transforming positional
+args (basename them, strip extensions, etc.) silently drop
+all but one.
+
+**Workaround** — copy to array first, apply modifier there:
+```sh
+local _args=("$@")
+basenames=("${_args[@]:t}")
+```
+
+---
+
+## #279 — `$_` (last-arg-of-previous-cmd) empty inside function (zsh: contains the function name)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'foo() { echo "_=[$_]"; }; foo'
+_=[foo]
+
+$ ./target/debug/zshrs --zsh -c 'foo() { echo "_=[$_]"; }; foo'
+_=[]
+```
+
+`$_` is the parameter holding the last argument of the
+previously-executed command. When a function is called,
+`$_` is set to the function name itself (per POSIX/bash/zsh
+convention). zsh populates it; zshrs leaves it empty.
+
+zsh-portability with bash often relies on `$_` for:
+1. Detecting "what command was just run" in DEBUG traps.
+2. Auto-changing tmux window title to last command.
+3. Building "redo last command" macros.
+
+zshrs's `$_` autovar is not maintained — empty regardless of
+context.
+
+The environment-passed `_` (from parent shell, used by some
+tools to identify the launching binary) is also wrong:
+- zsh: `_=/usr/bin/env` (full path of executor)
+- zshrs: `_=env` (just the name)
+
+Two sub-bugs:
+1. In-function `$_` not set to fn name.
+2. Inherited `$_` from env stripped to basename only.
+
+**Where** — `src/ported/exec.rs::dispatch_command`: doesn't
+update `_` parameter to the last argv slot. C-source
+`Src/exec.c::execcmd` calls `setunderscore(args)` for each
+command before invocation.
+
+**Impact** — bash-ported scripts and shell macros that rely
+on `$_` see empty values. Tmux/window-title hooks that
+display the last command break.
+
+**Workaround** — use `${history[1]}` or manual tracking via
+`preexec` hook — though `preexec` itself may have gaps in
+zshrs.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -14900,9 +15051,12 @@ array updated on entry/exit (cumbersome).
 | 274 | `$PROMPT3` autovar default empty — zsh: colored `-->>>>` select prompt | **port-bug** | explicit `PROMPT3=...` init |
 | 275 | Array splice `a[1,0]=(...)` reverse-range form replaces first elem instead of prepending (data loss) | **port-bug** | explicit `a=(NEW "${a[@]}")` |
 | 276 | `${funcstack[@]}` array empty in nested fn — breaks caller-introspection / stack-trace plugins | **port-bug** | manual call-stack tracking |
+| 277 | `${(o)@}` sort flag not applied to positionals — `$@`/`$*` returns unsorted | **port-bug** | copy to temp array first |
+| 278 | `${@:t}` (and other modifiers) applies to last positional only, drops the rest (data loss) | **port-bug** | copy to array, modifier there |
+| 279 | `$_` (last-arg-prev-cmd) empty inside function — zsh: contains fn name | **port-bug** | use `${history[1]}` or manual tracking |
 
-Of two hundred and seventy-six entries, two are fixed (5, 7), two
-hundred and seventy remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and seventy-nine entries, two are fixed (5, 7), two
+hundred and seventy-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -14921,5 +15075,6 @@ hundred and seventy remain open port-bugs/perf-issues (4, 8, 9, 10,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
-266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276), and four
-were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
+279), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
