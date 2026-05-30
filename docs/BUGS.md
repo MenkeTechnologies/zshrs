@@ -17168,6 +17168,180 @@ KEYTIMEOUT=10
 
 ---
 
+## #322 — `${arr[*]/pat/repl}` (and `[*]#`/`[*]%`) applies per-element instead of scalar-context
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(abc def ghi); echo "star=[${a[*]/?/X}]"; echo "at=[${a[@]/?/X}]"'
+star=[Xbc def ghi]
+at=[Xbc Xef Xhi]
+
+$ ./target/debug/zshrs --zsh -c 'a=(abc def ghi); echo "star=[${a[*]/?/X}]"; echo "at=[${a[@]/?/X}]"'
+star=[Xbc Xef Xhi]
+at=[Xbc Xef Xhi]
+```
+
+zsh distinguishes `[*]` (scalar-context: join with IFS first,
+then apply operator once) from `[@]` (per-element: apply
+operator to each element). zshrs treats both forms
+identically — per-element.
+
+Affects all substitution/strip operators on `[*]`:
+- `${a[*]/pat/repl}` — substitution
+- `${a[*]//pat/repl}` — global substitution
+- `${a[*]#prefix}` — prefix-strip
+- `${a[*]%suffix}` — suffix-strip
+- `${a[*]##pat}` — greedy prefix
+- `${a[*]%%pat}` — greedy suffix
+
+Tested examples:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(abc def ghi); echo "${a[*]//?/X}"'
+XXXXXXXXXXX                        # all 11 chars (9 letters + 2 spaces) replaced
+
+$ ./target/debug/zshrs --zsh -c 'a=(abc def ghi); echo "${a[*]//?/X}"'
+XXX XXX XXX                        # per-element, spaces preserved between
+```
+
+**Where** — `src/ported/paramsubst.rs::dispatch_star_subscript`:
+treats `[*]` as alias for `[@]` in substitution-operator
+context. C-source `Src/subst.c::dosubst` checks the subscript
+form and applies IFS-join-then-substitute for `[*]`, per-
+element for `[@]`.
+
+**Impact** — text-processing code that relies on the scalar-
+context semantics for `[*]` (typically used to apply one
+substitution to a joined string) gets wrong output:
+
+```sh
+# Get first comma in joined string
+IFS=,
+joined="${arr[*]}"      # "a,b,c"
+# Apply substitution: ${arr[*]/,/_}
+first_comma_replaced="${arr[*]/,/_}"
+# zsh: "a_b,c" (only first comma replaced)
+# zshrs: "a_b_c" (per-element — but each element doesn't contain comma!)
+```
+
+Most users use `[@]` not `[*]` for modifications, so impact
+moderate. But idiomatic IFS-joined-then-modified patterns
+break.
+
+**Workaround** — explicit scalar via temp var:
+```sh
+local _joined="${arr[*]}"
+first_comma_replaced="${_joined/,/_}"
+```
+
+---
+
+## #323 — `functions[f]+="..."` append-to-function-body doesn't append
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo a; }; functions[f]+="echo b"; f'
+aecho b
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo a; }; functions[f]+="echo b"; f'
+a
+```
+
+zsh's `functions[name]=value` and `functions[name]+=value`
+provide programmatic modification of function bodies via the
+`functions` introspection assoc:
+- `=` replaces the entire body
+- `+=` appends to the existing body
+
+zshrs supports `=` (verified in earlier tests — `functions[h]="echo from-assoc"`
+works) but doesn't apply `+=` — the append silently no-ops.
+
+Note: zsh's `+=` concatenates raw text without inserting a
+newline, producing the malformed body `echo aecho b` which
+runs as a single command `echo aecho b`. zshrs is right to be
+suspicious of this behavior, but should match zsh for parity.
+
+**Where** — `src/ported/params/functions_assoc.rs::append_to_body`:
+`+=` operator not dispatched on the functions assoc. C-source
+`Src/parameter.c::set_function` handles both assignment forms
+via `setpparam()`.
+
+**Impact** — function-augmentation plugins that programmatic-
+ally modify existing function bodies break:
+
+```sh
+# Plugin pattern: prepend logging to user fns
+for fn in "${(@k)functions}"; do
+    [[ "$fn" == _* ]] && continue
+    functions[$fn]="log_call '$fn'; ${functions[$fn]}"
+done
+# zsh: every non-internal fn gets log_call prepended
+# zshrs: functions table doesn't accept the assignment (or += equivalent), silent no-op
+```
+
+**Workaround** — read body, rewrite full assignment:
+```sh
+body="${functions[f]}"
+functions[f]="$body"$'\n'"echo b"
+```
+
+---
+
+## #324 — `strftime -r FORMAT STRING` reverse-parse not implemented — "format not matched"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime; strftime -rs out "%Y" 2024; echo "[$out]"'
+[1704085200]
+
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/datetime; strftime -rs out "%Y" 2024; echo "[$out]"'
+zsh:strftime:1: format not matched: 2024
+[]
+```
+
+zsh's `strftime -r FORMAT STRING` parses `STRING` according to
+`FORMAT` and outputs the corresponding epoch timestamp. With
+`%Y` and `2024`, zsh interprets as "year 2024" → 1704085200
+(2024-01-01 00:00:00 UTC).
+
+zshrs's `strftime -r` rejects "2024" as "format not matched"
+even when the format is `%Y` (which clearly matches digit-
+years). The reverse-parsing logic doesn't handle individual
+format-specifier matching.
+
+Same family as #316 (zsh/system module's builtins missing
+helpers) — zsh/datetime module partially implemented.
+
+**Where** — `src/ported/modules/zsh_datetime.rs::strftime_reverse`:
+the `-r` flag is recognized but the per-format-specifier
+matching loop is missing. C-source
+`Src/Modules/datetime.c::bin_strftime` with `-r` calls
+`strptime()` which handles individual `%`-specifiers.
+
+**Impact** — date/time parsing in zsh scripts broken. Common
+patterns:
+
+```sh
+# Parse a date file
+strftime -rs epoch "%Y-%m-%d" "$(cat date.txt)"
+# zsh: epoch = unix timestamp
+# zshrs: errors "format not matched", epoch stays unset
+```
+
+Affects log analysis, scheduling scripts, time-based filtering
+— anything that needs "string → epoch" conversion.
+
+**Workaround** — use external `date -j -f`:
+```sh
+epoch=$(date -j -f "%Y" "2024" "+%s")
+```
+
+(External fork overhead.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -17493,9 +17667,12 @@ KEYTIMEOUT=10
 | 319 | `eval --` end-of-options separator not recognized (extends #251/#252/#284 `--` family) | **port-bug** | drop the `--` |
 | 320 | `${@/pat/repl}`/`${@#pre}`/`${@%suf}` apply only to first positional (zsh: per-element; `//` form works) | **port-bug** | copy to array, use `[@]` |
 | 321 | `KEYTIMEOUT` default is `40` instead of zsh's `10` — vi-mode/multi-key bindings feel sluggish | **port-bug** | explicit `KEYTIMEOUT=10` in .zshrc |
+| 322 | `${arr[*]/pat/repl}`/`[*]#`/`[*]%` applies per-element instead of scalar-context (zsh: joins to scalar first) | **port-bug** | use temp scalar `joined="${arr[*]}"` |
+| 323 | `functions[f]+="..."` append-to-fn-body no-op (zsh: appends raw text) | **port-bug** | read body, full reassign |
+| 324 | `strftime -r FORMAT STRING` reverse-parse errors "format not matched" — string→epoch broken | **port-bug** | external `date -j -f` |
 
-Of three hundred and twenty-one entries, two are fixed (5, 7),
-three hundred and fifteen remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and twenty-four entries, two are fixed (5, 7),
+three hundred and eighteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -17518,5 +17695,5 @@ three hundred and fifteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
-318, 319, 320, 321), and four were zsh-correct behavior misframed
-by demos (1, 2, 3, 6).
+318, 319, 320, 321, 322, 323, 324), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
