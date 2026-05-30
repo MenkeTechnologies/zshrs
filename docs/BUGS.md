@@ -16520,6 +16520,168 @@ saved="${(qq)_vals[@]}"
 
 ---
 
+## #310 — `${(@)arr:#pat}` filter via `(@)` flag form not applied (works with `[@]` subscript form)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(abc xyz); print -l "${(@)a:#a*}"'
+xyz
+
+$ ./target/debug/zshrs --zsh -c 'a=(abc xyz); print -l "${(@)a:#a*}"'
+abc
+xyz
+```
+
+`${var:#pat}` filters OUT elements matching `pat`. zsh applies
+the filter regardless of whether the array context comes from
+the `[@]` subscript or the `(@)` flag. zshrs only applies the
+filter when `[@]` is used.
+
+Control: `[@]` form works in both:
+```sh
+$ both-shells -fc 'a=(abc xyz); print -l "${a[@]:#a*}"'
+xyz
+```
+
+So the filter machinery exists; it just doesn't dispatch when
+the array-context is set by the `(@)` flag.
+
+**Where** — `src/ported/paramflags.rs::apply_at_flag`: when
+`(@)` forces array context, the subsequent `:#pat` operator
+isn't piped through the filter. C-source `Src/subst.c::dosubst`
+treats `(@)` and `[@]` symmetrically — both trigger the
+"array context with filter post-processing" path.
+
+**Impact** — code that uses `(@)` flag explicitly (e.g., to
+force array context inside double quotes where `[@]` would
+also work) loses filter functionality:
+
+```sh
+# Standard pattern: filter and re-array
+filtered=("${(@)source_arr:#prefix*}")
+# zsh: filtered contains non-matching elements
+# zshrs: filtered contains ALL elements (filter skipped)
+```
+
+**Workaround** — use `[@]` subscript form instead of `(@)`
+flag:
+```sh
+filtered=("${source_arr[@]:#prefix*}")
+```
+
+---
+
+## #311 — `${(@k)assoc:#pat}` / `${(@v)assoc:#pat}` filter on assoc keys/values not applied
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[abc]=1; h[xyz]=2; print -l "${(@k)h:#a*}" | sort'
+xyz
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[abc]=1; h[xyz]=2; print -l "${(@k)h:#a*}" | sort'
+abc
+xyz
+```
+
+Same family as #310 — `:#pat` filter not applied when array
+context comes from `(@k)` or `(@v)` flag on assoc array.
+
+Same issue for value-filter:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[a]=ABC; h[b]=XYZ; print -l "${(@v)h:#A*}" | sort'
+XYZ
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[a]=ABC; h[b]=XYZ; print -l "${(@v)h:#A*}" | sort'
+ABC
+XYZ
+```
+
+zshrs returns both ABC and XYZ; should filter out ABC (matches
+`A*`).
+
+**Where** — same root cause as #310 (`src/ported/paramflags.rs::apply_at_flag`
+on assoc form). C-source `Src/subst.c::dosubst` unifies
+filter dispatch across all array-producing flag/subscript
+combinations.
+
+**Impact** — assoc-array key/value filtering by pattern broken
+across the entire `(@k)`/`(@v)`-via-flag family:
+
+```sh
+# Drop all keys starting with "tmp_"
+config=("${(@kv)config:#tmp_*}")
+# zsh: config keeps non-tmp_ entries
+# zshrs: all entries retained, including tmp_-prefixed
+```
+
+Affects every "filter assoc by key/value pattern" idiom —
+common in plugin-state-management code.
+
+**Workaround** — explicit loop:
+```sh
+typeset -A filtered
+for k v in "${(@kv)config}"; do
+    [[ "$k" == tmp_* ]] && continue
+    filtered[$k]="$v"
+done
+```
+
+---
+
+## #312 — `${(v)assoc:#pat}` scalar-context filter on assoc values not applied
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[a]=ABC; h[b]=XYZ; echo "[${(v)h:#A*}]"'
+[]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[a]=ABC; h[b]=XYZ; echo "[${(v)h:#A*}]"'
+[ABC XYZ]
+```
+
+`${(v)h}` (without `@`) joins values with IFS into a scalar.
+Then `:#pat` should test the joined scalar against `pat` —
+if matches, return empty.
+
+zsh: `ABC XYZ` (joined) matches `A*` pattern (starts with A),
+gets filtered out → empty.
+
+zshrs: returns the joined string without applying filter at
+all.
+
+Same root cause family as #310/#311 — filter not dispatched
+when value comes through `(v)` flag.
+
+**Where** — same as #310/#311 — `(v)` flag path doesn't
+thread through filter operator. C-source `Src/subst.c::dosubst`
+treats `(v)`-flag result the same way other expansions are
+filtered.
+
+**Impact** — defensive checks like "is this assoc's joined
+value matching pattern" don't work:
+
+```sh
+# Detect if any value starts with TEMP_
+if [[ -z "${(v)config:#TEMP_*}" ]]; then
+    echo "All values match TEMP_ pattern"
+fi
+# zsh: tests correctly
+# zshrs: condition always false (filter doesn't fire, joined string returned)
+```
+
+**Workaround** — use loop with explicit per-element test:
+```sh
+all_temp=1
+for v in "${(@v)config}"; do
+    [[ "$v" == TEMP_* ]] || all_temp=0
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -16833,9 +16995,12 @@ saved="${(qq)_vals[@]}"
 | 307 | `[[ -5 -lt 0 ]]` errors "unknown condition: -5" — bare negative number misparsed as unary operator | **port-bug** | always quote: `[[ "-5" -lt 0 ]]` |
 | 308 | `${(t)arr[N]}` type-of-element errors "bad substitution" (zsh: returns "a") | **port-bug** | copy to temp scalar |
 | 309 | Chained `${(qq)${(@P)var}}` drops elements — only first preserved (#229/#195/#287 family) | **port-bug** | two-step via intermediate var |
+| 310 | `${(@)arr:#pat}` filter via `(@)` flag form not applied (works with `[@]` subscript) | **port-bug** | use `[@]` subscript form |
+| 311 | `${(@k)assoc:#pat}`/`${(@v)assoc:#pat}` filter on assoc keys/values not applied | **port-bug** | explicit `for k v in "${(@kv)h}"` loop |
+| 312 | `${(v)assoc:#pat}` scalar-context filter on assoc values not applied | **port-bug** | per-element loop |
 
-Of three hundred and nine entries, two are fixed (5, 7), three
-hundred and three remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and twelve entries, two are fixed (5, 7), three
+hundred and six remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -16857,5 +17022,5 @@ hundred and three remain open port-bugs/perf-issues (4, 8, 9, 10,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
-305, 306, 307, 308, 309), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+305, 306, 307, 308, 309, 310, 311, 312), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
