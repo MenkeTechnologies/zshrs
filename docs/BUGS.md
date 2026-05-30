@@ -16181,6 +16181,166 @@ process_batch() {
 
 ---
 
+## #304 — Completion-system builtins missing entirely (compfiles, compgroups, compquote, comptags, comptry, compvalues, comparguments, compdescribe, compcall, compctl all return "command not found")
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'compfiles 2>&1'
+zsh:compfiles:1: not enough arguments
+
+$ ./target/debug/zshrs --zsh -c 'compfiles 2>&1'
+zsh:1: command not found: compfiles
+```
+
+Ten completion-helper builtins from the `zsh/computil` and
+`zsh/compctl` modules are missing entirely in zshrs:
+
+| Builtin | zsh module | Purpose |
+|---------|-----------|---------|
+| `compcall` | zsh/compctl | Call old-compctl completion from new compsys |
+| `compctl` | zsh/compctl | Old-style completion control (pre-compsys) |
+| `compdescribe` | zsh/computil | Build descriptions for matches |
+| `compfiles` | zsh/computil | File-completion helper |
+| `compgroups` | zsh/computil | Display group helper |
+| `compquote` | zsh/computil | Quote handling for completion |
+| `comptags` | zsh/computil | Tag-based dispatch |
+| `comptry` | zsh/computil | Tag-loop control |
+| `compvalues` | zsh/computil | Value-completion helper |
+| `comparguments` | zsh/computil | Argument-spec parser |
+
+zsh recognizes all of them (and emits appropriate errors when
+called without args). zshrs treats each as an unknown command.
+
+`compadd` (the main match-add builtin) IS present, but the
+support builtins that compsys's `_*` functions invoke are
+missing — meaning the entire compsys completion framework
+cannot run on zshrs.
+
+**Where** — `src/ported/builtins/completion/`: only `compadd`
+is implemented. C-source `Src/Modules/computil.c` and
+`Src/Modules/compctl.c` register the ten missing builtins.
+
+**Impact** — **major daily-driver blocker**. The user's
+`zsh-more-completions` repo (16,806 files) and every modern
+completion plugin (oh-my-zsh, prezto, zinit-loaded
+completions) depend on these builtins. Without them:
+
+- `compinit` may load but `_complete` and friends fail at
+  runtime when trying to call `compfiles -p`, `comparguments
+  -s`, etc.
+- Tab-completion fundamentally doesn't work.
+- p10k's instant-prompt-deferred completion init fails.
+
+This is one of the largest single gaps for compatibility with
+the user's CLI setup.
+
+**Workaround** — none — needs the builtins implemented.
+Fallback to pre-compsys `compctl`-only completion is also
+blocked since `compctl` itself is missing.
+
+---
+
+## #305 — `vared -c VAR` non-interactive silently no-ops (zsh: errors "can't access terminal")
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'vared -c TEST'
+zsh:vared:1: can't access terminal
+
+$ ./target/debug/zshrs --zsh -c 'vared -c TEST'
+(empty — silent)
+```
+
+`vared` is the zle-backed "edit a variable's value" builtin.
+In non-interactive mode (no tty), zsh errors loudly. zshrs
+silently does nothing — neither errors nor edits.
+
+This is a defensive-runtime gap. Scripts that fall through to
+`vared` in non-interactive contexts (e.g., test harnesses
+that accidentally hit the vared path) get unexpected silent
+no-ops instead of a clear error.
+
+**Where** — `src/ported/builtins/vared.rs::handle_no_tty`:
+silently returns success when stdin isn't a tty. C-source
+`Src/Zle/zle_main.c::bin_vared` checks `isatty(0)` and
+returns 1 with an error message.
+
+**Impact** — defensive-runtime detection — non-interactive
+vared usage caught by zsh, ignored by zshrs:
+
+```sh
+edit_config() {
+    vared -c CONFIG_VAR
+    [[ -n "$CONFIG_VAR" ]] || return 1
+}
+# Script auto-test:
+echo "test" | edit_config
+# zsh: errors via vared, function returns 1
+# zshrs: vared is silent no-op, CONFIG_VAR unchanged, function may pass or fail randomly
+```
+
+**Workaround** — explicit `[[ -t 0 ]]` check before vared:
+```sh
+edit_config() {
+    [[ -t 0 ]] || { echo "vared requires tty" >&2; return 1; }
+    vared -c CONFIG_VAR
+}
+```
+
+---
+
+## #306 — `compdef -a/-k/-N` flag handling differs from zsh
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'compdef -a 2>&1'
+zsh:1: command not found: compdef
+
+$ ./target/debug/zshrs --zsh -c 'compdef -a 2>&1'
+compdef: I need arguments
+
+$ /opt/homebrew/bin/zsh -fc 'compdef -N my_widget 2>&1'
+zsh:1: command not found: compdef
+
+$ ./target/debug/zshrs --zsh -c 'compdef -N my_widget 2>&1'
+compdef: unknown option: -N
+```
+
+`compdef` in zsh is an autoloaded function (not a builtin) —
+in fresh `-f` mode without `compinit` having run, it's not
+defined, hence "command not found". zshrs has `compdef`
+pre-registered as a builtin, so it's always available.
+
+Two divergences:
+1. **Availability**: zsh requires `autoload -Uz compdef`
+   (or `compinit`), zshrs has it always-available.
+2. **Flag set**: zshrs's compdef rejects `-N` ("unknown
+   option") and silently accepts `-a` / `-k` with different
+   errors than zsh would have.
+
+The always-available compdef in zshrs might seem like a
+feature (works without autoload), but flag-set divergence
+means scripts written for zsh's autoloaded compdef use flags
+zshrs doesn't recognize.
+
+**Where** — `src/ported/builtins/compdef.rs`: pre-registered
+builtin with incomplete flag table. C-source
+`Functions/Completion/Base/compinit` defines compdef as a
+function via the standard autoload mechanism.
+
+**Impact** — completion-registration scripts that pass
+specific compdef flags get rejected. Combined with #304
+(other compsys builtins missing), the completion-system
+porting effort has many surface-level gaps.
+
+**Workaround** — none direct — depends on aligning zshrs's
+compdef flag table with zsh's autoloaded compdef function.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -16488,9 +16648,12 @@ process_batch() {
 | 301 | `${(L/U/C)arr[N]}` case-change flag on subscripted array element errors "bad substitution" | **port-bug** | split: `e=arr[N]; ${(C)e}` |
 | 302 | `pushd +N` dirstack rotation rotates to wrong element (direction or indexing differs from zsh) | **port-bug** | absolute `pushd "${dirstack[N]}"` |
 | 303 | `trap '...' ERR` fires twice when failing cmd is inside a fn (zsh: once per logical error) | **port-bug** | `\|\| return 0` at fn end to suppress |
+| 304 | `compfiles`/`compgroups`/`compquote`/`comptags`/`comptry`/`compvalues`/`comparguments`/`compdescribe`/`compcall`/`compctl` builtins missing — compsys unusable | **port-bug** | (none — major daily-driver blocker) |
+| 305 | `vared -c VAR` non-interactive silent no-op (zsh: errors "can't access terminal") | **port-bug** | explicit `[[ -t 0 ]]` check |
+| 306 | `compdef` flag handling differs — `-N` rejected, always-available (zsh: autoloaded function not builtin) | **port-bug** | (none — needs flag table alignment) |
 
-Of three hundred and three entries, two are fixed (5, 7), two
-hundred and ninety-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and six entries, two are fixed (5, 7), three
+hundred remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -16511,5 +16674,6 @@ hundred and ninety-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
-292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303), and
-four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
+305, 306), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
