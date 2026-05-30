@@ -871,4 +871,142 @@ mod tests {
                 "enables_ must be deterministic for null in");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/cap.c
+    // c:36 bin_cap / c:68 bin_getcap / c:91 bin_setcap /
+    // c:274-310 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:303 — `cleanup_` is idempotent.
+    #[test]
+    fn cap_cleanup_idempotent_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:303 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn cap_cleanup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:310 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn cap_finish_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:296 — `boot_` return type i32 (compile-time pin).
+    #[test]
+    fn cap_boot_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = boot_(std::ptr::null());
+    }
+
+    /// c:36 — `bin_cap` empty args non-negative.
+    #[test]
+    fn bin_cap_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_cap("cap", &[], &ops, 0);
+        assert!(r >= 0, "bin_cap empty args must return ≥ 0, got {}", r);
+    }
+
+    /// c:68 — `bin_getcap("")` empty path doesn't panic.
+    #[test]
+    fn bin_getcap_empty_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let _ = bin_getcap("getcap", &[String::new()], &ops, 0);
+    }
+
+    /// c:91 — `bin_setcap` various func values don't panic.
+    #[test]
+    fn bin_setcap_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_setcap("setcap", &[], &ops, func);
+        }
+    }
+
+    /// c:36 — `bin_cap` very long arg list doesn't panic.
+    #[test]
+    fn bin_cap_long_arg_list_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let args: Vec<String> = (0..50).map(|i| format!("arg{}", i)).collect();
+        let _ = bin_cap("cap", &args, &ops, 0);
+    }
+
+    /// c:68 — `bin_getcap` deterministic for nonexistent path.
+    #[test]
+    fn bin_getcap_deterministic_nonexistent_path() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let args = vec!["/__never_exists_xyz__".to_string()];
+        let r1 = bin_getcap("getcap", &args, &ops, 0);
+        let r2 = bin_getcap("getcap", &args, &ops, 0);
+        assert_eq!(r1, r2, "bin_getcap nonexistent path must be deterministic");
+    }
+
+    /// c:289 — `enables_` with Some(non-empty) safe.
+    #[test]
+    fn cap_enables_with_some_non_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = Some(vec![1, 2, 3]);
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:281 — `features_` is deterministic across repeated calls.
+    #[test]
+    fn cap_features_deterministic_on_null_module() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v1: Vec<String> = Vec::new();
+        let mut v2: Vec<String> = Vec::new();
+        assert_eq!(features_(null, &mut v1), 0);
+        assert_eq!(features_(null, &mut v2), 0);
+        assert_eq!(v1, v2,
+            "features_ must populate identical vec for identical input");
+    }
+
+    /// c:310 — `finish_` is idempotent.
+    #[test]
+    fn cap_finish_idempotent_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
 }
