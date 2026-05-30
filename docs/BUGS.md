@@ -22148,6 +22148,203 @@ porting between zsh-impls.
 
 ---
 
+## #415 — function-local `typeset -A h` clobbers global `h` instead of shadowing
+
+**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=(o 1); f() { typeset -A h=(i 2); }; f; echo "after_o=[${h[o]}] after_i=[${h[i]}]"'
+after_o=[1] after_i=[]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(o 1); f() { typeset -A h=(i 2); }; f; echo "after_o=[${h[o]}] after_i=[${h[i]}]"'
+after_o=[] after_i=[2]
+```
+
+zsh: function-local `typeset -A h=(i 2)` **shadows** the
+global `h`. After the function returns, the global is
+intact — `h[o]=1` survives, `h[i]` is undefined.
+
+zshrs: function-local `typeset -A` **clobbers** the
+global. After the function returns, the *function's*
+state leaks out — `h[o]` is gone, `h[i]=2` persists.
+
+Tested with scalar `local` and regular array `local -a`
+in earlier hunts and those shadow correctly. The bug is
+specific to associative arrays (`typeset -A` /
+`local -A`).
+
+**Where** — `src/ported/builtins/typeset.rs::declare_assoc`
+or the scope-push for assoc parameters: the function-
+local declaration must push a new entry onto the param
+stack without modifying or merging with the parent
+scope's assoc. C-source `Src/params.c::setlocal_assoc`
+saves the parent's `Param` struct and restores on
+function exit.
+
+**Impact** — **Function isolation broken for assocs**.
+Every script that uses local hashtables for per-function
+state mutates the caller's hash:
+
+```sh
+typeset -A config=(theme dark size 14)
+render() {
+    typeset -A config=(theme override-only)   # intended: local view
+    echo "${config[theme]}"   # "override-only"
+}
+render
+echo "${config[theme]}"   # zsh: "dark" (untouched)
+                          # zshrs: empty — config[theme] gone
+echo "${config[size]}"    # zsh: "14" (untouched)
+                          # zshrs: empty — clobbered
+```
+
+Affects:
+- Plugin loaders that use assoc for option-storage
+- Themes that have per-render local overrides
+- Memoization caches passed through helper functions
+
+The shadowing bug is **silent** — code appears to work
+on first call, then state from the function leaks to the
+caller on subsequent calls.
+
+**Workaround** — manual save/restore:
+```sh
+render() {
+    local saved=("${(@kv)config}")
+    typeset -A config=()
+    config[theme]="override-only"
+    # ... use config ...
+    config=("${saved[@]}")  # restore
+}
+```
+
+Ugly and error-prone for nested patterns.
+
+---
+
+## #416 — `unset PATH` ignored — command lookup still resolves binaries
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'unset PATH; ls / 2>&1; echo rc=$?'
+zsh:1: command not found: ls
+rc=127
+
+$ ./target/debug/zshrs --zsh -c 'unset PATH; ls / 2>&1; echo rc=$?'
+Applications
+bin
+cores
+... (etc — full directory listing)
+rc=0
+```
+
+`unset PATH` should make subsequent command lookups fail
+— with no PATH, `ls` can't be resolved and must error
+"command not found" with rc=127.
+
+zshrs ignores the unset: `ls` still resolves and executes
+successfully. Either:
+- `unset` doesn't actually remove PATH (it stays in the
+  parameter table)
+- PATH is removed but command resolution falls back to a
+  hardcoded default (`/usr/bin:/bin` or similar)
+- The `path` array (tied) is what command-lookup uses,
+  and unsetting `PATH` (scalar) doesn't clear `path`
+  (array)
+
+**Where** — `src/ported/exec/cmdlookup.rs::resolve` or
+the unset path for tied params: must clear both scalar
+and array sides of `PATH`/`path`, and use the (now-empty)
+result for resolution. C-source `Src/exec.c::execcmd`
+calls `getpath()` which returns NULL after PATH is unset.
+
+**Impact** — defensive sandboxing patterns don't work:
+
+```sh
+# Lock down: only allow explicit-path calls
+unset PATH
+/usr/bin/ls /trusted   # explicit path: works
+ls /untrusted          # zsh: command not found
+                       # zshrs: still finds ls — sandbox bypassed
+```
+
+Test harnesses, secure-context wrappers, restricted-mode
+scripts all rely on `unset PATH` to disable command
+lookup. zshrs's behavior is a **security bypass** for
+this pattern.
+
+**Workaround** — explicit empty assignment:
+```sh
+PATH=
+ls /                   # works in both shells after this
+```
+
+Wait — does empty PATH actually disable lookup in zshrs?
+Needs verification. If empty also doesn't disable, no
+workaround exists short of patching command resolver.
+
+---
+
+## #417 — `unset RANDOM` ignored — special parameter regenerates on next access
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'unset RANDOM; echo "[$RANDOM]"'
+[]
+
+$ ./target/debug/zshrs --zsh -c 'unset RANDOM; echo "[$RANDOM]"'
+[16807]
+```
+
+zsh: `unset RANDOM` removes the parameter; subsequent
+access returns empty string.
+
+zshrs: ignores the unset; subsequent access regenerates
+a new random number (`16807` = the classic Park-Miller
+LCG seed, suggesting hardcoded reinitialization on each
+access).
+
+Same family as #373 (pipestatus mutable when it shouldn't
+be), #374 (reswords), #375 (commands slice) — but in the
+**opposite direction**. There the issue was zshrs not
+applying readonly protection; here the issue is zshrs
+not honoring an unset on a parameter that *should* be
+unsettable.
+
+In zsh, `RANDOM` is described as a special parameter
+whose value is "regenerated on each read" — but `unset`
+deactivates the regenerator, leaving an empty string.
+zshrs's regenerator stays active regardless of unset.
+
+**Where** — `src/ported/params/random.rs::unset_handler`
+(or the special-param unset dispatch): must mark the
+parameter as fully cleared, suppressing the `getfn`
+regenerator. C-source `Src/params.c::randomsetfn` with
+unset path sets `PM_UNSET` flag and `getfn` checks the
+flag.
+
+**Impact** — minor. The regenerator-active-after-unset
+behavior is technically correct in spirit (RANDOM always
+generates), but breaks any defensive-scoping pattern that
+uses `unset RANDOM` to ensure no leaks of the regenerator
+state:
+
+```sh
+# In test fixtures: avoid timing-side-channel from RANDOM
+unset RANDOM
+[[ -z $RANDOM ]] && echo "RANDOM is gone"
+# zsh: prints "RANDOM is gone"
+# zshrs: $RANDOM regenerates — no clean state
+```
+
+**Workaround** — none — the regenerator can't be
+disabled in zshrs. Test fixtures must use a different
+mechanism for randomness control.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -22566,9 +22763,12 @@ porting between zsh-impls.
 | 412 | `$PROMPT3` default empty — `select` prompt missing (zsh: `\\033[1;34m-->>>> \\033[0m`) | **port-bug** | seed `PS3` in zshrc |
 | 413 | `do` standalone-keyword silently accepted as no-op (zsh: parse error near `do`) — reserved-word strict check missing | **port-bug** | `zsh -n script.zsh` pre-check |
 | 414 | `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape) — opposite of #398 printf direction | **port-bug** | explicit escape allowlist |
+| 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **port-bug** | manual save/restore via `${(@kv)config}` |
+| 416 | `unset PATH` ignored — command lookup still resolves (security bypass for sandboxing patterns) | **port-bug** | try `PATH=` empty assignment (needs verify) |
+| 417 | `unset RANDOM` ignored — special-param regenerator stays active (zsh: returns empty after unset) | **port-bug** | no workaround for clean-state requirement |
 
-Of four hundred and fourteen entries, two are fixed (5, 7),
-four hundred and eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and seventeen entries, two are fixed (5, 7),
+four hundred and eleven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
