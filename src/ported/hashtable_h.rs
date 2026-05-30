@@ -661,4 +661,151 @@ mod tests {
         assert!(BIN_SETOPT >= 0);
         assert!(BIN_UNSETOPT >= 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional pins for Src/hashtable.h
+    // c:34-66 BIN_* main overload codes / c:69-70 BIN_SETOPT family
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:34-66 — verbatim positional pins: every BIN_* main slot matches
+    /// its source-line offset.
+    #[test]
+    fn bin_main_slot_values_exact() {
+        assert_eq!(BIN_TYPESET, 0);
+        assert_eq!(BIN_BG, 1);
+        assert_eq!(BIN_FG, 2);
+        assert_eq!(BIN_JOBS, 3);
+        assert_eq!(BIN_WAIT, 4);
+        assert_eq!(BIN_DISOWN, 5);
+        assert_eq!(BIN_BREAK, 6);
+        assert_eq!(BIN_CONTINUE, 7);
+        assert_eq!(BIN_EXIT, 8);
+        assert_eq!(BIN_RETURN, 9);
+        assert_eq!(BIN_CD, 10);
+        assert_eq!(BIN_POPD, 11);
+        assert_eq!(BIN_PUSHD, 12);
+        assert_eq!(BIN_PRINT, 13);
+        assert_eq!(BIN_EVAL, 14);
+        assert_eq!(BIN_SCHED, 15);
+        assert_eq!(BIN_FC, 16);
+        assert_eq!(BIN_R, 17);
+        assert_eq!(BIN_PUSHLINE, 18);
+        assert_eq!(BIN_LOGOUT, 19);
+    }
+
+    /// c:54-66 — verbatim positional pins for the rest of BIN_* main slots.
+    #[test]
+    fn bin_main_slot_values_exact_part_two() {
+        assert_eq!(BIN_TEST, 20);
+        assert_eq!(BIN_BRACKET, 21);
+        assert_eq!(BIN_READONLY, 22);
+        assert_eq!(BIN_ECHO, 23);
+        assert_eq!(BIN_DISABLE, 24);
+        assert_eq!(BIN_ENABLE, 25);
+        assert_eq!(BIN_PRINTF, 26);
+        assert_eq!(BIN_COMMAND, 27);
+        assert_eq!(BIN_UNHASH, 28);
+        assert_eq!(BIN_UNALIAS, 29);
+        assert_eq!(BIN_UNFUNCTION, 30);
+        assert_eq!(BIN_UNSET, 31);
+        assert_eq!(BIN_EXPORT, 32);
+    }
+
+    /// c:34-66 — 33 main-slot codes form a dense 0..=32 sequence.
+    #[test]
+    fn bin_main_slots_form_dense_0_to_32() {
+        let mut codes = [
+            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
+            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN, BIN_CD,
+            BIN_POPD, BIN_PUSHD, BIN_PRINT, BIN_EVAL, BIN_SCHED, BIN_FC,
+            BIN_R, BIN_PUSHLINE, BIN_LOGOUT, BIN_TEST, BIN_BRACKET,
+            BIN_READONLY, BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
+            BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
+            BIN_UNSET, BIN_EXPORT,
+        ];
+        codes.sort();
+        let expected: Vec<i32> = (0..=32).collect();
+        assert_eq!(codes.to_vec(), expected,
+            "BIN_* main slots must be dense 0..=32 (no gaps)");
+    }
+
+    /// c:69-70 — setopt-family pair values pinned verbatim.
+    #[test]
+    fn bin_setopt_family_exact_values() {
+        assert_eq!(BIN_SETOPT, 0);
+        assert_eq!(BIN_UNSETOPT, 1);
+    }
+
+    /// c:69-70 — setopt-family codes are distinct from each other.
+    #[test]
+    fn bin_setopt_family_pair_distinct() {
+        assert_ne!(BIN_SETOPT, BIN_UNSETOPT,
+            "setopt vs unsetopt must be different overload codes");
+    }
+
+    /// c:34-66 — main codes fit comfortably in i8 (room for ≥2x growth).
+    #[test]
+    fn bin_main_codes_fit_in_i8_room_for_growth() {
+        for c in [BIN_TYPESET, BIN_EXPORT] {
+            assert!(c < i8::MAX as i32,
+                "BIN_* main {} must fit in i8 (≥2x growth headroom)", c);
+        }
+    }
+
+    /// c:34-66 — total count of main codes is 33 (offsets 0..=32, dense).
+    #[test]
+    fn bin_main_slots_count_is_33() {
+        let codes = [
+            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
+            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN, BIN_CD,
+            BIN_POPD, BIN_PUSHD, BIN_PRINT, BIN_EVAL, BIN_SCHED, BIN_FC,
+            BIN_R, BIN_PUSHLINE, BIN_LOGOUT, BIN_TEST, BIN_BRACKET,
+            BIN_READONLY, BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
+            BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
+            BIN_UNSET, BIN_EXPORT,
+        ];
+        assert_eq!(codes.len(), 33,
+            "33 BIN_* main slots must be declared");
+    }
+
+    /// c:34-66 — BIN_TYPESET is the canonical zero (first slot).
+    #[test]
+    fn bin_typeset_is_zero_sentinel() {
+        assert_eq!(BIN_TYPESET, 0, "BIN_TYPESET must be first slot (= 0)");
+    }
+
+    /// c:43 / c:42 — BIN_EXIT (8) and BIN_RETURN (9) are sequential
+    /// (zsh's flow-control pair).
+    #[test]
+    fn bin_exit_return_are_sequential() {
+        assert_eq!(BIN_RETURN - BIN_EXIT, 1,
+            "BIN_RETURN must immediately follow BIN_EXIT");
+    }
+
+    /// c:40-41 — BIN_BREAK (6) and BIN_CONTINUE (7) are sequential
+    /// (loop-control pair).
+    #[test]
+    fn bin_break_continue_are_sequential() {
+        assert_eq!(BIN_CONTINUE - BIN_BREAK, 1,
+            "BIN_CONTINUE must immediately follow BIN_BREAK");
+    }
+
+    /// c:62-66 — un* family (UNHASH, UNALIAS, UNFUNCTION, UNSET) are
+    /// 4 consecutive slots (28..=31).
+    #[test]
+    fn bin_un_family_is_consecutive() {
+        let un = [BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION, BIN_UNSET];
+        for w in un.windows(2) {
+            assert_eq!(w[1] - w[0], 1,
+                "un* family must be consecutive: {} → {}", w[0], w[1]);
+        }
+    }
+
+    /// c:54-55 — BIN_TEST (20) and BIN_BRACKET (21) are sequential
+    /// (the `test` vs `[` pair).
+    #[test]
+    fn bin_test_bracket_are_sequential() {
+        assert_eq!(BIN_BRACKET - BIN_TEST, 1,
+            "BIN_BRACKET must immediately follow BIN_TEST");
+    }
 }
