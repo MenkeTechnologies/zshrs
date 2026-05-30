@@ -21640,6 +21640,184 @@ zsh -n script.zsh || echo "parse error in script"
 
 ---
 
+## #406 — `${funcstack[@]}` returns empty despite `${#funcstack}` reporting correct length
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a() { b; }; b() { print -l -- "${funcstack[@]}"; }; a'
+b
+a
+
+$ ./target/debug/zshrs --zsh -c 'a() { b; }; b() { print -l -- "${funcstack[@]}"; }; a'
+
+```
+
+Diagnostic across access patterns inside the deepest fn:
+| Access                  | zsh    | zshrs       |
+|-------------------------|--------|-------------|
+| `${funcstack[@]}`       | `b a`  | (empty)     |
+| `${funcstack[*]}`       | `b a`  | (empty)     |
+| `${funcstack[1]}`       | `b`    | `b`         |
+| `${funcstack[2]}`       | `a`    | `a`         |
+| `${#funcstack}`         | `2`    | `2`         |
+| `typeset -p funcstack`  | (n/a)  | `(  )`      |
+
+Individual subscripts work. Length works. But the
+"expand all elements" forms (`[@]`, `[*]`, bare) return
+empty. `typeset -p` reports an empty array even though
+elements exist.
+
+**Where** — `src/ported/params/funcstack.rs`: the special
+parameter likely has a getter for individual indices but
+no working `get_all`/`iter` implementation. Or the array
+backing the assoc has phantom-length tracking divorced
+from actual storage.
+
+C-source `Src/parameter.c::funcstackgetfn` returns a
+proper `char **` array consumed uniformly by all access
+paths.
+
+**Impact** — **Critical introspection failure**. Error
+handlers, stack-trace utilities, and debug frameworks all
+break:
+
+```sh
+# Standard zsh error-stack pattern
+TRAPZERR() {
+    print -r -- "STACK TRACE:"
+    for f in "${funcstack[@]}"; do
+        print "  $f"
+    done
+}
+# zsh: prints each function in the call chain
+# zshrs: prints "STACK TRACE:" and nothing else
+```
+
+Affects every "print a stack trace" pattern across
+oh-my-zsh, p10k debug-output, and zinit's error logging.
+
+**Workaround** — index manually:
+```sh
+for (( i=1; i<=${#funcstack}; i++ )); do
+    print "  ${funcstack[$i]}"
+done
+```
+
+(Individual subscripts work, so this round-trips through
+the `${#funcstack}` length value.)
+
+---
+
+## #407 — subscript flag `(e)` treated as `(r)` — exact-key lookup falls back to find-by-value
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(one two); echo "[${a[(e)one]}]"'
+[]
+
+$ ./target/debug/zshrs --zsh -c 'a=(one two); echo "[${a[(e)one]}]"'
+[one]
+```
+
+The `(e)` subscript flag means "treat the subscript text
+**literally as the key**, with NO parameter substitution
+or pattern matching". For an indexed array, `a[(e)one]`
+asks for element at numeric-index "one" → coerces to 0 →
+empty (zsh arrays are 1-indexed).
+
+zshrs falls through to `(r)` semantics — "find first
+element whose value matches `one`" — returns the matching
+element `one`. The `(e)` flag's "no-interpretation"
+contract is violated.
+
+**Where** — `src/ported/paramsubst/subscript.rs::flag_e`:
+likely no `(e)` flag handler at all, falls through to
+default match behavior. C-source
+`Src/subst.c::getindex` checks `flags & SCANPM_EXACT`
+and uses raw text as numeric subscript without scanning.
+
+**Impact** — array lookups with `(e)` produce silent
+wrong results. Most affected use case:
+
+```sh
+# Defensive: look up by literal name, not pattern
+needle="*"  # potentially user-supplied
+result="${array[(e)$needle]}"
+# zsh: returns empty (no element at index "*")
+# zshrs: returns first element matching pattern * = all elements
+```
+
+Security-relevant when subscript contains untrusted input —
+zshrs's fallback to pattern-match allows shell-injection-
+like behavior in a code path the user marked `(e)` to
+specifically PREVENT.
+
+**Workaround** — for indexed arrays, explicit numeric
+coercion:
+```sh
+result="${array[$((needle))]}"
+```
+
+For assocs, this is harder — `(e)` was the intended
+"literal key lookup" mechanism.
+
+---
+
+## #408 — `${a[1,5,2]}` 3-arg array slice silently accepted (zsh: bad substitution)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(1 2 3 4 5); echo "[${a[1,5,2]}]"'
+zsh:1: bad substitution
+
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3 4 5); echo "[${a[1,5,2]}]"'
+[1 2 3 4 5]
+```
+
+zsh's array-slice syntax is `${a[start,end]}` — exactly
+two args separated by comma. A third arg is a parse
+error: "bad substitution".
+
+zshrs accepts the 3-arg form and ignores the third
+argument — returns the full slice `[1,5]` as if the third
+arg weren't there.
+
+**Where** — `src/ported/paramsubst/subscript.rs::parse_range`:
+should error on more than two comma-separated parts.
+C-source `Src/subst.c::subscr_endidx` errors when
+finding a third comma.
+
+**Impact** — typos in slice syntax pass silently. Someone
+porting bash/python-style 3-arg slices (`a[start:end:step]`)
+to zsh syntax assumes zshrs is "more flexible" and ships
+broken code that silently doesn't step:
+
+```sh
+# Mistakenly wrote step-form: every other element
+evens=${a[1,${#a},2]}
+# zsh: bad substitution — bug caught immediately
+# zshrs: returns full a[1,${#a}] slice with no stepping
+#        — silently wrong output
+```
+
+Confirms a pattern across #400/#403/#404/#405/#408 —
+zshrs is broadly **less strict than zsh** about parse-
+time validation, accepting malformed constructs that
+should error.
+
+**Workaround** — use explicit step loop:
+```sh
+local result=()
+for (( i=1; i<=${#a}; i+=2 )); do
+    result+=("${a[$i]}")
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -22049,9 +22227,12 @@ zsh -n script.zsh || echo "parse error in script"
 | 403 | `for ... don` typo silently treated as separator + command (zsh: parse error) — body runs + `don` runs per iteration | **port-bug** | CI lint for unbalanced do/done |
 | 404 | `while false ... don` typo silently accepted, no diagnostic, rc=0 — invisible until condition changes | **port-bug** | CI lint for unbalanced do/done |
 | 405 | function definition missing close-brace silently accepted — body registered with broken structure | **port-bug** | strict `zsh -n script.zsh` pre-check |
+| 406 | `${funcstack[@]}` returns empty despite `${#funcstack}` reporting correct length — `[@]`/`[*]` broken, individual subscripts work | **port-bug** | manual `for (( i=1; i<=${#funcstack}; i++ ))` |
+| 407 | `${a[(e)key]}` subscript flag treated as `(r)` find-by-value (zsh: literal-as-numeric) — security-relevant fallback | **port-bug** | explicit numeric coercion `${a[$((key))]}` |
+| 408 | `${a[1,5,2]}` 3-arg array slice silently accepted (zsh: bad substitution) — third arg ignored | **port-bug** | explicit step loop |
 
-Of four hundred and five entries, two are fixed (5, 7),
-three hundred and ninety-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and eight entries, two are fixed (5, 7),
+four hundred and two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
