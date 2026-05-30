@@ -377,4 +377,119 @@ mod tests {
             count
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional libc-availability pins — every legacy extern in
+    // Src/prototypes.h must be available through libc (not redeclared).
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// libc provides `getdomainname` (legacy SunOS-pre-Solaris extern).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn libc_provides_getdomainname() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*mut libc::c_char, libc::size_t) -> libc::c_int =
+            libc::getdomainname;
+    }
+
+    /// libc provides `free` (legacy fallback companion to malloc).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_free() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*mut libc::c_void) = libc::free;
+    }
+
+    /// libc provides `time` (companion to legacy difftime).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_time() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*mut libc::time_t) -> libc::time_t = libc::time;
+    }
+
+    /// libc provides `strncpy` (string-extern family in prototypes.h).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_strncpy() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*mut libc::c_char, *const libc::c_char, libc::size_t)
+            -> *mut libc::c_char = libc::strncpy;
+    }
+
+    /// libc provides `strncmp` (string-extern family).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_strncmp() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*const libc::c_char, *const libc::c_char, libc::size_t)
+            -> libc::c_int = libc::strncmp;
+    }
+
+    /// libc provides `strcmp` (string-extern family).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_strcmp() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(*const libc::c_char, *const libc::c_char) -> libc::c_int =
+            libc::strcmp;
+    }
+
+    /// libc provides `setpgid` (modern replacement for setpgrp legacy paths).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_setpgid() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(libc::pid_t, libc::pid_t) -> libc::c_int = libc::setpgid;
+    }
+
+    /// libc provides `getpid` (companion to legacy getppid).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_getpid() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn() -> libc::pid_t = libc::getpid;
+    }
+
+    /// libc provides `signal` (modern signal handler installer).
+    #[cfg(unix)]
+    #[test]
+    fn libc_provides_signal() {
+        let _g = crate::test_util::global_state_lock();
+        let _: unsafe extern "C" fn(libc::c_int, libc::sighandler_t) -> libc::sighandler_t =
+            libc::signal;
+    }
+
+    /// File-structure pin: prototypes_h.rs body above the test module
+    /// MUST contain no items (doc comments + attributes + blank lines only).
+    #[test]
+    fn prototypes_h_body_above_tests_is_empty() {
+        let src = include_str!("prototypes_h.rs");
+        let pre_tests: String = src
+            .lines()
+            .take_while(|l| !l.contains("mod tests"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for line in pre_tests.lines() {
+            let t = line.trim_start();
+            assert!(
+                t.is_empty() || t.starts_with("//") || t.starts_with("#[") || t.starts_with("//!"),
+                "prototypes_h body above tests must be empty (doc + attrs only); got: {:?}",
+                line
+            );
+        }
+    }
+
+    /// File-structure pin: tests are the only `mod` declaration.
+    #[test]
+    fn prototypes_h_has_exactly_one_mod_decl() {
+        let src = include_str!("prototypes_h.rs");
+        let count = src.lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                t.starts_with("mod ") || t.starts_with("pub mod ")
+            }).count();
+        assert_eq!(count, 1,
+            "prototypes_h.rs MUST contain only the 1 #[cfg(test)] mod tests");
+    }
 }
