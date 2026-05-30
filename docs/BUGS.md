@@ -21988,6 +21988,166 @@ fi
 
 ---
 
+## #412 — `$PROMPT3` (PS3) default empty — `select` prompt missing
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$PROMPT3]"'
+[[1;34m-->>>> [0m]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[$PROMPT3]"'
+[]
+```
+
+zsh's default PROMPT3 (alias PS3) is a colored arrow
+prompt — `\033[1;34m-->>>> \033[0m` — displayed during
+`select` loops. zshrs initializes PROMPT3 to empty.
+
+This is parallel to #390 (PS4 default empty) — another
+prompt special-parameter with missing default.
+
+**Where** — `src/ported/params/prompts.rs::init_defaults`:
+PROMPT3 initializer missing. C-source
+`Src/params.c::createspecials` sets PS3 to the canonical
+colored-arrow default.
+
+**Impact** — `select` loops display no prompt text:
+
+```sh
+select choice in apple banana cherry; do
+    echo "[$choice]"; break
+done
+# zsh:
+#   1) apple  2) banana  3) cherry
+#   -->>>>       <-- colored prompt
+# zshrs:
+#   1) apple  2) banana  3) cherry
+#                <-- no prompt, just cursor
+```
+
+Users see a numbered menu with no input cue. Combined
+with #390 and #401 (empty option list hangs), zshrs's
+`select` UX is broken in all three default cases.
+
+**Workaround** — set PS3 explicitly in `.zshrc`:
+```sh
+PS3=$'%F{blue}-->>>> %f'
+```
+
+---
+
+## #413 — `do` standalone-keyword silently accepted as no-op (zsh: parse error)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'do echo hi'
+zsh:1: parse error near `do'
+
+$ ./target/debug/zshrs --zsh -c 'do echo hi'
+(no output, rc=0)
+```
+
+zsh strictly reserves `do` as a loop-body opener — it can
+appear only inside `for`/`while`/`until`/`select` blocks.
+A standalone `do` is a parse error.
+
+zshrs accepts `do echo hi` silently — both the `do`
+keyword and the rest of the line are swallowed, exiting
+rc=0 with no output.
+
+Same family as #400/#403/#404/#405 (parse strictness
+gap), but for **reserved-words at top-level command
+position** rather than close-token misuse.
+
+**Where** — `src/ported/parser/command.rs::dispatch`:
+reserved-word detection for `do`/`done`/`fi`/`esac` at
+top-level command position is missing. C-source
+`Src/parse.c::par_simple` checks `tok == DOLOOP` and
+errors when seen outside loop-body context.
+
+**Impact** — top-of-script typos invisible. A script that
+accidentally starts with `do` (paste artifact, transposed
+lines) produces no output and rc=0:
+
+```sh
+do                  # accidental — stray line
+echo "starting"
+echo "step 1"
+echo "step 2"
+```
+
+zsh: parse error, nothing runs.
+zshrs: depending on parse state, may swallow entire
+script or just the first line — script appears to
+succeed but partially or fully no-ops.
+
+Pairs with #404 (while typo not detected) in the "silent
+shell programs" failure mode.
+
+**Workaround** — strict pre-check before sourcing:
+```sh
+zsh -n script.zsh || echo "parse error"
+```
+
+(Same workaround as #405 — though needs verification that
+zshrs's `-n` catches what its `-c` accepts.)
+
+---
+
+## #414 — `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%Zabc"'
+abc
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%Zabc"'
+%Zabc
+```
+
+zsh's prompt-escape expander, when fed an unknown `%X`
+sequence, **drops the escape** (consumes the `%` and the
+flag character) and continues with the rest of the
+string. zshrs preserves the escape literally — emits
+`%Z` as-is followed by the remaining text.
+
+Same direction as #391 (PS4 escapes printed literally
+when expander not invoked) — but distinct: here the
+expander IS being invoked (other escapes like `%F{red}`
+work in zshrs per #390/#391 testing), it's just the
+unknown-directive handling that's wrong.
+
+**Where** — `src/ported/prompts/expand.rs::expand_escape`:
+unknown `%X` falls through to literal-emit. C-source
+`Src/prompt.c::putpromptchar` advances past the unknown
+flag character silently.
+
+**Impact** — opposite direction from #398 (printf which
+should error but silently passes through): here zsh
+silently passes through to *nothing*, zshrs emits the
+escape. Both shells have a "silently consume" policy in
+exactly opposite directions.
+
+Real-world breakage when prompt strings are templated
+across shells:
+
+```sh
+PS1=$'%n@%m:%~ %Z> '   # %Z was a typo for %#
+# zsh: shows "user@host:~ > " (Z dropped, space then >)
+# zshrs: shows "user@host:~ %Z> " (Z literal, visible)
+```
+
+Less destructive than #398 but produces visible UI
+artifacts that don't match zsh's rendering.
+
+**Workaround** — none — explicit escape allowlist if
+porting between zsh-impls.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -22403,9 +22563,12 @@ fi
 | 409 | `(#i)PATTERN` glob case-folding flag not recognized — treated as literal filename component | **port-bug** | explicit case-variants `[xX]` |
 | 410 | `typeset -p PATH` doesn't expose tied scalar/array pair (zsh: `export -T PATH path=(...)`) — state-snapshot lossy | **port-bug** | manually pair-emit `path` array |
 | 411 | `[ "abc" -eq 5 ]` silent rc=1 instead of "integer expression expected" + rc=2 — type-error coerced to 0 | **port-bug** | pre-validate operand with `=~ ^-?[0-9]+$` |
+| 412 | `$PROMPT3` default empty — `select` prompt missing (zsh: `\\033[1;34m-->>>> \\033[0m`) | **port-bug** | seed `PS3` in zshrc |
+| 413 | `do` standalone-keyword silently accepted as no-op (zsh: parse error near `do`) — reserved-word strict check missing | **port-bug** | `zsh -n script.zsh` pre-check |
+| 414 | `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape) — opposite of #398 printf direction | **port-bug** | explicit escape allowlist |
 
-Of four hundred and eleven entries, two are fixed (5, 7),
-four hundred and five remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and fourteen entries, two are fixed (5, 7),
+four hundred and eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
