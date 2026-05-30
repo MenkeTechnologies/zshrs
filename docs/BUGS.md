@@ -1253,6 +1253,116 @@ Or just don't use the literal name `argv` in messages.
 
 ---
 
+## #30 — `setopt no_clobber` rejects `> /dev/null` (and any char-special device)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt no_clobber; echo hi > /dev/null'
+# (no error — succeeds)
+
+$ zshrs --zsh -c 'setopt no_clobber; echo hi > /dev/null'
+zsh:1: file exists: /dev/null
+```
+
+`setopt no_clobber` (a.k.a. `>!` requirement) should only protect
+REGULAR files from being overwritten. Real zsh exempts character
+special, block special, FIFO, and symlinks-to-non-regular targets
+from the check — overwriting `/dev/null` or `/dev/stdout` always
+works. zshrs's port treats `/dev/null` as a protected file.
+
+Affects EVERY common idiom that uses `> /dev/null` or `2> /dev/null`
+once a script sets `no_clobber`:
+
+```sh
+setopt no_clobber
+
+# All of these fail in zshrs, work in zsh:
+some_cmd > /dev/null
+some_cmd 2> /dev/null
+some_cmd &> /dev/null
+echo "fd 1 to stdout dup" >&1
+```
+
+**Where** — `src/ported/exec.rs::add_fd_or_open` or the redirection
+opener path that calls `O_CREAT | O_EXCL` style flags. Should
+`stat()` the target first and skip the existence check for
+non-regular files.
+
+**Workaround** — use `>|` to force-clobber:
+```sh
+setopt no_clobber
+some_cmd >| /dev/null    # force overwrite, bypasses noclobber
+```
+
+---
+
+## #31 — `${EPOCHSECONDS:-default}` always uses default — `:-` and `:+` think dynamic params are unset
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime
+echo "1: ${EPOCHSECONDS:-DEFAULT}"
+echo "2: ${+EPOCHSECONDS}"
+echo "3: ${EPOCHSECONDS:+set}"
+echo "4: ${EPOCHSECONDS}"'
+1: 1780150194
+2: 1
+3: set
+4: 1780150194
+
+$ zshrs --zsh -c 'zmodload zsh/datetime
+echo "1: ${EPOCHSECONDS:-DEFAULT}"
+echo "2: ${+EPOCHSECONDS}"
+echo "3: ${EPOCHSECONDS:+set}"
+echo "4: ${EPOCHSECONDS}"'
+1: DEFAULT      ← wrong, should be the value
+2: 0            ← wrong, should be 1
+3:              ← wrong, should be "set"
+4: 1780150194   ← correct via direct access
+```
+
+The four standard ways to check if `EPOCHSECONDS` is set ALL report
+unset. Direct value access works. This breaks every script that
+uses defensive `${var:-fallback}` patterns around dynamic special
+parameters from `zsh/datetime`.
+
+Tested all dynamic-special parameters — divergence is specific to
+**module-loaded** dynamic params:
+
+  | parameter         | direct | `:-default` | `${+x}` | source                  |
+  |-------------------|--------|-------------|---------|-------------------------|
+  | `EPOCHSECONDS`    | works  | **FAILS**   | 0/1 wrong | `zsh/datetime`        |
+  | `EPOCHREALTIME`   | works  | **FAILS**   | 0/1 wrong | `zsh/datetime`        |
+  | `RANDOM`          | works  | works       | works   | built-in PM_SPECIAL    |
+  | `SECONDS`         | works  | works       | works   | built-in PM_SPECIAL    |
+  | `LINENO`          | works  | works       | works   | built-in PM_SPECIAL    |
+  | `HISTCMD`         | works  | works       | works   | built-in PM_SPECIAL    |
+  | `SHLVL`           | works  | works       | works   | environment            |
+
+**Where** — `src/ported/modules/datetime.rs` registers
+`EPOCHSECONDS`/`EPOCHREALTIME` with the `set` flag not being
+properly set on the `Param` struct, so the `is_param_set` check
+in `paramsubst` for `:-` / `:+` / `${+x}` returns false.
+
+**Workaround** — fall back to direct access without the `:-` check:
+```sh
+ts=$EPOCHSECONDS
+[[ -n $ts ]] && echo "set to $ts"
+
+# Or assign-then-test:
+local epoch="$EPOCHSECONDS"
+local fallback="${epoch:-default}"   # epoch is a REGULAR var, the :- works
+```
+
+Demos 77, 254, 260, 285, 300, 310, 335, 350, 360, 367 all use
+`${EPOCHSECONDS:-N/A}` patterns that silently fall back to the
+default. The display works because the value still gets printed
+via `strftime $EPOCHSECONDS` (direct access path).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -1286,8 +1396,10 @@ Or just don't use the literal name `argv` in messages.
 | 27 | `caller`/`help` extra builtins shadow user fns | **port-bug** | `disable caller help` |
 | 28 | `mkdir`/`rm`/`mv`/etc. shadowed as shell builtins | **port-bug** | `command rm` to bypass |
 | 29 | `"argv[N]=..."` literal stripped inside double quotes | **port-bug** | escape `\[` `\]` |
+| 30 | `setopt no_clobber` rejects `> /dev/null` | **port-bug** | `>\|` force-clobber |
+| 31 | `${EPOCHSECONDS:-x}` always uses default | **port-bug** | direct `$EPOCHSECONDS` access |
 
-Of twenty-nine entries, two are fixed (5, 7), twenty-three remain
+Of thirty-one entries, two are fixed (5, 7), twenty-five remain
 open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31), and four
+were zsh-correct behavior misframed by demos (1, 2, 3, 6).
