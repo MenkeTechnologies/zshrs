@@ -975,4 +975,118 @@ mod tests {
             assert!(v > 0, "CC_* secondary must be > 0; got {}", v);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Zle/compctl.h
+    // c:76-89 CCT_* / c:118-149 CC_* / c:152-158 secondary CC_*
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:76-89 — every CCT_* is in 0..=13 (no out-of-range).
+    #[test]
+    fn cct_all_in_range_0_to_13() {
+        for &v in &[CCT_UNUSED, CCT_POS, CCT_CURSTR, CCT_CURPAT,
+                    CCT_WORDSTR, CCT_WORDPAT, CCT_CURSUF, CCT_CURPRE,
+                    CCT_CURSUB, CCT_CURSUBC, CCT_NUMWORDS, CCT_RANGESTR,
+                    CCT_RANGEPAT, CCT_QUOTE] {
+            assert!((0..=13).contains(&v), "CCT_* must be 0..=13, got {}", v);
+        }
+    }
+
+    /// c:76-89 — CCT_* values are pairwise distinct (sequential).
+    #[test]
+    fn cct_pairwise_distinct() {
+        let codes = [CCT_UNUSED, CCT_POS, CCT_CURSTR, CCT_CURPAT,
+                     CCT_WORDSTR, CCT_WORDPAT, CCT_CURSUF, CCT_CURPRE,
+                     CCT_CURSUB, CCT_CURSUBC, CCT_NUMWORDS, CCT_RANGESTR,
+                     CCT_RANGEPAT, CCT_QUOTE];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "CCT_* pairwise distinct");
+    }
+
+    /// c:76 — `CCT_UNUSED` is sentinel zero (alt pin).
+    #[test]
+    fn cct_unused_is_zero_sentinel_alt() {
+        assert_eq!(CCT_UNUSED, 0, "CCT_UNUSED must be 0 (sentinel)");
+    }
+
+    /// c:148 — `CC_EXPANDEXPL` skips bit 29 (gap preserved from C).
+    #[test]
+    fn cc_expandexpl_uses_bit_30_not_29() {
+        assert_eq!(CC_EXPANDEXPL, 1u64 << 30,
+            "CC_EXPANDEXPL must use bit 30 (bit 29 reserved)");
+    }
+
+    /// c:152-158 — every secondary CC_* is in low 7 bits (0..7).
+    #[test]
+    fn cc_secondary_in_low_7_bits() {
+        for &v in &[CC_NOSORT, CC_XORCONT, CC_CCCONT, CC_PATCONT,
+                    CC_DEFCONT, CC_UNIQCON, CC_UNIQALL] {
+            assert!(v < (1u64 << 7),
+                "CC_* secondary must be < (1<<7), got 0x{:x}", v);
+        }
+    }
+
+    /// c:118-149 — bit 29 is the reserved gap; no primary CC_* uses it.
+    #[test]
+    fn cc_primary_bit_29_is_reserved_gap() {
+        let codes = [CC_FILES, CC_COMMPATH, CC_REMOVE, CC_OPTIONS, CC_VARS,
+                     CC_BINDINGS, CC_ARRAYS, CC_INTVARS, CC_SHFUNCS, CC_PARAMS,
+                     CC_ENVVARS, CC_JOBS, CC_RUNNING, CC_STOPPED, CC_BUILTINS,
+                     CC_ALREG, CC_ALGLOB, CC_USERS, CC_DISCMDS, CC_EXCMDS,
+                     CC_SCALARS, CC_READONLYS, CC_SPECIALS, CC_DELETE, CC_NAMED,
+                     CC_QUOTEFLAG, CC_EXTCMDS, CC_RESWDS, CC_DIRS,
+                     CC_EXPANDEXPL, CC_RESERVED];
+        for c in codes {
+            assert_ne!(c, 1u64 << 29,
+                "no primary CC_* uses bit 29 (reserved); offending: 0x{:x}", c);
+        }
+    }
+
+    /// c:152-158 — secondary CC_* pairwise distinct.
+    #[test]
+    fn cc_secondary_pairwise_distinct() {
+        let codes = [CC_NOSORT, CC_XORCONT, CC_CCCONT, CC_PATCONT,
+                     CC_DEFCONT, CC_UNIQCON, CC_UNIQALL];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "secondary CC_* pairwise distinct");
+    }
+
+    /// c:152-158 — OR of all secondary CC_* covers bits 0..6.
+    #[test]
+    fn cc_secondary_or_covers_low_7_bits() {
+        let or_all = CC_NOSORT | CC_XORCONT | CC_CCCONT | CC_PATCONT
+            | CC_DEFCONT | CC_UNIQCON | CC_UNIQALL;
+        assert_eq!(or_all, (1u64 << 7) - 1,
+            "secondary CC_* must cover bits 0..6");
+    }
+
+    /// c:118 — `CC_FILES` is bit 0 (smallest primary, pin alt2).
+    #[test]
+    fn cc_files_is_bit_zero_pin_alt2() {
+        assert_eq!(CC_FILES, 1u64, "CC_FILES must be bit 0");
+    }
+
+    /// c:152 — `CC_NOSORT` is bit 0 (smallest secondary).
+    #[test]
+    fn cc_nosort_is_bit_zero() {
+        assert_eq!(CC_NOSORT, 1u64, "CC_NOSORT must be bit 0 of secondary mask");
+    }
+
+    /// c:149 — `CC_RESERVED` is the highest primary (bit 31).
+    #[test]
+    fn cc_reserved_is_highest_bit_31() {
+        assert_eq!(CC_RESERVED, 1u64 << 31, "CC_RESERVED must be bit 31");
+    }
+
+    /// c:158 — `CC_UNIQALL` is the highest secondary (bit 6).
+    #[test]
+    fn cc_uniqall_is_bit_six() {
+        assert_eq!(CC_UNIQALL, 1u64 << 6, "CC_UNIQALL must be bit 6");
+    }
+
+    /// c:78 — `CCT_CURSTR` = 2 (positional value pin).
+    #[test]
+    fn cct_curstr_is_two() {
+        assert_eq!(CCT_CURSTR, 2);
+    }
 }
