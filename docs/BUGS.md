@@ -3777,6 +3777,215 @@ Or use `printf '\e[%d;%dH' 6 11` directly to avoid the builtin.
 
 ---
 
+## #79 — Job control table empty: `jobs`, `wait %N`, `kill %N`, `disown` all fail
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'sleep 0.5 & jobs; wait'
+[1]  + running    sleep 0.5
+
+$ ./target/debug/zshrs --zsh -c 'sleep 0.5 & jobs; wait'
+(empty)
+```
+
+zshrs spawns the background process correctly (and `$!` returns
+its PID), but doesn't register the process in the **jobs table**.
+This breaks every `%N` jobspec-based builtin:
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'sleep 0.5 & wait %1; echo "exit=$?"'
+zsh:wait:1: %1: no such job
+exit=1
+
+$ ./target/debug/zshrs --zsh -c 'sleep 1 & kill %1' 2>&1
+zsh:kill:1: %1: no such job
+
+$ ./target/debug/zshrs --zsh -c 'sleep 0.5 & disown %1' 2>&1
+(empty — should still error on "no such job" if table absent)
+```
+
+zsh's behavior:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'sleep 0.5 & wait %1; echo "exit=$?"'
+exit=0
+
+$ /opt/homebrew/bin/zsh -fc 'sleep 1 & kill %1' 2>&1
+(no output, kill succeeds)
+```
+
+**Where** — `src/ported/exec.rs::spawn_background`: should populate
+`shell.jobs[next_job_id] = JobEntry { pid, cmd, state }` after
+fork. C-source `Src/jobs.c::addproc` builds the job entry. zshrs's
+forker only updates `$!` and exits.
+
+**Impact** — job-control idioms broken:
+- `sleep 1 &` then `kill %1` to cancel a timer
+- `cmd &` then `wait $!` works (by PID) but `wait %1` doesn't
+- `jobs -p` returns no PIDs
+- Shell prompt `%j` count of jobs always 0
+
+Most non-interactive scripts work around this with `$!`, but
+interactive job-control workflows (Ctrl-Z, `fg`, `bg`, `jobs -l`)
+are entirely broken.
+
+**Workaround** — use `$!` to capture PID at backgrounding time,
+then `wait $pid` / `kill $pid` by PID:
+```sh
+sleep 1 &
+bgpid=$!
+kill $bgpid    # works in both shells
+```
+
+---
+
+## #80 — `trap EXIT` inside fn fires at SCRIPT exit, not fn exit (and lost entirely in nested fns)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { trap "echo bye-fn" EXIT; echo "inside"; }; f; echo "after"'
+inside
+bye-fn
+after
+
+$ ./target/debug/zshrs --zsh -c 'f() { trap "echo bye-fn" EXIT; echo "inside"; }; f; echo "after"'
+inside
+after
+bye-fn
+```
+
+Per zsh semantics, a `trap "..." EXIT` set inside a function fires
+when **that function exits** (return path), not at shell exit. zsh
+prints `bye-fn` between `inside` and `after`. zshrs delays it until
+after `after` (i.e., treats it as the global shell EXIT trap).
+
+Worse, in nested functions, zshrs **loses** the inner trap entirely:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { trap "echo f-exit" EXIT; g; }; g() { trap "echo g-exit" EXIT; echo "in g"; }; f; echo "post"'
+in g
+g-exit
+f-exit
+post
+
+$ ./target/debug/zshrs --zsh -c 'f() { trap "echo f-exit" EXIT; g; }; g() { trap "echo g-exit" EXIT; echo "in g"; }; f; echo "post"'
+in g
+post
+g-exit
+```
+
+zsh fires both traps in LIFO at each function return: `in g →
+g-exit (g returns) → f-exit (f returns) → post`. zshrs prints only
+one trap (`g-exit`) at script exit, and **`f-exit` is silently
+dropped**.
+
+**Where** — `src/ported/builtin_trap.rs::set_trap_exit`: traps
+installed inside function scope should be registered to a
+**function-local trap stack** (per-frame). C-source
+`Src/exec.c::execfuncdef` saves the prior EXIT trap on function
+entry and restores+fires the new one on function return. zshrs
+appears to globally clobber.
+
+**Impact** — cleanup code in functions never runs in the right
+order. Patterns broken:
+
+```sh
+with_lock() {
+    local lockfile=$1
+    touch $lockfile
+    trap "rm -f $lockfile" EXIT
+    real_work
+}
+# zsh: rm fires at end of with_lock
+# zshrs: rm fires at end of SHELL (if at all); lockfile leaks
+#        between with_lock invocations
+```
+
+```sh
+with_tmp() {
+    local tmp=$(mktemp)
+    trap "rm -f $tmp" EXIT
+    process_into $tmp
+}
+# zsh: tmp removed at end of with_tmp
+# zshrs: tmp never removed by trap; manual cleanup needed
+```
+
+**Workaround** — explicit cleanup at function epilogue:
+```sh
+with_tmp() {
+    local tmp=$(mktemp)
+    process_into $tmp
+    rm -f $tmp     # manual cleanup, no trap reliance
+}
+```
+Or `zshexit` hook for shell-level cleanup, function-local cleanup
+via early-return wrappers.
+
+---
+
+## #81 — Glob with `extended_glob ~` exclusion produces duplicates + matches dir itself
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; print -l /tmp/zgq/*~*b*'
+/tmp/zgq/a
+/tmp/zgq/c
+
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; print -l /tmp/zgq/*~*b*'
+/tmp/zgq/a
+/tmp/zgq/c
+/tmp/zgq/a
+/tmp/zgq/c
+/tmp/zgq/b
+/tmp/zgq
+```
+
+Files in `/tmp/zgq/`: `a b c`. Pattern `*~*b*` should match
+"anything except names containing b" → `a c`.
+
+zsh returns exactly that. zshrs returns:
+1. `a c` (correct match) — but DUPLICATED
+2. `b` — the supposedly-excluded file
+3. `/tmp/zgq` — the directory itself
+
+The glob engine appears to run the match TWICE (yielding the dups)
+AND the `~` exclusion is partially honored (b appears once not
+twice, but still appears) AND there's a separate code path that
+matches the parent directory.
+
+Related to #62 (extended_glob `~` operator not honored at all in
+some contexts) but a different and worse manifestation.
+
+**Where** — `src/ported/glob.rs::expand_pattern`: pattern with
+embedded `~` is parsed into multiple sub-patterns that are matched
+independently and unioned. C-source `Src/pattern.c::pattrylit`
+applies `~` as a single AND-NOT operator on the same set.
+
+**Impact** — every `extended_glob` use case with `~` returns wrong
+results. Common idiom for "delete everything except current.log":
+
+```sh
+rm /var/log/*.log~current.log
+# zsh: deletes all *.log except current.log (correct)
+# zshrs: deletes all *.log INCLUDING current.log (and possibly
+#        the /var/log dir too)
+```
+
+That's destructive — data loss potential.
+
+**Workaround** — explicit loop with `[[ ... == *...* ]]` skip:
+```sh
+for f in /var/log/*.log; do
+    [[ "$f" == */current.log ]] && continue
+    rm "$f"
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -3859,11 +4068,14 @@ Or use `printf '\e[%d;%dH' 6 11` directly to avoid the builtin.
 | 76 | `zmodload` lists 32 auto-loaded modules vs zsh's 1 | **port-bug** | none — startup-time bloat |
 | 77 | `${h[(k)-key]}` flag-lookup of dash key returns empty | **port-bug** | direct `${h[$opt]+set}` |
 | 78 | `echoti` output emitted AFTER next stdout (buf flush) | **port-bug** | direct `printf '\e[...'` |
+| 79 | Job control table empty: `jobs`/`wait %N`/`kill %N`/`disown` fail | **port-bug** | use `$!` PID instead |
+| 80 | `trap EXIT` in fn fires at script exit, lost in nested fns | **port-bug** | explicit cleanup at fn epilogue |
+| 81 | `extended_glob *~b` returns duplicates + matches dir | **port-bug** | loop with `[[ == ... ]] continue` |
 
-Of seventy-eight entries, two are fixed (5, 7), seventy-two remain
+Of eighty-one entries, two are fixed (5, 7), seventy-five remain
 open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
-69, 70, 71, 72, 73, 74, 75, 76, 77, 78), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
