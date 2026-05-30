@@ -1639,6 +1639,101 @@ echo "[${(j: :)${(z)a}}]"   # both: [foo bar baz]
 
 ---
 
+## #38 — Many prompt escapes missing / printed-literally (extends bug #5)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting. Extends bug
+#5 which only listed `%j`, `%T`, `%D{}`.
+
+Direct sweep against `/opt/homebrew/bin/zsh` 5.9:
+
+  | escape   | zshrs                | zsh                    | meaning                  |
+  |----------|----------------------|------------------------|--------------------------|
+  | `%m`     | **literal `%m`**     | `codelabs-arm`         | hostname (short)         |
+  | `%C`     | **literal `%C`**     | `zshrs`                | last segment of $PWD     |
+  | `%i`     | **`0`**              | `1`                    | line number              |
+  | `%I`     | **literal `%I`**     | `1`                    | line in source           |
+  | `%l`     | **literal `%l`**     | `()`                   | tty line                 |
+  | `%y`     | **literal `%y`**     | `()`                   | controlling tty          |
+  | `%H`     | **literal `%H`**     | (empty)                | highlight ON / partial   |
+  | `%E`     | **literal `%E`**     | `\x1b[K`               | clear to EOL             |
+  | `%v`     | **literal `%v`**     | (empty)                | $psvar[1]                |
+  | `%s`     | (empty)              | `\x1b[27m`             | standout OFF             |
+  | `%u`     | (empty)              | `\x1b[24m`             | underline OFF            |
+  | `%b`     | (empty)              | `\x1b[0m`              | bold OFF                 |
+  | `%f`     | (empty)              | `\x1b[39m`             | foreground default       |
+  | `%k`     | (empty)              | `\x1b[49m`             | background default       |
+
+Working: `%n`, `%M`, `%~`, `%/`, `%d`, `%c`, `%j`, `%T`, `%t`, `%@`,
+`%w`, `%W`, `%D`, `%D{}`, `%!`, `%h`, `%F{}`, `%K{}`, `%B`, `%U`,
+`%S`, `%%`, `%?`, `%(?...)`, `%{...%}`.
+
+The most impactful gap is **`%m`** (hostname). Used in almost
+every customized zsh prompt (`%n@%m:%~$`). zshrs prints the literal
+`%m` text where the hostname should appear.
+
+The escape-OFF pairs (`%b`/`%u`/`%s`/`%f`/`%k`) emit empty in zshrs
+where zsh emits the corresponding ANSI/terminfo escape sequence —
+this leaves users with prompts where colors/styles don't reset
+after `%F{red}...%f` etc.
+
+**Where** — `src/ported/prompt.rs::putpromptchar` (port of
+`Src/prompt.c::putpromptchar` switch table). Each missing case
+needs to:
+  - `%m`: short hostname from `gethostname()`
+  - `%C`: last segment of `$PWD`
+  - `%i`: current line number (`$LINENO`)
+  - `%l`/`%y`: tty name from `ttyname(0)` or `()` when no tty
+  - `%E`: ANSI clear-to-EOL (`\x1b[K`)
+  - `%v`: `$psvar[1]`
+  - `%b`/`%u`/`%s`/`%f`/`%k`: terminfo string for "off" of B/U/S/F/K
+
+**Workaround** — substitute manually in prompts:
+```sh
+PS1='%n@$HOST:%~%# '       # use $HOST instead of %m
+PS1='%F{red}error%f'        # zshrs: red text, but %f doesn't reset
+PS1='%F{red}error%F{default}' # workaround: explicit "default" color
+```
+
+---
+
+## #39 — `${arr:#"literal pattern"}` doesn't honor quoting (still globs)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(cat "[bc]*" bird); echo "[${(M)a:#"[bc]*"}]"'
+[[bc]*]   # quoted pattern is literal, only matches "[bc]*" element
+
+$ zshrs --zsh -c 'a=(cat "[bc]*" bird); echo "[${(M)a:#"[bc]*"}]"'
+[cat [bc]* bird]   # treats as glob, matches cat (c*) and bird (b*) and the literal one
+```
+
+Per zsh docs, when a pattern inside `${arr:#...}` or `${(M)arr:#...}`
+is quoted, the quote chars make the contents LITERAL — `[bc]*` becomes
+the exact 5-character string, not a glob pattern.
+
+zshrs ignores the quotes and treats `"[bc]*"` as a glob anyway. This
+breaks any code that uses quoted patterns to match literal special
+characters.
+
+Backslash-escaped (`\[bc\]\*`) form works in zshrs but doesn't work
+identically in zsh either — so quoting is the only reliable way
+to mean "literal pattern" and it fails in zshrs.
+
+**Where** — `src/ported/subst.rs::paramsubst` pattern parsing for
+`:#` and `(M):#`. Quoted segments should be added to the pattern
+as literal-only nodes, not glob nodes.
+
+**Workaround** — match exact strings via per-element iteration:
+```sh
+local -a result
+for el in "${a[@]}"; do
+    [[ $el == '[bc]*' ]] && result+=("$el")
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -1680,9 +1775,11 @@ echo "[${(j: :)${(z)a}}]"   # both: [foo bar baz]
 | 35 | `${(v)h[key]}` errors with bad substitution | **port-bug** | drop the `(v)` for single subscript |
 | 36 | MULTIOS not implemented (multiple `>` / `<` redirects) | **port-bug** | explicit `tee`/`cat` |
 | 37 | `"${(z)str}"` quoted form splits fields | **port-bug** | `${(j: :)${(z)str}}` rejoin |
+| 38 | prompt escapes `%m`/`%C`/`%i`/`%l`/`%y`/`%E`/`%v`/`%b`/`%u`/`%s`/`%f`/`%k` missing | **port-bug** | use `$HOST`/`$PWD` etc |
+| 39 | `${arr:#"literal"}` quoted pat still globbed | **port-bug** | per-element iteration |
 
-Of thirty-seven entries, two are fixed (5, 7), thirty-one remain
+Of thirty-nine entries, two are fixed (5, 7), thirty-three remain
 open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
-35, 36, 37), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+35, 36, 37, 38, 39), and four were zsh-correct behavior misframed by
+demos (1, 2, 3, 6).
