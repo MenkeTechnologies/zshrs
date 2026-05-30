@@ -6029,6 +6029,184 @@ intent is matching at varying depths.
 
 ---
 
+## #118 — `(( y = x ))` doesn't coerce string `x` to integer; stores raw string
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'x=hello; (( y = x )); echo "type: $(typeset -p y) val=[$y]"'
+type: typeset -i y=0 val=[0]
+
+$ ./target/debug/zshrs --zsh -c 'x=hello; (( y = x )); echo "type: $(typeset -p y) val=[$y]"'
+type: typeset y=hello val=[hello]
+```
+
+In arithmetic context `(( ))`, zsh treats `x` as a variable
+reference. When the value isn't a number, zsh recursively
+resolves until it bottoms out at 0 (the unset-resolves-to-0
+semantic). `y` gets typed `integer` with value `0`.
+
+zshrs's `(( ))` assignment skips the arith-context coercion —
+stores the raw string and types `y` as scalar (not integer).
+
+Note: `integer y; y=$x` works correctly in both shells (forces
+integer assignment).
+
+Per `man zshmisc` § ARITHMETIC EVALUATION:
+> Variables ... are used by name. ... If the variable does not
+> contain a number, the value is considered to be zero.
+
+**Where** — `src/ported/math.rs::eval_assignment`: the LHS-of-`=`
+declaration path doesn't promote the target to `PM_INTEGER` type,
+and doesn't coerce the RHS value via the arith-recurse rule.
+C-source `Src/math.c::matheval` sets `PM_INTEGER` and runs
+`getnparam` on RHS, which coerces.
+
+**Impact** — code that intentionally uses arith-context for
+auto-typing breaks:
+
+```sh
+parse_count() {
+    local val=$1
+    (( count = val ))
+    # zsh: count is integer, val coerced to 0 if non-numeric
+    # zshrs: count is scalar, may hold non-numeric content
+    (( count > 0 )) && process_records $count
+    # zshrs: errors on the arith comparison or runs with wrong type
+}
+```
+
+**Workaround** — explicit `integer` declaration:
+```sh
+integer count=$val
+```
+Or pre-validate:
+```sh
+[[ "$val" =~ "^[0-9]+$" ]] || val=0
+(( count = val ))
+```
+
+---
+
+## #119 — `setopt glob_subst` doesn't trigger filename expansion of substituted patterns in for-loop
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt glob_subst; pat="*.txt"; for f in /tmp/zgs/$pat; do echo "$f"; done'
+/tmp/zgs/a.txt
+
+$ ./target/debug/zshrs --zsh -c 'setopt glob_subst; pat="*.txt"; for f in /tmp/zgs/$pat; do echo "$f"; done'
+/tmp/zgs/*.txt
+```
+
+With `setopt glob_subst` explicitly set, zsh treats characters in
+expanded parameter values as glob metacharacters — `$pat="*.txt"`
+expands to glob-pattern in the `for` loop's word list, matches
+`/tmp/zgs/a.txt`.
+
+zshrs returns the literal `/tmp/zgs/*.txt` even with `glob_subst`
+set. So the GLOB_SUBST option doesn't actually trigger filename
+expansion of substituted patterns in this context.
+
+Contrasts with bug #116 (`GLOB_SUBST` default ON in zshrs for
+`[[ == ]]` context). So zshrs has the option default ON for
+pattern-match context but ignores it for filename-expansion
+context — inverted from zsh.
+
+Per `man zshoptions`:
+> `GLOB_SUBST` — Treat any characters resulting from parameter
+> expansion as being eligible for filename generation and pattern
+> matching.
+
+Should apply to BOTH filename and pattern contexts equally; zshrs
+splits the behavior.
+
+**Where** — `src/ported/exec.rs::expand_words`: the `for` loop
+word-expansion path doesn't consult `opts.glob_subst` when
+deciding whether substituted glob chars trigger filename gen.
+C-source `Src/exec.c::execfor` walks `args` and runs `globlist`
+when `GLOBSUBST` is set.
+
+**Impact** — common pattern of "parameterized glob in for loop"
+silently fails:
+
+```sh
+setopt glob_subst
+patterns=("*.log" "*.txt" "*.bak")
+for pattern in "${patterns[@]}"; do
+    for f in /var/data/$pattern; do
+        process "$f"
+    done
+done
+# zsh: iterates matched files
+# zshrs: iterates literal pattern strings (process gets "*.log" etc.)
+```
+
+**Workaround** — explicit `eval` to force re-expansion:
+```sh
+for f in $(eval "echo /var/data/$pattern"); do ... done
+```
+
+---
+
+## #120 — `a=("${a[@]:0:-1}")` on empty array creates 1-element array
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(); a=("${a[@]:0:-1}"); echo "len=${#a}"'
+len=0
+
+$ ./target/debug/zshrs --zsh -c 'a=(); a=("${a[@]:0:-1}"); echo "len=${#a}"'
+len=1
+```
+
+`${a[@]:0:-1}` on an empty array — zsh returns no elements; the
+self-assignment leaves `a` empty (`len=0`).
+
+zshrs returns one element (likely an empty string) — the self-
+assignment results in a one-element array containing `""`. From
+`len=1`.
+
+This is the "drop-last-element" idiom (bug #16) family — but
+specifically the **empty-array** edge case is broken.
+
+```sh
+# pop the last element repeatedly until empty
+while (( ${#a} > 0 )); do
+    last=${a[-1]}
+    a=("${a[@]:0:-1}")
+    process "$last"
+done
+# zsh: terminates cleanly (a becomes empty, loop exits)
+# zshrs: infinite loop (a always has 1 element, ${#a} > 0 always)
+```
+
+**Where** — `src/ported/paramsubst.rs::array_slice_negative_end`:
+when `end_offset` results in a length that should be 0, returns
+`[""]` (single empty) instead of `[]` (empty array). C-source
+`Src/subst.c::arrslice` returns `NULL`/empty list when start ==
+end.
+
+**Impact** — pop-until-empty patterns infinite-loop. Same root
+shape as #16 (already documented as no-shrink in fn context).
+
+**Workaround** — explicit length check:
+```sh
+while (( ${#a} > 0 )); do
+    last=${a[-1]}
+    if (( ${#a} == 1 )); then
+        a=()
+    else
+        a=("${a[@]:0:-1}")
+    fi
+    process "$last"
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -6150,14 +6328,17 @@ intent is matching at varying depths.
 | 115 | Prompt `%s`/`%b`/`%u` use full reset `\e[0m` not selective | **port-bug** | re-apply attrs after `%x` |
 | 116 | `GLOB_SUBST` defaults ON in zshrs (zsh: off) | **port-bug** | `unsetopt glob_subst` explicit |
 | 117 | Extended_glob `(group)#` quantifier not recognized | **port-bug** | `**/` recursive glob |
+| 118 | `(( y = x ))` doesn't coerce non-numeric string to 0 | **port-bug** | `integer y; y=$x` |
+| 119 | `glob_subst` doesn't trigger filename expansion in for-loop | **port-bug** | `eval "echo ..."` force-expand |
+| 120 | `a=("${a[@]:0:-1}")` on empty arr produces 1-element arr | **port-bug** | length-gated branch |
 
-Of one hundred seventeen entries, two are fixed (5, 7), one hundred
-eleven remain open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13,
+Of one hundred twenty entries, two are fixed (5, 7), one hundred
+fourteen remain open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13,
 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98,
 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112,
-113, 114, 115, 116, 117), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+113, 114, 115, 116, 117, 118, 119, 120), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
