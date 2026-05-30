@@ -17342,6 +17342,173 @@ epoch=$(date -j -f "%Y" "2024" "+%s")
 
 ---
 
+## #325 — `$'\xNN\xNN'` C-string hex escapes treat UTF-8 as separate bytes (zsh: combines into multibyte char)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc $'s=$\'\\xc3\\xa9\'; echo "len=${#s}"; echo "[$s]"'
+len=1
+[é]
+
+$ ./target/debug/zshrs --zsh -c $'s=$\'\\xc3\\xa9\'; echo "len=${#s}"; echo "[$s]"'
+len=2
+[Ã©]
+```
+
+zsh interprets `$'\xc3\xa9'` as a UTF-8 byte sequence that
+encodes the single character `é` (length 1, displays as é).
+zshrs treats it as 2 independent bytes (length 2, displays as
+2 chars per the terminal's UTF-8 fallback).
+
+The locale-aware multibyte handling that combines `\xC3\xA9`
+into one character is missing in zshrs.
+
+Note: literal `"é"` in source works in both (the editor saves
+as UTF-8, and both shells handle UTF-8 source input correctly).
+The bug is specifically the `$'\xNN'` C-string-escape
+construction path.
+
+Same divergence for `(V)` flag, character indexing, etc. —
+anywhere multibyte vs byte semantics matter:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc $'s=$\'\\xc3\\xa9\'; echo "[${(V)s}]"'
+[é]
+
+$ ./target/debug/zshrs --zsh -c $'s=$\'\\xc3\\xa9\'; echo "[${(V)s}]"'
+[\M-C\M-)]
+```
+
+**Where** — `src/ported/parse/c_string.rs::expand_hex_escape`:
+emits each `\xNN` as a separate byte without locale-aware
+combination. C-source `Src/string.c::get_string` collects
+consecutive `\xNN` sequences and runs them through
+`mbrtowc()` when LC_CTYPE is UTF-8.
+
+**Impact** — code that constructs international/special chars
+via `\xNN\xNN` hex sequences gets wrong character semantics:
+
+```sh
+# Insert em-dash character
+dash=$'\xe2\x80\x94'
+echo "Length: ${#dash}"    # zsh: 1, zshrs: 3
+echo "Position 1: ${dash[1]}"
+# zsh: the em-dash char
+# zshrs: just the first byte (incomplete UTF-8)
+```
+
+**Workaround** — use `\uNNNN` Unicode-codepoint form:
+```sh
+echo $'é'    # works in both (probably)
+```
+
+(May or may not work — `\u` may have its own multibyte
+handling gaps; needs separate verification.)
+
+---
+
+## #326 — `typeset +i n` removes integer attribute AND clears the value
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -i n=5; typeset +i n; echo "[$n]"'
+[5]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -i n=5; typeset +i n; echo "[$n]"'
+[]
+```
+
+`typeset +i` removes the integer attribute from a variable.
+zsh keeps the current value (5) — just as a regular scalar
+string now. zshrs both removes the attribute AND clears the
+value to empty.
+
+Data loss when toggling attributes. Same pattern likely
+applies to `+l`, `+u`, `+F`, `+E` (removing case/float flags
+may also wipe the value).
+
+Companion to #234 (`typeset +U arr` corrupts the array) —
+zshrs's attribute-removal logic has multiple data-loss surfaces.
+
+**Where** — `src/ported/builtins/typeset.rs::clear_attribute`:
+when removing an attribute, the value is reset instead of
+re-typed in place. C-source `Src/params.c::typeset_single`
+preserves the underlying value when changing attribute flags.
+
+**Impact** — scripts that toggle attributes mid-execution
+lose state:
+
+```sh
+typeset -i counter=100
+work_with_counter
+typeset +i counter      # now treat as scalar
+counter+="suffix"        # zsh: "100suffix"; zshrs: "suffix" — lost 100
+```
+
+**Workaround** — preserve value across the toggle manually:
+```sh
+typeset -i n=5
+saved="$n"
+typeset +i n
+n="$saved"
+```
+
+---
+
+## #327 — `${(l.N.)arr[N]}` pad flags on subscripted array element return empty (extends #301 family)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "[${(l.3.)a[1]}]"'
+[  x]
+
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); echo "[${(l.3.)a[1]}]"'
+[]
+```
+
+zsh's `(l.N.)` left-pad flag works on array-element targets.
+zshrs returns empty.
+
+Same family as #301 (`(L/U/C)arr[N]` case-flags rejected),
+#308 (`(t)arr[N]` type-flag rejected). The flag-on-subscripted-
+array dispatcher is broadly broken across multiple flag
+categories:
+- `(L)` / `(U)` / `(C)` — case (#301)
+- `(t)` — type (#308)
+- `(l)` / `(r)` — pad (this bug)
+- `(j)` — join (also fails per my tests)
+
+All return empty when target is `arr[N]`, work correctly when
+target is scalar.
+
+**Where** — `src/ported/paramflags.rs::dispatch_flag_to_subscripted`:
+unified flag-dispatch doesn't handle array-element subscript
+target. C-source `Src/subst.c::dosubst` resolves the
+subscript first to get a scalar, then applies the flag.
+
+**Impact** — common pad-formatting idiom for tabular output
+broken:
+
+```sh
+files=(report.txt big.log)
+for f in "${files[@]}"; do
+    printf "%s\n" "${(l.30.)f} | $(stat -f %z "$f")"
+done
+# zsh: pad each filename to 30 chars
+# zshrs: padded form empty, output unaligned
+```
+
+**Workaround** — copy to temp scalar:
+```sh
+local _f="${files[1]}"
+padded="${(l.30.)_f}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -17670,9 +17837,12 @@ epoch=$(date -j -f "%Y" "2024" "+%s")
 | 322 | `${arr[*]/pat/repl}`/`[*]#`/`[*]%` applies per-element instead of scalar-context (zsh: joins to scalar first) | **port-bug** | use temp scalar `joined="${arr[*]}"` |
 | 323 | `functions[f]+="..."` append-to-fn-body no-op (zsh: appends raw text) | **port-bug** | read body, full reassign |
 | 324 | `strftime -r FORMAT STRING` reverse-parse errors "format not matched" — string→epoch broken | **port-bug** | external `date -j -f` |
+| 325 | `$'\xNN\xNN'` C-string hex escapes treat UTF-8 sequence as 2 bytes (zsh: combines into multibyte char via locale) | **port-bug** | use `\uNNNN` Unicode form (unverified) |
+| 326 | `typeset +i n` clears value AND removes attribute (zsh: preserves value as scalar) | **port-bug** | save/restore around toggle |
+| 327 | `${(l.N.)arr[N]}` pad flags on array-element return empty — extends #301 family | **port-bug** | copy to temp scalar |
 
-Of three hundred and twenty-four entries, two are fixed (5, 7),
-three hundred and eighteen remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and twenty-seven entries, two are fixed (5, 7),
+three hundred and twenty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -17695,5 +17865,5 @@ three hundred and eighteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
-318, 319, 320, 321, 322, 323, 324), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+318, 319, 320, 321, 322, 323, 324, 325, 326, 327), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
