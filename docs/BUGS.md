@@ -14131,6 +14131,176 @@ saved=$(set -o)
 
 ---
 
+## #268 — Autovars `LISTMAX`/`MAILCHECK`/`KEYTIMEOUT`/`PERIOD` typed as `scalar` instead of `integer`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "LISTMAX=[${(t)LISTMAX}] KEYTIMEOUT=[${(t)KEYTIMEOUT}] MAILCHECK=[${(t)MAILCHECK}]"'
+LISTMAX=[integer] KEYTIMEOUT=[integer-export] MAILCHECK=[integer]
+
+$ ./target/debug/zshrs --zsh -c 'echo "LISTMAX=[${(t)LISTMAX}] KEYTIMEOUT=[${(t)KEYTIMEOUT}] MAILCHECK=[${(t)MAILCHECK}]"'
+LISTMAX=[scalar] KEYTIMEOUT=[scalar-export] MAILCHECK=[scalar]
+```
+
+zsh's automatic parameters that hold integer values
+(`LISTMAX` for completion list size, `KEYTIMEOUT` for key-
+sequence timeout, `MAILCHECK` for mail-check interval,
+`PERIOD` for periodic hook interval, etc.) are typed as
+`integer` from initialization. zshrs initializes them as
+`scalar`.
+
+Affects which arithmetic semantics apply — `LISTMAX=abc` in
+zsh fails with "bad math expression," while in zshrs it
+silently accepts a string into a "scalar" variable.
+
+Note: some autovars are correctly typed:
+- `HISTSIZE`: `integer-export-special` (correct in both)
+- `RANDOM`/`SECONDS`/`LINENO`: integer in both (presumably)
+
+So zshrs has a partial autovar-type table — about half of
+the integer autovars are correctly typed, half are scalar.
+
+**Where** — `src/ported/params/autovars.rs::register_autovars`:
+the autovar registry initializes `LISTMAX/KEYTIMEOUT/MAILCHECK/
+PERIOD` without the `-i` integer flag. C-source
+`Src/params.c::IPDEF_INT_BLOCK` macro applies `PM_INTEGER` to
+each entry in the integer-typed autovar list.
+
+**Impact** — arithmetic-aware semantics broken on these
+params:
+
+```sh
+LISTMAX="bogus"      # zsh: errors "bad math expression"
+                     # zshrs: accepts, stores literal string
+                     # next completion that reads LISTMAX gets garbage
+```
+
+Also breaks defensive code that introspects via `(t)` flag:
+
+```sh
+case "${(t)LISTMAX}" in
+    *integer*) listmax_arith=$LISTMAX ;;
+    *)         listmax_arith=10 ;;
+esac
+# zsh: takes integer branch
+# zshrs: takes default branch
+```
+
+**Workaround** — explicitly re-cast with `typeset -i` after
+declaration:
+```sh
+typeset -i LISTMAX
+typeset -i KEYTIMEOUT
+```
+
+---
+
+## #269 — `$SPROMPT` autovar default empty (zsh: spell-check prompt template)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${SPROMPT-NONE}]"'
+[zsh: correct '%R' to '%r' [nyae]? ]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[${SPROMPT-NONE}]"'
+[]
+```
+
+`SPROMPT` is the prompt template used when zsh's spell-
+correction asks the user to confirm a substitution.
+zsh has a built-in default: `zsh: correct '%R' to '%r'
+[nyae]? `. zshrs has it set to empty (which is what `${X-NONE}`
+sees as "set but empty," distinct from "unset").
+
+Combined with various other autovar default-value gaps
+(some empty, some scalar-instead-of-integer, etc.), zshrs's
+autovar table is missing initialization data for several
+parameters.
+
+Note: `${SPROMPT-NONE}` distinguishes "unset" from "empty";
+the test confirms SPROMPT is "set but empty" in zshrs (not
+"unset"), so the autovar exists in the symbol table but
+without its zsh-default content.
+
+**Where** — `src/ported/params/autovars.rs::default_sprompt`:
+either omitted from the default-value table or set to empty
+string. C-source `Src/zsh.h`'s `PROMPT_S` constant provides
+the default: `"zsh: correct '%R' to '%r' [nyae]? "`.
+
+**Impact** — spell-correction (`setopt correct`/`correct_all`)
+shows nothing when prompting the user — silent prompt asking
+for confirmation, no visible cue what's being asked.
+
+Less common than other prompts (most users disable
+`correct`), but for users relying on `correct`, this makes
+the feature unusable.
+
+Likely-similar gaps for other autovar defaults: `WATCHFMT`
+(watch-output format), `TIMEFMT` (already verified mostly OK
+in #243 — value present, type empty), `NULLCMD`, `READNULLCMD`.
+
+**Workaround** — explicit init in `.zshrc`:
+```sh
+SPROMPT="zsh: correct '%R' to '%r' [nyae]? "
+```
+
+---
+
+## #270 — `${(t)watch}` autovar absent entirely (zsh: `array-special`)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${(t)watch}]"'
+[array-special]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[${(t)watch}]"'
+[]
+```
+
+`watch` (lowercase, parallels `WATCH`) is the array autovar
+holding the list of users to watch for login/logout activity.
+zsh registers it as a special array; zshrs's introspection
+shows empty type — the autovar isn't registered at all.
+
+Same gap exists for the scalar/array twin: `WATCH` (uppercase
+scalar form, tied to `watch` array via `typeset -T`). With
+#231 (tied-array no-sync), even if `WATCH` got registered,
+the tie wouldn't work.
+
+This is a feature-set gap (the `watch` builtin and the
+`watch` array work together — without the parameter, the
+`watch` builtin has nothing to read).
+
+**Where** — `src/ported/params/init.rs::register_array_autovars`:
+no entry for `watch`. C-source `Src/Modules/zsh_watch.c`
+(part of `zsh/system` module's watch functionality) defines
+the parameter when loaded — possibly the module isn't loaded
+in zshrs, or the init order is wrong.
+
+**Impact** — `watch` user-tracking feature dead. Tools that
+introspect available special arrays for "what state can I
+read" see fewer entries:
+
+```sh
+# Plugin checking available watch capability
+[[ "${(t)watch}" == array* ]] || echo "no watch parameter"
+# zsh: takes the affirmative path
+# zshrs: takes the negative path (no watch support)
+```
+
+Combined with other watch-related gaps (`WATCHFMT` likely
+also empty/default, `LOGCHECK` autovar status unknown), the
+entire watch-for-logins feature is non-functional in zshrs.
+
+**Workaround** — none for the watch feature itself. For type-
+checking code, fall back to `(( ${+watch} ))` existence test
+(though this may also report wrong for unregistered autovars).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -14402,9 +14572,12 @@ saved=$(set -o)
 | 265 | `$MATCH` not populated by `(#m)` flag in `${var/pat/repl}` substitution (works in `=~`) | **port-bug** | use `=~` then manually substitute |
 | 266 | `$match[N]` backref array not populated by `(#b)` in substitution | **port-bug** | use `=~` to capture, build repl manually |
 | 267 | Bare `setopt` (no args) prints nothing instead of listing currently-set options | **port-bug** | use `set -o` (POSIX form) |
+| 268 | Autovars `LISTMAX`/`MAILCHECK`/`KEYTIMEOUT`/`PERIOD` typed `scalar` instead of `integer` | **port-bug** | explicit `typeset -i NAME` after init |
+| 269 | `$SPROMPT` autovar default empty (zsh: `zsh: correct '%R' to '%r' [nyae]?`) | **port-bug** | explicit `SPROMPT=...` init in .zshrc |
+| 270 | `${(t)watch}` autovar absent — zsh: `array-special`; `watch` user-tracking feature dead | **port-bug** | (none — feature not implemented) |
 
-Of two hundred and sixty-seven entries, two are fixed (5, 7), two
-hundred and sixty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and seventy entries, two are fixed (5, 7), two
+hundred and sixty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -14423,5 +14596,5 @@ hundred and sixty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
-266, 267), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+266, 267, 268, 269, 270), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
