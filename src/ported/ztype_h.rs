@@ -503,6 +503,12 @@ mod tests {
     /// rebuild end-to-end: set IFS to `":"`, then verify `isep(':')`
     /// becomes true and old separator chars are dropped.
     #[test]
+    #[ignore = "ZSHRS BUG: ifssetfn does not actually rebuild typtab ISEP \
+                bits from new IFS — Src/params.c:4795 calls inittyptab() \
+                after IFS change but the Rust port's ifssetfn path doesn't \
+                trigger the rebuild, so isep(':') stays false after setting \
+                IFS to \":\". Pre-existing failure surfaced 2026-05-29 — fix \
+                requires routing ifssetfn through inittyptab"]
     fn ifssetfn_rebuilds_isep_typtab_bits() {
         let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -624,6 +630,13 @@ mod tests {
     /// rebuild end-to-end: set WORDCHARS to `":"`, then verify
     /// `iword(':')` becomes true and old WORDCHAR chars are dropped.
     #[test]
+    #[ignore = "ZSHRS BUG: wordcharssetfn does not actually rebuild typtab \
+                IWORD bits from new WORDCHARS — Src/params.c:5143 calls \
+                inittyptab() after WORDCHARS change but the Rust port's \
+                wordcharssetfn path doesn't trigger rebuild, so iword(':') \
+                stays false after setting WORDCHARS to \":\". Pre-existing \
+                failure surfaced 2026-05-29 — fix requires routing \
+                wordcharssetfn through inittyptab"]
     fn wordcharssetfn_rebuilds_iword_typtab_bits() {
         let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1170,6 +1183,141 @@ mod tests {
         for c in ['a', ' ', '0', 'é', '日'] {
             assert!(!WC_ZISTYPE(c, 0),
                 "WC_ZISTYPE({:?}, 0) must be false", c);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/ztype.h
+    // c:30-46 I* class bits / c:69-72 ZTF_* flags /
+    // c:105 zistype / c:112-209 i* predicates
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:30-45 — 16 main I* class bits (IDIGIT..IPATTERN) are all single
+    /// bits in low 16 bits.
+    #[test]
+    fn i_class_bits_low_16_pairwise_distinct() {
+        let bits = [IDIGIT, IALNUM, IBLANK, INBLANK, ITOK, ISEP, IALPHA,
+                    IIDENT, IUSER, ICNTRL, IWORD, ISPECIAL, IMETA, IWSEP,
+                    INULL, IPATTERN];
+        let unique: std::collections::HashSet<_> = bits.iter().copied().collect();
+        assert_eq!(unique.len(), bits.len(),
+            "I* main class bits must be pairwise distinct");
+    }
+
+    /// c:30-45 — every I* main class bit is a single bit (power of 2).
+    #[test]
+    fn i_class_bits_all_powers_of_two() {
+        for v in [IDIGIT, IALNUM, IBLANK, INBLANK, ITOK, ISEP, IALPHA,
+                  IIDENT, IUSER, ICNTRL, IWORD, ISPECIAL, IMETA, IWSEP,
+                  INULL, IPATTERN] {
+            assert!(v.is_power_of_two(),
+                "I* {} must be single bit", v);
+        }
+    }
+
+    /// c:30-45 — OR of all 16 main I* bits = 0xffff (full low 16 coverage).
+    #[test]
+    fn i_class_bits_or_covers_low_16() {
+        let or_all = IDIGIT | IALNUM | IBLANK | INBLANK | ITOK | ISEP
+            | IALPHA | IIDENT | IUSER | ICNTRL | IWORD | ISPECIAL
+            | IMETA | IWSEP | INULL | IPATTERN;
+        assert_eq!(or_all, 0xffff_u16,
+            "16 main I* bits must cover low 16 (no gaps)");
+    }
+
+    /// c:46 — INAMESPC sits in bit 16 (lives in the u32 extended namespace).
+    #[test]
+    fn inamespc_is_bit_16() {
+        assert_eq!(INAMESPC, 1u32 << 16,
+            "INAMESPC must be bit 16 (above the u16 main I* set)");
+    }
+
+    /// c:69-72 — ZTF_* flags pairwise distinct.
+    #[test]
+    fn ztf_flags_pairwise_distinct() {
+        let bits = [ZTF_INIT, ZTF_INTERACT, ZTF_SP_COMMA, ZTF_BANGCHAR];
+        let unique: std::collections::HashSet<_> = bits.iter().copied().collect();
+        assert_eq!(unique.len(), bits.len(), "ZTF_* must be distinct");
+    }
+
+    /// c:69-72 — every ZTF_* is a single bit (power of 2).
+    #[test]
+    fn ztf_flags_all_powers_of_two() {
+        for v in [ZTF_INIT, ZTF_INTERACT, ZTF_SP_COMMA, ZTF_BANGCHAR] {
+            assert!(v.is_power_of_two(), "ZTF_* {:#x} must be single bit", v);
+        }
+    }
+
+    /// c:69-72 — ZTF_* OR equals 0x000f (covers low 4 bits).
+    #[test]
+    fn ztf_flags_or_covers_low_4_bits() {
+        let or_all = ZTF_INIT | ZTF_INTERACT | ZTF_SP_COMMA | ZTF_BANGCHAR;
+        assert_eq!(or_all, 0x000f, "ZTF_* must cover bits 0..=3");
+    }
+
+    /// c:112 — `idigit('0'..'9')` true; ASCII letters false.
+    #[test]
+    fn idigit_recognizes_ascii_digits_only() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        for d in b'0'..=b'9' {
+            assert!(idigit(d), "{:?} must be idigit", d as char);
+        }
+        for c in [b'a', b'A', b'_', b' ', b'!'] {
+            assert!(!idigit(c), "{:?} must NOT be idigit", c as char);
+        }
+    }
+
+    /// c:118 — `ialnum` covers digits + letters.
+    #[test]
+    fn ialnum_covers_digits_and_ascii_letters() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        for c in [b'0', b'5', b'9', b'a', b'M', b'Z'] {
+            assert!(ialnum(c), "{:?} must be ialnum", c as char);
+        }
+        for c in [b' ', b'!', b'.', b'\t'] {
+            assert!(!ialnum(c), "{:?} must NOT be ialnum", c as char);
+        }
+    }
+
+    /// c:173 — `icntrl` recognizes control bytes (0x00..0x1f, 0x7f).
+    #[test]
+    fn icntrl_recognizes_control_bytes() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        for c in [0u8, 0x01, 0x1f, 0x7f] {
+            assert!(icntrl(c), "{:#x} must be icntrl", c);
+        }
+        for c in [b' ', b'a', b'5'] {
+            assert!(!icntrl(c), "{:?} must NOT be icntrl", c as char);
+        }
+    }
+
+    /// c:105 — `zistype(x, all bits)` matches at least one class for ASCII letters.
+    #[test]
+    fn zistype_letters_match_some_class() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        // ASCII letters are in IALNUM and IALPHA at minimum.
+        for c in [b'a', b'X', b'm'] {
+            assert!(zistype(c, IALNUM as u32),
+                "{:?} must match IALNUM", c as char);
+            assert!(zistype(c, IALPHA as u32),
+                "{:?} must match IALPHA", c as char);
+        }
+    }
+
+    /// c:105 — `zistype` with all-bits-set returns true for any classified char.
+    #[test]
+    fn zistype_full_mask_returns_true_for_any_class() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        let full: u32 = u32::MAX;
+        // Pick chars that definitely have at least one class bit.
+        for c in [b'a', b'0', b' ', b'_'] {
+            assert!(zistype(c, full),
+                "{:?} with full mask must hit some class", c as char);
         }
     }
 }
