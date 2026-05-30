@@ -1536,4 +1536,132 @@ mod tests {
                 "CMF_* {} must be a single bit", v);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Zle/comp.h
+    // c:85-95 CGF_* / c:185-189 CPAT_* / c:259-261 CLF_* /
+    // c:389-440 CPN_*/CP_* duality / c:443 CP_ALLKEYS /
+    // c:447-451 hook offsets / c:474 CM_SPACE
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:85-95 — CGF_* all powers of 2 (alt pin).
+    #[test]
+    fn cgf_flags_all_powers_of_two_alt() {
+        for &v in &[CGF_NOSORT, CGF_LINES, CGF_HASDL, CGF_UNIQALL,
+                    CGF_UNIQCON, CGF_PACKED, CGF_ROWS, CGF_FILES,
+                    CGF_MATSORT, CGF_NUMSORT, CGF_REVSORT] {
+            assert!((v as u32).is_power_of_two(),
+                "CGF_* {} must be a single bit", v);
+        }
+    }
+
+    /// c:85-95 — CGF_* pairwise distinct (alt pin).
+    #[test]
+    fn cgf_flags_pairwise_distinct_alt() {
+        let codes = [CGF_NOSORT, CGF_LINES, CGF_HASDL, CGF_UNIQALL,
+                     CGF_UNIQCON, CGF_PACKED, CGF_ROWS, CGF_FILES,
+                     CGF_MATSORT, CGF_NUMSORT, CGF_REVSORT];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "CGF_* pairwise distinct");
+    }
+
+    /// c:85-95 — CGF_* OR covers bits 0..=10.
+    #[test]
+    fn cgf_or_covers_low_11_bits() {
+        let or_all = CGF_NOSORT | CGF_LINES | CGF_HASDL | CGF_UNIQALL
+            | CGF_UNIQCON | CGF_PACKED | CGF_ROWS | CGF_FILES
+            | CGF_MATSORT | CGF_NUMSORT | CGF_REVSORT;
+        assert_eq!(or_all, (1i32 << 11) - 1,
+            "CGF_* must cover bits 0..=10 (no gaps)");
+    }
+
+    /// c:185-189 — CPAT_* values 0..=4 (sequential).
+    #[test]
+    fn cpat_values_sequential_0_to_4() {
+        assert_eq!(CPAT_CCLASS, 0);
+        assert_eq!(CPAT_NCLASS, 1);
+        assert_eq!(CPAT_EQUIV, 2);
+        assert_eq!(CPAT_ANY, 3);
+        assert_eq!(CPAT_CHAR, 4);
+    }
+
+    /// c:185-189 — CPAT_* pairwise distinct.
+    #[test]
+    fn cpat_pairwise_distinct() {
+        let codes = [CPAT_CCLASS, CPAT_NCLASS, CPAT_EQUIV, CPAT_ANY, CPAT_CHAR];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "CPAT_* pairwise distinct");
+    }
+
+    /// c:259-261 — CLF_MISS / CLF_DIFF / CLF_SUF are powers of 2.
+    #[test]
+    fn clf_flags_powers_of_two() {
+        for &v in &[CLF_MISS, CLF_DIFF, CLF_SUF] {
+            assert!((v as u32).is_power_of_two(),
+                "CLF_* {} must be a single bit", v);
+        }
+    }
+
+    /// c:259-261 — CLF_MISS=1, CLF_DIFF=2, CLF_SUF=4 (verbatim values).
+    #[test]
+    fn clf_flags_exact_values() {
+        assert_eq!(CLF_MISS, 1);
+        assert_eq!(CLF_DIFF, 2);
+        assert_eq!(CLF_SUF, 4);
+    }
+
+    /// c:389-440 — CP_X = 1 << CPN_X for every X (duality invariant).
+    #[test]
+    fn cp_equals_one_shift_cpn_duality() {
+        // Sample 6 pairs across the range.
+        assert_eq!(CP_EXACTSTR, 1u32 << CPN_EXACTSTR);
+        assert_eq!(CP_PATMATCH, 1u32 << CPN_PATMATCH);
+        assert_eq!(CP_PATINSERT, 1u32 << CPN_PATINSERT);
+        assert_eq!(CP_UNAMBIG, 1u32 << CPN_UNAMBIG);
+        assert_eq!(CP_IGNORED, 1u32 << CPN_IGNORED);
+        assert_eq!(CP_TOEND, 1u32 << CPN_TOEND);
+    }
+
+    /// c:443 — `CP_ALLKEYS = 0x3ffffff` (covers bits 0..=25, all 26 CPN_*).
+    #[test]
+    fn cp_allkeys_covers_26_bits() {
+        assert_eq!(CP_ALLKEYS, 0x3ffffffu32);
+        assert_eq!(CP_ALLKEYS, (1u32 << 26) - 1, "26 bits set");
+        assert_eq!(CP_ALLKEYS.count_ones(), 26);
+    }
+
+    /// c:447-451 — hook offsets sequential 0..=4.
+    #[test]
+    fn hook_offsets_sequential_0_to_4() {
+        assert_eq!(INSERTMATCHHOOK_OFFSET, 0);
+        assert_eq!(MENUSTARTHOOK_OFFSET, 1);
+        assert_eq!(COMPCTLMAKEHOOK_OFFSET, 2);
+        assert_eq!(COMPCTLCLEANUPHOOK_OFFSET, 3);
+        assert_eq!(COMPLISTMATCHESHOOK_OFFSET, 4);
+    }
+
+    /// c:447-451 — hook offsets pairwise distinct (alt pin).
+    #[test]
+    fn hook_offsets_pairwise_distinct_alt() {
+        let codes = [INSERTMATCHHOOK_OFFSET, MENUSTARTHOOK_OFFSET,
+                     COMPCTLMAKEHOOK_OFFSET, COMPCTLCLEANUPHOOK_OFFSET,
+                     COMPLISTMATCHESHOOK_OFFSET];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "hook offsets pairwise distinct");
+    }
+
+    /// c:474 — `CM_SPACE = 2`.
+    #[test]
+    fn cm_space_is_two() {
+        assert_eq!(CM_SPACE, 2);
+    }
+
+    /// c:172-178 — CMF_LINE/LEFT/RIGHT/INTER are 1,2,4,8 (powers of 2).
+    #[test]
+    fn cmf_line_class_flags_are_powers_of_two() {
+        for &v in &[CMF_LINE, CMF_LEFT, CMF_RIGHT, CMF_INTER] {
+            assert!((v as u32).is_power_of_two(),
+                "CMF_* line/edge {} must be single bit", v);
+        }
+    }
 }
