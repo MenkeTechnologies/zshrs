@@ -13971,6 +13971,166 @@ user-managed assoc instead of relying on `widgets[]`.
 
 ---
 
+## #265 — `$MATCH` not populated by `(#m)` flag in `${var/pat/...}` substitution
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extendedglob; s=hello; echo "[${s/(#m)*/MATCH=$MATCH}]"'
+[MATCH=hello]
+
+$ ./target/debug/zshrs --zsh -c 'setopt extendedglob; s=hello; echo "[${s/(#m)*/MATCH=$MATCH}]"'
+[MATCH=]
+```
+
+The `(#m)` extended_glob flag enables `$MATCH`, `$MBEGIN`,
+and `$MEND` parameters during pattern matching. In zsh, these
+populate during `${var/pat/repl}` substitution — the
+replacement string can reference `$MATCH` to incorporate the
+matched text.
+
+zshrs's substitution machinery doesn't populate `$MATCH`
+inside the replacement context. The replacement runs but
+reads `$MATCH` as empty.
+
+`$MATCH` works correctly in `=~` regex match context:
+```sh
+$ both-shells -fc '[[ "hello" =~ "([a-z]+)" ]] && echo "MATCH=[$MATCH]"'
+MATCH=[hello]
+```
+
+So the parameter-machinery exists; it just isn't connected to
+the parameter-substitution-with-replacement code path.
+
+**Where** — `src/ported/paramsubst.rs::do_replacement`:
+doesn't call into the `set_match_params()` hook before
+expanding the replacement string. C-source
+`Src/subst.c::dosubst` populates the params via
+`patmatch()` before passing the replacement to the
+expansion engine.
+
+**Impact** — common pattern for "wrap matched text" idioms
+fails:
+
+```sh
+# Highlight URLs by wrapping with ANSI codes
+log_line="${input/(#m)https:\/\/[^ ]##/${'$'\e''[36m'}$MATCH${'$'\e''[0m'}}"
+# zsh: surrounds the matched URL with color codes
+# zshrs: $MATCH is empty, surrounds with empty string (just emits color codes)
+```
+
+**Workaround** — use `=~` regex with `$MATCH`:
+```sh
+if [[ "$input" =~ "(https://[^ ]+)" ]]; then
+    log_line="${input/$MATCH/\e[36m$MATCH\e[0m}"
+fi
+```
+
+---
+
+## #266 — `$match[N]` backref array not populated by `(#b)` flag in substitution
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extendedglob; s="abc123"; echo "[${s/(#b)([a-z]##)/[$match[1]]}]"'
+[[abc]123]
+
+$ ./target/debug/zshrs --zsh -c 'setopt extendedglob; s="abc123"; echo "[${s/(#b)([a-z]##)/[$match[1]]}]"'
+[[]123]
+```
+
+`(#b)` enables backreference capture into the `$match[]`,
+`$mbegin[]`, and `$mend[]` arrays. Parenthesized groups in
+the pattern populate `$match[1]`, `$match[2]`, etc., for use
+in the replacement.
+
+zsh populates `$match` correctly. zshrs's substitution
+doesn't trigger the backref capture — replacement reads
+`$match[1]` as empty.
+
+Companion bug to #265 — both `(#m)`/`(#b)` flag-driven
+parameter population paths are missing in substitution
+context.
+
+**Where** — `src/ported/paramsubst.rs::do_replacement` (same
+location as #265): doesn't call into the backref-capture
+hook. C-source `Src/subst.c::dosubst` calls `patmatch()`
+which fills `match[]`/`mbegin[]`/`mend[]` arrays before the
+replacement is expanded.
+
+**Impact** — major loss for sed-style "capture and reorder"
+patterns:
+
+```sh
+# Reformat date: 2026-05-30 → 30/05/2026
+input="2026-05-30"
+output="${input/(#b)(####)-(##)-(##)/$match[3]/$match[2]/$match[1]}"
+# zsh: "30/05/2026"
+# zshrs: "//" — all matches are empty
+```
+
+**Workaround** — use `=~` match then build the replacement
+manually:
+```sh
+[[ "$input" =~ "([0-9]+)-([0-9]+)-([0-9]+)" ]]
+output="${match[3]}/${match[2]}/${match[1]}"
+```
+
+---
+
+## #267 — Bare `setopt` (no args) prints nothing instead of listing currently-set options
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt' | head -10
+nohashdirs
+norcs
+
+$ ./target/debug/zshrs --zsh -c 'setopt' | head -10
+(empty)
+```
+
+`setopt` with no args is the introspection form — lists all
+currently-set options, one per line. zsh emits 2 lines for
+`-f` mode (`nohashdirs`, `norcs`). zshrs prints nothing.
+
+The same likely applies to `unsetopt` with no args (lists
+unset options).
+
+The `setopt -p` (POSIX-style `set -o`-equivalent) likely
+works since it goes through a different code path — but
+bare `setopt` is the more common idiom.
+
+**Where** — `src/ported/builtins/setopt.rs::list_active_opts`:
+no-args path doesn't iterate the option table. C-source
+`Src/options.c::bin_setopt` walks `optns[]` and prints
+each option whose state matches the "set" filter.
+
+**Impact** — diagnostics and `.zshrc` introspection scripts
+that capture current option state break:
+
+```sh
+# Save current option state for restoration
+saved_opts=$(setopt)
+# ... do stuff that might change opts ...
+unsetopt $(setopt)            # reset all
+eval "$saved_opts"            # restore
+# zsh: saves a snapshot, restores correctly
+# zshrs: saved_opts is empty, restore does nothing
+```
+
+`p10k` and several oh-my-zsh themes use this pattern to
+preserve user-set options across their initialization paths.
+
+**Workaround** — use `set -o` (POSIX form) which likely works:
+```sh
+saved=$(set -o)
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -14239,9 +14399,12 @@ user-managed assoc instead of relying on `widgets[]`.
 | 262 | `zsh_eval_context` array always empty (zsh: `cmdarg`, `cmdarg shfunc`, etc. — eval context stack) | **port-bug** | manual `${funcstack[*]}` (also broken) |
 | 263 | `$ZSH_DEBUG_CMD` empty when DEBUG trap fires (parameter never populated with cmd text) | **port-bug** | (none — step-debug not possible) |
 | 264 | `${widgets[fn]}` after `zle -N fn` returns literal `builtin` for all queries (no real lookup) | **port-bug** | parallel user-managed assoc |
+| 265 | `$MATCH` not populated by `(#m)` flag in `${var/pat/repl}` substitution (works in `=~`) | **port-bug** | use `=~` then manually substitute |
+| 266 | `$match[N]` backref array not populated by `(#b)` in substitution | **port-bug** | use `=~` to capture, build repl manually |
+| 267 | Bare `setopt` (no args) prints nothing instead of listing currently-set options | **port-bug** | use `set -o` (POSIX form) |
 
-Of two hundred and sixty-four entries, two are fixed (5, 7), two
-hundred and fifty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and sixty-seven entries, two are fixed (5, 7), two
+hundred and sixty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -14259,5 +14422,6 @@ hundred and fifty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
-253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264), and
-four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
+266, 267), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
