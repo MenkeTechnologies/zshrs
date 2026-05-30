@@ -18138,6 +18138,195 @@ config[$key_safe]="value"
 
 ---
 
+## #340 — `print -P "%Nd"` numeric path-truncate prompt-escape not implemented
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /usr/local/bin 2>/dev/null; print -P "%2d"'
+local/bin
+
+$ ./target/debug/zshrs --zsh -c 'cd /usr/local/bin 2>/dev/null; print -P "%2d"'
+/usr/local/bin
+```
+
+`%Nd` in prompt-escapes truncates `$PWD` to the last `N` path
+components. `%2d` of `/usr/local/bin` is `local/bin`. zshrs
+ignores the count modifier and emits the full path.
+
+Same gap for negative form (drops leading components):
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /usr/local 2>/dev/null; print -P "%-1d"'
+/usr
+
+$ ./target/debug/zshrs --zsh -c 'cd /usr/local 2>/dev/null; print -P "%-1d"'
+/usr/local
+```
+
+zsh strips the leading component (`local`); zshrs returns
+the full path.
+
+Same gap for `%N~` (tilde-form):
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp; print -P "%2~"'
+/tmp                  # already short, no truncation
+
+$ /opt/homebrew/bin/zsh -fc 'cd /usr/local/bin 2>/dev/null; print -P "%2~"'
+local/bin
+```
+
+**Where** — `src/ported/prompt.rs::handle_d_escape`: numeric
+prefix `N` and `-N` not parsed/applied. C-source
+`Src/prompt.c::promptexpand` extracts the integer count
+preceding `d`/`~` and trims via `truncate_dir()`.
+
+**Impact** — common p10k / oh-my-zsh prompt theme idiom for
+"short pwd display" broken. Themes set `%2d` or `%-3~` to
+show 2 trailing or drop 3 leading components — zshrs displays
+full paths instead, making prompts noisy.
+
+**Workaround** — manual truncation via param-substitution:
+```sh
+short_pwd="${PWD##*/}"      # last component only
+PS1="$short_pwd %% "
+```
+
+(Loses the `N`-component flexibility.)
+
+---
+
+## #341 — `$((arr[(i)pat]))` subscript-flag inside arith subscript returns 0 (zsh: index of match)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); echo $((a[(i)blue]))'
+2
+
+$ ./target/debug/zshrs --zsh -c 'a=(red blue green); echo $((a[(i)blue]))'
+0
+```
+
+zsh's arith context allows subscript-flags `(i)`/`(I)`/`(R)`/
+`(r)` inside `arr[...]` for compute-and-use-immediately
+patterns. The `(i)` flag returns the index of the first match
+(2 for "blue"), which the arith expression uses as the value.
+
+zshrs's arith subscript parser doesn't recognize the flag
+syntax — falls through to treating `blue` as an undefined
+variable (which evaluates to 0 in arith context).
+
+Same for `(I)` reverse-search:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue red); echo $((a[(I)red]))'
+3                                # last index of red
+
+$ ./target/debug/zshrs --zsh -c 'a=(red blue red); echo $((a[(I)red]))'
+0
+```
+
+**Where** — `src/ported/math/subscript.rs::parse_arith_subscript`:
+no `(FLAG)` recognition before parsing the subscript content.
+C-source `Src/math.c::matheval` calls into the general
+subscript parser which honors flags.
+
+**Impact** — array-search-and-arithmetic idioms broken:
+
+```sh
+# Check if value exists in array
+items=(red blue green)
+needle=blue
+if (( ${items[(i)$needle]} <= ${#items} )); then
+    echo "found"
+fi
+# zsh: works correctly
+# zshrs: (i) returns 0, comparison always true, false positive
+```
+
+**Workaround** — separate the index extraction:
+```sh
+idx="${items[(i)$needle]}"
+(( idx <= ${#items} )) && echo "found"
+```
+
+---
+
+## #342 — `options[opt]=on/off` assignment to introspection assoc doesn't toggle the option
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'options[errexit]=on; [[ -o errexit ]] && echo set || echo unset'
+set
+
+$ ./target/debug/zshrs --zsh -c 'options[errexit]=on; [[ -o errexit ]] && echo set || echo unset'
+unset
+```
+
+zsh's `options` introspection assoc is bidirectional —
+reading shows current state, AND writing toggles the option.
+`options[errexit]=on` is equivalent to `setopt errexit`.
+
+zshrs treats `options` as read-only (or rather, accepts the
+assignment but doesn't propagate to the actual option state).
+The opt remains unchanged.
+
+Reverse direction also broken:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt errexit; options[errexit]=off; [[ -o errexit ]] && echo set || echo unset'
+unset                            # zsh: assignment unset the opt
+
+$ ./target/debug/zshrs --zsh -c 'setopt errexit; options[errexit]=off; [[ -o errexit ]] && echo set || echo unset'
+set                              # zshrs: opt still set
+```
+
+Same likely applies to other assoc-as-control features:
+- `aliases[foo]=bar` should define alias (works per #338 test)
+- `functions[f]=body` should define fn (works)
+- `options[opt]=on` should set opt (this bug)
+- `commands[name]=/path` ... (effect uncertain)
+
+So the assoc-write→state-change binding is missing
+specifically for `options`.
+
+**Where** — `src/ported/params/options_assoc.rs::set_option_via_assoc`:
+write hook on `options[opt]` doesn't dispatch to `setopt`/
+`unsetopt`. C-source `Src/parameter.c::optionsetfn` handles
+the assoc-write by calling `dosetopt()` with the parsed
+value.
+
+**Impact** — config-driven option toggling broken:
+
+```sh
+# Set options from config
+typeset -A config_opts=(
+    errexit  on
+    pipefail on
+    nounset  off
+)
+for opt val in "${(@kv)config_opts}"; do
+    options[$opt]=$val
+done
+# zsh: all 3 opts toggled
+# zshrs: opts unchanged
+```
+
+Modern config-loading patterns that drive opt state via
+assoc-assignment fail silently.
+
+**Workaround** — direct `setopt`/`unsetopt`:
+```sh
+for opt val in "${(@kv)config_opts}"; do
+    if [[ "$val" == on ]]; then
+        setopt "$opt"
+    else
+        unsetopt "$opt"
+    fi
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -18481,9 +18670,12 @@ config[$key_safe]="value"
 | 337 | `(( n += "5" ))` quoted-string operands in `(( ))` arith treated as `0` (zsh: parses as int) | **port-bug** | use `$((...))` form |
 | 338 | `h["key'with'special"]=v` assoc keys with embedded quotes/specials lost silently | **port-bug** | sanitize keys to alphanumeric |
 | 339 | `h["a\\nb"]=v` assoc keys with backslash escapes round-trip differently — `(@k)` output not quoted | **port-bug** | base64-encode keys |
+| 340 | `print -P "%Nd"`/`%-Nd` numeric path-truncate prompt-escape not implemented (e.g., `%2d` last-2-comps) | **port-bug** | manual `${PWD##*/}` |
+| 341 | `$((arr[(i)pat]))` subscript-flag inside arith subscript returns 0 (zsh: returns match index) | **port-bug** | extract index first via temp var |
+| 342 | `options[opt]=on/off` assignment doesn't toggle option — assoc-write→state binding missing | **port-bug** | direct `setopt`/`unsetopt` |
 
-Of three hundred and thirty-nine entries, two are fixed (5, 7),
-three hundred and thirty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and forty-two entries, two are fixed (5, 7),
+three hundred and thirty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -18507,5 +18699,5 @@ three hundred and thirty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
-331, 332, 333, 334, 335, 336, 337, 338, 339), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342), and
+four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
