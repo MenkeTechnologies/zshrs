@@ -854,4 +854,117 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _: i32 = boot_(std::ptr::null());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/langinfo.c
+    // c:94 liitem / c:119 getlanginfo / c:163 scanlanginfo /
+    // c:183-224 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:183 — `setup_` is idempotent.
+    #[test]
+    fn langinfo_setup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:217 — `cleanup_` is idempotent.
+    #[test]
+    fn langinfo_cleanup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:224 — `finish_` is idempotent.
+    #[test]
+    fn langinfo_finish_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:217 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn langinfo_cleanup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:224 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn langinfo_finish_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:94 — `liitem("")` empty name returns None.
+    #[test]
+    fn liitem_empty_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(liitem("").is_none(), "empty name must yield None");
+    }
+
+    /// c:94 — `liitem("__never_real_xyz__")` unknown returns None.
+    #[test]
+    fn liitem_unknown_name_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(liitem("__never_real_li_item_xyz__").is_none(),
+            "unknown name must yield None");
+    }
+
+    /// c:119 — `getlanginfo("")` empty name returns None (alt 2).
+    #[test]
+    fn getlanginfo_empty_name_returns_none_alt_2() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getlanginfo("").is_none(),
+            "empty name must yield None");
+    }
+
+    /// c:119 — `getlanginfo` deterministic for same input.
+    #[test]
+    fn getlanginfo_deterministic_for_same_input() {
+        let _g = crate::test_util::global_state_lock();
+        let a = getlanginfo("CODESET");
+        let b = getlanginfo("CODESET");
+        assert_eq!(a, b, "getlanginfo(CODESET) must be deterministic");
+    }
+
+    /// c:163 — `scanlanginfo` returns Vec<(String, String)>.
+    #[test]
+    fn scanlanginfo_returns_vec_tuple_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<(String, String)> = scanlanginfo();
+    }
+
+    /// c:163 — `scanlanginfo` is deterministic across calls.
+    #[test]
+    fn scanlanginfo_deterministic_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        let a = scanlanginfo();
+        let b = scanlanginfo();
+        assert_eq!(a, b, "scanlanginfo must be deterministic");
+    }
+
+    /// c:203 — `enables_` with Some(non-empty) doesn't panic.
+    #[test]
+    fn langinfo_enables_with_some_non_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = Some(vec![1, 2, 3]);
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:183/210/224 — setup→boot→finish chain returns 0 each.
+    #[test]
+    fn langinfo_setup_boot_finish_chain_returns_zero_each() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
 }
