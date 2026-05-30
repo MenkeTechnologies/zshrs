@@ -918,4 +918,113 @@ mod tests {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional pins for Src/zsh_system.h
+    // c:594-733 stat-mode bits / c:747-750 access flags /
+    // c:225-286 always-false ISDOOR/ISMPB/ISMPC/ISNWK/ISOFD/ISOFL stubs /
+    // c:427 DEFAULT_WORDCHARS / c:428 DEFAULT_TIMEFMT
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:225/250/259/268/277/286 — stub ISDOOR/MPB/MPC/NWK/OFD/OFL
+    /// always return false regardless of mode bits (zsh-rs has no Solaris
+    /// doors, no NeXTSTEP multi-platform bits, etc).
+    #[test]
+    fn s_is_stub_predicates_always_false() {
+        for mode in [0u32, 0xffffffff, S_IFDIR, S_IFREG, S_IFLNK, 0o170_000] {
+            assert!(!S_ISDOOR(mode), "S_ISDOOR({:o}) must be false stub", mode);
+            assert!(!S_ISMPB(mode), "S_ISMPB({:o}) must be false stub", mode);
+            assert!(!S_ISMPC(mode), "S_ISMPC({:o}) must be false stub", mode);
+            assert!(!S_ISNWK(mode), "S_ISNWK({:o}) must be false stub", mode);
+            assert!(!S_ISOFD(mode), "S_ISOFD({:o}) must be false stub", mode);
+            assert!(!S_ISOFL(mode), "S_ISOFL({:o}) must be false stub", mode);
+        }
+    }
+
+    /// c:682-715 — user/group/other permission bits are pairwise distinct.
+    #[test]
+    fn permission_bits_pairwise_distinct() {
+        let bits = [S_ISUID, S_ISGID, S_ISVTX, S_IRUSR, S_IWUSR, S_IXUSR,
+                    S_IRGRP, S_IWGRP, S_IXGRP, S_IROTH, S_IWOTH, S_IXOTH];
+        let unique: std::collections::HashSet<_> = bits.iter().copied().collect();
+        assert_eq!(unique.len(), bits.len(),
+            "permission bits must be pairwise distinct");
+    }
+
+    /// c:682-715 — every permission bit is a single bit (power of 2).
+    #[test]
+    fn permission_bits_all_single_bits() {
+        for v in [S_ISUID, S_ISGID, S_ISVTX, S_IRUSR, S_IWUSR, S_IXUSR,
+                  S_IRGRP, S_IWGRP, S_IXGRP, S_IROTH, S_IWOTH, S_IXOTH] {
+            assert!(v.is_power_of_two(),
+                "permission bit 0o{:o} must be a single bit", v);
+        }
+    }
+
+    /// c:682/685/688 — sticky/sgid/suid setid trio values pinned verbatim.
+    #[test]
+    fn setid_sticky_bits_verbatim() {
+        assert_eq!(S_ISUID, 0o4000);
+        assert_eq!(S_ISGID, 0o2000);
+        assert_eq!(S_ISVTX, 0o1000);
+    }
+
+    /// c:747-750 — access-test flag values exact (F_OK=0, X_OK=1, W_OK=2, R_OK=4).
+    #[test]
+    fn access_flag_values_exact() {
+        assert_eq!(F_OK, 0);
+        assert_eq!(X_OK, 1);
+        assert_eq!(W_OK, 2);
+        assert_eq!(R_OK, 4);
+    }
+
+    /// c:718-724 — S_IRWX{U,G,O} aggregates equal 0o7 in their respective nibble.
+    #[test]
+    fn s_irwx_aggregates_equal_seven_in_nibble() {
+        assert_eq!(S_IRWXU, 0o0700);
+        assert_eq!(S_IRWXG, 0o0070);
+        assert_eq!(S_IRWXO, 0o0007);
+    }
+
+    /// c:427 — DEFAULT_WORDCHARS verbatim value pin.
+    #[test]
+    fn default_wordchars_exact_value() {
+        assert_eq!(DEFAULT_WORDCHARS, "*?_-.[]~=/&;!#$%^(){}<>");
+    }
+
+    /// c:428 — DEFAULT_TIMEFMT verbatim value pin.
+    #[test]
+    fn default_timefmt_exact_value() {
+        assert_eq!(DEFAULT_TIMEFMT, "%J  %U user %S system %P cpu %*E total");
+    }
+
+    /// c:594 — S_IFMT = 0o170_000 (file-type mask covers top 4 octal digits).
+    #[test]
+    fn s_ifmt_is_octal_170000() {
+        assert_eq!(S_IFMT, 0o170_000);
+    }
+
+    /// c:594-734 — file-type bits (S_IFBLK..S_IFSOCK) are all in S_IFMT mask.
+    #[test]
+    fn file_type_bits_within_s_ifmt_mask() {
+        for ft in [S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK] {
+            assert_eq!(ft & !S_IFMT, 0,
+                "file-type 0o{:o} must be within S_IFMT mask", ft);
+        }
+    }
+
+    /// c:594-734 — file-type bits pairwise distinct (no aliasing).
+    #[test]
+    fn file_type_bits_pairwise_distinct() {
+        let bits = [S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK];
+        let unique: std::collections::HashSet<_> = bits.iter().copied().collect();
+        assert_eq!(unique.len(), bits.len(),
+            "file-type constants must be pairwise distinct");
+    }
+
+    /// c:307 — ZSH_INITIAL_OPEN_MAX is exactly 64 (verbatim).
+    #[test]
+    fn zsh_initial_open_max_exact_64() {
+        assert_eq!(ZSH_INITIAL_OPEN_MAX, 64);
+    }
 }
