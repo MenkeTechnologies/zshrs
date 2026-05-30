@@ -12598,6 +12598,195 @@ guarantees.
 
 ---
 
+## #241 — `${assoc[@]}` and `${assoc[*]}` return empty (basic assoc value iteration broken)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[a]=1; h[b]=2; echo "star=[${h[*]}] at=[${h[@]}]"'
+star=[1 2] at=[1 2]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[a]=1; h[b]=2; echo "star=[${h[*]}] at=[${h[@]}]"'
+star=[] at=[]
+```
+
+For a regular (non-assoc) array, `${arr[*]}` and `${arr[@]}`
+expand to all elements (joined by IFS or word-split,
+respectively). For an associative array, zsh applies the same
+semantics — all *values* are returned. zshrs returns empty
+for both forms.
+
+The explicit `(@v)` flag form works:
+```sh
+$ both-shells -fc 'typeset -A h; h[a]=1; h[b]=2; print -l "${(@v)h}"'
+1
+2
+```
+
+So zshrs has the value-iteration mechanism but doesn't trigger
+it via the bare `[@]`/`[*]` subscript on assoc arrays.
+
+**Where** — `src/ported/paramsubst.rs::handle_at_star_subscript`:
+when the parameter is an assoc array, doesn't dispatch to the
+value-collection path. C-source `Src/subst.c::dosubst` checks
+`PM_HASHED` flag and treats `[@]`/`[*]` as equivalent to the
+`(v)` flag.
+
+**Impact** — the standard idiom for "iterate values of an
+assoc" is broken. Most scripts work with values more than
+keys (or together as kv pairs), so this is a hot path:
+
+```sh
+typeset -A endpoints=(api1 https://x api2 https://y)
+
+# Common pattern: iterate values
+for url in "${endpoints[@]}"; do
+    health_check "$url"
+done
+# zsh: iterates the two URLs
+# zshrs: iterates zero times — silent no-op
+```
+
+Combined with #213 (assoc reverse-by-value errors) and #229
+(kv-join drops values), assoc-array support has multiple
+foundational gaps.
+
+**Workaround** — use `${(@v)h}` (explicit value flag):
+```sh
+for url in "${(@v)endpoints}"; do
+    health_check "$url"
+done
+```
+
+---
+
+## #242 — Introspection assocs (`builtins`/`parameters`/`modules`/etc.) not read-only — writes silently accepted
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'builtins[xx]=foo'
+zsh:1: read-only variable: builtins
+$ echo $?
+1
+
+$ ./target/debug/zshrs --zsh -c 'builtins[xx]=foo'
+$ echo $?
+0
+```
+
+`builtins`, `parameters`, `modules`, `aliases`, `dis_aliases`,
+`functions`, `commands`, and similar introspection assocs are
+marked read-only in zsh — writing to them errors out. They
+exist for read-only introspection of internal shell tables.
+
+zshrs allows writes silently. This makes the variables
+mutable user state, which:
+- Diverges from zsh's protection guarantee.
+- May or may not affect the underlying table (the test
+  doesn't probe whether the write also corrupts the real
+  table — uncertain).
+
+Verified missing read-only marker via `(t)` flag (see #243
+companion bug).
+
+**Where** — `src/ported/params/init.rs::register_special_assocs`:
+doesn't set the `PM_READONLY` flag on these special params.
+C-source `Src/parameter.c::createspecialhash` initializes
+each with `PM_READONLY | PM_SPECIAL | PM_HIDE | PM_HIDEVAL`.
+
+**Impact** — silent acceptance of writes to read-only
+introspection vars is a security/correctness concern:
+1. Scripts that mistakenly write to `aliases[foo]=bar`
+   thinking they're defining an alias get no error feedback —
+   they succeed at corrupting state and then `alias foo` may
+   or may not work.
+2. Tests/probes that check write-protection (e.g.
+   "verify we can't accidentally pollute parameters table")
+   get false negatives in zshrs.
+
+```sh
+# Defensive pattern: try to write, expect failure
+if ! aliases[CRITICAL]=injected 2>/dev/null; then
+    echo "alias table protected"
+else
+    echo "WARNING: alias table writeable - aborting"
+    exit 1
+fi
+# zsh: prints "alias table protected"
+# zshrs: prints "WARNING: ..." — false positive abort
+```
+
+**Workaround** — none; depends on zshrs flagging these as
+`PM_READONLY` at init.
+
+---
+
+## #243 — `${(t)var}` returns empty for `TIMEFMT` and other special parameters
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "type=${(t)TIMEFMT}; val=[$TIMEFMT]"'
+type=scalar; val=[%J  %U user %S system %P cpu %*E total]
+
+$ ./target/debug/zshrs --zsh -c 'echo "type=${(t)TIMEFMT}; val=[$TIMEFMT]"'
+type=; val=[%J  %U user %S system %P cpu %*E total]
+```
+
+`TIMEFMT` has a valid default scalar value in both shells, but
+zshrs's `(t)` flag introspection returns empty — meaning the
+type-introspection machinery considers it unset/missing even
+though `$TIMEFMT` returns the value.
+
+This affects multiple built-in special parameters. Related to
+#216 (`${(t)var:-default}` after unset returns empty) but
+exposes a different surface: even on params with non-empty
+values, `(t)` returns empty if the param isn't registered
+properly in the introspection map.
+
+The introspection-assoc family (`builtins`, `parameters`,
+`modules`) also misses the `-readonly` attribute in the type
+string:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "${(t)builtins}"'
+association-readonly-hide-hideval-special
+
+$ ./target/debug/zshrs --zsh -c 'echo "${(t)builtins}"'
+association-hide-hideval-special   # missing -readonly
+```
+
+**Where** — `src/ported/params/init.rs::register_autovar`:
+autovars (TIMEFMT, NULLCMD, READNULLCMD, WATCHFMT, etc.) are
+populated with default values but not registered in the
+parameter-type-introspection map. Special assocs are
+registered but missing the `PM_READONLY` flag in their type
+string (companion bug to #242).
+
+C-source `Src/parameter.c::paramtypestr` walks the
+`Param->node.flags` bits and emits each as a hyphenated
+suffix.
+
+**Impact** — type-aware code that decides behavior based on
+`(t)` introspection (e.g., "is this an integer? if so use
+arith") gets wrong answers:
+
+```sh
+case "${(t)$1}" in
+    *integer*) echo "Got integer: $(($1 * 2))" ;;
+    scalar*)   echo "Got string: $1" ;;
+    *)         echo "Unknown type for $1: ${(t)$1}" ;;
+esac
+# zsh: matches the right branch for TIMEFMT (scalar)
+# zshrs: falls into "Unknown type" branch since (t) returns empty
+```
+
+**Workaround** — explicit `(( ${+VAR} ))` for existence check,
+or check value emptiness — but neither replicates the full
+type-string info.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -12842,9 +13031,12 @@ guarantees.
 | 238 | `setopt promptbang` doesn't enable `!` → history-number in prompts | **port-bug** | use `%h`/`%!` percent-escape |
 | 239 | `print -P "%J"` (jobs count prompt escape) treats as literal — extends #38 family | **port-bug** | use `${#jobstates}` introspection |
 | 240 | `{ false } always { :; }` clears errflag — errexit doesn't fire after always block | **port-bug** | explicit `\|\| _err=$?` propagation |
+| 241 | `${assoc[@]}`/`${assoc[*]}` return empty — basic assoc value iteration broken | **port-bug** | `${(@v)h}` explicit value flag |
+| 242 | Introspection assocs (`builtins`/`parameters`/etc.) not read-only — writes silently accepted | **port-bug** | (none — needs `PM_READONLY` at init) |
+| 243 | `${(t)TIMEFMT}` etc. return empty for autovar/special params (type intro broken) | **port-bug** | `(( ${+VAR} ))` existence check only |
 
-Of two hundred and forty entries, two are fixed (5, 7), two
-hundred and thirty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and forty-three entries, two are fixed (5, 7), two
+hundred and thirty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -12861,5 +13053,5 @@ hundred and thirty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
-240), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+240, 241, 242, 243), and four were zsh-correct behavior misframed
+by demos (1, 2, 3, 6).
