@@ -19708,6 +19708,145 @@ wait "$p1"
 
 ---
 
+## #370 — `${(t)1}` positional-parameter type returns `scalar` instead of `array-special`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- a; echo "[${(t)1}]"'
+[array-special]
+
+$ ./target/debug/zshrs --zsh -c 'set -- a; echo "[${(t)1}]"'
+[scalar]
+```
+
+zsh reports positional parameters as `array-special` — they
+are elements of the special-array `argv`. zshrs treats them
+as plain `scalar` strings.
+
+Same family as #243 (type-string missing markers like
+`-special`/`-readonly`), #231 (tied scalar/array missing
+`-tied`).
+
+The type-string introspection diverges from zsh across
+multiple parameter classes:
+- Positional `$1` — `array-special` vs `scalar` (this bug)
+- Tied `STR`/`str` — `scalar-tied`/`array-tied` vs `scalar` (#231)
+- Special autovars like `SECONDS` — `float-special` vs `float` (#243)
+
+**Where** — `src/ported/params/positional.rs::positional_type`:
+returns hardcoded `scalar` instead of `array-special`. C-source
+`Src/params.c::paramtypestr` walks param flags and emits
+`array-special` for elements of the positional array.
+
+**Impact** — type-introspection code that dispatches based on
+attribute family gets wrong answers for positional params:
+
+```sh
+case "${(t)1}" in
+    *array*) handle_array_elem "$1" ;;
+    scalar*) handle_scalar "$1" ;;
+esac
+# zsh: takes array-elem branch
+# zshrs: takes scalar branch (wrong path)
+```
+
+**Workaround** — manual detection via context (no clean way
+to infer "is positional" from outside).
+
+---
+
+## #371 — `typeset -A` with no args lists random unrelated assocs instead of being no-op or erroring
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A 2>&1'
+(empty)
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A 2>&1'
+aliases=(  )
+```
+
+`typeset -A` without a variable name should either:
+1. Be a no-op (zsh's behavior — silently succeeds, no output).
+2. Error with "missing argument" or similar.
+
+zshrs prints the empty `aliases=( )` introspection assoc as
+if `-A` were a display request. This leaks internal state.
+
+The display contains other introspection assocs too (the
+full output may show `commands=`, `parameters=`, etc. — only
+`aliases=` was caught by the diff because the others got
+filtered).
+
+**Where** — `src/ported/builtins/typeset.rs::handle_A_no_args`:
+treats `-A` no-name as "show all assocs" instead of either
+erroring or no-op. C-source `Src/builtin.c::typeset_single`
+with no name argument and `-A` flag silently succeeds.
+
+**Impact** — leaks introspection-assoc data to stdout
+unexpectedly. Scripts that probe whether `typeset -A` errored
+(to verify behavior) get wrong info.
+
+**Workaround** — provide explicit assoc name:
+```sh
+typeset -A myname     # declares empty assoc named "myname"
+```
+
+---
+
+## #372 — `print -P "%F{invalid_color}"` drops entire format instead of emitting default-color recovery
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%F{abc}x%f"'
+[39mx[39m              # emits default-fg code as recovery, then x, then reset
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%F{abc}x%f"'
+x                      # silently drops the %F/%f entirely
+```
+
+zsh's `%F{name}` parsing is forgiving — when the color name
+is unknown, it falls back to the default color escape (`ESC[39m`).
+The user gets a usable output with a "no color" effect.
+
+zshrs silently strips the entire `%F{...}` escape, including
+the closing `%f`. The output is just `x` with no color codes
+at all.
+
+Same gap for `%F` alone (without `{...}`) — zsh emits a
+default-color code; zshrs returns empty.
+
+**Where** — `src/ported/prompt.rs::handle_F_color`: unknown
+color name path returns empty instead of emitting fallback
+escape. C-source `Src/prompt.c::promptexpand` falls back to
+`tcout(TCFGDEFAULTFG)` (escape code 39) for unknown names.
+
+**Impact** — prompt themes using `%F{color}` for theme
+colors render differently when zsh's defined color list and
+the theme's expected color list disagree. zsh shows fallback
+formatting; zshrs shows raw text:
+
+```sh
+PS1='%F{mytheme_red}error%f '
+# If mytheme_red is unknown:
+# zsh: " error " (default colored)
+# zshrs: " error " (no color codes — might confuse parsing tools expecting escapes)
+```
+
+Mostly a display-fidelity issue. Combined with #92/#239/#352
+(other prompt-escape gaps), zshrs's prompt rendering has
+multiple fidelity issues.
+
+**Workaround** — use ANSI escape sequences directly:
+```sh
+PS1=$'\e[31m%F{red}error\e[0m '
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -20081,9 +20220,12 @@ wait "$p1"
 | 367 | `$?` bare `?` in `$((...))` arith not resolved — treats as `0` instead of last exit status | **port-bug** | explicit `$?` |
 | 368 | `$#` bare `#` in `$((...))` arith not resolved — treats as `0` instead of positional count | **port-bug** | explicit `$#` |
 | 369 | `wait %1` job-spec resolution fails "no such job" — zsh: succeeds (ec=0) | **port-bug** | capture `$!` and wait by PID |
+| 370 | `${(t)1}` positional-param type returns `scalar` instead of `array-special` | **port-bug** | manual detection of positional context |
+| 371 | `typeset -A` with no args lists random assocs instead of being no-op (zsh: silent success) | **port-bug** | always provide explicit name |
+| 372 | `print -P "%F{invalid}"` drops entire format instead of emitting default-color escape | **port-bug** | use ANSI escapes directly |
 
-Of three hundred and sixty-nine entries, two are fixed (5, 7),
-three hundred and sixty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and seventy-two entries, two are fixed (5, 7),
+three hundred and sixty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -20109,5 +20251,6 @@ three hundred and sixty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343,
 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356,
-357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369),
-and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369,
+370, 371, 372), and four were zsh-correct behavior misframed by
+demos (1, 2, 3, 6).
