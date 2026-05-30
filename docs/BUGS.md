@@ -20988,6 +20988,164 @@ fi
 
 ---
 
+## #394 — `setopt` no-args dump empty under `-f` — should list activated "no" options
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt'
+nohashdirs
+norcs
+
+$ ./target/debug/zshrs --zsh -c 'setopt'
+
+```
+
+When invoked with `-f`, zsh activates `nohashdirs` and
+`norcs` — these are then listed by `setopt` (no-args)
+because they're divergent from the option's default
+value.
+
+zshrs's `setopt` no-args dump returns empty under `-f` —
+either the `-f` flag doesn't activate the no-options, or
+the listing filter misses options whose name starts with
+`no`.
+
+**Where** — `src/ported/builtins/setopt.rs::list_active`:
+listing path likely skips options that are *off* by
+default but show *on* in zshrs's table, or vice versa.
+C-source `Src/builtins.c::bin_setopt` lists every option
+whose current value differs from its compile-time default,
+using the conventional name (with `no` prefix iff default
+is on and current is off).
+
+**Impact** — scripts that probe shell state via `setopt`
+dump break. Common pattern in `~/.zshrc` introspection:
+
+```sh
+# Show what's different from defaults
+echo "Currently divergent options:"
+setopt
+# zsh: shows nohashdirs, norcs (if -f), plus any user-set
+# zshrs: shows nothing — state probe fails
+```
+
+Also breaks `setopt | wc -l` for option-state delta
+audits.
+
+**Workaround** — probe specific options with `[[ -o NAME ]]`:
+```sh
+[[ -o rcs ]] || echo "rcs is off"
+```
+
+---
+
+## #395 — `compdef` builtin always-present in zshrs — pre-compinit probe pattern broken
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'compdef'
+zsh:1: command not found: compdef
+
+$ ./target/debug/zshrs --zsh -c 'compdef'
+compdef: I need arguments
+```
+
+In zsh, `compdef` is **not a builtin** — it's a shell
+function defined by `compinit`. Before `compinit` runs,
+calling it errors with "command not found" (rc=127).
+
+zshrs ships `compdef` as a permanent builtin, available
+even before `compinit` runs. Calling it with no args
+emits "I need arguments" instead of the canonical
+not-found error.
+
+**Where** — `src/ported/builtins/registry.rs` (or wherever
+builtin table is initialized): `compdef` should be removed
+from the always-available builtin set. It must be
+registered dynamically by `compinit` autoload.
+
+**Impact** — plugin auto-load guards break:
+
+```sh
+# Common pattern in zinit/oh-my-zsh plugin loaders
+if (( ${+functions[compdef]} )); then
+    compdef _my_cmd my_cmd
+fi
+# zsh: branch only taken AFTER compinit
+# zshrs: ${+functions[compdef]} = 0 (it's a builtin, not
+#        a function), so guard never fires; plugins skip
+#        completion registration even after compinit
+```
+
+The mirror probe `(( ${+commands[compdef]} ))` does
+detect zshrs's builtin (commands assoc includes builtins
+in zshrs per #242 family), making the guard go *true*
+when zsh's would go *false* — wrong-direction breakage.
+
+**Workaround** — probe instead with a feature-flag:
+```sh
+[[ -n $_comp_setup ]] && compdef _my_cmd my_cmd
+```
+
+(`_comp_setup` is set by compinit on successful init.)
+
+---
+
+## #396 — `$funcsourcetrace` returns line:0 instead of line:1 — off-by-one parallel to #385
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "[$funcsourcetrace]"; }; f'
+[zsh:1]
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo "[$funcsourcetrace]"; }; f'
+[zsh:0]
+```
+
+`$funcsourcetrace` is the array tracking
+"file:line where each active function was DEFINED". For
+`f` defined as `f() { ... }` on input line 1, zsh records
+`zsh:1`. zshrs records `zsh:0` — same off-by-one error as
+#385 (LINENO inside fn) but for the function-source-line
+tracking array.
+
+Parallel issue family with #385 — likely fixed by the
+same base-index correction.
+
+**Where** — `src/ported/exec/funcdef.rs::register_function`:
+should record `current_lineno + 1` (or whatever
+1-based offset C-source uses) into the function metadata.
+C-source `Src/exec.c::execfuncdef` saves `lineno` at
+definition time (1-based).
+
+**Impact** — debugging frameworks that print function-
+definition locations show line:0 — confuses humans
+("line 0 doesn't exist") and breaks `(file):(line)`
+clickable terminal links in modern terminals (iTerm2,
+WezTerm, Kitty all expect 1-based line numbers in
+`file:line` strings):
+
+```sh
+# Print where each in-flight function is defined
+for entry in $funcsourcetrace; do
+    print "Defined at: $entry"
+done
+# zsh: "Defined at: ~/.zshrc:42" — opens file at line 42
+# zshrs: "Defined at: ~/.zshrc:0" — opens file at top
+```
+
+**Workaround** — adjust by 1 explicitly when emitting:
+```sh
+for entry in $funcsourcetrace; do
+    print "${entry%:*}:$(( ${entry##*:} + 1 ))"
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -21385,9 +21543,12 @@ fi
 | 391 | PS4 escape expansion broken — `%x`/`%N`/`%I`/`%_` printed literally during `set -x` (zsh: expanded) | **port-bug** | abandon `set -x`; use manual `echo` debugging |
 | 392 | `${(qq)arr[@]}` only quotes whitespace-containing elements (zsh: force-quotes all) | **port-bug** | `printf "'%s' " "${a[@]}"` instead |
 | 393 | `jobs %X` rc=1 on unknown-job instead of 127 + `%` not stripped in error msg (zsh: rc=127, msg `not found: NAME`) | **port-bug** | match on diagnostic text instead of `$?` |
+| 394 | `setopt` no-args dump empty under `-f` — should list `nohashdirs`/`norcs` (zsh: shows divergent-from-default) | **port-bug** | probe specific opts with `[[ -o NAME ]]` |
+| 395 | `compdef` shipped as permanent builtin — zsh: not defined until `compinit`; breaks `${+functions[compdef]}` guard | **port-bug** | probe `_comp_setup` instead |
+| 396 | `$funcsourcetrace` records `:0` instead of `:1` for function-definition line (parallel to #385 LINENO base) | **port-bug** | `$(( line + 1 ))` adjust when emitting |
 
-Of three hundred and ninety-three entries, two are fixed (5, 7),
-three hundred and eighty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and ninety-six entries, two are fixed (5, 7),
+three hundred and ninety remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
