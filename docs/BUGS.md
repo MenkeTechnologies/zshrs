@@ -10319,6 +10319,157 @@ cross between zsh and zshrs.
 
 ---
 
+## #199 — `${(qq)x}` with embedded newline emits mixed `'a'$'\n''b'` instead of literal newline
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc $'x=$\'a\\nb\'; echo "${(qq)x}"'
+'a
+b'
+
+$ ./target/debug/zshrs --zsh -c $'x=$\'a\\nb\'; echo "${(qq)x}"'
+'a'$'
+''b'
+```
+
+zsh's `(qq)` flag produces single-quote-style quoting and
+embeds literal newline inside the single quotes (single quotes
+preserve newlines in zsh syntax). zshrs splits at the newline
+and inserts `$'\n'` between segments — that's `(q+)`-style
+behavior, not `(qq)`.
+
+Both forms re-parse to the same value, but tools that
+checksum/golden-test serialized output see a diff:
+
+```sh
+typeset -p multi_line_var | sha256sum
+# zsh and zshrs disagree even though the underlying data is identical
+```
+
+**Where** — `src/ported/paramflags.rs::quote_qq`: emits
+`$'\n'` escape for newline within `(qq)`. C-source
+`Src/utils.c::quotestring` with `QT_DOUBLE` keeps newlines
+literal inside single quotes.
+
+**Impact** — golden-file diff tests, config-migration scripts,
+and `typeset -p`-based serialization round-trips show
+unexpected drift between zsh and zshrs even when the
+underlying values are byte-equal.
+
+**Workaround** — use `(q+)` flag explicitly (which both shells
+implement consistently), or normalize via:
+```sh
+typeset -p var | tr -d $'\n' | ... # before checksumming
+```
+
+---
+
+## #200 — `${(k)assoc[key]}` key-flag with subscript returns empty (zsh: returns key when subscript matches)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[k1]=v1; echo "${(k)h[k1]}"'
+k1
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[k1]=v1; echo "${(k)h[k1]}"'
+(empty)
+```
+
+The `(k)` key-flag combined with subscript `[key]` is zsh's
+idiom for "return the key if it exists in the assoc array".
+zshrs returns empty regardless of whether the key exists.
+
+This is the assoc-array analog of "test existence":
+```sh
+[[ -n "${(k)config[$user_input]}" ]] && echo "key exists"
+# zsh: detects existence correctly
+# zshrs: always reports key as missing because (k) returns empty
+```
+
+The full-array form `${(k)h}` (return all keys) works:
+```sh
+$ both-shells -fc 'typeset -A h; h[k1]=v1; h[k2]=v2; echo "${(k)h}"'
+k1 k2
+```
+
+Just the with-subscript form is broken.
+
+**Where** —
+`src/ported/paramsubst.rs::apply_k_flag_with_subscript`:
+doesn't honor `(k)` when subscript is present. C-source
+`Src/subst.c::paramsubst` checks `PRINT_KIND_KEY` flag after
+subscript resolution and re-emits the key string.
+
+**Impact** — assoc-array key-existence idiom returns
+false-negative for every key in zshrs, breaking common
+existence-test patterns:
+
+```sh
+if [[ -n "${(k)valid_options[$arg]}" ]]; then
+    use_option "$arg"
+else
+    error "unknown option: $arg"
+fi
+# zsh: takes the right branch
+# zshrs: always falls through to error branch
+```
+
+**Workaround** — use `(v)` value flag or `[[ -v ]]` test:
+```sh
+[[ -v "valid_options[$arg]" ]] && use_option "$arg" || error "..."
+```
+
+---
+
+## #201 — `typeset +x VAR` doesn't remove VAR from environment
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -x V=1; typeset +x V; env | grep "^V="'
+(empty — V removed from env)
+
+$ ./target/debug/zshrs --zsh -c 'typeset -x V=1; typeset +x V; env | grep "^V="'
+V=1
+```
+
+`typeset +x VAR` is supposed to clear the export attribute —
+the var stays as a shell parameter but is removed from the
+environment passed to child processes. zsh removes it. zshrs
+leaves it in the environment.
+
+This is a basic POSIX-compatible feature (the `+` reverses an
+attribute flag).
+
+**Where** — `src/ported/builtins/typeset.rs::handle_plus_flag`:
+clears the `PM_EXPORTED` bit on the Param struct but doesn't
+call `unsetenv()`/`envc.remove()` for the underlying os-env
+entry. C-source `Src/builtin.c::typeset_single` calls
+`removeenv(value)` when the `-x` flag is being removed.
+
+**Impact** — exported variables can't be un-exported without
+fully unsetting. Common cleanup patterns leak into child
+processes:
+
+```sh
+typeset -x SECRET=$(get_secret)
+do_work_with_secret
+typeset +x SECRET
+# zsh: child processes won't see SECRET
+# zshrs: SECRET still leaks into env of every subsequent child
+exec my_untrusted_program  # gets SECRET in env on zshrs
+```
+
+This is a security-relevant gap for credential-handling code
+that toggles export state mid-script.
+
+**Workaround** — `unset VAR; typeset VAR=$saved_value` to fully
+clear from env then re-bind as non-exported parameter.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -10521,9 +10672,12 @@ cross between zsh and zshrs.
 | 196 | Anonymous fn output lost in `$(() { :; })` cmdsub or `(() { :; })` subshell | **port-bug** | named fn called inside subshell |
 | 197 | `typeset -f` function-body display collapses statement newlines into `; ` | **port-bug** | sed `'s/; /\n\t/g'` post-filter |
 | 198 | `bindkey -L` output uses individual entries instead of `-R` range-compressed | **port-bug** | round-trip via zshrs's own output |
+| 199 | `${(qq)x}` with embedded newline emits mixed `'a'$'\n''b'` instead of literal | **port-bug** | use `(q+)` flag explicitly |
+| 200 | `${(k)assoc[key]}` key-flag with subscript returns empty (zsh: key when exists) | **port-bug** | `[[ -v assoc[key] ]]` existence test |
+| 201 | `typeset +x VAR` doesn't remove VAR from environment (security-relevant) | **port-bug** | `unset VAR; typeset VAR=$saved` re-bind |
 
-Of one hundred ninety-eight entries, two are fixed (5, 7), one
-hundred ninety-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and one entries, two are fixed (5, 7), one
+hundred ninety-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -10536,5 +10690,6 @@ hundred ninety-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174,
 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
-188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198), and four
-were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
+201), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
