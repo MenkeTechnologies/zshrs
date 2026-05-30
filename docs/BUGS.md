@@ -3247,6 +3247,188 @@ correct semantics in both shells.
 
 ---
 
+## #70 — Filesystem watcher leaks newly-created paths to stderr
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting. Severe.
+
+Reproducer:
+```sh
+$ ./target/debug/zshrs --zsh -c '
+cd /tmp/zwatch
+touch a b c
+sleep 0.3
+touch d e f
+sleep 0.3
+echo done' 2>/tmp/zee 1>/dev/null
+
+$ cat /tmp/zee
+/tmp/zee
+/tmp/zwatch/a
+/tmp/zwatch/f
+/tmp/zwatch/c
+/tmp/zwatch/d
+/tmp/zwatch/e
+/tmp/zwatch/b
+/tmp/zwatch
+```
+
+A background filesystem watcher (likely fed into the completion
+cache or some indexing service) writes every newly-created file
+path under watched directories to **stderr**. The redirect target
+file `/tmp/zee` itself appears in the output, as do all files the
+script created during its run.
+
+zsh writes nothing to stderr for the same command.
+
+**Where** — `src/index/watcher.rs` (or wherever the FS watcher
+lives): the `notify::Event` debug printer is emitting via
+`eprintln!` instead of `tracing::debug!`. CLAUDE.md "no info to
+stdout/stderr" rule explicitly forbids this: *"Informational
+chatter goes to log only. If you find yourself adding a `println!` /
+`eprintln!` outside of (a) error reporting on stderr, (b) explicit
+user-requested output, or (c) what the user's script printed —
+convert it to `tracing::info!` / `tracing::debug!` instead."*
+
+Same family as #23 (worker-pool shutdown INFO leaks to stdout) but
+with severe stderr pollution, not just at shutdown.
+
+**Impact** — every script that does `cmd 2>/var/log/err.log` to
+capture errors gets a flood of file paths the indexer touched.
+Beyond noise: this is a **privacy leak** — any file path the shell
+process creates, accesses, or watches gets exposed to wherever
+stderr lands (cron mail, sentry, log files, CI logs, IDE terminals).
+
+```sh
+# user expects only error output
+gpg --encrypt secret_doc.txt 2>/tmp/audit.log
+# /tmp/audit.log now contains "secret_doc.txt" path AND all the
+# temp files gpg created during encryption
+```
+
+Also breaks `2>&1 | grep ERROR` pipelines (every file path matches
+spurious greps).
+
+**Workaround** — none from user side (can't disable a background
+watcher externally). Must be fixed in zshrs: route notify events
+through `tracing::debug!` so they go to `~/.cache/zshrs/zshrs.log`
+instead of stderr.
+
+---
+
+## #71 — `${var:N:M}` substring accepts non-digit-leading offset (bashism)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="abcdef"; n=1; echo "${s:n:3}"'
+zsh:1: unrecognized modifier `n'
+
+$ zshrs --zsh -c 's="abcdef"; n=1; echo "${s:n:3}"'
+bcd
+```
+
+zsh's `${var:start:length}` substring syntax requires `start` to
+begin with a digit, `+`, `-`, or `(`. Otherwise `:n` is parsed as a
+**history modifier** (which is what `n` is — the
+"un-anchored-substring" modifier of `:s`/`:r`/`:t` etc.) and
+errors.
+
+zshrs treats any expression as a substring offset, accepting
+variable names as offsets directly. This is a bash extension.
+
+Per `man zshparam`:
+> `${name:offset}` `${name:offset:length}` — both forms require
+> offset to be an arithmetic expression that begins with a digit
+> or one of the characters `+`, `-`, `(`.
+
+**Where** — `src/ported/paramsubst.rs::parse_substring_offset`:
+should require the leading byte to be in `[0-9+\-(]` set, and fall
+through to modifier-parsing otherwise. C-source
+`Src/subst.c::getstring` does this dispatch.
+
+**Impact** — bashisms work silently in zshrs that don't work in zsh.
+Cross-shell scripts that rely on zsh's stricter parsing to catch
+typos won't catch them in zshrs. Worse: an intentional zsh
+modifier like `${path:r}` would be mis-parsed by zshrs as a
+substring if user writes `${path:r:3}` expecting "the `r`
+modifier"; zshrs would silently treat `r:3` as substring spec.
+
+```sh
+# zsh-style modifier — works in zsh, mis-interpreted by zshrs
+path=/usr/local/bin/cmd.txt
+echo "${path:r:3}"    # zsh: errors           zshrs: substring "loc"
+```
+
+**Workaround** — always wrap variable offsets in `$(( ))` or `(())`:
+```sh
+n=1
+echo "${s:$((n)):3}"    # both shells: bcd
+```
+Or use parens: `${s:(n):3}` works in zsh.
+
+---
+
+## #72 — `log` builtin registered but execution dispatches to `/usr/bin/log`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'log; echo "exit=$?"'
+exit=0
+
+$ ./target/debug/zshrs --zsh -c 'log'
+usage:
+    log <command>
+
+global options:
+    -?, --help
+    ...
+$ echo "exit=$?"
+exit=64
+```
+
+Both shells report `log` as a builtin via `whence -v log`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'whence -v log'
+log is a shell builtin
+
+$ ./target/debug/zshrs --zsh -c 'whence -v log'
+log is a shell builtin
+```
+
+But when actually executed, zshrs runs the macOS system utility
+`/usr/bin/log` (which shows its own usage and exits with code 64
+because no args), while zsh runs its own builtin that simply shows
+the `$WATCH` variable contents (exit 0 with no args).
+
+So the builtin **table entry exists** but the **dispatch logic** is
+broken — invocation falls through to PATH lookup instead of the
+registered builtin function.
+
+zsh's `log` builtin shows the value of `$WATCH` (a list of users to
+watch for login activity), per `man zshbuiltins`:
+> `log` — list users currently logged on who are affected by the
+> current setting of the `watch` parameter.
+
+**Where** — `src/ported/builtin_log.rs` is registered in the builtin
+table (which is why `whence` reports it) but its exec function is
+either stubbed-out or absent, so the dispatcher falls through to
+external lookup. C-source `Src/builtin.c::bin_log` does the actual
+WATCH display.
+
+**Impact** — every script that calls `log` on macOS unexpectedly
+runs the system log-archive utility instead of the zsh builtin.
+Exit codes are wildly different (0 vs 64), output is wildly
+different, and on Linux/BSD where `/usr/bin/log` doesn't exist,
+zshrs errors with command-not-found while zsh runs cleanly.
+
+**Workaround** — explicitly use `print -- $watch` to inspect the
+WATCH list. Or `disable log` to remove the builtin from zshrs's
+table so external lookup is the deliberate behavior (already-broken
+state).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -3320,10 +3502,14 @@ correct semantics in both shells.
 | 67 | `pushd` no-args doesn't swap top of dir stack | **port-bug** | explicit `pushd $OLDPWD` |
 | 68 | `trap` listing in insertion order, not signal-number | **port-bug** | pipe through `sort` |
 | 69 | `$sysparams` auto-loaded w/o `zmodload zsh/system` | **port-bug** | call `zmodload` regardless |
+| 70 | FS watcher leaks newly-created paths to stderr | **port-bug** | none — must fix in zshrs |
+| 71 | `${var:N:M}` accepts non-digit offset (bashism) | **port-bug** | wrap offset in `$(( ))` |
+| 72 | `log` builtin registered but dispatch → `/usr/bin/log` | **port-bug** | `print -- $watch` instead |
 
-Of sixty-nine entries, two are fixed (5, 7), sixty-three remain open
+Of seventy-two entries, two are fixed (5, 7), sixty-six remain open
 port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
-53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69),
-and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
+70, 71, 72), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
