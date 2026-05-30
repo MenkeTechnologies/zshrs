@@ -7393,6 +7393,178 @@ scripts before running under zshrs.
 
 ---
 
+## #142 — Orphan terminator parse error uses generic "orphan terminator" + double-print
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'esac 2>&1'
+zsh:1: parse error near `esac'
+
+$ ./target/debug/zshrs --zsh -c 'esac 2>&1' 2>&1
+zsh:1: parse error near orphan terminator
+zshrs: parse error
+```
+
+When a control-flow terminator (`esac`, `fi`, `done`) appears
+outside its matching block, zsh emits a single error naming the
+specific token: `parse error near 'esac'`. zshrs emits:
+1. Generic descriptor "orphan terminator" instead of naming the
+   actual token.
+2. A second redundant `zshrs: parse error` line.
+
+Same for `fi` and `done`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'fi 2>&1'
+zsh:1: parse error near `fi'
+
+$ ./target/debug/zshrs --zsh -c 'fi 2>&1' 2>&1
+zsh:1: parse error near orphan terminator
+zshrs: parse error
+```
+
+**Where** — `src/ported/parse.rs::handle_orphan_terminator`:
+emits a hardcoded "orphan terminator" string instead of the
+specific keyword. Also wraps the error in two layers of error
+reporting (parser-level + outer "zshrs: parse error" wrapper).
+C-source `Src/parse.c::par_event` reports the exact token from
+the offending position.
+
+**Impact** — error-parsing tools (linters, editor-integrated
+checkers) that extract token-specific error positions can't
+identify the actual unmatched terminator. CI pipelines that grep
+for the offending keyword fail.
+
+The double-print also confuses log-parsing tools expecting one
+error message per parse failure.
+
+**Workaround** — none portable.
+
+---
+
+## #143 — `$TRY_BLOCK_ERROR` initial value is `0` in zshrs (zsh: `-1`)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$TRY_BLOCK_ERROR]"'
+[-1]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[$TRY_BLOCK_ERROR]"'
+[0]
+```
+
+`$TRY_BLOCK_ERROR` is the integer parameter set by the `{ try }
+always { handler }` construct to indicate whether an error
+occurred in the try block:
+- `-1` = no exception (initial/normal state)
+- `0` = exception cleared
+- `>0` = exception number (errno-like)
+
+zsh initializes it to `-1` (no exception). zshrs initializes
+to `0`, which conflates "uninitialized" with "exception just
+cleared".
+
+Inside `always` block (no error in try):
+```sh
+$ /opt/homebrew/bin/zsh -fc '{ true } always { echo "[$TRY_BLOCK_ERROR]"; }'
+[0]
+
+$ ./target/debug/zshrs --zsh -c '{ true } always { echo "[$TRY_BLOCK_ERROR]"; }'
+[0]
+```
+
+So the `always` block value is the same; only the initial value
+differs. Code that checks `(( TRY_BLOCK_ERROR == -1 ))` to
+distinguish "never been in try block" from "in always block,
+no error" gives wrong results under zshrs.
+
+Per `man zshparam`:
+> `TRY_BLOCK_ERROR` — In a `{ try } always { handler }`
+> construct, the value of this parameter is set to:
+> `-1` before the try block runs (no exception in flight),
+> `0` in the always block if no exception occurred,
+> `n>0` in the always block if an exception with code `n` was
+> raised.
+
+**Where** — `src/ported/init.rs::init_special_params`: sets
+`TRY_BLOCK_ERROR` to 0 at startup. Should set to -1 per zsh
+convention. C-source `Src/init.c::setupvals` creates with
+initial `-1`.
+
+**Impact** — exception-aware scripts using `(( TRY_BLOCK_ERROR
+== -1 ))` to distinguish initial state vs cleared-after-try
+get false positives:
+
+```sh
+if (( TRY_BLOCK_ERROR == -1 )); then
+    # zsh: only true before any try block
+    # zshrs: never true (always 0 or positive)
+    setup_initial_state
+fi
+```
+
+**Workaround** — track try-block state via explicit flag instead
+of relying on `TRY_BLOCK_ERROR`'s initial value.
+
+---
+
+## #144 — `${(q)str}` with embedded newline uses `\<newline>` form instead of `$'\n'`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'x=$'\''a\nb'\''; echo "[${(q)x}]"'
+[a$'
+'b]                  # uses $'...' form to encode the newline
+
+$ ./target/debug/zshrs --zsh -c 'x=$'\''a\nb'\''; echo "[${(q)x}]"'
+[a\
+b]                   # uses backslash-newline (line continuation)
+```
+
+The `(q)` quote flag produces a shell-safe quoted form of the
+string. For a string containing a literal newline byte:
+- zsh: uses `$'\n'` ANSI-C escape syntax, producing `a$'\n'b`
+- zshrs: uses `\<actual-newline>` (backslash line-continuation)
+
+Both forms parse back to the same string when fed through `eval`,
+but they LOOK different and have different downstream behaviors:
+- `$'\n'` form: stays as 4 bytes (`$`, `'`, `\n`, `'`) in the
+  output — easily greppable, fits on one line.
+- `\<newline>` form: emits 2 bytes (`\`, actual newline) —
+  the line-break IS in the output, breaks line-oriented tools.
+
+**Where** — `src/ported/paramsubst.rs::quote_string`: for
+newline character, emits `\\\n` instead of `$'\\n'`. C-source
+`Src/utils.c::quotestring` uses `$'...'` form for any non-printable
+byte.
+
+**Impact** — output of `${(q)x}` containing a newline:
+- Breaks tools that count quoted args by line.
+- Can't be reused as a single-line literal in zsh scripts
+  (the linebreak is real, requires multi-line context).
+- `eval "$(echo "${(q)x}")"` still works in both shells because
+  the parser accepts both forms, but the intermediate string
+  differs.
+
+```sh
+config="$(read_value)"
+# encode for storage in a single-line config file:
+echo "key=${(q)config}" >> /etc/myapp.conf
+# zsh: produces "key=a$'\n'b" — one line, parseable
+# zshrs: produces "key=a\<newline>b" — TWO lines, breaks config parser
+```
+
+**Workaround** — use `(qq)` (double-quote form) which doesn't
+have this issue:
+```sh
+echo "key=${(qq)config}" >> /etc/myapp.conf
+# both shells: produces "key="a<newline>b"" — explicit dquote
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -7538,9 +7710,12 @@ scripts before running under zshrs.
 | 139 | Sourced-file errors report `zsh:1:` instead of `/file:N` | **port-bug** | none — debug manually |
 | 140 | `exec /no/such` uses generic "not found" + wrong `zshrs:` prefix | **port-bug** | pre-check `[[ -x cmd ]]` |
 | 141 | `;;` outside case context not a parse error (silent drop) | **port-bug** | careful review |
+| 142 | Orphan-terminator parse error: "orphan terminator" + double-print | **port-bug** | none |
+| 143 | `$TRY_BLOCK_ERROR` initial value is `0` in zshrs (zsh: `-1`) | **port-bug** | explicit state-flag |
+| 144 | `${(q)str}` with newline uses `\<newline>` not `$'\n'` form | **port-bug** | `(qq)` double-quote form |
 
-Of one hundred forty-one entries, two are fixed (5, 7), one
-hundred thirty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of one hundred forty-four entries, two are fixed (5, 7), one
+hundred thirty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -7549,5 +7724,5 @@ hundred thirty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
-136, 137, 138, 139, 140, 141), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+136, 137, 138, 139, 140, 141, 142, 143, 144), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
