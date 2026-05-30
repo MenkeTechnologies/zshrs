@@ -5686,6 +5686,173 @@ PROMPT="%n@%m ${TTY##*/} %# "
 
 ---
 
+## #112 — Builtin error format leaks Rust's `io::Error` "(os error N)" suffix
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /nonexistent_xyz 2>&1'
+zsh:cd:1: no such file or directory: /nonexistent_xyz
+
+$ ./target/debug/zshrs --zsh -c 'cd /nonexistent_xyz 2>&1'
+zsh:cd:1: No such file or directory (os error 2): /nonexistent_xyz
+```
+
+zsh's standard error format: `zsh:cd:1: no such file or directory:
+/path`. zshrs's version capitalizes 'N' AND appends ` (os error 2)`
+— the Rust `std::io::Error` Display implementation leaks into
+user-visible output.
+
+Same for `mkdir`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'mkdir /no/such/path 2>&1'
+mkdir: /no/such: No such file or directory
+
+$ ./target/debug/zshrs --zsh -c 'mkdir /no/such/path 2>&1'
+zsh:mkdir:1: cannot make directory `/no/such/path': No such file or directory (os error 2)
+```
+
+zshrs's `mkdir` builtin (per #28) has the Rust error leak; also
+the format `cannot make directory '...'` is GNU coreutils style
+not the BSD-style `mkdir: /path: msg` zsh inherits.
+
+**Where** — `src/ported/builtin_cd.rs::run` / `src/ported/builtin_mkdir.rs`:
+errors formatted via `format!("{}", io_err)` or `.to_string()`.
+Should map known errno values to zsh-canonical lowercase strings:
+- ENOENT → "no such file or directory"
+- EACCES → "permission denied"
+- EEXIST → "file exists"
+- ENOTDIR → "not a directory"
+- EISDIR → "is a directory"
+
+C-source `Src/builtin.c::cd_try_chdir` calls `zwarnnam(name,
+"%e: %s", strerror(errno), path)`.
+
+**Impact** — error-message-parsing scripts that grep for specific
+zsh format fail under zshrs. CI test fixtures that compare error
+output across shells break. The `(os error 2)` suffix is
+implementation-detail leak that zsh-compat code wouldn't expect.
+
+**Workaround** — none portable; user must accept different error
+strings or grep loosely (`*: no such file*` works for both shells
+modulo case).
+
+---
+
+## #113 — `$'\C-X'` ANSI-C control-character escape not honored (literal)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc "echo \$'\\C-a'" | od -c | head -1
+0000000  001  \n
+
+$ ./target/debug/zshrs --zsh -c "echo \$'\\C-a'" | od -c | head -1
+0000000    C   -   a  \n
+```
+
+`$'\C-X'` is the bash/zsh ANSI-C quoting form for "Ctrl-X"
+control characters. `\C-a` = byte 0x01 (Ctrl-A), `\C-h` = 0x08
+(backspace), etc. zsh produces the actual control byte. zshrs
+outputs the literal three characters `C-a`.
+
+Other `$'...'` escapes work in both shells:
+- `$'\n'` → newline (works)
+- `$'\t'` → tab (works)
+- `$'\x41'` → 'A' (works per earlier tests)
+- `$'\041'` → '!' (works)
+
+So the bug is specifically the `\C-X` notation, which zsh
+recognizes per `man zshmisc` § QUOTING:
+> `\C-x` — control character with the value of `x XOR @`.
+
+**Where** — `src/ported/lex.rs::parse_dollar_quote`: ANSI-C
+escape sequence table missing the `\C-X` form. C-source
+`Src/utils.c::getkeystring` recognizes `\C` followed by a
+character.
+
+**Impact** — keybinding scripts that use `$'\C-X'` to specify
+key combos break:
+
+```sh
+bindkey "$'\C-x\C-e'" edit-command-line
+# zsh: binds Ctrl-X Ctrl-E
+# zshrs: tries to bind the literal string "C-xC-e"
+```
+
+User-defined readline-style key macros also fail.
+
+**Workaround** — use `\xNN` hex escapes for the same byte values:
+```sh
+bindkey "$'\x18\x05'" edit-command-line   # Ctrl-X (0x18), Ctrl-E (0x05)
+```
+
+---
+
+## #114 — `${(l.W.)s}` left-pad width must be literal; variable name parses as "bad substitution"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'w=5; s=hi; echo "[${(l.w.)s}]"'
+[   hi]
+
+$ ./target/debug/zshrs --zsh -c 'w=5; s=hi; echo "[${(l.w.)s}]"' 2>&1
+zsh:1: bad substitution
+```
+
+In zsh, the width argument to `(l.WIDTH.)` or `(r.WIDTH.)` can be
+either a literal numeric or a **parameter name** (which gets
+expanded to a number). `w=5; ${(l.w.)s}` pads `s` to 5 chars
+using the variable `w`'s value.
+
+zshrs requires a literal numeric — `${(l.5.)s}` works, but
+`${(l.w.)s}` errors with "bad substitution".
+
+`${(l.$w.)s}` (with explicit `$` expansion) also fails:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'w=5; s=hi; echo "[${(l.$w.)s}]"'
+[   hi]
+
+$ ./target/debug/zshrs --zsh -c 'w=5; s=hi; echo "[${(l.$w.)s}]"' 2>&1
+zsh:1: bad substitution
+```
+
+Per `man zshexpn` § Parameter Expansion Flags:
+> `l:expr:string1:string2:` — Pad the resulting words on the
+> left. Each word is truncated if required and placed in a field
+> `expr` characters wide. ... `expr` can be a math expression.
+
+So even `${(l.((w*2)).)s}` math expression should work; zshrs only
+accepts bare literals.
+
+**Where** — `src/ported/paramsubst.rs::parse_pad_width`: parses
+only `[0-9]+` literals; doesn't fall through to math evaluator
+for the width spec. C-source `Src/subst.c::getargnum` runs
+`mathevali` on the whole expression.
+
+**Impact** — dynamic padding/justification idioms break:
+
+```sh
+# right-align price column to widest entry
+typeset -i width
+for p in "${prices[@]}"; do
+    (( ${#p} > width )) && width=${#p}
+done
+for p in "${prices[@]}"; do
+    echo "${(r.width.)p}"
+done
+# zsh: clean right-aligned column
+# zshrs: bad substitution error on every iteration
+```
+
+**Workaround** — use `printf` width spec with explicit expansion:
+```sh
+printf "%${width}s\n" "$p"   # both shells: same output
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -5801,13 +5968,17 @@ PROMPT="%n@%m ${TTY##*/} %# "
 | 109 | `${assoc[@]}` returns empty (no value enumeration) | **port-bug** | use `${(v)h[@]}` explicit |
 | 110 | `a[0]=val` silently accepted (zsh 1-indexed, errors) | **port-bug** | use 1-indexed throughout |
 | 111 | `%y` (and `%l`) prompt escape for tty not expanded | **port-bug** | `${TTY##*/}` substitution |
+| 112 | Builtin error format leaks Rust's `(os error N)` suffix | **port-bug** | grep loosely for portability |
+| 113 | `$'\C-X'` ANSI-C ctrl-char escape not honored (literal) | **port-bug** | `$'\xNN'` hex escape |
+| 114 | `${(l.W.)s}` width must be literal; variable errors | **port-bug** | `printf "%${w}s"` instead |
 
-Of one hundred eleven entries, two are fixed (5, 7), one hundred five
-remain open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15,
-16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
-50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66,
-67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,
-84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100,
-101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111), and four
-were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+Of one hundred fourteen entries, two are fixed (5, 7), one hundred
+eight remain open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13,
+14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
+65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
+82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98,
+99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112,
+113, 114), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
