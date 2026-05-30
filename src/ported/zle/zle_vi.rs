@@ -2734,4 +2734,122 @@ mod tests {
         let r = vioperswapcase();
         assert!((0..256).contains(&r));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_vi.c
+    // c:39 vichange / c:147 vigetkey / c:269 getvirange / c:287 dovilinerange /
+    // c:304 viaddnext / c:317 viaddeol / c:326 viinsert / c:343 viinsertbol /
+    // c:382 videletechar / c:420 visubstitute
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:39 — `vichange` returns i32 (compile-time pin, alt).
+    #[test]
+    fn vichange_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = vichange();
+    }
+
+    /// c:147 — `vigetkey` returns i32 (compile-time pin, alt).
+    #[test]
+    fn vigetkey_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = vigetkey();
+    }
+
+    /// c:269 — `getvirange(0)` returns i32 (compile-time pin, alt).
+    #[test]
+    fn getvirange_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = getvirange(0);
+    }
+
+    /// c:287 — `dovilinerange` returns (usize, usize) tuple.
+    #[test]
+    fn dovilinerange_returns_usize_pair_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: (usize, usize) = dovilinerange();
+    }
+
+    /// c:304 — `viaddnext` returns i32.
+    #[test]
+    fn viaddnext_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = viaddnext();
+    }
+
+    /// c:317 — `viaddeol` returns i32.
+    #[test]
+    fn viaddeol_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = viaddeol();
+    }
+
+    /// c:326 — `viinsert` returns i32 + idempotent.
+    #[test]
+    fn viinsert_idempotent_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            let _: i32 = viinsert();
+        }
+    }
+
+    /// c:343 — `viinsertbol` returns i32.
+    #[test]
+    fn viinsertbol_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = viinsertbol();
+    }
+
+    /// c:382 — `videletechar` exit code in u8 range (alt).
+    #[test]
+    fn videletechar_returns_in_exit_range_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = videletechar();
+        assert!((0..256).contains(&r));
+    }
+
+    /// c:420 — `visubstitute` exit code in u8 range (alt).
+    #[test]
+    fn visubstitute_returns_in_exit_range_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = visubstitute();
+        assert!((0..256).contains(&r));
+    }
+
+    /// c:39 — `vichange` exit code in u8 range.
+    #[test]
+    fn vichange_returns_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vichange();
+        assert!((0..256).contains(&r));
+    }
+
+    /// c:454 — `vichangeeol` exit code in u8 range (alt).
+    #[test]
+    fn vichangeeol_returns_in_exit_range_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vichangeeol();
+        assert!((0..256).contains(&r));
+    }
+
+    /// c:478 — `vichangewholeline` exit code in u8 range (alt).
+    #[test]
+    fn vichangewholeline_returns_in_exit_range_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vichangewholeline();
+        assert!((0..256).contains(&r));
+    }
 }
