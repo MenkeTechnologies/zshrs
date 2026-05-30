@@ -8386,6 +8386,146 @@ for ((i=0; i < ${#array}; i++)); do ...
 
 ---
 
+## #160 — `autoload -U +X funcname` doesn't actually load the function body
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'autoload -U +X compinit; type compinit'
+compinit is a shell function from /opt/homebrew/Cellar/zsh/5.9/share/zsh/functions/compinit
+
+$ ./target/debug/zshrs --zsh -c 'autoload -U +X compinit; type compinit'
+compinit is an autoload shell function
+```
+
+`autoload -U +X` should **immediately load** the function from
+its file in `$fpath`. zsh's `type` after `+X` shows the source
+file path, confirming the function body has been loaded. zshrs
+shows "autoload shell function" — meaning the function is still
+in lazy/marker state, not actually loaded.
+
+Different from bug #107 (`autoload -U +X` doesn't validate
+existence). This is the next step: even when the file IS in
+fpath, `+X` doesn't load the body.
+
+Per `man zshbuiltins`:
+> `-X` — Trigger function loading immediately without waiting
+> for first invocation.
+
+**Where** — `src/ported/builtin_autoload.rs::handle_X_flag`: the
+`+X` immediate-load path marks the function as "to-be-loaded"
+but doesn't read+parse+install the file contents. C-source
+`Src/builtin.c::bin_autoload` calls `loadautofn` which evaluates
+the file and registers the body.
+
+**Impact** — completion-system setup that depends on `autoload
++X` pre-loading breaks:
+
+```sh
+autoload -Uz +X compinit
+compinit -i    # zsh: pre-loaded body runs
+              # zshrs: still in lazy state, runs the marker
+```
+
+**Workaround** — drop `+X`; let lazy-load trigger on first call:
+```sh
+autoload -Uz compinit
+compinit -i    # both shells: lazy-loads then runs
+```
+
+---
+
+## #161 — `case x in) ... ;; esac` (empty pattern) silently accepted
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'case x in) echo b;; esac; echo "after"' 2>&1
+zsh:1: parse error near `)'
+
+$ ./target/debug/zshrs --zsh -c 'case x in) echo b;; esac; echo "after"' 2>&1
+after
+```
+
+The `case` construct requires a pattern between `in` and `)`.
+zsh rejects `in)` (empty pattern) at parse time. zshrs silently
+treats the empty arm as a no-op and continues to "after".
+
+Family with permissive-parser bugs:
+- #141 (`;;` outside case)
+- #146 (`{ cmd; } arg` trailing args)
+- #161 (this — empty case pattern)
+
+**Where** — `src/ported/parse.rs::parse_case_arm`: doesn't
+require at least one pattern token before `)`. C-source
+`Src/parse.c::par_case` errors on empty arm-pattern.
+
+**Impact** — typos with empty patterns silently match nothing:
+
+```sh
+# user typo: missing pattern between `in` and `)`
+case $cmd in)
+    echo "default"
+    ;;
+esac
+# zsh: parse error (caught immediately)
+# zshrs: falls through silently, default never prints
+```
+
+**Workaround** — careful syntax review before running.
+
+---
+
+## #162 — `${(l.5)x}` (missing close-delimiter) silently padded; zsh errors
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'x=42; echo "[${(l.5)x}]"' 2>&1
+(empty - syntax error or unmatched delimiter)
+
+$ ./target/debug/zshrs --zsh -c 'x=42; echo "[${(l.5)x}]"' 2>&1
+[   42]
+```
+
+The pad-flag syntax is `(l.<expr>.<str1>.<str2>.)` — delimiters
+must match on both sides AND closing delimiter must be present.
+
+`(l.5)` lacks the closing `.` — should be parse error. zsh
+rejects. zshrs accepts and applies pad with `5` as expression.
+
+Properly-closed forms work in both:
+```sh
+$ both-shells -fc 'x=42; echo "[${(l.5..0.)x}]"'
+[00042]
+```
+
+So the bug is the permissive parser accepting incomplete
+flag-arg syntax.
+
+**Where** — `src/ported/paramsubst.rs::parse_pad_flag_args`:
+doesn't enforce balanced delimiters on `(l...)`/`(r...)` flag
+contents. C-source `Src/subst.c::parsesubst` errors on missing
+close-delimiter.
+
+**Impact** — typos in pad-syntax silently produce different
+results:
+
+```sh
+# user typo: missing close-delimiter, intending zero-pad
+echo "${(l.10)num}"
+# zsh: error (caught immediately)
+# zshrs: applies space-pad (default), wrong format silently
+```
+
+Same family as #141, #146, #161 — permissive parser hides
+malformed input.
+
+**Workaround** — careful syntax review; always close the pad-flag
+delimiter.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -8549,9 +8689,12 @@ for ((i=0; i < ${#array}; i++)); do ...
 | 157 | `TRAP<SIG>()` function-named trap handlers not recognized | **port-bug** | explicit `trap` builtin |
 | 158 | Function-def redirect `f() {} < file` not honored | **port-bug** | redirect at call site |
 | 159 | `while [[ $((i++)) -lt N ]]` only iterates once | **port-bug** | `while (( i++ < N ))` |
+| 160 | `autoload -U +X funcname` doesn't actually load function body | **port-bug** | drop `+X`, lazy load |
+| 161 | `case x in)` empty pattern silently accepted (zsh: parse error) | **port-bug** | careful syntax |
+| 162 | `${(l.5)x}` missing close-delim silently accepted (zsh: error) | **port-bug** | careful syntax |
 
-Of one hundred fifty-nine entries, two are fixed (5, 7), one
-hundred fifty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of one hundred sixty-two entries, two are fixed (5, 7), one
+hundred fifty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -8561,5 +8704,6 @@ hundred fifty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
-149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159), and four
-were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
+162), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
