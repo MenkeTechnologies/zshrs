@@ -18327,6 +18327,137 @@ done
 
 ---
 
+## #343 — `bindkey "key" widget` define-binding doesn't actually bind — silent no-op
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'bindkey "^x^y" self-insert; bindkey "^x^y"'
+"^X^Y" self-insert
+
+$ ./target/debug/zshrs --zsh -c 'bindkey "^x^y" self-insert; bindkey "^x^y"'
+"^X^Y" undefined-key
+```
+
+`bindkey KEY WIDGET` is the standard ZLE keybinding command —
+in this case binding `Ctrl-X Ctrl-Y` to the `self-insert`
+widget. zsh registers the binding correctly. zshrs accepts
+the command without error but doesn't actually update the
+keymap — subsequent query shows `undefined-key`.
+
+This is a foundational ZLE function — every user's `.zshrc`
+makes dozens of `bindkey` calls to customize the keymap.
+With this bug, none of them take effect.
+
+Combined with #198 (`bindkey -L` output format wrong), #214
+(chpwd hooks not firing), #260 (`widgets[]` empty), #264
+(`widgets[fn]` returns "builtin" literal), zshrs's ZLE
+keymap subsystem is largely non-functional.
+
+**Where** — `src/ported/builtins/bindkey.rs::bind_key`: parses
+the args but doesn't update the keymap table. C-source
+`Src/Zle/zle_keymap.c::bin_bindkey` walks the parsed key
+sequence and inserts into the active keymap via
+`bindkey()`.
+
+**Impact** — **daily-driver blocker** — every user customizes
+keybindings. Common patterns broken:
+
+```sh
+# .zshrc keybinding setup
+bindkey "^P" history-search-backward
+bindkey "^N" history-search-forward
+bindkey "^[[1;5C" forward-word
+bindkey "^[[1;5D" backward-word
+# zsh: all bindings take effect
+# zshrs: all silently ignored
+```
+
+This means user can't customize the shell's keystroke
+behavior at all — the keymap is whatever zshrs's hardcoded
+defaults are.
+
+**Workaround** — none.
+
+---
+
+## #344 — `bindkey -r "key"` doesn't remove the binding — silent no-op
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'bindkey -r "^a"; bindkey "^a"'
+"^A" undefined-key
+
+$ ./target/debug/zshrs --zsh -c 'bindkey -r "^a"; bindkey "^a"'
+"^A" beginning-of-line
+```
+
+`bindkey -r KEY` removes the binding for `KEY`. zsh
+successfully removes (subsequent query shows `undefined-key`).
+zshrs's `-r` flag is silently no-op — the binding remains.
+
+Companion bug to #343 — both add (#343) and remove (this bug)
+operations on the keymap silently fail in zshrs.
+
+Same pattern as #221/#227/#228 (introspection-table-mirror
+gap) but for the actual keymap data structure, not just the
+introspection assoc.
+
+**Where** — `src/ported/builtins/bindkey.rs::remove_binding`:
+the `-r` flag-dispatch doesn't actually remove from the
+active keymap. C-source `Src/Zle/zle_keymap.c::bindkey_remove`
+zeroes the keymap slot.
+
+**Impact** — same as #343 — users can't unbind defaults. The
+`bindkey -r` idiom for "clear out distracting defaults" is
+common in vi-mode setup and minimal-prompt configs. None of
+those take effect on zshrs.
+
+**Workaround** — none.
+
+---
+
+## #345 — Default `^A` keybinding differs — `self-insert` (zsh -f) vs `beginning-of-line` (zshrs always)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'bindkey "^a"'
+"^A" self-insert
+
+$ ./target/debug/zshrs --zsh -c 'bindkey "^a"'
+"^A" beginning-of-line
+```
+
+In zsh's `-f` mode (no rcs, minimal init), the default
+keymap is `safe-fallback` or similar — most keys bind to
+`self-insert`. zshrs initializes with the emacs keymap
+regardless of `-f` flag, so `^A` is `beginning-of-line`.
+
+This differs from default zsh's `-f` behavior — under `-f`,
+zsh uses a minimal keymap with mostly-self-insert bindings.
+zshrs's minimal-load doesn't strip down the keymap.
+
+Subtle but real divergence. Affects test harnesses and
+minimal-shell-state validation.
+
+**Where** — `src/ported/zle/init.rs::init_keymap`: always
+initializes with full emacs keymap regardless of `-f` flag.
+C-source `Src/init.c::setupshell` decides keymap based on
+flags.
+
+**Impact** — minor — most users have explicit emacs/vi
+bindkey calls (which currently no-op anyway per #343), so
+the underlying default is masked. But for users relying on
+zsh's `-f` behavior in test/automation scripts, the keymap
+differs.
+
+**Workaround** — none for `-f` behavior — but #343/#344
+issues mean users can't override either way.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -18673,9 +18804,12 @@ done
 | 340 | `print -P "%Nd"`/`%-Nd` numeric path-truncate prompt-escape not implemented (e.g., `%2d` last-2-comps) | **port-bug** | manual `${PWD##*/}` |
 | 341 | `$((arr[(i)pat]))` subscript-flag inside arith subscript returns 0 (zsh: returns match index) | **port-bug** | extract index first via temp var |
 | 342 | `options[opt]=on/off` assignment doesn't toggle option — assoc-write→state binding missing | **port-bug** | direct `setopt`/`unsetopt` |
+| 343 | `bindkey "key" widget` define-binding silent no-op — every `.zshrc` keybinding ignored (daily-driver blocker) | **port-bug** | (none — keymap insert broken) |
+| 344 | `bindkey -r "key"` doesn't remove binding — companion to #343, key remains bound | **port-bug** | (none — keymap delete broken) |
+| 345 | Default `^A` binding differs — `self-insert` (zsh -f) vs `beginning-of-line` (zshrs always) | **port-bug** | (none — -f doesn't strip keymap) |
 
-Of three hundred and forty-two entries, two are fixed (5, 7),
-three hundred and thirty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and forty-five entries, two are fixed (5, 7),
+three hundred and thirty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -18699,5 +18833,6 @@ three hundred and thirty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
-331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342), and
-four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343,
+344, 345), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
