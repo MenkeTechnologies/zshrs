@@ -882,4 +882,97 @@ mod tests {
         let or_all: u64 = all.iter().fold(0, |acc, &v| acc | v);
         assert_eq!(or_all, (1u64 << 29) - 1, "bits 0..28 must all be set");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compctl.h
+    // c:76-89 CCT_* / c:118-149 primary CC_* / c:152-158 secondary CC_*
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:76 — `CCT_UNUSED` is the zero sentinel (slot 0).
+    #[test]
+    fn cct_unused_is_zero_sentinel() {
+        assert_eq!(CCT_UNUSED, 0, "c:76 — UNUSED is the slot-0 sentinel");
+    }
+
+    /// c:76-89 — all CCT_* codes are i32 (compile-time type pin).
+    #[test]
+    fn cct_codes_all_i32_type() {
+        let _: i32 = CCT_UNUSED;
+        let _: i32 = CCT_POS;
+        let _: i32 = CCT_QUOTE;
+    }
+
+    /// c:76-89 — CCT_* codes cover slots 0..=13 with no gaps/dups.
+    #[test]
+    fn cct_codes_dense_0_through_13() {
+        let mut codes = vec![
+            CCT_UNUSED, CCT_POS, CCT_CURSTR, CCT_CURPAT, CCT_WORDSTR,
+            CCT_WORDPAT, CCT_CURSUF, CCT_CURPRE, CCT_CURSUB, CCT_CURSUBC,
+            CCT_NUMWORDS, CCT_RANGESTR, CCT_RANGEPAT, CCT_QUOTE,
+        ];
+        codes.sort();
+        let expected: Vec<i32> = (0..=13).collect();
+        assert_eq!(codes, expected,
+            "CCT_* must cover slots 0..=13 with no gaps/dups");
+    }
+
+    /// c:118 — `CC_FILES` is canonical bit 0 (alt name pin).
+    #[test]
+    fn cc_files_is_bit_zero_alt() {
+        assert_eq!(CC_FILES, 1u64 << 0, "c:118 — FILES is bit 0");
+    }
+
+    /// c:131-149 — primary CC_* form a complete bitset:
+    /// (bits 0..28) | EXPANDEXPL(30) | RESERVED(31), with bit 29 gap.
+    #[test]
+    fn cc_primary_complete_bitset_with_bit29_gap() {
+        let all = [
+            CC_FILES, CC_COMMPATH, CC_REMOVE, CC_OPTIONS, CC_VARS,
+            CC_BINDINGS, CC_ARRAYS, CC_INTVARS, CC_SHFUNCS, CC_PARAMS,
+            CC_ENVVARS, CC_JOBS, CC_RUNNING, CC_STOPPED, CC_BUILTINS,
+            CC_ALREG, CC_ALGLOB, CC_USERS, CC_DISCMDS, CC_EXCMDS,
+            CC_SCALARS, CC_READONLYS, CC_SPECIALS, CC_DELETE, CC_NAMED,
+            CC_QUOTEFLAG, CC_EXTCMDS, CC_RESWDS, CC_DIRS,
+            CC_EXPANDEXPL, CC_RESERVED,
+        ];
+        let or_all: u64 = all.iter().fold(0, |acc, &v| acc | v);
+        let expected = ((1u64 << 29) - 1) | (1u64 << 30) | (1u64 << 31);
+        assert_eq!(or_all, expected,
+            "primary CC_* must cover bits 0..28 + 30 + 31 (bit 29 reserved)");
+    }
+
+    /// c:131-149 — primary CC_* are pairwise distinct.
+    #[test]
+    fn cc_primary_flags_pairwise_distinct() {
+        let codes = [
+            CC_FILES, CC_COMMPATH, CC_REMOVE, CC_OPTIONS, CC_VARS,
+            CC_BINDINGS, CC_ARRAYS, CC_INTVARS, CC_SHFUNCS, CC_PARAMS,
+            CC_ENVVARS, CC_JOBS, CC_RUNNING, CC_STOPPED, CC_BUILTINS,
+            CC_ALREG, CC_ALGLOB, CC_USERS, CC_DISCMDS, CC_EXCMDS,
+            CC_SCALARS, CC_READONLYS, CC_SPECIALS, CC_DELETE, CC_NAMED,
+            CC_QUOTEFLAG, CC_EXTCMDS, CC_RESWDS, CC_DIRS,
+            CC_EXPANDEXPL, CC_RESERVED,
+        ];
+        let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(),
+            "primary CC_* must be pairwise distinct");
+    }
+
+    /// c:118-149 — every primary CC_* is non-zero (no false sentinel).
+    #[test]
+    fn cc_primary_all_non_zero() {
+        for &v in &[CC_FILES, CC_COMMPATH, CC_REMOVE, CC_OPTIONS,
+                    CC_DIRS, CC_EXPANDEXPL, CC_RESERVED] {
+            assert!(v > 0, "CC_* primary must be > 0; got {}", v);
+        }
+    }
+
+    /// c:152-158 — every secondary CC_* is non-zero.
+    #[test]
+    fn cc_secondary_all_non_zero() {
+        for &v in &[CC_NOSORT, CC_XORCONT, CC_CCCONT, CC_PATCONT,
+                    CC_DEFCONT, CC_UNIQCON, CC_UNIQALL] {
+            assert!(v > 0, "CC_* secondary must be > 0; got {}", v);
+        }
+    }
 }
