@@ -15123,6 +15123,177 @@ added.
 
 ---
 
+## #286 — `setopt errexit; true | false` doesn't abort — pipeline-tail-status with errexit ignored
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt errexit; true | false; echo never'
+$ echo $?
+1
+
+$ ./target/debug/zshrs --zsh -c 'setopt errexit; true | false; echo never'
+never
+$ echo $?
+0
+```
+
+`errexit` (`set -e`) should abort on any non-zero command
+exit. For a pipeline (without pipefail), the exit status is
+the last command's. Here `true | false` has exit 1 (the
+trailing `false`), and errexit should fire.
+
+zsh aborts correctly. zshrs ignores the pipeline's exit
+status for errexit purposes.
+
+Controls (both shells agree):
+- `false` alone → both abort ✓
+- `false | true` (last succeeds, status=0) → both continue ✓
+
+The bug is specifically `cmd-that-fails AT END OF PIPELINE`
+under errexit.
+
+Same family as #202 (set -eo pipefail also broken) and #220
+(err_return scope). The error-propagation flag handling for
+pipelines has multiple gaps.
+
+**Where** — `src/ported/exec.rs::run_pipeline`: doesn't
+trigger errexit check based on pipeline's final exit code.
+C-source `Src/exec.c::execpline` updates `lastval` from the
+pipeline and the post-cmd error check via
+`zexit_or_continue()` sees the non-zero value.
+
+**Impact** — strict-mode scripts using errexit as guard
+silently continue past failed pipelines:
+
+```sh
+set -e
+process_data | save_output     # if save_output fails
+post_process                   # zsh: never reached; zshrs: runs anyway
+```
+
+Common idiom — every `set -e` script with pipelines
+potentially affected.
+
+**Workaround** — explicit pipeline-status check:
+```sh
+process_data | save_output
+[[ ${pipestatus[-1]} -eq 0 ]] || exit 1
+```
+
+---
+
+## #287 — `${(@)assoc}` in for-iteration produces single concatenated element instead of one-per-value
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[k1]=v1; h[k2]=v2; for v in "${(@)h}"; do echo "v=[$v]"; done | sort'
+v=[v1]
+v=[v2]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[k1]=v1; h[k2]=v2; for v in "${(@)h}"; do echo "v=[$v]"; done | sort'
+v=[v1 v2]
+```
+
+`(@)` flag forces array-context expansion. For an assoc
+array in array context, zsh emits one element per value
+(equivalent to `(@v)`). zshrs collapses all values into a
+single space-separated element.
+
+Control: `${(@v)h}` (explicit value flag) works correctly in
+both shells:
+```sh
+$ both-shells -fc 'typeset -A h; h[k1]=v1; h[k2]=v2; for v in "${(@v)h}"; do echo "v=[$v]"; done'
+v=[v1]
+v=[v2]
+```
+
+So zshrs's value-iteration is implemented; it just doesn't
+trigger via the bare `(@)` flag on assoc.
+
+Same family as #241 (`${assoc[@]}` returns empty) — multiple
+assoc-array iteration paths have wrong default semantics.
+
+**Where** — `src/ported/paramflags.rs::apply_at_to_assoc`:
+when `(@)` is applied to an assoc, doesn't dispatch to
+value-array. C-source `Src/subst.c::dosubst` treats `(@)` on
+assoc as equivalent to `(@v)` per zsh's documented semantics.
+
+**Impact** — code iterating assoc values via the bare `(@)`
+form treats each "iteration" as a single concatenated
+string, breaking value-processing loops:
+
+```sh
+typeset -A counters
+counters=(api 100 db 200 cache 50)
+total=0
+for n in "${(@)counters}"; do
+    (( total += n ))
+done
+# zsh: total = 350 (sums each value)
+# zshrs: tries arith on "100 200 50" — single token, parses as 100, total=100
+```
+
+**Workaround** — use explicit `(@v)`:
+```sh
+for n in "${(@v)counters}"; do
+    (( total += n ))
+done
+```
+
+---
+
+## #288 — `typeset -A h; h[]=value` empty-subscript assignment silently accepted (zsh: errors)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[]=val; echo "[${h[""]:-empty}]"'
+(empty — error)
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[]=val; echo "[${h[""]:-empty}]"'
+[val]
+```
+
+zsh treats `h[]=value` (assoc assignment with empty
+subscript) as a syntax error — neither stores the value nor
+silently accepts. zshrs accepts the empty subscript and
+stores `val` under the empty key `""`.
+
+Same permissive-parser family as #141/#146/#161/#162/#167/
+#168/#169/#170/#171/#172/#189/#219/#225/#284 — zshrs
+accepts invalid syntax silently while zsh rejects.
+
+The companion read form `${h[]}` is also silently accepted
+in zshrs (returns the empty-key value) while zsh errors.
+
+**Where** — `src/ported/paramsubst.rs::parse_assoc_subscript`:
+doesn't reject empty subscript on write. C-source
+`Src/subst.c::dosubst` requires a non-empty subscript text
+for assoc index/assign — errors with `"<paramname>: bad
+substitution"` for empty form.
+
+**Impact** — subtle bugs from typo-style `h[]=v` (instead of
+`h[k]=v`) silently store data under empty key:
+
+```sh
+typeset -A config
+config[]="oops"          # zsh: errors loudly; zshrs: stores under ""
+config["host"]="example.com"
+
+for k in "${(@k)config}"; do
+    echo "key=[$k] val=[${config[$k]}]"
+done
+# zsh: only host shown (the bad assignment failed)
+# zshrs: also shows key=[] val=[oops] — silent garbage entry
+```
+
+**Workaround** — none direct — depends on zshrs adopting
+zsh's empty-subscript rejection.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -15412,9 +15583,12 @@ added.
 | 283 | `[[ "!" == "..." ]]` misparses bare `!` token as negation operator even when quoted/escaped | **port-bug** | use `[ ]` single-bracket for `!` literal |
 | 284 | `printf -- "%s\n" hi` doesn't recognize `--` end-of-options (extends #251 family) | **port-bug** | drop the `--` if format doesn't start with `-` |
 | 285 | `break`/`continue` outside loop silently succeed (zsh: errors "not in ... loop", ec=1) | **port-bug** | (none — runtime check missing) |
+| 286 | `setopt errexit; true \| false; ...` doesn't abort — pipeline-tail-status with errexit ignored | **port-bug** | `[[ ${pipestatus[-1]} -eq 0 ]] \|\| exit 1` |
+| 287 | `${(@)assoc}` for-iteration produces single concatenated element (zsh: one element per value) | **port-bug** | use explicit `(@v)` flag |
+| 288 | `typeset -A h; h[]=value` empty-subscript silently accepted (zsh: errors) — permissive-parser family | **port-bug** | careful syntax |
 
-Of two hundred and eighty-five entries, two are fixed (5, 7), two
-hundred and seventy-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and eighty-eight entries, two are fixed (5, 7), two
+hundred and eighty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -15434,5 +15608,5 @@ hundred and seventy-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
-279, 280, 281, 282, 283, 284, 285), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+279, 280, 281, 282, 283, 284, 285, 286, 287, 288), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
