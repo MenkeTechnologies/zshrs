@@ -19238,6 +19238,157 @@ result=$(myadd 2 3; echo $REPLY)
 
 ---
 
+## #361 — `typeset -R N` width-flag doesn't truncate when value is longer than N
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -R 3 s=hello; echo "[$s]"'
+[llo]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -R 3 s=hello; echo "[$s]"'
+[hello]
+```
+
+`typeset -R N` right-justifies the value to width N. When the
+value is longer than N, zsh truncates from the LEFT (keeping
+the last N chars). zshrs ignores the truncation, returning
+the full value.
+
+Padding when value is SHORTER than N works in both shells.
+The bug is specifically the truncate-on-overflow case.
+
+**Where** — `src/ported/builtins/typeset.rs::apply_R_width`:
+left-pad path is implemented; truncate-from-left when value
+exceeds width is missing. C-source `Src/params.c::setsparam`
+with `PM_RIGHT_B` flag truncates per the width.
+
+**Impact** — column-aligned output with fixed widths gets
+misaligned when any value exceeds the column width:
+
+```sh
+typeset -R 10 name="VeryLongName"   # exceeds 10
+typeset -R 10 user=alice
+echo "$name | $user"
+# zsh: "rongName |      alice" (truncated, aligned)
+# zshrs: "VeryLongName |      alice" (overflowed, name longer than column)
+```
+
+Affects table-formatted output, status-bar layouts, prompt
+themes with fixed-width fields.
+
+**Workaround** — manual truncation:
+```sh
+[[ ${#s} -gt 3 ]] && s="${s: -3}"
+```
+
+---
+
+## #362 — `typeset -Z N` zero-pad flag doesn't truncate when value is wider than N
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -Z 3 n=12345; echo "[$n]"'
+[345]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -Z 3 n=12345; echo "[$n]"'
+[12345]
+```
+
+`typeset -Z N` zero-pads to width N. When the value has more
+digits than N, zsh keeps the LAST N digits (truncates from
+the left). zshrs returns full value.
+
+Same family as #361 — width-flag truncation missing for the
+overflow case. Padding when value is shorter works correctly.
+
+**Where** — `src/ported/builtins/typeset.rs::apply_Z_width`:
+same gap as #361 — pad-but-don't-truncate. C-source
+`Src/params.c::setsparam` with `PM_LEFT_Z` flag truncates.
+
+**Impact** — fixed-width-numeric outputs (e.g., zero-padded
+IDs, log line numbers) get extra digits when value grows:
+
+```sh
+typeset -Z 4 id=42; echo "id=$id"      # zsh: "id=0042"  zshrs: "id=0042" ✓
+typeset -Z 4 id=99999; echo "id=$id"   # zsh: "id=9999"  zshrs: "id=99999" ✗
+```
+
+Common pattern for fixed-width log-line numbering, version
+formatting, etc.
+
+**Workaround** — manual truncate:
+```sh
+[[ ${#n} -gt 3 ]] && n="${n: -3}"
+```
+
+---
+
+## #363 — `${(z)cmd}` tokenize-flag drops comment tokens and doesn't preserve `$VAR` literals
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cmd="echo a # cmnt"; arr=("${(z)cmd}"); echo "n=${#arr}"'
+n=4
+
+$ ./target/debug/zshrs --zsh -c 'cmd="echo a # cmnt"; arr=("${(z)cmd}"); echo "n=${#arr}"'
+n=2
+```
+
+`${(z)cmd}` is the shell-parser-aware tokenization flag. zsh
+preserves comments as tokens (including the `#` and following
+text). zshrs drops them — returns only the pre-comment
+tokens.
+
+Same gap for `$VAR` literal preservation:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cmd="echo \$VAR"; arr=("${(z)cmd}"); echo "[${arr[2]}]"'
+[$VAR]                    # preserves $VAR as literal
+
+$ ./target/debug/zshrs --zsh -c 'cmd="echo \$VAR"; arr=("${(z)cmd}"); echo "[${arr[2]}]"'
+[]                        # drops the $VAR token
+```
+
+zshrs's `(z)` flag both:
+1. Strips comment tokens silently.
+2. Drops or unexpands `$VAR` literals during tokenization.
+
+The `(z)` flag is foundational for completion-helper scripts
+that need to tokenize command lines for parsing.
+
+**Where** — `src/ported/paramflags.rs::z_tokenize`: comment
+handling doesn't preserve them; variable refs not preserved
+as literals. C-source `Src/utils.c::getoutput` with `Z_FLAG`
+runs the standard tokenizer which retains comments as
+distinct tokens and emits `$VAR` references unchanged.
+
+**Impact** — completion/parsing tools that tokenize command
+lines for analysis get wrong token streams:
+
+```sh
+# Plugin: extract first token from buffered command
+words=("${(z)BUFFER}")
+case "${words[1]}" in
+    git) _git_complete ;;
+    docker) _docker_complete ;;
+esac
+# Works on BUFFER='git commit' but fails on BUFFER='git commit # WIP'
+# zsh: works in both cases
+# zshrs: works in simple case, but token count differs from zsh — may misroute
+```
+
+Also breaks `zsh-syntax-highlighting`, `fzf-tab`, and other
+plugins that tokenize for analysis purposes.
+
+**Workaround** — strip comments before tokenizing:
+```sh
+words=("${(z)cmd%%\#*}")   # crude comment-strip
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -19602,9 +19753,12 @@ result=$(myadd 2 3; echo $REPLY)
 | 358 | `cd ~-N` dirstack-tilde-expansion fails — `~-0`/`~-1` treated as literal "~-N" path | **port-bug** | `cd "${dirstack[N+1]}"` indexed |
 | 359 | Bare `pushd` (no args) doesn't `cd` to `$HOME` when dirstack empty — stays at current dir | **port-bug** | explicit `cd ~` |
 | 360 | `functions -M name N M handler` math-function registration not implemented — DSL/sci-arith patterns broken | **port-bug** | call shell fn directly with `$REPLY` capture |
+| 361 | `typeset -R N` width-flag doesn't truncate values longer than N — overflow ruins fixed-width column alignment | **port-bug** | manual `[[ ${#s} -gt N ]] && s="${s: -N}"` |
+| 362 | `typeset -Z N` zero-pad doesn't truncate values wider than N — extra digits leak through | **port-bug** | manual truncate before assign |
+| 363 | `${(z)cmd}` tokenize-flag drops comment tokens AND doesn't preserve `$VAR` literals — completion/parsing tools break | **port-bug** | strip `#*` before tokenizing (partial fix) |
 
-Of three hundred and sixty entries, two are fixed (5, 7),
-three hundred and fifty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and sixty-three entries, two are fixed (5, 7),
+three hundred and fifty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -19630,5 +19784,5 @@ three hundred and fifty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343,
 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356,
-357, 358, 359, 360), and four were zsh-correct behavior misframed
-by demos (1, 2, 3, 6).
+357, 358, 359, 360, 361, 362, 363), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
