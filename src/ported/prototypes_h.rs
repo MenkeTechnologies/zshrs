@@ -75,10 +75,11 @@ mod tests {
     #[test]
     fn libc_provides_get_set_rlimit() {
         let _g = crate::test_util::global_state_lock();
-        let _: unsafe extern "C" fn(libc::c_int, *mut libc::rlimit) -> libc::c_int =
-            libc::getrlimit;
-        let _: unsafe extern "C" fn(libc::c_int, *const libc::rlimit) -> libc::c_int =
-            libc::setrlimit;
+        // First param varies by platform: __rlimit_resource_t (u32) on Linux glibc,
+        // c_int (i32) on BSDs/macOS. `_` placeholder lets either pass while still
+        // pinning the rlimit pointer types and return type.
+        let _: unsafe extern "C" fn(_, *mut libc::rlimit) -> libc::c_int = libc::getrlimit;
+        let _: unsafe extern "C" fn(_, *const libc::rlimit) -> libc::c_int = libc::setrlimit;
     }
 
     /// libc provides getrusage.
@@ -149,8 +150,10 @@ mod tests {
     #[test]
     fn libc_provides_gettimeofday() {
         let _g = crate::test_util::global_state_lock();
-        let _: unsafe extern "C" fn(*mut libc::timeval, *mut libc::c_void) -> libc::c_int =
-            libc::gettimeofday;
+        // Second param varies by platform: *mut timezone on Linux glibc,
+        // *mut c_void on BSDs/macOS. `_` lets either pass while still
+        // pinning the timeval pointer and return type.
+        let _: unsafe extern "C" fn(*mut libc::timeval, _) -> libc::c_int = libc::gettimeofday;
     }
 
     /// libc provides select (legacy IO multiplexing).
