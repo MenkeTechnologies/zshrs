@@ -54,6 +54,12 @@ zshrs replaces `fork + exec` with a persistent worker thread pool, compiles ever
 ## [0x01] INSTALL
 
 ```sh
+# Via Homebrew tap (auto-bumped by each release)
+brew tap MenkeTechnologies/menketech
+brew install zshrs        # core: zshrs + zd
+# OR
+brew install zshrs-all    # umbrella: zshrs + zd + zshrs-recorder + zshrs-daemon
+
 # From crates.io
 cargo install zshrs
 
@@ -63,8 +69,8 @@ cd zshrs && cargo build --release
 # binary: target/release/zshrs
 
 # Set as login shell
-sudo sh -c 'echo ~/.cargo/bin/zshrs >> /etc/shells'
-chsh -s ~/.cargo/bin/zshrs
+sudo sh -c 'echo "$(which zshrs)" >> /etc/shells'
+chsh -s "$(which zshrs)"
 ```
 
 ---
