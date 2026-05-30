@@ -1940,4 +1940,119 @@ mod tests {
         let args: Vec<String> = vec![];
         assert_eq!(cond_val(&args, 0), 0, "empty args + idx 0 → 0");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/cond.c
+    // c:513 doaccess / c:538 getstat / c:570 dostat / c:583 dolstat /
+    // c:594 optison / c:653 cond_str / c:685 cond_val / c:716 cond_match /
+    // c:758 tracemodcond
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:513 — `doaccess("")` empty path doesn't panic.
+    #[test]
+    fn doaccess_empty_path_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = doaccess("", libc::F_OK);
+    }
+
+    /// c:513 — `doaccess` various access modes safe for nonexistent path.
+    #[test]
+    fn doaccess_nonexistent_path_various_modes_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for mode in [libc::F_OK, libc::R_OK, libc::W_OK, libc::X_OK] {
+            let _ = doaccess("__never_real_path_xyz_abc__", mode);
+        }
+    }
+
+    /// c:538 — `getstat("")` empty path returns None.
+    #[test]
+    fn getstat_empty_path_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getstat("").is_none(),
+            "getstat(\"\") must be None");
+    }
+
+    /// c:538 — `getstat` for "/" (root) returns Some on Unix.
+    #[cfg(unix)]
+    #[test]
+    fn getstat_root_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getstat("/").is_some(),
+            "/ must exist and return Some");
+    }
+
+    /// c:570/583 — dostat == dolstat for non-symlink paths.
+    #[cfg(unix)]
+    #[test]
+    fn dostat_dolstat_equal_for_regular_path() {
+        let _g = crate::test_util::global_state_lock();
+        let a = dostat("/");
+        let b = dolstat("/");
+        assert_eq!(a, b, "dostat and dolstat must agree on / (non-symlink)");
+    }
+
+    /// c:570 — `dostat` is deterministic.
+    #[test]
+    fn dostat_deterministic_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        let a = dostat("/tmp");
+        let b = dostat("/tmp");
+        assert_eq!(a, b, "dostat must be pure");
+    }
+
+    /// c:594 — `optison("")` empty name doesn't panic.
+    #[test]
+    fn optison_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = optison("", "");
+    }
+
+    /// c:653 — `cond_str` out-of-bounds num returns empty.
+    #[test]
+    fn cond_str_oob_num_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let args: Vec<String> = vec!["a".into(), "b".into()];
+        let r = cond_str(&args, 999, false);
+        assert!(r.is_empty(), "OOB num must return empty, got {:?}", r);
+    }
+
+    /// c:685 — `cond_val` out-of-bounds num returns 0.
+    #[test]
+    fn cond_val_oob_num_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let args: Vec<String> = vec!["a".into(), "b".into()];
+        let r = cond_val(&args, 999);
+        assert_eq!(r, 0, "OOB num must return 0");
+    }
+
+    /// c:716 — `cond_match("", 0, "")` (empty match) doesn't panic.
+    #[test]
+    fn cond_match_empty_inputs_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let args: Vec<String> = vec![];
+        let _ = cond_match(&args, 0, "");
+    }
+
+    /// c:758 — `tracemodcond` with various flag values safe.
+    #[test]
+    fn tracemodcond_various_flag_combinations_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec!["a".into(), "b".into()];
+        tracemodcond("test", &args, true);
+        tracemodcond("test", &args, false);
+        tracemodcond("", &[], true);
+    }
+
+    /// c:653/685/716 — args is borrowed (no mutation across calls).
+    #[test]
+    fn cond_str_val_match_dont_mutate_args() {
+        let _g = crate::test_util::global_state_lock();
+        let mut args: Vec<String> = vec!["x".into(), "y".into()];
+        let before = args.clone();
+        let _ = cond_str(&args, 0, false);
+        let _ = cond_val(&args, 0);
+        let _ = cond_match(&args, 0, "");
+        args.shrink_to_fit();
+        assert_eq!(args, before, "args must remain unchanged");
+    }
 }
