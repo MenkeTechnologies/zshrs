@@ -17509,6 +17509,177 @@ padded="${(l.30.)_f}"
 
 ---
 
+## #328 — All `${(FLAG)arr[N]}` flags on subscripted-array-element broken (case/type/pad/quote/sort/unique/join/eval/P/split/visible/D)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+Comprehensive enumeration: every documented `(FLAG)` produces
+correct output on scalar but empty/error on subscripted array
+element `arr[N]`.
+
+Tested (all return empty in zshrs vs working in zsh):
+
+| Flag | Purpose | zsh output | zshrs |
+|------|---------|------------|-------|
+| `(L)` | lower | `hello` | empty (#301) |
+| `(U)` | upper | `HELLO` | empty (#301) |
+| `(C)` | capitalize | `Hello` | empty (#301) |
+| `(t)` | type string | `a` | bad subst (#308) |
+| `(l.N.)` | left-pad | `  x` | empty (#327) |
+| `(r.N.)` | right-pad | `x  ` | empty |
+| `(j./.)` | join | `x` | empty |
+| `(q)` | quote | `a\ b` | empty |
+| `(qq)` | dquote-style | `'a b'` | empty |
+| `(o)` | sort | `c` | empty |
+| `(u)` | unique | `c` | empty |
+| `(f)` | newline-split | `a\nb` | empty |
+| `(F)` | flat-join | `a b` | empty |
+| `(e)` | eval | `/home/user` | empty |
+| `(P)` | indirect | `hello` | empty |
+| `(s.X.)` | split | array | empty |
+| `(V)` | visible | `a\tb` | empty |
+| `(g::)` | g-string | escape | empty |
+| `(#)` | char-from-num | `a` | empty |
+| `(D)` | home-shortcut | `/path` | empty |
+| `(qL)` | chained | `hello` | empty |
+
+zsh's flag dispatcher resolves `arr[N]` to scalar BEFORE
+applying the flag. zshrs's dispatcher fails to route through
+the scalar-resolution path for any flag, producing universal
+empty/error output.
+
+This is THE single largest paramsubst gap — a single fix
+could resolve 20+ separate documented flag forms.
+
+**Where** — `src/ported/paramsubst.rs::flag_on_subscripted`:
+all flags for `${(FLAG)arr[N]}` need to resolve the subscript
+first, then apply the flag to the resulting scalar. C-source
+`Src/subst.c::dosubst` has unified handling: extract element
+via subscript, then run flag chain.
+
+**Impact** — broad. Common patterns broken across the board:
+
+```sh
+files=(/path/big.log /path/small.txt)
+echo "${(l.30.)files[1]}"      # pad first file's path
+echo "${(t)files[1]}"          # type of first
+echo "${(j./.)files[1]}"       # would join (no-op on scalar)
+echo "${(P)files[1]}"          # would deref if val was var name
+# zsh: all work correctly
+# zshrs: ALL return empty
+```
+
+**Workaround** — universal: copy element to temp scalar:
+```sh
+elem="${files[1]}"
+padded="${(l.30.)elem}"
+```
+
+---
+
+## #329 — `setopt globsubst` doesn't enable variable-as-glob-pattern expansion
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp; touch zgst_a zgst_b; setopt globsubst; pat="zgst*"; echo $pat; rm zgst_a zgst_b'
+zgst_a zgst_b
+
+$ ./target/debug/zshrs --zsh -c 'cd /tmp; touch zgst_a zgst_b; setopt globsubst; pat="zgst*"; echo $pat; rm zgst_a zgst_b'
+zgst*
+```
+
+`GLOB_SUBST` is the zsh option that makes variable expansions
+participate in glob matching — useful when storing glob
+patterns in variables for later expansion.
+
+zsh respects the option (variable-as-pattern globs). zshrs
+ignores it (variable always treated as literal).
+
+The explicit `${~var}` syntax works in zshrs (verified
+separately) — so the per-expansion forced-glob is fine, just
+the global option-driven path is missing.
+
+**Where** — `src/ported/exec.rs::expand_variable`: doesn't
+check `GLOBSUBST` opt before forwarding to glob-expansion
+dispatch. C-source `Src/subst.c::dosubst` checks
+`isset(GLOBSUBST)` for each `$var` expansion in cmd-position.
+
+**Impact** — scripts that rely on storing-pattern-in-var
+approach for dynamic globs break:
+
+```sh
+setopt globsubst
+file_pattern="*.log"
+for f in $file_pattern; do
+    process "$f"
+done
+# zsh: loop iterates over matching files
+# zshrs: loop iterates over literal "*.log" once
+```
+
+**Workaround** — use `${~var}` per-expansion:
+```sh
+file_pattern="*.log"
+for f in ${~file_pattern}; do
+    ...
+done
+```
+
+---
+
+## #330 — `${~$(cmdsub)}` forced-glob marker on cmdsub doesn't trigger glob expansion
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp; touch ztcs_a ztcs_b; echo ${~$(echo "ztcs*")}; rm ztcs_a ztcs_b'
+ztcs_a ztcs_b
+
+$ ./target/debug/zshrs --zsh -c 'cd /tmp; touch ztcs_a ztcs_b; echo ${~$(echo "ztcs*")}; rm ztcs_a ztcs_b'
+(empty)
+```
+
+`${~EXPR}` is zsh's force-glob marker — applies glob
+expansion to the expansion result regardless of `GLOBSUBST`
+option state. zshrs handles `${~var}` correctly (verified)
+but `${~$(cmdsub)}` (forced glob on command-substitution
+result) silently produces no output.
+
+The combination of `${~...}` + `$(...)` cmdsub doesn't
+trigger glob expansion in zshrs; instead the result is empty
+(seemingly losing both the cmdsub output AND any glob
+expansion).
+
+Companion to #329 — both are forced-glob-related gaps.
+
+**Where** — `src/ported/paramsubst.rs::handle_tilde_marker`:
+the inner `$(cmdsub)` runs but its output isn't fed into the
+glob-expansion path. C-source `Src/subst.c::dosubst` with
+`SUB_DOFORCEDGLOB` flag pipes the inner expansion result
+through `glob()` regardless of `GLOBSUBST`.
+
+**Impact** — dynamic-pattern-from-cmd-output idioms broken:
+
+```sh
+# Match files based on a list-generating command
+for f in ${~$(cat patterns.txt)}; do
+    process "$f"
+done
+# zsh: globs each pattern from patterns.txt
+# zshrs: empty — both pattern read and glob fail silently
+```
+
+**Workaround** — assign to temp variable:
+```sh
+local _pat="$(cat patterns.txt)"
+for f in ${~_pat}; do
+    ...
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -17840,9 +18011,12 @@ padded="${(l.30.)_f}"
 | 325 | `$'\xNN\xNN'` C-string hex escapes treat UTF-8 sequence as 2 bytes (zsh: combines into multibyte char via locale) | **port-bug** | use `\uNNNN` Unicode form (unverified) |
 | 326 | `typeset +i n` clears value AND removes attribute (zsh: preserves value as scalar) | **port-bug** | save/restore around toggle |
 | 327 | `${(l.N.)arr[N]}` pad flags on array-element return empty — extends #301 family | **port-bug** | copy to temp scalar |
+| 328 | ALL `${(FLAG)arr[N]}` flags broken on subscripted-array-element (20+ flags: case/type/pad/quote/sort/unique/join/eval/P/split/visible/D) | **port-bug** | universal: `elem="${arr[N]}"` then `(FLAG)elem` |
+| 329 | `setopt globsubst` doesn't enable variable-as-glob-pattern expansion (`${~var}` still works) | **port-bug** | use `${~var}` per-expansion |
+| 330 | `${~$(cmdsub)}` forced-glob marker on cmdsub doesn't trigger glob — returns empty | **port-bug** | temp var: `_pat="$(...)"; ${~_pat}` |
 
-Of three hundred and twenty-seven entries, two are fixed (5, 7),
-three hundred and twenty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and thirty entries, two are fixed (5, 7),
+three hundred and twenty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -17865,5 +18039,5 @@ three hundred and twenty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
-318, 319, 320, 321, 322, 323, 324, 325, 326, 327), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330),
+and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
