@@ -8038,6 +8038,169 @@ echo "$((${#tokens}))"
 
 ---
 
+## #154 — Readonly variable modifiable via `(( ))` / `let` arith ops
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'readonly x=5; (( x++ )); echo "x=$x"' 2>&1
+zsh:1: read-only variable: x
+x=5
+
+$ ./target/debug/zshrs --zsh -c 'readonly x=5; (( x++ )); echo "x=$x"' 2>&1
+x=6
+```
+
+Readonly enforcement is bypassed in arithmetic contexts. zsh
+blocks `(( x++ ))`, `(( x += 5 ))`, `let "x = 10"` and similar
+on readonly variables. zshrs silently allows the modification.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'readonly y=10; let "y = 100"; echo "y=$y"' 2>&1
+zsh:1: read-only variable: y
+y=10
+
+$ ./target/debug/zshrs --zsh -c 'readonly y=10; let "y = 100"; echo "y=$y"' 2>&1
+y=100
+```
+
+Direct assignment `y=100` IS blocked correctly:
+```sh
+$ ./target/debug/zshrs --zsh -c 'readonly y=10; y=100' 2>&1
+zsh:1: read-only variable: y
+```
+
+So the bug is specifically the arith-context paths (`(( ))`,
+`let`, `(( var op ))`).
+
+**Where** — `src/ported/math.rs::assign_result`: doesn't check
+the `PM_READONLY` flag on the target variable before writing.
+C-source `Src/math.c::matheval` calls `setiparam` which respects
+the readonly bit.
+
+**Impact** — security/invariant code that relies on readonly
+to guarantee constants is silently bypassable:
+
+```sh
+readonly MAX_ATTEMPTS=3
+for ((i = 0; i < MAX_ATTEMPTS; i++)); do
+    if try_login; then
+        (( MAX_ATTEMPTS = 0 ))   # malicious or buggy code
+        # zsh: errors, MAX stays 3
+        # zshrs: silently sets to 0, loop exits early
+        break
+    fi
+done
+```
+
+**Workaround** — `if [[ "$var" != "$original" ]]; then` post-check.
+
+---
+
+## #155 — `${str[N,M+1]}` slice subscript doesn't evaluate variable/arith expressions
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's=hello; n=2; echo "${s[1,n+1]}"'
+hel
+
+$ ./target/debug/zshrs --zsh -c 's=hello; n=2; echo "${s[1,n+1]}"'
+hello
+```
+
+`${str[N,M]}` is the string-slice operator. zsh evaluates BOTH
+N and M as arithmetic expressions, so `[1,n+1]` with `n=2`
+becomes `[1,3]` and returns `hel`.
+
+zshrs only evaluates literal numerics in subscript; variable
+names and arith expressions are silently ignored, returning the
+full string.
+
+Confirmed all three forms diverge:
+- `${s[1,3]}` (literal): both `hel` ✓
+- `${s[1,n]}` (bare var): zsh `he`, zshrs `hello` ✗
+- `${s[1,n+1]}` (arith): zsh `hel`, zshrs `hello` ✗
+
+Per `man zshparam`:
+> The subscript syntax for arrays and strings is `[exp]` or
+> `[exp1,exp2]`, where each `exp` is an arithmetic expression.
+
+**Where** — `src/ported/paramsubst.rs::parse_subscript`: only
+accepts `[0-9]+` literals; doesn't fall through to arith
+evaluator. C-source `Src/params.c::getarg` runs `mathevali`
+on the subscript.
+
+**Impact** — dynamic-bounds slicing breaks:
+
+```sh
+text="The quick brown fox"
+end=${#text}
+mid=$((end / 2))
+echo "${text[1,mid]}"     # zsh: "The quick " (first half)
+                           # zshrs: full text
+```
+
+**Workaround** — pre-compute the index value:
+```sh
+m=$((n + 1))
+echo "${s[1,m]}"
+```
+
+---
+
+## #156 — `[[ -e /path/*.glob ]]` glob-expands in test (zsh: literal match)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ mkdir -p /tmp/zgt; touch /tmp/zgt/a.txt
+$ /opt/homebrew/bin/zsh -fc '[[ -e /tmp/zgt/*.txt ]] && echo y || echo n'
+n
+
+$ ./target/debug/zshrs --zsh -c '[[ -e /tmp/zgt/*.txt ]] && echo y || echo n'
+y
+```
+
+Inside `[[ ... ]]` conditional, zsh treats the argument literally
+(no glob expansion). The path `/tmp/zgt/*.txt` is checked for
+existence literally — no file named `*.txt` exists → `-e`
+returns false.
+
+zshrs glob-expands the argument: `*.txt` matches `/tmp/zgt/a.txt`,
+which exists → `-e` returns true.
+
+This is consistent with bug #116 (`GLOB_SUBST` default on in
+zshrs for pattern contexts) but also affects file-test contexts
+where zsh doesn't expand at all.
+
+Per zsh semantics, `[[ ]]` conditional arguments are NOT subject
+to filename generation. zshrs ignores this.
+
+**Where** — `src/ported/cond.rs::expand_arg`: applies glob
+expansion to file-test operands. C-source `Src/cond.c::evalcond`
+treats `[[ ]]` arguments as literal strings (no `globlist`
+call).
+
+**Impact** — `[[ -e $pattern ]]` checks where `$pattern` may
+contain glob chars give wrong results. Common idiom of "exact
+path test":
+
+```sh
+log="/var/log/*"   # literal asterisk in filename (rare but valid)
+[[ -e "$log" ]] && echo "found"
+# zsh: tests literal file "/var/log/*"
+# zshrs: globs, matches anything in /var/log
+```
+
+Even with quoted `"$log"`, zshrs's glob-expansion behavior
+differs from zsh.
+
+**Workaround** — explicit `ls "$path" >/dev/null 2>&1` or
+loop-over-glob with explicit pattern handling.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -8195,17 +8358,20 @@ echo "$((${#tokens}))"
 | 151 | `${(@qq)arr}` only quotes first element (rest unquoted) | **port-bug** | explicit per-element loop |
 | 152 | `${(qq)arr}` per-element when zsh joins-then-quotes | **port-bug** | `${(qq)${(j: :)arr}}` |
 | 153 | `${#${(z)s}}` returns 5 vs 4 (off-by-one count) | **port-bug** | intermediate `arr=(...)` |
+| 154 | Readonly var modifiable via `(( ))` / `let` arith | **port-bug** | post-assignment check |
+| 155 | `${str[N,M+1]}` slice subscript ignores var/arith | **port-bug** | pre-compute index |
+| 156 | `[[ -e /path/*.glob ]]` glob-expands in test (zsh: literal) | **port-bug** | external `ls` test |
 
-Of one hundred fifty-three entries, two are fixed (5, 7), one
-hundred forty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
-11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
-62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
-79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
-96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
-110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
-123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
-136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
-149, 150, 151, 152, 153), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+Of one hundred fifty-six entries, two are fixed (5, 7), one
+hundred fifty remain open port-bugs/perf-issues (4, 8, 9, 10, 11,
+12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
+63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
+97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
+111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
+124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
+137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149,
+150, 151, 152, 153, 154, 155, 156), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
