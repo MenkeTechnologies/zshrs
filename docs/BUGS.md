@@ -12094,6 +12094,178 @@ my_path=("${(@s/:/)MY_PATH}")
 
 ---
 
+## #232 — `TRAPEXIT()` named-function form of EXIT trap not fired on shell exit
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPEXIT() { echo "TRAPEXIT-FIRED"; }; echo "before"; exit 0'
+before
+TRAPEXIT-FIRED
+
+$ ./target/debug/zshrs --zsh -c 'TRAPEXIT() { echo "TRAPEXIT-FIRED"; }; echo "before"; exit 0'
+before
+```
+
+zsh recognizes two parallel ways to set up signal trap
+handlers:
+1. `trap "cmd" SIGNAL` — POSIX-style.
+2. `TRAPNAME() { ... }` — zsh extension where a function named
+   `TRAP<SIGNAL>` is auto-bound as the handler for that signal.
+
+zshrs supports (1) but not (2) for `EXIT` (and presumably all
+other signals — `TRAPINT`, `TRAPUSR1`, `TRAPTERM`, etc.).
+
+This is a different surface from the previously-documented
+`zshexit` hook (#215) and `trap EXIT` in fn (#203):
+- `trap "..." EXIT` at top-level works.
+- `zshexit() { ... }` does NOT work (#215).
+- `TRAPEXIT() { ... }` does NOT work (this bug).
+- `trap` inside a fn has scope bug (#203).
+
+Three of the four exit-handling mechanisms are broken.
+
+**Where** — `src/ported/builtins/function_def.rs::register_function`:
+no special-case detection for `TRAP*` named functions to
+auto-bind to the signal-handler table. C-source `Src/signals.c::settrap`
+is called from `Src/parse.c::parsefuncname` when a fn matches
+the `TRAP<signame>` pattern.
+
+**Impact** — combined with #215 and #203, the zsh signal-
+hook system is largely dead. The third common idiom for
+shell-exit cleanup (`TRAPEXIT() { rm $tmpfile; }`) joins the
+list of broken approaches:
+
+```sh
+# Three patterns all broken differently:
+zshexit() { echo via_zshexit_fn; }       # #215 — silently doesn't fire
+TRAPEXIT() { echo via_trapexit; }        # this bug — silently doesn't fire
+trap "echo via_trap_exit" EXIT           # works only at top-level (#203 broken inside fn)
+```
+
+For signal handlers other than EXIT (`TRAPINT`, `TRAPTERM`,
+etc.), the same bug likely exists — meaning zshrs scripts
+can't use the zsh-idiomatic named-fn signal binding for any
+signal.
+
+**Workaround** — explicit `trap "..." EXIT` at top level
+(survives if not inside a function — per #203).
+
+---
+
+## #233 — `typeset -H VAR=val` then `typeset -p VAR` shows value (zsh: hides via `typeset H`)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -H H=v; typeset -p H'
+typeset H
+
+$ ./target/debug/zshrs --zsh -c 'typeset -H H=v; typeset -p H'
+typeset H=v
+```
+
+`typeset -H` ("hidden") tells zsh not to display the value
+when introspecting via `typeset -p` or `set`. The variable
+still works normally (`echo $H` returns `v`) but `typeset -p`
+elides the value to avoid leaking sensitive data to debug
+output.
+
+zshrs's `typeset -p` ignores the `-H` flag and shows the value
+anyway.
+
+**Where** — `src/ported/builtins/typeset.rs::print_param_form`:
+doesn't check the `PM_HIDEVAL` flag before emitting the
+`=value` portion. C-source `Src/builtin.c::printparamnode`
+checks `pm->node.flags & PM_HIDEVAL` and emits only the name.
+
+**Impact** — secret-handling code that relies on `-H` to keep
+credentials out of `set`/`typeset -p`/`env`-dump output
+silently leaks them in zshrs:
+
+```sh
+typeset -H DB_PASSWORD=$(read_secret)
+# ... script runs ...
+
+# Debug dump for support
+typeset -p > /tmp/state.dump
+# zsh: DB_PASSWORD shows as "typeset -H DB_PASSWORD" (value hidden)
+# zshrs: DB_PASSWORD shows as "typeset -H DB_PASSWORD=actualpasswordhere"
+# anyone seeing /tmp/state.dump now has the credential
+```
+
+Security-relevant gap — `-H` is specifically designed for
+credential isolation in debug/dump paths.
+
+**Workaround** — use `set | grep -v '^DB_PASSWORD='` filter
+when dumping, or store secrets in environment variables
+explicitly marked for exclusion.
+
+---
+
+## #234 — `typeset +U arr` doesn't disable dedup AND `+=` corrupts the array
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -aU u=(a b); typeset +U u; u+=(a); echo "[${u[@]}] count=${#u}"'
+[a b a] count=3
+
+$ ./target/debug/zshrs --zsh -c 'typeset -aU u=(a b); typeset +U u; u+=(a); echo "[${u[@]}] count=${#u}"'
+[a] count=1
+```
+
+`typeset -U` sets the unique-only (dedup) flag on an array.
+`typeset +U` removes it. After `+U`, appending a duplicate
+should succeed (array grows with the dup).
+
+zshrs's `+U` not only fails to remove the flag (so dedup still
+kicks in on append) but ALSO somehow corrupts the array —
+reducing `(a b)` + dup `a` to just `(a)` instead of either
+`(a b)` (dedup kept) or `(a b a)` (dedup removed).
+
+Two distinct bugs in one repro:
+1. `+U` doesn't clear the dedup attribute.
+2. `+=` on a `-U` array with a duplicate destroys the rest of
+   the array instead of either keeping it (with dedup) or
+   appending (without dedup).
+
+Controls:
+```sh
+# Regular array append (no -U) — works:
+$ both-shells -fc 'u=(a b); u+=(a); echo "[${u[@]}]"'
+[a b a]
+
+# -U dedup-on append a dup — works (keeps dedup):
+$ both-shells -fc 'typeset -aU u=(a b); u+=(a); echo "[${u[@]}]"'
+[a b]
+```
+
+The bug is specifically the `+U`-then-append-dup path.
+
+**Where** — `src/ported/builtins/typeset.rs::clear_attr`:
+doesn't clear `PM_UNIQUE` when `+U` is applied. PLUS
+`src/ported/params/assign.rs::append_to_unique_array`:
+incorrect destructive replacement on dup-append. C-source
+`Src/params.c::setarrvalue` with `ASSPM_AUGMENT` correctly
+merges with dedup applied per the current PM_UNIQUE state.
+
+**Impact** — code that toggles dedup mid-script (set `-U` for
+initial dedup, then `+U` to allow duplicates during a later
+phase) doesn't work, and worse, silently destroys data. Less
+common pattern, but the destructive corruption surface is
+serious.
+
+**Workaround** — copy to a new non-unique array:
+```sh
+typeset -aU u=(a b)
+# ... initial dedup phase ...
+typeset -a u2=("${u[@]}")     # u2 has no -U flag
+u2+=(a)                       # works correctly
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -12329,9 +12501,12 @@ my_path=("${(@s/:/)MY_PATH}")
 | 229 | `${(j: :)${(@kv)h}}` join-on-kv drops values (only keys joined) | **port-bug** | manual `for k v in "${(@kv)h}"` loop |
 | 230 | `echo "a\0b"` doesn't interpret `\0` octal NUL escape (other escapes work) | **port-bug** | use `print "..."` instead |
 | 231 | `${(t)tied_var}` returns `scalar` instead of `scalar-tied`/`array-tied` — tied pair concept missing | **port-bug** | manual sync via `(@s/:/)` |
+| 232 | `TRAPEXIT()` named-function form of EXIT trap not fired (3rd broken exit-handler form) | **port-bug** | explicit `trap "..." EXIT` at top-level |
+| 233 | `typeset -H VAR=val` then `typeset -p VAR` shows value (security-relevant credential leak) | **port-bug** | filter dump output explicitly |
+| 234 | `typeset +U arr` doesn't clear dedup AND `+=` of dup destroys array (corrupting) | **port-bug** | copy to fresh non-`-U` array |
 
-Of two hundred and thirty-one entries, two are fixed (5, 7), two
-hundred and twenty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and thirty-four entries, two are fixed (5, 7), two
+hundred and twenty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -12347,5 +12522,5 @@ hundred and twenty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
-227, 228, 229, 230, 231), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+227, 228, 229, 230, 231, 232, 233, 234), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
