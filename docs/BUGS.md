@@ -6914,6 +6914,174 @@ done
 
 ---
 
+## #133 — `zstat -F "fmt"` format flag ignored; output uses default date string
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/stat; zstat -F "%Y" +mtime /etc/hosts'
+2026
+
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/stat; zstat -F "%Y" +mtime /etc/hosts' 2>/dev/null
+Thu May 21  0:14:26 EDT 2026
+```
+
+`zstat -F "FMT"` should format time fields via `strftime` using
+the given format string. zsh returns the year only (`%Y`). zshrs
+returns the default `date(1)`-style string, ignoring `-F`.
+
+Other formats also ignored:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/stat; zstat -F "%Y-%m-%d" +mtime /etc/hosts'
+2026-05-21
+
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/stat; zstat -F "%Y-%m-%d" +mtime /etc/hosts' 2>/dev/null
+Thu May 21  0:14:26 EDT 2026
+```
+
+Per `man zshmodules` § The zsh/stat Module:
+> `-F fmt` — Specify a `strftime` format for time-valued fields.
+
+**Where** — `src/ported/builtin_zstat.rs::format_time_field`:
+ignores the `-F` flag value and uses a hardcoded default
+formatter. C-source `Src/Modules/stat.c::stat_print` calls
+`strftime` with the `-F` argument.
+
+**Impact** — date-parseable output from `zstat` requires custom
+format strings (`-F "%s"` for epoch, `-F "%Y-%m-%d"` for ISO).
+zshrs's hardcoded output isn't parseable by downstream tools
+expecting epoch or ISO format.
+
+**Workaround** — use `stat`(1) external command with `-f` (BSD)
+or `--format` (GNU):
+```sh
+stat -f "%m" /etc/hosts          # BSD/macOS: epoch
+stat --format "%Y" /etc/hosts    # GNU: epoch
+```
+
+---
+
+## #134 — `${var:h}` modifier on empty string returns `/` (zsh: `.`)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f=""; echo "${f:h}"'
+.
+
+$ ./target/debug/zshrs --zsh -c 'f=""; echo "${f:h}"'
+/
+```
+
+`${var:h}` modifier is the "head" (directory-portion) equivalent
+of `dirname`. Per POSIX `dirname` semantics, the head of an
+empty string is `.` (current directory). zsh follows this.
+zshrs returns `/` (root directory).
+
+Edge-case test confirms only the empty-string case diverges:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'for p in "" "/" "foo" "a/b" "/a/b"; do printf "p=%s h=%s\n" "$p" "${p:h}"; done'
+p= h=.        # zsh: empty → .
+p=/ h=/       # both: /
+p=foo h=.     # both: .
+p=a/b h=a     # both: a
+p=/a/b h=/a   # both: /a
+
+$ ./target/debug/zshrs --zsh -c 'for p in "" "/" "foo" "a/b" "/a/b"; do printf "p=%s h=%s\n" "$p" "${p:h}"; done'
+p= h=/        # zshrs: empty → /  (DIFFERS)
+p=/ h=/
+p=foo h=.
+p=a/b h=a
+p=/a/b h=/a
+```
+
+So all non-empty cases match; only empty input diverges.
+
+Per `man zshexpn` § HISTORY EXPANSION (which documents modifier
+semantics):
+> `h` — Remove a trailing pathname component, leaving the head.
+
+POSIX `dirname` spec: `dirname ""` is `.`.
+
+**Where** — `src/ported/modifier.rs::apply_h`: when input is
+empty, returns `/` instead of `.`. C-source
+`Src/subst.c::removepathname` returns "." when no path
+separator found.
+
+**Impact** — defensive code using `:h` on potentially-empty
+input picks wrong default:
+
+```sh
+file=$1
+dir="${file:h}"
+[[ -d "$dir" ]] || mkdir "$dir"
+# If $1 is unset/empty:
+#   zsh: $dir = "."  (current dir, likely exists)
+#   zshrs: $dir = "/" (root, mkdir / fails)
+```
+
+**Workaround** — explicit empty-check:
+```sh
+[[ -z "$file" ]] && dir=. || dir="${file:h}"
+```
+
+---
+
+## #135 — `*(om)` glob qualifier mtime ordering broken (zsh: newest→oldest sorted)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ touch /tmp/zgs/old; sleep 0.5; touch /tmp/zgs/new; sleep 0.5; touch /tmp/zgs/newest
+
+$ /opt/homebrew/bin/zsh -fc 'print -l /tmp/zgs/*(om)'
+/tmp/zgs/newest
+/tmp/zgs/new
+/tmp/zgs/old
+
+$ ./target/debug/zshrs --zsh -c 'print -l /tmp/zgs/*(om)' 2>/dev/null
+/tmp/zgs/newest
+/tmp/zgs/old
+/tmp/zgs/new
+```
+
+`(om)` glob qualifier sorts results by modification time, newest
+first. zsh produces `newest, new, old` (correct descending mtime
+order). zshrs returns `newest, old, new` — first entry correct
+but rest unordered.
+
+The reverse direction `(Om)` (oldest-first) works in zshrs but
+contaminated by FS-watcher leak (#70) on subsequent reads.
+
+**Where** — `src/ported/glob.rs::sort_by_mtime`: the sort
+comparator returns inconsistent ordering — possibly partial
+sort or stable-sort with mismatched comparator semantics.
+C-source `Src/glob.c::sorter` uses qsort with strict ordering.
+
+**Impact** — every "log rotation"/"newest-N files" idiom breaks:
+
+```sh
+# show 5 most-recent log files
+for f in /var/log/*(om[1,5]); do
+    echo "$f"
+done
+# zsh: 5 newest in mtime order
+# zshrs: 1st newest + 4 in random order
+```
+
+Related to bug #36 (glob ordering DFS vs depth-first) — glob-result
+ordering has multiple distinct issues.
+
+**Workaround** — pipe through external `sort` with `ls -t` for
+mtime-ordered results:
+```sh
+for f in $(ls -t /var/log/ | head -5); do
+    echo "/var/log/$f"
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -7050,9 +7218,12 @@ done
 | 130 | `${var@X}` bash parameter-transform accepted (zsh errors) | **port-bug** | `${(U)x}`/`${(L)x}`/`${(q)x}` |
 | 131 | `%(N~.A.B)` prompt conditional evaluates path-depth wrong | **port-bug** | manual `precmd` depth check |
 | 132 | `(( x = "5" + "3" ))` quoted numeric strings not coerced | **port-bug** | drop quotes for known-numeric |
+| 133 | `zstat -F "fmt"` format flag ignored | **port-bug** | external `stat -f`/`stat --format` |
+| 134 | `${"":h}` empty-string head modifier returns `/` (zsh: `.`) | **port-bug** | explicit empty-check |
+| 135 | `*(om)` glob qualifier mtime ordering broken | **port-bug** | external `ls -t` |
 
-Of one hundred thirty-two entries, two are fixed (5, 7), one
-hundred twenty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of one hundred thirty-five entries, two are fixed (5, 7), one
+hundred twenty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -7060,5 +7231,5 @@ hundred twenty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
-123, 124, 125, 126, 127, 128, 129, 130, 131, 132), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135),
+and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
