@@ -12787,6 +12787,184 @@ type-string info.
 
 ---
 
+## #244 — `${(Z+c+)cmd}` Z-flag word-split with `c` option doesn't split
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cmd="echo a # comment"; arr=("${(Z+c+)cmd}"); print -l "${arr[@]}"'
+echo
+a
+# comment
+
+$ ./target/debug/zshrs --zsh -c 'cmd="echo a # comment"; arr=("${(Z+c+)cmd}"); print -l "${arr[@]}"'
+echo a # comment
+```
+
+`${(Z+OPTS+)str}` is the parser-aware word-split form. With
+`c` option, comments are preserved as their own token. zsh
+produces 3 tokens (`echo`, `a`, `# comment`). zshrs returns
+the entire input string as a single token — splitting isn't
+happening at all.
+
+The simpler `${(z)cmd}` form also exhibits issues but is
+partially functional in some cases. The `(Z+c+)`/`(Z+n+)`/
+`(Z+q+)` parameterized forms are uniformly broken (also seen
+in batch testing: `Z+n+` for newlines returns same single-
+token result).
+
+**Where** — `src/ported/paramflags.rs::parse_Z_options`:
+either the `+OPT+` parameter parsing for Z flag is incomplete
+or the resulting parsed-options aren't passed to the actual
+word-splitter. C-source `Src/utils.c::getoutput` walks the
+option chars after `Z+` and passes them as flags to the
+parser.
+
+**Impact** — completion-helper scripts and zsh-style command-
+line parsers that rely on `(Z+c+)` for safe tokenization of
+user input lose the ability to extract command words:
+
+```sh
+# Common completion pattern
+words=("${(Z+c+)BUFFER}")
+cmd=${words[1]}
+case "$cmd" in
+    git) _git_completion ;;
+    *) ;;
+esac
+# zsh: extracts cmd correctly even with comments in BUFFER
+# zshrs: words[1] is the whole BUFFER string, $cmd is the whole input
+```
+
+**Workaround** — manual split for simple cases:
+```sh
+words=(${(s: :)cmd%%\#*})   # strip comment, split on spaces
+```
+
+---
+
+## #245 — Extended_glob `(#cN,M)` range-repetition not supported
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extendedglob; [[ "abc" == ?(#c2,5) ]]; echo "ec=$?"'
+ec=0
+
+$ ./target/debug/zshrs --zsh -c 'setopt extendedglob; [[ "abc" == ?(#c2,5) ]]; echo "ec=$?"'
+ec=1
+```
+
+zsh's extended_glob `(#cN,M)` syntax repeats the preceding
+pattern between N and M times. The test pattern `?(#c2,5)`
+means "any char, 2 to 5 times" — `"abc"` matches (3 chars in
+the range).
+
+zshrs's extended_glob accepts the syntax (no parse error) but
+the matcher doesn't honor the repetition counter — match
+fails.
+
+Bare `(#cN)` form (single count) likely works (not tested
+here in this batch). The bug is the comma-separated range
+form specifically.
+
+**Where** — `src/ported/glob/extended.rs::parse_hash_c_range`:
+parses `(#cN,M)` but doesn't apply the count to the
+quantifier. C-source `Src/glob.c::patcompswitch` reads N and
+M and emits a `P_COUNT` opcode for the matcher.
+
+**Impact** — range-quantified patterns common in
+file-validation scripts don't match:
+
+```sh
+# Match identifiers with 3-12 alphanumeric chars
+setopt extendedglob
+case "$input" in
+    [[:alnum:]](#c3,12)) echo "valid id" ;;
+    *) echo "invalid: $input" ;;
+esac
+# zsh: matches "abc", "abcdef", etc. — rejects "ab" and "abcdefghijklmnop"
+# zshrs: never matches the range — falls through to invalid branch always
+```
+
+**Workaround** — explicit repetition with character classes:
+```sh
+case "$input" in
+    [[:alnum:]][[:alnum:]][[:alnum:]]*) echo "at least 3 alnum" ;;
+esac
+```
+
+(no clean upper-bound check without the range form.)
+
+---
+
+## #246 — `setopt rc_expand_param` applied inside double quotes (zsh: unquoted-only)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt rc_expand_param; a=(1 2); echo "prefix$a"'
+prefix1 2
+
+$ ./target/debug/zshrs --zsh -c 'setopt rc_expand_param; a=(1 2); echo "prefix$a"'
+prefix1 prefix2
+```
+
+`rc_expand_param` makes `prefix$array suffix` expand to
+`prefix1 suffix prefix2 suffix` — but ONLY when the array
+reference is in *unquoted* context.
+
+Inside double quotes, normal scalar-concat semantics apply
+(no per-element distribution). zsh respects this. zshrs
+applies rc_expand_param even inside double quotes.
+
+Control:
+```sh
+# Both shells produce same output without quotes:
+$ both-shells -fc 'setopt rc_expand_param; a=(1 2); echo prefix$a'
+prefix1 prefix2
+
+# Both shells produce same output without the opt:
+$ both-shells -fc 'a=(1 2); echo "prefix$a"'
+prefix1 2
+```
+
+The bug is only in the `setopt rc_expand_param` × `"$a"`
+intersection — zshrs incorrectly applies the per-element
+distribution even inside the quotes.
+
+**Where** — `src/ported/exec.rs::expand_word`: rc_expand_param
+check fires regardless of quote context. C-source
+`Src/glob.c::xpandredir` only applies the rcexpand
+transformation when the param ref is *not* inside double
+quotes (tracked via expansion-context flags).
+
+**Impact** — scripts that intentionally suppress
+rc_expand_param via double-quoting (the canonical "I want
+the array as a single space-joined string" pattern) get
+silently distributed:
+
+```sh
+setopt rc_expand_param
+files=(a.txt b.txt c.txt)
+log "Processing files: $files"   # intended: "Processing files: a.txt b.txt c.txt"
+# zsh:   logs "Processing files: a.txt b.txt c.txt" (one message)
+# zshrs: logs three messages: "Processing files: a.txt", "Processing files: b.txt", "Processing files: c.txt"
+```
+
+The bug is high-impact for any user `.zshrc` that uses
+`rc_expand_param` (it's a popular `rc-shell`-compat option)
+because every prior double-quoted array reference now
+silently fans out.
+
+**Workaround** — use `${a[*]}` (star) which forces scalar-
+join regardless of `rc_expand_param`:
+```sh
+log "Processing files: ${a[*]}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -13034,9 +13212,12 @@ type-string info.
 | 241 | `${assoc[@]}`/`${assoc[*]}` return empty — basic assoc value iteration broken | **port-bug** | `${(@v)h}` explicit value flag |
 | 242 | Introspection assocs (`builtins`/`parameters`/etc.) not read-only — writes silently accepted | **port-bug** | (none — needs `PM_READONLY` at init) |
 | 243 | `${(t)TIMEFMT}` etc. return empty for autovar/special params (type intro broken) | **port-bug** | `(( ${+VAR} ))` existence check only |
+| 244 | `${(Z+c+)cmd}` word-split with c option returns whole string as 1 token (parser-aware split broken) | **port-bug** | manual `${(s: :)cmd%%\\#*}` for simple cases |
+| 245 | `(#cN,M)` extended_glob range-repetition not honored (count syntax accepted but matcher ignores) | **port-bug** | explicit char-class repetition |
+| 246 | `setopt rc_expand_param` applied inside double quotes — silently fans out `"prefix$arr"` per-element | **port-bug** | use `${a[*]}` star to force scalar-join |
 
-Of two hundred and forty-three entries, two are fixed (5, 7), two
-hundred and thirty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and forty-six entries, two are fixed (5, 7), two
+hundred and forty remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -13053,5 +13234,5 @@ hundred and thirty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
-240, 241, 242, 243), and four were zsh-correct behavior misframed
-by demos (1, 2, 3, 6).
+240, 241, 242, 243, 244, 245, 246), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
