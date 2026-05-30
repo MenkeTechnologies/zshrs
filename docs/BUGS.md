@@ -2783,6 +2783,145 @@ anonymous form `() { body }` (no `function` keyword).
 
 ---
 
+## #61 — `h["key"]=v` subscript form embeds literal quotes in the key
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h["k2"]=v2; typeset -p h'
+typeset -A h=( ['"k2"']=v2 )
+
+$ zshrs --zsh -c 'typeset -A h; h["k2"]=v2; typeset -p h'
+typeset -A h=( [k2]=v2 )
+```
+
+When using the `name[subscript]=value` LHS-assignment form, real zsh
+treats the `"` characters in the subscript as PART of the key string.
+So `h["k2"]=v2` creates a key whose literal value is `"k2"` (5 chars
+including quotes), retrievable only via `${h[\"k2\"]}`. The
+parenthesised init form `h=( k2 v2 )` stores `k2` (2 chars).
+
+zshrs strips quotes from the subscript first, so `h["k2"]=v2` stores
+the same key as `h=( k2 v2 )` — divergent from the C source.
+
+Confirmation that the keys round-trip in zsh:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h["k1"]=hello; echo "[${h[\"k1\"]}]"; echo "[${h[k1]}]"'
+[hello]
+[]
+```
+
+**Where** — `src/ported/lex.rs` / `src/ported/parse.rs`: subscript
+lexer for `name[…]=` LHS strips matching quote pairs before storing
+the key. The C source (`Src/subst.c::strpfx`/`Src/params.c::sethparam`)
+treats the subscript bytes verbatim because quote-removal happens
+during expansion, not parsing.
+
+**Impact** — assoc tables populated via the bracketed-assignment
+form behave differently between zsh and zshrs. Any code that assumes
+`h["key"]` and `h[key]` are equivalent (the natural assumption)
+works in zshrs and fails in zsh — but more importantly, code copied
+FROM real-zsh that intentionally uses the literal-quote key trick
+breaks under zshrs.
+
+**Workaround** — always use the parenthesised init form
+`typeset -A h=( k1 v1 k2 v2 )` or assign via a variable
+`key=k1; h[$key]=v1` to avoid the ambiguity. Both work identically
+in zsh and zshrs.
+
+---
+
+## #62 — `setopt extended_glob` doesn't recognize `~` (and-not) operator
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; echo a*~ab'
+zsh:1: no matches found: a*~ab
+
+$ zshrs --zsh -c 'setopt extended_glob; echo a*~ab'
+a*~ab
+```
+
+The `pat1~pat2` syntax in `extended_glob` means "match `pat1` but
+exclude anything that matches `pat2`". Real zsh sees `a*~ab` as a
+glob pattern, fails to match (no such files), and errors per the
+default `nomatch` option.
+
+zshrs doesn't recognize `~` as a glob metachar even with
+`extended_glob` set, so it treats `a*~ab` as a literal string and
+prints it.
+
+**Where** — `src/ported/pattern.rs`: pattern compiler's
+extended-glob token table missing `~` (PAT_TILDE) handling. C source
+in `Src/pattern.c::patcompile` adds tilde-exclusion when
+`isset(EXTENDEDGLOB)`.
+
+**Impact** — any extended_glob script using `~` to exclude
+sub-patterns silently degrades. Example:
+
+```sh
+setopt extended_glob
+# delete all .log files except current.log
+rm /var/log/*.log~current.log    # zsh: deletes everything except current.log
+                                  # zshrs: tries to rm a literal "*.log~current.log" file
+```
+
+**Workaround** — invert with explicit loop:
+```sh
+for f in /var/log/*.log; do
+    [[ "$f" == */current.log ]] && continue
+    rm "$f"
+done
+```
+Or use `find` with `-not`.
+
+---
+
+## #63 — `${(j:s:)${(s:t:)var}}` nested split-then-join returns first element only
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="A B C"; echo "${(j:-:)${(s: :)a}}"'
+A-B-C
+
+$ zshrs --zsh -c 'a="A B C"; echo "${(j:-:)${(s: :)a}}"'
+A
+```
+
+The inner `${(s: :)a}` splits `"A B C"` on spaces → `(A B C)` array.
+The outer `${(j:-:)…}` joins that array on `-` → `A-B-C`.
+
+zshrs collapses the inner array to its first element before the
+outer flag sees it, returning just `A`.
+
+**Where** — `src/ported/paramsubst.rs`: nested parameter expansion
+doesn't propagate array-context flag (`PM_HASHED`/`PM_ARRAY`) from
+the inner expansion to the outer. C source uses the
+`Param->u.arr`/`scalarsplit` chain so the outer expansion sees the
+inner as an array.
+
+**Impact** — pipeline-style string transforms break:
+```sh
+# convert CSV to TSV by split-then-join
+out="${(j:\t:)${(s:,:)csv_line}}"   # zsh: tab-separated
+                                      # zshrs: first field only
+```
+
+Also breaks:
+- `${(j:/:)${(s:.:)path}}` — replace `.` with `/`
+- `${(@)${(s::)str}}` — convert string to char-array
+- Any `${(flag2)${(flag1)var}}` two-stage transform
+
+**Workaround** — intermediate array variable:
+```sh
+arr=( "${(s: :)a}" )
+echo "${(j:-:)arr}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -2847,10 +2986,13 @@ anonymous form `() { body }` (no `function` keyword).
 | 58 | `[[ "x*" == "x*" ]]` quoted-RHS-star still globbed | **port-bug** | escape `\*` on RHS |
 | 59 | `setopt no_clobber` allows `>>` to create new file | **port-bug** | pre-`touch` the file |
 | 60 | `function {body}` (no name) parses + stray `}` echo | **port-bug** | use `funcname() { body }` form |
+| 61 | `h["key"]=v` subscript quotes not embedded in key | **port-bug** | use `h=( k v )` paren init |
+| 62 | `extended_glob` `~` (and-not) operator not honored | **port-bug** | iterate + skip with `[[` |
+| 63 | `${(j:s:)${(s:t:)var}}` nested split-then-join → first element only | **port-bug** | intermediate `arr=(...)` |
 
-Of sixty entries, two are fixed (5, 7), fifty-four remain open
+Of sixty-three entries, two are fixed (5, 7), fifty-seven remain open
 port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
-53, 54, 55, 56, 57, 58, 59, 60), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
