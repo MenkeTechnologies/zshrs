@@ -9248,6 +9248,174 @@ fi
 
 ---
 
+## #178 — `IFS` doesn't affect cmdsub field-splitting in `for`/array context
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'IFS=$'\''\n'\''; for x in $(printf "a\nb\nc"); do echo "[$x]"; done'
+[a]
+[b]
+[c]
+
+$ ./target/debug/zshrs --zsh -c 'IFS=$'\''\n'\''; for x in $(printf "a\nb\nc"); do echo "[$x]"; done'
+[a b c]
+```
+
+Setting `IFS` to a custom value (newline, tab, colon, etc.)
+should control how unquoted command-substitution output is
+field-split. zsh respects `IFS` for the split. zshrs always
+joins with space, ignoring `IFS`.
+
+Verified across multiple IFS values:
+```sh
+# IFS=":"
+$ /opt/homebrew/bin/zsh -fc 'IFS=":"; for x in $(echo "a:b:c"); do echo "[$x]"; done'
+[a]
+[b]
+[c]
+
+$ ./target/debug/zshrs --zsh -c 'IFS=":"; for x in $(echo "a:b:c"); do echo "[$x]"; done'
+[a b c]
+```
+
+Per POSIX/zsh semantics:
+> Word splitting on the result of command substitution uses the
+> current value of `$IFS` as the delimiter set.
+
+**Where** — `src/ported/exec.rs::expand_for_args`: doesn't
+consult `$IFS` when word-splitting cmdsub output for `for`-loop
+list. C-source `Src/exec.c::execfor` calls `wordsplit` with
+current IFS chars.
+
+**Impact** — every "iterate over multi-line cmdsub output"
+idiom breaks:
+
+```sh
+IFS=$'\n'
+for line in $(grep error /var/log/syslog); do
+    process "$line"
+done
+# zsh: iterates each matching line
+# zshrs: passes all matches concatenated as single iteration
+```
+
+This is a fundamental POSIX-compatibility gap.
+
+**Workaround** — explicit `${(f)$(...)}` (split on newlines via
+flag) or `${(@s.X.)$(...)}` (split on X via flag):
+```sh
+for line in "${(@f)$(grep error /var/log/syslog)}"; do
+    process "$line"
+done
+```
+
+---
+
+## #179 — `${(S)pat}` shortest-match flag treated as no-op
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="hello.world.txt"; echo "[${s%.*}]"; echo "[${(S)s%.*}]"; echo "[${s%%.*}]"'
+[hello.world]
+[hello.worldtxt]
+[hello]
+
+$ ./target/debug/zshrs --zsh -c 's="hello.world.txt"; echo "[${s%.*}]"; echo "[${(S)s%.*}]"; echo "[${s%%.*}]"'
+[hello.world]
+[hello.world]    # (S) flag ignored
+[hello]
+```
+
+The `(S)` flag with `%`/`%%`/`#`/`##` operators changes their
+match anchoring. Per `man zshexpn`:
+> `(S)` — In combination with `${name#pat}` etc., specifies
+> non-greedy match. With `%` and `%%`, the match searches the
+> shortest occurrence at any position (instead of anchored at
+> end).
+
+zsh's behavior:
+- `${s%.*}` (anchored at end): removes `.txt` → `hello.world`
+- `${(S)s%.*}` (search anywhere, shortest): removes shortest `.X`
+  found → `hello.worldtxt` (removes the middle `.` only, keeps
+  the boundary chars)
+- `${s%%.*}` (anchored, longest): removes `.world.txt` → `hello`
+
+zshrs's `(S)` returns the same result as without it — flag is
+ignored.
+
+More tests confirm:
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="abXcdXef"; echo "[${(S)s%X*}]"; echo "[${(S)s%%X*}]"'
+[abXcdef]      # S+% = remove shortest "X*" at any position
+[abXcd]         # S+%% = remove longest "X*" at any position
+
+$ ./target/debug/zshrs --zsh -c 's="abXcdXef"; echo "[${(S)s%X*}]"; echo "[${(S)s%%X*}]"'
+[abXcd]         # S not honored
+[ab]            # S not honored
+```
+
+**Where** — `src/ported/paramsubst.rs::apply_S_flag`: not
+implemented; falls through to default `%`/`%%` behavior.
+C-source `Src/subst.c::getmatch` checks `(S)` flag bit and
+inverts the anchor semantics.
+
+**Impact** — substring removal patterns that intentionally use
+`(S)` for "remove first match anywhere" produce wrong results
+(zsh-specific extension, not portable).
+
+**Workaround** — use explicit `${var/pat/}` substitution which
+has independent anchoring control via `#`/`%` prefixes.
+
+---
+
+## #180 — `${(C)-text}` bash-style default with case-flag silently accepted
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "${(C)-from-bash-style}"' 2>&1
+569x
+
+$ ./target/debug/zshrs --zsh -c 'echo "${(C)-from-bash-style}"' 2>&1
+From-Bash-Style
+```
+
+The `${(FLAG)-default}` form (without colon between FLAG and `-`)
+is a bash-extension form that zsh doesn't recognize as a default
+expression. zsh interprets `(C)-from-bash-style` as "apply (C)
+to the parameter named `-from-bash-style`" — and `$-` is the
+shell-flags special, returning `569x`.
+
+zshrs parses it as "apply (C) to the default `from-bash-style`"
+yielding `From-Bash-Style`.
+
+Per `man zshexpn`:
+> `${name:-default}` (with colon) — apply default if unset.
+> `${name-default}` (no colon) — apply default if unset, but
+> not if empty.
+
+The form `${(C)-text}` (with the FLAG and `-`) is non-standard;
+zsh treats `-text` as part of the parameter name.
+
+**Where** — `src/ported/paramsubst.rs::parse_flag_then_default`:
+treats `-text` after `)` as default-text. C-source
+`Src/subst.c::dosubst` requires colon-separator.
+
+**Impact** — bash-style `${(C)-default}` works in zshrs but
+not zsh. Cross-shell scripts that use this syntax (originally
+bash) silently produce different results. Falls in the
+permissive-parser family — zshrs accepts bash-isms that zsh
+rejects.
+
+**Workaround** — always use colon-form `${(FLAG):-default}`:
+```sh
+echo "${(C):-default}"   # both shells: "Default"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -9429,19 +9597,22 @@ fi
 | 175 | `(( x = 0xFF ))` doesn't preserve integer base in display | **port-bug** | `typeset -i 16 x` explicit |
 | 176 | Bare `echo "\033"` doesn't interpret backslash escapes by default | **port-bug** | `print` or `printf '%b'` |
 | 177 | `vared -c X` no-tty silent (zsh: "can't access terminal") | **port-bug** | `[[ -t 0 ]]` tty pre-check |
+| 178 | `IFS` doesn't affect cmdsub field-splitting in `for`/array | **port-bug** | `${(@f)$(...)}` explicit |
+| 179 | `${(S)pat}` shortest-match flag treated as no-op | **port-bug** | use `${var/pat/}` explicit |
+| 180 | `${(C)-text}` no-colon default with flag silently accepted | **port-bug** | use `${(C):-text}` colon-form |
 
-Of one hundred seventy-seven entries, two are fixed (5, 7), one
-hundred seventy-one remain open port-bugs/perf-issues (4, 8, 9, 10,
-11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
-62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
-79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
-96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
-110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
-123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
-136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
-149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
-162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174,
-175, 176, 177), and four were zsh-correct behavior misframed by
-demos (1, 2, 3, 6).
+Of one hundred eighty entries, two are fixed (5, 7), one hundred
+seventy-four remain open port-bugs/perf-issues (4, 8, 9, 10, 11,
+12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
+63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
+97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
+111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
+124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
+137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149,
+150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162,
+163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175,
+176, 177, 178, 179, 180), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
