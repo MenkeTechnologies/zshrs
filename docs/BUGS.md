@@ -9745,6 +9745,153 @@ fi
 
 ---
 
+## #187 — `f() { :; } > /file` redirect on fn-def creates file at definition time
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { :; } > /tmp/zfr'
+$ ls /tmp/zfr 2>&1
+ls: /tmp/zfr: No such file or directory
+
+$ ./target/debug/zshrs --zsh -c 'g() { :; } > /tmp/zfr'
+$ ls /tmp/zfr 2>&1
+-rw-r--r--@ 1 wizard wheel 0 ... /tmp/zfr
+```
+
+Function-definition redirects (`f() { ... } > file`) should
+attach the redirect to the function as part of its execution
+context. zsh defers the actual open() until the function is
+called. zshrs opens the file at definition time, creating a
+zero-byte file even if `f` is never called.
+
+This is the inverse of #158 — there, redirects didn't apply
+at call time. This bug shows the redirect creates side effects
+at def time. Combined: redirects are processed at the WRONG
+time entirely.
+
+Same for stderr:
+```sh
+$ ./target/debug/zshrs --zsh -c 'g() { :; } 2> /tmp/zfy' && ls /tmp/zfy
+/tmp/zfy
+```
+
+Both stdout and stderr redirects affected.
+
+**Where** — `src/ported/parse.rs::parse_function_def`: when
+encountering trailing redirects, opens the FDs immediately
+instead of storing the redirect spec in the function struct.
+C-source `Src/parse.c::par_funcdef` stores `Redir` nodes in
+`Shfunc.redir` chain for deferred application.
+
+**Impact** — fn-def files leak in `/tmp` (or wherever the
+redirect points) even when fns are never called. Worse:
+truncates existing files if the path exists:
+
+```sh
+my_logger() {
+    echo "$@"
+} > /var/log/app.log      # zsh: log file created on first call
+                           # zshrs: log file TRUNCATED at def time
+                           #        even if my_logger never called
+```
+
+Data loss possible.
+
+**Workaround** — never use redirect-on-fn-def in zshrs. Move
+the redirect to the call site:
+```sh
+my_logger() { echo "$@"; }
+my_logger "msg" > /var/log/app.log
+```
+
+---
+
+## #188 — Empty-array slice `${a[@]:0:1}` iterates once with empty value
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(); count=0; for x in "${a[@]:0:1}"; do ((count++)); echo "iter[$x]"; done; echo "iterations: $count"'
+iterations: 0
+
+$ ./target/debug/zshrs --zsh -c 'a=(); count=0; for x in "${a[@]:0:1}"; do ((count++)); echo "iter[$x]"; done; echo "iterations: $count"'
+iter[]
+iterations: 1
+```
+
+Slicing an empty array `${a[@]:0:1}` should yield no elements.
+zsh iterates 0 times. zshrs iterates ONCE with an empty value.
+
+Related to #120 (`a=("${a[@]:0:-1}")` on empty creates
+1-element array) — both stem from empty-array slice yielding
+spurious empty element.
+
+**Where** — `src/ported/paramsubst.rs::slice_array`: returns
+`[""]` for empty array slice instead of `[]`. C-source
+`Src/subst.c::arrslice` returns `NULL` (empty list) when start
+≥ end or array is empty.
+
+**Impact** — defensive iteration on possibly-empty arrays
+runs one phantom iteration with empty value:
+
+```sh
+configs=()
+for cfg in "${configs[@]:0:3}"; do
+    process_config "$cfg"
+done
+# zsh: skip entirely
+# zshrs: process_config called once with empty string
+```
+
+**Workaround** — explicit length check:
+```sh
+if (( ${#configs} > 0 )); then
+    for cfg in "${configs[@]:0:3}"; do ...
+fi
+```
+
+---
+
+## #189 — `${()-default}` empty-flag-paren silently accepted
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${()-default}]"' 2>&1
+zsh:1: bad substitution
+
+$ ./target/debug/zshrs --zsh -c 'echo "[${()-default}]"' 2>&1
+[569X]
+```
+
+`${()-default}` — empty parameter-flag parentheses, then default
+`-default`. zsh rejects as bad substitution (empty `(...)` flag
+is malformed). zshrs treats it as if the parameter name were `$-`
+(shell flags), returning the value of `$-` (`569X`).
+
+Permissive-parser family. The `()` empty flag should be a
+syntax error.
+
+**Where** — `src/ported/paramsubst.rs::parse_flags`: doesn't
+require at least one flag character between `(` and `)`. Treats
+empty parens as no-flag, then `${-default}` parses as `$-`
+(shell flags) with `-default` consumed.
+
+**Impact** — typos with empty flag parens silently return shell
+flags instead of erroring:
+
+```sh
+# user typo: forgot to specify flag (e.g., L)
+echo "${()-fallback}"
+# zsh: errors immediately
+# zshrs: returns "$-" value, confusing
+```
+
+**Workaround** — careful syntax review.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -9935,19 +10082,23 @@ fi
 | 184 | `$((${a[@]} + 0))` arith with array spread silently uses first elem | **port-bug** | explicit loop summation |
 | 185 | `[[ -z "${arr[@]}" ]]` for single-empty arr returns false (zsh: true) | **port-bug** | `${arr[*]}` star form |
 | 186 | `${(@)b:-default}` for single-empty arr returns default (zsh: empty) | **port-bug** | `(( ${#arr} > 0 ))` check |
+| 187 | `f() { :; } > /file` redirect on fn-def creates file at def time | **port-bug** | redirect at call site |
+| 188 | Empty-array slice `${a[@]:0:1}` iterates once with empty val | **port-bug** | `${#a} > 0` pre-check |
+| 189 | `${()-default}` empty-flag-paren silently returns `$-` | **port-bug** | careful syntax |
 
-Of one hundred eighty-six entries, two are fixed (5, 7), one
-hundred eighty remain open port-bugs/perf-issues (4, 8, 9, 10, 11,
-12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
-46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
-63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
-80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
-97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
-111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
-124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
-137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149,
-150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162,
-163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175,
-176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186), and four
-were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+Of one hundred eighty-nine entries, two are fixed (5, 7), one
+hundred eighty-three remain open port-bugs/perf-issues (4, 8, 9,
+10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
+78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
+95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108,
+109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
+122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134,
+135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147,
+148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160,
+161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173,
+174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186,
+187, 188, 189), and four were zsh-correct behavior misframed by
+demos (1, 2, 3, 6).
