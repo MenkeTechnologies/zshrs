@@ -395,4 +395,124 @@ mod tests {
         let _ = std::str::from_utf8(ZSH_PATCHLEVEL.as_bytes()).expect("PATCHLEVEL valid UTF-8");
         let _ = std::str::from_utf8(ZSH_VERSION.as_bytes()).expect("VERSION valid UTF-8");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional pins for Src/patchlevel.h + Config/version.mk
+    // ZSH_PATCHLEVEL shape / ZSH_VERSION semver-ish format
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Pin the upstream major version — ZSH_PATCHLEVEL must start `zsh-5.`
+    /// (we're synced to upstream 5.x; any 6.x jump would be a deliberate
+    /// rebase event flagged by this test).
+    #[test]
+    fn zsh_patchlevel_starts_with_zsh_5_dot() {
+        assert!(ZSH_PATCHLEVEL.starts_with("zsh-5."),
+            "ZSH_PATCHLEVEL must start `zsh-5.` (upstream major), got: {}",
+            ZSH_PATCHLEVEL);
+    }
+
+    /// ZSH_VERSION must start with `5.` (matches the upstream major
+    /// the patchlevel snapshot was taken from).
+    #[test]
+    fn zsh_version_starts_with_5_dot() {
+        assert!(ZSH_VERSION.starts_with("5."),
+            "ZSH_VERSION must start `5.` (upstream-major sync), got: {}",
+            ZSH_VERSION);
+    }
+
+    /// ZSH_PATCHLEVEL has exactly 4 dash-separated segments: zsh, X.Y, N, gHASH.
+    #[test]
+    fn zsh_patchlevel_has_four_dash_segments() {
+        let segs: Vec<&str> = ZSH_PATCHLEVEL.split('-').collect();
+        assert_eq!(segs.len(), 4,
+            "ZSH_PATCHLEVEL must have 4 segments (zsh-X.Y-N-gHASH); got {} from {:?}",
+            segs.len(), ZSH_PATCHLEVEL);
+        assert_eq!(segs[0], "zsh");
+        assert!(segs[3].starts_with('g'), "4th segment must start `g`");
+    }
+
+    /// ZSH_PATCHLEVEL's commit-count segment (3rd) is a positive integer.
+    #[test]
+    fn zsh_patchlevel_commit_count_is_positive_integer() {
+        let segs: Vec<&str> = ZSH_PATCHLEVEL.split('-').collect();
+        let n: u32 = segs[2].parse().expect("3rd segment must be integer");
+        assert!(n > 0, "commit count must be positive, got {}", n);
+    }
+
+    /// ZSH_PATCHLEVEL's git hash (4th segment, after the `g`) is 7+ hex chars.
+    #[test]
+    fn zsh_patchlevel_hash_is_7_or_more_hex_chars() {
+        let segs: Vec<&str> = ZSH_PATCHLEVEL.split('-').collect();
+        let hash = &segs[3][1..]; // strip 'g'
+        assert!(hash.len() >= 7,
+            "git short hash must be ≥ 7 chars, got {} from {:?}",
+            hash.len(), hash);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "git hash must be all hex; got: {:?}", hash);
+    }
+
+    /// ZSH_VERSION's first dot-segment is parseable as u32 (the major).
+    #[test]
+    fn zsh_version_major_parseable_as_u32() {
+        let major = ZSH_VERSION.split('.').next().unwrap();
+        let _: u32 = major.parse().expect("major must parse as u32");
+    }
+
+    /// ZSH_VERSION's second dot-segment is parseable as u32 (the minor).
+    #[test]
+    fn zsh_version_minor_parseable_as_u32() {
+        let mut iter = ZSH_VERSION.split('.');
+        let _ = iter.next();
+        let minor = iter.next().expect("VERSION must have minor segment");
+        let _: u32 = minor.parse().expect("minor must parse as u32");
+    }
+
+    /// Both version constants are ASCII-only (no Unicode trickery).
+    #[test]
+    fn version_constants_are_ascii_only() {
+        assert!(ZSH_PATCHLEVEL.is_ascii(), "ZSH_PATCHLEVEL must be ASCII");
+        assert!(ZSH_VERSION.is_ascii(), "ZSH_VERSION must be ASCII");
+    }
+
+    /// Neither version constant contains a space.
+    #[test]
+    fn version_constants_have_no_spaces() {
+        assert!(!ZSH_PATCHLEVEL.contains(' '),
+            "ZSH_PATCHLEVEL must not contain spaces: {:?}", ZSH_PATCHLEVEL);
+        assert!(!ZSH_VERSION.contains(' '),
+            "ZSH_VERSION must not contain spaces: {:?}", ZSH_VERSION);
+    }
+
+    /// ZSH_VERSION major.minor matches the major.minor in ZSH_PATCHLEVEL.
+    /// (`5.9.0.3-test` major=5, minor=9; ZSH_PATCHLEVEL `zsh-5.9-…` major-minor=5.9)
+    #[test]
+    fn zsh_version_major_minor_matches_patchlevel() {
+        // PATCHLEVEL major.minor from segment 1 (`zsh-{X.Y}-N-gHASH`).
+        let segs: Vec<&str> = ZSH_PATCHLEVEL.split('-').collect();
+        let pl_mm = segs[1];
+        // VERSION major.minor from first 2 dot-segments.
+        let v_segs: Vec<&str> = ZSH_VERSION.split('.').collect();
+        let v_mm = format!("{}.{}", v_segs[0], v_segs[1]);
+        assert_eq!(pl_mm, v_mm,
+            "PATCHLEVEL major.minor ({}) must match VERSION major.minor ({})",
+            pl_mm, v_mm);
+    }
+
+    /// ZSH_PATCHLEVEL is not the bare upstream tag (must include git-describe suffix).
+    #[test]
+    fn zsh_patchlevel_is_not_bare_tag() {
+        assert_ne!(ZSH_PATCHLEVEL, "zsh-5.9",
+            "PATCHLEVEL must include git-describe suffix, not bare tag");
+        assert_ne!(ZSH_PATCHLEVEL, "5.9",
+            "PATCHLEVEL must include `zsh-` prefix");
+    }
+
+    /// Both constants are not empty / not whitespace-only.
+    #[test]
+    fn version_constants_non_empty() {
+        assert!(!ZSH_PATCHLEVEL.is_empty());
+        assert!(!ZSH_VERSION.is_empty());
+        assert!(!ZSH_PATCHLEVEL.trim().is_empty());
+        assert!(!ZSH_VERSION.trim().is_empty());
+    }
 }
