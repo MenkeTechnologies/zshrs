@@ -789,4 +789,140 @@ mod tests {
         assert_eq!(cleanup_(null), 0, "c:242 cleanup_");
         assert_eq!(finish_(null), 0, "c:249 finish_");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/clone.c
+    // c:37 bin_clone (main fn) / c:213-249 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:213 — `setup_` is idempotent (multiple invocations safe).
+    #[test]
+    fn clone_setup_idempotent_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:242 — `cleanup_` is idempotent.
+    #[test]
+    fn clone_cleanup_idempotent_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:249 — `finish_` is idempotent.
+    #[test]
+    fn clone_finish_idempotent_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:220 — `features_` is deterministic (same inputs → same outputs).
+    #[test]
+    fn clone_features_deterministic_on_null_module() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        let mut v1: Vec<String> = Vec::new();
+        let mut v2: Vec<String> = Vec::new();
+        assert_eq!(features_(null, &mut v1), 0);
+        assert_eq!(features_(null, &mut v2), 0);
+        assert_eq!(v1, v2,
+            "features_ must populate identical vec for identical input");
+    }
+
+    /// c:37 — `bin_clone(empty args)` returns non-negative exit code.
+    #[test]
+    fn bin_clone_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_clone("clone", &[], &ops, 0);
+        assert!(r >= 0, "bin_clone empty args must return ≥ 0, got {}", r);
+    }
+
+    /// c:37 — `bin_clone` is deterministic across calls (same args → same exit).
+    #[test]
+    fn bin_clone_deterministic_for_two_args() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let args = vec!["a".to_string(), "b".to_string()];
+        let r1 = bin_clone("clone", &args, &ops, 0);
+        let r2 = bin_clone("clone", &args, &ops, 0);
+        assert_eq!(r1, r2, "bin_clone must be deterministic for same args");
+    }
+
+    /// c:37 — `bin_clone` various func values don't panic (func is the
+    /// hashed builtin selector; clone has only one BIN_* code).
+    #[test]
+    fn bin_clone_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_clone("clone", &[], &ops, func);
+        }
+    }
+
+    /// c:213/235 — `setup_` then `boot_` sequence returns 0 from both.
+    #[test]
+    fn clone_setup_then_boot_returns_zero_each() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        assert_eq!(boot_(null), 0);
+    }
+
+    /// c:228 — `enables_` with Some(non-empty) input doesn't panic.
+    #[test]
+    fn clone_enables_with_some_non_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = Some(vec![1, 2, 3]);
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:213 — `setup_` return type i32 (compile-time pin).
+    #[test]
+    fn clone_setup_returns_i32_type_compile_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:235 — `boot_` return type i32 (compile-time pin).
+    #[test]
+    fn clone_boot_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = boot_(std::ptr::null());
+    }
+
+    /// c:242 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn clone_cleanup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:249 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn clone_finish_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
 }
