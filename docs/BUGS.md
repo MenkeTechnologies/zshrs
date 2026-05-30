@@ -9080,6 +9080,174 @@ prefix in any output-parsing.
 
 ---
 
+## #175 — `(( x = 0xFF ))` doesn't preserve integer base in display
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'integer x=5; (( x = 0xFF )); echo "[$x]"; typeset -p x'
+[16#FF]
+typeset -i16 x=255
+
+$ ./target/debug/zshrs --zsh -c 'integer x=5; (( x = 0xFF )); echo "[$x]"; typeset -p x'
+[255]
+typeset -i x=255
+```
+
+When an integer variable is assigned a hexadecimal literal via
+`(( var = 0xN ))`, zsh tracks the base in the variable's
+metadata: `typeset -p` shows `-i16` (base-16) and `$var` displays
+as `16#FF` (radix notation).
+
+zshrs stores only the decimal value (255), losing the base
+information. Display is decimal-only.
+
+Direct assignment `x=0xff` (without `(( ))`) DOES preserve base
+in both shells:
+```sh
+$ both-shells -fc 'integer x; x=0xff; echo "[$x]"'
+[16#FF]
+```
+
+So the bug is specifically the `(( var = HEX ))` path.
+
+Per `man zshparam`:
+> `-i[BASE]` — Use an integer numeric type. ... The argument to
+> `-i` specifies the output base; with no argument, the same
+> base used to assign.
+
+**Where** — `src/ported/math.rs::assign_with_base_track`: the
+arith-assignment path stores the result but doesn't update the
+target's `base` attribute when the source was hex/octal/binary.
+C-source `Src/math.c::matheval` calls `setiparam` with the
+base from the most-recent literal.
+
+**Impact** — visual aid for hex bitmasks lost. Permission /
+mask manipulation scripts that use hex for clarity get decimal
+output:
+
+```sh
+integer perm=0
+(( perm = 0o644 ))   # zsh: shows "8#644" — readable
+                      # zshrs: shows "420" — must convert to verify
+```
+
+**Workaround** — explicit `typeset -i 16 x=$(( 0xFF ))` to
+force base display.
+
+---
+
+## #176 — Bare `echo "\033"` doesn't interpret backslash escapes by default
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "\033"' | od -c
+033  \n
+
+$ ./target/debug/zshrs --zsh -c 'echo "\033"' | od -c
+\ 0 3 3  \n
+```
+
+zsh's `echo` builtin interprets backslash escape sequences
+(`\033`, `\t`, `\n`, `\NNN`, `\xNN`) by **default**. The
+`BSD_ECHO` option (default off) would change this to require
+`-e` for interpretation. So zsh-default = interpret.
+
+zshrs's `echo` doesn't interpret escapes by default — only with
+explicit `-e` flag. This matches bash's default behavior, not
+zsh's.
+
+Per `man zshoptions`:
+> `BSD_ECHO` — Makes `echo` behave like the BSD version, i.e.,
+> the `-e` flag is required to interpret backslash escapes.
+> Default: off (zsh DOES interpret by default).
+
+Tested across forms:
+```sh
+# Without BSD_ECHO (default):
+$ /opt/homebrew/bin/zsh -fc 'echo "\033"; echo "\t"' | od -c
+033 \n \t \n             # both interpreted
+
+$ ./target/debug/zshrs --zsh -c 'echo "\033"; echo "\t"' | od -c
+\ 0 3 3 \n \ t \n        # literal, no interpretation
+```
+
+The `-E` flag (no-interpret), `print -r`, and `printf "%s"` all
+preserve literals in both shells. The divergence is specifically
+in **bare `echo` default mode**.
+
+**Where** — `src/ported/builtin_echo.rs::process_args`: defaults
+to no-interpret unless `-e` flag. Should default to interpret
+unless `-E` flag OR `BSD_ECHO` option is set. C-source
+`Src/builtin.c::bin_echo` checks `isset(BSDECHO)` to invert
+the default.
+
+**Impact** — terminal-control scripts that use `echo "\033[K"`
+to emit escape sequences produce literal `\033` instead of the
+escape byte:
+
+```sh
+echo "\033[2K\r"  # clear line + carriage return
+# zsh: prints actual ANSI codes
+# zshrs: prints literal "\033[2K\r" text
+```
+
+**Workaround** — use `print` (zsh-canonical, default-interprets
+in both shells) or `printf '%b'`:
+```sh
+print '\033[2K\r'
+printf '%b' '\033[2K\r'
+```
+
+---
+
+## #177 — `vared` (without -c flag) doesn't emit "can't access terminal" error
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'vared -c X' 2>&1
+zsh:vared:1: can't access terminal
+
+$ ./target/debug/zshrs --zsh -c 'vared -c X' 2>&1
+(empty - no error, returns)
+```
+
+The `vared` builtin is interactive — it requires a tty to edit
+the value. When run in a non-interactive context (no tty), zsh
+emits `can't access terminal` error and returns non-zero.
+
+zshrs silently returns with no error and no editing.
+
+**Where** — `src/ported/builtin_vared.rs::edit_param`: doesn't
+check `isatty(stdin)` and emit error when terminal isn't
+available. C-source `Src/Modules/zutil.c` errors on no-tty
+condition.
+
+**Impact** — scripts that `vared` for value editing inside
+non-interactive contexts (CI, pipes, `-c` mode) silently skip
+the edit step. User expects to see an error and a chance to
+fall back to default; instead the variable is unchanged
+silently.
+
+```sh
+echo "Please review the config:"
+vared -p "Edit > " config_var   # in CI: silent no-op in zshrs
+                                 # in zsh: errors, user sees it
+```
+
+**Workaround** — explicit tty check:
+```sh
+if [[ -t 0 ]]; then
+    vared -p "Edit > " config_var
+else
+    echo "No terminal — skipping editor"
+fi
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -9258,19 +9426,22 @@ prefix in any output-parsing.
 | 172 | `${ }` whitespace-only param name silently empty (zsh: error) | **port-bug** | careful review |
 | 173 | `${(t)$(cmdsub)}` returns `scalar` (zsh: cmdsub output) | **port-bug** | drop `(t)` flag |
 | 174 | `type fn` for user-defined function shows "from zsh" suffix | **port-bug** | match `*shell function*` loosely |
+| 175 | `(( x = 0xFF ))` doesn't preserve integer base in display | **port-bug** | `typeset -i 16 x` explicit |
+| 176 | Bare `echo "\033"` doesn't interpret backslash escapes by default | **port-bug** | `print` or `printf '%b'` |
+| 177 | `vared -c X` no-tty silent (zsh: "can't access terminal") | **port-bug** | `[[ -t 0 ]]` tty pre-check |
 
-Of one hundred seventy-four entries, two are fixed (5, 7), one
-hundred sixty-eight remain open port-bugs/perf-issues (4, 8, 9,
-10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
-78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
-95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108,
-109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
-122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134,
-135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147,
-148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160,
-161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173,
-174), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+Of one hundred seventy-seven entries, two are fixed (5, 7), one
+hundred seventy-one remain open port-bugs/perf-issues (4, 8, 9, 10,
+11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
+62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
+79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
+110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
+123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
+136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
+149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
+162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174,
+175, 176, 177), and four were zsh-correct behavior misframed by
+demos (1, 2, 3, 6).
