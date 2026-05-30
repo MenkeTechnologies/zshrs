@@ -1306,4 +1306,109 @@ mod tests {
         assert_eq!(cleanup_(null), 0, "c:536 cleanup_");
         assert_eq!(finish_(null), 0, "c:595 finish_");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/ksh93.c
+    // c:47 edcharsetfn / c:83 matchgetfn / c:212 ksh93_wrapper /
+    // c:491-595 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:491 — `setup_` return type i32 (compile-time pin, alt).
+    #[test]
+    fn ksh93_setup_returns_i32_type_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:536 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn ksh93_cleanup_returns_i32_type_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:595 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn ksh93_finish_returns_i32_type_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:514 — `boot_` return type i32 (compile-time pin).
+    #[test]
+    fn ksh93_boot_returns_i32_type_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = boot_(std::ptr::null());
+    }
+
+    /// c:83 — `matchgetfn(null)` returns Vec<String> safely.
+    #[test]
+    fn matchgetfn_null_pm_returns_vec_string() {
+        let _g = crate::test_util::global_state_lock();
+        let r = matchgetfn(std::ptr::null_mut());
+        let _: Vec<String> = r;
+    }
+
+    /// c:83 — `matchgetfn` is deterministic for null pm.
+    #[test]
+    fn matchgetfn_null_pm_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let a = matchgetfn(std::ptr::null_mut());
+        let b = matchgetfn(std::ptr::null_mut());
+        assert_eq!(a, b, "matchgetfn(null) must be deterministic");
+    }
+
+    /// c:47 — `edcharsetfn(null, null)` doesn't panic.
+    #[test]
+    fn edcharsetfn_null_inputs_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
+    }
+
+    /// c:212 — `ksh93_wrapper` with all null inputs doesn't panic.
+    #[test]
+    fn ksh93_wrapper_all_null_inputs_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let name = std::ffi::CString::new("test").unwrap();
+        let _ = ksh93_wrapper(std::ptr::null(), std::ptr::null(),
+            name.as_ptr() as *mut libc::c_char);
+    }
+
+    /// c:212 — `ksh93_wrapper` return type i32 (compile-time pin, alt).
+    #[test]
+    fn ksh93_wrapper_returns_i32_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let name = std::ffi::CString::new("test").unwrap();
+        let _: i32 = ksh93_wrapper(std::ptr::null(), std::ptr::null(),
+            name.as_ptr() as *mut libc::c_char);
+    }
+
+    /// c:499 — `features_` deterministic on null module.
+    #[test]
+    fn ksh93_features_deterministic_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v1: Vec<String> = Vec::new();
+        let mut v2: Vec<String> = Vec::new();
+        let _ = features_(std::ptr::null(), &mut v1);
+        let _ = features_(std::ptr::null(), &mut v2);
+        assert_eq!(v1, v2, "features_ must be deterministic");
+    }
+
+    /// c:507 — `enables_` with Some(non-empty) doesn't panic.
+    #[test]
+    fn ksh93_enables_with_some_non_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = Some(vec![1, 2, 3]);
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:491/514/595 — setup→boot→finish chain returns 0 each.
+    #[test]
+    fn ksh93_setup_boot_finish_chain_returns_zero_each() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
 }
