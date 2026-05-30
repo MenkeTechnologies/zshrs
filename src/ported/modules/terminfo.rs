@@ -1253,4 +1253,127 @@ mod tests {
         assert_eq!(cleanup_(null), 0, "c:525 cleanup_");
         assert_eq!(finish_(null), 0, "c:532 finish_");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/terminfo.c
+    // c:59 bin_echoti / c:204 getterminfo / c:304 scanterminfo /
+    // c:491-532 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:491 — `setup_` is idempotent (alt).
+    #[test]
+    fn terminfo_setup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:525 — `cleanup_` is idempotent (alt).
+    #[test]
+    fn terminfo_cleanup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:532 — `finish_` is idempotent (alt).
+    #[test]
+    fn terminfo_finish_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:525 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn terminfo_cleanup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:532 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn terminfo_finish_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:514 — `boot_` return type i32 (compile-time pin).
+    #[test]
+    fn terminfo_boot_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = boot_(std::ptr::null());
+    }
+
+    /// c:59 — `bin_echoti` empty args non-negative.
+    #[test]
+    fn bin_echoti_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_echoti("echoti", &[], &ops, 0);
+        assert!(r >= 0, "bin_echoti empty must be ≥ 0, got {}", r);
+    }
+
+    /// c:59 — `bin_echoti` various func values don't panic.
+    #[test]
+    fn bin_echoti_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_echoti("echoti", &[], &ops, func);
+        }
+    }
+
+    /// c:59 — `bin_echoti` deterministic for unknown cap name.
+    #[test]
+    fn bin_echoti_deterministic_unknown_cap() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let args = vec!["__never_real_terminfo_cap_xyz__".to_string()];
+        let r1 = bin_echoti("echoti", &args, &ops, 0);
+        let r2 = bin_echoti("echoti", &args, &ops, 0);
+        assert_eq!(r1, r2, "bin_echoti unknown cap must be deterministic");
+    }
+
+    /// c:204 — `getterminfo("")` empty name doesn't panic.
+    #[test]
+    fn getterminfo_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = getterminfo(std::ptr::null_mut(), "");
+    }
+
+    /// c:304 — `scanterminfo` with None callback safe on repeat.
+    #[test]
+    fn scanterminfo_none_callback_repeated_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            scanterminfo(std::ptr::null_mut(), None, 0);
+        }
+    }
+
+    /// c:507 — `enables_` with Some(non-empty) doesn't panic.
+    #[test]
+    fn terminfo_enables_with_some_non_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = Some(vec![1, 2, 3]);
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
 }
