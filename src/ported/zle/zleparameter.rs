@@ -1007,4 +1007,107 @@ mod tests {
     fn zleparameter_cleanup_idempotent() {
         for _ in 0..10 { assert_eq!(cleanup_(), 0); }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Zle/zleparameter.c
+    // c:37 widgetstr / c:33 getpmwidgets / c:91 scanpmwidgets /
+    // c:142 keymapsgetfn / c:155-198 module lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:37 — `widgetstr` empty name → `user:` (degenerate but C-faithful).
+    #[test]
+    fn widgetstr_empty_name_user_format() {
+        assert_eq!(widgetstr("", true, false), "user:",
+            "empty name still gets user: prefix");
+    }
+
+    /// c:37 — `widgetstr` empty name + completion → `completion:`.
+    #[test]
+    fn widgetstr_empty_name_completion_format() {
+        assert_eq!(widgetstr("", false, true), "completion:",
+            "empty + completion → completion: prefix only");
+    }
+
+    /// c:37 — `widgetstr` is_completion=true overrides is_user=true (C path
+    /// checks WIDGET_INT first via WC_ZLE_TYPE — completion wins).
+    #[test]
+    fn widgetstr_completion_beats_both_flags() {
+        assert_eq!(widgetstr("foo", true, true), "completion:foo",
+            "completion takes precedence when both flags set");
+    }
+
+    /// c:37 — `widgetstr` builtin path: both flags false.
+    #[test]
+    fn widgetstr_both_flags_false_returns_builtin() {
+        assert_eq!(widgetstr("anything", false, false), "builtin");
+    }
+
+    /// c:37 — `widgetstr` deterministic across calls.
+    #[test]
+    fn widgetstr_deterministic_repeated_calls() {
+        for _ in 0..10 {
+            assert_eq!(widgetstr("foo", true, false), "user:foo");
+            assert_eq!(widgetstr("bar", false, true), "completion:bar");
+            assert_eq!(widgetstr("baz", false, false), "builtin");
+        }
+    }
+
+    /// c:37 — `widgetstr` preserves name verbatim (no escaping, no quoting).
+    #[test]
+    fn widgetstr_preserves_special_chars_in_name() {
+        assert_eq!(widgetstr("a b\tc", true, false), "user:a b\tc");
+        assert_eq!(widgetstr("\\n", true, false), "user:\\n");
+    }
+
+    /// c:33 — `getpmwidgets("")` empty name doesn't panic.
+    #[test]
+    fn getpmwidgets_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = getpmwidgets(std::ptr::null_mut(), "");
+    }
+
+    /// c:91 — `scanpmwidgets` with None callback is a no-op (safe).
+    #[test]
+    fn scanpmwidgets_none_repeat_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            scanpmwidgets(std::ptr::null_mut(), None, 0);
+        }
+    }
+
+    /// c:142 — `keymapsgetfn` returns Vec<String> (compile-time pin, alt).
+    #[test]
+    fn keymapsgetfn_returns_vec_string_compile_pin_alt() {
+        let _: Vec<String> = keymapsgetfn(std::ptr::null_mut());
+    }
+
+    /// c:142 — `keymapsgetfn` doesn't panic on null pm (alt pin).
+    #[test]
+    fn keymapsgetfn_null_pm_no_panic_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = keymapsgetfn(std::ptr::null_mut());
+    }
+
+    /// c:155 — `setup_` idempotent.
+    #[test]
+    fn zleparameter_setup_idempotent() {
+        for _ in 0..10 { assert_eq!(setup_(), 0); }
+    }
+
+    /// c:198 — `finish_` idempotent.
+    #[test]
+    fn zleparameter_finish_idempotent() {
+        for _ in 0..10 { assert_eq!(finish_(), 0); }
+    }
+
+    /// c:155-198 — full lifecycle sequence safe + all return 0.
+    #[test]
+    fn zleparameter_full_lifecycle_sequence_safe() {
+        assert_eq!(setup_(), 0);
+        assert_eq!(features_(), 0);
+        assert_eq!(enables_(), 0);
+        assert_eq!(boot_(), 0);
+        assert_eq!(cleanup_(), 0);
+        assert_eq!(finish_(), 0);
+    }
 }
