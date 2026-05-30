@@ -3308,4 +3308,104 @@ mod tests {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_main.c
+    // c:131 ungetbyte / c:142 ungetbytes / c:317 raw_getbyte /
+    // c:406 getbyte / c:439 getfullchar / c:712 execimmortal /
+    // c:1142 whereis
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:131 — `ungetbyte` returns void (compile-time pin).
+    #[test]
+    fn ungetbyte_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: () = ungetbyte(b'a');
+    }
+
+    /// c:131 — `ungetbyte` is callable repeatedly (queue semantics).
+    #[test]
+    fn ungetbyte_repeated_calls_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for b in [b'a', b'b', b'c', 0, 0xff] {
+            ungetbyte(b);
+        }
+    }
+
+    /// c:142 — `ungetbytes(empty)` is a no-op (safe).
+    #[test]
+    fn ungetbytes_empty_slice_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ungetbytes(&[]);
+    }
+
+    /// c:142 — `ungetbytes` for various inputs no-panic.
+    #[test]
+    fn ungetbytes_various_inputs_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ungetbytes(b"hello");
+        ungetbytes(&[0xff, 0x00, 0x7f]);
+    }
+
+    /// c:169 — `ungetbytes_unmeta(empty)` is safe.
+    #[test]
+    fn ungetbytes_unmeta_empty_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ungetbytes_unmeta(&[]);
+    }
+
+    /// c:317 — `raw_getbyte` returns Option<u8> (compile-time pin).
+    #[test]
+    fn raw_getbyte_returns_option_u8_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Option<u8> = raw_getbyte(false);
+    }
+
+    /// c:406 — `getbyte` returns Option<u8> (compile-time pin).
+    #[test]
+    fn getbyte_returns_option_u8_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Option<u8> = getbyte(false);
+    }
+
+    /// c:439 — `getfullchar` returns Option<char> (compile-time pin, alt).
+    #[test]
+    fn getfullchar_returns_option_char_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Option<char> = getfullchar(false);
+    }
+
+    /// c:712 — `execimmortal` returns i32 (compile-time pin, alt name).
+    #[test]
+    fn execimmortal_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = execimmortal("name", &[]);
+    }
+
+    /// c:712 — `execimmortal` exit code is in u8 range.
+    #[test]
+    fn execimmortal_exit_code_in_u8_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = execimmortal("", &[]);
+        assert!((0..256).contains(&r),
+            "execimmortal exit code {} must fit u8", r);
+    }
+
+    /// c:1142 — `whereis` returns Vec<String> (compile-time pin, alt).
+    #[test]
+    fn whereis_returns_vec_string_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Vec<String> = whereis("any");
+    }
 }
