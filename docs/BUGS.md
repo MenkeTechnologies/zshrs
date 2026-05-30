@@ -16341,6 +16341,185 @@ compdef flag table with zsh's autoloaded compdef function.
 
 ---
 
+## #307 — `[[ -5 -lt 0 ]]` errors "unknown condition: -5" — bare negative number misparsed as unary operator
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ -5 -lt 0 ]] && echo Y'
+Y
+
+$ ./target/debug/zshrs --zsh -c '[[ -5 -lt 0 ]] && echo Y'
+zshrs:1: unknown condition: -5
+zsh:1: command not found: 0
+```
+
+zsh's `[[ ]]` parser correctly identifies `-5` in operand
+position (left of `-lt`/`-gt`/`-eq`/etc.) as a negative
+number, not a unary test flag. zshrs treats every
+`-IDENTIFIER` as a unary condition flag (like `-d`, `-e`,
+`-f`, `-z`, `-n`), so `-5` becomes "unknown condition".
+
+Affects ALL arithmetic comparisons with bare negative numbers
+as LHS:
+- `[[ -5 -lt 0 ]]` — errors
+- `[[ -5 -gt 0 ]]` — errors
+- `[[ -5 -le 0 ]]` — errors
+- `[[ -5 -ge 0 ]]` — errors
+- `[[ -5 -eq 0 ]]` — errors
+- `[[ -5 -ne 0 ]]` — errors
+
+Quoted form works in both shells:
+```sh
+$ both-shells -fc '[[ "-5" -lt 0 ]] && echo Y'
+Y
+```
+
+So the workaround is always-quote, but unquoted form is the
+common idiom — zsh accepts it.
+
+**Where** — `src/ported/parse/dd_bracket.rs::parse_test_token`:
+treats any `-X` (where X starts with non-digit, OR fails to
+disambiguate digit vs flag-letter) as a flag. C-source
+`Src/parse.c::par_cond_simple` checks context — if the token
+is a known unary flag AND we're in operand position, treat as
+flag; otherwise treat as operand string (and arith eval).
+
+**Impact** — arith-comparison idioms with negative literals
+or computed negatives break:
+
+```sh
+balance=-100
+[[ $balance -lt 0 ]] && echo "in debt"
+# zsh: prints "in debt"
+# zshrs: errors "unknown condition: -100", aborts the test
+```
+
+Affects financial calc, signed-counter logic, timezone offset
+checks, etc.
+
+**Workaround** — always quote arith operands in `[[ ]]`:
+```sh
+[[ "$balance" -lt 0 ]] && echo "in debt"
+```
+
+---
+
+## #308 — `${(t)arr[N]}` type-of-array-element errors "bad substitution" (zsh: returns type letter)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "type=[${(t)a[1]}]"'
+type=[a]
+
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); echo "type=[${(t)a[1]}]"'
+zsh:1: bad substitution
+```
+
+`${(t)varname}` returns the type string of `varname`. For an
+array element (`a[1]`), zsh returns `a` — meaning "this is
+an array element". zshrs rejects the form as "bad
+substitution".
+
+Same family as #301 (case-flag `${(C)a[N]}` rejected) —
+zshrs's flag dispatcher doesn't handle subscripted-array
+targets for several flags.
+
+Type-flag on whole array works in both:
+```sh
+$ both-shells -fc 'a=(x y z); echo "${(t)a}"'
+array
+```
+
+The bug is the subscripted form specifically.
+
+**Where** — `src/ported/paramsubst.rs::dispatch_t_subscripted`:
+no path for `(t)` on subscripted array element. Same area as
+#301. C-source `Src/subst.c::paramtypestr` evaluates the
+subscript first and then returns the per-element type string.
+
+**Impact** — type-introspection-driven code that inspects
+individual array elements breaks. Less common than scalar
+type-checking, but defensive code uses this:
+
+```sh
+arr=(10 20.5 "text")
+for i in {1..${#arr}}; do
+    case "${(t)arr[$i]}" in
+        integer*) handle_int "${arr[$i]}" ;;
+        float*)   handle_float "${arr[$i]}" ;;
+        scalar*)  handle_str "${arr[$i]}" ;;
+    esac
+done
+# zsh: per-element type dispatch works
+# zshrs: bad substitution on the first iteration, script aborts
+```
+
+**Workaround** — copy to temp scalar:
+```sh
+local _elem="${arr[$i]}"
+case "${(t)_elem}" in
+    ...
+esac
+```
+
+---
+
+## #309 — Chained flag composition `${(qq)${(@P)var}}` drops elements (only first preserved)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); n=a; echo "[${(qq)${(@P)n}}]"'
+['x y z']
+
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); n=a; echo "[${(qq)${(@P)n}}]"'
+['x']
+```
+
+Outer `(qq)` quotes its operand. Inner `(@P)n` produces the
+array `a` (via indirect deref) — `(x y z)`. zsh quotes the
+joined result: `'x y z'`. zshrs only sees the first element
+of the inner result, producing `'x'`.
+
+Same family as #229 (`${(j: :)${(@kv)h}}` drops values) —
+nested flag composition loses information at the boundary
+between inner and outer expansions.
+
+Variants tested:
+- `${(qq)${(@P)n}}` — drops y, z (this bug)
+- `${(j: :)${(@kv)h}}` — drops values (#229)
+- `${(C)${(P)name}[N]}` — outer subscript ignored (#195)
+- `${(j: :)${(@v)h}}` — would also drop probably
+
+**Where** — `src/ported/paramsubst.rs::compose_outer_inner_flags`:
+the boundary between outer expansion and inner result loses
+the array structure — only the first element threads through.
+C-source `Src/subst.c::dosubst` recursively expands inner,
+keeping the full result available to outer flag application.
+
+**Impact** — multi-stage serialization patterns produce
+truncated output:
+
+```sh
+saved="${(qq)${(@P)backup_array_name}}"
+# zsh: full array quoted as space-separated string
+# zshrs: only first element quoted, rest dropped — data loss
+```
+
+Combined with #229, #195, #287, the nested-expansion family
+has many gaps. Workaround everywhere is "use intermediate
+variable".
+
+**Workaround** — split into two assignments:
+```sh
+local _vals=("${(@P)backup_array_name}")
+saved="${(qq)_vals[@]}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -16651,9 +16830,12 @@ compdef flag table with zsh's autoloaded compdef function.
 | 304 | `compfiles`/`compgroups`/`compquote`/`comptags`/`comptry`/`compvalues`/`comparguments`/`compdescribe`/`compcall`/`compctl` builtins missing — compsys unusable | **port-bug** | (none — major daily-driver blocker) |
 | 305 | `vared -c VAR` non-interactive silent no-op (zsh: errors "can't access terminal") | **port-bug** | explicit `[[ -t 0 ]]` check |
 | 306 | `compdef` flag handling differs — `-N` rejected, always-available (zsh: autoloaded function not builtin) | **port-bug** | (none — needs flag table alignment) |
+| 307 | `[[ -5 -lt 0 ]]` errors "unknown condition: -5" — bare negative number misparsed as unary operator | **port-bug** | always quote: `[[ "-5" -lt 0 ]]` |
+| 308 | `${(t)arr[N]}` type-of-element errors "bad substitution" (zsh: returns "a") | **port-bug** | copy to temp scalar |
+| 309 | Chained `${(qq)${(@P)var}}` drops elements — only first preserved (#229/#195/#287 family) | **port-bug** | two-step via intermediate var |
 
-Of three hundred and six entries, two are fixed (5, 7), three
-hundred remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and nine entries, two are fixed (5, 7), three
+hundred and three remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -16675,5 +16857,5 @@ hundred remain open port-bugs/perf-issues (4, 8, 9, 10,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
-305, 306), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+305, 306, 307, 308, 309), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
