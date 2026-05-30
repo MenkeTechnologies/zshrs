@@ -20487,6 +20487,162 @@ safe_cd() {
 
 ---
 
+## #385 — `$LINENO` inside function returns 1 instead of 0 — base-index off-by-one
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo $LINENO; }; f'
+0
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo $LINENO; }; f'
+1
+```
+
+When `$LINENO` is read inside a function body, zsh returns
+**0** — the function's line counter is relative to the
+function declaration, starting at 0 for the first body
+line (which the parser counts as the open-brace line).
+zshrs returns 1 — uses 1-based line counter.
+
+**Where** — `src/ported/params/lineno.rs::get` or
+function-call enter setup: function-local LINENO should be
+initialized to 0 on function entry, not 1. C-source
+`Src/exec.c::execfuncdef` saves `funclineno` to 0 (line
+relative to function body start).
+
+**Impact** — log-formatting / debug-trace scripts that
+print `$LINENO` from function context get offset values:
+
+```sh
+log() { echo "[$0:$LINENO] $*"; }
+log "step 1"
+log "step 2"
+# zsh: [log:0] step 1
+#      [log:0] step 2  (always 0 — function body line counter)
+# zshrs: [log:1] step 1
+#        [log:1] step 2
+```
+
+Affects ZDOTDIR-relative line tracking in debug traps and
+error-handler stack traces.
+
+**Workaround** — adjust by 1 explicitly: `$((LINENO - 1))`.
+
+---
+
+## #386 — `readonly` no-args lists nothing instead of dumping readonly variables
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'readonly' | head -3
+!=0
+'#'=0
+'$'=73116
+
+$ ./target/debug/zshrs --zsh -c 'readonly' | head -3
+
+```
+
+zsh's `readonly` with no args dumps all readonly variables
+in `name=value` form (with proper quoting for special
+identifiers like `#`, `$`, `!`). zshrs returns empty
+output — no readonly variables listed at all.
+
+This is a parallel symptom to #377 (zmodload wrong-table
+listing). The introspection plumbing exists, but the
+read-only filter isn't applied to the dump path.
+
+**Where** — `src/ported/builtins/readonly.rs::dump_all`:
+should iterate the parameter table and filter on
+`PM_READONLY`. C-source `Src/builtins.c::bin_typeset`
+when called as `readonly` walks `paramtab` with
+`PM_READONLY` filter.
+
+**Impact** — auditing scripts that probe "which vars are
+locked" via `readonly | grep VAR` always return empty.
+Distinct from #242/#373/#374/#375 — those were about
+*missing* readonly protection on specific vars; this is
+the introspection-visibility side of the same plumbing
+gap.
+
+```sh
+# Audit: check that critical vars are still readonly
+if readonly | grep -q "^HOME="; then
+    echo "HOME locked"
+fi
+# zsh: HOME shown in dump if marked readonly elsewhere
+# zshrs: dump empty, branch never taken
+```
+
+**Workaround** — probe each var with `typeset -p VAR` and
+parse the `-r` flag:
+```sh
+typeset -p HOME | grep -q "^typeset -[^ ]*r" && echo "locked"
+```
+
+---
+
+## #387 — `read -p "prompt"` parsing — flag arg consumed as identifier instead of coprocess flag
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo y | read -p "prompt> " ans' 2>&1
+zsh:read:1: -p: no coprocess
+
+$ ./target/debug/zshrs --zsh -c 'echo y | read -p "prompt> " ans' 2>&1
+zsh:1: not an identifier: prompt>
+```
+
+Both shells reject the input, but for **different
+reasons** — revealing a flag-parsing divergence:
+
+- zsh: recognizes `-p` as the coprocess-input flag,
+  rejects with "no coprocess" since no coproc is open.
+- zshrs: does not recognize `-p` at all, falls through to
+  positional-parsing, treats `"prompt> "` as a variable
+  name, rejects "not an identifier".
+
+The visible error and the exit semantics differ enough
+that error-handling scripts can't distinguish "coprocess
+unavailable" from "syntax error".
+
+**Where** — `src/ported/builtins/read.rs::parse_flags`:
+missing `-p` flag → coprocess-input dispatch. C-source
+`Src/builtins.c::bin_read` recognizes `OPT_ISSET('p')` and
+sets the input source to the coprocess fd.
+
+**Impact** — coprocess-based code patterns fail with the
+wrong error message:
+
+```sh
+# Common: read from a started coprocess
+coproc { while read line; do echo "got: $line"; done }
+print -p "hello"
+read -p ans
+# zsh: ans = "got: hello" (read from coproc)
+# zshrs: rejects with "not an identifier" — coproc-input
+#        feature broken
+```
+
+bash-style users may also expect `-p` to mean "prompt",
+which zsh's `-p` deliberately does NOT support; zshrs's
+error is misleading both audiences.
+
+**Workaround** — for prompts: emit prompt to stderr
+explicitly:
+```sh
+print -n "prompt> " >&2
+read ans
+```
+
+For coprocess: feature appears unsupported in zshrs — see
+above. Need to verify whether `coproc` itself works at all.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -20875,9 +21031,12 @@ safe_cd() {
 | 382 | `TRAPEXIT()` function-form not invoked at script-exit — universal cleanup gap (oh-my-zsh, p10k, zinit) | **port-bug** | use string-form `trap '…' EXIT` |
 | 383 | `keymaps` assoc empty — viins/vicmd/emacs/main/.safe/etc all missing (zsh: 9 keymaps registered) | **port-bug** | assume zsh-default keymap names exist |
 | 384 | function-local `trap '…' EXIT` fires at script-exit not function-return — RAII cleanup broken | **port-bug** | explicit cleanup at each return point |
+| 385 | `$LINENO` inside function returns 1 instead of 0 — base-index off-by-one | **port-bug** | `$((LINENO - 1))` |
+| 386 | `readonly` no-args dumps nothing instead of listing readonly variables (zsh: full dump) | **port-bug** | parse `typeset -p VAR` for `-r` flag |
+| 387 | `read -p "prompt"` parsing — `-p` not recognized as coprocess flag, treats arg as identifier | **port-bug** | `print -n` to stderr + bare `read` |
 
-Of three hundred and eighty-four entries, two are fixed (5, 7),
-three hundred and seventy-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and eighty-seven entries, two are fixed (5, 7),
+three hundred and eighty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
