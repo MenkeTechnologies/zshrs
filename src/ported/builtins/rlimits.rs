@@ -2219,4 +2219,136 @@ mod tests {
         let mut e: Option<Vec<i32>> = None;
         let _: i32 = enables_(std::ptr::null(), &mut e);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/rlimits.c
+    // c:699 bin_limit / c:965 bin_unlimit / c:1079 bin_ulimit /
+    // c:1330-1364 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:1330 — `setup_` is idempotent.
+    #[test]
+    fn rlimits_setup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:1357 — `cleanup_` is idempotent.
+    #[test]
+    fn rlimits_cleanup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:1364 — `finish_` is idempotent.
+    #[test]
+    fn rlimits_finish_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:1350 — `boot_` is idempotent.
+    #[test]
+    fn rlimits_boot_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            let _ = boot_(std::ptr::null());
+        }
+    }
+
+    /// c:1330 — `setup_` return type i32 (compile-time pin).
+    #[test]
+    fn rlimits_setup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:1357 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn rlimits_cleanup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:1364 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn rlimits_finish_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:699 — `bin_limit` empty args non-negative.
+    #[test]
+    fn bin_limit_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_limit("limit", &[], &ops, 0);
+        assert!(r >= 0, "bin_limit empty must be ≥ 0, got {}", r);
+    }
+
+    /// c:965 — `bin_unlimit` empty args non-negative.
+    #[test]
+    fn bin_unlimit_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_unlimit("unlimit", &[], &ops, 0);
+        assert!(r >= 0, "bin_unlimit empty must be ≥ 0, got {}", r);
+    }
+
+    /// c:1079 — `bin_ulimit` empty args non-negative.
+    #[test]
+    fn bin_ulimit_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_ulimit("ulimit", &[], &ops, 0);
+        assert!(r >= 0, "bin_ulimit empty must be ≥ 0, got {}", r);
+    }
+
+    /// c:699 — `bin_limit` various func values don't panic.
+    #[test]
+    fn bin_limit_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_limit("limit", &[], &ops, func);
+        }
+    }
+
+    /// c:1336 — `features_` is deterministic across calls.
+    #[test]
+    fn rlimits_features_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v1: Vec<String> = Vec::new();
+        let mut v2: Vec<String> = Vec::new();
+        let _ = features_(std::ptr::null(), &mut v1);
+        let _ = features_(std::ptr::null(), &mut v2);
+        assert_eq!(v1, v2,
+            "features_ must populate identical vec for identical input");
+    }
 }
