@@ -1086,6 +1086,123 @@ fn() {
 
 ---
 
+## #27 — Extra `caller` and `help` builtins shadow user functions silently
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'caller() { echo my-fn; }; caller'
+my-fn
+
+$ zshrs --zsh -c 'caller() { echo my-fn; }; caller'
+0 main
+```
+
+zshrs has two bash-specific builtins that real zsh does not:
+  - **`caller`** — prints `<index> <fn>` stack info (bash compat)
+  - **`help`** — prints `zshrs shell builtins:` listing (bash compat)
+
+User scripts that define functions with those names get silently
+shadowed in zshrs. Real zsh treats those names as ordinary
+identifiers and runs the user function correctly.
+
+Compounding the issue: `type caller` and `whence caller` both
+report **"not found"** — so the user has no way to discover that
+the name is taken by a hidden builtin.
+
+**Where** — `src/ported/builtin.rs` registers `bin_caller` and
+`bin_help` at startup. These should either:
+  - be removed (they don't exist in zsh)
+  - be guarded behind a `--bash-compat` flag
+  - at minimum: register with `type` / `whence` so users can detect them
+
+**Workaround** — for now, use different names for user functions
+(`my_caller`, `usage` instead of `help`), OR shadow with `disable`:
+```sh
+disable caller help
+caller() { echo my-fn; }   # now works
+```
+
+---
+
+## #28 — Coreutils mkdir/rm/mv/ln/chmod/chown shadowed as shell builtins
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'type mkdir rm mv ln chmod chown'
+mkdir is /bin/mkdir
+rm is /bin/rm
+mv is /bin/mv
+ln is /bin/ln
+chmod is /bin/chmod
+chown is /usr/sbin/chown
+
+$ zshrs --zsh -c 'type mkdir rm mv ln chmod chown'
+mkdir is a shell builtin
+rm is a shell builtin
+mv is a shell builtin
+ln is a shell builtin
+chmod is a shell builtin
+chown is a shell builtin
+```
+
+zshrs registers coreutils-like builtins (`mkdir`, `rm`, `mv`, `ln`,
+`chmod`, `chown`, `chgrp`, `cap`, `getcap`, `setcap`, `stat`, `sync`)
+that shadow the system commands. Per project rules these are
+"anti-fork" extensions intended to avoid `fork+exec` overhead for
+common filesystem operations.
+
+The trade-off: any flag that the zshrs builtin doesn't implement,
+or any subtle behavior difference vs `/bin/rm`, becomes invisible
+to the user — `rm -I` (BSD) or `rm --interactive=never` (GNU) may
+silently behave differently.
+
+In zsh proper these become available only when explicitly loaded
+via `zmodload zsh/files`, and even then they go to a separate
+namespace (`zf_rm`, `zf_mv`, `zf_chmod`) — never shadowing the
+system commands by default.
+
+zshrs's diff against real zsh on this front:
+```
+extra zshrs builtins (50+):
+  cap chgrp chmod chown clone example getcap hashinfo ln
+  mem mkdir mv nameref patdebug pcre_compile pcre_match
+  pcre_study rm rmdir setcap stat strftime sync syserror
+  sysopen sysread sysseek syswrite zcurses zdelattr
+  zf_chgrp zf_chmod zf_chown zf_ln zf_mkdir zf_mv zf_rm
+  zf_rmdir zf_sync zftp zgdbmpath zgetattr zlistattr
+  zprof zpty zselect zsetattr zsocket zstat zsystem
+  ztcp ztie zuntie
+```
+
+Most are from modules that real zsh keeps unloaded by default
+(`zsh/pcre`, `zsh/stat`, `zsh/curses`, `zsh/net/tcp`, `zsh/zftp`,
+`zsh/zpty`, `zsh/zselect`, `zsh/system`, `zsh/files`). zshrs
+pre-loads them all.
+
+**Where** — `src/ported/builtin.rs::register_builtins` initializes
+the full set unconditionally.
+
+**Workaround**:
+```sh
+# Force external command path:
+command rm /path/to/file
+# Or fully qualify:
+/bin/rm /path/to/file
+# Or disable the builtin:
+disable rm
+rm /path/to/file    # now /bin/rm
+```
+
+The decision to keep these as default-on builtins is a deliberate
+zshrs design choice for perf (anti-fork). The bug here is the
+**namespace collision** with system commands — at minimum the
+`zf_*` aliases should be the only names registered, with the bare
+names (`mkdir`, `rm`, etc.) opt-in.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -1116,8 +1233,10 @@ fn() {
 | 24 | `typeset -T` tied colon-array no-sync | **port-bug** | manual `${(j.:.)arr}` rejoin |
 | 25 | `$ZSH_SCRIPT` unset, `$ZSH_ARGZERO` wrong | **port-bug** | fall back to `$0` |
 | 26 | `emulate -L sh` missing KSH_ARRAYS | **port-bug** | `setopt ksh_arrays` explicit |
+| 27 | `caller`/`help` extra builtins shadow user fns | **port-bug** | `disable caller help` |
+| 28 | `mkdir`/`rm`/`mv`/etc. shadowed as shell builtins | **port-bug** | `command rm` to bypass |
 
-Of twenty-six entries, two are fixed (5, 7), twenty remain open
-port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
-19, 20, 21, 22, 23, 24, 25, 26), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+Of twenty-eight entries, two are fixed (5, 7), twenty-two remain
+open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
