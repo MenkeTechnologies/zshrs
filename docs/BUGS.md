@@ -24044,6 +24044,173 @@ echo "${(R)arr[@]}"
 
 ---
 
+## #448 — `print -s "text"` doesn't add to history — line never appears in `fc -l`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -s "history-cmd"; fc -l'
+    1  history-cmd
+
+$ ./target/debug/zshrs --zsh -c 'print -s "history-cmd"; fc -l'
+zsh:fc:1: no such event: 1
+```
+
+`print -s ARG` is the documented way to push a string
+onto the shell history without executing it. Used heavily
+in:
+- `_history_substring_search` (zsh-history-substring-search)
+- `zsh-autosuggestions` for accepting/replaying
+- ZLE widgets that synthesize commands
+- `precmd` hooks that record state
+
+zshrs's `print -s` doesn't push to history — `fc -l` shows
+no history.
+
+**Where** — `src/ported/builtins/print.rs::handle_s_flag`:
+must push the arg onto the history-list. C-source
+`Src/builtins.c::bin_print` with `OPT_ISSET('s')` calls
+`hist_add` directly.
+
+**Impact** — ZLE widgets that synthesize commands into
+history fail:
+
+```sh
+my-widget() {
+    BUFFER="exit 42"
+    print -s "$BUFFER"      # save to history first
+    zle accept-line
+}
+# zsh: history retains the line — useful for replay
+# zshrs: history empty after — commands the user "ran"
+#        via the widget don't appear in fc -l / up-arrow
+```
+
+**Workaround** — manual history-file append, or use
+`fc -p`/`fc -P` to push/pop a history "frame".
+
+---
+
+## #449 — `[[ "x" == pat\* ]]` backslash-escape in pattern not honored — treats as glob
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ "abc" == ab\* ]]; echo $?'
+1
+
+$ ./target/debug/zshrs --zsh -c '[[ "abc" == ab\* ]]; echo $?'
+0
+```
+
+In `[[ STR == PATTERN ]]`, backslash before a glob
+metachar makes it literal:
+- `ab\*` should match only literal `ab*` (no glob)
+- `\?` should match literal `?`
+- `\[abc\]` should match literal `[abc]`
+
+zsh implements this. zshrs ignores the backslash and
+treats `\*` as the glob wildcard, so `ab\*` matches `abc`
+(incorrect).
+
+Quoted-string form `"ab*"` works correctly in both
+shells. The bug is specific to backslash escape.
+
+Same family as #13 (`[[ "$x" == "?" ]]` quote loss) but
+for the **backslash escape** rather than quote escape.
+
+**Where** — `src/ported/conditional/pattern.rs::compile_pat`:
+pattern compiler must consume `\X` as literal X for glob
+metachars. C-source `Src/pattern.c::patcompile` handles
+`\` via `Tabackbase` token.
+
+**Impact** — defensive patterns that escape user input
+break:
+
+```sh
+needle="*"
+escaped="${needle//\*/\\*}"
+[[ "$haystack" == *${escaped}* ]] || error "no literal *"
+# zsh: matches only haystacks with literal "*"
+# zshrs: \* still treated as glob — matches anything
+```
+
+**Workaround** — use quoted-string pattern form instead
+of backslash escape.
+
+---
+
+## #450 — subshell `trap` leaks to parent — outer trap not preserved across `(...)` block
+
+**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'trap "echo OUTER" USR1; (trap "echo INNER" USR1; kill -USR1 $$); echo done'
+OUTER
+done
+
+$ ./target/debug/zshrs --zsh -c 'trap "echo OUTER" USR1; (trap "echo INNER" USR1; kill -USR1 $$); echo done'
+INNER
+done
+```
+
+A subshell `(...)` setting `trap` for a signal should
+**only affect the subshell**. The parent's pre-existing
+trap remains active.
+
+In the test: `$$` is the parent's PID (verified — both
+shells return same PID in subshell). `kill -USR1 $$` from
+within the subshell sends USR1 to the **parent**. The
+parent's USR1 handler ("OUTER") should fire.
+
+zsh: outer trap fires (correct).
+zshrs: inner trap fires — meaning either:
+- The subshell's trap-set leaked into the parent's trap
+  table, or
+- The signal was caught by the subshell before it could
+  reach the parent (e.g., subshell-fork timing issue)
+
+Either way, **trap-scope isolation is broken in
+subshells**.
+
+**Where** — `src/ported/exec/subshell.rs::execute`:
+must save parent's trap table on subshell entry and
+restore on exit. C-source `Src/exec.c::entersubsh` saves
+via `gsavetrap`, restores via `restoretrap` on exit.
+
+**Impact** — **Function-trap isolation broken**. Common
+pattern with defensive subshell + own cleanup trap:
+
+```sh
+do_risky_thing() {
+    (
+        trap 'cleanup-temp-files' EXIT
+        risky_work
+    )
+    # parent continues normally
+}
+
+trap 'echo "parent: unexpected exit"' EXIT
+do_risky_thing
+# zsh: parent's trap intact after subshell exits
+# zshrs: parent's trap REPLACED — wrong cleanup fires
+```
+
+Combined with #381/#382/#384/#389 (TRAP function-form
+issues), zshrs's trap subsystem has multiple critical
+scoping bugs.
+
+**Workaround** — explicit save/restore around subshell:
+```sh
+old_traps=$(trap)
+(... subshell with traps ...)
+eval "$old_traps"
+```
+
+Tedious and error-prone for nested patterns.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -24495,9 +24662,12 @@ echo "${(R)arr[@]}"
 | 445 | `exec N<<<str` here-string-to-fd doesn't persist — fd unusable after exec (file form works) | **port-bug** | use temp file + `exec N<file` |
 | 446 | `noglob` standalone accepted as no-op (zsh: parse error) — extends #413 parser strictness gap | **port-bug** | CI lint for prefix-keyword-no-command |
 | 447 | `${(flag)scalar[@]}` returns empty for ALL flags (R/U/L/Q/V) — flag-on-scalar-with-@ broken | **port-bug** | bind scalar to typed array first |
+| 448 | `print -s "text"` doesn't add to history — `fc -l` shows nothing (zsh: line appears) | **port-bug** | manual history-file append |
+| 449 | `[[ "x" == pat\\* ]]` backslash-escape in pattern not honored — `\\*` treated as glob wildcard | **port-bug** | quoted-string pattern form `"pat*"` |
+| 450 | **CRITICAL** subshell `trap` leaks to parent — outer trap replaced after `(...)` exits | **port-bug** | explicit `eval "$(trap)"` save/restore around subshell |
 
-Of four hundred and forty-seven entries, two are fixed (5, 7),
-four hundred and forty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and fifty entries, two are fixed (5, 7),
+four hundred and forty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
