@@ -19389,6 +19389,166 @@ words=("${(z)cmd%%\#*}")   # crude comment-strip
 
 ---
 
+## #364 — `$'\uNNNN'` Unicode-codepoint escape in C-string not interpreted — emits literal `uNNNN`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc $'print "\\u3042"'
+あ
+
+$ ./target/debug/zshrs --zsh -c $'print "\\u3042"'
+u3042
+```
+
+zsh's C-string escape sequence `\uNNNN` (or `\uNN`) emits the
+Unicode codepoint as a UTF-8 character. zsh decodes
+`あ` → `あ` (Japanese hiragana A).
+
+zshrs strips the backslash but doesn't interpret the
+`uNNNN` sequence — emits literal text `u3042` instead of
+the character.
+
+Companion to #325 (`$'\xNN\xNN'` hex-escape treats UTF-8 as
+2 separate bytes) — both UTF-8 encoding paths in `$'...'`
+C-strings are broken.
+
+**Where** — `src/ported/parse/c_string.rs::handle_u_escape`:
+not implemented or doesn't emit UTF-8. C-source
+`Src/string.c::getkeystring` decodes `\uNNNN` via
+`hexval()` and `wctoutf8()`.
+
+**Impact** — scripts that emit Unicode chars via
+codepoint-escape (common for emoji, special punctuation, box-
+drawing chars):
+
+```sh
+# Status indicators using box-drawing chars
+print $'✓ done'         # ✓ done
+print $'✗ failed'       # ✗ failed
+# zsh: shows ✓/✗ glyphs
+# zshrs: shows "u2713 done" and "u2717 failed" — broken visual indicators
+```
+
+**Workaround** — embed Unicode chars literally in source:
+```sh
+print "✓ done"
+```
+
+---
+
+## #365 — `${s/multibyte_char/repl}` pattern substitution PANICS with "not a char boundary"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="日本"; echo "[${s/日/J}]"'
+[J本]
+
+$ ./target/debug/zshrs --zsh -c 's="日本"; echo "[${s/日/J}]"'
+(empty + Rust panic to stderr)
+thread 'main' panicked at src/extensions/compile_zsh.rs:6220:34:
+end byte index 2 is not a char boundary; it is inside '日' (bytes 1..4 of string)
+```
+
+zshrs's pattern-substitution code uses `&str[..N]` byte-index
+slicing without checking char boundaries — when the pattern
+or string contains multi-byte UTF-8 chars, the slice indexes
+land inside a char, triggering Rust's UTF-8 boundary panic.
+
+Result: zsh successfully substitutes `日` → `J`, producing
+`J本`. zshrs crashes silently (panic goes to stderr,
+substitution returns empty).
+
+This is a **CRASH bug** — not a silent-wrong behavior, but
+an actual Rust panic. In a long-running shell, this means a
+user typing a Japanese filename and using `${var/PATTERN/}`
+could crash the shell.
+
+**Where** — `src/extensions/compile_zsh.rs:6220` — direct
+panic location reported. Should use `.chars()` iteration or
+`char_boundary()`-aware slicing. C-source
+`Src/glob.c::patmatch` operates on byte arrays without
+char-boundary assumptions, working correctly for any byte
+content.
+
+**Impact** — **CRITICAL** — any text-substitution operation
+on Unicode strings crashes the shell process. Every user
+with non-ASCII filenames, names, log lines, etc. is at risk.
+
+Specific repro paths likely panic:
+- `${var/multibyte/repl}` — confirmed
+- `${var//multibyte/repl}` — likely
+- `${var#multibyte}` / `${var%multibyte}` — likely
+- Glob matching against multibyte filenames — possibly
+
+**Workaround** — avoid pattern substitution on Unicode
+strings; use sed/external for multibyte text processing.
+
+---
+
+## #366 — `h[multibyte_key]=v` assoc array with multibyte key PANICS with "not a char boundary"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[日]=v; echo "[${h[日]}]"'
+[v]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[日]=v; echo "[${h[日]}]"'
+(empty + Rust panic to stderr)
+thread 'main' panicked at src/extensions/compile_zsh.rs:6220:34:
+end byte index 2 is not a char boundary; it is inside '日'
+```
+
+Companion to #365 — same Rust panic location and root cause.
+Assoc-array key lookup with multi-byte UTF-8 keys triggers
+the byte-index slicing panic.
+
+zsh successfully stores and retrieves the assoc value for the
+Japanese key `日`. zshrs crashes on the retrieval (or the
+storage — uncertain which step panics first).
+
+Combined with #365, ALL Unicode-key paramsubst operations
+crash:
+- `${var/utf8/repl}` (#365) — PANIC
+- `h[utf8]=v; ${h[utf8]}` (this bug) — PANIC
+- Likely also: array element access with utf8 in pattern,
+  `[[ string == utf8_pat ]]` matching, etc.
+
+The panic location `src/extensions/compile_zsh.rs:6220` is
+the same — single code path handles multiple Unicode-touching
+operations.
+
+**Where** — same as #365 — `src/extensions/compile_zsh.rs:6220`.
+A single fix to use char-boundary-safe slicing should resolve
+both #365 and #366 (and likely more).
+
+**Impact** — **CRITICAL** — multibyte-key assoc arrays are
+common for i18n config (translation tables, locale-keyed
+lookups, user-input handling). Every such use case crashes
+the shell.
+
+```sh
+# i18n translation table
+typeset -A translations
+translations[Hello]="こんにちは"
+translations[Goodbye]="さようなら"
+# Lookup
+greeting="${translations[Hello]}"
+# zsh: greeting="こんにちは"
+# zshrs: shell crashes with Rust panic
+```
+
+**Workaround** — use ASCII-only keys, store Unicode only in
+values:
+```sh
+typeset -A translations
+translations[hello_jp]="こんにちは"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -19756,9 +19916,12 @@ words=("${(z)cmd%%\#*}")   # crude comment-strip
 | 361 | `typeset -R N` width-flag doesn't truncate values longer than N — overflow ruins fixed-width column alignment | **port-bug** | manual `[[ ${#s} -gt N ]] && s="${s: -N}"` |
 | 362 | `typeset -Z N` zero-pad doesn't truncate values wider than N — extra digits leak through | **port-bug** | manual truncate before assign |
 | 363 | `${(z)cmd}` tokenize-flag drops comment tokens AND doesn't preserve `$VAR` literals — completion/parsing tools break | **port-bug** | strip `#*` before tokenizing (partial fix) |
+| 364 | `$'\uNNNN'` Unicode-codepoint escape in C-string not interpreted — emits literal `uNNNN` | **port-bug** | embed Unicode chars literally in source |
+| 365 | `${s/multibyte_char/repl}` substitution PANICS with "not a char boundary" — **CRITICAL CRASH** | **port-bug** | use sed/external for multibyte substitution |
+| 366 | `h[multibyte_key]=v` assoc with UTF-8 key PANICS with "not a char boundary" — **CRITICAL CRASH** | **port-bug** | use ASCII-only keys |
 
-Of three hundred and sixty-three entries, two are fixed (5, 7),
-three hundred and fifty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and sixty-six entries, two are fixed (5, 7),
+three hundred and sixty remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -19784,5 +19947,5 @@ three hundred and fifty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343,
 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356,
-357, 358, 359, 360, 361, 362, 363), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+357, 358, 359, 360, 361, 362, 363, 364, 365, 366), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
