@@ -126,6 +126,7 @@ a space: `$( () { … } 7)` parses correctly today.
 
 **Status:** `fixed` 2026-05-29 (`src/ported/prompt.rs`).
 
+{% raw %}
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%j"; print -P "%T"; print -P "%D{%Y}"'
 0
@@ -137,6 +138,7 @@ $ zshrs --zsh -c 'print -P "%j"; print -P "%T"; print -P "%D{%Y}"'
 %T
 %D{%Y}
 ```
+{% endraw %}
 
 The prompt-character dispatcher (`putpromptchar` in `Src/prompt.c`,
 ported to `src/ported/prompt.rs`) is missing the case branches for:
