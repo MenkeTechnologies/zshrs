@@ -20643,6 +20643,177 @@ above. Need to verify whether `coproc` itself works at all.
 
 ---
 
+## #388 — `coproc` builtin doesn't open a coprocess — entire feature missing
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'coproc cat; print -p hello; read -p line <&p; echo "[$line]"'
+[hello]
+
+$ ./target/debug/zshrs --zsh -c 'coproc cat; print -p hello; read -p line <&p; echo "[$line]"'
+zsh:print:1: -p: no coprocess
+(then hangs on the read until SIGKILL)
+```
+
+`coproc CMD` starts CMD as a background coprocess with its
+stdin/stdout connected to special fds `&p`. zsh sets up
+the pipes; subsequent `print -p` writes to the coproc's
+stdin and `read -p` reads from its stdout.
+
+zshrs's `coproc cat` runs without complaint but does NOT
+register the coprocess fd. The follow-up `print -p` errors
+"no coprocess", and `read -p ... <&p` hangs forever (no
+fd to read from, no EOF).
+
+This confirms the speculative note in #387 — the coprocess
+feature is genuinely unsupported, not just diagnostically
+mislabeled.
+
+**Where** — `src/ported/builtins/coproc.rs` or the
+`coproc` keyword parsing in `src/ported/exec/exec.rs`: must
+fork-exec CMD with pipes to special-fd table entries, then
+expose those fds to `print -p` / `read -p` / `<&p`.
+C-source `Src/exec.c::execcoproc` builds the pipe pair and
+sets `coprocin`/`coprocout` globals.
+
+**Impact** — entire **coprocess feature unavailable**.
+Programs that use coproc for stateful subprocess IPC fail
+completely:
+
+```sh
+# Spawn long-running tool, query repeatedly
+coproc bc -l
+print -p "scale=10; 4*a(1)"
+read -p pi
+echo "$pi"
+# zsh: pi = 3.1415926535...
+# zshrs: hangs forever; pi unset
+```
+
+Major use cases broken: external math eval (bc), persistent
+SSH masters (via expect-style scripts), interactive helper
+processes, async-pipeline patterns. Also breaks any code
+that does `<&p` or `>&p` redirections.
+
+**Workaround** — use named pipes (mkfifo) for two-way IPC:
+```sh
+mkfifo /tmp/in /tmp/out
+exec 3>/tmp/in 4</tmp/out
+cat </tmp/in >/tmp/out &
+print "msg" >&3
+read line <&4
+```
+
+Heavier, but functional.
+
+---
+
+## #389 — `TRAPZERR()` function-form not invoked on non-zero exit
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPZERR() { echo zerr-fired; }; false; echo done'
+zerr-fired
+done
+
+$ ./target/debug/zshrs --zsh -c 'TRAPZERR() { echo zerr-fired; }; false; echo done'
+done
+```
+
+`ZERR` is zsh's pseudo-signal that fires whenever a command
+exits non-zero (similar to bash's `ERR`). The function-form
+`TRAPZERR()` is the canonical pattern for global error
+hooks — for logging, error-stack capture, and
+err-propagation.
+
+Same root cause as #381/#382/#389 — function-form signal
+traps not dispatched. But ZERR specifically is the
+mechanism for *error introspection*, distinct from
+EXIT/INT/USR1/USR2, so it gets its own entry.
+
+**Where** — same as #381/#382: `src/ported/signals/handler.rs`
+dispatch doesn't check the `TRAP$SIG()` function table.
+
+**Impact** — error-tracing frameworks all break:
+
+```sh
+# Common error-capture pattern
+TRAPZERR() {
+    print -r -- "ERROR: $0 at line $LINENO: status=$?"  >> /tmp/errlog
+}
+# Every failed command logs context
+false  # zsh: writes "ERROR: …" to errlog
+       # zshrs: nothing logged
+```
+
+Affects oh-my-zsh's error-handler, `zsh-defer`'s exception
+catcher, and most try/catch shims people layer on top of
+zsh.
+
+**Workaround** — set `setopt err_exit` and use explicit
+`||` checks (much more verbose, not equivalent semantically).
+
+---
+
+## #390 — `$PS4` default value missing — `set -x` produces no debug prompt
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$PS4]"'
+[[34m%x	%0N	%I	%_[0m	]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[$PS4]"'
+[]
+```
+
+zsh's default PS4 is a structured debug prompt:
+- `[34m` `[0m` — ANSI blue on/off
+- `%x` — current source file
+- `%0N` — function name
+- `%I` — line number in source
+- `%_` — context indent (one `+ ` per nesting depth)
+
+zshrs initializes PS4 to empty string. Every `set -x`
+trace line is emitted with no context prefix.
+
+**Where** — `src/ported/params/prompts.rs::init_defaults`
+or the PS4 special-parameter initializer: must seed with
+the canonical default. C-source
+`Src/params.c::createspecials` sets PS4 to
+`"%{\e[34m%}%x\t%0N\t%I\t%_%{\e[m%}\t"`.
+
+**Impact** — `set -x` debug output is unusable:
+
+```sh
+$ zsh -fc 'set -x; f() { echo body; }; f arg'
+[34mzsh:1[0m	[0m]f arg
+[34mzsh:1[0m	f	1	[0m]echo body
++f:1> echo body
+body
+
+$ zshrs -c 'set -x; f() { echo body; }; f arg'
+f arg
+echo body
+body
+```
+
+zshrs's trace shows raw commands with no source/line/depth
+context — can't tell which file/function the line came
+from, can't see nesting. Makes `set -x` debugging
+essentially useless for any non-trivial script.
+
+**Workaround** — explicitly set PS4 in `.zshrc`:
+```sh
+PS4=$'%{\e[34m%}%x\t%0N\t%I\t%_%{\e[m%}\t'
+```
+
+But this must be done by every user who relies on `-x`.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -21034,9 +21205,12 @@ above. Need to verify whether `coproc` itself works at all.
 | 385 | `$LINENO` inside function returns 1 instead of 0 — base-index off-by-one | **port-bug** | `$((LINENO - 1))` |
 | 386 | `readonly` no-args dumps nothing instead of listing readonly variables (zsh: full dump) | **port-bug** | parse `typeset -p VAR` for `-r` flag |
 | 387 | `read -p "prompt"` parsing — `-p` not recognized as coprocess flag, treats arg as identifier | **port-bug** | `print -n` to stderr + bare `read` |
+| 388 | `coproc CMD` doesn't open coprocess — `print -p`/`read -p`/`<&p` all broken, entire feature missing | **port-bug** | named pipes (mkfifo) for two-way IPC |
+| 389 | `TRAPZERR()` function-form not invoked on non-zero exit — error-tracing frameworks broken | **port-bug** | `setopt err_exit` + explicit `\|\|` checks |
+| 390 | `$PS4` default value empty — `set -x` produces no source/function/line/depth context | **port-bug** | seed `PS4=$'%F{blue}%x\\t%0N\\t%I\\t%_%f\\t'` in zshrc |
 
-Of three hundred and eighty-seven entries, two are fixed (5, 7),
-three hundred and eighty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and ninety entries, two are fixed (5, 7),
+three hundred and eighty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
