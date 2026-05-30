@@ -3779,4 +3779,117 @@ mod tests {
         let _g2 = zle_test_setup();
         let _: i32 = pastebuf(&[], 1, 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_misc.c
+    // c:76 doinsert / c:177 selfinsert / c:225 selfinsertunmeta /
+    // c:297 killwholeline / c:345 killbuffer / c:439 gosmacstransposechars /
+    // c:592 acceptline / c:604 acceptandhold / c:615 killline /
+    // c:662 regionlines / c:693 killregion / c:722 copyregionaskill /
+    // c:533 poundinsert
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:76 — `doinsert(empty)` is safe.
+    #[test]
+    fn doinsert_empty_chars_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        doinsert(&[]);
+    }
+
+    /// c:177 — `selfinsert` returns i32 (compile-time pin, alt).
+    #[test]
+    fn selfinsert_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = selfinsert(&[]);
+    }
+
+    /// c:225 — `selfinsertunmeta` returns i32 (compile-time pin, alt).
+    #[test]
+    fn selfinsertunmeta_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = selfinsertunmeta(&[]);
+    }
+
+    /// c:297 — `killwholeline` returns i32.
+    #[test]
+    fn killwholeline_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = killwholeline();
+    }
+
+    /// c:345 — `killbuffer` returns i32.
+    #[test]
+    fn killbuffer_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = killbuffer();
+    }
+
+    /// c:439 — `gosmacstransposechars` returns i32.
+    #[test]
+    fn gosmacstransposechars_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = gosmacstransposechars();
+    }
+
+    /// c:592 — `acceptline` returns i32.
+    #[test]
+    fn acceptline_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = acceptline();
+    }
+
+    /// c:604 — `acceptandhold` returns i32.
+    #[test]
+    fn acceptandhold_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = acceptandhold();
+    }
+
+    /// c:615 — `killline` returns i32.
+    #[test]
+    fn killline_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = killline();
+    }
+
+    /// c:662 — `regionlines` returns (usize, usize) tuple.
+    #[test]
+    fn regionlines_returns_usize_pair_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: (usize, usize) = regionlines();
+    }
+
+    /// c:693 — `killregion` returns i32.
+    #[test]
+    fn killregion_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = killregion();
+    }
+
+    /// c:722 — `copyregionaskill(empty)` returns i32.
+    #[test]
+    fn copyregionaskill_empty_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = copyregionaskill(&[]);
+    }
+
+    /// c:533 — `poundinsert` returns i32 (alt name pin).
+    #[test]
+    fn poundinsert_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = poundinsert();
+    }
 }
