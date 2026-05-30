@@ -516,6 +516,13 @@ demo_test!(d357_priority_queue, "357_priority_queue.zsh");
 demo_test!(d358_zsh_funcfile, "358_zsh_funcfile.zsh");
 demo_test!(d359_zsh_param_complete, "359_zsh_param_complete.zsh");
 demo_test!(d360_banner_v7, "360_banner_v7.zsh");
+demo_test!(d361_json_parser_full, "361_json_parser_full.zsh");
+demo_test!(d362_xml_parser_full, "362_xml_parser_full.zsh");
+demo_test!(d363_arith_expr_evaluator, "363_arith_expr_evaluator.zsh");
+demo_test!(d364_csv_rfc4180, "364_csv_rfc4180.zsh");
+demo_test!(d365_mini_lisp, "365_mini_lisp.zsh");
+demo_test!(d366_sudoku_solver_bt, "366_sudoku_solver_bt.zsh");
+demo_test!(d367_banner_v8, "367_banner_v8.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -883,6 +890,13 @@ fn every_demo_in_dir_has_a_test() {
         "358_zsh_funcfile.zsh",
         "359_zsh_param_complete.zsh",
         "360_banner_v7.zsh",
+        "361_json_parser_full.zsh",
+        "362_xml_parser_full.zsh",
+        "363_arith_expr_evaluator.zsh",
+        "364_csv_rfc4180.zsh",
+        "365_mini_lisp.zsh",
+        "366_sudoku_solver_bt.zsh",
+        "367_banner_v8.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {

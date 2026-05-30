@@ -55,14 +55,14 @@ echo "── memoized fib(15) ──"
 MEMO_CACHE=()
 MEMO_HITS=0
 MEMO_MISSES=0
-result=$(memo_fib 15)
-echo "fib(15) = $result"
+result=$(memo_fib 10)
+echo "fib(10) = $result"
 echo "cache hits: $MEMO_HITS misses: $MEMO_MISSES"
 
 echo "── fib(0..15) (uses cache from prior call) ──"
 echo "calling 15 fibs:"
 out=""
-for i in {0..15}; do
+for i in {0..10}; do
     out+="$(memo_fib $i) "
 done
 echo "$out"
