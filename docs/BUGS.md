@@ -16682,6 +16682,160 @@ done
 
 ---
 
+## #313 — `${(s.X.)str}` in scalar/echo context returns multiple args instead of single joined string
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's=a:b:c; echo "[${(s.:.)s}]"'
+[a b c]
+
+$ ./target/debug/zshrs --zsh -c 's=a:b:c; echo "[${(s.:.)s}]"'
+[a] [b] [c]
+```
+
+`${(s.X.)str}` splits `str` on delimiter `X`. In scalar
+context (no `@` flag), zsh joins the split result back with
+IFS (space) into a single argument — `[a b c]`.
+
+zshrs treats the split result as still-array even in scalar
+context, producing 3 separate echo arguments — `[a]` `[b]` `[c]`.
+
+The bracketing `[${...}]` shows the difference: zsh wraps once
+around the joined result; zshrs wraps once but echo sees 3
+args so prints 3 bracketed words.
+
+The `(@s.X.)` array-context form works in both:
+```sh
+$ both-shells -fc 's=a:b:c; arr=("${(@s.:.)s}"); echo "n=${#arr}"'
+n=3
+```
+
+So zshrs's split machinery produces the array correctly, but
+the scalar-context-join post-processing is missing.
+
+**Where** — `src/ported/paramflags.rs::after_split_to_scalar`:
+no IFS-join step when split-flag is used without `@`. C-source
+`Src/subst.c::dosubst` joins the split-array with `ifs[0]` when
+the outer context is scalar.
+
+**Impact** — split-and-rejoin patterns produce wrong output:
+
+```sh
+words="${(s. .)log_line}"
+echo "Parsed: $words"
+# zsh: prints "Parsed: word1 word2 word3" (joined with space)
+# zshrs: echo gets 3 args, all but first lost in this case OR multiple args output
+```
+
+**Workaround** — explicitly use `[*]` or `(j: :)`:
+```sh
+words="${(j. .)${(@s. .)log_line}}"   # array-split then join
+```
+
+---
+
+## #314 — `${(o[@]s.X.)str}` sort flag not applied after split
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's=c:a:b; print -l "${(@os.:.)s}"'
+a
+b
+c
+
+$ ./target/debug/zshrs --zsh -c 's=c:a:b; print -l "${(@os.:.)s}"'
+c
+a
+b
+```
+
+`(o)` flag sorts the array. After `(s.X.)` split produces the
+intermediate array, the `(o)` should sort. zsh applies sort;
+zshrs returns unsorted input order.
+
+Flag composition order shouldn't matter — `(@os.:.)`, `(os@.:.)`,
+`(s.:.@o)` should all sort. zshrs's flag dispatcher applies
+the split but skips the subsequent sort.
+
+**Where** — `src/ported/paramflags.rs::compose_split_and_sort`:
+sort flag applied before split (which is a no-op on the
+original scalar), not after. C-source `Src/subst.c::dosubst`
+applies flags in documented order: split first, then sort/
+unique/etc.
+
+**Impact** — sort-after-split idioms broken:
+
+```sh
+# Get unique sorted list of values from colon-separated env var
+sorted_unique=("${(@uos.:.)PATH}")
+print -l "${sorted_unique[@]}"
+# zsh: PATH split, deduped, sorted
+# zshrs: PATH split only, no dedup/sort applied
+```
+
+Combined with #315 (unique flag also not applied after split),
+zshrs's flag-composition has multiple gaps in the split-then-
+process pattern.
+
+**Workaround** — two-step:
+```sh
+split=("${(@s.:.)PATH}")
+sorted=("${(o)split[@]}")
+```
+
+---
+
+## #315 — `${(u[@]s.X.)str}` unique flag not applied after split
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's=a:b:a:c; print -l "${(@us.:.)s}"'
+a
+b
+c
+
+$ ./target/debug/zshrs --zsh -c 's=a:b:a:c; print -l "${(@us.:.)s}"'
+a
+b
+a
+c
+```
+
+`(u)` flag dedups the array. After `(s.X.)` split produces
+`(a b a c)`, the `(u)` should dedup to `(a b c)`. zshrs keeps
+duplicates.
+
+Companion bug to #314 — same flag-composition gap. Both
+`(o)` (sort) and `(u)` (unique) fail to apply after split.
+
+**Where** — same as #314 — `src/ported/paramflags.rs::compose_split_and_sort`
+applies dedup before split (on the original scalar — no-op)
+rather than after.
+
+**Impact** — PATH-deduplication and similar idioms broken:
+
+```sh
+# Dedupe colon-separated path
+path_unique=("${(@us.:.)PATH}")
+typeset -gx PATH="${(j.:.)path_unique}"
+# zsh: PATH compacted to unique entries
+# zshrs: PATH unchanged (duplicates retained)
+```
+
+Common in `.zshrc` setups that source multiple plugins each
+prepending to PATH and want to dedupe.
+
+**Workaround** — two-step:
+```sh
+split=("${(@s.:.)PATH}")
+deduped=("${(u)split[@]}")
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -16998,9 +17152,12 @@ done
 | 310 | `${(@)arr:#pat}` filter via `(@)` flag form not applied (works with `[@]` subscript) | **port-bug** | use `[@]` subscript form |
 | 311 | `${(@k)assoc:#pat}`/`${(@v)assoc:#pat}` filter on assoc keys/values not applied | **port-bug** | explicit `for k v in "${(@kv)h}"` loop |
 | 312 | `${(v)assoc:#pat}` scalar-context filter on assoc values not applied | **port-bug** | per-element loop |
+| 313 | `${(s.X.)str}` scalar-context split returns multiple echo args instead of joined string | **port-bug** | `${(j: :)${(@s.X.)str}}` rejoin |
+| 314 | `${(os.X.)str}` sort flag not applied after split — flag-composition gap | **port-bug** | two-step: split into array, then `(o)` |
+| 315 | `${(us.X.)str}` unique flag not applied after split — PATH-dedup idiom broken | **port-bug** | two-step: split into array, then `(u)` |
 
-Of three hundred and twelve entries, two are fixed (5, 7), three
-hundred and six remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and fifteen entries, two are fixed (5, 7), three
+hundred and nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -17022,5 +17179,5 @@ hundred and six remain open port-bugs/perf-issues (4, 8, 9, 10,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
-305, 306, 307, 308, 309, 310, 311, 312), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315), and four
+were zsh-correct behavior misframed by demos (1, 2, 3, 6).
