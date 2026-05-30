@@ -2087,4 +2087,128 @@ mod tests {
         let got = tbuf.with(|tb| tb.borrow().clone());
         assert!(got.is_empty(), "empty input must not grow buffer");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/text.c
+    // c:48-51 cond_binary_ops table / c:65 taddchr / c:146 taddstr /
+    // c:90 taddpending / tdopending
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:48-51 — `cond_binary_ops` contains the canonical 15 entries:
+    /// 6 string comparators (=, ==, !=, <, >, =~), 3 file-stamp ops
+    /// (-nt, -ot, -ef), 6 arithmetic comparators (-eq..-ge).
+    #[test]
+    fn cond_binary_ops_has_15_entries() {
+        assert_eq!(COND_BINARY_OPS.len(), 15,
+            "cond_binary_ops must have 15 entries; got {}",
+            COND_BINARY_OPS.len());
+    }
+
+    /// c:48-51 — every cond_binary_ops entry is non-empty.
+    #[test]
+    fn cond_binary_ops_all_non_empty() {
+        for op in COND_BINARY_OPS {
+            assert!(!op.is_empty(),
+                "cond_binary_op must be non-empty: {:?}", op);
+        }
+    }
+
+    /// c:48-51 — every cond_binary_ops entry length ≤ 3 (longest is `-nt`).
+    #[test]
+    fn cond_binary_ops_max_length_three() {
+        for op in COND_BINARY_OPS {
+            assert!(op.len() <= 3,
+                "cond_binary_op must be ≤ 3 chars: {:?}", op);
+        }
+    }
+
+    /// c:48-51 — `=~` is the regex match operator (last entry).
+    #[test]
+    fn cond_binary_ops_last_is_regex_match() {
+        assert_eq!(*COND_BINARY_OPS.last().unwrap(), "=~",
+            "regex-match `=~` must be last");
+    }
+
+    /// c:48-51 — `=` is the first entry (assignment-style comparator).
+    #[test]
+    fn cond_binary_ops_first_is_eq() {
+        assert_eq!(COND_BINARY_OPS[0], "=",
+            "first entry must be `=`");
+    }
+
+    /// c:32 — `is_cond_binary_op` returns 0 or 1 (bool-as-i32).
+    #[test]
+    fn is_cond_binary_op_returns_only_0_or_1() {
+        for s in ["=", "==", "==", "foo", "", "[", "<<"] {
+            let r = is_cond_binary_op(s);
+            assert!(r == 0 || r == 1,
+                "is_cond_binary_op({:?}) = {} not in {{0,1}}", s, r);
+        }
+    }
+
+    /// c:32 — `is_cond_binary_op` is pure (no global mutation).
+    #[test]
+    fn is_cond_binary_op_is_pure() {
+        let _g = crate::test_util::global_state_lock();
+        tbuf.with(|tb| tb.borrow_mut().clear());
+        let cap_before = tbuf.with(|tb| tb.borrow().len());
+        let _ = is_cond_binary_op("==");
+        let _ = is_cond_binary_op("foo");
+        let cap_after = tbuf.with(|tb| tb.borrow().len());
+        assert_eq!(cap_before, cap_after,
+            "is_cond_binary_op must not mutate tbuf");
+    }
+
+    /// c:65 — `taddchr` appends multiple distinct bytes.
+    #[test]
+    fn taddchr_appends_multiple_bytes_in_sequence() {
+        let _g = crate::test_util::global_state_lock();
+        tbuf.with(|tb| tb.borrow_mut().clear());
+        tnewlins.with(|c| *c.borrow_mut() = true);
+        taddchr(b'a' as i32);
+        taddchr(b'b' as i32);
+        taddchr(b'c' as i32);
+        let got = tbuf.with(|tb| tb.borrow().clone());
+        assert_eq!(&got[..], b"abc", "taddchr must append in order");
+    }
+
+    /// c:146 — `taddstr` very long string doesn't panic (buffer grows).
+    #[test]
+    fn taddstr_large_input_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        tbuf.with(|tb| tb.borrow_mut().clear());
+        tnewlins.with(|c| *c.borrow_mut() = true);
+        let long = "x".repeat(10_000);
+        taddstr(&long);
+        let got_len = tbuf.with(|tb| tb.borrow().len());
+        assert_eq!(got_len, 10_000, "buffer must hold all 10000 bytes");
+    }
+
+    /// c:90 — `taddpending` with two long strings doesn't panic.
+    #[test]
+    fn taddpending_long_strings_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let s1 = "a".repeat(500);
+        let s2 = "b".repeat(500);
+        taddpending(&s1, &s2);
+    }
+
+    /// c:90 — `tdopending` on empty/never-pending state safe.
+    #[test]
+    fn tdopending_on_empty_state_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        tdopending();
+        tdopending();
+        tdopending();
+    }
+
+    /// c:32 — `is_cond_binary_op` rejects substring of valid op.
+    /// `=` is valid; `=A` should be rejected (no prefix-matching).
+    #[test]
+    fn is_cond_binary_op_rejects_prefix_substring() {
+        assert_eq!(is_cond_binary_op("=A"), 0,
+            "`=A` is NOT a binary op (no prefix-match semantics)");
+        assert_eq!(is_cond_binary_op("=="), 1,
+            "`==` IS a binary op");
+    }
 }
