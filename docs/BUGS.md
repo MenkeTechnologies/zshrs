@@ -4991,6 +4991,185 @@ class and `{N,M}` quantifier:
 
 ---
 
+## #100 — `typeset -R N x="hello"` doesn't right-truncate the value
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -L 3 x="hello"; echo "L: [$x]"; typeset -R 3 y="hello"; echo "R: [$y]"'
+L: [hel]
+R: [llo]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -L 3 x="hello"; echo "L: [$x]"; typeset -R 3 y="hello"; echo "R: [$y]"'
+L: [hel]
+R: [hello]
+```
+
+`typeset -L N` (left-justify, truncate at N) — both shells return
+`hel` (correct).
+
+`typeset -R N` (right-justify, truncate at N) — zsh returns `llo`
+(the rightmost 3 chars). zshrs returns the unmodified full
+`hello` — the `-R N` attribute is recorded but not enforced on
+assignment.
+
+Per `man zshbuiltins`:
+> `-L NUM` — Left-justify the value in a field of width NUM. If
+> NUM is non-zero, longer strings are truncated.
+> `-R NUM` — Right-justify and truncate similarly.
+
+**Where** — `src/ported/builtin_typeset.rs::apply_attrs`: the
+`-R N` truncation code path is missing or no-op. `-L N` works,
+suggesting only the right-justify branch is unimplemented.
+C-source `Src/params.c::sethparam` calls `padstring(..., right)`
+based on the flag.
+
+**Impact** — fixed-width columnar output formatting via
+`typeset -R N` is broken. Any code formatting tabular data:
+
+```sh
+typeset -R 5 num=42
+typeset -L 8 name="alice"
+echo "$num | $name"     # zsh:    "   42 | alice   "
+                         # zshrs:  "42 | alice   "   (num not padded/truncated)
+```
+
+**Workaround** — explicit printf width specifier:
+```sh
+printf "%5s | %-8s\n" "$num" "$name"   # both shells: same output
+```
+
+---
+
+## #101 — `exec funcname` (shell function) errors "not found" instead of running
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "in fn"; }; exec f'
+in fn
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo "in fn"; }; exec f'
+zshrs: exec: f: not found
+```
+
+`exec cmd` should replace the shell with `cmd`. When `cmd` is a
+shell-defined function, zsh runs the function in the current
+process (no fork, no PATH lookup) — effectively the last act of
+the shell, after which it exits.
+
+zshrs's `exec` does PATH-only lookup, errors when `f` isn't an
+external binary. Loses the "exec a shell function as last act"
+semantic.
+
+Subshell variant (`(exec fn)`) is the same:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "in fn"; }; (exec f); echo "after"'
+in fn
+after
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo "in fn"; }; (exec f); echo "after"' 2>&1
+zshrs: exec: f: not found
+after
+```
+
+The subshell runs at all in zshrs, but immediately errors on
+exec. (The `after` line still prints because the subshell exits
+on error, and `#94`'s parent-terminates-with-subshell only fires
+on clean exec success.)
+
+**Where** — `src/ported/builtin_exec.rs::resolve_target`: looks
+up `target` in PATH only. Should check the function table first
+(`shell.functions.get(target)`) and call the function in the
+current process if found. C-source `Src/exec.c::execcmd` falls
+through to `Builtin/External/Function` dispatch even from `exec`
+context.
+
+**Impact** — `exec` chaining of shell functions is broken. Common
+pattern: define a wrapper function, then `exec` it at end-of-init
+to swap into it:
+
+```sh
+init_setup() { ...; }
+init_setup    # do setup
+exec main    # become main loop forever
+# zsh: process becomes main()
+# zshrs: errors out
+```
+
+**Workaround** — drop `exec` and just call the function:
+```sh
+main    # last line of script
+```
+Or use a real external command if the goal is genuine process
+replacement.
+
+---
+
+## #102 — `$-` (current option flags) doesn't include `f` from `-f` startup flag
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$-]"'
+[569Xf]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[$-]"'
+[569X]
+```
+
+`$-` is the special parameter listing currently-set shell options
+as single-letter codes. When zsh is invoked with `-f` (skip rc
+files), the `f` flag appears in `$-`. zshrs's `$-` omits it.
+
+Per `man zsh` § STARTUP:
+> `-f` — Equivalent to `--no-rcs`. Suppresses sourcing of all
+> startup files.
+
+And per `man zshparam`:
+> `$-` — Flags supplied to the shell on invocation or by the set
+> builtin.
+
+Runtime-toggled options DO show up:
+```sh
+$ ./target/debug/zshrs --zsh -c 'set -x; echo "[$-]"; set +x' 2>&1 | grep '\['
+[569Xx]
+```
+
+`x` is properly added when `set -x` runs. So the bug is
+specifically: startup-time `-f` doesn't propagate into `$-`.
+
+**Where** — `src/ported/init.rs::apply_startup_flags`: parses
+`-f` and sets internal NO_RCS state but doesn't add `f` to the
+`$-` letter set. `src/ported/params.rs::compute_dash_param` walks
+the option table looking for letters; the `-f` startup-only flag
+might not be in the option table at all (it's a CLI-only
+shortcut for `--no-rcs`).
+
+**Impact** — defensive code checking `$-` for `f` to detect
+"plain shell" mode doesn't work:
+
+```sh
+case "$-" in
+    *f*) echo "shell started with -f (no rc files)" ;;
+    *)   echo "rc files were sourced" ;;
+esac
+# zsh: prints "started with -f" under -fc invocation
+# zshrs: always prints "rc files were sourced" (false)
+```
+
+Related to bug #87 (`setopt` no-args listing missing `nohashdirs`/
+`norcs` under `-fc`) — both stem from `-f` not fully wired
+through.
+
+**Workaround** — none portable; rely on `[[ -o no_rcs ]]` direct
+option test instead:
+```sh
+[[ -o no_rcs ]] && echo "no rc files"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -5094,12 +5273,16 @@ class and `{N,M}` quantifier:
 | 97 | `typeset -r` listing omits shell-internal readonly params (`!=0` etc.) | **port-bug** | n/a — semantic still readonly |
 | 98 | `[ "a" \< "b" ]` lex-compare bash ext accepted (zsh errors) | **port-bug** | `[[ < ]]` double-bracket |
 | 99 | `(#cN,M)` count quantifier + other `(#x)` flags not recognized | **port-bug** | `=~ {N,M}` regex form |
+| 100 | `typeset -R N x="hello"` doesn't right-truncate (full string kept) | **port-bug** | `printf "%Ns"` instead |
+| 101 | `exec funcname` errors "not found" instead of running shell fn | **port-bug** | drop `exec`, call fn directly |
+| 102 | `$-` doesn't include `f` from `-f` startup flag | **port-bug** | `[[ -o no_rcs ]]` direct option test |
 
-Of ninety-nine entries, two are fixed (5, 7), ninety-three remain
+Of one hundred two entries, two are fixed (5, 7), ninety-six remain
 open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85,
-86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99), and four
-were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101,
+102), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
