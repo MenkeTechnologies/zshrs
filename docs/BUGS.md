@@ -7565,6 +7565,159 @@ echo "key=${(qq)config}" >> /etc/myapp.conf
 
 ---
 
+## #145 — `${(k)h[name]}` key-existence query errors "bad substitution"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=(red 1 blue 2); echo "[${(k)h[red]}]"; echo "[${(k)h[nope]}]"'
+[red]
+[]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(red 1 blue 2); echo "[${(k)h[red]}]"' 2>&1
+zsh:1: bad substitution
+```
+
+`${(k)h[name]}` is the documented zsh form for "if `name` is a
+key in assoc array `h`, return the key; otherwise return empty".
+This is a common test idiom for "does key exist" without
+ambiguity around empty-value keys.
+
+zshrs's `(k)` flag parser doesn't handle the `[name]` subscript
+form — only `${(k)h[@]}` (all-keys) and `${(@k)h}` (all-keys
+array) work.
+
+Per `man zshparam`:
+> `(k)` — When this flag is followed by a subscript, the keys
+> matching the subscript are returned instead of the values.
+
+**Where** — `src/ported/paramsubst.rs::parse_k_flag`: doesn't
+accept named-subscript after `(k)` flag. C-source
+`Src/subst.c::dosubst` handles `[name]` as a key-existence
+lookup in the `PM_HASHED|(k)` code path.
+
+**Impact** — assoc-array existence-test idioms break:
+
+```sh
+typeset -A user_perms=(alice read bob write)
+for u in alice bob charlie; do
+    if [[ -n "${(k)user_perms[$u]}" ]]; then
+        echo "$u has perms"
+    fi
+done
+# zsh: prints "alice has perms", "bob has perms"
+# zshrs: bad substitution error
+```
+
+**Workaround** — use `${+h[name]}` (parameter-defined test) or
+`(( ${+h[name]} ))`:
+```sh
+if (( ${+user_perms[$u]} )); then
+    echo "$u has perms"
+fi
+```
+
+---
+
+## #146 — `{ cmd; } arg arg` compound-with-trailing-args silently accepted
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '{ echo a; } b c' 2>&1
+zsh:1: parse error near `b'
+
+$ ./target/debug/zshrs --zsh -c '{ echo a; } b c' 2>&1
+a
+zshrs: command not found: b
+```
+
+zsh rejects `{ cmd; } arg arg` syntax at parse time (compound
+groups can't take trailing args). zshrs splits it into two
+commands: runs `{ echo a; }` (printing `a`) then runs `b c` as
+a separate command (which fails with "command not found").
+
+The split behavior masks the syntax error — the user might not
+notice the parser is treating their code differently than
+intended.
+
+Per zsh grammar, `{ ... }` is a `sublist_terminator` and
+shouldn't be followed by additional words on the same logical
+line. zsh strictly enforces this.
+
+**Where** — `src/ported/parse.rs::parse_compound`: doesn't
+require newline/`;`/`&` after `}` before next command starts.
+Treats whitespace after `}` as command separator. C-source
+`Src/parse.c::par_cmd` requires explicit terminator.
+
+**Impact** — typos that accidentally place tokens after a
+compound group don't get caught:
+
+```sh
+# user typo: forgot to wrap "echo b" in the braces
+{ echo a; } echo b
+# zsh: parse error (caught immediately)
+# zshrs: runs `echo a`, then fails to find command `echo b`
+#   — partial execution + unclear error
+```
+
+Similar to bug #141 (`;;` outside case silently accepted) — permissive
+parser hides programming errors.
+
+**Workaround** — none — be careful with brace syntax.
+
+---
+
+## #147 — `${(@)arr:mod}` modifier dropped when applied with `(@)` flag
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(/a/b.txt /c/d.log); echo "${(@)a:t}"'
+b.txt d.log
+
+$ ./target/debug/zshrs --zsh -c 'a=(/a/b.txt /c/d.log); echo "${(@)a:t}"'
+/a/b.txt /c/d.log
+```
+
+`${(@)arr:t}` should apply the `:t` (tail) modifier to each
+element of the array after `@` array-context flag. zsh applies
+the modifier to each element → `b.txt d.log`. zshrs ignores
+the modifier entirely → full paths returned.
+
+`${arr[@]:t}` (subscript-style array context) works in both:
+```sh
+$ both-shells -fc 'a=(/a/b.txt /c/d.log); echo "${a[@]:t}"'
+b.txt d.log
+```
+
+So the bug is the **flag-style `(@)`** form when combined with
+a trailing modifier. Same family as #91 (modifier dropped after
+`(j)`), #82, #83, #108 — flag+modifier combination consistently
+broken.
+
+**Where** — `src/ported/paramsubst.rs::parse_flag_then_modifier`:
+when the expansion has both a leading flag (like `(@)`, `(j)`,
+`(s)`) and a trailing `:modifier`, the modifier parse path
+isn't reached. C-source `Src/subst.c::modify` dispatches
+modifiers regardless of preceding flag.
+
+**Impact** — array transforms break in the flag-first form:
+
+```sh
+paths=(/var/log/a.log /var/log/b.log /var/log/c.log)
+echo "${(@)paths:t}"
+# zsh: a.log b.log c.log
+# zshrs: /var/log/a.log /var/log/b.log /var/log/c.log
+```
+
+**Workaround** — use subscript form `${arr[@]:mod}`:
+```sh
+echo "${paths[@]:t}"   # both shells: tailed
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -7713,9 +7866,12 @@ echo "key=${(qq)config}" >> /etc/myapp.conf
 | 142 | Orphan-terminator parse error: "orphan terminator" + double-print | **port-bug** | none |
 | 143 | `$TRY_BLOCK_ERROR` initial value is `0` in zshrs (zsh: `-1`) | **port-bug** | explicit state-flag |
 | 144 | `${(q)str}` with newline uses `\<newline>` not `$'\n'` form | **port-bug** | `(qq)` double-quote form |
+| 145 | `${(k)h[name]}` key-existence query errors "bad substitution" | **port-bug** | `(( ${+h[name]} ))` |
+| 146 | `{ cmd; } arg` trailing args silently accepted (zsh: parse error) | **port-bug** | careful braces |
+| 147 | `${(@)arr:mod}` modifier dropped after `(@)` flag | **port-bug** | `${arr[@]:mod}` subscript form |
 
-Of one hundred forty-four entries, two are fixed (5, 7), one
-hundred thirty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of one hundred forty-seven entries, two are fixed (5, 7), one
+hundred forty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -7724,5 +7880,5 @@ hundred thirty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
-136, 137, 138, 139, 140, 141, 142, 143, 144), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147), and
+four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
