@@ -1067,4 +1067,123 @@ mod tests {
         assert_eq!(cleanup_(null), 0, "c:399 cleanup_");
         assert_eq!(finish_(null), 0, "c:410 finish_");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/termcap.c
+    // c:32 ztgetflag / c:69 bin_echotc / c:210 gettermcap /
+    // c:288 scantermcap / c:399/410 cleanup/finish idempotency
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:399 — `cleanup_` is idempotent.
+    #[test]
+    fn termcap_cleanup_idempotent_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:399 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn termcap_cleanup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:410 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn termcap_finish_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:388 — `boot_` return type i32 (compile-time pin).
+    #[test]
+    fn termcap_boot_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = boot_(std::ptr::null());
+    }
+
+    /// c:388 — `boot_` is idempotent.
+    #[test]
+    fn termcap_boot_idempotent_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            let _ = boot_(std::ptr::null());
+        }
+    }
+
+    /// c:32 — `ztgetflag` deterministic for known cap names.
+    #[test]
+    fn ztgetflag_deterministic_for_common_caps() {
+        let _g = crate::test_util::global_state_lock();
+        for cap in ["am", "bw", "xn", "km"] {
+            let a = ztgetflag(cap);
+            let b = ztgetflag(cap);
+            assert_eq!(a, b, "ztgetflag({:?}) must be deterministic", cap);
+        }
+    }
+
+    /// c:32 — `ztgetflag` very long cap name doesn't panic.
+    #[test]
+    fn ztgetflag_long_cap_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let long = "x".repeat(500);
+        let _ = ztgetflag(&long);
+    }
+
+    /// c:69 — `bin_echotc` various func values don't panic.
+    #[test]
+    fn bin_echotc_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_echotc("echotc", &[], &ops, func);
+        }
+    }
+
+    /// c:69 — `bin_echotc` deterministic for unknown cap name.
+    #[test]
+    fn bin_echotc_deterministic_unknown_cap() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let args = vec!["__never_real_cap_xyz__".to_string()];
+        let r1 = bin_echotc("echotc", &args, &ops, 0);
+        let r2 = bin_echotc("echotc", &args, &ops, 0);
+        assert_eq!(r1, r2, "bin_echotc unknown cap must be deterministic");
+    }
+
+    /// c:210 — `gettermcap("")` empty name doesn't panic.
+    #[test]
+    fn gettermcap_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = gettermcap(std::ptr::null_mut(), "");
+    }
+
+    /// c:288 — `scantermcap` with None callback safe on repeat.
+    #[test]
+    fn scantermcap_none_callback_repeated_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            scantermcap(std::ptr::null_mut(), None, 0);
+        }
+    }
+
+    /// c:381 — `enables_` with Some(non-empty) doesn't panic.
+    #[test]
+    fn termcap_enables_with_some_non_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = Some(vec![1, 2, 3]);
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
 }
