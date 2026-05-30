@@ -23527,6 +23527,179 @@ equivalent to `%N` semantics but covers most cases.)
 
 ---
 
+## #439 — `%>>...` and `%<<...` prompt truncation directives not recognized
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%>>"'
+(empty)
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%>>"'
+%>>
+```
+
+`%>>...` and `%<<...` are zsh prompt-truncation
+directives — they bound the width of a substring of the
+prompt, useful for keeping the prompt within a fixed
+column count when paths get long.
+
+Variants:
+- `%N>>...truncated...%>>` — truncate text between
+  markers to N columns
+- `%N<<...truncated...%<<` — same but truncating from
+  the left
+- `%>>` / `%<<` alone — reset truncation
+
+zsh accepts and processes these (with no markers it emits
+empty); zshrs emits literal text.
+
+**Where** — `src/ported/prompts/expand.rs::handle_truncate`:
+add handlers for `>>` and `<<` width-bounded segments.
+C-source `Src/prompt.c::tsetcap` handles these as
+state-machine transitions.
+
+**Impact** — fancy prompts with width-aware truncation
+break. p10k and powerlevel9k specifically use these for
+"truncate path if too long" segments:
+
+```sh
+PS1='%30<<…%~%<<%# '
+# zsh: shows path truncated to 30 cols with "…" prefix
+# zshrs: shows literal "%30<<…%~%<< " — visible garbage
+```
+
+Combined with #438 (`%N`), the prompt-escape coverage
+gap is now ~7 documented directives.
+
+**Workaround** — use `${PWD/#$HOME/~}` and manual
+truncation logic in a precmd hook.
+
+---
+
+## #440 — `**` recursive glob breadth-first ordering instead of zsh's depth-first
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg/{a,b,c} && touch /tmp/_zg/a/x /tmp/_zg/b/y /tmp/_zg/c/z; echo /tmp/_zg/**/*'
+/tmp/_zg/a /tmp/_zg/a/x /tmp/_zg/b /tmp/_zg/b/y /tmp/_zg/c /tmp/_zg/c/z
+
+$ ./target/debug/zshrs --zsh -c 'mkdir -p /tmp/_zg/{a,b,c} && touch /tmp/_zg/a/x /tmp/_zg/b/y /tmp/_zg/c/z; echo /tmp/_zg/**/*'
+/tmp/_zg/a /tmp/_zg/b /tmp/_zg/c /tmp/_zg/a/x /tmp/_zg/b/y /tmp/_zg/c/z
+```
+
+zsh's default `**` traversal order is **alphabetical
+depth-first**: each directory entry, then its children,
+before moving to the next sibling. So `a` is followed by
+`a/x` before going to `b`.
+
+zshrs's `**` traversal is **breadth-first**: all
+top-level entries first (`a b c`), then all grandchildren
+(`a/x b/y c/z`).
+
+The sort positions differ — both shells produce the same
+set of matches but in different order. Scripts that rely
+on the order (e.g., processing files before their parent
+directory for cleanup) break.
+
+**Where** — `src/ported/glob/recursive.rs::traverse`:
+should walk depth-first instead of breadth-first.
+C-source `Src/glob.c::descend` recursively walks each
+directory entry inline (depth-first).
+
+**Impact** — order-dependent scripts produce wrong
+results:
+
+```sh
+# Recursive cleanup: delete files before their dirs
+for entry in /tmp/work/**/*(.); do
+    rm "$entry"      # remove file
+done
+for entry in /tmp/work/**/*(/) /tmp/work; do
+    rmdir "$entry"   # remove dir (now-empty)
+done
+# zsh: file order ensures dirs are emptied before rmdir
+# zshrs: BFS order may try to rmdir non-empty dirs (errors)
+```
+
+Less critical when paired with explicit dir-vs-file
+selectors `(.)`/`(/)`, but order-sensitive without them.
+
+Also affects diff-based comparisons of `**` output —
+scripts that snapshot a directory tree and compare see
+spurious "different" results despite identical contents.
+
+**Workaround** — explicit sort:
+```sh
+print -l /tmp/_zg/**/* | sort
+```
+
+---
+
+## #441 — `pwd` builtin returns `$PWD` blindly when disagreement with `getcwd()` — zsh validates
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /; PWD=/tmp; pwd; echo "[$PWD]"'
+/
+[/tmp]
+
+$ ./target/debug/zshrs --zsh -c 'cd /; PWD=/tmp; pwd; echo "[$PWD]"'
+/tmp
+[/tmp]
+```
+
+zsh's `pwd` (logical mode, default) **validates** that
+the `$PWD` parameter matches the actual current
+directory via `getcwd(3)`. If they disagree (because the
+user manually assigned to `$PWD`), `pwd` falls back to
+the physical `getcwd()` result.
+
+zshrs's `pwd` blindly uses `$PWD` — meaning user code
+can spoof the apparent current directory by assigning to
+`$PWD`. The reported `pwd` doesn't match where the shell
+actually is.
+
+**Where** — `src/ported/builtins/pwd.rs::logical_pwd`:
+must call `getcwd()` and compare against `$PWD`, falling
+back to `getcwd()` on mismatch. C-source
+`Src/builtins.c::bin_pwd` calls `pwd_get()` which checks
+`getcwd()` validity before trusting `$PWD`.
+
+**Impact** — **security-relevant**. Scripts that rely on
+`pwd` to determine "where am I" can be deceived:
+
+```sh
+# Sanity check before destructive op
+if [[ "$(pwd)" == "/safe/sandbox"* ]]; then
+    rm -rf ./*
+fi
+# zsh: pwd uses getcwd() — accurate path check
+# zshrs: pwd uses $PWD — if $PWD was spoofed before
+#        this code, rm runs in wrong dir
+```
+
+Affects defensive-coding patterns in deployment scripts
+and CI workers that branch on `pwd` output for safety.
+
+Related to #416 (unset PATH ignored) and #423/#424
+(tied-param breakage) — the parameter/cwd plumbing in
+zshrs is broadly disconnected from kernel-level state.
+
+**Workaround** — use `command pwd -P` (physical mode) for
+trust-critical checks:
+```sh
+actual_pwd=$(command pwd -P)
+```
+
+(`-P` forces physical resolution via `getcwd()` even in
+logical mode — but needs verification that zshrs's `pwd -P`
+honors that.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -23969,9 +24142,12 @@ equivalent to `%N` semantics but covers most cases.)
 | 436 | `${(q)a[N]}` flag + subscript combination errors "bad substitution" — parser doesn't combine flags with subscripts | **port-bug** | bind to intermediate variable |
 | 437 | regex-compile error diagnostic missing details — "failed to compile regex" with no specific reason (zsh: "brackets not balanced" etc.) | **port-bug** | external grep -E test |
 | 438 | `%N` prompt escape (script/fn name) not expanded — extends prompt-escape gap family | **port-bug** | use `$0` in prompt function |
+| 439 | `%>>...` / `%<<...` prompt truncation directives not recognized — printed literally | **port-bug** | manual `${PWD/#$HOME/~}` + precmd truncation |
+| 440 | `**` recursive glob breadth-first ordering instead of zsh's alphabetical depth-first — order-dependent scripts break | **port-bug** | pipe through `sort` |
+| 441 | `pwd` builtin returns spoofed `$PWD` blindly — security-relevant, zsh validates against `getcwd()` | **port-bug** | `command pwd -P` for trusted checks |
 
-Of four hundred and thirty-eight entries, two are fixed (5, 7),
-four hundred and thirty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and forty-one entries, two are fixed (5, 7),
+four hundred and thirty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
