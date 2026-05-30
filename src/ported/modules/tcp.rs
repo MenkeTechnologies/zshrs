@@ -1584,4 +1584,132 @@ mod tests {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/tcp.c
+    // c:65 zsh_inet_ntop / c:83 zsh_inet_pton / c:107 zsh_gethostbyname2 /
+    // c:319 bin_ztcp / c:844-890 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:65 — `zsh_inet_ntop` for empty bytes doesn't panic.
+    #[test]
+    fn zsh_inet_ntop_empty_bytes_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = zsh_inet_ntop(libc::AF_INET, &[]);
+    }
+
+    /// c:65 — `zsh_inet_ntop` for canonical IPv4 returns dotted-quad.
+    #[test]
+    fn zsh_inet_ntop_ipv4_canonical_form() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zsh_inet_ntop(libc::AF_INET, &[127, 0, 0, 1]);
+        assert!(r.is_some(), "127.0.0.1 must convert");
+        assert_eq!(r.unwrap(), "127.0.0.1",
+            "must produce canonical dotted-quad");
+    }
+
+    /// c:65 — `zsh_inet_ntop` invalid family returns None.
+    #[test]
+    fn zsh_inet_ntop_invalid_family_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zsh_inet_ntop(99999, &[1, 2, 3, 4]);
+        assert!(r.is_none(), "invalid AF must return None");
+    }
+
+    /// c:83 — `zsh_inet_pton("")` empty returns failure code (≤ 0).
+    #[test]
+    fn zsh_inet_pton_empty_returns_failure() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 16];
+        let r = zsh_inet_pton(libc::AF_INET, "", &mut buf);
+        assert!(r <= 0, "empty pton must fail (≤ 0), got {}", r);
+    }
+
+    /// c:83 — `zsh_inet_pton("127.0.0.1", AF_INET)` parses to [127,0,0,1].
+    #[test]
+    fn zsh_inet_pton_localhost_parses_correctly() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 16];
+        let r = zsh_inet_pton(libc::AF_INET, "127.0.0.1", &mut buf);
+        assert_eq!(r, 1, "valid IPv4 must return 1");
+        assert_eq!(&buf[..4], &[127, 0, 0, 1]);
+    }
+
+    /// c:107 — `zsh_gethostbyname2("")` returns Vec type.
+    #[test]
+    fn zsh_gethostbyname2_empty_name_returns_vec_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<[u8; 4]> = zsh_gethostbyname2("", libc::AF_INET);
+    }
+
+    /// c:319 — `bin_ztcp` empty args non-negative.
+    #[test]
+    fn bin_ztcp_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_ztcp("ztcp", &[], &ops, 0);
+        assert!(r >= 0, "bin_ztcp empty must be ≥ 0, got {}", r);
+    }
+
+    /// c:319 — `bin_ztcp` various func values don't panic.
+    #[test]
+    fn bin_ztcp_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_ztcp("ztcp", &[], &ops, func);
+        }
+    }
+
+    /// c:844 — `setup_` is idempotent.
+    #[test]
+    fn tcp_setup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:882 — `cleanup_` is idempotent.
+    #[test]
+    fn tcp_cleanup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:890 — `finish_` is idempotent.
+    #[test]
+    fn tcp_finish_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:319 — `bin_ztcp` deterministic for identical args (idle state).
+    #[test]
+    fn bin_ztcp_deterministic_for_same_args() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r1 = bin_ztcp("ztcp", &[], &ops, 0);
+        let r2 = bin_ztcp("ztcp", &[], &ops, 0);
+        assert_eq!(r1, r2, "bin_ztcp empty args must be deterministic");
+    }
 }
