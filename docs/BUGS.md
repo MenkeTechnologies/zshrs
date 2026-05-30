@@ -17977,6 +17977,167 @@ done
 
 ---
 
+## #337 — `(( var = "5" ))` and `(( n += "5" ))` quoted-string operands in `(( ))` treated as `0`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -i n=10; (( n += "5" )); echo "n=$n"'
+n=15
+
+$ ./target/debug/zshrs --zsh -c 'typeset -i n=10; (( n += "5" )); echo "n=$n"'
+n=10
+```
+
+zsh's `(( ))` arithmetic context parses quoted-string operands
+as integers — `"5"` becomes 5. zshrs treats them as 0,
+causing all compound-ops and assignments with quoted RHS to
+silently no-op (or assign 0).
+
+Tested forms (zsh value / zshrs value):
+- `(( n = "5" ))` — 5 / 0
+- `(( n += "5" ))` — 15 (n was 10) / 10 (no change)
+- `(( n -= "5" ))` — 5 / 10 (no change)
+- `(( n *= "5" ))` — 50 / 0 (multiplied by 0)
+- `(( n /= "5" ))` — 2 / div-by-zero / 10 (no change)
+
+The bare `$((...))` arithmetic-expansion form works in both:
+```sh
+$ both-shells -fc 'n=10; echo $((n + "5"))'
+15
+```
+
+So the bug is specific to the `(( ))` statement form's
+quoted-string operand handling.
+
+**Where** — `src/ported/math.rs::parse_quoted_arith_operand`:
+quoted operand path in compound-assign returns 0 instead of
+the int value. C-source `Src/math.c::matheval` unquotes
+operands before integer parsing.
+
+**Impact** — common idiom of quoting numeric variables for
+safety breaks:
+
+```sh
+typeset -i counter=10
+amount="5"      # value comes from user input as string
+(( counter += "$amount" ))
+# zsh: counter = 15
+# zshrs: counter = 10 (silent no-op — bug!)
+```
+
+Hides logic errors in code that operates on user input or
+mixed-string-num data.
+
+**Workaround** — strip quotes (unsafe with special chars) or
+use `$(())` form:
+```sh
+counter=$((counter + amount))   # works in both
+```
+
+---
+
+## #338 — `h["key'with'special"]=v` assoc keys with embedded quotes/specials lost (silent fail)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h["q'"'"'q"]=v; echo "[${h["q'"'"'q"]}]"'
+[v]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h["q'"'"'q"]=v; echo "[${h["q'"'"'q"]}]"'
+[]
+```
+
+zsh correctly stores and retrieves assoc-array values with
+keys containing embedded special characters (single quotes,
+backslashes, etc.). zshrs silently fails — the assignment
+appears to succeed but the lookup returns empty.
+
+Tested keys with various special chars:
+- `"q'q"` (embedded single quote) — fails in zshrs
+- `"a\nb"` (embedded escape) — keys differ structurally
+- Spaces in key — likely works (not tested here)
+
+**Where** — `src/ported/parse/subscript.rs::parse_assoc_key`:
+quote/escape handling in subscript context drops or
+misinterprets the special chars. C-source `Src/lex.c` tokenizer
+correctly preserves the key bytes through to the hash insert.
+
+**Impact** — assoc-array keyed by arbitrary user input
+(filenames with quotes, config keys with special chars)
+silently misbehaves:
+
+```sh
+typeset -A cache
+key="user's-input"
+cache[$key]="value"
+echo "${cache[$key]}"
+# zsh: "value"
+# zshrs: "" (lookup miss — key mangled during insert)
+```
+
+**Workaround** — sanitize keys to alphanumeric before use:
+```sh
+clean_key="${key//[^a-zA-Z0-9_]/_}"
+cache[$clean_key]="value"
+```
+
+---
+
+## #339 — `h["a\\nb"]=v` assoc key with literal backslash-escape stored as different key than zsh
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h["a\\nb"]=v; print -l "${(@k)h}"'
+"a
+b"                              # single key with embedded literal newline (quoted display)
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h["a\\nb"]=v; print -l "${(@k)h}"'
+a
+b                               # appears split (no quotes around the multi-line key)
+```
+
+zsh interprets the `\\n` in the assoc-key assignment as a
+literal backslash-n followed by `b`, OR as an embedded newline
+char, depending on quote context. zsh's display preserves
+the form via quoting.
+
+zshrs displays the key without the quote-preservation,
+suggesting either the key was split or the display path
+doesn't quote multi-line content.
+
+Companion to #338 — both are assoc-key special-char handling
+gaps. zshrs treats keys as plain strings without proper
+escape/quote round-tripping.
+
+**Where** — `src/ported/params/assoc_print.rs::print_keys`:
+doesn't quote keys containing newlines/specials in `(@k)`
+output. C-source `Src/params.c::printparam_assoc` quotes keys
+in display via `quotedzputs()`.
+
+**Impact** — round-tripping assoc-array state via
+`typeset -p` or `print -l "${(@k)h}"` produces output that
+can't be re-parsed back into the same assoc:
+
+```sh
+# Snapshot and restore
+saved="$(typeset -p config)"
+# ... later ...
+eval "$saved"
+# zsh: faithful round-trip
+# zshrs: keys with specials lose their identity, restore creates different entries
+```
+
+**Workaround** — base64-encode keys for safe round-trip:
+```sh
+key_safe=$(echo -n "$key" | base64)
+config[$key_safe]="value"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -18317,9 +18478,12 @@ done
 | 334 | `zsh -f` doesn't disable `rcs` option — `[[ -o rcs ]]` returns "on" instead of "off" | **port-bug** | (none — needs init.rs to toggle flag) |
 | 335 | `hashdirs` option default differs — zsh: off (default), zshrs: on | **port-bug** | explicit `unsetopt hashdirs` in .zshrc |
 | 336 | `${(O)@}`/`${(n)@}`/`${(oi)@}` sort variants on positionals all silently no-op (extends #277/#332) | **port-bug** | copy to array, sort via `[@]` |
+| 337 | `(( n += "5" ))` quoted-string operands in `(( ))` arith treated as `0` (zsh: parses as int) | **port-bug** | use `$((...))` form |
+| 338 | `h["key'with'special"]=v` assoc keys with embedded quotes/specials lost silently | **port-bug** | sanitize keys to alphanumeric |
+| 339 | `h["a\\nb"]=v` assoc keys with backslash escapes round-trip differently — `(@k)` output not quoted | **port-bug** | base64-encode keys |
 
-Of three hundred and thirty-six entries, two are fixed (5, 7),
-three hundred and thirty remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and thirty-nine entries, two are fixed (5, 7),
+three hundred and thirty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -18343,5 +18507,5 @@ three hundred and thirty remain open port-bugs/perf-issues (4, 8, 9, 10,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
-331, 332, 333, 334, 335, 336), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+331, 332, 333, 334, 335, 336, 337, 338, 339), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
