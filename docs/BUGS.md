@@ -15848,6 +15848,173 @@ typeset -p > /tmp/state.dump   # both shells emit reproducible form
 
 ---
 
+## #298 — Bare variable name in array slice subscript `${a[1,n]}` doesn't arith-evaluate
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(a b c d); n=2; echo "[${a[1,n]}]"'
+[a b]
+
+$ ./target/debug/zshrs --zsh -c 'a=(a b c d); n=2; echo "[${a[1,n]}]"'
+[a b c d]
+```
+
+zsh evaluates the slice subscript `[N,M]` as an arithmetic
+expression — bare variable names like `n` are looked up and
+used as integers. So `[1,n]` with `n=2` becomes `[1,2]`,
+selecting the first 2 elements.
+
+zshrs doesn't arith-evaluate the bare name — treats `n` as
+literal or as 0, returning the full array instead.
+
+Also applies to arith expressions inside the subscript:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(a b c d); n=2; echo "[${a[1,n+1]}]"'
+[a b c]
+
+$ ./target/debug/zshrs --zsh -c 'a=(a b c d); n=2; echo "[${a[1,n+1]}]"'
+[a b c d]
+```
+
+Single-subscript form with `$` works in both:
+```sh
+$ both-shells -fc 'a=(a b c d); n=2; echo "[${a[$n]}]"'
+[b]
+```
+
+So zshrs handles `[$n]` (explicit deref) but not `[n]`/`[1,n]`
+(bare-name-in-arith-context).
+
+**Where** — `src/ported/paramsubst.rs::eval_slice_subscript`:
+doesn't dispatch to arith evaluator for slice subscripts.
+C-source `Src/params.c::getarrelt` calls `mathevalarg()` on
+each subscript bound, which auto-derefs bare variable names.
+
+**Impact** — common zsh idiom for "first N elements" broken:
+
+```sh
+top_n="${a[1,N]}"   # zsh: takes first N
+                    # zshrs: takes all elements regardless of N
+```
+
+Also affects negative-from-end with computed offset:
+```sh
+last="${a[-n,-1]}"   # zsh: works
+                     # zshrs: returns full array
+```
+
+**Workaround** — explicit `$` deref:
+```sh
+top_n="${a[1,$N]}"
+```
+
+---
+
+## #299 — Glob qualifier `(YN)` count-limit not applied — returns all matches instead of first N
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp; touch zy1 zy2 zy3; echo zy*(Y2); rm zy1 zy2 zy3'
+zy3 zy2
+
+$ ./target/debug/zshrs --zsh -c 'cd /tmp; touch zy1 zy2 zy3; echo zy*(Y2); rm zy1 zy2 zy3'
+zy1 zy2 zy3
+```
+
+zsh's `(YN)` glob qualifier limits the match count to the
+first `N` results (in the order produced after other sort/
+filter qualifiers). zshrs ignores `(Y...)` and returns all
+matches.
+
+The default ordering also differs:
+- zsh returns `zy3 zy2` (reverse — likely due to glob qual
+  default ordering being newest-first when combined with Y).
+- zshrs returns `zy1 zy2 zy3` (forward — no count applied).
+
+Note: zsh's order here is unusual — possibly `Y` defaults to
+some sort. Confirmation via `zy*(Y2on)` (force name-sort)
+would clarify, but the bug is clearly: count-limit not honored.
+
+**Where** — `src/ported/glob/qualifiers.rs::parse_Y_qualifier`:
+either not recognized or not applied to the result set.
+C-source `Src/glob.c::qualY` truncates the match-list to the
+specified count.
+
+**Impact** — code using `(Y...)` for "top N by mtime" etc.
+patterns gets all results, breaking limit-based logic:
+
+```sh
+# Get 5 most-recently-modified files
+recent=(*(om[1,5]))
+# or
+recent=(*(omY5))
+# zsh: 5 files
+# zshrs: all files in current dir
+```
+
+**Workaround** — use array slice after the glob:
+```sh
+recent=(*(om))
+recent=("${recent[@]:0:5}")
+```
+
+---
+
+## #300 — `typeset -i n; n=0o10` Python-style octal prefix silently parses as 0
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -i n; n=0o10; echo "[$n]"'
+zsh:1: bad math expression: operator expected at `o10'
+
+$ ./target/debug/zshrs --zsh -c 'typeset -i n; n=0o10; echo "[$n]"'
+[0]
+```
+
+zsh's arith parser recognizes `0x...` (hex), `0...` (octal,
+when `OCTAL_ZEROES` opt set), `N#...` (base-N), and decimal —
+but NOT Python's `0o...` (explicit-octal) syntax. zsh emits a
+clear parse error: "bad math expression: operator expected".
+
+zshrs silently parses `0o10` as `0` followed by `o10`
+(probably reads up to first non-digit and stops, returning
+`0`). No error, just silent data corruption.
+
+Same permissive-parser family as #225 (`printf "%(%Y)T"`
+literal), #284 (extglob `(#x)pat` no-error), etc.
+
+**Where** — `src/ported/parse/numeric.rs::parse_int_literal`:
+encounters `0o`, reads `0`, ignores the rest. Should error or
+support the syntax. C-source `Src/math.c::zstrtol`
+implements POSIX-strict numeric parsing and errors on unknown
+prefix chars after a digit.
+
+**Impact** — scripts ported from Python/modern shells that
+use `0o` prefix get silent zeros instead of the intended octal
+value:
+
+```sh
+# Set umask to 022 (octal)
+typeset -i mask=0o022
+umask $mask
+# zsh: errors loudly at the bad syntax
+# zshrs: mask=0, umask 0 — every-file-readable-by-anyone permissions
+```
+
+This is security-relevant in cases where the octal value is
+expected to be a restrictive mask.
+
+**Workaround** — use bare octal or explicit `8#` base:
+```sh
+typeset -i mask=022      # POSIX octal (with leading 0)
+typeset -i mask=8#22     # explicit base-8
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -16149,9 +16316,12 @@ typeset -p > /tmp/state.dump   # both shells emit reproducible form
 | 295 | Array splice `a[N,M]=X` single-value doesn't shrink range — replaces only last index (#275 family) | **port-bug** | manual rebuild via slice concat |
 | 296 | `${s/\\./X}` pattern `\\X` interpretation diverges — zsh: literal `\\` + glob `.`, zshrs: escaped `.` | **port-bug** | use bracket class `[.]` instead |
 | 297 | Bare `typeset` (no args) display format missing attribute prefix (`array readonly tied NAME`) | **port-bug** | use `typeset -p` for reproducible form |
+| 298 | Bare var in slice subscript `${a[1,n]}` doesn't arith-deref `n` (zsh: evaluates as int) | **port-bug** | explicit `$` deref `${a[1,$n]}` |
+| 299 | Glob qualifier `(YN)` count-limit not applied — returns all matches | **port-bug** | post-glob array slice `arr=("${arr[@]:0:N}")` |
+| 300 | `typeset -i n; n=0o10` (Python octal prefix) silently parses as `0` (zsh: errors loudly); security-relevant for masks | **port-bug** | use bare `022` or `8#22` |
 
-Of two hundred and ninety-seven entries, two are fixed (5, 7), two
-hundred and ninety-one remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred entries, two are fixed (5, 7), two hundred and
+ninety-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -16172,5 +16342,5 @@ hundred and ninety-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
-292, 293, 294, 295, 296, 297), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+292, 293, 294, 295, 296, 297, 298, 299, 300), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
