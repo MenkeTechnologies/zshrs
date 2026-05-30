@@ -17826,6 +17826,157 @@ saved="${(q)_lowered[@]}"
 
 ---
 
+## #334 — `zsh -f` (no-rcs flag) doesn't disable `rcs` option — `[[ -o rcs ]]` returns "on"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ -o rcs ]] && echo on || echo off'
+off
+
+$ ./target/debug/zshrs --zsh -fc '[[ -o rcs ]] && echo on || echo off'
+on
+```
+
+zsh's `-f` command-line flag is documented as "Don't run any
+rc files" and corresponds to setting `NO_RCS` option (the
+`rcs` option being OFF). zshrs accepts `-f` (no startup files
+ARE actually skipped — both shells reach the `-c` cmd
+without rc-loading) but doesn't reflect the state via the
+`rcs` option.
+
+The `setopt` output also reflects this — zsh shows `norcs` in
+the option list, zshrs's `setopt` output is empty (#267) so
+we can't see the option state via that method.
+
+Script-level detection of "was -f passed" via `[[ -o rcs ]]`
+returns wrong answer in zshrs.
+
+**Where** — `src/ported/init.rs::apply_minus_f`: skips
+rc-loading but doesn't toggle the `RCS` option flag. C-source
+`Src/init.c::parseargs` calls `unsetopt RCS` for `-f`.
+
+**Impact** — defensive scripts that check whether rcs are
+disabled get false positive — appear to be "with rcs" when
+launched with `-f`:
+
+```sh
+# Plugin detects whether to skip its own init
+[[ -o rcs ]] || return   # skip if -f passed
+do_heavy_init
+# zsh: properly skips when -f
+# zshrs: do_heavy_init always runs
+```
+
+**Workaround** — none direct — depends on opt flag being
+properly toggled.
+
+---
+
+## #335 — `hashdirs` option default differs — zsh: off (default), zshrs: on
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ -o hashdirs ]] && echo on || echo off'
+off
+
+$ ./target/debug/zshrs --zsh -c '[[ -o hashdirs ]] && echo on || echo off'
+on
+```
+
+`HASH_DIRS` controls whether directory hashing is performed
+when the shell starts (caches frequently-accessed directories
+for faster cd). zsh defaults to OFF; zshrs defaults to ON.
+
+This affects startup behavior and the `hash -d` introspection
+output — zshrs eagerly populates the named-directory cache
+where zsh waits for explicit `hash -d` calls.
+
+Different default behavior can produce subtle script
+divergences when code reads `hash -d` output expecting it
+empty initially.
+
+**Where** — `src/ported/options.rs::register_default_opts`:
+HASH_DIRS in the default-on group instead of default-off
+group. C-source `Src/options.c::optns[]` table has HASH_DIRS
+in the OPT_NONE (off-by-default) group.
+
+**Impact** — startup-state-sensitive scripts get
+different baseline:
+
+```sh
+# Test: expect hash table empty initially
+[[ -z "$(hash -d)" ]] || error "stale hash table"
+# zsh: passes (empty by default)
+# zshrs: fails (hash table pre-populated)
+```
+
+Also might cause subtle perf difference on shell init if
+zshrs is eagerly hashing directories the user doesn't need.
+
+**Workaround** — explicit `unsetopt hashdirs` in .zshrc.
+
+---
+
+## #336 — `${(O)@}`/`${(n)@}`/`${(oi)@}` sort variants on positionals all silently no-op (extends #277 family)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- c a b; echo "O=[${(O)@}]"; echo "n=[${(n)@}]"; echo "oi=[${(oi)@}]"'
+O=[c b a]
+n=[a b c]
+oi=[a b c]
+
+$ ./target/debug/zshrs --zsh -c 'set -- c a b; echo "O=[${(O)@}]"; echo "n=[${(n)@}]"; echo "oi=[${(oi)@}]"'
+O=[c a b]
+n=[c a b]
+oi=[c a b]
+```
+
+zsh applies all sort flag variants to positional parameters
+via `$@`:
+- `(O)` — reverse-sort
+- `(n)` — numeric-sort
+- `(oi)` — case-insensitive sort
+- `(o)` — basic sort (#277 documented)
+- `(u)` — unique (#332 documented)
+
+zshrs silently ignores all flag transformations — returns
+positionals in original order.
+
+Same family as #277/#332 — positional-parameter flag
+dispatch path doesn't include the sort/transform stages.
+
+**Where** — `src/ported/paramflags.rs::apply_flag_to_positional`:
+single shared gap — sort/dedup/transform path skipped for
+positional aggregation. Same fix scope as #277/#332.
+
+**Impact** — common arg-processing idioms broken:
+
+```sh
+process_files() {
+    # Process in case-insensitive sorted order
+    for f in "${(@oi)@}"; do
+        handle "$f"
+    done
+}
+process_files file_C.log File_a.log file_B.log
+# zsh: handles in order File_a, file_B, file_C (case-insens)
+# zshrs: handles in input order (C, a, B), case-fold ignored
+```
+
+**Workaround** — copy to array, sort there:
+```sh
+local _args=("$@")
+for f in "${(oi)_args[@]}"; do
+    handle "$f"
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -18163,9 +18314,12 @@ saved="${(q)_lowered[@]}"
 | 331 | ALL `${(FLAG)assoc[k]}` flags broken on subscripted-assoc-element (mirrors #328 for assoc) | **port-bug** | universal: `elem="${h[k]}"` then `(FLAG)elem` |
 | 332 | `${(u)@}` unique flag on positionals not applied — extends #277 sort family | **port-bug** | copy to array, dedup via `[@]` |
 | 333 | `${(qL)*}` chained quote+lower on `$*` only applies lowercase, drops quote | **port-bug** | apply flags sequentially via temp array |
+| 334 | `zsh -f` doesn't disable `rcs` option — `[[ -o rcs ]]` returns "on" instead of "off" | **port-bug** | (none — needs init.rs to toggle flag) |
+| 335 | `hashdirs` option default differs — zsh: off (default), zshrs: on | **port-bug** | explicit `unsetopt hashdirs` in .zshrc |
+| 336 | `${(O)@}`/`${(n)@}`/`${(oi)@}` sort variants on positionals all silently no-op (extends #277/#332) | **port-bug** | copy to array, sort via `[@]` |
 
-Of three hundred and thirty-three entries, two are fixed (5, 7),
-three hundred and twenty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and thirty-six entries, two are fixed (5, 7),
+three hundred and thirty remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -18189,5 +18343,5 @@ three hundred and twenty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
-331, 332, 333), and four were zsh-correct behavior misframed by
-demos (1, 2, 3, 6).
+331, 332, 333, 334, 335, 336), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
