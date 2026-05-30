@@ -15294,6 +15294,187 @@ zsh's empty-subscript rejection.
 
 ---
 
+## #289 — `zmodload -L` output format diverges — bare module names instead of `zmodload NAME` reproducible-script form
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload -L'
+zmodload zsh/main
+
+$ ./target/debug/zshrs --zsh -c 'zmodload -L | head -3'
+zsh/zselect
+zsh/zpty
+zsh/param/private
+```
+
+`zmodload -L` is the "list in reproducible-script form" flag —
+output should be valid shell input that, when sourced,
+re-establishes the current zmodload state. zsh's format is
+`zmodload <FLAGS> <module>` per line. zshrs emits bare module
+names (no `zmodload` prefix, no flag info) — the output isn't
+re-executable.
+
+Also count differs: zsh shows 1 loaded module (`zsh/main`),
+zshrs shows 32 entries — zshrs is listing all available
+modules instead of only loaded ones.
+
+**Where** — `src/ported/builtins/zmodload.rs::list_L_format`:
+either iterates the wrong table (all modules vs loaded) or
+emits wrong format. C-source `Src/builtin.c::bin_zmodload`
+with `-L` walks the `modules` hash for `MOD_INIT_BD`-flagged
+entries and formats each as `zmodload <flags> <name>`.
+
+**Impact** — state-snapshot / config-backup tools that
+capture loaded modules via `zmodload -L` get unusable output:
+
+```sh
+# Save current zmodload state for restoration
+zmodload -L > saved_modules.zsh
+# ... do stuff ...
+source saved_modules.zsh   # zsh: re-loads same modules
+                          # zshrs: errors "command not found: zsh/zselect"
+```
+
+**Workaround** — manually format:
+```sh
+zmodload | while read mod; do echo "zmodload $mod"; done > saved.zsh
+```
+
+---
+
+## #290 — `${(q)arr}` / `${(qq)arr}` drops empty array elements from quoted output
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x "" y); echo "${(q)a[@]}"'
+x '' y
+
+$ ./target/debug/zshrs --zsh -c 'a=(x "" y); echo "${(q)a[@]}"'
+x y
+```
+
+`(q)` and `(qq)` quote each array element so the result can
+round-trip through shell parsing. zsh emits empty elements
+as `''` (literal empty-quoted string), preserving them in the
+output stream. zshrs silently drops empty elements, breaking
+the round-trip guarantee.
+
+Same applies to sparse arrays:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(a b); a[5]=Z; echo "${(qq)a[@]}"'
+'a' 'b' '' '' 'Z'
+
+$ ./target/debug/zshrs --zsh -c 'a=(a b); a[5]=Z; echo "${(qq)a[@]}"'
+'a' b Z
+```
+
+zshrs not only drops the empties (positions 3 and 4) but also
+fails to quote the non-empty elements that have no special
+chars (`b` and `Z` come out unquoted, where zsh always
+double-quotes for consistency).
+
+**Where** — `src/ported/paramflags.rs::quote_array_elements`:
+empty-element handling skips the emit-empty-quoted path AND
+the "always quote, even simple chars" guarantee of `(qq)`.
+C-source `Src/utils.c::quotestring` with `QT_DOUBLE` always
+wraps in quotes, regardless of content.
+
+**Impact** — serialization round-trip is broken — saving
+arrays via `(q)`/`(qq)` to file then eval-loading them later
+loses sparse / empty data:
+
+```sh
+# Save array state
+saved="${(qq)config_array[@]}"
+echo "$saved" > /tmp/state
+
+# Restore
+eval "config_array=( $(cat /tmp/state) )"
+# zsh: full array restored including empties
+# zshrs: empty slots lost, array compacted; sparse layout destroyed
+```
+
+**Workaround** — explicit empty-slot encoding:
+```sh
+saved=""
+for elem in "${config_array[@]}"; do
+    saved+="${(qq)elem} "   # apply (qq) per-element manually
+done
+```
+
+---
+
+## #291 — `$(case word in pat) ... esac)` parse error — `case` inside cmdsub misparses paren
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "$(case y in y) echo got ;; esac)"'
+got
+
+$ ./target/debug/zshrs --zsh -c 'echo "$(case y in y) echo got ;; esac)"'
+zsh:1: par_case: expected `)` or `|`
+zsh:1: expected ')' in case pattern
+ echo got ;; esac)
+```
+
+zsh's parser correctly recognizes that within `$(...)`, an
+inner `case pat)` clause's `)` is not the closing paren of
+the outer `$(`. zshrs's parser mis-tracks the paren context,
+sees the first `)` (from `y)`) as closing the `$(`, then
+chokes on the rest as an unexpected continuation.
+
+The control case `case` outside cmdsub works in both:
+```sh
+$ both-shells -fc 'case y in y) echo got ;; esac'
+got
+```
+
+So zshrs's `case` parser is fine; the bug is specifically the
+nesting-context tracking inside `$(...)`.
+
+Same issue likely affects `case` inside `(...)` subshell,
+`{...}` brace group, here-strings, etc., where the parser
+needs to track paren context.
+
+**Where** — `src/ported/parse/cmdsub.rs::parse_until_close`:
+counts `)` tokens without recognizing them as part of an
+inner `case`-pattern syntax. C-source `Src/lex.c::gettokstr`
+tracks parser state (in-case-pattern, in-cmdsub) as a context
+stack, knowing which `)` belongs to which construct.
+
+**Impact** — major bash-portability blocker. Common idioms:
+
+```sh
+# Inline case in cmdsub for "convert format"
+result=$(case "$input" in
+    json)  jq '.' ;;
+    yaml)  yq '.' ;;
+    *)     cat ;;
+esac)
+# zsh: works
+# zshrs: parse error at first ) — script aborts before runtime
+```
+
+Affects every script that embeds case-statements in
+`$()`-captured contexts (common for "compute X based on Y"
+patterns).
+
+**Workaround** — use a separate function:
+```sh
+_convert_input() {
+    case "$input" in
+        json) jq '.' ;;
+        ...
+    esac
+}
+result=$(_convert_input)
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -15586,9 +15767,12 @@ zsh's empty-subscript rejection.
 | 286 | `setopt errexit; true \| false; ...` doesn't abort — pipeline-tail-status with errexit ignored | **port-bug** | `[[ ${pipestatus[-1]} -eq 0 ]] \|\| exit 1` |
 | 287 | `${(@)assoc}` for-iteration produces single concatenated element (zsh: one element per value) | **port-bug** | use explicit `(@v)` flag |
 | 288 | `typeset -A h; h[]=value` empty-subscript silently accepted (zsh: errors) — permissive-parser family | **port-bug** | careful syntax |
+| 289 | `zmodload -L` output format wrong — bare module names vs `zmodload zsh/NAME` reproducible-script form | **port-bug** | manual format via `zmodload \| while read mod` |
+| 290 | `${(q)arr}`/`${(qq)arr}` drops empty array elements and doesn't always-quote simple chars (round-trip broken) | **port-bug** | per-element loop applying `(qq)` |
+| 291 | `$(case word in pat) ... esac)` parse error — case-pattern `)` mis-tracked as cmdsub closer | **port-bug** | extract case into a named function |
 
-Of two hundred and eighty-eight entries, two are fixed (5, 7), two
-hundred and eighty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and ninety-one entries, two are fixed (5, 7), two
+hundred and eighty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -15608,5 +15792,5 @@ hundred and eighty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
-279, 280, 281, 282, 283, 284, 285, 286, 287, 288), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291),
+and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
