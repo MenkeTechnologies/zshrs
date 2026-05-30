@@ -10161,6 +10161,164 @@ echo "Primary: ${(C)deref[1]}"
 
 ---
 
+## #196 — Anonymous function output not captured by `$(...)` or `(...)` subshell
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'x=$(() { echo hi }); echo "[$x]"'
+[hi]
+
+$ ./target/debug/zshrs --zsh -c 'x=$(() { echo hi }); echo "[$x]"'
+[]
+```
+
+Same gap in plain subshell:
+```sh
+$ /opt/homebrew/bin/zsh -fc '(() { echo subhi })'
+subhi
+
+$ ./target/debug/zshrs --zsh -c '(() { echo subhi })'
+(empty)
+```
+
+And in array-context:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'arr=($(() { echo "a b c" })); echo "${#arr}"'
+3
+
+$ ./target/debug/zshrs --zsh -c 'arr=($(() { echo "a b c" })); echo "${#arr}"'
+(empty)
+```
+
+Anonymous function `() { ... }` invoked inside any forking
+construct loses stdout entirely. The function appears to
+execute (no error printed) but its output never propagates
+out of the fork.
+
+Direct invocation at top level works:
+```sh
+$ both-shells -fc '() { echo hi }'
+hi
+```
+
+**Where** — `src/ported/exec.rs::execpline` (subshell-fork path):
+anonymous-fn dispatch via `Wordcode::Funcdef-inline` doesn't
+inherit the forked child's stdout. C-source `Src/exec.c::execpline`
+forks then `execlist` runs the anon-fn with normal stdout fd
+inheritance.
+
+**Impact** — common zsh idiom for scoped helpers is broken in
+capture contexts:
+
+```sh
+# Common pattern: scoped logic with no name pollution
+config=$(() {
+  local IFS=:
+  for dir in $path; do
+    [[ -f "$dir/myconfig" ]] && { cat "$dir/myconfig"; return }
+  done
+})
+# zsh: $config contains the first matching file's contents
+# zshrs: $config is empty regardless of what files exist
+```
+
+**Workaround** — use a named function and call it inside the
+subshell:
+```sh
+_get_config() { ... }
+config=$(_get_config)
+unfunction _get_config
+```
+
+---
+
+## #197 — `typeset -f` function-body display collapses statement newlines into semicolons
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo b1; echo b2; }; typeset -f f'
+f () {
+	echo b1
+	echo b2
+}
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo b1; echo b2; }; typeset -f f'
+f () {
+	echo b1; echo b2
+}
+```
+
+zsh normalizes the function body by splitting `;`-separated
+statements onto separate lines (each indented with tab) for
+display. zshrs preserves the original `;` separator and keeps
+both statements on one line.
+
+`functions f` and `which f` share the same display path and
+likely suffer the same bug.
+
+**Where** — `src/ported/text.rs::gettext` (text-reconstruction
+of parsed Eprog node). zsh's C-source `Src/text.c::gettext2`
+emits `\n\t` instead of `; ` between sibling pline nodes.
+
+**Impact** — anyone parsing/diffing function bodies via `typeset
+-f` (config management, security audits, golden-file tests)
+sees diff output where there should be none:
+
+```sh
+# Diff golden function body vs current
+diff <(typeset -f my_fn) golden/my_fn.txt
+# zsh: no diff (matches golden captured from zsh)
+# zshrs: diff every line because separators differ
+```
+
+**Workaround** — pipe through sed to normalize:
+```sh
+typeset -f f | sed 's/; /\n\t/g'
+```
+
+---
+
+## #198 — `bindkey -L` output format diverges entirely from zsh
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'bindkey -L | head -1'
+bindkey -R "^A"-"^C" self-insert
+
+$ ./target/debug/zshrs --zsh -c 'bindkey -L | head -1'
+bindkey "^@" set-mark-command
+```
+
+zsh's `-L` emits range-compressed output using `-R` flag and
+`"^A"-"^C"` style notation — runs of keys bound to the same
+widget are collapsed into one range line. zshrs emits one line
+per individual key with no range compression and a different
+sort order.
+
+For someone parsing `bindkey -L` to round-trip bindings
+(`bindkey -L > saved; ...; source saved`), the formats differ
+not just cosmetically — zshrs output saved from zshrs may
+re-parse correctly but the diff against zsh's output is total.
+
+**Where** — `src/ported/zle/bindings.rs::print_bindings`:
+no range-detection pass. C-source `Src/Zle/zle_keymap.c::scanbindings`
+collapses adjacent same-binding entries into `keymap -R lo-hi widget`
+format.
+
+**Impact** — config/golden tests that capture `bindkey -L`
+output for diff fail wholesale on zshrs. Migration tools that
+parse the output expecting zsh's range format get individual
+entries instead.
+
+**Workaround** — when round-tripping, save and source via
+zshrs's own output (which it parses back correctly), don't
+cross between zsh and zshrs.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -10360,9 +10518,12 @@ echo "Primary: ${(C)deref[1]}"
 | 193 | `(( y = ${x:?msg} ))` continues after required-param error | **port-bug** | explicit `[[ -v ]]` guard before arith |
 | 194 | `function f { :; } > /file` keyword-form fn-def redirect at def time | **port-bug** | redirect at call site |
 | 195 | `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored | **port-bug** | temp `deref=("${(@P)name}")` |
+| 196 | Anonymous fn output lost in `$(() { :; })` cmdsub or `(() { :; })` subshell | **port-bug** | named fn called inside subshell |
+| 197 | `typeset -f` function-body display collapses statement newlines into `; ` | **port-bug** | sed `'s/; /\n\t/g'` post-filter |
+| 198 | `bindkey -L` output uses individual entries instead of `-R` range-compressed | **port-bug** | round-trip via zshrs's own output |
 
-Of one hundred ninety-five entries, two are fixed (5, 7), one
-hundred eighty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of one hundred ninety-eight entries, two are fixed (5, 7), one
+hundred ninety-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -10375,5 +10536,5 @@ hundred eighty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174,
 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
-188, 189, 190, 191, 192, 193, 194, 195), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198), and four
+were zsh-correct behavior misframed by demos (1, 2, 3, 6).
