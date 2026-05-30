@@ -19096,6 +19096,148 @@ machinery being wired up.)
 
 ---
 
+## #358 — `cd ~-N` dirstack-tilde-expansion fails — `~-0`/`~-1` treated as literal path
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /; cd /tmp; cd ~-0; pwd'
+/tmp
+
+$ ./target/debug/zshrs --zsh -c 'cd /; cd /tmp; cd ~-0; pwd'
+zsh:cd:1: no such file or directory: ~-0
+/tmp
+```
+
+zsh's `~-N` (with optional N) expands to the Nth-most-recent
+directory from the dirstack (reverse direction). `~-0` is the
+current dir, `~-1` is one back, etc.
+
+zshrs's `cd ~-N` treats it as a literal path "~-0" and tries
+to open a directory named that.
+
+Companion `~+N` (forward direction) works in both shells.
+Only `~-N` is broken.
+
+```sh
+$ both-shells -fc 'cd /tmp; cd ~+0; pwd'
+/tmp           # ~+N works in both
+```
+
+**Where** — `src/ported/expand/tilde.rs::expand_tilde_minus`:
+`~-N` token not recognized as dirstack reference. C-source
+`Src/utils.c::filesubst` handles both `~+N` and `~-N` via
+`namhash` lookup.
+
+**Impact** — directory-history navigation broken — `cd ~-`
+(quick "go back" idiom common in interactive zsh) and
+indexed `cd ~-2` (jump back 2) both fail.
+
+**Workaround** — use absolute `cd "${dirstack[N+1]}"`:
+```sh
+cd "${dirstack[1]}"   # equivalent to cd ~-0 (current)
+cd "${dirstack[2]}"   # equivalent to cd ~-1 (one back)
+```
+
+(But #228 noted `nameddirs` introspection broken — `dirstack`
+similarly may have gaps.)
+
+---
+
+## #359 — Bare `pushd` (no args) doesn't `cd` to `$HOME` when dirstack is empty
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /; pushd; pwd'
+/Users/wizard
+
+$ ./target/debug/zshrs --zsh -c 'cd /; pushd; pwd'
+/
+```
+
+When invoked with no arguments and an empty dirstack, zsh's
+`pushd` defaults to changing to `$HOME` (similar to bare `cd`).
+zshrs's bare `pushd` does nothing — stays at current dir.
+
+When the dirstack has entries, both shells correctly swap the
+top two entries — the bug is specifically the empty-stack +
+no-args case.
+
+**Where** — `src/ported/builtins/pushd.rs::handle_no_args`:
+falls through silently when stack is empty. C-source
+`Src/builtin.c::bin_dirs` (the pushd impl) checks empty
+stack and calls `cd_to_home()` as fallback.
+
+**Impact** — `pushd` as quick-cd-to-home idiom broken:
+
+```sh
+# Common interactive workflow
+cd /some/deep/path
+# do work
+pushd   # quick-jump back to HOME
+# zsh: at $HOME
+# zshrs: still at /some/deep/path
+```
+
+**Workaround** — explicit `cd "$HOME"` or `cd ~`:
+```sh
+cd ~
+```
+
+---
+
+## #360 — `functions -M name N M handler` math-function registration not implemented
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'myadd() { (( REPLY = $1 + $2 )); }; functions -M myadd 2 2 myadd; echo $((myadd(2,3)))'
+5
+
+$ ./target/debug/zshrs --zsh -c 'myadd() { (( REPLY = $1 + $2 )); }; functions -M myadd 2 2 myadd; echo $((myadd(2,3)))'
+zsh:1: bad math expression: operand expected at end of string
+```
+
+zsh's `functions -M NAME MIN MAX HANDLER` registers `NAME` as
+a math-arith function callable in `$((...))` context. The
+handler is a shell function that receives positional args
+and stores the result in `$REPLY`.
+
+zshrs's `functions -M` either errors or silently fails to
+register — subsequent calls to the math function in arith
+context fail to parse.
+
+**Where** — `src/ported/builtins/functions.rs::handle_M_flag`:
+not implemented. C-source `Src/builtin.c::bin_functions` with
+`-M` calls `add_mathfunc()` to register.
+
+**Impact** — user-defined math functions broken. Common
+use-case: extending arith with domain-specific operations
+(geometry, statistics, etc.):
+
+```sh
+hypotenuse() { (( REPLY = sqrt($1*$1 + $2*$2) )); }
+functions -M hypot 2 2 hypotenuse
+# zsh: subsequent $((hypot(3, 4))) gives 5
+# zshrs: parse error in math expression
+```
+
+Affects scientific computing / DSL-in-shell patterns. The
+zsh/mathfunc module provides built-in math fns (sqrt, abs,
+etc.) — see #316 family for those gaps; user-defined
+extensions via `-M` (this bug) are separate.
+
+**Workaround** — call the shell function directly and capture
+via subshell:
+```sh
+result=$(myadd 2 3; echo $REPLY)
+```
+
+(Loses the arith-context integration.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -19457,9 +19599,12 @@ machinery being wired up.)
 | 355 | `${s/#%pat/repl}` both-anchor substitution pattern unsupported — returns unchanged | **port-bug** | use `case` for exact-match dispatch |
 | 356 | `${(S)s//pat/repl}` shortest-match flag not applied in replace-all — greedy match instead | **port-bug** | manual while-loop replace |
 | 357 | `setopt warn_nested_var` warning not emitted (extends #223 warn_create_global; #220 err_return strict-mode family) | **port-bug** | (none — diagnostic check not wired) |
+| 358 | `cd ~-N` dirstack-tilde-expansion fails — `~-0`/`~-1` treated as literal "~-N" path | **port-bug** | `cd "${dirstack[N+1]}"` indexed |
+| 359 | Bare `pushd` (no args) doesn't `cd` to `$HOME` when dirstack empty — stays at current dir | **port-bug** | explicit `cd ~` |
+| 360 | `functions -M name N M handler` math-function registration not implemented — DSL/sci-arith patterns broken | **port-bug** | call shell fn directly with `$REPLY` capture |
 
-Of three hundred and fifty-seven entries, two are fixed (5, 7),
-three hundred and fifty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and sixty entries, two are fixed (5, 7),
+three hundred and fifty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -19485,5 +19630,5 @@ three hundred and fifty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343,
 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356,
-357), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+357, 358, 359, 360), and four were zsh-correct behavior misframed
+by demos (1, 2, 3, 6).
