@@ -16015,6 +16015,172 @@ typeset -i mask=8#22     # explicit base-8
 
 ---
 
+## #301 — `${(L/U/C)arr[N]}` case-change flags on subscripted array element error "bad substitution"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(hello world); echo "[${(C)a[1]}]"'
+[Hello]
+
+$ ./target/debug/zshrs --zsh -c 'a=(hello world); echo "[${(C)a[1]}]"'
+zsh:1: bad substitution
+```
+
+zsh applies the case-change flags `(L)` (lower), `(U)`
+(upper), `(C)` (capitalize) to array-element-subscript
+expressions. zshrs rejects the combination as "bad
+substitution" — parses correctly when the target is a scalar
+or when the flag is `(t)`/`(P)`/etc., but specifically the
+case-change family on subscripted arrays errors.
+
+Control: case-flag on scalar works in both:
+```sh
+$ both-shells -fc 's=hello; echo "[${(C)s}]"'
+[Hello]
+```
+
+Affects all three case flags identically:
+- `${(L)a[N]}` — lowercase
+- `${(U)a[N]}` — uppercase
+- `${(C)a[N]}` — capitalize
+
+**Where** — `src/ported/paramsubst.rs::dispatch_subscripted_flag`:
+case-flag dispatch table doesn't handle the subscripted-array
+case. C-source `Src/subst.c::dosubst` applies the case flag
+post-subscript-resolution, so the operand for case is always
+a scalar by the time the flag fires.
+
+**Impact** — common path/string-manipulation patterns
+broken:
+
+```sh
+files=(report.TXT data.LOG)
+ext="${(L)files[1]##*.}"   # extract lower-cased extension
+# zsh: ext = "txt"
+# zshrs: parse error before computing
+```
+
+**Workaround** — split into two steps:
+```sh
+elem="${files[1]##*.}"
+ext="${(L)elem}"
+```
+
+---
+
+## #302 — `pushd +N` directory-stack rotation rotates wrong direction
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp; pushd / >/dev/null; pushd /etc >/dev/null; pushd +1 >/dev/null; pwd'
+/
+
+$ ./target/debug/zshrs --zsh -c 'cd /tmp; pushd / >/dev/null; pushd /etc >/dev/null; pushd +1 >/dev/null; pwd'
+/tmp
+```
+
+Sequence:
+1. `cd /tmp` — current dir = /tmp, stack = []
+2. `pushd /` — current = /, stack = [/tmp]
+3. `pushd /etc` — current = /etc, stack = [/, /tmp]
+4. `pushd +1` — rotate dirstack by 1 position
+
+zsh interprets `pushd +1` as "make element [+1] (skipping
+current) the new top" — `/` from position 1 becomes current.
+zshrs's rotation chooses a different element (`/tmp` —
+position 2).
+
+The exact semantics of `pushd +N` are documented in zsh's
+manual, but zshrs's implementation diverges.
+
+**Where** — `src/ported/builtins/pushd.rs::rotate_stack`:
+direction or indexing of the rotation differs from zsh. C-
+source `Src/builtin.c::bin_dirs` for `pushd +N` rotates
+dirstack so that entry N becomes current.
+
+**Impact** — dirstack-based navigation idioms in interactive
+zsh (common in user `.zshrc` for "jump to 3rd most-recent
+dir") jump to wrong destinations.
+
+**Workaround** — use absolute `pushd <path>` instead of
+relative `pushd +N`:
+```sh
+saved="${dirstack[2]}"   # or whichever index you actually want
+cd "$saved"
+```
+
+---
+
+## #303 — `trap '...' ERR` fires twice when failing command is inside a function
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'count=0; trap "((count++)); echo \"TRAP-\$count\"" ERR; f() { false; }; f; echo "total=$count"'
+TRAP-1
+total=1
+
+$ ./target/debug/zshrs --zsh -c 'count=0; trap "((count++)); echo \"TRAP-\$count\"" ERR; f() { false; }; f; echo "total=$count"'
+TRAP-1
+TRAP-2
+total=2
+```
+
+zsh's `ERR` trap fires once per "user-level" error event. A
+function that runs a failing command produces ONE error
+event from the user's perspective.
+
+zshrs fires `ERR` twice for the same logical error:
+1. When `false` returns non-zero (inside the fn).
+2. When the function returns with non-zero status to the
+   caller.
+
+The second firing is incorrect — the function's failure is
+not a NEW error event; it's the propagation of the same
+original error.
+
+**Where** — `src/ported/exec.rs::propagate_function_error`:
+re-fires the ERR trap on function-return-with-nonzero-status.
+C-source `Src/exec.c::doshfunc` checks `lastval` on exit but
+suppresses re-firing the ERR trap (the trap already fired
+inside the fn body for the actual failing command).
+
+**Impact** — counters/loggers in ERR trap handlers count
+double:
+
+```sh
+typeset -i error_count=0
+trap '((error_count++)); log_error "$LAST_CMD"' ERR
+
+process_batch() {
+    for item in "${batch[@]}"; do
+        process_item "$item" || true   # uses || true to avoid trap
+    done
+    false   # signal "some items failed" to caller
+}
+process_batch
+# zsh: error_count = 1 (for the explicit "false" line)
+# zshrs: error_count = 2 (also fires when process_batch returns non-zero)
+```
+
+For users who count errors via trap hooks, this means every
+function-level error double-counts.
+
+**Workaround** — explicit `|| return 0` at fn end to suppress
+the second firing:
+```sh
+process_batch() {
+    ...
+    false || return 0   # propagate as success to suppress double-trap
+}
+```
+
+(Defeats the purpose of returning failure to caller.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -16319,9 +16485,12 @@ typeset -i mask=8#22     # explicit base-8
 | 298 | Bare var in slice subscript `${a[1,n]}` doesn't arith-deref `n` (zsh: evaluates as int) | **port-bug** | explicit `$` deref `${a[1,$n]}` |
 | 299 | Glob qualifier `(YN)` count-limit not applied — returns all matches | **port-bug** | post-glob array slice `arr=("${arr[@]:0:N}")` |
 | 300 | `typeset -i n; n=0o10` (Python octal prefix) silently parses as `0` (zsh: errors loudly); security-relevant for masks | **port-bug** | use bare `022` or `8#22` |
+| 301 | `${(L/U/C)arr[N]}` case-change flag on subscripted array element errors "bad substitution" | **port-bug** | split: `e=arr[N]; ${(C)e}` |
+| 302 | `pushd +N` dirstack rotation rotates to wrong element (direction or indexing differs from zsh) | **port-bug** | absolute `pushd "${dirstack[N]}"` |
+| 303 | `trap '...' ERR` fires twice when failing cmd is inside a fn (zsh: once per logical error) | **port-bug** | `\|\| return 0` at fn end to suppress |
 
-Of three hundred entries, two are fixed (5, 7), two hundred and
-ninety-four remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and three entries, two are fixed (5, 7), two
+hundred and ninety-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -16342,5 +16511,5 @@ ninety-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
-292, 293, 294, 295, 296, 297, 298, 299, 300), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303), and
+four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
