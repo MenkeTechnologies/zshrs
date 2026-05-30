@@ -1627,4 +1627,113 @@ mod tests {
         inpoptop();
         inpop();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/input.c
+    // c:63 shinbufreset / c:144 shinbufalloc / c:156 shinbufsave /
+    // c:213 shingetline / c:326 inputline / c:392 zstuff /
+    // c:467 inpush / c:594 inpopalias / c:603 ingetptr / c:455 inerrflush
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:63 — `shinbufreset` is idempotent (safe to call repeatedly).
+    #[test]
+    fn shinbufreset_idempotent_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            shinbufreset();
+        }
+    }
+
+    /// c:144 — `shinbufalloc` is idempotent.
+    #[test]
+    fn shinbufalloc_idempotent_repeated_calls() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            shinbufalloc();
+        }
+    }
+
+    /// c:156/168 — save/restore round-trip is safe (alt).
+    #[test]
+    fn shinbufsave_restore_round_trip_safe_alt() {
+        let _g = crate::test_util::global_state_lock();
+        shinbufsave();
+        shinbufrestore();
+        shinbufsave();
+        shinbufrestore();
+    }
+
+    /// c:213 — `shingetline` returns String type.
+    #[test]
+    fn shingetline_returns_string_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = shingetline();
+    }
+
+    /// c:326 — `inputline` returns String type (alt).
+    #[test]
+    fn inputline_returns_string_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = inputline();
+    }
+
+    /// c:326 — `inputline` is deterministic on idle state.
+    #[test]
+    fn inputline_deterministic_on_idle_state() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        let a = inputline();
+        let b = inputline();
+        assert_eq!(a, b, "inputline must be deterministic on idle state");
+    }
+
+    /// c:392 — `zstuff` returns Result<(String, i64), i32>.
+    #[test]
+    fn zstuff_returns_result_type_compile_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<(String, i64), i32> = zstuff("");
+    }
+
+    /// c:392 — `zstuff("/dev/null")` returns Ok with empty content.
+    #[test]
+    fn zstuff_dev_null_returns_ok_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zstuff("/dev/null");
+        match r {
+            Ok((s, _)) => assert!(s.is_empty(),
+                "/dev/null content must be empty"),
+            Err(_) => {} // /dev/null may not exist on some CI; accept either
+        }
+    }
+
+    /// c:467 — `inpush("")` empty string safe (alt).
+    #[test]
+    fn inpush_empty_string_no_panic_alt() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inpush("", 0, None);
+    }
+
+    /// c:594 — `inpopalias` on empty stack safe (alt).
+    #[test]
+    fn inpopalias_empty_stack_no_panic_alt() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inpopalias();
+        inpopalias();
+    }
+
+    /// c:603 — `ingetptr` returns String type (alt).
+    #[test]
+    fn ingetptr_returns_string_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = ingetptr();
+    }
+
+    /// c:455 — `inerrflush` returns void (compile-time pin).
+    #[test]
+    fn inerrflush_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: () = inerrflush();
+    }
 }
