@@ -1779,4 +1779,114 @@ mod tests {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle.h
+    // c:122 invicmdmode / c:155 ZS_memset / c:225 ZS_strchr /
+    // c:233 ZS_memchr / c:242 ZS_width / c:256-303 ZC_* classifiers
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:122 — `invicmdmode` returns bool (compile-time pin).
+    #[test]
+    fn invicmdmode_returns_bool_type() {
+        let _: bool = invicmdmode("emacs");
+    }
+
+    /// c:122 — `invicmdmode` deterministic across keymap names.
+    #[test]
+    fn invicmdmode_deterministic() {
+        for name in ["emacs", "vicmd", "viins", "", "anything"] {
+            let first = invicmdmode(name);
+            for _ in 0..3 {
+                assert_eq!(invicmdmode(name), first,
+                    "invicmdmode({:?}) must be pure", name);
+            }
+        }
+    }
+
+    /// c:155 — `ZS_memset` actually fills the buffer.
+    #[test]
+    fn zs_memset_fills_buffer() {
+        let mut buf: Vec<char> = vec!['a', 'a', 'a', 'a'];
+        ZS_memset(&mut buf, 'X', 4);
+        assert_eq!(buf, vec!['X', 'X', 'X', 'X'],
+            "ZS_memset must fill all 4 slots with 'X'");
+    }
+
+    /// c:225 — `ZS_strchr` finds present char.
+    #[test]
+    fn zs_strchr_finds_present_char() {
+        let buf: Vec<char> = "hello".chars().collect();
+        let r = ZS_strchr(&buf, 'l');
+        assert!(r.is_some(), "must find 'l' in 'hello'");
+    }
+
+    /// c:225 — `ZS_strchr` for absent char returns None.
+    #[test]
+    fn zs_strchr_absent_char_returns_none() {
+        let buf: Vec<char> = "hello".chars().collect();
+        assert_eq!(ZS_strchr(&buf, 'z'), None,
+            "'z' not in 'hello' → None");
+    }
+
+    /// c:233 — `ZS_memchr` with n=0 always returns None.
+    #[test]
+    fn zs_memchr_zero_n_always_returns_none() {
+        for buf in [vec!['a', 'b', 'c'], vec!['x']] {
+            assert_eq!(ZS_memchr(&buf, 'a', 0), None,
+                "n=0 search → None regardless of buffer content");
+        }
+    }
+
+    /// c:242 — `ZS_width` for ASCII returns count.
+    #[test]
+    fn zs_width_ascii_matches_char_count() {
+        for s in ["", "x", "hello", "12345"] {
+            let buf: Vec<char> = s.chars().collect();
+            let w = ZS_width(&buf);
+            assert_eq!(w as usize, s.chars().count(),
+                "ASCII '{}' width = char count", s);
+        }
+    }
+
+    /// c:256-303 — `ZC_ialpha` returns bool (compile-time pin).
+    #[test]
+    fn zc_ialpha_returns_bool_type() {
+        let _: bool = ZC_ialpha('a');
+    }
+
+    /// c:256-303 — `ZC_idigit` returns bool (compile-time pin).
+    #[test]
+    fn zc_idigit_returns_bool_type() {
+        let _: bool = ZC_idigit('0');
+    }
+
+    /// c:256-303 — `ZC_ialpha` correctly classifies basic ASCII.
+    #[test]
+    fn zc_ialpha_basic_ascii_classification() {
+        assert!(ZC_ialpha('a'), "'a' is alpha");
+        assert!(ZC_ialpha('Z'), "'Z' is alpha");
+        assert!(!ZC_ialpha('0'), "'0' is NOT alpha");
+        assert!(!ZC_ialpha(' '), "' ' is NOT alpha");
+    }
+
+    /// c:256-303 — `ZC_idigit` correctly classifies basic ASCII.
+    #[test]
+    fn zc_idigit_basic_ascii_classification() {
+        assert!(ZC_idigit('0'), "'0' is digit");
+        assert!(ZC_idigit('9'), "'9' is digit");
+        assert!(!ZC_idigit('a'), "'a' is NOT digit");
+        assert!(!ZC_idigit(' '), "' ' is NOT digit");
+    }
+
+    /// c:71 — `Th` returns None for negative + MIN (alt pin).
+    #[test]
+    fn th_negative_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for idx in [-1, -100, i32::MIN] {
+            assert!(Th(idx).is_none(),
+                "Th({}) must be None", idx);
+        }
+    }
 }
