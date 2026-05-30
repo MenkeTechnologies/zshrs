@@ -913,6 +913,179 @@ exec 3>&-     # ← close to prevent the leak
 
 ---
 
+## #24 — `typeset -T` tied colon-array doesn't sync (string side stays empty)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -T XPATH xpath=(/x /y /z) :
+echo "XPATH: $XPATH"
+echo "xpath: ${xpath[@]}"
+xpath+=(/w)
+echo "after append: $XPATH"
+XPATH="/a:/b:/c"
+echo "after assign: ${xpath[@]}"'
+XPATH: /x:/y:/z
+xpath: /x /y /z
+after append: /x:/y:/z:/w
+after assign: /a /b /c
+
+$ zshrs --zsh -c 'typeset -T XPATH xpath=(/x /y /z) :
+echo "XPATH: $XPATH"
+echo "xpath: ${xpath[@]}"
+xpath+=(/w)
+echo "after append: $XPATH"
+XPATH="/a:/b:/c"
+echo "after assign: ${xpath[@]}"'
+XPATH:
+xpath: /x /y /z
+after append:
+after assign: /x /y /z /w
+```
+
+`typeset -T VAR var :` creates a "tied" pair: `VAR` is a
+colon-separated string view of array `var`. Modifications to either
+side should propagate. C-zsh implements this via `PM_TIED` in
+`Src/params.c`.
+
+zshrs's port:
+  - The array side (`xpath`) is populated correctly from the `=(...)` init
+  - The string side (`XPATH`) is ALWAYS empty
+  - Modifying the array doesn't update the string
+  - Modifying the string doesn't update the array (it stays at the array's
+    pre-assignment value)
+
+**Where** — `src/ported/params.rs::create_tied_var` or the PM_TIED
+getter/setter chain. The string-side `intgetfn` / `strgetfn`
+callback may be missing the array-join step (`join_arr_with_sep`),
+and the assign path is missing the split-on-sep step
+(`split_string_on_sep`).
+
+The reverse case (built-in `PATH` ↔ `path`) appears to work
+correctly, so the bug is specific to user-declared `typeset -T`
+pairs, not the kernel-builtin tied pairs.
+
+**Workaround** — use built-in `PATH`/`path` for path-like vars, or
+manually sync the two sides:
+```sh
+xpath=(/x /y /z)
+XPATH="${(j.:.)xpath}"     # rejoin on each mutation
+```
+
+---
+
+## #25 — `$ZSH_SCRIPT` unset and `$ZSH_ARGZERO` wrong in script mode
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ cat > /tmp/d.zsh <<'EOF'
+echo "ZSH_SCRIPT=${ZSH_SCRIPT:-N/A}"
+echo "ZSH_ARGZERO=${ZSH_ARGZERO:-N/A}"
+echo "\$0=$0"
+EOF
+
+$ /opt/homebrew/bin/zsh /tmp/d.zsh
+ZSH_SCRIPT=/tmp/d.zsh
+ZSH_ARGZERO=/tmp/d.zsh
+$0=/tmp/d.zsh
+
+$ ./target/debug/zshrs --zsh /tmp/d.zsh
+ZSH_SCRIPT=N/A
+ZSH_ARGZERO=./target/debug/zshrs
+$0=/tmp/d.zsh
+```
+
+Two separate divergences:
+
+  1. **`$ZSH_SCRIPT`**: zsh sets this to the path of the currently
+     running script. zshrs leaves it unset.
+
+  2. **`$ZSH_ARGZERO`**: zsh sets this to `argv[0]` as the script
+     intended (the script path when invoked as `zsh /path/to.zsh`).
+     zshrs sets it to the path of the zshrs binary itself
+     (`./target/debug/zshrs`).
+
+Only `$0` is set correctly to the script path in both shells.
+
+**Where** — `src/ported/init.rs::init_special_vars` (port of
+`Src/init.c`'s special-param setup). Both `ZSH_SCRIPT` and
+`ZSH_ARGZERO` need to be assigned when zshrs detects script-mode
+invocation (`argv[1]` is a `.zsh` file or `--zsh script.zsh`).
+
+**Affected callers** — tooling that introspects "which script am I
+in":
+  - autoload bookkeeping
+  - error messages (`script:line: error`)
+  - shellcheck-style linters
+  - test harnesses that need the script path
+
+**Workaround** — fall back to `$0` (which works correctly):
+```sh
+script_path="${ZSH_SCRIPT:-$0}"
+arg_zero="${ZSH_ARGZERO:-$0}"
+```
+
+---
+
+## #26 — `emulate -L sh` doesn't switch arrays to 0-indexed (KSH_ARRAYS missing)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'inner() {
+    emulate -L sh
+    a=(1 2 3)
+    echo "[0]: ${a[0]}"
+    echo "[1]: ${a[1]}"
+}
+inner'
+[0]: 1
+[1]: 2
+
+$ zshrs --zsh -c 'inner() {
+    emulate -L sh
+    a=(1 2 3)
+    echo "[0]: ${a[0]}"
+    echo "[1]: ${a[1]}"
+}
+inner'
+[0]:
+[1]: 1
+```
+
+`emulate -L sh` (sticky local emulation) should switch the function
+into POSIX-shell mode, which includes 0-indexed array access (the
+`KSH_ARRAYS` option). zshrs's `emulate` correctly does some option
+adjustment (the leading `in sh emulation` print proves the call
+itself works), but doesn't enable `KSH_ARRAYS` — arrays stay
+1-indexed inside the sh-emulated function.
+
+C-zsh's emulate dispatch in `Src/init.c::zsh_emulate` sets
+`KSH_ARRAYS`, `SH_NULLCMD`, `SH_GLOB`, `SH_WORD_SPLIT`, and others
+when the target emulation is `sh`. zshrs's port at
+`src/ported/init.rs` appears to skip the `KSH_ARRAYS` step.
+
+Verify with `emulate -R ksh` (similar issue):
+```sh
+$ /opt/homebrew/bin/zsh -fc 'emulate -L ksh; a=(x y z); echo "${a[0]}"'
+x
+$ zshrs --zsh -c 'emulate -L ksh; a=(x y z); echo "${a[0]}"'
+            # empty
+```
+
+**Workaround** — explicitly set `KSH_ARRAYS` after emulate:
+```sh
+fn() {
+    emulate -L sh
+    setopt ksh_arrays    # ← required workaround
+    a=(1 2 3)
+    echo "${a[0]}"
+}
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -940,8 +1113,11 @@ exec 3>&-     # ← close to prevent the leak
 | 21 | nested `$(( a + $((b)) ))` garbles outer expansion | **port-bug** | extract inner to var first |
 | 22 | heredoc `\$VAR` escape not honored | **port-bug** | use `<<'END'` quoted form |
 | 23 | worker-pool shutdown INFO leaks to stdout | **port-bug** | close duped fd before exit |
+| 24 | `typeset -T` tied colon-array no-sync | **port-bug** | manual `${(j.:.)arr}` rejoin |
+| 25 | `$ZSH_SCRIPT` unset, `$ZSH_ARGZERO` wrong | **port-bug** | fall back to `$0` |
+| 26 | `emulate -L sh` missing KSH_ARRAYS | **port-bug** | `setopt ksh_arrays` explicit |
 
-Of twenty-three entries, two are fixed (5, 7), seventeen remain
-open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-18, 19, 20, 21, 22, 23), and four were zsh-correct behavior
+Of twenty-six entries, two are fixed (5, 7), twenty remain open
+port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+19, 20, 21, 22, 23, 24, 25, 26), and four were zsh-correct behavior
 misframed by demos (1, 2, 3, 6).
