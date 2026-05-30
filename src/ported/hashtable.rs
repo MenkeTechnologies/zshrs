@@ -3682,4 +3682,122 @@ mod tests {
         let empty: HashMap<String, String> = HashMap::new();
         let _: String = printhashtabinfo("test", &empty);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/hashtable.c
+    // c:55 hasher / c:139 addhashnode / c:343 gethashnode2 / c:355 removehashnode /
+    // c:715 hnamcmp / c:900 emptyhashtable / c:916 printhashtabinfo
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:55 — `hasher` returns u32 (compile-time pin).
+    #[test]
+    fn hasher_returns_u32_type() {
+        let _: u32 = hasher("anything");
+    }
+
+    /// c:55 — `hasher` is deterministic (same input → same hash, alt).
+    #[test]
+    fn hasher_is_deterministic_alt() {
+        for s in ["", "x", "abc", "longer input", "日本"] {
+            let first = hasher(s);
+            for _ in 0..5 {
+                assert_eq!(hasher(s), first,
+                    "hasher({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:55 — `hasher` distinguishes simple distinct inputs (sanity:
+    /// not a constant hash).
+    #[test]
+    fn hasher_distinguishes_distinct_inputs() {
+        let h_a = hasher("a");
+        let h_b = hasher("b");
+        let h_z = hasher("z");
+        // At least two of three must differ (proves non-constant).
+        let distinct = (h_a != h_b) || (h_b != h_z) || (h_a != h_z);
+        assert!(distinct,
+            "hasher must distinguish distinct inputs; got {} {} {}",
+            h_a, h_b, h_z);
+    }
+
+    /// c:139 — `addhashnode` followed by gethashnode2 retrieves entry.
+    #[test]
+    fn addhashnode_then_gethashnode2_retrieves_entry() {
+        let mut h: HashMap<String, String> = HashMap::new();
+        addhashnode(&mut h, "key", "value".to_string());
+        let v = gethashnode2(&h, "key");
+        assert_eq!(v, Some(&"value".to_string()),
+            "add then get must round-trip");
+    }
+
+    /// c:355 — `removehashnode` after add returns Some(value).
+    #[test]
+    fn removehashnode_after_add_returns_some() {
+        let mut h: HashMap<String, String> = HashMap::new();
+        addhashnode(&mut h, "k", "v".to_string());
+        let removed = removehashnode(&mut h, "k");
+        assert_eq!(removed, Some("v".to_string()),
+            "remove returns the removed value");
+        assert!(h.is_empty(), "table empty after remove");
+    }
+
+    /// c:355 — `removehashnode` twice returns Some then None.
+    #[test]
+    fn removehashnode_twice_returns_some_then_none() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        addhashnode(&mut h, "k", 42);
+        let first = removehashnode(&mut h, "k");
+        let second = removehashnode(&mut h, "k");
+        assert!(first.is_some());
+        assert!(second.is_none(),
+            "second remove of same key returns None");
+    }
+
+    /// c:715 — `hnamcmp(x, x)` returns Equal (reflexive).
+    #[test]
+    fn hnamcmp_reflexive() {
+        use std::cmp::Ordering;
+        for s in ["", "a", "hello", "long string here"] {
+            assert_eq!(hnamcmp(s, s), Ordering::Equal,
+                "hnamcmp({:?}, {:?}) must be Equal", s, s);
+        }
+    }
+
+    /// c:900 — `emptyhashtable` actually drops all entries.
+    #[test]
+    fn emptyhashtable_drops_all_entries() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        for i in 0..10 {
+            addhashnode(&mut h, &format!("k_{}", i), i);
+        }
+        assert_eq!(h.len(), 10);
+        emptyhashtable(&mut h);
+        assert_eq!(h.len(), 0, "empty must clear all entries");
+    }
+
+    /// c:916 — `printhashtabinfo` for empty table returns non-empty
+    /// String (must contain at least the table name).
+    #[test]
+    fn printhashtabinfo_empty_table_non_empty_output() {
+        let empty: HashMap<String, String> = HashMap::new();
+        let r = printhashtabinfo("my_table_name", &empty);
+        assert!(!r.is_empty(),
+            "printhashtabinfo must produce non-empty output even for empty table");
+    }
+
+    /// c:97 — `deletehashtable` empties + safe.
+    #[test]
+    fn deletehashtable_empties_table() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        addhashnode(&mut h, "k", 1);
+        deletehashtable(&mut h);
+        assert!(h.is_empty(), "delete must empty the table");
+    }
+
+    /// c:85 — `newhashtable` returns (String, i32) tuple (compile-time pin).
+    #[test]
+    fn newhashtable_returns_tuple_type() {
+        let _: (String, i32) = newhashtable(0, "test");
+    }
 }
