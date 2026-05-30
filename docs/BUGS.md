@@ -8672,6 +8672,142 @@ result="$((bytes * 8))"
 
 ---
 
+## #166 — `for x in $@` (unquoted) keeps empty elements (zsh: removes)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- a "" b; for x in $@; do printf "[%s]" "$x"; done; echo'
+[a][b]
+
+$ ./target/debug/zshrs --zsh -c 'set -- a "" b; for x in $@; do printf "[%s]" "$x"; done; echo'
+[a][][b]
+```
+
+Per shell convention, unquoted `$@` undergoes word-splitting,
+which removes empty elements. zsh removes the empty middle arg.
+zshrs preserves it as an empty word.
+
+The quoted form `"$@"` correctly preserves all elements in both:
+```sh
+$ both-shells -fc 'set -- a "" b; for x in "$@"; do printf "[%s]" "$x"; done; echo'
+[a][][b]    # both keep the empty element
+```
+
+So the bug is specifically the unquoted `$@` IFS-split path
+not stripping empties.
+
+Per POSIX:
+> Unquoted `$@`/`$*` undergoes field splitting via IFS. Empty
+> fields resulting from such splitting are eliminated.
+
+**Where** — `src/ported/paramsubst.rs::split_unquoted_positionals`:
+emits each positional including empty strings as separate
+tokens. C-source `Src/subst.c::wordsplit` skips zero-length
+fields.
+
+**Impact** — defensive iteration patterns that rely on
+empty-skipping behavior process unwanted empty entries:
+
+```sh
+for arg in $@; do
+    [[ -z "$arg" ]] && continue   # workaround
+    process "$arg"
+done
+```
+
+Cross-shell scripts get different iteration counts.
+
+**Workaround** — explicit empty-check inside loop:
+```sh
+for arg in "$@"; do
+    [[ -z "$arg" ]] && continue
+    process "$arg"
+done
+```
+
+---
+
+## #167 — Unclosed `{ cmd` silently runs without error (zsh: parse error)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '{ echo a' 2>&1
+zsh:1: parse error near `a'
+
+$ ./target/debug/zshrs --zsh -c '{ echo a' 2>&1
+a
+```
+
+A `{` opens a compound-command grouping that requires a
+matching `}` close. Missing close should be parse error. zsh
+errors. zshrs silently treats it as if the `{` weren't there
+and runs the body.
+
+Same permissive-parser family:
+- #141 (`;;` outside case)
+- #146 (`{ cmd; } arg` trailing args)
+- #161 (`case x in)` empty pattern)
+- #162 (`(l.5)` missing close delim)
+- #167 (this — unclosed `{`)
+
+**Where** — `src/ported/parse.rs::parse_brace_group`: doesn't
+require matching `}` at end-of-input. C-source
+`Src/parse.c::par_subsh` errors on unmatched bracket.
+
+**Impact** — common typo (forgetting `}` on a multi-line block)
+silently passes through and runs partial code:
+
+```sh
+# accidentally truncated function definition
+foo() {
+    cleanup
+# forgot closing brace
+# zsh: parse error (caught immediately)
+# zshrs: cleanup runs as top-level command, function never defined
+```
+
+**Workaround** — none — careful syntax review.
+
+---
+
+## #168 — Extra `}` after command silently ignored (zsh: parse error)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo a }' 2>&1
+zsh:1: parse error near `}'
+
+$ ./target/debug/zshrs --zsh -c 'echo a }' 2>&1
+a
+```
+
+An orphan `}` (no matching `{`) should be a parse error. zsh
+errors. zshrs silently ignores the `}` and runs `echo a`.
+
+Same permissive-parser family as #167 etc.
+
+**Where** — `src/ported/parse.rs::handle_close_brace`: ignores
+stray `}` tokens when not in brace-group context. Should error
+like orphan terminators (cf. #142). C-source `Src/parse.c::par_event`
+errors on `}` not closing a `{`.
+
+**Impact** — copy-paste mistakes that leave stray `}` chars
+silently pass:
+
+```sh
+# pasted code from another file, accidentally left trailing }
+echo "main work" }
+# zsh: parse error
+# zshrs: runs as "echo main work" + ignores }
+```
+
+**Workaround** — careful review before running.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -8841,9 +8977,12 @@ result="$((bytes * 8))"
 | 163 | `${(t)1}` positional type returns `scalar` (zsh: `array-special`) | **port-bug** | `[[ "$#" -gt 0 ]]` test |
 | 164 | Extended_glob `^pat` (negation prefix) not recognized | **port-bug** | loop with `[[ == ]] continue` |
 | 165 | `${$((expr))}` arith-as-name returns empty (zsh: expr value) | **port-bug** | direct `$((expr))` |
+| 166 | `for x in $@` keeps empty elements (zsh: removes via IFS-split) | **port-bug** | `[[ -z $arg ]] continue` |
+| 167 | Unclosed `{ cmd` silently runs (zsh: parse error) | **port-bug** | careful review |
+| 168 | Extra `}` after command silently ignored (zsh: parse error) | **port-bug** | careful review |
 
-Of one hundred sixty-five entries, two are fixed (5, 7), one
-hundred fifty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of one hundred sixty-eight entries, two are fixed (5, 7), one
+hundred sixty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -8854,5 +8993,5 @@ hundred fifty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
-162, 163, 164, 165), and four were zsh-correct behavior misframed
-by demos (1, 2, 3, 6).
+162, 163, 164, 165, 166, 167, 168), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
