@@ -23366,6 +23366,167 @@ typeset -p +H | grep "^typeset -A"
 
 ---
 
+## #436 — `${(q)a[N]}` flag + subscript combination errors "bad substitution"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=("hello world" "foo bar"); print -l -- "${(q)a[1]}"'
+hello world
+
+$ ./target/debug/zshrs --zsh -c 'a=("hello world" "foo bar"); print -l -- "${(q)a[1]}"'
+zsh:1: bad substitution
+```
+
+`(q)` is the quoting-flag (single-quote each element);
+`a[1]` is a subscript. Combined as `${(q)a[1]}`, zsh
+applies the flag to element 1 of the array — produces the
+first element's value (with `(q)` applied since it's a
+single scalar after subscript, the quoting is a no-op or
+single-element wrap).
+
+zshrs's parser doesn't combine `(flag)` with `[N]`
+subscript — errors immediately with "bad substitution".
+
+Related to #407 (subscript flag `(e)` treated wrong) and
+#408 (3-arg slice ignored). The parameter-expansion
+flag×subscript matrix is broadly broken.
+
+**Where** — `src/ported/paramsubst/parse.rs`: flag-token
+parser doesn't admit subscript after the closing flag
+paren. C-source `Src/subst.c::paramsubst` parses flags
+first then subscript, both before the value-fetch.
+
+**Impact** — common pattern broken:
+
+```sh
+files=("config dir/" "data dir/")
+for i in {1..${#files}}; do
+    cmd "${(q)files[$i]}"   # ← errors in zshrs
+done
+```
+
+Have to refactor with intermediate variable:
+```sh
+for i in {1..${#files}}; do
+    f="${files[$i]}"
+    cmd "${(q)f}"
+done
+```
+
+**Workaround** — bind to intermediate variable.
+
+---
+
+## #437 — regex-compile error diagnostic missing details — `failed to compile regex` without specific reason
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ "x" =~ "[" ]]'
+zsh:1: failed to compile regex: brackets ([ ]) not balanced
+
+$ ./target/debug/zshrs --zsh -c '[[ "x" =~ "[" ]]'
+zsh:-regex-match:1: failed to compile regex
+```
+
+When a regex pattern is invalid, zsh emits the **specific
+compile error** from the regex engine — "brackets ([ ])
+not balanced", "trailing backslash", "nothing to repeat",
+etc. This lets users immediately understand what's wrong.
+
+zshrs emits a generic "failed to compile regex" with no
+detail. Also has the wrong context prefix
+`zsh:-regex-match:1:` instead of zsh's plain `zsh:1:`
+(extends #420).
+
+**Where** — `src/ported/conditional/regex.rs::compile_err`:
+must capture and emit the `regex::Error` or `Regex::Error`
+detail from the regex crate (or whichever engine is in
+use). C-source `Src/cond.c::cond_regex_err` uses
+`regerror()` to get the human-readable detail.
+
+**Impact** — debugging regex typos becomes harder. Users
+have to inspect their pattern manually to figure out the
+problem:
+
+```sh
+# typo: missing close bracket
+[[ "$input" =~ "[A-Z+]" ]] && allow
+# zsh diagnostic: "brackets ([ ]) not balanced" — clear
+# zshrs diagnostic: "failed to compile regex" — vague
+```
+
+Combined with #420 (eval context prefix lost),
+diagnostic-driven debugging is broadly worse in zshrs.
+
+**Workaround** — copy pattern out, test against
+`echo "$pattern" | grep -E "$pattern"` to get grep's
+clearer error message.
+
+---
+
+## #438 — `%N` prompt escape (script/function name) not expanded — extends prompt-escape gap family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "[%N]"'
+[zsh]
+
+$ ./target/debug/zshrs --zsh -c 'print -P "[%N]"'
+[%N]
+```
+
+`%N` expands to "the name of the script, sourced file, or
+shell function the prompt is being expanded from". Top-
+level (under `-fc`), zsh emits the shell name `zsh`.
+
+zshrs leaves `%N` literal — same family as #429 (`%m`),
+#431 (`%y`/`%l`).
+
+Cumulative prompt-escape gaps now documented in zshrs:
+- #390/#391 PS4 default + expander
+- #412 PS3 default
+- #414 unknown `%X` kept literal
+- #429 `%m` (short host)
+- #431 `%y`/`%l` (tty)
+- #438 `%N` (script/fn) (this entry)
+
+The prompt-escape implementation in zshrs covers only the
+most basic escapes (`%F{...}`, `%~`, `%n`, `%D{...}`).
+
+**Where** — `src/ported/prompts/expand.rs::handle_N`:
+should consult `scriptname` or `funcname[0]` and fall back
+to `argv[0]`. C-source `Src/prompt.c::putpromptchar` for
+`'N'` reads the current execution context.
+
+**Impact** — prompts that display current function name
+(used in nested-source debugging and live-shell
+introspection) break:
+
+```sh
+PS1='%n@%m(%N)> '   # show current source-name
+# zsh: "user@host(zsh)>" at top-level,
+#       "user@host(~/.zshrc:42:my_fn)>" inside a sourced fn
+# zshrs: "user@host(%N)>" — literal escape visible
+```
+
+Affects p10k's "current command" segment, zsh-defer's
+debug-prompt, and any "where am I" diagnostic in
+interactive shells.
+
+**Workaround** — `${functrace[1]}` or `$0` in the prompt
+function:
+```sh
+PS1='%n@%m($0)> '
+```
+
+(`$0` is the calling function or script name; not exactly
+equivalent to `%N` semantics but covers most cases.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -23805,9 +23966,12 @@ typeset -p +H | grep "^typeset -A"
 | 433 | `time` builtin ignores `$TIMEFMT` parameter — hardcoded format always used | **port-bug** | `awk` reformat the hardcoded output |
 | 434 | `read -e` echo-mode flag not recognized — input consumed silently instead of echoed to stdout | **port-bug** | `tee /dev/stderr` or explicit `echo "$REPLY"` |
 | 435 | `typeset -A` no-args lists internal introspection assocs (aliases/builtins/commands) instead of user-defined | **port-bug** | `typeset -p +H \| grep "typeset -A"` |
+| 436 | `${(q)a[N]}` flag + subscript combination errors "bad substitution" — parser doesn't combine flags with subscripts | **port-bug** | bind to intermediate variable |
+| 437 | regex-compile error diagnostic missing details — "failed to compile regex" with no specific reason (zsh: "brackets not balanced" etc.) | **port-bug** | external grep -E test |
+| 438 | `%N` prompt escape (script/fn name) not expanded — extends prompt-escape gap family | **port-bug** | use `$0` in prompt function |
 
-Of four hundred and thirty-five entries, two are fixed (5, 7),
-four hundred and twenty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and thirty-eight entries, two are fixed (5, 7),
+four hundred and thirty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
