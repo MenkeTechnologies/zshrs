@@ -1196,4 +1196,131 @@ mod tests {
         assert_eq!(r.type_, MN_INTEGER,
             "empty sum must be MN_INTEGER (f stayed 0)");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/example.c
+    // c:70 bin_example / c:149 cond_p_len / c:179 cond_i_ex /
+    // c:198 math_sum / c:250 math_length / c:318-388 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:198 — `math_sum` empty argv: l field is 0.
+    #[test]
+    fn math_sum_empty_l_is_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_sum("sum", 0, &[], 0);
+        assert_eq!(r.l, 0, "empty sum's integer field must be 0");
+    }
+
+    /// c:250 — `math_length("")` empty string has length 0.
+    #[test]
+    fn math_length_empty_string_is_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_length("length", "", 0);
+        assert_eq!(r.l, 0);
+        assert_eq!(r.type_, MN_INTEGER);
+    }
+
+    /// c:149 — `cond_p_len("")` empty operand returns boolean i32.
+    #[test]
+    fn cond_p_len_empty_operand_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cond_p_len(&["".to_string()], 0);
+    }
+
+    /// c:179 — `cond_i_ex` empty args returns i32 (alt).
+    #[test]
+    fn cond_i_ex_returns_i32_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cond_i_ex(&[], 0);
+    }
+
+    /// c:70 — `bin_example` empty args non-negative.
+    #[test]
+    fn bin_example_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_example("example", &[], &ops, 0);
+        assert!(r >= 0, "bin_example empty must be ≥ 0, got {}", r);
+    }
+
+    /// c:70 — `bin_example` various func values don't panic.
+    #[test]
+    fn bin_example_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_example("example", &[], &ops, func);
+        }
+    }
+
+    /// c:198 — `math_sum` is pure (same input → same output).
+    #[test]
+    fn math_sum_is_deterministic_for_empty_argv() {
+        let _g = crate::test_util::global_state_lock();
+        let r1 = math_sum("sum", 0, &[], 0);
+        let r2 = math_sum("sum", 0, &[], 0);
+        assert_eq!(r1.l, r2.l);
+        assert_eq!(r1.type_, r2.type_);
+    }
+
+    /// c:250 — `math_length` is pure across calls (alt).
+    #[test]
+    fn math_length_is_deterministic_alt() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["", "x", "hello"] {
+            let a = math_length("length", s, 0);
+            let b = math_length("length", s, 0);
+            assert_eq!(a.l, b.l);
+            assert_eq!(a.type_, b.type_);
+        }
+    }
+
+    /// c:318 — `setup_` is idempotent.
+    #[test]
+    fn example_setup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:376 — `cleanup_` is idempotent.
+    #[test]
+    fn example_cleanup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:388 — `finish_` is idempotent.
+    #[test]
+    fn example_finish_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:149 — `cond_p_len` is pure across calls.
+    #[test]
+    fn cond_p_len_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec!["hi".to_string()];
+        for _ in 0..3 {
+            let a = cond_p_len(&args, 0);
+            let b = cond_p_len(&args, 0);
+            assert_eq!(a, b, "cond_p_len must be pure");
+        }
+    }
 }
