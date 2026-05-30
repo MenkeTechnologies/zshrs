@@ -2141,4 +2141,128 @@ mod tests {
                 "forwardword on empty must be deterministic");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Zle/zle_word.c
+    // c:74-86 wordclass classifier / c:421 viforwardwordend /
+    // c:621 vibackwardblankword / c:672 vibackwardwordend /
+    // c:726 vibackwardblankwordend / c:348 viforwardblankwordend /
+    // c:974 upcaseword / c:1015 downcaseword
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:82 — `wordclass(' ')` = 0 (iblank class).
+    #[test]
+    fn wordclass_space_returns_zero() {
+        assert_eq!(wordclass(' '), 0);
+    }
+
+    /// c:82 — `wordclass('a')` = 1 (alnum class).
+    #[test]
+    fn wordclass_letter_returns_one() {
+        assert_eq!(wordclass('a'), 1);
+        assert_eq!(wordclass('Z'), 1);
+        assert_eq!(wordclass('5'), 1);
+        assert_eq!(wordclass('_'), 1, "underscore is class 1 per c:82");
+    }
+
+    /// c:82 — `wordclass('!')` = 2 (ipunct class).
+    #[test]
+    fn wordclass_punct_returns_two() {
+        assert_eq!(wordclass('!'), 2);
+        assert_eq!(wordclass('?'), 2);
+        assert_eq!(wordclass('.'), 2);
+    }
+
+    /// c:82 — `wordclass` always returns one of {0,1,2,3}.
+    #[test]
+    fn wordclass_returns_only_0_1_2_3() {
+        for c in (0u32..0x80).filter_map(char::from_u32) {
+            let r = wordclass(c);
+            assert!((0..=3).contains(&r),
+                "wordclass({:?}) = {} not in 0..=3", c, r);
+        }
+    }
+
+    /// c:82 — `wordclass('\n')` is NOT iblank (newline excluded),
+    /// must fall to one of the non-zero classes.
+    #[test]
+    fn wordclass_newline_not_blank() {
+        let r = wordclass('\n');
+        assert_ne!(r, 0, "newline must not be class 0 (iblank excludes \\n)");
+    }
+
+    /// c:421 — `viforwardwordend(empty)` exit code in u8 range.
+    #[test]
+    fn viforwardwordend_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = viforwardwordend(&[]);
+        assert!((0..256).contains(&r), "exit {} must fit u8", r);
+    }
+
+    /// c:621 — `vibackwardblankword(empty)` exit code in u8 range.
+    #[test]
+    fn vibackwardblankword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vibackwardblankword(&[]);
+        assert!((0..256).contains(&r), "exit {} must fit u8", r);
+    }
+
+    /// c:672 — `vibackwardwordend(empty)` exit code in u8 range.
+    #[test]
+    fn vibackwardwordend_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vibackwardwordend(&[]);
+        assert!((0..256).contains(&r), "exit {} must fit u8", r);
+    }
+
+    /// c:726 — `vibackwardblankwordend(empty)` exit code in u8 range.
+    #[test]
+    fn vibackwardblankwordend_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vibackwardblankwordend(&[]);
+        assert!((0..256).contains(&r), "exit {} must fit u8", r);
+    }
+
+    /// c:348 — `viforwardblankwordend(empty)` exit code in u8 range.
+    #[test]
+    fn viforwardblankwordend_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = viforwardblankwordend(&[]);
+        assert!((0..256).contains(&r), "exit {} must fit u8", r);
+    }
+
+    /// c:974 — `upcaseword` deterministic on identical buffer state.
+    #[test]
+    fn upcaseword_deterministic_on_identical_state() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = upcaseword(&[]);
+        for _ in 0..3 {
+            assert_eq!(upcaseword(&[]), first,
+                "upcaseword must be deterministic on identical state");
+        }
+    }
+
+    /// c:1015 — `downcaseword` deterministic on identical buffer state.
+    #[test]
+    fn downcaseword_deterministic_on_identical_state() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = downcaseword(&[]);
+        for _ in 0..3 {
+            assert_eq!(downcaseword(&[]), first,
+                "downcaseword must be deterministic on identical state");
+        }
+    }
+
+    /// c:74 — `wordclass` return type i32 (compile-time pin, alt).
+    #[test]
+    fn wordclass_returns_i32_type_alt() {
+        let _: i32 = wordclass(' ');
+    }
 }
