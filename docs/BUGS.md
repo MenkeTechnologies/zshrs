@@ -16836,6 +16836,171 @@ deduped=("${(u)split[@]}")
 
 ---
 
+## #316 — `zsh/system` module builtins missing — `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` all "command not found"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/system 2>/dev/null; syserror -e errmsg ENOENT; echo "[$errmsg]"'
+[No such file or directory]
+
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/system 2>/dev/null; syserror -e errmsg ENOENT; echo "[$errmsg]"'
+zsh:1: command not found: syserror
+[]
+```
+
+After `zmodload zsh/system`, zsh registers several
+filesystem/syscall-wrapper builtins:
+
+| Builtin | Purpose |
+|---------|---------|
+| `syserror` | Get errno name → message string |
+| `sysopen` | Open file with explicit fd assignment |
+| `sysread` | Read bytes with timeout/non-blocking |
+| `syswrite` | Write bytes with explicit count |
+| `sysseek` | Seek in fd |
+
+zshrs's `zmodload zsh/system` doesn't actually register any
+of these — all subsequent calls return "command not found".
+
+Same family as #304 (compsys builtins missing) — modules
+load but their builtin registration is incomplete.
+
+Tested:
+```sh
+for b in syserror sysopen sysread syswrite sysseek; do
+    # zsh: emits "not enough arguments" (builtin recognized)
+    # zshrs: "command not found: $b"
+done
+```
+
+`zsystem` (the umbrella builtin) works in both.
+
+**Where** — `src/ported/modules/zsh_system.rs`: only registers
+`zsystem` and some parameters. C-source
+`Src/Modules/system.c` defines all of these via the standard
+`bintab[]` registration table.
+
+**Impact** — scripts that use low-level fd manipulation,
+non-blocking I/O, or errno-to-string conversion fail. Common
+for:
+- Locking helpers: `zsystem flock` works but `sysopen -lr -o
+  cloexec 3 lockfile` doesn't (sysopen missing).
+- Async-I/O patterns relying on `sysread -t TIMEOUT`.
+- Library code that translates errno values via `syserror`.
+
+**Workaround** — none direct — depends on implementation of
+the missing builtins.
+
+---
+
+## #317 — `epochtime` array autovar from `zsh/datetime` not registered
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime 2>/dev/null; echo "n=${#epochtime} [${epochtime[1]}]"'
+n=2 [1780175431]
+
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/datetime 2>/dev/null; echo "n=${#epochtime} [${epochtime[1]}]"'
+n=0 []
+```
+
+After `zmodload zsh/datetime`, zsh registers the `epochtime`
+array — a 2-element array containing `[seconds, nanoseconds]`
+of the current time. zsh's introspection shows it as
+`array-readonly-hide-hideval-special`.
+
+zshrs registers `EPOCHSECONDS` (which works correctly per
+earlier hunts) but not `epochtime` — the array form is
+missing, so high-precision timing code that needs the
+nanosecond component fails.
+
+**Where** — `src/ported/modules/zsh_datetime.rs`: only the
+scalar `EPOCHSECONDS` and `EPOCHREALTIME` are registered, not
+the `epochtime` array. C-source `Src/Modules/datetime.c`
+registers all three via the standard parameter-binding table.
+
+**Impact** — high-precision timing patterns broken:
+
+```sh
+# Time a script section with nanosecond precision
+zmodload zsh/datetime
+start=("${epochtime[@]}")
+do_work
+end=("${epochtime[@]}")
+elapsed_ns=$(( (end[1] - start[1]) * 1000000000 + (end[2] - start[2]) ))
+echo "Took $elapsed_ns ns"
+# zsh: works, gives nanosecond elapsed time
+# zshrs: epochtime is empty array, elapsed_ns is 0
+```
+
+**Workaround** — use `$EPOCHREALTIME` (float seconds with
+fractional precision):
+```sh
+start=$EPOCHREALTIME
+do_work
+elapsed=$(( EPOCHREALTIME - start ))
+```
+
+---
+
+## #318 — PS4 prompt-escapes (`%x`/`%N`/`%I`/`%_`) not expanded in xtrace output
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt xtrace; echo cmd' 2>&1 1>/dev/null
+[34mzsh	zsh	1	[0m	echo cmd
+
+$ ./target/debug/zshrs --zsh -c 'setopt xtrace; echo cmd' 2>&1 1>/dev/null
+[34m%x	%N	%I	%_[0m	echo cmd
+```
+
+zsh's default `PS4` is `[34m%x\t%N\t%I\t%_[0m\t` (ANSI-blue
+file\tfunc\tline\tcaller-text-separator). When xtrace fires,
+zsh expands the `%`-escapes to actual values:
+- `%x` — current script filename
+- `%N` — current function name (or script)
+- `%I` — current line number
+- `%_` — calling-function-stack indicator
+
+zshrs has the default PS4 string but doesn't expand the
+escapes — emits literal `%x`, `%N`, `%I`, `%_` strings.
+
+Same family as #92 (PS4 default empty — earlier-stage issue)
+and #38 (prompt escapes missing in general).
+
+**Where** — `src/ported/exec.rs::emit_xtrace_prefix`: PS4 is
+written to stderr as a literal scalar. Should pass through
+`prompt_expand()` first. C-source `Src/exec.c::execpline2`
+calls `promptexpand(PS4, ...)` to evaluate `%`-escapes before
+emitting.
+
+**Impact** — every xtrace-debugged script has unusable trace
+output. `set -x` is the standard "what's happening" debug
+mechanism — zshrs's output shows literal `%x %N %I` instead
+of file/func/line, making the trace meaningless.
+
+```sh
+set -x
+problematic_function arg1 arg2
+# zsh: emits "/path/to/script.sh func_name 42 ... + problematic_function arg1 arg2"
+# zshrs: emits "%x %N %I %_ + problematic_function arg1 arg2"
+```
+
+Combined with #92 (PS4 default empty), zshrs's xtrace output
+is doubly broken if user hasn't explicitly set PS4: empty
+prefix THEN literal `%x` text.
+
+**Workaround** — set a simpler PS4 manually:
+```sh
+PS4='+ '
+set -x
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -17155,9 +17320,12 @@ deduped=("${(u)split[@]}")
 | 313 | `${(s.X.)str}` scalar-context split returns multiple echo args instead of joined string | **port-bug** | `${(j: :)${(@s.X.)str}}` rejoin |
 | 314 | `${(os.X.)str}` sort flag not applied after split — flag-composition gap | **port-bug** | two-step: split into array, then `(o)` |
 | 315 | `${(us.X.)str}` unique flag not applied after split — PATH-dedup idiom broken | **port-bug** | two-step: split into array, then `(u)` |
+| 316 | `zsh/system` module builtins `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` missing | **port-bug** | (none — needs builtin registration) |
+| 317 | `epochtime` array autovar from `zsh/datetime` not registered (zsh: 2-elem secs/nanosecs) | **port-bug** | use `$EPOCHREALTIME` float instead |
+| 318 | PS4 prompt-escapes (`%x`/`%N`/`%I`/`%_`) not expanded in xtrace output — trace shows literal text | **port-bug** | set simpler `PS4='+ '` manually |
 
-Of three hundred and fifteen entries, two are fixed (5, 7), three
-hundred and nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and eighteen entries, two are fixed (5, 7), three
+hundred and twelve remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -17179,5 +17347,6 @@ hundred and nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304,
-305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315), and four
-were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
+318), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
