@@ -23047,6 +23047,169 @@ so this introduces visual noise for FQDNs.
 
 ---
 
+## #430 — `%s`/`%u` prompt close-escapes emit `\033[0m` (reset-all) instead of pair-specific closes
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%Sx%s%Uy%u" | od -c | head -1'
+033   [   7   m   x 033   [   2   7   m 033   [   4   m   y 033
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%Sx%s%Uy%u" | od -c | head -1'
+033   [   7   m   x 033   [   0   m 033   [   4   m   y 033
+```
+
+zsh's `%s` (end standout) emits **`\033[27m`** — the
+SGR-specific "standout off" code. `%u` (end underline)
+emits **`\033[24m`** — the SGR-specific "underline off"
+code.
+
+zshrs emits **`\033[0m`** (full SGR reset) for both. This
+destroys any other active SGR state (bold, foreground
+color, background color, etc.).
+
+**Where** — `src/ported/prompts/expand.rs::handle_close_attr`:
+must use attribute-specific close codes. C-source
+`Src/prompt.c::standout_off` emits `27m`,
+`underline_off` emits `24m`.
+
+**Impact** — prompts that combine attributes break
+visually. Example:
+
+```sh
+PS1='%F{red}%Berror%S!%s%b%f '
+# Intent: red bold "error" + standout "!" + close standout
+#         + close bold + close red
+
+# zsh terminal sequence:
+#   \033[31m \033[1m error \033[7m ! \033[27m \033[22m \033[39m
+#   (each close turns off only that attribute)
+# Final state: nothing active — clean.
+
+# zshrs terminal sequence:
+#   \033[31m \033[1m error \033[7m ! \033[0m \033[22m \033[39m
+#   (the \033[0m mid-prompt clears bold AND red prematurely)
+# Final state: also nothing active — but the visual order
+#   of state changes is corrupted; "!" appears in correct
+#   colors but anything after is in default white-on-black
+#   when it should still have the red attribute "active"
+#   until the explicit %f.
+```
+
+p10k, agnoster, and most multi-attribute themes affected.
+
+**Workaround** — replace `%s` / `%u` with explicit
+ANSI close codes:
+```sh
+PS1='%F{red}%Berror'$'\e[7m''!'$'\e[27m''%b%f '
+```
+
+Loses the abstraction but works correctly.
+
+---
+
+## #431 — `%y`/`%l` prompt escapes (tty name) printed literally — extends #429
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "[%y][%l]"'
+[()][()]
+
+$ ./target/debug/zshrs --zsh -c 'print -P "[%y][%l]"'
+[%y][%l]
+```
+
+`%y` is the full tty name (e.g., `/dev/ttys001`); `%l`
+is the tty without `/dev/` prefix (e.g., `ttys001`).
+Under `-fc` (non-interactive), no tty is associated, so
+zsh emits `()` (the literal-paren marker meaning "empty
+expansion").
+
+zshrs leaves both as literal `%y` and `%l`.
+
+Same family as #429 (`%m` literal). The prompt-escape
+table in zshrs lacks handlers for the tty-related
+escapes.
+
+**Where** — `src/ported/prompts/expand.rs::handle_y` and
+`handle_l`. C-source `Src/prompt.c` uses
+`ttyname(2)` on the controlling-tty fd.
+
+**Impact** — prompts that display tty (common in
+multi-pane tmux sessions for identifying which pane is
+which) break:
+
+```sh
+PS1='[%l] %~ %# '
+# zsh: "[ttys003] ~/repo %"
+# zshrs: "[%l] ~/repo %"
+```
+
+**Workaround** — `$TTY` parameter (full path) or
+`"${TTY##*/}"` for the short form.
+
+---
+
+## #432 — `time` builtin output omits command label — pipeline timing reads as anonymous
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '(time (true | true | true)) 2>&1 | tail -1'
+( true | true | true; )  0.00s user 0.00s system 70% cpu 0.002 total
+
+$ ./target/debug/zshrs --zsh -c '(time (true | true | true)) 2>&1 | tail -1'
+0.00s user 0.00s system 80% cpu 0.003 total
+```
+
+zsh's `time` builtin prefixes the timing line with the
+canonical-form of the timed command (`( true | true |
+true; )`). zshrs emits only the bare timing — no
+command-string prefix.
+
+Without the prefix, batch-timing output is anonymous:
+
+```sh
+for cmd in cmd-a cmd-b cmd-c; do
+    time $cmd
+done 2>&1 | grep total
+# zsh output:
+#   cmd-a  0.5s user ...
+#   cmd-b  1.2s user ...
+#   cmd-c  0.3s user ...
+# zshrs output:
+#   0.5s user ...
+#   1.2s user ...
+#   0.3s user ...
+# (which result belongs to which cmd?)
+```
+
+**Where** — `src/ported/builtins/time.rs::format_output`:
+must prepend the canonical-form of the timed command.
+C-source `Src/exec.c::pipe_print` builds the
+command-string from the pipeline AST and prepends it to
+the timefmt output.
+
+**Impact** — batch-timing scripts lose command-result
+correlation. Also affects perf-comparison output that
+relies on grepping the timing lines.
+
+`TIMEFMT` customization is still respected for the
+numeric portion in both shells; the difference is
+specifically the command-label prefix.
+
+**Workaround** — wrap the timed command:
+```sh
+echo "--- $cmd ---"
+time $cmd
+```
+
+Adds visible separator but defeats single-line
+grep-and-parse workflows.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -23480,9 +23643,12 @@ so this introduces visual noise for FQDNs.
 | 427 | `read` doesn't strip leading/trailing IFS chars (zsh: trims `[hello]` from `"  hello  "`) | **port-bug** | explicit `${var##[[:space:]]##}` trim |
 | 428 | unquoted `${arr[*]}` joined with IFS but not re-word-split — half of join+split sequence missing | **port-bug** | use `${arr[@]}` form instead |
 | 429 | `%m` prompt escape (short hostname) not expanded — printed literally; likely also `%M`/`%y`/`%l`/`%j`/`%i` | **port-bug** | use `$HOST` parameter expansion |
+| 430 | `%s`/`%u` prompt close-escapes emit `\\033[0m` (reset-all) instead of `\\033[27m`/`\\033[24m` (pair-specific) | **port-bug** | use explicit ANSI close codes inline |
+| 431 | `%y`/`%l` prompt escapes (tty name) printed literally — extends #429 prompt-escape gap family | **port-bug** | `$TTY` / `${TTY##*/}` parameter |
+| 432 | `time` builtin output omits command-label prefix — pipeline timing reads as anonymous | **port-bug** | wrap with `echo "--- $cmd ---"` |
 
-Of four hundred and twenty-nine entries, two are fixed (5, 7),
-four hundred and twenty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and thirty-two entries, two are fixed (5, 7),
+four hundred and twenty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
