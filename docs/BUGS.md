@@ -19996,6 +19996,166 @@ do the actual PATH search, not the cached assoc).
 
 ---
 
+## #376 — `zmodload zsh/nonexistent` silent failure — missing dlopen error message
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/nonexistent 2>&1; echo rc=$?'
+zsh:1: failed to load module `zsh/nonexistent': dlopen(/opt/homebrew/Cellar/zsh/5.9/lib/zsh/nonexistent.bundle, 0x0009): tried: '/opt/homebrew/Cellar/zsh/5.9/lib/zsh/nonexistent.bundle' (no such file)…
+rc=1
+
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/nonexistent 2>&1; echo rc=$?'
+rc=1
+```
+
+Both exit non-zero (rc=1), but zshrs prints nothing —
+silently fails to load. zsh emits a structured diagnostic:
+`failed to load module 'NAME': dlopen(... 'no such file' ...)`
+with the exact search paths tried.
+
+**Where** — `src/ported/builtins/zmodload.rs::load_module`:
+on lookup-miss / dlopen-fail, return value drops the error
+detail. C-source `Src/init.c::load_module` calls
+`zwarn("failed to load module \`%s': %s", name, dlerror())`
+before returning.
+
+**Impact** — zshrs silently fails to load missing modules.
+Scripts that depend on knowing *why* a module load failed
+(typo? path issue? permissions? wrong version?) get no
+diagnostic — only an exit code.
+
+```sh
+# Common pattern: detect why a module failed
+if ! zmodload zsh/optional 2>/tmp/err; then
+    if grep -q "no such file" /tmp/err; then
+        echo "module not installed"
+    elif grep -q "permission" /tmp/err; then
+        echo "permission denied"
+    fi
+fi
+# zsh: diagnostic-aware branching works
+# zshrs: stderr empty, branching never triggers
+```
+
+**Workaround** — manually probe module file existence
+before zmodload, or `[ -e $module_path ]` and emit own
+diagnostic.
+
+---
+
+## #377 — `zmodload` no-args lists *available* modules instead of *loaded* modules
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ env -i PATH=/usr/bin:/bin /opt/homebrew/bin/zsh -fc 'zmodload'
+zsh/main
+
+$ env -i PATH=/usr/bin:/bin ./target/debug/zshrs --zsh -c 'zmodload'
+zsh/datetime
+zsh/files
+zsh/complete
+zsh/termcap
+zsh/zleparameter
+zsh/curses
+zsh/langinfo
+...(31 modules)
+```
+
+`zmodload` with no args is supposed to list **loaded**
+modules — zsh shows just `zsh/main` (the linker core) on
+a clean `-f` startup. zshrs instead enumerates **all
+available** modules (31 entries on this host), regardless
+of whether any have been `zmodload`-ed.
+
+**Where** — `src/ported/builtins/zmodload.rs::list_modules`:
+iterates the available-modules registry instead of the
+loaded-modules set. C-source `Src/init.c::bin_zmodload`
+walks `modules` linked-list which only contains loaded
+entries.
+
+**Impact** — scripts that detect "what's already loaded"
+via `zmodload | grep MODULE` always succeed in zshrs,
+producing false positives. Conditional auto-loading guards
+break:
+
+```sh
+# Guard: only zmodload if not already loaded
+if ! zmodload 2>/dev/null | grep -q "^zsh/stat$"; then
+    zmodload zsh/stat
+fi
+# zsh: condition true on first run, zmodloads zsh/stat
+# zshrs: condition always false (assoc shows zsh/stat as
+#        "already loaded"), zsh/stat never actually loaded
+```
+
+Also breaks profiling/inspection tools that compare
+zmodload output before/after a script section to detect
+which modules a script loaded.
+
+**Workaround** — track loaded modules manually:
+```sh
+typeset -gA my_loaded
+zmodload zsh/stat && my_loaded[zsh/stat]=1
+```
+
+---
+
+## #378 — `${#var}` ignores locale — always returns char count even in C/POSIX locale
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ LC_ALL=C /opt/homebrew/bin/zsh -fc 'a="héllo"; echo "${#a}"'
+6
+
+$ LC_ALL=C ./target/debug/zshrs --zsh -c 'a="héllo"; echo "${#a}"'
+5
+```
+
+`héllo` is 5 chars / 6 bytes in UTF-8 (é is two bytes).
+With `LC_ALL=C` (no UTF-8 locale), zsh reports the **byte
+count** (6) — single-byte mode is active. zshrs always
+returns the **char count** (5) regardless of locale.
+
+With `LC_ALL=en_US.UTF-8` both return 5 (correct char
+count). The divergence is locale-sensitive: zshrs ignores
+locale and always interprets strings as UTF-8.
+
+**Where** — `src/ported/params/length.rs` or equivalent
+`${#var}` handler: always uses `str::chars().count()`
+instead of branching on `MULTIBYTE` opt + LC_CTYPE.
+C-source `Src/utils.c::MB_METASTRLEN` checks
+`isset(MULTIBYTE)` and the active locale, falling back to
+byte count.
+
+**Impact** — scripts running under C locale (CI systems
+without locale config, embedded systems, init scripts) get
+character counts when byte counts are expected. Common
+real cases:
+
+```sh
+# Determining buffer/network packet length
+data="hello é"
+LC_ALL=C
+size="${#data}"
+printf "Content-Length: %d\r\n\r\n%s" "$size" "$data" | nc ...
+# zsh under C locale: size=8 (correct byte count)
+# zshrs under C locale: size=7 (wrong — Content-Length too short)
+```
+
+Same pattern affects any binary protocol, fixed-width
+formatting, ASCII validation, or pre-UTF8 data parsing
+that ran under POSIX locale on purpose.
+
+**Workaround** — explicit byte count via `wc -c`:
+```sh
+size=$(printf %s "$data" | wc -c)
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -20375,9 +20535,12 @@ do the actual PATH search, not the cached assoc).
 | 373 | `pipestatus=(...)` user-overwrite accepted — pipestatus not readonly (zsh: silently rejects) | **port-bug** | defensive copy before user-code |
 | 374 | `reswords=...` user-overwrite accepted — reswords not readonly (zsh: "read-only variable") | **port-bug** | defensive copy |
 | 375 | `commands[name]=path` slice-write accepted — security-relevant cmd-cache poisoning (zsh: "attempt to set slice") | **port-bug** | use `whence -p` / `command -v` for path resolution |
+| 376 | `zmodload zsh/nonexistent` silent failure — missing dlopen error message (zsh: "failed to load module: dlopen…") | **port-bug** | probe module file existence manually |
+| 377 | `zmodload` no-args lists *available* modules instead of *loaded* modules (zsh: just `zsh/main`) | **port-bug** | track loaded modules manually in user assoc |
+| 378 | `${#var}` ignores locale — always char count even in C/POSIX (zsh: byte count when LC_CTYPE not UTF-8) | **port-bug** | `wc -c` for byte count |
 
-Of three hundred and seventy-five entries, two are fixed (5, 7),
-three hundred and sixty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and seventy-eight entries, two are fixed (5, 7),
+three hundred and seventy-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
