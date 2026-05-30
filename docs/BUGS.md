@@ -18458,6 +18458,142 @@ issues mean users can't override either way.
 
 ---
 
+## #346 — `read -E` flag (echo input back to stdout) not implemented
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "hello" | read -E line; echo "[$line]"'
+hello
+[hello]
+
+$ ./target/debug/zshrs --zsh -c 'echo "hello" | read -E line; echo "[$line]"'
+[hello]
+```
+
+`read -E` reads input AND echoes each line back to stdout
+(useful for filtering pipelines where you want to both
+capture and forward). zsh does both: echoes "hello", then
+also assigns to `$line`.
+
+zshrs only assigns to `$line` — silently skips the echo
+step.
+
+**Where** — `src/ported/builtins/read.rs::handle_E_flag`: not
+implemented. C-source `Src/builtin.c::bin_read` with `OPT_E`
+flag also writes the read content to stdout before
+processing.
+
+**Impact** — Filter-and-capture pipelines break:
+
+```sh
+# Tee-like behavior: log every line AND process it
+some_command | while read -E line; do
+    [[ "$line" =~ error ]] && alert "$line"
+done
+# zsh: emits all lines to stdout AND processes
+# zshrs: lines disappear into the while-loop, no stdout output
+```
+
+**Workaround** — explicit tee:
+```sh
+some_command | tee /dev/stderr | while read line; do ...; done
+```
+
+---
+
+## #347 — `read -z` flag (read from command buffer) not implemented
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -z "from-buf"; read -z line; echo "[$line]"'
+[from-buf]
+
+$ ./target/debug/zshrs --zsh -c 'print -z "from-buf"; read -z line; echo "[$line]"'
+[]
+```
+
+`print -z` pushes text to zsh's editor command buffer (the
+queue of pending command lines). `read -z` reads from that
+buffer.
+
+zshrs's `print -z` may or may not push correctly, but
+`read -z` returns empty regardless — the buffer-read path
+isn't connected to the command-buffer storage.
+
+Combined with #343/#344 (bindkey broken) and #346 (-E flag),
+zshrs's interactive-shell interaction primitives have many
+gaps.
+
+**Where** — `src/ported/builtins/read.rs::handle_z_flag`:
+doesn't access the command-buffer storage. C-source
+`Src/Zle/zle_misc.c::bin_read_z` reads from the editor
+buffer queue.
+
+**Impact** — scripts that move text between command buffer
+and variables can't round-trip:
+
+```sh
+# Pre-populate cmd line via print -z, then read it back for inspection
+print -z "$default_cmd"
+# ... at later prompt the user can edit it ...
+read -z captured_cmd
+analyze "$captured_cmd"
+# zsh: works
+# zshrs: captured_cmd is empty
+```
+
+**Workaround** — none.
+
+---
+
+## #348 — `read -p VAR` flag semantics differ — zsh: read from coproc; zshrs: parse error
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'read -p line' 2>&1
+zsh:read:1: -p: no coprocess
+
+$ ./target/debug/zshrs --zsh -c 'read -p line' 2>&1
+(empty — no error, no output)
+```
+
+zsh's `read -p` means "read from the coproc's pipe" (read
+from the established coprocess fd). When no coprocess is
+active, zsh errors with "no coprocess".
+
+zshrs accepts the flag silently (or has different parsing —
+the original test showed it tried `not an identifier:
+prompt: ` suggesting -p might be interpreted differently).
+Either way, behavior diverges.
+
+Bash's `read -p` is different: "prompt string" — but in zsh
+`-p` means coproc. Cross-shell-porting confusion is part of
+the issue here.
+
+**Where** — `src/ported/builtins/read.rs::handle_p_flag`:
+either silently accepts as no-op or interprets as
+bash-style-prompt. C-source `Src/builtin.c::bin_read` errors
+when no coproc is established.
+
+**Impact** — coproc-pipe-read patterns broken. Less common
+than other read forms but `coproc` users hit this:
+
+```sh
+coproc some_helper
+print -p "request"
+read -p response
+# zsh: reads from coproc fd
+# zshrs: behavior undefined, may use wrong fd or parse wrong
+```
+
+**Workaround** — explicit fd: `read <&p` form (which may also
+have gaps per #205).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -18807,9 +18943,12 @@ issues mean users can't override either way.
 | 343 | `bindkey "key" widget` define-binding silent no-op — every `.zshrc` keybinding ignored (daily-driver blocker) | **port-bug** | (none — keymap insert broken) |
 | 344 | `bindkey -r "key"` doesn't remove binding — companion to #343, key remains bound | **port-bug** | (none — keymap delete broken) |
 | 345 | Default `^A` binding differs — `self-insert` (zsh -f) vs `beginning-of-line` (zshrs always) | **port-bug** | (none — -f doesn't strip keymap) |
+| 346 | `read -E` flag (echo input back to stdout) not implemented — tee-like read pipelines silently lose output | **port-bug** | use explicit `tee /dev/stderr` |
+| 347 | `read -z` flag (read from command buffer) returns empty — buffer-roundtrip broken | **port-bug** | (none — buffer not connected) |
+| 348 | `read -p VAR` flag semantics differ — zsh: read-from-coproc (errors when none), zshrs: parse-error/silent | **port-bug** | use `read <&p` (may also be broken per #205) |
 
-Of three hundred and forty-five entries, two are fixed (5, 7),
-three hundred and thirty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and forty-eight entries, two are fixed (5, 7),
+three hundred and forty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -18834,5 +18973,5 @@ three hundred and thirty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343,
-344, 345), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+344, 345, 346, 347, 348), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
