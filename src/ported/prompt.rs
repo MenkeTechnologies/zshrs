@@ -4456,4 +4456,133 @@ mod tests {
         let (got, _, _) = promptexpand("%%", 0, None);
         assert_eq!(got, "%", "%% → literal %");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/prompt.c
+    // c:288 promptpath / c:373 promptexpand / c:393 zattrescape /
+    // c:434 parsehighlight / c:1930 countprompt /
+    // c:2006 match_named_colour / c:2048 truecolor_terminal
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:288 — `promptpath` returns String (compile-time pin, alt).
+    #[test]
+    fn promptpath_returns_string_pin_alt() {
+        let _: String = promptpath("/tmp", 0, false, "/home/u");
+    }
+
+    /// c:288 — `promptpath("")` empty path is safe.
+    #[test]
+    fn promptpath_empty_path_safe() {
+        let _ = promptpath("", 0, false, "/home/u");
+        let _ = promptpath("", 0, true, "/home/u");
+    }
+
+    /// c:288 — `promptpath` is deterministic for fixed inputs.
+    #[test]
+    fn promptpath_deterministic() {
+        for (p, npath, tilde, home) in [
+            ("/tmp", 0usize, false, "/home/u"),
+            ("/usr/local/bin", 2, true, "/home/u"),
+            ("/home/u/proj", 0, true, "/home/u"),
+        ] {
+            let a = promptpath(p, npath, tilde, home);
+            let b = promptpath(p, npath, tilde, home);
+            assert_eq!(a, b,
+                "promptpath({:?}, {}, {}, {:?}) must be pure",
+                p, npath, tilde, home);
+        }
+    }
+
+    /// c:373 — `promptexpand` returns a 3-tuple (String, Option<usize>, Option<usize>).
+    #[test]
+    fn promptexpand_returns_tuple_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: (String, Option<usize>, Option<usize>) = promptexpand("", 0, None);
+    }
+
+    /// c:373 — `promptexpand("")` empty input returns empty String.
+    #[test]
+    fn promptexpand_empty_input_returns_empty_string() {
+        let _g = crate::test_util::global_state_lock();
+        let (got, _, _) = promptexpand("", 0, None);
+        assert_eq!(got, "", "empty prompt → empty output");
+    }
+
+    /// c:373 — `promptexpand("literal")` returns "literal" verbatim.
+    #[test]
+    fn promptexpand_plain_text_returned_verbatim() {
+        let _g = crate::test_util::global_state_lock();
+        let (got, _, _) = promptexpand("hello world", 0, None);
+        assert_eq!(got, "hello world",
+            "plain text (no %) returned verbatim");
+    }
+
+    /// c:393 — `zattrescape` returns String (compile-time pin, alt).
+    #[test]
+    fn zattrescape_returns_string_pin_alt() {
+        let _: String = zattrescape(0);
+    }
+
+    /// c:393 — `zattrescape(0)` is deterministic.
+    #[test]
+    fn zattrescape_zero_deterministic() {
+        let a = zattrescape(0);
+        let b = zattrescape(0);
+        assert_eq!(a, b, "zattrescape(0) must be pure");
+    }
+
+    /// c:434 — `parsehighlight("")` empty input is safe.
+    #[test]
+    fn parsehighlight_empty_returns_some_value() {
+        let _: zattr = parsehighlight("");
+    }
+
+    /// c:1930 — `countprompt("")` empty input → width=0, height=1
+    /// (the empty prompt still occupies one line; matches C convention).
+    #[test]
+    fn countprompt_empty_input_zero_width_one_height() {
+        let mut w = -1i32;
+        let mut h = -1i32;
+        countprompt("", &mut w, &mut h, 0);
+        assert_eq!(w, 0, "empty width = 0");
+        assert_eq!(h, 1, "empty height = 1 (first-line default)");
+    }
+
+    /// c:1930 — `countprompt` doesn't panic for plain ASCII text.
+    #[test]
+    fn countprompt_plain_ascii_no_panic() {
+        let mut w = 0i32;
+        let mut h = 0i32;
+        countprompt("hello", &mut w, &mut h, 0);
+        assert!(w > 0, "width should be > 0 for 'hello'; got {}", w);
+    }
+
+    /// c:2048 — `truecolor_terminal` returns bool + deterministic.
+    #[test]
+    fn truecolor_terminal_returns_bool_and_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = truecolor_terminal();
+        let a = truecolor_terminal();
+        let b = truecolor_terminal();
+        assert_eq!(a, b, "truecolor_terminal must be pure");
+    }
+
+    /// c:2006 — `match_named_colour` returns Option<u8> + deterministic.
+    #[test]
+    fn match_named_colour_returns_option_u8_deterministic() {
+        let _: Option<u8> = match_named_colour("red");
+        for name in &["red", "blue", "__unknown__", ""] {
+            let a = match_named_colour(name);
+            let b = match_named_colour(name);
+            assert_eq!(a, b,
+                "match_named_colour({:?}) must be pure", name);
+        }
+    }
+
+    /// c:2006 — `match_named_colour("")` empty input returns None (alt).
+    #[test]
+    fn match_named_colour_empty_returns_none_alt() {
+        assert!(match_named_colour("").is_none(),
+            "empty colour name → None");
+    }
 }
