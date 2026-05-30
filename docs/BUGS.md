@@ -11281,6 +11281,155 @@ else echo "type: none"; fi
 
 ---
 
+## #217 — `setopt cdable_vars` doesn't allow `cd VAR` to use VAR's value as path
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt cdable_vars; mytmp=/tmp; cd /; cd mytmp; pwd'
+/tmp
+
+$ ./target/debug/zshrs --zsh -c 'setopt cdable_vars; mytmp=/tmp; cd /; cd mytmp; pwd'
+zsh:cd:1: no such file or directory: mytmp
+/
+```
+
+`cdable_vars` is a zsh option that makes `cd NAME` (where
+NAME is not a literal directory) first check whether NAME is
+a parameter holding a directory path — if so, cd to that
+path. Common idiom for "named directories" without using
+`~name` syntax.
+
+zshrs's `cd` builtin doesn't consult the parameter table for
+non-existent paths even with `cdable_vars` set.
+
+**Where** — `src/ported/builtins/cd.rs::resolve_target`: no
+`cdable_vars` opt check in the fallback path. C-source
+`Src/builtin.c::cd_get_dest` walks parameter table when
+target isn't a literal dir and `CDABLEVARS` opt is set.
+
+**Impact** — workflows that use parameter-as-directory-name
+patterns (common in dotfile setups: `proj=/Users/x/work; cd
+proj`) all break. Same with `~name` style "named directory"
+hash table integration via cdable_vars.
+
+```sh
+# Common .zshrc pattern
+typeset projects=$HOME/code
+typeset config=$HOME/.config
+setopt cdable_vars
+# Now:
+cd projects   # zsh: cd's to ~/code; zshrs: errors "no such file"
+cd config     # zsh: cd's to ~/.config; zshrs: errors
+```
+
+**Workaround** — explicit deref:
+```sh
+cd "$projects"
+```
+
+---
+
+## #218 — `typeset NAME` for assoc array prints nothing (zsh: shows `h=( [k]=v ... )` literal)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[k]=v; h[k2]=v2; typeset h'
+h=( [k]=v [k2]=v2 )
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[k]=v; h[k2]=v2; typeset h'
+(empty)
+```
+
+`typeset NAME` (no other flags) should display the variable
+in its zsh-syntax assignment form. For an assoc array, that's
+the `h=( [k]=v ... )` form. zshrs prints nothing.
+
+`typeset -p h` works in both shells (also tested):
+```sh
+$ both-shells -fc 'typeset -A h; h[k]=v; typeset -p h'
+typeset -A h=( [k]=v )
+```
+
+So the `-p` (POSIX-like portable-syntax) path works, just the
+bare `typeset h` display path doesn't dispatch the assoc-array
+formatter.
+
+**Where** — `src/ported/builtins/typeset.rs::display_var`:
+when `-p` flag absent, formats scalars and arrays but assoc
+case falls through to an empty branch. C-source
+`Src/builtin.c::typeset_single` uses `printparamnode()` which
+handles assoc via `print_assoc_var()`.
+
+**Impact** — config-introspection scripts that dump bare
+`typeset h` to capture all current state lose all assoc-array
+data. Less severe than `-p` form working, but still a parity
+gap.
+
+```sh
+# Dump everything for debug
+for v in "${(@k)parameters}"; do typeset "$v"; done > state.dump
+# zsh: state.dump contains all scalars + arrays + assocs
+# zshrs: assocs missing from dump
+```
+
+**Workaround** — use `typeset -p h` explicitly.
+
+---
+
+## #219 — `typeset -i "h[k]"` integer-typeset on assoc element silently accepted (zsh: rejects)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; typeset -i "h[k]"; h[k]="100"; echo "[${h[k]}]"' 2>&1
+zsh:typeset:1: h[k]: inconsistent array element or slice assignment
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; typeset -i "h[k]"; h[k]="100"; echo "[${h[k]}]"'
+[100]
+```
+
+zsh rejects per-element attribute setting on assoc arrays —
+attributes (`-i`, `-l`, `-u`, `-r`, etc.) apply to the whole
+array, not individual elements. The error message
+"inconsistent array element or slice assignment" indicates
+zsh's parser/type-checker explicitly disallows this form.
+
+zshrs silently accepts and applies the integer attribute to
+the element. Same family as the permissive-parser bugs
+(#141/#146/#161/#162/#167/#168/#169/#170/#171/#172/#189) —
+zshrs accepts invalid syntax that zsh rejects.
+
+**Where** — `src/ported/builtins/typeset.rs::apply_attrs`:
+when subscript is present on target name, doesn't reject the
+per-element-attribute form. C-source `Src/builtin.c::typeset_single`
+checks `param->node.flags & PM_HASHELEM` and errors via
+`zwarnnam("inconsistent array element or slice assignment")`.
+
+**Impact** — scripts that accidentally write
+`typeset -i "h[k]"` instead of `typeset -i h` (with intent
+to make the whole assoc integer-valued) succeed in zshrs but
+fail in zsh — producing divergent runtime behavior. Less
+critical than crashes but still a parity gap that affects
+script portability.
+
+```sh
+# Bug-prone code that "works" in zshrs but errors in zsh
+typeset -A scores
+typeset -i "scores[alice]"   # zshrs: ok; zsh: error
+scores[alice]=95
+```
+
+**Workaround** — apply attribute to the whole assoc at
+declaration:
+```sh
+typeset -iA scores
+scores[alice]=95
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -11501,9 +11650,12 @@ else echo "type: none"; fi
 | 214 | `chpwd`/`chpwd_functions` hook not fired on `cd` — breaks p10k/oh-my-zsh/zoxide/direnv | **port-bug** | wrap `cd` in function dispatching hooks |
 | 215 | `zshexit` hook function not fired on shell exit (also breaks combined with #203) | **port-bug** | `trap "..." EXIT` at top-level |
 | 216 | `${(t)var:-default}` after `unset var` returns empty instead of default | **port-bug** | explicit `(( ${+var} ))` existence check |
+| 217 | `setopt cdable_vars` ignored — `cd VAR` doesn't deref VAR as path | **port-bug** | explicit `cd "$VAR"` deref |
+| 218 | `typeset NAME` for assoc array prints nothing (zsh: `h=( [k]=v ... )` form) | **port-bug** | `typeset -p h` explicit |
+| 219 | `typeset -i "h[k]"` integer-on-assoc-element silently accepted (zsh: rejects) | **port-bug** | apply attribute to whole assoc `typeset -iA` |
 
-Of two hundred and sixteen entries, two are fixed (5, 7), two
-hundred and ten remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and nineteen entries, two are fixed (5, 7), two
+hundred and thirteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -11518,5 +11670,5 @@ hundred and ten remain open port-bugs/perf-issues (4, 8, 9, 10,
 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
-214, 215, 216), and four were zsh-correct behavior misframed by
-demos (1, 2, 3, 6).
+214, 215, 216, 217, 218, 219), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
