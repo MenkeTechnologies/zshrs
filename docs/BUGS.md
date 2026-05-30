@@ -11128,6 +11128,159 @@ done
 
 ---
 
+## #214 — `chpwd` hook and `chpwd_functions` array not fired on `cd`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'chpwd() { echo "cwd: $PWD"; }; builtin cd /tmp; builtin cd /'
+cwd: /tmp
+cwd: /
+
+$ ./target/debug/zshrs --zsh -c 'chpwd() { echo "cwd: $PWD"; }; builtin cd /tmp; builtin cd /'
+(empty)
+```
+
+The `chpwd` function — and the array-form `chpwd_functions=(fn1
+fn2 ...)` — is supposed to be called automatically after every
+successful `cd`. zshrs's `cd` builtin doesn't invoke either.
+
+Array form also broken:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'my_h() { echo "h: $PWD"; }; chpwd_functions=(my_h); builtin cd /tmp; builtin cd /'
+h: /tmp
+h: /
+
+$ ./target/debug/zshrs --zsh -c 'my_h() { echo "h: $PWD"; }; chpwd_functions=(my_h); builtin cd /tmp; builtin cd /'
+(empty)
+```
+
+**Where** — `src/ported/builtins/cd.rs::after_chdir`: doesn't
+call the post-cd hook dispatch. C-source `Src/builtin.c::bin_cd`
+calls `callhookfunc("chpwd", NULL, 1, NULL)` after a successful
+chdir, which fires both the `chpwd` function and walks the
+`chpwd_functions` array.
+
+**Impact** — broad daily-driver blocker. `chpwd` is the
+standard zsh hook used by:
+- `p10k` / `powerlevel10k` for dynamic prompt segments
+- `oh-my-zsh` themes (`auto_ls`, project detection, vcs-status
+  refresh)
+- `zoxide` / `z` / autojump for path-frequency tracking
+- `direnv` for `.envrc` discovery on cd
+- Virtual-environment auto-activation plugins (pyenv-virtualenv,
+  rbenv-aware, etc.)
+- Window-title auto-update functions
+
+All of these go dead in zshrs. Visible breakage: the prompt
+won't update on directory change, frequented-dirs tracking
+breaks, env auto-activation stops working.
+
+**Workaround** — wrap `cd` in a function:
+```sh
+cd() {
+    builtin cd "$@" && {
+        [[ -n $functions[chpwd] ]] && chpwd
+        for f in "${chpwd_functions[@]}"; do "$f"; done
+    }
+}
+```
+
+---
+
+## #215 — `zshexit` hook function not fired on shell exit
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zshexit() { echo "EXIT-HOOK"; }; echo "before"; exit 0'
+before
+EXIT-HOOK
+
+$ ./target/debug/zshrs --zsh -c 'zshexit() { echo "EXIT-HOOK"; }; echo "before"; exit 0'
+before
+```
+
+The `zshexit` special function — and presumably the array form
+`zshexit_functions=(fn1 ...)` — is supposed to run when the
+shell exits (similar to `trap EXIT` but a zsh-specific hook
+mechanism). zsh fires it; zshrs doesn't.
+
+This is the same shell-event-hook gap as [[#214]] (chpwd), just
+on the exit-path side. Likely a single missing dispatch point
+in the shell-shutdown sequence.
+
+**Where** — `src/ported/exec.rs::shell_exit` / `main::cleanup`:
+no `callhookfunc("zshexit", ...)` invocation. C-source
+`Src/init.c::zexit` calls the hook before `_exit()`.
+
+**Impact** — paired with #214, every "hook on every event"
+plugin pattern is dead:
+- Cleanup-on-exit code (temp file removal, daemon shutdown,
+  session-state save)
+- Logging shells session-end time for productivity tracking
+  (zsh-history-database, etc.)
+- `znotify` / `auto-notify` end-of-shell summary plugins
+
+Combined with the `trap EXIT` scope bug ([[#203]]), zshrs's
+shell-exit lifecycle is severely degraded — neither the trap-
+form nor the hook-form fires correctly.
+
+**Workaround** — use `trap "cleanup_fn" EXIT` at shell
+top-level (not inside a fn, per #203).
+
+---
+
+## #216 — `${(t)var:-default}` after `unset var` returns empty instead of falling through to default
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[k]=v; unset h; echo "[${(t)h:-NONE}]"'
+[NONE]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[k]=v; unset h; echo "[${(t)h:-NONE}]"'
+[]
+```
+
+`${(t)var}` returns the type string ("association", "array",
+"integer", etc.). For an unset variable, the type lookup
+should produce no value — and the `:-NONE` default
+substitution should kick in.
+
+zsh returns the default. zshrs returns an empty string but
+doesn't apply the `:-` default. This means zshrs's `(t)` flag
+returns an empty *value* (not unset state) — the `:-` operator
+distinguishes "unset" from "empty string" by colon presence,
+and zshrs is producing "empty" not "unset" after the type
+lookup of an unset var.
+
+```sh
+# Common type-test idiom
+[[ "${(t)h:-none}" == "association"* ]] && process_assoc h || error "h is not assoc: ${(t)h:-none}"
+# zsh: error path prints "h is not assoc: none"
+# zshrs: error path prints "h is not assoc: " (truncated)
+```
+
+**Where** — `src/ported/paramflags.rs::apply_t_flag`: when var
+is unset, returns `""` (empty string state) instead of
+preserving unset state for downstream `:-`/`:=`/`:?` operators.
+C-source `Src/subst.c::dosubst` with `PARAMSUBST_TYPESET`
+sentinels unset state so subsequent default operators trigger.
+
+**Impact** — defensive type-checking idioms produce
+incorrect/empty output when the variable being introspected
+is unset. Errors become harder to diagnose because the type
+string in the error message is silently empty.
+
+**Workaround** — explicit existence check:
+```sh
+if (( ${+h} )); then echo "type: ${(t)h}"
+else echo "type: none"; fi
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -11345,9 +11498,12 @@ done
 | 211 | `$-` (option chars) missing `f`/other letters (option-to-char table incomplete) | **port-bug** | use `setopt \| grep ...` instead |
 | 212 | `${(b)str}` over-escapes non-glob chars (tab, etc) — extra `\` inserted | **port-bug** | use `(q)` for shell quoting instead |
 | 213 | `${assoc[(R)value]}` reverse-search-by-value errors `bad substitution` | **port-bug** | manual `for k v in "${(@kv)h}"` loop |
+| 214 | `chpwd`/`chpwd_functions` hook not fired on `cd` — breaks p10k/oh-my-zsh/zoxide/direnv | **port-bug** | wrap `cd` in function dispatching hooks |
+| 215 | `zshexit` hook function not fired on shell exit (also breaks combined with #203) | **port-bug** | `trap "..." EXIT` at top-level |
+| 216 | `${(t)var:-default}` after `unset var` returns empty instead of default | **port-bug** | explicit `(( ${+var} ))` existence check |
 
-Of two hundred and thirteen entries, two are fixed (5, 7), two
-hundred and seven remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and sixteen entries, two are fixed (5, 7), two
+hundred and ten remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -11361,5 +11517,6 @@ hundred and seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174,
 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
-201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213),
-and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
+214, 215, 216), and four were zsh-correct behavior misframed by
+demos (1, 2, 3, 6).
