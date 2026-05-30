@@ -2568,4 +2568,129 @@ mod tests {
             freebrinfo(None);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_tricky.c
+    // c:98 completecall / c:144 completeword / c:180 menucomplete /
+    // c:268 expandorcomplete / c:370 checkparams / c:541 parambeg /
+    // c:1024 has_real_token / c:1054 get_comp_string
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:98 — `completecall` returns i32 (compile-time type pin).
+    #[test]
+    fn completecall_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = completecall(&[]);
+    }
+
+    /// c:144 — `completeword` returns i32.
+    #[test]
+    fn completeword_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = completeword(&[]);
+    }
+
+    /// c:180 — `menucomplete` returns i32.
+    #[test]
+    fn menucomplete_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = menucomplete(&[]);
+    }
+
+    /// c:268 — `expandorcomplete` returns i32.
+    #[test]
+    fn expandorcomplete_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = expandorcomplete(&[]);
+    }
+
+    /// c:304 — `menuexpandorcomplete` returns i32.
+    #[test]
+    fn menuexpandorcomplete_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = menuexpandorcomplete(&[]);
+    }
+
+    /// c:342 — `reversemenucomplete` returns i32.
+    #[test]
+    fn reversemenucomplete_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = reversemenucomplete(&[]);
+    }
+
+    /// c:351 — `acceptandmenucomplete` returns i32.
+    #[test]
+    fn acceptandmenucomplete_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = acceptandmenucomplete(&[]);
+    }
+
+    /// c:370 — `checkparams("")` empty returns i32 (compile-time type pin).
+    #[test]
+    fn checkparams_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = checkparams("");
+    }
+
+    /// c:370 — `checkparams` is deterministic for stable input.
+    #[test]
+    fn checkparams_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for s in ["", "FOO", "PATH", "__never_real_param__"] {
+            let first = checkparams(s);
+            for _ in 0..3 {
+                assert_eq!(checkparams(s), first,
+                    "checkparams({:?}) must be deterministic", s);
+            }
+        }
+    }
+
+    /// c:541 — `parambeg("", 0)` empty returns Option<usize>.
+    #[test]
+    fn parambeg_returns_option_usize_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Option<usize> = parambeg("", 0);
+    }
+
+    /// c:1024 — `has_real_token("")` empty returns false (no tokens).
+    #[test]
+    fn has_real_token_empty_returns_false() {
+        assert!(!has_real_token(""), "empty has no tokens");
+    }
+
+    /// c:1024 — `has_real_token` returns bool (compile-time type pin).
+    #[test]
+    fn has_real_token_returns_bool_type() {
+        let _: bool = has_real_token("anything");
+    }
+
+    /// c:1024 — `has_real_token` is pure for stable input.
+    #[test]
+    fn has_real_token_is_pure() {
+        for s in ["", "abc", "hello world", "no tokens"] {
+            let first = has_real_token(s);
+            for _ in 0..3 {
+                assert_eq!(has_real_token(s), first,
+                    "has_real_token({:?}) must be pure", s);
+            }
+        }
+    }
+
+    /// c:1054 — `get_comp_string` returns Option<String> (type pin).
+    #[test]
+    fn get_comp_string_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Option<String> = get_comp_string();
+    }
 }

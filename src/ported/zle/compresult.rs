@@ -2379,4 +2379,105 @@ mod tests {
         assert_eq!(skipnolist(&[], 0), 0);
         assert_eq!(skipnolist(&[], 1), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compresult.c
+    // c:264 do_ambiguous / c:311 ztat / c:527 do_ambig_menu /
+    // c:639 list_lines / c:729 calclist / c:1232 asklist /
+    // c:1350 printlist / c:1502 bld_all_str / c:1657 ilistmatches /
+    // c:1683 list_matches
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:264 — `do_ambiguous(empty)` returns i32 (compile-time type pin).
+    #[test]
+    fn do_ambiguous_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = do_ambiguous(&[]);
+    }
+
+    /// c:311 — `ztat("/__never__", _)` returns Option<Metadata>.
+    #[test]
+    fn ztat_returns_option_metadata_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<std::fs::Metadata> = ztat("/__never_zshrs__", false);
+    }
+
+    /// c:311 — `ztat("/__never__", _)` returns None.
+    #[test]
+    fn ztat_nonexistent_returns_none() {
+        assert!(ztat("/__never_real_path_zshrs_xyz__", false).is_none(),
+            "nonexistent → None");
+        assert!(ztat("/__never_real_path_zshrs_xyz__", true).is_none(),
+            "nonexistent w/ symlink follow → None");
+    }
+
+    /// c:311 — `ztat("/tmp", _)` returns Some on every Unix host.
+    #[test]
+    #[cfg(unix)]
+    fn ztat_tmp_returns_some() {
+        assert!(ztat("/tmp", false).is_some(),
+            "/tmp must stat → Some");
+    }
+
+    /// c:527 — `do_ambig_menu` returns i32 (compile-time type pin).
+    #[test]
+    fn do_ambig_menu_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = do_ambig_menu();
+    }
+
+    /// c:639 — `list_lines(empty, 80)` returns 0 (no lines for empty matches).
+    #[test]
+    fn list_lines_empty_matches_returns_zero() {
+        assert_eq!(list_lines(&[], 80), 0,
+            "0 matches → 0 lines");
+    }
+
+    /// c:639 — `list_lines` returns usize (compile-time type pin).
+    #[test]
+    fn list_lines_returns_usize_type() {
+        let _: usize = list_lines(&[], 80);
+    }
+
+    /// c:729 — `calclist(0)` returns i32 (compile-time type pin).
+    #[test]
+    fn calclist_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = calclist(0);
+    }
+
+    /// c:1232 — `asklist` returns i32.
+    #[test]
+    fn asklist_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = asklist();
+    }
+
+    /// c:1350 — `printlist(0, 0)` returns i32.
+    #[test]
+    fn printlist_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = printlist(0, 0);
+    }
+
+    /// c:1502 — `bld_all_str` returns String (compile-time type pin).
+    #[test]
+    fn bld_all_str_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = bld_all_str();
+    }
+
+    /// c:1657 — `ilistmatches` returns i32.
+    #[test]
+    fn ilistmatches_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = ilistmatches();
+    }
+
+    /// c:1683 — `list_matches` returns i32.
+    #[test]
+    fn list_matches_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = list_matches();
+    }
 }
