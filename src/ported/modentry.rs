@@ -479,4 +479,124 @@ mod tests {
         assert_eq!(modentry(5, &mut m), 0);
         assert_eq!(modentry(3, &mut m), 0, "finish after enables still 0");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/modentry.c
+    // c:7-40 — boot-int selector ∈ {0..=5}; anything else returns 1.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:38 — `modentry(i32::MIN)` (most-negative) returns 1.
+    #[test]
+    fn modentry_i32_min_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(i32::MIN, &mut m), 1);
+    }
+
+    /// c:38 — `modentry(i32::MAX)` (most-positive) returns 1.
+    #[test]
+    fn modentry_i32_max_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(i32::MAX, &mut m), 1);
+    }
+
+    /// c:7-40 — exhaustive sweep of ops 0..=10: ops 0..=5 return 0,
+    /// ops 6..=10 return 1.
+    #[test]
+    fn modentry_exhaustive_sweep_0_to_10() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        for op in 0..=5 {
+            assert_eq!(modentry(op, &mut m), 0,
+                "op {} must return 0 (known)", op);
+        }
+        for op in 6..=10 {
+            assert_eq!(modentry(op, &mut m), 1,
+                "op {} must return 1 (unknown)", op);
+        }
+    }
+
+    /// c:7 — `modentry` is deterministic for the same (op, module) state.
+    #[test]
+    fn modentry_deterministic_on_unknown_op() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        let first = modentry(99, &mut m);
+        for _ in 0..10 {
+            assert_eq!(modentry(99, &mut m), first,
+                "unknown op must always return same value");
+        }
+    }
+
+    /// c:7 — `modentry` return type i32 (compile-time pin).
+    #[test]
+    fn modentry_returns_i32_type_compile_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        let _: i32 = modentry(0, &mut m);
+    }
+
+    /// c:14 — op=0 (setup) does not boot the module.
+    #[test]
+    fn modentry_op_zero_does_not_set_booted() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(0, &mut m), 0);
+        assert!(!m.booted, "setup must NOT set booted=true");
+    }
+
+    /// c:22 — op=2 (cleanup) does not boot the module.
+    #[test]
+    fn modentry_op_two_does_not_set_booted() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        assert_eq!(modentry(2, &mut m), 0);
+        assert!(!m.booted, "cleanup must NOT set booted=true");
+    }
+
+    /// c:7-40 — all unknown ops in 6..256 return 1 (sweep).
+    #[test]
+    fn modentry_unknown_op_sweep_6_to_255() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        for op in 6..256 {
+            assert_eq!(modentry(op, &mut m), 1,
+                "unknown op {} must return 1", op);
+        }
+    }
+
+    /// c:7-40 — all negative ops return 1 (sweep 1..1000).
+    #[test]
+    fn modentry_negative_op_sweep_minus_1_to_minus_1000() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        for op in 1..=1000 {
+            assert_eq!(modentry(-op, &mut m), 1,
+                "negative op -{} must return 1", op);
+        }
+    }
+
+    /// c:7 — return value is always in {0, 1} (boolean exit).
+    #[test]
+    fn modentry_return_only_0_or_1_sweep() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        for op in -50..=50 {
+            let r = modentry(op, &mut m);
+            assert!(r == 0 || r == 1,
+                "modentry({}) = {} not in {{0,1}}", op, r);
+        }
+    }
+
+    /// c:18 — op=1 (boot) sets booted=true; subsequent boots stay sticky.
+    #[test]
+    fn modentry_repeated_boot_is_idempotent_on_booted_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = TestModule { booted: false };
+        for _ in 0..5 {
+            assert_eq!(modentry(1, &mut m), 0);
+            assert!(m.booted, "booted must stay true");
+        }
+    }
 }
