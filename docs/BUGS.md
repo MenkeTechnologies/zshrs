@@ -15661,6 +15661,193 @@ LAST_COMMIT_TIME=$(date -d "$(git log -1 --format=%ai)" +%s)
 
 ---
 
+## #295 — Array splice `a[N,M]=X` with single value doesn't shrink range — replaces only last index
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(1 2 3 4 5); a[2,4]=X; echo "[${a[@]}] count=${#a}"'
+[1 X 5] count=3
+
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3 4 5); a[2,4]=X; echo "[${a[@]}] count=${#a}"'
+[1 2 3 X 5] count=5
+```
+
+zsh's `a[N,M]=value` splice assignment with a single value
+removes the entire `[N,M]` range and inserts the single
+value, shrinking the array by (M-N) elements.
+
+zshrs preserves elements N through M-1 and only replaces the
+element at index M with the new value — no shrinking. Result
+is a same-size array with elements 2 and 3 untouched.
+
+Control: multi-element replacement works correctly:
+```sh
+$ both-shells -fc 'a=(1 2 3 4 5); a[2,4]=(X Y); echo "[${a[@]}] count=${#a}"'
+[1 X Y 5] count=4
+```
+
+So the splice machinery exists; it just fails on the
+single-element case.
+
+Companion to #275 (reverse-range prepend wrong). zshrs's
+array-splice path has multiple data-corruption gaps:
+- `a[1,0]=(...)` reverse-range "prepend" → replaces first
+  element (#275)
+- `a[N,M]=X` shrinking-replace → only replaces last
+  (this bug)
+
+**Where** — `src/ported/params/array.rs::splice_assign`:
+single-value path treats target as scalar `a[M]=value`
+instead of range splice. C-source `Src/params.c::setarrvalue`
+unifies single/multi value handling via `ASSPM_SPLICE` flag.
+
+**Impact** — array manipulation idioms silently keep extra
+data:
+
+```sh
+# Remove indices 2-4, insert one element
+log_entries[2,4]="[truncated]"
+# zsh: shrinks list cleanly
+# zshrs: indices 2-3 retain old log entries; index 4 gets [truncated]
+```
+
+**Workaround** — manual sequence:
+```sh
+local _new=("${a[@]:0:1}" X "${a[@]:4}")
+a=("${_new[@]}")
+```
+
+---
+
+## #296 — `${s/\\./X}` pattern `\\X` interpretation diverges from zsh
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="a.b"; echo "[${s/\\./X}]"'
+[a.b]
+
+$ ./target/debug/zshrs --zsh -c 's="a.b"; echo "[${s/\\./X}]"'
+[aXb]
+```
+
+In zsh's pattern syntax, `\\.` is two tokens: `\\` (literal
+backslash) followed by `.` (a glob char that matches any
+single char). So `${s/\\./X}` searches for "backslash + any
+char" — doesn't match `a.b` (no backslash present), so
+returns unchanged.
+
+zshrs interprets `\\` as an escape of the following char,
+making `\\.` match a literal `.`. With `s="a.b"`, this
+matches and replaces, producing `aXb`.
+
+Same divergence for `\\n`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 's=$'"'"'a\nb'"'"'; echo "[${s//\\\\n/X}]"'
+[a
+b]                              # no replacement — \\n means backslash+n char-class
+
+$ ./target/debug/zshrs --zsh -c 's=$'"'"'a\nb'"'"'; echo "[${s//\\\\n/X}]"'
+[aXb]                           # replaced literal newline (zshrs treats \\n as escape for newline)
+```
+
+zshrs's behavior is arguably more intuitive (matches what
+sed/PCRE do) — but it diverges from zsh's pattern semantics.
+
+**Where** — `src/ported/glob/pattern.rs::compile_backslash`:
+treats `\\X` as escape for `X` (POSIX regex semantics).
+C-source `Src/glob.c::patcompile` treats `\\` as literal
+backslash and the following char as normal glob input.
+
+**Impact** — patterns ported from sed/grep/PCRE work in
+zshrs but don't behave as expected in zsh — meaning ported
+code may produce different outputs:
+
+```sh
+# Strip leading "./" (sed-style escape thinking)
+clean="${path/\\.\\//}"
+# zsh: probably no replacement (literal backslash backslash pattern)
+# zshrs: replaces ./ at start
+```
+
+Reverse compatibility: scripts that worked in zsh and used
+`\\.` for "literal backslash + any char" now match a literal
+`.` instead in zshrs — different (often more) replacements
+happen.
+
+**Workaround** — use explicit `(#e)`/`(#s)` anchors or
+non-`\\` escape forms (bracket class `[.]`):
+```sh
+clean="${path/[.][/]/}"          # works in both shells consistently
+```
+
+---
+
+## #297 — Bare `typeset` (no args) display format diverges — missing attribute prefix and many entries
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y); typeset | head -3'
+array readonly '*'=(  )
+array readonly @=(  )
+array a=( x y )
+
+$ ./target/debug/zshrs --zsh -c 'a=(x y); typeset | head -3'
+a=( x y )
+aliases=(  )
+argv=(  )
+```
+
+zsh's bare `typeset` prefixes each entry with the attribute
+list — `array readonly '*'=(  )` indicates the `*` autovar
+is array-typed, readonly, and (in this case) empty. zshrs
+omits the attribute prefix entirely, emitting just `name=(
+values )` form.
+
+Also entries differ: zsh shows special params (`*`, `@`,
+`argv` array, `path`, `fpath`, `pipestatus`, `signals`,
+`zsh_eval_context`, etc.) with their attribute strings.
+zshrs's output starts with `a=( x y )` then includes some
+introspection-assocs but not the canonical zsh ordering or
+attribute info.
+
+Combined with #218 (`typeset NAME` for assoc shows nothing)
+and #243 (`(t)` returns empty for special vars), the
+typeset-introspection family has multiple format/coverage
+gaps.
+
+**Where** — `src/ported/builtins/typeset.rs::display_all`:
+doesn't emit the attribute-prefix portion before each
+parameter. C-source `Src/builtin.c::printparamnode` walks
+the flag bits and emits each as a space-separated prefix:
+`array`, `readonly`, `tied`, `export`, `integer`, etc.
+
+**Impact** — state-snapshot dumps for debug/restore lose
+attribute info — values still parseable but type/attribute
+context lost:
+
+```sh
+# Capture full param state
+typeset > /tmp/state.dump
+# zsh: state.dump has full attribute info, can faithfully restore typed params
+# zshrs: state.dump has values only — type info (integer/readonly/special) lost
+```
+
+The downstream effect is partial restoration: re-sourcing the
+dump creates plain scalars/arrays without their original
+attributes.
+
+**Workaround** — use `typeset -p` (which emits
+`typeset -FLAG NAME=value` form per-param) instead of bare
+`typeset`:
+```sh
+typeset -p > /tmp/state.dump   # both shells emit reproducible form
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -15959,9 +16146,12 @@ LAST_COMMIT_TIME=$(date -d "$(git log -1 --format=%ai)" +%s)
 | 292 | `case "$x" in $pat)`/`$((expr)))`/`$(cmd)))` — case pattern doesn't expand var/arith/cmdsub | **port-bug** | pre-resolve to temp param |
 | 293 | `arr[(i)pat]=value` — subscript flag on LHS of assignment silently fails | **port-bug** | manual `idx=${arr[(i)pat]}; arr[$idx]=val` |
 | 294 | Nested backtick `` `outer \`inner\` outer` `` parses wrong (backslash escape not honored) | **port-bug** | convert to `$()` form |
+| 295 | Array splice `a[N,M]=X` single-value doesn't shrink range — replaces only last index (#275 family) | **port-bug** | manual rebuild via slice concat |
+| 296 | `${s/\\./X}` pattern `\\X` interpretation diverges — zsh: literal `\\` + glob `.`, zshrs: escaped `.` | **port-bug** | use bracket class `[.]` instead |
+| 297 | Bare `typeset` (no args) display format missing attribute prefix (`array readonly tied NAME`) | **port-bug** | use `typeset -p` for reproducible form |
 
-Of two hundred and ninety-four entries, two are fixed (5, 7), two
-hundred and eighty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and ninety-seven entries, two are fixed (5, 7), two
+hundred and ninety-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -15982,5 +16172,5 @@ hundred and eighty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
-292, 293, 294), and four were zsh-correct behavior misframed by
-demos (1, 2, 3, 6).
+292, 293, 294, 295, 296, 297), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
