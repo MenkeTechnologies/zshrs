@@ -13479,6 +13479,166 @@ run_isolated() {
 
 ---
 
+## #256 — `zstyle -e PATTERN KEY CODE` dynamic-eval form not honored
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/zutil; zstyle -e ":x" key "reply=(dynamic)"; zstyle -a ":x" key arr; echo "[${arr[1]}]"'
+[dynamic]
+
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/zutil; zstyle -e ":x" key "reply=(dynamic)"; zstyle -a ":x" key arr; echo "[${arr[1]}]"'
+[]
+```
+
+`zstyle -e CONTEXT STYLE CODE` registers a style value computed
+dynamically at lookup time — the `CODE` runs when the style
+is queried and its result (via `$reply` array) is returned as
+the style's value. Used heavily by completion-system and
+prompt-theme code for context-aware values.
+
+zshrs's `zstyle -e` either doesn't run the code on lookup or
+runs it without exposing `$reply` to the caller — retrieval
+via `zstyle -a` returns empty.
+
+The plain `zstyle CONTEXT STYLE VALUE` (no `-e`) static form
+likely works (#73 family — would need separate verification).
+
+**Where** — `src/ported/builtins/zstyle.rs::register_dynamic`:
+flag `-e` is recognized but the deferred evaluation
+mechanism doesn't dispatch on lookup OR the lookup path
+doesn't exec the registered code block. C-source
+`Src/Modules/zutil.c::bin_zstyle` stores the code body in the
+style entry with a deferred-eval marker; the lookup path
+runs it via `execstring()` and harvests `reply[]`.
+
+**Impact** — completion-system breakage. Common pattern:
+
+```sh
+# Set completion menu colors dynamically based on current context
+zstyle -e ':completion:*' menu 'reply=("yes select=long")'
+zstyle -e ':completion:*' file-list 'reply=("all")'
+# zsh: dynamic eval works, completions get correct menu config
+# zshrs: queries return empty, completions use defaults or fail
+```
+
+Also breaks p10k's many `-e`-based style definitions for
+prompt segments. This is a daily-driver blocker for any setup
+using modern completion or prompt themes.
+
+**Workaround** — use static `zstyle` if the value is known
+at registration time:
+```sh
+zstyle ':completion:*' menu 'yes select=long'
+```
+
+(Loses the dynamism — values frozen at zshrc-eval time.)
+
+---
+
+## #257 — `jobtexts[N]` introspection assoc not populated for running background jobs
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'sleep 0.5 & sleep 0.05; echo "jobtexts1=[${jobtexts[1]}]"; wait 2>/dev/null'
+jobtexts1=[sleep 0.5]
+
+$ ./target/debug/zshrs --zsh -c 'sleep 0.5 & sleep 0.05; echo "jobtexts1=[${jobtexts[1]}]"; wait 2>/dev/null'
+jobtexts1=[]
+```
+
+`jobtexts[N]` is supposed to return the literal command line
+of background job N. zsh populates it; zshrs returns empty
+for every job.
+
+Same family of "introspection-table-mirror" bugs as #226
+(`saliases`), #227 (`dis_aliases`), #228 (`nameddirs`),
+#243 (`(t)TIMEFMT` empty type). Jobs are tracked correctly
+internally (the `wait` works, `jobs` command shows them) but
+the parameter-introspection table `jobtexts` (also presumably
+`jobstates`, `jobdirs`) isn't kept in sync.
+
+**Where** — `src/ported/jobs/register.rs::start_bg_job`:
+doesn't insert the job's command text into the `jobtexts`
+parameter table. C-source `Src/jobs.c::makerunning` updates
+all three job-tracking parameter assocs (`jobtexts`,
+`jobstates`, `jobdirs`) when adding a new job.
+
+**Impact** — code that introspects current jobs via parameter
+interface (vs the `jobs` command output) gets empty data:
+
+```sh
+# Decorate prompt with running job count and current names
+for n in "${(@k)jobtexts}"; do
+    echo "[$n: ${jobtexts[$n]}]"
+done
+# zsh: lists all active jobs with their command lines
+# zshrs: silent (no entries in the assoc)
+```
+
+Tools that hook into shell-state for job tracking
+(notification daemons, status-bar plugins) see empty job
+state.
+
+**Workaround** — parse `jobs` output:
+```sh
+jobs -l | while read jobline; do echo "$jobline"; done
+```
+
+---
+
+## #258 — `printf "%d" $hugenum` silently overflows to 0 (zsh: errors "number truncated after 19 digits")
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'printf "%d\n" 99999999999999999999 2>&1 | head -1'
+zsh:1: number truncated after 19 digits: 99999999999999999999
+
+$ ./target/debug/zshrs --zsh -c 'printf "%d\n" 99999999999999999999 2>&1 | head -1'
+0
+```
+
+For numbers exceeding int64 range, zsh emits a warning to
+stderr and refuses the conversion. zshrs silently writes `0`
+to stdout without indicating the overflow.
+
+This is a silent-data-corruption bug — code that processes
+the printf output sees 0, has no way to distinguish from a
+legitimate zero input, and propagates the wrong value.
+
+**Where** — `src/ported/builtins/printf.rs::convert_to_int`:
+catches the overflow but doesn't emit a warning or set exit
+code. C-source `Src/builtin.c::bin_printf` calls
+`zwarnnam("number truncated after 19 digits: %s")` and the
+return value is non-zero.
+
+**Impact** — data-processing scripts that handle large
+integers from external sources (epoch nanoseconds, file
+sizes, IDs from large databases) silently get 0 instead of
+overflow warnings:
+
+```sh
+# Parse byte count from external API
+size=$(curl -s api/file_info | jq .size_bytes)
+printf "Size in bytes: %d\n" "$size"
+# zsh: emits warning if size exceeds int64, leaves clear signal in stderr
+# zshrs: prints "Size in bytes: 0" for large files — silently wrong
+```
+
+Combined with #225 (printf %( silently treats as literal),
+the `printf` builtin has multiple data-integrity gaps where
+zsh's defensive checks are missing.
+
+**Workaround** — pre-validate range:
+```sh
+[[ "$size" -gt 9223372036854775807 ]] && { echo "size overflow" >&2; exit 1; }
+printf "Size: %d\n" "$size"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -13738,9 +13898,12 @@ run_isolated() {
 | 253 | `$0` inside sourced file (top-level) isn't updated — breaks `${0:A:h}` plugin-dir pattern | **port-bug** | pass file path as parameter explicitly |
 | 254 | `UID=N`/`EUID=N` writes silently accepted (zsh: attempts setuid syscall) — privilege-drop silent no-op | **port-bug** | use external setuid wrapper |
 | 255 | `local -h NAME` doesn't hide parent scope's value — `-h` flag ignored | **port-bug** | explicit `local NAME=""` before set |
+| 256 | `zstyle -e CONTEXT STYLE CODE` dynamic-eval not honored — completion-system breakage | **port-bug** | use static `zstyle` form |
+| 257 | `jobtexts[N]` introspection assoc not populated for bg jobs (introspection-mirror family) | **port-bug** | parse `jobs -l` output instead |
+| 258 | `printf "%d" $hugenum` silently overflows to 0 (zsh: errors "number truncated") | **port-bug** | pre-validate range before printf |
 
-Of two hundred and fifty-five entries, two are fixed (5, 7), two
-hundred and forty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and fifty-eight entries, two are fixed (5, 7), two
+hundred and fifty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -13758,5 +13921,5 @@ hundred and forty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
-253, 254, 255), and four were zsh-correct behavior misframed by
-demos (1, 2, 3, 6).
+253, 254, 255, 256, 257, 258), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
