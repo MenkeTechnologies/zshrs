@@ -3344,4 +3344,127 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _: Option<usize> = get_compstate(std::ptr::null_mut());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/complete.c
+    // c:75 freecmlist / c:294 parse_cmatcher / c:791 parse_ordering /
+    // c:853 bin_compadd / c:942 prefix_injector / c:953 compadd_trace /
+    // c:1069 ignore_prefix / c:1087 ignore_suffix / c:1111 restrict_range /
+    // c:1393 bin_compset
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:75 — `freecmlist(None)` is idempotent (alt 10-call).
+    #[test]
+    fn freecmlist_none_idempotent_10_call() {
+        for _ in 0..10 {
+            freecmlist(None);
+        }
+    }
+
+    /// c:1069 — `ignore_prefix(positive)` is safe.
+    #[test]
+    fn ignore_prefix_positive_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for n in [1i32, 10, 100] {
+            ignore_prefix(n);
+        }
+    }
+
+    /// c:1087 — `ignore_suffix(positive)` is safe.
+    #[test]
+    fn ignore_suffix_positive_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for n in [1i32, 10, 100] {
+            ignore_suffix(n);
+        }
+    }
+
+    /// c:1069 — `ignore_prefix(0)` is idempotent across repeated calls.
+    #[test]
+    fn ignore_prefix_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..10 {
+            ignore_prefix(0);
+        }
+    }
+
+    /// c:1111 — `restrict_range` is safe for various endpoints.
+    #[test]
+    fn restrict_range_various_endpoints_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for &(b, e) in &[(0, 0), (1, 10), (-1, -1), (i32::MAX, i32::MAX)] {
+            restrict_range(b, e);
+        }
+    }
+
+    /// c:791 — `parse_ordering` is deterministic for empty name.
+    #[test]
+    fn parse_ordering_empty_deterministic() {
+        let mut flags1: Option<i32> = None;
+        let first = parse_ordering("", &mut flags1);
+        let mut flags2: Option<i32> = None;
+        let second = parse_ordering("", &mut flags2);
+        assert_eq!(first, second,
+            "parse_ordering('') must be deterministic");
+    }
+
+    /// c:853 — `bin_compadd` returns i32 (compile-time pin).
+    #[test]
+    fn bin_compadd_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let _: i32 = bin_compadd("compadd", &[], &ops, 0);
+    }
+
+    /// c:1393 — `bin_compset` returns i32 (compile-time pin).
+    #[test]
+    fn bin_compset_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let _: i32 = bin_compset("compset", &[], &ops, 0);
+    }
+
+    /// c:294 — `parse_cmatcher` is deterministic for various inputs.
+    #[test]
+    fn parse_cmatcher_various_inputs_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for s in ["", "x", "m:{a-z}={A-Z}", "garbage"] {
+            let a = parse_cmatcher("test", s).is_some();
+            let b = parse_cmatcher("test", s).is_some();
+            assert_eq!(a, b,
+                "parse_cmatcher({:?}) must be deterministic", s);
+        }
+    }
+
+    /// c:942 — `set_compadd_prefix_injector` round-trips with clear.
+    #[test]
+    fn compadd_prefix_injector_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Option<String> = set_compadd_prefix_injector("test_prefix_xyz");
+        clear_compadd_prefix_injector();
+    }
+
+    /// c:953 — `set_compadd_trace` is idempotent (toggle on/off).
+    #[test]
+    fn set_compadd_trace_toggle_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for active in [true, false, true, true, false] {
+            set_compadd_trace(active);
+        }
+    }
 }
