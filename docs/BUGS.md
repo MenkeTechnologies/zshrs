@@ -4644,6 +4644,193 @@ sentinel like `__EMPTY__` or `\0`.
 
 ---
 
+## #94 — `(exec cmd); cmd2` — parent shell terminates with subshell
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo o1; ( exec true ); echo o2'
+o1
+o2
+
+$ ./target/debug/zshrs --zsh -c 'echo o1; ( exec true ); echo o2'
+o1
+```
+
+`exec cmd` inside a subshell `(...)` should only replace the
+**subshell process**, not the parent. After the subshell exits, the
+parent should continue. zsh prints `o1\no2`. zshrs prints only `o1`
+— the parent shell exits when the subshell does.
+
+More elaborate test:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "outer-1"; (echo "sub-1"; exec echo "sub-replaced"; echo "sub-not-reached"); echo "outer-2"'
+outer-1
+sub-1
+sub-replaced
+outer-2
+
+$ ./target/debug/zshrs --zsh -c 'echo "outer-1"; (echo "sub-1"; exec echo "sub-replaced"; echo "sub-not-reached"); echo "outer-2"'
+outer-1
+sub-1
+sub-replaced
+(no outer-2)
+```
+
+The subshell correctly skips `sub-not-reached` (exec'd away), but
+the parent's `outer-2` also doesn't print.
+
+**Where** — `src/ported/exec.rs::exec_builtin`: doesn't check
+whether the current frame is a subshell vs the parent. `exec`
+should replace the current process image — for a subshell, that's
+the forked child; for the parent shell, that's the parent itself.
+zshrs treats them the same way and terminates both. C-source
+`Src/exec.c::execcmd_exec` is gated on `forked` flag.
+
+**Impact** — pattern of "fork off a one-shot child via subshell+
+exec" silently terminates the parent shell:
+
+```sh
+# replace a subshell stdout with another command's, then continue
+echo "starting"
+(exec curl https://api.example.com/data)
+echo "continuing"    # zsh prints; zshrs doesn't
+process_data
+```
+
+This breaks daemon/server scripts that exec sub-tasks in subshells
+expecting to continue.
+
+**Workaround** — don't use `exec` inside subshell unless you mean
+to terminate. Use plain command call:
+```sh
+(curl https://api.example.com/data)   # both shells: continue
+```
+
+---
+
+## #95 — Signal trap from subshell-internal `kill $$` fires immediately, not after subshell
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'trap "echo [TRAP-FIRED]" USR1; (echo "sub-start"; kill -USR1 $$; echo "sub-mid"; sleep 0.05; echo "sub-end"); echo "main-after"'
+sub-start
+sub-mid
+sub-end
+zsh:1: no matches found: [TRAP-FIRED]
+main-after
+
+$ ./target/debug/zshrs --zsh -c 'trap "echo [TRAP-FIRED]" USR1; (echo "sub-start"; kill -USR1 $$; echo "sub-mid"; sleep 0.05; echo "sub-end"); echo "main-after"'
+sub-start
+zsh:1: no matches found: [TRAP-FIRED]
+sub-mid
+sub-end
+main-after
+```
+
+(The `no matches found` error is from `[TRAP-FIRED]` being
+unfortunately glob-expanded under -fc default nomatch. Ignore it —
+look at the ordering of `sub-start`/`sub-mid`/`sub-end` and
+`[TRAP-FIRED]` line.)
+
+zsh:
+1. Subshell starts, prints `sub-start`.
+2. `kill -USR1 $$` sends USR1 to parent (the shell process).
+3. Parent is currently **waiting on subshell** — the signal is
+   queued.
+4. Subshell continues to completion: `sub-mid`, `sleep`, `sub-end`.
+5. Subshell exits, parent wakes up.
+6. Pending USR1 trap fires → `[TRAP-FIRED]`.
+7. Parent continues to `main-after`.
+
+zshrs:
+1. Subshell starts, prints `sub-start`.
+2. `kill -USR1 $$` sends USR1 to parent.
+3. Parent's signal handler **fires immediately**, prints
+   `[TRAP-FIRED]` (interleaved with subshell's stdout, before its
+   `sub-mid` line).
+4. Subshell continues: `sub-mid`, `sleep`, `sub-end`.
+5. Parent's `main-after`.
+
+The trap fires asynchronously in zshrs, whereas zsh defers signal
+processing until any synchronous command (including the wait on
+subshell) completes.
+
+**Where** — `src/ported/signal.rs::handle_signal_async`: signal
+handler runs immediately on receipt. C-source `Src/signals.c::
+zhandler` queues the signal and runs the trap at next instruction
+boundary (effectively at end of current synchronous command).
+
+**Impact** — race conditions in signal-driven cleanup. Patterns
+where subshell sends signal to parent for "notify me when this is
+done" semantics break — zsh's deferred handling gives clean
+ordering; zshrs's immediate handling produces interleaved output
+and possibly race-corrupted state if the trap mutates shared
+variables the subshell is still writing.
+
+**Workaround** — none from user side. Signal-driven IPC across
+subshell boundary not safe in zshrs.
+
+---
+
+## #96 — `%N/` prompt escape doesn't truncate path to last N components
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /Users/wizard/RustroverProjects/zshrs; print -P "[%1/]"; print -P "[%2/]"; print -P "[%3/]"'
+[zshrs]
+[RustroverProjects/zshrs]
+[wizard/RustroverProjects/zshrs]
+
+$ ./target/debug/zshrs --zsh -c 'cd /Users/wizard/RustroverProjects/zshrs; print -P "[%1/]"; print -P "[%2/]"; print -P "[%3/]"'
+[/Users/wizard/RustroverProjects/zshrs]
+[/Users/wizard/RustroverProjects/zshrs]
+[/Users/wizard/RustroverProjects/zshrs]
+```
+
+The `%N/` prompt escape limits path display to the last N path
+components. zsh:
+- `%1/` → last 1 component (`zshrs`)
+- `%2/` → last 2 (`RustroverProjects/zshrs`)
+- `%3/` → last 3 (`wizard/RustroverProjects/zshrs`)
+
+zshrs ignores the numeric prefix entirely and prints the full
+`$PWD` for all variants. Same family as #38 (prompt escapes
+missing) but specifically the numeric-modifier-on-`/` and `~`
+escapes.
+
+Per `man zshmisc` § PROMPT EXPANSION:
+> `%/` — Current working directory.
+> `%~` — Current working directory with `$HOME` shortened to `~`.
+> An integer may follow the `%` to specify how many trailing path
+> components to keep.
+
+**Where** — `src/ported/prompt.rs::handle_path_escape`: numeric
+prefix to `/` and `~` not parsed. C-source `Src/prompt.c::
+promptpath` walks the path backwards counting separators.
+
+**Impact** — every `.zshrc` PROMPT setting using `%N/` or `%N~`
+for compact path display falls back to full-path display. Vintage
+prompt themes (`oh-my-zsh`'s `robbyrussell`, `agnoster`, p10k
+default modes) all rely on `%~` with the modifier — wrong in
+zshrs.
+
+**Workaround** — manual truncation in prompt:
+```sh
+PROMPT='%# '
+precmd() {
+    local short=${PWD/#$HOME/\~}
+    local depth=2
+    psvar=("${(s:/:)short}")
+    # walk last $depth components manually
+    ...
+}
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -4741,12 +4928,15 @@ sentinel like `__EMPTY__` or `\0`.
 | 91 | `:t` modifier dropped on `${(j:X:)arr:t}` joined-then-modifier | **port-bug** | split the two ops |
 | 92 | `$PS4` default is empty; zsh's is `%x\t%0N\t%I\t%_` colored | **port-bug** | explicit `export PS4=...` |
 | 93 | Empty assoc key broken: paren-init misaligns, subscript stores but no retrieve | **port-bug** | reserve `__EMPTY__` sentinel |
+| 94 | `(exec cmd); cmd2` parent shell terminates with subshell | **port-bug** | drop `exec` inside subshell |
+| 95 | Signal trap from `kill -X $$` in subshell fires immediately | **port-bug** | avoid signal-IPC across sub |
+| 96 | `%N/` `%N~` prompt escape doesn't truncate path | **port-bug** | manual `precmd` truncation |
 
-Of ninety-three entries, two are fixed (5, 7), eighty-seven remain
-open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+Of ninety-six entries, two are fixed (5, 7), ninety remain open
+port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85,
-86, 87, 88, 89, 90, 91, 92, 93), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
