@@ -11917,6 +11917,183 @@ done
 
 ---
 
+## #229 — `${(j: :)${(@kv)h}}` join-on-kv drops values (only keys joined)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[k1]=v1; echo "${(j: :)${(@kv)h}}"'
+k1 v1
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[k1]=v1; echo "${(j: :)${(@kv)h}}"'
+k1
+```
+
+`${(@kv)h}` produces the assoc array as an interleaved `k v k
+v ...` flat array. When this flat array is joined via outer
+`(j: :)`, zsh joins all elements (`k1 v1`). zshrs drops the
+values during the join — only `k1` makes it through.
+
+The direct iteration form works:
+```sh
+$ both-shells -fc 'typeset -A h; h[k1]=v1; for k v in "${(@kv)h}"; do print "[$k]=[$v]"; done'
+[k1]=[v1]
+```
+
+And `print -l "${(@kv)h}"` works:
+```sh
+$ both-shells -fc 'typeset -A h; h[k1]=v1; print -l "${(@kv)h}"'
+k1
+v1
+```
+
+So `(@kv)` produces the flat array correctly. The bug is in
+the nested-flag composition path: when `(@kv)` is the inner
+expansion and an outer flag like `(j)` processes the result,
+half the elements get dropped.
+
+Likely related family: nested-expansion bugs (#147, #182,
+#195) where context propagation through `${...}` boundaries
+loses information.
+
+**Where** — `src/ported/paramsubst.rs::nested_expansion`: outer
+`(j)` flag re-reads the inner expansion's array but only sees
+the keys side. C-source `Src/subst.c::dosubst` preserves the
+full interleaved array through the nested-substitution dispatch.
+
+**Impact** — `(j)`-flatten of `(@kv)` is the standard idiom
+for serializing an assoc array to a single string. Breaks
+config-dump and debug-output patterns:
+
+```sh
+typeset -A config=(host example.com port 443 timeout 30)
+echo "Config: ${(j: :)${(@kv)config}}"
+# zsh: "Config: host example.com port 443 timeout 30"
+# zshrs: "Config: host port timeout"  (values dropped, output meaningless)
+```
+
+**Workaround** — manual loop to build serialization:
+```sh
+serialized=""
+for k v in "${(@kv)config}"; do
+    serialized+="$k $v "
+done
+```
+
+---
+
+## #230 — `echo "a\0b"` doesn't interpret `\0` as null byte (zsh: outputs literal NUL char)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "a\0b"' | od -c | head -1
+0000000    a  \0   b  \n
+
+$ ./target/debug/zshrs --zsh -c 'echo "a\0b"' | od -c | head -1
+0000000    a   \   0   b  \n
+```
+
+`echo` in zsh interprets a fixed set of backslash escapes by
+default (per the `echo`-builtin documentation): `\a`, `\b`,
+`\c`, `\e`, `\f`, `\n`, `\r`, `\t`, `\v`, `\\`, `\0NNN`.
+zshrs interprets `\t`, `\n`, etc. (the common ones tested
+elsewhere work) but not `\0NNN` numeric octal — which should
+produce a NUL byte.
+
+Tested control: `echo "a\tb"` works in both shells (both emit
+real tab). The bug is specific to the `\0` octal escape form.
+
+**Where** — `src/ported/builtins/echo.rs::interpret_escapes`:
+escape table missing `\0NNN` octal sequence. C-source
+`Src/builtin.c::bin_echo` calls `getkeystring()` which
+handles `\0NNN` as octal byte.
+
+**Impact** — scripts that emit binary data via `echo` (rare
+but valid use case) produce wrong output. More commonly,
+scripts that emit NUL-separated lists (`printf '%s\0' ...`-like
+patterns done with echo) fail to produce parseable output:
+
+```sh
+# Emit null-separated for xargs -0
+for file in "${(@)files}"; do
+    echo "$file\0"
+done | xargs -0 process
+# zsh: xargs sees NUL-separated args
+# zshrs: xargs sees literal "\0" as part of each filename
+```
+
+**Workaround** — use `print` (which handles `\0` correctly) or
+`printf '\0'`:
+```sh
+print "a\0b"   # works in zshrs for NUL
+```
+
+---
+
+## #231 — `${(t)tied_var}` returns `scalar`/`scalar` instead of `scalar-tied`/`array-tied` (tied pair concept missing)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -T STR str ":"; STR="a:b"; echo "STR=${(t)STR}; str=${(t)str}; n=${#str}"'
+STR=scalar-tied; str=array-tied; n=2
+
+$ ./target/debug/zshrs --zsh -c 'typeset -T STR str ":"; STR="a:b"; echo "STR=${(t)STR}; str=${(t)str}; n=${#str}"'
+STR=scalar; str=scalar; n=0
+```
+
+`typeset -T NAME ARR sep` creates a tied scalar/array pair —
+`NAME` is the scalar form (sep-joined), `ARR` is the array
+form. The two views are kept in sync (modifying one updates
+the other).
+
+Three sub-bugs in zshrs:
+1. `${(t)NAME}` returns `scalar` instead of `scalar-tied`.
+2. `${(t)ARR}` returns `scalar` (!!) instead of `array-tied`.
+3. `${#ARR}` returns 0 instead of 2 — the tied array doesn't
+   reflect the scalar's content at all.
+
+(3) means the tying isn't happening — `ARR` is empty even
+though `STR` has content. Same family as #24 (tied-array
+no-sync) but exposes additional surfaces:
+- The type-string introspection (`(t)` flag) loses the `-tied`
+  suffix.
+- The array-side of the tied pair isn't even recognized as an
+  array — typed as `scalar`, which is the default.
+
+**Where** — `src/ported/builtins/typeset.rs::handle_tied_T`:
+`-T` flag is parsed and accepted but doesn't establish the
+scalar↔array tie at all. C-source `Src/params.c::tiedarrayparam`
+creates the linked pair via the `Param->ename` field and
+synced get/set methods.
+
+**Impact** — `typeset -T` is the standard zsh idiom for
+working with separator-joined env vars (the canonical example
+being `PATH`/`path`, `MANPATH`/`manpath`, `FPATH`/`fpath`).
+With this bug:
+
+```sh
+typeset -T MY_PATH my_path ":"
+MY_PATH="/usr/local/bin:/usr/bin:/bin"
+echo "First entry: ${my_path[1]}"
+# zsh: "/usr/local/bin"
+# zshrs: empty (my_path is not actually tied)
+```
+
+Combined with #24, every user idiom that depends on `-T` is
+broken: indexing into the array, appending to either form,
+type-checking, iteration. Compatibility floor for `path`-style
+parameters is at risk if `$path[(I)/some/dir]` (a common .zshrc
+idiom) doesn't reflect `$PATH` correctly.
+
+**Workaround** — manual sync via convert-on-read:
+```sh
+my_path=("${(@s/:/)MY_PATH}")
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -12149,9 +12326,12 @@ done
 | 226 | `alias -s SUFFIX=cmd` doesn't populate `saliases` introspection assoc | **port-bug** | parse `alias -s` output instead |
 | 227 | `disable -a NAME` neither populates `dis_aliases` nor removes from active `aliases` table | **port-bug** | `unalias NAME` destructive |
 | 228 | `hash -d NAME=path` doesn't populate `nameddirs` introspection assoc | **port-bug** | parse `hash -d` output instead |
+| 229 | `${(j: :)${(@kv)h}}` join-on-kv drops values (only keys joined) | **port-bug** | manual `for k v in "${(@kv)h}"` loop |
+| 230 | `echo "a\0b"` doesn't interpret `\0` octal NUL escape (other escapes work) | **port-bug** | use `print "..."` instead |
+| 231 | `${(t)tied_var}` returns `scalar` instead of `scalar-tied`/`array-tied` — tied pair concept missing | **port-bug** | manual sync via `(@s/:/)` |
 
-Of two hundred and twenty-eight entries, two are fixed (5, 7), two
-hundred and twenty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and thirty-one entries, two are fixed (5, 7), two
+hundred and twenty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -12167,5 +12347,5 @@ hundred and twenty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
-227, 228), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+227, 228, 229, 230, 231), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
