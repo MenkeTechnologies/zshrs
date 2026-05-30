@@ -20814,6 +20814,180 @@ But this must be done by every user who relies on `-x`.
 
 ---
 
+## #391 — PS4 escape expansion broken — `%x`/`%N`/`%I`/`%_` printed literally during `set -x`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'PS4="%x %N %I %_+ "; set -x; true'
+zsh zsh 1 + true
+
+$ ./target/debug/zshrs --zsh -c 'PS4="%x %N %I %_+ "; set -x; true'
+%x %N %I %_+ true
+```
+
+When zsh emits `set -x` trace output, PS4 is run through
+the **prompt-escape expander** — `%x` becomes the source
+file name, `%N` becomes the function name, `%I` becomes the
+line number, `%_` becomes the parser-context indent. zshrs
+emits PS4 *as-is*, producing literal `%x %N %I %_` in every
+trace line.
+
+This is a related-but-distinct bug from #390. #390 was
+about the default value being empty; this is about the
+escape-expander not being invoked even when PS4 has a
+non-empty value with prompt escapes.
+
+**Where** — `src/ported/exec/trace.rs` or wherever the
+trace prefix is emitted: missing call to the prompt-escape
+expander before writing PS4. C-source
+`Src/exec.c::execcmd_exec` (and friends) calls
+`promptexpand(PS4, ...)` before printing the trace line.
+
+**Impact** — even users who explicitly set PS4 with
+escape sequences (universal pattern in zsh) get **trace
+output unusable for debugging** — no source file, no
+function name, no line number, no nesting indent. Just
+literal `%` markers next to commands.
+
+Example: tracing a complex script that calls into
+multiple sourced files becomes impossible to read:
+
+```sh
+$ set -x
+$ source plugin1.zsh    # sources plugin2.zsh
+# zsh trace: clearly shows plugin2.zsh:42:fn-name
+# zshrs trace: just "%x %N %I %_" + the bare command
+```
+
+**Workaround** — none for `set -x`-based debugging.
+Users must abandon trace mode and revert to manual
+`echo`-based debugging.
+
+---
+
+## #392 — `${(qq)arr[@]}` quotes only whitespace-containing elements — should always-quote
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=("a b" "c" "d e"); echo "${(qq)a[@]}"'
+'a b' 'c' 'd e'
+
+$ ./target/debug/zshrs --zsh -c 'a=("a b" "c" "d e"); echo "${(qq)a[@]}"'
+'a b' c d e
+```
+
+`(qq)` is the "single-quote each element" quoting flag.
+zsh always wraps each array element in single-quotes,
+regardless of whether the element contains shell-special
+chars. zshrs only quotes elements that contain whitespace
+— it's applying *conditional* (need-quoting) logic instead
+of forced wrapping.
+
+**Where** — `src/ported/paramsubst/flags/q.rs::qq_quote`:
+emits literal value when "no quoting needed" instead of
+always wrapping. C-source
+`Src/utils.c::quotestring(s, NULL, QT_SINGLE)` with
+`QT_FORCE` semantics for double-q always wraps.
+
+**Impact** — `set -- ${(qq)arr[@]}` (a common pattern for
+safe argv reconstruction) produces broken positional
+params when applied to elements without whitespace:
+
+```sh
+# Serialize args for `xargs -I{} sh -c '...'`
+xargs_arg=${(qq)args[@]}
+echo "sh -c 'cmd $xargs_arg'"
+# zsh: 'a b' 'c' 'd e' — quoted serialization survives re-eval
+# zshrs: 'a b' c d e — re-eval splits 'c' and 'd' as separate
+#        args, loses array boundary
+```
+
+Round-trips through `eval` / `print -r` for inter-process
+serialization are corrupted whenever the array contains
+mixed-spacing elements.
+
+Also affects:
+- `${(qq)PATH//:/ }` for path-safe display
+- `print -r -- ${(qq)$(command)}` pipeline-safe quoting
+
+**Workaround** — use `(q+)` flag (zsh extension for
+force-quoting) if supported, or wrap in `printf '%q '`:
+```sh
+printf "'%s' " "${a[@]}"
+```
+
+---
+
+## #393 — `jobs` builtin returns rc=1 instead of rc=127 on unknown-job — script error-classification breaks
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'jobs %% 2>&1; echo rc=$?'
+zsh:jobs:1: no current job
+rc=127
+
+$ ./target/debug/zshrs --zsh -c 'jobs %% 2>&1; echo rc=$?'
+zsh:jobs:1: no current job
+rc=1
+```
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'jobs %sleep 2>&1; echo rc=$?'
+zsh:jobs:1: job not found: sleep
+rc=127
+
+$ ./target/debug/zshrs --zsh -c 'jobs %sleep 2>&1; echo rc=$?'
+zsh:jobs:1: job not found: %sleep
+rc=1
+```
+
+Two distinct sub-bugs in `jobs` error path:
+
+1. **Exit code wrong** — zsh returns **127** (canonical
+   "command/job not found" rc); zshrs returns **1**
+   (generic-failure rc).
+2. **Diagnostic format wrong** — zsh strips the `%`
+   prefix from the job spec in the error message
+   (`%sleep` → `sleep`); zshrs keeps it (`%sleep` →
+   `%sleep`).
+
+The exit code is the script-impact half: scripts that
+branch on `$?` to distinguish "no such job" vs "other
+failure" all break:
+
+```sh
+jobs %build &>/dev/null
+case $? in
+    0)   echo "build job running" ;;
+    127) echo "no build job" ;;
+    *)   echo "jobs failed: $?" ;;
+esac
+# zsh: "no build job" branch taken (rc=127)
+# zshrs: "jobs failed: 1" branch taken (rc=1)
+```
+
+**Where** — `src/ported/builtins/jobs.rs::lookup_job`:
+on `JobNotFound`, return value drops to 1 instead of 127.
+C-source `Src/jobs.c::bin_fg` (and `bin_jobs`) returns
+`SHELL_ERROR_JOB_NOT_FOUND` = 127.
+
+**Impact** — script error-classification fails. Combined
+with the wrong-msg format, also breaks tooling that
+parses jobs diagnostics for monitoring.
+
+**Workaround** — match on the diagnostic text instead of
+rc:
+```sh
+if jobs %build 2>&1 | grep -q "not found"; then
+    echo "no build job"
+fi
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -21208,9 +21382,12 @@ But this must be done by every user who relies on `-x`.
 | 388 | `coproc CMD` doesn't open coprocess — `print -p`/`read -p`/`<&p` all broken, entire feature missing | **port-bug** | named pipes (mkfifo) for two-way IPC |
 | 389 | `TRAPZERR()` function-form not invoked on non-zero exit — error-tracing frameworks broken | **port-bug** | `setopt err_exit` + explicit `\|\|` checks |
 | 390 | `$PS4` default value empty — `set -x` produces no source/function/line/depth context | **port-bug** | seed `PS4=$'%F{blue}%x\\t%0N\\t%I\\t%_%f\\t'` in zshrc |
+| 391 | PS4 escape expansion broken — `%x`/`%N`/`%I`/`%_` printed literally during `set -x` (zsh: expanded) | **port-bug** | abandon `set -x`; use manual `echo` debugging |
+| 392 | `${(qq)arr[@]}` only quotes whitespace-containing elements (zsh: force-quotes all) | **port-bug** | `printf "'%s' " "${a[@]}"` instead |
+| 393 | `jobs %X` rc=1 on unknown-job instead of 127 + `%` not stripped in error msg (zsh: rc=127, msg `not found: NAME`) | **port-bug** | match on diagnostic text instead of `$?` |
 
-Of three hundred and ninety entries, two are fixed (5, 7),
-three hundred and eighty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and ninety-three entries, two are fixed (5, 7),
+three hundred and eighty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
