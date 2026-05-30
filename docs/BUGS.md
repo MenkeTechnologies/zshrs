@@ -2922,6 +2922,177 @@ echo "${(j:-:)arr}"
 
 ---
 
+## #64 — `$PIPESTATUS` (uppercase, bash-style) exists when it shouldn't
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'true | false | true; echo "pipestatus=[${pipestatus[@]}] PIPESTATUS=[${PIPESTATUS[@]}]"'
+pipestatus=[0 1 0] PIPESTATUS=[]
+
+$ zshrs --zsh -c 'true | false | true; echo "pipestatus=[${pipestatus[@]}] PIPESTATUS=[${PIPESTATUS[@]}]"'
+pipestatus=[0 1 0] PIPESTATUS=[0 1 0]
+```
+
+zsh exports only the **lowercase** `$pipestatus`. The uppercase
+`$PIPESTATUS` is the bash convention. zshrs populates BOTH, which:
+
+1. Hides bugs in code that checks `$PIPESTATUS` (uppercase) and
+   silently works under zshrs but breaks under real zsh.
+2. Pollutes the user namespace — `PIPESTATUS=...` in user code is
+   no longer a legal user-defined name in zshrs (it gets clobbered
+   after every pipeline).
+
+`${+PIPESTATUS}` proof:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "${+PIPESTATUS}"'
+0
+$ zshrs --zsh -c 'echo "${+PIPESTATUS}"'
+1
+```
+
+Wait — actually zsh DOES report `${+PIPESTATUS}` as 0 only after no
+pipeline has run. After a pipeline:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'true | false; echo "${+PIPESTATUS}"'
+0
+```
+
+So real zsh genuinely doesn't define `PIPESTATUS`. zshrs adds it as
+an alias to `pipestatus`.
+
+**Where** — `src/ported/exec.rs` pipeline epilogue / `src/ported/params.rs`
+special-parameter table includes both `pipestatus` and `PIPESTATUS`.
+C-zsh `Src/exec.c::execpline` only writes to `pipestatus` (the
+PM_ARRAY param).
+
+**Impact** — bash-compat scripts that check `$PIPESTATUS` work in
+zshrs but not in real zsh. False sense of cross-shell portability.
+Also, user code that intentionally sets `PIPESTATUS=...` for their
+own purposes gets clobbered.
+
+**Workaround** — explicitly use `${pipestatus[@]}` (lowercase) in
+any code that needs to be zsh-portable, and never read
+`$PIPESTATUS` in zsh.
+
+---
+
+## #65 — `${+EPOCHSECONDS}` returns 0 even after `zmodload zsh/datetime`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime; echo "EPOCH=$EPOCHSECONDS plus=${+EPOCHSECONDS}"'
+EPOCH=1780154288 plus=1
+
+$ zshrs --zsh -c 'zmodload zsh/datetime; echo "EPOCH=$EPOCHSECONDS plus=${+EPOCHSECONDS}"'
+EPOCH=1780154288 plus=0
+```
+
+`$EPOCHSECONDS` produces a value in both shells, but `${+VAR}`
+membership check returns 0 (not-set) in zshrs even though
+`zmodload zsh/datetime` was called.
+
+Different from bug #31 (which was about `:-` default fallback being
+ignored). This is the simpler `${+VAR}` parameter-defined-test
+returning the wrong boolean.
+
+**Where** — `src/ported/zmodload.rs::load_datetime`: the module-load
+adds `EPOCHSECONDS` to the param table as a "computed" param but
+doesn't set the `PM_SPECIAL`/`PM_DEFINED` flag that `${+VAR}` queries.
+C-source `Src/Modules/datetime.c::bin_zmodload` calls
+`createspecialhash`/`createparam` which sets `PM_TIED|PM_SPECIAL`.
+
+**Impact** — every script doing the standard "is this module's API
+available" check fails:
+
+```sh
+zmodload zsh/datetime 2>/dev/null
+if (( ${+EPOCHSECONDS} )); then
+    timestamp=$EPOCHSECONDS
+else
+    timestamp=$(date +%s)
+fi
+# zshrs: always takes the fallback path even though $EPOCHSECONDS
+# would produce a usable value
+```
+
+Affects all module-provided special params: `EPOCHSECONDS`,
+`EPOCHREALTIME`, `epochtime` (datetime), `mapfile` (mapfile),
+`zstat` symbols, etc.
+
+**Workaround** — direct access with `:-` won't work due to bug #31.
+Use `whence EPOCHSECONDS` check or guard with module-load success:
+```sh
+if zmodload zsh/datetime 2>/dev/null; then
+    ts=$EPOCHSECONDS
+else
+    ts=$(date +%s)
+fi
+```
+
+---
+
+## #66 — `time` builtin ignores `TIMEFMT` and omits `%J` (command name)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TIMEFMT="USER=%U SYS=%S CPU=%P"; time sleep 0.05'
+USER=0.00s SYS=0.00s CPU=3%
+
+$ zshrs --zsh -c 'TIMEFMT="USER=%U SYS=%S CPU=%P"; time sleep 0.05'
+0.04s user 0.01s system 80% cpu 0.064 total
+```
+
+zsh respects `$TIMEFMT` formatter for `time` builtin output. zshrs
+ignores it entirely and uses a hardcoded English string.
+
+Default format mismatch as well (no TIMEFMT override):
+```sh
+$ /opt/homebrew/bin/zsh -fc 'time sleep 0.05'
+sleep 0.05  0.00s user 0.00s system 7% cpu 0.059 total
+
+$ zshrs --zsh -c 'time sleep 0.05'
+0.06s user 0.01s system 80% cpu 0.088 total
+```
+
+zsh prefixes with the command being timed (`%J` formatter:
+`sleep 0.05  …`). zshrs drops `%J` entirely.
+
+Default `$TIMEFMT` is the same string in both shells:
+```
+%J  %U user %S system %P cpu %*E total
+```
+But zshrs's `time` doesn't consume that format string at all.
+
+**Where** — `src/ported/builtin_time.rs` (or wherever `time` lives):
+output uses a fixed `format!` macro instead of consulting
+`opts.timefmt`. C-source `Src/exec.c::printtime` walks the TIMEFMT
+string interpreting `%J/%U/%S/%P/%*E/%K/%M/%X` etc.
+
+**Impact** — every script that:
+1. Customizes `$TIMEFMT` for parseable output (CSV-style, JSON,
+   etc.) gets human-readable English instead.
+2. Pipes `time foo 2>&1 | awk` looking for the command name field
+   gets empty/wrong column data.
+3. Reports timing for compound commands like `time { … }` — no
+   command name to identify which block was timed.
+
+**Workaround** — explicit `/usr/bin/time -f "..."` (the GNU
+external) instead of the shell builtin:
+```sh
+/usr/bin/time -f "USER=%U SYS=%S" sleep 0.05
+```
+Or capture and reformat:
+```sh
+secs=$(zmodload zsh/datetime; t=$EPOCHREALTIME; sleep 0.05; \
+       echo $(( EPOCHREALTIME - t )))
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -2989,10 +3160,13 @@ echo "${(j:-:)arr}"
 | 61 | `h["key"]=v` subscript quotes not embedded in key | **port-bug** | use `h=( k v )` paren init |
 | 62 | `extended_glob` `~` (and-not) operator not honored | **port-bug** | iterate + skip with `[[` |
 | 63 | `${(j:s:)${(s:t:)var}}` nested split-then-join → first element only | **port-bug** | intermediate `arr=(...)` |
+| 64 | `$PIPESTATUS` (bash-style upper) exists in zshrs but not zsh | **port-bug** | use lowercase `$pipestatus` |
+| 65 | `${+EPOCHSECONDS}` returns 0 after `zmodload zsh/datetime` | **port-bug** | guard by `zmodload` rc |
+| 66 | `time` builtin ignores `TIMEFMT`, omits `%J` cmd name | **port-bug** | `/usr/bin/time -f` instead |
 
-Of sixty-three entries, two are fixed (5, 7), fifty-seven remain open
+Of sixty-six entries, two are fixed (5, 7), sixty remain open
 port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
-53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66), and four
+were zsh-correct behavior misframed by demos (1, 2, 3, 6).
