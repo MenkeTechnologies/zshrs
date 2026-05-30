@@ -13639,6 +13639,156 @@ printf "Size: %d\n" "$size"
 
 ---
 
+## #259 — `${jobstates[N]}` and `${jobdirs[N]}` introspection assocs not populated
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp; sleep 0.5 & sleep 0.05; echo "states=[${jobstates[1]}] dirs=[${jobdirs[1]}]"; wait 2>/dev/null'
+states=[running:+:19848=running] dirs=[/tmp]
+
+$ ./target/debug/zshrs --zsh -c 'cd /tmp; sleep 0.5 & sleep 0.05; echo "states=[${jobstates[1]}] dirs=[${jobdirs[1]}]"; wait 2>/dev/null'
+states=[] dirs=[]
+```
+
+Companion bug to #257 (`jobtexts` empty). All three job-
+introspection assocs share the same population path in zsh:
+
+- `jobtexts[N]` — command text of job N (#257)
+- `jobstates[N]` — state string (`running:+:PID=running`)
+- `jobdirs[N]` — directory job was started in
+
+All three are empty in zshrs even when the underlying job is
+tracked (the `wait` works, `jobs` command shows the job).
+
+**Where** — `src/ported/jobs/register.rs::start_bg_job`: same
+location as #257 — `jobtexts/jobstates/jobdirs` parameter
+tables aren't updated. C-source `Src/jobs.c::makerunning`
+fans out to all three.
+
+**Impact** — same family as #257 — any tool that reads job
+state through the parameter interface (vs the `jobs` command)
+sees empty data. Status-bar plugins, async-job-completion
+notifiers, and shell-state inspectors all blind to job state.
+
+Specifically additional impact for `jobstates`: format
+`"<status>:<curr/prev>:<pid>=<status>"` is parseable by
+plugins for fine-grained job introspection — replacing this
+with a `jobs -l` parse loses the PID and current/previous
+markers.
+
+**Workaround** — same as #257 — parse `jobs -l` output.
+
+---
+
+## #260 — `${widgets[NAME]}` zle widget introspection assoc not populated (386 widgets missing)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "self-insert=[${widgets[self-insert]}]"; echo "count=$(echo "${(@k)widgets}" | wc -w)"'
+self-insert=[builtin]
+count=     386
+
+$ ./target/debug/zshrs --zsh -c 'echo "self-insert=[${widgets[self-insert]}]"; echo "count=$(echo "${(@k)widgets}" | wc -w)"'
+self-insert=[empty]
+count=       0
+```
+
+`widgets` is the parameter-introspection assoc that maps zle
+widget names to their definition. zsh has ~386 built-in
+widgets pre-registered (`self-insert`, `backward-delete-char`,
+`expand-or-complete`, etc.). zshrs has 0 in the assoc.
+
+Per the existing #198 (`bindkey -L` divergence) and #214
+(`chpwd` hook not firing), the broader zle subsystem has
+multiple introspection/integration gaps. This is another
+surface.
+
+**Where** — `src/ported/zle/init.rs::register_builtin_widgets`:
+widget table is populated for binding lookup (since `bindkey`
+can bind keys to widget names that exist), but the parameter-
+introspection `widgets` assoc is empty. C-source
+`Src/Zle/zle_main.c::printbinding` reads from the same
+internal table that `parameters` introspection routes to
+`widgets`.
+
+**Impact** — zle plugins that probe widget existence before
+defining custom ones (the conventional pattern for plugin
+loaders) can't:
+
+```sh
+# Conventional plugin guard
+[[ -z "${widgets[my-custom-widget]}" ]] && zle -N my-custom-widget _my_custom_fn
+# zsh: registers the widget only if not already defined
+# zshrs: always registers (since widgets[] always empty), risk of double-define errors
+```
+
+Also blocks `zle -la` output discovery, which is what tools
+like fzf-tab and zsh-autosuggestions use to check what widgets
+they can intercept.
+
+**Workaround** — use `zle -la NAME` to test existence (may
+also be broken — needs separate verification):
+```sh
+zle -la my-widget 2>/dev/null && echo exists
+```
+
+---
+
+## #261 — `${functions_source[fn]}` format diverges (`zsh` vs `zsh:0`)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { :; }; echo "[${functions_source[f]}]"'
+[zsh]
+
+$ ./target/debug/zshrs --zsh -c 'f() { :; }; echo "[${functions_source[f]}]"'
+[zsh:0]
+```
+
+`functions_source[FN]` returns the filename where function
+`FN` was defined. For functions defined on the command line
+(`-c` mode), zsh returns just the shell name (`zsh`). zshrs
+appends `:0` (treating `0` as the line number).
+
+This is a format-string parity bug. Affects code that exact-
+matches on `functions_source` values:
+
+```sh
+# Check whether fn was defined interactively
+if [[ "${functions_source[my_fn]}" == "zsh" ]]; then
+    echo "defined at cmdline"
+fi
+# zsh: takes the branch correctly
+# zshrs: comparison fails (value is "zsh:0"), branch missed
+```
+
+The `:0` line-suffix probably shows up for any
+`functions_source` lookup of a `-c`-defined function — `:0`
+is the zshrs-added "line 0" marker (since the cmdline has no
+real line number).
+
+**Where** — `src/ported/params/functions_source.rs::format_entry`:
+emits `<file>:<line>` for all entries, including cmdline.
+C-source `Src/parameter.c::funcsourcegetfn` emits bare
+filename when line is 0 (cmdline/builtin context).
+
+**Impact** — equality-based introspection of function
+definition location fails. Similar format bugs exist in
+`funcfiletrace`/`functrace` (#237) — both share the
+"file-with-line-suffix" formatting routine that zshrs's
+machinery applies more eagerly than zsh.
+
+**Workaround** — strip the `:N` suffix before comparison:
+```sh
+src="${functions_source[my_fn]%%:*}"
+[[ "$src" == "zsh" ]] && echo "defined at cmdline"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -13901,9 +14051,12 @@ printf "Size: %d\n" "$size"
 | 256 | `zstyle -e CONTEXT STYLE CODE` dynamic-eval not honored — completion-system breakage | **port-bug** | use static `zstyle` form |
 | 257 | `jobtexts[N]` introspection assoc not populated for bg jobs (introspection-mirror family) | **port-bug** | parse `jobs -l` output instead |
 | 258 | `printf "%d" $hugenum` silently overflows to 0 (zsh: errors "number truncated") | **port-bug** | pre-validate range before printf |
+| 259 | `${jobstates[N]}` and `${jobdirs[N]}` empty (companion to #257 — all 3 job-intro assocs broken) | **port-bug** | parse `jobs -l` output |
+| 260 | `${widgets[NAME]}` zle widget intro assoc empty (zsh: 386 builtin widgets) | **port-bug** | `zle -la NAME` for existence test |
+| 261 | `${functions_source[fn]}` format diverges — `zsh:0` instead of bare `zsh` for cmdline fn | **port-bug** | strip `:N` suffix before compare |
 
-Of two hundred and fifty-eight entries, two are fixed (5, 7), two
-hundred and fifty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and sixty-one entries, two are fixed (5, 7), two
+hundred and fifty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -13921,5 +14074,5 @@ hundred and fifty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
-253, 254, 255, 256, 257, 258), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+253, 254, 255, 256, 257, 258, 259, 260, 261), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
