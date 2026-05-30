@@ -22345,6 +22345,182 @@ mechanism for randomness control.
 
 ---
 
+## #418 — `unset SECONDS` / `unset EPOCHSECONDS` ignored — regenerators stay active
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'SECONDS=10; unset SECONDS; echo "[$SECONDS]"'
+[]
+
+$ ./target/debug/zshrs --zsh -c 'SECONDS=10; unset SECONDS; echo "[$SECONDS]"'
+[10]
+```
+
+Same family as #417 (RANDOM unset ignored) — applied to
+the time-tracking special parameters:
+
+- `SECONDS` — seconds since shell start (or last set)
+- `EPOCHSECONDS` — Unix epoch seconds (from `zsh/datetime`)
+- Likely also: `EPOCHREALTIME`, `EGID`, `EUID`, `UID`,
+  `GID`, `HISTCMD`, `PPID`
+
+All zsh-specials whose value is computed on-read should
+have an unset path that suppresses the getter. zsh
+implements this; zshrs's getter fires unconditionally.
+
+**Where** — `src/ported/params/seconds.rs::unset_handler`
+and equivalent files: must mark the parameter
+`PM_UNSET` and have the `getfn` return empty when the
+flag is set. C-source `Src/params.c::*setfn` family
+respects `PM_UNSET`.
+
+**Impact** — test fixtures and benchmarking utilities
+that use `unset SECONDS; SECONDS=0` to reset the
+seconds-counter behave incorrectly:
+
+```sh
+benchmark() {
+    unset SECONDS
+    SECONDS=0
+    "$@"
+    printf "elapsed: %d sec\n" "$SECONDS"
+}
+# zsh: clean reset, accurate timing
+# zshrs: SECONDS already had a value from earlier in the
+#        session; unset is ignored; final value includes
+#        pre-benchmark drift
+```
+
+**Workaround** — explicit reassign instead of unset:
+```sh
+SECONDS=0
+```
+
+(Skipping the unset; the regenerator base resets on
+assignment.)
+
+---
+
+## #419 — `unset LINENO` silently accepted — no "read-only variable" diagnostic
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'unset LINENO; echo rc=$?'
+zsh:1: read-only variable: LINENO
+rc=0
+
+$ ./target/debug/zshrs --zsh -c 'unset LINENO; echo rc=$?'
+rc=0
+```
+
+zsh's LINENO is a read-only special parameter — attempts
+to `unset` it emit "read-only variable" to stderr (rc=0
+because the diagnostic is emitted but the calling
+context's rc isn't disturbed for `unset`).
+
+zshrs accepts the unset silently — no diagnostic. The
+subsequent value of `$LINENO` is empty in both shells,
+but only zsh tells you the operation was rejected.
+
+Same family as #242/#373/#374/#375/#386 (introspection
+specials missing PM_READONLY) — but specific to LINENO,
+and the parameter visibly retains zsh's expected
+readonly-blocking behavior on assignment but lacks it on
+unset.
+
+**Where** — `src/ported/params/lineno.rs::unset_handler`:
+must check `PM_READONLY` flag and emit the
+"read-only variable" diagnostic if set. C-source
+`Src/params.c::unsetparam_pm` checks readonly status
+before deletion.
+
+**Impact** — diagnostic-aware error handlers don't fire:
+
+```sh
+# Detect attempted readonly-violation
+output=$(unset LINENO 2>&1)
+if [[ -n $output ]]; then
+    echo "WARN: attempted readonly violation"
+fi
+# zsh: warn fires
+# zshrs: $output empty, warn never fires
+```
+
+Also misleads users debugging "why is my unset silently
+not working" — zsh tells them with a diagnostic; zshrs
+hides the issue.
+
+**Workaround** — none syntactic; manual probe via
+`typeset -p LINENO` to check it's still bound.
+
+---
+
+## #420 — `eval` error prefix uses `zsh:` instead of `(eval):` — source-context lost in diagnostics
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'eval "foo_no_such_cmd"'
+(eval):1: command not found: foo_no_such_cmd
+
+$ ./target/debug/zshrs --zsh -c 'eval "foo_no_such_cmd"'
+zsh:1: command not found: foo_no_such_cmd
+```
+
+zsh's error-message prefix indicates the **source
+context** of the error:
+- `zsh:N:` — error from line N of top-level script
+- `(eval):N:` — error from line N of an `eval`ed string
+- `funcname:N:` — error from line N of function body
+- `filename:N:` — error from line N of sourced file
+
+This context-prefix is crucial for debugging — a script
+that emits "command not found: X" can't be debugged
+without knowing which context (top-level, eval, function,
+sourced) X was invoked from.
+
+zshrs always emits `zsh:N:` regardless of context. The
+diagnostic location-hint is lost.
+
+**Where** — `src/ported/diagnostic/format.rs` (or
+equivalent): error-prefix needs to walk the call-stack
+and use the innermost context's name. C-source
+`Src/utils.c::niceerrname` selects from `scriptname`,
+`funcname[0]`, `(eval)`, `(cmdsubst)`, etc.
+
+**Impact** — script debugging is harder. A complex
+script with sourced files, evaled snippets, and function
+calls produces diagnostics that all look the same:
+
+```sh
+# error.zsh
+source helper.zsh        # error inside helper.zsh
+eval "$user_input"       # error inside eval
+my_func bad_arg          # error inside my_func
+
+# zsh diagnostics:
+#   helper.zsh:42: command not found: ...
+#   (eval):1: command not found: ...
+#   my_func:5: parse error: ...
+#
+# zshrs diagnostics:
+#   zsh:1: command not found: ...
+#   zsh:1: command not found: ...
+#   zsh:1: parse error: ...
+#   (all look identical; can't tell where error came from)
+```
+
+Affects every advanced .zshrc that wraps multiple plugin
+sources — when one plugin errors, zshrs's diagnostic
+doesn't say which.
+
+**Workaround** — none. Need to bisect manually by
+removing source/eval lines one at a time.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -22766,9 +22942,12 @@ mechanism for randomness control.
 | 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **port-bug** | manual save/restore via `${(@kv)config}` |
 | 416 | `unset PATH` ignored — command lookup still resolves (security bypass for sandboxing patterns) | **port-bug** | try `PATH=` empty assignment (needs verify) |
 | 417 | `unset RANDOM` ignored — special-param regenerator stays active (zsh: returns empty after unset) | **port-bug** | no workaround for clean-state requirement |
+| 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **port-bug** | `SECONDS=0` reassign instead of unset |
+| 419 | `unset LINENO` silently accepted — no "read-only variable" diagnostic (zsh: emits warning) | **port-bug** | none — manual `typeset -p LINENO` probe |
+| 420 | `eval` errors prefixed `zsh:` instead of `(eval):` — source-context lost (also affects funcname/sourced-file prefixes) | **port-bug** | manual bisect by removing source/eval lines |
 
-Of four hundred and seventeen entries, two are fixed (5, 7),
-four hundred and eleven remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and twenty entries, two are fixed (5, 7),
+four hundred and fourteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
