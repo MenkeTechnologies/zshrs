@@ -5853,6 +5853,182 @@ printf "%${width}s\n" "$p"   # both shells: same output
 
 ---
 
+## #115 — Prompt `%s`/`%b`/`%u` use full reset `\e[0m` instead of selective
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%Sstandout%s normal %Bbold%b plain %Uunder%u final"' | od -c
+... \033 [ 7 m standout \033 [ 2 7 m  normal \033 [ 1 m bold \033 [ 0 m  plain ...
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%Sstandout%s normal %Bbold%b plain %Uunder%u final"' | od -c
+... \033 [ 7 m standout \033 [ 0 m  normal \033 [ 1 m bold \033 [ 0 m  plain ...
+```
+
+zsh's prompt attribute-off escapes emit **selective reset codes**:
+- `%s` (standout off) → `\033[27m` (SGR 27 = standout-off)
+- `%b` (bold off)     → `\033[22m` (SGR 22 = bold-off)
+- `%u` (underline off) → `\033[24m` (SGR 24 = underline-off)
+
+zshrs emits the **full reset** `\033[0m` for all three, which
+clobbers every other active attribute (color, italic, etc.) along
+with the one being un-set.
+
+Per `man zshmisc` § VISUAL EFFECTS:
+> `%S` — Start (set) standout mode. `%s` — End standout mode.
+> `%U` — Start underline mode. `%u` — End underline mode.
+> `%B` — Start bold mode. `%b` — End bold mode.
+
+The expected semantic is "end THIS mode only", not "reset all".
+
+**Where** — `src/ported/prompt.rs::format_attr_end`: emits
+`"\x1b[0m"` for `%s`, `%b`, `%u`. Should emit `"\x1b[27m"` /
+`"\x1b[22m"` / `"\x1b[24m"` respectively. C-source
+`Src/prompt.c::putprompt` has these as `tcout(TCSTANDOUTEND)`,
+`tcout(TCALLATTRIBUTESOFF)` and `tcout(TCUNDERLINEEND)` mapped
+to termcap caps.
+
+**Impact** — prompts that combine attributes break visually:
+
+```sh
+PROMPT='%F{red}%Bbold%b regular%f'
+# zsh: red-bold "bold" then red "regular" (red preserved)
+# zshrs: red-bold "bold" then default-color "regular" (red killed by %b)
+```
+
+Every multi-attribute prompt theme produces wrong rendering.
+
+**Workaround** — manual SGR codes instead of `%`-escapes:
+```sh
+PROMPT=$'\e[31m\e[1mbold\e[22m regular\e[0m'
+```
+Or re-apply the desired attributes after each "off":
+```sh
+PROMPT='%F{red}%Bbold%b%F{red}regular%f'
+```
+
+---
+
+## #116 — `GLOB_SUBST` option default is ON in zshrs (zsh: OFF by default)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'pat="hel*"; s=hello; [[ "$s" == $pat ]] && echo "match"; echo done'
+done
+
+$ ./target/debug/zshrs --zsh -c 'pat="hel*"; s=hello; [[ "$s" == $pat ]] && echo "match"; echo done'
+match
+done
+```
+
+`GLOB_SUBST` controls whether parameter values containing glob
+metachars get glob-expanded when substituted into pattern
+contexts (like the RHS of `[[ ==`).
+
+zsh's default: **OFF**. So `$pat` (containing `*`) is treated as
+literal when expanded into `[[ "$s" == $pat ]]`, hence the no-match.
+
+zshrs's default: **ON**. So `*` in `$pat` becomes a glob metachar,
+matches `hello`.
+
+Setting `setopt glob_subst` in zsh makes it match zshrs's default:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt glob_subst; pat="hel*"; s=hello; [[ "$s" == $pat ]] && echo "match"'
+match
+```
+
+So both shells agree on behavior given the same option state —
+zshrs just defaults differently.
+
+Per `man zshoptions`:
+> `GLOB_SUBST` <K> <S> — Treat any characters resulting from
+> parameter expansion as being eligible for filename generation
+> and pattern matching. Without the option, no characters acquire
+> special meaning during expansion.
+> Default: off.
+
+**Where** — `src/ported/init.rs::default_options`: `GLOB_SUBST`
+should be initialized to off, mirroring `Src/options.c::
+ksh_compat_options` and the upstream default. zshrs has it on.
+
+**Impact** — silent behavior divergence:
+
+```sh
+# user code expecting literal-pattern match
+expected='*.log'
+if [[ "$file" == "$expected" ]]; then
+    echo "matches literal *.log"
+fi
+# zsh: only matches the literal filename "*.log"
+# zshrs: matches ANY .log file (silent over-match)
+```
+
+Cross-shell scripts using pattern matching get false positives in
+zshrs that catch in zsh.
+
+**Workaround** — explicit `unsetopt glob_subst` at start of any
+zsh-portable script:
+```sh
+emulate -L zsh
+unsetopt glob_subst
+```
+
+---
+
+## #117 — Extended_glob `(group)#` / `(group)##` group quantifier not recognized
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; print -l /tmp/zgq/(ab)#'
+/tmp/zgq/ab
+/tmp/zgq/abab
+/tmp/zgq/ababab
+
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; print -l /tmp/zgq/(ab)#'
+/tmp/zgq/(ab)#
+```
+
+Files: `ab abab ababab xy`. Pattern `(ab)#` (group followed by
+`#`) = "match the group zero or more times". zsh matches all
+three `ab`-repeating names. zshrs returns the literal pattern.
+
+The single-char `a#` quantifier was documented in bug #89; this
+is the **group form** `(group)#`. Same root cause but a different
+parser path (single-char vs group).
+
+Family with:
+- #62 (extended_glob `~` and-not)
+- #81 (`~` exclusion produces duplicates)
+- #89 (`#` / `##` single-char quantifier)
+- #99 (`(#cN,M)` count flag)
+- #117 (this — group quantifier)
+
+The whole extended_glob quantifier/flag family is partial or
+absent.
+
+**Where** — `src/ported/pattern.rs::compile_group_quantifier`:
+when `(...)` is followed by `#` or `##`, the parser should attach
+the quantifier to the group, not treat them as literal. C-source
+`Src/pattern.c::patcompile` handles this in the group-postfix
+path.
+
+**Impact** — log-rotation/repetition patterns silently fail:
+
+```sh
+setopt extended_glob
+# match files with prefix that repeats "log" zero or more times
+ls /var/(log)#/messages
+# zsh: matches /var/messages, /var/log/messages, /var/log/log/messages
+# zshrs: returns literal "/var/(log)#/messages"
+```
+
+**Workaround** — explicit loop with `**/` recursive glob if the
+intent is matching at varying depths.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -5971,14 +6147,17 @@ printf "%${width}s\n" "$p"   # both shells: same output
 | 112 | Builtin error format leaks Rust's `(os error N)` suffix | **port-bug** | grep loosely for portability |
 | 113 | `$'\C-X'` ANSI-C ctrl-char escape not honored (literal) | **port-bug** | `$'\xNN'` hex escape |
 | 114 | `${(l.W.)s}` width must be literal; variable errors | **port-bug** | `printf "%${w}s"` instead |
+| 115 | Prompt `%s`/`%b`/`%u` use full reset `\e[0m` not selective | **port-bug** | re-apply attrs after `%x` |
+| 116 | `GLOB_SUBST` defaults ON in zshrs (zsh: off) | **port-bug** | `unsetopt glob_subst` explicit |
+| 117 | Extended_glob `(group)#` quantifier not recognized | **port-bug** | `**/` recursive glob |
 
-Of one hundred fourteen entries, two are fixed (5, 7), one hundred
-eight remain open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13,
+Of one hundred seventeen entries, two are fixed (5, 7), one hundred
+eleven remain open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13,
 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98,
 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112,
-113, 114), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+113, 114, 115, 116, 117), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
