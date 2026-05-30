@@ -6579,6 +6579,178 @@ with substring syntax in zshrs to avoid silent failures.
 
 ---
 
+## #127 — `$'\xNN'` interpreted as Unicode codepoint, then re-encoded as UTF-8
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo $'\''\xff'\''' | od -An -c
+   377  \n
+
+$ ./target/debug/zshrs --zsh -c 'echo $'\''\xff'\''' | od -An -c
+   ÿ  **  \n
+```
+
+The `$'\xNN'` ANSI-C quoting form should produce the **raw byte**
+with value `0xNN`. zsh emits 1 byte `0xff` (octal `377`). zshrs
+treats `0xff` as Unicode codepoint U+00FF (`ÿ`) and re-encodes as
+UTF-8 → 2 bytes `\xC3\xBF`.
+
+Same for `\xc3\xa9` (which happens to BE the UTF-8 of `é`):
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo $'\''\xc3\xa9'\''' | od -An -c
+   é  **  \n              # 2 bytes 0xC3 0xA9 (display as é)
+
+$ ./target/debug/zshrs --zsh -c 'echo $'\''\xc3\xa9'\''' | od -An -c
+   Ã  **   ©  **  \n      # 4 bytes (UTF-8 of "Ã©")
+```
+
+For pure-ASCII `\x41\x42`, both shells produce same 2 bytes
+(`A`, `B`) — the divergence only appears with values ≥ 0x80.
+
+Per `man zshmisc` § QUOTING:
+> `\xNN` — character with hex value `NN`.
+
+The convention (matching bash, ksh, all `printf '\xNN'`
+implementations) is **raw byte**, not Unicode codepoint.
+
+**Where** — `src/ported/lex.rs::parse_hex_escape`: treats the
+parsed integer as a Unicode codepoint (`char::from_u32`), then
+the resulting string is UTF-8 encoded on output. C-source
+`Src/utils.c::getkeystring` calls `*p++ = (char)hex_value` —
+single-byte write.
+
+**Impact** — binary-data-handling scripts produce garbage:
+
+```sh
+# write a binary header
+header=$'\xff\xfe\x00\x01\x00\x02'   # 6 bytes
+printf '%s' "$header" > /tmp/img.bin
+# zsh: 6-byte file with exact bytes
+# zshrs: 8+ byte file with UTF-8-encoded chars
+```
+
+Cryptographic key handling, network protocol byte construction,
+binary file generation all silently corrupt.
+
+**Workaround** — `printf '\xNN'` directly (the printf builtin
+may have a different code path):
+```sh
+printf '\xff\xfe\x00\x01' > /tmp/img.bin
+```
+Verify with `od -c` after to confirm bytes are correct.
+
+---
+
+## #128 — `${(C)arr[N]}` capitalize on indexed array element errors "bad substitution"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); echo "[${(C)a[2]}]"'
+[Blue]
+
+$ ./target/debug/zshrs --zsh -c 'a=(red blue green); echo "[${(C)a[2]}]"' 2>&1
+zsh:1: bad substitution
+```
+
+The `(C)` capitalize flag works on scalars and on bare-array
+expansions in both shells:
+```sh
+$ both-shells -fc 'a=(red blue); echo "[${(C)a}]"'
+[Red Blue]                     # zsh and zshrs agree
+
+$ both-shells -fc 's=hello; echo "[${(C)s}]"'
+[Hello]                        # zsh and zshrs agree
+```
+
+But the **indexed-element form** `${(C)a[N]}` fails in zshrs with
+"bad substitution".
+
+`(L)` (lowercase) and `(U)` (uppercase) likely have the same
+issue when combined with `[N]` subscript.
+
+**Where** — `src/ported/paramsubst.rs::parse_flag_then_subscript`:
+when a case-flag like `(C)`/`(L)`/`(U)` is followed by a
+subscripted array reference, the parser fails to recognize the
+combo. C-source `Src/subst.c::dosubst` handles flag + subscript
+in any order.
+
+**Impact** — capitalize/lowercase a specific array element fails:
+
+```sh
+items=(red blue green yellow)
+echo "Selected: ${(C)items[2]}"
+# zsh: "Selected: Blue"          zshrs: bad substitution error
+```
+
+**Workaround** — assign to scalar then apply flag:
+```sh
+sel="${items[2]}"
+echo "Selected: ${(C)sel}"
+```
+
+---
+
+## #129 — `local -a a=("$@")` splits quoted args on whitespace (without `local -a` works)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { local -a a=("$@"); echo "len=${#a}"; for x in "${a[@]}"; do printf "[%s]\n" "$x"; done; }; f one "two three" four'
+len=3
+[one]
+[two three]
+[four]
+
+$ ./target/debug/zshrs --zsh -c 'f() { local -a a=("$@"); echo "len=${#a}"; for x in "${a[@]}"; do printf "[%s]\n" "$x"; done; }; f one "two three" four'
+len=4
+[one]
+[two]
+[three]
+[four]
+```
+
+`local -a a=("$@")` should preserve each positional arg as a
+distinct element. zsh gets 3 elements (the quoted `"two three"`
+stays as one). zshrs gets 4 (word-splits "two three").
+
+Without `local -a` (just `a=("$@")`), both shells produce 3:
+```sh
+$ both-shells -fc 'f() { a=("$@"); echo "len=${#a}"; }; f one "two three" four'
+len=3
+```
+
+So the bug is specifically the combination `local -a` with
+`"$@"` in initializer.
+
+**Where** — `src/ported/builtin_typeset.rs::declare_array_init`:
+when `-a` flag is present and the initializer is `("$@")`, the
+positionals get re-tokenized via word-split instead of being
+copied verbatim. C-source `Src/builtin.c::typeset_single` walks
+positional array element-by-element without splitting.
+
+**Impact** — function argument forwarding via `local -a a=("$@")`
+silently corrupts argument boundaries:
+
+```sh
+runner() {
+    local -a cmd=("$@")
+    ssh remote "${cmd[@]}"
+}
+runner ls "-la" "/tmp with space"
+# zsh: ssh runs `ls -la "/tmp with space"`
+# zshrs: ssh runs `ls -la /tmp with space`  (4 args, path broken)
+```
+
+**Workaround** — assign separately:
+```sh
+local -a a
+a=("$@")
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -6709,15 +6881,18 @@ with substring syntax in zshrs to avoid silent failures.
 | 124 | `typeset -f` source-as-typed vs zsh pretty-printed | **port-bug** | normalize whitespace |
 | 125 | `var=${a[-1]}` assignment returns empty (echo works) | **port-bug** | `var=${a[${#a}]}` positive idx |
 | 126 | `${s:N:}` empty length silently returns empty (zsh errors) | **port-bug** | careful syntax |
+| 127 | `$'\xNN'` interpreted as Unicode codepoint + UTF-8 re-encode | **port-bug** | `printf '\xNN'` direct |
+| 128 | `${(C)arr[N]}` indexed-element case-flag errors "bad substitution" | **port-bug** | assign to scalar first |
+| 129 | `local -a a=("$@")` splits quoted args (without `-a` works) | **port-bug** | `local -a a; a=("$@")` |
 
-Of one hundred twenty-six entries, two are fixed (5, 7), one
-hundred twenty remain open port-bugs/perf-issues (4, 8, 9, 10, 11,
-12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
-46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
-63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
-80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
-97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
-111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
-124, 125, 126), and four were zsh-correct behavior misframed by
-demos (1, 2, 3, 6).
+Of one hundred twenty-nine entries, two are fixed (5, 7), one
+hundred twenty-three remain open port-bugs/perf-issues (4, 8, 9,
+10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
+78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
+95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108,
+109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
+122, 123, 124, 125, 126, 127, 128, 129), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
