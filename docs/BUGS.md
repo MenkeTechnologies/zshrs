@@ -10662,6 +10662,166 @@ escape in PS1.
 
 ---
 
+## #205 — `read -u FD` doesn't read from numeric fd opened via `exec`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'exec 3<<<"line"; read -u 3 x; echo "[$x]"; exec 3<&-'
+[line]
+
+$ ./target/debug/zshrs --zsh -c 'exec 3<<<"line"; read -u 3 x; echo "[$x]"; exec 3<&-'
+[]
+```
+
+`read -u N` reads from fd N. zshrs's `read -u` either reads
+from stdin regardless or reads nothing when fd is not stdin/0.
+
+Workaround using stdin works:
+```sh
+$ both-shells -fc 'exec 3<<<"line"; read x <&3; echo "[$x]"; exec 3<&-'
+[line]
+```
+
+So the fd-redirect `<&3` path works, but the explicit `-u 3`
+flag is broken.
+
+**Where** — `src/ported/builtins/read.rs::handle_u_flag`:
+doesn't honor the user-supplied fd. C-source
+`Src/builtin.c::bin_read` uses the parsed `-u FD` value to
+substitute the fd in the `zread()` call.
+
+**Impact** — explicit-fd read idiom broken. Common in scripts
+that pipe between coprocess-like fd setups:
+
+```sh
+exec 4< <(some_data_source)
+while read -u 4 line; do
+    process "$line"
+done
+# zsh: iterates correctly
+# zshrs: read returns empty/EOF on every iteration
+```
+
+**Workaround** — use redirect-form `read x <&4` instead of
+`read -u 4 x`.
+
+---
+
+## #206 — `setopt multios` doesn't fan-out — only last redirection target receives output
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt multios; echo hi > /tmp/za > /tmp/zb'
+$ cat /tmp/za  # zsh
+hi
+$ cat /tmp/zb  # zsh
+hi
+
+$ ./target/debug/zshrs --zsh -c 'setopt multios; echo hi > /tmp/za > /tmp/zb'
+$ cat /tmp/za  # zshrs
+(empty)
+$ cat /tmp/zb  # zshrs
+hi
+```
+
+`multios` is one of zsh's distinguishing features over POSIX
+sh: when set, `cmd > a > b` writes to both `a` and `b` (zsh
+forks an internal `tee`-like duplicator). zshrs's redirect
+parser accepts the multi-target syntax but the last redirect
+wins, exactly like POSIX sh.
+
+Same gap applies to multi-input:
+```sh
+# Should concatenate: cat < a < b
+$ /opt/homebrew/bin/zsh -fc 'setopt multios; cat < /tmp/za < /tmp/zb'
+contents-of-a
+contents-of-b
+
+$ ./target/debug/zshrs --zsh -c 'setopt multios; cat < /tmp/za < /tmp/zb'
+contents-of-b
+```
+
+**Where** — `src/ported/exec.rs::setup_redirects`: each new
+target overwrites prior fd binding instead of inserting an
+internal tee. C-source `Src/exec.c::addfd` checks
+`isset(MULTIOS)` and when set, spawns the multio process and
+chains fds.
+
+**Impact** — every zsh script that uses the multios idiom for
+tee-like output (logging to multiple files without invoking
+external `tee`) loses output silently. The data ends up in
+only one of the listed targets.
+
+```sh
+# Common multios pattern
+setopt multios
+run_build 2>&1 > build.log > /dev/tty
+# zsh: tees output to file AND tty
+# zshrs: output goes only to /dev/tty, build.log left empty
+```
+
+**Workaround** — pipe through `tee` explicitly:
+```sh
+run_build 2>&1 | tee build.log
+```
+
+---
+
+## #207 — `emulate ksh` doesn't switch arrays to 0-indexed mode
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'emulate ksh; arr=(a b c); echo "[0]=${arr[0]} [1]=${arr[1]}"'
+[0]=a [1]=b
+
+$ ./target/debug/zshrs --zsh -c 'emulate ksh; arr=(a b c); echo "[0]=${arr[0]} [1]=${arr[1]}"'
+[0]= [1]=a
+```
+
+`emulate ksh` should set `KSH_ARRAYS` opt (per zsh manual:
+"Emulation modes set options to match the target shell").
+zshrs accepts `emulate ksh` without error but doesn't apply
+the option bundle — arrays stay 1-indexed.
+
+Direct `setopt KSH_ARRAYS` works in zshrs:
+```sh
+$ ./target/debug/zshrs --zsh -c 'setopt ksh_arrays; arr=(a b c); echo "[0]=${arr[0]}"'
+[0]=a
+```
+
+So the option itself works; `emulate ksh` just doesn't set it.
+
+**Where** — `src/ported/emulate.rs::apply_emulation_set`: ksh
+emulation table is incomplete — missing `KSH_ARRAYS`,
+`KSH_TYPESET`, `KSH_AUTOLOAD`, `BSD_ECHO`, etc. C-source
+`Src/options.c::emulate` reads from `emulations[]` table
+which has the full bundle.
+
+**Impact** — scripts that rely on `emulate -L ksh` to make a
+ksh-targeted script work inside zsh see array-index off-by-one
+errors. Same applies to `emulate sh`, `emulate csh` — every
+non-zsh emulation mode has incomplete option bundles in zshrs.
+
+```sh
+# Ksh script being sourced/eval'd with emulate
+emulate -L ksh
+for i in $(seq 0 2); do echo "${arr[i]}"; done
+# zsh: prints a, b, c (0-indexed via ksh emulation)
+# zshrs: prints (empty), a, b (still 1-indexed, off-by-one)
+```
+
+**Workaround** — set the specific options explicitly:
+```sh
+emulate -L ksh
+setopt ksh_arrays ksh_typeset bsd_echo
+# ...
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -10870,9 +11030,12 @@ escape in PS1.
 | 202 | `set -eo pipefail; false \| true` doesn't abort — pipefail ignored entirely | **port-bug** | `${pipestatus[1]}` explicit check |
 | 203 | `trap EXIT` in fn runs at shell exit instead of fn return (scope leak) | **port-bug** | wrap fn body in subshell `(...)` |
 | 204 | `setopt promptsubst` doesn't enable `$()`/`${}` substitution in prompts | **port-bug** | precompute prompt in `precmd` |
+| 205 | `read -u N` doesn't read from numeric fd opened via `exec N<...` | **port-bug** | `read x <&N` redirect-form |
+| 206 | `setopt multios` only last target receives `cmd > a > b` (zsh: both) | **port-bug** | explicit `tee` pipe |
+| 207 | `emulate ksh` doesn't apply `KSH_ARRAYS`/`BSD_ECHO`/etc option bundle | **port-bug** | explicit `setopt ksh_arrays` after |
 
-Of two hundred and four entries, two are fixed (5, 7), one
-hundred ninety-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and seven entries, two are fixed (5, 7), two
+hundred and one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -10886,5 +11049,5 @@ hundred ninety-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174,
 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
-201, 202, 203, 204), and four were zsh-correct behavior misframed
-by demos (1, 2, 3, 6).
+201, 202, 203, 204, 205, 206, 207), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
