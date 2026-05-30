@@ -1578,4 +1578,114 @@ mod tests {
         freeparcs(&mut v);
         assert!(v.is_empty(), "freeparcs must empty");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/zprof.c
+    // c:123 findpfunc / c:135 findparc / c:152-170 cmp* / c:193 bin_zprof /
+    // c:418 name_for_anonymous_function / c:682-719 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:123 — `findpfunc("")` empty name doesn't panic.
+    #[test]
+    fn findpfunc_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = findpfunc("");
+    }
+
+    /// c:123 — `findpfunc` is pure (no observable mutation across calls).
+    #[test]
+    fn findpfunc_repeated_calls_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let a = findpfunc("__never_real_pfn__");
+        let b = findpfunc("__never_real_pfn__");
+        assert_eq!(a, b, "findpfunc must be pure across calls");
+    }
+
+    /// c:135 — `findparc(0, 0)` doesn't panic.
+    #[test]
+    fn findparc_zero_indices_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = findparc(0, 0);
+    }
+
+    /// c:135 — `findparc(usize::MAX, usize::MAX)` doesn't panic.
+    #[test]
+    fn findparc_extreme_indices_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = findparc(usize::MAX, usize::MAX);
+    }
+
+    /// c:152 — `cmpsfuncs` reflexivity (alt).
+    #[test]
+    fn cmpsfuncs_reflexive_alt() {
+        let p = mk_pfunc("a", 1.0, 2.0);
+        let p2 = p.clone();
+        assert_eq!(cmpsfuncs(&p, &p2), std::cmp::Ordering::Equal,
+            "cmpsfuncs(x, x.clone()) must be Equal");
+    }
+
+    /// c:161 — `cmptfuncs` reflexivity (alt).
+    #[test]
+    fn cmptfuncs_reflexive_alt() {
+        let p = mk_pfunc("a", 1.0, 2.0);
+        let p2 = p.clone();
+        assert_eq!(cmptfuncs(&p, &p2), std::cmp::Ordering::Equal,
+            "cmptfuncs(x, x.clone()) must be Equal");
+    }
+
+    /// c:170 — `cmpparcs` reflexivity (alt).
+    #[test]
+    fn cmpparcs_reflexive_alt() {
+        let a = mk_parc(0, 1, 5.0);
+        let b = a.clone();
+        assert_eq!(cmpparcs(&a, &b), std::cmp::Ordering::Equal);
+    }
+
+    /// c:193 — `bin_zprof` empty args non-negative.
+    #[test]
+    fn bin_zprof_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zprof("zprof", &[], &ops, 0);
+        assert!(r >= 0, "bin_zprof empty must be ≥ 0, got {}", r);
+    }
+
+    /// c:418 — `name_for_anonymous_function("")` returns String type (alt).
+    #[test]
+    fn name_for_anonymous_function_returns_string_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = name_for_anonymous_function("");
+    }
+
+    /// c:418 — synthesized name is non-empty.
+    #[test]
+    fn name_for_anonymous_function_returns_non_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let n = name_for_anonymous_function("");
+        assert!(!n.is_empty(),
+            "synthesized name must not be empty");
+    }
+
+    /// c:682 — `setup_` is idempotent.
+    #[test]
+    fn zprof_setup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:719 — `cleanup_` is idempotent.
+    #[test]
+    fn zprof_cleanup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
 }
