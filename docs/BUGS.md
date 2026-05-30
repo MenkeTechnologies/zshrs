@@ -7718,6 +7718,159 @@ echo "${paths[@]:t}"   # both shells: tailed
 
 ---
 
+## #148 — `zsh/mathfunc` missing many functions (cbrt, asinh, erfc, gamma, j0, rand48, ...)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/mathfunc; echo $((asinh(1)))'
+0.88137358701954305
+
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/mathfunc; echo $((asinh(1)))' 2>&1
+(empty — function not found)
+```
+
+zsh/mathfunc provides a standard set of `libm` math functions for
+arithmetic context. zshrs's module is missing many of them:
+
+Missing in zshrs (present in zsh):
+- `cbrt(x)` — cube root
+- `asinh(x)`, `acosh(x)`, `atanh(x)` — inverse hyperbolic
+- `expm1(x)` — exp(x) - 1
+- `log1p(x)` — log(1+x)
+- `erf(x)`, `erfc(x)` — error functions
+- `gamma(x)`, `lgamma(x)` — gamma / log-gamma
+- `j0(x)`, `j1(x)`, `y0(x)`, `y1(x)` — Bessel functions
+- `rand48()` — random double in [0,1)
+
+Present in both: sin, cos, tan, asin, atan, sqrt, exp, log,
+log10, floor, ceil, int, abs, sinh, cosh, tanh.
+
+Per `man zshmodules` § The zsh/mathfunc Module:
+> Loads the math functions: `abs`, `acos`, `acosh`, `asin`,
+> `asinh`, `atan`, `atanh`, `cbrt`, `ceil`, `cos`, `cosh`,
+> `erf`, `erfc`, `exp`, `expm1`, `fabs`, `floor`, `gamma`, `j0`,
+> `j1`, `lgamma`, `log`, `log10`, `log1p`, `logb`, `sin`, `sinh`,
+> `sqrt`, `tan`, `tanh`, `y0`, `y1`. Two-argument functions:
+> `atan2`, `copysign`, `fmod`, `hypot`, etc.
+
+**Where** — `src/ported/mathfunc.rs`: only registers a subset of
+the C-library `libm` functions. C-source
+`Src/Modules/mathfunc.c::math_funcs` table lists ~30 functions.
+
+**Impact** — scientific scripts using zsh's mathfunc fail
+silently or produce 0:
+
+```sh
+zmodload zsh/mathfunc
+(( pi = 4 * atan(1) ))   # works (atan present)
+(( e = exp(1) ))          # works (exp present)
+(( bessel = j0(1) ))      # zsh: 0.7651...   zshrs: 0 or error
+```
+
+**Workaround** — external `bc`/`python` for missing functions:
+```sh
+pi=$(echo 'scale=10; 4*a(1)' | bc -l)
+```
+
+---
+
+## #149 — `${(q)str}` with tab uses `\<tab>` (extending #144 to all control chars)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'x=$'\''a\tb'\''; echo "[${(q)x}]"'
+[a$'	'b]              # uses $'\t' encoded form
+
+$ ./target/debug/zshrs --zsh -c 'x=$'\''a\tb'\''; echo "[${(q)x}]"'
+[a\	b]               # uses literal \<tab>
+```
+
+Extends bug #144 (newline case) to ALL non-printable characters.
+The `(q)` quote flag should encode tab/CR/null/etc. using `$'\X'`
+ANSI-C escape syntax. zsh does this for newline, tab, and other
+control bytes. zshrs uses backslash-literal form.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'x=$'\''line\ttab\nnl'\''; echo "${(q)x}"'
+line$'	'tab$'
+'nl                    # $'\t' and $'\n' both encoded
+
+$ ./target/debug/zshrs --zsh -c 'x=$'\''line\ttab\nnl'\''; echo "${(q)x}"'
+line\	tab\
+nl                     # literal backslash + char
+```
+
+Both forms parse back equivalently, but the visual representation
+and downstream parseability differ.
+
+**Where** — `src/ported/paramsubst.rs::quote_string`: maps all
+control chars to `\X` instead of `$'\X'`. C-source
+`Src/utils.c::quotedzputs` distinguishes printable/non-printable
+and uses ANSI-C encoding for the latter.
+
+**Impact** — same as #144 — single-line config-file generation
+via `key=${(q)val}` breaks when value contains tabs.
+
+**Workaround** — use `(qq)` double-quote form (works for all
+control chars in both shells).
+
+---
+
+## #150 — `$OPTERR` initialized to `1` in zshrs (zsh: empty/unset)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$OPTERR]"'
+[]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[$OPTERR]"'
+[1]
+```
+
+`$OPTERR` is the getopts error-reporting flag. Per POSIX/bash
+convention, `1` = print errors (default), `0` = silent. zsh
+LEAVES IT UNSET until `getopts` is called for the first time
+(then auto-sets to `1` per POSIX).
+
+zshrs pre-initializes `OPTERR=1` at shell startup before any
+`getopts` is called. Causes:
+1. `${OPTERR-default}` fallback never fires (parameter is set).
+2. `[[ -v OPTERR ]]` test reports `set` from the start.
+3. Code that intentionally checks "was getopts ever called?" via
+   `OPTERR` presence breaks.
+
+Same family as #69 (sysparams auto-loaded), #64 (PIPESTATUS),
+#65 (EPOCHSECONDS pre-populated) — zshrs has multiple eager-
+initialization gaps that violate the "param appears only when
+used" convention.
+
+**Where** — `src/ported/init.rs::init_getopts_state`: sets
+`OPTERR=1` in the global env. Should defer to first `getopts`
+call. C-source `Src/builtin.c::bin_getopts` lazy-initializes
+on first invocation.
+
+**Impact** — getopts-detection code fails:
+
+```sh
+# pre-check: did any earlier code already use getopts?
+if [[ -v OPTERR ]]; then
+    echo "getopts already ran somewhere"
+fi
+# zsh: only true if getopts has been called
+# zshrs: always true (even at fresh shell start)
+```
+
+**Workaround** — `(( OPTIND > 1 ))` to detect prior getopts use,
+or pair-check both:
+```sh
+[[ -v OPTERR && OPTIND -gt 1 ]] && echo "getopts ran"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -7869,16 +8022,19 @@ echo "${paths[@]:t}"   # both shells: tailed
 | 145 | `${(k)h[name]}` key-existence query errors "bad substitution" | **port-bug** | `(( ${+h[name]} ))` |
 | 146 | `{ cmd; } arg` trailing args silently accepted (zsh: parse error) | **port-bug** | careful braces |
 | 147 | `${(@)arr:mod}` modifier dropped after `(@)` flag | **port-bug** | `${arr[@]:mod}` subscript form |
+| 148 | `zsh/mathfunc` missing cbrt/asinh/erfc/gamma/j0/rand48/... | **port-bug** | external `bc`/`python` |
+| 149 | `${(q)str}` with tab/control chars uses `\X` not `$'\X'` form | **port-bug** | `(qq)` double-quote form |
+| 150 | `$OPTERR` initialized to `1` (zsh: empty/unset) | **port-bug** | `(( OPTIND > 1 ))` check |
 
-Of one hundred forty-seven entries, two are fixed (5, 7), one
-hundred forty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
-11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
-62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
-79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
-96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
-110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
-123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
-136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147), and
-four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+Of one hundred fifty entries, two are fixed (5, 7), one hundred
+forty-four remain open port-bugs/perf-issues (4, 8, 9, 10, 11, 12,
+13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
+47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
+81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97,
+98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
+112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124,
+125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137,
+138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150),
+and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
