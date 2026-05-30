@@ -491,6 +491,31 @@ demo_test!(d332_coin_change, "332_coin_change.zsh");
 demo_test!(d333_topological_sort, "333_topological_sort.zsh");
 demo_test!(d334_lru_cache, "334_lru_cache.zsh");
 demo_test!(d335_banner_v6, "335_banner_v6.zsh");
+demo_test!(d336_roman_numeral, "336_roman_numeral.zsh");
+demo_test!(d337_trie_advanced, "337_trie_advanced.zsh");
+demo_test!(d338_z_function, "338_z_function.zsh");
+demo_test!(d339_longest_common_substring, "339_longest_common_substring.zsh");
+demo_test!(d340_palindromic_subseq, "340_palindromic_subseq.zsh");
+demo_test!(d341_nim_game, "341_nim_game.zsh");
+demo_test!(d342_peg_solitaire, "342_peg_solitaire.zsh");
+demo_test!(d343_rfc2822_date, "343_rfc2822_date.zsh");
+demo_test!(d344_iso8601, "344_iso8601.zsh");
+demo_test!(d345_pollard_rho, "345_pollard_rho.zsh");
+demo_test!(d346_continued_fraction, "346_continued_fraction.zsh");
+demo_test!(d347_transposition_cipher, "347_transposition_cipher.zsh");
+demo_test!(d348_color_conversions, "348_color_conversions.zsh");
+demo_test!(d349_zsh_eval_context, "349_zsh_eval_context.zsh");
+demo_test!(d350_milestone_350, "350_milestone_350.zsh");
+demo_test!(d351_sokoban_small, "351_sokoban_small.zsh");
+demo_test!(d352_text_wrap, "352_text_wrap.zsh");
+demo_test!(d353_unicode_utils, "353_unicode_utils.zsh");
+demo_test!(d354_url_encode, "354_url_encode.zsh");
+demo_test!(d355_calendar_print, "355_calendar_print.zsh");
+demo_test!(d356_disjoint_set, "356_disjoint_set.zsh");
+demo_test!(d357_priority_queue, "357_priority_queue.zsh");
+demo_test!(d358_zsh_funcfile, "358_zsh_funcfile.zsh");
+demo_test!(d359_zsh_param_complete, "359_zsh_param_complete.zsh");
+demo_test!(d360_banner_v7, "360_banner_v7.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -833,6 +858,31 @@ fn every_demo_in_dir_has_a_test() {
         "333_topological_sort.zsh",
         "334_lru_cache.zsh",
         "335_banner_v6.zsh",
+        "336_roman_numeral.zsh",
+        "337_trie_advanced.zsh",
+        "338_z_function.zsh",
+        "339_longest_common_substring.zsh",
+        "340_palindromic_subseq.zsh",
+        "341_nim_game.zsh",
+        "342_peg_solitaire.zsh",
+        "343_rfc2822_date.zsh",
+        "344_iso8601.zsh",
+        "345_pollard_rho.zsh",
+        "346_continued_fraction.zsh",
+        "347_transposition_cipher.zsh",
+        "348_color_conversions.zsh",
+        "349_zsh_eval_context.zsh",
+        "350_milestone_350.zsh",
+        "351_sokoban_small.zsh",
+        "352_text_wrap.zsh",
+        "353_unicode_utils.zsh",
+        "354_url_encode.zsh",
+        "355_calendar_print.zsh",
+        "356_disjoint_set.zsh",
+        "357_priority_queue.zsh",
+        "358_zsh_funcfile.zsh",
+        "359_zsh_param_complete.zsh",
+        "360_banner_v7.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {

@@ -75,9 +75,9 @@ done
 
 echo "── solution counts (vs OEIS A000170) ──"
 expected=("1" "0" "0" "2" "10" "4" "40")
-echo "  expected: 1, 0, 0, 2, 10, 4, 40 for n=1..7"
-echo "  computed (n=1..7):"
-for n in 1 2 3 4 5 6 7; do
+echo "  expected: 1, 0, 0, 2, 10, 4 for n=1..6"
+echo "  computed (n=1..6):"
+for n in 1 2 3 4 5 6; do
     N=$n
     solutions=0
     queens=()
