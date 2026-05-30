@@ -22696,6 +22696,195 @@ Tedious but covers the most common case.
 
 ---
 
+## #424 — scalar→array tie broken for ALL tied params (MANPATH/FPATH/CDPATH) — generalizes #423
+
+**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'MANPATH=/x:/y; echo "[${manpath[@]}]"'
+[/x /y]
+
+$ ./target/debug/zshrs --zsh -c 'MANPATH=/x:/y; echo "[${manpath[@]}]"'
+[]
+```
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'FPATH=/x:/y; echo "[${fpath[@]}]"'
+[/x /y]
+
+$ ./target/debug/zshrs --zsh -c 'FPATH=/x:/y; echo "[${fpath[@]}]"'
+[/very/long/stale/fpath/...]  (giant pre-assignment value)
+```
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'CDPATH=/x:/y; echo "[${cdpath[@]}]"'
+[/x /y]
+
+$ ./target/debug/zshrs --zsh -c 'CDPATH=/x:/y; echo "[${cdpath[@]}]"'
+[]
+```
+
+#423 was the same scalar→array broken-tie for PATH/path
+specifically. This confirms the bug affects **every**
+tied param:
+
+| Scalar (string) | Array     | Direction broken in zshrs? |
+|-----------------|-----------|----------------------------|
+| `PATH`          | `path`    | yes (#423)                 |
+| `MANPATH`       | `manpath` | yes                        |
+| `FPATH`         | `fpath`   | yes                        |
+| `CDPATH`        | `cdpath`  | yes                        |
+
+The array→scalar direction works for all of them (per
+#423 follow-up testing). Only the scalar-assignment-
+propagation is broken — generic across all tied params.
+
+**Where** — `src/ported/params/tied.rs` (or wherever the
+shared tied-param infrastructure lives): the scalar
+`setfn` must split on `:` and replace the array's
+storage. Likely a single missing call in the shared base
+case affects all instances.
+
+C-source `Src/params.c::colonarrsetfn` (the function used
+by all tied scalars) calls `freearray` then `setarrayval`
+on the linked array.
+
+**Impact** — Massive zsh-compat fallout — the most
+common shell idioms for modifying these paths:
+
+```sh
+FPATH="$ZDOTDIR/funcs:$FPATH"      # add autoload dir
+MANPATH="/opt/homebrew/share/man:$MANPATH"   # brew docs
+CDPATH=".:$HOME"                   # quick cd targets
+
+# After these assignments, zshrs's fpath/manpath/cdpath
+# arrays are STALE. autoload then fails, man pages
+# can't be found, cd targets don't resolve.
+```
+
+Confirms a single fix in tied-param plumbing would
+address all four parameters. See #423 for fix location.
+
+**Workaround** — same as #423 — pair each scalar
+assignment with explicit array rebuild.
+
+---
+
+## #425 — `(#cN)` glob exact-count flag not recognized — extends #409 to count form
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; [[ "aaa" == (a)(#c3) ]] && echo m'
+m
+
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; [[ "aaa" == (a)(#c3) ]] && echo m'
+(no output, rc=1)
+```
+
+`(#cN,M)` is the EXTENDED_GLOB count-flag for exact (or
+range) repetitions of the preceding pattern. Variants:
+- `(a)(#c3)` — exactly 3 `a`'s
+- `(a)(#c2,5)` — 2 to 5 `a`'s
+- `(a)(#c0,)` — zero or more
+- `(a)(#c,3)` — up to 3
+
+zsh matches `"aaa" == (a)(#c3)` — the parenthesized
+`(a)` followed by exact-count 3 matches `aaa`. zshrs
+doesn't recognize the count-flag — falls through to
+either literal match or generic glob fail.
+
+Parallel to #409 (`(#i)` case-fold), #411 (other `(#X)`
+flags) — the entire `(#X)` glob-flag family is partially
+or wholly unsupported.
+
+**Where** — `src/ported/glob/pattern.rs::parse_paren_flag`:
+add handler for `c` and `c=N`/`c=N,M` parsing.
+C-source `Src/pattern.c::patcompile` consumes
+`#c<n>,<m>` and emits repetition op-codes.
+
+**Impact** — exact-count patterns broken:
+
+```sh
+# Match 8-character hex IDs
+for f in *(#c8); do ...; done
+
+# Match exactly 3 digits
+[[ $version =~ ^[0-9](#c3)$ ]] && echo "x.y.z"
+```
+
+Both fail under zshrs.
+
+**Workaround** — POSIX-style fixed repetition:
+```sh
+[[ "aaa" == aaa ]]   # literal — only works for known N
+[[ $s =~ "^a{3}$" ]] # regex — works
+```
+
+---
+
+## #426 — `command_not_found_handler` user-defined hook not invoked
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'command_not_found_handler() { echo "GOT: $1"; return 0; }; nonexistent-cmd-xyz; echo rc=$?'
+GOT: nonexistent-cmd-xyz
+rc=0
+
+$ ./target/debug/zshrs --zsh -c 'command_not_found_handler() { echo "GOT: $1"; return 0; }; nonexistent-cmd-xyz; echo rc=$?'
+zsh:1: command not found: nonexistent-cmd-xyz
+rc=127
+```
+
+zsh's documented behavior: when a command lookup fails,
+if a function named `command_not_found_handler` is
+defined, it's invoked with the command name and its
+return value becomes the command's rc.
+
+zshrs ignores the hook entirely — emits the default
+"command not found" diagnostic and exits 127.
+
+**Where** — `src/ported/exec/cmdlookup.rs::not_found_path`:
+must check for `command_not_found_handler` function
+before emitting the default error. C-source
+`Src/exec.c::execcmd_exec` calls
+`getshfunc("command_not_found_handler")` and invokes it
+with `argv[0]` and original `argv[1..]`.
+
+**Impact** — **Entire hook ecosystem broken**. Common
+real-world uses:
+
+```sh
+# Ubuntu/Debian: suggest apt install
+command_not_found_handler() {
+    /usr/lib/command-not-found "$1"
+}
+
+# Nix: lazy-install via nix-shell
+command_not_found_handler() {
+    nix-shell -p "$1" --run "$@"
+}
+
+# Pyenv/rbenv/asdf: auto-rehash on miss
+command_not_found_handler() {
+    asdf reshim
+    "$@"
+}
+```
+
+All of these silently fail under zshrs — the hook never
+fires, user sees the bare "command not found" error.
+
+Major feature gap. The hook is documented in zsh manual
+`zshmisc(1)` and is one of the most commonly used
+user-extension points.
+
+**Workaround** — none — without the hook, the integration
+can't fire.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -23123,9 +23312,12 @@ Tedious but covers the most common case.
 | 421 | `^` parsed as glob-negation even when `extended_glob` is off — gating missing on `^`/`~`/`#` extended-glob operators | **port-bug** | escape with backslash `\\^` |
 | 422 | sourced-file errors prefixed `zsh:` instead of `/path/to/file:` — extends #420, breaks .zshrc plugin-bisect debugging | **port-bug** | bisect by commenting out source lines |
 | 423 | **CRITICAL** `PATH=str` doesn't update tied `path` array — one-way tie broken (path=arr→PATH works) | **port-bug** | always also `path=("${(@s/:/)PATH}")` after PATH= |
+| 424 | **CRITICAL** scalar→array tie broken for MANPATH/FPATH/CDPATH — generalizes #423 to all tied params | **port-bug** | manual rebuild of `manpath`/`fpath`/`cdpath` after scalar assignment |
+| 425 | `(#cN)` glob exact-count flag not recognized — extends #409 family | **port-bug** | regex form `=~ "^a{3}$"` |
+| 426 | `command_not_found_handler` user-defined hook not invoked — entire ecosystem broken (apt/nix/asdf integration) | **port-bug** | none — without hook integration can't fire |
 
-Of four hundred and twenty-three entries, two are fixed (5, 7),
-four hundred and seventeen remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and twenty-six entries, two are fixed (5, 7),
+four hundred and twenty remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
