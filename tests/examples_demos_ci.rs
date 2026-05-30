@@ -416,6 +416,31 @@ demo_test!(d257_memory_match, "257_memory_match.zsh");
 demo_test!(d258_substitution_cipher, "258_substitution_cipher.zsh");
 demo_test!(d259_boggle_solver, "259_boggle_solver.zsh");
 demo_test!(d260_final_v3, "260_final_v3.zsh");
+demo_test!(d261_prime_factorize, "261_prime_factorize.zsh");
+demo_test!(d262_miller_rabin, "262_miller_rabin.zsh");
+demo_test!(d263_extended_gcd, "263_extended_gcd.zsh");
+demo_test!(d264_a_star_pathfind, "264_a_star_pathfind.zsh");
+demo_test!(d265_kruskal_mst, "265_kruskal_mst.zsh");
+demo_test!(d266_prim_mst, "266_prim_mst.zsh");
+demo_test!(d267_floyd_warshall, "267_floyd_warshall.zsh");
+demo_test!(d268_bellman_ford, "268_bellman_ford.zsh");
+demo_test!(d269_n_queens, "269_n_queens.zsh");
+demo_test!(d270_fifteen_puzzle, "270_fifteen_puzzle.zsh");
+demo_test!(d271_hanoi_animated, "271_hanoi_animated.zsh");
+demo_test!(d272_markdown_to_html, "272_markdown_to_html.zsh");
+demo_test!(d273_http_parser, "273_http_parser.zsh");
+demo_test!(d274_log_format_detect, "274_log_format_detect.zsh");
+demo_test!(d275_csv_merge, "275_csv_merge.zsh");
+demo_test!(d276_blackjack, "276_blackjack.zsh");
+demo_test!(d277_dice_game, "277_dice_game.zsh");
+demo_test!(d278_rps, "278_rps.zsh");
+demo_test!(d279_xor_cipher, "279_xor_cipher.zsh");
+demo_test!(d280_otp_pad, "280_otp_pad.zsh");
+demo_test!(d281_zsh_periodic, "281_zsh_periodic.zsh");
+demo_test!(d282_zsh_argv_special, "282_zsh_argv_special.zsh");
+demo_test!(d283_zsh_traps_full, "283_zsh_traps_full.zsh");
+demo_test!(d284_atomic_write, "284_atomic_write.zsh");
+demo_test!(d285_banner_v4, "285_banner_v4.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -683,6 +708,31 @@ fn every_demo_in_dir_has_a_test() {
         "258_substitution_cipher.zsh",
         "259_boggle_solver.zsh",
         "260_final_v3.zsh",
+        "261_prime_factorize.zsh",
+        "262_miller_rabin.zsh",
+        "263_extended_gcd.zsh",
+        "264_a_star_pathfind.zsh",
+        "265_kruskal_mst.zsh",
+        "266_prim_mst.zsh",
+        "267_floyd_warshall.zsh",
+        "268_bellman_ford.zsh",
+        "269_n_queens.zsh",
+        "270_fifteen_puzzle.zsh",
+        "271_hanoi_animated.zsh",
+        "272_markdown_to_html.zsh",
+        "273_http_parser.zsh",
+        "274_log_format_detect.zsh",
+        "275_csv_merge.zsh",
+        "276_blackjack.zsh",
+        "277_dice_game.zsh",
+        "278_rps.zsh",
+        "279_xor_cipher.zsh",
+        "280_otp_pad.zsh",
+        "281_zsh_periodic.zsh",
+        "282_zsh_argv_special.zsh",
+        "283_zsh_traps_full.zsh",
+        "284_atomic_write.zsh",
+        "285_banner_v4.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
