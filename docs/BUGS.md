@@ -12965,6 +12965,173 @@ log "Processing files: ${a[*]}"
 
 ---
 
+## #247 — `read line` doesn't strip leading/trailing IFS whitespace
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "  hello  " | { read line; echo "[$line]"; }'
+[hello]
+
+$ ./target/debug/zshrs --zsh -c 'echo "  hello  " | { read line; echo "[$line]"; }'
+[  hello  ]
+```
+
+POSIX `read` semantics: words are split on IFS characters,
+with leading/trailing IFS whitespace removed. zsh implements
+this — `[hello]` with no padding spaces. zshrs preserves the
+whitespace as part of the assigned value.
+
+This affects every interactive prompt parsing pattern and
+every config-file reader that loops over `read line`:
+
+```sh
+while read line; do
+    [[ -z "$line" ]] && continue
+    process "$line"
+done < config.txt
+# zsh: lines with trailing whitespace trim cleanly
+# zshrs: trailing whitespace becomes part of "$line", potentially breaking
+#        path-as-key lookups or comparison-based logic
+```
+
+**Where** — `src/ported/builtins/read.rs::strip_ifs`: doesn't
+strip leading/trailing IFS chars before assigning to the
+variable. C-source `Src/builtin.c::bin_read` calls
+`zwsplit_for_read()` which handles IFS-whitespace stripping
+per POSIX.
+
+**Impact** — broad — every script that reads user input or
+config-file lines may see unexpected leading/trailing
+whitespace in the captured value, affecting downstream
+processing.
+
+**Workaround** — explicit strip after read:
+```sh
+read line
+line="${line## }"   # strip leading spaces
+line="${line%% }"   # strip trailing spaces
+```
+
+Note: this still doesn't handle multi-char IFS whitespace
+(tabs, etc.) — that needs a more comprehensive trim.
+
+---
+
+## #248 — `read "?prompt" var` prints prompt to stdout when stdin is not a tty
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "ans" | read "?Question: " line; echo "[$line]"'
+[ans]
+
+$ ./target/debug/zshrs --zsh -c 'echo "ans" | read "?Question: " line; echo "[$line]"'
+Question: [ans]
+```
+
+`read "?prompt" var` displays `prompt` to stderr/tty before
+reading the variable. zsh detects non-tty stdin and skips the
+prompt display (the prompt is meant for interactive use only).
+
+zshrs prints the prompt regardless, AND prints it to stdout
+(not stderr) — making it appear in the captured output of
+the pipeline.
+
+Two sub-bugs:
+1. Should suppress prompt when stdin isn't a tty.
+2. Should write prompt to stderr, not stdout (even when
+   displayed).
+
+**Where** — `src/ported/builtins/read.rs::handle_prompt_arg`:
+unconditionally writes to fd 1 (stdout). C-source
+`Src/builtin.c::bin_read` checks `isatty(0)` before
+attempting to display the prompt, and writes to `shfderror`
+(fd 2).
+
+**Impact** — scripts that wrap `read "?prompt"` in pipes
+(e.g., `expect`-like automation, test harnesses, scripted
+deployments) get the prompt text mixed into their captured
+output:
+
+```sh
+result=$(echo "yes" | read "?Confirm: " ans; echo "$ans")
+# zsh:   result = "yes"
+# zshrs: result = "Confirm: yes" — prompt contaminates result
+```
+
+The stdout-vs-stderr aspect also affects interactive use:
+shell redirection of prompts (`script 2>/dev/null`) doesn't
+suppress them in zshrs.
+
+**Workaround** — separate the prompt from the read:
+```sh
+[[ -t 0 ]] && print -n "Confirm: " >&2   # only print when interactive
+read ans
+```
+
+---
+
+## #249 — `${arr//pat/repl}` on bare array applies replacement per-element instead of scalar-join (zsh: joins first)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(abc def); echo "[${a//?/X}]"'
+[XXXXXXX]
+
+$ ./target/debug/zshrs --zsh -c 'a=(abc def); echo "[${a//?/X}]"'
+[XXX XXX]
+```
+
+For bare array reference `$a` (no `[@]` or `[*]` subscript)
+in a scalar context (inside `"[...]"` here, since echo gets a
+single argument), zsh joins the array with IFS into a scalar
+first, then applies the substitution. Result: 6 chars + 1
+space = 7 chars, all replaced with X → `XXXXXXX`.
+
+zshrs applies the substitution per-element first, then joins:
+`abc → XXX`, `def → XXX`, joined → `XXX XXX`.
+
+Semantically different: zshrs's version preserves array
+structure through the substitution; zsh flattens first.
+
+For comparison, both shells handle the explicit `[@]` form
+the same way (per-element):
+```sh
+$ both-shells -fc 'a=(abc def); echo "[${a[@]//?/X}]"'
+[XXX XXX]
+```
+
+So the bug is specifically the no-subscript scalar-context
+path treating array as still-array.
+
+**Where** — `src/ported/paramsubst.rs::dispatch_array_in_scalar`:
+when an array is referenced without `[@]`/`[*]` in scalar
+context, the replacement should happen on the joined scalar
+form, not per-element. C-source `Src/subst.c::dosubst`
+checks the SCALAR_CTX flag and joins via `getsparam()` before
+applying the replacement.
+
+**Impact** — moderate. Most scripts use explicit `[@]`/`[*]`
+forms, but the bare `$arr` form is common in older or
+quickly-written code. Substitution results differ subtly:
+
+```sh
+# Replace any character with .
+log_line="$arr"
+log_clean="${log_line//[^a-z]/.}"   # mask non-alpha for logging
+# zsh: replacement applied to space-separated joined string
+# zshrs: replacement applied per-element, spaces preserved structurally
+```
+
+**Workaround** — explicit `[*]`:
+```sh
+log_clean="${${arr[*]}//[^a-z]/.}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -13215,9 +13382,12 @@ log "Processing files: ${a[*]}"
 | 244 | `${(Z+c+)cmd}` word-split with c option returns whole string as 1 token (parser-aware split broken) | **port-bug** | manual `${(s: :)cmd%%\\#*}` for simple cases |
 | 245 | `(#cN,M)` extended_glob range-repetition not honored (count syntax accepted but matcher ignores) | **port-bug** | explicit char-class repetition |
 | 246 | `setopt rc_expand_param` applied inside double quotes — silently fans out `"prefix$arr"` per-element | **port-bug** | use `${a[*]}` star to force scalar-join |
+| 247 | `read line` doesn't strip leading/trailing IFS whitespace from input | **port-bug** | explicit `${var## }`/`${var%% }` strip |
+| 248 | `read "?prompt" var` writes prompt to stdout when stdin isn't tty (contaminates output) | **port-bug** | conditional `print -n "p: " >&2` |
+| 249 | `${arr//pat/repl}` bare-array form applies replacement per-element (zsh: joins to scalar first) | **port-bug** | use `${${arr[*]}//pat/repl}` |
 
-Of two hundred and forty-six entries, two are fixed (5, 7), two
-hundred and forty remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and forty-nine entries, two are fixed (5, 7), two
+hundred and forty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -13234,5 +13404,5 @@ hundred and forty remain open port-bugs/perf-issues (4, 8, 9, 10,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
-240, 241, 242, 243, 244, 245, 246), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+240, 241, 242, 243, 244, 245, 246, 247, 248, 249), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
