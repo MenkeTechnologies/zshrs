@@ -8201,6 +8201,191 @@ loop-over-glob with explicit pattern handling.
 
 ---
 
+## #157 — `TRAP<SIG>()` function-named trap handlers not recognized
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPEXIT() { echo "EXIT-handler"; }; echo "main"'
+main
+EXIT-handler
+
+$ ./target/debug/zshrs --zsh -c 'TRAPEXIT() { echo "EXIT-handler"; }; echo "main"'
+main
+```
+
+zsh has a documented convention: functions named `TRAP<SIG>`
+(where `<SIG>` is a signal name like `EXIT`, `INT`, `USR1`,
+`DEBUG`, etc.) are automatically registered as trap handlers
+for that signal. zshrs doesn't recognize this convention.
+
+Same for signal traps:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPUSR1() { echo got; }; kill -USR1 $$; sleep 0.05; echo done'
+got
+done
+
+$ ./target/debug/zshrs --zsh -c 'TRAPUSR1() { echo got; }; kill -USR1 $$; sleep 0.05; echo done'
+done            # signal sent but TRAPUSR1 not called
+```
+
+Per `man zshmisc` § TRAP FUNCTIONS:
+> If a function with one of the trap-name forms (e.g., `TRAPINT`,
+> `TRAPEXIT`, `TRAPZERR`, etc.) is defined, it is run when the
+> corresponding signal/event occurs. Equivalent to `trap` builtin
+> registration.
+
+**Where** — `src/ported/builtin_typeset.rs::define_function`:
+when registering a function, doesn't check if the name matches
+the `TRAP<SIG>` pattern and register it as a signal handler.
+C-source `Src/exec.c::execfuncdef` calls `trapprog_install` for
+matching function names.
+
+**Impact** — every signal-handling idiom using the function-name
+form fails. This is the canonical zsh-idiomatic form (more
+ergonomic than `trap 'cmd' SIG`):
+
+```sh
+TRAPEXIT() {
+    rm -f /tmp/lockfile
+}
+# zsh: cleanup runs on shell exit
+# zshrs: cleanup never runs
+```
+
+`TRAPZERR()` (run on any non-zero exit), `TRAPDEBUG()` (before
+each command) — all broken.
+
+**Workaround** — use explicit `trap` builtin:
+```sh
+trap 'rm -f /tmp/lockfile' EXIT
+trap 'echo got' USR1
+```
+
+---
+
+## #158 — Function-def redirect `f() { ... } < file` not honored at call time
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "test_line" > /tmp/zfd; f() { read line; echo "[$line]"; } < /tmp/zfd; f; rm /tmp/zfd'
+[test_line]
+
+$ ./target/debug/zshrs --zsh -c 'echo "test_line" > /tmp/zfd; f() { read line; echo "[$line]"; } < /tmp/zfd; f; rm /tmp/zfd'
+(empty - read got no input)
+```
+
+zsh allows attaching redirects at function-definition time. When
+the function is later called, those redirects are applied as
+the default. `f() { read line; ...} < file` means "every call to
+`f` uses `file` as stdin unless overridden".
+
+zshrs parses the redirect but doesn't store it with the function
+definition; it has no effect at call time.
+
+Per zsh shell grammar:
+```
+fn_def = name "()" "{" body "}" [redirect_list]
+```
+where the redirect list is per-call default for the body.
+
+**Where** — `src/ported/parse.rs::parse_function_def`: parses
+the trailing redirects but doesn't attach them to the function's
+exec context. C-source `Src/exec.c::execfuncdef` builds a
+`Shfunc` with a `redir` chain that's applied each invocation.
+
+**Impact** — library functions using attached redirects to
+provide default input/output streams break:
+
+```sh
+log_with_timestamp() {
+    while IFS= read -r line; do
+        echo "$(date): $line"
+    done
+} < /var/log/messages
+log_with_timestamp
+# zsh: streams /var/log/messages through the function
+# zshrs: log_with_timestamp reads from terminal stdin (or hangs)
+```
+
+**Workaround** — explicit redirect at call site:
+```sh
+log_with_timestamp() {
+    while IFS= read -r line; do
+        echo "$(date): $line"
+    done
+}
+log_with_timestamp < /var/log/messages
+```
+
+---
+
+## #159 — `while [[ $((i++)) -lt N ]]` only iterates once (post-increment in `[[ ]]` cond)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'i=0; while [[ $((i++)) -lt 3 ]]; do echo "iter: i=$i"; done'
+iter: i=1
+iter: i=2
+iter: i=3
+
+$ ./target/debug/zshrs --zsh -c 'i=0; while [[ $((i++)) -lt 3 ]]; do echo "iter: i=$i"; done'
+iter: i=2
+```
+
+zsh evaluates the post-increment `$((i++))` correctly per
+iteration:
+- Iter 1: `i` was 0, post-inc → arith returns 0, compare `0<3` true,
+  body sees `i=1`.
+- Iter 2: `i` was 1, returns 1, `1<3` true, body sees `i=2`.
+- Iter 3: `i` was 2, returns 2, `2<3` true, body sees `i=3`.
+- Iter 4: `i` was 3, returns 3, `3<3` false, exit.
+
+zshrs runs only once. The `[[ $((i++)) -lt 3 ]]` condition is
+evaluated wrong — possibly the cmdsub/arith inside `[[ ]]` is
+cached or i++ runs multiple times in one iteration.
+
+The arith-form works correctly:
+```sh
+$ both-shells -fc 'i=0; while (( i++ < 3 )); do echo "iter: i=$i"; done'
+iter: i=1
+iter: i=2
+iter: i=3
+```
+
+So the bug is the specific combination of `[[ ]]` test +
+`$((i++))` arith expansion.
+
+**Where** — `src/ported/cond.rs::eval_arith_in_test`: the arith
+expansion is evaluated multiple times during a single iteration,
+double-incrementing `i`. C-source `Src/cond.c::evalcond` runs
+the arith once and caches the result for the comparison.
+
+**Impact** — count-based loops using post-increment in `[[ ]]`
+break silently:
+
+```sh
+i=0
+while [[ $((i++)) -lt ${#array} ]]; do
+    process "${array[i]}"
+done
+# zsh: iterates array length times
+# zshrs: runs once with wrong i value
+```
+
+**Workaround** — use `(( ))` arith for the condition:
+```sh
+while (( i++ < ${#array} )); do ...
+```
+Or external counter:
+```sh
+for ((i=0; i < ${#array}; i++)); do ...
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -8361,17 +8546,20 @@ loop-over-glob with explicit pattern handling.
 | 154 | Readonly var modifiable via `(( ))` / `let` arith | **port-bug** | post-assignment check |
 | 155 | `${str[N,M+1]}` slice subscript ignores var/arith | **port-bug** | pre-compute index |
 | 156 | `[[ -e /path/*.glob ]]` glob-expands in test (zsh: literal) | **port-bug** | external `ls` test |
+| 157 | `TRAP<SIG>()` function-named trap handlers not recognized | **port-bug** | explicit `trap` builtin |
+| 158 | Function-def redirect `f() {} < file` not honored | **port-bug** | redirect at call site |
+| 159 | `while [[ $((i++)) -lt N ]]` only iterates once | **port-bug** | `while (( i++ < N ))` |
 
-Of one hundred fifty-six entries, two are fixed (5, 7), one
-hundred fifty remain open port-bugs/perf-issues (4, 8, 9, 10, 11,
-12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
-46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
-63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
-80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
-97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
-111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
-124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
-137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149,
-150, 151, 152, 153, 154, 155, 156), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+Of one hundred fifty-nine entries, two are fixed (5, 7), one
+hundred fifty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
+11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
+62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
+79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
+110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
+123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
+136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
+149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159), and four
+were zsh-correct behavior misframed by demos (1, 2, 3, 6).
