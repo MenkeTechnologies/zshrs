@@ -23868,6 +23868,182 @@ build process, or detect zshrs separately via
 
 ---
 
+## #445 — `exec N<<<str` here-string-to-fd doesn't persist — fd unusable after exec
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'exec 3<<<hi; cat <&3'
+hi
+
+$ ./target/debug/zshrs --zsh -c 'exec 3<<<hi; cat <&3'
+cat: stdin: Bad file descriptor
+```
+
+`exec N<<<string` is the zsh-extension for opening a file
+descriptor backed by a here-string. The here-string is
+fed into a pipe; the read-end is assigned to fd `N` for
+the rest of the script's lifetime.
+
+zsh implements this; zshrs doesn't persist the fd —
+either the here-string is processed and discarded
+without binding to fd 3, or fd 3 is closed at the end of
+the `exec` statement.
+
+File-based redirection (`exec 3<file`) works correctly in
+both shells — the bug is specific to here-strings/here-
+docs combined with `exec`.
+
+**Where** — `src/ported/exec/redirect.rs::exec_assign_fd`:
+when source is a here-string/heredoc, must spawn a writer
+process or use a temp file to back the read fd. The
+current implementation likely processes the here-string
+inline and lets fd close at statement-end.
+
+C-source `Src/exec.c::execpline` handles `exec` + here-
+string by forking a small "here string writer" subprocess
+whose stdout is the read-end of a pipe — that pipe's
+read-end becomes the assigned fd.
+
+**Impact** — patterns that pre-load a script with
+configurable input fail:
+
+```sh
+exec 3<<<"$config_data"
+while read -u3 line; do
+    process "$line"
+done
+# zsh: works
+# zshrs: read fails with "Bad file descriptor"
+```
+
+Common in test-framework setup, configuration prep, and
+multi-source data loops.
+
+**Workaround** — use a temp file:
+```sh
+tmpfd=$(mktemp)
+echo "$config_data" > "$tmpfd"
+exec 3<"$tmpfd"
+rm "$tmpfd"
+```
+
+---
+
+## #446 — `noglob` standalone accepted as no-op — extends #413 parser strictness gap
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'noglob 2>&1; echo rc=$?'
+zsh:1: redirection with no command
+
+$ ./target/debug/zshrs --zsh -c 'noglob 2>&1; echo rc=$?'
+rc=0
+```
+
+`noglob` is a zsh reserved word — must be followed by a
+command to take effect (it suppresses glob expansion on
+the command's args). Standalone `noglob` is meaningless.
+
+zsh detects the malformed standalone use: when followed
+by `2>&1` (a redirection), it errors "redirection with no
+command" — the redirect can't attach to nothing.
+
+zshrs accepts the standalone form silently, returns rc=0.
+
+Same family as #413 (`do` standalone), #404 (while typo),
+#400 (case esack typo) — zshrs parser is non-strict about
+reserved-word-position validation.
+
+**Where** — `src/ported/parser/command.rs::dispatch`:
+reserved-words like `noglob`, `nocorrect`, `command`,
+`builtin`, `exec` need to be checked for required-
+following-command at parse time. C-source
+`Src/parse.c::par_simple` requires a command word after
+these prefix keywords.
+
+**Impact** — typos involving these prefix keywords pass
+silently:
+
+```sh
+noglob *.txt    # intended: noglob echo *.txt — typo dropped echo
+# zsh: parse error or glob still expanded?
+# zshrs: noglob alone runs, then the glob *.txt expands
+#        in a separate command? — depends on parser path
+```
+
+Less impactful than the other parser-strictness bugs but
+adds to the cumulative trust-loss in zshrs's parse-time
+validation.
+
+**Workaround** — none syntactic; CI lint for "prefix
+keyword followed by something other than a command".
+
+---
+
+## #447 — `${(flag)scalar[@]}` returns empty for ALL flags — flag-on-scalar-with-@ broken
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "[${(R)a[@]}][${(U)a[@]}][${(L)a[@]}][${(Q)a[@]}]"'
+[hello][HELLO][hello][hello]
+
+$ ./target/debug/zshrs --zsh -c 'a=hello; echo "[${(R)a[@]}][${(U)a[@]}][${(L)a[@]}][${(Q)a[@]}]"'
+[][][][]
+```
+
+When a paramexp flag is applied to a scalar with `[@]`
+subscript (treating the scalar as a 1-element array),
+zsh applies the flag to the scalar value and returns it
+unchanged or transformed:
+- `(R)hello[@]` → `hello` (reverse a 1-elem array)
+- `(U)hello[@]` → `HELLO` (upper-case)
+- `(L)hello[@]` → `hello` (lower-case)
+- `(Q)hello[@]` → `hello` (unquote)
+
+zshrs returns **empty for every flag** when scalar has
+`[@]` subscript. The flag isn't applied; instead the
+expansion-result is dropped.
+
+Same family as #406 (`${funcstack[@]}` empty),
+#436 (`${(q)a[N]}` errors), #407 (`(e)` subscript fallback),
+#408 (3-arg slice ignored). The flag×subscript matrix is
+broken in many specific cells.
+
+**Where** — `src/ported/paramsubst/scalar_at.rs` (or
+equivalent): when a scalar has `[@]` subscript and a flag
+is present, the flag-application code-path isn't reached
+— the `[@]` short-circuits to an "empty array" interp.
+
+**Impact** — paramexp on scalar values fails when callers
+use the consistent `[@]` form (which is the safer form
+for arrays and should be a no-op for scalars):
+
+```sh
+# Library helper that takes either scalar or array
+print_quoted() {
+    local var=$1
+    print -l -- "${(q)${(P)var}[@]}"
+}
+single="hello"
+many=(a b c)
+print_quoted single  # zsh: 'hello'   zshrs: (nothing)
+print_quoted many    # zsh: a, b, c   zshrs: ?
+```
+
+Generic helpers that work for both arrays and scalars
+break when scalars are passed.
+
+**Workaround** — bind to typed array first:
+```sh
+local arr=("$scalar")
+echo "${(R)arr[@]}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -24316,9 +24492,12 @@ build process, or detect zshrs separately via
 | 442 | `$ZSH_VERSION` exposes zshrs internal version `5.9.0.3-test` instead of zsh-compat `5.9` — breaks feature-detect scripts | **port-bug** | `ZSH_VERSION="${ZSH_VERSION%%[!.0-9]*}"` mutation |
 | 443 | `EUID=0`/`UID=0`/`PPID=99` assignment silently accepted — special-var syscall setters missing (security-relevant) | **port-bug** | use `sudo -u` / external tools |
 | 444 | `$ZSH_PATCHLEVEL` returns literal `unknown` — git-derived build identifier missing | **port-bug** | hardcode from build process |
+| 445 | `exec N<<<str` here-string-to-fd doesn't persist — fd unusable after exec (file form works) | **port-bug** | use temp file + `exec N<file` |
+| 446 | `noglob` standalone accepted as no-op (zsh: parse error) — extends #413 parser strictness gap | **port-bug** | CI lint for prefix-keyword-no-command |
+| 447 | `${(flag)scalar[@]}` returns empty for ALL flags (R/U/L/Q/V) — flag-on-scalar-with-@ broken | **port-bug** | bind scalar to typed array first |
 
-Of four hundred and forty-four entries, two are fixed (5, 7),
-four hundred and thirty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and forty-seven entries, two are fixed (5, 7),
+four hundred and forty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
