@@ -635,6 +635,81 @@ Demos 332 uses the pre-compute pattern.
 
 ---
 
+## #19 — `"!")` case pattern triggers `expected ')' in case pattern`
+
+**Status:** `port-bug` — surfaced 2026-05-29 writing demo 363.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'v=A; case $v in "!") echo bang;; A) echo a;; esac'
+a
+
+$ zshrs --zsh -c 'v=A; case $v in "!") echo bang;; A) echo a;; esac'
+zsh:1: expected ')' in case pattern
+zshrs: parse error
+```
+
+A double-quoted `"!"` as a case pattern triggers a parse error in
+zshrs. C-zsh treats `!` as a literal character in this context.
+The issue may be related to `!` being a history-expansion trigger
+or a glob-negation prefix in some other contexts. zshrs's lexer
+(port of `Src/lex.c::gettok` + `Src/parse.c::par_case`) appears to
+mis-parse the `!` inside the double-quoted pattern.
+
+Same failure mode likely affects other characters with special
+meaning even when quoted (e.g. `"{"`, `"}"`, `"?"` — see bugs #13,
+#14).
+
+**Workaround** — use single-quoted form `'!'` or backslash-escape
+`\!`:
+```sh
+case $v in '!') echo bang;; A) echo a;; esac    # works
+case $v in \!)  echo bang;; A) echo a;; esac    # works
+```
+Demo 363 uses single-quoted `'!'`/`'~'` for unary operator dispatch
+and falls back to `if/elif` chains where case syntax breaks.
+
+---
+
+## #20 — Large recursive parsers run very slowly under zshrs
+
+**Status:** `perf-issue` — surfaced 2026-05-29 writing demos 361/362.
+
+```sh
+# Demo 361 (JSON parser) on a 1.5kb input:
+$ time ./target/debug/zshrs --zsh demo_361.zsh
+real    0m12s
+
+# Demo 362 (XML parser) on a 2kb input:
+$ time ./target/debug/zshrs --zsh demo_362.zsh
+real    0m45s+    # often times out
+```
+
+Parsers with deep recursion (e.g. recursive-descent over nested
+JSON/XML structures) execute orders of magnitude slower in zshrs
+vs C-zsh. Hot loops involving:
+
+  - many small function calls (recursive parse_element)
+  - hash-table writes/reads (AST_TYPE[$id] etc.)
+  - cmd-sub inside the recursion (`var=$(...)`)
+
+are particularly affected. The combination of:
+  - bug #10 (cmd-sub doesn't propagate side effects in fn)
+  - bug #16 (array shrink doesn't update size)
+  - bug #17 (var=${arr[-1]} loses value in fn while)
+
+forces workarounds that further slow the inner loops.
+
+**Where** — likely the fusevm dispatch path through hash-table
+parameter set/get is slower than expected, or there's per-function
+overhead in the call frame push/pop.
+
+**Workaround** — for demos: (a) use smaller test inputs, (b) replace
+recursive descent with iterative state machines, (c) use parallel
+arrays instead of nested hash structures. Demo 362 was trimmed from
+2kb to ~100 bytes of test XML to fit the 30s CI budget.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -657,7 +732,10 @@ Demos 332 uses the pre-compute pattern.
 | 16 | `arr=("${arr[@]:0:-1}")` no-shrink in fn | **port-bug** | 311 uses `arr[${#arr}]=()` |
 | 17 | `var=${arr[-1]}` unquoted in fn while | **port-bug** | 311 quotes the RHS |
 | 18 | `arr[a + 1]=val` with space parsed as cmd | **port-bug** | 332 pre-computes `idx=$((..))` |
+| 19 | `"!")` case pattern → expected `)` | **port-bug** | 363 uses if/elif chain |
+| 20 | recursive parsers very slow vs C-zsh | **perf-issue** | 362 trimmed test inputs |
 
-Of eighteen entries, two are fixed (5, 7), twelve remain open
-port-bugs (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18), and four
-were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+Of twenty entries, two are fixed (5, 7), fourteen remain open
+port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+19, 20), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).

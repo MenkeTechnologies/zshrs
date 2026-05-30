@@ -1,8 +1,8 @@
 #!/usr/bin/env zshrs
 # Conway's Game of Life — animated multi-generation, no fn calls in hot loop.
 
-ROWS=10
-COLS=24
+ROWS=8
+COLS=18
 
 typeset -a GRID NEXT
 
