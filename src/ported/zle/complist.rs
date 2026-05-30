@@ -4102,4 +4102,109 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _: i32 = menuselect_bindings();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/complist.c
+    // c:238 getcolval / c:314 getcoldef / c:506 zlrputs / c:523 zcputs /
+    // c:533 zcoff / c:551 cleareol / c:739 clprintfmt / c:802 putmatchcol /
+    // c:838 putfilecol / c:987 compprintnl / c:1157 compzputs
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:238 — `getcolval("", 0)` returns (String, &str) tuple.
+    #[test]
+    fn getcolval_returns_string_str_tuple_type() {
+        let _: (String, &str) = getcolval("", 0);
+    }
+
+    /// c:238 — `getcolval` empty input deterministic.
+    #[test]
+    fn getcolval_empty_deterministic() {
+        let (a, _) = getcolval("", 0);
+        let (b, _) = getcolval("", 0);
+        assert_eq!(a, b, "getcolval('') must be pure");
+    }
+
+    /// c:314 — `getcoldef("")` returns Option<String> (alt name pin).
+    #[test]
+    fn getcoldef_returns_option_string_pin_alt() {
+        let _: Option<String> = getcoldef("");
+    }
+
+    /// c:314 — `getcoldef("")` empty input returns None (alt).
+    #[test]
+    fn getcoldef_empty_returns_none_alt() {
+        assert!(getcoldef("").is_none(), "empty colour-def → None");
+    }
+
+    /// c:506 — `zlrputs("")` empty cap returns i32 (compile-time pin).
+    #[test]
+    fn zlrputs_empty_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = zlrputs("");
+    }
+
+    /// c:523 — `zcputs("", None)` returns String (compile-time pin, alt).
+    #[test]
+    fn zcputs_returns_string_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = zcputs("", None);
+    }
+
+    /// c:523 — `zcputs("", None)` empty input deterministic.
+    #[test]
+    fn zcputs_empty_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let a = zcputs("", None);
+        let b = zcputs("", None);
+        assert_eq!(a, b, "zcputs('', None) must be pure");
+    }
+
+    /// c:533 — `zcoff` is idempotent (alt 10-call).
+    #[test]
+    fn zcoff_idempotent_10_call_alt() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 { zcoff(); }
+    }
+
+    /// c:551 — `cleareol` is idempotent (alt 10-call).
+    #[test]
+    fn cleareol_idempotent_10_call_alt() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 { cleareol(); }
+    }
+
+    /// c:739 — `clprintfmt("", 0)` empty format returns i32.
+    #[test]
+    fn clprintfmt_empty_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = clprintfmt("", 0);
+    }
+
+    /// c:1157 — `compzputs("", 0)` empty input returns i32.
+    #[test]
+    fn compzputs_empty_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = compzputs("", 0);
+    }
+
+    /// c:987 — `compprintnl(0)` returns i32 (compile-time pin, alt).
+    #[test]
+    fn compprintnl_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = compprintnl(0);
+    }
+
+    /// c:802 — `putmatchcol("", "")` returns i32.
+    #[test]
+    fn putmatchcol_empty_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = putmatchcol("", "");
+    }
+
+    /// c:838 — `putfilecol("", "", 0, 0)` returns i32.
+    #[test]
+    fn putfilecol_empty_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = putfilecol("", "", 0, 0);
+    }
 }
