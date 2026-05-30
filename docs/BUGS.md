@@ -367,6 +367,69 @@ Demos 239, 240 use workaround 1 (inline subscript).
 
 ---
 
+## #11 — `printf "%d" "'<space>"` returns 0 instead of 32
+
+**Status:** `port-bug` — surfaced 2026-05-29 writing demo 279.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'printf "%d" "'\'' "'
+32
+
+$ zshrs --zsh -c 'printf "%d" "'\'' "'
+0
+```
+
+POSIX `printf "%d" "'X"` returns the byte value of `X` (the leading
+single-quote tells `printf` to treat the next char as a character
+constant; spec at [POSIX printf](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/printf.html)).
+zshrs's `printf` builtin (port of `Src/builtin.c bin_print`) returns
+the correct value for printable letters/digits/punctuation but
+returns 0 for space and likely other whitespace. The result silently
+corrupts XOR-cipher and other byte-level computation that relies on
+the operator to read ASCII codes.
+
+**Workaround** — use zsh's arithmetic `#var` operator, which works
+correctly for whitespace too:
+```sh
+$ zshrs --zsh -c 'c=" "; echo $(( #c ))'
+32
+```
+
+Demos 279, 280 switched to the `$(( #ch ))` form.
+
+---
+
+## #12 — `${var%|*}` treats `|` as glob alternation, matches empty
+
+**Status:** `port-bug` — surfaced 2026-05-29 writing demo 279.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'p="hello|key"; echo "${p%|*}"'
+hello
+
+$ zshrs --zsh -c 'p="hello|key"; echo "${p%|*}"'
+hello|key
+```
+
+The trailing-suffix-strip `${var%pattern}` should treat bare `|`
+as a literal character; alternation requires the `(a|b)` parens
+form per `Src/pattern.c::patcompile` (or the `EXTENDED_GLOB`
+extension grouping). zshrs's `paramsubst` modifier path (port of
+`Src/subst.c::paramsubst` `:%` branch) appears to register the
+pattern `|*` as "empty | <anything>", successfully matching the
+empty prefix and stripping NOTHING (since `%` strips the shortest
+suffix matching pattern, and empty matches at the very end).
+
+Affected operators: `${var%pattern}`, `${var%%pattern}`,
+`${var#pattern}`, `${var##pattern}` — all use the same compiled
+pattern from `Src/pattern.c`.
+
+**Workaround** — escape the pipe: `${var%\|*}` works correctly in
+zshrs (and zsh — escaped form is universally portable). Or use
+a different separator. Demo 279 switched from `|` to `~` separator.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -381,7 +444,9 @@ Demos 239, 240 use workaround 1 (inline subscript).
 | 8 | `local IFS=` leaks | **port-bug** | n/a — workaround in 7's fix |
 | 9 | `v=${arr[(expr)*N+M]}` unquoted | **port-bug** | 239 uses `idx=$(…)` step |
 | 10 | nested-for + cmd-sub in fn | **port-bug** | 240 uses inline subscript |
+| 11 | `printf "%d" "' "` returns 0 | **port-bug** | 279/280 use `$((#c))` |
+| 12 | `${var%\|*}` `\|` treated as alt | **port-bug** | 279 uses `~` separator |
 
-Of ten entries, two are fixed (5, 7), four remain open port-bugs
-(4, 8, 9, 10), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+Of twelve entries, two are fixed (5, 7), six remain open port-bugs
+(4, 8, 9, 10, 11, 12), and four were zsh-correct behavior misframed
+by demos (1, 2, 3, 6).
