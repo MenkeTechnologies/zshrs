@@ -2019,4 +2019,126 @@ mod tests {
         let r = killword(&[]);
         assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_word.c
+    // c:157 wordclass / c:174 viforwardword / c:240 viforwardblankword /
+    // c:300 emacsforwardword / c:556 vibackwardword / c:766 emacsbackwardword
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:157 — `wordclass` returns i32 (compile-time pin, alt).
+    #[test]
+    fn wordclass_returns_i32_pin_alt() {
+        let _: i32 = wordclass('a');
+    }
+
+    /// c:157 — `wordclass` is deterministic (pure classifier).
+    #[test]
+    fn wordclass_deterministic() {
+        for c in ['a', 'A', '0', ' ', '\t', '\n', '!', '日', '_'] {
+            let first = wordclass(c);
+            for _ in 0..5 {
+                assert_eq!(wordclass(c), first,
+                    "wordclass({:?}) must be pure", c);
+            }
+        }
+    }
+
+    /// c:157 — `wordclass(alnum)` produces same class for digits and letters
+    /// (alnum is one class in default wordchars).
+    #[test]
+    fn wordclass_alnum_chars_share_class() {
+        let cls_a = wordclass('a');
+        let cls_0 = wordclass('0');
+        assert_eq!(cls_a, cls_0,
+            "letter and digit are both alnum word-class");
+    }
+
+    /// c:157 — `wordclass(space)` differs from `wordclass(letter)`.
+    #[test]
+    fn wordclass_space_differs_from_letter() {
+        let cls_space = wordclass(' ');
+        let cls_a = wordclass('a');
+        assert_ne!(cls_space, cls_a,
+            "space and letter must be distinct word-classes");
+    }
+
+    /// c:106 — `forwardword(empty)` return in u8 exit-code range (alt).
+    #[test]
+    fn forwardword_empty_args_in_exit_range_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = forwardword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:174 — `viforwardword(empty)` MUST return in u8 exit-code range
+    /// without panicking. C source guards ZLELINE[ZLECS] read by checking
+    /// `ZLECS != ZLELL` first. In zshrs the port indexes unconditionally
+    /// at `Src/Zle/zle_word.rs:199` → panics on empty buffer.
+    #[test]
+    #[ignore = "ZSHRS BUG: viforwardword indexes ZLELINE[ZLECS] without bounds check; panics on empty buffer (Src/Zle/zle_word.c:174 — should guard via ZLECS != ZLELL first)"]
+    fn viforwardword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = viforwardword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:240 — `viforwardblankword(empty)` return in u8 exit-code range.
+    #[test]
+    fn viforwardblankword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = viforwardblankword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:300 — `emacsforwardword(empty)` return in u8 exit-code range.
+    #[test]
+    fn emacsforwardword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = emacsforwardword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:556 — `vibackwardword(empty)` return in u8 exit-code range.
+    #[test]
+    fn vibackwardword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vibackwardword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:766 — `emacsbackwardword(empty)` return in u8 exit-code range.
+    #[test]
+    fn emacsbackwardword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = emacsbackwardword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:861 — `vibackwardkillword(empty)` return in u8 exit-code range.
+    #[test]
+    fn vibackwardkillword_empty_args_in_exit_range() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let r = vibackwardkillword(&[]);
+        assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
+    }
+
+    /// c:106 — `forwardword` is deterministic on empty buffer.
+    #[test]
+    fn forwardword_empty_buffer_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = forwardword(&[]);
+        for _ in 0..5 {
+            assert_eq!(forwardword(&[]), first,
+                "forwardword on empty must be deterministic");
+        }
+    }
 }
