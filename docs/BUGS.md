@@ -4483,6 +4483,167 @@ esac
 
 ---
 
+## #91 — `:t` modifier ignored when applied to `${(j:X:)arr:t}` joined array
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'paths=(/a/b/c.txt /d/e/f.log); echo "${(j: :)paths:t}"'
+f.log
+
+$ ./target/debug/zshrs --zsh -c 'paths=(/a/b/c.txt /d/e/f.log); echo "${(j: :)paths:t}"'
+/a/b/c.txt /d/e/f.log
+```
+
+The `${(j: :)paths:t}` form should join the array with space, then
+apply the `:t` modifier (tail/basename) to the resulting scalar.
+zsh applies `:t` after the join, yielding `f.log` (basename of
+the joined string).
+
+zshrs joins but ignores the `:t` modifier entirely.
+
+Other modifier+expansion combinations work in both shells:
+```sh
+${paths[@]:t}    # both: c.txt f.log
+${paths:t}       # both: f.log
+${(j: :)paths}   # both: /a/b/c.txt /d/e/f.log
+```
+
+So the bug is specifically the `(j:X:)` flag + trailing modifier
+combo — flag consumes the parse context and modifier never fires.
+
+**Where** — `src/ported/paramsubst.rs::apply_modifiers_after_flags`:
+when an expansion flag like `(j:X:)` is present, the trailing
+`:modifier` token isn't dispatched to the modifier-handler. C-source
+`Src/subst.c::modify` runs modifier dispatch regardless of preceding
+flag.
+
+**Impact** — path-manipulation idioms break:
+
+```sh
+# build a colon-separated list of just basenames
+PATHs=(/usr/local/bin /usr/bin /opt/homebrew/bin)
+basenames="${(j.:.)PATHs:t}"
+# zsh: bin   (joined-then-tailed)
+# zshrs: /usr/local/bin:/usr/bin:/opt/homebrew/bin (modifier dropped)
+```
+
+**Workaround** — split the two operations:
+```sh
+tailed=("${PATHs[@]:t}")
+joined="${(j.:.)tailed}"
+```
+
+---
+
+## #92 — `$PS4` default is empty in zshrs; zsh defaults to `\e[34m%x\t%0N\t%I\t%_\e[0m\t`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo -n "$PS4"' | od -c | head -2
+0000000  033   [   3   4   m   %   x  \t   %   0   N  \t   %   I  \t   %
+0000020    _ 033   [   0   m  \t
+
+$ ./target/debug/zshrs --zsh -c 'echo -n "$PS4"' | od -c | head -2
+0000000
+```
+
+zsh-bare ships a default `$PS4` of `%F{blue}%x\t%0N\t%I\t%_%f\t`
+(blue color + filename + funcname + line + cmd + tab) for `set -x`
+output.
+
+zshrs has `$PS4` initialized to an empty string. So `set -x` output
+has no prefix at all (related to bug #44 where the prompt escapes
+don't expand either).
+
+The fact that PS4 is **empty by default** is even worse than #44
+suggested — even if the escapes worked, there'd be nothing to
+expand.
+
+**Where** — `src/ported/init.rs::set_default_ps_params`: doesn't
+initialize PS4. C-source `Src/init.c::setupvals` calls
+`createparam("PS4", "\033[34m%x\t%0N\t%I\t%_\033[0m\t", ...)`.
+
+**Impact** — `set -x` debugging output is unformatted, just bare
+command lines. Tracing identical-named commands across files
+impossible (no `%x` filename, no `%I` line):
+
+```sh
+$ /opt/homebrew/bin/zsh -fxc 'f() { echo hi; }; f'
++zsh:1<2>	f	1	echo hi
+hi
+
+$ ./target/debug/zshrs --zsh -xc 'f() { echo hi; }; f'
+echo hi
+hi
+```
+
+(zshrs misses the file/line/funcname annotations.)
+
+**Workaround** — set explicit PS4:
+```sh
+export PS4='+%N:%i> '   # filename:line in plain ASCII
+set -x
+```
+
+---
+
+## #93 — Empty-string assoc key: `typeset -A h=( "" val )` swaps key/value; `h[""]` lookup fails
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+Two sub-bugs in zshrs's empty-assoc-key handling:
+
+**Sub-bug A**: `typeset -A h=( "" "value" )` swaps key and value:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=( "" "empty-val" ); typeset -p h'
+typeset -A h=( ['']=empty-val )
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=( "" "empty-val" ); typeset -p h'
+typeset -A h=( [empty-val]='' )
+```
+
+zsh stores key `""` (empty) with value `empty-val`. zshrs treats
+the empty arg as missing (key skipped) and the next arg becomes
+the key with the FOLLOWING arg (or default empty) as the value.
+Effectively the empty key shifts the key/value alignment.
+
+**Sub-bug B**: subscript-form assignment `h[""]=` stored but
+`h[""]` lookup returns empty:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[""]="empty-key"; echo "[${h[\"\"]}]"; typeset -p h'
+[empty-key]
+typeset -A h=( ['""']=empty-key )
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[""]="empty-key"; echo "[${h[\"\"]}]"; typeset -p h'
+[]
+typeset -A h=( []=empty-key )
+```
+
+In zsh, `h[""]` stores key `""` (literally two chars: quote + quote,
+per the quote-embedding behavior from #61). zshrs strips quotes to
+empty-key, then lookup `${h[\"\"]}` also strips to empty and
+should match — but returns empty anyway.
+
+So zshrs's empty-key path is broken in both directions:
+- Paren-init: misaligns key/value pairs around the empty string.
+- Subscript-init: stores but can't retrieve.
+
+**Where** — `src/ported/params.rs::set_hash_value`: empty key
+treated as sentinel for "no key", advancing to next arg. C-source
+`Src/params.c::sethparam` accepts empty as a valid key.
+
+**Impact** — sparse hash patterns using empty as a sentinel
+(common for "default" or "unmarked" entries) silently break.
+Plus the misalignment on paren-init corrupts the entire hash for
+any data including empty strings.
+
+**Workaround** — never use empty string as a hash key. Reserve a
+sentinel like `__EMPTY__` or `\0`.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -4577,12 +4738,15 @@ esac
 | 88 | `setopt nounset` doesn't fire on unset var in arith `$((x+1))` | **port-bug** | `[[ -v var ]]` guard |
 | 89 | `extended_glob #`/`##` quantifiers not recognized (literal) | **port-bug** | use `*` + char class |
 | 90 | `$ZSH_PATCHLEVEL` = literal `"unknown"` vs zsh's commit | **port-bug** | fallback to `$ZSH_VERSION` |
+| 91 | `:t` modifier dropped on `${(j:X:)arr:t}` joined-then-modifier | **port-bug** | split the two ops |
+| 92 | `$PS4` default is empty; zsh's is `%x\t%0N\t%I\t%_` colored | **port-bug** | explicit `export PS4=...` |
+| 93 | Empty assoc key broken: paren-init misaligns, subscript stores but no retrieve | **port-bug** | reserve `__EMPTY__` sentinel |
 
-Of ninety entries, two are fixed (5, 7), eighty-four remain open
-port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+Of ninety-three entries, two are fixed (5, 7), eighty-seven remain
+open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85,
-86, 87, 88, 89, 90), and four were zsh-correct behavior misframed
-by demos (1, 2, 3, 6).
+86, 87, 88, 89, 90, 91, 92, 93), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
