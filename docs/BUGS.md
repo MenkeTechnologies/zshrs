@@ -5525,6 +5525,167 @@ echo "${joined/blue green/COMBINED}"
 
 ---
 
+## #109 — `${assoc[@]}` returns empty; cannot enumerate associative array values
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2 c 3); echo "${h[@]}"; for v in ${h[@]}; do echo "$v"; done'
+1 2 3
+1
+2
+3
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(a 1 b 2 c 3); echo "${h[@]}"; for v in ${h[@]}; do echo "$v"; done'
+(empty for ${h[@]})
+(no iteration)
+```
+
+For associative arrays, `${h[@]}` should enumerate VALUES (just
+like the indexed-array `[@]` enumerates elements). zsh produces
+the 3 values; zshrs returns empty.
+
+The `${(v)h[@]}` explicit-value form DOES work in both:
+```sh
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(a 1 b 2); echo "${(v)h[@]}"'
+1 2
+```
+
+So zshrs only enumerates assoc values when the `(v)` flag is
+explicitly given. zsh treats `[@]` on an assoc as implicit-`(v)`.
+
+**Where** — `src/ported/paramsubst.rs::expand_subscript_at`:
+the `[@]` subscript handler for `PM_HASHED` params returns empty
+instead of iterating values. C-source `Src/subst.c::getmatch`
+calls `gethkparam`/`gethvparam` based on flag, defaulting to
+value enumeration when no flag is given.
+
+**Impact** — every assoc-array iteration idiom is broken:
+
+```sh
+typeset -A scores=(alice 95 bob 87)
+total=0
+for score in "${scores[@]}"; do
+    (( total += score ))
+done
+echo "total=$total"
+# zsh: total=182          zshrs: total=0  (loop body never executed)
+```
+
+`${(@k)h}` (explicit keys) and `${(@v)h}` (explicit values) work
+correctly — the bug is only `${h[@]}`'s default-value semantic.
+
+**Workaround** — always use `${(v)h[@]}` explicitly for values
+or `${(k)h[@]}` for keys:
+```sh
+for score in "${(v)scores[@]}"; do ... done
+```
+
+---
+
+## #110 — `a[0]=val` silently accepted instead of erroring (zsh is 1-indexed)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(); a[0]=val; echo "[${a[*]}] len=${#a}"' 2>&1
+zsh:1: a: assignment to invalid subscript range
+
+$ ./target/debug/zshrs --zsh -c 'a=(); a[0]=val; echo "[${a[*]}] len=${#a}"'
+[val] len=1
+```
+
+zsh arrays are **1-indexed**. `a[0]` is invalid — zsh aborts with
+"assignment to invalid subscript range". zshrs silently accepts
+the assignment, storing `val` at index 0 (effectively a bash-
+style 0-indexed array).
+
+Verification of 1-index semantics elsewhere:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); echo "[${a[0]}] [${a[1]}]"'
+[] [red]                   # a[0] empty, a[1] first
+
+$ ./target/debug/zshrs --zsh -c 'a=(red blue green); echo "[${a[0]}] [${a[1]}]"'
+[] [red]                   # same — read-side honors 1-indexing
+```
+
+So zshrs's READ side is 1-indexed (correct). But WRITE side
+accepts `a[0]=...` silently. Asymmetric.
+
+The `KSH_ARRAYS` option makes both shells 0-indexed:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt KSH_ARRAYS; a=(red blue green); echo "[${a[0]}] [${a[1]}]"'
+[red] [blue]
+```
+
+But the bug here is in the default 1-indexed mode.
+
+**Where** — `src/ported/params.rs::set_array_element`: write path
+doesn't validate `index >= 1` under default mode. C-source
+`Src/params.c::setiparam` calls `subscript_check` which errors on
+0.
+
+**Impact** — code copied from bash (0-indexed) works in zshrs but
+fails under real zsh. Cross-shell scripts silently behave
+differently.
+
+**Workaround** — always use 1-indexed arrays in zsh-portable
+code, or explicitly `setopt KSH_ARRAYS` if 0-indexed semantics
+are desired throughout.
+
+---
+
+## #111 — `%y` prompt escape (current tty) not expanded
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%y"'
+()
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%y"'
+%y
+```
+
+`%y` in prompt expansion = "current tty without `/dev/`". When
+not attached to a tty (script via `-c`), zsh prints `()` as a
+placeholder. zshrs returns the literal `%y` (escape not
+recognized).
+
+Per `man zshmisc` § PROMPT EXPANSION:
+> `%y` — The line (tty) the user is logged in on, without
+> `/dev/` prefix.
+> `%l` — The line (tty) the user is logged in on, with the
+> `/dev/tty` prefix removed.
+
+Both `%y` and `%l` (already noted in similar batches) are missing.
+Same family as #38 (prompt escapes coverage gap), #96 (`%N/`
+truncation), #111 (this one).
+
+**Where** — `src/ported/prompt.rs::expand_escape`: lookup table
+for prompt escape characters missing entries for `y`, `l`, `M`,
+`v`, etc. C-source `Src/prompt.c::putprompt` has a dispatch
+switch covering all of them.
+
+**Impact** — any `.zshrc` PROMPT using terminal-identifying
+escapes:
+
+```sh
+PROMPT='%n@%m %y %# '
+# zsh: "wizard@laptop ttys003 $ "
+# zshrs: "wizard@laptop %y $ "
+```
+
+User has to either avoid `%y`/`%l` or implement them manually
+via `${TTY##*/}`:
+
+**Workaround** — substitute via `$TTY`:
+```sh
+PROMPT="%n@%m ${TTY##*/} %# "
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -5637,13 +5798,16 @@ echo "${joined/blue green/COMBINED}"
 | 106 | `disable BUILTIN` doesn't actually disable (echo/cd still work) | **port-bug** | `command BUILTIN` prefix |
 | 107 | `autoload -U +X funcname` doesn't validate fpath existence | **port-bug** | manual `[[ -f $fpath/fn ]]` check |
 | 108 | `${array/pat/X}` per-element (zsh treats as scalar-joined) | **port-bug** | `${arr[*]}` explicit join |
+| 109 | `${assoc[@]}` returns empty (no value enumeration) | **port-bug** | use `${(v)h[@]}` explicit |
+| 110 | `a[0]=val` silently accepted (zsh 1-indexed, errors) | **port-bug** | use 1-indexed throughout |
+| 111 | `%y` (and `%l`) prompt escape for tty not expanded | **port-bug** | `${TTY##*/}` substitution |
 
-Of one hundred eight entries, two are fixed (5, 7), one hundred two
+Of one hundred eleven entries, two are fixed (5, 7), one hundred five
 remain open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15,
 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66,
 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,
 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100,
-101, 102, 103, 104, 105, 106, 107, 108), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111), and four
+were zsh-correct behavior misframed by demos (1, 2, 3, 6).
