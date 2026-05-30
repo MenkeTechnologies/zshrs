@@ -21475,6 +21475,171 @@ let "x=$expr" || echo "let failed: $?"   # any non-zero
 
 ---
 
+## #403 — `for ... don` close-token typo silently treated as separator + command
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'for i in a b; do echo hi; don'
+zsh:1: parse error near `don'
+
+$ ./target/debug/zshrs --zsh -c 'for i in a b; do echo hi; don'
+hi
+zsh:1: command not found: don
+hi
+zsh:1: command not found: don
+```
+
+zsh strictly requires `done` to close a `for` loop; the
+typo `don` is rejected with a parse error before any
+execution.
+
+zshrs **executes the loop body** (`echo hi; don`) for each
+iteration. On each iteration, `don` runs as a regular
+command (fails with "command not found"), then the next
+iteration starts. Loop completes; script then exits.
+
+Same family as #400 (case/esack typo) — close-token
+strict-check missing on `for`.
+
+**Where** — `src/ported/parser/loops.rs::parse_for`:
+end-token must be exactly `done`. zshrs falls through to
+"command list ends, treat remaining tokens as next
+statement" instead of erroring. C-source
+`Src/parse.c::par_for` requires `tok == DONE` and errors
+otherwise.
+
+**Impact** — silent corruption of intended logic + extra
+side-effects from `don` running per iteration:
+
+```sh
+for f in *.tmp; do
+    rm "$f"
+    don     # typo: should be done; followed by:
+finalize
+echo "all cleaned"
+```
+
+zsh: parse error, nothing runs.
+zshrs: for-loop runs once per *.tmp (rm fires), then `don`
+runs (fails), then `finalize` runs (likely fails too —
+treated as separate command), then `echo "all cleaned"`
+runs — producing wrong-looking success output.
+
+**Workaround** — none syntactic; CI lint for unbalanced
+`do`/`done` pairs.
+
+---
+
+## #404 — `while ... don` close-token typo silently accepted with no diagnostic
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'while false; do echo body; don'
+zsh:1: parse error near `don'
+
+$ ./target/debug/zshrs --zsh -c 'while false; do echo body; don'
+(no output, rc=0)
+```
+
+Parallel to #403 but for `while`. Because `while false`
+never enters the body, `don` is never reached — but the
+parser still accepts the malformed construct without
+error. zshrs exits cleanly with rc=0.
+
+The difference from `for ... don` (#403) is that `for`
+has a non-empty iteration list, so the body executes and
+`don` surfaces as command-not-found. With `while false`,
+the body never runs, so the typo is **completely
+invisible** — no output, no error, rc=0.
+
+**Where** — `src/ported/parser/loops.rs::parse_while`:
+same root cause as #403. End-token check is non-strict.
+C-source `Src/parse.c::par_while` requires `DONE`.
+
+**Impact** — **most insidious of the parse-strictness
+bugs**. A typo'd `while`/`done` block in production code
+appears to work — until someone changes the condition to
+make the body run, then `don` surfaces as a runtime
+command error. Until then, scripts ship with broken loops
+that "succeed" because the body never runs.
+
+```sh
+# Defensive while: skip cleanup if flag not set
+while [[ -n $do_cleanup ]]; do
+    cleanup_logs
+    cleanup_locks
+    don   # typo
+echo "all cleaned"
+```
+
+Common case: `do_cleanup` is empty → body skipped →
+script outputs "all cleaned" and exits. The typo never
+surfaces in test runs that don't enable cleanup.
+
+**Workaround** — same as #403, CI lint.
+
+---
+
+## #405 — function definition missing close-brace silently accepted
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo hi'
+zsh:1: parse error near `hi'
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo hi'
+(no output, rc=0)
+```
+
+zsh requires a closing `}` to terminate a function body
+defined with `{...}` form. zshrs accepts the function as
+fully defined with the unterminated open-brace, silently
+swallowing the missing `}`.
+
+After the truncated definition, `f` is registered as a
+function whose body is `echo hi` (without the closing
+brace context). Calling `f` would either run that body or
+fail unpredictably depending on whether zshrs treats the
+missing close as a syntax error at call-time or as a
+silent inclusion.
+
+**Where** — `src/ported/parser/function.rs::parse_body`:
+must require matched `{`/`}` pairs and error on EOF
+before `}`. C-source `Src/parse.c::par_funcdef` reads
+until matching close-brace and errors on `tok == EOF`.
+
+**Impact** — **silent function-definition corruption**.
+A copy-paste error that drops the close-brace produces a
+shell that thinks the function is defined but with
+incomplete body. Worse, in script source-files:
+
+```sh
+f() {
+    echo "step 1"
+    # missing }
+g() {
+    echo "step 2"
+}
+```
+
+zsh: parse error at line 4 (eof in f's body).
+zshrs: silently defines `f` with body `echo "step 1" g() { echo "step 2" }` — likely produces nonsense
+output at call-time, OR registers `g` as nested inside
+`f` with no top-level access, OR something else.
+
+**Workaround** — strict pre-check before sourcing:
+```sh
+zsh -n script.zsh || echo "parse error in script"
+```
+
+(But zshrs probably accepts the same broken script via
+`-n` too — needs verification.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -21881,9 +22046,12 @@ let "x=$expr" || echo "let failed: $?"   # any non-zero
 | 400 | `case ... esack` typo silently accepted — missing `esac` close-token strict check (zsh: parse error) | **port-bug** | CI lint for unbalanced case/esac |
 | 401 | `select x in;` empty option list prompts/reads stdin instead of skipping body (zsh: skips, no prompt) | **port-bug** | guard `(( ${#opts} > 0 ))` before select |
 | 402 | `let "x=5/0"` arith-error rc=2 instead of 1 — script error-classification diverges | **port-bug** | collapse `\|\|` instead of branching on `$?` |
+| 403 | `for ... don` typo silently treated as separator + command (zsh: parse error) — body runs + `don` runs per iteration | **port-bug** | CI lint for unbalanced do/done |
+| 404 | `while false ... don` typo silently accepted, no diagnostic, rc=0 — invisible until condition changes | **port-bug** | CI lint for unbalanced do/done |
+| 405 | function definition missing close-brace silently accepted — body registered with broken structure | **port-bug** | strict `zsh -n script.zsh` pre-check |
 
-Of four hundred and two entries, two are fixed (5, 7),
-three hundred and ninety-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and five entries, two are fixed (5, 7),
+three hundred and ninety-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
