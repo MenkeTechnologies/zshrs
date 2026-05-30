@@ -19549,6 +19549,165 @@ translations[hello_jp]="こんにちは"
 
 ---
 
+## #367 — `$?` (bare `?`) in `$((...))` arith context not resolved — treats as `0` instead of last exit status
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'false; echo $((? + 5))'
+6
+
+$ ./target/debug/zshrs --zsh -c 'false; echo $((? + 5))'
+5
+```
+
+zsh treats bare `?` in arith context as the special variable
+`$?` (last exit status). `false` sets `$?=1`, so `? + 5 = 6`.
+
+zshrs treats bare `?` as undefined → defaults to `0`, so
+result is `5`.
+
+Same lookup-as-special-var convention applies to `#` (positional
+count), `$$`/`$` (pid), `!` (last bg pid) — all are auto-vars
+that zsh resolves in arith context without the `$` prefix.
+
+**Where** — `src/ported/math.rs::lookup_bare_name`: `?` and
+other special-var names not recognized in the arith-context
+lookup table. C-source `Src/math.c::matheval` consults
+`getparam()` which handles special-var names like normal
+parameters.
+
+**Impact** — arith expressions referencing `$?` without
+explicit `$` get wrong value:
+
+```sh
+some_cmd
+(( ? != 0 )) && error_count=$((error_count + 1))
+# zsh: condition fires when some_cmd failed
+# zshrs: condition never fires (? always 0 in arith)
+```
+
+Less common than `$?` (most users write it as `$?` explicitly),
+but POSIX-style scripts that use bare `?` in `[ ]` test commands
+or `(( ))` arith fail.
+
+**Workaround** — explicit `$?`:
+```sh
+(( $? != 0 ))
+```
+
+---
+
+## #368 — `$#` (bare `#`) in `$((...))` arith context not resolved — treats as `0` instead of positional count
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- a b c; echo $((# + 5))'
+8
+
+$ ./target/debug/zshrs --zsh -c 'set -- a b c; echo $((# + 5))'
+5
+```
+
+Companion to #367 — bare `#` in arith should resolve to `$#`
+(count of positional parameters). zsh does it; zshrs returns 0.
+
+Same root cause: special-var name lookup table in arith context
+doesn't include `#`, `?`, `!`, `$`.
+
+Tested similar bare-special-name patterns:
+- `?` — fails (#367)
+- `#` — fails (this bug)
+- `$$`/`$` — works in arith (verified earlier — both return PID > 0)
+- `!` — uncertain (likely also fails)
+
+So zshrs's lookup table is partial — some specials work
+(`$$`), others don't (`?`, `#`).
+
+**Where** — same as #367 — `src/ported/math.rs::lookup_bare_name`.
+A single fix to extend the special-var lookup table would
+resolve both.
+
+**Impact** — POSIX-style arg-counting idioms break:
+
+```sh
+process() {
+    (( # > 0 )) || { echo "need args" >&2; return 1; }
+    for arg; do
+        ...
+    done
+}
+# zsh: arg-count check works
+# zshrs: condition always false (# resolves to 0), always errors
+```
+
+**Workaround** — explicit `$#`:
+```sh
+(( $# > 0 ))
+```
+
+---
+
+## #369 — `wait %1` (wait by job-spec) errors "no such job" — fails when zsh succeeds
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'sleep 0.1 & wait %1; echo "ec=$?"'
+ec=0
+
+$ ./target/debug/zshrs --zsh -c 'sleep 0.1 & wait %1; echo "ec=$?"'
+zsh:wait:1: %1: no such job
+ec=1
+```
+
+zsh's `wait %SPEC` waits for the job specified by job-spec.
+`%1` is the first background job (in this test, the
+`sleep 0.1 &`).
+
+zshrs errors "no such job" — the job-spec dispatch in `wait`
+doesn't find the job that was just backgrounded.
+
+Possibly the job is tracked correctly internally but the
+`%N` job-spec parser in `wait` doesn't resolve to the
+internal tracking. The job DOES complete (since `wait`
+without args works for the same scenario per earlier tests).
+
+Same family as #198 (bindkey -L format), #214 (chpwd
+hook), #260 (widgets[] empty), #264 (widgets[fn] literal)
+— ZLE/job-control subsystem has multiple introspection /
+dispatch gaps.
+
+**Where** — `src/ported/builtins/wait.rs::resolve_job_spec`:
+`%N` parsing or job-table lookup broken. C-source
+`Src/builtin.c::bin_wait` walks the job table for the
+matching job_id.
+
+**Impact** — job-spec-based wait broken — can't wait for
+specific bg job by spec:
+
+```sh
+sleep 5 &
+sleep 1 &
+wait %2     # wait for the 2nd job (1-second sleep)
+echo "first done"
+wait %1     # wait for the 5-second sleep
+# zsh: works as expected
+# zshrs: both wait calls fail
+```
+
+**Workaround** — capture `$!` and wait by PID:
+```sh
+sleep 5 & p1=$!
+sleep 1 & p2=$!
+wait "$p2"
+echo "first done"
+wait "$p1"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -19919,9 +20078,12 @@ translations[hello_jp]="こんにちは"
 | 364 | `$'\uNNNN'` Unicode-codepoint escape in C-string not interpreted — emits literal `uNNNN` | **port-bug** | embed Unicode chars literally in source |
 | 365 | `${s/multibyte_char/repl}` substitution PANICS with "not a char boundary" — **CRITICAL CRASH** | **port-bug** | use sed/external for multibyte substitution |
 | 366 | `h[multibyte_key]=v` assoc with UTF-8 key PANICS with "not a char boundary" — **CRITICAL CRASH** | **port-bug** | use ASCII-only keys |
+| 367 | `$?` bare `?` in `$((...))` arith not resolved — treats as `0` instead of last exit status | **port-bug** | explicit `$?` |
+| 368 | `$#` bare `#` in `$((...))` arith not resolved — treats as `0` instead of positional count | **port-bug** | explicit `$#` |
+| 369 | `wait %1` job-spec resolution fails "no such job" — zsh: succeeds (ec=0) | **port-bug** | capture `$!` and wait by PID |
 
-Of three hundred and sixty-six entries, two are fixed (5, 7),
-three hundred and sixty remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and sixty-nine entries, two are fixed (5, 7),
+three hundred and sixty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -19947,5 +20109,5 @@ three hundred and sixty remain open port-bugs/perf-issues (4, 8, 9, 10,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343,
 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356,
-357, 358, 359, 360, 361, 362, 363, 364, 365, 366), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369),
+and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
