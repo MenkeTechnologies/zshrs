@@ -2329,6 +2329,98 @@ fn() {
 
 ---
 
+## #52 — `${(q)arr}` on array doesn't join+quote — per-element quote only
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(foo "bar baz" qux); echo "${(q)a}"'
+foo\ bar\ baz\ qux       # zsh: join then quote ALL spaces
+
+$ zshrs --zsh -c 'a=(foo "bar baz" qux); echo "${(q)a}"'
+foo bar\ baz qux         # zshrs: per-element quote only
+```
+
+Per zsh docs, the `(q)` flag (without `@` modifier) on an array
+should:
+  1. Join elements with the first character of `$IFS` (space)
+  2. Quote ALL shell-special chars in the resulting STRING
+
+So `(foo)(bar baz)(qux)` → join → `foo bar baz qux` → quote spaces
+→ `foo\ bar\ baz\ qux`.
+
+zshrs only quotes spaces that were INSIDE elements, treating the
+join-separator spaces as unquotable. This makes the result
+ambiguous if it's later re-split — the boundaries between original
+elements are lost.
+
+`${(@q)arr}` (per-element form) works identically in both shells —
+that's not affected.
+
+**Where** — `src/ported/subst.rs::paramsubst` should apply `(q)`
+AFTER joining, not before. The early per-element quoting bypasses
+the post-join quoting pass.
+
+**Workaround** — explicitly use `(@q)` (per-element) and then
+`(j)` to join:
+```sh
+echo "${(j: :)${(@q)a}}"   # explicit join after per-element quote
+```
+
+---
+
+## #53 — `${(P)$ref}` indirect doesn't resolve `name[subscript]` references
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); ref="a[2]"; echo "${(P)ref}"'
+y
+
+$ zshrs --zsh -c 'a=(x y z); ref="a[2]"; echo "${(P)ref}"'
+            # empty
+```
+
+The `(P)` flag dereferences a variable name held in another
+variable (indirect expansion). When `$ref` holds a bare name
+(`"a"`), both shells correctly expand to the array's value(s).
+When `$ref` holds a subscripted name (`"a[2]"`, `"m[key]"`), zsh
+parses the subscript and returns the element; zshrs returns empty.
+
+Affects:
+  - `${(P)$ref}` where `ref="arr[N]"` → empty in zshrs
+  - `${(P)$ref}` where `ref="hash[key]"` → empty in zshrs
+
+Works:
+  - `${(P)$ref}` where `ref="varname"` → both shells correct
+
+**Where** — `src/ported/subst.rs::paramsubst` `(P)` flag handler
+should parse the indirect string as a full parameter expression
+(including `[idx]`), not just a bare identifier. The subscript
+part needs to flow through the parameter-lookup path.
+
+**Impact** — limits the usefulness of `(P)` for building dynamic
+references to array elements:
+```sh
+# Common pattern: store "config.PORT" type references:
+keys=(server.host server.port db.name)
+typeset -A config=(server.host localhost server.port 8080 db.name myapp)
+
+for k in "${keys[@]}"; do
+    ref="config[$k]"
+    echo "$k = ${(P)ref}"   # zsh: works; zshrs: prints empty
+done
+```
+
+**Workaround** — assign through eval:
+```sh
+ref="a[2]"
+eval "val=\${$ref}"
+echo "$val"           # works in both shells
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -2384,9 +2476,12 @@ fn() {
 | 49 | `(( "abc" == "abc" ))` quoted strings → false | **port-bug** | drop quotes |
 | 50 | Trap inherited from outer doesn't fire in fn | **port-bug** | re-install trap in fn |
 | 51 | `${#*}` access corrupts `$@`/`$*` for rest of fn | **port-bug** | use `${#@}` or `$#` |
+| 52 | `${(q)arr}` per-element quote, doesn't quote join-sep | **port-bug** | `${(j: :)${(@q)a}}` explicit |
+| 53 | `${(P)$ref}` doesn't resolve `name[idx]` indirect | **port-bug** | `eval "val=\\${$ref}"` |
 
-Of fifty-one entries, two are fixed (5, 7), forty-five remain open
-port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
-19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51), and
-four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+Of fifty-three entries, two are fixed (5, 7), forty-seven remain
+open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
+35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+52, 53), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
