@@ -11585,6 +11585,165 @@ need verification — could be a separate gap.)
 
 ---
 
+## #223 — `setopt warn_create_global` doesn't emit warning on implicit global creation
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt warn_create_global; f() { X=1; }; f'
+f: scalar parameter X created globally in function f
+
+$ ./target/debug/zshrs --zsh -c 'setopt warn_create_global; f() { X=1; }; f'
+(empty)
+```
+
+`warn_create_global` is one of zsh's "strict-mode" options:
+when a function body assigns to a parameter that doesn't
+exist in any enclosing scope, zsh emits a warning to stderr
+("X created globally in function f"). This catches the common
+bug of forgetting `local` inside a function body.
+
+zshrs silently allows the implicit global creation with no
+warning.
+
+**Where** — `src/ported/params/assign.rs::assign_in_function`:
+no `WARNCREATEGLOBAL` opt check before creating a parameter
+at outer scope. C-source `Src/params.c::setsparam` checks
+`isset(WARNCREATEGLOBAL)` when `locallevel > 0` and a new
+param is being created at level 0.
+
+**Impact** — the strict-mode option that catches accidental
+global pollution is dead. Functions that should use `local`
+but don't get a free pass:
+
+```sh
+setopt warn_create_global
+process_records() {
+    record_count=0      # zsh: warns about implicit global
+    for r in $@; do
+        ((record_count++))
+    done
+}
+# zshrs: no warning, record_count silently becomes a global
+# affecting subsequent function calls in unexpected ways
+```
+
+**Workaround** — `setopt local_options` + audit each function
+body manually, or use a lint pass (`zsh -nx script.zsh` won't
+catch this either since the option isn't honored).
+
+---
+
+## #224 — `unsetopt typeset_silent` + `typeset X` doesn't print existing value (zsh: prints `X=value`)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'X=1; unsetopt typeset_silent; typeset X'
+X=1
+
+$ ./target/debug/zshrs --zsh -c 'X=1; unsetopt typeset_silent; typeset X'
+(empty)
+```
+
+When `typeset_silent` is unset, declaring/redeclaring an
+existing parameter via `typeset NAME` (no value) should print
+the current value to stdout (`NAME=value`). zshrs treats
+`typeset_silent` as always-on regardless of the option state.
+
+This is referenced in the user's own CLAUDE.md note: *"bare
+`local var` (no assignment) re-declaration prints the current
+value to stdout when `typeset_silent` is off. With default
+`typeset_silent` on, `local var=value` re-declaration is
+silent."* — describing exactly the behavior zsh exhibits and
+zshrs doesn't.
+
+**Where** — `src/ported/builtins/typeset.rs::redeclare_existing`:
+no `TYPESET_SILENT` opt check on the "no assignment, var exists"
+path. C-source `Src/builtin.c::typeset_single` checks
+`!isset(TYPESETSILENT)` before printing the existing value.
+
+**Impact** — the option exists primarily to make
+script-debugging easier (turn off `typeset_silent` to see what
+state functions inherit when they declare via bare
+`local`/`typeset`). With the option dead, scripts that depend
+on this behavior to dump state (or `set -x` reveal) get no
+info:
+
+```sh
+unsetopt typeset_silent
+f() {
+    local PATH       # zsh: prints PATH=... when entering f
+    PATH=/restricted
+    do_stuff
+}
+# zshrs: nothing printed, no visibility into inherited PATH
+```
+
+Lower-impact than #223 but same root cause family — strict-
+mode/diagnostic options not consulted by the assignment path.
+
+**Workaround** — explicit `echo "PATH=$PATH"` before
+re-declaration when debugging.
+
+---
+
+## #225 — `printf "%(%Y)T\n"` silently treats `%(...)T` as literal (zsh: errors "invalid directive")
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'printf "%(%Y)T\n" 1000000000'
+zsh:printf:1: %(: invalid directive
+$ echo $?
+1
+
+$ ./target/debug/zshrs --zsh -c 'printf "%(%Y)T\n" 1000000000'
+%(%Y)T
+$ echo $?
+0
+```
+
+Neither zsh nor zshrs support bash's `%(date-format)T` printf
+directive (a bash 4.x extension). But the error-handling
+behavior differs:
+
+- zsh errors loudly: "%(: invalid directive", exit code 1.
+- zshrs silently echoes the format as literal text, exit
+  code 0.
+
+Same permissive-parser family as #141/#146/#161/#162/#167/
+#168/#169/#170/#171/#172/#189/#219 — zshrs accepts invalid
+input silently, zsh rejects.
+
+**Where** — `src/ported/builtins/printf.rs::parse_directive`:
+unknown `%(...)X` directive falls through to "echo literal"
+branch instead of erroring. C-source `Src/builtin.c::bin_printf`
+calls `zwarnnam("invalid directive: %s")` and returns 1.
+
+**Impact** — scripts ported from bash that try to use
+`printf "%(%F)T"` for date formatting get garbage output in
+zshrs without any error indication, vs zsh which errors
+immediately and exits non-zero (giving the script-author a
+chance to notice and replace with `strftime` from zsh/datetime
+module).
+
+```sh
+log_line=$(printf "%(%F %T)T  %s\n" -1 "$message")
+# zsh: errors, script aborts (caller knows to use strftime)
+# zshrs: log_line becomes literal "%(%F %T)T  hello message"
+# downstream parsing of the "timestamped" log corrupts silently
+```
+
+**Workaround** — use the zsh/datetime module's `strftime`
+builtin (which both shells support):
+```sh
+zmodload zsh/datetime
+strftime -s log_line "%F %T  %s" $EPOCHSECONDS "$message"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -11811,9 +11970,12 @@ need verification — could be a separate gap.)
 | 220 | `setopt err_return` doesn't abort function on failed command (fn-scoped strict mode dead) | **port-bug** | explicit `\|\| return $?` per command |
 | 221 | `disable -f FN` doesn't disable — `FN` still callable, `dis_functions[FN]` empty | **port-bug** | `unfunction FN` destructive |
 | 222 | `zmodload -a` lists 0 auto-loaded modules (zsh: 27 builtin→module bindings) | **port-bug** | try-and-catch with `zmodload -e` |
+| 223 | `setopt warn_create_global` no warning on implicit global creation in fn | **port-bug** | manual audit / explicit `local` always |
+| 224 | `unsetopt typeset_silent` + `typeset X` doesn't print existing value | **port-bug** | explicit `echo "X=$X"` for debug |
+| 225 | `printf "%(%Y)T"` silently treats as literal (zsh: errors "invalid directive") | **port-bug** | use `zsh/datetime` `strftime` builtin |
 
-Of two hundred and twenty-two entries, two are fixed (5, 7), two
-hundred and sixteen remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and twenty-five entries, two are fixed (5, 7), two
+hundred and nineteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -11828,5 +11990,5 @@ hundred and sixteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
-214, 215, 216, 217, 218, 219, 220, 221, 222), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225), and
+four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
