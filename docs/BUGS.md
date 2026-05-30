@@ -14301,6 +14301,178 @@ checking code, fall back to `(( ${+watch} ))` existence test
 
 ---
 
+## #271 — `h=([k]=v)` bash-style assoc init treated as glob pattern (errors "no matches found")
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h=([a]=1 [b]=2); echo "[${h[a]}][${h[b]}]"'
+[1][2]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h=([a]=1 [b]=2); echo "[${h[a]}][${h[b]}]"'
+zsh:1: no matches found: [a]=1
+```
+
+zsh supports two assoc-init syntaxes:
+1. Flat-pairs (zsh classic): `h=(k1 v1 k2 v2)` — works in both shells.
+2. Bash/ksh `[k]=v` form: `h=([a]=1 [b]=2)` — works in zsh, errors in zshrs.
+
+zshrs's parser treats `[a]=1` as a glob expression `[a]` followed
+by literal `=1`, which fails the glob match (no files match
+the bracket pattern), triggering "no matches found".
+
+Append form `h+=([b]=2)` has the same bug — also errors.
+
+**Where** — `src/ported/parse.rs::parse_array_literal`: when
+seeing `[...]=value` inside an array-init `(...)` block, no
+special-case to disable glob expansion and treat as assoc
+key-value pair. C-source `Src/parse.c::par_array` checks the
+target parameter's type — if assoc, `[k]=v` is parsed as
+key-value; if regular array or unknown type, glob-expanded.
+
+**Impact** — major bash-porting blocker. Most bash/ksh
+scripts using assoc arrays use the `[k]=v` form:
+
+```sh
+# Common bash pattern
+typeset -A config=(
+    [host]=example.com
+    [port]=443
+    [timeout]=30
+)
+# zsh: defines config correctly
+# zshrs: errors on first [host]=example.com, script aborts
+```
+
+This affects every ported bash script with assoc arrays, every
+config-as-assoc pattern, every multi-step assoc init.
+
+**Workaround** — convert to flat-pairs syntax:
+```sh
+typeset -A config=(
+    host example.com
+    port 443
+    timeout 30
+)
+```
+
+(Less readable, but works in both shells.)
+
+---
+
+## #272 — `typeset -axU` combined flags — `-U` dedup not applied when combined with `-x` (export)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -axU u=(/bin /usr/bin /bin); echo "[${u[@]}]"'
+[/bin /usr/bin]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -axU u=(/bin /usr/bin /bin); echo "[${u[@]}]"'
+[/bin /usr/bin /bin]
+```
+
+`typeset -axU` declares an exported unique-only array. Both
+attributes should compose — the array dedups on assignment
+AND is exported to the environment. zsh applies both. zshrs
+applies only `-a` and `-x`, silently dropping `-U`.
+
+Control: `typeset -aU` (no `-x`) works in both — `[/bin
+/usr/bin]`. So `-U` is honored when not combined with `-x`.
+
+**Where** — `src/ported/builtins/typeset.rs::parse_combined_flags`:
+flag combination parse picks `-x` but drops `-U` when both
+present. Could be flag-mask collision or option-string parsing
+order issue. C-source `Src/builtin.c::typeset_single` accumulates
+all flags as bits in a single `pmflags` value, with no
+mutual-exclusion check.
+
+**Impact** — exported deduped arrays (the canonical pattern
+for `path`-like vars) silently keep duplicates:
+
+```sh
+# Common .zshrc pattern
+typeset -xU path manpath fpath
+# zsh: each array is exported AND deduped
+# zshrs: each array exported, but duplicates accumulate across
+#        edits — fpath bloat, manpath bloat
+```
+
+Affects the user's daily-driver setup directly — `typeset
+-xU path` is one of the very first lines in many .zshrc
+files.
+
+**Workaround** — separate the operations:
+```sh
+typeset -aU u=(/bin /usr/bin /bin)   # dedup applied
+typeset -x u                          # then export
+```
+
+---
+
+## #273 — `TIMEFMT` autovar in inconsistent state — value present, but `(t)` and `${-NONE}` both signal "unset"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "val=[$TIMEFMT]"; echo "default=${TIMEFMT-NONE}"; echo "type=${(t)TIMEFMT}"'
+val=[%J  %U user %S system %P cpu %*E total]
+default=%J  %U user %S system %P cpu %*E total
+type=scalar
+
+$ ./target/debug/zshrs --zsh -c 'echo "val=[$TIMEFMT]"; echo "default=${TIMEFMT-NONE}"; echo "type=${(t)TIMEFMT}"'
+val=[%J  %U user %S system %P cpu %*E total]
+default=NONE                       # ← unset-default triggers
+type=                              # ← no type
+```
+
+`TIMEFMT` autovar is in a "schrodinger-set" state in zshrs:
+- Direct read returns the default content (works).
+- `${TIMEFMT-NONE}` (no-colon default — triggers only on
+  truly-unset) returns `NONE` — meaning the parameter is
+  detected as unset.
+- `${(t)TIMEFMT}` returns empty — meaning the parameter has
+  no registered type.
+
+Three different code paths disagree on whether TIMEFMT is
+"set":
+1. Value-read path: yes (returns the content).
+2. Existence/unset-default path: no.
+3. Type-introspection path: no.
+
+This is more severe than #243 (which noted `(t)` returns empty
+for special vars) — `TIMEFMT` literally has a value AND has
+an "unset" state simultaneously.
+
+**Where** — `src/ported/params/autovars.rs::TIMEFMT_handler`:
+likely a hardcoded `getfn` returning the default string, but
+no `Param` registered in the symbol table at all. C-source
+`Src/params.c::createparam` would register the entry with
+proper `PM_SCALAR` type and visibility to `${X-default}`.
+
+**Impact** — code paths that check parameter existence diverge
+from code paths that read the value:
+
+```sh
+# Common pattern: "use custom format if user hasn't overridden"
+: "${TIMEFMT:=user override default}"
+# zsh: TIMEFMT was already set, no change
+# zshrs: TIMEFMT detected as unset, := assigns new value
+#        breaking the user-override-default idiom
+```
+
+Combined with #243 and #269, the autovar machinery has
+multiple consistency gaps — the symbol table, type table,
+default-value table, and unset-state table are all separate
+in zshrs but should be unified.
+
+**Workaround** — explicit check before defaulting:
+```sh
+[[ -z "$TIMEFMT" ]] && TIMEFMT="%J  %U user %S system %P cpu %*E total"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -14575,9 +14747,12 @@ checking code, fall back to `(( ${+watch} ))` existence test
 | 268 | Autovars `LISTMAX`/`MAILCHECK`/`KEYTIMEOUT`/`PERIOD` typed `scalar` instead of `integer` | **port-bug** | explicit `typeset -i NAME` after init |
 | 269 | `$SPROMPT` autovar default empty (zsh: `zsh: correct '%R' to '%r' [nyae]?`) | **port-bug** | explicit `SPROMPT=...` init in .zshrc |
 | 270 | `${(t)watch}` autovar absent — zsh: `array-special`; `watch` user-tracking feature dead | **port-bug** | (none — feature not implemented) |
+| 271 | `h=([k]=v)` bash-style assoc init treated as glob — errors "no matches found" | **port-bug** | use flat-pairs `h=(k v k v)` instead |
+| 272 | `typeset -axU` `-U` dedup not applied when combined with `-x` (export) | **port-bug** | separate into `typeset -aU` then `typeset -x` |
+| 273 | `TIMEFMT` autovar in inconsistent state — value reads correctly but `(t)`/`${-NONE}` signal "unset" | **port-bug** | explicit `[[ -z ]]` check before := defaulting |
 
-Of two hundred and seventy entries, two are fixed (5, 7), two
-hundred and sixty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and seventy-three entries, two are fixed (5, 7), two
+hundred and sixty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -14596,5 +14771,5 @@ hundred and sixty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
-266, 267, 268, 269, 270), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+266, 267, 268, 269, 270, 271, 272, 273), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
