@@ -1373,4 +1373,136 @@ mod tests {
             assert_eq!(boot_(std::ptr::null()), 0);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/sched.c
+    // c:245 bin_sched / c:624-684 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:624 — `setup_` is idempotent (alt-2).
+    #[test]
+    fn sched_setup_idempotent_alt_2() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:684 — `finish_` is idempotent (alt-2).
+    #[test]
+    fn sched_finish_idempotent_alt_2() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:624 — `setup_` return type i32 (compile-time pin).
+    #[test]
+    fn sched_setup_returns_i32_type_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = setup_(std::ptr::null());
+    }
+
+    /// c:659 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn sched_cleanup_returns_i32_type_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:684 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn sched_finish_returns_i32_type_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:639 — `enables_` with Some(non-empty) doesn't panic.
+    #[test]
+    fn sched_enables_with_some_non_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut e: Option<Vec<i32>> = Some(vec![1, 2, 3]);
+        let _ = enables_(std::ptr::null(), &mut e);
+    }
+
+    /// c:245 — `bin_sched` empty args + ops returns non-negative.
+    #[test]
+    fn bin_sched_empty_args_non_negative_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_sched("sched", &[], &ops, 0);
+        assert!(r >= 0, "bin_sched empty must return ≥ 0, got {}", r);
+    }
+
+    /// c:245 — `bin_sched` deterministic for empty schedule (idle state).
+    #[test]
+    fn bin_sched_empty_schedule_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r1 = bin_sched("sched", &[], &ops, 0);
+        let r2 = bin_sched("sched", &[], &ops, 0);
+        assert_eq!(r1, r2, "bin_sched empty schedule must be deterministic");
+    }
+
+    /// c:245 — `bin_sched` various func values don't panic.
+    #[test]
+    fn bin_sched_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_sched("sched", &[], &ops, func);
+        }
+    }
+
+    /// c:245 — `bin_sched("-malformed")` invalid removal arg doesn't panic.
+    #[test]
+    fn bin_sched_malformed_removal_arg_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for arg in ["-", "-x", "-99999", "-abc"] {
+            let _ = bin_sched("sched", &[arg.to_string()], &ops, 0);
+        }
+    }
+
+    /// c:631 — `features_` is deterministic across calls.
+    #[test]
+    fn sched_features_deterministic_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        let mut v1: Vec<String> = Vec::new();
+        let mut v2: Vec<String> = Vec::new();
+        assert_eq!(features_(std::ptr::null(), &mut v1), 0);
+        assert_eq!(features_(std::ptr::null(), &mut v2), 0);
+        assert_eq!(v1, v2, "features_ must be deterministic");
+    }
+
+    /// c:624/646/684 — setup→boot→finish chain returns 0 each.
+    #[test]
+    fn sched_setup_boot_finish_chain_returns_zero_each() {
+        let _g = crate::test_util::global_state_lock();
+        let null = std::ptr::null();
+        assert_eq!(setup_(null), 0);
+        assert_eq!(boot_(null), 0);
+        assert_eq!(finish_(null), 0);
+    }
 }
