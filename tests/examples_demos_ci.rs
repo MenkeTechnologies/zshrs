@@ -466,6 +466,31 @@ demo_test!(d307_zsh_compsys_args, "307_zsh_compsys_args.zsh");
 demo_test!(d308_kruskal_algo_density, "308_kruskal_algo_density.zsh");
 demo_test!(d309_state_machine_dsl, "309_state_machine_dsl.zsh");
 demo_test!(d310_banner_v5, "310_banner_v5.zsh");
+demo_test!(d311_bst, "311_bst.zsh");
+demo_test!(d312_avl_tree, "312_avl_tree.zsh");
+demo_test!(d313_bloom_filter_v2, "313_bloom_filter_v2.zsh");
+demo_test!(d314_deque, "314_deque.zsh");
+demo_test!(d315_ring_buffer, "315_ring_buffer.zsh");
+demo_test!(d316_ipv4_subnet, "316_ipv4_subnet.zsh");
+demo_test!(d317_mac_address, "317_mac_address.zsh");
+demo_test!(d318_file_checksum, "318_file_checksum.zsh");
+demo_test!(d319_anagram_solver, "319_anagram_solver.zsh");
+demo_test!(d320_leet_speak, "320_leet_speak.zsh");
+demo_test!(d321_pig_latin, "321_pig_latin.zsh");
+demo_test!(d322_history_parser, "322_history_parser.zsh");
+demo_test!(d323_ssh_known_hosts, "323_ssh_known_hosts.zsh");
+demo_test!(d324_brace_advanced, "324_brace_advanced.zsh");
+demo_test!(d325_zsh_print_more, "325_zsh_print_more.zsh");
+demo_test!(d326_zsh_compinit, "326_zsh_compinit.zsh");
+demo_test!(d327_zsh_extended_glob, "327_zsh_extended_glob.zsh");
+demo_test!(d328_zsh_kv_assoc, "328_zsh_kv_assoc.zsh");
+demo_test!(d329_max_subarray, "329_max_subarray.zsh");
+demo_test!(d330_lis_lcs, "330_lis_lcs.zsh");
+demo_test!(d331_knapsack, "331_knapsack.zsh");
+demo_test!(d332_coin_change, "332_coin_change.zsh");
+demo_test!(d333_topological_sort, "333_topological_sort.zsh");
+demo_test!(d334_lru_cache, "334_lru_cache.zsh");
+demo_test!(d335_banner_v6, "335_banner_v6.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -783,6 +808,31 @@ fn every_demo_in_dir_has_a_test() {
         "308_kruskal_algo_density.zsh",
         "309_state_machine_dsl.zsh",
         "310_banner_v5.zsh",
+        "311_bst.zsh",
+        "312_avl_tree.zsh",
+        "313_bloom_filter_v2.zsh",
+        "314_deque.zsh",
+        "315_ring_buffer.zsh",
+        "316_ipv4_subnet.zsh",
+        "317_mac_address.zsh",
+        "318_file_checksum.zsh",
+        "319_anagram_solver.zsh",
+        "320_leet_speak.zsh",
+        "321_pig_latin.zsh",
+        "322_history_parser.zsh",
+        "323_ssh_known_hosts.zsh",
+        "324_brace_advanced.zsh",
+        "325_zsh_print_more.zsh",
+        "326_zsh_compinit.zsh",
+        "327_zsh_extended_glob.zsh",
+        "328_zsh_kv_assoc.zsh",
+        "329_max_subarray.zsh",
+        "330_lis_lcs.zsh",
+        "331_knapsack.zsh",
+        "332_coin_change.zsh",
+        "333_topological_sort.zsh",
+        "334_lru_cache.zsh",
+        "335_banner_v6.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
