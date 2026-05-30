@@ -13132,6 +13132,172 @@ log_clean="${${arr[*]}//[^a-z]/.}"
 
 ---
 
+## #250 — `typeset -ia` / `typeset -Fa` silently accepted (zsh: rejects "inconsistent type for assignment")
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -ia arr=(10 20 30); echo "[${arr[2]}]"'
+zsh:typeset:1: arr: inconsistent type for assignment
+$ echo $?
+1
+
+$ ./target/debug/zshrs --zsh -c 'typeset -ia arr=(10 20 30); echo "[${arr[2]}]"'
+[20]
+$ echo $?
+0
+```
+
+zsh treats `-i` (integer) and `-a` (array) as mutually
+exclusive at the variable level — you can't have both at
+once. The error message "inconsistent type for assignment"
+indicates the type system explicitly rejects mixing scalar-
+type modifiers (`-i`, `-l`, `-u`, `-F`, `-E`) with array/assoc
+attributes (`-a`, `-A`).
+
+zshrs silently accepts. Same family as #219 (`typeset -i
+"h[k]"` per-element attr on assoc) — zshrs's typeset doesn't
+enforce zsh's attribute-conflict rules.
+
+Same bug applies to `-Fa` (float array):
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -Fa farr=(1.5 2.5)' 2>&1
+zsh:typeset:1: farr: inconsistent type for assignment
+
+$ ./target/debug/zshrs --zsh -c 'typeset -Fa farr=(1.5 2.5); echo "[${farr[1]}]"'
+[1.5]
+```
+
+**Where** — `src/ported/builtins/typeset.rs::validate_attr_combo`:
+no rejection of conflicting type-attribute combinations.
+C-source `Src/builtin.c::typeset_single` checks the flag bits
+for `(PM_INTEGER|PM_EFLOAT|...) & (PM_ARRAY|PM_HASHED)` and
+errors when both are present.
+
+**Impact** — scripts ported from bash (which doesn't have
+these constraints in the same way) may try to declare typed
+arrays. In zsh, that's a hard error caught at declaration. In
+zshrs, the declaration succeeds and the array stores
+seemingly-typed values, but the integer/float coercion is
+applied differently (or not at all) — subtle behavior
+divergence that's hard to trace later.
+
+```sh
+# Bash-portable but illegal-in-zsh declaration
+typeset -ia counts=(10 20 30)
+counts[2]="not a number"
+# zsh: would have errored at declaration, never reaches the bad assignment
+# zshrs: stored as-is, scripts downstream get unexpected non-integer in counts[2]
+```
+
+**Workaround** — declare array first, then per-element
+integer attribute (if needed) via separate assignment with
+arith forcing:
+```sh
+typeset -a counts=(10 20 30)
+(( counts[1] = counts[1] ))   # forces integer evaluation per element
+```
+
+---
+
+## #251 — `command -- echo hi` doesn't recognize `--` end-of-options separator
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'command -- echo hi'
+hi
+
+$ ./target/debug/zshrs --zsh -c 'command -- echo hi'
+zsh:1: command not found: --
+$ echo $?
+127
+```
+
+`command -- ARG...` is POSIX-defined: the `--` marker
+indicates "all following args are command + args, ignore any
+options that look like flags". zsh handles it; zshrs treats
+`--` as a literal command name.
+
+This is a common pattern when the command-to-execute might
+start with a `-`:
+```sh
+command -- "$user_provided_cmd" "$@"
+# zsh: safely runs the user's command even if cmd name starts with -
+# zshrs: tries to execute "--" as a command, fails with 127
+```
+
+**Where** — `src/ported/builtins/command.rs::parse_opts`:
+doesn't terminate option parsing on `--`. C-source
+`Src/builtin.c::bin_command` parses flags via standard
+`getopt`-style loop that recognizes `--` as the option
+terminator.
+
+**Impact** — defensive scripts that wrap user input through
+`command --` for safety lose the safety. Bare `command CMD`
+without `--` still works (and is more common), so the bug
+only surfaces in scripts written for paranoid input handling
+or POSIX-portable style.
+
+**Workaround** — drop the `--`:
+```sh
+command "$user_cmd" "$@"
+```
+
+(Trades safety for compatibility — `$user_cmd` starting with
+`-` will be parsed as command flags.)
+
+---
+
+## #252 — `exec -` (dash with no command) errors instead of being a no-op
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'exec -; echo after'
+after
+
+$ ./target/debug/zshrs --zsh -c 'exec -; echo after'
+zshrs: exec: -: not found
+$ echo $?
+127
+```
+
+`exec -` (or `exec - cmd`, or `exec -l cmd`, etc.) is the
+zsh form of "exec with login shell convention": the dash
+either marks the next arg as login-style or, when used alone
+with no command, is a no-op. zsh treats bare `exec -` as a
+no-op and continues script execution; zshrs treats `-` as a
+command name to exec, fails to find it, and errors with
+"command not found".
+
+**Where** — `src/ported/builtins/exec.rs::parse_args`:
+doesn't recognize bare `-` as a flag marker. C-source
+`Src/builtin.c::bin_exec` checks `ops[OPT_DASH]` (`-` flag)
+and either applies the login-shell semantics or treats it as
+no-op when there's no following command.
+
+**Impact** — POSIX/zsh-portable scripts that use `exec -` as a
+guard or marker (uncommon but valid) fail in zshrs. The
+script-killing exit-code 127 makes the failure hard to miss
+but unhelpful — `exec -` is supposed to be safe to call.
+
+```sh
+# Defensive: ensure we're in login-shell-like state for nested exec
+exec -   # no-op marker
+exec my_cmd "$@"
+# zsh: runs my_cmd as planned
+# zshrs: errors before reaching my_cmd, script aborts
+```
+
+**Workaround** — remove `exec -` (it's a no-op in zsh and
+unnecessary):
+```sh
+exec my_cmd "$@"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -13385,9 +13551,12 @@ log_clean="${${arr[*]}//[^a-z]/.}"
 | 247 | `read line` doesn't strip leading/trailing IFS whitespace from input | **port-bug** | explicit `${var## }`/`${var%% }` strip |
 | 248 | `read "?prompt" var` writes prompt to stdout when stdin isn't tty (contaminates output) | **port-bug** | conditional `print -n "p: " >&2` |
 | 249 | `${arr//pat/repl}` bare-array form applies replacement per-element (zsh: joins to scalar first) | **port-bug** | use `${${arr[*]}//pat/repl}` |
+| 250 | `typeset -ia`/`typeset -Fa` accepted (zsh: errors "inconsistent type for assignment") | **port-bug** | split into `-a` then per-elem arith |
+| 251 | `command -- echo hi` doesn't recognize `--` end-of-options separator | **port-bug** | drop the `--` |
+| 252 | `exec -` (dash, no command) errors "exec: -: not found" instead of no-op | **port-bug** | drop the `exec -` |
 
-Of two hundred and forty-nine entries, two are fixed (5, 7), two
-hundred and forty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and fifty-two entries, two are fixed (5, 7), two
+hundred and forty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -13404,5 +13573,5 @@ hundred and forty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
-240, 241, 242, 243, 244, 245, 246, 247, 248, 249), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252),
+and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
