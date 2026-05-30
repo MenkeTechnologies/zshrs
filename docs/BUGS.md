@@ -2260,6 +2260,75 @@ fn() {
 
 ---
 
+## #51 — `${#*}` access corrupts `$@`/`$*` for subsequent use in same function
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ cat > /tmp/t.zsh <<'EOF'
+fn() {
+    echo "${#*}"
+    for x in "$@"; do echo "[$x]"; done
+}
+fn a b c
+EOF
+
+$ /opt/homebrew/bin/zsh /tmp/t.zsh
+3
+[a]
+[b]
+[c]
+
+$ ./target/debug/zshrs --zsh /tmp/t.zsh
+3
+[]
+[]
+[]
+```
+
+Accessing `${#*}` (positional-param count via `*` reference)
+inside a function corrupts `$@` for the rest of the function.
+The for-loop iterates the correct NUMBER of times (3) but each
+iteration's `$x` is empty.
+
+`${#@}` (with `@` instead of `*`) and bare `$#` both work
+correctly — the bug is specific to the `${#*}` form.
+
+Other access patterns through `${#*}`:
+  - `local n=${#*}` → corrupts (3 empty loop iters)
+  - `echo "${#*}"` → corrupts (3 empty loop iters)
+  - `echo "${#*}suffix"` → corrupts
+  - `echo "prefix${#*}"` → corrupts
+  - `echo "X: ${#*}"` → corrupts (sometimes 0 iters instead of 3)
+  - `${#@}` (alternative) → works correctly
+
+**Where** — `src/ported/subst.rs` parameter-name resolution path
+for `*` special parameter. The `${#*}` form likely shares state
+with `$*` substitution and inadvertently empties the cached
+positional-params array.
+
+C-zsh's `Src/subst.c paramsubst` treats `${#@}` and `${#*}` as
+synonyms for the COUNT (both should be `$#`), without mutating
+the underlying parameter list.
+
+**Impact** — quite narrow because most scripts use `${#@}` or
+`$#`. But subtle for anyone copying bash patterns that use
+`${#*}` (bash treats both identically and doesn't have this bug).
+
+**Workaround** — use `${#@}` or `$#`:
+```sh
+fn() {
+    echo "$#"           # zshrs: works
+    # echo "${#@}"      # zshrs: also works
+    # echo "${#*}"      # zshrs: BREAKS $@/$* below
+    for x in "$@"; do
+        echo "[$x]"
+    done
+}
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -2314,9 +2383,10 @@ fn() {
 | 48 | `typeset -m PAT` rejects pattern arg | **port-bug** | iterate `${(k)parameters}` |
 | 49 | `(( "abc" == "abc" ))` quoted strings → false | **port-bug** | drop quotes |
 | 50 | Trap inherited from outer doesn't fire in fn | **port-bug** | re-install trap in fn |
+| 51 | `${#*}` access corrupts `$@`/`$*` for rest of fn | **port-bug** | use `${#@}` or `$#` |
 
-Of fifty entries, two are fixed (5, 7), forty-four remain open
+Of fifty-one entries, two are fixed (5, 7), forty-five remain open
 port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50), and
+36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51), and
 four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
