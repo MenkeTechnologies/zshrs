@@ -2111,6 +2111,155 @@ ls **/$~"$file"        # alt: skip the (b) flag entirely
 
 ---
 
+## #48 — `typeset -m PATTERN` rejects pattern argument
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=1; b=2; aa=3; typeset -m "a*"'
+a=1
+aa=3
+
+$ zshrs --zsh -c 'a=1; b=2; aa=3; typeset -m "a*"'
+zsh:typeset:1: not valid in this context: a*
+```
+
+The `-m` flag to `typeset` should accept a glob pattern and list
+matching parameters. zshrs rejects the pattern as "not valid in
+this context". Same with `typeset -mp PAT` (patterned print).
+
+`unset -m PAT` and `unalias -m PAT` also potentially affected
+(not yet exhaustively tested).
+
+**Where** — `src/ported/builtin.rs::bin_typeset` `-m` flag handler
+fails to switch the argument parser into pattern mode and instead
+runs the standard "name[=value]" parser, which rejects `*`.
+
+**Impact** — `typeset -m` is THE standard way to enumerate
+parameters by pattern. Used heavily for introspection scripts,
+shellcheck-like tools, debug helpers:
+
+```sh
+# Common pattern: dump all DEBUG_* vars
+typeset -m 'DEBUG_*'   # zshrs: parse error
+
+# Common pattern: remove all temp vars
+unset -m '_TMP_*'     # zshrs: same issue if affected
+```
+
+Demo 305 uses `typeset -m 'report_*'` with `2>/dev/null` suppressing
+the error — the demo silently produces empty output instead of
+the matched variables.
+
+**Workaround** — iterate manually:
+```sh
+for name in ${(k)parameters}; do
+    [[ $name == a* ]] && echo "$name=${(P)name}"
+done
+```
+
+---
+
+## #49 — Quoted string comparison `(( "abc" == "abc" ))` returns false
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '(( "abc" == "abc" )); echo "exit=$?"'
+exit=0
+
+$ zshrs --zsh -c '(( "abc" == "abc" )); echo "exit=$?"'
+exit=1
+```
+
+Inside `(( ... ))` arithmetic, both literal strings should be
+looked up as variable names. `abc` is unset (= 0), so the
+comparison is `0 == 0` = true (exit 0). zshrs returns false
+(exit 1), treating the quoted strings as literal strings whose
+value differs from numbers.
+
+Unquoted form works identically in both shells:
+  - `(( abc == abc ))` → both: exit 0 ✓
+
+So the bug is specific to the QUOTED form's name-resolution path.
+
+C-zsh `Src/math.c::mathevali` treats both `abc` and `"abc"`
+identically — strips quotes during tokenization, then looks up as
+variable name.
+
+**Where** — `src/ported/math.rs` arith tokenizer should strip
+double-quotes around identifiers and treat them as bare identifiers
+for variable lookup.
+
+**Impact** — defensive arithmetic with quoted variable names (used
+when the variable might contain a name with spaces, even though
+arith identifiers can't have spaces):
+```sh
+(( "$varname" == 5 ))    # zsh resolves $varname then lookups
+                          # zshrs may fail depending on quoting timing
+```
+
+**Workaround** — drop the quotes:
+```sh
+(( abc == 5 ))         # works in both
+```
+
+---
+
+## #50 — Trap set in outer scope doesn't fire on signal received inside function
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ cat > /tmp/t.zsh <<'EOF'
+trap "echo OUTER" USR1
+fn() {
+    kill -USR1 $$
+    sleep 0.1
+}
+fn
+echo done
+EOF
+
+$ /opt/homebrew/bin/zsh /tmp/t.zsh
+OUTER
+done
+
+$ ./target/debug/zshrs --zsh /tmp/t.zsh
+done
+```
+
+A `trap` installed at the script's top level is not invoked when
+the targeted signal arrives during a function call. zshrs swallows
+the signal silently — `done` prints but `OUTER` never fires.
+
+Signal traps installed inside subshells also don't fire reliably.
+
+**Where** — `src/ported/signals.rs` signal-dispatch routine
+checks the trap table in the current function frame but doesn't
+fall back to the parent frame's trap table for inherited traps.
+C-zsh's `Src/signals.c::dotrap` walks the frame stack.
+
+**Impact** — critical for cleanup logic that depends on traps:
+```sh
+trap "rm -rf $tmpdir" EXIT INT TERM HUP
+fn_that_might_be_killed
+# zsh: cleanup runs on INT/TERM
+# zshrs: cleanup may NOT run, leaving orphan tmpdirs
+```
+
+**Workaround** — re-install the trap inside each function that
+might receive the signal:
+```sh
+fn() {
+    trap "echo OUTER" USR1   # re-install in fn scope
+    kill -USR1 $$
+    sleep 0.1
+}
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -2162,9 +2311,12 @@ ls **/$~"$file"        # alt: skip the (b) flag entirely
 | 45 | `${#$}` returns 0 (length of PID) | **port-bug** | `pid=$$; ${#pid}` |
 | 46 | nested `` `\`...\`` `` backquotes mishandled | **port-bug** | use `$(...)` instead |
 | 47 | `${(b)str}` escapes space/semi (C-zsh doesn't) | **port-bug** | drop `(b)` flag |
+| 48 | `typeset -m PAT` rejects pattern arg | **port-bug** | iterate `${(k)parameters}` |
+| 49 | `(( "abc" == "abc" ))` quoted strings → false | **port-bug** | drop quotes |
+| 50 | Trap inherited from outer doesn't fire in fn | **port-bug** | re-install trap in fn |
 
-Of forty-seven entries, two are fixed (5, 7), forty-one remain open
+Of fifty entries, two are fixed (5, 7), forty-four remain open
 port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50), and
+four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
