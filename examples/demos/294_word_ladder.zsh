@@ -95,11 +95,6 @@ pairs=(
     "cat car"
     "pet peg"
     "bat bag"
-    "dog log"
-    "hit his"
-    "cat lid"
-    "log dog"
-    "pet pen"
     "xyz abc"
 )
 for p in "${pairs[@]}"; do

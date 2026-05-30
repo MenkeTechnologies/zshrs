@@ -7,9 +7,9 @@ zmodload zsh/mathfunc 2>/dev/null
 # Scale factor (1024 = 10-bit fixed point).
 S=1024
 
-WIDTH=60
-HEIGHT=24
-MAX_ITER=30
+WIDTH=40
+HEIGHT=16
+MAX_ITER=20
 
 # Map screen (x,y) → complex plane (-2.5..1.0, -1.0..1.0).
 # Use integer math: cx in [-2560..1024] / 1024.
