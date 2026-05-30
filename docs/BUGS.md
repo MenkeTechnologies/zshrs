@@ -20311,6 +20311,182 @@ zshrs.
 
 ---
 
+## #382 — `TRAPEXIT()` function-style not invoked at script exit
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPEXIT() { echo "in-exit-fn"; }; echo main'
+main
+in-exit-fn
+
+$ ./target/debug/zshrs --zsh -c 'TRAPEXIT() { echo "in-exit-fn"; }; echo main'
+main
+```
+
+zsh's TRAPEXIT (function-form EXIT trap) fires when the
+shell / script exits. zshrs ignores the function body
+entirely — same root cause as #381 (TRAPINT) but for the
+EXIT pseudo-signal, which is by far the most-used TRAP
+function in real .zshrc files.
+
+The string form `trap '…' EXIT` is also commonly used and
+needs verification — this entry covers the function-form
+specifically.
+
+**Where** — `src/ported/signals/exit_handler.rs` (or
+equivalent): script-exit cleanup walks the trap-string
+table only. C-source `Src/init.c::zexit` calls
+`dotrapargs(SIGEXIT, ...)` which checks both the function
+and string tables.
+
+**Impact** — **Universal cleanup gap**. Every script that
+uses `TRAPEXIT` for tmpdir cleanup, lock-release, or
+output-buffer flush silently leaks resources under zshrs:
+
+```sh
+TRAPEXIT() {
+    [[ -n $tmpdir ]] && rm -rf -- "$tmpdir"
+    [[ -n $lockfd ]] && exec {lockfd}>&-
+}
+tmpdir=$(mktemp -d)
+# ... work ...
+# zsh: tmpdir removed on exit
+# zshrs: tmpdir leaked
+```
+
+This is THE most common signal-trap idiom in zsh; affects
+oh-my-zsh themes, p10k initialization, zinit's plugin
+loader, and most `~/.zshrc` files in the wild.
+
+**Workaround** — use string form:
+```sh
+trap '[[ -n $tmpdir ]] && rm -rf -- "$tmpdir"' EXIT
+```
+
+---
+
+## #383 — `keymaps` assoc array empty — viins/vicmd/emacs/main not registered
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "${(k)keymaps}" | tr " " "\n" | sort -u'
+.safe
+command
+emacs
+isearch
+main
+vicmd
+viins
+viopp
+visual
+
+$ ./target/debug/zshrs --zsh -c 'echo "${(k)keymaps}" | tr " " "\n" | sort -u'
+
+```
+
+zsh registers nine standard keymaps as keys of the
+`keymaps` special assoc — `.safe`, `command`, `emacs`,
+`isearch`, `main`, `vicmd`, `viins`, `viopp`, `visual`.
+zshrs's `keymaps` assoc is empty.
+
+Same family as #379 (`zle -la` empty) — the ZLE keymap /
+widget registry plumbing isn't exposed to introspection
+parameters even though it must exist internally for ZLE
+to function.
+
+**Where** — `src/ported/params/keymaps.rs::register` or
+the wiring of the special parameter to the keymap list:
+C-source `Src/Zle/zle_params.c::keymapsetfn` /
+`keymapsgetfn` walks the live keymap table.
+
+**Impact** — vi-mode / keymap-switching frameworks fail
+to detect available keymaps:
+
+```sh
+# p10k vi-mode integration
+if [[ -n $keymaps[vicmd] ]]; then
+    # configure vi-cmd indicator
+fi
+# zsh: branch taken, indicator configured
+# zshrs: keymaps[vicmd] empty, indicator missing
+```
+
+Also breaks any script that probes `(( ${+keymaps[NAME]} ))`
+before `bindkey -A` aliasing.
+
+**Workaround** — assume zsh-default keymap names are
+available, skip the introspection guard. Not generally
+safe but works in practice for the canonical 9.
+
+---
+
+## #384 — function-local `trap '...' EXIT` fires at script-exit instead of function-return
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { trap "echo fn-exit" EXIT; echo fn-body; }; f; echo after'
+fn-body
+fn-exit
+after
+
+$ ./target/debug/zshrs --zsh -c 'f() { trap "echo fn-exit" EXIT; echo fn-body; }; f; echo after'
+fn-body
+after
+fn-exit
+```
+
+In zsh, `trap '…' EXIT` set **inside a function body**
+fires when the function returns — function-local EXIT
+trap semantics. zshrs treats every trap as global, so the
+trap fires at script-exit instead.
+
+The ordering difference (`fn-exit` between `fn-body` and
+`after` vs after `after`) breaks any code that depends on
+function-scoped cleanup running before the caller
+continues.
+
+**Where** — `src/ported/signals/trap.rs`:
+`set_trap()` should push onto a function-local trap stack
+(mirroring zsh's `funcstack` lifecycle). C-source
+`Src/exec.c::execfuncdef` saves the parent trap state
+into the function's `traplocal` field; on `doreturn` /
+function-exit, `signal_setmask` restores it.
+
+**Impact** — function-local cleanup pattern is BROKEN.
+This is the second canonical EXIT-trap idiom (after
+top-level TRAPEXIT):
+
+```sh
+safe_cd() {
+    trap 'cd -' EXIT    # restore CWD on function-return
+    cd "$1"
+    do_stuff_in_dir
+}
+safe_cd /tmp
+# zsh: returns to original CWD on safe_cd return
+# zshrs: CWD stays at /tmp; trap defers to script-exit
+```
+
+Real instances include git-functions that cd into a repo,
+mktemp-functions that cleanup on return, and any "guard"
+pattern that wraps a transient state-change.
+
+**Workaround** — explicit cleanup at each function-return
+point (loses RAII-style scope guarantee):
+```sh
+safe_cd() {
+    local orig=$PWD
+    cd "$1"
+    do_stuff_in_dir
+    cd "$orig"  # must run manually before every return
+}
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -20696,9 +20872,12 @@ zshrs.
 | 379 | `zle -la` returns empty — builtin widget registry not exposed (zsh: 386 widgets incl `.accept-line`) | **port-bug** | hardcode widget list / probe `${+widgets[N]}` |
 | 380 | `bindkey` default-keymap output divergence — 31 vs 117 entries (zsh: canonical emacs set) | **port-bug** | use specific-key probe instead of full diff |
 | 381 | `TRAPINT()` function-style signal handler not invoked — only string-form `trap '…' INT` works | **port-bug** | use `trap '…' SIG` instead of `TRAP$SIG()` |
+| 382 | `TRAPEXIT()` function-form not invoked at script-exit — universal cleanup gap (oh-my-zsh, p10k, zinit) | **port-bug** | use string-form `trap '…' EXIT` |
+| 383 | `keymaps` assoc empty — viins/vicmd/emacs/main/.safe/etc all missing (zsh: 9 keymaps registered) | **port-bug** | assume zsh-default keymap names exist |
+| 384 | function-local `trap '…' EXIT` fires at script-exit not function-return — RAII cleanup broken | **port-bug** | explicit cleanup at each return point |
 
-Of three hundred and eighty-one entries, two are fixed (5, 7),
-three hundred and seventy-five remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and eighty-four entries, two are fixed (5, 7),
+three hundred and seventy-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
