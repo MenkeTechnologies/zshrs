@@ -24211,6 +24211,178 @@ Tedious and error-prone for nested patterns.
 
 ---
 
+## #451 — function definition/unfunction in subshell LEAKS to parent — parallel to #450 trap leak
+
+**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo outer; }; (f() { echo inner; }; f); f'
+inner
+outer
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo outer; }; (f() { echo inner; }; f); f'
+inner
+inner
+```
+
+Also for `unfunction`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo outer; }; (unfunction f); f'
+outer
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo outer; }; (unfunction f); f'
+zsh:1: command not found: f
+```
+
+Subshells should fork the function table; modifications
+in subshell must not affect parent. zshrs's subshells
+share the function table with the parent.
+
+zsh forks function-table state on subshell entry and
+restores on exit (or, more typically, the subshell runs
+in a forked child process whose memory is naturally
+isolated).
+
+**Where** — `src/ported/exec/subshell.rs::execute`:
+must fork-execute or explicitly save/restore the
+function/alias/widget tables. Most likely zshrs is
+optimizing subshells into in-process scope frames
+without proper table isolation.
+
+C-source `Src/exec.c::entersubsh` forks a child process
+(or sets up a CoW snapshot when using `MAGIC_EQUAL_SUBST`
+optimization).
+
+**Impact** — **Critical** — every subshell-isolation
+pattern fails:
+
+```sh
+# Pattern: try a transformation, undo on error
+my_func() { echo original; }
+result=$( my_func() { echo modified; }; my_func )
+# zsh: parent's my_func is untouched; result="modified"
+# zshrs: parent's my_func is overwritten; result="modified"
+#        AND subsequent my_func calls return "modified"
+```
+
+Affects:
+- Try-modify-undo patterns
+- Plugin loaders that use `(...)` to scope plugin setup
+- Test frameworks that mock functions per-test inside
+  subshells
+- zsh-defer's lazy-loading subshells
+
+Combined with #450 (trap leak), zshrs's subshell scoping
+is fundamentally broken for several parameter types.
+
+**Workaround** — explicit save/restore:
+```sh
+old_def=$(declare -f my_func)
+( my_func() { ... }; ... )
+eval "$old_def"
+```
+
+Tedious for nested patterns.
+
+---
+
+## #452 — alias definition/unalias in subshell LEAKS to parent — same family as #451
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'alias x=hi; (alias x=bye); alias x'
+x=hi
+
+$ ./target/debug/zshrs --zsh -c 'alias x=hi; (alias x=bye); alias x'
+x=bye
+```
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'alias x=foo; (unalias x); alias x; echo rc=$?'
+x=foo
+rc=0
+
+$ ./target/debug/zshrs --zsh -c 'alias x=foo; (unalias x); alias x; echo rc=$?'
+rc=1
+```
+
+Same subshell-scope-leak root cause as #451 but for the
+**alias table** instead of the function table. Aliases
+defined or removed in `(...)` propagate to the parent.
+
+**Where** — `src/ported/exec/subshell.rs::execute`:
+must isolate the alias table from parent. C-source
+`Src/exec.c::entersubsh` forks (gives natural isolation
+via process boundary).
+
+**Impact** — plugin-isolation patterns break:
+
+```sh
+# Pattern: try a plugin in isolated subshell
+( source ~/.zsh/test-plugin.zsh )
+# zsh: any aliases the plugin defines are scoped to ()
+# zshrs: aliases leak into parent — uninstall is hard
+```
+
+Combined with #450 (trap leak), #451 (function leak),
+zshrs's `(...)` subshell is no longer a proper sandbox.
+
+**Workaround** — explicit save/restore of alias dump,
+or run plugin in a forked zshrs child instead of `(...)`.
+
+---
+
+## #453 — ZLE widget registration in subshell LEAKS to parent — third member of subshell-scope-leak family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { :; }; zle -N w f; (zle -D w); zle -l w; echo rc=$?'
+rc=0
+
+$ ./target/debug/zshrs --zsh -c 'f() { :; }; zle -N w f; (zle -D w); zle -l w; echo rc=$?'
+rc=1
+```
+
+zsh: subshell's `zle -D w` (delete widget) doesn't affect
+parent's widget table. After subshell exits, `zle -l w`
+succeeds (widget still defined).
+
+zshrs: subshell's `zle -D w` removes the widget from the
+parent's table. After subshell exits, `zle -l w` errors
+(widget gone — rc=1).
+
+Confirms the subshell-scope-leak issue extends to the ZLE
+widget table — parallel to #450 (trap), #451 (function
+table), #452 (alias table).
+
+**Where** — same as #451: `src/ported/exec/subshell.rs`
+must fork or isolate all per-shell-state tables: trap
+table, function table, alias table, widget table,
+keymaps, bindkey state.
+
+**Impact** — completion-system testing inside subshells
+mutates the parent's widget set:
+
+```sh
+# Test ZLE behavior in isolation
+( zle -N my-test-widget; zle invoke-test )
+# zsh: parent's widget table untouched
+# zshrs: my-test-widget leaks into parent's table
+```
+
+**Workaround** — fork explicit zshrs child for widget
+isolation:
+```sh
+zshrs --zsh -c "zle -N my-widget; ..."
+```
+
+(Heavier — actual process fork rather than `(...)`
+subshell.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -24665,9 +24837,12 @@ Tedious and error-prone for nested patterns.
 | 448 | `print -s "text"` doesn't add to history — `fc -l` shows nothing (zsh: line appears) | **port-bug** | manual history-file append |
 | 449 | `[[ "x" == pat\\* ]]` backslash-escape in pattern not honored — `\\*` treated as glob wildcard | **port-bug** | quoted-string pattern form `"pat*"` |
 | 450 | **CRITICAL** subshell `trap` leaks to parent — outer trap replaced after `(...)` exits | **port-bug** | explicit `eval "$(trap)"` save/restore around subshell |
+| 451 | **CRITICAL** function definition/`unfunction` in subshell LEAKS to parent — parallel to #450 trap leak | **port-bug** | save with `declare -f`, restore via `eval` |
+| 452 | alias definition/`unalias` in subshell LEAKS to parent — same family as #451 | **port-bug** | save alias dump, restore around subshell |
+| 453 | ZLE widget registration (`zle -N`/`zle -D`) in subshell LEAKS to parent — third member of subshell-scope-leak family | **port-bug** | fork explicit zshrs child for widget isolation |
 
-Of four hundred and fifty entries, two are fixed (5, 7),
-four hundred and forty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and fifty-three entries, two are fixed (5, 7),
+four hundred and forty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
