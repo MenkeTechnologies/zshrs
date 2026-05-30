@@ -2638,6 +2638,151 @@ perms=$(( 8#755 | 8#10 ))   # both shells: 501 decimal
 
 ---
 
+## #58 — Quoted `*` on RHS of `[[ == ]]` still treated as glob
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ "a*b" == "a*b" ]] && echo literal; [[ "a*b" == a\*b ]] && echo bksl'
+literal
+bksl
+
+$ zshrs --zsh -c '[[ "a*b" == "a*b" ]] && echo literal; [[ "a*b" == a\*b ]] && echo bksl'
+bksl
+```
+
+The first test compares `"a*b"` against the quoted RHS `"a*b"`. In
+real zsh, quoting the RHS makes `*` literal — match succeeds, prints
+`literal`. zshrs treats the `*` as a glob metachar even though it's
+in double quotes, so it tries to match `"a*b"` (the lhs literal)
+against the pattern `a*b` (with `*` = any). That should succeed too,
+but zshrs evidently strips quotes too late and the match fails
+silently.
+
+The second test uses backslash escape (`a\*b`) and both shells
+agree — `*` is literal, match succeeds.
+
+**Where** — `src/ported/parse.rs` / `src/ported/cond.rs`: the `[[ ]]`
+RHS pattern compiler doesn't honor quote-state from the lexer when
+deciding whether `*` is metachar or literal. Real zsh keeps a
+per-character "was this in quotes" flag (the Meta-char convention)
+that survives into pattern compilation; zshrs flattens quotes too
+early.
+
+**Impact** — every `[[ "$x" == "$pat" ]]` test where `$pat` happens
+to contain `*` / `?` / `[` from user data behaves differently than
+zsh. Config validators, path-component sanity checks, regex-lite
+matchers all fail or false-positive.
+
+```sh
+expected='log_*.txt'
+got='log_*.txt'
+[[ "$got" == "$expected" ]]   # zsh: true   zshrs: depends on what's in $log_
+```
+
+**Workaround** — escape metachars on RHS explicitly:
+```sh
+[[ "$got" == "${expected//\*/\\*}" ]]
+```
+Or use the pattern as bare-unquoted with deliberate backslashes:
+`[[ "$got" == a\*b ]]`.
+
+---
+
+## #59 — `setopt no_clobber` allows `>>` to CREATE new file
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt no_clobber; echo a >> /tmp/zexa; echo b >> /tmp/zexa; cat /tmp/zexa'
+zsh:1: no such file or directory: /tmp/zexa
+zsh:1: no such file or directory: /tmp/zexa
+cat: /tmp/zexa: No such file or directory
+
+$ zshrs --zsh -c 'setopt no_clobber; echo a >> /tmp/zexa; echo b >> /tmp/zexa; cat /tmp/zexa'
+a
+b
+```
+
+Per `man zshoptions`:
+> **NO_CLOBBER**  Prevents `>` redirection from truncating existing
+> files. `>>` to a non-existent file is also an error unless
+> `APPEND_CREATE` is set.
+
+zshrs creates the file on `>>` even with `no_clobber` set and
+`append_create` unset. Real zsh refuses, errors out.
+
+**Where** — `src/ported/exec.rs` redirect handler for `O_APPEND`
+mode: doesn't check `opts.no_clobber && !opts.append_create` before
+adding `O_CREAT` to the open flags. Should `open(O_APPEND|O_WRONLY)`
+without `O_CREAT`, then ENOENT propagates as the "no such file"
+error.
+
+**Impact** — POSIX-strict log-append scripts that rely on
+`no_clobber` to catch typo'd paths silently create new garbage files
+instead of erroring.
+
+```sh
+# author thinks they're appending to existing /var/log/svc.log
+echo "$msg" >> /var/log/svc.lgo    # zsh: error (file doesn't exist)
+                                    # zshrs: silently creates the typo'd file
+```
+
+**Workaround** — explicit existence check:
+```sh
+[[ -f $logf ]] || { echo "no such log: $logf" >&2; return 1; }
+echo "$msg" >> $logf
+```
+Or set `setopt append_create` to explicitly opt-in to the
+zshrs/permissive behavior.
+
+---
+
+## #60 — `function {body}` (no name) parses + echoes stray `}`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'function {echo "empty name"}'
+zsh:1: parse error near `}'
+
+$ zshrs --zsh -c 'function {echo "empty name"}'
+empty name}
+```
+
+`function` keyword in zsh requires either a name or zero names
+(anonymous function uses `() { body }` syntax, NOT `function
+{ body }`). Real zsh treats `function {…}` as a parse error because
+`{` is parsed as the start of the name, not as the body brace.
+
+zshrs evidently splits `function` from `{echo`, treats `{echo` as
+the function name, then runs the rest as if `echo` was a literal
+command — but it leaks the closing `}` into the output, suggesting
+the brace-parser is in some intermediate state.
+
+**Where** — `src/ported/parse.rs::parse_function_def`: doesn't
+require a name token between `function` and `{` brace. Should reject
+when next token after `function` is `{`.
+
+**Impact** — accepts malformed input that zsh rejects. Worse, the
+stray `}` is echoed to stdout, so scripts that defensively wrap
+`function foo { … }` in nested constructs may produce surprising
+output if `function` is mis-typed without a name.
+
+```sh
+# typo: forgot the function name
+function {
+    echo "set up"
+}                     # zsh: parse error on line 1
+                       # zshrs: prints "set up\n}\n" to stdout
+```
+
+**Workaround** — always use `funcname() { … }` syntax (the POSIX
+form) which both shells parse identically. Or use the explicit
+anonymous form `() { body }` (no `function` keyword).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -2699,10 +2844,13 @@ perms=$(( 8#755 | 8#10 ))   # both shells: 501 decimal
 | 55 | `setopt err_return` doesn't fire on command failure | **port-bug** | explicit `\|\| return $?` |
 | 56 | Signal trap output captured into `$(...)` result | **port-bug** | guard cmd-sub output |
 | 57 | `setopt octal_zeroes` ignored by arith parser | **port-bug** | `8#NNN` explicit base |
+| 58 | `[[ "x*" == "x*" ]]` quoted-RHS-star still globbed | **port-bug** | escape `\*` on RHS |
+| 59 | `setopt no_clobber` allows `>>` to create new file | **port-bug** | pre-`touch` the file |
+| 60 | `function {body}` (no name) parses + stray `}` echo | **port-bug** | use `funcname() { body }` form |
 
-Of fifty-seven entries, two are fixed (5, 7), fifty-one remain open
+Of sixty entries, two are fixed (5, 7), fifty-four remain open
 port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
-53, 54, 55, 56, 57), and four were zsh-correct behavior misframed by
-demos (1, 2, 3, 6).
+53, 54, 55, 56, 57, 58, 59, 60), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
