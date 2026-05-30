@@ -15475,6 +15475,192 @@ result=$(_convert_input)
 
 ---
 
+## #292 — `case "$x" in $var)`/`$((expr)))`/`$(cmd)))` — case pattern doesn't expand variables/arith/cmdsub
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+# Variable in pattern:
+$ /opt/homebrew/bin/zsh -fc 'pat=y; case "y" in $pat) echo got ;; *) echo no ;; esac'
+got
+
+$ ./target/debug/zshrs --zsh -c 'pat=y; case "y" in $pat) echo got ;; *) echo no ;; esac'
+no
+
+# Arith in pattern:
+$ /opt/homebrew/bin/zsh -fc 'case "5" in $((5))) echo arith ;; *) echo no ;; esac'
+arith
+
+$ ./target/debug/zshrs --zsh -c 'case "5" in $((5))) echo arith ;; *) echo no ;; esac'
+no
+
+# Cmdsub in pattern:
+$ /opt/homebrew/bin/zsh -fc 'case "y" in $(echo y)) echo got ;; *) echo no ;; esac'
+got
+
+$ ./target/debug/zshrs --zsh -c 'case "y" in $(echo y)) echo got ;; *) echo no ;; esac'
+no
+```
+
+zsh expands `$var`, `$((expr))`, and `$(cmd)` inside case
+patterns before matching. zshrs treats them as literal text —
+the pattern doesn't resolve, so the match always fails and
+the default `*` arm runs.
+
+All three substitution forms are affected. The closing `)` of
+each pattern reaches the `case` parser intact, but the prefix
+expansion path doesn't fire.
+
+**Where** — `src/ported/exec.rs::eval_case_pattern`: doesn't
+invoke param/arith/cmdsub expansion on the pattern string
+before pattern-match. C-source `Src/exec.c::execcase` calls
+`paramsubst()` and `cmdoutsubst()` on each pattern entry
+before `pattmatch()`.
+
+**Impact** — major scripting blocker. Common dispatch
+patterns broken:
+
+```sh
+# Dispatch by computed type
+typeset -A handlers
+handlers=(json _handle_json yaml _handle_yaml)
+for input in "${args[@]}"; do
+    case "$input" in
+        ${handlers[json]}) ... ;;       # zsh: ok, zshrs: never matches
+        $(detect_format "$input")) ... ;;
+    esac
+done
+```
+
+Also breaks variable-driven switch patterns:
+```sh
+case "$X" in
+    "$expected_value") echo "match" ;;   # quoted form works in zsh
+    *) echo "no match" ;;
+esac
+```
+
+(Note: testing quoted form should confirm — may have different
+behavior than unquoted.)
+
+**Workaround** — pre-resolve expansions to a temporary
+parameter:
+```sh
+local _pat="$pat"      # or "$((expr))" / "$(cmd)"
+case "$x" in
+    "$_pat") echo got ;;
+esac
+```
+
+(May or may not help depending on whether the issue is
+expansion timing vs quoted-literal matching.)
+
+---
+
+## #293 — `arr[(i)pat]=value` — subscript flag on LHS of assignment silently fails
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); a[(i)blue]=YELLOW; echo "${a[@]}"'
+red YELLOW green
+
+$ ./target/debug/zshrs --zsh -c 'a=(red blue green); a[(i)blue]=YELLOW; echo "${a[@]}"'
+(empty — no output)
+```
+
+zsh's `arr[(i)pat]=value` syntax computes the index of the
+first match of `pat` in `arr` and assigns to that slot. So
+`a[(i)blue]` resolves to index 2 (where "blue" is), and the
+assignment makes `a[2]=YELLOW`.
+
+zshrs silently fails — the array is unchanged AND the line
+appears to produce no output (the subsequent `echo` returns
+empty, suggesting the assignment broke parsing). Likely the
+subscript-flag form isn't recognized in lvalue context.
+
+The read form `${a[(i)blue]}` (which returns the index)
+likely works (per zsh's documented index-search semantics).
+
+**Where** — `src/ported/parse/assignment.rs::parse_subscript_lhs`:
+subscript-flag forms `(i)`/`(I)`/`(R)`/`(r)` not recognized
+on the LHS. C-source `Src/parse.c::par_simple` recognizes
+the flag in subscript-context and converts to integer index
+before assignment dispatch.
+
+**Impact** — array element update by pattern-search broken:
+
+```sh
+# Update existing entry if found, else append
+update_or_add() {
+    local val="$1"
+    if [[ "${arr[(i)$val]}" -le "${#arr}" ]]; then
+        arr[(i)$val]="$val (updated)"      # zsh: updates; zshrs: silent fail
+    else
+        arr+=("$val")
+    fi
+}
+```
+
+**Workaround** — manual two-step:
+```sh
+local idx="${arr[(i)pat]}"
+arr[$idx]=YELLOW
+```
+
+---
+
+## #294 — Nested backtick `` `outer \`inner\` outer` `` parses wrong
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "`echo \`echo nested\``"'
+nested
+
+$ ./target/debug/zshrs --zsh -c 'echo "`echo \`echo nested\``"'
+echo nested`
+```
+
+POSIX backtick command-substitution allows nesting via
+backslash-escape: `` `outer \`inner\` outer` ``. zsh parses
+this correctly — the `\`` are escaped backticks that delimit
+the inner `cmdsub`. zshrs's parser doesn't honor the
+backslash escape and gets confused by the trailing backtick.
+
+Control: single-level backtick `` `cmd` `` works in both.
+The bug is specifically the escaped-backtick-within-backtick
+nesting.
+
+Modern code uses `$()` for nesting (which works fine — `$()`
+doesn't need escaping for nesting). But legacy/POSIX scripts
+still use the backtick form.
+
+**Where** — `src/ported/lex/backtick.rs::tokenize_backtick`:
+doesn't recognize `\`` as escape-then-literal-backtick during
+content scan. C-source `Src/lex.c::cmdoutsubst` decodes
+backslash sequences before recursive parse.
+
+**Impact** — POSIX-portable scripts that use backtick-nesting
+break:
+
+```sh
+# Common POSIX idiom: get the timestamp of the latest commit
+LAST_COMMIT_TIME=`date -d "\`git log -1 --format=%ai\`" +%s`
+# zsh: works
+# zshrs: parse error or wrong output
+```
+
+Most modern shell code avoids backticks entirely, so impact
+is moderate — affects ported legacy scripts.
+
+**Workaround** — convert to `$()` form (always preferable):
+```sh
+LAST_COMMIT_TIME=$(date -d "$(git log -1 --format=%ai)" +%s)
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -15770,9 +15956,12 @@ result=$(_convert_input)
 | 289 | `zmodload -L` output format wrong — bare module names vs `zmodload zsh/NAME` reproducible-script form | **port-bug** | manual format via `zmodload \| while read mod` |
 | 290 | `${(q)arr}`/`${(qq)arr}` drops empty array elements and doesn't always-quote simple chars (round-trip broken) | **port-bug** | per-element loop applying `(qq)` |
 | 291 | `$(case word in pat) ... esac)` parse error — case-pattern `)` mis-tracked as cmdsub closer | **port-bug** | extract case into a named function |
+| 292 | `case "$x" in $pat)`/`$((expr)))`/`$(cmd)))` — case pattern doesn't expand var/arith/cmdsub | **port-bug** | pre-resolve to temp param |
+| 293 | `arr[(i)pat]=value` — subscript flag on LHS of assignment silently fails | **port-bug** | manual `idx=${arr[(i)pat]}; arr[$idx]=val` |
+| 294 | Nested backtick `` `outer \`inner\` outer` `` parses wrong (backslash escape not honored) | **port-bug** | convert to `$()` form |
 
-Of two hundred and ninety-one entries, two are fixed (5, 7), two
-hundred and eighty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and ninety-four entries, two are fixed (5, 7), two
+hundred and eighty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -15792,5 +15981,6 @@ hundred and eighty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
-279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291),
-and four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291,
+292, 293, 294), and four were zsh-correct behavior misframed by
+demos (1, 2, 3, 6).
