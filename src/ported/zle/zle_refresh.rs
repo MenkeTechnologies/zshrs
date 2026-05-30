@@ -4043,4 +4043,117 @@ mod tests {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_refresh.c
+    // c:143 ZR_strlen / c:230 ZR_strncmp / c:476 zwcputc / c:496 zwcwrite /
+    // c:448 zle_free_highlight / c:465 tcoutclear / c:1097 wpfxlen / c:33 ZR_memset
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:143 — `ZR_strlen(empty)` returns 0.
+    #[test]
+    fn zr_strlen_empty_returns_zero() {
+        assert_eq!(ZR_strlen(&[]), 0, "empty → 0 length");
+    }
+
+    /// c:230 — `ZR_strncmp` is BOOLEAN (0=equal, 1=different), NOT
+    /// a signed ordinal like C `strncmp`. Pin the symmetric-boolean
+    /// contract per Src/Zle/zle_refresh.c:127 `return 1` arm.
+    /// Distinct inputs must produce 1 in BOTH directions.
+    #[test]
+    fn zr_strncmp_symmetric_boolean_for_distinct() {
+        let a = [REFRESH_ELEMENT { chr: 'a', atr: 0 }];
+        let b = [REFRESH_ELEMENT { chr: 'b', atr: 0 }];
+        let ab = ZR_strncmp(&a, &b, 1);
+        let ba = ZR_strncmp(&b, &a, 1);
+        assert_eq!(ab, 1, "ZR_strncmp(a, b, 1) = 1 (different)");
+        assert_eq!(ba, 1, "ZR_strncmp(b, a, 1) = 1 (different, symmetric)");
+    }
+
+    /// c:230 — `ZR_strncmp(x, x, n)` reflexive: same input → 0 (alt).
+    #[test]
+    fn zr_strncmp_reflexive_returns_zero_alt() {
+        let buf = [
+            REFRESH_ELEMENT { chr: 'x', atr: 0 },
+            REFRESH_ELEMENT { chr: 'y', atr: 0 },
+        ];
+        assert_eq!(ZR_strncmp(&buf, &buf, 2), 0,
+            "ZR_strncmp(x, x, n) must be 0");
+    }
+
+    /// c:496 — `zwcwrite("")` is idempotent across many calls.
+    #[test]
+    fn zwcwrite_empty_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..10 {
+            zwcwrite("");
+        }
+    }
+
+    /// c:476 — `zwcputc` returns void; safe for various chars.
+    #[test]
+    fn zwcputc_various_chars_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for c in ['a', '\n', '\t', '\0', '日'] {
+            zwcputc(c);
+        }
+    }
+
+    /// c:448 — `zle_free_highlight` is idempotent (alt 5-call).
+    #[test]
+    fn zle_free_highlight_idempotent_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..5 {
+            zle_free_highlight();
+        }
+    }
+
+    /// c:465 — `tcoutclear` for both bool arms is safe.
+    #[test]
+    fn tcoutclear_both_arms_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        tcoutclear(false);
+        tcoutclear(true);
+    }
+
+    /// c:1097 — `wpfxlen(empty, empty)` returns 0 (alt name).
+    #[test]
+    fn wpfxlen_both_empty_returns_zero_alt() {
+        assert_eq!(wpfxlen(&[], &[]), 0,
+            "empty + empty → 0 common prefix");
+    }
+
+    /// c:1097 — `wpfxlen` is symmetric: wpfxlen(a, b) == wpfxlen(b, a).
+    #[test]
+    fn wpfxlen_symmetric() {
+        let a = [REFRESH_ELEMENT { chr: 'a', atr: 0 },
+                 REFRESH_ELEMENT { chr: 'b', atr: 0 }];
+        let b = [REFRESH_ELEMENT { chr: 'a', atr: 0 },
+                 REFRESH_ELEMENT { chr: 'c', atr: 0 }];
+        assert_eq!(wpfxlen(&a, &b), wpfxlen(&b, &a),
+            "wpfxlen must be symmetric");
+    }
+
+    /// c:1097 — `wpfxlen(x, x)` returns full length (perfect prefix match).
+    #[test]
+    fn wpfxlen_identical_inputs_full_match() {
+        let buf = [
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'b', atr: 0 },
+            REFRESH_ELEMENT { chr: 'c', atr: 0 },
+        ];
+        let n = wpfxlen(&buf, &buf);
+        assert_eq!(n, 3, "x vs x → full length 3");
+    }
+
+    /// c:33 — `ZR_memset` n=0 on empty buf is safe.
+    #[test]
+    fn zr_memset_zero_n_safe() {
+        let mut buf: Vec<REFRESH_ELEMENT> = vec![];
+        ZR_memset(&mut buf, REFRESH_ELEMENT { chr: 'x', atr: 0 }, 0);
+    }
 }
