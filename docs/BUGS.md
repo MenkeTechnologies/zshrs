@@ -3609,6 +3609,174 @@ fi
 
 ---
 
+## #76 — `zmodload` (no args) reports 32 auto-loaded modules vs zsh's 1
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload | wc -l'
+       1
+
+$ ./target/debug/zshrs --zsh -c 'zmodload | wc -l'
+      32
+```
+
+zsh-bare reports only `zsh/main` loaded. zshrs reports 32 modules
+eagerly loaded at shell init:
+
+```
+zsh/zpty zsh/datetime zsh/zselect zsh/zutil zsh/attr zsh/curses
+zsh/files zsh/watch zsh/langinfo zsh/pcre zsh/regex zsh/zftp
+zsh/mapfile zsh/zprof zsh/termcap zsh/parameter zsh/computil
+zsh/net/tcp zsh/complist zsh/net/socket zsh/mathfunc zsh/cap
+zsh/clone zsh/param/private zsh/terminfo zsh/nearcolor
+zsh/db/gdbm zsh/complete zsh/stat zsh/sched zsh/zleparameter
+zsh/system
+```
+
+Also, the `zsh/main` entry is missing from zshrs's list — every
+zsh shell reports `zsh/main` as the always-present base module.
+
+This is the **master bug** for the eager-loading family — #64
+(PIPESTATUS from `zsh/pipestatus`-like), #65 (EPOCHSECONDS without
+explicit zmodload), #69 (sysparams from zsh/system). All those
+manifest because zshrs auto-loads everything.
+
+**Where** — `src/ported/init.rs::register_modules`: builds the
+module registry by pre-loading every module the binary has linked
+in. C-source `Src/init.c::init_main` only registers `zsh/main`;
+other modules wait for explicit `zmodload`.
+
+**Impact** — startup time penalty (loading 32 modules vs 1 — TCP,
+FTP, curses, GDBM all loaded even for shell scripts that need none
+of them). Plus all the namespace pollution from special params
+(#64, #69) and option flags from those modules.
+
+Real cost on macOS with debug build: every `zshrs -c '...'`
+invocation pays the 32-module init time, which is significant for
+sub-100ms shell-script orchestration loops.
+
+**Workaround** — none. The eager loading is at binary init time.
+Must be fixed in zshrs by switching to lazy-load (init module
+metadata table but defer dlopen/symbol-bind until first
+`zmodload zsh/xxx`).
+
+---
+
+## #77 — `${h[(k)-key]}` flag-lookup of leading-dash key returns empty
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=( [-a]=val1 ); echo "1: ${h[-a]}"; echo "2: ${h[(k)-a]}"'
+1: val1
+2: val1
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=( [-a]=val1 ); echo "1: ${h[-a]}"; echo "2: ${h[(k)-a]}"'
+1: val1
+2:
+```
+
+Direct subscript `${h[-a]}` works in both — `val1` retrieved.
+But the **(k)-flag form** `${h[(k)-a]}` returns empty in zshrs.
+
+`(k)` is "find the key by name match" — it's redundant for an
+assoc unless used with patterns or negative indexing. In zsh it's
+robust enough to look up `-a` directly.
+
+zshrs's `(k)` subscript-flag handler appears to interpret `-a` as
+a flag/option (because it starts with `-`) rather than a key
+literal.
+
+**Where** — `src/ported/paramsubst.rs::parse_subscript_flags`: the
+`(k)` flag's key argument is consumed by an `extern crate clap`-
+style arg parser that treats `-a` as a flag name, not as a string.
+Should be a positional argument capture, not flag parsing.
+
+**Impact** — anything that uses `zparseopts -A opts` then reads
+back via the `(k)` flag (the documented portable way to test
+membership) fails to find dash-prefixed option keys:
+
+```sh
+zmodload zsh/zutil
+zparseopts -E -A opts a: b c
+# opts contains [-a]=val, [-b]='', [-c]=''
+for opt in -a -b -c; do
+    if (( ${+opts[(k)$opt]} )); then
+        echo "saw $opt"
+    fi
+done
+# zsh: prints "saw -a", "saw -b", "saw -c"
+# zshrs: prints nothing
+```
+
+**Workaround** — direct subscript without `(k)` flag works:
+```sh
+[[ -n "${opts[$opt]+set}" ]] && echo "saw $opt"
+```
+
+---
+
+## #78 — `echoti` output emitted AFTER next command's stdout (buffer flush ordering)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echoti cup 0 0; echo done' | od -c
+0000000  033   [   1   ;   1   H   d   o   n   e  \n
+                                ^^^ cursor sequence FIRST
+                                                ^^^ then "done"
+
+$ ./target/debug/zshrs --zsh -c 'echoti cup 0 0; echo done' | od -c
+0000000    d   o   n   e  \n 033   [   1   ;   1   H
+                ^^^ "done" FIRST
+                                ^^^ then cursor sequence (wrong order!)
+```
+
+`echoti` writes terminfo escape sequences to stdout. zshrs's
+implementation buffers the output and flushes AFTER the next
+command's stdout writes, reversing the intended order.
+
+Anything depending on order — terminal positioning, color codes
+followed by content — comes out scrambled.
+
+**Where** — `src/ported/builtin_echoti.rs::output_termcap`:
+writes via a buffered `BufWriter` that doesn't flush before
+returning control to the next builtin. C-source
+`Src/Modules/termcap.c::output_termcap` writes via the `outsh`
+unbuffered output func.
+
+**Impact** — terminal manipulation idioms broken:
+
+```sh
+echoti cup 5 10    # move cursor to row 5, col 10
+print "label"      # write label at that position
+# zsh: label appears at (5,10)
+# zshrs: label appears at original cursor, then jumps to (5,10) at end
+```
+
+```sh
+echoti setaf 1     # set foreground red
+print "red text"
+echoti sgr0        # reset
+print "normal"
+# zsh: red text, then normal
+# zshrs: all text appears before any color codes — output garbled
+```
+
+`echotc` (the termcap variant) has the same problem since both
+share the buffered-writer path.
+
+**Workaround** — explicit fflush via `<&0` no-op or pipe through
+`cat -u`:
+```sh
+echoti cup 5 10
+print -u 2 ""       # write to stderr to bypass stdout buffering
+```
+Or use `printf '\e[%d;%dH' 6 11` directly to avoid the builtin.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -3688,11 +3856,14 @@ fi
 | 73 | `$ZSH_VERSION` includes `.0.3-test` suffix vs `5.9` | **port-bug** | parse `${ZSH_VERSION%%.0*}` |
 | 74 | `local -r` violation in fn doesn't abort script | **port-bug** | check fn exit status |
 | 75 | `typeset -i x; x="bad math"` silently coerces to 0 | **port-bug** | regex-validate input first |
+| 76 | `zmodload` lists 32 auto-loaded modules vs zsh's 1 | **port-bug** | none — startup-time bloat |
+| 77 | `${h[(k)-key]}` flag-lookup of dash key returns empty | **port-bug** | direct `${h[$opt]+set}` |
+| 78 | `echoti` output emitted AFTER next stdout (buf flush) | **port-bug** | direct `printf '\e[...'` |
 
-Of seventy-five entries, two are fixed (5, 7), sixty-nine remain
+Of seventy-eight entries, two are fixed (5, 7), seventy-two remain
 open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
-69, 70, 71, 72, 73, 74, 75), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+69, 70, 71, 72, 73, 74, 75, 76, 77, 78), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
