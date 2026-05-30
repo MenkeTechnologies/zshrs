@@ -6395,6 +6395,190 @@ Or use `${(j: :)hosts}` explicit-join form (works in heredoc).
 
 ---
 
+## #124 — `typeset -f` returns source-as-typed; zsh pretty-prints with indentation
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'outer() { inner() { echo "in inner"; }; inner; }; typeset -f outer'
+outer () {
+	inner () {
+		echo "in inner"
+	}
+	inner
+}
+
+$ ./target/debug/zshrs --zsh -c 'outer() { inner() { echo "in inner"; }; inner; }; typeset -f outer'
+outer () {
+	inner() { echo "in inner"; }; inner
+}
+```
+
+`typeset -f` should dump function bodies in zsh's canonical
+pretty-printed form: one statement per line, nested functions
+indented by tabs, brace placement consistent.
+
+zsh's output is the **reformatted/normalized** representation
+(parsed → AST → emitted with indent). zshrs's output is the
+**original source text** as the user typed it (semicolon-
+separated inline form preserved).
+
+The contents are semantically equivalent but the byte stream
+differs significantly — any test fixture comparing function
+output byte-for-byte fails.
+
+Per `man zshbuiltins`:
+> `typeset -f` — Print each function definition.
+
+The implicit convention (per all extant zsh installations) is
+that `-f` output goes through the prompt-output formatter, which
+indents nested constructs.
+
+**Where** — `src/ported/builtin_typeset.rs::print_function`:
+emits stored source text directly. C-source
+`Src/builtin.c::printfuncdef` calls `getpermtext` which walks
+the parsed AST and re-emits via `outputblock`/`outputblock_pr`
+with `\t` indentation.
+
+**Impact** — config-snapshot tools that dump+diff function
+definitions across shell versions get false positives:
+
+```sh
+# pre-flight check: snapshot installed fns
+expected=$(typeset -f compinit)
+... do work that may patch compinit ...
+new=$(typeset -f compinit)
+[[ "$expected" == "$new" ]] || alert "compinit changed"
+# zsh: stable (always-formatted)
+# zshrs: fluctuates based on source whitespace (inline vs multi-line)
+```
+
+**Workaround** — normalize whitespace before comparing:
+```sh
+norm_fn() { typeset -f "$1" | tr -s '[:space:]' ' '; }
+[[ "$(norm_fn fn)" == "$(norm_fn fn)" ]] && echo "same"
+```
+
+---
+
+## #125 — `var=${a[-1]}` assignment from negative subscript returns empty
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(1 2 3 4); last=${a[-1]}; echo "[$last]"'
+[4]
+
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3 4); last=${a[-1]}; echo "[$last]"'
+[]
+```
+
+Standalone `echo "${a[-1]}"` works in both shells — returns the
+last element. The bug appears specifically when the negative-
+subscript expansion is the **RHS of a variable assignment**:
+zshrs assigns empty string to `last`.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(1 2 3 4); echo "[${a[-1]}]"'
+[4]
+
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3 4); echo "[${a[-1]}]"'
+[4]
+```
+
+Direct expansion works. Only the assignment-context form `var=`
+fails.
+
+Verified with multiple assignment forms — same failure:
+```sh
+last=${a[-1]}       # empty
+last="${a[-1]}"     # empty
+declare last=${a[-1]} # empty
+```
+
+Related to bug #17 (`var=${arr[-1]}` unquoted in fn while
+loops) — that documented the symptom in fn-loop context;
+this bug shows the issue is more general.
+
+**Where** — `src/ported/paramsubst.rs::eval_subscript_neg`:
+when the negative-subscript evaluation happens in an
+assignment-RHS context, the value gets dropped before storage.
+Likely a context-flag check that's wrong — the `assignment`
+context path doesn't run the negative-subscript translation.
+C-source `Src/params.c::sethparam` runs the same `getarrelt`
+that the expansion side uses.
+
+**Impact** — every "pop last element" pattern silently
+produces empty values:
+
+```sh
+a=(host1 host2 host3 host4)
+while (( ${#a} > 0 )); do
+    last=${a[-1]}
+    a=("${a[@]:0:-1}")
+    process "$last"
+done
+# zsh: processes each host
+# zshrs: passes empty string each iteration
+```
+
+Combined with bug #120 (`a=("${a[@]:0:-1}")` on empty doesn't
+shrink), this loop also infinite-loops in zshrs.
+
+**Workaround** — explicit positive index using `${#a}`:
+```sh
+last=${a[${#a}]}    # positive subscript = ${#a}, gets last
+```
+
+---
+
+## #126 — `${s:N:}` (empty length suffix) silently empty; zsh errors
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="hello"; echo "[${s:0:2}${s:2:}]"' 2>&1
+zsh:1: closing brace expected
+
+$ ./target/debug/zshrs --zsh -c 's="hello"; echo "[${s:0:2}${s:2:}]"'
+[he]
+```
+
+`${s:N:}` with empty length specifier is malformed in zsh (zsh
+errors "closing brace expected" because length must be present
+when colon follows offset). zshrs silently treats it as
+zero-length substring (returns empty) instead of erroring.
+
+Variants of malformed substring syntax all behave like this:
+- `${s::}` — empty offset + empty length
+- `${s:2:}` — present offset, empty length
+- `${s:}` — only colon, no offset
+
+zsh refuses all; zshrs silently accepts and returns empty.
+
+**Where** — `src/ported/paramsubst.rs::parse_substring`:
+permissive parser accepts empty operands as zero-length. Should
+match C-source `Src/subst.c::getsubstr` strictness — error on
+empty operand after `:`.
+
+**Impact** — typos in substring expressions silently produce
+empty values instead of errors:
+
+```sh
+parse_field() {
+    local s=$1 n=${2:?length required}
+    echo "${s:0:n}"     # typo: missing variable expansion $
+}
+parse_field "hello" 3
+# zsh: errors on bad substring (or undefined behavior)
+# zshrs: returns empty silently → caller gets wrong data
+```
+
+**Workaround** — none from user side; the user must be careful
+with substring syntax in zshrs to avoid silent failures.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -6522,15 +6706,18 @@ Or use `${(j: :)hosts}` explicit-join form (works in heredoc).
 | 121 | `[[ -N -op -M ]]` negative-number operands error "unknown condition" | **port-bug** | use `(( ))` arith |
 | 122 | Exit status of `$()` inside `${x:-$()}` not propagated | **port-bug** | pre-eval cmdsub |
 | 123 | `${arr[@]}` inside heredoc returns only first element | **port-bug** | `${(j: :)arr}` or pre-join |
+| 124 | `typeset -f` source-as-typed vs zsh pretty-printed | **port-bug** | normalize whitespace |
+| 125 | `var=${a[-1]}` assignment returns empty (echo works) | **port-bug** | `var=${a[${#a}]}` positive idx |
+| 126 | `${s:N:}` empty length silently returns empty (zsh errors) | **port-bug** | careful syntax |
 
-Of one hundred twenty-three entries, two are fixed (5, 7), one
-hundred seventeen remain open port-bugs/perf-issues (4, 8, 9, 10,
-11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
-62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
-79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
-96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
-110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
-123), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+Of one hundred twenty-six entries, two are fixed (5, 7), one
+hundred twenty remain open port-bugs/perf-issues (4, 8, 9, 10, 11,
+12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
+63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
+97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
+111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
+124, 125, 126), and four were zsh-correct behavior misframed by
+demos (1, 2, 3, 6).
