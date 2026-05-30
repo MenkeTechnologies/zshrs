@@ -1203,6 +1203,56 @@ names (`mkdir`, `rm`, etc.) opt-in.
 
 ---
 
+## #29 — Literal `argv[N]` inside double quotes gets stripped when string also contains `$other[idx]`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "argv[1]=$a[1]"'
+argv[1]=x
+
+$ zshrs --zsh -c 'a=(x y z); echo "argv[1]=$a[1]"'
+x
+```
+
+The literal text `argv[1]=` inside the double-quoted string is
+silently consumed by zshrs. The output drops the prefix and shows
+only the value of `$a[1]`.
+
+Triggers when ALL of:
+  1. inside double quotes
+  2. literal text contains the exact name `argv[<idx>]`
+  3. the same string also contains a separate `$var[idx]` expansion
+
+Does NOT trigger for any other parameter name. Tested
+`funcstack[1]=$a[1]`, `path[1]=$a[1]`, `pipestatus[1]=$a[1]`,
+`fpath[1]=$a[1]`, `functrace[1]=$a[1]`, `funcfiletrace[1]=$a[1]`,
+`funcsourcetrace[1]=$a[1]` — all work correctly. Only `argv` fails.
+
+zshrs's lexer (port of `Src/lex.c` + `Src/subst.c paramsubst`)
+appears to have a special-case for `argv` that triggers
+parameter-style subscript expansion on a bare (no `$`) identifier
+within double quotes, but only when followed somewhere in the same
+string by a legitimate `$var[idx]` reference (the second expansion
+probably re-tickles the parser's "we're in subscript mode" flag).
+
+**Where** — `src/ported/subst.rs::stringsubst` (port of
+`Src/subst.c::stringsubst`) — the double-quoted-string state
+machine's identifier scanner reuses the same code path for `$argv`
+and bare `argv` recognition.
+
+**Workaround** — escape the `[`:
+```sh
+echo "argv\[1\]=$a[1]"   # zsh: argv[1]=x ; zshrs: argv[1]=x
+```
+Or use `\$argv[1]` literal:
+```sh
+echo "\\argv[1]=$a[1]"
+```
+Or just don't use the literal name `argv` in messages.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -1235,8 +1285,9 @@ names (`mkdir`, `rm`, etc.) opt-in.
 | 26 | `emulate -L sh` missing KSH_ARRAYS | **port-bug** | `setopt ksh_arrays` explicit |
 | 27 | `caller`/`help` extra builtins shadow user fns | **port-bug** | `disable caller help` |
 | 28 | `mkdir`/`rm`/`mv`/etc. shadowed as shell builtins | **port-bug** | `command rm` to bypass |
+| 29 | `"argv[N]=..."` literal stripped inside double quotes | **port-bug** | escape `\[` `\]` |
 
-Of twenty-eight entries, two are fixed (5, 7), twenty-two remain
+Of twenty-nine entries, two are fixed (5, 7), twenty-three remain
 open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28), and four were
+18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29), and four were
 zsh-correct behavior misframed by demos (1, 2, 3, 6).
