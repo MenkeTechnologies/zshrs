@@ -14473,6 +14473,153 @@ in zshrs but should be unified.
 
 ---
 
+## #274 — `$PROMPT3` autovar default empty (zsh: colored `-->>>>` select prompt)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$PROMPT3]"'
+[[1;34m-->>>> [0m]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[$PROMPT3]"'
+[]
+```
+
+`$PROMPT3` is the prompt template displayed when the `select`
+builtin asks the user to choose a numbered option. zsh has
+a built-in ANSI-blue-colored default `-->>>> `. zshrs has
+empty default.
+
+Same family as #269 (`$SPROMPT` empty) — multiple prompt
+defaults missing in zshrs's autovar table:
+- `PROMPT3` (select) — empty
+- `SPROMPT` (spell-correct) — empty
+- `PROMPT4` (xtrace, per #92) — empty
+- `RPROMPT` / `RPS1` — empty
+
+**Where** — `src/ported/params/prompts.rs::register_prompt_defaults`:
+PROMPT3 either missing from the autovar table or registered
+with empty value. C-source `Src/init.c::setupshell` initializes
+all four prompts via `setiparam("PROMPT3", "%SSELECT> ")` etc.
+
+**Impact** — the `select` builtin loop has no visible prompt
+when zshrs is used, making interactive menus unusable. Less
+critical than other prompts (most scripts don't use `select`)
+but the missing prompt makes the feature seem broken.
+
+**Workaround** — explicit init in `.zshrc`:
+```sh
+PROMPT3="?# "
+```
+
+---
+
+## #275 — Array splice `a[1,0]=(...)` reverse-range form doesn't prepend — replaces first element
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(b c); a[1,0]=(A); echo "[${a[@]}]"'
+[A b c]
+
+$ ./target/debug/zshrs --zsh -c 'a=(b c); a[1,0]=(A); echo "[${a[@]}]"'
+[A c]
+```
+
+zsh's array-splice form `a[N,M]=(...)` with reverse range
+(N > M) means "insert at position N without removing any
+elements." It's the idiomatic zsh "prepend" form.
+
+zshrs treats `a[1,0]=(A)` as if it were `a[1]=A` — replacing
+the first element rather than inserting. The second element
+`b` is silently lost (`[A c]` instead of `[A b c]`).
+
+With multiple new elements `a[1,0]=(A B)`:
+- zsh: `[A B b c]` (both prepended, all originals retained)
+- zshrs: `[A B c]` (replaces position 1 and 2 with A and B,
+  losing original `b`)
+
+This is data-corruption — original array elements are lost
+silently when using the reverse-range prepend form.
+
+**Where** — `src/ported/params/array.rs::handle_splice_assign`:
+doesn't detect reverse-range as "prepend at N without
+removal." C-source `Src/params.c::setarrvalue` with
+`ASSPM_SPLICE` flag checks `start > end` and routes to
+the insert-without-remove path.
+
+**Impact** — code using the canonical zsh prepend idiom
+silently corrupts arrays:
+
+```sh
+# Common pattern: prepend a directory to fpath
+fpath[1,0]=(/my/custom/funcs)
+# zsh: fpath = (/my/custom/funcs ${original_fpath})
+# zshrs: fpath = (/my/custom/funcs ${fpath_from_idx_2_onward})
+#        — original_fpath[1] is silently dropped
+```
+
+Combined with #234 (`+U` corrupts arrays) and similar gaps,
+zshrs has multiple data-corruption bugs in array operations.
+
+**Workaround** — explicit prepend via array literal:
+```sh
+fpath=(/my/custom/funcs "${fpath[@]}")
+```
+
+---
+
+## #276 — `${funcstack[@]}` array empty inside nested function (zsh: shows call stack)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'g() { echo "fs=[${funcstack[@]}]"; }; f() { g; }; f'
+fs=[g f]
+
+$ ./target/debug/zshrs --zsh -c 'g() { echo "fs=[${funcstack[@]}]"; }; f() { g; }; f'
+fs=[]
+```
+
+`$funcstack` is the array tracking the current function call
+stack — `funcstack[1]` is the innermost (currently-running)
+function, `funcstack[2]` its caller, etc. zsh fills it
+correctly; zshrs leaves it empty in nested function calls.
+
+Same family as #237 (`funcfiletrace`/`functrace` format
+broken) — the function-call-stack introspection machinery
+has multiple gaps:
+- `funcstack` — empty (this bug)
+- `funcfiletrace` — wrong format (#237)
+- `functrace` — wrong format (#237)
+- `funcsourcetrace` — likely also broken (not tested here)
+
+**Where** — `src/ported/exec.rs::enter_function`: doesn't push
+fn name onto the `funcstack` parameter table. C-source
+`Src/exec.c::doshfunc` updates `funcstack` (and friends) on
+each function call/return.
+
+**Impact** — debugging/tracing code can't introspect where it
+was called from:
+
+```sh
+log_caller() {
+    echo "[caller=${funcstack[2]}] $*" >&2
+}
+process_data() {
+    log_caller "starting"   # zsh: "[caller=process_data] starting"
+                            # zshrs: "[caller=] starting"
+}
+```
+
+Stack-trace plugins, recursion-detection guards, and "what
+function am I called from" diagnostics all blind in zshrs.
+
+**Workaround** — manually track call stack via a parallel
+array updated on entry/exit (cumbersome).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -14750,9 +14897,12 @@ in zshrs but should be unified.
 | 271 | `h=([k]=v)` bash-style assoc init treated as glob — errors "no matches found" | **port-bug** | use flat-pairs `h=(k v k v)` instead |
 | 272 | `typeset -axU` `-U` dedup not applied when combined with `-x` (export) | **port-bug** | separate into `typeset -aU` then `typeset -x` |
 | 273 | `TIMEFMT` autovar in inconsistent state — value reads correctly but `(t)`/`${-NONE}` signal "unset" | **port-bug** | explicit `[[ -z ]]` check before := defaulting |
+| 274 | `$PROMPT3` autovar default empty — zsh: colored `-->>>>` select prompt | **port-bug** | explicit `PROMPT3=...` init |
+| 275 | Array splice `a[1,0]=(...)` reverse-range form replaces first elem instead of prepending (data loss) | **port-bug** | explicit `a=(NEW "${a[@]}")` |
+| 276 | `${funcstack[@]}` array empty in nested fn — breaks caller-introspection / stack-trace plugins | **port-bug** | manual call-stack tracking |
 
-Of two hundred and seventy-three entries, two are fixed (5, 7), two
-hundred and sixty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and seventy-six entries, two are fixed (5, 7), two
+hundred and seventy remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -14771,5 +14921,5 @@ hundred and sixty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
-266, 267, 268, 269, 270, 271, 272, 273), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276), and four
+were zsh-correct behavior misframed by demos (1, 2, 3, 6).
