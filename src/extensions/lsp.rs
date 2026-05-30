@@ -1984,12 +1984,62 @@ fn hover(state: &State, params: &Value) -> Value {
 /// those are routine code comments, not doc strings.
 pub(crate) fn find_user_symbol_doc(text: &str, name: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
-    // Two passes: prefer the first definition WITH a `##` doc-block
-    // (richer card); if none has docs, fall back to the first
-    // definition WITHOUT docs and render a minimal card so hover still
-    // tells the user "yes, this symbol IS defined here." Without this
-    // fallback, hovering on any UDF that lacks a doc-string yields
-    // null and the editor silently goes blank.
+    // PRIMARY: AST-walk via SymbolTable::build. Returns every Func /
+    // Global / Local decl in the current file with line numbers. This
+    // is the correct source of truth — it sees `function foo()`,
+    // `bar=value`, `local x=42` exactly as the parser does, without
+    // false matches on `# bar=value` (comment) or `"foo=…"` (string).
+    //
+    // Previously this function used `symbol_decl_kind` (text-prefix
+    // matching) which couldn't tell a real `local s1=…` from a string
+    // `"local s1=…"` inside a quoted argument, and missed multi-line
+    // function-decl variants. Switched to AST so the hover card is
+    // grounded in real parsed decls only.
+    //
+    // FALLBACK: if the parser fails (mid-edit, broken syntax), drop
+    // to the text-based scanner so hover doesn't silently go blank
+    // during typing.
+    if let Some(table) = crate::lsp_symbols::SymbolTable::build(text) {
+        // Two passes: prefer the first decl WITH a `##` doc-block
+        // (richer card); fall back to a minimal card when no doc-block
+        // exists so hover still confirms "yes, defined here."
+        let mut undocumented: Option<(u32, &'static str, &str)> = None;
+        for sym in &table.symbols {
+            if sym.name != name {
+                continue;
+            }
+            let line_idx = sym.decl_line as usize;
+            let def_line = lines.get(line_idx).copied().unwrap_or("");
+            // SymbolTable classifies `alias foo=…` declarations as Func
+            // (alias creates a callable binding). Re-discriminate from
+            // the line prefix so the hover card says "user-defined
+            // alias" instead of "user-defined function".
+            let line_trim = def_line.trim_start();
+            let kind = if line_trim.starts_with("alias ") || line_trim.starts_with("alias\t") {
+                "alias"
+            } else {
+                match sym.kind {
+                    crate::lsp_symbols::SymbolKind::Func => "function",
+                    crate::lsp_symbols::SymbolKind::Global => "parameter",
+                    crate::lsp_symbols::SymbolKind::Local => "parameter",
+                }
+            };
+            let doc_block = collect_doc_block_above(&lines, line_idx);
+            if !doc_block.is_empty() {
+                return Some(render_user_doc_card(name, kind, def_line.trim(), &doc_block));
+            }
+            if undocumented.is_none() {
+                undocumented = Some((sym.decl_line, kind, def_line));
+            }
+        }
+        if let Some((_, kind, line)) = undocumented {
+            return Some(render_user_doc_card_no_block(name, kind, line.trim()));
+        }
+        // AST table found no match — fall through to the text-prefix
+        // scanner below for any decl shape AST misses entirely.
+    }
+    // Parser failed OR AST didn't find the name — fall back to text
+    // scanner so hover doesn't go blank.
     let mut undocumented: Option<(usize, &'static str, &str)> = None;
     for (i, line) in lines.iter().enumerate() {
         let kind = match symbol_decl_kind(line, name) {
@@ -5738,11 +5788,11 @@ fn definition(state: &State, params: &Value) -> Value {
         _ => return Value::Null,
     };
     let bare = word.strip_prefix('$').unwrap_or(&word);
-    // Try AST first — scans every file in the workspace for a
-    // `FuncDef` whose name matches, or a top-level assignment if the
-    // cursor is on a `$var` reference. Falls through to the textual
-    // single-file scan below on parse failure.
-    if let Some(v) = definition_via_ast(state, &word, bare) {
+    // Try AST first — walks active file + transitively-sourced files
+    // (via `source X` / `. X` / `zsource X`) for a matching FuncDef
+    // or top-level assignment. Falls through to the textual single-
+    // file scan below on parse failure.
+    if let Some(v) = definition_via_ast(state, uri, text, &word, bare) {
         return v;
     }
     // Textual fallback (single file only, function defs only).
@@ -5775,7 +5825,13 @@ fn definition(state: &State, params: &Value) -> Value {
 ///   per-file shadowing; surface all and let the client pick)
 /// * `None` if any active-file parse fails or no decl is found —
 ///   caller falls back to the textual scan.
-fn definition_via_ast(state: &State, word: &str, bare: &str) -> Option<Value> {
+fn definition_via_ast(
+    state: &State,
+    active_uri: &str,
+    active_text: &str,
+    word: &str,
+    bare: &str,
+) -> Option<Value> {
     use crate::lsp_symbols::{find_ast_occurrences, SymbolKind};
     // `$x` cursor → look up Global decl. Bare cursor → look up Func
     // decl. (Locals don't cross files.) For bare words we also try
@@ -5785,44 +5841,22 @@ fn definition_via_ast(state: &State, word: &str, bare: &str) -> Option<Value> {
     } else {
         SymbolKind::Func
     };
+    // Cross-file scope in zsh is OPT-IN via `source X` / `. X` /
+    // `zsource X`. Walk active file + transitively-sourced files only.
+    // Previously this iterated `state.all_docs()` indiscriminately,
+    // returning false-positive jumps to unrelated workspace files that
+    // happened to share a symbol name. Fixed: build the source-chain
+    // BFS via AST (`collect_sourced_paths`) and only search inside it.
+    let files = collect_active_and_sourced_files(state, active_uri, active_text);
     let mut hits: Vec<Value> = Vec::new();
-    for (uri, src) in state.all_docs() {
-        let lines = find_ast_occurrences(&src, bare, kind.clone());
-        for line in lines {
-            // Only count decl-shaped occurrences. For Func kind that's
-            // any `FuncDef.names` match (the walker only emits at the
-            // FuncDef line for Func, plus call-site lines — discriminate
-            // by re-reading the line). For Global it's any line that
-            // starts an assignment / `local`/`typeset`.
-            if !line_is_decl(&src, line, bare, &kind) {
-                continue;
-            }
-            if let Some((start, end)) = find_first_word_col(&src, line, bare) {
-                hits.push(json!({
-                    "uri": uri,
-                    "range": {
-                        "start": { "line": line, "character": start },
-                        "end":   { "line": line, "character": end },
-                    },
-                }));
-            }
-        }
-    }
-    if hits.is_empty() {
-        // Fallback once for Global → Func or vice versa, in case the
-        // cursor's `$` heuristic guessed wrong.
-        let alt = if matches!(kind, SymbolKind::Global) {
-            SymbolKind::Func
-        } else {
-            SymbolKind::Global
-        };
-        for (uri, src) in state.all_docs() {
-            let lines = find_ast_occurrences(&src, bare, alt.clone());
+    let scan = |kind: SymbolKind, hits: &mut Vec<Value>| {
+        for (uri, src) in &files {
+            let lines = find_ast_occurrences(src, bare, kind.clone());
             for line in lines {
-                if !line_is_decl(&src, line, bare, &alt) {
+                if !line_is_decl(src, line, bare, &kind) {
                     continue;
                 }
-                if let Some((start, end)) = find_first_word_col(&src, line, bare) {
+                if let Some((start, end)) = find_first_word_col(src, line, bare) {
                     hits.push(json!({
                         "uri": uri,
                         "range": {
@@ -5833,12 +5867,135 @@ fn definition_via_ast(state: &State, word: &str, bare: &str) -> Option<Value> {
                 }
             }
         }
+    };
+    scan(kind.clone(), &mut hits);
+    if hits.is_empty() {
+        // Fallback once for Global → Func or vice versa, in case the
+        // cursor's `$` heuristic guessed wrong.
+        let alt = if matches!(kind, SymbolKind::Global) {
+            SymbolKind::Func
+        } else {
+            SymbolKind::Global
+        };
+        scan(alt, &mut hits);
     }
     match hits.len() {
         0 => None,
         1 => Some(hits.into_iter().next().unwrap()),
         _ => Some(Value::Array(hits)),
     }
+}
+
+/// Walk the source graph reachable from `active_uri` (BOTH directions:
+/// files the active file transitively sources, AND files that source
+/// the active file — i.e. dependents). Returns `(uri, text)` for every
+/// file in the source-graph component containing `active_uri`.
+///
+/// The two-direction walk is the correct scope for rename / references:
+/// a function declared in `lib.zsh` and called from `rc.zsh` (which has
+/// `source lib.zsh`) needs to be findable from EITHER cursor position.
+///
+/// Forward = outgoing sources via AST `collect_sourced_paths`.
+/// Reverse = scan every workspace file; if its forward chain contains
+///           any URI already in the component, add it.
+///
+/// Cycle-guarded; depth- and breadth-capped (MAX_FILES) to keep
+/// pathological rc chains from hanging the LSP. Files reached this way
+/// are read fresh from disk so edits propagate without an explicit
+/// didChangeWatchedFiles event.
+fn collect_active_and_sourced_files(
+    state: &State,
+    active_uri: &str,
+    active_text: &str,
+) -> Vec<(String, String)> {
+    const MAX_FILES: usize = 256;
+
+    // Helper: read text for a URI, preferring open-doc → workspace cache → disk.
+    let read_text = |uri: &str| -> Option<String> {
+        if uri == active_uri {
+            return Some(active_text.to_string());
+        }
+        state
+            .docs
+            .get(uri)
+            .cloned()
+            .or_else(|| state.workspace_files.get(uri).cloned())
+            .or_else(|| file_uri_to_path(uri).and_then(|p| std::fs::read_to_string(p).ok()))
+    };
+
+    // Forward BFS: active + everything it transitively sources.
+    let mut component: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    component.insert(active_uri.to_string(), active_text.to_string());
+    let mut queue: Vec<String> = vec![active_uri.to_string()];
+    while let Some(uri) = queue.pop() {
+        if component.len() >= MAX_FILES {
+            break;
+        }
+        let parent_text = match component.get(&uri).cloned().or_else(|| read_text(&uri)) {
+            Some(t) => t,
+            None => continue,
+        };
+        let parent_dir = file_uri_to_path(&uri)
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        for sourced_path in crate::lsp_symbols::collect_sourced_paths(&parent_text, &parent_dir) {
+            let sourced_uri = format!("file://{}", sourced_path.display());
+            if component.contains_key(&sourced_uri) {
+                continue;
+            }
+            if let Some(t) = read_text(&sourced_uri) {
+                component.insert(sourced_uri.clone(), t);
+                queue.push(sourced_uri);
+            }
+        }
+    }
+
+    // Reverse: scan workspace files; if any of them forward-source a
+    // file already in `component`, pull them in (transitively). Repeat
+    // until fixed point (or MAX_FILES).
+    loop {
+        if component.len() >= MAX_FILES {
+            tracing::warn!(
+                target: "zshrs::lsp::source_chain",
+                walked = component.len(),
+                "source-graph component hit MAX_FILES cap",
+            );
+            break;
+        }
+        let before = component.len();
+        // Snapshot URIs to avoid mutating during iteration. Iterate
+        // BOTH `state.docs` (open editor buffers) and `workspace_files`
+        // (cached unopened files), since dependents may live in either.
+        let candidates: Vec<(String, String)> = state
+            .all_docs()
+            .into_iter()
+            .filter(|(u, _)| !component.contains_key(u.as_str()))
+            .collect();
+        for (uri, src) in candidates {
+            let parent_dir = file_uri_to_path(&uri)
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let mut sources_into_component = false;
+            for sourced_path in crate::lsp_symbols::collect_sourced_paths(&src, &parent_dir) {
+                let sourced_uri = format!("file://{}", sourced_path.display());
+                if component.contains_key(&sourced_uri) {
+                    sources_into_component = true;
+                    break;
+                }
+            }
+            if sources_into_component {
+                component.insert(uri, src);
+                if component.len() >= MAX_FILES {
+                    break;
+                }
+            }
+        }
+        if component.len() == before {
+            break;
+        }
+    }
+
+    component.into_iter().collect()
 }
 
 /// True when `(line, name)` in `src` is a *declaration* site for the
@@ -6036,12 +6193,17 @@ fn references_via_ast(
     {
         Some(sym) => (sym.name.clone(), sym.kind.clone()),
         None => {
+            // Look for the kind in source-chain-reachable files only.
+            // (Previously scanned `state.all_docs()` which let unrelated
+            // workspace files seed the kind — wrong scope, same FAKE
+            // class of bug as the cross-file emission below.)
+            let chain_files = collect_active_and_sourced_files(state, active_uri, active_text);
             let mut found: Option<SymbolKind> = None;
-            'outer: for (other_uri, src) in state.all_docs() {
+            'outer: for (other_uri, src) in &chain_files {
                 if other_uri == active_uri {
                     continue;
                 }
-                let Some(t) = SymbolTable::build(&src) else {
+                let Some(t) = SymbolTable::build(src) else {
                     continue;
                 };
                 for s in &t.symbols {
@@ -6103,18 +6265,29 @@ fn references_via_ast(
         }
     }
 
-    // Cross-file: only for symbols that cross file boundaries.
+    // Cross-file: only for symbols that cross file boundaries via an
+    // EXPLICIT `source X` / `. X` / `zsource X` chain rooted at the
+    // active file. Variables in unrelated scripts are SEPARATE
+    // variables — zsh has no implicit cross-file scope.
+    //
+    // Previously this block iterated `state.all_docs()` indiscriminately,
+    // emitting every same-name match in the entire workspace. Users
+    // (correctly) called this FAKE: hovering `s1` in 278_rps.zsh would
+    // jump to a `s1` defined in 999_unrelated.zsh just because the name
+    // matched. Cross-file scope in zsh is opt-in via `source`; the BFS
+    // below is the correct mechanism. Removed the indiscriminate sweep.
     if !matches!(kind, SymbolKind::Local) {
-        // Track every URI already walked so source-chain following
-        // (below) doesn't re-emit duplicate locations.
-        let mut walked: std::collections::HashSet<String> = std::collections::HashSet::new();
-        walked.insert(active_uri.to_string());
-        for (uri, src) in state.all_docs() {
+        // Use the shared source-graph component helper: walks both
+        // outgoing sources (files this one imports) AND incoming
+        // sources (files that import this one — for "rename a decl,
+        // find all callers" semantics). Pure AST-based via
+        // `collect_sourced_paths` so canonicalize / dedup is right.
+        let component = collect_active_and_sourced_files(state, active_uri, active_text);
+        for (uri, src) in &component {
             if uri == active_uri {
-                continue;
+                continue; // already emitted above
             }
-            walked.insert(uri.clone());
-            let lines = find_ast_occurrences(&src, &name, kind.clone());
+            let lines = find_ast_occurrences(src, &name, kind.clone());
             let src_lines: Vec<&str> = src.lines().collect();
             for line in lines {
                 if let Some(lt) = src_lines.get(line as usize) {
@@ -6130,79 +6303,10 @@ fn references_via_ast(
                 }
             }
         }
-
-        // ── Source-chain following ───────────────────────────────────
-        // BFS over `source X` / `. X` / `zsource X` (zshrs daemon
-        // variant) commands found via AST walk. Pulls in files OUTSIDE
-        // the workspace root that the active file depends on. Cycle-
-        // guarded; depth-capped to keep pathological rc chains from
-        // hanging the LSP. Files reached this way are NOT cached —
-        // they're read fresh each call so edits propagate without an
-        // explicit didChangeWatchedFiles event.
-        let mut queue: Vec<String> = vec![active_uri.to_string()];
-        // Seed with every workspace file too — sourced files may live
-        // off any of them, not just the active doc.
-        for (uri, _) in state.all_docs() {
-            queue.push(uri);
-        }
-        const MAX_FILES: usize = 256;
-        while let Some(uri) = queue.pop() {
-            if walked.len() >= MAX_FILES {
-                tracing::warn!(
-                    target: "zshrs::lsp::references_ast",
-                    walked = walked.len(),
-                    "source-chain hit MAX_FILES cap; stopping BFS",
-                );
-                break;
-            }
-            // Find this file's text in the open-doc map or read it
-            // from disk if we have a file:// URI.
-            let parent_text = state
-                .docs
-                .get(&uri)
-                .cloned()
-                .or_else(|| state.workspace_files.get(&uri).cloned())
-                .or_else(|| file_uri_to_path(&uri).and_then(|p| std::fs::read_to_string(p).ok()));
-            let Some(parent_text) = parent_text else {
-                continue;
-            };
-            let parent_dir = file_uri_to_path(&uri)
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
-            for sourced_path in crate::lsp_symbols::collect_sourced_paths(&parent_text, &parent_dir)
-            {
-                let sourced_uri = format!("file://{}", sourced_path.display());
-                if walked.contains(&sourced_uri) {
-                    continue;
-                }
-                walked.insert(sourced_uri.clone());
-                let Ok(sourced_text) = std::fs::read_to_string(&sourced_path) else {
-                    continue;
-                };
-                let lines = find_ast_occurrences(&sourced_text, &name, kind.clone());
-                let src_lines: Vec<&str> = sourced_text.lines().collect();
-                for line in lines {
-                    if let Some(lt) = src_lines.get(line as usize) {
-                        for (s, e) in find_all_word_cols_kinded(lt, &name, is_var) {
-                            out.push(json!({
-                                "uri": sourced_uri,
-                                "range": {
-                                    "start": { "line": line, "character": s },
-                                    "end":   { "line": line, "character": e },
-                                },
-                            }));
-                        }
-                    }
-                }
-                // Push for transitive BFS — sourced file may itself
-                // source more files.
-                queue.push(sourced_uri);
-            }
-        }
         tracing::debug!(
             target: "zshrs::lsp::references_ast",
-            files_walked = walked.len(),
-            "source-chain BFS done",
+            files_in_component = component.len(),
+            "source-graph component walked",
         );
     }
 
@@ -11541,14 +11645,17 @@ foo() { echo second }\n\
         let lib_path = tmp.join("lib.zsh");
         let rc_path = tmp.join("rc.zsh");
         std::fs::write(&lib_path, "function greet { echo hi }\n").unwrap();
-        std::fs::write(&rc_path, "greet\ngreet world\n").unwrap();
+        // rc.zsh MUST source lib.zsh — otherwise the cross-file lookup
+        // would be FAKE (matching `greet` across unrelated files just
+        // because the name matches, with no actual scope linkage).
+        // Cross-file scope in zsh is opt-in via `source X`.
+        let rc_text = format!("source {}\ngreet\ngreet world\n", lib_path.display());
+        std::fs::write(&rc_path, &rc_text).unwrap();
         let rc_uri = format!("file://{}", rc_path.display());
 
         let mut state = State::default();
         // Only `rc.zsh` is in the editor — `lib.zsh` is on disk.
-        state
-            .docs
-            .insert(rc_uri.clone(), "greet\ngreet world\n".into());
+        state.docs.insert(rc_uri.clone(), rc_text.clone());
         // Simulate the `initialize` workspace handoff.
         let init = json!({ "rootUri": format!("file://{}", tmp.display()) });
         ingest_workspace_init(&mut state, &init);
@@ -11559,17 +11666,27 @@ foo() { echo second }\n\
             "workspace walk picked up lib.zsh: keys={:?}",
             state.workspace_files.keys().collect::<Vec<_>>(),
         );
+        // On macOS `/var` is a symlink to `/private/var`. The
+        // source-chain BFS canonicalizes `source X` targets (so
+        // symlinks don't double-emit), which means the URI in the
+        // rename result is the CANONICAL path. Use that for the
+        // contains_key assertion below.
+        let canon_lib_path = std::fs::canonicalize(&lib_path).unwrap_or(lib_path.clone());
+        let canon_lib_uri = format!("file://{}", canon_lib_path.display());
         // Rename `greet` from the rc.zsh call site — must touch both.
+        // Cursor on line 1 col 0 since rc.zsh now starts with the
+        // `source lib.zsh` directive on line 0; the first `greet` call
+        // site is on line 1.
         let params = json!({
             "textDocument": { "uri": rc_uri },
-            "position": { "line": 0, "character": 0 },
+            "position": { "line": 1, "character": 0 },
             "context": { "includeDeclaration": true },
             "newName": "salute",
         });
         let r = rename(&state, &params);
         let changes = r["changes"].as_object().expect("changes map");
         assert!(
-            changes.contains_key(&lib_uri),
+            changes.contains_key(&canon_lib_uri),
             "lib.zsh (workspace) edited: keys={:?}",
             changes.keys().collect::<Vec<_>>(),
         );
@@ -11579,7 +11696,7 @@ foo() { echo second }\n\
             changes.keys().collect::<Vec<_>>(),
         );
         // 1 decl in lib + 2 call sites in rc.
-        assert_eq!(changes[&lib_uri].as_array().unwrap().len(), 1);
+        assert_eq!(changes[&canon_lib_uri].as_array().unwrap().len(), 1);
         assert_eq!(changes[&rc_uri].as_array().unwrap().len(), 2);
 
         // Cleanup.
