@@ -18762,6 +18762,170 @@ echo "typeset -a a=( ${(qq)a[@]} )"
 
 ---
 
+## #352 — `print -P "%u"`/`%s` reset codes use generic `ESC[0m` instead of attribute-specific off codes
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%Ux%u"' | od -c | head -1
+0000000  033   [   4   m   x 033   [   2   4   m  \n
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%Ux%u"' | od -c | head -1
+0000000  033   [   4   m   x 033   [   0   m  \n
+```
+
+zsh's underline-off (`%u`) emits the specific ANSI code
+`ESC[24m` (underline-off, leaves other attributes intact).
+zshrs emits `ESC[0m` (full reset — clears all attributes
+including any active color/bold/etc.).
+
+Same gap for standout-off (`%s`):
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%Sx%s"' | od -c | head -1
+0000000  033   [   7   m   x 033   [   2   7   m  \n
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%Sx%s"' | od -c | head -1
+0000000  033   [   7   m   x 033   [   0   m  \n
+```
+
+zshrs's generic reset breaks layered formatting — once any
+attribute-off escape fires, everything resets:
+
+```sh
+print -P "%F{red}%Bbold-red%b%Brestored%b"
+# zsh: stays red the whole time (bold toggles preserve fg-color)
+# zshrs: %b emits ESC[0m, losing the %F{red} state mid-line
+```
+
+**Where** — `src/ported/prompt.rs::emit_attribute_off`: all
+off-codes route to `ESC[0m` (generic reset). C-source
+`Src/prompt.c::promptexpand` maps each attribute to its
+specific off-code via a lookup table.
+
+**Impact** — prompt themes with layered formatting (color +
+bold + underline combinations) show wrong attributes after
+any partial toggle. p10k, oh-my-zsh themes, and powerlevel*
+all use layered attributes — output will appear "naked" after
+the first toggle.
+
+**Workaround** — manually emit specific codes:
+```sh
+PS1=$'\e[31mred\e[39m '
+# instead of relying on %F{red}...%f
+```
+
+---
+
+## #353 — `exec FD>&1` inside `$(...)` cmdsub doesn't capture FD-write content
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'x=$(exec 3>&1; echo via-3 >&3); echo "[$x]"'
+[via-3]
+
+$ ./target/debug/zshrs --zsh -c 'x=$(exec 3>&1; echo via-3 >&3); echo "[$x]"'
+(hangs OR returns empty)
+```
+
+zsh's `$(exec 3>&1; ...)` pattern is a common idiom for
+"split stderr from stdout in cmdsub" — `exec 3>&1` dups
+stdout to fd 3 within the subshell, then redirects can write
+to fd 3 which is captured by the outer cmdsub.
+
+zshrs's cmdsub subshell either:
+1. Returns empty (the fd-3 redirect doesn't tie back to
+   cmdsub capture).
+2. Hangs on the fd open (the test command timed out).
+
+Both behaviors break the canonical "split stderr" pattern:
+
+```sh
+# Standard zsh idiom for capturing only stderr
+{ stderr=$(some_cmd 2>&1 >&3 3>&-); } 3>&1
+# zsh: stderr captures, stdout passes through
+# zshrs: pattern fails (stderr empty or hang)
+```
+
+**Where** — `src/ported/exec.rs::handle_exec_in_subshell`: fd
+inheritance from outer cmdsub's capture pipe not threaded
+correctly. C-source `Src/exec.c::execlist` for cmdsub
+preserves fd 1 as the capture-pipe and allows `exec N>&1` to
+dup from it.
+
+**Impact** — canonical stderr-capture idiom broken — every
+script that separates stderr from stdout for testing or
+logging fails.
+
+**Workaround** — use temp file:
+```sh
+some_cmd 2>/tmp/err >/dev/null
+stderr=$(cat /tmp/err)
+```
+
+(External I/O overhead, less elegant.)
+
+---
+
+## #354 — `trap EXIT` set inside `$(...)` cmdsub doesn't fire when subshell ends
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'x=$(trap "echo TRAP" EXIT; echo before); echo "[$x]"'
+[before
+TRAP]
+
+$ ./target/debug/zshrs --zsh -c 'x=$(trap "echo TRAP" EXIT; echo before); echo "[$x]"'
+[before]
+```
+
+The `$(...)` cmdsub spawns a subshell. zsh fires the EXIT
+trap when that subshell exits — `TRAP` appears in `$x` along
+with `before`.
+
+zshrs doesn't fire the EXIT trap at cmdsub end. Same family
+as #203 (`trap EXIT` in fn-scope not fired), #215 (`zshexit`
+not fired), #232 (`TRAPEXIT()` not fired), #240 (`{ false }
+always { :; }` clears errflag).
+
+Combined, zshrs has 5+ separate forms where exit-event
+handlers don't fire reliably:
+- #203: `trap EXIT` set inside fn
+- #215: `zshexit()` hook
+- #232: `TRAPEXIT()` named-fn form
+- #240: `{ } always { }` errflag clearing
+- #354 (this bug): `trap EXIT` inside cmdsub
+
+Only the top-level `trap EXIT` reliably fires.
+
+**Where** — `src/ported/exec.rs::cmdsub_exit_hook`: doesn't
+call into the trap dispatcher before the cmdsub subshell
+exits. C-source `Src/exec.c::execcmdoutsubst` runs the
+EXIT trap via `dotrap()` before the captured-output is
+returned.
+
+**Impact** — cleanup-on-cmdsub-exit patterns broken:
+
+```sh
+result=$(
+    trap "rm -f $tmpfile" EXIT
+    work_with_tmp
+    process
+)
+# zsh: $tmpfile cleaned up after subshell exits
+# zshrs: $tmpfile leaks (trap never fired)
+```
+
+**Workaround** — explicit cleanup after `$(...)`:
+```sh
+tmpfile=$(mktemp)
+result=$(work_with_tmp "$tmpfile" && process "$tmpfile")
+rm -f "$tmpfile"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -19117,9 +19281,12 @@ echo "typeset -a a=( ${(qq)a[@]} )"
 | 349 | `export ASSOC_VAR` for assoc adds malformed `NAME=` empty entry to env (zsh: refuses) | **port-bug** | serialize via `typeset -p` before export |
 | 350 | Integer arithmetic at INT64 boundary returns `0` silently — overflow indistinguishable from intended zero | **port-bug** | range-validate inputs before arith |
 | 351 | `typeset -p arr` doesn't quote space-containing elements — round-trip via eval splits "a b" into 2 elems | **port-bug** | manual `(qq)`-quote (also gappy per #290) |
+| 352 | `print -P "%u"`/`%s` reset codes use generic `ESC[0m` instead of attribute-specific `ESC[24m`/`ESC[27m` | **port-bug** | manual ANSI escape codes |
+| 353 | `exec FD>&1` inside `$(...)` cmdsub doesn't capture FD-write content — stderr-capture idiom broken | **port-bug** | use temp file for stderr capture |
+| 354 | `trap EXIT` inside `$(...)` cmdsub doesn't fire — extends exit-handler family (#203/#215/#232/#240) | **port-bug** | cleanup outside cmdsub |
 
-Of three hundred and fifty-one entries, two are fixed (5, 7),
-three hundred and forty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and fifty-four entries, two are fixed (5, 7),
+three hundred and forty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -19144,5 +19311,5 @@ three hundred and forty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317,
 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343,
-344, 345, 346, 347, 348, 349, 350, 351), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354), and four
+were zsh-correct behavior misframed by demos (1, 2, 3, 6).
