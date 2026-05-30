@@ -12445,6 +12445,159 @@ workaround.
 
 ---
 
+## #238 — `setopt promptbang` doesn't enable `!` → history-number expansion in prompts
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt promptbang; PS1="!"; print -P "$PS1"'
+0
+
+$ ./target/debug/zshrs --zsh -c 'setopt promptbang; PS1="!"; print -P "$PS1"'
+!
+```
+
+With `promptbang` opt set, a literal `!` in PS1 expands to the
+current history event number during prompt expansion. zsh
+substitutes the count (0 here since no commands have run);
+zshrs leaves the `!` literal.
+
+Same family as #204 (`promptsubst` opt not honored) — prompt-
+related option flags broadly ignored. Other prompt-state opts
+likely similar (`prompt_subst`, `prompt_percent`,
+`prompt_sp`, `prompt_cr`).
+
+**Where** — `src/ported/prompt.rs::expand_prompt`: doesn't
+check `PROMPTBANG` opt to decide whether to substitute `!`.
+C-source `Src/prompt.c::promptexpand` walks the prompt char-
+by-char and substitutes `!` only when `isset(PROMPTBANG)`.
+
+**Impact** — themes/prompts that use `!` for history number
+(common in minimal/bash-style PS1) get literal `!` instead of
+a number:
+
+```sh
+# Common bash-compatible PS1
+PS1='\!: '
+# Bash: "1: ", "2: ", ...
+# Zsh with promptbang: "0: ", "1: ", ...
+# zshrs: "!: " on every line (no count)
+```
+
+Combined with #204 (promptsubst), all `!`/`$()`/`${}`-based
+dynamic-prompt mechanisms are dead in zshrs.
+
+**Workaround** — use `%h` or `%!` prompt-percent escape
+instead (both work in both shells when no opt changes are
+needed for them — though watch out for the chained prompt-
+escape coverage gaps in the #38 family).
+
+---
+
+## #239 — `print -P "%J"` (jobs-count prompt escape) treats as literal
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "[%J]"'
+[]
+
+$ ./target/debug/zshrs --zsh -c 'print -P "[%J]"'
+[%J]
+```
+
+`%J` is the prompt-escape for "number of currently-active
+jobs in the shell." With no jobs running, zsh expands it to
+empty. zshrs leaves the literal `%J`.
+
+The bug extends the prompt-escape gap documented in #38
+(which lists `%m/%C/%i/%l/%y/%E/%v/%b/%u/%s/%f/%k` as missing).
+`%J` joins that list as a separate missing escape.
+
+**Where** — `src/ported/prompt.rs::escape_J`: not implemented.
+C-source `Src/prompt.c::promptexpand` maps `%J` to the job
+count from `jobtab[]`.
+
+**Impact** — prompts that display job count visually
+(common in minimalist PS1 designs: `[%j] $ ` or RPS1 showing
+background-job count) show literal `%J`/`%j` instead.
+
+Note `%j` may also be affected (same character class — lower-
+case version, same internals). Test batch didn't compare
+`%j` explicitly.
+
+**Workaround** — use `${#jobstates}` if `jobstates`
+introspection works (uncertain — could be broken per the
+introspection-table family).
+
+---
+
+## #240 — `setopt err_exit` + `{ false } always { :; }` doesn't trigger errexit after always block
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '(setopt err_exit; { false } always { :; }; echo never)'
+$ echo $?
+1
+
+$ ./target/debug/zshrs --zsh -c '(setopt err_exit; { false } always { :; }; echo never)'
+never
+$ echo $?
+1
+```
+
+`{ try } always { cleanup }` is zsh's try-finally construct.
+The `cleanup` block runs unconditionally; if the `try` block
+errored, the error state should propagate after cleanup
+completes — so `errexit` should still fire and abort.
+
+zshrs runs cleanup correctly but clears the error state, so
+subsequent statements (here, `echo never`) execute despite
+errexit being set.
+
+This is the always-block analog of #202 (`set -eo pipefail`
+ignored) and #220 (`err_return` ignored) — error-propagation
+flags broadly broken across compound-statement boundaries.
+
+**Where** — `src/ported/exec.rs::run_try_always`: clears
+`errflag` after the always block instead of preserving it for
+the surrounding errexit check. C-source `Src/exec.c::execlist`
+saves errflag before always, restores it after, then checks
+`isset(ERREXIT)` post-restore.
+
+**Impact** — strict-mode error handling broken at any
+try-always boundary:
+
+```sh
+setopt err_exit
+{
+    risky_operation
+} always {
+    cleanup_temp_files
+}
+# zsh: aborts if risky_operation failed (after cleanup)
+# zshrs: continues regardless of risky_operation's exit code
+do_more_critical_work   # runs even after failure on zshrs
+```
+
+This means try-always blocks effectively neuter errexit for
+their enclosing scope — defensive scripts that use the
+pattern for cleanup paradoxically lose error-handling
+guarantees.
+
+**Workaround** — explicit propagation:
+```sh
+{
+    risky_operation || _err=$?
+} always {
+    cleanup_temp_files
+}
+[[ -n "$_err" ]] && exit "$_err"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -12686,9 +12839,12 @@ workaround.
 | 235 | `typeset -m "glob"` errors "not valid in this context" instead of pattern-matching | **port-bug** | loop with `${(@k)parameters[(I)pat]}` |
 | 236 | `${(@)arr:#}` empty-pattern filter doesn't filter empty elements (sparse-arr cleanup broken) | **port-bug** | `:#(#e)` extended-glob anchor |
 | 237 | `${funcfiletrace}`/`${functrace}` format diverges — missing file path + line | **port-bug** | (no clean workaround) |
+| 238 | `setopt promptbang` doesn't enable `!` → history-number in prompts | **port-bug** | use `%h`/`%!` percent-escape |
+| 239 | `print -P "%J"` (jobs count prompt escape) treats as literal — extends #38 family | **port-bug** | use `${#jobstates}` introspection |
+| 240 | `{ false } always { :; }` clears errflag — errexit doesn't fire after always block | **port-bug** | explicit `\|\| _err=$?` propagation |
 
-Of two hundred and thirty-seven entries, two are fixed (5, 7), two
-hundred and thirty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and forty entries, two are fixed (5, 7), two
+hundred and thirty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -12704,5 +12860,6 @@ hundred and thirty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
-227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237), and four
-were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
+240), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
