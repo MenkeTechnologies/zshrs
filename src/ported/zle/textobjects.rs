@@ -789,4 +789,127 @@ mod tests {
             );
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Zle/textobjects.c
+    // c:34 blankwordclass / c:41 selectword / c:212 selectargument
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:34 — `blankwordclass` is pure (no global mutation).
+    #[test]
+    fn blankwordclass_is_pure_no_side_effects() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let cs = ZLECS.load(Ordering::SeqCst);
+        let ll = ZLELL.load(Ordering::SeqCst);
+        for c in [' ', 'a', '0', '_', '\t', '\n', '\x0b'] {
+            let _ = blankwordclass(c);
+        }
+        assert_eq!(ZLECS.load(Ordering::SeqCst), cs);
+        assert_eq!(ZLELL.load(Ordering::SeqCst), ll);
+    }
+
+    /// c:34 — `\n` (newline) is NOT iblank per `wcsiblank` def.
+    #[test]
+    fn blankwordclass_newline_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(blankwordclass('\n'), 1, "\\n is excluded from iblank");
+    }
+
+    /// c:34 — DEL (0x7f) is NOT iblank.
+    #[test]
+    fn blankwordclass_del_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(blankwordclass('\x7f'), 1, "DEL is not whitespace");
+    }
+
+    /// c:34 — NBSP (U+00A0) — per ISO C iswspace in most locales, but
+    /// Rust's char::is_whitespace handles it. Pin actual zshrs behavior
+    /// for future diff visibility (no assertion on direction).
+    #[test]
+    fn blankwordclass_nbsp_returns_bool_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let r = blankwordclass('\u{00A0}');
+        assert!(r == 0 || r == 1, "NBSP must return 0 or 1, got {}", r);
+    }
+
+    /// c:34 — return type pin (compile-time).
+    #[test]
+    fn blankwordclass_returns_i32_type() {
+        let _: i32 = blankwordclass(' ');
+    }
+
+    /// c:41 — `selectword` returns i32 (type pin).
+    #[test]
+    fn selectword_returns_i32_type() {
+        let _: i32 = std::convert::identity::<fn() -> i32>(selectword)();
+    }
+
+    /// c:41 — `selectword` on empty buffer doesn't panic.
+    #[test]
+    fn selectword_empty_buffer_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = Vec::new();
+        ZLELL.store(0, Ordering::SeqCst);
+        ZLECS.store(0, Ordering::SeqCst);
+        let _ = selectword();
+    }
+
+    /// c:41 — `selectword` with single-char buffer doesn't panic.
+    #[test]
+    fn selectword_single_char_buffer_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = vec!['a'];
+        ZLELL.store(1, Ordering::SeqCst);
+        ZLECS.store(0, Ordering::SeqCst);
+        let _ = selectword();
+    }
+
+    /// c:41 — `selectword` with cursor past ZLELL doesn't panic
+    /// (defensive: C's `zleline[zlecs]` would UB; zshrs should handle).
+    #[test]
+    fn selectword_cursor_past_zlell_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = vec!['h', 'i'];
+        ZLELL.store(2, Ordering::SeqCst);
+        ZLECS.store(2, Ordering::SeqCst); // past last index
+        let _ = selectword();
+    }
+
+    /// c:41 — `selectword` is deterministic on identical state.
+    #[test]
+    fn selectword_deterministic_on_identical_state() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "hello world".chars().collect();
+        ZLELL.store(11, Ordering::SeqCst);
+        ZLECS.store(3, Ordering::SeqCst);
+        let first = selectword();
+        ZLECS.store(3, Ordering::SeqCst);
+        let second = selectword();
+        assert_eq!(first, second, "selectword must be deterministic");
+    }
+
+    /// c:212 — `selectargument` returns i32 (type pin).
+    #[test]
+    fn selectargument_returns_i32_type() {
+        let _: i32 = std::convert::identity::<fn() -> i32>(selectargument)();
+    }
+
+    /// c:212 — `selectargument` with n=1 on single-char doesn't panic.
+    #[test]
+    fn selectargument_n_one_single_char_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        ZMOD.lock().unwrap().flags |= MOD_MULT;
+        ZMOD.lock().unwrap().mult = 1;
+        *ZLELINE.lock().unwrap() = vec!['x'];
+        ZLELL.store(1, Ordering::SeqCst);
+        ZLECS.store(0, Ordering::SeqCst);
+        let _ = selectargument();
+        ZMOD.lock().unwrap().flags &= !MOD_MULT;
+    }
 }
