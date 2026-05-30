@@ -30,21 +30,32 @@ days_in_month() {
     esac
 }
 
-# Days since arbitrary epoch (year 1 → Jan 1).
-days_since_epoch() {
+# Days since year 1900 (avoids 2000-iter year loop for distant dates).
+# Inline leap test + days-in-month table for speed (no fn calls).
+days_since_1900() {
     local y=$1 m=$2 d=$3
-    local total=0 yr mo
-    # Years.
-    for ((yr=1; yr<y; yr++)); do
-        if (( $(is_leap $yr) )); then
+    local total=0 yr mo leap dim
+    local -a months=(31 28 31 30 31 30 31 31 30 31 30 31)
+    for ((yr=1900; yr<y; yr++)); do
+        if (( yr % 400 == 0 )); then
+            (( total += 366 ))
+        elif (( yr % 100 == 0 )); then
+            (( total += 365 ))
+        elif (( yr % 4 == 0 )); then
             (( total += 366 ))
         else
             (( total += 365 ))
         fi
     done
-    # Months.
+    if (( y % 400 == 0 )); then leap=1
+    elif (( y % 100 == 0 )); then leap=0
+    elif (( y % 4 == 0 )); then leap=1
+    else leap=0
+    fi
     for ((mo=1; mo<m; mo++)); do
-        (( total += $(days_in_month $mo $y) ))
+        dim=${months[mo]}
+        (( mo == 2 && leap )) && (( dim++ ))
+        (( total += dim ))
     done
     (( total += d - 1 ))
     echo $total
@@ -54,8 +65,8 @@ days_between() {
     local d1=$1 d2=$2
     local p1=( $(parse_date $d1) )
     local p2=( $(parse_date $d2) )
-    local e1=$(days_since_epoch ${p1[1]} ${p1[2]} ${p1[3]})
-    local e2=$(days_since_epoch ${p2[1]} ${p2[2]} ${p2[3]})
+    local e1=$(days_since_1900 ${p1[1]} ${p1[2]} ${p1[3]})
+    local e2=$(days_since_1900 ${p2[1]} ${p2[2]} ${p2[3]})
     local diff=$(( e2 - e1 ))
     (( diff < 0 )) && diff=$(( -diff ))
     echo $diff

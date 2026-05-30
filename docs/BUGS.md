@@ -274,6 +274,99 @@ IFS).
 
 ---
 
+## #9 — `var=${arr[(expr)*N + M]}` returns empty when unquoted-assigned
+
+**Status:** `port-bug` — surfaced 2026-05-29 while writing demo 239.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(p q r s t); r=1; c=1; v=${a[(r-1)*2 + c]}; echo "[$v]"'
+[p]
+
+$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; v=${a[(r-1)*2 + c]}; echo "[$v]"'
+[]
+```
+
+`(r-1)*2 + c` is a valid arithmetic subscript and the C-zsh path
+returns `a[1]` = `p`. zshrs returns empty when assigned to a
+variable unquoted. The same expression works as an interpolation
+target and as a quoted-assigned RHS:
+
+```sh
+$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; echo "${a[(r-1)*2 + c]}"'
+p
+
+$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; v2="${a[(r-1)*2 + c]}"; echo "[$v2]"'
+[p]
+```
+
+**Where** — `${arr[…]}` subscript parsing in `src/ported/subst.rs`
+(port of `Src/subst.c::paramsubst`). The leading `(` of `(r-1)`
+collides with the C parser's subscript-flag dispatch (e.g. `(r)`,
+`(R)`, `(i)`, `(I)`, `(k)`, `(v)`, `(w)`, `(W)`, `(e)`, `(n)`).
+C-zsh's subscript flag parser (`Src/subst.c::strstartsfn` chain at
+c:3650-3750) rejects malformed flag content with a hard error AND
+then falls through to math-eval the entire subscript body. The
+Rust port appears to take a "no valid flag → bail with empty" path
+when assigning unquoted to a scalar — but treats the same
+expression as math correctly in interpolated/quoted contexts.
+
+**Workaround** — compute the index in a separate `$((...))` step
+first: `idx=$(( (r-1)*2 + c )); v="${arr[idx]}"`. Demo 239 is
+written this way pending the underlying fix.
+
+---
+
+## #10 — `v=$(...)` inside nested for-loop in function corrupts inner iteration
+
+**Status:** `port-bug` — surfaced 2026-05-29 writing demos 239/240.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '
+> fn() { for r in 1 2 3; do for c in 1 2 3; do v=$(echo 0); printf "[%s]" "$v"; done; echo; done; }
+> fn
+> '
+[0][0][0]
+[0][0][0]
+[0][0][0]
+
+$ zshrs --zsh -c '
+> fn() { for r in 1 2 3; do for c in 1 2 3; do v=$(echo 0); printf "[%s]" "$v"; done; echo; done; }
+> fn
+> '
+[[[0]0]0]
+[[[0]0]0]
+[[[0]0]0]
+```
+
+The C-zsh path produces `[0][0][0]` per row (9 well-formed iterations).
+zshrs interleaves the assignments and printfs into `[[[0]0]0]`,
+implying the cmd-sub result lands one or two iterations late — the
+first 2 printfs see an empty `$v` and emit only `[` (no closing
+`]`); the third sees the catch-up value and emits `0]0]0]`. With
+an `if (( v )); then …; else …; fi` branch in the loop, the
+inner loop falls through after one iteration: 3 rows of single-cell
+output instead of 3×3.
+
+**Where** — `src/ported/exec.rs` execution of nested for-lists when
+the function frame holds a deferred cmd-sub completion. The C path
+in `Src/exec.c::execcmd` runs cmd-sub to completion (sets the param
+via `setsparam`) before the next statement; the Rust port appears to
+schedule the substitution result onto a queue that drains one
+statement late inside a function frame. Outside a function (top-level
+nested for + cmd-sub) the bug doesn't reproduce.
+
+**Workaround** — restructure to one of:
+
+1. Replace `v=$(get_cell $r $c)` with inline subscript:
+   `idx=$(( (r-1)*SIZE + c )); v="${BOARD[idx]}"`.
+2. Move the cmd-sub OUTSIDE the inner loop (pre-compute a row array).
+3. Build the entire row as a string with `+=` and `echo` once after
+   the inner loop instead of printf-per-cell with a branch.
+
+Demos 239, 240 use workaround 1 (inline subscript).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -286,7 +379,9 @@ IFS).
 | 6 | `:gs|X|Y|` + `print -l` | demo-error | 83 chained `:t:r:s` |
 | 7 | `local arr=( $=s )` | **fixed** 2026-05-29 | uses `${(s/:/)var}` |
 | 8 | `local IFS=` leaks | **port-bug** | n/a — workaround in 7's fix |
+| 9 | `v=${arr[(expr)*N+M]}` unquoted | **port-bug** | 239 uses `idx=$(…)` step |
+| 10 | nested-for + cmd-sub in fn | **port-bug** | 240 uses inline subscript |
 
-Of the original 7, two are now fixed (5 + 7), two remain open as
-port-bugs (4 + 8 surfaced during 7's diagnosis), and four were
-zsh-correct behavior misframed by the demos.
+Of ten entries, two are fixed (5, 7), four remain open port-bugs
+(4, 8, 9, 10), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).

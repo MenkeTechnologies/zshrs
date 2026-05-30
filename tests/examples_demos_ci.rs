@@ -391,6 +391,31 @@ demo_test!(d232_time_tracker, "232_time_tracker.zsh");
 demo_test!(d233_word_chain, "233_word_chain.zsh");
 demo_test!(d234_simple_kvs, "234_simple_kvs.zsh");
 demo_test!(d235_grand_finale, "235_grand_finale.zsh");
+demo_test!(d236_zsh_hooks, "236_zsh_hooks.zsh");
+demo_test!(d237_zsh_autoload, "237_zsh_autoload.zsh");
+demo_test!(d238_dijkstra, "238_dijkstra.zsh");
+demo_test!(d239_sudoku_validate, "239_sudoku_validate.zsh");
+demo_test!(d240_lights_out, "240_lights_out.zsh");
+demo_test!(d241_hangman, "241_hangman.zsh");
+demo_test!(d242_number_sequences, "242_number_sequences.zsh");
+demo_test!(d243_sierpinski, "243_sierpinski.zsh");
+demo_test!(d244_mandelbrot_ascii, "244_mandelbrot_ascii.zsh");
+demo_test!(d245_toml_parser, "245_toml_parser.zsh");
+demo_test!(d246_env_file_parser, "246_env_file_parser.zsh");
+demo_test!(d247_shebang_detector, "247_shebang_detector.zsh");
+demo_test!(d248_charset_validator, "248_charset_validator.zsh");
+demo_test!(d249_whitespace_normalizer, "249_whitespace_normalizer.zsh");
+demo_test!(d250_shopping_cart, "250_shopping_cart.zsh");
+demo_test!(d251_vigenere_cipher, "251_vigenere_cipher.zsh");
+demo_test!(d252_caesar_cipher, "252_caesar_cipher.zsh");
+demo_test!(d253_word_search, "253_word_search.zsh");
+demo_test!(d254_ascii_clock, "254_ascii_clock.zsh");
+demo_test!(d255_ipv6_parser, "255_ipv6_parser.zsh");
+demo_test!(d256_recipe_converter, "256_recipe_converter.zsh");
+demo_test!(d257_memory_match, "257_memory_match.zsh");
+demo_test!(d258_substitution_cipher, "258_substitution_cipher.zsh");
+demo_test!(d259_boggle_solver, "259_boggle_solver.zsh");
+demo_test!(d260_final_v3, "260_final_v3.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -633,6 +658,31 @@ fn every_demo_in_dir_has_a_test() {
         "233_word_chain.zsh",
         "234_simple_kvs.zsh",
         "235_grand_finale.zsh",
+        "236_zsh_hooks.zsh",
+        "237_zsh_autoload.zsh",
+        "238_dijkstra.zsh",
+        "239_sudoku_validate.zsh",
+        "240_lights_out.zsh",
+        "241_hangman.zsh",
+        "242_number_sequences.zsh",
+        "243_sierpinski.zsh",
+        "244_mandelbrot_ascii.zsh",
+        "245_toml_parser.zsh",
+        "246_env_file_parser.zsh",
+        "247_shebang_detector.zsh",
+        "248_charset_validator.zsh",
+        "249_whitespace_normalizer.zsh",
+        "250_shopping_cart.zsh",
+        "251_vigenere_cipher.zsh",
+        "252_caesar_cipher.zsh",
+        "253_word_search.zsh",
+        "254_ascii_clock.zsh",
+        "255_ipv6_parser.zsh",
+        "256_recipe_converter.zsh",
+        "257_memory_match.zsh",
+        "258_substitution_cipher.zsh",
+        "259_boggle_solver.zsh",
+        "260_final_v3.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
