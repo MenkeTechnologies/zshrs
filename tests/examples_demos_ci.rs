@@ -441,6 +441,31 @@ demo_test!(d282_zsh_argv_special, "282_zsh_argv_special.zsh");
 demo_test!(d283_zsh_traps_full, "283_zsh_traps_full.zsh");
 demo_test!(d284_atomic_write, "284_atomic_write.zsh");
 demo_test!(d285_banner_v4, "285_banner_v4.zsh");
+demo_test!(d286_segment_tree, "286_segment_tree.zsh");
+demo_test!(d287_fenwick_tree, "287_fenwick_tree.zsh");
+demo_test!(d288_kmp_match, "288_kmp_match.zsh");
+demo_test!(d289_rabin_karp, "289_rabin_karp.zsh");
+demo_test!(d290_manacher, "290_manacher.zsh");
+demo_test!(d291_reservoir_sample, "291_reservoir_sample.zsh");
+demo_test!(d292_skiplist, "292_skiplist.zsh");
+demo_test!(d293_suffix_array, "293_suffix_array.zsh");
+demo_test!(d294_word_ladder, "294_word_ladder.zsh");
+demo_test!(d295_soundex, "295_soundex.zsh");
+demo_test!(d296_minesweeper, "296_minesweeper.zsh");
+demo_test!(d297_mastermind, "297_mastermind.zsh");
+demo_test!(d298_ttt_minimax, "298_ttt_minimax.zsh");
+demo_test!(d299_conway_animated, "299_conway_animated.zsh");
+demo_test!(d300_milestone_300, "300_milestone_300.zsh");
+demo_test!(d301_url_template, "301_url_template.zsh");
+demo_test!(d302_sql_mini_parser, "302_sql_mini_parser.zsh");
+demo_test!(d303_zsh_print_z, "303_zsh_print_z.zsh");
+demo_test!(d304_zsh_unhash_pattern, "304_zsh_unhash_pattern.zsh");
+demo_test!(d305_zsh_typeset_m, "305_zsh_typeset_m.zsh");
+demo_test!(d306_zsh_zle_widgets, "306_zsh_zle_widgets.zsh");
+demo_test!(d307_zsh_compsys_args, "307_zsh_compsys_args.zsh");
+demo_test!(d308_kruskal_algo_density, "308_kruskal_algo_density.zsh");
+demo_test!(d309_state_machine_dsl, "309_state_machine_dsl.zsh");
+demo_test!(d310_banner_v5, "310_banner_v5.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -733,6 +758,31 @@ fn every_demo_in_dir_has_a_test() {
         "283_zsh_traps_full.zsh",
         "284_atomic_write.zsh",
         "285_banner_v4.zsh",
+        "286_segment_tree.zsh",
+        "287_fenwick_tree.zsh",
+        "288_kmp_match.zsh",
+        "289_rabin_karp.zsh",
+        "290_manacher.zsh",
+        "291_reservoir_sample.zsh",
+        "292_skiplist.zsh",
+        "293_suffix_array.zsh",
+        "294_word_ladder.zsh",
+        "295_soundex.zsh",
+        "296_minesweeper.zsh",
+        "297_mastermind.zsh",
+        "298_ttt_minimax.zsh",
+        "299_conway_animated.zsh",
+        "300_milestone_300.zsh",
+        "301_url_template.zsh",
+        "302_sql_mini_parser.zsh",
+        "303_zsh_print_z.zsh",
+        "304_zsh_unhash_pattern.zsh",
+        "305_zsh_typeset_m.zsh",
+        "306_zsh_zle_widgets.zsh",
+        "307_zsh_compsys_args.zsh",
+        "308_kruskal_algo_density.zsh",
+        "309_state_machine_dsl.zsh",
+        "310_banner_v5.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {

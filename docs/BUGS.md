@@ -430,6 +430,108 @@ a different separator. Demo 279 switched from `|` to `~` separator.
 
 ---
 
+## #13 — `[[ "$x" == "?" ]]` fails for literal `?` (double-quoted RHS)
+
+**Status:** `port-bug` — surfaced 2026-05-29 writing demo 301.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'c="?"; [[ "$c" == "?" ]] && echo MATCH'
+MATCH
+
+$ zshrs --zsh -c 'c="?"; [[ "$c" == "?" ]] && echo MATCH'
+# silent — no match!
+```
+
+The C-zsh parser strips quotes from the RHS of `[[ ==`, leaving a
+literal `?` to match. zshrs's port (`Src/cond.c::cond_match` /
+`Src/pattern.c::patcompile`) appears to honor the wildcard meaning
+of `?` even when the RHS was double-quoted — only single-quoted or
+backslash-escaped forms work:
+
+```sh
+[[ "$c" == '?' ]] && echo MATCH      # works
+[[ "$c" == \? ]]  && echo MATCH      # works
+[[ "$c" == "?" ]] && echo MATCH      # FAILS in zshrs
+```
+
+Same failure mode likely affects other glob meta-chars (`*`, `[`)
+when used as RHS in `[[ == ]]` with double quotes.
+
+**Workaround** — use single quotes or backslash escape for any glob
+meta-character on the RHS of `[[ == ]]`. Demo 301 switched all
+double-quoted ops (`"?"`, `"+"`, `"#"`, `"&"`) to single-quoted
+form. The check on `"/"` (not a glob char) was unaffected.
+
+---
+
+## #14 — `[[ $ch == "{" ]]` causes parse error "unterminated if"
+
+**Status:** `port-bug` — surfaced 2026-05-29 writing demo 301.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'c="{"; [[ "$c" == "{" ]] && echo MATCH'
+MATCH
+
+$ zshrs --zsh -c 'c="{"; [[ "$c" == "{" ]] && echo MATCH'
+zsh:1: parse error: unterminated if
+```
+
+The C-zsh lexer treats `{` inside double-quoted RHS of `[[ ==` as a
+literal character. zshrs's lexer (port of `Src/lex.c::gettokstr` /
+`gettok`) appears to enter brace-expansion or compound-cmd parsing
+mode when it sees the `{`, never returning to close the `[[`. Same
+applies to `}` on the RHS.
+
+**Workaround** — store the brace character in a variable and use
+unquoted variable substitution:
+```sh
+local close_char='}'
+[[ $c == $close_char ]] && echo MATCH
+```
+Demo 301 uses this pattern.
+
+---
+
+## #15 — `set -- ${=var}` doesn't reliably split inside functions
+
+**Status:** `port-bug` — surfaced 2026-05-29 writing demo 298.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { local l="1 2 3"; for x in "a b" "c d"; do set -- ${=x}; echo "$# $1 $2"; done; }; f'
+2 a b
+2 c d
+
+$ zshrs --zsh -c 'f() { local l="1 2 3"; for x in "a b" "c d"; do set -- ${=x}; echo "$# $1 $2"; done; }; f'
+1 a 
+1 b 
+1 c 
+1 d 
+```
+
+`for x in "a b" "c d"; do … done` should iterate twice (x="a b",
+then x="c d"). The C-zsh path preserves the quoting and iterates
+correctly. zshrs's port iterates the WORD-SPLIT array instead —
+4 iterations with x="a", x="b", x="c", x="d", losing the field
+boundaries entirely. The `${=x}` split then has nothing to split
+because each x is already a single word.
+
+**Where** — likely `src/ported/exec.rs::execfor` mishandling the
+`for var in "${arr[@]}"` quoting when arr is a literal element list
+inside a function frame.
+
+**Workaround** — index the array explicitly instead of `for x in
+"${arr[@]}"`:
+```sh
+for ((i=1; i<=${#arr}; i++)); do
+    x="${arr[i]}"
+    set -- ${=x}
+done
+```
+Or use parallel arrays for the parsed parts (demo 298 takes this
+approach: `la=(1 4 7 …); lb=(2 5 8 …)` then index by `$i`).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -446,7 +548,10 @@ a different separator. Demo 279 switched from `|` to `~` separator.
 | 10 | nested-for + cmd-sub in fn | **port-bug** | 240 uses inline subscript |
 | 11 | `printf "%d" "' "` returns 0 | **port-bug** | 279/280 use `$((#c))` |
 | 12 | `${var%\|*}` `\|` treated as alt | **port-bug** | 279 uses `~` separator |
+| 13 | `[[ "$x" == "?" ]]` ignores quotes | **port-bug** | 301 uses `'?'` single-quotes |
+| 14 | `[[ $ch == "{" ]]` parse error | **port-bug** | 301 uses `$close_char` var |
+| 15 | `set -- ${=x}` mis-iterates in fn | **port-bug** | 298 uses parallel arrays |
 
-Of twelve entries, two are fixed (5, 7), six remain open port-bugs
-(4, 8, 9, 10, 11, 12), and four were zsh-correct behavior misframed
-by demos (1, 2, 3, 6).
+Of fifteen entries, two are fixed (5, 7), nine remain open
+port-bugs (4, 8, 9, 10, 11, 12, 13, 14, 15), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
