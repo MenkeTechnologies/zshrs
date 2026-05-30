@@ -635,38 +635,83 @@ Demos 332 uses the pre-compute pattern.
 
 ---
 
-## #19 — `"!")` case pattern triggers `expected ')' in case pattern`
+## #19 — Quoted special-char / reserved-word case patterns fail (non-first branch in fn)
 
-**Status:** `port-bug` — surfaced 2026-05-29 writing demo 363.
+**Status:** `port-bug` — surfaced 2026-05-29 writing demos 363, 365.
 
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'v=A; case $v in "!") echo bang;; A) echo a;; esac'
-a
+$ /opt/homebrew/bin/zsh -fc 'f() { case $1 in plain) echo p;; "!") echo b;; *) echo o;; esac; }; f "!"'
+b
 
-$ zshrs --zsh -c 'v=A; case $v in "!") echo bang;; A) echo a;; esac'
+$ zshrs --zsh -c 'f() { case $1 in plain) echo p;; "!") echo b;; *) echo o;; esac; }; f "!"'
+zsh:1: expected ')' in case pattern
+zshrs: parse error
+
+$ /opt/homebrew/bin/zsh -fc 'f() { case $1 in plain) echo p;; '\''if'\'') echo b;; *) echo o;; esac; }; f if'
+b
+
+$ zshrs --zsh -c 'f() { case $1 in plain) echo p;; '\''if'\'') echo b;; *) echo o;; esac; }; f if'
 zsh:1: expected ')' in case pattern
 zshrs: parse error
 ```
 
-A double-quoted `"!"` as a case pattern triggers a parse error in
-zshrs. C-zsh treats `!` as a literal character in this context.
-The issue may be related to `!` being a history-expansion trigger
-or a glob-negation prefix in some other contexts. zshrs's lexer
-(port of `Src/lex.c::gettok` + `Src/parse.c::par_case`) appears to
-mis-parse the `!` inside the double-quoted pattern.
+Two distinct fail-triggers share the same error message:
 
-Same failure mode likely affects other characters with special
-meaning even when quoted (e.g. `"{"`, `"}"`, `"?"` — see bugs #13,
-#14).
+  1. **Quoted special chars**: `"!"`, `"?"`, `"*"`, `"["`, `"{"`, `"}"`
+  2. **Quoted reserved words**: `'if'`, `'while'`, `'do'`, `'then'`, `'else'`, `'let'`
 
-**Workaround** — use single-quoted form `'!'` or backslash-escape
-`\!`:
-```sh
-case $v in '!') echo bang;; A) echo a;; esac    # works
-case $v in \!)  echo bang;; A) echo a;; esac    # works
-```
-Demo 363 uses single-quoted `'!'`/`'~'` for unary operator dispatch
-and falls back to `if/elif` chains where case syntax breaks.
+Both fail **only when** the case branch is NOT the first branch in
+the `case` block AND the surrounding code is inside a function.
+The exact same patterns parse correctly when:
+  - the branch is FIRST in the case (no prior `;;` before it), OR
+  - the case is at top level outside any function
+
+| pattern    | inside fn, first branch | inside fn, after another | top level |
+|------------|------------------------|---------------------------|-----------|
+| `"!")`     | works                   | **FAILS**                  | works      |
+| `'if')`    | works                   | **FAILS**                  | works      |
+| `'while')` | works                   | **FAILS**                  | works      |
+| `'foo')`   | works                   | works                      | works      |
+| `plain)`   | works                   | works                      | works      |
+
+Tested zsh 5.9 (`/opt/homebrew/bin/zsh`) handles all forms correctly.
+
+**Where** — likely `src/ported/parse.rs::par_case` interaction with
+the case-branch separator (`;;` or newline) processing inside the
+function-frame parser path. The lexer (`Src/lex.c::gettok` port at
+`src/ported/lex.rs`) appears to forget that a quoted token in case
+position should not be interpreted as a keyword/operator, but the
+forgetting only happens after the first branch boundary inside a
+function.
+
+Related to bugs #13 (quoted `"?"` ignored in `[[ == ]]`) and #14
+(`[[ $ch == "{" ]]` parse error) — all share the same root cause:
+zshrs's lexer not respecting quote boundaries for special tokens
+in certain contexts.
+
+**Workarounds**:
+
+  1. Move the affected branch to the FIRST position in the case:
+     ```sh
+     case $v in
+         'if') ...;;           # works at first position
+         plain) ...;;
+         *) ...;;
+     esac
+     ```
+
+  2. Use `if/elif` chain (always works):
+     ```sh
+     if [[ $v == "if" ]]; then ...
+     elif [[ $v == "!" ]]; then ...
+     elif [[ $v == plain ]]; then ...
+     fi
+     ```
+
+Demo 363 dispatches unary `'!'`/`'~'` via `if/elif`. Demo 365
+moves all reserved-word case branches before any other branches and
+uses a leading `if [[ $head == ... ]]; then ...; return; fi` guard
+chain for `quote`, `if`, `let` to bypass the bug entirely.
 
 ---
 
@@ -732,7 +777,7 @@ arrays instead of nested hash structures. Demo 362 was trimmed from
 | 16 | `arr=("${arr[@]:0:-1}")` no-shrink in fn | **port-bug** | 311 uses `arr[${#arr}]=()` |
 | 17 | `var=${arr[-1]}` unquoted in fn while | **port-bug** | 311 quotes the RHS |
 | 18 | `arr[a + 1]=val` with space parsed as cmd | **port-bug** | 332 pre-computes `idx=$((..))` |
-| 19 | `"!")` case pattern → expected `)` | **port-bug** | 363 uses if/elif chain |
+| 19 | quoted special/keyword case pat (non-first branch in fn) | **port-bug** | 363/365 reorder branches or if/elif |
 | 20 | recursive parsers very slow vs C-zsh | **perf-issue** | 362 trimmed test inputs |
 
 Of twenty entries, two are fixed (5, 7), fourteen remain open
