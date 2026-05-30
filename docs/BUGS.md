@@ -14771,6 +14771,187 @@ zshrs.
 
 ---
 
+## #280 — `setopt typeset_to_unset` opt ignored — `typeset X` always creates parameter
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt typeset_to_unset; typeset X; (( ${+X} )) && echo plus-set || echo plus-unset; [[ -v X ]] && echo v-set || echo v-unset'
+plus-unset
+v-unset
+
+$ ./target/debug/zshrs --zsh -c 'setopt typeset_to_unset; typeset X; (( ${+X} )) && echo plus-set || echo plus-unset; [[ -v X ]] && echo v-set || echo v-unset'
+plus-set
+v-set
+```
+
+`typeset_to_unset` makes bare `typeset NAME` (no assignment)
+declare NAME without creating it — `NAME` remains "unset"
+status until an explicit assignment occurs. zsh applies this
+correctly; zshrs ignores the option and creates `X` as set
+(but empty-valued).
+
+Same family as #267 (bare `setopt` empty) — zshrs's option
+handling for the typeset behavior-modifying options is
+broadly broken (also #223 `warn_create_global`, #224
+`typeset_silent`).
+
+**Where** — `src/ported/builtins/typeset.rs::declare_no_value`:
+no `TYPESETTOUNSET` opt check before adding the param to the
+table. C-source `Src/builtin.c::typeset_single` checks
+`isset(TYPESETTOUNSET)` for bare declarations and skips the
+`createparam()` call.
+
+**Impact** — code that relies on the option to detect
+"declared but not assigned" gets false positives:
+
+```sh
+setopt typeset_to_unset
+declare_config_vars() {
+    typeset HOST PORT TIMEOUT
+}
+declare_config_vars
+[[ -v HOST ]] || HOST=default.example.com   # init only if not user-set
+# zsh: HOST stays unset, default applied
+# zshrs: HOST is set (empty), default NOT applied — HOST ends up empty
+```
+
+**Workaround** — use explicit `unset` after `typeset`:
+```sh
+typeset HOST
+unset HOST
+```
+
+---
+
+## #281 — `argv[N]=value` and `argv+=(x)` don't sync with positionals (`$@`/`$*`) — argv is read-only mirror
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- a b c; argv[2]=Z; echo "positional=[$@] argv=[${argv[@]}]"'
+positional=[a Z c] argv=[a Z c]
+
+$ ./target/debug/zshrs --zsh -c 'set -- a b c; argv[2]=Z; echo "positional=[$@] argv=[${argv[@]}]"'
+positional=[a b c] argv=[a b c]
+```
+
+In zsh, `argv` and the positional parameters (`$@`/`$*`/`$1`,
+`$2`, ...) are two views of the same data — writing to one
+updates the other. zshrs's `argv` array is a read-only mirror:
+positional → argv sync works, but argv → positional
+direction is broken (AND zshrs doesn't even update argv
+itself when the assignment is to `argv[N]=...`).
+
+Append form also broken catastrophically:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- a b; argv+=(c); echo "$@"'
+a b c
+
+$ ./target/debug/zshrs --zsh -c 'set -- a b; argv+=(c); echo "$@"'
+c
+```
+
+zshrs treats `argv+=(c)` as a complete replacement —
+`argv` becomes just `(c)`, dropping the existing positionals.
+This is data corruption.
+
+Same for `unset argv`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- a b c; unset argv; echo "[${argv[@]:-unset}]"'
+[unset]
+
+$ ./target/debug/zshrs --zsh -c 'set -- a b c; unset argv; echo "[${argv[@]:-unset}]"'
+[a b c]
+```
+
+zshrs's `unset argv` doesn't work — positionals persist.
+
+**Where** — `src/ported/params/argv.rs::argv_setfn`: the
+write-direction sync from `argv` parameter to positionals
+table is missing. C-source `Src/params.c::poundgetfn` and
+`argvsetfn` tie the two via shared `pparams` global.
+
+**Impact** — common pattern for arg manipulation broken:
+
+```sh
+process_args() {
+    # Reverse argv
+    local -a reversed
+    for ((i=${#argv}; i>=1; i--)); do
+        reversed+=("${argv[$i]}")
+    done
+    argv=("${reversed[@]}")   # zsh: rewrites $@; zshrs: no effect
+    for arg in "$@"; do
+        ...
+    done
+}
+```
+
+Combined with #275 (array splice prepend corruption) and #234
+(`+U` corrupts arrays), zshrs has multiple array-write paths
+that silently corrupt or no-op.
+
+**Workaround** — use `set -- "$@"` family explicitly:
+```sh
+set -- "${argv[1]}" "Z" "${argv[3]}"   # rebuild positionals
+```
+
+---
+
+## #282 — `$ZSH_VERSION` format diverges — `5.9.0.3-test` (4-part with suffix) vs zsh's `5.9` (2-part)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "$ZSH_VERSION"'
+5.9
+
+$ ./target/debug/zshrs --zsh -c 'echo "$ZSH_VERSION"'
+5.9.0.3-test
+```
+
+`$ZSH_VERSION` is widely used in `.zshrc` setups for
+feature-detection and version-gating. zsh 5.9 reports `5.9`
+(major.minor only). zshrs reports `5.9.0.3-test` — four-part
+with a suffix.
+
+Plugins do exact-match version checks:
+```sh
+[[ "$ZSH_VERSION" == 5.* ]] && enable_feature_X    # works in both
+[[ "$ZSH_VERSION" == 5.9 ]] && enable_feature_Y    # zsh: yes, zshrs: NO
+(( ${ZSH_VERSION%%.*} >= 5 ))                       # zsh: 5>=5 yes; zshrs: 5>=5 yes (same)
+```
+
+Less critical than execution bugs, but version-check based
+feature flags get unexpected results. Plugins that gate
+specific 5.9-only features may incorrectly skip them on
+zshrs.
+
+A more bash-compat-friendly approach would be to report a
+synthetic `5.9` (matching the zsh release being emulated)
+and expose the real zshrs version via a separate parameter
+like `$ZSHRS_VERSION`.
+
+**Where** — `src/ported/params/init.rs::register_ZSH_VERSION`:
+hardcoded to the zshrs build version. C-source
+`Src/init.c::setupshell` sets it from `ZSH_VERSION` constant
+in `Src/zsh.h`.
+
+**Impact** — `.zshrc` plugin guards that do exact `5.9`
+checks miss-detect zshrs.
+
+**Workaround** — fuzzy version-check patterns:
+```sh
+case "${ZSH_VERSION}" in
+    5.9*) enable_5_9_features ;;
+esac
+```
+
+(matches both `5.9` and `5.9.0.3-test`)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -15054,9 +15235,12 @@ zshrs.
 | 277 | `${(o)@}` sort flag not applied to positionals — `$@`/`$*` returns unsorted | **port-bug** | copy to temp array first |
 | 278 | `${@:t}` (and other modifiers) applies to last positional only, drops the rest (data loss) | **port-bug** | copy to array, modifier there |
 | 279 | `$_` (last-arg-prev-cmd) empty inside function — zsh: contains fn name | **port-bug** | use `${history[1]}` or manual tracking |
+| 280 | `setopt typeset_to_unset` ignored — `typeset X` always creates parameter (set+empty) | **port-bug** | explicit `unset` after typeset |
+| 281 | `argv[N]=value`/`argv+=(x)`/`unset argv` don't sync with `$@` — argv is read-only mirror (data corruption on append) | **port-bug** | use `set -- ...` to rewrite positionals |
+| 282 | `$ZSH_VERSION` format diverges — `5.9.0.3-test` vs zsh's `5.9`; affects version-gate exact-match plugin guards | **port-bug** | fuzzy version-check patterns |
 
-Of two hundred and seventy-nine entries, two are fixed (5, 7), two
-hundred and seventy-three remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and eighty-two entries, two are fixed (5, 7), two
+hundred and seventy-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -15076,5 +15260,5 @@ hundred and seventy-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265,
 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
-279), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+279, 280, 281, 282), and four were zsh-correct behavior misframed
+by demos (1, 2, 3, 6).
