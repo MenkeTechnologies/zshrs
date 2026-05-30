@@ -1767,4 +1767,119 @@ mod tests {
             checksched();
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/Modules/watch.c
+    // c:262 watchlog_match / c:526 dowatch / c:617 checksched /
+    // c:658 bin_log / c:693-769 lifecycle hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:693 — `setup_` is idempotent.
+    #[test]
+    fn watch_setup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(setup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:758 — `cleanup_` is idempotent.
+    #[test]
+    fn watch_cleanup_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(cleanup_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:769 — `finish_` is idempotent.
+    #[test]
+    fn watch_finish_idempotent_alt_pin() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 {
+            assert_eq!(finish_(std::ptr::null()), 0);
+        }
+    }
+
+    /// c:758 — `cleanup_` return type i32 (compile-time pin).
+    #[test]
+    fn watch_cleanup_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = cleanup_(std::ptr::null());
+    }
+
+    /// c:769 — `finish_` return type i32 (compile-time pin).
+    #[test]
+    fn watch_finish_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = finish_(std::ptr::null());
+    }
+
+    /// c:735 — `boot_` return type i32 (compile-time pin).
+    #[test]
+    fn watch_boot_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = boot_(std::ptr::null());
+    }
+
+    /// c:526 — `dowatch` is safe to call repeatedly.
+    #[test]
+    fn dowatch_repeated_calls_safe() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..5 {
+            dowatch();
+        }
+    }
+
+    /// c:617 — `checksched` returns void (compile-time pin).
+    #[test]
+    fn checksched_returns_void_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: () = checksched();
+    }
+
+    /// c:658 — `bin_log` empty args non-negative.
+    #[test]
+    fn bin_log_empty_args_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_log("log", &[], &ops, 0);
+        assert!(r >= 0, "bin_log empty must be ≥ 0, got {}", r);
+    }
+
+    /// c:658 — `bin_log` various func values don't panic.
+    #[test]
+    fn bin_log_various_func_values_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for func in [-1, 0, 1, 100, i32::MAX] {
+            let _ = bin_log("log", &[], &ops, func);
+        }
+    }
+
+    /// c:262 — `watchlog_match` returns bool (compile-time pin, alt).
+    #[test]
+    fn watchlog_match_returns_bool_type_alt() {
+        let _: bool = watchlog_match("foo", "foo");
+    }
+
+    /// c:262 — `watchlog_match` is deterministic for same inputs.
+    #[test]
+    fn watchlog_match_deterministic() {
+        for (p, v) in [("foo", "foo"), ("", "x"), ("*", "anything")] {
+            let a = watchlog_match(p, v);
+            let b = watchlog_match(p, v);
+            assert_eq!(a, b, "watchlog_match({:?},{:?}) must be pure", p, v);
+        }
+    }
 }
