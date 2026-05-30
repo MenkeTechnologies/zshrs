@@ -23700,6 +23700,174 @@ honors that.)
 
 ---
 
+## #442 — `$ZSH_VERSION` exposes zshrs internal version (5.9.0.3-test) instead of zsh-compat (5.9)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$ZSH_VERSION]"'
+[5.9]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[$ZSH_VERSION]"'
+[5.9.0.3-test]
+```
+
+`$ZSH_VERSION` is the documented zsh parameter that
+scripts use for **feature-detection by version**.
+Examples in the wild:
+
+```sh
+autoload -Uz is-at-least
+is-at-least 5.4 || echo "WARN: need zsh 5.4+"
+
+# Or direct comparison:
+[[ $ZSH_VERSION == 5.<5->.* ]] && support_new_feature
+```
+
+In `--zsh` mode (the zsh-compat entrypoint), zshrs should
+report a version string that matches the zsh upstream it's
+compatible with — `5.9` here. Instead it exposes its own
+internal version `5.9.0.3-test`.
+
+Feature-detect scripts get confused: comparison
+`[[ $ZSH_VERSION == 5.9 ]]` returns false (string is
+"5.9.0.3-test"), even though the shell IS compatible with
+zsh 5.9.
+
+**Where** — `src/ported/params/zsh_version.rs::init`:
+in `--zsh` mode, set `$ZSH_VERSION` to the upstream-
+compat version string. C-source `Src/zsh.c::setupparams`
+sets `ZSH_VERSION` to compile-time `VERSION_STR`.
+
+**Impact** — version-gating breaks broadly. zsh-completion
+plugins, zinit, p10k, oh-my-zsh themes all probe
+`$ZSH_VERSION` to enable features conditional on
+version. zshrs's odd version makes them all see "future
+zsh 5.9.0.3" and may enable speculative code paths or
+emit "unsupported version" warnings.
+
+**Workaround** — script-level wrap:
+```sh
+ZSH_VERSION="${ZSH_VERSION%%[!.0-9]*}"   # strip suffix
+```
+
+But that mutation has to happen before any compat-aware
+plugin runs.
+
+---
+
+## #443 — `EUID=0`/`UID=0`/`PPID=99` silently accepted — special-var setters missing
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'EUID=0; echo "[$EUID]"'
+zsh:1: failed to change effective user ID: operation not permitted
+
+$ ./target/debug/zshrs --zsh -c 'EUID=0; echo "[$EUID]"'
+[501]
+rc=0
+```
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'PPID=99; echo "[$PPID]"'
+zsh:1: read-only variable: PPID
+
+$ ./target/debug/zshrs --zsh -c 'PPID=99; echo "[$PPID]"'
+[68713]
+```
+
+zsh's `EUID` / `UID` / `GID` / `EGID` have special
+setters that attempt the corresponding `seteuid/setuid`
+syscall — typically failing with "operation not
+permitted" for non-root users. The diagnostic surfaces
+the privilege issue immediately.
+
+`PPID` is marked read-only (cannot be changed at all).
+
+zshrs treats all four as plain variables — silently
+accepts user assignment but the actual EUID/UID/PPID
+in the process is unchanged. Subsequent `$EUID` reads
+return the actual UID (because the getter checks the
+real syscall state), so the assignment is effectively a
+no-op AND doesn't surface the privilege issue.
+
+**Where** — `src/ported/params/uid.rs::setfn` (and EGID/
+GID/PPID equivalents): scalar-set handler must call
+`seteuid()` / `setuid()` and emit diagnostic on failure.
+For PPID, set `PM_READONLY`. C-source
+`Src/params.c::uidsetfn` etc.
+
+**Impact** — **Security-relevant**. Scripts that try to
+drop privileges via UID assignment fail silently:
+
+```sh
+# Defensive: drop to nobody before exec
+EUID=$nobody_uid
+exec untrusted_script
+# zsh: assignment fails, exits with diagnostic
+# zshrs: assignment "succeeds" (no error), exec runs
+#        with original UID
+```
+
+Same family as #242/#373/#374/#375 (introspection-special
+readonly missing), but for syscall-backed parameters.
+
+**Workaround** — use `setuid` directly via external
+tools (`sudo -u $user`, `runuser`, etc.) instead of
+attempting via parameter assignment.
+
+---
+
+## #444 — `$ZSH_PATCHLEVEL` returns `unknown` — git-derived identifier missing
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$ZSH_PATCHLEVEL]"'
+[zsh-5.9-0-g73d3173]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[$ZSH_PATCHLEVEL]"'
+[unknown]
+```
+
+zsh's `$ZSH_PATCHLEVEL` is the git-derived
+`describe --long --tags` output baked in at build time
+(e.g., `zsh-5.9-0-g73d3173`). Scripts use it for
+debugging-output identification ("which exact zsh build
+is this?") and for cache-busting compiled completion
+data.
+
+zshrs returns the literal string `unknown` — no
+identifying information at all.
+
+**Where** — `src/ported/params/zsh_patchlevel.rs::init`:
+in `--zsh` mode should report a build-derived identifier.
+For the zshrs binary itself, return its own git-describe.
+C-source uses `Src/zshpaths.h::VERSION_PATCHLEVEL` set
+at configure time from `git describe`.
+
+**Impact** — bug reports lose build-identification:
+
+```sh
+# Standard zsh bug-report template
+echo "ZSH_VERSION=$ZSH_VERSION"
+echo "ZSH_PATCHLEVEL=$ZSH_PATCHLEVEL"
+echo "MACHTYPE=$MACHTYPE"
+# zsh: zsh-5.9-0-g73d3173 — identifies exact commit
+# zshrs: unknown — useless
+```
+
+Also breaks compdump cache-busting that incorporates
+`$ZSH_PATCHLEVEL` into the cache-key (compinit's
+`.zcompdump` regeneration heuristic).
+
+**Workaround** — hardcode a known identifier from
+build process, or detect zshrs separately via
+`$ZSH_VERSION` pattern (`*-test`).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -24145,9 +24313,12 @@ honors that.)
 | 439 | `%>>...` / `%<<...` prompt truncation directives not recognized — printed literally | **port-bug** | manual `${PWD/#$HOME/~}` + precmd truncation |
 | 440 | `**` recursive glob breadth-first ordering instead of zsh's alphabetical depth-first — order-dependent scripts break | **port-bug** | pipe through `sort` |
 | 441 | `pwd` builtin returns spoofed `$PWD` blindly — security-relevant, zsh validates against `getcwd()` | **port-bug** | `command pwd -P` for trusted checks |
+| 442 | `$ZSH_VERSION` exposes zshrs internal version `5.9.0.3-test` instead of zsh-compat `5.9` — breaks feature-detect scripts | **port-bug** | `ZSH_VERSION="${ZSH_VERSION%%[!.0-9]*}"` mutation |
+| 443 | `EUID=0`/`UID=0`/`PPID=99` assignment silently accepted — special-var syscall setters missing (security-relevant) | **port-bug** | use `sudo -u` / external tools |
+| 444 | `$ZSH_PATCHLEVEL` returns literal `unknown` — git-derived build identifier missing | **port-bug** | hardcode from build process |
 
-Of four hundred and forty-one entries, two are fixed (5, 7),
-four hundred and thirty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and forty-four entries, two are fixed (5, 7),
+four hundred and thirty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
