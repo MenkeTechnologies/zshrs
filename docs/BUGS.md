@@ -9589,6 +9589,162 @@ done
 
 ---
 
+## #184 — `$((${a[@]} + 0))` arith with array spread silently uses first element
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(1 2 3); echo "$((${a[@]} + 0))"' 2>&1
+zsh:1: bad math expression: operator expected at `2 3 + 0'
+
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3); echo "$((${a[@]} + 0))"'
+1
+```
+
+Inside `$((...))` arith context, `${a[@]}` spreads array as
+space-joined string. zsh tries to parse `1 2 3 + 0` as arith,
+fails with "operator expected". zshrs silently uses only the
+first element (`1 + 0 = 1`).
+
+Different failure modes:
+- zsh: clear syntax error, exit non-zero, user notices
+- zshrs: silent wrong result, no error
+
+Per zsh arith semantics, `${a[@]}` in arith should either:
+1. Expand to first element only (per shell-history convention),
+2. Error (zsh's choice),
+3. Sum all elements (Python-like).
+
+zshrs picks option 1 silently. zsh picks option 2 explicitly.
+Both behaviors are defensible; the silent-wrong-result is the bug.
+
+**Where** — `src/ported/math.rs::eval_array_token`: takes only
+the first element when an array expansion appears in arith.
+Should either error or process the entire spread. C-source
+`Src/math.c::mathevalreal` errors on multi-token arith input.
+
+**Impact** — common pattern of summing array via arith silently
+produces wrong totals:
+
+```sh
+prices=(10 20 30)
+total=$((${prices[@]}))    # user intended sum
+# zsh: errors (caught)
+# zshrs: total=10 (silently wrong)
+```
+
+**Workaround** — explicit loop:
+```sh
+total=0
+for p in "${prices[@]}"; do
+    (( total += p ))
+done
+```
+
+---
+
+## #185 — `[[ -z "${arr[@]}" ]]` returns false for single-empty array (zsh: true)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'b=(""); [[ -z "${b[@]}" ]] && echo "empty" || echo "not-empty"'
+empty
+
+$ ./target/debug/zshrs --zsh -c 'b=(""); [[ -z "${b[@]}" ]] && echo "empty" || echo "not-empty"'
+not-empty
+```
+
+An array with a single empty-string element: `b=("")`. When
+expanded via `"${b[@]}"` in `-z` test context, the result is
+a single empty string. zsh's `-z` returns true (the joined
+result is empty). zshrs's `-z` returns false (perhaps testing
+whether the array has elements rather than the joined content).
+
+Comparison with `${b[*]}` (star form):
+```sh
+$ both-shells -fc 'b=(""); [[ -z "${b[*]}" ]] && echo "empty"'
+empty                    # both shells agree on star form
+```
+
+So only the `[@]` form diverges.
+
+**Where** — `src/ported/cond.rs::eval_z`: when operand is
+`"${arr[@]}"`, checks array length instead of joined content.
+C-source `Src/cond.c::evalcond` joins the array first then
+checks string length.
+
+**Impact** — defensive emptiness checks misclassify:
+
+```sh
+config_lines=("")    # placeholder for "no config"
+if [[ -z "${config_lines[@]}" ]]; then
+    use_defaults
+fi
+# zsh: use_defaults runs
+# zshrs: skips the branch (treats as non-empty)
+```
+
+---
+
+## #186 — `${(@)b:-default}` for single-empty array returns default (zsh: returns empty)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'b=(""); echo "[${(@)b:-default}]"'
+[]
+
+$ ./target/debug/zshrs --zsh -c 'b=(""); echo "[${(@)b:-default}]"'
+[default]
+```
+
+Inverse of #185 — same `b=("")` array, but here the `:-default`
+fallback behavior:
+- zsh: array has one element (even if empty) → not "unset" → no
+  default. Returns `[]` (the empty element).
+- zshrs: treats array as empty → applies default. Returns
+  `[default]`.
+
+Verified against other states:
+```sh
+$ both-shells -fc 'a=(); echo "[${(@)a:-default}]"; c=("x"); echo "[${(@)c:-default}]"'
+[default]                # truly empty → default
+[x]                       # non-empty → element
+```
+
+So the divergence is specifically the single-empty-element case.
+
+Combined with #185 (where zsh thinks "${b[@]}" IS empty for -z),
+this is logically inconsistent in zsh too — but the divergence
+from zshrs is real and reproducible.
+
+**Where** — `src/ported/paramsubst.rs::default_branch`: checks
+array length only, not effective string content. Should apply
+default only when length is 0. C-source `Src/subst.c::dosubst`
+distinguishes "no elements" from "elements all empty".
+
+**Impact** — fallback patterns for "use this OR default" misfire
+on intentionally-empty-element arrays:
+
+```sh
+custom_args=("")     # placeholder: no extra args wanted
+cmd=("my-tool" "${(@)custom_args:-default-args}")
+# zsh: cmd has 2 elements ("my-tool", "")
+# zshrs: cmd has 2 elements ("my-tool", "default-args")
+```
+
+**Workaround** — explicit `${#arr}` check:
+```sh
+if (( ${#custom_args} > 0 )); then
+    cmd=("my-tool" "${custom_args[@]}")
+else
+    cmd=("my-tool" "default-args")
+fi
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -9776,19 +9932,22 @@ done
 | 181 | `typeset -p` doesn't quote array elements with spaces | **port-bug** | manual `${(qq)}` loop |
 | 182 | `${${(P)name}[N]}` after-deref indexing returns full array | **port-bug** | temp `deref=("${(@P)name}")` |
 | 183 | `"${@:1:2}"` positional slice returns all instead of slicing | **port-bug** | manual loop |
+| 184 | `$((${a[@]} + 0))` arith with array spread silently uses first elem | **port-bug** | explicit loop summation |
+| 185 | `[[ -z "${arr[@]}" ]]` for single-empty arr returns false (zsh: true) | **port-bug** | `${arr[*]}` star form |
+| 186 | `${(@)b:-default}` for single-empty arr returns default (zsh: empty) | **port-bug** | `(( ${#arr} > 0 ))` check |
 
-Of one hundred eighty-three entries, two are fixed (5, 7), one
-hundred seventy-seven remain open port-bugs/perf-issues (4, 8, 9,
-10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
-78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
-95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108,
-109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
-122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134,
-135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147,
-148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160,
-161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173,
-174, 175, 176, 177, 178, 179, 180, 181, 182, 183), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+Of one hundred eighty-six entries, two are fixed (5, 7), one
+hundred eighty remain open port-bugs/perf-issues (4, 8, 9, 10, 11,
+12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
+63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
+97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
+111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
+124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
+137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149,
+150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162,
+163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175,
+176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186), and four
+were zsh-correct behavior misframed by demos (1, 2, 3, 6).
