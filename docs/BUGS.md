@@ -13789,6 +13789,188 @@ src="${functions_source[my_fn]%%:*}"
 
 ---
 
+## #262 — `zsh_eval_context` array always empty (zsh: tracks outer→inner eval context)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "ctx=[${zsh_eval_context[*]}]"; f() { echo "in-fn=[${zsh_eval_context[*]}]"; }; f'
+ctx=[cmdarg]
+in-fn=[cmdarg shfunc]
+
+$ ./target/debug/zshrs --zsh -c 'echo "ctx=[${zsh_eval_context[*]}]"; f() { echo "in-fn=[${zsh_eval_context[*]}]"; }; f'
+ctx=[]
+in-fn=[]
+```
+
+`zsh_eval_context` is an array tracking the current
+evaluation context — each entry describes one level of the
+context stack. Values include:
+- `cmdarg` — outermost cmdline arg context (`zsh -c "..."`)
+- `toplevel` — top of script execution
+- `shfunc` — inside a shell function
+- `loadeval` — inside `source`/`.` evaluation
+- `cmdsubst` — inside `$(...)` command substitution
+- `evalpos` — inside `eval` call
+- `globsubst` — inside glob-related substitution
+
+zshrs's `zsh_eval_context` is always empty, regardless of
+nesting level. The parameter exists (no error on access) but
+never gets populated.
+
+Verified across multiple contexts:
+- Top-level: zsh `[cmdarg]`, zshrs `[]`
+- Inside function: zsh `[cmdarg shfunc]`, zshrs `[]`
+- Inside `(...)`: zsh `[cmdarg]`, zshrs `[]`
+- Inside `$(...)`: zsh `[cmdarg cmdsubst]`, zshrs `[]`
+
+**Where** — `src/ported/params/eval_context.rs::push_context`:
+the autovar exists but nothing pushes entries onto it during
+context transitions. C-source `Src/init.c::zsh_main` and
+various `Src/exec.c` entry points push/pop via
+`zsh_eval_context_stack[]` updates.
+
+**Impact** — debug-output helpers and "where am I" plugins
+that key off the context stack get no info:
+
+```sh
+# Trace helper: show full eval context on each call
+trace() {
+    echo "[$(date +%T)] [${zsh_eval_context[*]}] $*" >&2
+}
+trace "doing X"
+# zsh: "[...] [cmdarg toplevel shfunc] doing X"  (full call stack context)
+# zshrs: "[...] [] doing X"  (no context info)
+```
+
+Some prompt themes also use `zsh_eval_context` to determine
+"am I in a function or interactive prompt" — those checks
+silently default to wrong path.
+
+**Workaround** — manually track via `${funcstack[*]}` (already
+broken per #237 though — file:line format diverges).
+
+---
+
+## #263 — `$ZSH_DEBUG_CMD` empty when DEBUG trap fires (zsh: contains the command being executed)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'trap "echo \"CMD=[\$ZSH_DEBUG_CMD]\"" DEBUG; echo hi'
+CMD=[echo hi]
+hi
+
+$ ./target/debug/zshrs --zsh -c 'trap "echo \"CMD=[\$ZSH_DEBUG_CMD]\"" DEBUG; echo hi'
+CMD=[]
+hi
+```
+
+`ZSH_DEBUG_CMD` is the parameter set by zsh just before
+firing the DEBUG trap — contains the text of the command
+about to be executed. Used by step-debuggers and tracing
+plugins.
+
+zshrs's DEBUG trap fires (the trap body runs) but
+`ZSH_DEBUG_CMD` is empty when read inside the trap. The
+parameter exists but isn't populated with the command text.
+
+(Side observation: in zsh's `-c` cmdline mode, the DEBUG
+trap may or may not fire depending on the command form —
+the output above shows it firing once for the `echo hi`
+command. zshrs fires it consistently. Both behaviors are
+present but the missing `ZSH_DEBUG_CMD` content is the
+clear bug.)
+
+**Where** — `src/ported/exec.rs::fire_debug_trap`: invokes
+trap body but doesn't set `ZSH_DEBUG_CMD` parameter
+beforehand. C-source `Src/exec.c::trapcmd` updates the
+parameter from `dupstring(text)` before calling the trap.
+
+**Impact** — step-debuggers, command-tracers, and slow-
+command-logging plugins (common in zsh user setups) can't
+introspect what command is about to run:
+
+```sh
+# Log every command before execution
+trap '[[ "$ZSH_DEBUG_CMD" =~ "slow_op" ]] && start_timer' DEBUG
+# zsh: timer starts whenever a slow_op command is about to run
+# zshrs: ZSH_DEBUG_CMD always empty, regex never matches, timer never starts
+```
+
+Combined with #237 (funcfiletrace format broken), zshrs's
+debugging/introspection infrastructure has multiple gaps that
+together make custom debug tooling unusable.
+
+**Workaround** — none direct — `ZSH_DEBUG_CMD` is the
+authoritative source. Could use `read -A history -p` to read
+just-typed lines but that's only interactive.
+
+---
+
+## #264 — `${widgets[fn]}` returns `builtin` for ALL queries (registration ignored)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'my-fn() { :; }; zle -N my-fn; echo "[${widgets[my-fn]}]"'
+[user:my-fn]
+
+$ ./target/debug/zshrs --zsh -c 'my-fn() { :; }; zle -N my-fn; echo "[${widgets[my-fn]}]"'
+[builtin]
+```
+
+After registering a custom widget via `zle -N name [fn]`,
+zsh's `widgets[name]` introspection returns `user:fnname`
+indicating it's a user-defined widget backed by function
+`fnname`. zshrs returns the literal string `builtin` for
+ALL queries — including ones that were never registered.
+
+Combined with #260 (which showed `widgets[]` introspection
+returns empty for built-in widgets and `(@k)widgets` returns
+0 keys), the widgets-assoc semantics in zshrs are doubly
+broken:
+
+1. Pre-registered builtin widgets don't appear in the
+   introspection table at all (#260).
+2. User-registered widgets via `zle -N` aren't reflected in
+   the table either — every query returns the literal
+   `builtin` string regardless of the actual widget state.
+
+The `builtin` literal appears to be a hardcoded default
+return — there's no actual lookup happening against a real
+widgets-table.
+
+**Where** — `src/ported/params/widgets.rs::widgets_getfn`:
+returns a hardcoded `"builtin"` string instead of consulting
+the registered widget table. C-source `Src/Zle/zle_thingy.c::widgetsgetfn`
+iterates `thingytab[]` and returns the formatted entry
+(`user:fnname` for user widgets, `completion:context` for
+completion widgets, etc.).
+
+**Impact** — completion frameworks (fzf-tab, zsh-completions,
+zsh-syntax-highlighting) that probe widget types to decide
+how to interact with them get wrong type info on every
+query:
+
+```sh
+# fzf-tab-style guard: only wrap user widgets, not builtins
+case "${widgets[expand-or-complete]}" in
+    user:*) wrap_with_fzf expand-or-complete ;;
+    *)      : ;;
+esac
+# zsh: matches user:* only after compsys/fzf-tab has bound the widget
+# zshrs: always matches *) branch (value is "builtin"), wrapping never happens
+```
+
+This is a critical introspection gap for any zsh plugin that
+inspects widget types.
+
+**Workaround** — track widget registration in a parallel
+user-managed assoc instead of relying on `widgets[]`.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -14054,9 +14236,12 @@ src="${functions_source[my_fn]%%:*}"
 | 259 | `${jobstates[N]}` and `${jobdirs[N]}` empty (companion to #257 — all 3 job-intro assocs broken) | **port-bug** | parse `jobs -l` output |
 | 260 | `${widgets[NAME]}` zle widget intro assoc empty (zsh: 386 builtin widgets) | **port-bug** | `zle -la NAME` for existence test |
 | 261 | `${functions_source[fn]}` format diverges — `zsh:0` instead of bare `zsh` for cmdline fn | **port-bug** | strip `:N` suffix before compare |
+| 262 | `zsh_eval_context` array always empty (zsh: `cmdarg`, `cmdarg shfunc`, etc. — eval context stack) | **port-bug** | manual `${funcstack[*]}` (also broken) |
+| 263 | `$ZSH_DEBUG_CMD` empty when DEBUG trap fires (parameter never populated with cmd text) | **port-bug** | (none — step-debug not possible) |
+| 264 | `${widgets[fn]}` after `zle -N fn` returns literal `builtin` for all queries (no real lookup) | **port-bug** | parallel user-managed assoc |
 
-Of two hundred and sixty-one entries, two are fixed (5, 7), two
-hundred and fifty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and sixty-four entries, two are fixed (5, 7), two
+hundred and fifty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -14074,5 +14259,5 @@ hundred and fifty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252,
-253, 254, 255, 256, 257, 258, 259, 260, 261), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264), and
+four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
