@@ -12266,6 +12266,185 @@ u2+=(a)                       # works correctly
 
 ---
 
+## #235 — `typeset -m "glob"` errors instead of glob-matching parameter names
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'foo1=a; foo2=b; bar=c; typeset -m "foo*"'
+foo1=a
+foo2=b
+
+$ ./target/debug/zshrs --zsh -c 'foo1=a; foo2=b; bar=c; typeset -m "foo*"'
+zsh:typeset:1: not valid in this context: foo*
+```
+
+`typeset -m PATTERN` is supposed to operate on parameters
+whose names match the given glob pattern — displaying them
+(when no other action specified) or applying attribute flags
+to all matches. zsh handles this; zshrs rejects the pattern
+as "not valid in this context."
+
+The `-m` flag is supported on many builtins for pattern-based
+batch operations:
+- `unset -m "pattern"` — unset all matching params
+- `unalias -m "pattern"` — remove matching aliases
+- `unfunction -m "pattern"` — remove matching functions
+- `unhash -dm "pattern"` — remove matching named-dirs
+- `typeset -m "pattern"` — display/modify matching params
+- `disable -m`, `enable -m` — toggle by pattern
+
+zshrs may have similar gaps on the other builtins; the test
+batch only exercised `typeset -m`.
+
+**Where** — `src/ported/builtins/typeset.rs::handle_m_flag`:
+either the `-m` flag isn't parsed, or pattern-matching against
+the parameter table isn't dispatched. C-source
+`Src/builtin.c::typeset_single` with `OPT_MFLAG` calls
+`scanmatchtable()` over the params hash with the glob pattern.
+
+**Impact** — config dumps that want to inspect all parameters
+matching a naming convention break:
+
+```sh
+# Common pattern for prefixed config vars
+typeset -m "MYAPP_*"   # show all app config
+# zsh: dumps every MYAPP_* var
+# zshrs: errors out, script aborts (or fails silently if 2>/dev/null)
+```
+
+Same impact for batch-cleanup patterns:
+```sh
+unset -m "TEMP_*"   # cleanup all TEMP_* vars at script end
+# Probably also broken if unset -m has the same gap
+```
+
+**Workaround** — explicit loop with manual glob:
+```sh
+for v in "${(@k)parameters[(I)foo*]}"; do
+    typeset "$v"
+done
+```
+
+---
+
+## #236 — `${(@)arr:#}` empty-pattern filter doesn't filter out empty elements
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x "" y); print -l "${(@)a:#}"'
+x
+y
+
+$ ./target/debug/zshrs --zsh -c 'a=(x "" y); print -l "${(@)a:#}"'
+x
+(empty line)
+y
+```
+
+The pattern `${arr:#pat}` filters out elements matching `pat`.
+With an EMPTY pattern (`${arr:#}`), zsh interprets this as
+"filter out elements equal to empty string" — empties are
+removed. zshrs preserves empty elements.
+
+Common idiom for cleaning sparse arrays:
+```sh
+arr=("${(@)source_arr:#}")   # remove empty/unset slots
+```
+
+**Where** — `src/ported/paramsubst.rs::filter_with_pattern`:
+when pattern is empty, doesn't match empty elements. C-source
+`Src/subst.c::filtsubstr` treats empty pattern as matching
+empty string explicitly.
+
+**Impact** — array-cleaning idiom doesn't compact sparse
+arrays. Subsequent indexed iteration sees empty slots:
+
+```sh
+read_lines() {
+    local IFS=$'\n'
+    arr=("${(@f)$(cat file)}")
+    arr=("${(@)arr:#}")   # zsh: removes blank lines
+                          # zshrs: blank lines kept
+    process "${arr[@]}"
+}
+```
+
+**Workaround** — explicit pattern matching empty:
+```sh
+arr=("${(@)arr:#(#e)}")   # extended-glob anchor-at-end empty
+```
+
+or manual loop:
+```sh
+new=()
+for x in "${arr[@]}"; do [[ -n "$x" ]] && new+=("$x"); done
+arr=("${new[@]}")
+```
+
+---
+
+## #237 — `${funcfiletrace}` and `${functrace}` format diverges from zsh (missing file path + line)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "ft=${funcfiletrace[1]}"; }; f'
+ft=/opt/homebrew/bin/zsh:1
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo "ft=${funcfiletrace[1]}"; }; f'
+ft=zsh
+```
+
+`funcfiletrace[N]` is supposed to contain
+`<file>:<line>` for the source location that called the
+function at funcstack level N. zsh produces the full binary
+path + line number. zshrs produces just the program name
+(`zsh`) with no line number and no path.
+
+Same broken format applies to `${functrace}`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "${functrace[1]}"; }; f'
+/opt/homebrew/bin/zsh:1
+
+$ ./target/debug/zshrs --zsh -c 'f() { echo "${functrace[1]}"; }; f'
+f:1
+```
+
+(`functrace` is the function-name version while
+`funcfiletrace` is the file-path version — both are broken
+but in different ways: zshrs's `functrace` produces `<fn>:<line>`,
+zsh produces `<file>:<line>`.)
+
+**Where** — `src/ported/params/autovars.rs::funcfiletrace_get`
+and `functrace_get`: format and source-data lookups don't
+match zsh. C-source `Src/parameter.c::funcfiletracegetfn`
+builds entries from the active funcstack's `caller_file` and
+`caller_line` fields.
+
+**Impact** — error-reporting code that uses `funcfiletrace`
+to print "called from FILE:LINE" gets wrong info:
+
+```sh
+die() {
+    echo "ERROR at ${funcfiletrace[1]}: $*" >&2
+    exit 1
+}
+# zsh: prints "ERROR at /path/to/script.zsh:42: ..."
+# zshrs: prints "ERROR at zsh: ..." (no useful trace location)
+```
+
+Stack-trace plugins (zsh-better-error / zsh-utils style) lose
+their source-location info entirely.
+
+**Workaround** — use `${(%):-%x:%I}` prompt-escape form for
+script:line if [[#204]] (promptsubst) and the relevant prompt
+escapes (#38/#92) are addressed; otherwise no clean
+workaround.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -12504,9 +12683,12 @@ u2+=(a)                       # works correctly
 | 232 | `TRAPEXIT()` named-function form of EXIT trap not fired (3rd broken exit-handler form) | **port-bug** | explicit `trap "..." EXIT` at top-level |
 | 233 | `typeset -H VAR=val` then `typeset -p VAR` shows value (security-relevant credential leak) | **port-bug** | filter dump output explicitly |
 | 234 | `typeset +U arr` doesn't clear dedup AND `+=` of dup destroys array (corrupting) | **port-bug** | copy to fresh non-`-U` array |
+| 235 | `typeset -m "glob"` errors "not valid in this context" instead of pattern-matching | **port-bug** | loop with `${(@k)parameters[(I)pat]}` |
+| 236 | `${(@)arr:#}` empty-pattern filter doesn't filter empty elements (sparse-arr cleanup broken) | **port-bug** | `:#(#e)` extended-glob anchor |
+| 237 | `${funcfiletrace}`/`${functrace}` format diverges — missing file path + line | **port-bug** | (no clean workaround) |
 
-Of two hundred and thirty-four entries, two are fixed (5, 7), two
-hundred and twenty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and thirty-seven entries, two are fixed (5, 7), two
+hundred and thirty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -12522,5 +12704,5 @@ hundred and twenty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
-227, 228, 229, 230, 231, 232, 233, 234), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237), and four
+were zsh-correct behavior misframed by demos (1, 2, 3, 6).
