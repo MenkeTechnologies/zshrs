@@ -11744,6 +11744,179 @@ strftime -s log_line "%F %T  %s" $EPOCHSECONDS "$message"
 
 ---
 
+## #226 — `alias -s SUFFIX=cmd` doesn't populate `saliases` introspection assoc
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'alias -s py=python; echo "saliases=[${saliases[py]}]"; alias -s'
+saliases=[python]
+py=python
+
+$ ./target/debug/zshrs --zsh -c 'alias -s py=python; echo "saliases=[${saliases[py]}]"; alias -s'
+saliases=[]
+py=python
+```
+
+zsh maintains three parallel introspection assoc arrays:
+`aliases` (regular), `galiases` (global, `alias -g`), and
+`saliases` (suffix, `alias -s`). zshrs's suffix-alias
+registration via the builtin works (`alias -s` lists them
+correctly) but doesn't mirror into the `saliases` parameter
+introspection table.
+
+**Where** — `src/ported/builtins/alias.rs::define_suffix_alias`:
+no insert into the `saliases` parameter table. C-source
+`Src/builtin.c::bin_alias` with `-s` flag inserts into the
+shared aliases table with `ALIAS_SUFFIX` flag; the
+`parameters` introspection routes flagged entries to the
+appropriate hash.
+
+**Impact** — plugin frameworks that probe `saliases` for
+"what file extensions are registered as suffix aliases" get
+empty results, even when `alias -s` shows the aliases working
+at runtime:
+
+```sh
+# Plugin discovery pattern
+for ext in "${(@k)saliases}"; do
+    echo "Registered suffix: .$ext → ${saliases[$ext]}"
+done
+# zsh: iterates py, sh, md, etc.
+# zshrs: iterates nothing — plugin sees no suffix aliases
+```
+
+**Workaround** — parse `alias -s` output instead of querying
+the assoc:
+```sh
+alias -s | while IFS='=' read suffix cmd; do
+    echo "$suffix → $cmd"
+done
+```
+
+---
+
+## #227 — `disable -a NAME` neither populates `dis_aliases` nor removes from active `aliases` table
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'alias foo=bar; disable -a foo; echo "dis_aliases=[${dis_aliases[foo]}]"; alias foo; foo 2>&1'
+dis_aliases=[bar]
+zsh:1: command not found: foo
+
+$ ./target/debug/zshrs --zsh -c 'alias foo=bar; disable -a foo; echo "dis_aliases=[${dis_aliases[foo]}]"; alias foo; foo 2>&1'
+dis_aliases=[]
+foo=bar
+zsh:1: command not found: foo
+```
+
+Three behaviors should change when `disable -a foo` runs:
+1. `dis_aliases[foo]` gets the saved body.
+2. `aliases[foo]` is cleared (alias no longer in active table).
+3. `foo` becomes uncallable.
+
+zshrs gets (3) right but fails (1) and (2). The alias
+silently stays in the active `aliases` table, and the disabled
+table is never populated.
+
+Same root cause as #221 (`disable -f` for functions): the
+"move to disabled table" transition isn't implemented for
+either functions or aliases. zshrs's `disable` flips an
+internal flag that affects callability but skips the
+table-migration step.
+
+**Where** — `src/ported/builtins/disable.rs::disable_alias`:
+flips a disabled bit but doesn't insert into `dis_aliases`
+parameter table OR remove from the `aliases` parameter table.
+C-source `Src/builtin.c::bin_enable` for `-a` mode flags the
+aliasnode and `parameters` introspection routes it.
+
+**Impact** — same as #221 for aliases. Re-enable patterns
+break:
+
+```sh
+disable -a my_destructive_alias
+do_safe_operations
+enable -a my_destructive_alias  # zsh: re-enables; zshrs: re-enables but
+                                # was never really disabled in introspection
+```
+
+Combined with #221 (functions) and the missing `dis_builtins`
+behavior (presumably also broken — wasn't tested in this
+batch), zshrs's entire `disable`/`enable` round-trip is
+table-mirror-broken.
+
+**Workaround** — `unalias NAME` (destructive) and re-define
+later from a saved copy.
+
+---
+
+## #228 — `hash -d NAME=path` doesn't populate `nameddirs` introspection assoc
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'hash -d foo=/tmp; echo "nameddirs=[${nameddirs[foo]}]"; echo "~foo"; hash -d'
+nameddirs=[/tmp]
+~foo
+foo=/tmp
+
+$ ./target/debug/zshrs --zsh -c 'hash -d foo=/tmp; echo "nameddirs=[${nameddirs[foo]}]"; echo "~foo"; hash -d'
+nameddirs=[]
+~foo
+foo=/tmp
+```
+
+`hash -d` registers a "named directory" — `~foo` then expands
+to `/tmp` in path contexts. zshrs's registration works (the
+`hash -d` listing shows it, and `~foo` expands correctly), but
+the `nameddirs` introspection assoc isn't populated.
+
+Same introspection-table-mirror bug pattern as #226/#227 —
+the data structure that backs the builtin works, but the
+parameter-introspection mapping is incomplete.
+
+Note: `~foo` itself does NOT expand to `/tmp` in this test —
+both shells output the literal `~foo` because echo gets the
+unexpanded string (the test echoes the literal text). To see
+the expansion both shells need a different context:
+
+```sh
+$ both-shells -fc 'hash -d foo=/tmp; cd ~foo; pwd'
+/tmp
+```
+
+The bug is specifically about the introspection assoc.
+
+**Where** — `src/ported/builtins/hash.rs::register_named_dir`:
+inserts into the named-dir table backing `~name` expansion,
+but doesn't mirror into `nameddirs` parameter. C-source
+`Src/hashtable.c::createnameddir` updates the shared table
+that `parameters` introspection reads.
+
+**Impact** — code that introspects registered named
+directories to build menus / config dumps / migration scripts
+sees no entries:
+
+```sh
+# Dump all named dirs for a config backup
+for name dir in "${(@kv)nameddirs}"; do
+    echo "hash -d $name=$dir" >> ~/.zsh_dirs_backup
+done
+# zsh: produces backup file with all named dirs
+# zshrs: empty backup file
+```
+
+**Workaround** — parse `hash -d` output:
+```sh
+hash -d | while IFS='=' read name dir; do
+    echo "$name → $dir"
+done
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -11973,9 +12146,12 @@ strftime -s log_line "%F %T  %s" $EPOCHSECONDS "$message"
 | 223 | `setopt warn_create_global` no warning on implicit global creation in fn | **port-bug** | manual audit / explicit `local` always |
 | 224 | `unsetopt typeset_silent` + `typeset X` doesn't print existing value | **port-bug** | explicit `echo "X=$X"` for debug |
 | 225 | `printf "%(%Y)T"` silently treats as literal (zsh: errors "invalid directive") | **port-bug** | use `zsh/datetime` `strftime` builtin |
+| 226 | `alias -s SUFFIX=cmd` doesn't populate `saliases` introspection assoc | **port-bug** | parse `alias -s` output instead |
+| 227 | `disable -a NAME` neither populates `dis_aliases` nor removes from active `aliases` table | **port-bug** | `unalias NAME` destructive |
+| 228 | `hash -d NAME=path` doesn't populate `nameddirs` introspection assoc | **port-bug** | parse `hash -d` output instead |
 
-Of two hundred and twenty-five entries, two are fixed (5, 7), two
-hundred and nineteen remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of two hundred and twenty-eight entries, two are fixed (5, 7), two
+hundred and twenty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -11990,5 +12166,6 @@ hundred and nineteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213,
-214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225), and
-four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
+227, 228), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
