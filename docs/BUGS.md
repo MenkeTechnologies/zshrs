@@ -20156,6 +20156,161 @@ size=$(printf %s "$data" | wc -c)
 
 ---
 
+## #379 — `zle -la` returns empty — builtin widget registry not exposed
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zle -la 2>&1 | wc -l'
+     386
+
+$ ./target/debug/zshrs --zsh -c 'zle -la 2>&1 | wc -l'
+       0
+```
+
+`zle -la` lists **all** widgets (builtin + user-defined),
+including internal widgets prefixed with `.` (e.g.
+`.accept-line`, `.accept-and-hold`,
+`.accept-and-infer-next-history`). zsh exposes 386 such
+widgets; zshrs returns nothing.
+
+**Where** — `src/ported/builtins/zle.rs` `-la` handler:
+falls through to user-widget enumeration only; missing
+walk of the C-builtin widget table. C-source
+`Src/Zle/zle_main.c::bin_zle` with `OPT_ISSET("la")` walks
+both `internal_widgets` and `user_widgets`.
+
+**Impact** — completion frameworks (zsh-completions, fzf-tab,
+zsh-autosuggestions) probe `zle -la` to detect available
+widgets before wiring keybindings. With zshrs:
+
+```sh
+# fzf-tab probe (real pattern from zinit)
+if zle -la 2>/dev/null | grep -q "^expand-or-complete$"; then
+    bindkey '^I' expand-or-complete
+fi
+# zsh: widget detected, binding wired
+# zshrs: probe fails, completion stays unbound
+```
+
+Also breaks bindkey introspection scripts that audit
+"which widgets are bound vs unbound" via the diff between
+`bindkey -L | awk '{print $NF}'` and `zle -la`.
+
+**Workaround** — hardcode widget list, or check
+`(( ${+widgets[NAME]} ))` (parameter-based probe).
+
+---
+
+## #380 — `bindkey` default-keymap output divergence — 31 vs 117 entries
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'bindkey 2>&1 | wc -l'
+      31
+
+$ ./target/debug/zshrs --zsh -c 'bindkey 2>&1 | wc -l'
+     117
+```
+
+zsh's default emacs keymap (active under `-f`) has 31
+visible bindings — the canonical control-key set
+(`^A` beginning-of-line, `^E` end-of-line, etc., plus
+escape sequences).
+
+zshrs emits 117 entries — 3.8x as many. Either the
+emacs keymap is over-populated (pre-binding viins / vicmd
+keys into emacs), or `bindkey` is incorrectly merging
+multiple keymaps into the no-arg dump.
+
+**Where** — `src/ported/builtins/bindkey.rs::list_default`:
+likely walking the wrong keymap table or merging multiple
+maps. C-source `Src/Zle/zle_keymap.c::bin_bindkey`
+no-args path walks only the *current* keymap (default
+`main` = emacs alias).
+
+**Impact** — zsh users who diff their bindkey state against
+defaults (common debugging pattern when keybindings break)
+get noisy 4x-larger output that's hard to compare against
+zsh's actual defaults.
+
+```sh
+# Common diff pattern
+zsh-keymap-baseline=$(zsh -fc 'bindkey')
+my-keymap=$(bindkey)
+diff <(echo "$zsh-keymap-baseline") <(echo "$my-keymap")
+# zsh: shows real customizations
+# zshrs: shows 86 phantom entries that "differ" from baseline
+```
+
+**Workaround** — none for diff use cases; for "is X bound?"
+probe `bindkey '^A'` (specific-key form, which both shells
+handle correctly per spot checks).
+
+---
+
+## #381 — `TRAPINT()` function-style signal handler not invoked on SIGINT
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPINT() { echo intercept; exit 1; }; kill -INT $$; echo "after"'
+intercept
+rc=1
+
+$ ./target/debug/zshrs --zsh -c 'TRAPINT() { echo intercept; exit 1; }; kill -INT $$; echo "after"'
+rc=130
+```
+
+zsh supports two equivalent forms of signal trap:
+
+1. `trap 'CMD' SIG` — POSIX-style string command
+2. `TRAPNAME() { BODY }` — zsh-style function (named
+   `TRAPINT`, `TRAPUSR1`, `TRAPHUP`, etc.)
+
+Both fire on signal delivery. zshrs handles form (1) but
+ignores form (2): the function `TRAPINT` is defined but
+SIGINT causes default exit (`rc=130` = 128+SIGINT) without
+ever invoking the function body.
+
+**Where** — `src/ported/signals/handler.rs`: signal
+dispatch lookup checks the trap-string table but not the
+`TRAP*` function table. C-source
+`Src/signals.c::dosigtrap` checks both — function table
+first via `getshfunc()`, then string trap.
+
+**Impact** — **critical signal-handling gap**. The
+function-style form is the more common zsh idiom (cleaner
+syntax, multi-line bodies). Scripts that use it for
+cleanup, lock-release, or PID-tracking lose all signal
+handling under zshrs:
+
+```sh
+# Lock-file cleanup on Ctrl-C
+TRAPINT() {
+    rm -f /var/run/myapp.lock
+    return $((128 + 2))   # propagate SIGINT
+}
+# zsh: lock removed on Ctrl-C
+# zshrs: TRAPINT never fires, lock leaks
+```
+
+Real instances in the wild include:
+- oh-my-zsh's `lib/spectrum.zsh` (TRAPINT for cleanup)
+- p10k's transient prompt (TRAPWINCH for resize)
+- zinit's progress display (TRAPWINCH)
+
+**Workaround** — convert to string form:
+```sh
+trap 'rm -f /var/run/myapp.lock' INT
+```
+
+Less ergonomic for multi-line handlers but works under
+zshrs.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -20538,9 +20693,12 @@ size=$(printf %s "$data" | wc -c)
 | 376 | `zmodload zsh/nonexistent` silent failure — missing dlopen error message (zsh: "failed to load module: dlopen…") | **port-bug** | probe module file existence manually |
 | 377 | `zmodload` no-args lists *available* modules instead of *loaded* modules (zsh: just `zsh/main`) | **port-bug** | track loaded modules manually in user assoc |
 | 378 | `${#var}` ignores locale — always char count even in C/POSIX (zsh: byte count when LC_CTYPE not UTF-8) | **port-bug** | `wc -c` for byte count |
+| 379 | `zle -la` returns empty — builtin widget registry not exposed (zsh: 386 widgets incl `.accept-line`) | **port-bug** | hardcode widget list / probe `${+widgets[N]}` |
+| 380 | `bindkey` default-keymap output divergence — 31 vs 117 entries (zsh: canonical emacs set) | **port-bug** | use specific-key probe instead of full diff |
+| 381 | `TRAPINT()` function-style signal handler not invoked — only string-form `trap '…' INT` works | **port-bug** | use `trap '…' SIG` instead of `TRAP$SIG()` |
 
-Of three hundred and seventy-eight entries, two are fixed (5, 7),
-three hundred and seventy-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and eighty-one entries, two are fixed (5, 7),
+three hundred and seventy-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
