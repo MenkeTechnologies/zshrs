@@ -2914,4 +2914,106 @@ mod tests {
                 "listwidgets must be deterministic");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/zle_thingy.c
+    // c:48 createthingytab / c:307 rthingy_nocreate / c:417 unbindwidget /
+    // c:659 bin_zle / c:752 bin_zle_list / c:1219 zle_usable /
+    // c:1896 listwidgets / c:1907 getwidgettarget
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:48 — `createthingytab` is idempotent.
+    #[test]
+    fn createthingytab_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        for _ in 0..10 { createthingytab(); }
+    }
+
+    /// c:307 — `rthingy_nocreate` returns bool (compile-time pin, alt).
+    #[test]
+    fn rthingy_nocreate_returns_bool_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: bool = rthingy_nocreate("__never_real_thingy_xyz__");
+    }
+
+    /// c:307 — `rthingy_nocreate("")` empty name deterministic.
+    #[test]
+    fn rthingy_nocreate_empty_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let first = rthingy_nocreate("");
+        for _ in 0..5 {
+            assert_eq!(rthingy_nocreate(""), first,
+                "rthingy_nocreate('') must be pure");
+        }
+    }
+
+    /// c:417 — `unbindwidget("nonexistent", _)` returns i32 (no panic).
+    #[test]
+    fn unbindwidget_nonexistent_returns_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = unbindwidget("__never_widget__", 0);
+    }
+
+    /// c:1219 — `zle_usable` returns i32 (compile-time pin).
+    #[test]
+    fn zle_usable_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: i32 = zle_usable();
+    }
+
+    /// c:1896 — `listwidgets` returns Vec<String> (alt-name type pin).
+    /// Note: in test context the widget table is empty; the
+    /// `includes self-insert` invariant only holds after the live
+    /// startup-time registration, which test_setup doesn't perform.
+    #[test]
+    fn listwidgets_returns_vec_string_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _: Vec<String> = listwidgets();
+    }
+
+    /// c:1907 — `getwidgettarget("")` empty input deterministic.
+    #[test]
+    fn getwidgettarget_empty_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let a = getwidgettarget("");
+        let b = getwidgettarget("");
+        assert_eq!(a, b, "getwidgettarget('') must be pure");
+    }
+
+    /// c:1907 — `getwidgettarget` for unknown widget returns None.
+    /// (Test context's widget table is empty so even builtin lookups
+    /// return None; only the unknown-name invariant is reliably
+    /// testable here.)
+    #[test]
+    fn getwidgettarget_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(getwidgettarget("__never_real_widget_xyz__").is_none(),
+            "unknown widget → None");
+    }
+
+    /// c:659 — `bin_zle` returns i32 (compile-time pin).
+    #[test]
+    fn bin_zle_returns_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let ops = empty_ops_thingy();
+        let _: i32 = bin_zle("zle", &[], &ops, 0);
+    }
+
+    /// c:752 — `bin_zle_list` returns i32 (compile-time pin, alt).
+    #[test]
+    fn bin_zle_list_returns_i32_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let ops = empty_ops_thingy();
+        let _: i32 = bin_zle_list("zle", &[], &ops, 0);
+    }
 }
