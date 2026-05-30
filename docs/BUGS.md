@@ -3429,6 +3429,186 @@ state).
 
 ---
 
+## #73 — `$ZSH_VERSION` reports `5.9.0.3-test` (custom suffix), not `5.9`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$ZSH_VERSION]"'
+[5.9]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[$ZSH_VERSION]"'
+[5.9.0.3-test]
+```
+
+zshrs appends `.0.3-test` to its reported `$ZSH_VERSION`. zsh sets
+this exactly to `5.9` (or whatever upstream is installed).
+
+**Where** — `src/ported/version.rs` / `src/ported/init.rs`: the
+`ZSH_VERSION` special-param initializer uses zshrs's `CARGO_PKG_*`
+build metadata instead of mirroring upstream zsh's `VERSION` macro
+from `Src/zsh.h`.
+
+**Impact** — every `.zshrc`-style guard parsing `$ZSH_VERSION` to
+gate features fails:
+
+```sh
+# common idiom in dotfiles
+ver=${ZSH_VERSION%%.*}     # major version
+[[ $ver -ge 5 ]] && setopt ...
+# zsh: ver=5 -> ok
+# zshrs: ver=5 -> ok (lucky in this case)
+```
+
+But finer parses break:
+```sh
+# parse all four version components
+IFS=. read -r maj min pat <<< "$ZSH_VERSION"
+# zsh: maj=5 min=9 pat=
+# zshrs: maj=5 min=9 pat=0  (extra component captured into pat)
+```
+
+And:
+```sh
+# detect zsh-vs-zshrs
+[[ "$ZSH_VERSION" == *test* ]] && echo "zshrs"  # works for zshrs
+[[ "$ZSH_VERSION" == "5.9" ]] && echo "zsh exact"  # fails on zshrs
+```
+
+If the goal is identity-divergence (so `.zshrc` can detect zshrs vs
+zsh), the variable to inspect should be `$ZSH_NAME` or a dedicated
+`$ZSHRS_VERSION` — NOT clobbering the upstream-compat
+`$ZSH_VERSION`.
+
+**Where** — `src/ported/init.rs::set_zsh_version`: should set the
+value verbatim to the C-zsh version string. zshrs identity should
+land in a separate parameter so the compat-floor invariant holds.
+
+**Workaround** — code that needs the "real" version can parse
+`${ZSH_VERSION%%.*-test*}` or use `${ZSH_VERSION%%.[0-9].[0-9]-test}`.
+But the right fix is upstream.
+
+---
+
+## #74 — `local -r` violation in function doesn't abort, continues execution
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { local -r x=5; x=10; echo "after assign in fn"; }; f; echo "after fn call"'
+f: read-only variable: x
+
+$ ./target/debug/zshrs --zsh -c 'f() { local -r x=5; x=10; echo "after assign in fn"; }; f; echo "after fn call"'
+f:1: read-only variable: x
+after fn call
+```
+
+Two bugs in one:
+
+1. **Error format**: zsh prints `f: read-only ...` (function name).
+   zshrs prints `f:1: read-only ...` (function name + line number).
+   The `:1:` is a zshrs addition that doesn't match upstream format.
+
+2. **Execution continuation**: zsh aborts the script after the
+   read-only violation (no `after fn call` line). zshrs prints the
+   trailing `after fn call` line, meaning the function returned
+   normally (and the script continued).
+
+Per zsh semantics, a read-only assignment inside a function should:
+- print the error
+- return from the function with non-zero status
+- under `set -e`, also abort the script
+
+zshrs prints, sets exit status, but doesn't abort the function
+itself. The remaining body of `f` (the `echo "after assign in fn"`
+line) IS skipped in both shells — but only zsh propagates the
+abort up to the script level.
+
+Global readonly violations DO abort correctly in zshrs:
+```sh
+$ ./target/debug/zshrs --zsh -c 'readonly Y=5; Y=10; echo "still alive"'
+zsh:1: read-only variable: Y
+# (no "still alive" — abort works)
+```
+
+So the bug is specifically the function-scoped `local -r` path.
+
+**Where** — `src/ported/builtin_typeset.rs::assign_to_readonly`:
+the function-level readonly violation path returns instead of
+propagating an abort flag. C-source `Src/params.c::setsparam` sets
+`errflag |= ERRFLAG_ERROR` which the executor checks.
+
+**Impact** — scripts relying on `local -r` to enforce invariants
+during function execution can silently continue past a violation,
+producing wrong results downstream.
+
+**Workaround** — `set -e` and check return status after every
+function call — but `set -e` interactions with `local -r` aren't
+fully tested either (related to bug #33).
+
+---
+
+## #75 — `typeset -i x; x="bad math"` silently coerces to 0
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -i x=42; x="abc def"; echo "still alive: x=$x"'
+zsh:1: bad math expression: operator expected at `def'
+
+$ ./target/debug/zshrs --zsh -c 'typeset -i x=42; x="abc def"; echo "still alive: x=$x"'
+still alive: x=0
+```
+
+Assigning a string that's not a valid arithmetic expression to an
+integer-typed variable should:
+- in zsh: print "bad math expression" and abort the script (since
+  not in an `if`/`while` test context).
+- in zshrs: silently coerce to 0 and continue.
+
+Single-token non-numeric strings ARE handled the same in both
+(treated as variable name → 0):
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -i x=42; x="abc"; echo "[$x]"'
+[0]
+
+$ ./target/debug/zshrs --zsh -c 'typeset -i x=42; x="abc"; echo "[$x]"'
+[0]
+```
+
+But multi-token strings like `"abc def"` or `"not a number"` should
+trigger the arith parser's "operator expected" error, which zshrs
+silently swallows.
+
+**Where** — `src/ported/math.rs::parse_expression`: doesn't return
+an error when arith parsing fails to consume the entire input
+(remaining tokens after a successful primary expression). C-source
+`Src/math.c::matheval` checks `*str != '\0'` after parsing and
+flags the leftover as "operator expected".
+
+**Impact** — silent data corruption. Scripts that defensively type
+their counters as `typeset -i` and feed them from user input lose
+the type-safety net:
+
+```sh
+typeset -i counter=0
+read user_input <<< "abc def"
+counter=$user_input    # zsh: errors      zshrs: counter=0 silently
+# downstream loops run 0 times instead of erroring out
+```
+
+**Workaround** — explicit arith eval with validation:
+```sh
+if [[ "$user_input" =~ '^-?[0-9]+$' ]]; then
+    counter=$user_input
+else
+    echo "bad input: $user_input" >&2
+    return 1
+fi
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -3505,11 +3685,14 @@ state).
 | 70 | FS watcher leaks newly-created paths to stderr | **port-bug** | none — must fix in zshrs |
 | 71 | `${var:N:M}` accepts non-digit offset (bashism) | **port-bug** | wrap offset in `$(( ))` |
 | 72 | `log` builtin registered but dispatch → `/usr/bin/log` | **port-bug** | `print -- $watch` instead |
+| 73 | `$ZSH_VERSION` includes `.0.3-test` suffix vs `5.9` | **port-bug** | parse `${ZSH_VERSION%%.0*}` |
+| 74 | `local -r` violation in fn doesn't abort script | **port-bug** | check fn exit status |
+| 75 | `typeset -i x; x="bad math"` silently coerces to 0 | **port-bug** | regex-validate input first |
 
-Of seventy-two entries, two are fixed (5, 7), sixty-six remain open
-port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
-19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
-53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
-70, 71, 72), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+Of seventy-five entries, two are fixed (5, 7), sixty-nine remain
+open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
+35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
+69, 70, 71, 72, 73, 74, 75), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
