@@ -21316,6 +21316,165 @@ first_ten=( "${files[1,10]}" )
 
 ---
 
+## #400 — `case ... esack` typo silently accepted — missing `esac` parse-error detection
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'case x in y) echo y; esack'
+zsh:1: parse error near `esack'
+
+$ ./target/debug/zshrs --zsh -c 'case x in y) echo y; esack'
+(no output, rc=0)
+```
+
+zsh strictly requires `esac` to close a `case` block; the
+common typo `esack` is rejected with a parse error.
+
+zshrs accepts `esack` silently — the entire `case` block
+is parsed and executed up to that point, then the `esack`
+identifier is treated as command (which doesn't exist),
+which is silently swallowed because the case-body
+parsing context absorbs it. The case statement appears to
+succeed with rc=0.
+
+**Where** — `src/ported/parser/case.rs::parse_block`:
+the end-token recognition for case-blocks accepts any
+unmatched identifier instead of strictly requiring `esac`.
+C-source `Src/parse.c::par_case` checks `tok == ESAC`
+explicitly and errors otherwise.
+
+**Impact** — **silent corruption of intended logic**.
+Common typo of `esac` (very fingerable on macOS, easy to
+mistype) is invisible to zshrs. Code with the typo
+appears to work but doesn't execute the rest of the
+script:
+
+```sh
+case "$state" in
+    running) start_server ;;
+    stopped) stop_server ;;
+esack       # typo: should be esac
+verify_state
+cleanup_logs
+```
+
+zsh: parse error, script doesn't run.
+zshrs: case runs, `esack verify_state cleanup_logs` is
+treated as a single command (or several) that all silently
+fail or are interpreted in unexpected ways.
+
+**Workaround** — none syntactic; must add a CI lint that
+greps for unbalanced `case`/`esac` pairs.
+
+---
+
+## #401 — `select x in; do ... done` with empty option list — zshrs prompts and reads stdin instead of skipping
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'select x in; do echo body; break; done; echo after'
+after
+
+$ echo "" | ./target/debug/zshrs --zsh -c 'select x in; do echo body; break; done; echo after'
+?# ?# after
+```
+
+When `select` has an empty option list, zsh's
+documented behavior is to **skip the body entirely** —
+nothing to choose from, nothing to display, loop exits.
+
+zshrs emits the PS3 prompt and reads from stdin twice
+(visible as `?# ?# `) before exiting. With a real
+interactive terminal this would loop until the user
+provides input (effectively infinite-loop on empty-list).
+
+**Where** — `src/ported/exec/select.rs::execute`:
+should check `option_count == 0` at entry and skip the
+body. C-source `Src/loop.c::execselect` returns
+immediately when `nopts == 0`.
+
+**Impact** — defensive `select` over a possibly-empty
+array hangs an interactive session:
+
+```sh
+select choice in "${available_options[@]}"; do
+    [[ -n $choice ]] && break
+done
+# Normal flow: user picks. Edge: array is empty.
+# zsh: skips entirely, code continues
+# zshrs: empty prompt loop, hangs waiting for input that
+#        can never produce a valid pick
+```
+
+Common when `available_options` is filtered dynamically
+and the filter returns no results.
+
+**Workaround** — guard before `select`:
+```sh
+if (( ${#available_options} > 0 )); then
+    select choice in "${available_options[@]}"; do ...; done
+fi
+```
+
+---
+
+## #402 — `let` arithmetic-error exit code 2 instead of 1 — script error-classification diverges
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'let "x = 5/0"; echo rc=$?'
+zsh:1: division by zero
+rc=1
+
+$ ./target/debug/zshrs --zsh -c 'let "x = 5/0"; echo rc=$?'
+zsh:1: division by zero
+rc=2
+```
+
+zsh returns `rc=1` after a failed `let` arithmetic
+evaluation (canonical "general error" rc — `let` is
+documented to return 0 when the result is non-zero, 1
+otherwise / on error).
+
+zshrs returns `rc=2` (typically reserved for syntax /
+shell-builtin-usage errors, but here applied to arith
+errors).
+
+**Where** — `src/ported/builtins/let.rs::execute` (or
+the arithmetic evaluator): on error path, returns
+`BUILTIN_BAD_USAGE` (2) instead of generic-error (1).
+C-source `Src/builtins.c::bin_let` returns 1 on any error
+(arithmetic, parse, undefined variable).
+
+**Impact** — error-classification scripts that
+distinguish "shell builtin syntax error" from "arithmetic
+runtime error" break:
+
+```sh
+case "$(let "x=$expr" 2>/dev/null; echo $?)" in
+    0) echo "success" ;;
+    1) echo "arith error (div-zero, overflow)" ;;
+    2) echo "syntax error in expr" ;;
+esac
+# zsh: arith err triggers branch 1
+# zshrs: arith err triggers branch 2 (mis-classified)
+```
+
+Also subtly affects `set -e` interaction — both rcs
+trigger exit-on-error, but logging frameworks that
+emit "arith error" vs "syntax error" based on rc become
+inverted.
+
+**Workaround** — collapse 1/2 branches:
+```sh
+let "x=$expr" || echo "let failed: $?"   # any non-zero
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -21719,9 +21878,12 @@ first_ten=( "${files[1,10]}" )
 | 397 | **CRITICAL** `printf "X" > FILE` writes to BOTH stdout AND file — builtin bypasses shell redirection (echo/print work) | **port-bug** | use `print -r --` instead, or wrap printf in subshell |
 | 398 | `printf` unknown directives (`%Z`/`%K`/`%A`/`%a`/`%T`/`%(…)T`) printed literally instead of erroring (zsh: "invalid directive") | **port-bug** | manually validate format strings; check stderr for "invalid directive" |
 | 399 | `*(YN)` glob qualifier limit-to-N-matches ignored — returns all matches (zsh: caps at N) | **port-bug** | `( *(om) )` then array-slice `[1,N]` |
+| 400 | `case ... esack` typo silently accepted — missing `esac` close-token strict check (zsh: parse error) | **port-bug** | CI lint for unbalanced case/esac |
+| 401 | `select x in;` empty option list prompts/reads stdin instead of skipping body (zsh: skips, no prompt) | **port-bug** | guard `(( ${#opts} > 0 ))` before select |
+| 402 | `let "x=5/0"` arith-error rc=2 instead of 1 — script error-classification diverges | **port-bug** | collapse `\|\|` instead of branching on `$?` |
 
-Of three hundred and ninety-nine entries, two are fixed (5, 7),
-three hundred and ninety-three remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and two entries, two are fixed (5, 7),
+three hundred and ninety-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
