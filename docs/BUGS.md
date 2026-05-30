@@ -24383,6 +24383,169 @@ subshell.)
 
 ---
 
+## #454 — keymap creation/deletion (`bindkey -N`/`-D`) in subshell LEAKS to parent — extends #453
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'bindkey -N testmap; (bindkey -D testmap); bindkey -l | grep testmap'
+testmap
+
+$ ./target/debug/zshrs --zsh -c 'bindkey -N testmap; (bindkey -D testmap); bindkey -l | grep testmap'
+(empty)
+```
+
+Same subshell-scope-leak root as #450/#451/#452/#453.
+The **keymap table** is now confirmed to be in the
+shared-state group: subshell `bindkey -D` deletes the
+keymap from the parent.
+
+The bindkey/keymap table is distinct from the
+ZLE widget table (#453) — they're separate data
+structures even though `bindkey -N` and `zle -N` both
+extend the user-input system.
+
+**Where** — `src/ported/exec/subshell.rs` (same as
+#450-#453): keymap table needs save/restore or
+process-fork isolation.
+
+C-source `Src/Zle/zle_keymap.c::deletekeymap` operates
+on the global keymap table — subshell isolation relies
+on `entersubsh` having forked the address space.
+
+**Impact** — vi-mode plugin testing patterns break:
+
+```sh
+# Test custom keymap in isolation
+( bindkey -N my-mode; bindkey -M my-mode "^X" foo; ... )
+# zsh: parent's keymap state untouched
+# zshrs: my-mode now lives in the parent's keymap table
+#        AFTER the subshell exits — sandbox failed
+```
+
+Combined with #450/#451/#452/#453, the subshell-scope-
+leak family now covers: traps, functions, aliases, ZLE
+widgets, keymaps. One root cause; one fix point.
+
+**Workaround** — same as #450-#453: explicit save/restore,
+or fork a real zshrs child for full isolation.
+
+---
+
+## #455 — function definitions inside `$(...)` command-substitution LEAK to parent
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=$(g() { echo def; }; g); echo "captured=[$a]"; g 2>&1'
+captured=[def]
+zsh:1: command not found: g
+
+$ ./target/debug/zshrs --zsh -c 'a=$(g() { echo def; }; g); echo "captured=[$a]"; g 2>&1'
+captured=[def]
+def
+```
+
+Extends #451 (function leak from `(...)` subshell) to
+the **`$(...)` command-substitution** subshell context.
+Both should fork-isolate the function table.
+
+zsh: `g` defined inside `$()` is isolated; parent doesn't
+have it; subsequent `g` call errors "command not found".
+
+zshrs: `g` leaks from cmdsub into parent's function
+table; subsequent call invokes it.
+
+**Where** — `src/ported/exec/cmdsubst.rs::execute`:
+must save and restore the function table around the
+sub-execution. Same root as #450-#454.
+
+**Impact** — even more pervasive than #451. The
+`$()` cmdsub is one of the most common shell idioms;
+any plugin loader that uses `$(source plugin.zsh)` to
+capture output also captures any function defs as side
+effect:
+
+```sh
+plugin_version=$(source ~/.zsh/plug.zsh; print "$VERSION")
+# zsh: plug.zsh's helper functions confined to $()
+# zshrs: plug.zsh's helper functions leak into parent
+```
+
+Confirms the subshell-scope-leak family applies to BOTH
+forms of subshell — `(...)` and `$(...)`. A unified fix
+in subshell-entry plumbing should cover both.
+
+**Workaround** — save and restore:
+```sh
+old_defs=$(declare -f)
+plugin_version=$(source ~/.zsh/plug.zsh; print "$VERSION")
+# now reset functions
+unset -f $(declare -f | awk '/^[a-zA-Z_]+ \(\) {/ {print $1}')
+eval "$old_defs"
+```
+
+Heavy; unsuitable for nested cmdsub.
+
+---
+
+## #456 — `[[ "(x)" == "(x)" ]]` doesn't match — quoted parens in pattern not treated as literal
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="(x)"; [[ "$a" == "(x)" ]] && echo m || echo n'
+m
+
+$ ./target/debug/zshrs --zsh -c 'a="(x)"; [[ "$a" == "(x)" ]] && echo m || echo n'
+n
+```
+
+In `[[ ]]`, double-quoted patterns disable glob/extended-
+glob interpretation — the quoted value is treated as a
+**literal string** for matching.
+
+zsh: `"(x)" == "(x)"` matches as literal string.
+zshrs: doesn't match — apparently parsing `(x)` even
+inside double quotes as a glob-alternation construct,
+which then fails because `x` isn't a real alternative
+list.
+
+Same family as #13 (quote loss with `?`) and #449
+(backslash-escape not honored). The pattern compiler in
+zshrs's `[[ ]]` ignores quoting hints.
+
+**Where** — `src/ported/conditional/pattern.rs::compile_pat`:
+must check `QC_DOUBLE`/`QC_SINGLE` quote-marker on the
+pattern tokens and skip glob metachar interpretation in
+quoted regions. C-source `Src/pattern.c::patcompile`
+checks `Nularg`/`Quote` markers.
+
+**Impact** — defensive patterns with literal special-
+chars fail:
+
+```sh
+# Validate input contains literal "(prod)"
+if [[ "$user_input" == *"(prod)"* ]]; then
+    confirm_destructive
+fi
+# zsh: matches only if user_input literally contains "(prod)"
+# zshrs: doesn't match anything (the quoted "(prod)" is
+#        parsed as broken glob)
+```
+
+**Workaround** — use `grep`/`case`:
+```sh
+case "$user_input" in
+    *"(prod)"*) confirm_destructive ;;
+esac
+```
+
+`case` handles double-quoted literals correctly even when
+`[[ ]]` doesn't.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -24840,9 +25003,12 @@ subshell.)
 | 451 | **CRITICAL** function definition/`unfunction` in subshell LEAKS to parent — parallel to #450 trap leak | **port-bug** | save with `declare -f`, restore via `eval` |
 | 452 | alias definition/`unalias` in subshell LEAKS to parent — same family as #451 | **port-bug** | save alias dump, restore around subshell |
 | 453 | ZLE widget registration (`zle -N`/`zle -D`) in subshell LEAKS to parent — third member of subshell-scope-leak family | **port-bug** | fork explicit zshrs child for widget isolation |
+| 454 | keymap creation/deletion (`bindkey -N`/`-D`) in subshell LEAKS to parent — extends #453 to keymap table | **port-bug** | fork explicit child |
+| 455 | function definitions inside `$(...)` cmd-substitution LEAK to parent — extends #451 to cmdsub context | **port-bug** | manual save/restore via `declare -f` |
+| 456 | `[[ "(x)" == "(x)" ]]` doesn't match — quoted parens in pattern not treated as literal (same family as #13/#449) | **port-bug** | use `case` instead of `[[ ]]` for literals |
 
-Of four hundred and fifty-three entries, two are fixed (5, 7),
-four hundred and forty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and fifty-six entries, two are fixed (5, 7),
+four hundred and fifty remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
