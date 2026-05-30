@@ -19847,6 +19847,155 @@ PS1=$'\e[31m%F{red}error\e[0m '
 
 ---
 
+## #373 — `pipestatus=(...)` user-overwrite accepted — pipestatus not readonly
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'true; pipestatus=(99 100); echo "[${pipestatus[@]}]"'
+[0]
+
+$ ./target/debug/zshrs --zsh -c 'true; pipestatus=(99 100); echo "[${pipestatus[@]}]"'
+[99 100]
+```
+
+`pipestatus` is the special array tracking the exit codes of
+the most recent pipeline. zsh protects it as read-only —
+attempts to overwrite are silently rejected (the original
+value is preserved).
+
+zshrs allows user code to overwrite `pipestatus` arbitrarily.
+Subsequent reads return whatever the user assigned.
+
+Same family as #242 (introspection assocs `builtins`/
+`parameters`/`modules` not readonly) — multiple read-only
+special parameters in zsh are mutable in zshrs.
+
+**Where** — `src/ported/params/pipestatus.rs::register`:
+should set `PM_READONLY` on the parameter. C-source
+`Src/parameter.c::pipestatussetfn` is a no-op (rejects user
+writes silently).
+
+**Impact** — silent state corruption. Code that overwrites
+`pipestatus` (intentionally or accidentally) doesn't get the
+correct exit status of the most recent pipeline:
+
+```sh
+# Common pattern: check each pipeline component
+my_pipeline | filter | output
+if (( pipestatus[1] != 0 )); then
+    pipestatus=(99 100)   # accidental overwrite (e.g., a typo in another script)
+fi
+# zsh: pipestatus[1] checked correctly, overwrite ignored
+# zshrs: overwrite takes effect; subsequent code sees wrong status
+```
+
+**Workaround** — defensive copy before user-code:
+```sh
+local -a saved_ps=("${pipestatus[@]}")
+# ... user code ...
+local check_ps=("${saved_ps[@]}")
+```
+
+---
+
+## #374 — `reswords=...` user-overwrite accepted — reswords (reserved-words array) not readonly
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'reswords=corrupt'
+zsh:1: read-only variable: reswords
+
+$ ./target/debug/zshrs --zsh -c 'reswords=corrupt; echo "[$reswords]"'
+[corrupt]
+```
+
+`reswords` is the read-only array of shell-reserved words
+(`if`, `then`, `for`, `case`, etc.). zsh protects it.
+zshrs accepts overwrites — a user could replace the entire
+reserved-words list with arbitrary content.
+
+Same family as #242/#373 — missing readonly protection on
+special variables.
+
+**Where** — `src/ported/params/reswords.rs::register`:
+missing `PM_READONLY` flag. C-source `Src/parameter.c`
+registers it with `PM_READONLY | PM_SPECIAL`.
+
+**Impact** — shell introspection scripts can corrupt the
+reswords array:
+
+```sh
+# Defensive: extract reserved words for syntax-aware processing
+zsh_keywords=("${(@)reswords}")
+# Later, accidentally:
+reswords=("$user_input")
+# zsh: error, original list preserved
+# zshrs: list overwritten with $user_input value
+```
+
+Combined with #373 (pipestatus), #242 (builtins/parameters
+not readonly), zshrs's readonly-protection on introspection
+specials is broadly missing.
+
+**Workaround** — same as #373 — defensive copy.
+
+---
+
+## #375 — `commands[name]=value` user-overwrite accepted — commands (cmd-to-path map) not slice-protected
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'commands[ls]=/fake/path 2>&1' | head -1
+zsh:1: commands: attempt to set slice of associative array
+
+$ ./target/debug/zshrs --zsh -c 'commands[ls]=/fake/path; echo "[${commands[ls]}]"'
+[/fake/path]
+```
+
+`commands` is the read-only assoc mapping command names to
+their absolute paths (zsh's PATH-search cache). zsh protects
+it AND specifically errors on slice-write attempts with
+"attempt to set slice of associative array".
+
+zshrs accepts the slice write, allowing arbitrary commands
+to be redirected to user-chosen paths. This is a security-
+relevant gap — a user script could overwrite `commands[sudo]`
+to point to a fake executable.
+
+Same family as #242/#373/#374 — missing readonly on
+introspection assocs. This specific instance is
+security-relevant.
+
+**Where** — `src/ported/params/commands.rs::set_slice`:
+should reject slice writes via `ERR_READONLY`. C-source
+`Src/parameter.c::commandssetscope` errors on any write
+attempt.
+
+**Impact** — **Security-relevant** — code that probes
+`commands[ls]` to determine the path of a binary can be
+deceived if the user (or hostile script) has overwritten the
+entry:
+
+```sh
+# Trusting commands[] for "where is ls"
+ls_path="${commands[ls]}"
+"$ls_path" -la /important
+# zsh: ls_path is real /bin/ls
+# zshrs: if commands[ls] was overwritten, runs attacker's binary
+```
+
+Less common attack surface than directly tampering with PATH,
+but the introspection assoc was supposed to be a trusted
+read-only view of the resolved cmd cache.
+
+**Workaround** — use `whence -p ls` or `command -v ls` (which
+do the actual PATH search, not the cached assoc).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -20223,9 +20372,12 @@ PS1=$'\e[31m%F{red}error\e[0m '
 | 370 | `${(t)1}` positional-param type returns `scalar` instead of `array-special` | **port-bug** | manual detection of positional context |
 | 371 | `typeset -A` with no args lists random assocs instead of being no-op (zsh: silent success) | **port-bug** | always provide explicit name |
 | 372 | `print -P "%F{invalid}"` drops entire format instead of emitting default-color escape | **port-bug** | use ANSI escapes directly |
+| 373 | `pipestatus=(...)` user-overwrite accepted — pipestatus not readonly (zsh: silently rejects) | **port-bug** | defensive copy before user-code |
+| 374 | `reswords=...` user-overwrite accepted — reswords not readonly (zsh: "read-only variable") | **port-bug** | defensive copy |
+| 375 | `commands[name]=path` slice-write accepted — security-relevant cmd-cache poisoning (zsh: "attempt to set slice") | **port-bug** | use `whence -p` / `command -v` for path resolution |
 
-Of three hundred and seventy-two entries, two are fixed (5, 7),
-three hundred and sixty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and seventy-five entries, two are fixed (5, 7),
+three hundred and sixty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
