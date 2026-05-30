@@ -7249,6 +7249,150 @@ PS4='+$LINENO> '
 
 ---
 
+## #139 — Sourced-file error location reports `zsh:1:` instead of `/sourced/file:N`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ echo 'definitely_not_a_cmd_xyz' > /tmp/zsl
+$ /opt/homebrew/bin/zsh -fc 'source /tmp/zsl' 2>&1
+/tmp/zsl:1: command not found: definitely_not_a_cmd_xyz
+
+$ ./target/debug/zshrs --zsh -c 'source /tmp/zsl' 2>&1
+zsh:1: command not found: definitely_not_a_cmd_xyz
+```
+
+When an error occurs inside a sourced file, zsh prepends the
+**sourced file's path and line number** (`/tmp/zsl:1:`) to the
+error message. zshrs always uses the literal `zsh:1:` regardless
+of which file is being sourced.
+
+For `/etc/hosts`-as-source (gibberish input):
+```sh
+$ /opt/homebrew/bin/zsh -fc '. /etc/hosts' 2>&1 | head -2
+/etc/hosts:4: command not found: 127.0.0.1
+/etc/hosts:5: command not found: 127.0.0.1
+
+$ ./target/debug/zshrs --zsh -c '. /etc/hosts' 2>&1 | head -2
+zsh:1: command not found: 127.0.0.1
+zsh:1: command not found: 127.0.0.1
+```
+
+zshrs reports every error from a sourced file as `zsh:1:`,
+losing both filename context and line number.
+
+**Where** — `src/ported/builtin_source.rs::source_file`: doesn't
+push the sourced filename and per-line counter into the error-
+formatter context. C-source `Src/builtin.c::bin_dot` updates
+`scriptname` and `lineno` for the duration of the source call.
+
+**Impact** — debugging sourced libraries is much harder. Stack
+traces from `.zshrc` errors show `zsh:1:` for every error
+regardless of which plugin file caused it.
+
+Plus: tools that parse shell error output by file:line (linters,
+IDE plugins) can't locate the actual error site.
+
+**Workaround** — none from user side; errors from sourced files
+must be diagnosed manually by reading the source.
+
+---
+
+## #140 — `exec /not/found` uses generic "not found" with wrong program prefix
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'exec /no/such/cmd 2>&1'
+zsh:1: no such file or directory: /no/such/cmd
+
+$ ./target/debug/zshrs --zsh -c 'exec /no/such/cmd 2>&1'
+zshrs: exec: /no/such/cmd: not found
+```
+
+zsh's error format: `zsh:LINE: ERRNO_MSG: PATH` — specifically
+"no such file or directory" (the ENOENT errno string).
+
+zshrs's format issues:
+1. **Wrong program prefix**: `zshrs:` instead of `zsh:` — zshrs
+   doesn't mirror the C-zsh convention that even the zshrs port
+   should use the `zsh:` prefix for compat.
+2. **No line number**: `zshrs: exec: ...` without `:LINE:`.
+3. **Wrong error string**: "not found" instead of the
+   errno-specific "no such file or directory".
+
+Combined with #112 (Rust `io::Error` "(os error N)" leak), error
+formatting has multiple distinct gaps from zsh's canonical
+format.
+
+**Where** — `src/ported/builtin_exec.rs::dispatch_target`: error
+emitted via `eprintln!("zshrs: exec: {}: not found", target)`
+hardcodes both the prefix and the generic message. Should use
+`format_zsh_error(line, errno_str, path)` matching the canonical
+`zsh:LINE: NAMEFROM_ERRNO: TARGET` pattern.
+
+**Impact** — error-parsing tools (CI failure parsers, linters,
+script wrappers) that grep for `zsh:` prefix or specific errno
+strings can't match zshrs output. Cross-shell-compatible tooling
+needs special-case for zshrs.
+
+**Workaround** — wrap exec calls with explicit existence check:
+```sh
+[[ -x /no/such/cmd ]] || { echo "zsh: exec: no such file: /no/such/cmd" >&2; exit 1; }
+exec /no/such/cmd
+```
+
+---
+
+## #141 — `;;` outside case context not a parse error in zshrs
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo a;; echo b' 2>&1
+zsh:1: parse error near `;;'
+
+$ ./target/debug/zshrs --zsh -c 'echo a;; echo b' 2>&1
+a
+```
+
+`;;` is the case-pattern terminator inside `case ... esac`
+constructs. Outside of `case`, encountering `;;` should be a
+parse error. zsh errors with "parse error near `;;`". zshrs
+silently parses the first `echo a`, discards the rest, and
+returns success.
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'echo a;; echo b; echo c' 2>&1
+a
+```
+
+Only `echo a` runs; `echo b` and `echo c` are silently dropped.
+
+**Where** — `src/ported/parse.rs::parse_command`: doesn't
+reject `;;` token outside of `case` context. C-source
+`Src/parse.c::par_cmd` errors on `DSEMI` outside `case`.
+
+**Impact** — typos that include accidental `;;` (e.g., from
+copy-paste of case-arm code into a regular block) silently
+truncate the script:
+
+```sh
+# user accidentally pasted `;; ` from case-arm
+process_input;;
+finalize
+# zsh: parse error (caught immediately)
+# zshrs: runs process_input, silently skips finalize
+```
+
+Real data-loss potential. zsh's strict parsing catches this;
+zshrs's permissive parsing hides the typo.
+
+**Workaround** — none portable; rely on careful review of
+scripts before running under zshrs.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -7391,9 +7535,12 @@ PS4='+$LINENO> '
 | 136 | `%E` prompt escape (clear-EOL) not expanded; literal `%E` | **port-bug** | manual `$'\e[K'` |
 | 137 | `(( "str" == "str" ))` returns false (no string coerce) | **port-bug** | use `[[ == ]]` for strings |
 | 138 | `%i` prompt escape returns `0` instead of current line | **port-bug** | `$LINENO` parameter |
+| 139 | Sourced-file errors report `zsh:1:` instead of `/file:N` | **port-bug** | none — debug manually |
+| 140 | `exec /no/such` uses generic "not found" + wrong `zshrs:` prefix | **port-bug** | pre-check `[[ -x cmd ]]` |
+| 141 | `;;` outside case context not a parse error (silent drop) | **port-bug** | careful review |
 
-Of one hundred thirty-eight entries, two are fixed (5, 7), one
-hundred thirty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of one hundred forty-one entries, two are fixed (5, 7), one
+hundred thirty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -7402,5 +7549,5 @@ hundred thirty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
-136, 137, 138), and four were zsh-correct behavior misframed by
-demos (1, 2, 3, 6).
+136, 137, 138, 139, 140, 141), and four were zsh-correct behavior
+misframed by demos (1, 2, 3, 6).
