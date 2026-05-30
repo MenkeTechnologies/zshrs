@@ -6207,6 +6207,194 @@ done
 
 ---
 
+## #121 — `[[ -N -op -M ]]` with negative numbers errors "unknown condition"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ -5 -lt -3 ]] && echo "yes" || echo "no"'
+yes
+
+$ ./target/debug/zshrs --zsh -c '[[ -5 -lt -3 ]] && echo "yes" || echo "no"' 2>&1
+zshrs:1: unknown condition: -5
+zsh:1: command not found: -3
+no
+```
+
+`[[ ... ]]` test with negative-number operands. zsh correctly
+parses `-5 -lt -3` as the integer comparison `-5 < -3` (true).
+zshrs's test parser sees `-5` as an unrecognized test-flag (like
+`-d`, `-f`, `-n`) and errors out, then tries to execute `-3` as a
+command (also fails).
+
+Verified across all numeric ops:
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ -1 -lt 0 ]] && echo "lt0"; [[ -1 -gt 0 ]] && echo "gt0"; echo "done"'
+lt0
+done
+
+$ ./target/debug/zshrs --zsh -c '[[ -1 -lt 0 ]] && echo "lt0"; [[ -1 -gt 0 ]] && echo "gt0"; echo "done"' 2>&1
+zshrs:1: unknown condition: -1
+zsh:1: command not found: 0
+done
+```
+
+The test parser tries to dispatch `-1` as a test flag before
+recognizing it could be an integer literal in the operand position.
+
+Workaround using a variable doesn't help:
+```sh
+$ ./target/debug/zshrs --zsh -c 'a=-5; b=-3; [[ $a -lt $b ]] && echo "yes"' 2>&1
+zshrs:1: unknown condition: -5
+```
+
+**Where** — `src/ported/cond.rs::parse_condition`: token
+classifier sees a `-` prefix and routes to unary-flag handler
+without checking whether the next pos is a binary integer op.
+C-source `Src/test.c::test_expr` looks ahead 1 token: if it sees
+`-eq`/`-lt`/etc., treats both sides as integer operands.
+
+**Impact** — every numeric comparison involving negative numbers
+fails. Pattern that runs fine in zsh:
+
+```sh
+delta=$((current - threshold))
+if [[ $delta -lt 0 ]]; then
+    echo "below threshold by ${delta#-}"
+fi
+# zsh: works
+# zshrs: errors on the [[ comparison
+```
+
+**Workaround** — use arith context `(( ))` for numeric tests:
+```sh
+(( delta < 0 )) && echo "below threshold by ${delta#-}"
+```
+
+---
+
+## #122 — Exit status of `$()` inside `${x:-$(...)}` not propagated to `$?`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'unset x; y="${x:-$(false)}"; echo "1:ec=$?"; y="${x:-$(exit 7)}"; echo "2:ec=$?"'
+1:ec=1
+2:ec=7
+
+$ ./target/debug/zshrs --zsh -c 'unset x; y="${x:-$(false)}"; echo "1:ec=$?"; y="${x:-$(exit 7)}"; echo "2:ec=$?"'
+1:ec=0
+2:ec=0
+```
+
+When `$()` runs as the default-value branch of `${x:-...}`, zsh
+preserves its exit status — `$?` after the assignment reflects
+the cmdsub's status. zshrs loses it (always 0).
+
+Standalone cmdsub exit propagates correctly:
+```sh
+$ ./target/debug/zshrs --zsh -c 'x=$(exit 7); echo "ec=$?"'
+ec=7
+```
+
+So the bug is specifically about cmdsub inside parameter-expansion
+default `${:-$()}`.
+
+**Where** — `src/ported/paramsubst.rs::default_branch`: doesn't
+capture and propagate the exit status of the cmdsub run during
+the `:-` default-evaluation. C-source `Src/subst.c::dosubst`
+threads `lastval` through the substitution.
+
+**Impact** — fallback patterns that use cmdsub status as a
+diagnostic break:
+
+```sh
+config_path="${CONFIG:-$(detect_config)}"
+if (( $? != 0 )); then
+    echo "warn: detect_config failed, using default"
+    config_path=/etc/default.conf
+fi
+# zsh: warns when detect_config fails
+# zshrs: never warns (status always 0)
+```
+
+**Workaround** — explicit pre-eval the cmdsub before assignment:
+```sh
+if [[ -z "$CONFIG" ]]; then
+    config_path=$(detect_config)
+    cmdsub_ec=$?
+else
+    config_path=$CONFIG
+fi
+```
+
+---
+
+## #123 — `${arr[@]}` inside heredoc body returns only first element
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'arr=(a b c); cat <<END
+${arr[@]}
+END'
+a b c
+
+$ ./target/debug/zshrs --zsh -c 'arr=(a b c); cat <<END
+${arr[@]}
+END'
+a
+```
+
+`${arr[@]}` should enumerate all array elements joined by space
+when expanded inside a heredoc body. zsh produces `a b c`. zshrs
+returns only `a` (first element).
+
+Same context-propagation family as #82, #83, #108, #109, #120 —
+array vs scalar context handling in paramsubst.
+
+Verified other forms:
+- `"${arr[@]}"` quoted form: same bug (only first element)
+- `${arr[*]}` (star form): same bug
+- `${arr}` (bare): same bug
+- `${(j: :)arr}` (explicit join): works correctly
+
+So heredoc context loses the array-iteration behavior entirely;
+only explicit join-flag works.
+
+**Where** — `src/ported/lex.rs::expand_heredoc_body`: array
+expansion in heredoc-token context doesn't recognize `[@]`/`[*]`
+to expand to multiple elements; treats as scalar single-element.
+C-source `Src/parse.c::gettokstr` walks the heredoc body and
+calls `paramsubst` with full array-context flags.
+
+**Impact** — heredocs are the canonical way to emit multi-line
+templates containing array contents (env file generation,
+config templates, etc.):
+
+```sh
+hosts=(web1.local web2.local db.local)
+cat > /etc/hosts.d/allowed <<END
+allowed-hosts=${hosts[*]}
+backends=${hosts[@]}
+END
+# zsh: writes "allowed-hosts=web1.local web2.local db.local\n
+#               backends=web1.local web2.local db.local"
+# zshrs: writes only "allowed-hosts=web1.local\nbackends=web1.local"
+```
+
+**Workaround** — pre-join into a scalar variable:
+```sh
+hosts_str="${hosts[*]}"
+cat > /etc/hosts.d/allowed <<END
+allowed-hosts=$hosts_str
+backends=$hosts_str
+END
+```
+Or use `${(j: :)hosts}` explicit-join form (works in heredoc).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -6331,14 +6519,18 @@ done
 | 118 | `(( y = x ))` doesn't coerce non-numeric string to 0 | **port-bug** | `integer y; y=$x` |
 | 119 | `glob_subst` doesn't trigger filename expansion in for-loop | **port-bug** | `eval "echo ..."` force-expand |
 | 120 | `a=("${a[@]:0:-1}")` on empty arr produces 1-element arr | **port-bug** | length-gated branch |
+| 121 | `[[ -N -op -M ]]` negative-number operands error "unknown condition" | **port-bug** | use `(( ))` arith |
+| 122 | Exit status of `$()` inside `${x:-$()}` not propagated | **port-bug** | pre-eval cmdsub |
+| 123 | `${arr[@]}` inside heredoc returns only first element | **port-bug** | `${(j: :)arr}` or pre-join |
 
-Of one hundred twenty entries, two are fixed (5, 7), one hundred
-fourteen remain open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13,
-14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
-48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
-65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
-82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98,
-99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112,
-113, 114, 115, 116, 117, 118, 119, 120), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+Of one hundred twenty-three entries, two are fixed (5, 7), one
+hundred seventeen remain open port-bugs/perf-issues (4, 8, 9, 10,
+11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
+62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
+79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
+110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
+123), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
