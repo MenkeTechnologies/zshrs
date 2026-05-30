@@ -609,8 +609,41 @@ fn diagnose(text: &str) -> Vec<Value> {
     let mut diags = Vec::new();
     let mut stack: Vec<(char, usize, usize)> = Vec::new(); // (open, line, col)
     let mut block_stack: Vec<(&str, usize, usize)> = Vec::new();
+    // Multi-line quote state. `'` and `"` can span lines (heredocs,
+    // multi-line awk/sed/perl scripts embedded in single quotes, etc.).
+    // When set, the next line is parsed as quote-body until we find the
+    // matching close, after which normal parsing resumes.
+    let mut open_quote: Option<char> = None;
 
     for (line_no, line) in text.lines().enumerate() {
+        // If we're inside a multi-line quote opened on a previous line,
+        // scan for its close. Skip block-keyword scanning entirely for
+        // this line — the line content is string-body, not zsh code.
+        if let Some(q) = open_quote {
+            let bytes = line.as_bytes();
+            let mut i = 0usize;
+            let mut closed_at = None;
+            while i < bytes.len() {
+                let c = bytes[i] as char;
+                if c == '\\' && q != '\'' && i + 1 < bytes.len() {
+                    i += 2;
+                    continue;
+                }
+                if c == q {
+                    closed_at = Some(i);
+                    break;
+                }
+                i += 1;
+            }
+            if let Some(_close_pos) = closed_at {
+                // Quote closed on this line. Remaining content is code,
+                // but for simplicity skip the rest of this line too —
+                // multi-line-quote-then-code-on-same-close-line is rare.
+                open_quote = None;
+            }
+            // Skip block-keyword scan + token-level scan for this line.
+            continue;
+        }
         let trimmed = line.trim_start();
         if trimmed.starts_with('#') {
             continue;
@@ -817,6 +850,7 @@ fn diagnose(text: &str) -> Vec<Value> {
                     // Skip past matching quote
                     let q = c;
                     i += 1;
+                    let mut closed = false;
                     while i < bytes.len() {
                         let cc = bytes[i] as char;
                         if cc == '\\' && q != '\'' && i + 1 < bytes.len() {
@@ -824,9 +858,20 @@ fn diagnose(text: &str) -> Vec<Value> {
                             continue;
                         }
                         if cc == q {
+                            closed = true;
                             break;
                         }
                         i += 1;
+                    }
+                    if !closed {
+                        // Quote spans multiple lines. Mark open so the
+                        // next line is parsed as quote-body. Multi-line
+                        // awk/sed/perl scripts embedded in `'...'` no
+                        // longer leak `for`/`do`/`done` keywords to the
+                        // block_stack as false positives.
+                        open_quote = Some(q);
+                        // Halt scan of this line — rest is quote body.
+                        break;
                     }
                 }
                 '#' => {
@@ -835,12 +880,18 @@ fn diagnose(text: &str) -> Vec<Value> {
                     // it's part of `$#` (argc), `${#var}` (length), or
                     // similar parameter expansion and must not terminate
                     // the scan.
+                    //
+                    // INSIDE arithmetic (`$((...))`, top of `stack` has 'A'),
+                    // `#` is NEVER a comment — it's the char-value operator
+                    // `#c` (zsh arithmetic) per `Src/math.c`. Skip the
+                    // comment check entirely when stack contains 'A'.
+                    let in_arith = stack.iter().any(|x| x.0 == 'A');
                     let prev = if i == 0 {
                         None
                     } else {
                         Some(bytes[i - 1] as char)
                     };
-                    let is_comment_start = match prev {
+                    let is_comment_start = !in_arith && match prev {
                         None => true,
                         Some(p) => {
                             // Note: `(` removed from the prev-chars list
