@@ -3986,6 +3986,179 @@ done
 
 ---
 
+## #82 — `"PREFIX${(s.X.)var}"` repeats prefix per split element inside double quotes
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="a b c"; echo "P:${(s. .)s}"'
+P:a b c
+
+$ ./target/debug/zshrs --zsh -c 's="a b c"; echo "P:${(s. .)s}"'
+P:a P:b P:c
+```
+
+Inside double quotes, `${(s.X.)var}` should produce a **scalar**
+joined back by the default IFS (per zsh's quoted-expansion rules
+for split flags). zsh joins as `a b c` (one word). zshrs treats it
+as an **array** and applies the literal prefix to EACH element,
+producing `P:a P:b P:c` (three words).
+
+This is the fundamental "split flag inside `"..."` produces array
+context" bug. For normal `"${a[@]}"` patterns the behavior matches
+(both produce word-joined scalars or per-element words depending
+on `[@]` vs `[*]`):
+
+```sh
+$ both-shells -fc 'a=(red blue green); echo "P:$a"'
+P:red blue green        # zsh and zshrs agree
+```
+
+But the `(s.X.)` flag specifically diverges:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="a b c"; print -r -- "P:${(s. .)s}"'
+P:a b c
+
+$ ./target/debug/zshrs --zsh -c 's="a b c"; print -r -- "P:${(s. .)s}"'
+P:a P:b P:c
+```
+
+**Where** — `src/ported/paramsubst.rs::apply_split_flag`: split
+flag produces a true `Vec<String>` even inside `"..."` context;
+should collapse back to scalar (join by space) when expansion site
+is within a quote scope. C-source `Src/subst.c::dosplit` checks
+the `IS_INSIDE_QUOTES` flag and joins accordingly.
+
+**Impact** — every string-transform idiom using `(s)` inside `"..."`
+prefix construction breaks:
+
+```sh
+# build sql IN clause from comma-separated list
+csv="a,b,c"
+sql="VALUES (${(s.,.)csv})"
+# zsh: VALUES (a b c)
+# zshrs: VALUES (a VALUES (b VALUES (c)
+```
+
+Same family as bug #63 (`${(j:s:)${(s:t:)var}}` nested
+split-then-join returns first element only) — both are
+context-propagation bugs in paramsubst.
+
+**Workaround** — explicit array assignment then expansion:
+```sh
+arr=("${(s. .)s}")
+echo "P:${arr[*]}"     # both shells: P:a b c
+```
+
+---
+
+## #83 — `${a[(s.,.)N,M]}` array slice with subscript flag returns full array
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(1 2 3 4 5 6 7 8 9 10); echo "${a[(s.,.)3,7]}"'
+3 4 5 6 7
+
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3 4 5 6 7 8 9 10); echo "${a[(s.,.)3,7]}"'
+1 2 3 4 5 6 7 8 9 10
+```
+
+The `(s.X.)` subscript flag specifies a separator for the array
+when it's joined into a string before subscripting. With `3,7` it
+should still produce elements 3 through 7. zsh respects the range.
+zshrs ignores the `N,M` range entirely and returns the full array.
+
+Without the flag, both shells return `3 4 5 6 7`. So the bug is
+specifically the interaction of subscript flag + range — zshrs
+appears to discard the integer-pair indices when a string-flag is
+present.
+
+**Where** — `src/ported/paramsubst.rs::parse_subscript_with_flags`:
+when a flag like `(s.X.)` is detected, the subsequent `N,M` pair
+isn't parsed as a range; the entire expansion falls through to
+"return all".
+
+**Impact** — defensive code that combines flag-based array
+operations with explicit ranges (a common zsh idiom) silently
+returns wrong results:
+
+```sh
+log_lines=(${(f)"$(< /var/log/syslog)"})    # split file by lines
+recent=( "${log_lines[(s.\n.)-100,-1]}" )    # last 100 lines
+# zsh: recent has 100 entries
+# zshrs: recent has ALL entries
+```
+
+**Workaround** — compute range without the flag:
+```sh
+recent=("${log_lines[-100,-1]}")           # both shells: last 100
+```
+
+---
+
+## #84 — Default `bindkey -L` outputs 117 individual entries vs zsh's 31 ranged entries
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'bindkey -L | wc -l'
+31
+
+$ ./target/debug/zshrs --zsh -c 'bindkey -L | wc -l'
+117
+```
+
+zsh prints compact `-R` range entries:
+```
+bindkey -R "^A"-"^C" self-insert
+bindkey "^D" list-choices
+bindkey -R "^E"-"^F" self-insert
+bindkey "^G" list-expand
+```
+
+zshrs prints one binding per key, no ranges:
+```
+bindkey "^@" set-mark-command
+bindkey "^A" beginning-of-line
+bindkey "^B" backward-char
+bindkey "^D" delete-char-or-list
+bindkey "^E" end-of-line
+```
+
+Two divergences:
+1. **Default keymap content**: zsh-bare with `-f` has only a few
+   bindings (mostly self-insert + a handful of named widgets).
+   zshrs has a full emacs-style keymap installed (Ctrl-A =
+   beginning-of-line, etc.).
+2. **Output format**: zshrs's `bindkey -L` doesn't collapse
+   contiguous same-binding ranges into `-R` entries.
+
+The default keymap difference is the bigger issue — `-f` is
+supposed to skip rc files AND most option-state initialization,
+giving a "vanilla" shell. zshrs's `-f` (or `--zsh` mode) installs
+emacs defaults regardless.
+
+**Where** — `src/ported/zle/keymap.rs::default_emacs_keymap`:
+populated at init regardless of `-f` flag. C-source `Src/Zle/init.c::
+selectkeymap` only installs the emacs map after rc files run.
+zshrs initializes earlier in the boot sequence.
+
+**Impact** — scripts that snapshot `bindkey` output to compare or
+restore differ between shells. ZLE-aware tests fail. Plus the
+output-format difference means line-count comparisons (`bindkey
+-L | wc -l` as a sanity check) diverge.
+
+**Workaround** — when needing portable bindkey output, normalize:
+```sh
+# expand -R into individual entries
+bindkey -L | awk '/^bindkey -R/ { for (i in range) ...; next } { print }'
+```
+But the right fix is parity with zsh's `-R` collapsed output.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -4071,11 +4244,14 @@ done
 | 79 | Job control table empty: `jobs`/`wait %N`/`kill %N`/`disown` fail | **port-bug** | use `$!` PID instead |
 | 80 | `trap EXIT` in fn fires at script exit, lost in nested fns | **port-bug** | explicit cleanup at fn epilogue |
 | 81 | `extended_glob *~b` returns duplicates + matches dir | **port-bug** | loop with `[[ == ... ]] continue` |
+| 82 | `"PREFIX${(s.X.)var}"` repeats prefix per element | **port-bug** | `arr=("${(s.X.)v}"); "P:${arr[*]}"` |
+| 83 | `${a[(s.,.)N,M]}` slice with flag returns full array | **port-bug** | drop subscript flag |
+| 84 | `bindkey -L` 117 entries vs zsh's 31 (default keymap differs) | **port-bug** | normalize via post-process |
 
-Of eighty-one entries, two are fixed (5, 7), seventy-five remain
+Of eighty-four entries, two are fixed (5, 7), seventy-eight remain
 open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
-69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84), and
+four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
