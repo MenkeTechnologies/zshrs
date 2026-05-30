@@ -532,6 +532,107 @@ approach: `la=(1 4 7 …); lb=(2 5 8 …)` then index by `$i`).
 
 ---
 
+## #16 — `arr=("${arr[@]:0:-1}")` doesn't shrink array inside function
+
+**Status:** `port-bug` — surfaced 2026-05-29 writing demos 311/314.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { s=(a b c); s=("${s[@]:0:-1}"); echo "${#s}: ${s[*]}"; }; f'
+2: a b
+
+$ zshrs --zsh -c 'f() { s=(a b c); s=("${s[@]:0:-1}"); echo "${#s}: ${s[*]}"; }; f'
+1:
+```
+
+Inside a function, `s=("${s[@]:0:-1}")` (drop last element via slice
+to -1) clears the visible content but reports `${#s}` as 1 instead of
+2. At top level it works correctly. Likely a port issue in
+`src/ported/subst.rs` `paramsubst` slicing path interacting with the
+function-frame `pm.old` push/pop in `src/ported/params.rs`.
+
+Same root cause: `s=("${s[@]:0:$(( ${#s} - 1 ))}" )` (explicit length)
+ALSO fails: after the last shrink-to-zero, `${#s}` stays at 1 and
+the loop never exits.
+
+**Workaround** — use `arr[${#arr}]=()` to delete the last element
+(works reliably) or use a counter variable instead of `${#arr}`:
+
+```sh
+arr[${#arr}]=()        # decrements correctly
+# or:
+local top=${#arr}
+while (( top > 0 )); do
+    cur="${arr[top]}"
+    (( top-- ))
+done
+```
+
+Demos 311/312/314 use the `arr[${#arr}]=()` workaround.
+
+---
+
+## #17 — `var=${arr[-1]}` (unquoted) loses value inside while-loop in fn
+
+**Status:** `port-bug` — surfaced 2026-05-29 writing demo 311.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { s=(7); while (( ${#s} > 0 )); do n=${s[-1]}; echo "[$n]"; s[${#s}]=(); s+=("$((n+1))"); [[ $n -gt 10 ]] && break; done; }; f'
+[7]
+[8]
+[9]
+[10]
+[11]
+
+$ zshrs --zsh -c 'f() { s=(7); while (( ${#s} > 0 )); do n=${s[-1]}; echo "[$n]"; s[${#s}]=(); s+=("$((n+1))"); [[ $n -gt 10 ]] && break; done; }; f'
+[7]
+[]
+[]
+[]
+...
+```
+
+`n=${s[-1]}` (unquoted assignment from negative-index subscript)
+inside a `while` loop in a function reads correctly on the first
+iteration only — subsequent iterations capture empty. At top level
+or with quotes it works correctly.
+
+**Workaround** — quote the RHS or declare local:
+```sh
+n="${s[-1]}"    # works
+local n=${s[-1]} # also works
+```
+Demos 311/312/314 use the quoted form.
+
+---
+
+## #18 — `arr[a + 1]=val` parsed as command "arr[a" with space
+
+**Status:** `port-bug` — surfaced 2026-05-29 writing demo 332.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'dp=(); for ((a=0; a<3; a++)); do dp[a + 1]=$a; done; echo "${dp[@]}"'
+0 1 2
+
+$ zshrs --zsh -c 'dp=(); for ((a=0; a<3; a++)); do dp[a + 1]=$a; done; echo "${dp[@]}"'
+zsh:1: command not found: dp[a
+zsh:1: command not found: dp[a
+zsh:1: command not found: dp[a
+```
+
+C-zsh accepts `arr[expr]=val` where `expr` contains spaces (parsed
+in arith context). zshrs's lexer (port of `Src/lex.c::gettok`)
+appears to terminate the assignment target at the first whitespace,
+treating `dp[a` as a command name.
+
+**Workaround** — pre-compute the index into a variable:
+```sh
+local idx=$(( a + 1 ))
+dp[idx]=$val
+```
+Demos 332 uses the pre-compute pattern.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -551,7 +652,10 @@ approach: `la=(1 4 7 …); lb=(2 5 8 …)` then index by `$i`).
 | 13 | `[[ "$x" == "?" ]]` ignores quotes | **port-bug** | 301 uses `'?'` single-quotes |
 | 14 | `[[ $ch == "{" ]]` parse error | **port-bug** | 301 uses `$close_char` var |
 | 15 | `set -- ${=x}` mis-iterates in fn | **port-bug** | 298 uses parallel arrays |
+| 16 | `arr=("${arr[@]:0:-1}")` no-shrink in fn | **port-bug** | 311 uses `arr[${#arr}]=()` |
+| 17 | `var=${arr[-1]}` unquoted in fn while | **port-bug** | 311 quotes the RHS |
+| 18 | `arr[a + 1]=val` with space parsed as cmd | **port-bug** | 332 pre-computes `idx=$((..))` |
 
-Of fifteen entries, two are fixed (5, 7), nine remain open
-port-bugs (4, 8, 9, 10, 11, 12, 13, 14, 15), and four were
-zsh-correct behavior misframed by demos (1, 2, 3, 6).
+Of eighteen entries, two are fixed (5, 7), twelve remain open
+port-bugs (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18), and four
+were zsh-correct behavior misframed by demos (1, 2, 3, 6).
