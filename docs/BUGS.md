@@ -1460,6 +1460,185 @@ set -e
 
 ---
 
+## #34 — `case` `(a*|b*))` paren-grouped alternation doesn't match with `extended_glob`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob
+case "abc" in (a*|b*)) echo "alt match" ;; *) echo "default" ;; esac'
+alt match
+
+$ zshrs --zsh -c 'setopt extended_glob
+case "abc" in (a*|b*)) echo "alt match" ;; *) echo "default" ;; esac'
+default
+```
+
+A case pattern wrapped in parentheses with internal alternation
+`(a*|b*))` should match either alt under `extended_glob`. zshrs
+treats it as not matching, falling through to the `*` default.
+
+Works without the outer parens (`a*|b*)`), so the bug is in the
+combination of the leading `(` opener and the case-arm closing
+`)`. The lexer probably consumes the opening `(` as if starting a
+new case arm, then trips on the closing `))`.
+
+Tested:
+  - `case x in (x)) echo ok ;; esac`           → both: `ok`     ✓
+  - `case x in (x|y)) echo ok ;; esac`         → zshrs: empty; zsh: `ok` ✗
+  - `case x in x|y) echo ok ;; esac`           → both: `ok`     ✓
+  - `case x in ((x|y))) echo ok ;; esac`       → both: `ok`     ✓ (extra paren)
+
+**Where** — `src/ported/parse.rs::par_case` interprets `(pat))` as
+an empty pattern followed by extra `)`. C-zsh strips the outer
+parens and matches against the inner pattern.
+
+**Workaround** — drop the outer parens or double them up:
+```sh
+case x in
+    a*|b*) ...        # bare form works
+    ((a*|b*))) ...    # doubled outer works
+esac
+```
+
+---
+
+## #35 — `${(v)h[key]}` flag on single subscript errors with `bad substitution`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2); echo "${(v)h[a]}"'
+1
+
+$ zshrs --zsh -c 'typeset -A h=(a 1 b 2); echo "${(v)h[a]}"'
+zsh:1: bad substitution
+```
+
+The `(v)` flag is supposed to return values when applied to an
+associative array. For a single-key access `${(v)h[key]}`, real
+zsh returns the value at `key`. zshrs rejects the syntax entirely.
+
+Works without the flag:
+  - `${h[a]}`        → both: `1`
+  - `${(v)h}`        → both: `1 2` (all values)
+  - `${(@v)h}`       → both: `1 2`
+  - `${(v)h[a]}`     → **zshrs: error; zsh: `1`** ← the bug
+
+**Where** — `src/ported/subst.rs::paramsubst` doesn't handle the
+combination of a value-extraction flag with a subscript expression.
+The `[a]` parses as a normal subscript but the `(v)` then errors
+trying to apply value-flag to a result that's already a scalar.
+
+**Workaround** — drop the `(v)` since for single-subscript access
+the result IS the value:
+```sh
+echo "${h[a]}"      # works, equivalent
+```
+Or extract via key-then-value chain:
+```sh
+local val="${h[a]}"
+echo "$val"
+```
+
+---
+
+## #36 — MULTIOS not implemented: `> a > b` and `< a < b` don't tee/cat
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+# Real zsh fans out (MULTIOS default-on):
+$ /opt/homebrew/bin/zsh -fc 'echo hi > /tmp/a > /tmp/b
+cat /tmp/a
+cat /tmp/b'
+hi
+hi
+
+# zshrs only honors the LAST redirect:
+$ zshrs --zsh -c 'echo hi > /tmp/a > /tmp/b
+cat /tmp/a
+cat /tmp/b'
+(empty)    ← /tmp/a never written
+hi         ← only /tmp/b
+
+# Same for < (multios concatenates inputs):
+$ echo a1 > /tmp/a; echo a2 > /tmp/b
+$ /opt/homebrew/bin/zsh -fc 'cat < /tmp/a < /tmp/b'
+a1
+a2
+
+$ zshrs --zsh -c 'cat < /tmp/a < /tmp/b'
+a2          ← only the last input read
+```
+
+zsh's `MULTIOS` option (default-on) makes `> a > b` write to BOTH
+files (via an internal tee fanout) and `< a < b` concatenate
+both inputs. zshrs's redirection handler only honors the last
+file mentioned for each direction.
+
+This breaks common zsh idioms:
+```sh
+# log both stdout and stderr to file AND tty:
+some_cmd > log.txt > /dev/tty
+# zsh: log.txt has output + tty shows it
+# zshrs: only /dev/tty shows it, log.txt is empty
+```
+
+**Where** — `src/ported/exec.rs::exec_redirs` should detect
+multiple redirects to the same fd and create a tee/cat
+intermediate process per `Src/exec.c::addmultio`. zshrs uses the
+last redirect to overwrite the prior fd binding.
+
+**Workaround** — explicit tee/cat:
+```sh
+echo hi | tee /tmp/a > /tmp/b      # explicit tee
+cat /tmp/a /tmp/b | other_cmd      # explicit concat
+```
+
+---
+
+## #37 — `${(z)str}` inside double quotes splits fields unexpectedly
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=" foo bar baz "; echo "[${(z)a}]"'
+[foo bar baz]
+
+$ zshrs --zsh -c 'a=" foo bar baz "; echo "[${(z)a}]"'
+[foo] [bar] [baz]
+```
+
+The `(z)` shell-words split flag inside double quotes should give
+a single space-joined string. zshrs splits the result into
+separate fields even inside quotes.
+
+When assigned to an array, both behave the same (`b=( ${(z)a} );
+echo "[${b[@]}]"` → `[foo bar baz]` in both).
+
+The divergence is specific to `"${(z)a}"` interpolation.
+
+**Where** — `src/ported/subst.rs::paramsubst` treats the `(z)`
+result as an array even when the surrounding context is a quoted
+scalar. The IFS-rejoin step is missing for quoted `(z)` results.
+
+Related: `(s/sep/)` likely has the same issue:
+```sh
+$ zshrs --zsh -c 'a="x,y,z"; echo "[${(s/,/)a}]"'
+[x] [y] [z]
+
+$ /opt/homebrew/bin/zsh -fc 'a="x,y,z"; echo "[${(s/,/)a}]"'
+[x y z]
+```
+
+**Workaround** — use `(j: :)` to rejoin explicitly:
+```sh
+echo "[${(j: :)${(z)a}}]"   # both: [foo bar baz]
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -1497,8 +1676,13 @@ set -e
 | 31 | `${EPOCHSECONDS:-x}` always uses default | **port-bug** | direct `$EPOCHSECONDS` access |
 | 32 | `hash -d name=~` doesn't expand `~` in value | **port-bug** | use `$HOME` literal |
 | 33 | `set -e` doesn't fire on `(( false_cond ))` | **port-bug** | `\|\| exit 1` explicit |
+| 34 | case `(a*\|b*))` paren-alt doesn't match w/ extended_glob | **port-bug** | drop outer parens or double them |
+| 35 | `${(v)h[key]}` errors with bad substitution | **port-bug** | drop the `(v)` for single subscript |
+| 36 | MULTIOS not implemented (multiple `>` / `<` redirects) | **port-bug** | explicit `tee`/`cat` |
+| 37 | `"${(z)str}"` quoted form splits fields | **port-bug** | `${(j: :)${(z)str}}` rejoin |
 
-Of thirty-three entries, two are fixed (5, 7), twenty-seven remain
+Of thirty-seven entries, two are fixed (5, 7), thirty-one remain
 open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33), and
-four were zsh-correct behavior misframed by demos (1, 2, 3, 6).
+18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
+35, 36, 37), and four were zsh-correct behavior misframed by demos
+(1, 2, 3, 6).
