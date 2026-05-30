@@ -4307,6 +4307,182 @@ echo "rcs=${options[rcs]} hashdirs=${options[hashdirs]}"
 
 ---
 
+## #88 — `setopt nounset` doesn't fire on undefined var in arith `$((x+1))`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt nounset; unset x; echo $((x+1)); echo "after"'
+zsh:1: x: parameter not set
+(no "after" — aborted)
+
+$ ./target/debug/zshrs --zsh -c 'setopt nounset; unset x; echo $((x+1)); echo "after"'
+1
+after
+```
+
+`setopt nounset` (aka `set -u`) should make any reference to an
+unset parameter an error. zsh enforces this in arithmetic
+contexts: `$((x+1))` with `x` unset errors out and aborts.
+
+zshrs treats unset arithmetic variables as 0 even under `nounset`,
+so `x+1` becomes `0+1=1` and execution continues.
+
+Note: outside arith context, `nounset` does work in zshrs:
+```sh
+$ ./target/debug/zshrs --zsh -c 'setopt nounset; echo "[$UNDEFINED]"'
+zshrs: UNDEFINED: parameter not set
+```
+
+So the bug is specifically the arith path.
+
+**Where** — `src/ported/math.rs::lookup_var`: returns 0 for
+unset vars without consulting `opts.nounset`. C-source
+`Src/math.c::getmathparam` checks the `NOUNSET` option and
+emits "parameter not set" via `zerr()`.
+
+**Impact** — defensive code relying on `nounset` to catch
+typos/uninitialized counters silently produces wrong values:
+
+```sh
+setopt nounset
+total=0
+for line in "${log_lines[@]}"; do
+    # typo: should be $countt = $count
+    (( total += countt ))    # zsh: errors on first iter
+                              # zshrs: silently uses 0, total stays 0
+done
+echo "total: $total"          # zshrs reports 0, never warns
+```
+
+**Workaround** — guard arith with explicit defined check:
+```sh
+[[ -v countt ]] || { echo "countt unset"; return 1; }
+```
+
+---
+
+## #89 — Extended glob `#` and `##` quantifiers not recognized
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; print -l /tmp/zh/a#'
+/tmp/zh/a
+/tmp/zh/aa
+/tmp/zh/aaa
+
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; print -l /tmp/zh/a#'
+/tmp/zh/a#
+```
+
+Files: `a aa aaa`. Pattern `a#` (extended_glob: "0 or more of the
+preceding character/group") should match all three. zsh expands
+correctly. zshrs treats `#` as literal, returns the pattern
+verbatim.
+
+Same for `##` (one-or-more quantifier):
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; print -l /tmp/zh/a##'
+/tmp/zh/a
+/tmp/zh/aa
+/tmp/zh/aaa
+
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; print -l /tmp/zh/a##'
+/tmp/zh/a##
+```
+
+Related to #62 (extended_glob `~` and-not operator) and #81
+(extended_glob exclusion duplicates). The whole extended_glob
+operator set (`#`, `##`, `~`, `^`) is partially or fully missing.
+
+Per `man zshexpn` § FILENAME GENERATION:
+> If the `EXTENDED_GLOB` option is set, the following also have
+> special meaning:
+> `x#` — match zero or more occurrences of `x`
+> `x##` — match one or more occurrences of `x`
+
+**Where** — `src/ported/pattern.rs::compile_extended_glob`: token
+table missing `PAT_HASH` (one-or-more) and `PAT_HASH2` (zero-or-
+more). C-source `Src/pattern.c::patcompile` adds quantifier
+handling when `isset(EXTENDEDGLOB)`.
+
+**Impact** — any extended_glob script using `#`/`##` quantifiers
+silently fails. Idioms:
+
+```sh
+setopt extended_glob
+# match log files with all-numeric basenames
+ls /var/log/[0-9]##.log
+# zsh: matches 5.log, 42.log, 99999.log
+# zshrs: tries to match the literal string "[0-9]##.log"
+```
+
+**Workaround** — use `*` plus character class:
+```sh
+ls /var/log/<0-9>*.log    # zsh-specific numeric range
+ls /var/log/[0-9]*.log    # POSIX, both shells
+```
+
+---
+
+## #90 — `$ZSH_PATCHLEVEL` set to literal `"unknown"` vs zsh's git-described commit
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${ZSH_PATCHLEVEL:-unset}]"'
+[zsh-5.9-0-g73d3173]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[${ZSH_PATCHLEVEL:-unset}]"'
+[unknown]
+```
+
+zsh sets `$ZSH_PATCHLEVEL` to a git-describe-style version string
+identifying the exact upstream commit (`zsh-5.9-0-g73d3173`).
+zshrs hardcodes `"unknown"`.
+
+Related to bug #73 (`$ZSH_VERSION` has `.0.3-test` suffix). Both
+are compat-floor parameter-value bugs: zshrs should mirror
+upstream values where possible.
+
+For zshrs's own identity, a separate parameter is appropriate
+(`$ZSHRS_PATCHLEVEL` or the git hash of the zshrs build). Don't
+overload upstream's `$ZSH_PATCHLEVEL`.
+
+**Where** — `src/ported/init.rs::set_compat_params`: hardcodes
+the string. Should either:
+1. Reflect a specific upstream zsh commit the port targets (e.g.,
+   `zsh-5.9-0-g73d3173` to match what zshrs claims compat with).
+2. Provide it as a build-time const updated from upstream tags.
+
+**Impact** — scripts that fingerprint zsh by `$ZSH_PATCHLEVEL`
+(common in dotfile detection) see `unknown` and can't determine
+feature availability:
+
+```sh
+# dotfile-pattern: feature gating by patch level
+case "$ZSH_PATCHLEVEL" in
+    zsh-5.9-*)  HAS_SIXEL=1 ;;
+    zsh-5.10*)  HAS_SIXEL=2 ;;
+    *)          HAS_SIXEL=0 ;;
+esac
+# zsh: HAS_SIXEL=1
+# zshrs: HAS_SIXEL=0  (always falls to wildcard, features assumed absent)
+```
+
+**Workaround** — guard with `$ZSH_VERSION` fallback (which is at
+least populated, though wrongly per #73):
+```sh
+zv=${ZSH_PATCHLEVEL:-${ZSH_VERSION}}
+case "$zv" in
+    *5.9*)   HAS_SIXEL=1 ;;
+    ...
+esac
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -4398,12 +4574,15 @@ echo "rcs=${options[rcs]} hashdirs=${options[hashdirs]}"
 | 85 | `"${(s.X.)s[@]}"` on scalar with `[@]` returns empty | **port-bug** | `(@s.X.)s` flag-first form |
 | 86 | `${1:?msg}` error format has spurious `:1:` line | **port-bug** | sed-strip the line number |
 | 87 | `setopt` (no args) empty under `-fc`; zsh shows `nohashdirs/norcs` | **port-bug** | `$options[rcs]` direct query |
+| 88 | `setopt nounset` doesn't fire on unset var in arith `$((x+1))` | **port-bug** | `[[ -v var ]]` guard |
+| 89 | `extended_glob #`/`##` quantifiers not recognized (literal) | **port-bug** | use `*` + char class |
+| 90 | `$ZSH_PATCHLEVEL` = literal `"unknown"` vs zsh's commit | **port-bug** | fallback to `$ZSH_VERSION` |
 
-Of eighty-seven entries, two are fixed (5, 7), eighty-one remain
-open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+Of ninety entries, two are fixed (5, 7), eighty-four remain open
+port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85,
-86, 87), and four were zsh-correct behavior misframed by demos
-(1, 2, 3, 6).
+86, 87, 88, 89, 90), and four were zsh-correct behavior misframed
+by demos (1, 2, 3, 6).
