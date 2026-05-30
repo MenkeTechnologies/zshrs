@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v0.11.22)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -14,23 +20,48 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # zshrs is huge (627k+ LOC, multiple binaries) — give the build room.
+    timeout-minutes: 180
+    # Per-target failures are tolerated on the flaky variants so the
+    # downstream publish + tap job ships from whichever targets did
+    # build. `needs: build` is satisfied either way.
+    continue-on-error: ${{ matrix.allow_failure || false }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: x86_64-apple-darwin
+          # --- macOS native ---
           - os: macos-latest
             target: aarch64-apple-darwin
+          - os: macos-13
+            target: x86_64-apple-darwin
+          # --- Linux glibc native ---
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            # GA arm64 runner since Aug 2025 (free for public repos).
+            # Allow failure: zshrs is 627k LOC; arm runner OOM risk.
+            allow_failure: true
+          # --- Linux musl static (portable across glibc/musl distros) ---
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            allow_failure: true
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            allow_failure: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - uses: Swatinem/rust-cache@v2
 
@@ -63,12 +94,12 @@ jobs:
           tar czf ../../../zshrs-all-${{ github.ref_name }}-${{ matrix.target }}.tar.gz zshrs zd zshrs-recorder zshrs-daemon
           cd ../../..
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v4
         with:
           name: zshrs-${{ matrix.target }}
           path: zshrs-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v4
         with:
           name: zshrs-all-${{ matrix.target }}
           path: zshrs-all-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
@@ -81,7 +112,7 @@ jobs:
       run:
         working-directory: editors/intellij
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -90,7 +121,7 @@ jobs:
           java-version: '17'
 
       - name: Cache Gradle + IntelliJ Platform SDK
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
@@ -112,7 +143,7 @@ jobs:
           echo "path=$zip_path" >> "$GITHUB_OUTPUT"
           echo "name=$(basename $zip_path)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v4
         with:
           name: zshrs-intellij-plugin
           path: editors/intellij/${{ steps.plugin_zip.outputs.path }}
@@ -122,7 +153,7 @@ jobs:
     needs: [build, plugin]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
@@ -167,107 +198,111 @@ jobs:
             echo "${key}=${sum}" >> "$GITHUB_OUTPUT"
           done
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           repository: MenkeTechnologies/homebrew-menketech
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
 
-      - name: Update formula
+      - name: Update zshrs formula
         shell: bash
         env:
           VERSION: ${{ github.ref_name }}
+          SHA_ARM_MACOS: ${{ steps.sha.outputs.aarch64_apple_darwin }}
+          SHA_X86_MACOS: ${{ steps.sha.outputs.x86_64_apple_darwin }}
+          SHA_X86_LINUX: ${{ steps.sha.outputs.x86_64_unknown_linux_gnu }}
+          SHA_ARM_LINUX: ${{ steps.sha.outputs.aarch64_unknown_linux_gnu }}
+          SHA_X86_LINUX_MUSL: ${{ steps.sha.outputs.x86_64_unknown_linux_musl }}
+          SHA_ARM_LINUX_MUSL: ${{ steps.sha.outputs.aarch64_unknown_linux_musl }}
         run: |
-          # Strip leading 'v' from VERSION (e.g. v1.2.3 → 1.2.3).
-          VERSION="${VERSION#v}"
-          cd tap
-          cat > Formula/zshrs.rb <<'FORMULA_HEAD'
-          class Zshrs < Formula
-            desc "The first compiled Unix shell — drop-in zsh replacement with bytecode JIT, AOP, worker pool"
-            homepage "https://github.com/MenkeTechnologies/zshrs"
-            license "MIT"
-          FORMULA_HEAD
-          cat >> Formula/zshrs.rb <<EOF
-            version "${VERSION}"
-
-            on_macos do
-            on_arm do
-              url "https://github.com/MenkeTechnologies/zshrs/releases/download/v${VERSION}/zshrs-v${VERSION}-aarch64-apple-darwin.tar.gz"
-              sha256 "${{ steps.sha.outputs.aarch64_apple_darwin }}"
-            end
-            on_intel do
-              url "https://github.com/MenkeTechnologies/zshrs/releases/download/v${VERSION}/zshrs-v${VERSION}-x86_64-apple-darwin.tar.gz"
-              sha256 "${{ steps.sha.outputs.x86_64_apple_darwin }}"
-            end
-            end
-
-            on_linux do
-            on_intel do
-              url "https://github.com/MenkeTechnologies/zshrs/releases/download/v${VERSION}/zshrs-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-              sha256 "${{ steps.sha.outputs.x86_64_unknown_linux_gnu }}"
-            end
-            end
-
-            def install
-            bin.install "zshrs"
-            bin.install "zd"
-            end
-
-            test do
-              assert_match "hi", shell_output("#{bin}/zshrs -c \'echo hi\'")
-            end
-          end
-          EOF
+          set -eu
+          V="${VERSION#v}"
+          BASE="https://github.com/MenkeTechnologies/zshrs/releases/download/v${V}"
+          # Helper: emit an on_arm / on_intel block when its SHA is non-empty.
+          emit() { local guard="$1" arch="$2" sha="$3"; [ -n "$sha" ] || return 0; printf '    %s do\n      url "%s/zshrs-v%s-%s.tar.gz"\n      sha256 "%s"\n    end\n' "$guard" "$BASE" "$V" "$arch" "$sha"; }
+          # Build per-OS blocks first; skip the whole on_macos/on_linux
+          # block if zero arches succeeded for that OS.
+          mac_blocks=$( { emit on_arm aarch64-apple-darwin "$SHA_ARM_MACOS"; emit on_intel x86_64-apple-darwin "$SHA_X86_MACOS"; } )
+          linux_blocks=$( { emit on_intel x86_64-unknown-linux-gnu "$SHA_X86_LINUX"; emit on_arm aarch64-unknown-linux-gnu "$SHA_ARM_LINUX"; } )
+          {
+            printf 'class Zshrs < Formula\n'
+            printf '  desc "First compiled Unix shell — drop-in zsh with bytecode JIT, AOP, worker pool"\n'
+            printf '  homepage "https://github.com/MenkeTechnologies/zshrs"\n'
+            printf '  license "MIT"\n'
+            printf '  version "%s"\n\n' "$V"
+            if [ -n "$mac_blocks" ]; then
+              printf '  on_macos do\n%s\n  end\n\n' "$mac_blocks"
+            fi
+            if [ -n "$linux_blocks" ]; then
+              printf '  on_linux do\n%s\n  end\n\n' "$linux_blocks"
+            fi
+            printf '  def install\n'
+            printf '    bin.install "zshrs"\n'
+            printf '    bin.install "zd"\n'
+            printf '  end\n\n'
+            printf '  test do\n'
+            printf '    assert_match "hi", shell_output("#{bin}/zshrs -c '"'"'echo hi'"'"'")\n'
+            printf '  end\n'
+            # musl tarballs as trailing comment — Homebrew has no
+            # on_libc gate, so static binaries are referenced by URL
+            # for users targeting Alpine / scratch / distroless.
+            if [ -n "$SHA_X86_LINUX_MUSL" ] || [ -n "$SHA_ARM_LINUX_MUSL" ]; then
+              printf '\n  # Static musl tarballs also published at this release:\n'
+              [ -n "$SHA_X86_LINUX_MUSL" ] && printf '  #   zshrs-v%s-x86_64-unknown-linux-musl.tar.gz  sha256: %s\n' "$V" "$SHA_X86_LINUX_MUSL"
+              [ -n "$SHA_ARM_LINUX_MUSL" ] && printf '  #   zshrs-v%s-aarch64-unknown-linux-musl.tar.gz  sha256: %s\n' "$V" "$SHA_ARM_LINUX_MUSL"
+            fi
+            printf 'end\n'
+          } > tap/Formula/zshrs.rb
 
       - name: Update zshrs-all formula
         shell: bash
         env:
           VERSION: ${{ github.ref_name }}
+          SHA_ARM_MACOS: ${{ steps.sha.outputs.all_aarch64_apple_darwin }}
+          SHA_X86_MACOS: ${{ steps.sha.outputs.all_x86_64_apple_darwin }}
+          SHA_X86_LINUX: ${{ steps.sha.outputs.all_x86_64_unknown_linux_gnu }}
+          SHA_ARM_LINUX: ${{ steps.sha.outputs.all_aarch64_unknown_linux_gnu }}
+          SHA_X86_LINUX_MUSL: ${{ steps.sha.outputs.all_x86_64_unknown_linux_musl }}
+          SHA_ARM_LINUX_MUSL: ${{ steps.sha.outputs.all_aarch64_unknown_linux_musl }}
         run: |
-          VERSION="${VERSION#v}"
-          cd tap
-          cat > Formula/zshrs-all.rb <<'FORMULA_HEAD'
-          class ZshrsAll < Formula
-            desc "Full zshrs install — shell + zd client + recorder + daemon"
-            homepage "https://github.com/MenkeTechnologies/zshrs"
-            license "MIT"
-            conflicts_with "zshrs", because: "both install zshrs and zd"
-          FORMULA_HEAD
-          cat >> Formula/zshrs-all.rb <<EOF
-            version "${VERSION}"
-
-            on_macos do
-            on_arm do
-              url "https://github.com/MenkeTechnologies/zshrs/releases/download/v${VERSION}/zshrs-all-v${VERSION}-aarch64-apple-darwin.tar.gz"
-              sha256 "${{ steps.sha.outputs.all_aarch64_apple_darwin }}"
-            end
-            on_intel do
-              url "https://github.com/MenkeTechnologies/zshrs/releases/download/v${VERSION}/zshrs-all-v${VERSION}-x86_64-apple-darwin.tar.gz"
-              sha256 "${{ steps.sha.outputs.all_x86_64_apple_darwin }}"
-            end
-            end
-
-            on_linux do
-            on_intel do
-              url "https://github.com/MenkeTechnologies/zshrs/releases/download/v${VERSION}/zshrs-all-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-              sha256 "${{ steps.sha.outputs.all_x86_64_unknown_linux_gnu }}"
-            end
-            end
-
-            def install
-            bin.install "zshrs"
-            bin.install "zd"
-            bin.install "zshrs-recorder"
-            bin.install "zshrs-daemon"
-            end
-
-            test do
-              assert_match "hi", shell_output("#{bin}/zshrs -c \'echo hi\'")
-              assert_predicate bin/"zshrs-recorder", :exist?
-              assert_predicate bin/"zshrs-daemon", :exist?
-            end
-          end
-          EOF
+          set -eu
+          V="${VERSION#v}"
+          BASE="https://github.com/MenkeTechnologies/zshrs/releases/download/v${V}"
+          # Helper: emit an on_arm / on_intel block when its SHA is non-empty.
+          emit() { local guard="$1" arch="$2" sha="$3"; [ -n "$sha" ] || return 0; printf '    %s do\n      url "%s/zshrs-all-v%s-%s.tar.gz"\n      sha256 "%s"\n    end\n' "$guard" "$BASE" "$V" "$arch" "$sha"; }
+          mac_blocks=$( { emit on_arm aarch64-apple-darwin "$SHA_ARM_MACOS"; emit on_intel x86_64-apple-darwin "$SHA_X86_MACOS"; } )
+          linux_blocks=$( { emit on_intel x86_64-unknown-linux-gnu "$SHA_X86_LINUX"; emit on_arm aarch64-unknown-linux-gnu "$SHA_ARM_LINUX"; } )
+          {
+            printf 'class ZshrsAll < Formula\n'
+            printf '  desc "Full zshrs install — shell + zd client + recorder + daemon"\n'
+            printf '  homepage "https://github.com/MenkeTechnologies/zshrs"\n'
+            printf '  license "MIT"\n'
+            printf '  conflicts_with "zshrs", because: "both install zshrs and zd"\n'
+            printf '  version "%s"\n\n' "$V"
+            if [ -n "$mac_blocks" ]; then
+              printf '  on_macos do\n%s\n  end\n\n' "$mac_blocks"
+            fi
+            if [ -n "$linux_blocks" ]; then
+              printf '  on_linux do\n%s\n  end\n\n' "$linux_blocks"
+            fi
+            printf '  def install\n'
+            printf '    bin.install "zshrs"\n'
+            printf '    bin.install "zd"\n'
+            printf '    bin.install "zshrs-recorder"\n'
+            printf '    bin.install "zshrs-daemon"\n'
+            printf '  end\n\n'
+            printf '  test do\n'
+            printf '    assert_match "hi", shell_output("#{bin}/zshrs -c '"'"'echo hi'"'"'")\n'
+            printf '    assert_predicate bin/"zshrs-recorder", :exist?\n'
+            printf '    assert_predicate bin/"zshrs-daemon", :exist?\n'
+            printf '  end\n'
+            if [ -n "$SHA_X86_LINUX_MUSL" ] || [ -n "$SHA_ARM_LINUX_MUSL" ]; then
+              printf '\n  # Static musl tarballs also published at this release:\n'
+              [ -n "$SHA_X86_LINUX_MUSL" ] && printf '  #   zshrs-all-v%s-x86_64-unknown-linux-musl.tar.gz  sha256: %s\n' "$V" "$SHA_X86_LINUX_MUSL"
+              [ -n "$SHA_ARM_LINUX_MUSL" ] && printf '  #   zshrs-all-v%s-aarch64-unknown-linux-musl.tar.gz  sha256: %s\n' "$V" "$SHA_ARM_LINUX_MUSL"
+            fi
+            printf 'end\n'
+          } > tap/Formula/zshrs-all.rb
 
       - name: Push formula update
         run: |
