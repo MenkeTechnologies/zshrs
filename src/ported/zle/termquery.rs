@@ -1944,4 +1944,104 @@ mod tests {
         assert_eq!(extension_enabled("", "", true), true);
         assert_eq!(extension_enabled("", "", false), false);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/termquery.rs
+    // c:116 find_branch / c:126 find_matching / c:392 base64_encode /
+    // c:451 base64_decode / c:531 url_encode / c:792 prompt_markers
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:116 — `find_branch` returns Option<usize> (compile-time pin, alt).
+    #[test]
+    fn find_branch_returns_option_usize_pin_alt() {
+        let _: Option<usize> = find_branch("anything", b';');
+    }
+
+    /// c:116 — `find_branch("", _)` returns None (empty string has no branch).
+    #[test]
+    fn find_branch_empty_returns_none() {
+        assert!(find_branch("", b';').is_none(),
+            "empty string → no branch found");
+    }
+
+    /// c:126 — `find_matching` returns Option<usize> (compile-time pin).
+    #[test]
+    fn find_matching_returns_option_usize_type() {
+        let _: Option<usize> = find_matching("()", b'(', b')');
+    }
+
+    /// c:126 — `find_matching` on balanced pair finds the close.
+    #[test]
+    fn find_matching_balanced_pair_finds_close() {
+        let r = find_matching("()", b'(', b')');
+        assert_eq!(r, Some(1), "() close at index 1");
+    }
+
+    /// c:126 — `find_matching` on unbalanced returns None (alt name pin).
+    #[test]
+    fn find_matching_unbalanced_returns_none_alt() {
+        assert!(find_matching("(((", b'(', b')').is_none(),
+            "unbalanced ((( → None");
+    }
+
+    /// c:392 — `base64_encode` returns String (compile-time pin).
+    #[test]
+    fn base64_encode_returns_string_type() {
+        let _: String = base64_encode(&[]);
+    }
+
+    /// c:392 — `base64_encode(&[])` returns empty string.
+    #[test]
+    fn base64_encode_empty_returns_empty() {
+        assert_eq!(base64_encode(&[]), "", "empty bytes → empty string");
+    }
+
+    /// c:392 — `base64_encode(&[0x41])` returns "QQ==" (canonical "A" → b64).
+    #[test]
+    fn base64_encode_single_byte_canonical() {
+        assert_eq!(base64_encode(&[0x41]), "QQ==",
+            "'A' (0x41) → 'QQ==' canonical");
+    }
+
+    /// c:392 + c:451 — base64 encode→decode round-trip preserves bytes.
+    #[test]
+    fn base64_encode_decode_round_trip() {
+        for input in [
+            &[][..],
+            &[0x00][..],
+            &[0x41, 0x42, 0x43][..],
+            &[0xff, 0xff, 0xff, 0xff][..],
+        ] {
+            let encoded = base64_encode(input);
+            let decoded = base64_decode(&encoded);
+            assert_eq!(decoded, input.to_vec(),
+                "base64 round-trip must preserve {:?}", input);
+        }
+    }
+
+    /// c:451 — `base64_decode` returns Vec<u8> (compile-time pin).
+    #[test]
+    fn base64_decode_returns_vec_u8_type() {
+        let _: Vec<u8> = base64_decode("");
+    }
+
+    /// c:531 — `url_encode` returns String (compile-time pin).
+    #[test]
+    fn url_encode_returns_string_type() {
+        let _: String = url_encode("");
+    }
+
+    /// c:531 — `url_encode` passes through ASCII alphanumerics unchanged.
+    #[test]
+    fn url_encode_alphanumerics_unchanged() {
+        let r = url_encode("abc123");
+        assert_eq!(r, "abc123",
+            "url_encode must pass ASCII alphanumerics verbatim");
+    }
+
+    /// c:792 — `prompt_markers` returns 3-element array (compile-time pin).
+    #[test]
+    fn prompt_markers_returns_3_element_array() {
+        let _: [String; 3] = prompt_markers();
+    }
 }
