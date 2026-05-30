@@ -4218,4 +4218,107 @@ mod tests {
         assert!(!is_pat, "empty input not a pattern");
         assert_eq!(name, "", "empty input → empty name");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for Src/Zle/compctl.c
+    // c:92 createcompctltable / c:104 freecompctlp / c:320 set_gmatcher /
+    // c:356 get_gmatcher / c:1052 compctl_name_pat / c:1080 delpatcomp /
+    // c:1303 bin_compctl / c:1435 bin_compcall / c:1485 ccmakehookfn
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:92 — `createcompctltable` is idempotent (alt 10-call).
+    #[test]
+    fn createcompctltable_idempotent_10_call_alt() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..10 { createcompctltable(); }
+    }
+
+    /// c:104 — `freecompctlp(empty)` safe.
+    #[test]
+    fn freecompctlp_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        freecompctlp("");
+    }
+
+    /// c:104 — `freecompctlp("__never__")` for unknown name safe (alt pin).
+    #[test]
+    fn freecompctlp_unknown_name_no_panic_alt() {
+        let _g = crate::test_util::global_state_lock();
+        freecompctlp("__never_real_compctl_xyz__");
+    }
+
+    /// c:320 — `set_gmatcher` returns i32 (compile-time pin, alt).
+    #[test]
+    fn set_gmatcher_returns_i32_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = set_gmatcher("test", &[]);
+    }
+
+    /// c:356 — `get_gmatcher` returns i32 (compile-time pin, alt).
+    #[test]
+    fn get_gmatcher_returns_i32_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: i32 = get_gmatcher("test", &[]);
+    }
+
+    /// c:1052 — `compctl_name_pat` returns (bool, String) tuple.
+    #[test]
+    fn compctl_name_pat_returns_bool_string_tuple_type() {
+        let _: (bool, String) = compctl_name_pat("");
+    }
+
+    /// c:1052 — `compctl_name_pat` is deterministic.
+    #[test]
+    fn compctl_name_pat_deterministic() {
+        for s in ["", "abc", "*", "(pattern)", "name"] {
+            let a = compctl_name_pat(s);
+            let b = compctl_name_pat(s);
+            assert_eq!(a, b,
+                "compctl_name_pat({:?}) must be pure", s);
+        }
+    }
+
+    /// c:1080 — `delpatcomp("")` empty pattern safe.
+    #[test]
+    fn delpatcomp_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        delpatcomp("");
+    }
+
+    /// c:1080 — `delpatcomp("__never__")` unknown pattern safe.
+    #[test]
+    fn delpatcomp_unknown_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        delpatcomp("__never_real_pattern_xyz__");
+    }
+
+    /// c:1303 — `bin_compctl` non-negative exit code.
+    #[test]
+    fn bin_compctl_exit_code_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let r = bin_compctl("compctl", &[], &ops, 0);
+        assert!(r >= 0, "bin_compctl exit code must be ≥ 0, got {}", r);
+    }
+
+    /// c:1435 — `bin_compcall` non-negative exit code.
+    #[test]
+    fn bin_compcall_exit_code_non_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let r = bin_compcall("compcall", &[], &ops, 0);
+        assert!(r >= 0, "bin_compcall exit code must be ≥ 0, got {}", r);
+    }
+
+    /// c:1485 — `ccmakehookfn` returns i32 (compile-time pin, alt).
+    #[test]
+    fn ccmakehookfn_returns_i32_type_alt() {
+        let _: i32 = ccmakehookfn(());
+    }
 }
