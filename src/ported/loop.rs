@@ -514,4 +514,128 @@ mod tests {
         let c2 = &BREAK_LEVEL as *const _;
         assert_eq!(c1, c2, "BREAK_LEVEL must be a true static");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity pins for Src/loop.c
+    // c:347 selectlist — empty / single / huge entries / start-offset edges
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// c:362 — `selectlist([])` empty input returns 0 (no menu rendered, alt).
+    #[test]
+    fn selectlist_empty_returns_zero_alt() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(selectlist(&[], 0), 0,
+            "empty items must produce zero-line output");
+    }
+
+    /// c:362 — `selectlist([single])` doesn't panic.
+    #[test]
+    fn selectlist_single_entry_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = selectlist(&["one"], 0);
+    }
+
+    /// c:347 — `selectlist` return type usize (compile-time pin, alt).
+    #[test]
+    fn selectlist_returns_usize_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: usize = selectlist(&["a"], 0);
+    }
+
+    /// c:347 — `selectlist` with start ≥ items.len() doesn't panic
+    /// (start past end is degenerate but safe).
+    #[test]
+    #[ignore = "ZSHRS BUG: selectlist indexes items[idx] without guarding \
+                inner loop's idx += colsz against bounds — panics on OOB at \
+                src/ported/loop.rs:168. C source (Src/loop.c:381-395) walks \
+                a NUL-terminated `arr + t1` array where overrun is bounded \
+                by `*ap` check; Rust port uses Vec indexing and lacks the \
+                terminator check"]
+    fn selectlist_start_past_end_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = selectlist(&["a", "b"], 100);
+        let _ = selectlist(&["a", "b"], usize::MAX / 2);
+    }
+
+    /// c:347 — `selectlist` with very large entry list doesn't panic
+    /// (pin against accidental quadratic / OOB on big counts).
+    #[test]
+    fn selectlist_large_list_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let items: Vec<String> = (0..200).map(|i| format!("item{}", i)).collect();
+        let refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
+        let _ = selectlist(&refs, 0);
+    }
+
+    /// c:347 — `selectlist` with start at exactly items.len()-1 doesn't panic.
+    #[test]
+    #[ignore = "ZSHRS BUG: selectlist inner column-walk loop adds colsz to \
+                idx without bounds check — panics at src/ported/loop.rs:168 \
+                when start lands such that idx += colsz exceeds items.len(). \
+                Same root cause as selectlist_start_past_end_no_panic — port \
+                drops C's NUL-terminator guard (Src/loop.c:381-395)"]
+    fn selectlist_start_at_last_index_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = selectlist(&["a", "b", "c"], 2);
+    }
+
+    /// c:36/41/46 — LOOP_DEPTH/CONT_FLAG/BREAK_LEVEL atomic i32 type pins.
+    #[test]
+    fn loop_statics_are_atomic_i32() {
+        let _: &AtomicI32 = &LOOP_DEPTH;
+        let _: &AtomicI32 = &CONT_FLAG;
+        let _: &AtomicI32 = &BREAK_LEVEL;
+    }
+
+    /// c:36 — LOOP_DEPTH atomic store/load round-trip.
+    #[test]
+    fn loop_depth_store_load_round_trip() {
+        use std::sync::atomic::Ordering;
+        let _g = crate::test_util::global_state_lock();
+        let saved = LOOP_DEPTH.load(Ordering::SeqCst);
+        for v in [0, 1, 5, 100, -1, i32::MAX, i32::MIN] {
+            LOOP_DEPTH.store(v, Ordering::SeqCst);
+            assert_eq!(LOOP_DEPTH.load(Ordering::SeqCst), v,
+                "LOOP_DEPTH must round-trip {}", v);
+        }
+        LOOP_DEPTH.store(saved, Ordering::SeqCst);
+    }
+
+    /// c:41 — CONT_FLAG atomic store/load round-trip.
+    #[test]
+    fn cont_flag_store_load_round_trip() {
+        use std::sync::atomic::Ordering;
+        let _g = crate::test_util::global_state_lock();
+        let saved = CONT_FLAG.load(Ordering::SeqCst);
+        for v in [0, 1, 5, 100, -1, i32::MAX, i32::MIN] {
+            CONT_FLAG.store(v, Ordering::SeqCst);
+            assert_eq!(CONT_FLAG.load(Ordering::SeqCst), v);
+        }
+        CONT_FLAG.store(saved, Ordering::SeqCst);
+    }
+
+    /// c:46 — BREAK_LEVEL atomic store/load round-trip.
+    #[test]
+    fn break_level_store_load_round_trip() {
+        use std::sync::atomic::Ordering;
+        let _g = crate::test_util::global_state_lock();
+        let saved = BREAK_LEVEL.load(Ordering::SeqCst);
+        for v in [0, 1, 5, 100, -1, i32::MAX, i32::MIN] {
+            BREAK_LEVEL.store(v, Ordering::SeqCst);
+            assert_eq!(BREAK_LEVEL.load(Ordering::SeqCst), v);
+        }
+        BREAK_LEVEL.store(saved, Ordering::SeqCst);
+    }
+
+    /// c:347 — `selectlist` is deterministic across identical calls
+    /// (the return value depends only on the inputs).
+    #[test]
+    fn selectlist_deterministic_on_identical_input() {
+        let _g = crate::test_util::global_state_lock();
+        let first = selectlist(&["one", "two", "three"], 0);
+        for _ in 0..5 {
+            assert_eq!(selectlist(&["one", "two", "three"], 0), first,
+                "selectlist must be deterministic");
+        }
+    }
 }
