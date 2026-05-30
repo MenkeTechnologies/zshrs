@@ -21146,6 +21146,176 @@ done
 
 ---
 
+## #397 — `printf` builtin redirection broken — writes to BOTH stdout AND file
+
+**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'printf "abcde" > /tmp/_x; echo done; cat /tmp/_x; rm /tmp/_x'
+done
+abcde
+
+$ ./target/debug/zshrs --zsh -c 'printf "abcde" > /tmp/_x; echo done; cat /tmp/_x; rm /tmp/_x'
+abcdedone
+abcde
+```
+
+zsh: `printf "abcde" > /tmp/_x` redirects printf's
+output to the file. Stdout receives only the subsequent
+`done` from echo. File contents: `abcde`.
+
+zshrs: printf writes `abcde` to **both** stdout (visible
+as `abcdedone`) and the file (visible from cat). The
+`> /tmp/_x` redirection still creates and populates the
+file — but stdout is **also** receiving the output.
+
+Confirmed it's `printf`-specific:
+- `echo "X" > FILE` — works correctly in both shells
+- `print "X" > FILE` — works correctly in both shells
+- `printf "X" > FILE` — broken in zshrs
+
+**Where** — `src/ported/builtins/printf.rs::execute`:
+writes directly to `io::stdout()` or `fd 1` instead of
+honoring the shell's per-builtin output fd. C-source
+`Src/builtins.c::bin_printf` writes to `outputfp` /
+`shoutfd` (the redirection-aware fd).
+
+Likely the redirect is being applied at the exec layer
+(creating the file) but the builtin opens its own fd-1
+handle bypassing the redirection.
+
+**Impact** — **MASSIVE FALLOUT**. Every script that uses
+`printf` to write to a file has stdout corruption:
+
+```sh
+# Building config files
+printf "[section]\nkey=%s\n" "$value" > /etc/myapp.conf
+# zsh: clean — stdout silent, config file populated
+# zshrs: stdout gets the config content too — leaks
+#        secrets into terminal, pipeline corruption,
+#        log noise, completion-output garbled
+```
+
+Real-world breakage:
+- generators that pipe stdout to a downstream command
+- prompt themes using `printf "%s" > /dev/tty` (writes
+  to both tty and stdout)
+- log builders, snapshot writers, any "write-then-process"
+  pattern
+- `printf -v var "..."` would also be suspect — needs
+  separate verification
+
+**Workaround** — use `print -r --` instead of `printf`:
+```sh
+print -r -- "${formatted}" > /etc/myapp.conf
+```
+
+Or wrap printf in a subshell:
+```sh
+( printf "%s" "$x" ) > /etc/myapp.conf
+```
+
+(Subshell forks; redirection then applies to the whole
+process.)
+
+---
+
+## #398 — `printf` unknown format directives printed literally instead of rejected
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'printf "%Z\n" 100 2>&1'
+zsh:printf:1: %Z: invalid directive
+
+$ ./target/debug/zshrs --zsh -c 'printf "%Z\n" 100 2>&1'
+%Z
+```
+
+zsh's printf strictly validates format directives — any
+unknown `%X` errors with "invalid directive". zshrs
+prints the directive text **literally** (as if it were
+ordinary content) without erroring.
+
+Confirmed across multiple directives:
+- `%Z`, `%K`, `%A`, `%a` (truly invalid)
+- `%T` (zsh has no bash-style time directive)
+- `%(%Y)T` (bash time-format syntax)
+
+All are accepted-as-literal by zshrs; all are rejected by
+zsh.
+
+**Where** — `src/ported/builtins/printf.rs::parse_format`:
+unknown directive falls through to literal-emit instead
+of returning `BUILTIN_USAGE` / "invalid directive" error.
+C-source `Src/utils.c::pchroma` (used by bin_printf)
+calls `zwarnnam("printf", "%c: invalid directive",
+fmt_char)`.
+
+**Impact** — typos in printf format strings produce
+nonsense output instead of errors:
+
+```sh
+# Typo: meant %s but typed %S
+printf "User: %S\n" "$user"
+# zsh: errors immediately — typo surfaces
+# zshrs: outputs "User: %S" with the arg silently
+#        dropped — bug ships to production
+```
+
+Also masks intentional probes for "does my printf support
+%(fmt)T" (bash-extension portability checks always succeed
+in zshrs).
+
+**Workaround** — manually validate format strings before
+printf, or grep stderr for "invalid directive" after
+calling. No good in-script workaround.
+
+---
+
+## #399 — `*(YN)` glob qualifier — limit-to-N-matches ignored, returns all matches
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/{a,b,c}; echo /tmp/_zg/*(Y2); rm -rf /tmp/_zg'
+/tmp/_zg/a /tmp/_zg/c
+
+$ ./target/debug/zshrs --zsh -c 'mkdir -p /tmp/_zg && touch /tmp/_zg/{a,b,c}; echo /tmp/_zg/*(Y2); rm -rf /tmp/_zg'
+/tmp/_zg/a /tmp/_zg/b /tmp/_zg/c
+```
+
+`(YN)` is the glob qualifier that caps the result to the
+first N matches (after qualifier ordering). zsh returns 2
+matches; zshrs returns all 3 — the qualifier is parsed
+without error but ignored.
+
+**Where** — `src/ported/glob/qualifiers/y.rs` or
+equivalent: missing limit-application after match
+collection. C-source `Src/glob.c::qualifyy` sets
+`min(matches, Y_limit)`.
+
+**Impact** — common patterns broken:
+
+```sh
+# "Get me the 10 most recently modified files"
+recent=( *(om[1,10]) )            # works (slicing)
+recent=( *(omY10) )               # zsh: 10 newest
+                                  # zshrs: ALL files in mtime order
+```
+
+Especially common in log-rotation, backup-cleanup, and
+"largest N files" scripts. Workaround via `[1,N]` slice
+exists but doesn't compose with all qualifier orderings.
+
+**Workaround** — use array slice after glob:
+```sh
+files=( *(om) )
+first_ten=( "${files[1,10]}" )
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -21546,9 +21716,12 @@ done
 | 394 | `setopt` no-args dump empty under `-f` — should list `nohashdirs`/`norcs` (zsh: shows divergent-from-default) | **port-bug** | probe specific opts with `[[ -o NAME ]]` |
 | 395 | `compdef` shipped as permanent builtin — zsh: not defined until `compinit`; breaks `${+functions[compdef]}` guard | **port-bug** | probe `_comp_setup` instead |
 | 396 | `$funcsourcetrace` records `:0` instead of `:1` for function-definition line (parallel to #385 LINENO base) | **port-bug** | `$(( line + 1 ))` adjust when emitting |
+| 397 | **CRITICAL** `printf "X" > FILE` writes to BOTH stdout AND file — builtin bypasses shell redirection (echo/print work) | **port-bug** | use `print -r --` instead, or wrap printf in subshell |
+| 398 | `printf` unknown directives (`%Z`/`%K`/`%A`/`%a`/`%T`/`%(…)T`) printed literally instead of erroring (zsh: "invalid directive") | **port-bug** | manually validate format strings; check stderr for "invalid directive" |
+| 399 | `*(YN)` glob qualifier limit-to-N-matches ignored — returns all matches (zsh: caps at N) | **port-bug** | `( *(om) )` then array-slice `[1,N]` |
 
-Of three hundred and ninety-six entries, two are fixed (5, 7),
-three hundred and ninety remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of three hundred and ninety-nine entries, two are fixed (5, 7),
+three hundred and ninety-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
