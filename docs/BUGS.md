@@ -10018,6 +10018,149 @@ basename="${deref[1]:t}"
 
 ---
 
+## #193 — `(( y = ${x:?msg} ))` continues after required-param error in arith context
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'unset x; (( y = ${x:?msg} )); echo "after: ec=$?"' 2>&1
+zsh:1: x: msg
+(no "after" — aborted)
+
+$ ./target/debug/zshrs --zsh -c 'unset x; (( y = ${x:?msg} )); echo "after: ec=$?"' 2>&1
+zsh:1: x: msg
+after: ec=2
+```
+
+When `${x:?msg}` errors (x is unset), zsh aborts script
+execution. zshrs prints the error but continues to next
+statement.
+
+Specifically the arith-context `(( ))` path is affected. The
+standalone `${x:?msg}` outside arith correctly aborts in both
+shells:
+
+```sh
+$ both-shells -fc 'unset x; echo "${x:?msg}"; echo "after"' 2>&1
+zsh:1: x: msg
+# (no "after" in either shell)
+```
+
+Related to bug #74 (`local -r` violation in fn doesn't abort)
+— both stem from error-propagation gaps in non-statement
+contexts.
+
+**Where** — `src/ported/math.rs::eval_required_substitution`:
+when the substitution errors via `:?`, prints the error but
+doesn't set `errflag |= ERRFLAG_ERROR`. C-source
+`Src/math.c::matheval` propagates the substitution error
+through the arith evaluator.
+
+**Impact** — defensive arith patterns with required-param
+guards silently continue past errors:
+
+```sh
+(( max_size = ${MAX_SIZE_BYTES:?MAX_SIZE_BYTES must be set} ))
+# zsh: aborts at error
+# zshrs: max_size left as scalar default (0), continues
+allocate_buffer $max_size   # zsh: never reached  zshrs: allocates 0
+```
+
+**Workaround** — explicit guard before arith:
+```sh
+[[ -v MAX_SIZE_BYTES ]] || { echo "MAX_SIZE_BYTES required" >&2; exit 1; }
+(( max_size = MAX_SIZE_BYTES ))
+```
+
+---
+
+## #194 — `function f { :; } > /file` keyword-form fn-def redirect creates file at def time
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'function f { echo body; } > /tmp/zfk' && ls /tmp/zfk
+ls: /tmp/zfk: No such file or directory
+
+$ ./target/debug/zshrs --zsh -c 'function f { echo body; } > /tmp/zfk' && ls /tmp/zfk
+/tmp/zfk     (file created with 0 bytes)
+```
+
+Same bug as #187 (paren-form `f() { :; } > file`), but for the
+`function`-keyword fn-definition form. Both syntactic variants
+suffer from the same issue: redirect on fn-def takes effect at
+definition time instead of at function-call time.
+
+zsh defers the open() until function call. zshrs opens
+immediately at definition, creating/truncating the file
+without any call.
+
+**Where** — `src/ported/parse.rs::parse_function_keyword`:
+inherits the bug from `parse_function_def` (paren form). Both
+forms route through the same execution path that immediately
+processes trailing redirects.
+
+**Impact** — same as #187 — data-loss risk for `function
+my_logger { ... } > /var/log/app.log` patterns where the log
+file is truncated at definition time before any logging.
+
+**Workaround** — same as #187 — redirect at call site, not at
+definition.
+
+---
+
+## #195 — `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'arr=("hello world" "foo bar"); name=arr; echo "${(C)${(P)name}[1]}"'
+Hello World
+
+$ ./target/debug/zshrs --zsh -c 'arr=("hello world" "foo bar"); name=arr; echo "${(C)${(P)name}[1]}"'
+Hello World Foo Bar
+```
+
+`${(C)${(P)name}[N]}` should:
+1. Deref `(P)name` → returns array `("hello world", "foo bar")`.
+2. Index `[1]` → first element `"hello world"`.
+3. Apply `(C)` capitalize → `"Hello World"`.
+
+zsh produces `"Hello World"`. zshrs applies `(C)` to the FULL
+array (capitalizing all elements: "Hello World Foo Bar") and
+ignores the outer `[1]` subscript.
+
+The inner-subscript form `${(C)${(P)name[1]}}` works in zshrs
+but errors in zsh (bug #192).
+
+Same family as #182 (after-deref indexing returns full array)
+and #147 (modifier dropped after flag) — context propagation
+through nested `${...}` forms broken.
+
+**Where** — `src/ported/paramsubst.rs::nested_subscript`: outer
+subscript applied to inner expansion not honored when inner is
+array-context after flag. C-source `Src/subst.c::dosubst`
+threads subscript through to apply after the inner expansion
+resolves.
+
+**Impact** — code intending to apply case flag to a specific
+indirect-array element gets the flag applied to all elements:
+
+```sh
+arrname=user_emails
+echo "Primary: ${(C)${(P)arrname}[1]}"
+# zsh: "Primary: Alice@Example.com"
+# zshrs: "Primary: Alice@Example.com Bob@Example.com Charlie@Example.com"
+```
+
+**Workaround** — temp variable:
+```sh
+local -a deref=("${(@P)arrname}")
+echo "Primary: ${(C)deref[1]}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -10214,9 +10357,12 @@ basename="${deref[1]:t}"
 | 190 | `kill -L` lists signals (zsh: errors "unknown signal: SIGL") | **port-bug** | always use `-l` lowercase |
 | 191 | `${(l.5..)s}` empty-fill silently accepted with garbage output | **port-bug** | always specify fill chars |
 | 192 | `${(P)name[N]:mod}` indirect-arr-elem with modifier works (zsh: errors) | **port-bug** | temp var split |
+| 193 | `(( y = ${x:?msg} ))` continues after required-param error | **port-bug** | explicit `[[ -v ]]` guard before arith |
+| 194 | `function f { :; } > /file` keyword-form fn-def redirect at def time | **port-bug** | redirect at call site |
+| 195 | `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored | **port-bug** | temp `deref=("${(@P)name}")` |
 
-Of one hundred ninety-two entries, two are fixed (5, 7), one
-hundred eighty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of one hundred ninety-five entries, two are fixed (5, 7), one
+hundred eighty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
@@ -10229,5 +10375,5 @@ hundred eighty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174,
 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
-188, 189, 190, 191, 192), and four were zsh-correct behavior
-misframed by demos (1, 2, 3, 6).
+188, 189, 190, 191, 192, 193, 194, 195), and four were zsh-correct
+behavior misframed by demos (1, 2, 3, 6).
