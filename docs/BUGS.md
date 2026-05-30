@@ -1928,6 +1928,96 @@ length context — a wide compat surface.
 
 ---
 
+## #44 — `set -x` xtrace output prints literal `%x %N %I %_` instead of expanding PS4
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -x; echo hi'
+[34mzsh	zsh	1	[0m	echo hi
+hi
+
+$ zshrs --zsh -c 'set -x; echo hi'
+[34m%x	%N	%I	%_[0m	echo hi
+hi
+```
+
+The default `$PS4` is `%F{blue}%x\t%N\t%I\t%_%f\t` — prompt
+escapes that should expand to filename, function name, line
+number, and parser state. zshrs prints them LITERALLY. Real zsh
+expands them as part of `set -x` (xtrace) output.
+
+Custom `PS4="+ "` (no escapes) works in both shells correctly.
+The bug is specific to the prompt-escape expansion stage of PS4
+during xtrace.
+
+Missing prompt escapes (combining with bug #38):
+  - `%x` script/source filename
+  - `%N` function/script name
+  - `%_` parser state for continuation
+  - `%P` `%R` `%V` (various)
+
+**Where** — `src/ported/exec.rs::trace_command` should call
+`putpromptchar` (or equivalent) on `$PS4` before printing each
+trace line. Currently appears to pass `$PS4` through unprocessed.
+
+The fix should reuse the prompt-expansion code from `print -P`,
+since `$PS1` `$PS2` `$PS3` `$PS4` `$RPS1` all share the same
+escape syntax.
+
+**Impact** — every script using `set -x` to debug has broken trace
+output. The trace line still shows the COMMAND being executed,
+which is the main info, but the source-location prefix is lost.
+
+**Workaround** — set a simple `$PS4` before enabling trace:
+```sh
+PS4="+ "
+set -x
+my_command
+set +x
+```
+
+---
+
+## #45 — `${#$}`, `${#PPID}` length operator returns 0 for special-PID params
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "PID=$$; len=${#$}"'
+PID=84994; len=5
+
+$ zshrs --zsh -c 'echo "PID=$$; len=${#$}"'
+PID=84993; len=0
+```
+
+`$$` (current shell PID) expands correctly with `$` but the `${#}`
+length-of operator returns 0. The `$$` parameter direct access
+works correctly; only the length application breaks.
+
+Likely affects all single-character special parameters that hold
+expandable values:
+  - `${#$}` (PID length) — wrong
+  - `${#?}` (exit status length) — works (tested earlier)
+  - `${##}` (positional count length) — works
+  - `${#!}` (last bg PID length) — untested
+
+Workaround using a temp:
+```sh
+pid=$$
+echo "len=${#pid}"   # both shells: 5
+```
+
+Related to bug #43 but specific to single-char special params
+(which are read via different code paths in zsh's parser).
+
+**Where** — `src/ported/subst.rs` parameter-name lookup for the
+`${#X}` form, where `X` is a special-char param. The `${#X}`
+parse doesn't resolve special single-char params before computing
+length.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -1975,9 +2065,11 @@ length context — a wide compat surface.
 | 41 | Glob qualifier `Yn` (limit) returns all matches | **port-bug** | `head -n` or array slice |
 | 42 | Bare `typeset` prints `name=val` only, no attrs | **port-bug** | use `typeset -p` |
 | 43 | `${#var:mod}` / `${#var/pat/rep}` / `${#arr[i,j]}` ignores transform | **port-bug** | assign to temp first |
+| 44 | `set -x` PS4 doesn't expand `%x %N %I %_` | **port-bug** | `PS4="+ "` simple |
+| 45 | `${#$}` returns 0 (length of PID) | **port-bug** | `pid=$$; ${#pid}` |
 
-Of forty-three entries, two are fixed (5, 7), thirty-seven remain
+Of forty-five entries, two are fixed (5, 7), thirty-nine remain
 open port-bugs/perf-issues (4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
-35, 36, 37, 38, 39, 40, 41, 42, 43), and four were zsh-correct
-behavior misframed by demos (1, 2, 3, 6).
+35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45), and four were
+zsh-correct behavior misframed by demos (1, 2, 3, 6).
