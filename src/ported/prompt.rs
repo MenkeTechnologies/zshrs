@@ -493,13 +493,13 @@ pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {
 /// `endchar` match) — matches C's `return *bv->fm` semantics.
 pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
     // c:359
-    use crate::ported::ztype_h::idigit;
     use crate::ported::zsh_h::{isset, PROMPTPERCENT};
+    use crate::ported::ztype_h::idigit;
 
     // c:369 — `for (; *bv->fm && *bv->fm != endchar; bv->fm++)`.
     loop {
         let c = match bv.fm.as_bytes().get(bv.fm_pos).copied() {
-            Some(0) | None => return 0, // c:369 `*bv->fm == 0`
+            Some(0) | None => return 0,                       // c:369 `*bv->fm == 0`
             Some(c) if c == endchar as u8 => return c as i32, // c:369 endchar match
             Some(c) => c,
         };
@@ -521,9 +521,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
             let nb = bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0);
             if idigit(nb) {
                 let start = bv.fm_pos;
-                while bv.fm_pos < bv.fm.len()
-                    && idigit(bv.fm.as_bytes()[bv.fm_pos])
-                {
+                while bv.fm_pos < bv.fm.len() && idigit(bv.fm.as_bytes()[bv.fm_pos]) {
                     bv.fm_pos += 1;
                 }
                 arg = bv.fm[start..bv.fm_pos].parse::<i32>().unwrap_or(0);
@@ -542,12 +540,10 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
             // so the second call resumes where the first stopped.
             if bv.fm.as_bytes().get(bv.fm_pos).copied() == Some(b'(') {
                 bv.fm_pos += 1; // c:407 — `*++bv->fm`
-                // c:408-413 — optional digit arg after `(`.
+                                // c:408-413 — optional digit arg after `(`.
                 if bv.fm_pos < bv.fm.len() && idigit(bv.fm.as_bytes()[bv.fm_pos]) {
                     let start = bv.fm_pos;
-                    while bv.fm_pos < bv.fm.len()
-                        && idigit(bv.fm.as_bytes()[bv.fm_pos])
-                    {
+                    while bv.fm_pos < bv.fm.len() && idigit(bv.fm.as_bytes()[bv.fm_pos]) {
                         bv.fm_pos += 1;
                     }
                     arg = bv.fm[start..bv.fm_pos].parse::<i32>().unwrap_or(0);
@@ -588,7 +584,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     Some(c) => c,
                 };
                 bv.fm_pos += 1; // c:461 past the sep
-                // c:464-466 — save truncwidth, recurse for true branch.
+                                // c:464-466 — save truncwidth, recurse for true branch.
                 let otruncwidth = bv.truncwidth;
                 bv.truncwidth = 0;
                 let r1 = putpromptchar(bv, if test == 1 { doprint } else { 0 }, sep as i32);
@@ -619,13 +615,11 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 match xc {
                     b'[' => {
                         // c:491 — `while(idigit(*++bv->fm)); while(*++bv->fm != ']');`
-                        while bv.fm_pos + 1 < bv.fm.len()
-                            && idigit(bv.fm.as_bytes()[bv.fm_pos + 1])
+                        while bv.fm_pos + 1 < bv.fm.len() && idigit(bv.fm.as_bytes()[bv.fm_pos + 1])
                         {
                             bv.fm_pos += 1;
                         }
-                        while bv.fm_pos + 1 < bv.fm.len()
-                            && bv.fm.as_bytes()[bv.fm_pos + 1] != b']'
+                        while bv.fm_pos + 1 < bv.fm.len() && bv.fm.as_bytes()[bv.fm_pos + 1] != b']'
                         {
                             bv.fm_pos += 1;
                         }
@@ -633,8 +627,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     }
                     b'<' => {
                         // c:494 — `while(*++bv->fm != '<');`
-                        while bv.fm_pos + 1 < bv.fm.len()
-                            && bv.fm.as_bytes()[bv.fm_pos + 1] != b'<'
+                        while bv.fm_pos + 1 < bv.fm.len() && bv.fm.as_bytes()[bv.fm_pos + 1] != b'<'
                         {
                             bv.fm_pos += 1;
                         }
@@ -642,8 +635,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     }
                     b'>' => {
                         // c:497
-                        while bv.fm_pos + 1 < bv.fm.len()
-                            && bv.fm.as_bytes()[bv.fm_pos + 1] != b'>'
+                        while bv.fm_pos + 1 < bv.fm.len() && bv.fm.as_bytes()[bv.fm_pos + 1] != b'>'
                         {
                             bv.fm_pos += 1;
                         }
@@ -695,8 +687,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         pwd
                     };
                     let n = if arg > 0 { arg as usize } else { 1 };
-                    let parts: Vec<&str> =
-                        path.split('/').filter(|s| !s.is_empty()).collect();
+                    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
                     let tail = if parts.len() <= n {
                         path
                     } else {
@@ -717,13 +708,13 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 // c:563-570 — `%S` (standout on) / `%s` (off)
                 b'S' => {
                     let _ = tsetattrs(TXTSTANDOUT); // c:564
-                    // c:565 — `applytextattributes(TSC_PROMPT);`. C body emits
-                    // SGR diff into `bv->buf` framed by Inpar/Outpar markers
-                    // (the width-ignore wrappers). Rust splits the work:
-                    // `applytextattributes(flags)` returns the SGR diff string;
-                    // the prompt-buffer write + Inpar/Outpar bracketing inlined
-                    // here matching the C `tsetcap(..., TSC_PROMPT)` path
-                    // (prompt.c:1101-1108).
+                                                    // c:565 — `applytextattributes(TSC_PROMPT);`. C body emits
+                                                    // SGR diff into `bv->buf` framed by Inpar/Outpar markers
+                                                    // (the width-ignore wrappers). Rust splits the work:
+                                                    // `applytextattributes(flags)` returns the SGR diff string;
+                                                    // the prompt-buffer write + Inpar/Outpar bracketing inlined
+                                                    // here matching the C `tsetcap(..., TSC_PROMPT)` path
+                                                    // (prompt.c:1101-1108).
                     let sgr = applytextattributes(TSC_PROMPT);
                     if !sgr.is_empty() {
                         addbufspc(bv, 1);
@@ -946,9 +937,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                                 let jb = &tab[j];
                                 if jb.stat != 0
                                     && !jb.procs.is_empty()
-                                    && (jb.stat
-                                        & crate::ported::zsh_h::STAT_NOPRINT)
-                                        == 0
+                                    && (jb.stat & crate::ported::zsh_h::STAT_NOPRINT) == 0
                                 {
                                     numjobs += 1; // c:567
                                 }
@@ -964,8 +953,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 // convbase(bv->bp, curhist, 10);
                 // ```
                 b'!' | b'h' => {
-                    let n = crate::ported::hist::curhist
-                        .load(std::sync::atomic::Ordering::SeqCst);
+                    let n = crate::ported::hist::curhist.load(std::sync::atomic::Ordering::SeqCst);
                     stradd(bv, &n.to_string());
                 }
                 // c:703-770 — `%t %T %@ %* %w %W %D` — time / date dispatch
@@ -989,16 +977,14 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 b't' | b'T' | b'@' | b'*' | b'w' | b'W' | b'D' => {
                     let tmfmt: String;
                     match xc {
-                        b'T' => tmfmt = "%H:%M".to_string(), // c:715
+                        b'T' => tmfmt = "%H:%M".to_string(),    // c:715
                         b'*' => tmfmt = "%H:%M:%S".to_string(), // c:718
-                        b'w' => tmfmt = "%a %e".to_string(), // c:721
+                        b'w' => tmfmt = "%a %e".to_string(),    // c:721
                         b'W' => tmfmt = "%m/%d/%y".to_string(), // c:724
                         b'D' => {
                             // c:727-746 — `%D{...}` format from braces;
                             // bare `%D` → "%y-%m-%d".
-                            if bv.fm.as_bytes().get(bv.fm_pos + 1).copied()
-                                == Some(b'{')
-                            {
+                            if bv.fm.as_bytes().get(bv.fm_pos + 1).copied() == Some(b'{') {
                                 // Walk from `{` to matching `}`, honouring
                                 // `\X` → X drop.
                                 let bytes = bv.fm.as_bytes();
@@ -1100,7 +1086,7 @@ pub fn addbufspc(bv: &mut buf_vars, mut need: i32) {
         let new_size = bv.bufspc as i32 + need;
         bv.buf.resize(new_size as usize, 0); // c:998 realloc
         bv.bufspc = new_size as usize; // c:998 bufspc += need
-        // bp / bufline are usize indexes (not pointers); no recompute
+                                       // bp / bufline are usize indexes (not pointers); no recompute
     }
 }
 
@@ -2067,7 +2053,6 @@ pub fn truecolor_terminal() -> bool {
     false // c:1944
 }
 
-
 /// Match a `%F`/`%K` argument as a colour spec.
 /// Port of `zattr match_colour(const char **teststrp, int is_fg, int colour)` from `Src/prompt.c:1957`.
 /// Returns the encoded `zattr` (with TXTFGCOLOUR/TXTBGCOLOUR + 24bit
@@ -2678,7 +2663,7 @@ pub fn expand_prompt(s: &str) -> String {
         in_escape: false,
     };
     putpromptchar(&mut bv, 1, 0); // c:1305 `putpromptchar(1, '\0')`
-    // Unmetafy the buffer for display.
+                                  // Unmetafy the buffer for display.
     let end = bv.bp.min(bv.buf.len());
     let mut raw = bv.buf[..end].to_vec();
     crate::ported::utils::unmetafy(&mut raw);
@@ -3697,11 +3682,23 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let saved_home = std::env::var("HOME").ok();
         let saved_pwd = std::env::var("PWD").ok();
-        unsafe { std::env::set_var("HOME", "/home/user"); }
-        unsafe { std::env::set_var("PWD", "/home/user/work"); }
+        unsafe {
+            std::env::set_var("HOME", "/home/user");
+        }
+        unsafe {
+            std::env::set_var("PWD", "/home/user/work");
+        }
         let out = expand_prompt("%~");
-        if let Some(h) = saved_home { unsafe { std::env::set_var("HOME", h); } }
-        if let Some(p) = saved_pwd { unsafe { std::env::set_var("PWD", p); } }
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        }
+        if let Some(p) = saved_pwd {
+            unsafe {
+                std::env::set_var("PWD", p);
+            }
+        }
         assert_eq!(out, "~/work");
     }
 
@@ -3710,9 +3707,15 @@ mod tests {
     fn putpromptchar_d_emits_raw_pwd() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("PWD").ok();
-        unsafe { std::env::set_var("PWD", "/tmp/x"); }
+        unsafe {
+            std::env::set_var("PWD", "/tmp/x");
+        }
         let out = expand_prompt("%d");
-        if let Some(p) = saved { unsafe { std::env::set_var("PWD", p); } }
+        if let Some(p) = saved {
+            unsafe {
+                std::env::set_var("PWD", p);
+            }
+        }
         assert_eq!(out, "/tmp/x");
     }
 
@@ -3721,10 +3724,16 @@ mod tests {
     fn putpromptchar_slash_equals_d() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("PWD").ok();
-        unsafe { std::env::set_var("PWD", "/a/b/c"); }
+        unsafe {
+            std::env::set_var("PWD", "/a/b/c");
+        }
         let a = expand_prompt("%/");
         let b = expand_prompt("%d");
-        if let Some(p) = saved { unsafe { std::env::set_var("PWD", p); } }
+        if let Some(p) = saved {
+            unsafe {
+                std::env::set_var("PWD", p);
+            }
+        }
         assert_eq!(a, b);
     }
 
@@ -3735,11 +3744,23 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let saved_home = std::env::var("HOME").ok();
         let saved_pwd = std::env::var("PWD").ok();
-        unsafe { std::env::set_var("HOME", "/home/u"); }
-        unsafe { std::env::set_var("PWD", "/home/u/proj/src"); }
+        unsafe {
+            std::env::set_var("HOME", "/home/u");
+        }
+        unsafe {
+            std::env::set_var("PWD", "/home/u/proj/src");
+        }
         let out = expand_prompt("%c");
-        if let Some(h) = saved_home { unsafe { std::env::set_var("HOME", h); } }
-        if let Some(p) = saved_pwd { unsafe { std::env::set_var("PWD", p); } }
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        }
+        if let Some(p) = saved_pwd {
+            unsafe {
+                std::env::set_var("PWD", p);
+            }
+        }
         assert_eq!(out, "src");
     }
 
@@ -3748,9 +3769,15 @@ mod tests {
     fn putpromptchar_2c_emits_two_trailing_components() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("PWD").ok();
-        unsafe { std::env::set_var("PWD", "/a/b/c/d"); }
+        unsafe {
+            std::env::set_var("PWD", "/a/b/c/d");
+        }
         let out = expand_prompt("%2c");
-        if let Some(p) = saved { unsafe { std::env::set_var("PWD", p); } }
+        if let Some(p) = saved {
+            unsafe {
+                std::env::set_var("PWD", p);
+            }
+        }
         assert_eq!(out, "c/d");
     }
 
@@ -3759,9 +3786,15 @@ mod tests {
     fn putpromptchar_n_emits_username() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("USER").ok();
-        unsafe { std::env::set_var("USER", "alice"); }
+        unsafe {
+            std::env::set_var("USER", "alice");
+        }
         let out = expand_prompt("%n");
-        if let Some(u) = saved { unsafe { std::env::set_var("USER", u); } }
+        if let Some(u) = saved {
+            unsafe {
+                std::env::set_var("USER", u);
+            }
+        }
         assert_eq!(out, "alice");
     }
 
@@ -3810,7 +3843,10 @@ mod tests {
         let out = expand_prompt("%S%s");
         // %S emits the standout-on SGR wrapped in markers; %s diff
         // emits the reset since current==standout, pending==0.
-        assert!(out.starts_with('\x01'), "expected start marker, got {out:?}");
+        assert!(
+            out.starts_with('\x01'),
+            "expected start marker, got {out:?}"
+        );
         assert!(out.contains("\x1b["), "expected SGR escape");
     }
 
@@ -3905,9 +3941,15 @@ mod tests {
     fn putpromptchar_plain_text_between_escapes_preserved() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("USER").ok();
-        unsafe { std::env::set_var("USER", "bob"); }
+        unsafe {
+            std::env::set_var("USER", "bob");
+        }
         let out = expand_prompt("user=%n done");
-        if let Some(u) = saved { unsafe { std::env::set_var("USER", u); } }
+        if let Some(u) = saved {
+            unsafe {
+                std::env::set_var("USER", u);
+            }
+        }
         assert_eq!(out, "user=bob done");
     }
 
@@ -3955,7 +3997,10 @@ mod tests {
             out.chars().all(|c| c.is_ascii_digit()),
             "%h should emit digits from curhist; got {out:?}"
         );
-        assert!(!out.is_empty(), "%h should not be empty when history exists");
+        assert!(
+            !out.is_empty(),
+            "%h should not be empty when history exists"
+        );
     }
 
     /// GAP: `%j` emits active job count (c:606-612). Requires jobs
@@ -3978,9 +4023,15 @@ mod tests {
     fn putpromptchar_ternary_c_test_dir_depth_match() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("PWD").ok();
-        unsafe { std::env::set_var("PWD", "/a/b/c"); }
+        unsafe {
+            std::env::set_var("PWD", "/a/b/c");
+        }
         let out = expand_prompt("%(2c.deep.shallow)");
-        if let Some(p) = saved { unsafe { std::env::set_var("PWD", p); } }
+        if let Some(p) = saved {
+            unsafe {
+                std::env::set_var("PWD", p);
+            }
+        }
         assert_eq!(out, "deep", "depth 3 >= arg 2 → true branch");
     }
 
@@ -3991,9 +4042,15 @@ mod tests {
     fn putpromptchar_ternary_L_shlvl_match() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("SHLVL").ok();
-        unsafe { std::env::set_var("SHLVL", "3"); }
+        unsafe {
+            std::env::set_var("SHLVL", "3");
+        }
         let out = expand_prompt("%(2L.nested.top)");
-        if let Some(s) = saved { unsafe { std::env::set_var("SHLVL", s); } }
+        if let Some(s) = saved {
+            unsafe {
+                std::env::set_var("SHLVL", s);
+            }
+        }
         assert_eq!(out, "nested");
     }
 
@@ -4031,7 +4088,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%D{%Y}");
         let y: i32 = out.parse().unwrap_or(0);
-        assert!(y >= 2024, "%D{{%Y}} should emit a 4-digit year; got {out:?}");
+        assert!(
+            y >= 2024,
+            "%D{{%Y}} should emit a 4-digit year; got {out:?}"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -4113,9 +4173,15 @@ mod tests {
     fn putpromptchar_uppercase_C_trailing_no_tilde() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("PWD").ok();
-        unsafe { std::env::set_var("PWD", "/a/b/c"); }
+        unsafe {
+            std::env::set_var("PWD", "/a/b/c");
+        }
         let out = expand_prompt("%C");
-        if let Some(p) = saved { unsafe { std::env::set_var("PWD", p); } }
+        if let Some(p) = saved {
+            unsafe {
+                std::env::set_var("PWD", p);
+            }
+        }
         assert_eq!(out, "c", "%C with default arg=1 → last component");
     }
 
@@ -4140,7 +4206,10 @@ mod tests {
         let out = expand_prompt("%m");
         // %m with default arg=1 takes 1 leading domain component.
         assert!(!out.is_empty(), "%m should emit hostname (short form)");
-        assert!(!out.contains('.'), "%m with arg=1 should not contain dots; got {out:?}");
+        assert!(
+            !out.contains('.'),
+            "%m with arg=1 should not contain dots; got {out:?}"
+        );
     }
 
     /// `%l` emits the TTY name shortened (strip /dev/ or /dev/tty
@@ -4262,7 +4331,10 @@ mod tests {
     fn putpromptchar_I_emits_funcstack_lineno() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%I");
-        assert!(out.parse::<i32>().is_ok(), "%I should be decimal; got {out:?}");
+        assert!(
+            out.parse::<i32>().is_ok(),
+            "%I should be decimal; got {out:?}"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -4328,8 +4400,7 @@ mod tests {
     /// c:1889 — `match_named_colour("")` empty returns None.
     #[test]
     fn match_named_colour_empty_returns_none_pin() {
-        assert!(match_named_colour("").is_none(),
-            "empty color name → None");
+        assert!(match_named_colour("").is_none(), "empty color name → None");
     }
 
     /// c:1889 — `match_named_colour("red")` known color returns Some.
@@ -4371,8 +4442,11 @@ mod tests {
     fn promptexpand_percent_j_returns_job_count() {
         let _g = crate::test_util::global_state_lock();
         let (got, _, _) = promptexpand("%j", 0, None);
-        assert!(got.chars().all(|c| c.is_ascii_digit()),
-            "%j must expand to a decimal count, got {:?}", got);
+        assert!(
+            got.chars().all(|c| c.is_ascii_digit()),
+            "%j must expand to a decimal count, got {:?}",
+            got
+        );
         assert_ne!(got, "%j", "%j must NOT emit literally");
     }
 
@@ -4443,8 +4517,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (got, _, _) = promptexpand("%i", 0, None);
         assert_ne!(got, "%i", "%i must NOT emit literally");
-        assert!(got.chars().all(|c| c.is_ascii_digit()),
-            "%i must be a decimal, got {:?}", got);
+        assert!(
+            got.chars().all(|c| c.is_ascii_digit()),
+            "%i must be a decimal, got {:?}",
+            got
+        );
     }
 
     /// c:Src/prompt.c:894-896 — `%%` regression pin. The newly-added
@@ -4487,9 +4564,11 @@ mod tests {
         ] {
             let a = promptpath(p, npath, tilde, home);
             let b = promptpath(p, npath, tilde, home);
-            assert_eq!(a, b,
+            assert_eq!(
+                a, b,
                 "promptpath({:?}, {}, {}, {:?}) must be pure",
-                p, npath, tilde, home);
+                p, npath, tilde, home
+            );
         }
     }
 
@@ -4513,8 +4592,7 @@ mod tests {
     fn promptexpand_plain_text_returned_verbatim() {
         let _g = crate::test_util::global_state_lock();
         let (got, _, _) = promptexpand("hello world", 0, None);
-        assert_eq!(got, "hello world",
-            "plain text (no %) returned verbatim");
+        assert_eq!(got, "hello world", "plain text (no %) returned verbatim");
     }
 
     /// c:393 — `zattrescape` returns String (compile-time pin, alt).
@@ -4574,15 +4652,13 @@ mod tests {
         for name in &["red", "blue", "__unknown__", ""] {
             let a = match_named_colour(name);
             let b = match_named_colour(name);
-            assert_eq!(a, b,
-                "match_named_colour({:?}) must be pure", name);
+            assert_eq!(a, b, "match_named_colour({:?}) must be pure", name);
         }
     }
 
     /// c:2006 — `match_named_colour("")` empty input returns None (alt).
     #[test]
     fn match_named_colour_empty_returns_none_alt() {
-        assert!(match_named_colour("").is_none(),
-            "empty colour name → None");
+        assert!(match_named_colour("").is_none(), "empty colour name → None");
     }
 }

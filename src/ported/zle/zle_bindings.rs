@@ -1578,8 +1578,7 @@ mod tests {
         for s in ["", "a", r"\n", "^A", r"\e^[abc"] {
             let first = getkeystring(s);
             for _ in 0..3 {
-                assert_eq!(getkeystring(s), first,
-                    "getkeystring({:?}) must be pure", s);
+                assert_eq!(getkeystring(s), first, "getkeystring({:?}) must be pure", s);
             }
         }
     }

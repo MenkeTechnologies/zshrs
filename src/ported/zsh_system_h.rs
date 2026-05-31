@@ -726,7 +726,9 @@ mod tests {
     /// Every S_IF* family bit must be a subset of S_IFMT.
     #[test]
     fn s_ifmt_covers_all_file_type_bits() {
-        for &bits in &[S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK] {
+        for &bits in &[
+            S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK,
+        ] {
             assert_eq!(
                 bits & S_IFMT,
                 bits,
@@ -823,8 +825,10 @@ mod tests {
     /// c:682-715 — every permission bit is a single bit (power of two).
     #[test]
     fn permission_bits_are_single_bits() {
-        for &b in &[S_ISUID, S_ISGID, S_ISVTX, S_IRUSR, S_IWUSR, S_IXUSR,
-                    S_IRGRP, S_IWGRP, S_IXGRP, S_IROTH, S_IWOTH, S_IXOTH] {
+        for &b in &[
+            S_ISUID, S_ISGID, S_ISVTX, S_IRUSR, S_IWUSR, S_IXUSR, S_IRGRP, S_IWGRP, S_IXGRP,
+            S_IROTH, S_IWOTH, S_IXOTH,
+        ] {
             assert!(b.is_power_of_two(), "{:o} must be a single bit", b);
         }
     }
@@ -868,9 +872,12 @@ mod tests {
     /// c:313 — `OPEN_MAX` ≥ `ZSH_INITIAL_OPEN_MAX` (start size never exceeds cap).
     #[test]
     fn open_max_at_least_initial() {
-        assert!(OPEN_MAX >= ZSH_INITIAL_OPEN_MAX,
+        assert!(
+            OPEN_MAX >= ZSH_INITIAL_OPEN_MAX,
             "OPEN_MAX {} must be ≥ ZSH_INITIAL_OPEN_MAX {}",
-            OPEN_MAX, ZSH_INITIAL_OPEN_MAX);
+            OPEN_MAX,
+            ZSH_INITIAL_OPEN_MAX
+        );
     }
 
     /// c:569 — `DIGBUFSIZE` is positive (i64 decimal digits + sign + NUL).
@@ -888,9 +895,12 @@ mod tests {
     /// c:570 — `BDIGBUFSIZE > DIGBUFSIZE` (binary needs more bytes than decimal).
     #[test]
     fn bdigbufsize_greater_than_digbufsize() {
-        assert!(BDIGBUFSIZE > DIGBUFSIZE,
+        assert!(
+            BDIGBUFSIZE > DIGBUFSIZE,
             "binary {} must need more bytes than decimal {}",
-            BDIGBUFSIZE, DIGBUFSIZE);
+            BDIGBUFSIZE,
+            DIGBUFSIZE
+        );
     }
 
     /// c:594 — `S_IFMT` is non-zero file-type mask.
@@ -944,20 +954,30 @@ mod tests {
     /// c:682-715 — user/group/other permission bits are pairwise distinct.
     #[test]
     fn permission_bits_pairwise_distinct() {
-        let bits = [S_ISUID, S_ISGID, S_ISVTX, S_IRUSR, S_IWUSR, S_IXUSR,
-                    S_IRGRP, S_IWGRP, S_IXGRP, S_IROTH, S_IWOTH, S_IXOTH];
+        let bits = [
+            S_ISUID, S_ISGID, S_ISVTX, S_IRUSR, S_IWUSR, S_IXUSR, S_IRGRP, S_IWGRP, S_IXGRP,
+            S_IROTH, S_IWOTH, S_IXOTH,
+        ];
         let unique: std::collections::HashSet<_> = bits.iter().copied().collect();
-        assert_eq!(unique.len(), bits.len(),
-            "permission bits must be pairwise distinct");
+        assert_eq!(
+            unique.len(),
+            bits.len(),
+            "permission bits must be pairwise distinct"
+        );
     }
 
     /// c:682-715 — every permission bit is a single bit (power of 2).
     #[test]
     fn permission_bits_all_single_bits() {
-        for v in [S_ISUID, S_ISGID, S_ISVTX, S_IRUSR, S_IWUSR, S_IXUSR,
-                  S_IRGRP, S_IWGRP, S_IXGRP, S_IROTH, S_IWOTH, S_IXOTH] {
-            assert!(v.is_power_of_two(),
-                "permission bit 0o{:o} must be a single bit", v);
+        for v in [
+            S_ISUID, S_ISGID, S_ISVTX, S_IRUSR, S_IWUSR, S_IXUSR, S_IRGRP, S_IWGRP, S_IXGRP,
+            S_IROTH, S_IWOTH, S_IXOTH,
+        ] {
+            assert!(
+                v.is_power_of_two(),
+                "permission bit 0o{:o} must be a single bit",
+                v
+            );
         }
     }
 
@@ -1007,19 +1027,30 @@ mod tests {
     /// c:594-734 — file-type bits (S_IFBLK..S_IFSOCK) are all in S_IFMT mask.
     #[test]
     fn file_type_bits_within_s_ifmt_mask() {
-        for ft in [S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK] {
-            assert_eq!(ft & !S_IFMT, 0,
-                "file-type 0o{:o} must be within S_IFMT mask", ft);
+        for ft in [
+            S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK,
+        ] {
+            assert_eq!(
+                ft & !S_IFMT,
+                0,
+                "file-type 0o{:o} must be within S_IFMT mask",
+                ft
+            );
         }
     }
 
     /// c:594-734 — file-type bits pairwise distinct (no aliasing).
     #[test]
     fn file_type_bits_pairwise_distinct() {
-        let bits = [S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK];
+        let bits = [
+            S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK,
+        ];
         let unique: std::collections::HashSet<_> = bits.iter().copied().collect();
-        assert_eq!(unique.len(), bits.len(),
-            "file-type constants must be pairwise distinct");
+        assert_eq!(
+            unique.len(),
+            bits.len(),
+            "file-type constants must be pairwise distinct"
+        );
     }
 
     /// c:307 — ZSH_INITIAL_OPEN_MAX is exactly 64 (verbatim).

@@ -1319,7 +1319,7 @@ mod tests {
         reset_input();
         inputsetline("", 0);
         let _ = ingetc(); // may consume or return None
-        // No panic = pass.
+                          // No panic = pass.
     }
 
     /// c:318 — `inputsetline(s) + ingetc` walks every byte in order.
@@ -1362,7 +1362,7 @@ mod tests {
         inputsetline("a", 0);
         let _ = ingetc(); // consume 'a'
         let _ = ingetc(); // hit EOF → lexstop set
-        // inungetc must not panic; subsequent ingetc still None.
+                          // inungetc must not panic; subsequent ingetc still None.
         inungetc('Z');
         // Result depends on whether port restored lexstop; pin no panic.
     }
@@ -1412,7 +1412,7 @@ mod tests {
         inputsetline("a", 0);
         let _ = ingetc(); // consume a
         let _ = ingetc(); // EOF, sets lexstop
-        // New inputsetline should make new content readable.
+                          // New inputsetline should make new content readable.
         inputsetline("b", 0);
         assert_eq!(ingetc(), Some('b'), "lexstop reset by inputsetline");
     }
@@ -1700,8 +1700,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let r = zstuff("/dev/null");
         match r {
-            Ok((s, _)) => assert!(s.is_empty(),
-                "/dev/null content must be empty"),
+            Ok((s, _)) => assert!(s.is_empty(), "/dev/null content must be empty"),
             Err(_) => {} // /dev/null may not exist on some CI; accept either
         }
     }

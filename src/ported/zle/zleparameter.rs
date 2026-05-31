@@ -601,8 +601,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         use crate::ported::zsh_h::PM_READONLY;
-        let pm = getpmwidgets(std::ptr::null_mut(), "no-such-widget")
-            .expect("always returns Some");
+        let pm = getpmwidgets(std::ptr::null_mut(), "no-such-widget").expect("always returns Some");
         assert!(pm.node.flags & PM_READONLY as i32 != 0, "PM_READONLY set");
     }
 
@@ -612,8 +611,7 @@ mod tests {
     fn getpmwidgets_param_name_round_trips_input() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let pm = getpmwidgets(std::ptr::null_mut(), "my-test-widget")
-            .expect("always returns Some");
+        let pm = getpmwidgets(std::ptr::null_mut(), "my-test-widget").expect("always returns Some");
         assert_eq!(pm.node.nam, "my-test-widget");
     }
 
@@ -673,8 +671,12 @@ mod tests {
     #[test]
     fn widgetstr_builtin_ignores_all_names() {
         for name in &["", "anything", "with spaces", "包含中文", "x\ny"] {
-            assert_eq!(widgetstr(name, false, false), "builtin",
-                "builtin arm must ignore name {:?}", name);
+            assert_eq!(
+                widgetstr(name, false, false),
+                "builtin",
+                "builtin arm must ignore name {:?}",
+                name
+            );
         }
     }
 
@@ -761,8 +763,8 @@ mod tests {
         use crate::ported::zsh_h::PM_UNSET;
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let pm = getpmwidgets(std::ptr::null_mut(), "zshrs_never_a_widget_xyz")
-            .expect("always Some");
+        let pm =
+            getpmwidgets(std::ptr::null_mut(), "zshrs_never_a_widget_xyz").expect("always Some");
         assert_ne!(
             pm.node.flags & PM_UNSET as i32,
             0,
@@ -880,8 +882,12 @@ mod tests {
         for name in ["", "a", "fwd", "back-word", "complete-word"] {
             let first = widgetstr(name, false, false);
             for _ in 0..3 {
-                assert_eq!(widgetstr(name, false, false), first,
-                    "widgetstr({:?}, false, false) must be pure", name);
+                assert_eq!(
+                    widgetstr(name, false, false),
+                    first,
+                    "widgetstr({:?}, false, false) must be pure",
+                    name
+                );
             }
         }
     }
@@ -897,8 +903,12 @@ mod tests {
     fn widgetstr_builtin_ignores_name() {
         let _g = crate::test_util::global_state_lock();
         for name in ["", "a", "x", "self-insert", "fancy-name"] {
-            assert_eq!(widgetstr(name, false, false), "builtin",
-                "builtin mode ignores name; got name={:?}", name);
+            assert_eq!(
+                widgetstr(name, false, false),
+                "builtin",
+                "builtin mode ignores name; got name={:?}",
+                name
+            );
         }
     }
 
@@ -907,8 +917,11 @@ mod tests {
     #[test]
     fn widgetstr_completion_precedence_over_user() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(widgetstr("foo", true, true), "completion:foo",
-            "completion bit dominates user bit");
+        assert_eq!(
+            widgetstr("foo", true, true),
+            "completion:foo",
+            "completion bit dominates user bit"
+        );
     }
 
     /// c:35 — `is_user=true,is_completion=false` formats `user:NAME`.
@@ -969,8 +982,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = keymapsgetfn(std::ptr::null_mut());
         for _ in 0..5 {
-            assert_eq!(keymapsgetfn(std::ptr::null_mut()), first,
-                "must be deterministic across calls");
+            assert_eq!(
+                keymapsgetfn(std::ptr::null_mut()),
+                first,
+                "must be deterministic across calls"
+            );
         }
     }
 
@@ -980,32 +996,43 @@ mod tests {
     fn getpmwidgets_returns_some_for_unknown_name() {
         let _g = crate::test_util::global_state_lock();
         let pm = getpmwidgets(std::ptr::null_mut(), "definitely-not-a-widget-xyz123");
-        assert!(pm.is_some(), "even unknown name returns Some (flags carry PM_UNSET)");
+        assert!(
+            pm.is_some(),
+            "even unknown name returns Some (flags carry PM_UNSET)"
+        );
     }
 
     /// c:155-198 — every lifecycle hook is independently idempotent
     /// (fine-grained vs the bulk full-sweep test).
     #[test]
     fn zleparameter_features_idempotent() {
-        for _ in 0..10 { assert_eq!(features_(), 0); }
+        for _ in 0..10 {
+            assert_eq!(features_(), 0);
+        }
     }
 
     /// c:162 — `enables_` idempotent.
     #[test]
     fn zleparameter_enables_idempotent() {
-        for _ in 0..10 { assert_eq!(enables_(), 0); }
+        for _ in 0..10 {
+            assert_eq!(enables_(), 0);
+        }
     }
 
     /// c:181 — `boot_` idempotent.
     #[test]
     fn zleparameter_boot_idempotent() {
-        for _ in 0..10 { assert_eq!(boot_(), 0); }
+        for _ in 0..10 {
+            assert_eq!(boot_(), 0);
+        }
     }
 
     /// c:190 — `cleanup_` idempotent.
     #[test]
     fn zleparameter_cleanup_idempotent() {
-        for _ in 0..10 { assert_eq!(cleanup_(), 0); }
+        for _ in 0..10 {
+            assert_eq!(cleanup_(), 0);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1017,23 +1044,32 @@ mod tests {
     /// c:37 — `widgetstr` empty name → `user:` (degenerate but C-faithful).
     #[test]
     fn widgetstr_empty_name_user_format() {
-        assert_eq!(widgetstr("", true, false), "user:",
-            "empty name still gets user: prefix");
+        assert_eq!(
+            widgetstr("", true, false),
+            "user:",
+            "empty name still gets user: prefix"
+        );
     }
 
     /// c:37 — `widgetstr` empty name + completion → `completion:`.
     #[test]
     fn widgetstr_empty_name_completion_format() {
-        assert_eq!(widgetstr("", false, true), "completion:",
-            "empty + completion → completion: prefix only");
+        assert_eq!(
+            widgetstr("", false, true),
+            "completion:",
+            "empty + completion → completion: prefix only"
+        );
     }
 
     /// c:37 — `widgetstr` is_completion=true overrides is_user=true (C path
     /// checks WIDGET_INT first via WC_ZLE_TYPE — completion wins).
     #[test]
     fn widgetstr_completion_beats_both_flags() {
-        assert_eq!(widgetstr("foo", true, true), "completion:foo",
-            "completion takes precedence when both flags set");
+        assert_eq!(
+            widgetstr("foo", true, true),
+            "completion:foo",
+            "completion takes precedence when both flags set"
+        );
     }
 
     /// c:37 — `widgetstr` builtin path: both flags false.
@@ -1091,13 +1127,17 @@ mod tests {
     /// c:155 — `setup_` idempotent.
     #[test]
     fn zleparameter_setup_idempotent() {
-        for _ in 0..10 { assert_eq!(setup_(), 0); }
+        for _ in 0..10 {
+            assert_eq!(setup_(), 0);
+        }
     }
 
     /// c:198 — `finish_` idempotent.
     #[test]
     fn zleparameter_finish_idempotent() {
-        for _ in 0..10 { assert_eq!(finish_(), 0); }
+        for _ in 0..10 {
+            assert_eq!(finish_(), 0);
+        }
     }
 
     /// c:155-198 — full lifecycle sequence safe + all return 0.

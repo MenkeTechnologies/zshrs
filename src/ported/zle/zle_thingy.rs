@@ -2694,10 +2694,20 @@ mod tests {
         let name = "zshrs_rthingy_nocreate_existing";
         let _ = thingytab().lock().unwrap().remove(name);
         rthingy(name); // create with rc=1
-        let rc_before = thingytab().lock().unwrap().get(name).map(|t| t.rc).unwrap_or(0);
+        let rc_before = thingytab()
+            .lock()
+            .unwrap()
+            .get(name)
+            .map(|t| t.rc)
+            .unwrap_or(0);
         let r = rthingy_nocreate(name);
         assert!(r, "existing → true");
-        let rc_after = thingytab().lock().unwrap().get(name).map(|t| t.rc).unwrap_or(0);
+        let rc_after = thingytab()
+            .lock()
+            .unwrap()
+            .get(name)
+            .map(|t| t.rc)
+            .unwrap_or(0);
         assert_eq!(rc_after, rc_before + 1, "rc must increment by 1");
         let _ = thingytab().lock().unwrap().remove(name);
     }
@@ -2733,7 +2743,12 @@ mod tests {
             thingytab().lock().unwrap().contains_key(name),
             "rc=1 (after unref from 2) must remain"
         );
-        let rc = thingytab().lock().unwrap().get(name).map(|t| t.rc).unwrap_or(99);
+        let rc = thingytab()
+            .lock()
+            .unwrap()
+            .get(name)
+            .map(|t| t.rc)
+            .unwrap_or(99);
         assert_eq!(rc, 1);
         let _ = thingytab().lock().unwrap().remove(name);
     }
@@ -2793,8 +2808,7 @@ mod tests {
             bin_zle_refresh("zle", &[], &ops, 0),
             bin_zle_mesg("zle", &[], &ops, 0),
         ] {
-            assert!((0..256).contains(&r),
-                "exit code {} must fit in u8", r);
+            assert!((0..256).contains(&r), "exit code {} must fit in u8", r);
         }
     }
 
@@ -2808,7 +2822,9 @@ mod tests {
     fn empty_ops_thingy() -> options {
         options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         }
     }
 
@@ -2882,8 +2898,7 @@ mod tests {
         let _g2 = zle_test_setup();
         let first = zle_usable();
         for _ in 0..3 {
-            assert_eq!(zle_usable(), first,
-                "zle_usable must be deterministic");
+            assert_eq!(zle_usable(), first, "zle_usable must be deterministic");
         }
     }
 
@@ -2910,8 +2925,7 @@ mod tests {
         let _g2 = zle_test_setup();
         let first = listwidgets();
         for _ in 0..3 {
-            assert_eq!(listwidgets(), first,
-                "listwidgets must be deterministic");
+            assert_eq!(listwidgets(), first, "listwidgets must be deterministic");
         }
     }
 
@@ -2927,7 +2941,9 @@ mod tests {
     fn createthingytab_idempotent() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        for _ in 0..10 { createthingytab(); }
+        for _ in 0..10 {
+            createthingytab();
+        }
     }
 
     /// c:307 — `rthingy_nocreate` returns bool (compile-time pin, alt).
@@ -2945,8 +2961,11 @@ mod tests {
         let _g2 = zle_test_setup();
         let first = rthingy_nocreate("");
         for _ in 0..5 {
-            assert_eq!(rthingy_nocreate(""), first,
-                "rthingy_nocreate('') must be pure");
+            assert_eq!(
+                rthingy_nocreate(""),
+                first,
+                "rthingy_nocreate('') must be pure"
+            );
         }
     }
 
@@ -2995,8 +3014,10 @@ mod tests {
     fn getwidgettarget_unknown_returns_none() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        assert!(getwidgettarget("__never_real_widget_xyz__").is_none(),
-            "unknown widget → None");
+        assert!(
+            getwidgettarget("__never_real_widget_xyz__").is_none(),
+            "unknown widget → None"
+        );
     }
 
     /// c:659 — `bin_zle` returns i32 (compile-time pin).

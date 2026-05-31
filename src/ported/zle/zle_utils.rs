@@ -2806,7 +2806,11 @@ mod findbol_findeol_tests {
         sizeline(100);
         // No panic = capacity grew successfully.
         let cap = ZLELINE.lock().unwrap().capacity();
-        assert!(cap >= 100, "sizeline(100) → ZLELINE capacity ≥ 100, got {}", cap);
+        assert!(
+            cap >= 100,
+            "sizeline(100) → ZLELINE capacity ≥ 100, got {}",
+            cap
+        );
     }
 
     /// `sizeline(0)` is safe.
@@ -2868,8 +2872,11 @@ mod findbol_findeol_tests {
     /// becomes the literal `""` empty-quoted form.
     #[test]
     fn bindztrdup_empty_returns_quoted_empty() {
-        assert_eq!(bindztrdup(b""), "\"\"",
-            "empty seq → '\"\"' quoted-empty per C bindztrdup quoting");
+        assert_eq!(
+            bindztrdup(b""),
+            "\"\"",
+            "empty seq → '\"\"' quoted-empty per C bindztrdup quoting"
+        );
     }
 
     /// c:1205 — `bindztrdup` is pure for ASCII input.
@@ -2878,8 +2885,7 @@ mod findbol_findeol_tests {
         for s in [b"a" as &[u8], b"hello", b"\t\n"] {
             let first = bindztrdup(s);
             for _ in 0..3 {
-                assert_eq!(bindztrdup(s), first,
-                    "bindztrdup({:?}) must be pure", s);
+                assert_eq!(bindztrdup(s), first, "bindztrdup({:?}) must be pure", s);
             }
         }
     }
@@ -2889,8 +2895,11 @@ mod findbol_findeol_tests {
     /// quoting for shell-display safety.
     #[test]
     fn printbind_empty_returns_quoted_empty() {
-        assert_eq!(printbind(b""), "\"\"",
-            "empty seq → '\"\"' per C printbind quoting");
+        assert_eq!(
+            printbind(b""),
+            "\"\"",
+            "empty seq → '\"\"' per C printbind quoting"
+        );
     }
 
     /// c:1243 — `printbind` is deterministic.
@@ -2899,8 +2908,12 @@ mod findbol_findeol_tests {
         for s in [b"" as &[u8], b"a", b"\x01", b"hello"] {
             let first = printbind(s);
             for _ in 0..3 {
-                assert_eq!(printbind(s), first,
-                    "printbind({:?}) must be deterministic", s);
+                assert_eq!(
+                    printbind(s),
+                    first,
+                    "printbind({:?}) must be deterministic",
+                    s
+                );
             }
         }
     }
@@ -3040,7 +3053,11 @@ mod findbol_findeol_tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let (start, end) = findline();
-        assert!(start <= end,
-            "findline start={} must be ≤ end={}", start, end);
+        assert!(
+            start <= end,
+            "findline start={} must be ≤ end={}",
+            start,
+            end
+        );
     }
 }

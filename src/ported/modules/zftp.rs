@@ -5626,8 +5626,11 @@ mod tests {
     fn zfargstring_empty_is_pure() {
         let first = zfargstring("", &[]);
         for _ in 0..3 {
-            assert_eq!(zfargstring("", &[]), first,
-                "zfargstring empty must be pure");
+            assert_eq!(
+                zfargstring("", &[]),
+                first,
+                "zfargstring empty must be pure"
+            );
         }
     }
 

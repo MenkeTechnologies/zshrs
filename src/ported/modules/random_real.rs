@@ -531,8 +531,24 @@ mod tests {
     /// Pin: Rust port's manual cascade and stdlib must agree.
     #[test]
     fn zclz64_matches_stdlib_leading_zeros() {
-        for v in [0u64, 1, 2, 3, 4, 7, 8, 15, 16, 255, 256, 0xFFFF,
-                  0x1_0000, u64::MAX, u64::MAX / 2, 0x8000_0000_0000_0000] {
+        for v in [
+            0u64,
+            1,
+            2,
+            3,
+            4,
+            7,
+            8,
+            15,
+            16,
+            255,
+            256,
+            0xFFFF,
+            0x1_0000,
+            u64::MAX,
+            u64::MAX / 2,
+            0x8000_0000_0000_0000,
+        ] {
             assert_eq!(
                 _zclz64(v) as u32,
                 v.leading_zeros(),
@@ -567,7 +583,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = random_64bit();
         let any_different = (0..100).any(|_| random_64bit() != first);
-        assert!(any_different, "100 calls should produce ≥ 1 different value");
+        assert!(
+            any_different,
+            "100 calls should produce ≥ 1 different value"
+        );
     }
 
     /// c:119 — `random_real` upper bound: never returns 1.0 exactly.
@@ -616,10 +635,22 @@ mod tests {
     /// c:25 — `_zclz64` result in [0, 64] for all inputs.
     #[test]
     fn zclz64_result_bounded_zero_to_64() {
-        for &x in &[0u64, 1, 2, 0xff, 0xffff_ffff, u64::MAX, 0x8000_0000_0000_0000] {
+        for &x in &[
+            0u64,
+            1,
+            2,
+            0xff,
+            0xffff_ffff,
+            u64::MAX,
+            0x8000_0000_0000_0000,
+        ] {
             let r = _zclz64(x);
-            assert!((0..=64).contains(&r),
-                "_zclz64({:#x}) = {} must be in [0, 64]", x, r);
+            assert!(
+                (0..=64).contains(&r),
+                "_zclz64({:#x}) = {} must be in [0, 64]",
+                x,
+                r
+            );
         }
     }
 
@@ -686,8 +717,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let n = 1000;
         let above = (0..n).filter(|_| random_real() > 0.1).count();
-        assert!(above >= n / 10,
-            "{} out of {} should be > 0.1, got {}", n / 10, n, above);
+        assert!(
+            above >= n / 10,
+            "{} out of {} should be > 0.1, got {}",
+            n / 10,
+            n,
+            above
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -713,9 +749,11 @@ mod tests {
         for x in [0u64, 1, 0xff, 0x10000, 0x80000000, u64::MAX, 42] {
             let our = _zclz64(x);
             let std = x.leading_zeros() as i32;
-            assert_eq!(our, std,
+            assert_eq!(
+                our, std,
                 "_zclz64({:#x}) = {} but stdlib leading_zeros = {}",
-                x, our, std);
+                x, our, std
+            );
         }
     }
 
@@ -751,8 +789,7 @@ mod tests {
         for x in [0u64, 1, 2, 7, 0xff, 0x10000, 0x80000000, u64::MAX] {
             let first = _zclz64(x);
             for _ in 0..5 {
-                assert_eq!(_zclz64(x), first,
-                    "_zclz64({:#x}) must be pure", x);
+                assert_eq!(_zclz64(x), first, "_zclz64({:#x}) must be pure", x);
             }
         }
     }
@@ -762,8 +799,7 @@ mod tests {
     fn clz64_full_sweep_agrees_with_zclz64() {
         for x in 0u32..256u32 {
             let v = x as u64;
-            assert_eq!(clz64(v), _zclz64(v),
-                "clz64({:#x}) must match _zclz64", v);
+            assert_eq!(clz64(v), _zclz64(v), "clz64({:#x}) must match _zclz64", v);
         }
     }
 
@@ -783,9 +819,12 @@ mod tests {
         let mean = sum / n as f64;
         // Weak check: mean must be in (0.3, 0.7) — extremely loose
         // statistical bound to avoid flake.
-        assert!(mean > 0.3 && mean < 0.7,
+        assert!(
+            mean > 0.3 && mean < 0.7,
             "random_real mean across {} samples = {} should be in (0.3, 0.7)",
-            n, mean);
+            n,
+            mean
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -802,29 +841,41 @@ mod tests {
     /// c:25 — `_zclz64(0)` returns 64 (alt-name pin).
     #[test]
     fn zclz64_zero_returns_64_alt() {
-        assert_eq!(_zclz64(0), 64,
-            "clz64(0) MUST equal 64 (all 64 bits are leading zeros)");
+        assert_eq!(
+            _zclz64(0),
+            64,
+            "clz64(0) MUST equal 64 (all 64 bits are leading zeros)"
+        );
     }
 
     /// c:25 — `_zclz64(u64::MAX)` returns 0 (no leading zeros).
     #[test]
     fn zclz64_max_returns_zero() {
-        assert_eq!(_zclz64(u64::MAX), 0,
-            "clz64(u64::MAX) MUST equal 0 (no leading zeros)");
+        assert_eq!(
+            _zclz64(u64::MAX),
+            0,
+            "clz64(u64::MAX) MUST equal 0 (no leading zeros)"
+        );
     }
 
     /// c:25 — `_zclz64(1)` returns 63 (only the LSB set; alt-name).
     #[test]
     fn zclz64_one_returns_63_alt() {
-        assert_eq!(_zclz64(1), 63,
-            "clz64(1) MUST equal 63 (63 leading zeros + 1 LSB)");
+        assert_eq!(
+            _zclz64(1),
+            63,
+            "clz64(1) MUST equal 63 (63 leading zeros + 1 LSB)"
+        );
     }
 
     /// c:25 — `_zclz64(1 << 63)` returns 0 (top bit set).
     #[test]
     fn zclz64_top_bit_returns_zero() {
-        assert_eq!(_zclz64(1u64 << 63), 0,
-            "clz64(1<<63) MUST equal 0 (MSB set)");
+        assert_eq!(
+            _zclz64(1u64 << 63),
+            0,
+            "clz64(1<<63) MUST equal 0 (MSB set)"
+        );
     }
 
     /// c:25 — `_zclz64` matches std `u64::leading_zeros` for power-of-2 inputs.
@@ -832,8 +883,12 @@ mod tests {
     fn zclz64_matches_stdlib_for_powers_of_two() {
         for shift in 0..64 {
             let x = 1u64 << shift;
-            assert_eq!(_zclz64(x) as u32, x.leading_zeros(),
-                "_zclz64(1<<{}) must match stdlib leading_zeros", shift);
+            assert_eq!(
+                _zclz64(x) as u32,
+                x.leading_zeros(),
+                "_zclz64(1<<{}) must match stdlib leading_zeros",
+                shift
+            );
         }
     }
 
@@ -853,8 +908,10 @@ mod tests {
     fn random_64bit_eventually_exceeds_32_bit_threshold() {
         let _g = crate::test_util::global_state_lock();
         let any_large = (0..200).any(|_| random_64bit() > (u32::MAX as u64));
-        assert!(any_large,
-            "200 random_64bit values must include ≥ 1 above u32::MAX");
+        assert!(
+            any_large,
+            "200 random_64bit values must include ≥ 1 above u32::MAX"
+        );
     }
 
     /// c:119 — `random_real` returns f64 (alt-name compile-time pin).
@@ -870,8 +927,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..500 {
             let v = random_real();
-            assert!(v.is_finite(),
-                "random_real must always be finite, got {}", v);
+            assert!(
+                v.is_finite(),
+                "random_real must always be finite, got {}",
+                v
+            );
         }
     }
 

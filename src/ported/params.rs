@@ -13478,8 +13478,10 @@ mod tests {
     #[test]
     fn getsparam_unknown_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getsparam("__never_a_real_var_xyz_zshrs__").is_none(),
-            "unknown var → None");
+        assert!(
+            getsparam("__never_a_real_var_xyz_zshrs__").is_none(),
+            "unknown var → None"
+        );
     }
 
     /// c:4099 — `getiparam` returns i64.
@@ -13510,8 +13512,11 @@ mod tests {
         let name = "ZSHRS_TEST_SETSPARAM_ROUND_TRIP";
         let _ = unsetparam(name);
         setsparam(name, "hello");
-        assert_eq!(getsparam(name).as_deref(), Some("hello"),
-            "setsparam/getsparam round-trip");
+        assert_eq!(
+            getsparam(name).as_deref(),
+            Some("hello"),
+            "setsparam/getsparam round-trip"
+        );
         unsetparam(name);
     }
 
@@ -13534,8 +13539,7 @@ mod tests {
         unsetparam(name);
         let v = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         setaparam(name, v.clone());
-        assert_eq!(getaparam(name), Some(v),
-            "setaparam/getaparam round-trip");
+        assert_eq!(getaparam(name), Some(v), "setaparam/getaparam round-trip");
         unsetparam(name);
     }
 
@@ -13622,7 +13626,10 @@ mod tests {
         let mut pm = param::default();
         pm.u_str = None;
         let s = strgetfn(&pm);
-        assert!(s.is_empty(), "None u_str → empty String (port of hcalloc(1))");
+        assert!(
+            s.is_empty(),
+            "None u_str → empty String (port of hcalloc(1))"
+        );
     }
 
     /// c:4029-4033 — `strgetfn` returns u_str clone when present.

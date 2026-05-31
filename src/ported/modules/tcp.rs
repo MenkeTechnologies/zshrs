@@ -1419,8 +1419,10 @@ mod tests {
     #[test]
     fn zsh_gethostbyname2_nonexistent_returns_empty() {
         let _g = crate::test_util::global_state_lock();
-        let r = zsh_gethostbyname2("definitely_not_a_real_host_xyz_zshrs.invalid",
-                                    libc::AF_INET);
+        let r = zsh_gethostbyname2(
+            "definitely_not_a_real_host_xyz_zshrs.invalid",
+            libc::AF_INET,
+        );
         assert!(r.is_empty(), "nonexistent host → empty vec");
     }
 
@@ -1522,7 +1524,11 @@ mod tests {
         for name in ["", "nonexistent.invalid.zshrs.xyz"] {
             let a = zsh_getipnodebyname(name, libc::AF_INET);
             let b = zsh_gethostbyname2(name, libc::AF_INET);
-            assert_eq!(a, b, "zsh_getipnodebyname({:?}) must match gethostbyname2", name);
+            assert_eq!(
+                a, b,
+                "zsh_getipnodebyname({:?}) must match gethostbyname2",
+                name
+            );
         }
     }
 
@@ -1579,8 +1585,12 @@ mod tests {
         for s in ["", "1.2.3.4", "garbage", "256.256.256.256"] {
             let first = zsh_inet_aton(s);
             for _ in 0..3 {
-                assert_eq!(zsh_inet_aton(s), first,
-                    "zsh_inet_aton({:?}) must be deterministic", s);
+                assert_eq!(
+                    zsh_inet_aton(s),
+                    first,
+                    "zsh_inet_aton({:?}) must be deterministic",
+                    s
+                );
             }
         }
     }
@@ -1604,8 +1614,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let r = zsh_inet_ntop(libc::AF_INET, &[127, 0, 0, 1]);
         assert!(r.is_some(), "127.0.0.1 must convert");
-        assert_eq!(r.unwrap(), "127.0.0.1",
-            "must produce canonical dotted-quad");
+        assert_eq!(
+            r.unwrap(),
+            "127.0.0.1",
+            "must produce canonical dotted-quad"
+        );
     }
 
     /// c:65 — `zsh_inet_ntop` invalid family returns None.

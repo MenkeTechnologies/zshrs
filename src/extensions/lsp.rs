@@ -582,7 +582,11 @@ fn strip_comments_and_strings(line: &str) -> String {
                 continue;
             }
             '#' => {
-                let prev = if i == 0 { None } else { Some(bytes[i - 1] as char) };
+                let prev = if i == 0 {
+                    None
+                } else {
+                    Some(bytes[i - 1] as char)
+                };
                 let is_comment_start = match prev {
                     None => true,
                     // Note: `(` removed from prev-chars — zsh glob
@@ -657,12 +661,10 @@ fn diagnose(text: &str) -> Vec<Value> {
         // bracket scan runs in lexical order and `case` hasn't been
         // pushed onto block_stack yet when the `)` is seen.
         let line_code_only = strip_comments_and_strings(line);
-        let line_has_case_keyword = line_code_only
-            .split_whitespace()
-            .any(|t| {
-                let bare = t.trim_end_matches(|c: char| matches!(c, ';' | '&' | '|'));
-                bare == "case"
-            });
+        let line_has_case_keyword = line_code_only.split_whitespace().any(|t| {
+            let bare = t.trim_end_matches(|c: char| matches!(c, ';' | '&' | '|'));
+            bare == "case"
+        });
         // Pre-scan: find positions where `done`/`fi`/`esac` appear as
         // BARE VALUE tokens (not as block terminators). They're
         // terminators only when the previous token is a statement-
@@ -682,11 +684,13 @@ fn diagnose(text: &str) -> Vec<Value> {
         {
             let toks: Vec<&str> = line_code_only.split_whitespace().collect();
             for (i, t) in toks.iter().enumerate() {
-                if i == 0 { continue; }
-                let prev_bare = toks[i - 1]
-                    .trim_end_matches(|c: char| matches!(c, ';' | '&' | '|'));
-                let prev_ends_with_separator = toks[i - 1]
-                    .ends_with(|c: char| matches!(c, ';' | '&' | '|'));
+                if i == 0 {
+                    continue;
+                }
+                let prev_bare =
+                    toks[i - 1].trim_end_matches(|c: char| matches!(c, ';' | '&' | '|'));
+                let prev_ends_with_separator =
+                    toks[i - 1].ends_with(|c: char| matches!(c, ';' | '&' | '|'));
                 let bare = t.trim_end_matches(|c: char| matches!(c, ';' | '&' | '|'));
                 let prev_is_body_opener = matches!(
                     prev_bare,
@@ -724,13 +728,10 @@ fn diagnose(text: &str) -> Vec<Value> {
                         let prev_is_dollar = i > 0 && bytes[i - 1] == b'$';
                         let next2 = bytes.get(i + 2).copied();
                         let next3 = bytes.get(i + 3).copied();
-                        if prev_is_dollar
-                            && next2 == Some(b')')
-                            && next3 != Some(b')')
-                        {
+                        if prev_is_dollar && next2 == Some(b')') && next3 != Some(b')') {
                             // Treat as two separate `(` so the inner `()`
                             // pair balances cleanly with its `)`.
-                            stack.push(('(', line_no, i));     // outer $(
+                            stack.push(('(', line_no, i)); // outer $(
                             stack.push(('(', line_no, i + 1)); // inner (
                             i += 2;
                             continue;
@@ -891,18 +892,19 @@ fn diagnose(text: &str) -> Vec<Value> {
                     } else {
                         Some(bytes[i - 1] as char)
                     };
-                    let is_comment_start = !in_arith && match prev {
-                        None => true,
-                        Some(p) => {
-                            // Note: `(` removed from the prev-chars list
-                            // because `(#i)` / `(#a1)` etc. are zsh glob
-                            // qualifiers / extended-glob flags where `#`
-                            // immediately after `(` is NOT a comment.
-                            // `( # cmt)` style is still recognized via
-                            // the whitespace test before `#`.
-                            p.is_whitespace() || p == ';' || p == '&' || p == '|'
-                        }
-                    };
+                    let is_comment_start = !in_arith
+                        && match prev {
+                            None => true,
+                            Some(p) => {
+                                // Note: `(` removed from the prev-chars list
+                                // because `(#i)` / `(#a1)` etc. are zsh glob
+                                // qualifiers / extended-glob flags where `#`
+                                // immediately after `(` is NOT a comment.
+                                // `( # cmt)` style is still recognized via
+                                // the whitespace test before `#`.
+                                p.is_whitespace() || p == ';' || p == '&' || p == '|'
+                            }
+                        };
                     if is_comment_start {
                         break;
                     }
@@ -944,9 +946,7 @@ fn diagnose(text: &str) -> Vec<Value> {
             // `repeat N CMD` is a one-liner with no `do`/`done`; only push
             // onto block_stack when same line has a `do` token (block form
             // `repeat N; do ... done` or `repeat N do CMD done`).
-            if kw_static == "repeat"
-                && !code_only.split_whitespace().any(|t| t == "do")
-            {
+            if kw_static == "repeat" && !code_only.split_whitespace().any(|t| t == "do") {
                 continue;
             }
             // `select` can appear as a bareword ARGUMENT to other
@@ -955,9 +955,7 @@ fn diagnose(text: &str) -> Vec<Value> {
             // NOT opening a `select VAR in WORDS; do ... done` block.
             // Only treat as a block opener when the same line also
             // has a `do` token (block form). Same heuristic as repeat.
-            if kw_static == "select"
-                && !code_only.split_whitespace().any(|t| t == "do")
-            {
+            if kw_static == "select" && !code_only.split_whitespace().any(|t| t == "do") {
                 continue;
             }
             // `done`/`fi`/`esac` as the RIGHT operand of a comparison
@@ -2026,7 +2024,12 @@ pub(crate) fn find_user_symbol_doc(text: &str, name: &str) -> Option<String> {
             };
             let doc_block = collect_doc_block_above(&lines, line_idx);
             if !doc_block.is_empty() {
-                return Some(render_user_doc_card(name, kind, def_line.trim(), &doc_block));
+                return Some(render_user_doc_card(
+                    name,
+                    kind,
+                    def_line.trim(),
+                    &doc_block,
+                ));
             }
             if undocumented.is_none() {
                 undocumented = Some((sym.decl_line, kind, def_line));
@@ -2054,9 +2057,7 @@ pub(crate) fn find_user_symbol_doc(text: &str, name: &str) -> Option<String> {
             undocumented = Some((i, kind, line));
         }
     }
-    undocumented.map(|(_, kind, line)| {
-        render_user_doc_card_no_block(name, kind, line.trim())
-    })
+    undocumented.map(|(_, kind, line)| render_user_doc_card_no_block(name, kind, line.trim()))
 }
 
 /// Render a minimal hover card for a user-defined symbol that has no
@@ -6600,8 +6601,7 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                         // blob. Without this, `"$(( -7 % 3 ))"` inside
                         // a double-quoted string had its arithmetic body
                         // colored like a string-internal variable.
-                        let is_arith = q2 + 1 < inner_end
-                            && bb[q2] == b'(' && bb[q2 + 1] == b'(';
+                        let is_arith = q2 + 1 < inner_end && bb[q2] == b'(' && bb[q2 + 1] == b'(';
                         if is_arith {
                             // Scan to matching `))` (paren-depth aware).
                             let mut depth = 2i32; // already past `$((`
@@ -6613,7 +6613,9 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                                     b')' => depth -= 1,
                                     _ => {}
                                 }
-                                if depth == 0 { break; }
+                                if depth == 0 {
+                                    break;
+                                }
                                 q2 += 1;
                             }
                             // q2 now points at the first `)` of the
@@ -6630,19 +6632,41 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                                 q2
                             };
                             // Emit `$((` as operator.
-                            push_tok(&mut data, &mut last_line, &mut last_col,
-                                ln, (col + var_start) as u32, 3, 4);
+                            push_tok(
+                                &mut data,
+                                &mut last_line,
+                                &mut last_col,
+                                ln,
+                                (col + var_start) as u32,
+                                3,
+                                4,
+                            );
                             // Tokenize the arithmetic interior into
                             // numbers / identifiers / operators.
-                            emit_arith_interior(&mut data, &mut last_line,
-                                &mut last_col, ln, col, bb, arith_start, arith_end);
+                            emit_arith_interior(
+                                &mut data,
+                                &mut last_line,
+                                &mut last_col,
+                                ln,
+                                col,
+                                bb,
+                                arith_start,
+                                arith_end,
+                            );
                             // Emit `))` as operator (2 bytes) if present.
                             if arith_end + 1 < bb.len()
                                 && bb[arith_end] == b')'
                                 && bb[arith_end + 1] == b')'
                             {
-                                push_tok(&mut data, &mut last_line, &mut last_col,
-                                    ln, (col + arith_end) as u32, 2, 4);
+                                push_tok(
+                                    &mut data,
+                                    &mut last_line,
+                                    &mut last_col,
+                                    ln,
+                                    (col + arith_end) as u32,
+                                    2,
+                                    4,
+                                );
                                 q2 = arith_end + 2;
                             } else {
                                 q2 = arith_end;
@@ -6785,8 +6809,7 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
             // Short flag `-f` is intentionally NOT handled here (zsh's
             // `-x`/`-n`/etc. already render fine as `-` + word; only
             // the double-dash long form was visibly broken).
-            if rest.starts_with("--") && rest.len() > 2
-                && rest.as_bytes()[2].is_ascii_alphabetic()
+            if rest.starts_with("--") && rest.len() > 2 && rest.as_bytes()[2].is_ascii_alphabetic()
             {
                 let bb = rest.as_bytes();
                 let mut end = 2;
@@ -7043,21 +7066,33 @@ fn emit_arith_interior(
             while end < arith_end && (bb[end].is_ascii_digit() || bb[end] == b'.') {
                 end += 1;
             }
-            push_tok(data, last_line, last_col,
-                ln, (col + p) as u32, (end - p) as u32, 2);
+            push_tok(
+                data,
+                last_line,
+                last_col,
+                ln,
+                (col + p) as u32,
+                (end - p) as u32,
+                2,
+            );
             p = end;
             continue;
         }
         // Identifier (alpha or `_`) → variable (type 6).
         if c.is_ascii_alphabetic() || c == b'_' {
             let mut end = p + 1;
-            while end < arith_end
-                && (bb[end].is_ascii_alphanumeric() || bb[end] == b'_')
-            {
+            while end < arith_end && (bb[end].is_ascii_alphanumeric() || bb[end] == b'_') {
                 end += 1;
             }
-            push_tok(data, last_line, last_col,
-                ln, (col + p) as u32, (end - p) as u32, 6);
+            push_tok(
+                data,
+                last_line,
+                last_col,
+                ln,
+                (col + p) as u32,
+                (end - p) as u32,
+                6,
+            );
             p = end;
             continue;
         }
@@ -7072,14 +7107,20 @@ fn emit_arith_interior(
             None
         };
         let span = match two {
-            Some(b"**") | Some(b"++") | Some(b"--") | Some(b"<<") | Some(b">>")
-            | Some(b"&&") | Some(b"||") | Some(b"==") | Some(b"!=")
-            | Some(b"<=") | Some(b">=") | Some(b"+=") | Some(b"-=")
-            | Some(b"*=") | Some(b"/=") | Some(b"%=") => 2,
+            Some(b"**") | Some(b"++") | Some(b"--") | Some(b"<<") | Some(b">>") | Some(b"&&")
+            | Some(b"||") | Some(b"==") | Some(b"!=") | Some(b"<=") | Some(b">=") | Some(b"+=")
+            | Some(b"-=") | Some(b"*=") | Some(b"/=") | Some(b"%=") => 2,
             _ => 1,
         };
-        push_tok(data, last_line, last_col,
-            ln, (col + p) as u32, span as u32, 4);
+        push_tok(
+            data,
+            last_line,
+            last_col,
+            ln,
+            (col + p) as u32,
+            span as u32,
+            4,
+        );
         p += span;
     }
 }
@@ -9412,8 +9453,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let src = "# operations — length, case, slice, concat, search.\nx=1\n";
         let d = diagnose(src);
-        assert!(d.is_empty(),
-            "block keyword `case` inside comment flagged: {:?}", d);
+        assert!(
+            d.is_empty(),
+            "block keyword `case` inside comment flagged: {:?}",
+            d
+        );
     }
 
     /// Same for `if` / `for` / `while` / `until` / `select` / `repeat`
@@ -9425,8 +9469,11 @@ mod tests {
                    echo \"if for while until case select repeat\"\n\
                    x=1\n";
         let d = diagnose(src);
-        assert!(d.is_empty(),
-            "block keywords in comments/strings flagged: {:?}", d);
+        assert!(
+            d.is_empty(),
+            "block keywords in comments/strings flagged: {:?}",
+            d
+        );
     }
 
     /// Loop-terminator keywords in comments must NOT pop block_stack
@@ -9437,8 +9484,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let src = "# fi done esac comment\nx=1\n";
         let d = diagnose(src);
-        assert!(d.is_empty(),
-            "terminator keywords in comments flagged: {:?}", d);
+        assert!(
+            d.is_empty(),
+            "terminator keywords in comments flagged: {:?}",
+            d
+        );
     }
 
     /// `done;` (terminator with trailing `;`) must still pop the `for`
@@ -9500,8 +9550,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let src = "level=${log_line#\\[}; date=${log_line#*\\][}\n";
         let d = diagnose(src);
-        assert!(d.is_empty(),
-            "param-subst with escaped brackets flagged: {:?}", d);
+        assert!(
+            d.is_empty(),
+            "param-subst with escaped brackets flagged: {:?}",
+            d
+        );
     }
 
     /// `select` as an ARGUMENT to another builtin (e.g.
@@ -9516,8 +9569,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let src = "zstyle ':completion:*' menu select\n";
         let d = diagnose(src);
-        assert!(d.is_empty(),
-            "`select` as builtin arg flagged: {:?}", d);
+        assert!(d.is_empty(), "`select` as builtin arg flagged: {:?}", d);
     }
 
     /// Real `select VAR in WORDS; do …; done` block form still
@@ -9527,8 +9579,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let src = "select x in a b c; do echo $x; break; done\n";
         let d = diagnose(src);
-        assert!(d.is_empty(),
-            "block-form `select … do … done` flagged: {:?}", d);
+        assert!(
+            d.is_empty(),
+            "block-form `select … do … done` flagged: {:?}",
+            d
+        );
     }
 
     // ── Hover regressions: UDF + user-variable fall-back & priority ──
@@ -9542,10 +9597,16 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let src = "greet() {\n    echo hello\n}\n";
         let r = find_user_symbol_doc(src, "greet").expect("UDF must hover");
-        assert!(r.contains("user-defined function"),
-            "card must label kind, got {:?}", r);
-        assert!(r.contains("greet"),
-            "card must include the symbol name, got {:?}", r);
+        assert!(
+            r.contains("user-defined function"),
+            "card must label kind, got {:?}",
+            r
+        );
+        assert!(
+            r.contains("greet"),
+            "card must include the symbol name, got {:?}",
+            r
+        );
     }
 
     /// User-defined variable (local/typeset/etc.) with no doc-block
@@ -9555,11 +9616,16 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let src = "fn() {\n    local start=$EPOCHREALTIME\n}\n";
         let r = find_user_symbol_doc(src, "start").expect("user var must hover");
-        assert!(r.contains("user-defined parameter")
-                || r.contains("user-defined variable"),
-            "card must label parameter/variable kind, got {:?}", r);
-        assert!(r.contains("start"),
-            "card must include the var name, got {:?}", r);
+        assert!(
+            r.contains("user-defined parameter") || r.contains("user-defined variable"),
+            "card must label parameter/variable kind, got {:?}",
+            r
+        );
+        assert!(
+            r.contains("start"),
+            "card must include the var name, got {:?}",
+            r
+        );
     }
 
     /// User-defined symbol with a doc-block beats the minimal-card
@@ -9569,8 +9635,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let src = "## says hi\ngreet() {\n    echo hi\n}\n";
         let r = find_user_symbol_doc(src, "greet").expect("UDF must hover");
-        assert!(r.contains("says hi"),
-            "documented form must include the doc block, got {:?}", r);
+        assert!(
+            r.contains("says hi"),
+            "documented form must include the doc block, got {:?}",
+            r
+        );
     }
 
     /// Brace-range expansion `{a..e}` / `{A..E}` / `{1..10}` /
@@ -9584,22 +9653,25 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
         let uri = "file:///t.zsh";
-        state.docs.insert(uri.to_string(), "echo {a..e}\n".to_string());
+        state
+            .docs
+            .insert(uri.to_string(), "echo {a..e}\n".to_string());
         let r = semantic_tokens(&state, &json!({ "textDocument": { "uri": uri } }));
         let data = r["data"].as_array().expect("data array");
         // Token stream layout includes `{a..e}` = 6 bytes, type 4 (operator).
         // Each token = 5 u32s (delta_line, delta_col, len, ty, mods).
         let mut found = false;
         for chunk in data.chunks(5) {
-            if chunk.len() == 5 && chunk[2].as_u64() == Some(6)
-                && chunk[3].as_u64() == Some(4)
-            {
+            if chunk.len() == 5 && chunk[2].as_u64() == Some(6) && chunk[3].as_u64() == Some(4) {
                 found = true;
                 break;
             }
         }
-        assert!(found,
-            "brace range `{{a..e}}` must emit a single 6-byte operator token, got data={:?}", data);
+        assert!(
+            found,
+            "brace range `{{a..e}}` must emit a single 6-byte operator token, got data={:?}",
+            data
+        );
     }
 
     /// Uppercase letter brace ranges `{A..E}` get the same treatment
@@ -9610,20 +9682,23 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
         let uri = "file:///t.zsh";
-        state.docs.insert(uri.to_string(), "echo {A..E}\n".to_string());
+        state
+            .docs
+            .insert(uri.to_string(), "echo {A..E}\n".to_string());
         let r = semantic_tokens(&state, &json!({ "textDocument": { "uri": uri } }));
         let data = r["data"].as_array().expect("data array");
         let mut found = false;
         for chunk in data.chunks(5) {
-            if chunk.len() == 5 && chunk[2].as_u64() == Some(6)
-                && chunk[3].as_u64() == Some(4)
-            {
+            if chunk.len() == 5 && chunk[2].as_u64() == Some(6) && chunk[3].as_u64() == Some(4) {
                 found = true;
                 break;
             }
         }
-        assert!(found,
-            "brace range `{{A..E}}` must emit a single 6-byte operator token, got data={:?}", data);
+        assert!(
+            found,
+            "brace range `{{A..E}}` must emit a single 6-byte operator token, got data={:?}",
+            data
+        );
     }
 
     /// `$((arith))` inside a double-quoted string must NOT emit one
@@ -9639,8 +9714,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
         let uri = "file:///t.zsh";
-        state.docs.insert(uri.to_string(),
-            "echo \"$(( -7 % 3 ))\"\n".to_string());
+        state
+            .docs
+            .insert(uri.to_string(), "echo \"$(( -7 % 3 ))\"\n".to_string());
         let r = semantic_tokens(&state, &json!({ "textDocument": { "uri": uri } }));
         let data = r["data"].as_array().expect("data array");
         // We expect to see at least:
@@ -9660,10 +9736,16 @@ mod tests {
                 }
             }
         }
-        assert!(numbers >= 2,
-            "expected ≥2 number tokens inside $((…)), got {numbers}; data={:?}", data);
-        assert!(operators >= 3,
-            "expected ≥3 operator tokens ($((, %, )) ) inside $((…)), got {operators}; data={:?}", data);
+        assert!(
+            numbers >= 2,
+            "expected ≥2 number tokens inside $((…)), got {numbers}; data={:?}",
+            data
+        );
+        assert!(
+            operators >= 3,
+            "expected ≥3 operator tokens ($((, %, )) ) inside $((…)), got {operators}; data={:?}",
+            data
+        );
     }
 
     /// Long-form CLI flags `--verbose` / `--debug` emit a single
@@ -9676,8 +9758,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
         let uri = "file:///t.zsh";
-        state.docs.insert(uri.to_string(),
-            "parse_demo --verbose --debug arg1\n".to_string());
+        state.docs.insert(
+            uri.to_string(),
+            "parse_demo --verbose --debug arg1\n".to_string(),
+        );
         let r = semantic_tokens(&state, &json!({ "textDocument": { "uri": uri } }));
         let data = r["data"].as_array().expect("data array");
         // Need at least one operator token of len=9 (`--verbose`)
@@ -9693,10 +9777,16 @@ mod tests {
                 }
             }
         }
-        assert!(saw_9_op,
-            "`--verbose` (9 bytes) must emit an operator token, got {:?}", data);
-        assert!(saw_7_op,
-            "`--debug` (7 bytes) must emit an operator token, got {:?}", data);
+        assert!(
+            saw_9_op,
+            "`--verbose` (9 bytes) must emit an operator token, got {:?}",
+            data
+        );
+        assert!(
+            saw_7_op,
+            "`--debug` (7 bytes) must emit an operator token, got {:?}",
+            data
+        );
     }
 
     /// Stepped brace range `{1..10..2}` covers the full 10-byte span
@@ -9706,20 +9796,23 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
         let uri = "file:///t.zsh";
-        state.docs.insert(uri.to_string(), "echo {1..10..2}\n".to_string());
+        state
+            .docs
+            .insert(uri.to_string(), "echo {1..10..2}\n".to_string());
         let r = semantic_tokens(&state, &json!({ "textDocument": { "uri": uri } }));
         let data = r["data"].as_array().expect("data array");
         let mut found = false;
         for chunk in data.chunks(5) {
-            if chunk.len() == 5 && chunk[2].as_u64() == Some(10)
-                && chunk[3].as_u64() == Some(4)
-            {
+            if chunk.len() == 5 && chunk[2].as_u64() == Some(10) && chunk[3].as_u64() == Some(4) {
                 found = true;
                 break;
             }
         }
-        assert!(found,
-            "brace range `{{1..10..2}}` must emit a single 10-byte operator token, got data={:?}", data);
+        assert!(
+            found,
+            "brace range `{{1..10..2}}` must emit a single 10-byte operator token, got data={:?}",
+            data
+        );
     }
 
     /// Two definitions of the same name: the documented one wins even
@@ -9736,8 +9829,11 @@ fn foo() { echo first }\n\
 foo() { echo second }\n\
 ";
         let r = find_user_symbol_doc(src, "foo").expect("UDF must hover");
-        assert!(r.contains("second def with docs"),
-            "documented later-def must win, got {:?}", r);
+        assert!(
+            r.contains("second def with docs"),
+            "documented later-def must win, got {:?}",
+            r
+        );
     }
 
     /// Every `examples/demos/*.zsh` file must pass `diagnose()` with
@@ -9750,8 +9846,7 @@ foo() { echo second }\n\
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let demos_dir = manifest_dir.join("examples").join("demos");
         let mut failures: Vec<(String, Vec<Value>)> = Vec::new();
-        let entries = std::fs::read_dir(&demos_dir)
-            .expect("examples/demos must exist");
+        let entries = std::fs::read_dir(&demos_dir).expect("examples/demos must exist");
         let mut total = 0usize;
         for entry in entries {
             let path = entry.unwrap().path();
@@ -9762,17 +9857,16 @@ foo() { echo second }\n\
             let text = std::fs::read_to_string(&path).unwrap();
             let d = diagnose(&text);
             if !d.is_empty() {
-                failures.push((
-                    path.file_name().unwrap().to_string_lossy().into_owned(),
-                    d,
-                ));
+                failures.push((path.file_name().unwrap().to_string_lossy().into_owned(), d));
             }
         }
         assert!(total > 0, "no demos found under {}", demos_dir.display());
         assert!(
             failures.is_empty(),
             "{}/{} demos flagged by LSP diagnose():\n{:#?}",
-            failures.len(), total, failures,
+            failures.len(),
+            total,
+            failures,
         );
     }
 

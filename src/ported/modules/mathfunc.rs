@@ -1174,8 +1174,10 @@ mod tests {
             let r = math_string("rand48", "", 0);
             // rand48 returns f64; result should be finite.
             // mnumber.d may be 0.0 if int variant — check both fields.
-            assert!(r.d.is_finite() || r.l != 0 || r.d == 0.0,
-                "rand48 should be finite f64");
+            assert!(
+                r.d.is_finite() || r.l != 0 || r.d == 0.0,
+                "rand48 should be finite f64"
+            );
         }
     }
 
@@ -1184,7 +1186,11 @@ mod tests {
     #[test]
     fn math_func_returns_mnumber_type() {
         use crate::ported::zsh_h::MN_FLOAT;
-        let arg = mnumber { l: 0, d: 1.0, type_: MN_FLOAT };
+        let arg = mnumber {
+            l: 0,
+            d: 1.0,
+            type_: MN_FLOAT,
+        };
         let _: mnumber = math_func("fabs", 1, &[arg], 0);
     }
 
@@ -1192,12 +1198,23 @@ mod tests {
     #[test]
     fn math_func_pure_for_fabs() {
         use crate::ported::zsh_h::MN_FLOAT;
-        let arg = mnumber { l: 0, d: 1.5, type_: MN_FLOAT };
+        let arg = mnumber {
+            l: 0,
+            d: 1.5,
+            type_: MN_FLOAT,
+        };
         let first = math_func("fabs", 1, &[arg], 0);
         for _ in 0..3 {
-            let arg2 = mnumber { l: 0, d: 1.5, type_: MN_FLOAT };
-            assert_eq!(math_func("fabs", 1, &[arg2], 0).d, first.d,
-                "fabs(1.5) must be pure");
+            let arg2 = mnumber {
+                l: 0,
+                d: 1.5,
+                type_: MN_FLOAT,
+            };
+            assert_eq!(
+                math_func("fabs", 1, &[arg2], 0).d,
+                first.d,
+                "fabs(1.5) must be pure"
+            );
         }
     }
 
@@ -1268,8 +1285,7 @@ mod tests {
             // rand48 is the only non-deterministic id; sticky compare on
             // type field rather than value.
             let r = math_string("rand48", "", 0);
-            assert_eq!(r.type_, first.type_,
-                "math_string rand48 type stable");
+            assert_eq!(r.type_, first.type_, "math_string rand48 type stable");
         }
     }
 
@@ -1289,12 +1305,23 @@ mod tests {
     fn math_func_int_int_arg_deterministic() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::MN_INTEGER;
-        let arg = mnumber { l: 42, d: 0.0, type_: MN_INTEGER };
+        let arg = mnumber {
+            l: 42,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
         let first = math_func("int", 1, &[arg], 0).l;
         for _ in 0..3 {
-            let arg2 = mnumber { l: 42, d: 0.0, type_: MN_INTEGER };
-            assert_eq!(math_func("int", 1, &[arg2], 0).l, first,
-                "math_func int deterministic");
+            let arg2 = mnumber {
+                l: 42,
+                d: 0.0,
+                type_: MN_INTEGER,
+            };
+            assert_eq!(
+                math_func("int", 1, &[arg2], 0).l,
+                first,
+                "math_func int deterministic"
+            );
         }
     }
 
@@ -1303,7 +1330,11 @@ mod tests {
     fn math_func_fabs_negative_returns_positive() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::MN_FLOAT;
-        let arg = mnumber { l: 0, d: -3.5, type_: MN_FLOAT };
+        let arg = mnumber {
+            l: 0,
+            d: -3.5,
+            type_: MN_FLOAT,
+        };
         let r = math_func("fabs", 1, &[arg], 0);
         assert_eq!(r.d, 3.5, "fabs(-3.5) = 3.5");
     }
@@ -1313,7 +1344,11 @@ mod tests {
     fn math_func_fabs_zero_returns_zero_pin() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::MN_FLOAT;
-        let arg = mnumber { l: 0, d: 0.0, type_: MN_FLOAT };
+        let arg = mnumber {
+            l: 0,
+            d: 0.0,
+            type_: MN_FLOAT,
+        };
         let r = math_func("fabs", 1, &[arg], 0);
         assert_eq!(r.d, 0.0, "fabs(0) = 0");
     }
@@ -1327,7 +1362,11 @@ mod tests {
     fn math_func_int_float_truncates_toward_zero() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::MN_FLOAT;
-        let arg = mnumber { l: 0, d: 3.9, type_: MN_FLOAT };
+        let arg = mnumber {
+            l: 0,
+            d: 3.9,
+            type_: MN_FLOAT,
+        };
         let r = math_func("int", 1, &[arg], 0);
         assert_eq!(r.l, 3, "int(3.9) = 3 (truncates toward zero)");
     }
@@ -1338,7 +1377,11 @@ mod tests {
     fn math_func_int_negative_float_truncates_toward_zero() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::MN_FLOAT;
-        let arg = mnumber { l: 0, d: -3.9, type_: MN_FLOAT };
+        let arg = mnumber {
+            l: 0,
+            d: -3.9,
+            type_: MN_FLOAT,
+        };
         let r = math_func("int", 1, &[arg], 0);
         assert_eq!(r.l, -3, "int(-3.9) = -3 (truncates toward zero, not -4)");
     }
@@ -1349,7 +1392,11 @@ mod tests {
     fn math_func_float_int_returns_float_type() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{MN_FLOAT, MN_INTEGER};
-        let arg = mnumber { l: 42, d: 0.0, type_: MN_INTEGER };
+        let arg = mnumber {
+            l: 42,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
         let r = math_func("float", 1, &[arg], 0);
         assert_eq!(r.type_, MN_FLOAT, "float(42) type is float");
     }
@@ -1367,12 +1414,24 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::MN_FLOAT;
         for v in [-1.0, 0.0, 1.0, 100.0, -3.14] {
-            let arg = mnumber { l: 0, d: v, type_: MN_FLOAT };
+            let arg = mnumber {
+                l: 0,
+                d: v,
+                type_: MN_FLOAT,
+            };
             let first = math_func("fabs", 1, &[arg], 0).d;
             for _ in 0..3 {
-                let arg2 = mnumber { l: 0, d: v, type_: MN_FLOAT };
-                assert_eq!(math_func("fabs", 1, &[arg2], 0).d, first,
-                    "fabs({}) must be pure", v);
+                let arg2 = mnumber {
+                    l: 0,
+                    d: v,
+                    type_: MN_FLOAT,
+                };
+                assert_eq!(
+                    math_func("fabs", 1, &[arg2], 0).d,
+                    first,
+                    "fabs({}) must be pure",
+                    v
+                );
             }
         }
     }
@@ -1417,7 +1476,11 @@ mod tests {
     fn math_func_fabs_positive_unchanged_alt() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::MN_FLOAT;
-        let arg = mnumber { l: 0, d: 5.0, type_: MN_FLOAT };
+        let arg = mnumber {
+            l: 0,
+            d: 5.0,
+            type_: MN_FLOAT,
+        };
         let r = math_func("fabs", 1, &[arg], 0);
         assert_eq!(r.d, 5.0, "fabs(5.0) = 5.0");
     }
@@ -1427,7 +1490,11 @@ mod tests {
     fn math_func_fabs_large_negative() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::MN_FLOAT;
-        let arg = mnumber { l: 0, d: -1e20, type_: MN_FLOAT };
+        let arg = mnumber {
+            l: 0,
+            d: -1e20,
+            type_: MN_FLOAT,
+        };
         let r = math_func("fabs", 1, &[arg], 0);
         assert!((r.d - 1e20).abs() < 1.0, "fabs(-1e20) ≈ 1e20; got {}", r.d);
     }
@@ -1470,7 +1537,11 @@ mod tests {
     fn math_func_fabs_nan_returns_nan() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::MN_FLOAT;
-        let arg = mnumber { l: 0, d: f64::NAN, type_: MN_FLOAT };
+        let arg = mnumber {
+            l: 0,
+            d: f64::NAN,
+            type_: MN_FLOAT,
+        };
         let r = math_func("fabs", 1, &[arg], 0);
         assert!(r.d.is_nan(), "fabs(NaN) = NaN; got {}", r.d);
     }

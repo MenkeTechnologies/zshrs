@@ -1219,8 +1219,7 @@ mod tests {
         for v in [0u64, 1, 42, 1_000_000, u64::MAX] {
             let first = statulprint(v);
             for _ in 0..5 {
-                assert_eq!(statulprint(v), first,
-                    "statulprint({}) must be pure", v);
+                assert_eq!(statulprint(v), first, "statulprint({}) must be pure", v);
             }
         }
     }
@@ -1231,8 +1230,11 @@ mod tests {
         for v in [0u64, 1, 42, u32::MAX as u64, u64::MAX] {
             let s = statulprint(v);
             assert!(!s.is_empty(), "non-empty");
-            assert!(s.chars().all(|c| c.is_ascii_digit()),
-                "all chars must be digits: {:?}", s);
+            assert!(
+                s.chars().all(|c| c.is_ascii_digit()),
+                "all chars must be digits: {:?}",
+                s
+            );
         }
     }
 
@@ -1242,8 +1244,7 @@ mod tests {
         let mode = 0o100644u32;
         let first = statmodeprint(mode, 0);
         for _ in 0..5 {
-            assert_eq!(statmodeprint(mode, 0), first,
-                "statmodeprint must be pure");
+            assert_eq!(statmodeprint(mode, 0), first, "statmodeprint must be pure");
         }
     }
 
@@ -1259,8 +1260,7 @@ mod tests {
         let t = 1_700_000_000i64;
         let first = stattimeprint(t, 0, 0);
         for _ in 0..5 {
-            assert_eq!(stattimeprint(t, 0, 0), first,
-                "stattimeprint must be pure");
+            assert_eq!(stattimeprint(t, 0, 0), first, "stattimeprint must be pure");
         }
     }
 
@@ -1269,8 +1269,11 @@ mod tests {
     fn statlinkprint_non_symlink_returns_empty() {
         let r = statlinkprint(0o100644, "/tmp/__not_symlink__");
         // Regular file mode bit pattern → empty.
-        assert!(r.is_empty() || r == "" || r.starts_with(" "),
-            "non-symlink should return empty or marker, got {:?}", r);
+        assert!(
+            r.is_empty() || r == "" || r.starts_with(" "),
+            "non-symlink should return empty or marker, got {:?}",
+            r
+        );
     }
 
     /// c:237 — `statlinkprint` empty fname doesn't panic.
@@ -1285,8 +1288,12 @@ mod tests {
         for uid in [0u32, 1, 1000, u32::MAX] {
             let first = statuidprint(uid, 0);
             for _ in 0..5 {
-                assert_eq!(statuidprint(uid, 0), first,
-                    "statuidprint({}, 0) must be pure", uid);
+                assert_eq!(
+                    statuidprint(uid, 0),
+                    first,
+                    "statuidprint({}, 0) must be pure",
+                    uid
+                );
             }
         }
     }
@@ -1297,8 +1304,12 @@ mod tests {
         for gid in [0u32, 1, 1000, u32::MAX] {
             let first = statgidprint(gid, 0);
             for _ in 0..5 {
-                assert_eq!(statgidprint(gid, 0), first,
-                    "statgidprint({}, 0) must be pure", gid);
+                assert_eq!(
+                    statgidprint(gid, 0),
+                    first,
+                    "statgidprint({}, 0) must be pure",
+                    gid
+                );
             }
         }
     }
@@ -1349,16 +1360,14 @@ mod tests {
     /// c:228 — `statulprint(0)` returns "0".
     #[test]
     fn statulprint_zero_returns_zero_digit() {
-        assert_eq!(statulprint(0), "0",
-            "0 → \"0\" canonical");
+        assert_eq!(statulprint(0), "0", "0 → \"0\" canonical");
     }
 
     /// c:228 — `statulprint(u64::MAX)` returns max decimal repr.
     #[test]
     fn statulprint_u64_max_returns_canonical_decimal() {
         let s = statulprint(u64::MAX);
-        assert_eq!(s, u64::MAX.to_string(),
-            "u64::MAX matches std decimal");
+        assert_eq!(s, u64::MAX.to_string(), "u64::MAX matches std decimal");
     }
 
     /// c:300 — `bin_stat` returns i32 (compile-time type pin).
@@ -1397,8 +1406,11 @@ mod tests {
         let mut feats = Vec::new();
         features_(std::ptr::null(), &mut feats);
         for f in &feats {
-            assert!(f.starts_with("b:") || f.starts_with("p:"),
-                "feature {:?} must use b:/p: prefix", f);
+            assert!(
+                f.starts_with("b:") || f.starts_with("p:"),
+                "feature {:?} must use b:/p: prefix",
+                f
+            );
         }
     }
 
@@ -1509,8 +1521,12 @@ mod tests {
             vec!["/__nonexistent_xyz__".into()],
         ] {
             let r = bin_stat("stat", &argv, &ops, 0);
-            assert!(r >= 0,
-                "exit code must be non-negative, got {} for {:?}", r, argv);
+            assert!(
+                r >= 0,
+                "exit code must be non-negative, got {} for {:?}",
+                r,
+                argv
+            );
         }
     }
 

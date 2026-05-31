@@ -929,8 +929,12 @@ mod tests {
             vec!["bold".to_string()],
         ] {
             let r = bin_echoti("echoti", &args, &ops, 0);
-            assert!((0..256).contains(&r),
-                "exit code must fit in u8 range, got {} for {:?}", r, args);
+            assert!(
+                (0..256).contains(&r),
+                "exit code must fit in u8 range, got {} for {:?}",
+                r,
+                args
+            );
         }
     }
 
@@ -949,7 +953,10 @@ mod tests {
     fn getterminfo_empty_name_returns_some_pin() {
         let _g = crate::test_util::global_state_lock();
         let pm = getterminfo(std::ptr::null_mut(), "");
-        assert!(pm.is_some(), "C convention: always Some, missing via PM_UNSET");
+        assert!(
+            pm.is_some(),
+            "C convention: always Some, missing via PM_UNSET"
+        );
     }
 
     /// c:204 — getterminfo is deterministic (multiple calls = same result).
@@ -970,8 +977,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let pm = getterminfo(std::ptr::null_mut(), "definitely_unknown_xyz_cap");
         if let Some(p) = pm {
-            assert_ne!(p.node.flags & PM_UNSET as i32, 0,
-                "unknown cap must have PM_UNSET bit");
+            assert_ne!(
+                p.node.flags & PM_UNSET as i32,
+                0,
+                "unknown cap must have PM_UNSET bit"
+            );
         }
     }
 
@@ -1077,8 +1087,11 @@ mod tests {
         let mut feats = Vec::new();
         features_(std::ptr::null(), &mut feats);
         for f in &feats {
-            assert!(f.starts_with("b:") || f.starts_with("p:"),
-                "feature {:?} must use b:/p: prefix", f);
+            assert!(
+                f.starts_with("b:") || f.starts_with("p:"),
+                "feature {:?} must use b:/p: prefix",
+                f
+            );
         }
     }
 
@@ -1137,7 +1150,10 @@ mod tests {
     fn getterminfo_known_cap_returns_some() {
         let _g = crate::test_util::global_state_lock();
         let pm = getterminfo(std::ptr::null_mut(), "bold");
-        assert!(pm.is_some(), "getterminfo always returns Some per C convention");
+        assert!(
+            pm.is_some(),
+            "getterminfo always returns Some per C convention"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1183,8 +1199,12 @@ mod tests {
             vec!["cup".into(), "5".into(), "10".into()],
         ] {
             let r = bin_echoti("echoti", &argv, &ops, 0);
-            assert!(r >= 0,
-                "exit code must be non-negative, got {} for {:?}", r, argv);
+            assert!(
+                r >= 0,
+                "exit code must be non-negative, got {} for {:?}",
+                r,
+                argv
+            );
         }
     }
 
@@ -1194,8 +1214,10 @@ mod tests {
     fn getterminfo_empty_cap_returns_some() {
         let _g = crate::test_util::global_state_lock();
         let pm = getterminfo(std::ptr::null_mut(), "");
-        assert!(pm.is_some(),
-            "c:204 getterminfo always returns Some (PM_UNSET signals missing)");
+        assert!(
+            pm.is_some(),
+            "c:204 getterminfo always returns Some (PM_UNSET signals missing)"
+        );
     }
 
     /// c:204 — `getterminfo` is deterministic for the same input.
@@ -1204,8 +1226,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let a = getterminfo(std::ptr::null_mut(), "bold");
         let b = getterminfo(std::ptr::null_mut(), "bold");
-        assert_eq!(a.is_some(), b.is_some(),
-            "getterminfo must be deterministic");
+        assert_eq!(
+            a.is_some(),
+            b.is_some(),
+            "getterminfo must be deterministic"
+        );
     }
 
     /// c:304 — `scanterminfo` with None callback returns void.

@@ -795,8 +795,7 @@ mod tests {
             for _ in 0..3 {
                 let (mut s2, mut f2) = fresh_set();
                 let r = handle_digits("zselect", s, &mut s2, &mut f2);
-                assert_eq!(r, first,
-                    "handle_digits({:?}) must be deterministic", s);
+                assert_eq!(r, first, "handle_digits({:?}) must be deterministic", s);
             }
         }
     }
@@ -807,8 +806,12 @@ mod tests {
         let (mut set, mut fdmax) = fresh_set();
         for s in ["0", "1", "100", "abc", "", "-1", "0x10"] {
             let r = handle_digits("zselect", s, &mut set, &mut fdmax);
-            assert!(r == 0 || r == 1,
-                "handle_digits({:?}) = {} not in {{0,1}}", s, r);
+            assert!(
+                r == 0 || r == 1,
+                "handle_digits({:?}) = {} not in {{0,1}}",
+                s,
+                r
+            );
         }
     }
 
@@ -834,13 +837,14 @@ mod tests {
     fn bin_zselect_garbage_arg_return_in_exit_code_range() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();
-        for args in [
-            vec!["garbage".to_string()],
-            vec!["abc".to_string()],
-        ] {
+        for args in [vec!["garbage".to_string()], vec!["abc".to_string()]] {
             let r = bin_zselect("zselect", &args, &ops, 0);
-            assert!((0..256).contains(&r),
-                "exit code {} must fit in u8 range for {:?}", r, args);
+            assert!(
+                (0..256).contains(&r),
+                "exit code {} must fit in u8 range for {:?}",
+                r,
+                args
+            );
         }
     }
 
@@ -916,8 +920,12 @@ mod tests {
             let first = handle_digits("zselect", fd, &mut set, &mut fdmax);
             for _ in 0..3 {
                 let (mut set2, mut fdmax2) = fresh_set();
-                assert_eq!(handle_digits("zselect", fd, &mut set2, &mut fdmax2), first,
-                    "handle_digits({:?}) must be deterministic", fd);
+                assert_eq!(
+                    handle_digits("zselect", fd, &mut set2, &mut fdmax2),
+                    first,
+                    "handle_digits({:?}) must be deterministic",
+                    fd
+                );
             }
         }
     }
@@ -943,8 +951,12 @@ mod tests {
     fn handle_digits_non_numeric_returns_nonzero_pin() {
         for s in ["xyz", "1a", "a1", "abc"] {
             let (mut set, mut fdmax) = fresh_set();
-            assert_ne!(handle_digits("zselect", s, &mut set, &mut fdmax), 0,
-                "non-numeric {:?} → error", s);
+            assert_ne!(
+                handle_digits("zselect", s, &mut set, &mut fdmax),
+                0,
+                "non-numeric {:?} → error",
+                s
+            );
         }
     }
 
@@ -983,8 +995,11 @@ mod tests {
         let mut feats = Vec::new();
         features_(std::ptr::null(), &mut feats);
         for f in &feats {
-            assert!(f.starts_with("b:") || f.starts_with("p:"),
-                "feature {:?} must use b:/p: prefix", f);
+            assert!(
+                f.starts_with("b:") || f.starts_with("p:"),
+                "feature {:?} must use b:/p: prefix",
+                f
+            );
         }
     }
 
@@ -1033,8 +1048,11 @@ mod tests {
         let first = handle_digits("zselect", "0", &mut s1, &mut f1);
         for _ in 0..5 {
             let (mut s, mut f) = fresh_set();
-            assert_eq!(handle_digits("zselect", "0", &mut s, &mut f), first,
-                "handle_digits('0') must be pure");
+            assert_eq!(
+                handle_digits("zselect", "0", &mut s, &mut f),
+                first,
+                "handle_digits('0') must be pure"
+            );
         }
     }
 
@@ -1077,14 +1095,14 @@ mod tests {
     fn bin_zselect_usage_error_exit_codes_non_negative() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();
-        for argv in [
-            vec![],
-            vec!["bogus".into()],
-            vec!["-X".into()],
-        ] {
+        for argv in [vec![], vec!["bogus".into()], vec!["-X".into()]] {
             let r = bin_zselect("zselect", &argv, &ops, 0);
-            assert!(r >= 0, "exit code must be non-negative; got {} for {:?}",
-                r, argv);
+            assert!(
+                r >= 0,
+                "exit code must be non-negative; got {} for {:?}",
+                r,
+                argv
+            );
         }
     }
 

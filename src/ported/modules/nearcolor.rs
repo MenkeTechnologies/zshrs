@@ -835,18 +835,38 @@ mod tests {
     /// c:41 — `deltae` always returns non-negative (sum of squares).
     #[test]
     fn deltae_always_non_negative() {
-        let a = cielab { L: -100.0, a: -50.0, b: 200.0 };
-        let b = cielab { L: 100.0, a: 50.0, b: -200.0 };
+        let a = cielab {
+            L: -100.0,
+            a: -50.0,
+            b: 200.0,
+        };
+        let b = cielab {
+            L: 100.0,
+            a: 50.0,
+            b: -200.0,
+        };
         let d = deltae(&a, &b);
-        assert!(d >= 0.0, "delta-E is sum of squares, must be ≥ 0, got {}", d);
+        assert!(
+            d >= 0.0,
+            "delta-E is sum of squares, must be ≥ 0, got {}",
+            d
+        );
     }
 
     /// c:41 — `deltae` matches the (L1-L2)^2 + (a1-a2)^2 + (b1-b2)^2
     /// formula exactly (no sqrt per c:42 comment).
     #[test]
     fn deltae_matches_sum_of_squares_formula() {
-        let a = cielab { L: 50.0, a: 0.0, b: 0.0 };
-        let b = cielab { L: 53.0, a: 4.0, b: 12.0 };
+        let a = cielab {
+            L: 50.0,
+            a: 0.0,
+            b: 0.0,
+        };
+        let b = cielab {
+            L: 53.0,
+            a: 4.0,
+            b: 12.0,
+        };
         let r = deltae(&a, &b);
         let expected = 9.0 + 16.0 + 144.0; // 3² + 4² + 12² = 169
         assert!((r - expected).abs() < 1e-9, "{} != {}", r, expected);
@@ -855,7 +875,11 @@ mod tests {
     /// c:50 — `RGBtoLAB(0,0,0)` → black: L=0, a=0, b=0.
     #[test]
     fn rgb_to_lab_black_origin() {
-        let mut lab = cielab { L: 99.0, a: 99.0, b: 99.0 };
+        let mut lab = cielab {
+            L: 99.0,
+            a: 99.0,
+            b: 99.0,
+        };
         RGBtoLAB(0, 0, 0, &mut lab);
         assert!(lab.L.abs() < 1e-3, "black L≈0, got {}", lab.L);
         assert!(lab.a.abs() < 1e-3, "black a≈0, got {}", lab.a);
@@ -865,20 +889,24 @@ mod tests {
     /// c:50 — `RGBtoLAB(255,255,255)` → white: L≈100.
     #[test]
     fn rgb_to_lab_white_has_l_near_100() {
-        let mut lab = cielab { L: 0.0, a: 0.0, b: 0.0 };
+        let mut lab = cielab {
+            L: 0.0,
+            a: 0.0,
+            b: 0.0,
+        };
         RGBtoLAB(255, 255, 255, &mut lab);
-        assert!(
-            (lab.L - 100.0).abs() < 0.5,
-            "white L≈100, got {}",
-            lab.L
-        );
+        assert!((lab.L - 100.0).abs() < 0.5, "white L≈100, got {}", lab.L);
     }
 
     /// c:50 — RGBtoLAB(R,R,R) for gray scale → a≈0, b≈0 (chromatic
     /// neutrality of pure grays).
     #[test]
     fn rgb_to_lab_gray_has_zero_chroma() {
-        let mut lab = cielab { L: 0.0, a: 99.0, b: 99.0 };
+        let mut lab = cielab {
+            L: 0.0,
+            a: 99.0,
+            b: 99.0,
+        };
         RGBtoLAB(128, 128, 128, &mut lab);
         assert!(lab.a.abs() < 1.0, "gray a≈0, got {}", lab.a);
         assert!(lab.b.abs() < 1.0, "gray b≈0, got {}", lab.b);
@@ -887,8 +915,16 @@ mod tests {
     /// c:50 — RGBtoLAB is deterministic.
     #[test]
     fn rgb_to_lab_is_deterministic() {
-        let mut lab1 = cielab { L: 0.0, a: 0.0, b: 0.0 };
-        let mut lab2 = cielab { L: 0.0, a: 0.0, b: 0.0 };
+        let mut lab1 = cielab {
+            L: 0.0,
+            a: 0.0,
+            b: 0.0,
+        };
+        let mut lab2 = cielab {
+            L: 0.0,
+            a: 0.0,
+            b: 0.0,
+        };
         RGBtoLAB(100, 150, 200, &mut lab1);
         RGBtoLAB(100, 150, 200, &mut lab2);
         assert_eq!(lab1.L, lab2.L);
@@ -900,7 +936,11 @@ mod tests {
     #[test]
     fn mapRGBto88_returns_valid_palette_index() {
         let r = mapRGBto88(0, 0, 0);
-        assert!(r >= 0 && r < 88, "88-color palette index in [0,88), got {}", r);
+        assert!(
+            r >= 0 && r < 88,
+            "88-color palette index in [0,88), got {}",
+            r
+        );
     }
 
     /// c:74 — `mapRGBto88` deterministic for fixed input.
@@ -915,7 +955,11 @@ mod tests {
     #[test]
     fn mapRGBto256_returns_valid_palette_index() {
         let r = mapRGBto256(0, 0, 0);
-        assert!(r >= 0 && r < 256, "256-color palette index in [0,256), got {}", r);
+        assert!(
+            r >= 0 && r < 256,
+            "256-color palette index in [0,256), got {}",
+            r
+        );
     }
 
     /// c:218 — `mapRGBto256` deterministic.
@@ -949,11 +993,16 @@ mod tests {
     /// c:53 — `deltae(a, a)` = 0 (reflexive).
     #[test]
     fn deltae_reflexive_for_arbitrary_colors() {
-        for (r, g, b) in [(0,0,0), (255,0,0), (128,128,128), (255,255,255)] {
+        for (r, g, b) in [(0, 0, 0), (255, 0, 0), (128, 128, 128), (255, 255, 255)] {
             let mut lab = cielab::default();
             RGBtoLAB(r, g, b, &mut lab);
-            assert_eq!(deltae(&lab, &lab), 0.0,
-                "deltae({:?}, {:?}) must be 0", (r,g,b), (r,g,b));
+            assert_eq!(
+                deltae(&lab, &lab),
+                0.0,
+                "deltae({:?}, {:?}) must be 0",
+                (r, g, b),
+                (r, g, b)
+            );
         }
     }
 
@@ -961,11 +1010,11 @@ mod tests {
     #[test]
     fn deltae_symmetric_full_sweep() {
         let pairs = [
-            ((255,0,0), (0,255,0)),
-            ((0,0,0), (128,128,128)),
-            ((255,255,255), (0,0,0)),
+            ((255, 0, 0), (0, 255, 0)),
+            ((0, 0, 0), (128, 128, 128)),
+            ((255, 255, 255), (0, 0, 0)),
         ];
-        for ((r1,g1,b1), (r2,g2,b2)) in pairs {
+        for ((r1, g1, b1), (r2, g2, b2)) in pairs {
             let mut a = cielab::default();
             let mut b = cielab::default();
             RGBtoLAB(r1, g1, b1, &mut a);
@@ -979,11 +1028,17 @@ mod tests {
     /// c:141 — `mapRGBto88` is pure (deterministic for same input).
     #[test]
     fn mapRGBto88_full_sweep_pure() {
-        for (r, g, b) in [(0,0,0), (127,127,127), (255,0,0), (255,255,255)] {
+        for (r, g, b) in [(0, 0, 0), (127, 127, 127), (255, 0, 0), (255, 255, 255)] {
             let first = mapRGBto88(r, g, b);
             for _ in 0..3 {
-                assert_eq!(mapRGBto88(r, g, b), first,
-                    "mapRGBto88({},{},{}) must be pure", r, g, b);
+                assert_eq!(
+                    mapRGBto88(r, g, b),
+                    first,
+                    "mapRGBto88({},{},{}) must be pure",
+                    r,
+                    g,
+                    b
+                );
             }
         }
     }
@@ -991,11 +1046,17 @@ mod tests {
     /// c:218 — `mapRGBto256` is pure.
     #[test]
     fn mapRGBto256_full_sweep_pure() {
-        for (r, g, b) in [(0,0,0), (127,127,127), (255,0,0), (255,255,255)] {
+        for (r, g, b) in [(0, 0, 0), (127, 127, 127), (255, 0, 0), (255, 255, 255)] {
             let first = mapRGBto256(r, g, b);
             for _ in 0..3 {
-                assert_eq!(mapRGBto256(r, g, b), first,
-                    "mapRGBto256({},{},{}) must be pure", r, g, b);
+                assert_eq!(
+                    mapRGBto256(r, g, b),
+                    first,
+                    "mapRGBto256({},{},{}) must be pure",
+                    r,
+                    g,
+                    b
+                );
             }
         }
     }
@@ -1003,38 +1064,62 @@ mod tests {
     /// c:73 — `RGBtoLAB` produces L in [0, 100] for valid sRGB input.
     #[test]
     fn rgb_to_lab_lightness_in_zero_to_hundred() {
-        for (r, g, b) in [(0,0,0), (255,0,0), (0,255,0), (0,0,255), (255,255,255)] {
+        for (r, g, b) in [
+            (0, 0, 0),
+            (255, 0, 0),
+            (0, 255, 0),
+            (0, 0, 255),
+            (255, 255, 255),
+        ] {
             let mut lab = cielab::default();
             RGBtoLAB(r, g, b, &mut lab);
-            assert!((0.0..=100.5).contains(&lab.L),
-                "L value {} out of [0, 100] for ({},{},{})", lab.L, r, g, b);
+            assert!(
+                (0.0..=100.5).contains(&lab.L),
+                "L value {} out of [0, 100] for ({},{},{})",
+                lab.L,
+                r,
+                g,
+                b
+            );
         }
     }
 
     /// c:141 — `mapRGBto88` output in [16, 88) palette range.
     #[test]
     fn mapRGBto88_output_in_palette_range() {
-        for (r, g, b) in [(0,0,0), (255,0,0), (128,128,128), (255,255,255)] {
+        for (r, g, b) in [(0, 0, 0), (255, 0, 0), (128, 128, 128), (255, 255, 255)] {
             let idx = mapRGBto88(r, g, b);
-            assert!((16..88).contains(&idx),
-                "mapRGBto88({},{},{}) = {} out of [16, 88)", r, g, b, idx);
+            assert!(
+                (16..88).contains(&idx),
+                "mapRGBto88({},{},{}) = {} out of [16, 88)",
+                r,
+                g,
+                b,
+                idx
+            );
         }
     }
 
     /// c:218 — `mapRGBto256` output in [16, 256) palette range.
     #[test]
     fn mapRGBto256_output_in_palette_range() {
-        for (r, g, b) in [(0,0,0), (255,0,0), (128,128,128), (255,255,255)] {
+        for (r, g, b) in [(0, 0, 0), (255, 0, 0), (128, 128, 128), (255, 255, 255)] {
             let idx = mapRGBto256(r, g, b);
-            assert!((16..256).contains(&idx),
-                "mapRGBto256({},{},{}) = {} out of [16, 256)", r, g, b, idx);
+            assert!(
+                (16..256).contains(&idx),
+                "mapRGBto256({},{},{}) = {} out of [16, 256)",
+                r,
+                g,
+                b,
+                idx
+            );
         }
     }
 
     /// c:73 — `RGBtoLAB` is pure (same input → same output).
     #[test]
     fn rgb_to_lab_full_sweep_is_pure() {
-        for (r, g, b) in [(0,0,0), (255,128,64), (50,50,50)] {
+        for (r, g, b) in [(0, 0, 0), (255, 128, 64), (50, 50, 50)] {
             let mut a = cielab::default();
             let mut b_lab = cielab::default();
             RGBtoLAB(r, g, b, &mut a);
@@ -1086,7 +1171,11 @@ mod tests {
     /// c:53 — `deltae(lab, lab)` of identical labs = 0 (CIE76 distance).
     #[test]
     fn deltae_identical_labs_is_zero() {
-        let lab = cielab { L: 50.0, a: 25.0, b: -10.0 };
+        let lab = cielab {
+            L: 50.0,
+            a: 25.0,
+            b: -10.0,
+        };
         let d = deltae(&lab, &lab);
         assert_eq!(d, 0.0, "deltae(x, x) = 0; got {}", d);
     }
@@ -1095,12 +1184,24 @@ mod tests {
     /// (alt-name pin to coexist with sibling test).
     #[test]
     fn deltae_symmetric_alt_pin() {
-        let p = cielab { L: 30.0, a: 10.0, b: 20.0 };
-        let q = cielab { L: 60.0, a: -5.0, b: 40.0 };
+        let p = cielab {
+            L: 30.0,
+            a: 10.0,
+            b: 20.0,
+        };
+        let q = cielab {
+            L: 60.0,
+            a: -5.0,
+            b: 40.0,
+        };
         let d_pq = deltae(&p, &q);
         let d_qp = deltae(&q, &p);
-        assert!((d_pq - d_qp).abs() < 1e-9,
-            "CIE76 ΔE must be symmetric; got {} vs {}", d_pq, d_qp);
+        assert!(
+            (d_pq - d_qp).abs() < 1e-9,
+            "CIE76 ΔE must be symmetric; got {} vs {}",
+            d_pq,
+            d_qp
+        );
     }
 
     /// c:53 — `deltae` always non-negative (distance metric invariant).
@@ -1108,11 +1209,20 @@ mod tests {
     fn deltae_non_negative_invariant() {
         for (l, a, b) in [(0.0, 0.0, 0.0), (100.0, 50.0, -50.0), (25.0, -30.0, 10.0)] {
             let x = cielab { L: l, a, b };
-            let y = cielab { L: 50.0, a: 0.0, b: 0.0 };
+            let y = cielab {
+                L: 50.0,
+                a: 0.0,
+                b: 0.0,
+            };
             let d = deltae(&x, &y);
-            assert!(d >= 0.0,
+            assert!(
+                d >= 0.0,
                 "ΔE must be ≥ 0 for any inputs; got {} from L={}/a={}/b={}",
-                d, l, a, b);
+                d,
+                l,
+                a,
+                b
+            );
         }
     }
 
@@ -1121,8 +1231,11 @@ mod tests {
     fn rgb_to_lab_black_has_zero_lightness() {
         let mut lab = cielab::default();
         RGBtoLAB(0, 0, 0, &mut lab);
-        assert!(lab.L.abs() < 0.5,
-            "black should have L ≈ 0; got L={}", lab.L);
+        assert!(
+            lab.L.abs() < 0.5,
+            "black should have L ≈ 0; got L={}",
+            lab.L
+        );
     }
 
     /// c:73 — `RGBtoLAB(255,255,255)` produces L≈100 (pure white sRGB).
@@ -1130,8 +1243,11 @@ mod tests {
     fn rgb_to_lab_white_has_lightness_near_hundred() {
         let mut lab = cielab::default();
         RGBtoLAB(255, 255, 255, &mut lab);
-        assert!((lab.L - 100.0).abs() < 0.5,
-            "white should have L ≈ 100; got L={}", lab.L);
+        assert!(
+            (lab.L - 100.0).abs() < 0.5,
+            "white should have L ≈ 100; got L={}",
+            lab.L
+        );
     }
 
     /// c:141 — `mapRGBto88` returns i32 (compile-time pin).
@@ -1151,8 +1267,11 @@ mod tests {
     #[test]
     fn mapRGBto88_black_in_palette_range() {
         let idx = mapRGBto88(0, 0, 0);
-        assert!(idx >= 16 && idx < 88,
-            "mapRGBto88(black) = {} must be in [16, 88)", idx);
+        assert!(
+            idx >= 16 && idx < 88,
+            "mapRGBto88(black) = {} must be in [16, 88)",
+            idx
+        );
     }
 
     /// c:218 — `mapRGBto256(255,255,255)` (white) returns an index
@@ -1161,8 +1280,10 @@ mod tests {
     fn mapRGBto256_black_and_white_distinct() {
         let black_idx = mapRGBto256(0, 0, 0);
         let white_idx = mapRGBto256(255, 255, 255);
-        assert_ne!(black_idx, white_idx,
-            "black and white must map to different 256-palette entries");
+        assert_ne!(
+            black_idx, white_idx,
+            "black and white must map to different 256-palette entries"
+        );
     }
 
     /// c:53 — `deltae` returns SQUARED Euclidean distance, NOT
@@ -1172,12 +1293,23 @@ mod tests {
     /// regression breaks the test loudly.
     #[test]
     fn deltae_returns_squared_distance_no_sqrt() {
-        let a = cielab { L: 0.0, a: 0.0, b: 0.0 };
-        let c = cielab { L: 100.0, a: 0.0, b: 0.0 };
+        let a = cielab {
+            L: 0.0,
+            a: 0.0,
+            b: 0.0,
+        };
+        let c = cielab {
+            L: 100.0,
+            a: 0.0,
+            b: 0.0,
+        };
         let d = deltae(&a, &c);
         // True ΔE = 100; squared = 10000.
-        assert!((d - 10000.0).abs() < 0.5,
-            "deltae must return Σ(diff²) = 10000 (NOT sqrt'd 100); got {}", d);
+        assert!(
+            (d - 10000.0).abs() < 0.5,
+            "deltae must return Σ(diff²) = 10000 (NOT sqrt'd 100); got {}",
+            d
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1189,21 +1321,40 @@ mod tests {
     /// c:53 — `deltae` returns 0 for identical inputs.
     #[test]
     fn deltae_zero_for_identical_inputs() {
-        let a = cielab { L: 50.0, a: 10.0, b: -5.0 };
+        let a = cielab {
+            L: 50.0,
+            a: 10.0,
+            b: -5.0,
+        };
         let b = a.clone();
-        assert_eq!(deltae(&a, &b), 0.0,
-            "deltae(x, x.clone()) must be exactly 0");
+        assert_eq!(
+            deltae(&a, &b),
+            0.0,
+            "deltae(x, x.clone()) must be exactly 0"
+        );
     }
 
     /// c:53 — `deltae` is symmetric (alt).
     #[test]
     fn deltae_is_symmetric_alt() {
-        let a = cielab { L: 10.0, a: 20.0, b: 30.0 };
-        let b = cielab { L: 40.0, a: 50.0, b: 60.0 };
+        let a = cielab {
+            L: 10.0,
+            a: 20.0,
+            b: 30.0,
+        };
+        let b = cielab {
+            L: 40.0,
+            a: 50.0,
+            b: 60.0,
+        };
         let d1 = deltae(&a, &b);
         let d2 = deltae(&b, &a);
-        assert!((d1 - d2).abs() < 1e-9,
-            "deltae must be symmetric, got {} vs {}", d1, d2);
+        assert!(
+            (d1 - d2).abs() < 1e-9,
+            "deltae must be symmetric, got {} vs {}",
+            d1,
+            d2
+        );
     }
 
     /// c:53 — `deltae` is non-negative.
@@ -1214,17 +1365,28 @@ mod tests {
             ((50.0, -50.0, 50.0), (0.0, 0.0, 0.0)),
             ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)),
         ] {
-            let p = cielab { L: l1, a: a1, b: b1 };
-            let q = cielab { L: l2, a: a2, b: b2 };
-            assert!(deltae(&p, &q) >= 0.0,
-                "deltae must be ≥ 0");
+            let p = cielab {
+                L: l1,
+                a: a1,
+                b: b1,
+            };
+            let q = cielab {
+                L: l2,
+                a: a2,
+                b: b2,
+            };
+            assert!(deltae(&p, &q) >= 0.0, "deltae must be ≥ 0");
         }
     }
 
     /// c:73 — `RGBtoLAB(0,0,0,&lab)` → L=0 (black).
     #[test]
     fn rgb_to_lab_black_is_l_zero() {
-        let mut lab = cielab { L: -1.0, a: -1.0, b: -1.0 };
+        let mut lab = cielab {
+            L: -1.0,
+            a: -1.0,
+            b: -1.0,
+        };
         RGBtoLAB(0, 0, 0, &mut lab);
         assert!(lab.L.abs() < 1.0, "black must produce L≈0, got {}", lab.L);
     }
@@ -1233,33 +1395,51 @@ mod tests {
     /// is 0..255 per c:50 `R = red / 255.0`.
     #[test]
     fn rgb_to_lab_white_is_l_one_hundred() {
-        let mut lab = cielab { L: 0.0, a: 0.0, b: 0.0 };
+        let mut lab = cielab {
+            L: 0.0,
+            a: 0.0,
+            b: 0.0,
+        };
         RGBtoLAB(255, 255, 255, &mut lab);
-        assert!((lab.L - 100.0).abs() < 1.0,
-            "white must produce L≈100, got {}", lab.L);
+        assert!(
+            (lab.L - 100.0).abs() < 1.0,
+            "white must produce L≈100, got {}",
+            lab.L
+        );
     }
 
     /// c:141 — `mapRGBto88` for black (0,0,0) returns valid index in 0..88.
     #[test]
     fn map_rgb_to_88_black_in_range() {
         let i = mapRGBto88(0, 0, 0);
-        assert!((0..88).contains(&i),
-            "mapRGBto88(0,0,0) = {} must be in 0..88", i);
+        assert!(
+            (0..88).contains(&i),
+            "mapRGBto88(0,0,0) = {} must be in 0..88",
+            i
+        );
     }
 
     /// c:218 — `mapRGBto256` for black returns valid index in 0..256.
     #[test]
     fn map_rgb_to_256_black_in_range() {
         let i = mapRGBto256(0, 0, 0);
-        assert!((0..256).contains(&i),
-            "mapRGBto256(0,0,0) = {} must be in 0..256", i);
+        assert!(
+            (0..256).contains(&i),
+            "mapRGBto256(0,0,0) = {} must be in 0..256",
+            i
+        );
     }
 
     /// c:141/218 — both map fns are deterministic.
     #[test]
     fn map_rgb_functions_deterministic() {
-        for (r, g, b) in [(0, 0, 0), (255, 0, 0), (0, 255, 0), (0, 0, 255),
-                          (128, 128, 128)] {
+        for (r, g, b) in [
+            (0, 0, 0),
+            (255, 0, 0),
+            (0, 255, 0),
+            (0, 0, 255),
+            (128, 128, 128),
+        ] {
             let a1 = mapRGBto88(r, g, b);
             let a2 = mapRGBto88(r, g, b);
             assert_eq!(a1, a2);

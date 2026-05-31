@@ -731,8 +731,13 @@ mod tests {
             (vec!["a*", ""], 0),
         ] {
             let r = crate::regex_module::zcond_regex_match(&args, id);
-            assert!(r == 0 || r == 1,
-                "zcond_regex_match({:?}, {}) = {} not in {{0,1}}", args, id, r);
+            assert!(
+                r == 0 || r == 1,
+                "zcond_regex_match({:?}, {}) = {} not in {{0,1}}",
+                args,
+                id,
+                r
+            );
         }
     }
 
@@ -748,8 +753,13 @@ mod tests {
         ] {
             let first = crate::regex_module::zcond_regex_match(&args, id);
             for _ in 0..5 {
-                assert_eq!(crate::regex_module::zcond_regex_match(&args, id), first,
-                    "({:?}, {}) must be deterministic", args, id);
+                assert_eq!(
+                    crate::regex_module::zcond_regex_match(&args, id),
+                    first,
+                    "({:?}, {}) must be deterministic",
+                    args,
+                    id
+                );
             }
         }
     }
@@ -844,8 +854,7 @@ mod tests {
     #[test]
     fn zcond_regex_match_anchored_alpha_matches() {
         let _g = crate::test_util::global_state_lock();
-        let r = crate::regex_module::zcond_regex_match(
-            &["^abc", "abcdef"], 0);
+        let r = crate::regex_module::zcond_regex_match(&["^abc", "abcdef"], 0);
         assert!(r == 0 || r == 1, "result is boolean i32");
     }
 
@@ -857,8 +866,7 @@ mod tests {
     #[ignore = "ZSHRS BUG: case-insensitive when flags=0; C is case-sensitive default (regex.c:58)"]
     fn zcond_regex_match_case_sensitive_by_default() {
         let _g = crate::test_util::global_state_lock();
-        let mismatch = crate::regex_module::zcond_regex_match(
-            &["abc", "ABC"], 0);
+        let mismatch = crate::regex_module::zcond_regex_match(&["abc", "ABC"], 0);
         assert_eq!(mismatch, 0, "abc !~ ABC by default");
     }
 
@@ -866,8 +874,7 @@ mod tests {
     #[test]
     fn zcond_regex_match_empty_pattern_matches_empty_value() {
         let _g = crate::test_util::global_state_lock();
-        let r = crate::regex_module::zcond_regex_match(
-            &["", ""], 0);
+        let r = crate::regex_module::zcond_regex_match(&["", ""], 0);
         // Empty regex matches everything per PCRE; pin behavior either way.
         assert!(r == 0 || r == 1, "result is boolean i32");
     }
@@ -890,8 +897,7 @@ mod tests {
     #[test]
     fn zcond_regex_match_digit_class_matches() {
         let _g = crate::test_util::global_state_lock();
-        let r = crate::regex_module::zcond_regex_match(
-            &["[0-9]+", "123abc"], 0);
+        let r = crate::regex_module::zcond_regex_match(&["[0-9]+", "123abc"], 0);
         assert!(r == 0 || r == 1);
     }
 
@@ -899,8 +905,7 @@ mod tests {
     #[test]
     fn zcond_regex_match_no_match_returns_zero_pin() {
         let _g = crate::test_util::global_state_lock();
-        let r = crate::regex_module::zcond_regex_match(
-            &["xyz", "abc"], 0);
+        let r = crate::regex_module::zcond_regex_match(&["xyz", "abc"], 0);
         assert_eq!(r, 0, "xyz not in abc → 0");
     }
 
@@ -908,8 +913,7 @@ mod tests {
     #[test]
     fn zcond_regex_match_full_equal_matches() {
         let _g = crate::test_util::global_state_lock();
-        let r = crate::regex_module::zcond_regex_match(
-            &["^abc$", "abc"], 0);
+        let r = crate::regex_module::zcond_regex_match(&["^abc$", "abc"], 0);
         // Pin: result in {0,1}
         assert!(r == 0 || r == 1);
     }
@@ -918,8 +922,7 @@ mod tests {
     #[test]
     fn zcond_regex_match_dot_matches_single() {
         let _g = crate::test_util::global_state_lock();
-        let r = crate::regex_module::zcond_regex_match(
-            &[".", "a"], 0);
+        let r = crate::regex_module::zcond_regex_match(&[".", "a"], 0);
         assert!(r == 0 || r == 1);
     }
 
@@ -932,21 +935,20 @@ mod tests {
     #[test]
     fn zcond_regex_match_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: i32 = crate::regex_module::zcond_regex_match(
-            &[".", "a"], 0);
+        let _: i32 = crate::regex_module::zcond_regex_match(&[".", "a"], 0);
     }
 
     /// c:58 — `zcond_regex_match` is deterministic for the same input.
     #[test]
     fn zcond_regex_match_deterministic_for_simple_pattern() {
         let _g = crate::test_util::global_state_lock();
-        let first = crate::regex_module::zcond_regex_match(
-            &["abc", "abcdef"], 0);
+        let first = crate::regex_module::zcond_regex_match(&["abc", "abcdef"], 0);
         for _ in 0..5 {
             assert_eq!(
                 crate::regex_module::zcond_regex_match(&["abc", "abcdef"], 0),
                 first,
-                "zcond_regex_match must be pure across calls");
+                "zcond_regex_match must be pure across calls"
+            );
         }
     }
 
@@ -961,10 +963,14 @@ mod tests {
             ("^foo", "foobar"),
             (".+", ""),
         ] {
-            let r = crate::regex_module::zcond_regex_match(
-                &[pair.0, pair.1], 0);
-            assert!(r == 0 || r == 1,
-                "regex match ({:?}, {:?}) → {} not in 0/1", pair.0, pair.1, r);
+            let r = crate::regex_module::zcond_regex_match(&[pair.0, pair.1], 0);
+            assert!(
+                r == 0 || r == 1,
+                "regex match ({:?}, {:?}) → {} not in 0/1",
+                pair.0,
+                pair.1,
+                r
+            );
         }
     }
 
@@ -990,8 +996,7 @@ mod tests {
     fn zcond_regex_match_malformed_pattern_no_panic() {
         let _g = crate::test_util::global_state_lock();
         for bad in &["[", "(", "*", "+", "(?", "[a-"] {
-            let _ = crate::regex_module::zcond_regex_match(
-                &[bad, "input"], 0);
+            let _ = crate::regex_module::zcond_regex_match(&[bad, "input"], 0);
         }
     }
 
@@ -1026,8 +1031,16 @@ mod tests {
         let mut v: Vec<String> = Vec::new();
         let mut e: Option<Vec<i32>> = None;
         assert_eq!(crate::regex_module::setup_(null), 0, "c:215 setup_");
-        assert_eq!(crate::regex_module::features_(null, &mut v), 0, "c:222 features_");
-        assert_eq!(crate::regex_module::enables_(null, &mut e), 0, "c:228 enables_");
+        assert_eq!(
+            crate::regex_module::features_(null, &mut v),
+            0,
+            "c:222 features_"
+        );
+        assert_eq!(
+            crate::regex_module::enables_(null, &mut e),
+            0,
+            "c:228 enables_"
+        );
         assert_eq!(crate::regex_module::boot_(null), 0, "c:234 boot_");
         assert_eq!(crate::regex_module::cleanup_(null), 0, "c:242 cleanup_");
         assert_eq!(crate::regex_module::finish_(null), 0, "c:248 finish_");

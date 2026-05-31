@@ -730,11 +730,7 @@ mod tests {
     #[test]
     fn strmetasort_backwards_reverses_lex_order() {
         let _g = crate::test_util::global_state_lock();
-        let mut arr = vec![
-            "alpha".to_string(),
-            "beta".to_string(),
-            "gamma".to_string(),
-        ];
+        let mut arr = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
         strmetasort(&mut arr, SORTIT_BACKWARDS as u32, None);
         assert_eq!(arr, vec!["gamma", "beta", "alpha"]);
     }
@@ -825,11 +821,7 @@ mod tests {
     #[test]
     fn strmetasort_already_sorted_is_idempotent() {
         let _g = crate::test_util::global_state_lock();
-        let mut arr = vec![
-            "alpha".to_string(),
-            "beta".to_string(),
-            "gamma".to_string(),
-        ];
+        let mut arr = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
         let expected = arr.clone();
         strmetasort(&mut arr, 0, None);
         assert_eq!(arr, expected);
@@ -839,11 +831,7 @@ mod tests {
     #[test]
     fn strmetasort_numeric_sorts_by_value() {
         let _g = crate::test_util::global_state_lock();
-        let mut arr = vec![
-            "100".to_string(),
-            "20".to_string(),
-            "3".to_string(),
-        ];
+        let mut arr = vec!["100".to_string(), "20".to_string(), "3".to_string()];
         strmetasort(
             &mut arr,
             (SORTIT_NUMERICALLY | SORTIT_NUMERICALLY_SIGNED) as u32,
@@ -856,11 +844,7 @@ mod tests {
     #[test]
     fn strmetasort_numeric_backwards_descends() {
         let _g = crate::test_util::global_state_lock();
-        let mut arr = vec![
-            "1".to_string(),
-            "10".to_string(),
-            "2".to_string(),
-        ];
+        let mut arr = vec!["1".to_string(), "10".to_string(), "2".to_string()];
         strmetasort(
             &mut arr,
             (SORTIT_NUMERICALLY | SORTIT_NUMERICALLY_SIGNED | SORTIT_BACKWARDS) as u32,
@@ -878,25 +862,30 @@ mod tests {
     #[test]
     fn zstrcmp_reflexive_full_sweep() {
         for s in ["", "a", "abc", "1", "100", "Hello World", "日本"] {
-            assert_eq!(zstrcmp(s, s, 0), Ordering::Equal,
-                "zstrcmp({:?}, {:?}) must be Equal", s, s);
+            assert_eq!(
+                zstrcmp(s, s, 0),
+                Ordering::Equal,
+                "zstrcmp({:?}, {:?}) must be Equal",
+                s,
+                s
+            );
         }
     }
 
     /// c:114 — `zstrcmp` is antisymmetric: if a<b then b>a.
     #[test]
     fn zstrcmp_antisymmetric() {
-        let pairs = [
-            ("a", "b"),
-            ("apple", "banana"),
-            ("", "x"),
-            ("abc", "abd"),
-        ];
+        let pairs = [("a", "b"), ("apple", "banana"), ("", "x"), ("abc", "abd")];
         for (a, b) in pairs {
             let ab = zstrcmp(a, b, 0);
             let ba = zstrcmp(b, a, 0);
-            assert_eq!(ab.reverse(), ba,
-                "zstrcmp must be antisymmetric for ({:?}, {:?})", a, b);
+            assert_eq!(
+                ab.reverse(),
+                ba,
+                "zstrcmp must be antisymmetric for ({:?}, {:?})",
+                a,
+                b
+            );
         }
     }
 
@@ -906,8 +895,13 @@ mod tests {
         for (a, b) in [("foo", "bar"), ("a", "z"), ("100", "20")] {
             let first = zstrcmp(a, b, 0);
             for _ in 0..5 {
-                assert_eq!(zstrcmp(a, b, 0), first,
-                    "zstrcmp({:?}, {:?}) must be deterministic", a, b);
+                assert_eq!(
+                    zstrcmp(a, b, 0),
+                    first,
+                    "zstrcmp({:?}, {:?}) must be deterministic",
+                    a,
+                    b
+                );
             }
         }
     }
@@ -916,20 +910,26 @@ mod tests {
     /// (007 != 7 in zsh — uses string comparison after numeric prefix consumed).
     #[test]
     fn zstrcmp_numeric_leading_zeros_string_compare() {
-        let r = zstrcmp("007", "7", (SORTIT_NUMERICALLY | SORTIT_NUMERICALLY_SIGNED) as u32);
+        let r = zstrcmp(
+            "007",
+            "7",
+            (SORTIT_NUMERICALLY | SORTIT_NUMERICALLY_SIGNED) as u32,
+        );
         // zsh numeric mode compares the digit-runs as numbers first, but
         // ties fall through to lex; "007" vs "7" both equal numeric 7 yet
         // lex-order differs by leading zeros → non-Equal.
-        assert_ne!(r, Ordering::Equal,
-            "007 vs 7 differ after numeric tie via lex fallback");
+        assert_ne!(
+            r,
+            Ordering::Equal,
+            "007 vs 7 differ after numeric tie via lex fallback"
+        );
     }
 
     /// c:114 — `zstrcmp` flag-0 (lex mode) is case-sensitive.
     #[test]
     fn zstrcmp_lex_mode_case_sensitive() {
         let r = zstrcmp("abc", "ABC", 0);
-        assert_ne!(r, Ordering::Equal,
-            "lex mode must distinguish ABC from abc");
+        assert_ne!(r, Ordering::Equal, "lex mode must distinguish ABC from abc");
     }
 
     /// c:283 — `strmetasort` empty array is no-op.
@@ -954,7 +954,10 @@ mod tests {
     #[test]
     fn strmetasort_double_sort_idempotent_full_sweep() {
         let _g = crate::test_util::global_state_lock();
-        let mut arr = vec!["c", "a", "b", "d"].iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let mut arr = vec!["c", "a", "b", "d"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
         strmetasort(&mut arr, 0, None);
         let after_first = arr.clone();
         strmetasort(&mut arr, 0, None);
@@ -978,8 +981,7 @@ mod tests {
         };
         let first = eltpcmp(&a, &b, 0);
         for _ in 0..5 {
-            assert_eq!(eltpcmp(&a, &b, 0), first,
-                "eltpcmp must be deterministic");
+            assert_eq!(eltpcmp(&a, &b, 0), first, "eltpcmp must be deterministic");
         }
     }
 
@@ -991,29 +993,62 @@ mod tests {
     /// c:55 — `eltpcmp` returns Ordering (compile-time pin).
     #[test]
     fn eltpcmp_returns_ordering_type() {
-        let a = sortelt { orig: "a".into(), cmp: "a".into(), origlen: 1, len: 1 };
-        let b = sortelt { orig: "b".into(), cmp: "b".into(), origlen: 1, len: 1 };
+        let a = sortelt {
+            orig: "a".into(),
+            cmp: "a".into(),
+            origlen: 1,
+            len: 1,
+        };
+        let b = sortelt {
+            orig: "b".into(),
+            cmp: "b".into(),
+            origlen: 1,
+            len: 1,
+        };
         let _: Ordering = eltpcmp(&a, &b, 0);
     }
 
     /// c:55 — `eltpcmp(a, a, _)` (same element) returns Equal.
     #[test]
     fn eltpcmp_same_element_returns_equal() {
-        let a = sortelt { orig: "x".into(), cmp: "x".into(), origlen: 1, len: 1 };
-        assert_eq!(eltpcmp(&a, &a, 0), Ordering::Equal,
-            "comparing element with itself must return Equal");
+        let a = sortelt {
+            orig: "x".into(),
+            cmp: "x".into(),
+            origlen: 1,
+            len: 1,
+        };
+        assert_eq!(
+            eltpcmp(&a, &a, 0),
+            Ordering::Equal,
+            "comparing element with itself must return Equal"
+        );
     }
 
     /// c:55 — `eltpcmp(a, b, _)` and `eltpcmp(b, a, _)` are opposites
     /// (antisymmetry property of cmp functions).
     #[test]
     fn eltpcmp_antisymmetric() {
-        let a = sortelt { orig: "a".into(), cmp: "a".into(), origlen: 1, len: 1 };
-        let b = sortelt { orig: "b".into(), cmp: "b".into(), origlen: 1, len: 1 };
+        let a = sortelt {
+            orig: "a".into(),
+            cmp: "a".into(),
+            origlen: 1,
+            len: 1,
+        };
+        let b = sortelt {
+            orig: "b".into(),
+            cmp: "b".into(),
+            origlen: 1,
+            len: 1,
+        };
         let ab = eltpcmp(&a, &b, 0);
         let ba = eltpcmp(&b, &a, 0);
-        assert_eq!(ab.reverse(), ba,
-            "cmp(a,b) must be reverse of cmp(b,a); got {:?} vs {:?}", ab, ba);
+        assert_eq!(
+            ab.reverse(),
+            ba,
+            "cmp(a,b) must be reverse of cmp(b,a); got {:?} vs {:?}",
+            ab,
+            ba
+        );
     }
 
     /// c:114 — `zstrcmp` returns Ordering (compile-time pin).
@@ -1032,8 +1067,13 @@ mod tests {
     #[test]
     fn zstrcmp_identity_returns_equal() {
         for s in ["", "a", "abc", "hello world", "日本"] {
-            assert_eq!(zstrcmp(s, s, 0), Ordering::Equal,
-                "identity zstrcmp({:?}, {:?}, 0) must be Equal", s, s);
+            assert_eq!(
+                zstrcmp(s, s, 0),
+                Ordering::Equal,
+                "identity zstrcmp({:?}, {:?}, 0) must be Equal",
+                s,
+                s
+            );
         }
     }
 
@@ -1043,9 +1083,15 @@ mod tests {
         for (a, b) in &[("a", "b"), ("abc", "abd"), ("", "x"), ("xy", "x")] {
             let ab = zstrcmp(a, b, 0);
             let ba = zstrcmp(b, a, 0);
-            assert_eq!(ab.reverse(), ba,
+            assert_eq!(
+                ab.reverse(),
+                ba,
                 "antisymmetry: zstrcmp({:?},{:?}) = {:?} ≠ reverse({:?})",
-                a, b, ab, ba);
+                a,
+                b,
+                ab,
+                ba
+            );
         }
     }
 
@@ -1101,31 +1147,50 @@ mod tests {
     /// `Src/zsh.h:2993` — SORTIT_* (excluding sentinel) are pairwise distinct.
     #[test]
     fn sortit_flags_pairwise_distinct() {
-        let bits = [SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY,
-                    SORTIT_NUMERICALLY_SIGNED, SORTIT_BACKWARDS,
-                    SORTIT_IGNORING_BACKSLASHES, SORTIT_SOMEHOW];
+        let bits = [
+            SORTIT_IGNORING_CASE,
+            SORTIT_NUMERICALLY,
+            SORTIT_NUMERICALLY_SIGNED,
+            SORTIT_BACKWARDS,
+            SORTIT_IGNORING_BACKSLASHES,
+            SORTIT_SOMEHOW,
+        ];
         let unique: std::collections::HashSet<_> = bits.iter().copied().collect();
-        assert_eq!(unique.len(), bits.len(),
-            "SORTIT_* flags must be pairwise distinct");
+        assert_eq!(
+            unique.len(),
+            bits.len(),
+            "SORTIT_* flags must be pairwise distinct"
+        );
     }
 
     /// `Src/zsh.h:2993` — every non-sentinel SORTIT_* is a single bit.
     #[test]
     fn sortit_flags_all_powers_of_two() {
-        for v in [SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY,
-                  SORTIT_NUMERICALLY_SIGNED, SORTIT_BACKWARDS,
-                  SORTIT_IGNORING_BACKSLASHES, SORTIT_SOMEHOW] {
-            assert!((v as u32).is_power_of_two(),
-                "SORTIT_* {} must be single bit", v);
+        for v in [
+            SORTIT_IGNORING_CASE,
+            SORTIT_NUMERICALLY,
+            SORTIT_NUMERICALLY_SIGNED,
+            SORTIT_BACKWARDS,
+            SORTIT_IGNORING_BACKSLASHES,
+            SORTIT_SOMEHOW,
+        ] {
+            assert!(
+                (v as u32).is_power_of_two(),
+                "SORTIT_* {} must be single bit",
+                v
+            );
         }
     }
 
     /// `Src/zsh.h:2993` — SORTIT_* OR covers bits 0..=5 (63).
     #[test]
     fn sortit_flags_or_covers_low_6_bits() {
-        let or_all = SORTIT_IGNORING_CASE | SORTIT_NUMERICALLY
-            | SORTIT_NUMERICALLY_SIGNED | SORTIT_BACKWARDS
-            | SORTIT_IGNORING_BACKSLASHES | SORTIT_SOMEHOW;
+        let or_all = SORTIT_IGNORING_CASE
+            | SORTIT_NUMERICALLY
+            | SORTIT_NUMERICALLY_SIGNED
+            | SORTIT_BACKWARDS
+            | SORTIT_IGNORING_BACKSLASHES
+            | SORTIT_SOMEHOW;
         assert_eq!(or_all, 63, "SORTIT_* must cover bits 0..=5");
     }
 
@@ -1133,8 +1198,13 @@ mod tests {
     #[test]
     fn zstrcmp_reflexive_non_empty() {
         for s in ["a", "abc", "  ", "hello world"] {
-            assert_eq!(zstrcmp(s, s, 0), Ordering::Equal,
-                "zstrcmp({:?}, {:?}, 0) must be Equal", s, s);
+            assert_eq!(
+                zstrcmp(s, s, 0),
+                Ordering::Equal,
+                "zstrcmp({:?}, {:?}, 0) must be Equal",
+                s,
+                s
+            );
         }
     }
 
@@ -1145,8 +1215,10 @@ mod tests {
     fn zstrcmp_does_not_honor_backwards_flag() {
         let normal = zstrcmp("a", "b", 0);
         let with_back = zstrcmp("a", "b", SORTIT_BACKWARDS as u32);
-        assert_eq!(normal, with_back,
-            "zstrcmp must not invert on BACKWARDS — that's eltpcmp's job");
+        assert_eq!(
+            normal, with_back,
+            "zstrcmp must not invert on BACKWARDS — that's eltpcmp's job"
+        );
     }
 
     /// c:114 — `zstrcmp` does NOT honor SORTIT_IGNORING_CASE; case
@@ -1156,27 +1228,43 @@ mod tests {
     fn zstrcmp_does_not_honor_ignoring_case_flag() {
         let no_flag = zstrcmp("ABC", "abc", 0);
         let with_flag = zstrcmp("ABC", "abc", SORTIT_IGNORING_CASE as u32);
-        assert_eq!(no_flag, with_flag,
-            "zstrcmp must not case-fold; flag is no-op at this level");
+        assert_eq!(
+            no_flag, with_flag,
+            "zstrcmp must not case-fold; flag is no-op at this level"
+        );
     }
 
     /// c:114 — `zstrcmp` numeric flag orders "2" < "10" (not lex).
     #[test]
     fn zstrcmp_numeric_orders_two_before_ten() {
         let r = zstrcmp("2", "10", SORTIT_NUMERICALLY as u32);
-        assert_eq!(r, Ordering::Less,
-            "numeric sort: 2 < 10 (lex would say 1 < 2)");
+        assert_eq!(
+            r,
+            Ordering::Less,
+            "numeric sort: 2 < 10 (lex would say 1 < 2)"
+        );
     }
 
     /// c:283 — `strmetasort` sorts longer corpus correctly.
     #[test]
     fn strmetasort_corpus_round_trip() {
         let _g = crate::test_util::global_state_lock();
-        let mut arr: Vec<String> = vec!["zebra".into(), "apple".into(),
-                                         "mango".into(), "banana".into()];
+        let mut arr: Vec<String> = vec![
+            "zebra".into(),
+            "apple".into(),
+            "mango".into(),
+            "banana".into(),
+        ];
         strmetasort(&mut arr, 0, None);
-        assert_eq!(arr, vec!["apple".to_string(), "banana".into(),
-                              "mango".into(), "zebra".into()]);
+        assert_eq!(
+            arr,
+            vec![
+                "apple".to_string(),
+                "banana".into(),
+                "mango".into(),
+                "zebra".into()
+            ]
+        );
     }
 
     /// c:283 — `strmetasort` empty input doesn't panic.

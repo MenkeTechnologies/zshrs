@@ -1536,7 +1536,10 @@ mod tests {
     fn utmp_user_zeroed_returns_empty() {
         let _g = crate::test_util::global_state_lock();
         let u: libc::utmpx = unsafe { std::mem::zeroed() };
-        assert!(utmp_user(&u).is_empty(), "zero-initialized utmpx has empty user");
+        assert!(
+            utmp_user(&u).is_empty(),
+            "zero-initialized utmpx has empty user"
+        );
     }
 
     /// c:828 — `utmp_line` on default-zeroed utmpx returns empty.
@@ -1619,8 +1622,13 @@ mod tests {
         ] {
             let first = watchlog_match(p, v);
             for _ in 0..5 {
-                assert_eq!(watchlog_match(p, v), first,
-                    "({:?}, {:?}) must be deterministic", p, v);
+                assert_eq!(
+                    watchlog_match(p, v),
+                    first,
+                    "({:?}, {:?}) must be deterministic",
+                    p,
+                    v
+                );
             }
         }
     }
@@ -1628,8 +1636,7 @@ mod tests {
     /// c:262 — `watchlog_match` empty pattern doesn't match non-empty value.
     #[test]
     fn watchlog_match_empty_pattern_rejects_nonempty() {
-        assert!(!watchlog_match("", "x"),
-            "empty pattern must NOT match 'x'");
+        assert!(!watchlog_match("", "x"), "empty pattern must NOT match 'x'");
     }
 
     /// c:385 — `ucmp` returns 0 for self (reflexive).

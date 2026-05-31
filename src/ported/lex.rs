@@ -5333,12 +5333,7 @@ mod tests {
             let ch = c as char;
             let first = lextok2_get(ch);
             for _ in 0..5 {
-                assert_eq!(
-                    lextok2_get(ch),
-                    first,
-                    "lextok2_get({:?}) must be pure",
-                    ch
-                );
+                assert_eq!(lextok2_get(ch), first, "lextok2_get({:?}) must be pure", ch);
             }
         }
     }
@@ -5407,8 +5402,7 @@ mod tests {
             let ch = b as char;
             let first = lexact1_get(ch);
             for _ in 0..3 {
-                assert_eq!(lexact1_get(ch), first,
-                    "lexact1_get({:?}) must be pure", ch);
+                assert_eq!(lexact1_get(ch), first, "lexact1_get({:?}) must be pure", ch);
             }
         }
     }
@@ -5421,8 +5415,7 @@ mod tests {
             let ch = b as char;
             let first = lexact2_get(ch);
             for _ in 0..3 {
-                assert_eq!(lexact2_get(ch), first,
-                    "lexact2_get({:?}) must be pure", ch);
+                assert_eq!(lexact2_get(ch), first, "lexact2_get({:?}) must be pure", ch);
             }
         }
     }
@@ -5549,8 +5542,7 @@ mod tests {
         for s in ["", "abc", "abc def", "x\u{84}y", "\u{9c}"] {
             let first = has_token(s);
             for _ in 0..3 {
-                assert_eq!(has_token(s), first,
-                    "has_token({:?}) must be pure", s);
+                assert_eq!(has_token(s), first, "has_token({:?}) must be pure", s);
             }
         }
     }
@@ -5561,8 +5553,7 @@ mod tests {
         for s in ["", "abc", "hello world", "no tokens here"] {
             let first = untokenize(s);
             for _ in 0..3 {
-                assert_eq!(untokenize(s), first,
-                    "untokenize({:?}) must be pure", s);
+                assert_eq!(untokenize(s), first, "untokenize({:?}) must be pure", s);
             }
         }
     }

@@ -3926,8 +3926,12 @@ mod tests {
         for s in ["", "01", "01;31", "01;32:something"] {
             let first = getcolval(s, 0);
             for _ in 0..3 {
-                assert_eq!(getcolval(s, 0), first,
-                    "getcolval({:?}, 0) must be deterministic", s);
+                assert_eq!(
+                    getcolval(s, 0),
+                    first,
+                    "getcolval({:?}, 0) must be deterministic",
+                    s
+                );
             }
         }
     }
@@ -4163,14 +4167,18 @@ mod tests {
     #[test]
     fn zcoff_idempotent_10_call_alt() {
         let _g = crate::test_util::global_state_lock();
-        for _ in 0..10 { zcoff(); }
+        for _ in 0..10 {
+            zcoff();
+        }
     }
 
     /// c:551 — `cleareol` is idempotent (alt 10-call).
     #[test]
     fn cleareol_idempotent_10_call_alt() {
         let _g = crate::test_util::global_state_lock();
-        for _ in 0..10 { cleareol(); }
+        for _ in 0..10 {
+            cleareol();
+        }
     }
 
     /// c:739 — `clprintfmt("", 0)` empty format returns i32.

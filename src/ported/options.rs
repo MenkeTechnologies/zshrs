@@ -2649,8 +2649,11 @@ mod tests {
     fn optlookup_unknown_returns_non_positive() {
         let _g = crate::test_util::global_state_lock();
         let r = optlookup("__definitely_not_a_real_option_xyz123__");
-        assert!(r <= 0,
-            "unknown option must return sentinel (0 or negative); got {}", r);
+        assert!(
+            r <= 0,
+            "unknown option must return sentinel (0 or negative); got {}",
+            r
+        );
     }
 
     /// c:594 — `optlookup` is deterministic for any name.
@@ -2660,8 +2663,7 @@ mod tests {
         for n in &["nounset", "errexit", "xtrace", "__bogus__", ""] {
             let first = optlookup(n);
             for _ in 0..5 {
-                assert_eq!(optlookup(n), first,
-                    "optlookup({:?}) must be pure", n);
+                assert_eq!(optlookup(n), first, "optlookup({:?}) must be pure", n);
             }
         }
     }
@@ -2688,8 +2690,7 @@ mod tests {
         for c in ['e', 'x', 'u', 'a', '\0', 'Z'] {
             let first = optlookupc(c);
             for _ in 0..3 {
-                assert_eq!(optlookupc(c), first,
-                    "optlookupc({:?}) must be pure", c);
+                assert_eq!(optlookupc(c), first, "optlookupc({:?}) must be pure", c);
             }
         }
     }
@@ -2707,8 +2708,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = dashgetfn();
         for _ in 0..5 {
-            assert_eq!(dashgetfn(), first,
-                "dashgetfn must be pure across calls");
+            assert_eq!(dashgetfn(), first, "dashgetfn must be pure across calls");
         }
     }
 
@@ -2723,8 +2723,11 @@ mod tests {
     #[test]
     fn opt_state_get_empty_name_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(opt_state_get(""), None,
-            "empty option name must return None (not a known option)");
+        assert_eq!(
+            opt_state_get(""),
+            None,
+            "empty option name must return None (not a known option)"
+        );
     }
 
     /// c:1860 — `opt_state_len` returns usize (compile-time pin).
@@ -2873,8 +2876,10 @@ mod tests {
         let snap1 = opt_state_snapshot();
         opt_state_restore(snap1.clone());
         let snap2 = opt_state_snapshot();
-        assert_eq!(snap1, snap2,
-            "snapshot/restore round-trip must preserve entries");
+        assert_eq!(
+            snap1, snap2,
+            "snapshot/restore round-trip must preserve entries"
+        );
     }
 
     /// c:1860 — `opt_state_len` returns usize and equals snapshot size.
@@ -2883,9 +2888,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let len = opt_state_len();
         let snap = opt_state_snapshot();
-        assert_eq!(len, snap.len(),
+        assert_eq!(
+            len,
+            snap.len(),
             "opt_state_len ({}) must match snapshot.len ({})",
-            len, snap.len());
+            len,
+            snap.len()
+        );
     }
 
     /// c:1502 — `defset` returns bool (compile-time pin).

@@ -1166,10 +1166,12 @@ mod tests {
     fn linknodebystring_case_sensitive() {
         let mut l: LinkList<String> = LinkList::new();
         l.push_back("APPLE".to_string());
-        assert_eq!(linknodebystring(&l, "apple"), None,
-            "case mismatch must miss");
-        assert!(linknodebystring(&l, "APPLE").is_some(),
-            "exact case match");
+        assert_eq!(
+            linknodebystring(&l, "apple"),
+            None,
+            "case mismatch must miss"
+        );
+        assert!(linknodebystring(&l, "APPLE").is_some(), "exact case match");
     }
 
     /// c:386 — `linknodebydatum` for absent value returns None.
@@ -1300,8 +1302,11 @@ mod tests {
         joinlists(&mut b2, &mut c2);
         joinlists(&mut a2, &mut b2);
 
-        assert_eq!(a1.len(), a2.len(),
-            "joinlists associative: (a+b)+c.len = a+(b+c).len");
+        assert_eq!(
+            a1.len(),
+            a2.len(),
+            "joinlists associative: (a+b)+c.len = a+(b+c).len"
+        );
     }
 
     /// c:382 — `rolllist` on 1-element list is no-op for any index.
@@ -1390,8 +1395,12 @@ mod tests {
             for i in 0..n {
                 l.push_back(i as i32);
             }
-            assert_eq!(countlinknodes(&l), l.len(),
-                "countlinknodes must equal list.len() for n={}", n);
+            assert_eq!(
+                countlinknodes(&l),
+                l.len(),
+                "countlinknodes must equal list.len() for n={}",
+                n
+            );
         }
     }
 
@@ -1422,8 +1431,7 @@ mod tests {
         let mut l: LinkList<i32> = LinkList::new();
         l.push_back(1);
         l.push_back(2);
-        assert!(linknodebydatum(&l, &999).is_none(),
-            "missing datum → None");
+        assert!(linknodebydatum(&l, &999).is_none(), "missing datum → None");
     }
 
     /// c:429 — `linknodebystring("")` empty needle is deterministic.
@@ -1433,8 +1441,11 @@ mod tests {
         l.push_back("foo".to_string());
         let a = linknodebystring(&l, "");
         let b = linknodebystring(&l, "");
-        assert_eq!(a.is_some(), b.is_some(),
-            "linknodebystring('') must be deterministic");
+        assert_eq!(
+            a.is_some(),
+            b.is_some(),
+            "linknodebystring('') must be deterministic"
+        );
     }
 
     /// c:436 — `hlinklist2array` returns Vec<String> (compile-time pin).

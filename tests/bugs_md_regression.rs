@@ -8,8 +8,11 @@
 //! exit-code match the expected zsh-reference output.
 
 #![allow(clippy::needless_raw_string_hashes)]
+// Function names below preserve the literal zsh prompt-escape case
+// (e.g. `%T` ≠ `%t`, `%D` ≠ `%d`) — non_snake_case is intentional.
+#![allow(non_snake_case)]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 fn zshrs_bin() -> Option<PathBuf> {
@@ -20,15 +23,12 @@ fn zshrs_bin() -> Option<PathBuf> {
         }
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for cand in [
+    [
         manifest.join("target/debug/zshrs"),
         manifest.join("target/release/zshrs"),
-    ] {
-        if cand.exists() {
-            return Some(cand);
-        }
-    }
-    None
+    ]
+    .into_iter()
+    .find(|cand| cand.exists())
 }
 
 fn run_zshrs(script: &str) -> (i32, String, String) {
@@ -92,10 +92,7 @@ fn bug5_percent_D_braces_year_emits_4_digit_year() {
         return;
     }
     let trimmed = stdout.trim();
-    assert_ne!(
-        trimmed, "%D{%Y}",
-        "%D{{...}} must NOT emit literally"
-    );
+    assert_ne!(trimmed, "%D{%Y}", "%D{{...}} must NOT emit literally");
     let year: u32 = trimmed
         .parse()
         .unwrap_or_else(|_| panic!("expected 4-digit year, got {:?}", trimmed));

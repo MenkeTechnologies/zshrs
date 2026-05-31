@@ -2294,8 +2294,13 @@ mod tests {
             for n in [0usize, 1, 5, 100] {
                 let first = cut_cline(s, n);
                 for _ in 0..3 {
-                    assert_eq!(cut_cline(s, n), first,
-                        "cut_cline({:?}, {}) must be deterministic", s, n);
+                    assert_eq!(
+                        cut_cline(s, n),
+                        first,
+                        "cut_cline({:?}, {}) must be deterministic",
+                        s,
+                        n
+                    );
                 }
             }
         }
@@ -2313,8 +2318,13 @@ mod tests {
         for (c, t) in [(1usize, 1usize), (5, 10), (100, 1000)] {
             let first = build_pos_string(c, t);
             for _ in 0..3 {
-                assert_eq!(build_pos_string(c, t), first,
-                    "build_pos_string({}, {}) must be pure", c, t);
+                assert_eq!(
+                    build_pos_string(c, t),
+                    first,
+                    "build_pos_string({}, {}) must be pure",
+                    c,
+                    t
+                );
             }
         }
     }
@@ -2338,8 +2348,7 @@ mod tests {
         for s in ["", "abc", "{a,b}", "a{b,c}d"] {
             let first = hasbrpsfx(s);
             for _ in 0..3 {
-                assert_eq!(hasbrpsfx(s), first,
-                    "hasbrpsfx({:?}) must be pure", s);
+                assert_eq!(hasbrpsfx(s), first, "hasbrpsfx({:?}) must be pure", s);
             }
         }
     }
@@ -2350,8 +2359,14 @@ mod tests {
     #[test]
     fn comp_mod_zero_returns_m_minus_one() {
         for m in [1i32, 5, 100, 1000] {
-            assert_eq!(comp_mod(0, m), m - 1,
-                "comp_mod(0, {}) = {}-1 = {} per c:1367 decrement+wrap", m, m, m - 1);
+            assert_eq!(
+                comp_mod(0, m),
+                m - 1,
+                "comp_mod(0, {}) = {}-1 = {} per c:1367 decrement+wrap",
+                m,
+                m,
+                m - 1
+            );
         }
     }
 
@@ -2361,8 +2376,14 @@ mod tests {
         for v in [-100i32, -1, 0, 1, 50, 100] {
             for m in [1i32, 5, 10] {
                 let r = comp_mod(v, m);
-                assert!(r >= 0 && r < m,
-                    "comp_mod({}, {}) = {} must be in [0, {})", v, m, r, m);
+                assert!(
+                    r >= 0 && r < m,
+                    "comp_mod({}, {}) = {} must be in [0, {})",
+                    v,
+                    m,
+                    r,
+                    m
+                );
             }
         }
     }
@@ -2405,18 +2426,21 @@ mod tests {
     /// c:311 — `ztat("/__never__", _)` returns None.
     #[test]
     fn ztat_nonexistent_returns_none() {
-        assert!(ztat("/__never_real_path_zshrs_xyz__", false).is_none(),
-            "nonexistent → None");
-        assert!(ztat("/__never_real_path_zshrs_xyz__", true).is_none(),
-            "nonexistent w/ symlink follow → None");
+        assert!(
+            ztat("/__never_real_path_zshrs_xyz__", false).is_none(),
+            "nonexistent → None"
+        );
+        assert!(
+            ztat("/__never_real_path_zshrs_xyz__", true).is_none(),
+            "nonexistent w/ symlink follow → None"
+        );
     }
 
     /// c:311 — `ztat("/tmp", _)` returns Some on every Unix host.
     #[test]
     #[cfg(unix)]
     fn ztat_tmp_returns_some() {
-        assert!(ztat("/tmp", false).is_some(),
-            "/tmp must stat → Some");
+        assert!(ztat("/tmp", false).is_some(), "/tmp must stat → Some");
     }
 
     /// c:527 — `do_ambig_menu` returns i32 (compile-time type pin).
@@ -2429,8 +2453,7 @@ mod tests {
     /// c:639 — `list_lines(empty, 80)` returns 0 (no lines for empty matches).
     #[test]
     fn list_lines_empty_matches_returns_zero() {
-        assert_eq!(list_lines(&[], 80), 0,
-            "0 matches → 0 lines");
+        assert_eq!(list_lines(&[], 80), 0, "0 matches → 0 lines");
     }
 
     /// c:639 — `list_lines` returns usize (compile-time type pin).

@@ -851,8 +851,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for cap in ["am", "bw", "xn", "co", "li", "xyz_unknown_cap"] {
             let r = ztgetflag(cap);
-            assert!(r == -1 || r == 0 || r == 1,
-                "ztgetflag({:?}) = {} not in {{-1, 0, 1}}", cap, r);
+            assert!(
+                r == -1 || r == 0 || r == 1,
+                "ztgetflag({:?}) = {} not in {{-1, 0, 1}}",
+                cap,
+                r
+            );
         }
     }
 
@@ -971,8 +975,7 @@ mod tests {
         for s in ["zz_unknown", "AAA", "garbage"] {
             let first = ztgetflag(s);
             for _ in 0..5 {
-                assert_eq!(ztgetflag(s), first,
-                    "ztgetflag({:?}) must be pure", s);
+                assert_eq!(ztgetflag(s), first, "ztgetflag({:?}) must be pure", s);
             }
         }
     }
@@ -1009,8 +1012,12 @@ mod tests {
             vec!["cm".into(), "5".into(), "10".into()],
         ] {
             let r = bin_echotc("echotc", &argv, &ops, 0);
-            assert!(r >= 0, "exit code must be non-negative, got {} for {:?}",
-                r, argv);
+            assert!(
+                r >= 0,
+                "exit code must be non-negative, got {} for {:?}",
+                r,
+                argv
+            );
         }
     }
 
@@ -1018,8 +1025,7 @@ mod tests {
     #[test]
     fn gettermcap_returns_option_param_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: Option<crate::ported::zsh_h::Param> =
-            gettermcap(std::ptr::null_mut(), "co");
+        let _: Option<crate::ported::zsh_h::Param> = gettermcap(std::ptr::null_mut(), "co");
     }
 
     /// c:288 — `scantermcap` returns void (compile-time pin).

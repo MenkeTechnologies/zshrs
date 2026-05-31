@@ -3581,8 +3581,7 @@ mod tests {
         for s in ["", "a", "abc", "hello world", "日本"] {
             let first = hasher(s);
             for _ in 0..5 {
-                assert_eq!(hasher(s), first,
-                    "hasher({:?}) must be pure", s);
+                assert_eq!(hasher(s), first, "hasher({:?}) must be pure", s);
             }
         }
     }
@@ -3646,8 +3645,13 @@ mod tests {
         for (a, b) in [("a", "b"), ("abc", "xyz"), ("", "x")] {
             let ab = hnamcmp(a, b);
             let ba = hnamcmp(b, a);
-            assert_eq!(ab.reverse(), ba,
-                "hnamcmp must be antisymmetric for ({:?}, {:?})", a, b);
+            assert_eq!(
+                ab.reverse(),
+                ba,
+                "hnamcmp must be antisymmetric for ({:?}, {:?})",
+                a,
+                b
+            );
             // ab cannot be Equal AND ba Equal unless both Equal
             if ab == Ordering::Equal {
                 assert_eq!(ba, Ordering::Equal);
@@ -3701,8 +3705,7 @@ mod tests {
         for s in ["", "x", "abc", "longer input", "日本"] {
             let first = hasher(s);
             for _ in 0..5 {
-                assert_eq!(hasher(s), first,
-                    "hasher({:?}) must be pure", s);
+                assert_eq!(hasher(s), first, "hasher({:?}) must be pure", s);
             }
         }
     }
@@ -3716,9 +3719,11 @@ mod tests {
         let h_z = hasher("z");
         // At least two of three must differ (proves non-constant).
         let distinct = (h_a != h_b) || (h_b != h_z) || (h_a != h_z);
-        assert!(distinct,
+        assert!(
+            distinct,
             "hasher must distinguish distinct inputs; got {} {} {}",
-            h_a, h_b, h_z);
+            h_a, h_b, h_z
+        );
     }
 
     /// c:139 — `addhashnode` followed by gethashnode2 retrieves entry.
@@ -3727,8 +3732,11 @@ mod tests {
         let mut h: HashMap<String, String> = HashMap::new();
         addhashnode(&mut h, "key", "value".to_string());
         let v = gethashnode2(&h, "key");
-        assert_eq!(v, Some(&"value".to_string()),
-            "add then get must round-trip");
+        assert_eq!(
+            v,
+            Some(&"value".to_string()),
+            "add then get must round-trip"
+        );
     }
 
     /// c:355 — `removehashnode` after add returns Some(value).
@@ -3737,8 +3745,11 @@ mod tests {
         let mut h: HashMap<String, String> = HashMap::new();
         addhashnode(&mut h, "k", "v".to_string());
         let removed = removehashnode(&mut h, "k");
-        assert_eq!(removed, Some("v".to_string()),
-            "remove returns the removed value");
+        assert_eq!(
+            removed,
+            Some("v".to_string()),
+            "remove returns the removed value"
+        );
         assert!(h.is_empty(), "table empty after remove");
     }
 
@@ -3750,8 +3761,7 @@ mod tests {
         let first = removehashnode(&mut h, "k");
         let second = removehashnode(&mut h, "k");
         assert!(first.is_some());
-        assert!(second.is_none(),
-            "second remove of same key returns None");
+        assert!(second.is_none(), "second remove of same key returns None");
     }
 
     /// c:715 — `hnamcmp(x, x)` returns Equal (reflexive).
@@ -3759,8 +3769,13 @@ mod tests {
     fn hnamcmp_reflexive() {
         use std::cmp::Ordering;
         for s in ["", "a", "hello", "long string here"] {
-            assert_eq!(hnamcmp(s, s), Ordering::Equal,
-                "hnamcmp({:?}, {:?}) must be Equal", s, s);
+            assert_eq!(
+                hnamcmp(s, s),
+                Ordering::Equal,
+                "hnamcmp({:?}, {:?}) must be Equal",
+                s,
+                s
+            );
         }
     }
 
@@ -3782,8 +3797,10 @@ mod tests {
     fn printhashtabinfo_empty_table_non_empty_output() {
         let empty: HashMap<String, String> = HashMap::new();
         let r = printhashtabinfo("my_table_name", &empty);
-        assert!(!r.is_empty(),
-            "printhashtabinfo must produce non-empty output even for empty table");
+        assert!(
+            !r.is_empty(),
+            "printhashtabinfo must produce non-empty output even for empty table"
+        );
     }
 
     /// c:97 — `deletehashtable` empties + safe.

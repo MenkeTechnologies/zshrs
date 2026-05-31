@@ -1253,16 +1253,23 @@ mod tests {
     /// c:38/42 — TRAPCOUNT >= VSIGCOUNT (RT range never shrinks below VSIG).
     #[test]
     fn trapcount_greater_or_equal_vsigcount() {
-        assert!(TRAPCOUNT >= VSIGCOUNT,
-            "TRAPCOUNT {} must ≥ VSIGCOUNT {}", TRAPCOUNT, VSIGCOUNT);
+        assert!(
+            TRAPCOUNT >= VSIGCOUNT,
+            "TRAPCOUNT {} must ≥ VSIGCOUNT {}",
+            TRAPCOUNT,
+            VSIGCOUNT
+        );
     }
 
     /// c:46 — SIGEXIT (=0) is special pseudo-signal for EXIT trap slot.
     /// c:34 — SIGZERR is SIGCOUNT+1 (above all real signals).
     #[test]
     fn sigexit_below_sigzerr() {
-        assert!(SIGEXIT < SIGZERR,
-            "SIGEXIT=0 must be below SIGZERR={}", SIGZERR);
+        assert!(
+            SIGEXIT < SIGZERR,
+            "SIGEXIT=0 must be below SIGZERR={}",
+            SIGZERR
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1297,8 +1304,7 @@ mod tests {
         for idx in [0, 1, 2, 5, 9, 15, -1, 100] {
             let first = sigs_name(idx);
             for _ in 0..3 {
-                assert_eq!(sigs_name(idx), first,
-                    "sigs_name({}) must be pure", idx);
+                assert_eq!(sigs_name(idx), first, "sigs_name({}) must be pure", idx);
             }
         }
     }
@@ -1318,8 +1324,10 @@ mod tests {
     /// c:238 — `sigs_number` for nonsense name returns None.
     #[test]
     fn sigs_number_nonsense_returns_none() {
-        assert!(sigs_number("__bogus_signal_xyz__").is_none(),
-            "nonsense name → None");
+        assert!(
+            sigs_number("__bogus_signal_xyz__").is_none(),
+            "nonsense name → None"
+        );
     }
 
     /// c:238 — `sigs_number` is deterministic.
@@ -1328,8 +1336,12 @@ mod tests {
         for name in ["HUP", "INT", "TERM", "__bogus__", ""] {
             let first = sigs_number(name);
             for _ in 0..3 {
-                assert_eq!(sigs_number(name), first,
-                    "sigs_number({:?}) must be pure", name);
+                assert_eq!(
+                    sigs_number(name),
+                    first,
+                    "sigs_number({:?}) must be pure",
+                    name
+                );
             }
         }
     }

@@ -4632,7 +4632,10 @@ mod tests {
             str: Some(b"abc".to_vec()),
             ..Default::default()
         };
-        assert!(cpatterns_same(Some(&a), Some(&b)), "same NCLASS str → equal");
+        assert!(
+            cpatterns_same(Some(&a), Some(&b)),
+            "same NCLASS str → equal"
+        );
     }
 
     /// c:52-54 — EQUIV uses str compare as well (same dispatch as
@@ -4673,8 +4676,14 @@ mod tests {
             ..Default::default()
         };
         let b = cpat_char('a' as u32);
-        assert!(!cpatterns_same(Some(&a), Some(&b)), "a=2-chain, b=1 → not equal");
-        assert!(!cpatterns_same(Some(&b), Some(&a)), "b=1, a=2-chain → not equal");
+        assert!(
+            !cpatterns_same(Some(&a), Some(&b)),
+            "a=2-chain, b=1 → not equal"
+        );
+        assert!(
+            !cpatterns_same(Some(&b), Some(&a)),
+            "b=1, a=2-chain → not equal"
+        );
     }
 
     /// c:46-77 — chain walk: same multi-node chain returns true.
@@ -4716,7 +4725,10 @@ mod tests {
             right: None,
             ralen: 11,
         };
-        assert!(cmatchers_same(&m, &m), "same pointer → true regardless of fields");
+        assert!(
+            cmatchers_same(&m, &m),
+            "same pointer → true regardless of fields"
+        );
     }
 
     /// c:91 — anchor checks ONLY run when CMF_LEFT or CMF_RIGHT is
@@ -4734,9 +4746,9 @@ mod tests {
             word: None,
             wlen: 0,
             left: None,
-            lalen: 5,    // mismatch
+            lalen: 5, // mismatch
             right: None,
-            ralen: 7,    // mismatch
+            ralen: 7, // mismatch
         };
         let b = Cmatcher {
             refc: 1,
@@ -4747,9 +4759,9 @@ mod tests {
             word: None,
             wlen: 0,
             left: None,
-            lalen: 99,   // mismatch
+            lalen: 99, // mismatch
             right: None,
-            ralen: 0,    // mismatch
+            ralen: 0, // mismatch
         };
         // Without CMF_LEFT/CMF_RIGHT, anchor lens shouldn't matter.
         assert!(
@@ -4813,8 +4825,11 @@ mod tests {
     #[test]
     fn match_parts_empty_inputs_boolean_result() {
         let r = match_parts("", "", 0, 0);
-        assert!(r == 0 || r == 1,
-            "match_parts must return 0 or 1, got {}", r);
+        assert!(
+            r == 0 || r == 1,
+            "match_parts must return 0 or 1, got {}",
+            r
+        );
     }
 
     /// c:1605 — `match_parts` deterministic for same input.
@@ -4823,8 +4838,13 @@ mod tests {
         for (l, w) in [("a", "a"), ("abc", "abc"), ("", "")] {
             let first = match_parts(l, w, 0, 0);
             for _ in 0..3 {
-                assert_eq!(match_parts(l, w, 0, 0), first,
-                    "match_parts({:?}, {:?}) must be deterministic", l, w);
+                assert_eq!(
+                    match_parts(l, w, 0, 0),
+                    first,
+                    "match_parts({:?}, {:?}) must be deterministic",
+                    l,
+                    w
+                );
             }
         }
     }
@@ -4890,14 +4910,23 @@ mod tests {
     #[test]
     fn cline_sublen_is_pure() {
         let cline = Cline {
-            next: None, prefix: None, suffix: None, line: None,
-            llen: 0, word: None, wlen: 0, orig: None, olen: 0,
-            slen: 0, min: 0, max: 0, flags: 0,
+            next: None,
+            prefix: None,
+            suffix: None,
+            line: None,
+            llen: 0,
+            word: None,
+            wlen: 0,
+            orig: None,
+            olen: 0,
+            slen: 0,
+            min: 0,
+            max: 0,
+            flags: 0,
         };
         let first = cline_sublen(&cline);
         for _ in 0..3 {
-            assert_eq!(cline_sublen(&cline), first,
-                "cline_sublen must be pure");
+            assert_eq!(cline_sublen(&cline), first, "cline_sublen must be pure");
         }
     }
 
@@ -4940,12 +4969,23 @@ mod tests {
     /// c:1605 — `match_parts` is pure for stable input.
     #[test]
     fn match_parts_is_pure_full_sweep() {
-        for (l, w, n, p) in [("", "", 0, 0), ("a", "a", 0, 0),
-                              ("abc", "abc", 1, 0), ("x", "y", 0, 1)] {
+        for (l, w, n, p) in [
+            ("", "", 0, 0),
+            ("a", "a", 0, 0),
+            ("abc", "abc", 1, 0),
+            ("x", "y", 0, 1),
+        ] {
             let first = match_parts(l, w, n, p);
             for _ in 0..3 {
-                assert_eq!(match_parts(l, w, n, p), first,
-                    "match_parts({:?},{:?},{},{}) must be pure", l, w, n, p);
+                assert_eq!(
+                    match_parts(l, w, n, p),
+                    first,
+                    "match_parts({:?},{:?},{},{}) must be pure",
+                    l,
+                    w,
+                    n,
+                    p
+                );
             }
         }
     }
@@ -4953,8 +4993,10 @@ mod tests {
     /// c:79 — `cpatterns_same(None, None)` reflexive (true).
     #[test]
     fn cpatterns_same_double_none_true() {
-        assert!(cpatterns_same(None, None),
-            "double None is reflexive identity");
+        assert!(
+            cpatterns_same(None, None),
+            "double None is reflexive identity"
+        );
     }
 
     /// c:220 — `update_bmatchers` followed by `add_bmatchers(None)` safe.

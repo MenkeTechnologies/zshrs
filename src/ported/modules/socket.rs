@@ -571,7 +571,12 @@ mod tests {
     fn ops_with_flag(flag: u8) -> options {
         let mut ind = [0u8; crate::ported::zsh_h::MAX_OPS];
         ind[flag as usize] = 1;
-        options { ind, args: Vec::new(), argscount: 0, argsalloc: 0 }
+        options {
+            ind,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        }
     }
 
     /// c:88 — `bin_zsocket -l` with no args returns 1 ("requires arg").
@@ -668,8 +673,12 @@ mod tests {
             vec!["".to_string()],
         ] {
             let r = bin_zsocket("zsocket", &args, &ops, 0);
-            assert!((0..256).contains(&r),
-                "exit code {} must fit in u8 range for {:?}", r, args);
+            assert!(
+                (0..256).contains(&r),
+                "exit code {} must fit in u8 range for {:?}",
+                r,
+                args
+            );
         }
     }
 
@@ -790,8 +799,12 @@ mod tests {
             vec!["/tmp/sock".into(), "extra".into()],
         ] {
             let r = bin_zsocket("zsocket", &argv, &ops, 0);
-            assert!(r >= 0,
-                "exit code must be non-negative, got {} for {:?}", r, argv);
+            assert!(
+                r >= 0,
+                "exit code must be non-negative, got {} for {:?}",
+                r,
+                argv
+            );
         }
     }
 
@@ -802,8 +815,11 @@ mod tests {
         let ops = empty_ops();
         let first = bin_zsocket("zsocket", &["".to_string()], &ops, 0);
         for _ in 0..5 {
-            assert_eq!(bin_zsocket("zsocket", &["".to_string()], &ops, 0), first,
-                "empty-path zsocket must be pure across calls");
+            assert_eq!(
+                bin_zsocket("zsocket", &["".to_string()], &ops, 0),
+                first,
+                "empty-path zsocket must be pure across calls"
+            );
         }
     }
 
@@ -868,8 +884,11 @@ mod tests {
         let first = enables_(std::ptr::null(), &mut a);
         for _ in 0..3 {
             let mut b: Option<Vec<i32>> = None;
-            assert_eq!(enables_(std::ptr::null(), &mut b), first,
-                "enables_ must be deterministic");
+            assert_eq!(
+                enables_(std::ptr::null(), &mut b),
+                first,
+                "enables_ must be deterministic"
+            );
         }
     }
 

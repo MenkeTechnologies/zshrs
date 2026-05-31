@@ -647,7 +647,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         reset_cstack();
         zcontext_save_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
-        assert!(cstack.lock().unwrap().is_some(), "frame must exist after save");
+        assert!(
+            cstack.lock().unwrap().is_some(),
+            "frame must exist after save"
+        );
         zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
         assert!(cstack.lock().unwrap().is_none(), "frame must be drained");
     }
@@ -674,8 +677,10 @@ mod tests {
         zcontext_restore();
         zcontext_restore();
         zcontext_restore();
-        assert!(cstack.lock().unwrap().is_none(),
-            "all 3 frames must drain (LIFO)");
+        assert!(
+            cstack.lock().unwrap().is_none(),
+            "all 3 frames must drain (LIFO)"
+        );
     }
 
     /// c:80 — `zcontext_save` is the shorthand for the OR of all three.
@@ -692,8 +697,10 @@ mod tests {
                 | crate::ported::zsh_h::ZCONTEXT_PARSE,
         );
         let depth2 = cstack.lock().unwrap().is_some();
-        assert_eq!(depth1, depth2,
-            "shorthand and explicit OR must produce same push behavior");
+        assert_eq!(
+            depth1, depth2,
+            "shorthand and explicit OR must produce same push behavior"
+        );
         zcontext_restore();
     }
 
@@ -759,8 +766,10 @@ mod tests {
         for _ in 0..20 {
             zcontext_restore();
         }
-        assert!(cstack.lock().unwrap().is_none(),
-            "after 20 paired save/restore, stack must be empty");
+        assert!(
+            cstack.lock().unwrap().is_none(),
+            "after 20 paired save/restore, stack must be empty"
+        );
     }
 
     /// c:91 — restore with subset mask of saved flags still drains frame.
@@ -772,7 +781,9 @@ mod tests {
             crate::ported::zsh_h::ZCONTEXT_HIST | crate::ported::zsh_h::ZCONTEXT_LEX,
         );
         zcontext_restore_partial(crate::ported::zsh_h::ZCONTEXT_HIST);
-        assert!(cstack.lock().unwrap().is_none(),
-            "restore with subset mask still pops the frame");
+        assert!(
+            cstack.lock().unwrap().is_none(),
+            "restore with subset mask still pops the frame"
+        );
     }
 }

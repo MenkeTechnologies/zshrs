@@ -1661,7 +1661,11 @@ mod widget_killring_tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         set_buffer("12345");
-        assert_eq!(ZLELL.load(Ordering::SeqCst), 5, "ZLELL must reflect new length");
+        assert_eq!(
+            ZLELL.load(Ordering::SeqCst),
+            5,
+            "ZLELL must reflect new length"
+        );
         set_buffer("");
         assert_eq!(ZLELL.load(Ordering::SeqCst), 0, "empty buffer → ZLELL=0");
     }
@@ -1829,8 +1833,11 @@ mod widget_killring_tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let r = get_region_active();
-        assert!((0..=2).contains(&r),
-            "region_active must be in {{0,1,2}}, got {}", r);
+        assert!(
+            (0..=2).contains(&r),
+            "region_active must be in {{0,1,2}}, got {}",
+            r
+        );
     }
 
     /// c:259 — `get_widget` returns String.

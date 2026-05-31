@@ -5483,8 +5483,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = mathevali("__never_real_var_xyz__");
         for _ in 0..3 {
-            assert_eq!(mathevali("__never_real_var_xyz__"), first,
-                "mathevali on undefined ident must be deterministic");
+            assert_eq!(
+                mathevali("__never_real_var_xyz__"),
+                first,
+                "mathevali on undefined ident must be deterministic"
+            );
         }
     }
 
@@ -5524,7 +5527,11 @@ mod tests {
         // (( counts[apple]++ )) → read 10, write 11.
         let _ = setmathvar(
             "counts[apple]",
-            mnumber { l: 11, d: 0.0, type_: MN_INTEGER },
+            mnumber {
+                l: 11,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
         );
         assert_eq!(
             assoc_read("counts", "apple"),
@@ -5544,7 +5551,11 @@ mod tests {
         let _ = crate::ported::params::assignsparam("h[b]", "2", 0);
         let _ = setmathvar(
             "h[c]",
-            mnumber { l: 99, d: 0.0, type_: MN_INTEGER },
+            mnumber {
+                l: 99,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
         );
         assert_eq!(
             assoc_read("h", "a"),
@@ -5578,7 +5589,11 @@ mod tests {
         );
         let _ = setmathvar(
             "arr[2]",
-            mnumber { l: 99, d: 0.0, type_: MN_INTEGER },
+            mnumber {
+                l: 99,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
         );
         assert_eq!(
             crate::ported::params::getaparam("arr"),
@@ -5601,13 +5616,22 @@ mod tests {
         let _ = crate::ported::params::setiparam("i", 2);
         let _ = crate::ported::params::assignaparam(
             "arr",
-            vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()],
+            vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string(),
+            ],
             0,
         );
         // arr[i + 1] → arr[3] after matheval.
         let _ = setmathvar(
             "arr[i + 1]",
-            mnumber { l: 77, d: 0.0, type_: MN_INTEGER },
+            mnumber {
+                l: 77,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
         );
         let got = crate::ported::params::getaparam("arr");
         assert_eq!(
@@ -5633,7 +5657,11 @@ mod tests {
                 .unwrap_or(0);
             let _ = setmathvar(
                 "hc[x]",
-                mnumber { l: cur + 1, d: 0.0, type_: MN_INTEGER },
+                mnumber {
+                    l: cur + 1,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                },
             );
         }
         assert_eq!(
@@ -5655,7 +5683,11 @@ mod tests {
         // (( hv[fresh]++ )) — fresh slot should become 1.
         let _ = setmathvar(
             "hv[fresh]",
-            mnumber { l: 1, d: 0.0, type_: MN_INTEGER },
+            mnumber {
+                l: 1,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
         );
         assert_eq!(
             assoc_read("hv", "fresh"),
@@ -5675,7 +5707,11 @@ mod tests {
         crate::ported::params::unsetparam("nev");
         let _ = crate::ported::params::assignsparam("nev[k]", "1", 0);
         M_NOEVAL.with(|n| n.set(1));
-        let v = mnumber { l: 999, d: 0.0, type_: MN_INTEGER };
+        let v = mnumber {
+            l: 999,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
         let ret = setmathvar("nev[k]", v);
         M_NOEVAL.with(|n| n.set(0));
         assert_eq!(ret.l, 999, "noeval returns val unchanged");

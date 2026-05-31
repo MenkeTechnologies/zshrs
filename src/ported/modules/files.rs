@@ -1931,8 +1931,11 @@ mod tests {
             bin_chmod("chmod", &[], &ops, 0),
             bin_chown("chown", &[], &ops, 0),
         ] {
-            assert!((0..256).contains(&r),
-                "exit code {} must fit in u8 range", r);
+            assert!(
+                (0..256).contains(&r),
+                "exit code {} must fit in u8 range",
+                r
+            );
         }
     }
 
@@ -2013,8 +2016,7 @@ mod tests {
             for _ in 0..3 {
                 let mut err2 = 0i32;
                 let v = getnumeric(s, &mut err2);
-                assert_eq!(v, first,
-                    "getnumeric({:?}) must be deterministic", s);
+                assert_eq!(v, first, "getnumeric({:?}) must be deterministic", s);
             }
         }
     }
@@ -2042,8 +2044,11 @@ mod tests {
         let mut feats = Vec::new();
         features_(std::ptr::null(), &mut feats);
         for f in &feats {
-            assert!(f.starts_with("b:") || f.starts_with("p:"),
-                "feature {:?} must use b:/p: prefix", f);
+            assert!(
+                f.starts_with("b:") || f.starts_with("p:"),
+                "feature {:?} must use b:/p: prefix",
+                f
+            );
         }
     }
 
@@ -2100,8 +2105,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         for _ in 0..10 {
-            assert_eq!(bin_sync("sync", &[], &ops, 0), 0,
-                "sync always returns 0");
+            assert_eq!(bin_sync("sync", &[], &ops, 0), 0, "sync always returns 0");
         }
     }
 

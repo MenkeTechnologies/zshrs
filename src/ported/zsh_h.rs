@@ -5639,7 +5639,11 @@ mod tests {
     fn minimum_returns_smaller_value() {
         assert_eq!(minimum(3, 7), 3);
         assert_eq!(minimum(7, 3), 3);
-        assert_eq!(minimum(5, 5), 5, "equal → either (returns first per PartialOrd)");
+        assert_eq!(
+            minimum(5, 5),
+            5,
+            "equal → either (returns first per PartialOrd)"
+        );
         assert_eq!(minimum(-10, 10), -10);
     }
 
@@ -5793,16 +5797,20 @@ mod tests {
     /// because undefined fns can never have case attributes.
     #[test]
     fn pm_undefined_aliases_pm_upper() {
-        assert_eq!(PM_UNDEFINED, PM_UPPER,
-            "c:3196 INTENTIONAL alias: undefined fns reuse UPPER bit");
+        assert_eq!(
+            PM_UNDEFINED, PM_UPPER,
+            "c:3196 INTENTIONAL alias: undefined fns reuse UPPER bit"
+        );
     }
 
     /// c:3204 — PM_ABSPATH_USED INTENTIONALLY aliases PM_EXPORTED.
     /// c:3204 comment: only-for-internal-tracking flag reuses exported bit.
     #[test]
     fn pm_abspath_used_aliases_pm_exported() {
-        assert_eq!(PM_ABSPATH_USED, PM_EXPORTED,
-            "c:3204 INTENTIONAL alias: bit reuse for path-tracking");
+        assert_eq!(
+            PM_ABSPATH_USED, PM_EXPORTED,
+            "c:3204 INTENTIONAL alias: bit reuse for path-tracking"
+        );
     }
 
     /// c:3198 — PM_READONLY = 1 << 10.
@@ -5824,29 +5832,53 @@ mod tests {
     /// (excluding intentional aliases like UNDEFINED=UPPER).
     #[test]
     fn pm_distinct_type_flags_pairwise_disjoint() {
-        let codes = [PM_ARRAY, PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_HASHED,
-                     PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_LOWER, PM_UPPER];
+        let codes = [
+            PM_ARRAY, PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z,
+            PM_LOWER, PM_UPPER,
+        ];
         let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
-        assert_eq!(unique.len(), codes.len(),
-            "distinct PM type/padding flags must be pairwise disjoint");
+        assert_eq!(
+            unique.len(),
+            codes.len(),
+            "distinct PM type/padding flags must be pairwise disjoint"
+        );
     }
 
     /// c:3176-3194 — every distinct PM_* type/padding flag is a single bit.
     #[test]
     fn pm_distinct_type_flags_all_single_bits() {
-        for &v in &[PM_ARRAY, PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_HASHED,
-                    PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_LOWER, PM_UPPER,
-                    PM_READONLY, PM_TAGGED, PM_EXPORTED, PM_UNIQUE] {
-            assert!(v.is_power_of_two(),
-                "PM_* flag {:#x} must be a single bit", v);
+        for &v in &[
+            PM_ARRAY,
+            PM_INTEGER,
+            PM_EFLOAT,
+            PM_FFLOAT,
+            PM_HASHED,
+            PM_LEFT,
+            PM_RIGHT_B,
+            PM_RIGHT_Z,
+            PM_LOWER,
+            PM_UPPER,
+            PM_READONLY,
+            PM_TAGGED,
+            PM_EXPORTED,
+            PM_UNIQUE,
+        ] {
+            assert!(
+                v.is_power_of_two(),
+                "PM_* flag {:#x} must be a single bit",
+                v
+            );
         }
     }
 
     /// c:3174 — PM_SCALAR being 0 means "all flags clear" matches PM_SCALAR.
     #[test]
     fn pm_scalar_zero_is_default_state() {
-        assert_eq!(PM_SCALAR & (PM_ARRAY | PM_INTEGER | PM_HASHED), 0,
-            "PM_SCALAR=0 by design: clear-all-bits state");
+        assert_eq!(
+            PM_SCALAR & (PM_ARRAY | PM_INTEGER | PM_HASHED),
+            0,
+            "PM_SCALAR=0 by design: clear-all-bits state"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -5875,22 +5907,28 @@ mod tests {
     /// builtins, so flag-bit reuse is safe.
     #[test]
     fn print_whence_csh_aliases_print_posix_export() {
-        assert_eq!(PRINT_WHENCE_CSH, PRINT_POSIX_EXPORT,
-            "c:3420 INTENTIONAL alias: whence vs typeset disambiguated by builtin");
+        assert_eq!(
+            PRINT_WHENCE_CSH, PRINT_POSIX_EXPORT,
+            "c:3420 INTENTIONAL alias: whence vs typeset disambiguated by builtin"
+        );
     }
 
     /// c:3422 — PRINT_WHENCE_VERBOSE aliases PRINT_POSIX_READONLY.
     #[test]
     fn print_whence_verbose_aliases_print_posix_readonly() {
-        assert_eq!(PRINT_WHENCE_VERBOSE, PRINT_POSIX_READONLY,
-            "c:3422 INTENTIONAL alias");
+        assert_eq!(
+            PRINT_WHENCE_VERBOSE, PRINT_POSIX_READONLY,
+            "c:3422 INTENTIONAL alias"
+        );
     }
 
     /// c:3424 — PRINT_WHENCE_SIMPLE aliases PRINT_WITH_NAMESPACE.
     #[test]
     fn print_whence_simple_aliases_print_with_namespace() {
-        assert_eq!(PRINT_WHENCE_SIMPLE, PRINT_WITH_NAMESPACE,
-            "c:3424 INTENTIONAL alias");
+        assert_eq!(
+            PRINT_WHENCE_SIMPLE, PRINT_WITH_NAMESPACE,
+            "c:3424 INTENTIONAL alias"
+        );
     }
 
     /// c:3400-3428 — every PRINT_* flag is i32 type (compile-time pin).
@@ -5925,30 +5963,56 @@ mod tests {
     /// c:3452-3464 — HIST_* are all single bits.
     #[test]
     fn hist_flags_all_single_bits() {
-        for &v in &[HIST_MAKEUNIQUE, HIST_OLD, HIST_READ, HIST_DUP,
-                    HIST_FOREIGN, HIST_TMPSTORE, HIST_NOWRITE] {
-            assert!(v.is_power_of_two(),
-                "HIST_* {:#x} must be a single bit", v);
+        for &v in &[
+            HIST_MAKEUNIQUE,
+            HIST_OLD,
+            HIST_READ,
+            HIST_DUP,
+            HIST_FOREIGN,
+            HIST_TMPSTORE,
+            HIST_NOWRITE,
+        ] {
+            assert!(v.is_power_of_two(), "HIST_* {:#x} must be a single bit", v);
         }
     }
 
     /// c:3452-3464 — HIST_* are pairwise distinct.
     #[test]
     fn hist_flags_pairwise_distinct() {
-        let codes = [HIST_MAKEUNIQUE, HIST_OLD, HIST_READ, HIST_DUP,
-                     HIST_FOREIGN, HIST_TMPSTORE, HIST_NOWRITE];
+        let codes = [
+            HIST_MAKEUNIQUE,
+            HIST_OLD,
+            HIST_READ,
+            HIST_DUP,
+            HIST_FOREIGN,
+            HIST_TMPSTORE,
+            HIST_NOWRITE,
+        ];
         let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
-        assert_eq!(unique.len(), codes.len(),
-            "HIST_* must be pairwise distinct");
+        assert_eq!(
+            unique.len(),
+            codes.len(),
+            "HIST_* must be pairwise distinct"
+        );
     }
 
     /// c:3400-3418 — first 7 non-aliased PRINT_* bits are pairwise distinct.
     #[test]
     fn print_non_aliased_pairwise_distinct() {
-        let codes = [PRINT_NAMEONLY, PRINT_TYPE, PRINT_LIST, PRINT_KV_PAIR,
-                     PRINT_INCLUDEVALUE, PRINT_TYPESET, PRINT_LINE];
+        let codes = [
+            PRINT_NAMEONLY,
+            PRINT_TYPE,
+            PRINT_LIST,
+            PRINT_KV_PAIR,
+            PRINT_INCLUDEVALUE,
+            PRINT_TYPESET,
+            PRINT_LINE,
+        ];
         let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
-        assert_eq!(unique.len(), codes.len(),
-            "non-aliased PRINT_* must be pairwise distinct");
+        assert_eq!(
+            unique.len(),
+            codes.len(),
+            "non-aliased PRINT_* must be pairwise distinct"
+        );
     }
 }

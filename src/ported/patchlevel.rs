@@ -182,11 +182,7 @@ mod tests {
     /// MAJOR.MINOR from ZSH_VERSION appears inside ZSH_PATCHLEVEL.
     #[test]
     fn patchlevel_contains_major_minor_from_version() {
-        let mm: String = ZSH_VERSION
-            .split('.')
-            .take(2)
-            .collect::<Vec<_>>()
-            .join(".");
+        let mm: String = ZSH_VERSION.split('.').take(2).collect::<Vec<_>>().join(".");
         assert!(
             ZSH_PATCHLEVEL.contains(&mm),
             "patchlevel {:?} must contain {}",
@@ -331,16 +327,18 @@ mod tests {
     #[test]
     fn zsh_patchlevel_length_in_sane_range() {
         let n = ZSH_PATCHLEVEL.len();
-        assert!(n >= 10 && n <= 200,
-            "PATCHLEVEL length {} must be in [10, 200]", n);
+        assert!(
+            n >= 10 && n <= 200,
+            "PATCHLEVEL length {} must be in [10, 200]",
+            n
+        );
     }
 
     /// ZSH_VERSION length is reasonable (3..30 bytes).
     #[test]
     fn zsh_version_length_in_sane_range() {
         let n = ZSH_VERSION.len();
-        assert!(n >= 3 && n <= 30,
-            "VERSION length {} must be in [3, 30]", n);
+        assert!(n >= 3 && n <= 30, "VERSION length {} must be in [3, 30]", n);
     }
 
     /// ZSH_PATCHLEVEL doesn't contain any uppercase hex above 9
@@ -352,7 +350,9 @@ mod tests {
         for c in hash.chars() {
             assert!(
                 !c.is_ascii_uppercase(),
-                "git-describe hash uses lowercase hex; found uppercase {:?}", c);
+                "git-describe hash uses lowercase hex; found uppercase {:?}",
+                c
+            );
         }
     }
 
@@ -360,8 +360,10 @@ mod tests {
     #[test]
     fn zsh_patchlevel_no_empty_segments() {
         for seg in ZSH_PATCHLEVEL.split('-') {
-            assert!(!seg.is_empty(),
-                "PATCHLEVEL must have no empty segments (no consecutive dashes)");
+            assert!(
+                !seg.is_empty(),
+                "PATCHLEVEL must have no empty segments (no consecutive dashes)"
+            );
         }
     }
 
@@ -406,27 +408,35 @@ mod tests {
     /// rebase event flagged by this test).
     #[test]
     fn zsh_patchlevel_starts_with_zsh_5_dot() {
-        assert!(ZSH_PATCHLEVEL.starts_with("zsh-5."),
+        assert!(
+            ZSH_PATCHLEVEL.starts_with("zsh-5."),
             "ZSH_PATCHLEVEL must start `zsh-5.` (upstream major), got: {}",
-            ZSH_PATCHLEVEL);
+            ZSH_PATCHLEVEL
+        );
     }
 
     /// ZSH_VERSION must start with `5.` (matches the upstream major
     /// the patchlevel snapshot was taken from).
     #[test]
     fn zsh_version_starts_with_5_dot() {
-        assert!(ZSH_VERSION.starts_with("5."),
+        assert!(
+            ZSH_VERSION.starts_with("5."),
             "ZSH_VERSION must start `5.` (upstream-major sync), got: {}",
-            ZSH_VERSION);
+            ZSH_VERSION
+        );
     }
 
     /// ZSH_PATCHLEVEL has exactly 4 dash-separated segments: zsh, X.Y, N, gHASH.
     #[test]
     fn zsh_patchlevel_has_four_dash_segments() {
         let segs: Vec<&str> = ZSH_PATCHLEVEL.split('-').collect();
-        assert_eq!(segs.len(), 4,
+        assert_eq!(
+            segs.len(),
+            4,
             "ZSH_PATCHLEVEL must have 4 segments (zsh-X.Y-N-gHASH); got {} from {:?}",
-            segs.len(), ZSH_PATCHLEVEL);
+            segs.len(),
+            ZSH_PATCHLEVEL
+        );
         assert_eq!(segs[0], "zsh");
         assert!(segs[3].starts_with('g'), "4th segment must start `g`");
     }
@@ -444,11 +454,17 @@ mod tests {
     fn zsh_patchlevel_hash_is_7_or_more_hex_chars() {
         let segs: Vec<&str> = ZSH_PATCHLEVEL.split('-').collect();
         let hash = &segs[3][1..]; // strip 'g'
-        assert!(hash.len() >= 7,
+        assert!(
+            hash.len() >= 7,
             "git short hash must be ≥ 7 chars, got {} from {:?}",
-            hash.len(), hash);
-        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "git hash must be all hex; got: {:?}", hash);
+            hash.len(),
+            hash
+        );
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "git hash must be all hex; got: {:?}",
+            hash
+        );
     }
 
     /// ZSH_VERSION's first dot-segment is parseable as u32 (the major).
@@ -477,10 +493,16 @@ mod tests {
     /// Neither version constant contains a space.
     #[test]
     fn version_constants_have_no_spaces() {
-        assert!(!ZSH_PATCHLEVEL.contains(' '),
-            "ZSH_PATCHLEVEL must not contain spaces: {:?}", ZSH_PATCHLEVEL);
-        assert!(!ZSH_VERSION.contains(' '),
-            "ZSH_VERSION must not contain spaces: {:?}", ZSH_VERSION);
+        assert!(
+            !ZSH_PATCHLEVEL.contains(' '),
+            "ZSH_PATCHLEVEL must not contain spaces: {:?}",
+            ZSH_PATCHLEVEL
+        );
+        assert!(
+            !ZSH_VERSION.contains(' '),
+            "ZSH_VERSION must not contain spaces: {:?}",
+            ZSH_VERSION
+        );
     }
 
     /// ZSH_VERSION major.minor matches the major.minor in ZSH_PATCHLEVEL.
@@ -493,18 +515,24 @@ mod tests {
         // VERSION major.minor from first 2 dot-segments.
         let v_segs: Vec<&str> = ZSH_VERSION.split('.').collect();
         let v_mm = format!("{}.{}", v_segs[0], v_segs[1]);
-        assert_eq!(pl_mm, v_mm,
+        assert_eq!(
+            pl_mm, v_mm,
             "PATCHLEVEL major.minor ({}) must match VERSION major.minor ({})",
-            pl_mm, v_mm);
+            pl_mm, v_mm
+        );
     }
 
     /// ZSH_PATCHLEVEL is not the bare upstream tag (must include git-describe suffix).
     #[test]
     fn zsh_patchlevel_is_not_bare_tag() {
-        assert_ne!(ZSH_PATCHLEVEL, "zsh-5.9",
-            "PATCHLEVEL must include git-describe suffix, not bare tag");
-        assert_ne!(ZSH_PATCHLEVEL, "5.9",
-            "PATCHLEVEL must include `zsh-` prefix");
+        assert_ne!(
+            ZSH_PATCHLEVEL, "zsh-5.9",
+            "PATCHLEVEL must include git-describe suffix, not bare tag"
+        );
+        assert_ne!(
+            ZSH_PATCHLEVEL, "5.9",
+            "PATCHLEVEL must include `zsh-` prefix"
+        );
     }
 
     /// Both constants are not empty / not whitespace-only.

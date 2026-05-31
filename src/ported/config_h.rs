@@ -1551,8 +1551,11 @@ mod tests {
     #[test]
     fn global_z_files_are_under_etc() {
         for p in [
-            GLOBAL_ZLOGIN, GLOBAL_ZLOGOUT, GLOBAL_ZPROFILE,
-            GLOBAL_ZSHENV, GLOBAL_ZSHRC,
+            GLOBAL_ZLOGIN,
+            GLOBAL_ZLOGOUT,
+            GLOBAL_ZPROFILE,
+            GLOBAL_ZSHENV,
+            GLOBAL_ZSHRC,
         ] {
             assert!(p.starts_with("/etc/"), "{:?} must be under /etc", p);
         }
@@ -1562,8 +1565,11 @@ mod tests {
     #[test]
     fn global_z_files_pairwise_distinct() {
         let paths = [
-            GLOBAL_ZLOGIN, GLOBAL_ZLOGOUT, GLOBAL_ZPROFILE,
-            GLOBAL_ZSHENV, GLOBAL_ZSHRC,
+            GLOBAL_ZLOGIN,
+            GLOBAL_ZLOGOUT,
+            GLOBAL_ZPROFILE,
+            GLOBAL_ZSHENV,
+            GLOBAL_ZSHRC,
         ];
         let unique: std::collections::HashSet<_> = paths.iter().copied().collect();
         assert_eq!(unique.len(), paths.len(), "must be distinct");
@@ -1637,7 +1643,13 @@ mod tests {
     /// All GLOBAL_Z* paths share /etc prefix.
     #[test]
     fn all_global_z_paths_under_etc() {
-        for path in &[GLOBAL_ZLOGIN, GLOBAL_ZLOGOUT, GLOBAL_ZPROFILE, GLOBAL_ZSHENV, GLOBAL_ZSHRC] {
+        for path in &[
+            GLOBAL_ZLOGIN,
+            GLOBAL_ZLOGOUT,
+            GLOBAL_ZPROFILE,
+            GLOBAL_ZSHENV,
+            GLOBAL_ZSHRC,
+        ] {
             assert!(
                 path.starts_with("/etc/"),
                 "GLOBAL_Z* path must start with /etc/, got {:?}",
@@ -1650,7 +1662,11 @@ mod tests {
     #[test]
     fn default_path_has_multiple_entries() {
         let entries: Vec<&str> = DEFAULT_PATH.split(':').collect();
-        assert!(entries.len() >= 2, "DEFAULT_PATH must have ≥ 2 entries, got {:?}", entries);
+        assert!(
+            entries.len() >= 2,
+            "DEFAULT_PATH must have ≥ 2 entries, got {:?}",
+            entries
+        );
     }
 
     /// DEFAULT_PATH entries are all absolute.
@@ -1690,7 +1706,11 @@ mod tests {
             GLOBAL_ZSHENV,
             GLOBAL_ZSHRC,
         ] {
-            assert!(!s.is_empty(), "config path string must not be empty: {:?}", s);
+            assert!(
+                !s.is_empty(),
+                "config path string must not be empty: {:?}",
+                s
+            );
         }
     }
 
@@ -1698,9 +1718,15 @@ mod tests {
     #[test]
     fn boolean_flags_all_zero_or_one() {
         for &v in &[
-            CACHE_USERNAMES, JOB_CONTROL, USE_SUSPENDED, BROKEN_ISPRINT,
-            CONFIG_LOCALE, DYNAMIC, DYNAMIC_NAME_CLASH_OK,
-            GETCWD_CALLS_MALLOC, GETPGRP_VOID,
+            CACHE_USERNAMES,
+            JOB_CONTROL,
+            USE_SUSPENDED,
+            BROKEN_ISPRINT,
+            CONFIG_LOCALE,
+            DYNAMIC,
+            DYNAMIC_NAME_CLASH_OK,
+            GETCWD_CALLS_MALLOC,
+            GETPGRP_VOID,
         ] {
             assert!(v == 0 || v == 1, "flag must be 0/1, got {}", v);
         }
@@ -1710,9 +1736,18 @@ mod tests {
     #[test]
     fn config_path_strings_are_ascii() {
         for s in &[
-            PASSWD_FILE, PASSWD_MAP, DEFAULT_PATH, DEFAULT_TMPPREFIX,
-            DEFAULT_FCEDIT, DEFAULT_READNULLCMD, DL_EXT,
-            GLOBAL_ZLOGIN, GLOBAL_ZLOGOUT, GLOBAL_ZPROFILE, GLOBAL_ZSHENV, GLOBAL_ZSHRC,
+            PASSWD_FILE,
+            PASSWD_MAP,
+            DEFAULT_PATH,
+            DEFAULT_TMPPREFIX,
+            DEFAULT_FCEDIT,
+            DEFAULT_READNULLCMD,
+            DL_EXT,
+            GLOBAL_ZLOGIN,
+            GLOBAL_ZLOGOUT,
+            GLOBAL_ZPROFILE,
+            GLOBAL_ZSHENV,
+            GLOBAL_ZSHRC,
         ] {
             assert!(s.is_ascii(), "config string must be ASCII: {:?}", s);
         }
@@ -1773,31 +1808,44 @@ mod tests {
     /// c:1000 — PATH_DEV_FD = "/dev/fd" (canonical fd file system path).
     #[test]
     fn path_dev_fd_is_canonical() {
-        assert_eq!(PATH_DEV_FD, "/dev/fd",
-            "canonical fd filesystem path per POSIX");
+        assert_eq!(
+            PATH_DEV_FD, "/dev/fd",
+            "canonical fd filesystem path per POSIX"
+        );
     }
 
     /// c:1003 — PATH_UTMPX_FILE is absolute path.
     #[test]
     fn path_utmpx_file_absolute() {
-        assert!(PATH_UTMPX_FILE.starts_with('/'),
-            "PATH_UTMPX_FILE must be absolute");
+        assert!(
+            PATH_UTMPX_FILE.starts_with('/'),
+            "PATH_UTMPX_FILE must be absolute"
+        );
     }
 
     /// c:962+979+1088 — MACHTYPE/OSTYPE/VENDOR all have no whitespace.
     #[test]
     fn machtype_ostype_vendor_no_whitespace() {
         for s in &[MACHTYPE, OSTYPE, VENDOR] {
-            assert!(!s.chars().any(|c| c.is_whitespace()),
-                "config target string must not contain whitespace: {:?}", s);
+            assert!(
+                !s.chars().any(|c| c.is_whitespace()),
+                "config target string must not contain whitespace: {:?}",
+                s
+            );
         }
     }
 
     /// PACKAGE_* fields are all defined (may be empty per autoconf default).
     #[test]
     fn package_fields_are_ascii_strings() {
-        for s in &[PACKAGE_BUGREPORT, PACKAGE_NAME, PACKAGE_STRING,
-                   PACKAGE_TARNAME, PACKAGE_URL, PACKAGE_VERSION] {
+        for s in &[
+            PACKAGE_BUGREPORT,
+            PACKAGE_NAME,
+            PACKAGE_STRING,
+            PACKAGE_TARNAME,
+            PACKAGE_URL,
+            PACKAGE_VERSION,
+        ] {
             assert!(s.is_ascii(), "PACKAGE_* must be ASCII: {:?}", s);
         }
     }
@@ -1813,22 +1861,30 @@ mod tests {
     /// c:23 — `PASSWD_FILE` is absolute path.
     #[test]
     fn passwd_file_is_absolute_path() {
-        assert!(PASSWD_FILE.starts_with('/'),
-            "PASSWD_FILE must be absolute, got {:?}", PASSWD_FILE);
+        assert!(
+            PASSWD_FILE.starts_with('/'),
+            "PASSWD_FILE must be absolute, got {:?}",
+            PASSWD_FILE
+        );
     }
 
     /// c:23 — `PASSWD_FILE` is canonical POSIX `/etc/passwd`.
     #[test]
     fn passwd_file_is_canonical_etc_passwd() {
-        assert_eq!(PASSWD_FILE, "/etc/passwd",
-            "PASSWD_FILE must be the POSIX canonical /etc/passwd");
+        assert_eq!(
+            PASSWD_FILE, "/etc/passwd",
+            "PASSWD_FILE must be the POSIX canonical /etc/passwd"
+        );
     }
 
     /// c:39 — `DEFAULT_HISTSIZE` is positive.
     #[test]
     fn default_histsize_is_positive() {
-        assert!(DEFAULT_HISTSIZE > 0,
-            "DEFAULT_HISTSIZE must be positive, got {}", DEFAULT_HISTSIZE);
+        assert!(
+            DEFAULT_HISTSIZE > 0,
+            "DEFAULT_HISTSIZE must be positive, got {}",
+            DEFAULT_HISTSIZE
+        );
     }
 
     /// c:42 — `DEFAULT_FCEDIT` is non-empty ASCII (editor command).
@@ -1841,22 +1897,29 @@ mod tests {
     /// c:45 — `DEFAULT_TMPPREFIX` is absolute.
     #[test]
     fn default_tmpprefix_is_absolute() {
-        assert!(DEFAULT_TMPPREFIX.starts_with('/'),
-            "DEFAULT_TMPPREFIX must be absolute path");
+        assert!(
+            DEFAULT_TMPPREFIX.starts_with('/'),
+            "DEFAULT_TMPPREFIX must be absolute path"
+        );
     }
 
     /// c:74 — `DEFAULT_PATH` contains `/usr/bin` (POSIX required entry).
     #[test]
     fn default_path_contains_usr_bin() {
-        assert!(DEFAULT_PATH.contains("/usr/bin"),
-            "DEFAULT_PATH must contain /usr/bin; got {:?}", DEFAULT_PATH);
+        assert!(
+            DEFAULT_PATH.contains("/usr/bin"),
+            "DEFAULT_PATH must contain /usr/bin; got {:?}",
+            DEFAULT_PATH
+        );
     }
 
     /// c:74 — `DEFAULT_PATH` uses ':' separator (POSIX convention).
     #[test]
     fn default_path_uses_colon_separator() {
-        assert!(DEFAULT_PATH.contains(':'),
-            "DEFAULT_PATH must use ':' separator");
+        assert!(
+            DEFAULT_PATH.contains(':'),
+            "DEFAULT_PATH must use ':' separator"
+        );
     }
 
     /// c:77 — `DEFAULT_READNULLCMD` is non-empty (pager command).
@@ -1868,16 +1931,20 @@ mod tests {
     /// c:85 — `DL_EXT` is non-empty ASCII (e.g. "so", "dylib").
     #[test]
     fn dl_ext_is_non_empty_ascii() {
-        assert!(!DL_EXT.is_empty(),
-            "DL_EXT must be non-empty (e.g. 'so'/'dylib')");
+        assert!(
+            !DL_EXT.is_empty(),
+            "DL_EXT must be non-empty (e.g. 'so'/'dylib')"
+        );
         assert!(DL_EXT.is_ascii());
     }
 
     /// c:967 — `MAX_FUNCTION_DEPTH` ≥ 100 (no degenerate shallow limit).
     #[test]
     fn max_function_depth_is_at_least_100() {
-        assert!(MAX_FUNCTION_DEPTH >= 100,
-            "MAX_FUNCTION_DEPTH must be ≥ 100 to support real scripts");
+        assert!(
+            MAX_FUNCTION_DEPTH >= 100,
+            "MAX_FUNCTION_DEPTH must be ≥ 100 to support real scripts"
+        );
     }
 
     /// c:33+36 — JOB_CONTROL + USE_SUSPENDED both enabled.
@@ -1890,8 +1957,10 @@ mod tests {
     /// c:30 — `CACHE_USERNAMES` enabled (canonical zsh behaviour).
     #[test]
     fn cache_usernames_enabled() {
-        assert_eq!(CACHE_USERNAMES, 1,
-            "CACHE_USERNAMES must be enabled for ~user expansion");
+        assert_eq!(
+            CACHE_USERNAMES, 1,
+            "CACHE_USERNAMES must be enabled for ~user expansion"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1904,46 +1973,61 @@ mod tests {
     /// c:23 — `PASSWD_FILE` is the canonical Unix password file path.
     #[test]
     fn passwd_file_is_canonical_unix_path() {
-        assert_eq!(PASSWD_FILE, "/etc/passwd",
-            "PASSWD_FILE must be /etc/passwd");
+        assert_eq!(
+            PASSWD_FILE, "/etc/passwd",
+            "PASSWD_FILE must be /etc/passwd"
+        );
     }
 
     /// c:42 — `DEFAULT_FCEDIT` is non-empty (history editor must have a default).
     #[test]
     fn default_fcedit_non_empty() {
-        assert!(!DEFAULT_FCEDIT.is_empty(),
-            "DEFAULT_FCEDIT must have a value");
+        assert!(
+            !DEFAULT_FCEDIT.is_empty(),
+            "DEFAULT_FCEDIT must have a value"
+        );
     }
 
     /// c:45 — `DEFAULT_TMPPREFIX` starts with `/tmp` (canonical temp dir).
     #[test]
     fn default_tmpprefix_starts_with_tmp() {
-        assert!(DEFAULT_TMPPREFIX.starts_with("/tmp"),
+        assert!(
+            DEFAULT_TMPPREFIX.starts_with("/tmp"),
             "DEFAULT_TMPPREFIX must be under /tmp, got {:?}",
-            DEFAULT_TMPPREFIX);
+            DEFAULT_TMPPREFIX
+        );
     }
 
     /// c:74 — `DEFAULT_PATH` contains `/usr/bin` and `/bin` (POSIX baseline).
     #[test]
     fn default_path_contains_usr_bin_and_bin() {
-        assert!(DEFAULT_PATH.contains("/usr/bin"),
-            "DEFAULT_PATH must contain /usr/bin");
-        assert!(DEFAULT_PATH.contains("/bin"),
-            "DEFAULT_PATH must contain /bin");
+        assert!(
+            DEFAULT_PATH.contains("/usr/bin"),
+            "DEFAULT_PATH must contain /usr/bin"
+        );
+        assert!(
+            DEFAULT_PATH.contains("/bin"),
+            "DEFAULT_PATH must contain /bin"
+        );
     }
 
     /// c:74 — `DEFAULT_PATH` uses `:` separator (POSIX PATH form, alt).
     #[test]
     fn default_path_uses_colon_separator_alt() {
-        assert!(DEFAULT_PATH.contains(':'),
-            "DEFAULT_PATH must use ':' separator");
+        assert!(
+            DEFAULT_PATH.contains(':'),
+            "DEFAULT_PATH must use ':' separator"
+        );
     }
 
     /// c:39 — `DEFAULT_HISTSIZE` is a positive integer (alt).
     #[test]
     fn default_histsize_is_positive_alt() {
-        assert!(DEFAULT_HISTSIZE > 0,
-            "DEFAULT_HISTSIZE must be > 0, got {}", DEFAULT_HISTSIZE);
+        assert!(
+            DEFAULT_HISTSIZE > 0,
+            "DEFAULT_HISTSIZE must be > 0, got {}",
+            DEFAULT_HISTSIZE
+        );
     }
 
     /// c:105-121 — every GLOBAL_Z* path starts with `/etc/`.
@@ -1956,8 +2040,12 @@ mod tests {
             ("GLOBAL_ZSHENV", GLOBAL_ZSHENV),
             ("GLOBAL_ZSHRC", GLOBAL_ZSHRC),
         ] {
-            assert!(val.starts_with("/etc/"),
-                "{} must be under /etc/, got {:?}", name, val);
+            assert!(
+                val.starts_with("/etc/"),
+                "{} must be under /etc/, got {:?}",
+                name,
+                val
+            );
         }
     }
 
@@ -1978,25 +2066,43 @@ mod tests {
     /// c:1000 — `PATH_DEV_FD` is `/dev/fd` (canonical fd-as-path, alt).
     #[test]
     fn path_dev_fd_is_canonical_alt() {
-        assert_eq!(PATH_DEV_FD, "/dev/fd",
-            "PATH_DEV_FD must be /dev/fd for process substitution");
+        assert_eq!(
+            PATH_DEV_FD, "/dev/fd",
+            "PATH_DEV_FD must be /dev/fd for process substitution"
+        );
     }
 
     /// c:970 — `MULTIBYTE_SUPPORT` is enabled (alt).
     #[test]
     fn multibyte_support_enabled_alt() {
-        assert_eq!(MULTIBYTE_SUPPORT, 1,
-            "MULTIBYTE_SUPPORT must be on for modern shells");
+        assert_eq!(
+            MULTIBYTE_SUPPORT, 1,
+            "MULTIBYTE_SUPPORT must be on for modern shells"
+        );
     }
 
     /// c:23-1093 — every string const is valid UTF-8 (trivial for &str, pin contract).
     #[test]
     fn string_consts_all_valid_utf8() {
-        for s in [PASSWD_FILE, PASSWD_MAP, DEFAULT_FCEDIT,
-                  DEFAULT_TMPPREFIX, DEFAULT_PATH, DEFAULT_READNULLCMD,
-                  DL_EXT, GLOBAL_ZLOGIN, GLOBAL_ZLOGOUT, GLOBAL_ZPROFILE,
-                  GLOBAL_ZSHENV, GLOBAL_ZSHRC, PATH_DEV_FD, PATH_UTMPX_FILE,
-                  MACHTYPE, OSTYPE, VENDOR] {
+        for s in [
+            PASSWD_FILE,
+            PASSWD_MAP,
+            DEFAULT_FCEDIT,
+            DEFAULT_TMPPREFIX,
+            DEFAULT_PATH,
+            DEFAULT_READNULLCMD,
+            DL_EXT,
+            GLOBAL_ZLOGIN,
+            GLOBAL_ZLOGOUT,
+            GLOBAL_ZPROFILE,
+            GLOBAL_ZSHENV,
+            GLOBAL_ZSHRC,
+            PATH_DEV_FD,
+            PATH_UTMPX_FILE,
+            MACHTYPE,
+            OSTYPE,
+            VENDOR,
+        ] {
             let _ = std::str::from_utf8(s.as_bytes()).expect("must be UTF-8");
         }
     }
@@ -2004,8 +2110,7 @@ mod tests {
     /// c:85 — `DL_EXT` is `so` (Linux/macOS shared-object suffix, no leading dot).
     #[test]
     fn dl_ext_is_so_no_leading_dot() {
-        assert_eq!(DL_EXT, "so",
-            "DL_EXT must be `so` (no leading dot)");
+        assert_eq!(DL_EXT, "so", "DL_EXT must be `so` (no leading dot)");
     }
 
     /// c:42 — `DEFAULT_FCEDIT` is `vi` (zsh canonical default fc editor, alt).

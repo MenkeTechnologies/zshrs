@@ -711,14 +711,22 @@ mod tests {
     #[test]
     fn blankwordclass_vertical_tab_is_iblank() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(blankwordclass('\x0b'), 0, "VT is whitespace (excl. newline)");
+        assert_eq!(
+            blankwordclass('\x0b'),
+            0,
+            "VT is whitespace (excl. newline)"
+        );
     }
 
     /// c:36 — `\f` (form feed) is iblank.
     #[test]
     fn blankwordclass_form_feed_is_iblank() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(blankwordclass('\x0c'), 0, "FF is whitespace (excl. newline)");
+        assert_eq!(
+            blankwordclass('\x0c'),
+            0,
+            "FF is whitespace (excl. newline)"
+        );
     }
 
     /// c:36 — `\r` (carriage return) is iblank (iswspace(CR) is true,
@@ -735,7 +743,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for c in (0u32..0x10000).step_by(1024).filter_map(char::from_u32) {
             let r = blankwordclass(c);
-            assert!(r == 0 || r == 1, "blankwordclass({:?}) = {} not in 0/1", c, r);
+            assert!(
+                r == 0 || r == 1,
+                "blankwordclass({:?}) = {} not in 0/1",
+                c,
+                r
+            );
         }
     }
 

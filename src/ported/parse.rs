@@ -9526,8 +9526,14 @@ esac"#;
         let i0 = ecadd(0xDEAD);
         let i1 = ecadd(0xBEEF);
         let i2 = ecadd(0xC0DE);
-        assert!(i1 > i0, "ecadd indices must strictly increase, got {i0} then {i1}");
-        assert!(i2 > i1, "ecadd indices must strictly increase, got {i1} then {i2}");
+        assert!(
+            i1 > i0,
+            "ecadd indices must strictly increase, got {i0} then {i1}"
+        );
+        assert!(
+            i2 > i1,
+            "ecadd indices must strictly increase, got {i1} then {i2}"
+        );
         assert_eq!(i1, i0 + 1, "consecutive ecadds advance by 1");
         assert_eq!(i2, i1 + 1, "consecutive ecadds advance by 1");
     }
@@ -9545,7 +9551,8 @@ esac"#;
         ecdel(i1);
         let next_after = ECUSED.get();
         assert_eq!(
-            next_after, next_before - 1,
+            next_after,
+            next_before - 1,
             "ecdel must decrement ecused by exactly 1"
         );
     }
@@ -9693,8 +9700,12 @@ esac"#;
         for s in ["", "a", "abc", "hello world"] {
             let first = ecstrcode(s);
             for _ in 0..3 {
-                assert_eq!(ecstrcode(s), first,
-                    "ecstrcode({:?}) must be deterministic", s);
+                assert_eq!(
+                    ecstrcode(s),
+                    first,
+                    "ecstrcode({:?}) must be deterministic",
+                    s
+                );
             }
         }
     }
@@ -9767,7 +9778,7 @@ esac"#;
         let mut buf = vec![0u32; FD_PRELEN + 32];
         buf[0] = FD_MAGIC; // pre[0] magic
         buf[1] = (0x12u32) | (0x00ABCDEFu32 << 8); // flags=0x12, other=0xABCDEF
-        // Embed version string starting at pre[2].
+                                                   // Embed version string starting at pre[2].
         let ver = b"5.9\0";
         for (i, chunk) in ver.chunks(4).enumerate() {
             let mut word = [0u8; 4];
@@ -9796,7 +9807,11 @@ esac"#;
     #[test]
     fn fdother_high_24_bits_extraction() {
         let buf = build_fd_header();
-        assert_eq!(fdother(&buf), 0x00ABCDEF, "other = pre[1] >> 8 & 0x00ffffff");
+        assert_eq!(
+            fdother(&buf),
+            0x00ABCDEF,
+            "other = pre[1] >> 8 & 0x00ffffff"
+        );
     }
 
     /// c:3132 — `fdsetflags` writes low byte, preserves high 24 bits.
@@ -9846,7 +9861,11 @@ esac"#;
     #[test]
     fn fdhflags_low_two_bits() {
         let h = fdhead {
-            start: 0, len: 0, npats: 0, strs: 0, hlen: 0,
+            start: 0,
+            len: 0,
+            npats: 0,
+            strs: 0,
+            hlen: 0,
             flags: 0b1011, // tail=2, kshload bits = 0b11
         };
         assert_eq!(fdhflags(&h), 0b11, "flags = h.flags & 0x3");
@@ -9856,7 +9875,11 @@ esac"#;
     #[test]
     fn fdhtail_shift_right_two() {
         let h = fdhead {
-            start: 0, len: 0, npats: 0, strs: 0, hlen: 0,
+            start: 0,
+            len: 0,
+            npats: 0,
+            strs: 0,
+            hlen: 0,
             flags: (0x12_3456 << 2) | 0x3,
         };
         assert_eq!(fdhtail(&h), 0x12_3456, "tail = h.flags >> 2");
@@ -9876,7 +9899,11 @@ esac"#;
         for (flags, tail) in [(0u32, 0u32), (1, 100), (2, 0xABC), (3, 0xFFFF)] {
             let packed = fdhbldflags(flags, tail);
             let h = fdhead {
-                start: 0, len: 0, npats: 0, strs: 0, hlen: 0,
+                start: 0,
+                len: 0,
+                npats: 0,
+                strs: 0,
+                hlen: 0,
                 flags: packed,
             };
             assert_eq!(fdhflags(&h), flags, "flags round-trips");
@@ -9887,8 +9914,11 @@ esac"#;
     /// c:8271 — `firstfdhead_offset()` returns FD_PRELEN constant.
     #[test]
     fn firstfdhead_offset_returns_prelen() {
-        assert_eq!(firstfdhead_offset(), FD_PRELEN,
-            "first header starts after prelude");
+        assert_eq!(
+            firstfdhead_offset(),
+            FD_PRELEN,
+            "first header starts after prelude"
+        );
     }
 
     /// c:3127 — `fdmagic` differentiates FD_MAGIC from FD_OMAGIC.

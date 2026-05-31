@@ -4041,7 +4041,10 @@ mod tests {
         let mut specs = std::collections::HashMap::new();
         specs.insert('%', "OVERRIDE".to_string());
         let r = zformat_substring("%%", &specs, false);
-        assert_eq!(r, "OVERRIDE", "caller override of % beats default '%' literal");
+        assert_eq!(
+            r, "OVERRIDE",
+            "caller override of % beats default '%' literal"
+        );
     }
 
     /// c:814 — `%` followed by unregistered char produces empty
@@ -4108,8 +4111,13 @@ mod tests {
         for (ctx, sty) in [("", ""), ("a", "b"), ("zsh", "color")] {
             let first = lookupstyle(ctx, sty);
             for _ in 0..3 {
-                assert_eq!(lookupstyle(ctx, sty), first,
-                    "lookupstyle({:?}, {:?}) must be deterministic", ctx, sty);
+                assert_eq!(
+                    lookupstyle(ctx, sty),
+                    first,
+                    "lookupstyle({:?}, {:?}) must be deterministic",
+                    ctx,
+                    sty
+                );
             }
         }
     }
@@ -4129,8 +4137,7 @@ mod tests {
     #[ignore = "ZSHRS BUG: testforstyle('','') returns 1 instead of 0 — empty ctx should not match any registered style (Src/Modules/zutil.c:810)"]
     fn testforstyle_empty_inputs_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(testforstyle("", ""), 0,
-            "empty ctx/style → 0 (not present)");
+        assert_eq!(testforstyle("", ""), 0, "empty ctx/style → 0 (not present)");
     }
 
     /// c:837 — `bin_zstyle` returns i32 (compile-time type pin).
@@ -4139,7 +4146,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _: i32 = bin_zstyle("zstyle", &[], &ops, 0);
     }
@@ -4150,7 +4159,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _: i32 = bin_zformat("zformat", &[], &ops, 0);
     }
@@ -4168,8 +4179,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let a = get_opt_desc("__never_real_opt__").is_some();
         for _ in 0..3 {
-            assert_eq!(get_opt_desc("__never_real_opt__").is_some(), a,
-                "get_opt_desc must be deterministic");
+            assert_eq!(
+                get_opt_desc("__never_real_opt__").is_some(),
+                a,
+                "get_opt_desc must be deterministic"
+            );
         }
     }
 
@@ -4223,8 +4237,7 @@ mod tests {
     fn lookupstyle_empty_returns_empty() {
         let _g = crate::test_util::global_state_lock();
         let v = lookupstyle("", "");
-        assert!(v.is_empty(),
-            "empty ctx/style → empty Vec; got {:?}", v);
+        assert!(v.is_empty(), "empty ctx/style → empty Vec; got {:?}", v);
     }
 
     /// c:810 — `testforstyle` returns i32 (compile-time pin, alt).
@@ -4240,11 +4253,16 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let r = bin_zstyle("zstyle", &[], &ops, 0);
-        assert!(r == 0 || r == 1,
-            "no args is the listing form; result must be 0/1, got {}", r);
+        assert!(
+            r == 0 || r == 1,
+            "no args is the listing form; result must be 0/1, got {}",
+            r
+        );
     }
 
     /// c:1131 — `bin_zformat` no-args returns nonzero (usage error).
@@ -4253,7 +4271,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let r = bin_zformat("zformat", &[], &ops, 0);
         assert_ne!(r, 0, "zformat no args → usage error");
@@ -4265,7 +4285,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _: i32 = bin_zregexparse("zregexparse", &[], &ops, 0);
     }
@@ -4276,7 +4298,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _: i32 = bin_zparseopts("zparseopts", &[], &ops, 0);
     }
@@ -4287,7 +4311,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let r = bin_zparseopts("zparseopts", &[], &ops, 0);
         assert_ne!(r, 0, "zparseopts no args → usage error");
@@ -4296,8 +4322,7 @@ mod tests {
     /// c:3135 — `zformat_substring("", _, false)` returns empty (alt).
     #[test]
     fn zformat_substring_empty_format_returns_empty_alt() {
-        let specs: std::collections::HashMap<char, String> =
-            std::collections::HashMap::new();
+        let specs: std::collections::HashMap<char, String> = std::collections::HashMap::new();
         let r = zformat_substring("", &specs, false);
         assert_eq!(r, "", "empty format → empty output");
     }
@@ -4305,18 +4330,15 @@ mod tests {
     /// c:3135 — `zformat_substring` returns String (compile-time pin).
     #[test]
     fn zformat_substring_returns_string_type() {
-        let specs: std::collections::HashMap<char, String> =
-            std::collections::HashMap::new();
+        let specs: std::collections::HashMap<char, String> = std::collections::HashMap::new();
         let _: String = zformat_substring("plain text", &specs, false);
     }
 
     /// c:3135 — `zformat_substring` plain text (no `%`) returns as-is.
     #[test]
     fn zformat_substring_plain_text_no_specs() {
-        let specs: std::collections::HashMap<char, String> =
-            std::collections::HashMap::new();
+        let specs: std::collections::HashMap<char, String> = std::collections::HashMap::new();
         let r = zformat_substring("hello world", &specs, false);
-        assert_eq!(r, "hello world",
-            "text without %-spec is returned verbatim");
+        assert_eq!(r, "hello world", "text without %-spec is returned verbatim");
     }
 }

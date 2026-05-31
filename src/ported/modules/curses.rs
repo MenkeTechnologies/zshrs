@@ -2912,8 +2912,10 @@ mod tests {
     #[test]
     fn zcurses_colorget_reverse_invalid_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(zcurses_colorget_reverse(i16::MAX).is_none(),
-            "invalid color pair → None");
+        assert!(
+            zcurses_colorget_reverse(i16::MAX).is_none(),
+            "invalid color pair → None"
+        );
     }
 
     /// c:544 — `freecolorpairnode("")` empty name is safe.
@@ -2929,8 +2931,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = zcurses_colorsarrgetfn();
         for _ in 0..3 {
-            assert_eq!(zcurses_colorsarrgetfn(), first,
-                "zcurses_colorsarrgetfn must be deterministic");
+            assert_eq!(
+                zcurses_colorsarrgetfn(),
+                first,
+                "zcurses_colorsarrgetfn must be deterministic"
+            );
         }
     }
 
@@ -2940,8 +2945,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = zcurses_attrgetfn();
         for _ in 0..3 {
-            assert_eq!(zcurses_attrgetfn(), first,
-                "zcurses_attrgetfn must be deterministic");
+            assert_eq!(
+                zcurses_attrgetfn(),
+                first,
+                "zcurses_attrgetfn must be deterministic"
+            );
         }
     }
 
@@ -2951,8 +2959,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = zcurses_keycodesgetfn();
         for _ in 0..3 {
-            assert_eq!(zcurses_keycodesgetfn(), first,
-                "zcurses_keycodesgetfn must be deterministic");
+            assert_eq!(
+                zcurses_keycodesgetfn(),
+                first,
+                "zcurses_keycodesgetfn must be deterministic"
+            );
         }
     }
 
@@ -3035,8 +3046,7 @@ mod tests {
         for err in [0, -1, 1, 42, i32::MIN, i32::MAX] {
             let a = zcurses_strerror(err);
             let b = zcurses_strerror(err);
-            assert_eq!(a, b,
-                "zcurses_strerror({}) must be pure", err);
+            assert_eq!(a, b, "zcurses_strerror({}) must be pure", err);
         }
     }
 
@@ -3044,8 +3054,7 @@ mod tests {
     #[test]
     fn zcurses_getwindowbyname_empty_returns_false() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!zcurses_getwindowbyname(""),
-            "empty name has no window");
+        assert!(!zcurses_getwindowbyname(""), "empty name has no window");
     }
 
     /// c:332 — `zcurses_getwindowbyname` returns bool (compile-time pin).
@@ -3067,8 +3076,11 @@ mod tests {
     fn zcurses_color_empty_string_returns_sentinel() {
         let _g = crate::test_util::global_state_lock();
         let r = zcurses_color("");
-        assert!(r < 0,
-            "empty color name must return negative sentinel; got {}", r);
+        assert!(
+            r < 0,
+            "empty color name must return negative sentinel; got {}",
+            r
+        );
     }
 
     /// c:418 — `zcurses_color` is deterministic.
@@ -3078,8 +3090,12 @@ mod tests {
         for name in ["__bogus_color__", "", "xyz"] {
             let first = zcurses_color(name);
             for _ in 0..3 {
-                assert_eq!(zcurses_color(name), first,
-                    "zcurses_color({:?}) must be pure", name);
+                assert_eq!(
+                    zcurses_color(name),
+                    first,
+                    "zcurses_color({:?}) must be pure",
+                    name
+                );
             }
         }
     }

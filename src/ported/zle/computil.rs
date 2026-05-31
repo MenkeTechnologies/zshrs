@@ -9592,8 +9592,11 @@ mod tests {
     /// C uses inverted boolean: 1 = equal, 0 = unequal (opposite of strcmp).
     #[test]
     fn arrcmp_both_none_returns_one_inverted_boolean() {
-        assert_eq!(arrcmp(None, None), 1,
-            "C inverted-boolean: 1=equal, 0=unequal (per c:980)");
+        assert_eq!(
+            arrcmp(None, None),
+            1,
+            "C inverted-boolean: 1=equal, 0=unequal (per c:980)"
+        );
     }
 
     /// c:980 — `arrcmp(None, Some)` returns 0 (unequal sentinel).
@@ -9608,8 +9611,11 @@ mod tests {
     #[test]
     fn arrcmp_identical_arrays_returns_one_equal() {
         let a = vec!["x".to_string(), "y".to_string()];
-        assert_eq!(arrcmp(Some(&a), Some(&a)), 1,
-            "identical arrays → 1 (equal) per c:989");
+        assert_eq!(
+            arrcmp(Some(&a), Some(&a)),
+            1,
+            "identical arrays → 1 (equal) per c:989"
+        );
     }
 
     /// c:1725 — `arrcmp` is pure for non-empty arrays.
@@ -9619,8 +9625,7 @@ mod tests {
         let b = vec!["y".to_string()];
         let first = arrcmp(Some(&a), Some(&b));
         for _ in 0..5 {
-            assert_eq!(arrcmp(Some(&a), Some(&b)), first,
-                "arrcmp must be pure");
+            assert_eq!(arrcmp(Some(&a), Some(&b)), first, "arrcmp must be pure");
         }
     }
 
@@ -9636,8 +9641,12 @@ mod tests {
         for s in ["", "abc", r"a\:b", r"\:\:"] {
             let first = rembslashcolon(s);
             for _ in 0..3 {
-                assert_eq!(rembslashcolon(s), first,
-                    "rembslashcolon({:?}) must be pure", s);
+                assert_eq!(
+                    rembslashcolon(s),
+                    first,
+                    "rembslashcolon({:?}) must be pure",
+                    s
+                );
             }
         }
     }
@@ -9666,8 +9675,7 @@ mod tests {
         for s in ["", "a:b", "no colon", "a:b:c:d"] {
             let first = bslashcolon(s);
             for _ in 0..3 {
-                assert_eq!(bslashcolon(s), first,
-                    "bslashcolon({:?}) must be pure", s);
+                assert_eq!(bslashcolon(s), first, "bslashcolon({:?}) must be pure", s);
             }
         }
     }
@@ -9682,8 +9690,7 @@ mod tests {
     /// c:933 — `cd_arrcat(&[], &[])` empty + empty returns empty.
     #[test]
     fn cd_arrcat_both_empty_returns_empty() {
-        assert!(cd_arrcat(&[], &[]).is_empty(),
-            "empty + empty → empty");
+        assert!(cd_arrcat(&[], &[]).is_empty(), "empty + empty → empty");
     }
 
     /// c:933 — `cd_arrcat(&[], &b)` empty-A returns clone of B.
@@ -9745,7 +9752,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _: i32 = bin_compdescribe("compdescribe", &[], &ops, 0);
     }
@@ -9781,8 +9790,11 @@ mod tests {
         for s in ["a:b", "x:y:z", "no_colon"] {
             let escaped = bslashcolon(s);
             let unescaped = rembslashcolon(&escaped);
-            assert_eq!(unescaped, s,
-                "bslashcolon→rembslashcolon must round-trip for {:?}", s);
+            assert_eq!(
+                unescaped, s,
+                "bslashcolon→rembslashcolon must round-trip for {:?}",
+                s
+            );
         }
     }
 

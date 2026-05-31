@@ -332,8 +332,7 @@ mod tests {
     fn modentry_max_minus_one_unknown_returns_one() {
         let _g = crate::test_util::global_state_lock();
         let mut m = TestModule { booted: false };
-        assert_eq!(modentry(i32::MAX - 1, &mut m), 1,
-            "MAX-1 op → 1 (unknown)");
+        assert_eq!(modentry(i32::MAX - 1, &mut m), 1, "MAX-1 op → 1 (unknown)");
     }
 
     /// c:7 — `modentry` for op=5 returns same result as op=4 (both feature-side).
@@ -342,8 +341,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for op in [4, 5] {
             let mut m = TestModule { booted: false };
-            assert_eq!(modentry(op, &mut m), 0,
-                "feature-side op {} returns 0", op);
+            assert_eq!(modentry(op, &mut m), 0, "feature-side op {} returns 0", op);
         }
     }
 
@@ -375,8 +373,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for op in 0..=5i32 {
             let mut m = TestModule { booted: false };
-            assert_eq!(modentry(op, &mut m), 0,
-                "op {} must return 0 (success)", op);
+            assert_eq!(modentry(op, &mut m), 0, "op {} must return 0 (success)", op);
         }
     }
 
@@ -386,8 +383,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for op in [-1, -100, i32::MIN] {
             let mut m = TestModule { booted: false };
-            assert_eq!(modentry(op, &mut m), 1,
-                "negative op {} → 1", op);
+            assert_eq!(modentry(op, &mut m), 1, "negative op {} → 1", op);
         }
     }
 
@@ -397,8 +393,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for op in [6, 7, 10, 100, 1000, i32::MAX] {
             let mut m = TestModule { booted: false };
-            assert_eq!(modentry(op, &mut m), 1,
-                "op {} ≥ 6 → 1", op);
+            assert_eq!(modentry(op, &mut m), 1, "op {} ≥ 6 → 1", op);
         }
     }
 
@@ -442,8 +437,7 @@ mod tests {
         for op in -5..=10i32 {
             let mut m = TestModule { booted: false };
             let r = modentry(op, &mut m);
-            assert!(r == 0 || r == 1,
-                "modentry({}) = {} not in 0/1", op, r);
+            assert!(r == 0 || r == 1, "modentry({}) = {} not in 0/1", op, r);
         }
     }
 
@@ -508,12 +502,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut m = TestModule { booted: false };
         for op in 0..=5 {
-            assert_eq!(modentry(op, &mut m), 0,
-                "op {} must return 0 (known)", op);
+            assert_eq!(modentry(op, &mut m), 0, "op {} must return 0 (known)", op);
         }
         for op in 6..=10 {
-            assert_eq!(modentry(op, &mut m), 1,
-                "op {} must return 1 (unknown)", op);
+            assert_eq!(modentry(op, &mut m), 1, "op {} must return 1 (unknown)", op);
         }
     }
 
@@ -524,8 +516,11 @@ mod tests {
         let mut m = TestModule { booted: false };
         let first = modentry(99, &mut m);
         for _ in 0..10 {
-            assert_eq!(modentry(99, &mut m), first,
-                "unknown op must always return same value");
+            assert_eq!(
+                modentry(99, &mut m),
+                first,
+                "unknown op must always return same value"
+            );
         }
     }
 
@@ -561,8 +556,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut m = TestModule { booted: false };
         for op in 6..256 {
-            assert_eq!(modentry(op, &mut m), 1,
-                "unknown op {} must return 1", op);
+            assert_eq!(modentry(op, &mut m), 1, "unknown op {} must return 1", op);
         }
     }
 
@@ -572,8 +566,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut m = TestModule { booted: false };
         for op in 1..=1000 {
-            assert_eq!(modentry(-op, &mut m), 1,
-                "negative op -{} must return 1", op);
+            assert_eq!(
+                modentry(-op, &mut m),
+                1,
+                "negative op -{} must return 1",
+                op
+            );
         }
     }
 
@@ -584,8 +582,7 @@ mod tests {
         let mut m = TestModule { booted: false };
         for op in -50..=50 {
             let r = modentry(op, &mut m);
-            assert!(r == 0 || r == 1,
-                "modentry({}) = {} not in {{0,1}}", op, r);
+            assert!(r == 0 || r == 1, "modentry({}) = {} not in {{0,1}}", op, r);
         }
     }
 
