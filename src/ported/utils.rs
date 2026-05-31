@@ -8832,6 +8832,85 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
                     result.push(val as char);
                 }
             }
+            // c:utils.c:7072-7138 — `\u` (4-hex) / `\U` (8-hex)
+            // Unicode codepoint escapes. Always interpreted; the C
+            // source's `case 'U':` / `case 'u':` arms have no flag
+            // gating (only the GETKEY_UPDATE_OFFSET bookkeeping). C
+            // calls `ucs4tomb(wval, t)` which writes UTF-8 bytes.
+            // Previously these were absent from `getkeystring_with`,
+            // so `echo -e "\U00000041"` emitted literal `\U00000041`
+            // instead of 'A'.
+            Some('u') => {
+                consumed += 1;
+                let mut hex = String::new();
+                for _ in 0..4 {
+                    if let Some(&c) = chars.peek() {
+                        if c.is_ascii_hexdigit() {
+                            hex.push(chars.next().unwrap());
+                            consumed += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                if let Ok(val) = u32::from_str_radix(&hex, 16) {
+                    if let Some(ch) = char::from_u32(val) {
+                        result.push(ch);
+                    }
+                }
+            }
+            Some('U') => {
+                consumed += 1;
+                let mut hex = String::new();
+                for _ in 0..8 {
+                    if let Some(&c) = chars.peek() {
+                        if c.is_ascii_hexdigit() {
+                            hex.push(chars.next().unwrap());
+                            consumed += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                if let Ok(val) = u32::from_str_radix(&hex, 16) {
+                    if let Some(ch) = char::from_u32(val) {
+                        result.push(ch);
+                    }
+                }
+            }
+            // c:utils.c:7156-7178 — `\0NNN` when GETKEY_OCTAL_ESC is
+            // NOT set (the echo path). C body:
+            //   if (!(how & GETKEY_OCTAL_ESC)) {
+            //       if (*s == '0')
+            //           s++;        // skip the 0 prefix
+            //       ...
+            //   }
+            //   *t++ = zstrtol(s + (*s == 'x'), &s, 8);
+            // So `\0NNN` reads up to 3 octal digits AFTER the leading
+            // 0 and emits one byte. Previously absent, so
+            // `echo -e "\0101"` emitted literal `\0101` instead of
+            // byte 0x41 ('A'). The OCTAL_ESC-gated arm below handles
+            // the printf path where any 0-7 digit starts an octal.
+            Some('0') if (how & GETKEY_OCTAL_ESC) == 0 => {
+                consumed += 1;
+                let mut oct = String::new();
+                for _ in 0..3 {
+                    if let Some(&c) = chars.peek() {
+                        if ('0'..='7').contains(&c) {
+                            oct.push(chars.next().unwrap());
+                            consumed += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                let val: u8 = if oct.is_empty() {
+                    0 // c:7170 zstrtol on empty reads as 0
+                } else {
+                    u8::from_str_radix(&oct, 8).unwrap_or(0)
+                };
+                result.push(val as char);
+            }
             // Octal escape: \NNN (1-3 octal digits). Gated on
             // GETKEY_OCTAL_ESC per c:utils.c:7156-7178.
             Some(d) if d.is_digit(8) && (how & GETKEY_OCTAL_ESC) != 0 => {

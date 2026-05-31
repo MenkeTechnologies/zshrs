@@ -7259,10 +7259,21 @@ pub fn bin_print(
             .push(body); // c:5565
         return 0;
     }
-    if OPT_ISSET(ops, b's') {
-        // c:5569-5574 — push the captured output as a history entry.
-        let event_id = crate::ported::hist::prepnexthistent(); // c:5569
-        crate::ported::hashtable::addhistnode(&body, event_id as i32); // c:5574
+    if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'S') {
+        // c:5047-5093 — `-s` / `-S` push captured output to the history
+        // list. `-S` requires exactly one arg (c:5058-5062
+        // `if (nwords > 1) zwarnnam(name, "option -S takes a single
+        // argument"); return 1`); the words array is then populated by
+        // `histsplitwords` (c:5065). `-s` joins all args with spaces
+        // and stores them as a single history entry. Both paths call
+        // `prepnexthistent` + `addhistnode(histtab, ent->node.nam, ent)`.
+        if OPT_ISSET(ops, b'S') && processed_args.len() > 1 {
+            // c:5059
+            zwarnnam(name, "option -S takes a single argument"); // c:5059
+            return 1; // c:5061
+        }
+        let event_id = crate::ported::hist::prepnexthistent(); // c:5066/5072
+        crate::ported::hashtable::addhistnode(&body, event_id as i32); // c:5090
         return 0;
     }
     if let Some(ref v) = dest_var {
@@ -8819,7 +8830,19 @@ pub fn bin_read(
         if !field.is_empty() || !parts.is_empty() {
             parts.push(field);
         }
-        setaparam(&reply, parts); // c:setaparam
+        // c:Src/builtin.c:6929 — `if (*buf || first || gotnl)`. With
+        // `gotnl=1` set on EOF (c:6898/6914) and `first=1` initial
+        // value (c:6771), C's `read -A` adds the empty buf as one
+        // element even when no bytes were ever read. The resulting
+        // linked list at c:6949 then yields a 1-element array
+        // containing "". Without this branch, immediate EOF produced
+        // a 0-element array — diverging from zsh's "consumed one
+        // (empty) field" semantics that downstream `${#arr}` checks
+        // rely on to distinguish "empty line" from "no input".
+        if parts.is_empty() {
+            parts.push(String::new());
+        }
+        setaparam(&reply, parts); // c:6968 setaparam
     } else if argi < args.len() {
         // Multi-var: `read x y [z]`. First var = reply (already
         // consumed); rest are args[argi..]. Split with at most
@@ -10367,10 +10390,19 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             "zformat",
             0,
             Some(crate::ported::modules::zutil::bin_zformat as HandlerFunc),
-            0,
+            3,
             -1,
             0,
-            Some("Faf"),
+            // c:Src/Modules/zutil.c:2136 — `BUILTIN("zformat", 0,
+            // bin_zformat, 3, -1, 0, NULL, NULL)`. NULL optstring:
+            // bin_zformat reads args[0] as the `-X` selector itself, so
+            // execbuiltin must not pre-eat the flag. Previously
+            // optstring="Faf" pre-parsed -F/-a/-f into ops, leaving
+            // args with the flag-letter stripped — combined with
+            // minargs=0 this let `zformat -F` slip past the dispatcher
+            // and emit "missing arguments to -f/-F" from the inner
+            // check instead of zsh's canonical "not enough arguments".
+            None,
             None,
         ),
         BUILTIN(

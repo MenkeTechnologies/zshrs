@@ -557,6 +557,59 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 let tc = bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0);
                 let mut test: i32 = 0;
                 match tc {
+                    // c:396-413 — `c` / `.` / `~` / `/` / `C` PWD-depth
+                    // tests. C body:
+                    //   if (finddir(ss)) { arg--; ss += strlen(nd->dir); }
+                    //   /*FALLTHROUGH*/
+                    //   if (*ss && *ss++ == '/' && *ss)  arg--;
+                    //   for (; *ss; ss++)
+                    //       if (*ss == '/') arg--;
+                    //   if (arg <= 0) test = 1;
+                    // Net effect: test=1 when PWD has ≥ (arg+1) path
+                    // components after the home-prefix dir (if any).
+                    // For the canonical `%(c..yes)` form, arg=0 →
+                    // test=1 for any non-empty PWD (matches zsh).
+                    b'c' | b'.' | b'~' | b'/' | b'C' => {
+                        let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
+                        let home = prompt_tls::HOME.with(|c| c.borrow().clone());
+                        // c:399 — `finddir(ss)` matches the home dir for
+                        // the `c`/`.`/`~` arms only. The `/`/`C` arms
+                        // skip the home strip (FALLTHROUGH from above
+                        // bypassed). Honor that:
+                        let strip_home = matches!(tc, b'c' | b'.' | b'~');
+                        let ss: &str = if strip_home
+                            && !home.is_empty()
+                            && pwd == home
+                        {
+                            arg -= 1; // c:400
+                            ""
+                        } else if strip_home
+                            && !home.is_empty()
+                            && pwd.starts_with(&format!("{}/", home))
+                        {
+                            arg -= 1; // c:400
+                            &pwd[home.len()..]
+                        } else {
+                            &pwd
+                        };
+                        // c:406-407 — `if (*ss && *ss++ == '/' && *ss)
+                        // arg--;` — the leading `/` counts iff there's
+                        // something after it.
+                        let bytes = ss.as_bytes();
+                        if bytes.len() >= 2 && bytes[0] == b'/' {
+                            arg -= 1; // c:407
+                        }
+                        // c:408-410 — remaining `/` chars each decrement.
+                        let skip_first = if !bytes.is_empty() && bytes[0] == b'/' { 1 } else { 0 };
+                        for &b in &bytes[skip_first..] {
+                            if b == b'/' {
+                                arg -= 1; // c:410
+                            }
+                        }
+                        if arg <= 0 {
+                            test = 1; // c:411-412
+                        }
+                    }
                     b'?' => {
                         // c:444-446 — `if (lastval == arg) test = 1;`
                         let lv = prompt_tls::LASTVAL.with(|c| *c.borrow());
@@ -571,10 +624,57 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                             test = 1;
                         }
                     }
+                    // c:447-449 (g sibling of #).
+                    b'g' => {
+                        // c:447-449 — `if (getegid() == arg) test = 1;`
+                        let egid = unsafe { libc::getegid() } as i32;
+                        if egid == arg {
+                            test = 1;
+                        }
+                    }
+                    // c:458-465 — `l`: line/column position test. C
+                    // calls `countprompt` to set `t0` then
+                    // `if (t0 >= arg) test = 1;`. zshrs's prompt
+                    // expansion runs offline (not bound to a terminal
+                    // column), so t0 is effectively 0; arg ≤ 0
+                    // satisfies the comparison and the common
+                    // `%(l.X.Y)` (no arg) form gets test=1 — matching
+                    // zsh when the line is not column-restricted.
+                    b'l' => {
+                        if 0 >= arg {
+                            test = 1;
+                        }
+                    }
+                    // c:477-479 — `L`: SHLVL >= arg.
+                    b'L' => {
+                        let shlvl = crate::ported::params::getsparam("SHLVL")
+                            .and_then(|s| s.parse::<i32>().ok())
+                            .unwrap_or(1);
+                        if shlvl >= arg {
+                            test = 1;
+                        }
+                    }
+                    // c:495-496 — `_`: cmd stack depth (cmdsp) >= arg.
+                    // zshrs doesn't track cmdsp the same way; mirror
+                    // the most common case (arg ≤ 0 → test=1) and
+                    // ignore arg > 0 (where C would check the live
+                    // cmdsp).
+                    b'_' => {
+                        if 0 >= arg {
+                            test = 1;
+                        }
+                    }
+                    // c:498-499 — `!`: privasserted (root-ish).
+                    // Approximate via euid == 0.
+                    b'!' => {
+                        let euid = unsafe { libc::geteuid() };
+                        if euid == 0 {
+                            test = 1;
+                        }
+                    }
                     _ => {
-                        // Other test chars (c, ~, /, C, t, T, d, D, w, g,
-                        // j, l, e, L, S, v, V, _, !) — not yet ported.
-                        // test stays 0.
+                        // Other test chars (t, T, d, D, w, j, e, S,
+                        // v, V) — not yet ported. test stays 0.
                     }
                 }
                 // c:457-460 — `if (!*bv->fm || !(sep = *++bv->fm)) return 0;`.

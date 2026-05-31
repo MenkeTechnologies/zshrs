@@ -29914,7 +29914,17 @@ error-message-format-divergence count alongside #488
 
 ## #562 — `${a:U}` / `${a:C}` / `${a:W}` invalid uppercase modifier suffixes silently accepted
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** **fixed** 2026-05-31 — `modify()` in `src/ported/subst.rs`
+now mirrors C `Src/subst.c:3786-3790`:
+- Letter-but-not-modifier first char (`U`, `C`, etc.) → `zerr(
+  "unrecognized modifier 'X'")` + `errflag_set_error()`, no longer
+  silently routed to the `${str:offset:length}` substring arm where
+  `mathevali("U")` returned 0 and sliced from offset 0.
+- Pre-modifier flags (`g`/`w`/`W`/`f`/`F`) consumed but no actual
+  modifier letter follows → `zerr("unrecognized modifier")` (bare,
+  no letter, matching C's `else` arm at c:3790). `${a:W}` was the
+  symptomatic case — `W` got eaten as the wide-separator flag and
+  the loop exited cleanly with rc=0.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:U}"'
@@ -29968,7 +29978,11 @@ and in the recognized set.
 
 ## #563 — `zformat -F` (no args) error message format diverges from zsh
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** **fixed** 2026-05-31 — `BUILTIN("zformat", ...)` in
+`src/ported/builtin.rs` updated to `minargs=3, optstring=None` matching
+C `Src/Modules/zutil.c:2136 BUILTIN("zformat", 0, bin_zformat, 3, -1,
+0, NULL, NULL)`. Dispatcher now emits canonical "not enough arguments"
+for `zformat -F` (argc=1 < 3) before `bin_zformat` is called.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zformat -F'
@@ -30060,7 +30074,12 @@ entirely.
 
 ## #565 — `echo -e "\0NNN"` octal escape passed through literally despite explicit `-e` flag
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** **fixed** 2026-05-31 — `getkeystring_with` in
+`src/ported/utils.rs` gained a `Some('0') if (how & OCTAL_ESC) == 0`
+branch matching C `Src/utils.c:7156-7178`: skip the leading 0, read
+up to 3 octal digits, emit the byte. This activates on the echo path
+(GETKEYS_ECHO = GETKEY_BACKSLASH_C only, no OCTAL_ESC) where C calls
+`zstrtol(s+1, &s, 8)`.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo -e "\0101"'
@@ -30106,7 +30125,12 @@ its own format string) or `$'\NNN'` ANSI-C quoting
 
 ## #566 — `echo -e "\uNNNN"` / `echo -e "\UNNNNNNNN"` Unicode escapes passed through literally despite `-e`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** **fixed** 2026-05-31 — `getkeystring_with` in
+`src/ported/utils.rs` gained `Some('u')` (4-hex) and `Some('U')`
+(8-hex) branches mirroring C `Src/utils.c:7072-7138 case 'u': / case
+'U':`. These arms have no flag gate (the C source only uses
+GETKEY_UPDATE_OFFSET for cursor bookkeeping), so they fire for echo
+(GETKEYS_ECHO), echo -e, print, and printf alike.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo -e "A"'
@@ -30153,7 +30177,13 @@ use `printf` if its decoder is more complete.
 
 ## #567 — `$'\UNNNNNNNN'` ANSI-C-quoting 8-hex-digit Unicode escape passed through literally
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** **fixed** 2026-05-31 — repro `zshrs --zsh -fc
+$'echo "\\U00000041"'` now emits `A`. The `getkeystring_dollar_quote`
+helper in `src/ported/lex.rs:4149-4168` already had `\u`/`\U`
+handling, but the `echo` arm calls `getkeystring_with` instead, which
+lacked Unicode arms. Adding `Some('u')`/`Some('U')` there (per #566's
+fix) also resolves this; the canonical `$'...'` path was never
+broken, only the double-quoted echo path that the repro exercised.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc $'echo "\\U00000041"'
@@ -30198,7 +30228,12 @@ incorrect).
 
 ## #568 — `read -A a </dev/null` on empty input creates 0-elem array; zsh: 1-elem empty array
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** **fixed** 2026-05-31 — `bin_read` array path in
+`src/ported/builtin.rs` now pushes an empty-string element when no
+splits were produced, mirroring C `Src/builtin.c:6929` condition
+`(*buf || first || gotnl)` which adds the empty buf on EOF (`gotnl=1`)
+via `addlinknode(readll, buf)` at 6931 → 1-element array at 6968
+`setaparam(reply, p)`.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'read -A a </dev/null; echo "len=${#a} elem1=[${a[1]}]"'
@@ -30353,6 +30388,151 @@ flag to the temp:
 ```sh
 local tmp=("${a[1,-1]}"); print "${(n)tmp}"
 ```
+
+---
+
+## #571 — `${(Z)a}` paramsubst flag without required argument errors "bad substitution"; zsh: "error in flags near position N"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="  hi  "; echo "[${(Z)a}]"'
+zsh:1: error in flags near position 5 in '${(Z)a}]"'
+
+$ ./target/debug/zshrs --zsh -fc 'a="  hi  "; echo "[${(Z)a}]"'
+zsh:1: bad substitution
+```
+
+`(Z)` is the shell-tokenize-with-options flag (takes a
+following argument like `(Z+C+n+)` to specify behavior).
+Used bare without its argument-suffix it's a syntax
+error in both shells.
+
+- zsh: emits canonical "error in flags near position N"
+  diagnostic with the offending input quoted
+- zshrs: emits generic "bad substitution"
+
+Same family as #561 (`(L99)`), #548 (whitespace flag
+paren), #546 (unknown flag silently accepted) —
+diagnostic-text-format divergence on flag parsing.
+
+**Where** — `src/ported/paramsubst/flags.rs::parse_flag_Z`:
+when next-char doesn't match the expected `+` or other
+arg-prefix, emit zsh's canonical error message rather
+than fall through to generic bad-substitution.
+
+**Impact** — diagnostic-quality divergence. Test code
+that greps "error in flags" won't catch zshrs's case.
+
+**Workaround** — match on rc only, not message text.
+
+---
+
+## #572 — `print -S arg` history-save flag emits `arg` to stdout instead of saving silently
+
+**Status:** **fixed** 2026-05-31 — `bin_print` history-save branch in
+`src/ported/builtin.rs` now matches `-s` OR `-S` (was `-s` only),
+mirroring C `Src/builtin.c:5047` `if (OPT_ISSET(ops,'s') ||
+OPT_ISSET(ops,'S'))`. Also added single-arg check from C 5058-5061
+("option -S takes a single argument" when nwords > 1).
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -S "a"'
+(no output)
+$ echo "rc=$?"
+rc=0
+
+$ ./target/debug/zshrs --zsh -fc 'print -S "a"'
+a
+rc=0
+```
+
+`print -S arg` appends `arg` to history and produces no
+output on stdout. C-source `Src/builtin.c::bin_print`
+has dedicated `-S` branch (`flags & PRINT_SAVE`) that
+calls `addhistnode()` and skips the stdout-emit loop.
+
+zshrs's `print -S` either ignores the flag or treats it
+as a no-op and falls through to default print behavior,
+emitting the argument to stdout.
+
+Same family as #525 (`print -x` non-int silently
+accepted), #555 (`compgen` bash-only shipped), #530
+(zsh/files always-available) — `print` flag-parsing
+incompleteness.
+
+**Where** — `src/ported/builtin_print.rs::bin_print`:
+add `-S` branch that calls history-save (`zaddhistory`
+equivalent) and returns without emitting anything to
+stdout. Match `bin_print` from `Src/builtin.c`.
+
+**Impact** — scripts using `print -S` to programmatically
+add history entries (e.g. ZLE widgets that synthesize
+commands, plugin-driven history augmentation) emit
+unwanted output to stdout AND don't actually save the
+entry. Double bug: wrong stdout + history-save no-op.
+
+**Workaround** — use `fc -p`/`fc -P` for transient
+history operations, or write to `$HISTFILE` then
+re-execute `fc -R`.
+
+---
+
+## #573 — `*(Lr)` invalid glob qualifier: zsh "number expected"; zshrs "no matches found"
+
+**Status:** **fixed** 2026-05-31 — `parse_range_spec` in
+`src/ported/glob.rs` now mirrors C `Src/glob.c:826-834 qgetnum`:
+when no digit is consumed it calls `zerr("number expected")` and sets
+`errflag |= ERRFLAG_ERROR`. `zglob` (c:1843-1854 pattern) was extended
+to bail out of the no-matches block when `errflag` is non-zero, so the
+prior diagnostic is the one the user sees and no stale "no matches
+found" message follows.
+
+```sh
+$ touch /tmp/_zg4/a 2>/dev/null
+$ /opt/homebrew/bin/zsh -fc 'echo /tmp/_zg4/*(Lr)'
+zsh:1: number expected
+rc=1
+
+$ ./target/debug/zshrs --zsh -fc 'echo /tmp/_zg4/*(Lr)'
+zsh:1: no matches found: /tmp/_zg4/*(Lr)
+rc=1
+```
+
+`*(Lr)` — `L` is the file-size-in-bytes qualifier
+(requires a following number like `L+1024`). With `r`
+immediately after instead of a digit, zsh recognizes
+this is a malformed `L` qualifier and errors with
+"number expected".
+
+zshrs's glob-qualifier parser doesn't recognize the `Lr`
+sequence as a malformed `L` — instead bails on the whole
+`(Lr)` qualifier paren-group, treating it as part of the
+glob pattern. Then the pattern `*(Lr)` has no match in
+the directory, producing "no matches found" instead.
+
+Two distinct parse paths producing two distinct error
+messages. Test code that distinguishes
+"bad qualifier syntax" from "valid pattern, no matches"
+gets the wrong category.
+
+Same family as #483 (`(#X)` family) — glob-qualifier
+parser strictness gap.
+
+**Where** — `src/ported/glob/qualifier.rs::parse_size_qual`:
+when `L`/`k`/`m`/etc. is followed by non-digit, emit
+zsh's canonical "number expected" error rather than fall
+through to literal-pattern matching. C-source
+`Src/glob.c::qualifier` handles this in the size-qualifier
+arm.
+
+**Impact** — typos in glob qualifiers silently degrade to
+"no matches found" — user thinks the pattern simply
+didn't match anything, doesn't realize the qualifier
+itself was malformed. Hidden script bugs.
+
+**Workaround** — visually audit `L`/`k`/`m` size
+qualifiers always have a digit suffix.
 
 ---
 
@@ -30930,11 +31110,14 @@ local tmp=("${a[1,-1]}"); print "${(n)tmp}"
 | 568 | `read -A a </dev/null` on empty input creates 0-elem array — zsh: 1-elem empty array | **port-bug** | use `$?` from `read` not `${#a}` |
 | 569 | `bindkey` no-args listing omits range-compaction `"^A"-"^C" self-insert` — emits each key (117 lines vs zsh 31) | **port-bug** | query specific keys with `bindkey '^X'` |
 | 570 | `${(n)a[1,-1]}` paramsubst flag + array-slice errors "bad substitution" — extends #436 to slice form | **port-bug** | fetch slice into temp then apply flag |
+| 571 | `${(Z)a}` flag without required arg errors "bad substitution" — zsh: "error in flags near position N" | **port-bug** | match on rc only |
+| 572 | `print -S arg` history-save flag emits arg to stdout (and doesn't save) — zsh: silent save | **port-bug** | use `fc -p`/`fc -P` |
+| 573 | `*(Lr)` malformed size-qualifier: zshrs "no matches found" — zsh: "number expected" | **port-bug** | visual audit `L/k/m` need digit |
 
-Of five hundred and seventy entries, two are fixed (5, 7), 2 freshly
+Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and sixty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and sixty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,

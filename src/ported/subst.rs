@@ -6383,6 +6383,24 @@ pub fn paramsubst(
                         | 'f'
                         | 'F'
                 );
+                // c:Src/subst.c:3786-3790 — after modify() returns, if
+                // `inbrace && *s` (unconsumed modifier text remains),
+                // zsh emits `unrecognized modifier 'X'`. This catches
+                // unknown alphabetic modifier letters like `:U`, `:C`,
+                // `:W` (wait — `W` IS recognized as the wide-separator
+                // flag; the bug entry's `W` example refers to the
+                // post-modifier branch where W has already been
+                // consumed). Previously the Rust port fell through to
+                // the substring-offset arm (line ~6516), where
+                // `mathevali("U")` returned 0 and silently sliced from
+                // offset 0 — yielding the original value unchanged.
+                // Detect the canonical "letter but not a known
+                // modifier" case here and emit the zsh diagnostic.
+                if !is_modifier && first.is_ascii_alphabetic() {
+                    zerr(&format!("unrecognized modifier `{}'", first)); // c:3788
+                    errflag_set_error();
+                    return (String::new(), 0, Vec::new()); // c:3791
+                }
                 if is_modifier {
                     // c:Src/subst.c:4531 modify() entry — apply
                     // history-style modifier chain (`:h`, `:t`, `:r`,
@@ -9012,6 +9030,12 @@ pub fn modify(s: &str, modifiers: &str) -> String {
         let mut sep: Option<String> = None; // c:4531
         let mut fixed_point = false;
         let mut max_iters: Option<u32> = None;
+        // c:Src/subst.c:3786-3790 — tracks whether any pre-modifier
+        // flag (`g`/`w`/`W`/`f`/`F`) was actually consumed. If yes
+        // and no actual modifier letter follows, zsh emits the bare
+        // "unrecognized modifier" diagnostic (the `else` arm at
+        // c:3790 with no letter, since `*s == ':'` is false).
+        let mut any_flag_consumed = false;
 
         // Parse modifier flags. `:g` is greedy/global, `:w` is
         // word-by-word, `:W:sep` is word-by-word with custom sep,
@@ -9024,15 +9048,18 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 Some(&'g') => {
                     // c:4531
                     gbal = true; // c:4531
+                    any_flag_consumed = true;
                     chars.next(); // c:4531
                 } // c:4531
                 Some(&'w') => {
                     // c:4531
                     wall = true; // c:4531
+                    any_flag_consumed = true;
                     chars.next(); // c:4531
                 } // c:4531
                 Some(&'W') => {
                     // c:4531
+                    any_flag_consumed = true;
                     chars.next(); // c:4531
                                   // Parse separator
                     if chars.peek() == Some(&':') {
@@ -9050,9 +9077,11 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 // idioms used by zsh autoload helpers.
                 Some(&'f') => {
                     fixed_point = true;
+                    any_flag_consumed = true;
                     chars.next();
                 }
                 Some(&'F') => {
+                    any_flag_consumed = true;
                     chars.next();
                     let mut num = String::new();
                     while let Some(&pc) = chars.peek() {
@@ -9072,7 +9101,19 @@ pub fn modify(s: &str, modifiers: &str) -> String {
         let modifier = match chars.next() {
             // c:4531
             Some(c) => c,  // c:4531
-            None => break, // c:4531
+            None => {
+                // c:Src/subst.c:3786-3790 — when the pre-flag loop
+                // consumed `g`/`w`/`W`/`f`/`F` but no actual modifier
+                // letter follows, zsh reports "unrecognized modifier"
+                // with no letter. Previously this branch silently
+                // exited the modify loop, so `${a:W}` returned the
+                // value unchanged with rc=0.
+                if any_flag_consumed {
+                    zerr("unrecognized modifier"); // c:3790
+                    errflag_set_error();
+                }
+                break;
+            }
         }; // c:4531
 
         // Count suffix for :h/:t — `:hN` keeps N leading components,

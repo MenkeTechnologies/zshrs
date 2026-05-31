@@ -1457,6 +1457,17 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
     if matches.is_empty() {
         let nullglob = isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
         let csh_nullglob = isset(crate::ported::zsh_h::CSHNULLGLOB); // c:1874
+        // c:Src/glob.c:1843-1854 — `if (!q || errflag) { ... zerr(
+        // "bad pattern", ostr); return; }`. When the qualifier
+        // parser already emitted a diagnostic (e.g. "number expected"
+        // from qgetnum at c:832) and set errflag, the no-matches /
+        // bad-pattern terminal block runs but the prior zerr is what
+        // the user sees first. Skipping the redundant "no matches
+        // found" here matches zsh which has already aborted glob
+        // expansion via the errflag-gated return at c:1787 / c:1843.
+        if errflag.load(Ordering::SeqCst) != 0 {
+            return;
+        }
         if !nullglob && !csh_nullglob && isset(crate::ported::zsh_h::NOMATCH) {
             // c:1876-1880 — `else if (isset(NOMATCH)) { zerr; return; }`
             crate::ported::utils::zerr(&format!("no matches found: {}", ostr));
@@ -3865,6 +3876,22 @@ fn parse_range_spec(chars: &mut std::iter::Peekable<std::str::Chars>) -> (char, 
         } else {
             break;
         }
+    }
+    // c:Src/glob.c:826-834 — `qgetnum` errors with "number expected"
+    // when not followed by `idigit(**s)`. Previously the Rust parser
+    // silently treated the missing number as 0 and let the outer
+    // qualifier loop continue consuming bytes as fresh qualifier
+    // letters — `*(Lr)` parsed as `L0 + r` (readable, size=0) and
+    // dropped to the no-matches path. Setting errflag here propagates
+    // the canonical error message and gates the "no matches found"
+    // emission in zglob (c:1843-1854 `if (errflag) ... return`).
+    if num.is_empty() {
+        crate::ported::utils::zerr("number expected"); // c:832
+        crate::ported::utils::errflag.fetch_or(
+            crate::ported::zsh_h::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        return (op, 0); // c:833
     }
     let val = num.parse().unwrap_or(0);
     (op, val)
