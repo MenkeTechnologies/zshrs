@@ -2697,7 +2697,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(zlinecmp("hello world", "hello"), -1);
         assert_eq!(zlinecmp("abc", "ab"), -1);
-        assert_eq!(zlinecmp("x", ""), -1, "empty input is prefix of any non-empty");
+        assert_eq!(
+            zlinecmp("x", ""),
+            -1,
+            "empty input is prefix of any non-empty"
+        );
     }
 
     /// c:174 — `zlinecmp("HELLO", "hello")` returns 1 (case-folded match
@@ -2791,8 +2795,11 @@ mod tests {
     /// c:114 — `zlinecmp("", "")` (both empty) returns 0 per c:120 prefix match.
     #[test]
     fn zlinecmp_both_empty_returns_zero() {
-        assert_eq!(zlinecmp("", ""), 0,
-            "both empty → match (returns 0 per identical-prefix rule)");
+        assert_eq!(
+            zlinecmp("", ""),
+            0,
+            "both empty → match (returns 0 per identical-prefix rule)"
+        );
     }
 
     /// c:114 — `zlinecmp` is deterministic for arbitrary input.
@@ -2801,8 +2808,13 @@ mod tests {
         for (a, b) in [("a", "a"), ("abc", "abc"), ("abc", "ab"), ("", "x")] {
             let first = zlinecmp(a, b);
             for _ in 0..3 {
-                assert_eq!(zlinecmp(a, b), first,
-                    "zlinecmp({:?}, {:?}) must be deterministic", a, b);
+                assert_eq!(
+                    zlinecmp(a, b),
+                    first,
+                    "zlinecmp({:?}, {:?}) must be deterministic",
+                    a,
+                    b
+                );
             }
         }
     }
@@ -2818,8 +2830,11 @@ mod tests {
     fn zlinefind_is_deterministic() {
         let first = zlinefind("hello", 0, "ell", 1, 2);
         for _ in 0..5 {
-            assert_eq!(zlinefind("hello", 0, "ell", 1, 2), first,
-                "zlinefind must be deterministic");
+            assert_eq!(
+                zlinefind("hello", 0, "ell", 1, 2),
+                first,
+                "zlinefind must be deterministic"
+            );
         }
     }
 
@@ -2873,8 +2888,13 @@ mod tests {
     #[test]
     fn zlinecmp_self_reflexive_zero() {
         for s in ["", "a", "hello", "abc"] {
-            assert_eq!(zlinecmp(s, s), 0,
-                "zlinecmp({:?},{:?}) self-reflexive must be 0", s, s);
+            assert_eq!(
+                zlinecmp(s, s),
+                0,
+                "zlinecmp({:?},{:?}) self-reflexive must be 0",
+                s,
+                s
+            );
         }
     }
 
@@ -2897,12 +2917,22 @@ mod tests {
     /// c:114 — `zlinecmp` purity sweep across pairs.
     #[test]
     fn zlinecmp_pure_full_sweep() {
-        for (a, b) in [("", ""), ("a", "b"), ("hello", "world"),
-                       ("prefix", "prefix_more"), ("X", "x")] {
+        for (a, b) in [
+            ("", ""),
+            ("a", "b"),
+            ("hello", "world"),
+            ("prefix", "prefix_more"),
+            ("X", "x"),
+        ] {
             let first = zlinecmp(a, b);
             for _ in 0..3 {
-                assert_eq!(zlinecmp(a, b), first,
-                    "zlinecmp({:?},{:?}) must be pure", a, b);
+                assert_eq!(
+                    zlinecmp(a, b),
+                    first,
+                    "zlinecmp({:?},{:?}) must be pure",
+                    a,
+                    b
+                );
             }
         }
     }

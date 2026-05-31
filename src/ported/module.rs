@@ -4838,7 +4838,11 @@ mod modname_tests {
     #[test]
     fn modname_ok_empty_returns_one() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(modname_ok(""), 1, "empty name passes loop without finding bad char");
+        assert_eq!(
+            modname_ok(""),
+            1,
+            "empty name passes loop without finding bad char"
+        );
     }
 
     /// c:2173 — `modname_ok("foo-bar")` returns 0 (hyphen NOT in
@@ -4904,7 +4908,11 @@ mod modname_tests {
         // It IS '/', so increment past. Now at byte 1 = 'f'.
         // Identifier loop consumes "foo", then loop again at next
         // iter, hits '\0' → return 1. Per C, "/foo" returns 1.
-        assert_eq!(modname_ok("/foo"), 1, "C allows leading slash (loop just skips)");
+        assert_eq!(
+            modname_ok("/foo"),
+            1,
+            "C allows leading slash (loop just skips)"
+        );
     }
 
     /// c:2173 — double slash also handled (zero-length component
@@ -4980,8 +4988,11 @@ mod modname_tests {
         let _g = crate::test_util::global_state_lock();
         let mut features: Vec<String> = vec!["preserved".into()];
         assert_eq!(dyn_features_module(std::ptr::null(), &mut features), 0);
-        assert_eq!(features, vec!["preserved".to_string()],
-            "static-link path must NOT mutate features");
+        assert_eq!(
+            features,
+            vec!["preserved".to_string()],
+            "static-link path must NOT mutate features"
+        );
     }
 
     /// c:1740 — `dyn_enables_module(null, &mut None)` returns 0
@@ -4991,7 +5002,10 @@ mod modname_tests {
         let _g = crate::test_util::global_state_lock();
         let mut enables: Option<Vec<i32>> = None;
         assert_eq!(dyn_enables_module(std::ptr::null(), &mut enables), 0);
-        assert!(enables.is_none(), "static-link path must NOT mutate enables");
+        assert!(
+            enables.is_none(),
+            "static-link path must NOT mutate enables"
+        );
     }
 
     /// c:167 — `newmoduletable` produces a table where `register_module`
@@ -5014,8 +5028,11 @@ mod modname_tests {
         let count_after_first = t.modules.len();
         let r = register_module(&mut t, name);
         assert!(!r, "duplicate must return false");
-        assert_eq!(t.modules.len(), count_after_first,
-            "table size unchanged on dup");
+        assert_eq!(
+            t.modules.len(),
+            count_after_first,
+            "table size unchanged on dup"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════

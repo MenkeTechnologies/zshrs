@@ -1845,8 +1845,13 @@ mod tests {
         for (p, c) in [("/tmp", 0), ("/nonexistent_xyz", 0), ("", 0)] {
             let first = doaccess(p, c);
             for _ in 0..3 {
-                assert_eq!(doaccess(p, c), first,
-                    "doaccess({:?}, {}) must be deterministic", p, c);
+                assert_eq!(
+                    doaccess(p, c),
+                    first,
+                    "doaccess({:?}, {}) must be deterministic",
+                    p,
+                    c
+                );
             }
         }
     }
@@ -1886,8 +1891,12 @@ mod tests {
         for s in ["x", "y", "v"] {
             let first = optison("test", s);
             for _ in 0..3 {
-                assert_eq!(optison("test", s), first,
-                    "optison(test, {:?}) must be deterministic", s);
+                assert_eq!(
+                    optison("test", s),
+                    first,
+                    "optison(test, {:?}) must be deterministic",
+                    s
+                );
             }
         }
     }
@@ -1968,8 +1977,7 @@ mod tests {
     #[test]
     fn getstat_empty_path_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getstat("").is_none(),
-            "getstat(\"\") must be None");
+        assert!(getstat("").is_none(), "getstat(\"\") must be None");
     }
 
     /// c:538 — `getstat` for "/" (root) returns Some on Unix.
@@ -1977,8 +1985,7 @@ mod tests {
     #[test]
     fn getstat_root_returns_some() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getstat("/").is_some(),
-            "/ must exist and return Some");
+        assert!(getstat("/").is_some(), "/ must exist and return Some");
     }
 
     /// c:570/583 — dostat == dolstat for non-symlink paths.

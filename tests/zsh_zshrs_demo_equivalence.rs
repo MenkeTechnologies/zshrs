@@ -33,15 +33,12 @@ fn zshrs_bin() -> Option<PathBuf> {
         }
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for cand in [
+    [
         manifest.join("target/debug/zshrs"),
         manifest.join("target/release/zshrs"),
-    ] {
-        if cand.exists() {
-            return Some(cand);
-        }
-    }
-    None
+    ]
+    .into_iter()
+    .find(|cand| cand.exists())
 }
 
 fn zsh_bin() -> Option<PathBuf> {
@@ -262,19 +259,34 @@ eq_test!(eq45_armstrong, "45_armstrong.zsh",
 eq_test!(eq46_perfect_numbers, "46_perfect_numbers.zsh");
 eq_test!(eq47_rot13, "47_rot13.zsh");
 eq_test!(eq48_atbash, "48_atbash.zsh");
-eq_test!(eq49_word_reverse, "49_word_reverse.zsh",
-    ignore = "ZSHRS BUG: word-reverse output diverges — investigate IFS-split or array reversal idiom");
+eq_test!(
+    eq49_word_reverse,
+    "49_word_reverse.zsh",
+    ignore =
+        "ZSHRS BUG: word-reverse output diverges — investigate IFS-split or array reversal idiom"
+);
 eq_test!(eq50_histogram, "50_histogram.zsh",
     ignore = "ZSHRS BUG: histogram bar rendering diverges — likely assoc-array value iteration or printf bar count");
-eq_test!(eq51_csv_parse, "51_csv_parse.zsh",
-    ignore = "ZSHRS BUG: csv-parse output diverges — likely IFS=, splitting or quoted-field handling");
+eq_test!(
+    eq51_csv_parse,
+    "51_csv_parse.zsh",
+    ignore =
+        "ZSHRS BUG: csv-parse output diverges — likely IFS=, splitting or quoted-field handling"
+);
 eq_test!(eq52_env_basics, "52_env_basics.zsh");
-eq_test!(eq53_file_tests, "53_file_tests.zsh",
-    ignore = "ZSHRS BUG: relies on temp-file paths / $$ PID — env-volatility, not a real bug");
+eq_test!(
+    eq53_file_tests,
+    "53_file_tests.zsh",
+    ignore = "ZSHRS BUG: relies on temp-file paths / $$ PID — env-volatility, not a real bug"
+);
 eq_test!(eq54_date_format, "54_date_format.zsh",
     ignore = "ZSHRS BUG: date formatting uses wall-clock time — naturally diverges across invocations; not a real bug");
-eq_test!(eq55_read_loop, "55_read_loop.zsh",
-    ignore = "ZSHRS BUG: read-loop relies on tempfile or stdin redirection that differs across runs");
+eq_test!(
+    eq55_read_loop,
+    "55_read_loop.zsh",
+    ignore =
+        "ZSHRS BUG: read-loop relies on tempfile or stdin redirection that differs across runs"
+);
 eq_test!(eq56_exit_codes, "56_exit_codes.zsh");
 eq_test!(eq57_atoi_itoa, "57_atoi_itoa.zsh");
 eq_test!(eq58_gcd_lcm, "58_gcd_lcm.zsh");
@@ -288,32 +300,63 @@ eq_test!(eq63_param_flags_join_split, "63_param_flags_join_split.zsh");
 eq_test!(eq64_param_flags_case, "64_param_flags_case.zsh");
 eq_test!(eq65_param_flags_sort, "65_param_flags_sort.zsh");
 eq_test!(eq66_param_flags_format, "66_param_flags_format.zsh");
-eq_test!(eq67_glob_qualifiers, "67_glob_qualifiers.zsh",
-    ignore = "ZSHRS BUG: glob qualifier output diverges — investigate `(.)/(/)/(L+N)` etc.");
-eq_test!(eq68_extended_glob, "68_extended_glob.zsh",
-    ignore = "ZSHRS BUG: extended-glob output diverges — investigate `(#i)`, `(##)`, `~`, `^` operators");
+eq_test!(
+    eq67_glob_qualifiers,
+    "67_glob_qualifiers.zsh",
+    ignore = "ZSHRS BUG: glob qualifier output diverges — investigate `(.)/(/)/(L+N)` etc."
+);
+eq_test!(
+    eq68_extended_glob,
+    "68_extended_glob.zsh",
+    ignore =
+        "ZSHRS BUG: extended-glob output diverges — investigate `(#i)`, `(##)`, `~`, `^` operators"
+);
 eq_test!(eq69_assoc_advanced, "69_assoc_advanced.zsh");
 eq_test!(eq70_array_set_ops_zsh, "70_array_set_ops_zsh.zsh");
 eq_test!(eq71_array_pattern_filter, "71_array_pattern_filter.zsh");
 eq_test!(eq72_typeset_int_base, "72_typeset_int_base.zsh");
-eq_test!(eq73_print_columnar, "73_print_columnar.zsh",
-    ignore = "ZSHRS BUG: print columnar/`-C N` output diverges — investigate column-width computation");
-eq_test!(eq74_print_prompt_escapes, "74_print_prompt_escapes.zsh",
-    ignore = "ZSHRS BUG: print -P prompt-escape output diverges — investigate prompt-expand port");
-eq_test!(eq75_zparseopts, "75_zparseopts.zsh",
-    ignore = "ZSHRS BUG: zparseopts output diverges — investigate option-spec parsing");
+eq_test!(
+    eq73_print_columnar,
+    "73_print_columnar.zsh",
+    ignore =
+        "ZSHRS BUG: print columnar/`-C N` output diverges — investigate column-width computation"
+);
+eq_test!(
+    eq74_print_prompt_escapes,
+    "74_print_prompt_escapes.zsh",
+    ignore = "ZSHRS BUG: print -P prompt-escape output diverges — investigate prompt-expand port"
+);
+eq_test!(
+    eq75_zparseopts,
+    "75_zparseopts.zsh",
+    ignore = "ZSHRS BUG: zparseopts output diverges — investigate option-spec parsing"
+);
 eq_test!(eq76_mathfunc, "76_mathfunc.zsh");
-eq_test!(eq77_datetime, "77_datetime.zsh",
-    ignore = "ZSHRS BUG: datetime uses wall-clock — env-volatile, not a real bug");
-eq_test!(eq78_setopt_local_scope, "78_setopt_local_scope.zsh",
-    ignore = "ZSHRS BUG: setopt -L local-options scope diverges — investigate option-stack save/restore");
+eq_test!(
+    eq77_datetime,
+    "77_datetime.zsh",
+    ignore = "ZSHRS BUG: datetime uses wall-clock — env-volatile, not a real bug"
+);
+eq_test!(
+    eq78_setopt_local_scope,
+    "78_setopt_local_scope.zsh",
+    ignore =
+        "ZSHRS BUG: setopt -L local-options scope diverges — investigate option-stack save/restore"
+);
 eq_test!(eq79_eval_dynamic_dispatch, "79_eval_dynamic_dispatch.zsh");
-eq_test!(eq80_anon_fn_args, "80_anon_fn_args.zsh",
-    ignore = "ZSHRS BUG: anon fn arg-handling diverges — likely related to eq26 anon-fn-in-cmdsub class");
+eq_test!(
+    eq80_anon_fn_args,
+    "80_anon_fn_args.zsh",
+    ignore =
+        "ZSHRS BUG: anon fn arg-handling diverges — likely related to eq26 anon-fn-in-cmdsub class"
+);
 eq_test!(eq81_compound_defaults, "81_compound_defaults.zsh");
 eq_test!(eq82_brace_advanced, "82_brace_advanced.zsh");
-eq_test!(eq83_history_modifiers, "83_history_modifiers.zsh",
-    ignore = "ZSHRS BUG: history-modifier output diverges — investigate `:h`/`:t`/`:r`/`:e` port");
+eq_test!(
+    eq83_history_modifiers,
+    "83_history_modifiers.zsh",
+    ignore = "ZSHRS BUG: history-modifier output diverges — investigate `:h`/`:t`/`:r`/`:e` port"
+);
 eq_test!(eq84_subst_split_complex, "84_subst_split_complex.zsh");
 eq_test!(eq85_zcalc_repl, "85_zcalc_repl.zsh");
 
@@ -322,43 +365,91 @@ eq_test!(eq85_zcalc_repl, "85_zcalc_repl.zsh");
 #[test]
 fn every_demo_has_equivalence_test() {
     let registered: Vec<&str> = vec![
-        "01_hello.zsh", "02_arithmetic.zsh", "03_strings.zsh",
-        "04_arrays.zsh", "05_assoc_arrays.zsh", "06_control_flow.zsh",
-        "07_for_loops.zsh", "08_functions.zsh", "09_recursion.zsh",
-        "10_fizzbuzz.zsh", "11_fibonacci.zsh", "12_quicksort.zsh",
-        "13_prime_sieve.zsh", "14_brace_expansion.zsh",
-        "15_parameter_expansion.zsh", "16_parameter_flags.zsh",
-        "17_heredocs.zsh", "18_cmd_substitution.zsh",
-        "19_pipes_and_filters.zsh", "20_process_substitution.zsh",
-        "21_printf_demo.zsh", "22_trap_exit.zsh", "23_ifs_split.zsh",
-        "24_word_count.zsh", "25_reverse_string.zsh",
-        "26_anonymous_fn.zsh", "27_positional_args.zsh",
-        "28_typeset.zsh", "29_matrix_print.zsh", "30_pattern_match.zsh",
-        "31_stack.zsh", "32_queue.zsh", "33_binary_search.zsh",
-        "34_bubble_sort.zsh", "35_insertion_sort.zsh",
-        "36_selection_sort.zsh", "37_counting_sort.zsh",
-        "38_set_ops.zsh", "39_matrix_multiply.zsh",
-        "40_roman_numerals.zsh", "41_base_convert.zsh",
-        "42_tower_of_hanoi.zsh", "43_collatz.zsh",
-        "44_happy_numbers.zsh", "45_armstrong.zsh",
-        "46_perfect_numbers.zsh", "47_rot13.zsh", "48_atbash.zsh",
-        "49_word_reverse.zsh", "50_histogram.zsh", "51_csv_parse.zsh",
-        "52_env_basics.zsh", "53_file_tests.zsh", "54_date_format.zsh",
-        "55_read_loop.zsh", "56_exit_codes.zsh", "57_atoi_itoa.zsh",
-        "58_gcd_lcm.zsh", "59_string_reverse_ops.zsh",
-        "60_mapfile_like.zsh", "61_zsh_modifiers.zsh",
-        "62_param_flags_match.zsh", "63_param_flags_join_split.zsh",
-        "64_param_flags_case.zsh", "65_param_flags_sort.zsh",
-        "66_param_flags_format.zsh", "67_glob_qualifiers.zsh",
-        "68_extended_glob.zsh", "69_assoc_advanced.zsh",
-        "70_array_set_ops_zsh.zsh", "71_array_pattern_filter.zsh",
-        "72_typeset_int_base.zsh", "73_print_columnar.zsh",
-        "74_print_prompt_escapes.zsh", "75_zparseopts.zsh",
-        "76_mathfunc.zsh", "77_datetime.zsh",
-        "78_setopt_local_scope.zsh", "79_eval_dynamic_dispatch.zsh",
-        "80_anon_fn_args.zsh", "81_compound_defaults.zsh",
-        "82_brace_advanced.zsh", "83_history_modifiers.zsh",
-        "84_subst_split_complex.zsh", "85_zcalc_repl.zsh",
+        "01_hello.zsh",
+        "02_arithmetic.zsh",
+        "03_strings.zsh",
+        "04_arrays.zsh",
+        "05_assoc_arrays.zsh",
+        "06_control_flow.zsh",
+        "07_for_loops.zsh",
+        "08_functions.zsh",
+        "09_recursion.zsh",
+        "10_fizzbuzz.zsh",
+        "11_fibonacci.zsh",
+        "12_quicksort.zsh",
+        "13_prime_sieve.zsh",
+        "14_brace_expansion.zsh",
+        "15_parameter_expansion.zsh",
+        "16_parameter_flags.zsh",
+        "17_heredocs.zsh",
+        "18_cmd_substitution.zsh",
+        "19_pipes_and_filters.zsh",
+        "20_process_substitution.zsh",
+        "21_printf_demo.zsh",
+        "22_trap_exit.zsh",
+        "23_ifs_split.zsh",
+        "24_word_count.zsh",
+        "25_reverse_string.zsh",
+        "26_anonymous_fn.zsh",
+        "27_positional_args.zsh",
+        "28_typeset.zsh",
+        "29_matrix_print.zsh",
+        "30_pattern_match.zsh",
+        "31_stack.zsh",
+        "32_queue.zsh",
+        "33_binary_search.zsh",
+        "34_bubble_sort.zsh",
+        "35_insertion_sort.zsh",
+        "36_selection_sort.zsh",
+        "37_counting_sort.zsh",
+        "38_set_ops.zsh",
+        "39_matrix_multiply.zsh",
+        "40_roman_numerals.zsh",
+        "41_base_convert.zsh",
+        "42_tower_of_hanoi.zsh",
+        "43_collatz.zsh",
+        "44_happy_numbers.zsh",
+        "45_armstrong.zsh",
+        "46_perfect_numbers.zsh",
+        "47_rot13.zsh",
+        "48_atbash.zsh",
+        "49_word_reverse.zsh",
+        "50_histogram.zsh",
+        "51_csv_parse.zsh",
+        "52_env_basics.zsh",
+        "53_file_tests.zsh",
+        "54_date_format.zsh",
+        "55_read_loop.zsh",
+        "56_exit_codes.zsh",
+        "57_atoi_itoa.zsh",
+        "58_gcd_lcm.zsh",
+        "59_string_reverse_ops.zsh",
+        "60_mapfile_like.zsh",
+        "61_zsh_modifiers.zsh",
+        "62_param_flags_match.zsh",
+        "63_param_flags_join_split.zsh",
+        "64_param_flags_case.zsh",
+        "65_param_flags_sort.zsh",
+        "66_param_flags_format.zsh",
+        "67_glob_qualifiers.zsh",
+        "68_extended_glob.zsh",
+        "69_assoc_advanced.zsh",
+        "70_array_set_ops_zsh.zsh",
+        "71_array_pattern_filter.zsh",
+        "72_typeset_int_base.zsh",
+        "73_print_columnar.zsh",
+        "74_print_prompt_escapes.zsh",
+        "75_zparseopts.zsh",
+        "76_mathfunc.zsh",
+        "77_datetime.zsh",
+        "78_setopt_local_scope.zsh",
+        "79_eval_dynamic_dispatch.zsh",
+        "80_anon_fn_args.zsh",
+        "81_compound_defaults.zsh",
+        "82_brace_advanced.zsh",
+        "83_history_modifiers.zsh",
+        "84_subst_split_complex.zsh",
+        "85_zcalc_repl.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {

@@ -2884,7 +2884,10 @@ mod tests {
         KUNGETBUF.lock().unwrap().clear();
         ungetbyte(b'X');
         let buf = KUNGETBUF.lock().unwrap();
-        assert!(buf.contains(&b'X'), "ungetbyte should push 'X' into KUNGETBUF");
+        assert!(
+            buf.contains(&b'X'),
+            "ungetbyte should push 'X' into KUNGETBUF"
+        );
     }
 
     /// `ungetbytes(s)` pushes bytes in REVERSE order — C c:357-361:
@@ -2983,7 +2986,10 @@ mod tests {
         let original = p.clone();
         p.push_str("MUTATED");
         let p2 = prompt();
-        assert_eq!(p2, original, "mutation of returned prompt must not leak back");
+        assert_eq!(
+            p2, original,
+            "mutation of returned prompt must not leak back"
+        );
     }
 
     /// `set_prompt` round-trips via `prompt()`.
@@ -3303,8 +3309,7 @@ mod tests {
         for w in ["", "forward-char", "__nonexistent_widget__"] {
             let first = whereis(w);
             for _ in 0..3 {
-                assert_eq!(whereis(w), first,
-                    "whereis({:?}) must be deterministic", w);
+                assert_eq!(whereis(w), first, "whereis({:?}) must be deterministic", w);
             }
         }
     }
@@ -3397,8 +3402,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let r = execimmortal("", &[]);
-        assert!((0..256).contains(&r),
-            "execimmortal exit code {} must fit u8", r);
+        assert!(
+            (0..256).contains(&r),
+            "execimmortal exit code {} must fit u8",
+            r
+        );
     }
 
     /// c:1142 — `whereis` returns Vec<String> (compile-time pin, alt).

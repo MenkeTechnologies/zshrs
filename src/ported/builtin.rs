@@ -3870,8 +3870,8 @@ pub fn bin_typeset(
                             // !(ifs && *ifs);`. Look up the variable;
                             // if unset, treat as empty string and
                             // produce no fields.
-                            let val = crate::ported::params::getsparam(stripped)
-                                .unwrap_or_default();
+                            let val =
+                                crate::ported::params::getsparam(stripped).unwrap_or_default();
                             if ifs_chars.is_empty() {
                                 if !val.is_empty() {
                                     out.push(val);
@@ -5958,10 +5958,7 @@ pub fn bin_whence(
                 // Chained into one `if` so Rust short-circuits identically
                 // to C; reading `arg.as_bytes()[idx - 1]` eagerly with
                 // idx==0 panics with subtract-overflow.
-                if idx + 1 < arg.len()
-                    && idx > 0
-                    && arg.as_bytes()[idx - 1] as u8 != Meta
-                {
+                if idx + 1 < arg.len() && idx > 0 && arg.as_bytes()[idx - 1] as u8 != Meta {
                     let suf = &arg[idx + 1..]; // c:4102 suf+1
                     let suf_alias = sufaliastab_lock()
                         .read()
@@ -13320,7 +13317,14 @@ mod tests {
     #[test]
     fn fixdir_is_idempotent() {
         let _g = crate::test_util::global_state_lock();
-        for input in &["/a/b/c", "/a/./b", "/a/b/..", "/../x", "../foo", "/foo//bar"] {
+        for input in &[
+            "/a/b/c",
+            "/a/./b",
+            "/a/b/..",
+            "/../x",
+            "../foo",
+            "/foo//bar",
+        ] {
             let once = fixdir(input);
             let twice = fixdir(&once);
             assert_eq!(once, twice, "fixdir must be idempotent on {:?}", input);
@@ -13353,7 +13357,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_opts_for_corpus();
         assert_eq!(bin_true("true", &[], &ops, 0), 0);
-        assert_eq!(bin_true("true", &["arg1".into(), "arg2".into()], &ops, 0), 0);
+        assert_eq!(
+            bin_true("true", &["arg1".into(), "arg2".into()], &ops, 0),
+            0
+        );
     }
 
     /// c:4559 — `bin_false` always returns 1 regardless of args.
@@ -13430,8 +13437,11 @@ mod tests {
     fn createbuiltintable_contains_canonical_builtins() {
         let t = createbuiltintable();
         for name in ["true", "false", "set", "cd", "exit", "echo"] {
-            assert!(t.contains_key(name),
-                "builtin table must contain {:?}", name);
+            assert!(
+                t.contains_key(name),
+                "builtin table must contain {:?}",
+                name
+            );
         }
     }
 
@@ -13470,8 +13480,7 @@ mod tests {
         for s in ["", "/abs", "rel", "./dot", "../parent", "a/b/c"] {
             let first = fixdir(s);
             for _ in 0..3 {
-                assert_eq!(fixdir(s), first,
-                    "fixdir({:?}) must be pure", s);
+                assert_eq!(fixdir(s), first, "fixdir({:?}) must be pure", s);
             }
         }
     }
@@ -13490,8 +13499,12 @@ mod tests {
         for s in ["", "garbage", "not_a_number"] {
             let first = fcgetcomm(s);
             for _ in 0..3 {
-                assert_eq!(fcgetcomm(s), first,
-                    "fcgetcomm({:?}) must be deterministic", s);
+                assert_eq!(
+                    fcgetcomm(s),
+                    first,
+                    "fcgetcomm({:?}) must be deterministic",
+                    s
+                );
             }
         }
     }
@@ -13570,8 +13583,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let o = empty_opts_for_corpus();
         let r = bin_pwd("pwd", &[], &o, 0);
-        assert!((0..256).contains(&r),
-            "bin_pwd exit code must fit u8, got {}", r);
+        assert!(
+            (0..256).contains(&r),
+            "bin_pwd exit code must fit u8, got {}",
+            r
+        );
     }
 
     /// c:7247 — `bin_shift` with no args + empty positional returns
@@ -13591,8 +13607,11 @@ mod tests {
         let o = empty_opts_for_corpus();
         let first = bin_let("let", &[], &o, 0);
         for _ in 0..3 {
-            assert_eq!(bin_let("let", &[], &o, 0), first,
-                "bin_let no-args must be deterministic");
+            assert_eq!(
+                bin_let("let", &[], &o, 0),
+                first,
+                "bin_let no-args must be deterministic"
+            );
         }
     }
 
@@ -13613,7 +13632,10 @@ mod tests {
         assert_eq!(bin_true("true", &[], &o, 0), 0);
         assert_eq!(bin_true("anything", &[], &o, 0), 0);
         assert_eq!(bin_true("true", &["unused".into()], &o, 99), 0);
-        assert_eq!(bin_true("", &["a".into(), "b".into(), "c".into()], &o, -1), 0);
+        assert_eq!(
+            bin_true("", &["a".into(), "b".into(), "c".into()], &o, -1),
+            0
+        );
     }
 
     /// c:6823 — `bin_false` ignores everything (args, opts, func).
@@ -13624,7 +13646,9 @@ mod tests {
         assert_eq!(bin_false("false", &[], &o, 0), 1);
         assert_eq!(bin_false("anything", &[], &o, 0), 1);
         assert_eq!(bin_false("false", &["unused".into()], &o, 99), 1);
-        assert_eq!(bin_false("", &["a".into(), "b".into(), "c".into()], &o, -1), 1);
+        assert_eq!(
+            bin_false("", &["a".into(), "b".into(), "c".into()], &o, -1),
+            1
+        );
     }
-
 }

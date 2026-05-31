@@ -1583,7 +1583,12 @@ mod tests {
     #[test]
     fn bin_ztie_no_args_in_exit_code_range() {
         let _g = crate::test_util::global_state_lock();
-        let ops = options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        let ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         let r = bin_ztie("ztie", &[], &ops, 0);
         assert!((0..256).contains(&r), "exit code must fit in u8");
     }
@@ -1643,7 +1648,12 @@ mod tests {
     #[test]
     fn bin_zgdbmpath_no_args_in_exit_code_range() {
         let _g = crate::test_util::global_state_lock();
-        let ops = options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        let ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
         let r = bin_zgdbmpath("zgdbmpath", &[], &ops, 0);
         assert!((0..256).contains(&r));
     }
@@ -1710,8 +1720,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = unmetafy_zalloc("test-string");
         for _ in 0..3 {
-            assert_eq!(unmetafy_zalloc("test-string"), first,
-                "unmetafy_zalloc must be deterministic");
+            assert_eq!(
+                unmetafy_zalloc("test-string"),
+                first,
+                "unmetafy_zalloc must be deterministic"
+            );
         }
     }
 
@@ -1885,8 +1898,10 @@ mod tests {
     #[test]
     fn getgdbmnode_never_tied_returns_false() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!getgdbmnode("__definitely_never_tied_node_xyz__", "any"),
-            "never-tied → false");
+        assert!(
+            !getgdbmnode("__definitely_never_tied_node_xyz__", "any"),
+            "never-tied → false"
+        );
     }
 
     /// c:519 — `gdbmuntie` on never-tied param is safe no-op (alt).

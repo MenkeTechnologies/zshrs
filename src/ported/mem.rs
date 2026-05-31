@@ -1311,8 +1311,11 @@ mod tests {
     fn arrdup_max_from_empty_returns_empty() {
         let arr: Vec<String> = vec![];
         for max in [0usize, 1, 100] {
-            assert!(arrdup_max(&arr, max).is_empty(),
-                "arrdup_max(empty, {}) must be empty", max);
+            assert!(
+                arrdup_max(&arr, max).is_empty(),
+                "arrdup_max(empty, {}) must be empty",
+                max
+            );
         }
     }
 
@@ -1477,8 +1480,7 @@ mod tests {
     fn arrlen_matches_slice_len_alt() {
         for n in [0usize, 1, 5, 100, 1000] {
             let arr: Vec<i32> = (0..n as i32).collect();
-            assert_eq!(arrlen(&arr), n,
-                "arrlen must equal slice len for n={}", n);
+            assert_eq!(arrlen(&arr), n, "arrlen must equal slice len for n={}", n);
         }
     }
 }

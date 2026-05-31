@@ -1772,10 +1772,8 @@ mod tests {
             let first_alpha = ZC_ialpha(c);
             let first_digit = ZC_idigit(c);
             for _ in 0..3 {
-                assert_eq!(ZC_ialpha(c), first_alpha,
-                    "ZC_ialpha({:?}) must be pure", c);
-                assert_eq!(ZC_idigit(c), first_digit,
-                    "ZC_idigit({:?}) must be pure", c);
+                assert_eq!(ZC_ialpha(c), first_alpha, "ZC_ialpha({:?}) must be pure", c);
+                assert_eq!(ZC_idigit(c), first_digit, "ZC_idigit({:?}) must be pure", c);
             }
         }
     }
@@ -1798,8 +1796,12 @@ mod tests {
         for name in ["emacs", "vicmd", "viins", "", "anything"] {
             let first = invicmdmode(name);
             for _ in 0..3 {
-                assert_eq!(invicmdmode(name), first,
-                    "invicmdmode({:?}) must be pure", name);
+                assert_eq!(
+                    invicmdmode(name),
+                    first,
+                    "invicmdmode({:?}) must be pure",
+                    name
+                );
             }
         }
     }
@@ -1809,8 +1811,11 @@ mod tests {
     fn zs_memset_fills_buffer() {
         let mut buf: Vec<char> = vec!['a', 'a', 'a', 'a'];
         ZS_memset(&mut buf, 'X', 4);
-        assert_eq!(buf, vec!['X', 'X', 'X', 'X'],
-            "ZS_memset must fill all 4 slots with 'X'");
+        assert_eq!(
+            buf,
+            vec!['X', 'X', 'X', 'X'],
+            "ZS_memset must fill all 4 slots with 'X'"
+        );
     }
 
     /// c:225 — `ZS_strchr` finds present char.
@@ -1825,16 +1830,18 @@ mod tests {
     #[test]
     fn zs_strchr_absent_char_returns_none() {
         let buf: Vec<char> = "hello".chars().collect();
-        assert_eq!(ZS_strchr(&buf, 'z'), None,
-            "'z' not in 'hello' → None");
+        assert_eq!(ZS_strchr(&buf, 'z'), None, "'z' not in 'hello' → None");
     }
 
     /// c:233 — `ZS_memchr` with n=0 always returns None.
     #[test]
     fn zs_memchr_zero_n_always_returns_none() {
         for buf in [vec!['a', 'b', 'c'], vec!['x']] {
-            assert_eq!(ZS_memchr(&buf, 'a', 0), None,
-                "n=0 search → None regardless of buffer content");
+            assert_eq!(
+                ZS_memchr(&buf, 'a', 0),
+                None,
+                "n=0 search → None regardless of buffer content"
+            );
         }
     }
 
@@ -1844,8 +1851,12 @@ mod tests {
         for s in ["", "x", "hello", "12345"] {
             let buf: Vec<char> = s.chars().collect();
             let w = ZS_width(&buf);
-            assert_eq!(w as usize, s.chars().count(),
-                "ASCII '{}' width = char count", s);
+            assert_eq!(
+                w as usize,
+                s.chars().count(),
+                "ASCII '{}' width = char count",
+                s
+            );
         }
     }
 
@@ -1885,8 +1896,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         for idx in [-1, -100, i32::MIN] {
-            assert!(Th(idx).is_none(),
-                "Th({}) must be None", idx);
+            assert!(Th(idx).is_none(), "Th({}) must be None", idx);
         }
     }
 }

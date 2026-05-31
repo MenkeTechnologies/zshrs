@@ -669,8 +669,7 @@ mod tests {
         for s in ["CODESET", "DAY_1", "MON_1", "RADIXCHAR", "__unknown_xyz__"] {
             let first = liitem(s);
             for _ in 0..3 {
-                assert_eq!(liitem(s), first,
-                    "liitem({:?}) must be deterministic", s);
+                assert_eq!(liitem(s), first, "liitem({:?}) must be deterministic", s);
             }
         }
     }
@@ -690,8 +689,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = getlanginfo("CODESET");
         for _ in 0..3 {
-            assert_eq!(getlanginfo("CODESET"), first,
-                "getlanginfo('CODESET') must be deterministic");
+            assert_eq!(
+                getlanginfo("CODESET"),
+                first,
+                "getlanginfo('CODESET') must be deterministic"
+            );
         }
     }
 
@@ -709,8 +711,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = scanlanginfo();
         for _ in 0..3 {
-            assert_eq!(scanlanginfo(), first,
-                "scanlanginfo must be fully deterministic");
+            assert_eq!(
+                scanlanginfo(),
+                first,
+                "scanlanginfo must be fully deterministic"
+            );
         }
     }
 
@@ -767,8 +772,10 @@ mod tests {
     #[test]
     fn liitem_nonsense_name_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(liitem("___definitely_not_a_langinfo_item_xyz___").is_none(),
-            "unknown langinfo name must be None");
+        assert!(
+            liitem("___definitely_not_a_langinfo_item_xyz___").is_none(),
+            "unknown langinfo name must be None"
+        );
     }
 
     /// c:94 — `liitem` returns Some for known POSIX items.
@@ -777,8 +784,10 @@ mod tests {
     #[test]
     fn liitem_codeset_returns_some() {
         let _g = crate::test_util::global_state_lock();
-        assert!(liitem("CODESET").is_some(),
-            "CODESET must resolve on every POSIX libc");
+        assert!(
+            liitem("CODESET").is_some(),
+            "CODESET must resolve on every POSIX libc"
+        );
     }
 
     /// c:119 — `getlanginfo("")` for empty name returns None (alt pin).
@@ -786,8 +795,10 @@ mod tests {
     #[test]
     fn getlanginfo_empty_name_returns_none_alt() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getlanginfo("").is_none(),
-            "empty langinfo name must yield None");
+        assert!(
+            getlanginfo("").is_none(),
+            "empty langinfo name must yield None"
+        );
     }
 
     /// c:119 — `getlanginfo` for nonsense name returns None.
@@ -817,8 +828,11 @@ mod tests {
         let entries = scanlanginfo();
         let mut seen = std::collections::HashSet::new();
         for (k, _) in &entries {
-            assert!(seen.insert(k.clone()),
-                "duplicate langinfo key {:?} in scanlanginfo output", k);
+            assert!(
+                seen.insert(k.clone()),
+                "duplicate langinfo key {:?} in scanlanginfo output",
+                k
+            );
         }
     }
 
@@ -828,8 +842,12 @@ mod tests {
     fn scanlanginfo_keys_are_uppercase_ascii() {
         let _g = crate::test_util::global_state_lock();
         for (k, _) in scanlanginfo() {
-            assert!(k.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
-                "langinfo key {:?} must be uppercase ASCII + digits + underscore", k);
+            assert!(
+                k.chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
+                "langinfo key {:?} must be uppercase ASCII + digits + underscore",
+                k
+            );
         }
     }
 
@@ -913,16 +931,17 @@ mod tests {
     #[test]
     fn liitem_unknown_name_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(liitem("__never_real_li_item_xyz__").is_none(),
-            "unknown name must yield None");
+        assert!(
+            liitem("__never_real_li_item_xyz__").is_none(),
+            "unknown name must yield None"
+        );
     }
 
     /// c:119 — `getlanginfo("")` empty name returns None (alt 2).
     #[test]
     fn getlanginfo_empty_name_returns_none_alt_2() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getlanginfo("").is_none(),
-            "empty name must yield None");
+        assert!(getlanginfo("").is_none(), "empty name must yield None");
     }
 
     /// c:119 — `getlanginfo` deterministic for same input.

@@ -1892,8 +1892,12 @@ mod tests {
         for s in ["", "QQ==", "QUI=", "QUJD"] {
             let first = base64_decode(s);
             for _ in 0..3 {
-                assert_eq!(base64_decode(s), first,
-                    "base64_decode({:?}) must be deterministic", s);
+                assert_eq!(
+                    base64_decode(s),
+                    first,
+                    "base64_decode({:?}) must be deterministic",
+                    s
+                );
             }
         }
     }
@@ -1910,8 +1914,7 @@ mod tests {
         for s in ["", "abc", "/path/to/file", "hello world"] {
             let first = url_encode(s);
             for _ in 0..3 {
-                assert_eq!(url_encode(s), first,
-                    "url_encode({:?}) must be pure", s);
+                assert_eq!(url_encode(s), first, "url_encode({:?}) must be pure", s);
             }
         }
     }
@@ -1960,8 +1963,10 @@ mod tests {
     /// c:116 — `find_branch("", _)` returns None (empty string has no branch).
     #[test]
     fn find_branch_empty_returns_none() {
-        assert!(find_branch("", b';').is_none(),
-            "empty string → no branch found");
+        assert!(
+            find_branch("", b';').is_none(),
+            "empty string → no branch found"
+        );
     }
 
     /// c:126 — `find_matching` returns Option<usize> (compile-time pin).
@@ -1980,8 +1985,10 @@ mod tests {
     /// c:126 — `find_matching` on unbalanced returns None (alt name pin).
     #[test]
     fn find_matching_unbalanced_returns_none_alt() {
-        assert!(find_matching("(((", b'(', b')').is_none(),
-            "unbalanced ((( → None");
+        assert!(
+            find_matching("(((", b'(', b')').is_none(),
+            "unbalanced ((( → None"
+        );
     }
 
     /// c:392 — `base64_encode` returns String (compile-time pin).
@@ -1999,8 +2006,11 @@ mod tests {
     /// c:392 — `base64_encode(&[0x41])` returns "QQ==" (canonical "A" → b64).
     #[test]
     fn base64_encode_single_byte_canonical() {
-        assert_eq!(base64_encode(&[0x41]), "QQ==",
-            "'A' (0x41) → 'QQ==' canonical");
+        assert_eq!(
+            base64_encode(&[0x41]),
+            "QQ==",
+            "'A' (0x41) → 'QQ==' canonical"
+        );
     }
 
     /// c:392 + c:451 — base64 encode→decode round-trip preserves bytes.
@@ -2014,8 +2024,12 @@ mod tests {
         ] {
             let encoded = base64_encode(input);
             let decoded = base64_decode(&encoded);
-            assert_eq!(decoded, input.to_vec(),
-                "base64 round-trip must preserve {:?}", input);
+            assert_eq!(
+                decoded,
+                input.to_vec(),
+                "base64 round-trip must preserve {:?}",
+                input
+            );
         }
     }
 
@@ -2035,8 +2049,10 @@ mod tests {
     #[test]
     fn url_encode_alphanumerics_unchanged() {
         let r = url_encode("abc123");
-        assert_eq!(r, "abc123",
-            "url_encode must pass ASCII alphanumerics verbatim");
+        assert_eq!(
+            r, "abc123",
+            "url_encode must pass ASCII alphanumerics verbatim"
+        );
     }
 
     /// c:792 — `prompt_markers` returns 3-element array (compile-time pin).

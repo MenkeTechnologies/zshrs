@@ -353,7 +353,13 @@ mod tests {
             ("", ""),
         ] {
             let r = check_dotfile(dir, fname);
-            assert!(r == 0 || r == -1, "result must be 0 or -1, got {} for ({:?}, {:?})", r, dir, fname);
+            assert!(
+                r == 0 || r == -1,
+                "result must be 0 or -1, got {} for ({:?}, {:?})",
+                r,
+                dir,
+                fname
+            );
         }
     }
 
@@ -457,8 +463,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut v: Vec<String> = Vec::new();
         let r = features_(std::ptr::null(), &mut v);
-        assert_eq!(r, 1,
-            "c:44 — features_ MUST return 1 (no feature table), not 0");
+        assert_eq!(
+            r, 1,
+            "c:44 — features_ MUST return 1 (no feature table), not 0"
+        );
     }
 
     /// c:44 — `features_` does NOT populate the out-Vec (no features).
@@ -522,8 +530,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for fname in &[".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
             let r = check_dotfile("/__no_such_dir_xyz_zshrs__", fname);
-            assert_eq!(r, -1,
-                "missing dir + {} must return -1, got {}", fname, r);
+            assert_eq!(r, -1, "missing dir + {} must return -1, got {}", fname, r);
         }
     }
 

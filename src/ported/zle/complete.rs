@@ -3408,8 +3408,7 @@ mod tests {
         let first = parse_ordering("", &mut flags1);
         let mut flags2: Option<i32> = None;
         let second = parse_ordering("", &mut flags2);
-        assert_eq!(first, second,
-            "parse_ordering('') must be deterministic");
+        assert_eq!(first, second, "parse_ordering('') must be deterministic");
     }
 
     /// c:853 — `bin_compadd` returns i32 (compile-time pin).
@@ -3419,7 +3418,9 @@ mod tests {
         let _g2 = zle_test_setup();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _: i32 = bin_compadd("compadd", &[], &ops, 0);
     }
@@ -3431,7 +3432,9 @@ mod tests {
         let _g2 = zle_test_setup();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _: i32 = bin_compset("compset", &[], &ops, 0);
     }
@@ -3444,8 +3447,7 @@ mod tests {
         for s in ["", "x", "m:{a-z}={A-Z}", "garbage"] {
             let a = parse_cmatcher("test", s).is_some();
             let b = parse_cmatcher("test", s).is_some();
-            assert_eq!(a, b,
-                "parse_cmatcher({:?}) must be deterministic", s);
+            assert_eq!(a, b, "parse_cmatcher({:?}) must be deterministic", s);
         }
     }
 

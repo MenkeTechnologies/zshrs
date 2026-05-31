@@ -13069,8 +13069,7 @@ mod tests {
         for s in ["", "abc", "$var", "no-special"] {
             let first = quotesubst(s);
             for _ in 0..3 {
-                assert_eq!(quotesubst(s), first,
-                    "quotesubst({:?}) must be pure", s);
+                assert_eq!(quotesubst(s), first, "quotesubst({:?}) must be pure", s);
             }
         }
     }
@@ -13100,8 +13099,12 @@ mod tests {
         for c in ['a', '0', ' ', '\t', '日'] {
             let first = wcpadwidth(c, 0);
             for _ in 0..3 {
-                assert_eq!(wcpadwidth(c, 0), first,
-                    "wcpadwidth({:?}, 0) must be pure", c);
+                assert_eq!(
+                    wcpadwidth(c, 0),
+                    first,
+                    "wcpadwidth({:?}, 0) must be pure",
+                    c
+                );
             }
         }
     }

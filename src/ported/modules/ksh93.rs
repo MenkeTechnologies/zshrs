@@ -950,11 +950,7 @@ mod tests {
     #[test]
     fn ksh93_wrapper_all_null_no_panic() {
         let _g = crate::test_util::global_state_lock();
-        let _ = ksh93_wrapper(
-            std::ptr::null(),
-            std::ptr::null(),
-            std::ptr::null_mut(),
-        );
+        let _ = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
     }
 
     /// c:491 — `setup_(NULL)` returns 0 (split per-hook).
@@ -1028,8 +1024,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = matchgetfn(std::ptr::null_mut());
         for _ in 0..5 {
-            assert_eq!(matchgetfn(std::ptr::null_mut()), first,
-                "matchgetfn(null) must be deterministic");
+            assert_eq!(
+                matchgetfn(std::ptr::null_mut()),
+                first,
+                "matchgetfn(null) must be deterministic"
+            );
         }
     }
 
@@ -1105,7 +1104,11 @@ mod tests {
     fn ksh93_wrapper_return_in_exit_code_range() {
         let _g = crate::test_util::global_state_lock();
         let r = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
-        assert!((0..256).contains(&r), "exit code must fit in u8 range, got {}", r);
+        assert!(
+            (0..256).contains(&r),
+            "exit code must fit in u8 range, got {}",
+            r
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1138,12 +1141,10 @@ mod tests {
     #[test]
     fn ksh93_wrapper_all_null_is_deterministic() {
         let _g = crate::test_util::global_state_lock();
-        let first = ksh93_wrapper(std::ptr::null(), std::ptr::null(),
-            std::ptr::null_mut());
+        let first = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
         for _ in 0..5 {
             assert_eq!(
-                ksh93_wrapper(std::ptr::null(), std::ptr::null(),
-                    std::ptr::null_mut()),
+                ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut()),
                 first,
                 "ksh93_wrapper(all null) must be deterministic"
             );
@@ -1206,8 +1207,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = matchgetfn(std::ptr::null_mut());
         for _ in 0..5 {
-            assert_eq!(matchgetfn(std::ptr::null_mut()), first,
-                "matchgetfn(null) must be pure");
+            assert_eq!(
+                matchgetfn(std::ptr::null_mut()),
+                first,
+                "matchgetfn(null) must be pure"
+            );
         }
     }
 
@@ -1223,8 +1227,7 @@ mod tests {
     #[test]
     fn ksh93_wrapper_exit_code_non_negative() {
         let _g = crate::test_util::global_state_lock();
-        let r = ksh93_wrapper(std::ptr::null(), std::ptr::null(),
-            std::ptr::null_mut());
+        let r = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
         assert!(r >= 0, "exit code must be non-negative, got {}", r);
     }
 
@@ -1233,10 +1236,12 @@ mod tests {
     #[test]
     fn ksh93_wrapper_exit_code_fits_u8() {
         let _g = crate::test_util::global_state_lock();
-        let r = ksh93_wrapper(std::ptr::null(), std::ptr::null(),
-            std::ptr::null_mut());
-        assert!((0..256).contains(&r),
-            "exit code {} must fit in u8 range", r);
+        let r = ksh93_wrapper(std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
+        assert!(
+            (0..256).contains(&r),
+            "exit code {} must fit in u8 range",
+            r
+        );
     }
 
     /// c:499 — `features_` returns i32 (compile-time pin).
@@ -1370,8 +1375,11 @@ mod tests {
     fn ksh93_wrapper_all_null_inputs_no_panic() {
         let _g = crate::test_util::global_state_lock();
         let name = std::ffi::CString::new("test").unwrap();
-        let _ = ksh93_wrapper(std::ptr::null(), std::ptr::null(),
-            name.as_ptr() as *mut libc::c_char);
+        let _ = ksh93_wrapper(
+            std::ptr::null(),
+            std::ptr::null(),
+            name.as_ptr() as *mut libc::c_char,
+        );
     }
 
     /// c:212 — `ksh93_wrapper` return type i32 (compile-time pin, alt).
@@ -1379,8 +1387,11 @@ mod tests {
     fn ksh93_wrapper_returns_i32_type_alt() {
         let _g = crate::test_util::global_state_lock();
         let name = std::ffi::CString::new("test").unwrap();
-        let _: i32 = ksh93_wrapper(std::ptr::null(), std::ptr::null(),
-            name.as_ptr() as *mut libc::c_char);
+        let _: i32 = ksh93_wrapper(
+            std::ptr::null(),
+            std::ptr::null(),
+            name.as_ptr() as *mut libc::c_char,
+        );
     }
 
     /// c:499 — `features_` deterministic on null module.

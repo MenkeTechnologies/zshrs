@@ -3529,7 +3529,11 @@ mod tests {
         let _g2 = zle_test_setup();
         let km = newkeymap(None, "test");
         for (i, slot) in km.first.iter().enumerate() {
-            assert!(slot.is_none(), "first[{}] must be unbound on fresh keymap", i);
+            assert!(
+                slot.is_none(),
+                "first[{}] must be unbound on fresh keymap",
+                i
+            );
         }
     }
 
@@ -3569,7 +3573,11 @@ mod tests {
     fn selectkeymap_default_emacs_succeeds() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        assert_eq!(selectkeymap("emacs", 0), 0, "default 'emacs' keymap must exist");
+        assert_eq!(
+            selectkeymap("emacs", 0),
+            0,
+            "default 'emacs' keymap must exist"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -3585,8 +3593,10 @@ mod tests {
     fn openkeymap_default_emacs_returns_some() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        assert!(openkeymap("emacs").is_some(),
-            "default 'emacs' keymap must open");
+        assert!(
+            openkeymap("emacs").is_some(),
+            "default 'emacs' keymap must open"
+        );
     }
 
     /// c:664 — `openkeymap("")` returns None (empty name invalid).
@@ -3602,8 +3612,10 @@ mod tests {
     fn openkeymap_unknown_name_returns_none_pin() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        assert!(openkeymap("__never_a_real_keymap_xyz__").is_none(),
-            "unknown keymap → None");
+        assert!(
+            openkeymap("__never_a_real_keymap_xyz__").is_none(),
+            "unknown keymap → None"
+        );
     }
 
     /// c:886 — `selectkeymap` returns i32 (compile-time type pin).
@@ -3671,8 +3683,11 @@ mod tests {
         let _g2 = zle_test_setup();
         let first = selectkeymap("emacs", 0);
         for _ in 0..3 {
-            assert_eq!(selectkeymap("emacs", 0), first,
-                "selectkeymap('emacs') must be deterministic");
+            assert_eq!(
+                selectkeymap("emacs", 0),
+                first,
+                "selectkeymap('emacs') must be deterministic"
+            );
         }
     }
 
@@ -3793,8 +3808,11 @@ mod tests {
         let _g2 = zle_test_setup();
         let first = unlinkkeymap("__zshrs_never_keymap__", 0);
         for _ in 0..3 {
-            assert_eq!(unlinkkeymap("__zshrs_never_keymap__", 0), first,
-                "unlinkkeymap unknown must be deterministic");
+            assert_eq!(
+                unlinkkeymap("__zshrs_never_keymap__", 0),
+                first,
+                "unlinkkeymap unknown must be deterministic"
+            );
         }
     }
 
@@ -3810,7 +3828,9 @@ mod tests {
     fn createkeymapnamtab_idempotent_10_call() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        for _ in 0..10 { createkeymapnamtab(); }
+        for _ in 0..10 {
+            createkeymapnamtab();
+        }
     }
 
     /// c:176 — `emptykeymapnamtab` is idempotent.
@@ -3818,7 +3838,9 @@ mod tests {
     fn emptykeymapnamtab_idempotent() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        for _ in 0..10 { emptykeymapnamtab(); }
+        for _ in 0..10 {
+            emptykeymapnamtab();
+        }
     }
 
     /// c:205 — `refkeymap_by_name` for unknown name is safe.
@@ -3877,8 +3899,7 @@ mod tests {
     fn openkeymap_empty_name_returns_none_alt() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        assert!(openkeymap("").is_none(),
-            "empty keymap name → None");
+        assert!(openkeymap("").is_none(), "empty keymap name → None");
     }
 
     /// c:664 — `openkeymap("__never__")` for unknown name returns None.

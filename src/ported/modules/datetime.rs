@@ -896,7 +896,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let arr = getcurrenttime();
         let nsec: i64 = arr[1].parse().expect("nsec parses");
-        assert!(nsec >= 0 && nsec < 1_000_000_000, "nsec out of range: {}", nsec);
+        assert!(
+            nsec >= 0 && nsec < 1_000_000_000,
+            "nsec out of range: {}",
+            nsec
+        );
     }
 
     /// c:233 — `bin_strftime` with no args returns nonzero (usage).
@@ -981,8 +985,7 @@ mod tests {
         let v = getcurrenttime();
         assert!(!v.is_empty(), "must have ≥ 1 element");
         let parsed: Result<i64, _> = v[0].parse();
-        assert!(parsed.is_ok(),
-            "first element {:?} must parse as i64", v[0]);
+        assert!(parsed.is_ok(), "first element {:?} must parse as i64", v[0]);
     }
 
     /// c:233 — `bin_strftime` return value in u8 exit-code range.
@@ -1001,8 +1004,12 @@ mod tests {
             vec!["%Y".to_string(), "1000".to_string()],
         ] {
             let r = bin_strftime("strftime", &args, &ops, 0);
-            assert!((0..256).contains(&r),
-                "exit code {} must fit in u8 for {:?}", r, args);
+            assert!(
+                (0..256).contains(&r),
+                "exit code {} must fit in u8 for {:?}",
+                r,
+                args
+            );
         }
     }
 
@@ -1042,8 +1049,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let a = getcurrentsecs();
         let b = getcurrentsecs();
-        assert!((b - a).abs() <= 2,
-            "two getcurrentsecs calls must be within 2 seconds");
+        assert!(
+            (b - a).abs() <= 2,
+            "two getcurrentsecs calls must be within 2 seconds"
+        );
     }
 
     /// c:283 — `getcurrentrealtime` returns f64 finite.
@@ -1062,8 +1071,12 @@ mod tests {
         let secs = getcurrentsecs() as f64;
         let real = getcurrentrealtime();
         // Allow 2 seconds drift since they may straddle the second boundary.
-        assert!((real - secs).abs() < 2.0,
-            "realtime {} and secs {} must agree within 2 sec", real, secs);
+        assert!(
+            (real - secs).abs() < 2.0,
+            "realtime {} and secs {} must agree within 2 sec",
+            real,
+            secs
+        );
     }
 
     /// c:303 — `getcurrenttime` returns Vec<String> with second element parseable.
@@ -1158,8 +1171,7 @@ mod tests {
         let mut prev = getcurrentsecs();
         for _ in 0..50 {
             let now = getcurrentsecs();
-            assert!(now >= prev,
-                "time went backwards: {} → {}", prev, now);
+            assert!(now >= prev, "time went backwards: {} → {}", prev, now);
             prev = now;
         }
     }
@@ -1171,8 +1183,7 @@ mod tests {
         let mut prev = getcurrentrealtime();
         for _ in 0..50 {
             let now = getcurrentrealtime();
-            assert!(now >= prev,
-                "realtime went backwards: {} → {}", prev, now);
+            assert!(now >= prev, "realtime went backwards: {} → {}", prev, now);
             prev = now;
         }
     }
@@ -1183,10 +1194,16 @@ mod tests {
     fn getcurrentsecs_in_plausible_epoch_range() {
         let _g = crate::test_util::global_state_lock();
         let now = getcurrentsecs();
-        assert!(now >= 1_577_836_800,
-            "current time {} must be after 2020-01-01 epoch", now);
-        assert!(now <= 4_102_444_800,
-            "current time {} must be before 2100-01-01 epoch", now);
+        assert!(
+            now >= 1_577_836_800,
+            "current time {} must be after 2020-01-01 epoch",
+            now
+        );
+        assert!(
+            now <= 4_102_444_800,
+            "current time {} must be before 2100-01-01 epoch",
+            now
+        );
     }
 
     /// c:303 — first element of `getcurrenttime` parses as i64 seconds.
@@ -1196,8 +1213,11 @@ mod tests {
         let v = getcurrenttime();
         assert!(v.len() >= 1, "must have at least one element");
         let secs: Result<i64, _> = v[0].parse();
-        assert!(secs.is_ok(),
-            "first element {:?} must parse as i64 secs", v[0]);
+        assert!(
+            secs.is_ok(),
+            "first element {:?} must parse as i64 secs",
+            v[0]
+        );
     }
 
     /// c:303 — `getcurrenttime` nsec ≤ 999_999_999 (within one second).
@@ -1207,8 +1227,7 @@ mod tests {
         let v = getcurrenttime();
         if v.len() >= 2 {
             if let Ok(n) = v[1].parse::<i64>() {
-                assert!(n <= 999_999_999,
-                    "nsec {} must be ≤ 999_999_999", n);
+                assert!(n <= 999_999_999, "nsec {} must be ≤ 999_999_999", n);
             }
         }
     }

@@ -792,8 +792,11 @@ mod tests {
         let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         allusersadded.store(1, Ordering::Relaxed);
         createnameddirtable();
-        assert_eq!(allusersadded.load(Ordering::Relaxed), 0,
-            "createnameddirtable must reset allusersadded → 0");
+        assert_eq!(
+            allusersadded.load(Ordering::Relaxed),
+            0,
+            "createnameddirtable must reset allusersadded → 0"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -810,8 +813,10 @@ mod tests {
         fresh_table();
         addnameddirnode("zshrs_test_lookup", make_nd("zshrs_test_lookup", "/tmp", 0));
         let t = nameddirtab().lock().unwrap();
-        assert!(t.contains_key("zshrs_test_lookup"),
-            "added entry must be findable");
+        assert!(
+            t.contains_key("zshrs_test_lookup"),
+            "added entry must be findable"
+        );
     }
 
     /// c:136 — `removenameddirnode` returns Option<nameddir> (type pin).
@@ -838,8 +843,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         fresh_table();
-        let _: () = addnameddirnode("zshrs_void_pin",
-            make_nd("zshrs_void_pin", "/tmp", 0));
+        let _: () = addnameddirnode("zshrs_void_pin", make_nd("zshrs_void_pin", "/tmp", 0));
     }
 
     /// c:53 — `emptynameddirtable` returns void.
@@ -893,7 +897,11 @@ mod tests {
     #[test]
     fn freenameddirnode_consumes_node_signature_void() {
         let nd = nameddir {
-            node: crate::zsh_h::hashnode { next: None, nam: "free_test".to_string(), flags: 0 },
+            node: crate::zsh_h::hashnode {
+                next: None,
+                nam: "free_test".to_string(),
+                flags: 0,
+            },
             dir: "/tmp".to_string(),
             diff: 0,
         };
@@ -942,8 +950,11 @@ mod tests {
         let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         addnameddirnode("e_test", make_nd("e_test", "/tmp", 0));
         emptynameddirtable();
-        assert_eq!(nameddirtab().lock().unwrap().len(), 0,
-            "empty must zero the table");
+        assert_eq!(
+            nameddirtab().lock().unwrap().len(),
+            0,
+            "empty must zero the table"
+        );
     }
 
     /// c:136 — `removenameddirnode` returns Option<nameddir> (alt pin).
@@ -960,8 +971,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         fresh_table();
-        assert!(removenameddirnode("__never_added_xyz__").is_none(),
-            "removing never-added returns None");
+        assert!(
+            removenameddirnode("__never_added_xyz__").is_none(),
+            "removing never-added returns None"
+        );
     }
 
     /// c:117 + c:136 — add then remove returns Some, then remove again None.
@@ -982,7 +995,11 @@ mod tests {
     fn printnameddirnode_various_flags_no_panic() {
         let _g = crate::test_util::global_state_lock();
         let nd = nameddir {
-            node: crate::zsh_h::hashnode { next: None, nam: "p_test".to_string(), flags: 0 },
+            node: crate::zsh_h::hashnode {
+                next: None,
+                nam: "p_test".to_string(),
+                flags: 0,
+            },
             dir: "/tmp".to_string(),
             diff: 0,
         };
@@ -1025,14 +1042,22 @@ mod tests {
         fresh_table();
         // Caller passes diff=42 — addnameddirnode MUST overwrite to
         // dir.len() - nam.len() = 12 - 13 = -1.
-        addnameddirnode("preserve_test", make_nd("preserve_test", "/unique/path", 42));
+        addnameddirnode(
+            "preserve_test",
+            make_nd("preserve_test", "/unique/path", 42),
+        );
         let tab = nameddirtab().lock().unwrap();
         let entry = tab.get("preserve_test").expect("entry exists");
         assert_eq!(entry.dir, "/unique/path", "dir field preserved");
         let expected = "/unique/path".len() as i32 - "preserve_test".len() as i32;
-        assert_eq!(entry.diff, expected,
+        assert_eq!(
+            entry.diff,
+            expected,
             "c:121 — diff = dir.len({}) - nam.len({}) = {}",
-            "/unique/path".len(), "preserve_test".len(), expected);
+            "/unique/path".len(),
+            "preserve_test".len(),
+            expected
+        );
     }
 
     // NOTE: `fillnameddirtable` reads /etc/passwd and populates the
@@ -1068,9 +1093,11 @@ mod tests {
         addnameddirnode("homed", mk_nd("/old/path"));
         addnameddirnode("homed", mk_nd("/new/path"));
         let tab = nameddirtab().lock().unwrap();
-        assert_eq!(tab.get("homed").map(|n| n.dir.clone()),
+        assert_eq!(
+            tab.get("homed").map(|n| n.dir.clone()),
             Some("/new/path".to_string()),
-            "overwrite must replace dir verbatim");
+            "overwrite must replace dir verbatim"
+        );
         drop(tab);
         emptynameddirtable();
     }
@@ -1174,8 +1201,11 @@ mod tests {
         let tab = nameddirtab().lock().unwrap();
         let nd = tab.get("very_long_name_xyz").unwrap();
         // diff = dir.len() - nam.len() = 2 - 18 = -16
-        assert_eq!(nd.diff, 2i32 - "very_long_name_xyz".len() as i32,
-            "diff must be dir.len() - nam.len(), even when negative");
+        assert_eq!(
+            nd.diff,
+            2i32 - "very_long_name_xyz".len() as i32,
+            "diff must be dir.len() - nam.len(), even when negative"
+        );
         drop(tab);
         emptynameddirtable();
     }
@@ -1190,7 +1220,10 @@ mod tests {
         }
         assert_eq!(nameddirtab().lock().unwrap().len(), 10);
         emptynameddirtable();
-        assert_eq!(nameddirtab().lock().unwrap().len(), 0,
-            "emptynameddirtable must remove every entry");
+        assert_eq!(
+            nameddirtab().lock().unwrap().len(),
+            0,
+            "emptynameddirtable must remove every entry"
+        );
     }
 }

@@ -1089,8 +1089,12 @@ mod tests {
     fn itok_false_for_plain_ascii() {
         with_typtab(|| {
             for b in [b'a', b'Z', b'5', b' ', b'\t', b'\n', b'.', b'_'] {
-                assert!(!itok(b),
-                    "plain ASCII byte {:?} (0x{:02x}) must NOT be a token", b as char, b);
+                assert!(
+                    !itok(b),
+                    "plain ASCII byte {:?} (0x{:02x}) must NOT be a token",
+                    b as char,
+                    b
+                );
             }
         });
     }
@@ -1100,8 +1104,7 @@ mod tests {
     fn zistype_zero_bits_always_false() {
         with_typtab(|| {
             for b in 0u8..=127 {
-                assert!(!zistype(b, 0),
-                    "byte 0x{:02x} with bits=0 must be false", b);
+                assert!(!zistype(b, 0), "byte 0x{:02x} with bits=0 must be false", b);
             }
         });
     }
@@ -1124,8 +1127,12 @@ mod tests {
         for b in 0u8..=127 {
             let first = ZISPRINT(b);
             for _ in 0..3 {
-                assert_eq!(ZISPRINT(b), first,
-                    "ZISPRINT(0x{:02x}) must be deterministic", b);
+                assert_eq!(
+                    ZISPRINT(b),
+                    first,
+                    "ZISPRINT(0x{:02x}) must be deterministic",
+                    b
+                );
             }
         }
     }
@@ -1136,8 +1143,12 @@ mod tests {
         for c in ['a', ' ', '0', '\n', '\t', 'é', '日', '\0', '\u{0007}'] {
             let first = WC_ISPRINT(c);
             for _ in 0..3 {
-                assert_eq!(WC_ISPRINT(c), first,
-                    "WC_ISPRINT({:?}) must be deterministic", c);
+                assert_eq!(
+                    WC_ISPRINT(c),
+                    first,
+                    "WC_ISPRINT({:?}) must be deterministic",
+                    c
+                );
             }
         }
     }
@@ -1153,7 +1164,8 @@ mod tests {
                         WC_ZISTYPE(c, bits as u32),
                         zistype(b, bits as u32),
                         "WC_ZISTYPE({:?}, {}) must match zistype on ASCII",
-                        c, bits
+                        c,
+                        bits
                     );
                 }
             }
@@ -1181,8 +1193,7 @@ mod tests {
     #[test]
     fn wc_zistype_zero_bits_always_false() {
         for c in ['a', ' ', '0', 'é', '日'] {
-            assert!(!WC_ZISTYPE(c, 0),
-                "WC_ZISTYPE({:?}, 0) must be false", c);
+            assert!(!WC_ZISTYPE(c, 0), "WC_ZISTYPE({:?}, 0) must be false", c);
         }
     }
 
@@ -1196,40 +1207,62 @@ mod tests {
     /// bits in low 16 bits.
     #[test]
     fn i_class_bits_low_16_pairwise_distinct() {
-        let bits = [IDIGIT, IALNUM, IBLANK, INBLANK, ITOK, ISEP, IALPHA,
-                    IIDENT, IUSER, ICNTRL, IWORD, ISPECIAL, IMETA, IWSEP,
-                    INULL, IPATTERN];
+        let bits = [
+            IDIGIT, IALNUM, IBLANK, INBLANK, ITOK, ISEP, IALPHA, IIDENT, IUSER, ICNTRL, IWORD,
+            ISPECIAL, IMETA, IWSEP, INULL, IPATTERN,
+        ];
         let unique: std::collections::HashSet<_> = bits.iter().copied().collect();
-        assert_eq!(unique.len(), bits.len(),
-            "I* main class bits must be pairwise distinct");
+        assert_eq!(
+            unique.len(),
+            bits.len(),
+            "I* main class bits must be pairwise distinct"
+        );
     }
 
     /// c:30-45 — every I* main class bit is a single bit (power of 2).
     #[test]
     fn i_class_bits_all_powers_of_two() {
-        for v in [IDIGIT, IALNUM, IBLANK, INBLANK, ITOK, ISEP, IALPHA,
-                  IIDENT, IUSER, ICNTRL, IWORD, ISPECIAL, IMETA, IWSEP,
-                  INULL, IPATTERN] {
-            assert!(v.is_power_of_two(),
-                "I* {} must be single bit", v);
+        for v in [
+            IDIGIT, IALNUM, IBLANK, INBLANK, ITOK, ISEP, IALPHA, IIDENT, IUSER, ICNTRL, IWORD,
+            ISPECIAL, IMETA, IWSEP, INULL, IPATTERN,
+        ] {
+            assert!(v.is_power_of_two(), "I* {} must be single bit", v);
         }
     }
 
     /// c:30-45 — OR of all 16 main I* bits = 0xffff (full low 16 coverage).
     #[test]
     fn i_class_bits_or_covers_low_16() {
-        let or_all = IDIGIT | IALNUM | IBLANK | INBLANK | ITOK | ISEP
-            | IALPHA | IIDENT | IUSER | ICNTRL | IWORD | ISPECIAL
-            | IMETA | IWSEP | INULL | IPATTERN;
-        assert_eq!(or_all, 0xffff_u16,
-            "16 main I* bits must cover low 16 (no gaps)");
+        let or_all = IDIGIT
+            | IALNUM
+            | IBLANK
+            | INBLANK
+            | ITOK
+            | ISEP
+            | IALPHA
+            | IIDENT
+            | IUSER
+            | ICNTRL
+            | IWORD
+            | ISPECIAL
+            | IMETA
+            | IWSEP
+            | INULL
+            | IPATTERN;
+        assert_eq!(
+            or_all, 0xffff_u16,
+            "16 main I* bits must cover low 16 (no gaps)"
+        );
     }
 
     /// c:46 — INAMESPC sits in bit 16 (lives in the u32 extended namespace).
     #[test]
     fn inamespc_is_bit_16() {
-        assert_eq!(INAMESPC, 1u32 << 16,
-            "INAMESPC must be bit 16 (above the u16 main I* set)");
+        assert_eq!(
+            INAMESPC,
+            1u32 << 16,
+            "INAMESPC must be bit 16 (above the u16 main I* set)"
+        );
     }
 
     /// c:69-72 — ZTF_* flags pairwise distinct.
@@ -1301,10 +1334,16 @@ mod tests {
         crate::ported::utils::inittyptab();
         // ASCII letters are in IALNUM and IALPHA at minimum.
         for c in [b'a', b'X', b'm'] {
-            assert!(zistype(c, IALNUM as u32),
-                "{:?} must match IALNUM", c as char);
-            assert!(zistype(c, IALPHA as u32),
-                "{:?} must match IALPHA", c as char);
+            assert!(
+                zistype(c, IALNUM as u32),
+                "{:?} must match IALNUM",
+                c as char
+            );
+            assert!(
+                zistype(c, IALPHA as u32),
+                "{:?} must match IALPHA",
+                c as char
+            );
         }
     }
 
@@ -1316,8 +1355,11 @@ mod tests {
         let full: u32 = u32::MAX;
         // Pick chars that definitely have at least one class bit.
         for c in [b'a', b'0', b' ', b'_'] {
-            assert!(zistype(c, full),
-                "{:?} with full mask must hit some class", c as char);
+            assert!(
+                zistype(c, full),
+                "{:?} with full mask must hit some class",
+                c as char
+            );
         }
     }
 }

@@ -290,12 +290,31 @@ mod tests {
     #[test]
     fn all_bin_codes_pairwise_distinct() {
         let codes = [
-            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
-            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
-            BIN_CD, BIN_POPD, BIN_PUSHD,
-            BIN_PRINT, BIN_EVAL, BIN_SCHED, BIN_FC, BIN_R,
-            BIN_PUSHLINE, BIN_LOGOUT, BIN_TEST, BIN_BRACKET,
-            BIN_READONLY, BIN_ECHO, BIN_DISABLE,
+            BIN_TYPESET,
+            BIN_BG,
+            BIN_FG,
+            BIN_JOBS,
+            BIN_WAIT,
+            BIN_DISOWN,
+            BIN_BREAK,
+            BIN_CONTINUE,
+            BIN_EXIT,
+            BIN_RETURN,
+            BIN_CD,
+            BIN_POPD,
+            BIN_PUSHD,
+            BIN_PRINT,
+            BIN_EVAL,
+            BIN_SCHED,
+            BIN_FC,
+            BIN_R,
+            BIN_PUSHLINE,
+            BIN_LOGOUT,
+            BIN_TEST,
+            BIN_BRACKET,
+            BIN_READONLY,
+            BIN_ECHO,
+            BIN_DISABLE,
         ];
         let unique: std::collections::HashSet<_> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len(), "BIN_* must be pairwise distinct");
@@ -305,10 +324,21 @@ mod tests {
     #[test]
     fn all_bin_codes_non_negative() {
         for c in [
-            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
-            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
-            BIN_CD, BIN_POPD, BIN_PUSHD,
-            BIN_PRINT, BIN_EVAL,
+            BIN_TYPESET,
+            BIN_BG,
+            BIN_FG,
+            BIN_JOBS,
+            BIN_WAIT,
+            BIN_DISOWN,
+            BIN_BREAK,
+            BIN_CONTINUE,
+            BIN_EXIT,
+            BIN_RETURN,
+            BIN_CD,
+            BIN_POPD,
+            BIN_PUSHD,
+            BIN_PRINT,
+            BIN_EVAL,
         ] {
             assert!(c >= 0, "BIN_* code {} must be ≥ 0", c);
         }
@@ -318,12 +348,31 @@ mod tests {
     #[test]
     fn bin_codes_form_contiguous_range() {
         let mut codes: Vec<i32> = vec![
-            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
-            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
-            BIN_CD, BIN_POPD, BIN_PUSHD,
-            BIN_PRINT, BIN_EVAL, BIN_SCHED, BIN_FC, BIN_R,
-            BIN_PUSHLINE, BIN_LOGOUT, BIN_TEST, BIN_BRACKET,
-            BIN_READONLY, BIN_ECHO, BIN_DISABLE,
+            BIN_TYPESET,
+            BIN_BG,
+            BIN_FG,
+            BIN_JOBS,
+            BIN_WAIT,
+            BIN_DISOWN,
+            BIN_BREAK,
+            BIN_CONTINUE,
+            BIN_EXIT,
+            BIN_RETURN,
+            BIN_CD,
+            BIN_POPD,
+            BIN_PUSHD,
+            BIN_PRINT,
+            BIN_EVAL,
+            BIN_SCHED,
+            BIN_FC,
+            BIN_R,
+            BIN_PUSHLINE,
+            BIN_LOGOUT,
+            BIN_TEST,
+            BIN_BRACKET,
+            BIN_READONLY,
+            BIN_ECHO,
+            BIN_DISABLE,
         ];
         codes.sort();
         for (i, c) in codes.iter().enumerate() {
@@ -385,16 +434,45 @@ mod tests {
     #[test]
     fn bin_export_is_max_non_overlapping() {
         let all = [
-            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
-            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
-            BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT, BIN_EVAL,
-            BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE, BIN_LOGOUT,
-            BIN_TEST, BIN_BRACKET, BIN_READONLY, BIN_ECHO, BIN_DISABLE,
-            BIN_ENABLE, BIN_PRINTF, BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS,
-            BIN_UNFUNCTION, BIN_UNSET, BIN_EXPORT,
+            BIN_TYPESET,
+            BIN_BG,
+            BIN_FG,
+            BIN_JOBS,
+            BIN_WAIT,
+            BIN_DISOWN,
+            BIN_BREAK,
+            BIN_CONTINUE,
+            BIN_EXIT,
+            BIN_RETURN,
+            BIN_CD,
+            BIN_POPD,
+            BIN_PUSHD,
+            BIN_PRINT,
+            BIN_EVAL,
+            BIN_SCHED,
+            BIN_FC,
+            BIN_R,
+            BIN_PUSHLINE,
+            BIN_LOGOUT,
+            BIN_TEST,
+            BIN_BRACKET,
+            BIN_READONLY,
+            BIN_ECHO,
+            BIN_DISABLE,
+            BIN_ENABLE,
+            BIN_PRINTF,
+            BIN_COMMAND,
+            BIN_UNHASH,
+            BIN_UNALIAS,
+            BIN_UNFUNCTION,
+            BIN_UNSET,
+            BIN_EXPORT,
         ];
         let max = *all.iter().max().unwrap();
-        assert_eq!(max, BIN_EXPORT, "BIN_EXPORT must be max non-overlapping slot");
+        assert_eq!(
+            max, BIN_EXPORT,
+            "BIN_EXPORT must be max non-overlapping slot"
+        );
         assert_eq!(BIN_EXPORT, 32, "c:66 = 32");
     }
 
@@ -413,13 +491,39 @@ mod tests {
     #[test]
     fn bin_overload_family_has_33_distinct_slots() {
         let ids = [
-            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
-            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
-            BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT, BIN_EVAL,
-            BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE, BIN_LOGOUT,
-            BIN_TEST, BIN_BRACKET, BIN_READONLY, BIN_ECHO, BIN_DISABLE,
-            BIN_ENABLE, BIN_PRINTF, BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS,
-            BIN_UNFUNCTION, BIN_UNSET, BIN_EXPORT,
+            BIN_TYPESET,
+            BIN_BG,
+            BIN_FG,
+            BIN_JOBS,
+            BIN_WAIT,
+            BIN_DISOWN,
+            BIN_BREAK,
+            BIN_CONTINUE,
+            BIN_EXIT,
+            BIN_RETURN,
+            BIN_CD,
+            BIN_POPD,
+            BIN_PUSHD,
+            BIN_PRINT,
+            BIN_EVAL,
+            BIN_SCHED,
+            BIN_FC,
+            BIN_R,
+            BIN_PUSHLINE,
+            BIN_LOGOUT,
+            BIN_TEST,
+            BIN_BRACKET,
+            BIN_READONLY,
+            BIN_ECHO,
+            BIN_DISABLE,
+            BIN_ENABLE,
+            BIN_PRINTF,
+            BIN_COMMAND,
+            BIN_UNHASH,
+            BIN_UNALIAS,
+            BIN_UNFUNCTION,
+            BIN_UNSET,
+            BIN_EXPORT,
         ];
         assert_eq!(ids.len(), 33, "33 explicitly numbered BIN_* overload slots");
         let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
@@ -431,13 +535,41 @@ mod tests {
     #[test]
     fn all_bin_codes_fit_in_u8_range() {
         let all = [
-            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
-            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN,
-            BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT, BIN_EVAL,
-            BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE, BIN_LOGOUT,
-            BIN_TEST, BIN_BRACKET, BIN_READONLY, BIN_ECHO, BIN_DISABLE,
-            BIN_ENABLE, BIN_PRINTF, BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS,
-            BIN_UNFUNCTION, BIN_UNSET, BIN_EXPORT, BIN_SETOPT, BIN_UNSETOPT,
+            BIN_TYPESET,
+            BIN_BG,
+            BIN_FG,
+            BIN_JOBS,
+            BIN_WAIT,
+            BIN_DISOWN,
+            BIN_BREAK,
+            BIN_CONTINUE,
+            BIN_EXIT,
+            BIN_RETURN,
+            BIN_CD,
+            BIN_POPD,
+            BIN_PUSHD,
+            BIN_PRINT,
+            BIN_EVAL,
+            BIN_SCHED,
+            BIN_FC,
+            BIN_R,
+            BIN_PUSHLINE,
+            BIN_LOGOUT,
+            BIN_TEST,
+            BIN_BRACKET,
+            BIN_READONLY,
+            BIN_ECHO,
+            BIN_DISABLE,
+            BIN_ENABLE,
+            BIN_PRINTF,
+            BIN_COMMAND,
+            BIN_UNHASH,
+            BIN_UNALIAS,
+            BIN_UNFUNCTION,
+            BIN_UNSET,
+            BIN_EXPORT,
+            BIN_SETOPT,
+            BIN_UNSETOPT,
         ];
         for c in all {
             assert!(
@@ -497,16 +629,46 @@ mod tests {
     /// c:34-66 — all BIN_* fit in i8 signed range (positive).
     #[test]
     fn all_bin_codes_fit_in_i8_positive_range() {
-        for c in [BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT,
-                  BIN_DISOWN, BIN_BREAK, BIN_CONTINUE, BIN_EXIT,
-                  BIN_RETURN, BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT,
-                  BIN_EVAL, BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE,
-                  BIN_LOGOUT, BIN_TEST, BIN_BRACKET, BIN_READONLY,
-                  BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
-                  BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
-                  BIN_UNSET, BIN_EXPORT] {
-            assert!((0..=i8::MAX as i32).contains(&c),
-                "BIN_* code {} must fit in i8 positive range", c);
+        for c in [
+            BIN_TYPESET,
+            BIN_BG,
+            BIN_FG,
+            BIN_JOBS,
+            BIN_WAIT,
+            BIN_DISOWN,
+            BIN_BREAK,
+            BIN_CONTINUE,
+            BIN_EXIT,
+            BIN_RETURN,
+            BIN_CD,
+            BIN_POPD,
+            BIN_PUSHD,
+            BIN_PRINT,
+            BIN_EVAL,
+            BIN_SCHED,
+            BIN_FC,
+            BIN_R,
+            BIN_PUSHLINE,
+            BIN_LOGOUT,
+            BIN_TEST,
+            BIN_BRACKET,
+            BIN_READONLY,
+            BIN_ECHO,
+            BIN_DISABLE,
+            BIN_ENABLE,
+            BIN_PRINTF,
+            BIN_COMMAND,
+            BIN_UNHASH,
+            BIN_UNALIAS,
+            BIN_UNFUNCTION,
+            BIN_UNSET,
+            BIN_EXPORT,
+        ] {
+            assert!(
+                (0..=i8::MAX as i32).contains(&c),
+                "BIN_* code {} must fit in i8 positive range",
+                c
+            );
         }
     }
 
@@ -572,19 +734,46 @@ mod tests {
     #[test]
     fn bin_overload_family_is_dense_0_through_32() {
         let mut codes: Vec<i32> = vec![
-            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT,
-            BIN_DISOWN, BIN_BREAK, BIN_CONTINUE, BIN_EXIT,
-            BIN_RETURN, BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT,
-            BIN_EVAL, BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE,
-            BIN_LOGOUT, BIN_TEST, BIN_BRACKET, BIN_READONLY,
-            BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
-            BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
-            BIN_UNSET, BIN_EXPORT,
+            BIN_TYPESET,
+            BIN_BG,
+            BIN_FG,
+            BIN_JOBS,
+            BIN_WAIT,
+            BIN_DISOWN,
+            BIN_BREAK,
+            BIN_CONTINUE,
+            BIN_EXIT,
+            BIN_RETURN,
+            BIN_CD,
+            BIN_POPD,
+            BIN_PUSHD,
+            BIN_PRINT,
+            BIN_EVAL,
+            BIN_SCHED,
+            BIN_FC,
+            BIN_R,
+            BIN_PUSHLINE,
+            BIN_LOGOUT,
+            BIN_TEST,
+            BIN_BRACKET,
+            BIN_READONLY,
+            BIN_ECHO,
+            BIN_DISABLE,
+            BIN_ENABLE,
+            BIN_PRINTF,
+            BIN_COMMAND,
+            BIN_UNHASH,
+            BIN_UNALIAS,
+            BIN_UNFUNCTION,
+            BIN_UNSET,
+            BIN_EXPORT,
         ];
         codes.sort();
         let expected: Vec<i32> = (0..=32).collect();
-        assert_eq!(codes, expected,
-            "overload family must cover exactly 0..=32 with no gaps/dups");
+        assert_eq!(
+            codes, expected,
+            "overload family must cover exactly 0..=32 with no gaps/dups"
+        );
     }
 
     /// c:69-70 — BIN_SETOPT/BIN_UNSETOPT family is its OWN dispatch
@@ -592,8 +781,10 @@ mod tests {
     /// the c:69 comment "depend on being 0 and 1".
     #[test]
     fn bin_setopt_family_has_distinct_pair() {
-        assert_ne!(BIN_SETOPT, BIN_UNSETOPT,
-            "SETOPT and UNSETOPT must differ to drive bin_setopt's branch");
+        assert_ne!(
+            BIN_SETOPT, BIN_UNSETOPT,
+            "SETOPT and UNSETOPT must differ to drive bin_setopt's branch"
+        );
     }
 
     /// c:34 / c:40 — BIN_TYPESET (0) and BIN_BREAK (6) are in different
@@ -627,30 +818,86 @@ mod tests {
     /// for "highest registered overload code").
     #[test]
     fn bin_export_is_canonical_max_slot() {
-        for c in [BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT,
-                  BIN_DISOWN, BIN_BREAK, BIN_CONTINUE, BIN_EXIT,
-                  BIN_RETURN, BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT,
-                  BIN_EVAL, BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE,
-                  BIN_LOGOUT, BIN_TEST, BIN_BRACKET, BIN_READONLY,
-                  BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
-                  BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
-                  BIN_UNSET] {
-            assert!(c <= BIN_EXPORT,
-                "BIN_EXPORT (32) must be the max overload code; {} > 32", c);
+        for c in [
+            BIN_TYPESET,
+            BIN_BG,
+            BIN_FG,
+            BIN_JOBS,
+            BIN_WAIT,
+            BIN_DISOWN,
+            BIN_BREAK,
+            BIN_CONTINUE,
+            BIN_EXIT,
+            BIN_RETURN,
+            BIN_CD,
+            BIN_POPD,
+            BIN_PUSHD,
+            BIN_PRINT,
+            BIN_EVAL,
+            BIN_SCHED,
+            BIN_FC,
+            BIN_R,
+            BIN_PUSHLINE,
+            BIN_LOGOUT,
+            BIN_TEST,
+            BIN_BRACKET,
+            BIN_READONLY,
+            BIN_ECHO,
+            BIN_DISABLE,
+            BIN_ENABLE,
+            BIN_PRINTF,
+            BIN_COMMAND,
+            BIN_UNHASH,
+            BIN_UNALIAS,
+            BIN_UNFUNCTION,
+            BIN_UNSET,
+        ] {
+            assert!(
+                c <= BIN_EXPORT,
+                "BIN_EXPORT (32) must be the max overload code; {} > 32",
+                c
+            );
         }
     }
 
     /// c:34-66 — overload codes are all non-negative.
     #[test]
     fn bin_overload_codes_all_non_negative() {
-        for c in [BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT,
-                  BIN_DISOWN, BIN_BREAK, BIN_CONTINUE, BIN_EXIT,
-                  BIN_RETURN, BIN_CD, BIN_POPD, BIN_PUSHD, BIN_PRINT,
-                  BIN_EVAL, BIN_SCHED, BIN_FC, BIN_R, BIN_PUSHLINE,
-                  BIN_LOGOUT, BIN_TEST, BIN_BRACKET, BIN_READONLY,
-                  BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
-                  BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
-                  BIN_UNSET, BIN_EXPORT] {
+        for c in [
+            BIN_TYPESET,
+            BIN_BG,
+            BIN_FG,
+            BIN_JOBS,
+            BIN_WAIT,
+            BIN_DISOWN,
+            BIN_BREAK,
+            BIN_CONTINUE,
+            BIN_EXIT,
+            BIN_RETURN,
+            BIN_CD,
+            BIN_POPD,
+            BIN_PUSHD,
+            BIN_PRINT,
+            BIN_EVAL,
+            BIN_SCHED,
+            BIN_FC,
+            BIN_R,
+            BIN_PUSHLINE,
+            BIN_LOGOUT,
+            BIN_TEST,
+            BIN_BRACKET,
+            BIN_READONLY,
+            BIN_ECHO,
+            BIN_DISABLE,
+            BIN_ENABLE,
+            BIN_PRINTF,
+            BIN_COMMAND,
+            BIN_UNHASH,
+            BIN_UNALIAS,
+            BIN_UNFUNCTION,
+            BIN_UNSET,
+            BIN_EXPORT,
+        ] {
             assert!(c >= 0, "BIN_* must be non-negative; got {}", c);
         }
     }
@@ -715,18 +962,47 @@ mod tests {
     #[test]
     fn bin_main_slots_form_dense_0_to_32() {
         let mut codes = [
-            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
-            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN, BIN_CD,
-            BIN_POPD, BIN_PUSHD, BIN_PRINT, BIN_EVAL, BIN_SCHED, BIN_FC,
-            BIN_R, BIN_PUSHLINE, BIN_LOGOUT, BIN_TEST, BIN_BRACKET,
-            BIN_READONLY, BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
-            BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
-            BIN_UNSET, BIN_EXPORT,
+            BIN_TYPESET,
+            BIN_BG,
+            BIN_FG,
+            BIN_JOBS,
+            BIN_WAIT,
+            BIN_DISOWN,
+            BIN_BREAK,
+            BIN_CONTINUE,
+            BIN_EXIT,
+            BIN_RETURN,
+            BIN_CD,
+            BIN_POPD,
+            BIN_PUSHD,
+            BIN_PRINT,
+            BIN_EVAL,
+            BIN_SCHED,
+            BIN_FC,
+            BIN_R,
+            BIN_PUSHLINE,
+            BIN_LOGOUT,
+            BIN_TEST,
+            BIN_BRACKET,
+            BIN_READONLY,
+            BIN_ECHO,
+            BIN_DISABLE,
+            BIN_ENABLE,
+            BIN_PRINTF,
+            BIN_COMMAND,
+            BIN_UNHASH,
+            BIN_UNALIAS,
+            BIN_UNFUNCTION,
+            BIN_UNSET,
+            BIN_EXPORT,
         ];
         codes.sort();
         let expected: Vec<i32> = (0..=32).collect();
-        assert_eq!(codes.to_vec(), expected,
-            "BIN_* main slots must be dense 0..=32 (no gaps)");
+        assert_eq!(
+            codes.to_vec(),
+            expected,
+            "BIN_* main slots must be dense 0..=32 (no gaps)"
+        );
     }
 
     /// c:69-70 — setopt-family pair values pinned verbatim.
@@ -739,16 +1015,21 @@ mod tests {
     /// c:69-70 — setopt-family codes are distinct from each other.
     #[test]
     fn bin_setopt_family_pair_distinct() {
-        assert_ne!(BIN_SETOPT, BIN_UNSETOPT,
-            "setopt vs unsetopt must be different overload codes");
+        assert_ne!(
+            BIN_SETOPT, BIN_UNSETOPT,
+            "setopt vs unsetopt must be different overload codes"
+        );
     }
 
     /// c:34-66 — main codes fit comfortably in i8 (room for ≥2x growth).
     #[test]
     fn bin_main_codes_fit_in_i8_room_for_growth() {
         for c in [BIN_TYPESET, BIN_EXPORT] {
-            assert!(c < i8::MAX as i32,
-                "BIN_* main {} must fit in i8 (≥2x growth headroom)", c);
+            assert!(
+                c < i8::MAX as i32,
+                "BIN_* main {} must fit in i8 (≥2x growth headroom)",
+                c
+            );
         }
     }
 
@@ -756,16 +1037,41 @@ mod tests {
     #[test]
     fn bin_main_slots_count_is_33() {
         let codes = [
-            BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
-            BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN, BIN_CD,
-            BIN_POPD, BIN_PUSHD, BIN_PRINT, BIN_EVAL, BIN_SCHED, BIN_FC,
-            BIN_R, BIN_PUSHLINE, BIN_LOGOUT, BIN_TEST, BIN_BRACKET,
-            BIN_READONLY, BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
-            BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
-            BIN_UNSET, BIN_EXPORT,
+            BIN_TYPESET,
+            BIN_BG,
+            BIN_FG,
+            BIN_JOBS,
+            BIN_WAIT,
+            BIN_DISOWN,
+            BIN_BREAK,
+            BIN_CONTINUE,
+            BIN_EXIT,
+            BIN_RETURN,
+            BIN_CD,
+            BIN_POPD,
+            BIN_PUSHD,
+            BIN_PRINT,
+            BIN_EVAL,
+            BIN_SCHED,
+            BIN_FC,
+            BIN_R,
+            BIN_PUSHLINE,
+            BIN_LOGOUT,
+            BIN_TEST,
+            BIN_BRACKET,
+            BIN_READONLY,
+            BIN_ECHO,
+            BIN_DISABLE,
+            BIN_ENABLE,
+            BIN_PRINTF,
+            BIN_COMMAND,
+            BIN_UNHASH,
+            BIN_UNALIAS,
+            BIN_UNFUNCTION,
+            BIN_UNSET,
+            BIN_EXPORT,
         ];
-        assert_eq!(codes.len(), 33,
-            "33 BIN_* main slots must be declared");
+        assert_eq!(codes.len(), 33, "33 BIN_* main slots must be declared");
     }
 
     /// c:34-66 — BIN_TYPESET is the canonical zero (first slot).
@@ -778,16 +1084,22 @@ mod tests {
     /// (zsh's flow-control pair).
     #[test]
     fn bin_exit_return_are_sequential() {
-        assert_eq!(BIN_RETURN - BIN_EXIT, 1,
-            "BIN_RETURN must immediately follow BIN_EXIT");
+        assert_eq!(
+            BIN_RETURN - BIN_EXIT,
+            1,
+            "BIN_RETURN must immediately follow BIN_EXIT"
+        );
     }
 
     /// c:40-41 — BIN_BREAK (6) and BIN_CONTINUE (7) are sequential
     /// (loop-control pair).
     #[test]
     fn bin_break_continue_are_sequential() {
-        assert_eq!(BIN_CONTINUE - BIN_BREAK, 1,
-            "BIN_CONTINUE must immediately follow BIN_BREAK");
+        assert_eq!(
+            BIN_CONTINUE - BIN_BREAK,
+            1,
+            "BIN_CONTINUE must immediately follow BIN_BREAK"
+        );
     }
 
     /// c:62-66 — un* family (UNHASH, UNALIAS, UNFUNCTION, UNSET) are
@@ -796,8 +1108,13 @@ mod tests {
     fn bin_un_family_is_consecutive() {
         let un = [BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION, BIN_UNSET];
         for w in un.windows(2) {
-            assert_eq!(w[1] - w[0], 1,
-                "un* family must be consecutive: {} → {}", w[0], w[1]);
+            assert_eq!(
+                w[1] - w[0],
+                1,
+                "un* family must be consecutive: {} → {}",
+                w[0],
+                w[1]
+            );
         }
     }
 
@@ -805,7 +1122,10 @@ mod tests {
     /// (the `test` vs `[` pair).
     #[test]
     fn bin_test_bracket_are_sequential() {
-        assert_eq!(BIN_BRACKET - BIN_TEST, 1,
-            "BIN_BRACKET must immediately follow BIN_TEST");
+        assert_eq!(
+            BIN_BRACKET - BIN_TEST,
+            1,
+            "BIN_BRACKET must immediately follow BIN_TEST"
+        );
     }
 }

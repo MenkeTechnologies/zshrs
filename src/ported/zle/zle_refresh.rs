@@ -3964,9 +3964,7 @@ mod tests {
     /// c:96 — `ZR_strcpy` empty src is safe.
     #[test]
     fn zr_strcpy_empty_src_no_panic() {
-        let mut dst: Vec<REFRESH_ELEMENT> = vec![
-            REFRESH_ELEMENT { chr: '\0', atr: 0 },
-        ];
+        let mut dst: Vec<REFRESH_ELEMENT> = vec![REFRESH_ELEMENT { chr: '\0', atr: 0 }];
         ZR_strcpy(&mut dst, &[]);
     }
 
@@ -4032,14 +4030,15 @@ mod tests {
             vec![],
             vec![REFRESH_ELEMENT { chr: 'a', atr: 0 }],
             vec![REFRESH_ELEMENT { chr: '\0', atr: 0 }],
-            vec![REFRESH_ELEMENT { chr: 'x', atr: 0 },
-                 REFRESH_ELEMENT { chr: 'y', atr: 0 }],
+            vec![
+                REFRESH_ELEMENT { chr: 'x', atr: 0 },
+                REFRESH_ELEMENT { chr: 'y', atr: 0 },
+            ],
         ];
         for c in &cases {
             let first = ZR_strlen(c);
             for _ in 0..3 {
-                assert_eq!(ZR_strlen(c), first,
-                    "ZR_strlen must be pure");
+                assert_eq!(ZR_strlen(c), first, "ZR_strlen must be pure");
             }
         }
     }
@@ -4077,8 +4076,11 @@ mod tests {
             REFRESH_ELEMENT { chr: 'x', atr: 0 },
             REFRESH_ELEMENT { chr: 'y', atr: 0 },
         ];
-        assert_eq!(ZR_strncmp(&buf, &buf, 2), 0,
-            "ZR_strncmp(x, x, n) must be 0");
+        assert_eq!(
+            ZR_strncmp(&buf, &buf, 2),
+            0,
+            "ZR_strncmp(x, x, n) must be 0"
+        );
     }
 
     /// c:496 — `zwcwrite("")` is idempotent across many calls.
@@ -4123,19 +4125,25 @@ mod tests {
     /// c:1097 — `wpfxlen(empty, empty)` returns 0 (alt name).
     #[test]
     fn wpfxlen_both_empty_returns_zero_alt() {
-        assert_eq!(wpfxlen(&[], &[]), 0,
-            "empty + empty → 0 common prefix");
+        assert_eq!(wpfxlen(&[], &[]), 0, "empty + empty → 0 common prefix");
     }
 
     /// c:1097 — `wpfxlen` is symmetric: wpfxlen(a, b) == wpfxlen(b, a).
     #[test]
     fn wpfxlen_symmetric() {
-        let a = [REFRESH_ELEMENT { chr: 'a', atr: 0 },
-                 REFRESH_ELEMENT { chr: 'b', atr: 0 }];
-        let b = [REFRESH_ELEMENT { chr: 'a', atr: 0 },
-                 REFRESH_ELEMENT { chr: 'c', atr: 0 }];
-        assert_eq!(wpfxlen(&a, &b), wpfxlen(&b, &a),
-            "wpfxlen must be symmetric");
+        let a = [
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'b', atr: 0 },
+        ];
+        let b = [
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'c', atr: 0 },
+        ];
+        assert_eq!(
+            wpfxlen(&a, &b),
+            wpfxlen(&b, &a),
+            "wpfxlen must be symmetric"
+        );
     }
 
     /// c:1097 — `wpfxlen(x, x)` returns full length (perfect prefix match).

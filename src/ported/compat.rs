@@ -1355,16 +1355,18 @@ mod tests {
     #[test]
     fn difftime_identity_returns_zero() {
         for t in [0i64, 100, 1_000_000, i32::MAX as i64] {
-            assert_eq!(difftime(t, t), 0.0,
-                "difftime({}, {}) must equal 0", t, t);
+            assert_eq!(difftime(t, t), 0.0, "difftime({}, {}) must equal 0", t, t);
         }
     }
 
     /// c:105 — `difftime(t2, t1)` = -(difftime(t1, t2)) (antisymmetric).
     #[test]
     fn difftime_antisymmetric() {
-        assert_eq!(difftime(100, 50), -difftime(50, 100),
-            "difftime is antisymmetric");
+        assert_eq!(
+            difftime(100, 50),
+            -difftime(50, 100),
+            "difftime is antisymmetric"
+        );
     }
 
     /// c:133 — `strerror` returns String (compile-time pin).
@@ -1377,8 +1379,7 @@ mod tests {
     /// or "Undefined error: 0").
     #[test]
     fn strerror_zero_returns_non_empty() {
-        assert!(!strerror(0).is_empty(),
-            "strerror(0) must be non-empty");
+        assert!(!strerror(0).is_empty(), "strerror(0) must be non-empty");
     }
 
     /// c:156 — `zopenmax` returns i64 (compile-time pin).

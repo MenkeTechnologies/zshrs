@@ -518,21 +518,36 @@ mod tests {
     fn modern_platforms_have_native_set_res_id() {
         // macOS has setreuid/setregid; Linux has both setre* and setres*.
         // The "have_native_*" check covers the setre* path used as fallback.
-        assert!(have_native_setregid(),
-            "modern target should have native setregid");
-        assert!(have_native_setreuid(),
-            "modern target should have native setreuid");
+        assert!(
+            have_native_setregid(),
+            "modern target should have native setregid"
+        );
+        assert!(
+            have_native_setreuid(),
+            "modern target should have native setreuid"
+        );
     }
 
     /// `errno_str` is deterministic for fixed input.
     #[cfg(unix)]
     #[test]
     fn errno_str_full_sweep_deterministic() {
-        for e in [0, libc::EPERM, libc::ENOENT, libc::EACCES, libc::EINVAL, 99999] {
+        for e in [
+            0,
+            libc::EPERM,
+            libc::ENOENT,
+            libc::EACCES,
+            libc::EINVAL,
+            99999,
+        ] {
             let first = errno_str(e);
             for _ in 0..3 {
-                assert_eq!(errno_str(e), first,
-                    "errno_str({}) must be deterministic", e);
+                assert_eq!(
+                    errno_str(e),
+                    first,
+                    "errno_str({}) must be deterministic",
+                    e
+                );
             }
         }
     }
@@ -541,10 +556,19 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn errno_str_common_codes_non_empty() {
-        for e in [libc::EPERM, libc::ENOENT, libc::EACCES, libc::EINVAL,
-                  libc::EBUSY, libc::EIO] {
-            assert!(!errno_str(e).is_empty(),
-                "errno_str({}) must return non-empty", e);
+        for e in [
+            libc::EPERM,
+            libc::ENOENT,
+            libc::EACCES,
+            libc::EINVAL,
+            libc::EBUSY,
+            libc::EIO,
+        ] {
+            assert!(
+                !errno_str(e).is_empty(),
+                "errno_str({}) must return non-empty",
+                e
+            );
         }
     }
 
@@ -617,8 +641,10 @@ mod tests {
     #[test]
     fn broken_and_native_mutually_exclusive_setregid() {
         if have_native_setregid() {
-            assert!(!broken_setregid(),
-                "having native setregid implies not broken");
+            assert!(
+                !broken_setregid(),
+                "having native setregid implies not broken"
+            );
         }
     }
 
@@ -627,8 +653,10 @@ mod tests {
     #[test]
     fn broken_and_native_mutually_exclusive_setreuid() {
         if have_native_setreuid() {
-            assert!(!broken_setreuid(),
-                "having native setreuid implies not broken");
+            assert!(
+                !broken_setreuid(),
+                "having native setreuid implies not broken"
+            );
         }
     }
 
@@ -682,8 +710,11 @@ mod tests {
         errno_set(0);
         let r = unsafe { setresgid(0 as libc::gid_t, 0 as libc::gid_t, 99 as libc::gid_t) };
         assert_eq!(r, -1, "rgid != sgid must return -1");
-        assert_eq!(errno_get(), libc::ENOSYS,
-            "errno must be set to ENOSYS per c:70");
+        assert_eq!(
+            errno_get(),
+            libc::ENOSYS,
+            "errno must be set to ENOSYS per c:70"
+        );
         errno_set(saved);
     }
 
@@ -697,8 +728,11 @@ mod tests {
         errno_set(0);
         let r = unsafe { setresuid(0 as libc::uid_t, 0 as libc::uid_t, 99 as libc::uid_t) };
         assert_eq!(r, -1, "ruid != suid must return -1");
-        assert_eq!(errno_get(), libc::ENOSYS,
-            "errno must be set to ENOSYS per c:104");
+        assert_eq!(
+            errno_get(),
+            libc::ENOSYS,
+            "errno must be set to ENOSYS per c:104"
+        );
         errno_set(saved);
     }
 
@@ -751,11 +785,17 @@ mod tests {
     fn errno_get_set_round_trip_all_common_codes() {
         let _g = crate::test_util::global_state_lock();
         let saved = errno_get();
-        for code in [0, libc::EAGAIN, libc::ENOSYS, libc::EINVAL,
-                     libc::EACCES, libc::EPERM, libc::ENOMEM] {
+        for code in [
+            0,
+            libc::EAGAIN,
+            libc::ENOSYS,
+            libc::EINVAL,
+            libc::EACCES,
+            libc::EPERM,
+            libc::ENOMEM,
+        ] {
             errno_set(code);
-            assert_eq!(errno_get(), code,
-                "errno round-trip must preserve {}", code);
+            assert_eq!(errno_get(), code, "errno round-trip must preserve {}", code);
         }
         errno_set(saved);
     }
@@ -813,8 +853,11 @@ mod tests {
         // Must not have hit the rgid != sgid early-return.
         // On non-root, may set errno from native syscall but not ENOSYS.
         let err = errno_get();
-        assert!(err != libc::ENOSYS,
-            "equal args must NOT trigger ENOSYS branch; got errno={}", err);
+        assert!(
+            err != libc::ENOSYS,
+            "equal args must NOT trigger ENOSYS branch; got errno={}",
+            err
+        );
         errno_set(saved);
     }
 }

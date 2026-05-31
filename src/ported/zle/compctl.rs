@@ -4053,8 +4053,12 @@ mod tests {
         for s in ["", "name", "*pat*", "with[brackets]"] {
             let first = compctl_name_pat(s);
             for _ in 0..3 {
-                assert_eq!(compctl_name_pat(s), first,
-                    "compctl_name_pat({:?}) must be pure", s);
+                assert_eq!(
+                    compctl_name_pat(s),
+                    first,
+                    "compctl_name_pat({:?}) must be pure",
+                    s
+                );
             }
         }
     }
@@ -4144,8 +4148,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = set_gmatcher("test", &[]);
         for _ in 0..3 {
-            assert_eq!(set_gmatcher("test", &[]), first,
-                "set_gmatcher must be deterministic");
+            assert_eq!(
+                set_gmatcher("test", &[]),
+                first,
+                "set_gmatcher must be deterministic"
+            );
         }
     }
 
@@ -4155,8 +4162,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = get_gmatcher("test", &[]);
         for _ in 0..3 {
-            assert_eq!(get_gmatcher("test", &[]), first,
-                "get_gmatcher must be deterministic");
+            assert_eq!(
+                get_gmatcher("test", &[]),
+                first,
+                "get_gmatcher must be deterministic"
+            );
         }
     }
 
@@ -4166,7 +4176,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _: i32 = bin_compctl("compctl", &[], &ops, 0);
     }
@@ -4177,7 +4189,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _: i32 = bin_compcall("compcall", &[], &ops, 0);
     }
@@ -4187,8 +4201,11 @@ mod tests {
     fn ccmakehookfn_is_deterministic() {
         let first = ccmakehookfn(());
         for _ in 0..3 {
-            assert_eq!(ccmakehookfn(()), first,
-                "ccmakehookfn must be deterministic");
+            assert_eq!(
+                ccmakehookfn(()),
+                first,
+                "ccmakehookfn must be deterministic"
+            );
         }
     }
 
@@ -4197,8 +4214,11 @@ mod tests {
     fn cccleanuphookfn_is_deterministic() {
         let first = cccleanuphookfn(());
         for _ in 0..3 {
-            assert_eq!(cccleanuphookfn(()), first,
-                "cccleanuphookfn must be deterministic");
+            assert_eq!(
+                cccleanuphookfn(()),
+                first,
+                "cccleanuphookfn must be deterministic"
+            );
         }
     }
 
@@ -4230,7 +4250,9 @@ mod tests {
     #[test]
     fn createcompctltable_idempotent_10_call_alt() {
         let _g = crate::test_util::global_state_lock();
-        for _ in 0..10 { createcompctltable(); }
+        for _ in 0..10 {
+            createcompctltable();
+        }
     }
 
     /// c:104 — `freecompctlp(empty)` safe.
@@ -4273,8 +4295,7 @@ mod tests {
         for s in ["", "abc", "*", "(pattern)", "name"] {
             let a = compctl_name_pat(s);
             let b = compctl_name_pat(s);
-            assert_eq!(a, b,
-                "compctl_name_pat({:?}) must be pure", s);
+            assert_eq!(a, b, "compctl_name_pat({:?}) must be pure", s);
         }
     }
 
@@ -4298,7 +4319,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let r = bin_compctl("compctl", &[], &ops, 0);
         assert!(r >= 0, "bin_compctl exit code must be ≥ 0, got {}", r);
@@ -4310,7 +4333,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let r = bin_compcall("compcall", &[], &ops, 0);
         assert!(r >= 0, "bin_compcall exit code must be ≥ 0, got {}", r);

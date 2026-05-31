@@ -1967,7 +1967,11 @@ mod region_tests {
         let before = ZLECS.load(Ordering::SeqCst);
         inccs();
         deccs();
-        assert_eq!(ZLECS.load(Ordering::SeqCst), before, "inccs+deccs is identity");
+        assert_eq!(
+            ZLECS.load(Ordering::SeqCst),
+            before,
+            "inccs+deccs is identity"
+        );
     }
 
     /// c:170 — `backwardmetafiedchar()` at ZLECS=0 is safe no-op
@@ -2203,8 +2207,11 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let r = vimatchbracket();
-        assert!((0..256).contains(&r),
-            "vimatchbracket exit code {} must fit u8", r);
+        assert!(
+            (0..256).contains(&r),
+            "vimatchbracket exit code {} must fit u8",
+            r
+        );
     }
 
     /// c:867 — `viendofline` returns in u8 exit range.
@@ -2237,7 +2244,9 @@ mod region_tests {
     fn inccs_idempotent_full_sweep() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        for _ in 0..10 { inccs(); }
+        for _ in 0..10 {
+            inccs();
+        }
     }
 
     /// c:180 — `deccs` is idempotent.
@@ -2245,7 +2254,9 @@ mod region_tests {
     fn deccs_idempotent_full_sweep() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        for _ in 0..10 { deccs(); }
+        for _ in 0..10 {
+            deccs();
+        }
     }
 
     /// c:202 — `incpos(&mut 0)` is safe (no panic for zero-pos arg).
@@ -2336,8 +2347,11 @@ mod region_tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let r = vigotocolumn();
-        assert!((0..256).contains(&r),
-            "vigotocolumn exit code {} must fit u8", r);
+        assert!(
+            (0..256).contains(&r),
+            "vigotocolumn exit code {} must fit u8",
+            r
+        );
     }
 
     /// c:550 — `setmarkcommand` exit code in u8 range.

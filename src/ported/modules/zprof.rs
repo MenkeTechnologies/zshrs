@@ -1620,8 +1620,11 @@ mod tests {
     fn cmpsfuncs_reflexive_alt() {
         let p = mk_pfunc("a", 1.0, 2.0);
         let p2 = p.clone();
-        assert_eq!(cmpsfuncs(&p, &p2), std::cmp::Ordering::Equal,
-            "cmpsfuncs(x, x.clone()) must be Equal");
+        assert_eq!(
+            cmpsfuncs(&p, &p2),
+            std::cmp::Ordering::Equal,
+            "cmpsfuncs(x, x.clone()) must be Equal"
+        );
     }
 
     /// c:161 — `cmptfuncs` reflexivity (alt).
@@ -1629,8 +1632,11 @@ mod tests {
     fn cmptfuncs_reflexive_alt() {
         let p = mk_pfunc("a", 1.0, 2.0);
         let p2 = p.clone();
-        assert_eq!(cmptfuncs(&p, &p2), std::cmp::Ordering::Equal,
-            "cmptfuncs(x, x.clone()) must be Equal");
+        assert_eq!(
+            cmptfuncs(&p, &p2),
+            std::cmp::Ordering::Equal,
+            "cmptfuncs(x, x.clone()) must be Equal"
+        );
     }
 
     /// c:170 — `cmpparcs` reflexivity (alt).
@@ -1667,8 +1673,7 @@ mod tests {
     fn name_for_anonymous_function_returns_non_empty() {
         let _g = crate::test_util::global_state_lock();
         let n = name_for_anonymous_function("");
-        assert!(!n.is_empty(),
-            "synthesized name must not be empty");
+        assert!(!n.is_empty(), "synthesized name must not be empty");
     }
 
     /// c:682 — `setup_` is idempotent.

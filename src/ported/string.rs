@@ -976,8 +976,12 @@ mod tests {
         for s in ["", "a", "hello world", "café"] {
             let first = dupstring(s);
             for _ in 0..3 {
-                assert_eq!(dupstring(s), first,
-                    "dupstring({:?}) must be deterministic", s);
+                assert_eq!(
+                    dupstring(s),
+                    first,
+                    "dupstring({:?}) must be deterministic",
+                    s
+                );
             }
         }
     }
@@ -987,8 +991,11 @@ mod tests {
     fn tricat_is_deterministic() {
         let first = tricat("foo", "bar", "baz");
         for _ in 0..3 {
-            assert_eq!(tricat("foo", "bar", "baz"), first,
-                "tricat must be deterministic");
+            assert_eq!(
+                tricat("foo", "bar", "baz"),
+                first,
+                "tricat must be deterministic"
+            );
         }
     }
 
@@ -1003,8 +1010,14 @@ mod tests {
             ("a", "b", ""),
             ("café", "日", "中"),
         ] {
-            assert_eq!(zhtricat(a, b, c), tricat(a, b, c),
-                "zhtricat({:?},{:?},{:?}) must match tricat", a, b, c);
+            assert_eq!(
+                zhtricat(a, b, c),
+                tricat(a, b, c),
+                "zhtricat({:?},{:?},{:?}) must match tricat",
+                a,
+                b,
+                c
+            );
         }
     }
 
@@ -1018,8 +1031,11 @@ mod tests {
     /// c:55 — `dupstring_wlen` with len == s.len() returns whole string.
     #[test]
     fn dupstring_wlen_exact_len_returns_whole_string() {
-        assert_eq!(dupstring_wlen("hello", 5), "hello",
-            "len == s.len() must return whole string");
+        assert_eq!(
+            dupstring_wlen("hello", 5),
+            "hello",
+            "len == s.len() must return whole string"
+        );
     }
 
     /// c:197 — `appstr(base, "")` empty append leaves base unchanged.
@@ -1054,8 +1070,7 @@ mod tests {
     #[test]
     fn ztrdup_preserves_content() {
         for s in ["", "x", "hello world", "日本語", "café"] {
-            assert_eq!(ztrdup(s), s,
-                "ztrdup must preserve {:?}", s);
+            assert_eq!(ztrdup(s), s, "ztrdup must preserve {:?}", s);
         }
     }
 
@@ -1075,8 +1090,7 @@ mod tests {
     #[test]
     fn dyncat_right_identity_empty() {
         for s in ["", "x", "hello"] {
-            assert_eq!(dyncat(s, ""), s,
-                "dyncat({:?}, '') must equal {:?}", s, s);
+            assert_eq!(dyncat(s, ""), s, "dyncat({:?}, '') must equal {:?}", s, s);
         }
     }
 
@@ -1084,8 +1098,7 @@ mod tests {
     #[test]
     fn dyncat_left_identity_empty() {
         for s in ["", "x", "hello"] {
-            assert_eq!(dyncat("", s), s,
-                "dyncat('', {:?}) must equal {:?}", s, s);
+            assert_eq!(dyncat("", s), s, "dyncat('', {:?}) must equal {:?}", s, s);
         }
     }
 
@@ -1105,8 +1118,7 @@ mod tests {
     #[test]
     fn dupstrpfx_zero_returns_empty() {
         for s in ["", "x", "hello"] {
-            assert_eq!(dupstrpfx(s, 0), "",
-                "dupstrpfx({:?}, 0) must be empty", s);
+            assert_eq!(dupstrpfx(s, 0), "", "dupstrpfx({:?}, 0) must be empty", s);
         }
     }
 
@@ -1130,8 +1142,7 @@ mod tests {
         for s in ["", "x", "abc", "hello"] {
             let first = strend(s);
             for _ in 0..3 {
-                assert_eq!(strend(s), first,
-                    "strend({:?}) must be pure", s);
+                assert_eq!(strend(s), first, "strend({:?}) must be pure", s);
             }
         }
     }

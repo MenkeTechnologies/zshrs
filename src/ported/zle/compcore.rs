@@ -5126,8 +5126,7 @@ mod tests {
         for s in ["", "abc", r"\a", r"\\\\"] {
             let first = rembslash(s);
             for _ in 0..3 {
-                assert_eq!(rembslash(s), first,
-                    "rembslash({:?}) must be pure", s);
+                assert_eq!(rembslash(s), first, "rembslash({:?}) must be pure", s);
             }
         }
     }
@@ -5138,8 +5137,12 @@ mod tests {
         for s in ["", "abc", "a*b", "a?b"] {
             let first = ctokenize(s);
             for _ in 0..3 {
-                assert_eq!(ctokenize(s), first,
-                    "ctokenize({:?}) must be deterministic", s);
+                assert_eq!(
+                    ctokenize(s),
+                    first,
+                    "ctokenize({:?}) must be deterministic",
+                    s
+                );
             }
         }
     }
@@ -5158,8 +5161,12 @@ mod tests {
         for s in ["", "abc", "x y"] {
             let first = multiquote(s, 0);
             for _ in 0..3 {
-                assert_eq!(multiquote(s, 0), first,
-                    "multiquote({:?}, 0) must be pure", s);
+                assert_eq!(
+                    multiquote(s, 0),
+                    first,
+                    "multiquote({:?}, 0) must be pure",
+                    s
+                );
             }
         }
     }
@@ -5172,8 +5179,12 @@ mod tests {
         for s in ["", "abc", "no_tilde", "/path/to/file"] {
             let first = tildequote(s, 0);
             for _ in 0..3 {
-                assert_eq!(tildequote(s, 0), first,
-                    "tildequote({:?}, 0) must be pure", s);
+                assert_eq!(
+                    tildequote(s, 0),
+                    first,
+                    "tildequote({:?}, 0) must be pure",
+                    s
+                );
             }
         }
     }
@@ -5243,8 +5254,11 @@ mod tests {
         let _g2 = zle_test_setup();
         let first = get_user_var(None);
         for _ in 0..3 {
-            assert_eq!(get_user_var(None), first,
-                "get_user_var(None) must be deterministic");
+            assert_eq!(
+                get_user_var(None),
+                first,
+                "get_user_var(None) must be deterministic"
+            );
         }
     }
 
@@ -5261,10 +5275,11 @@ mod tests {
     fn get_data_arr_empty_name_returns_none() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        assert!(get_data_arr("", false).is_none(),
-            "empty name → None");
-        assert!(get_data_arr("", true).is_none(),
-            "empty name (keys=true) → None");
+        assert!(get_data_arr("", false).is_none(), "empty name → None");
+        assert!(
+            get_data_arr("", true).is_none(),
+            "empty name (keys=true) → None"
+        );
     }
 
     /// c:2681 — `begcmgroup(None, 0)` safe.
@@ -5322,8 +5337,12 @@ mod tests {
         for stype in 0..10 {
             let first = comp_quoting_string(stype);
             for _ in 0..3 {
-                assert_eq!(comp_quoting_string(stype), first,
-                    "comp_quoting_string({}) must be pure", stype);
+                assert_eq!(
+                    comp_quoting_string(stype),
+                    first,
+                    "comp_quoting_string({}) must be pure",
+                    stype
+                );
             }
         }
     }

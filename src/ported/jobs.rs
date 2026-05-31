@@ -5523,10 +5523,7 @@ mod tests {
     #[test]
     fn getsigidx_zerr_and_err_alias() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            getsigidx("ZERR"),
-            Some(crate::ported::signals_h::SIGZERR)
-        );
+        assert_eq!(getsigidx("ZERR"), Some(crate::ported::signals_h::SIGZERR));
         assert_eq!(
             getsigidx("ERR"),
             Some(crate::ported::signals_h::SIGZERR),
@@ -5538,10 +5535,7 @@ mod tests {
     #[test]
     fn getsigidx_debug_returns_sigdebug() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            getsigidx("DEBUG"),
-            Some(crate::ported::signals_h::SIGDEBUG)
-        );
+        assert_eq!(getsigidx("DEBUG"), Some(crate::ported::signals_h::SIGDEBUG));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -5587,8 +5581,7 @@ mod tests {
         for s in [0.0, 1.0, 60.0, 3661.5, -1.0] {
             let first = printhhmmss(s);
             for _ in 0..3 {
-                assert_eq!(printhhmmss(s), first,
-                    "printhhmmss({}) must be pure", s);
+                assert_eq!(printhhmmss(s), first, "printhhmmss({}) must be pure", s);
             }
         }
     }
@@ -5598,16 +5591,23 @@ mod tests {
     #[test]
     fn printhhmmss_zero_short_form() {
         let s = printhhmmss(0.0);
-        assert!(s.contains('.'), "sub-minute must use 'S.MMM' form, got {:?}", s);
+        assert!(
+            s.contains('.'),
+            "sub-minute must use 'S.MMM' form, got {:?}",
+            s
+        );
         assert!(s.contains('0'), "must contain '0' digit, got {:?}", s);
     }
 
     /// c:885 — `printhhmmss(>60)` adds minute colon separator.
     #[test]
     fn printhhmmss_over_minute_adds_colon() {
-        let s = printhhmmss(125.0);  // 2m 5s
-        assert!(s.contains(':'),
-            "over 60s must contain ':' separator, got {:?}", s);
+        let s = printhhmmss(125.0); // 2m 5s
+        assert!(
+            s.contains(':'),
+            "over 60s must contain ':' separator, got {:?}",
+            s
+        );
     }
 
     /// c:1172 — `sigmsg` returns &'static str (compile-time type pin).
@@ -5622,8 +5622,7 @@ mod tests {
         for s in [0i32, 1, 9, 15, 999] {
             let first = sigmsg(s);
             for _ in 0..3 {
-                assert_eq!(sigmsg(s), first,
-                    "sigmsg({}) must be pure", s);
+                assert_eq!(sigmsg(s), first, "sigmsg({}) must be pure", s);
             }
         }
     }
@@ -5716,8 +5715,11 @@ mod tests {
     #[test]
     fn dtime_ts_same_instant_returns_zero() {
         let now = Instant::now();
-        assert_eq!(dtime_ts(&now, &now), Duration::ZERO,
-            "same instant → ZERO diff");
+        assert_eq!(
+            dtime_ts(&now, &now),
+            Duration::ZERO,
+            "same instant → ZERO diff"
+        );
     }
 
     /// c:1589 — `havefiles(empty)` returns false.
@@ -5775,8 +5777,7 @@ mod tests {
         for s in ["", "0", "123", "-5", "abc", "a1", "1a", "-", "12-34"] {
             let first = isanum(s);
             for _ in 0..3 {
-                assert_eq!(isanum(s), first,
-                    "isanum({:?}) must be pure", s);
+                assert_eq!(isanum(s), first, "isanum({:?}) must be pure", s);
             }
         }
     }

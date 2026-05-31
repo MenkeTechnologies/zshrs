@@ -35,15 +35,12 @@ fn zshrs_bin() -> Option<PathBuf> {
         }
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for cand in [
+    [
         manifest.join("target/debug/zshrs"),
         manifest.join("target/release/zshrs"),
-    ] {
-        if cand.exists() {
-            return Some(cand);
-        }
-    }
-    None
+    ]
+    .into_iter()
+    .find(|cand| cand.exists())
 }
 
 fn demos_dir() -> PathBuf {
@@ -257,7 +254,10 @@ demo_test!(d98_coreutils_builtins, "98_coreutils_builtins.zsh");
 demo_test!(d99_negative_indexing, "99_negative_indexing.zsh");
 demo_test!(d100_zsh_features_summary, "100_zsh_features_summary.zsh");
 demo_test!(d101_subshell_grouping, "101_subshell_grouping.zsh");
-demo_test!(d102_function_introspection, "102_function_introspection.zsh");
+demo_test!(
+    d102_function_introspection,
+    "102_function_introspection.zsh"
+);
 demo_test!(d103_exit_traps_advanced, "103_exit_traps_advanced.zsh");
 demo_test!(d104_strict_arithmetic, "104_strict_arithmetic.zsh");
 demo_test!(d105_dispatch_table, "105_dispatch_table.zsh");
@@ -494,7 +494,10 @@ demo_test!(d335_banner_v6, "335_banner_v6.zsh");
 demo_test!(d336_roman_numeral, "336_roman_numeral.zsh");
 demo_test!(d337_trie_advanced, "337_trie_advanced.zsh");
 demo_test!(d338_z_function, "338_z_function.zsh");
-demo_test!(d339_longest_common_substring, "339_longest_common_substring.zsh");
+demo_test!(
+    d339_longest_common_substring,
+    "339_longest_common_substring.zsh"
+);
 demo_test!(d340_palindromic_subseq, "340_palindromic_subseq.zsh");
 demo_test!(d341_nim_game, "341_nim_game.zsh");
 demo_test!(d342_peg_solitaire, "342_peg_solitaire.zsh");

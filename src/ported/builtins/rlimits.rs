@@ -2142,7 +2142,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _: i32 = bin_limit("limit", &[], &ops, 0);
     }
@@ -2154,7 +2156,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _: i32 = bin_unlimit("unlimit", &[], &ops, 0);
     }
@@ -2166,7 +2170,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         let _: i32 = bin_ulimit("ulimit", &[], &ops, 0);
     }
@@ -2178,7 +2184,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         };
         for r in [
             bin_limit("limit", &[], &ops, 0),
@@ -2198,8 +2206,12 @@ mod tests {
         for c in ('a'..='z').chain('A'..='Z') {
             let first = find_resource(c);
             for _ in 0..3 {
-                assert_eq!(find_resource(c), first,
-                    "find_resource({:?}) must be pure", c);
+                assert_eq!(
+                    find_resource(c),
+                    first,
+                    "find_resource({:?}) must be pure",
+                    c
+                );
             }
         }
     }
@@ -2348,7 +2360,9 @@ mod tests {
         let mut v2: Vec<String> = Vec::new();
         let _ = features_(std::ptr::null(), &mut v1);
         let _ = features_(std::ptr::null(), &mut v2);
-        assert_eq!(v1, v2,
-            "features_ must populate identical vec for identical input");
+        assert_eq!(
+            v1, v2,
+            "features_ must populate identical vec for identical input"
+        );
     }
 }

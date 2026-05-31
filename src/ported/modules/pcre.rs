@@ -1327,8 +1327,12 @@ mod tests {
         for input in ["42", "abc", "", "0", "999"] {
             let first = getposint(input, "test");
             for _ in 0..3 {
-                assert_eq!(getposint(input, "test"), first,
-                    "getposint({:?}) must be deterministic", input);
+                assert_eq!(
+                    getposint(input, "test"),
+                    first,
+                    "getposint({:?}) must be deterministic",
+                    input
+                );
             }
         }
     }
@@ -1338,8 +1342,7 @@ mod tests {
     fn pcre_getposint_empty_returns_zero() {
         let r = getposint("", "test");
         // Per shared C convention, empty might be 0 or -1; pin behavior.
-        assert!(r == 0 || r == -1,
-            "empty string returns 0 or -1, got {}", r);
+        assert!(r == 0 || r == -1, "empty string returns 0 or -1, got {}", r);
     }
 
     /// c:625 — `cond_pcre_match` return strictly boolean (0/1).
@@ -1353,8 +1356,12 @@ mod tests {
             vec!["bad[".to_string(), "x".to_string()],
         ] {
             let r = cond_pcre_match(&args, 0);
-            assert!(r == 0 || r == 1,
-                "cond_pcre_match({:?}) = {} not in {{0,1}}", args, r);
+            assert!(
+                r == 0 || r == 1,
+                "cond_pcre_match({:?}) = {} not in {{0,1}}",
+                args,
+                r
+            );
         }
     }
 
@@ -1368,8 +1375,12 @@ mod tests {
         ] {
             let first = cond_pcre_match(&args, 0);
             for _ in 0..5 {
-                assert_eq!(cond_pcre_match(&args, 0), first,
-                    "cond_pcre_match({:?}) must be deterministic", args);
+                assert_eq!(
+                    cond_pcre_match(&args, 0),
+                    first,
+                    "cond_pcre_match({:?}) must be deterministic",
+                    args
+                );
             }
         }
     }
@@ -1441,8 +1452,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = zpcre_utf8_enabled();
         for _ in 0..10 {
-            assert_eq!(zpcre_utf8_enabled(), first,
-                "zpcre_utf8_enabled must be pure");
+            assert_eq!(
+                zpcre_utf8_enabled(),
+                first,
+                "zpcre_utf8_enabled must be pure"
+            );
         }
     }
 

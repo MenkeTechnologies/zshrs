@@ -1002,8 +1002,11 @@ mod tests {
         for _ in 0..3 {
             let mut buf2 = [0u8; 4];
             let r = xgetxattr("/nonexistent_path", "user.x", &mut buf2, 0);
-            assert_eq!(r.signum(), first.signum(),
-                "xgetxattr must be deterministic in sign");
+            assert_eq!(
+                r.signum(),
+                first.signum(),
+                "xgetxattr must be deterministic in sign"
+            );
         }
     }
 
@@ -1078,11 +1081,19 @@ mod tests {
         let ops = empty_ops();
         for r in [
             bin_getattr("getattr", &["/tmp".into(), "user.x".into()], &ops, 0),
-            bin_setattr("setattr", &["/tmp".into(), "user.x".into(), "v".into()], &ops, 0),
+            bin_setattr(
+                "setattr",
+                &["/tmp".into(), "user.x".into(), "v".into()],
+                &ops,
+                0,
+            ),
             bin_listattr("listattr", &["/tmp".into()], &ops, 0),
         ] {
-            assert!((0..256).contains(&r),
-                "exit code must fit in u8 range, got {}", r);
+            assert!(
+                (0..256).contains(&r),
+                "exit code must fit in u8 range, got {}",
+                r
+            );
         }
     }
 
@@ -1149,7 +1160,8 @@ mod tests {
             assert_eq!(
                 xgetxattr("/__definitely_no_such_xyz__", "user.x", &mut b, 0),
                 first,
-                "xgetxattr must be pure across calls for missing path");
+                "xgetxattr must be pure across calls for missing path"
+            );
         }
     }
 

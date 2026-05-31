@@ -6961,8 +6961,12 @@ mod subst_modifier_tests {
         for s in ["", "abc", "  spaces  ", "\ttabs\t", "no\nnewlines\nhere"] {
             let first = histreduceblanks(s);
             for _ in 0..3 {
-                assert_eq!(histreduceblanks(s), first,
-                    "histreduceblanks({:?}) must be pure", s);
+                assert_eq!(
+                    histreduceblanks(s),
+                    first,
+                    "histreduceblanks({:?}) must be pure",
+                    s
+                );
             }
         }
     }
@@ -6990,8 +6994,11 @@ mod subst_modifier_tests {
         // result is deterministic for same input.
         let first = addhistnum(0, 0, 0);
         for _ in 0..3 {
-            assert_eq!(addhistnum(0, 0, 0), first,
-                "addhistnum(0, 0, 0) must be deterministic");
+            assert_eq!(
+                addhistnum(0, 0, 0),
+                first,
+                "addhistnum(0, 0, 0) must be deterministic"
+            );
         }
     }
 
@@ -7081,8 +7088,11 @@ mod subst_modifier_tests {
         let _g = crate::test_util::global_state_lock();
         let first = flockhistfile("/__never_exists_zshrs_flock__");
         for _ in 0..3 {
-            assert_eq!(flockhistfile("/__never_exists_zshrs_flock__"), first,
-                "flockhistfile must be deterministic");
+            assert_eq!(
+                flockhistfile("/__never_exists_zshrs_flock__"),
+                first,
+                "flockhistfile must be deterministic"
+            );
         }
     }
 
@@ -7098,8 +7108,7 @@ mod subst_modifier_tests {
     fn histfileIsLocked_returns_zero_or_one() {
         let _g = crate::test_util::global_state_lock();
         let r = histfileIsLocked();
-        assert!(r == 0 || r == 1,
-            "histfileIsLocked ∈ {{0,1}}, got {}", r);
+        assert!(r == 0 || r == 1, "histfileIsLocked ∈ {{0,1}}, got {}", r);
     }
 
     /// c:4449 — `firsthist` returns i64 (compile-time type pin).
@@ -7114,7 +7123,11 @@ mod subst_modifier_tests {
     fn firsthist_default_when_ring_empty() {
         let _g = crate::test_util::global_state_lock();
         let r = firsthist();
-        assert!(r >= 1, "firsthist ≥ 1 (default + populated both ≥ 1), got {}", r);
+        assert!(
+            r >= 1,
+            "firsthist ≥ 1 (default + populated both ≥ 1), got {}",
+            r
+        );
     }
 
     /// c:4449 — `firsthist` is deterministic on stable ring.
@@ -7123,8 +7136,11 @@ mod subst_modifier_tests {
         let _g = crate::test_util::global_state_lock();
         let first = firsthist();
         for _ in 0..3 {
-            assert_eq!(firsthist(), first,
-                "firsthist must be deterministic on unchanged ring");
+            assert_eq!(
+                firsthist(),
+                first,
+                "firsthist must be deterministic on unchanged ring"
+            );
         }
     }
 

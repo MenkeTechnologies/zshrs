@@ -1584,15 +1584,30 @@ mod tests {
                 nam: "zshrs_never_registered_param_xyz".to_string(),
                 flags: 0,
             },
-            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
-            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
-            gsu_h: None, base: 0, width: 0, env: None, ename: None,
-            old: None, level: 0,
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
         });
         let ptr: *const param = Box::into_raw(pm);
         let r = is_private(ptr);
         // Reclaim Box to free.
-        unsafe { drop(Box::from_raw(ptr as *mut param)); }
+        unsafe {
+            drop(Box::from_raw(ptr as *mut param));
+        }
         assert_eq!(r, 0, "unregistered param → not private");
     }
 
@@ -1707,8 +1722,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = is_private(std::ptr::null());
         for _ in 0..5 {
-            assert_eq!(is_private(std::ptr::null()), first,
-                "is_private(null) must be deterministic");
+            assert_eq!(
+                is_private(std::ptr::null()),
+                first,
+                "is_private(null) must be deterministic"
+            );
         }
     }
 
@@ -1825,8 +1843,11 @@ mod tests {
     #[test]
     fn is_private_null_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(is_private(std::ptr::null()), 0,
-            "null param is not private; got nonzero");
+        assert_eq!(
+            is_private(std::ptr::null()),
+            0,
+            "null param is not private; got nonzero"
+        );
     }
 
     /// c:200 — `is_private` returns i32 (compile-time pin, alt).

@@ -2094,8 +2094,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = source("/__never_exists_zshrs_source__");
         for _ in 0..3 {
-            assert_eq!(source("/__never_exists_zshrs_source__"), first,
-                "source must be deterministic");
+            assert_eq!(
+                source("/__never_exists_zshrs_source__"),
+                first,
+                "source must be deterministic"
+            );
         }
     }
 
@@ -2127,8 +2130,12 @@ mod tests {
         for n in ["", "name", "anything"] {
             let first = fallback_compctlread(n);
             for _ in 0..3 {
-                assert_eq!(fallback_compctlread(n), first,
-                    "fallback_compctlread({:?}) must be deterministic", n);
+                assert_eq!(
+                    fallback_compctlread(n),
+                    first,
+                    "fallback_compctlread({:?}) must be deterministic",
+                    n
+                );
             }
         }
     }
@@ -2179,7 +2186,11 @@ mod tests {
     fn tccap_get_name_oob_returns_empty() {
         assert_eq!(tccap_get_name(39), "", "TC_COUNT itself returns empty");
         assert_eq!(tccap_get_name(100), "", "way past TC_COUNT returns empty");
-        assert_eq!(tccap_get_name(usize::MAX), "", "MAX returns empty (no panic)");
+        assert_eq!(
+            tccap_get_name(usize::MAX),
+            "",
+            "MAX returns empty (no panic)"
+        );
     }
 
     /// c:464 — `tccap_get_name` is deterministic for in-range indices.
@@ -2188,8 +2199,12 @@ mod tests {
         for cap in 0..39usize {
             let first = tccap_get_name(cap);
             for _ in 0..3 {
-                assert_eq!(tccap_get_name(cap), first,
-                    "tccap_get_name({}) must be pure", cap);
+                assert_eq!(
+                    tccap_get_name(cap),
+                    first,
+                    "tccap_get_name({}) must be pure",
+                    cap
+                );
             }
         }
     }
@@ -2199,8 +2214,12 @@ mod tests {
     #[test]
     fn tccap_get_name_all_in_range_caps_non_empty() {
         for cap in 0..39usize {
-            assert!(!tccap_get_name(cap).is_empty(),
-                "TC_{} (cap idx {}) must have a non-empty cap name", cap, cap);
+            assert!(
+                !tccap_get_name(cap).is_empty(),
+                "TC_{} (cap idx {}) must have a non-empty cap name",
+                cap,
+                cap
+            );
         }
     }
 
@@ -2232,8 +2251,12 @@ mod tests {
         for cmd in 0..5i32 {
             let first = zleentry(cmd);
             for _ in 0..3 {
-                assert_eq!(zleentry(cmd), first,
-                    "zleentry({}) must be deterministic", cmd);
+                assert_eq!(
+                    zleentry(cmd),
+                    first,
+                    "zleentry({}) must be deterministic",
+                    cmd
+                );
             }
         }
     }

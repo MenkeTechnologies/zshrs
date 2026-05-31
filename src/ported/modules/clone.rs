@@ -576,8 +576,12 @@ mod tests {
             vec!["/dev/null".to_string()],
         ] {
             let r = bin_clone("clone", &args, &ops, 0);
-            assert!((0..256).contains(&r),
-                "exit code {} must fit in u8 range for {:?}", r, args);
+            assert!(
+                (0..256).contains(&r),
+                "exit code {} must fit in u8 range for {:?}",
+                r,
+                args
+            );
         }
     }
 
@@ -689,9 +693,12 @@ mod tests {
     fn bin_clone_five_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
-        let r = bin_clone("clone",
+        let r = bin_clone(
+            "clone",
             &["a".into(), "b".into(), "c".into(), "d".into(), "e".into()],
-            &ops, 0);
+            &ops,
+            0,
+        );
         assert_ne!(r, 0, "five args → usage error");
     }
 
@@ -703,8 +710,11 @@ mod tests {
         let ops = empty_ops();
         let first = bin_clone("clone", &[], &ops, 0);
         for _ in 0..5 {
-            assert_eq!(bin_clone("clone", &[], &ops, 0), first,
-                "bin_clone no-args must be pure");
+            assert_eq!(
+                bin_clone("clone", &[], &ops, 0),
+                first,
+                "bin_clone no-args must be pure"
+            );
         }
     }
 
@@ -713,14 +723,14 @@ mod tests {
     fn bin_clone_exit_code_non_negative_for_usage_errors() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
-        for argv in [
-            vec![],
-            vec!["arg".into()],
-            vec!["a".into(), "b".into()],
-        ] {
+        for argv in [vec![], vec!["arg".into()], vec!["a".into(), "b".into()]] {
             let r = bin_clone("clone", &argv, &ops, 0);
-            assert!(r >= 0,
-                "exit code must be non-negative, got {} for {:?}", r, argv);
+            assert!(
+                r >= 0,
+                "exit code must be non-negative, got {} for {:?}",
+                r,
+                argv
+            );
         }
     }
 
@@ -756,8 +766,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut v: Vec<String> = vec!["sentinel".to_string()];
         let _ = features_(std::ptr::null(), &mut v);
-        assert!(!v.iter().any(|s| s == "sentinel"),
-            "c:130 — features_ MUST overwrite the Vec (`*features = featuresarray(...)`)");
+        assert!(
+            !v.iter().any(|s| s == "sentinel"),
+            "c:130 — features_ MUST overwrite the Vec (`*features = featuresarray(...)`)"
+        );
     }
 
     /// c:228 — `enables_` deterministic for null callback.
@@ -768,8 +780,11 @@ mod tests {
         let first = enables_(std::ptr::null(), &mut a);
         for _ in 0..5 {
             let mut b: Option<Vec<i32>> = None;
-            assert_eq!(enables_(std::ptr::null(), &mut b), first,
-                "enables_ must be deterministic for null in");
+            assert_eq!(
+                enables_(std::ptr::null(), &mut b),
+                first,
+                "enables_ must be deterministic for null in"
+            );
         }
     }
 
@@ -831,8 +846,10 @@ mod tests {
         let mut v2: Vec<String> = Vec::new();
         assert_eq!(features_(null, &mut v1), 0);
         assert_eq!(features_(null, &mut v2), 0);
-        assert_eq!(v1, v2,
-            "features_ must populate identical vec for identical input");
+        assert_eq!(
+            v1, v2,
+            "features_ must populate identical vec for identical input"
+        );
     }
 
     /// c:37 — `bin_clone(empty args)` returns non-negative exit code.

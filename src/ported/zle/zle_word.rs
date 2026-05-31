@@ -1909,7 +1909,12 @@ mod tests {
             'a', 'Z', '0', '_', ' ', '\t', '.', '!', '\n', '\r', '\x01', '@',
         ] {
             let cls = wordclass(*c);
-            assert!(cls >= 0 && cls <= 3, "wordclass({:?})={} out of range", c, cls);
+            assert!(
+                cls >= 0 && cls <= 3,
+                "wordclass({:?})={} out of range",
+                c,
+                cls
+            );
         }
     }
 
@@ -1933,8 +1938,7 @@ mod tests {
             let c = b as char;
             let first = wordclass(c);
             for _ in 0..3 {
-                assert_eq!(wordclass(c), first,
-                    "wordclass(0x{:02x}) must be pure", b);
+                assert_eq!(wordclass(c), first, "wordclass(0x{:02x}) must be pure", b);
             }
         }
     }
@@ -2038,8 +2042,7 @@ mod tests {
         for c in ['a', 'A', '0', ' ', '\t', '\n', '!', '日', '_'] {
             let first = wordclass(c);
             for _ in 0..5 {
-                assert_eq!(wordclass(c), first,
-                    "wordclass({:?}) must be pure", c);
+                assert_eq!(wordclass(c), first, "wordclass({:?}) must be pure", c);
             }
         }
     }
@@ -2050,8 +2053,7 @@ mod tests {
     fn wordclass_alnum_chars_share_class() {
         let cls_a = wordclass('a');
         let cls_0 = wordclass('0');
-        assert_eq!(cls_a, cls_0,
-            "letter and digit are both alnum word-class");
+        assert_eq!(cls_a, cls_0, "letter and digit are both alnum word-class");
     }
 
     /// c:157 — `wordclass(space)` differs from `wordclass(letter)`.
@@ -2059,8 +2061,10 @@ mod tests {
     fn wordclass_space_differs_from_letter() {
         let cls_space = wordclass(' ');
         let cls_a = wordclass('a');
-        assert_ne!(cls_space, cls_a,
-            "space and letter must be distinct word-classes");
+        assert_ne!(
+            cls_space, cls_a,
+            "space and letter must be distinct word-classes"
+        );
     }
 
     /// c:106 — `forwardword(empty)` return in u8 exit-code range (alt).
@@ -2137,8 +2141,11 @@ mod tests {
         let _g2 = zle_test_setup();
         let first = forwardword(&[]);
         for _ in 0..5 {
-            assert_eq!(forwardword(&[]), first,
-                "forwardword on empty must be deterministic");
+            assert_eq!(
+                forwardword(&[]),
+                first,
+                "forwardword on empty must be deterministic"
+            );
         }
     }
 
@@ -2178,8 +2185,12 @@ mod tests {
     fn wordclass_returns_only_0_1_2_3() {
         for c in (0u32..0x80).filter_map(char::from_u32) {
             let r = wordclass(c);
-            assert!((0..=3).contains(&r),
-                "wordclass({:?}) = {} not in 0..=3", c, r);
+            assert!(
+                (0..=3).contains(&r),
+                "wordclass({:?}) = {} not in 0..=3",
+                c,
+                r
+            );
         }
     }
 
@@ -2243,8 +2254,11 @@ mod tests {
         let _g2 = zle_test_setup();
         let first = upcaseword(&[]);
         for _ in 0..3 {
-            assert_eq!(upcaseword(&[]), first,
-                "upcaseword must be deterministic on identical state");
+            assert_eq!(
+                upcaseword(&[]),
+                first,
+                "upcaseword must be deterministic on identical state"
+            );
         }
     }
 
@@ -2255,8 +2269,11 @@ mod tests {
         let _g2 = zle_test_setup();
         let first = downcaseword(&[]);
         for _ in 0..3 {
-            assert_eq!(downcaseword(&[]), first,
-                "downcaseword must be deterministic on identical state");
+            assert_eq!(
+                downcaseword(&[]),
+                first,
+                "downcaseword must be deterministic on identical state"
+            );
         }
     }
 

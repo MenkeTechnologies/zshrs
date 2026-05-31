@@ -13227,8 +13227,12 @@ mod tests {
         for c in ['a', '\t', '\n', '\x1b', '\x7f', '日'] {
             let first = nicechar_sel(c, false);
             for _ in 0..3 {
-                assert_eq!(nicechar_sel(c, false), first,
-                    "nicechar_sel({:?}, false) must be pure", c);
+                assert_eq!(
+                    nicechar_sel(c, false),
+                    first,
+                    "nicechar_sel({:?}, false) must be pure",
+                    c
+                );
             }
         }
     }

@@ -737,7 +737,11 @@ mod tests {
         let r = math_zrand_int(Some(5), Some(10), false);
         assert!(r.is_err());
         let msg = r.unwrap_err();
-        assert!(msg.contains("greater"), "msg mentions 'greater', got: {}", msg);
+        assert!(
+            msg.contains("greater"),
+            "msg mentions 'greater', got: {}",
+            msg
+        );
     }
 
     /// c:161 — `upper == lower` with exclusive returns the bound
@@ -790,7 +794,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = math_zrand_float();
         let any_different = (0..100).any(|_| math_zrand_float() != first);
-        assert!(any_different, "100 calls should produce ≥ 1 different value");
+        assert!(
+            any_different,
+            "100 calls should produce ≥ 1 different value"
+        );
     }
 
     /// c:58 — `get_srandom()` returns u32, repeated calls produce
@@ -800,7 +807,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = get_srandom();
         let any_different = (0..100).any(|_| get_srandom() != first);
-        assert!(any_different, "100 calls should produce ≥ 1 different value");
+        assert!(
+            any_different,
+            "100 calls should produce ≥ 1 different value"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -832,8 +842,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut buf = [0u8; 256];
         getrandom_buffer(&mut buf).unwrap();
-        assert!(buf.iter().any(|&b| b != 0),
-            "256 random bytes should have ≥ 1 non-zero");
+        assert!(
+            buf.iter().any(|&b| b != 0),
+            "256 random bytes should have ≥ 1 non-zero"
+        );
     }
 
     /// c:109 — `get_bound_random_buffer(buf, 1)` fills all zeros (only
@@ -873,8 +885,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
             let v = math_zrand_float();
-            assert!(v >= 0.0 && v < 1.0,
-                "math_zrand_float = {} must be in [0.0, 1.0)", v);
+            assert!(
+                v >= 0.0 && v < 1.0,
+                "math_zrand_float = {} must be in [0.0, 1.0)",
+                v
+            );
         }
     }
 
@@ -990,12 +1005,18 @@ mod tests {
         let mut feats = Vec::new();
         features_(std::ptr::null(), &mut feats);
         assert_eq!(feats.len(), 3, "random advertises 3 features");
-        assert!(feats.iter().any(|f| f == "f:zrand_float"),
-            "must contain f:zrand_float");
-        assert!(feats.iter().any(|f| f == "f:zrand_int"),
-            "must contain f:zrand_int");
-        assert!(feats.iter().any(|f| f == "p:SRANDOM"),
-            "must contain p:SRANDOM");
+        assert!(
+            feats.iter().any(|f| f == "f:zrand_float"),
+            "must contain f:zrand_float"
+        );
+        assert!(
+            feats.iter().any(|f| f == "f:zrand_int"),
+            "must contain f:zrand_int"
+        );
+        assert!(
+            feats.iter().any(|f| f == "p:SRANDOM"),
+            "must contain p:SRANDOM"
+        );
     }
 
     /// c:296 — `cleanup_` idempotent.
@@ -1068,8 +1089,10 @@ mod tests {
     fn random_u64_eventually_exceeds_u32_max() {
         let _g = crate::test_util::global_state_lock();
         let any_large = (0..200).any(|_| random_u64() > (u32::MAX as u64));
-        assert!(any_large,
-            "200 random_u64 values must include ≥ 1 above u32::MAX");
+        assert!(
+            any_large,
+            "200 random_u64 values must include ≥ 1 above u32::MAX"
+        );
     }
 
     /// c:219 — `math_zrand_float` returns f64 (compile-time pin).
@@ -1085,8 +1108,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..500 {
             let v = math_zrand_float();
-            assert!(v.is_finite(),
-                "math_zrand_float must always be finite, got {}", v);
+            assert!(
+                v.is_finite(),
+                "math_zrand_float must always be finite, got {}",
+                v
+            );
         }
     }
 
@@ -1095,8 +1121,11 @@ mod tests {
     fn bounded_one_always_returns_zero() {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
-            assert_eq!(bounded(1), 0,
-                "bounded(1) must always return 0 (only valid value)");
+            assert_eq!(
+                bounded(1),
+                0,
+                "bounded(1) must always return 0 (only valid value)"
+            );
         }
     }
 

@@ -141,8 +141,11 @@ mod tests {
     #[test]
     fn libc_provides_memcpy_as_bcopy_successor() {
         let _g = crate::test_util::global_state_lock();
-        let _: unsafe extern "C" fn(*mut libc::c_void, *const libc::c_void, libc::size_t)
-            -> *mut libc::c_void = libc::memcpy;
+        let _: unsafe extern "C" fn(
+            *mut libc::c_void,
+            *const libc::c_void,
+            libc::size_t,
+        ) -> *mut libc::c_void = libc::memcpy;
     }
 
     /// libc provides gettimeofday.
@@ -303,8 +306,11 @@ mod tests {
     #[test]
     fn libc_provides_memmove_as_bcopy_successor() {
         let _g = crate::test_util::global_state_lock();
-        let _: unsafe extern "C" fn(*mut libc::c_void, *const libc::c_void, libc::size_t)
-            -> *mut libc::c_void = libc::memmove;
+        let _: unsafe extern "C" fn(
+            *mut libc::c_void,
+            *const libc::c_void,
+            libc::size_t,
+        ) -> *mut libc::c_void = libc::memmove;
     }
 
     /// libc provides memcmp (general-purpose successor for any of the
@@ -313,8 +319,11 @@ mod tests {
     #[test]
     fn libc_provides_memcmp() {
         let _g = crate::test_util::global_state_lock();
-        let _: unsafe extern "C" fn(*const libc::c_void, *const libc::c_void, libc::size_t)
-            -> libc::c_int = libc::memcmp;
+        let _: unsafe extern "C" fn(
+            *const libc::c_void,
+            *const libc::c_void,
+            libc::size_t,
+        ) -> libc::c_int = libc::memcmp;
     }
 
     /// libc provides strlen (universal — never absent on any libc
@@ -357,7 +366,8 @@ mod tests {
                 .filter(|l| l.trim_start().starts_with(keyword))
                 .count();
             assert_eq!(
-                count, 0,
+                count,
+                0,
                 "prototypes_h.rs MUST NOT export {} — found {} occurrence(s)",
                 keyword.trim(),
                 count
@@ -370,10 +380,13 @@ mod tests {
     #[test]
     fn prototypes_h_exports_no_consts() {
         let src = include_str!("prototypes_h.rs");
-        let count = src.lines().filter(|l| {
-            let t = l.trim_start();
-            t.starts_with("pub const ") || t.starts_with("pub static ")
-        }).count();
+        let count = src
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                t.starts_with("pub const ") || t.starts_with("pub static ")
+            })
+            .count();
         assert_eq!(
             count, 0,
             "prototypes_h.rs MUST NOT export consts/statics — found {}",
@@ -416,8 +429,11 @@ mod tests {
     #[test]
     fn libc_provides_strncpy() {
         let _g = crate::test_util::global_state_lock();
-        let _: unsafe extern "C" fn(*mut libc::c_char, *const libc::c_char, libc::size_t)
-            -> *mut libc::c_char = libc::strncpy;
+        let _: unsafe extern "C" fn(
+            *mut libc::c_char,
+            *const libc::c_char,
+            libc::size_t,
+        ) -> *mut libc::c_char = libc::strncpy;
     }
 
     /// libc provides `strncmp` (string-extern family).
@@ -425,8 +441,11 @@ mod tests {
     #[test]
     fn libc_provides_strncmp() {
         let _g = crate::test_util::global_state_lock();
-        let _: unsafe extern "C" fn(*const libc::c_char, *const libc::c_char, libc::size_t)
-            -> libc::c_int = libc::strncmp;
+        let _: unsafe extern "C" fn(
+            *const libc::c_char,
+            *const libc::c_char,
+            libc::size_t,
+        ) -> libc::c_int = libc::strncmp;
     }
 
     /// libc provides `strcmp` (string-extern family).
@@ -487,12 +506,16 @@ mod tests {
     #[test]
     fn prototypes_h_has_exactly_one_mod_decl() {
         let src = include_str!("prototypes_h.rs");
-        let count = src.lines()
+        let count = src
+            .lines()
             .filter(|l| {
                 let t = l.trim_start();
                 t.starts_with("mod ") || t.starts_with("pub mod ")
-            }).count();
-        assert_eq!(count, 1,
-            "prototypes_h.rs MUST contain only the 1 #[cfg(test)] mod tests");
+            })
+            .count();
+        assert_eq!(
+            count, 1,
+            "prototypes_h.rs MUST contain only the 1 #[cfg(test)] mod tests"
+        );
     }
 }

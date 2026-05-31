@@ -7391,8 +7391,13 @@ mod tests {
             for pos in 0..s.len() {
                 let first = metacharinc(s, pos);
                 for _ in 0..3 {
-                    assert_eq!(metacharinc(s, pos), first,
-                        "metacharinc({:?}, {}) must be pure", s, pos);
+                    assert_eq!(
+                        metacharinc(s, pos),
+                        first,
+                        "metacharinc({:?}, {}) must be pure",
+                        s,
+                        pos
+                    );
                 }
             }
         }
@@ -7443,8 +7448,12 @@ mod tests {
         for s in ["", "abc", "a-z"] {
             let first = pattern_range_to_string(s);
             for _ in 0..3 {
-                assert_eq!(pattern_range_to_string(s), first,
-                    "pattern_range_to_string({:?}) must be pure", s);
+                assert_eq!(
+                    pattern_range_to_string(s),
+                    first,
+                    "pattern_range_to_string({:?}) must be pure",
+                    s
+                );
             }
         }
     }

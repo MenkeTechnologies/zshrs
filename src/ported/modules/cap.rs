@@ -624,12 +624,7 @@ mod tests {
     fn bin_getcap_nonexistent_path_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
-        let r = bin_getcap(
-            "getcap",
-            &["/__never_exists_zshrs_xyz__".into()],
-            &ops,
-            0,
-        );
+        let r = bin_getcap("getcap", &["/__never_exists_zshrs_xyz__".into()], &ops, 0);
         assert_ne!(r, 0, "nonexistent path → error");
     }
 
@@ -669,8 +664,11 @@ mod tests {
         let ops = empty_ops();
         let first = bin_cap("cap", &[], &ops, 0);
         for _ in 0..5 {
-            assert_eq!(bin_cap("cap", &[], &ops, 0), first,
-                "bin_cap must be deterministic");
+            assert_eq!(
+                bin_cap("cap", &[], &ops, 0),
+                first,
+                "bin_cap must be deterministic"
+            );
         }
     }
 
@@ -703,8 +701,11 @@ mod tests {
             bin_getcap("getcap", &["/tmp".into()], &ops, 0),
             bin_setcap("setcap", &["cap=ep".into(), "/tmp".into()], &ops, 0),
         ] {
-            assert!((0..256).contains(&r),
-                "exit code must fit in u8 range, got {}", r);
+            assert!(
+                (0..256).contains(&r),
+                "exit code must fit in u8 range, got {}",
+                r
+            );
         }
     }
 
@@ -713,9 +714,12 @@ mod tests {
     fn bin_getcap_multiple_paths_no_panic() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
-        let _ = bin_getcap("getcap", &[
-            "/tmp".into(), "/etc".into(), "/dev/null".into()
-        ], &ops, 0);
+        let _ = bin_getcap(
+            "getcap",
+            &["/tmp".into(), "/etc".into(), "/dev/null".into()],
+            &ops,
+            0,
+        );
     }
 
     /// c:62 — `bin_cap` with arbitrary spec args doesn't panic.
@@ -778,8 +782,11 @@ mod tests {
         let ops = empty_ops();
         let first = bin_cap("cap", &[], &ops, 0);
         for _ in 0..5 {
-            assert_eq!(bin_cap("cap", &[], &ops, 0), first,
-                "bin_cap no-args must be pure");
+            assert_eq!(
+                bin_cap("cap", &[], &ops, 0),
+                first,
+                "bin_cap no-args must be pure"
+            );
         }
     }
 
@@ -790,8 +797,11 @@ mod tests {
         let ops = empty_ops();
         let first = bin_getcap("getcap", &["/dev/null".into()], &ops, 0);
         for _ in 0..3 {
-            assert_eq!(bin_getcap("getcap", &["/dev/null".into()], &ops, 0), first,
-                "bin_getcap on /dev/null must be deterministic");
+            assert_eq!(
+                bin_getcap("getcap", &["/dev/null".into()], &ops, 0),
+                first,
+                "bin_getcap on /dev/null must be deterministic"
+            );
         }
     }
 
@@ -867,8 +877,11 @@ mod tests {
         let first = enables_(std::ptr::null(), &mut a);
         for _ in 0..3 {
             let mut b: Option<Vec<i32>> = None;
-            assert_eq!(enables_(std::ptr::null(), &mut b), first,
-                "enables_ must be deterministic for null in");
+            assert_eq!(
+                enables_(std::ptr::null(), &mut b),
+                first,
+                "enables_ must be deterministic for null in"
+            );
         }
     }
 
@@ -997,8 +1010,10 @@ mod tests {
         let mut v2: Vec<String> = Vec::new();
         assert_eq!(features_(null, &mut v1), 0);
         assert_eq!(features_(null, &mut v2), 0);
-        assert_eq!(v1, v2,
-            "features_ must populate identical vec for identical input");
+        assert_eq!(
+            v1, v2,
+            "features_ must populate identical vec for identical input"
+        );
     }
 
     /// c:310 — `finish_` is idempotent.

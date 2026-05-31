@@ -242,8 +242,14 @@ mod paramtypestr_tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(paramtypestr(&make_pm(PM_AUTOLOAD, 0)), "undefined");
         // Even combined with other flags — autoload wins.
-        assert_eq!(paramtypestr(&make_pm(PM_AUTOLOAD | PM_READONLY, 5)), "undefined");
-        assert_eq!(paramtypestr(&make_pm(PM_AUTOLOAD | PM_SCALAR, 0)), "undefined");
+        assert_eq!(
+            paramtypestr(&make_pm(PM_AUTOLOAD | PM_READONLY, 5)),
+            "undefined"
+        );
+        assert_eq!(
+            paramtypestr(&make_pm(PM_AUTOLOAD | PM_SCALAR, 0)),
+            "undefined"
+        );
     }
 
     /// c:55 — PM_ARRAY alone → "array".
@@ -279,7 +285,10 @@ mod paramtypestr_tests {
     #[test]
     fn paramtypestr_left_modifier() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(paramtypestr(&make_pm(PM_SCALAR | PM_LEFT, 0)), "scalar-left");
+        assert_eq!(
+            paramtypestr(&make_pm(PM_SCALAR | PM_LEFT, 0)),
+            "scalar-left"
+        );
     }
 
     /// c:67-68 — PM_RIGHT_B modifier appends "-right_blanks".
@@ -306,14 +315,20 @@ mod paramtypestr_tests {
     #[test]
     fn paramtypestr_lower_modifier() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(paramtypestr(&make_pm(PM_SCALAR | PM_LOWER, 0)), "scalar-lower");
+        assert_eq!(
+            paramtypestr(&make_pm(PM_SCALAR | PM_LOWER, 0)),
+            "scalar-lower"
+        );
     }
 
     /// c:73-74 — PM_UPPER modifier appends "-upper".
     #[test]
     fn paramtypestr_upper_modifier() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(paramtypestr(&make_pm(PM_SCALAR | PM_UPPER, 0)), "scalar-upper");
+        assert_eq!(
+            paramtypestr(&make_pm(PM_SCALAR | PM_UPPER, 0)),
+            "scalar-upper"
+        );
     }
 
     /// c:75-76 — PM_READONLY modifier appends "-readonly".
@@ -330,14 +345,20 @@ mod paramtypestr_tests {
     #[test]
     fn paramtypestr_tagged_modifier() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(paramtypestr(&make_pm(PM_SCALAR | PM_TAGGED, 0)), "scalar-tag");
+        assert_eq!(
+            paramtypestr(&make_pm(PM_SCALAR | PM_TAGGED, 0)),
+            "scalar-tag"
+        );
     }
 
     /// c:79-80 — PM_TIED modifier appends "-tied".
     #[test]
     fn paramtypestr_tied_modifier() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(paramtypestr(&make_pm(PM_SCALAR | PM_TIED, 0)), "scalar-tied");
+        assert_eq!(
+            paramtypestr(&make_pm(PM_SCALAR | PM_TIED, 0)),
+            "scalar-tied"
+        );
     }
 
     /// c:81-82 — PM_EXPORTED modifier appends "-export".
@@ -354,14 +375,20 @@ mod paramtypestr_tests {
     #[test]
     fn paramtypestr_unique_modifier() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(paramtypestr(&make_pm(PM_ARRAY | PM_UNIQUE, 0)), "array-unique");
+        assert_eq!(
+            paramtypestr(&make_pm(PM_ARRAY | PM_UNIQUE, 0)),
+            "array-unique"
+        );
     }
 
     /// c:85-86 — PM_HIDE modifier appends "-hide".
     #[test]
     fn paramtypestr_hide_modifier() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(paramtypestr(&make_pm(PM_SCALAR | PM_HIDE, 0)), "scalar-hide");
+        assert_eq!(
+            paramtypestr(&make_pm(PM_SCALAR | PM_HIDE, 0)),
+            "scalar-hide"
+        );
     }
 
     /// c:87-88 — PM_HIDEVAL modifier appends "-hideval".
@@ -399,7 +426,11 @@ mod paramtypestr_tests {
     fn paramtypestr_level_zero_does_not_add_local() {
         let _g = crate::test_util::global_state_lock();
         let r = paramtypestr(&make_pm(PM_SCALAR, 0));
-        assert!(!r.contains("local"), "level=0 must not include 'local', got: {}", r);
+        assert!(
+            !r.contains("local"),
+            "level=0 must not include 'local', got: {}",
+            r
+        );
     }
 
     /// Combined modifier chain order: local → flags appear in C's
@@ -4945,7 +4976,10 @@ mod paramtypestr_table_tests {
     fn funcstackgetfn_empty_stack_returns_empty_vec() {
         let _g = crate::test_util::global_state_lock();
         // Empty FUNCSTACK (no shell function in progress).
-        crate::ported::modules::parameter::FUNCSTACK.lock().unwrap().clear();
+        crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .unwrap()
+            .clear();
         let v = funcstackgetfn(std::ptr::null_mut());
         assert!(v.is_empty(), "no shell function in progress → empty stack");
     }
@@ -4954,7 +4988,10 @@ mod paramtypestr_table_tests {
     #[test]
     fn functracegetfn_empty_stack_returns_empty_vec() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::modules::parameter::FUNCSTACK.lock().unwrap().clear();
+        crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .unwrap()
+            .clear();
         let v = functracegetfn(std::ptr::null_mut());
         assert!(v.is_empty());
     }
@@ -4963,7 +5000,10 @@ mod paramtypestr_table_tests {
     #[test]
     fn funcsourcetracegetfn_empty_stack_returns_empty_vec() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::modules::parameter::FUNCSTACK.lock().unwrap().clear();
+        crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .unwrap()
+            .clear();
         let v = funcsourcetracegetfn(std::ptr::null_mut());
         assert!(v.is_empty());
     }
@@ -5097,8 +5137,7 @@ mod paramtypestr_table_tests {
     fn getpmralias_missing_returns_pm_unset() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_UNSET;
-        let pm = getpmralias(std::ptr::null_mut(), "zshrs_never_real_ralias_xyz")
-            .expect("Some");
+        let pm = getpmralias(std::ptr::null_mut(), "zshrs_never_real_ralias_xyz").expect("Some");
         assert!(pm.node.flags & PM_UNSET as i32 != 0);
     }
 
@@ -5107,8 +5146,8 @@ mod paramtypestr_table_tests {
     fn getpmdisralias_missing_returns_pm_unset() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_UNSET;
-        let pm = getpmdisralias(std::ptr::null_mut(), "zshrs_never_real_disralias_xyz")
-            .expect("Some");
+        let pm =
+            getpmdisralias(std::ptr::null_mut(), "zshrs_never_real_disralias_xyz").expect("Some");
         assert!(pm.node.flags & PM_UNSET as i32 != 0);
     }
 
@@ -5117,8 +5156,7 @@ mod paramtypestr_table_tests {
     fn getpmgalias_missing_returns_pm_unset() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::PM_UNSET;
-        let pm = getpmgalias(std::ptr::null_mut(), "zshrs_never_real_galias_xyz")
-            .expect("Some");
+        let pm = getpmgalias(std::ptr::null_mut(), "zshrs_never_real_galias_xyz").expect("Some");
         assert!(pm.node.flags & PM_UNSET as i32 != 0);
     }
 
@@ -5136,11 +5174,28 @@ mod paramtypestr_table_tests {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{hashnode, param};
         let pm = Box::new(param {
-            node: hashnode { next: None, nam: "test".to_string(), flags: 0 },
-            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
-            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
-            gsu_h: None, base: 0, width: 0, env: None, ename: None,
-            old: None, level: 0,
+            node: hashnode {
+                next: None,
+                nam: "test".to_string(),
+                flags: 0,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
         });
         setpmralias(pm, String::new());
     }
@@ -5151,11 +5206,28 @@ mod paramtypestr_table_tests {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{hashnode, param};
         let pm = Box::new(param {
-            node: hashnode { next: None, nam: "test".to_string(), flags: 0 },
-            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
-            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
-            gsu_h: None, base: 0, width: 0, env: None, ename: None,
-            old: None, level: 0,
+            node: hashnode {
+                next: None,
+                nam: "test".to_string(),
+                flags: 0,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
         });
         unsetpmalias(pm, 0);
     }
@@ -5166,11 +5238,28 @@ mod paramtypestr_table_tests {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{hashnode, param};
         let pm = Box::new(param {
-            node: hashnode { next: None, nam: "test".to_string(), flags: 0 },
-            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
-            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
-            gsu_h: None, base: 0, width: 0, env: None, ename: None,
-            old: None, level: 0,
+            node: hashnode {
+                next: None,
+                nam: "test".to_string(),
+                flags: 0,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
         });
         unsetpmsalias(pm, 0);
     }
@@ -5188,8 +5277,11 @@ mod paramtypestr_table_tests {
         let _g = crate::test_util::global_state_lock();
         let pm = getpmparameter(std::ptr::null_mut(), "");
         if let Some(p) = pm {
-            assert_ne!(p.node.flags & PM_UNSET as i32, 0,
-                "empty param name → PM_UNSET");
+            assert_ne!(
+                p.node.flags & PM_UNSET as i32,
+                0,
+                "empty param name → PM_UNSET"
+            );
         }
     }
 
@@ -5238,11 +5330,28 @@ mod paramtypestr_table_tests {
     fn paramtypestr_returns_string_type() {
         use crate::ported::zsh_h::{hashnode, param};
         let pm = param {
-            node: hashnode { next: None, nam: "x".to_string(), flags: 0 },
-            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
-            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
-            gsu_h: None, base: 0, width: 0, env: None, ename: None,
-            old: None, level: 0,
+            node: hashnode {
+                next: None,
+                nam: "x".to_string(),
+                flags: 0,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
         };
         let _: String = paramtypestr(&pm);
     }
@@ -5252,11 +5361,28 @@ mod paramtypestr_table_tests {
     fn paramtypestr_scalar_returns_nonempty() {
         use crate::ported::zsh_h::{hashnode, param};
         let pm = param {
-            node: hashnode { next: None, nam: "x".to_string(), flags: 0 },
-            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
-            u_hash: None, gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None,
-            gsu_h: None, base: 0, width: 0, env: None, ename: None,
-            old: None, level: 0,
+            node: hashnode {
+                next: None,
+                nam: "x".to_string(),
+                flags: 0,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
         };
         let s = paramtypestr(&pm);
         assert!(!s.is_empty(), "type str must be non-empty");
@@ -5292,10 +5418,10 @@ mod paramtypestr_table_tests {
     #[test]
     fn getpmcommand_deterministic_for_unknown() {
         let _g = crate::test_util::global_state_lock();
-        let a = getpmcommand(std::ptr::null_mut(), "__zshrs_never_cmd__")
-            .map(|p| p.node.nam.clone());
-        let b = getpmcommand(std::ptr::null_mut(), "__zshrs_never_cmd__")
-            .map(|p| p.node.nam.clone());
+        let a =
+            getpmcommand(std::ptr::null_mut(), "__zshrs_never_cmd__").map(|p| p.node.nam.clone());
+        let b =
+            getpmcommand(std::ptr::null_mut(), "__zshrs_never_cmd__").map(|p| p.node.nam.clone());
         assert_eq!(a, b, "getpmcommand must be deterministic");
     }
 
@@ -5311,10 +5437,10 @@ mod paramtypestr_table_tests {
     #[test]
     fn getpmfunction_deterministic_for_unknown() {
         let _g = crate::test_util::global_state_lock();
-        let a = getpmfunction(std::ptr::null_mut(), "__zshrs_never_fn__")
-            .map(|p| p.node.nam.clone());
-        let b = getpmfunction(std::ptr::null_mut(), "__zshrs_never_fn__")
-            .map(|p| p.node.nam.clone());
+        let a =
+            getpmfunction(std::ptr::null_mut(), "__zshrs_never_fn__").map(|p| p.node.nam.clone());
+        let b =
+            getpmfunction(std::ptr::null_mut(), "__zshrs_never_fn__").map(|p| p.node.nam.clone());
         assert_eq!(a, b, "getpmfunction must be deterministic");
     }
 
@@ -5369,9 +5495,11 @@ mod paramtypestr_table_tests {
         let _g = crate::test_util::global_state_lock();
         let first = funcstackgetfn(std::ptr::null_mut());
         for _ in 0..3 {
-            assert_eq!(funcstackgetfn(std::ptr::null_mut()), first,
-                "funcstackgetfn(null) must be deterministic");
+            assert_eq!(
+                funcstackgetfn(std::ptr::null_mut()),
+                first,
+                "funcstackgetfn(null) must be deterministic"
+            );
         }
     }
-
 }

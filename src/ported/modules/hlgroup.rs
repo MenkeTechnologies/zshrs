@@ -998,10 +998,18 @@ mod tests {
             let first_no_sgr = convertattr(input, false);
             let first_sgr = convertattr(input, true);
             for _ in 0..3 {
-                assert_eq!(convertattr(input, false), first_no_sgr,
-                    "convertattr({:?}, false) must be pure", input);
-                assert_eq!(convertattr(input, true), first_sgr,
-                    "convertattr({:?}, true) must be pure", input);
+                assert_eq!(
+                    convertattr(input, false),
+                    first_no_sgr,
+                    "convertattr({:?}, false) must be pure",
+                    input
+                );
+                assert_eq!(
+                    convertattr(input, true),
+                    first_sgr,
+                    "convertattr({:?}, true) must be pure",
+                    input
+                );
             }
         }
     }
@@ -1023,8 +1031,7 @@ mod tests {
     fn scangroup_is_deterministic() {
         let first = scangroup(false);
         for _ in 0..3 {
-            assert_eq!(scangroup(false), first,
-                "scangroup must be deterministic");
+            assert_eq!(scangroup(false), first, "scangroup must be deterministic");
         }
     }
 
@@ -1090,8 +1097,11 @@ mod tests {
     fn getgroup_empty_name_deterministic() {
         let a = getgroup("", false);
         let b = getgroup("", false);
-        assert_eq!(a.is_some(), b.is_some(),
-            "getgroup('') must be deterministic");
+        assert_eq!(
+            a.is_some(),
+            b.is_some(),
+            "getgroup('') must be deterministic"
+        );
     }
 
     /// c:210 — `getgroup` returns Option<String> for sgr=true too.
@@ -1150,8 +1160,10 @@ mod tests {
     #[test]
     fn scangroup_keys_all_non_empty() {
         for (k, _) in scangroup(false) {
-            assert!(!k.is_empty(),
-                "scangroup must not yield entries with empty key");
+            assert!(
+                !k.is_empty(),
+                "scangroup must not yield entries with empty key"
+            );
         }
     }
 }

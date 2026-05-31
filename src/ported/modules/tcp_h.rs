@@ -264,8 +264,11 @@ mod tests {
         // "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255"
         let max_ipv6 = "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255";
         assert_eq!(max_ipv6.len(), 45, "verify max IPv6 text length");
-        assert_eq!(INET6_ADDRSTRLEN, max_ipv6.len() + 1,
-            "INET6_ADDRSTRLEN must hold max textual + NUL");
+        assert_eq!(
+            INET6_ADDRSTRLEN,
+            max_ipv6.len() + 1,
+            "INET6_ADDRSTRLEN must hold max textual + NUL"
+        );
     }
 
     /// c:71 — SUPPORT_IPV6 is bool (compile-time pin).
@@ -302,15 +305,22 @@ mod tests {
     #[test]
     fn inet_addrstrlen_holds_max_ipv4_dotted() {
         let max_ipv4 = "255.255.255.255";
-        assert_eq!(INET_ADDRSTRLEN, max_ipv4.len() + 1,
-            "INET_ADDRSTRLEN must hold max IPv4 textual + NUL");
+        assert_eq!(
+            INET_ADDRSTRLEN,
+            max_ipv4.len() + 1,
+            "INET_ADDRSTRLEN must hold max IPv4 textual + NUL"
+        );
     }
 
     /// c:87 — tcp_session size is at least 8 bytes (fd + flags as i32 pair).
     #[test]
     fn tcp_session_minimum_size_holds_fd_plus_flags() {
         let size = std::mem::size_of::<tcp_session>();
-        assert!(size >= 8, "must hold fd+flags pair (≥ 8 bytes), got {}", size);
+        assert!(
+            size >= 8,
+            "must hold fd+flags pair (≥ 8 bytes), got {}",
+            size
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -324,9 +334,12 @@ mod tests {
     fn tcp_sockaddr_union_at_least_sockaddr_storage_size() {
         let union_sz = std::mem::size_of::<tcp_sockaddr>();
         let storage_sz = std::mem::size_of::<libc::sockaddr_storage>();
-        assert!(union_sz >= storage_sz,
+        assert!(
+            union_sz >= storage_sz,
             "tcp_sockaddr union ({}) must hold sockaddr_storage ({})",
-            union_sz, storage_sz);
+            union_sz,
+            storage_sz
+        );
     }
 
     /// c:74-79 — `tcp_sockaddr` union must be at least as big as each
@@ -334,12 +347,21 @@ mod tests {
     #[test]
     fn tcp_sockaddr_union_holds_every_variant() {
         let union_sz = std::mem::size_of::<tcp_sockaddr>();
-        assert!(union_sz >= std::mem::size_of::<libc::sockaddr>(),
-            "must hold sockaddr ({})", std::mem::size_of::<libc::sockaddr>());
-        assert!(union_sz >= std::mem::size_of::<libc::sockaddr_in>(),
-            "must hold sockaddr_in ({})", std::mem::size_of::<libc::sockaddr_in>());
-        assert!(union_sz >= std::mem::size_of::<libc::sockaddr_in6>(),
-            "must hold sockaddr_in6 ({})", std::mem::size_of::<libc::sockaddr_in6>());
+        assert!(
+            union_sz >= std::mem::size_of::<libc::sockaddr>(),
+            "must hold sockaddr ({})",
+            std::mem::size_of::<libc::sockaddr>()
+        );
+        assert!(
+            union_sz >= std::mem::size_of::<libc::sockaddr_in>(),
+            "must hold sockaddr_in ({})",
+            std::mem::size_of::<libc::sockaddr_in>()
+        );
+        assert!(
+            union_sz >= std::mem::size_of::<libc::sockaddr_in6>(),
+            "must hold sockaddr_in6 ({})",
+            std::mem::size_of::<libc::sockaddr_in6>()
+        );
     }
 
     /// c:87 — `tcp_session.fd` is i32 (compile-time access).
@@ -359,9 +381,11 @@ mod tests {
     #[test]
     fn ztcp_flags_no_pairwise_overlap_across_all_three() {
         let sum = ZTCP_LISTEN + ZTCP_INBOUND + ZTCP_ZFTP;
-        let or  = ZTCP_LISTEN | ZTCP_INBOUND | ZTCP_ZFTP;
-        assert_eq!(sum, or,
-            "sum==OR proves no shared bits between LISTEN/INBOUND/ZFTP");
+        let or = ZTCP_LISTEN | ZTCP_INBOUND | ZTCP_ZFTP;
+        assert_eq!(
+            sum, or,
+            "sum==OR proves no shared bits between LISTEN/INBOUND/ZFTP"
+        );
     }
 
     /// c:83 — ZTCP_LISTEN does not overlap ZTCP_INBOUND (subset of the
@@ -369,17 +393,23 @@ mod tests {
     /// failure resolution).
     #[test]
     fn ztcp_listen_disjoint_from_inbound() {
-        assert_eq!(ZTCP_LISTEN & ZTCP_INBOUND, 0,
-            "LISTEN and INBOUND must not share bits");
+        assert_eq!(
+            ZTCP_LISTEN & ZTCP_INBOUND,
+            0,
+            "LISTEN and INBOUND must not share bits"
+        );
     }
 
     /// c:85 — ZTCP_ZFTP must occupy a bit higher than INBOUND so
     /// a sequential bit allocation pattern survives future ZTCP_* adds.
     #[test]
     fn ztcp_zftp_bit_higher_than_inbound() {
-        assert!(ZTCP_ZFTP > ZTCP_INBOUND,
+        assert!(
+            ZTCP_ZFTP > ZTCP_INBOUND,
             "ZTCP_ZFTP ({}) must be > ZTCP_INBOUND ({}) for clean bitfield growth",
-            ZTCP_ZFTP, ZTCP_INBOUND);
+            ZTCP_ZFTP,
+            ZTCP_INBOUND
+        );
     }
 
     /// c:97 — INET_ADDRSTRLEN matches POSIX RFC value (16).
@@ -387,15 +417,19 @@ mod tests {
     /// pin to the RFC-mandated numeric value directly.
     #[test]
     fn inet_addrstrlen_matches_posix_rfc_value() {
-        assert_eq!(INET_ADDRSTRLEN, 16,
-            "INET_ADDRSTRLEN must equal 16 per RFC 4291 + POSIX (max IPv4 + NUL)");
+        assert_eq!(
+            INET_ADDRSTRLEN, 16,
+            "INET_ADDRSTRLEN must equal 16 per RFC 4291 + POSIX (max IPv4 + NUL)"
+        );
     }
 
     /// c:101 — INET6_ADDRSTRLEN matches POSIX RFC value (46).
     #[test]
     fn inet6_addrstrlen_matches_posix_rfc_value() {
-        assert_eq!(INET6_ADDRSTRLEN, 46,
-            "INET6_ADDRSTRLEN must equal 46 per RFC 4291 + POSIX");
+        assert_eq!(
+            INET6_ADDRSTRLEN, 46,
+            "INET6_ADDRSTRLEN must equal 46 per RFC 4291 + POSIX"
+        );
     }
 
     /// c:87 — `tcp_session` layout: two sockaddr unions sandwiched
@@ -406,9 +440,12 @@ mod tests {
         let sz = std::mem::size_of::<tcp_session>();
         let storage_sz = std::mem::size_of::<libc::sockaddr_storage>();
         let minimum = 4 + 2 * storage_sz + 4;
-        assert!(sz >= minimum,
+        assert!(
+            sz >= minimum,
             "tcp_session ({} bytes) must hold fd+2*storage+flags (≥ {})",
-            sz, minimum);
+            sz,
+            minimum
+        );
     }
 
     /// `Tcp_session` type alias points at owned `Box<tcp_session>`
@@ -449,8 +486,11 @@ mod tests {
     #[test]
     fn ztcp_flags_all_powers_of_two() {
         for v in [ZTCP_LISTEN, ZTCP_INBOUND, ZTCP_ZFTP] {
-            assert!((v as u32).is_power_of_two(),
-                "ZTCP_* {} must be single bit", v);
+            assert!(
+                (v as u32).is_power_of_two(),
+                "ZTCP_* {} must be single bit",
+                v
+            );
         }
     }
 
@@ -459,8 +499,11 @@ mod tests {
     fn ztcp_flags_pairwise_distinct() {
         let flags = [ZTCP_LISTEN, ZTCP_INBOUND, ZTCP_ZFTP];
         let unique: std::collections::HashSet<_> = flags.iter().copied().collect();
-        assert_eq!(unique.len(), flags.len(),
-            "ZTCP_* must be pairwise distinct");
+        assert_eq!(
+            unique.len(),
+            flags.len(),
+            "ZTCP_* must be pairwise distinct"
+        );
     }
 
     /// c:83-85 — ZTCP_* flags fit in i8 (room for ≥2x growth).
@@ -476,8 +519,11 @@ mod tests {
     /// bit 2,3 addition won't collide.
     #[test]
     fn ztcp_zftp_is_bit_4() {
-        assert_eq!(ZTCP_ZFTP, 1 << 4,
-            "ZTCP_ZFTP must be bit 4 (reserved gap from INBOUND)");
+        assert_eq!(
+            ZTCP_ZFTP,
+            1 << 4,
+            "ZTCP_ZFTP must be bit 4 (reserved gap from INBOUND)"
+        );
     }
 
     /// c:71 — SUPPORT_IPV6 is true on the platform zshrs targets.
@@ -489,44 +535,51 @@ mod tests {
     /// c:97 — INET_ADDRSTRLEN = 16 (RFC 791 max IPv4, alt).
     #[test]
     fn inet_addrstrlen_is_16_alt() {
-        assert_eq!(INET_ADDRSTRLEN, 16,
-            "INET_ADDRSTRLEN must be 16 (RFC 791)");
+        assert_eq!(INET_ADDRSTRLEN, 16, "INET_ADDRSTRLEN must be 16 (RFC 791)");
     }
 
     /// c:101 — INET6_ADDRSTRLEN = 46 (RFC 4291, alt).
     #[test]
     fn inet6_addrstrlen_is_46_alt() {
-        assert_eq!(INET6_ADDRSTRLEN, 46,
-            "INET6_ADDRSTRLEN must be 46 (RFC 4291)");
+        assert_eq!(
+            INET6_ADDRSTRLEN, 46,
+            "INET6_ADDRSTRLEN must be 46 (RFC 4291)"
+        );
     }
 
     /// c:97/101 — INET6_ADDRSTRLEN strictly larger than INET_ADDRSTRLEN.
     #[test]
     fn inet6_strlen_larger_than_inet_strlen() {
-        assert!(INET6_ADDRSTRLEN > INET_ADDRSTRLEN,
+        assert!(
+            INET6_ADDRSTRLEN > INET_ADDRSTRLEN,
             "IPv6 string must be longer than IPv4: {} vs {}",
-            INET6_ADDRSTRLEN, INET_ADDRSTRLEN);
+            INET6_ADDRSTRLEN,
+            INET_ADDRSTRLEN
+        );
     }
 
     /// c:107 — `tcp_session` struct is non-zero size.
     #[test]
     fn tcp_session_non_zero_size() {
-        assert!(std::mem::size_of::<tcp_session>() > 0,
-            "tcp_session must have a non-zero size");
+        assert!(
+            std::mem::size_of::<tcp_session>() > 0,
+            "tcp_session must have a non-zero size"
+        );
     }
 
     /// c:107 — `tcp_session` has sane alignment (≥ 4 bytes for pointer/i32).
     #[test]
     fn tcp_session_min_alignment() {
-        assert!(std::mem::align_of::<tcp_session>() >= 4,
-            "tcp_session must be ≥ 4-byte aligned");
+        assert!(
+            std::mem::align_of::<tcp_session>() >= 4,
+            "tcp_session must be ≥ 4-byte aligned"
+        );
     }
 
     /// c:83-85 — OR of all ZTCP_* flags equals 0b10011 = 19.
     #[test]
     fn ztcp_flags_or_equals_nineteen() {
         let or_all = ZTCP_LISTEN | ZTCP_INBOUND | ZTCP_ZFTP;
-        assert_eq!(or_all, 19,
-            "OR of all ZTCP_* must equal 0b10011 = 19");
+        assert_eq!(or_all, 19, "OR of all ZTCP_* must equal 0b10011 = 19");
     }
 }

@@ -441,8 +441,11 @@ mod tests {
         let items = ["alpha", "beta", "gamma"];
         let first = selectlist(&items, 0);
         for _ in 0..20 {
-            assert_eq!(selectlist(&items, 0), first,
-                "selectlist must be pure across repeated calls");
+            assert_eq!(
+                selectlist(&items, 0),
+                first,
+                "selectlist must be pure across repeated calls"
+            );
         }
     }
 
@@ -480,8 +483,11 @@ mod tests {
         use std::sync::atomic::Ordering;
         let first = try_tryflag.load(Ordering::SeqCst);
         for _ in 0..50 {
-            assert_eq!(try_tryflag.load(Ordering::SeqCst), first,
-                "try_tryflag pure load must be deterministic");
+            assert_eq!(
+                try_tryflag.load(Ordering::SeqCst),
+                first,
+                "try_tryflag pure load must be deterministic"
+            );
         }
     }
 
@@ -524,8 +530,11 @@ mod tests {
     #[test]
     fn selectlist_empty_returns_zero_alt() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(selectlist(&[], 0), 0,
-            "empty items must produce zero-line output");
+        assert_eq!(
+            selectlist(&[], 0),
+            0,
+            "empty items must produce zero-line output"
+        );
     }
 
     /// c:362 — `selectlist([single])` doesn't panic.
@@ -595,8 +604,12 @@ mod tests {
         let saved = LOOP_DEPTH.load(Ordering::SeqCst);
         for v in [0, 1, 5, 100, -1, i32::MAX, i32::MIN] {
             LOOP_DEPTH.store(v, Ordering::SeqCst);
-            assert_eq!(LOOP_DEPTH.load(Ordering::SeqCst), v,
-                "LOOP_DEPTH must round-trip {}", v);
+            assert_eq!(
+                LOOP_DEPTH.load(Ordering::SeqCst),
+                v,
+                "LOOP_DEPTH must round-trip {}",
+                v
+            );
         }
         LOOP_DEPTH.store(saved, Ordering::SeqCst);
     }
@@ -634,8 +647,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = selectlist(&["one", "two", "three"], 0);
         for _ in 0..5 {
-            assert_eq!(selectlist(&["one", "two", "three"], 0), first,
-                "selectlist must be deterministic");
+            assert_eq!(
+                selectlist(&["one", "two", "three"], 0),
+                first,
+                "selectlist must be deterministic"
+            );
         }
     }
 }

@@ -949,8 +949,16 @@ mod tests {
     fn math_sum_two_integers_returns_integer_sum() {
         let _g = crate::test_util::global_state_lock();
         let args = vec![
-            mnumber { l: 3, d: 0.0, type_: MN_INTEGER },
-            mnumber { l: 4, d: 0.0, type_: MN_INTEGER },
+            mnumber {
+                l: 3,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+            mnumber {
+                l: 4,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
         ];
         let r = math_sum("sum", 2, &args, 0);
         assert_eq!(r.l, 7, "3 + 4 = 7");
@@ -990,7 +998,12 @@ mod tests {
             vec![s(""), s("0")],
         ] {
             let r = cond_p_len(&args, 0);
-            assert!(r == 0 || r == 1, "cond_p_len({:?}) = {} not in {{0,1}}", args, r);
+            assert!(
+                r == 0 || r == 1,
+                "cond_p_len({:?}) = {} not in {{0,1}}",
+                args,
+                r
+            );
         }
     }
 
@@ -1004,7 +1017,12 @@ mod tests {
             vec![s("foo"), s("bar")],
         ] {
             let r = cond_i_ex(&args, 0);
-            assert!(r == 0 || r == 1, "cond_i_ex({:?}) = {} not in {{0,1}}", args, r);
+            assert!(
+                r == 0 || r == 1,
+                "cond_i_ex({:?}) = {} not in {{0,1}}",
+                args,
+                r
+            );
         }
     }
 
@@ -1112,8 +1130,12 @@ mod tests {
             vec!["hello".to_string(), "0".to_string()],
         ] {
             let r = cond_p_len(&a, 0);
-            assert!(r == 0 || r == 1,
-                "cond_p_len({:?}) must return 0 or 1; got {}", a, r);
+            assert!(
+                r == 0 || r == 1,
+                "cond_p_len({:?}) must return 0 or 1; got {}",
+                a,
+                r
+            );
         }
     }
 
@@ -1145,8 +1167,16 @@ mod tests {
     fn math_sum_all_integers_returns_integer_type() {
         let _g = crate::test_util::global_state_lock();
         let argv = vec![
-            mnumber { l: 3, d: 0.0, type_: MN_INTEGER },
-            mnumber { l: 5, d: 0.0, type_: MN_INTEGER },
+            mnumber {
+                l: 3,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+            mnumber {
+                l: 5,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
         ];
         let r = math_sum("sum", 2, &argv, 0);
         assert_eq!(r.type_, MN_INTEGER, "all-int sum must be MN_INTEGER");
@@ -1158,11 +1188,22 @@ mod tests {
     fn math_sum_mixed_promotes_to_float() {
         let _g = crate::test_util::global_state_lock();
         let argv = vec![
-            mnumber { l: 3, d: 0.0, type_: MN_INTEGER },
-            mnumber { l: 0, d: 2.5, type_: MN_FLOAT },
+            mnumber {
+                l: 3,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+            mnumber {
+                l: 0,
+                d: 2.5,
+                type_: MN_FLOAT,
+            },
         ];
         let r = math_sum("sum", 2, &argv, 0);
-        assert_eq!(r.type_, MN_FLOAT, "mixed int+float must promote to MN_FLOAT");
+        assert_eq!(
+            r.type_, MN_FLOAT,
+            "mixed int+float must promote to MN_FLOAT"
+        );
         assert!((r.d - 5.5).abs() < 1e-9, "3+2.5 = 5.5, got {}", r.d);
     }
 
@@ -1182,8 +1223,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for s in ["x", "hello", "a longer string here"] {
             let r = math_length("length", s, 0);
-            assert_eq!(r.l, s.len() as i64,
-                "math_length({:?}) must equal byte length {}", s, s.len());
+            assert_eq!(
+                r.l,
+                s.len() as i64,
+                "math_length({:?}) must equal byte length {}",
+                s,
+                s.len()
+            );
         }
     }
 
@@ -1193,8 +1239,10 @@ mod tests {
     fn math_sum_empty_is_integer_type() {
         let _g = crate::test_util::global_state_lock();
         let r = math_sum("sum", 0, &[], 0);
-        assert_eq!(r.type_, MN_INTEGER,
-            "empty sum must be MN_INTEGER (f stayed 0)");
+        assert_eq!(
+            r.type_, MN_INTEGER,
+            "empty sum must be MN_INTEGER (f stayed 0)"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════

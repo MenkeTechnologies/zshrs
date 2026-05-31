@@ -1232,8 +1232,11 @@ mod tests {
         let mut feats: Vec<String> = Vec::new();
         features_(std::ptr::null(), &mut feats);
         for f in &feats {
-            assert!(f.starts_with("b:") || f.starts_with("p:"),
-                "feature {:?} must use b:/p: prefix per zsh module spec", f);
+            assert!(
+                f.starts_with("b:") || f.starts_with("p:"),
+                "feature {:?} must use b:/p: prefix per zsh module spec",
+                f
+            );
         }
     }
 
@@ -1246,8 +1249,11 @@ mod tests {
         bin_sched("sched", &[s("+10"), s("alpha")], &ops, 0);
         let first = schedgetfn(std::ptr::null());
         for _ in 0..3 {
-            assert_eq!(schedgetfn(std::ptr::null()), first,
-                "schedgetfn must be deterministic on unchanged schedule");
+            assert_eq!(
+                schedgetfn(std::ptr::null()),
+                first,
+                "schedgetfn must be deterministic on unchanged schedule"
+            );
         }
     }
 
@@ -1281,8 +1287,7 @@ mod tests {
         let _serial = reset_with_lock();
         let first = checksched();
         for _ in 0..5 {
-            assert_eq!(checksched(), first,
-                "checksched on empty must be pure");
+            assert_eq!(checksched(), first, "checksched on empty must be pure");
         }
     }
 
@@ -1299,8 +1304,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let v = schedgetfn(std::ptr::null());
-        assert!(v.is_empty(),
-            "empty schedule must yield empty Vec; got {:?}", v);
+        assert!(
+            v.is_empty(),
+            "empty schedule must yield empty Vec; got {:?}",
+            v
+        );
     }
 
     /// c:95 — `schedaddtimed` is callable without panic.
@@ -1327,8 +1335,11 @@ mod tests {
         let _serial = reset_with_lock();
         let ops = empty_ops();
         let r = bin_sched("sched", &[], &ops, 0);
-        assert!(r == 0 || r == 1,
-            "no-args is the listing form; result 0/1, got {}", r);
+        assert!(
+            r == 0 || r == 1,
+            "no-args is the listing form; result 0/1, got {}",
+            r
+        );
     }
 
     /// c:245 — `bin_sched` non-negative exit code.
@@ -1337,14 +1348,14 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         let ops = empty_ops();
-        for argv in [
-            vec![],
-            vec![s("+5"), s("echo hi")],
-            vec![s("-1")],
-        ] {
+        for argv in [vec![], vec![s("+5"), s("echo hi")], vec![s("-1")]] {
             let r = bin_sched("sched", &argv, &ops, 0);
-            assert!(r >= 0, "exit code must be non-negative, got {} for {:?}",
-                r, argv);
+            assert!(
+                r >= 0,
+                "exit code must be non-negative, got {} for {:?}",
+                r,
+                argv
+            );
         }
     }
 

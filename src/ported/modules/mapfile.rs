@@ -986,8 +986,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let pm = getpmmapfile(std::ptr::null_mut(), "");
         if let Some(p) = pm {
-            assert_ne!(p.node.flags & PM_UNSET as i32, 0,
-                "missing file → PM_UNSET set");
+            assert_ne!(
+                p.node.flags & PM_UNSET as i32,
+                0,
+                "missing file → PM_UNSET set"
+            );
         }
     }
 
@@ -1108,8 +1111,11 @@ mod tests {
         let p = "/__nonexistent_zshrs_mapfile_xyz__";
         let first = get_contents(p);
         for _ in 0..3 {
-            assert_eq!(get_contents(p), first,
-                "get_contents nonexistent must be deterministic");
+            assert_eq!(
+                get_contents(p),
+                first,
+                "get_contents nonexistent must be deterministic"
+            );
         }
     }
 
@@ -1121,8 +1127,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let pm = getpmmapfile(std::ptr::null_mut(), "");
         if let Some(p) = pm {
-            assert_ne!(p.node.flags & PM_UNSET as i32, 0,
-                "empty name → PM_UNSET bit set");
+            assert_ne!(
+                p.node.flags & PM_UNSET as i32,
+                0,
+                "empty name → PM_UNSET bit set"
+            );
         }
     }
 
@@ -1177,8 +1186,12 @@ mod tests {
     fn get_contents_dev_null_returns_some_empty() {
         let _g = crate::test_util::global_state_lock();
         let r = get_contents("/dev/null");
-        assert_eq!(r.as_deref(), Some(""),
-            "/dev/null must read as Some(empty); got {:?}", r);
+        assert_eq!(
+            r.as_deref(),
+            Some(""),
+            "/dev/null must read as Some(empty); got {:?}",
+            r
+        );
     }
 
     /// c:52 — `setpmmapfile` with empty name doesn't panic.
@@ -1210,8 +1223,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let a = getpmmapfile(std::ptr::null_mut(), "anything");
         let b = getpmmapfile(std::ptr::null_mut(), "anything");
-        assert_eq!(a.is_some(), b.is_some(),
-            "getpmmapfile must be deterministic");
+        assert_eq!(
+            a.is_some(),
+            b.is_some(),
+            "getpmmapfile must be deterministic"
+        );
     }
 
     /// c:384 — `scanpmmapfile` various flag values are safe.

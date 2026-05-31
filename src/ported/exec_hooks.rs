@@ -541,8 +541,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = pparams();
         for _ in 0..3 {
-            assert_eq!(pparams(), first,
-                "pparams() must be deterministic across reads");
+            assert_eq!(
+                pparams(),
+                first,
+                "pparams() must be deterministic across reads"
+            );
         }
     }
 

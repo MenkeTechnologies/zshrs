@@ -665,11 +665,8 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
             // chars (alpha/digit/_).
             let _ = INAMESPC;
             // c:zle_tricky.c:579 — `e = itype_end(e, INAMESPC, 0);`
-            let span = crate::ported::utils::itype_end(
-                &s[e..],
-                crate::ported::ztype_h::INAMESPC,
-                false,
-            );
+            let span =
+                crate::ported::utils::itype_end(&s[e..], crate::ported::ztype_h::INAMESPC, false);
             e += span;
         }
     }
@@ -2483,8 +2480,12 @@ mod tests {
         for s in ["abc", "", "hello/world", "a.b"] {
             let first = cmphaswilds(s);
             for _ in 0..5 {
-                assert_eq!(cmphaswilds(s), first,
-                    "cmphaswilds({:?}) must be deterministic", s);
+                assert_eq!(
+                    cmphaswilds(s),
+                    first,
+                    "cmphaswilds({:?}) must be deterministic",
+                    s
+                );
             }
         }
     }
@@ -2496,8 +2497,12 @@ mod tests {
         let _g2 = zle_test_setup();
         for s in ["abc", "*.txt", "[a-z]", "?", "|", ""] {
             let r = cmphaswilds(s);
-            assert!(r == 0 || r == 1,
-                "cmphaswilds({:?}) = {} not in {{0,1}}", s, r);
+            assert!(
+                r == 0 || r == 1,
+                "cmphaswilds({:?}) = {} not in {{0,1}}",
+                s,
+                r
+            );
         }
     }
 
@@ -2512,8 +2517,12 @@ mod tests {
     fn dupstrspace_always_ends_in_space() {
         for s in ["", "x", "hello", "包含中文"] {
             let r = dupstrspace(s);
-            assert!(r.ends_with(' '),
-                "dupstrspace({:?}) = {:?} must end in space", s, r);
+            assert!(
+                r.ends_with(' '),
+                "dupstrspace({:?}) = {:?} must end in space",
+                s,
+                r
+            );
         }
     }
 
@@ -2523,8 +2532,7 @@ mod tests {
         for s in ["", "abc", "hello"] {
             let first = dupstrspace(s);
             for _ in 0..5 {
-                assert_eq!(dupstrspace(s), first,
-                    "dupstrspace({:?}) must be pure", s);
+                assert_eq!(dupstrspace(s), first, "dupstrspace({:?}) must be pure", s);
             }
         }
     }
@@ -2535,8 +2543,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let r = listchoices(&[]);
-        assert!((0..256).contains(&r),
-            "exit code {} must fit in u8 range", r);
+        assert!(
+            (0..256).contains(&r),
+            "exit code {} must fit in u8 range",
+            r
+        );
     }
 
     /// c:233 — `spellword(empty)` returns i32 in exit-code range.
@@ -2545,8 +2556,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let r = spellword(&[]);
-        assert!((0..256).contains(&r),
-            "exit code {} must fit in u8 range", r);
+        assert!(
+            (0..256).contains(&r),
+            "exit code {} must fit in u8 range",
+            r
+        );
     }
 
     /// c:331 — `listexpand(empty)` returns i32 in exit-code range.
@@ -2555,8 +2569,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let r = listexpand(&[]);
-        assert!((0..256).contains(&r),
-            "exit code {} must fit in u8 range", r);
+        assert!(
+            (0..256).contains(&r),
+            "exit code {} must fit in u8 range",
+            r
+        );
     }
 
     /// c:950 — `freebrinfo(None)` is idempotent.
@@ -2648,8 +2665,12 @@ mod tests {
         for s in ["", "FOO", "PATH", "__never_real_param__"] {
             let first = checkparams(s);
             for _ in 0..3 {
-                assert_eq!(checkparams(s), first,
-                    "checkparams({:?}) must be deterministic", s);
+                assert_eq!(
+                    checkparams(s),
+                    first,
+                    "checkparams({:?}) must be deterministic",
+                    s
+                );
             }
         }
     }
@@ -2680,8 +2701,12 @@ mod tests {
         for s in ["", "abc", "hello world", "no tokens"] {
             let first = has_real_token(s);
             for _ in 0..3 {
-                assert_eq!(has_real_token(s), first,
-                    "has_real_token({:?}) must be pure", s);
+                assert_eq!(
+                    has_real_token(s),
+                    first,
+                    "has_real_token({:?}) must be pure",
+                    s
+                );
             }
         }
     }

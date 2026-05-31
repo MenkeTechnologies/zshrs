@@ -10759,7 +10759,11 @@ mod tests {
         assert_eq!(is_anonymous_function_name("(anon"), 0, "no trailing paren");
         assert_eq!(is_anonymous_function_name("anon)"), 0, "no leading paren");
         assert_eq!(is_anonymous_function_name("(ANON)"), 0, "wrong case");
-        assert_eq!(is_anonymous_function_name(" (anon) "), 0, "leading/trailing space");
+        assert_eq!(
+            is_anonymous_function_name(" (anon) "),
+            0,
+            "leading/trailing space"
+        );
         assert_eq!(is_anonymous_function_name("(anon) "), 0, "trailing space");
         assert_eq!(is_anonymous_function_name(" (anon)"), 0, "leading space");
     }
@@ -10872,7 +10876,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("regular_file");
         std::fs::write(&p, "x").unwrap();
-        assert_eq!(cancd2(p.to_str().unwrap()), 0, "regular file not a cd target");
+        assert_eq!(
+            cancd2(p.to_str().unwrap()),
+            0,
+            "regular file not a cd target"
+        );
     }
 
     /// c:2114 — `quote_tokenized_output` on empty string writes nothing.
@@ -11002,8 +11010,11 @@ mod tests {
     /// c:1468 — `is_anonymous_function_name("")` empty returns 0.
     #[test]
     fn is_anonymous_function_name_empty_returns_zero() {
-        assert_eq!(is_anonymous_function_name(""), 0,
-            "empty name is not anonymous");
+        assert_eq!(
+            is_anonymous_function_name(""),
+            0,
+            "empty name is not anonymous"
+        );
     }
 
     /// c:1468 — `is_anonymous_function_name` is deterministic.
@@ -11012,8 +11023,12 @@ mod tests {
         for s in ["", "name", "(anon)", "(anon: foo)"] {
             let first = is_anonymous_function_name(s);
             for _ in 0..3 {
-                assert_eq!(is_anonymous_function_name(s), first,
-                    "is_anonymous_function_name({:?}) must be deterministic", s);
+                assert_eq!(
+                    is_anonymous_function_name(s),
+                    first,
+                    "is_anonymous_function_name({:?}) must be deterministic",
+                    s
+                );
             }
         }
     }
@@ -11114,8 +11129,10 @@ mod tests {
     #[test]
     fn cancd_nonexistent_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(cancd("/__nonexistent_zshrs_dir_xyz__").is_none(),
-            "nonexistent dir → None");
+        assert!(
+            cancd("/__nonexistent_zshrs_dir_xyz__").is_none(),
+            "nonexistent dir → None"
+        );
     }
 
     /// c:4603 — `cancd("/tmp")` exists → Some.
@@ -11133,8 +11150,12 @@ mod tests {
         for p in ["/", "/tmp", "/__never__"] {
             let first = cancd(p).is_some();
             for _ in 0..3 {
-                assert_eq!(cancd(p).is_some(), first,
-                    "cancd({:?}) must be deterministic", p);
+                assert_eq!(
+                    cancd(p).is_some(),
+                    first,
+                    "cancd({:?}) must be deterministic",
+                    p
+                );
             }
         }
     }
@@ -11146,8 +11167,7 @@ mod tests {
         for p in ["/tmp", "/__never__", "/bin/sh"] {
             let first = iscom(p);
             for _ in 0..3 {
-                assert_eq!(iscom(p), first,
-                    "iscom({:?}) must be deterministic", p);
+                assert_eq!(iscom(p), first, "iscom({:?}) must be deterministic", p);
             }
         }
     }

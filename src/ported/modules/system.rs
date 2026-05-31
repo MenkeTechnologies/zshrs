@@ -2067,8 +2067,12 @@ mod tests {
         for input in ["42", "-1", "abc", "", "0", "999999999"] {
             let first = getposint(input, "test");
             for _ in 0..3 {
-                assert_eq!(getposint(input, "test"), first,
-                    "must be deterministic for {:?}", input);
+                assert_eq!(
+                    getposint(input, "test"),
+                    first,
+                    "must be deterministic for {:?}",
+                    input
+                );
             }
         }
     }
@@ -2086,8 +2090,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let v = errnosgetfn(std::ptr::null_mut());
         for entry in &v {
-            assert!(entry.starts_with('E'),
-                "errno name {:?} must start with 'E'", entry);
+            assert!(
+                entry.starts_with('E'),
+                "errno name {:?} must start with 'E'",
+                entry
+            );
         }
     }
 
@@ -2205,8 +2212,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = getposint("-42", "test");
         for _ in 0..3 {
-            assert_eq!(getposint("-42", "test"), first,
-                "getposint(-42) must be deterministic");
+            assert_eq!(
+                getposint("-42", "test"),
+                first,
+                "getposint(-42) must be deterministic"
+            );
         }
     }
 
@@ -2235,7 +2245,9 @@ mod tests {
     fn empty_ops_sys() -> crate::ported::zsh_h::options {
         crate::ported::zsh_h::options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(), argscount: 0, argsalloc: 0,
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
         }
     }
 
@@ -2354,8 +2366,10 @@ mod tests {
         features_(std::ptr::null(), &mut feats);
         assert!(!feats.is_empty(), "system advertises ≥1 feature");
         for f in &feats {
-            let ok = f.starts_with("b:") || f.starts_with("p:")
-                || f.starts_with("f:") || f.starts_with("c:");
+            let ok = f.starts_with("b:")
+                || f.starts_with("p:")
+                || f.starts_with("f:")
+                || f.starts_with("c:");
             assert!(ok, "feature {:?} must use b:/p:/f:/c: prefix", f);
         }
     }
@@ -2386,8 +2400,11 @@ mod tests {
     fn system_getposint_garbage_non_positive() {
         let _g = crate::test_util::global_state_lock();
         let r = getposint("garbage", "test");
-        assert!(r <= 0,
-            "garbage must return non-positive sentinel; got {}", r);
+        assert!(
+            r <= 0,
+            "garbage must return non-positive sentinel; got {}",
+            r
+        );
     }
 
     /// c:65 — `bin_sysread` no-args returns nonzero (usage error).
@@ -2449,8 +2466,7 @@ mod tests {
     fn errnosgetfn_null_non_empty() {
         let _g = crate::test_util::global_state_lock();
         let v = errnosgetfn(std::ptr::null_mut());
-        assert!(!v.is_empty(),
-            "errnos table must have ≥1 entry on POSIX");
+        assert!(!v.is_empty(), "errnos table must have ≥1 entry on POSIX");
     }
 
     /// c:631 — `bin_syserror` returns i32 (compile-time pin, alt).

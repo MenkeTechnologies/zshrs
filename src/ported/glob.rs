@@ -1253,11 +1253,7 @@ pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> {
         // c:1090
         // c:1092 — `tt = itype_end(s, IIDENT, 0);`
         // c:1093-1097 — `if (tt == s) { zerr("missing identifier after `+'"); return NULL; }`
-        let tt = crate::ported::utils::itype_end(
-            s,
-            crate::ported::ztype_h::IIDENT as u32,
-            false,
-        );
+        let tt = crate::ported::utils::itype_end(s, crate::ported::ztype_h::IIDENT as u32, false);
         if tt == 0 {
             // c:1093
             zerr("missing identifier after `+'"); // c:1095
@@ -7316,8 +7312,12 @@ mod tests {
         for s in ["", "abc", "{", "{a,b}", "no braces"] {
             let first = hasbraces(s, false);
             for _ in 0..3 {
-                assert_eq!(hasbraces(s, false), first,
-                    "hasbraces({:?}, false) must be pure", s);
+                assert_eq!(
+                    hasbraces(s, false),
+                    first,
+                    "hasbraces({:?}, false) must be pure",
+                    s
+                );
             }
         }
     }
@@ -7334,8 +7334,7 @@ mod tests {
         for m in [0u32, 0o100000, 0o040000, 0o120000, 0o140000, 0o160000] {
             let first = file_type(m);
             for _ in 0..3 {
-                assert_eq!(file_type(m), first,
-                    "file_type({:o}) must be pure", m);
+                assert_eq!(file_type(m), first, "file_type({:o}) must be pure", m);
             }
         }
     }

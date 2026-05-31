@@ -2547,7 +2547,7 @@ mod tests {
         assert_eq!(rtsigno("TERM"), None);
         assert_eq!(rtsigno("KILL"), None);
         assert_eq!(rtsigno(""), None);
-        assert_eq!(rtsigno("RT"), None);  // RTMIN/RTMAX prefix incomplete
+        assert_eq!(rtsigno("RT"), None); // RTMIN/RTMAX prefix incomplete
     }
 
     /// c:1310 — offset exceeding maxofs returns None.
@@ -2599,8 +2599,8 @@ mod tests {
     #[test]
     fn rtsigno_wrong_direction_offset_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(rtsigno("RTMIN-1"), None);  // RTMIN doesn't take minus
-        assert_eq!(rtsigno("RTMAX+1"), None);  // RTMAX doesn't take plus
+        assert_eq!(rtsigno("RTMIN-1"), None); // RTMIN doesn't take minus
+        assert_eq!(rtsigno("RTMAX+1"), None); // RTMAX doesn't take plus
     }
 
     /// `signal_mask` with negative signal is harmless (just empty set).
@@ -2885,8 +2885,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let one = signal_mask(libc::SIGINT);
         let single_has_term = unsafe { libc::sigismember(&one, libc::SIGTERM) };
-        assert_eq!(single_has_term, 0,
-            "single SIGINT mask must NOT contain SIGTERM");
+        assert_eq!(
+            single_has_term, 0,
+            "single SIGINT mask must NOT contain SIGTERM"
+        );
     }
 
     /// c:217 — `signal_block` returns sigset_t (compile-time type pin).
@@ -2927,28 +2929,36 @@ mod tests {
     #[test]
     fn intr_idempotent() {
         let _g = crate::test_util::global_state_lock();
-        for _ in 0..10 { intr(); }
+        for _ in 0..10 {
+            intr();
+        }
     }
 
     /// c:131 — `nointr` is idempotent.
     #[test]
     fn nointr_idempotent() {
         let _g = crate::test_util::global_state_lock();
-        for _ in 0..10 { nointr(); }
+        for _ in 0..10 {
+            nointr();
+        }
     }
 
     /// c:152 — `holdintr` is idempotent (alt with 10-call loop).
     #[test]
     fn holdintr_idempotent_alt() {
         let _g = crate::test_util::global_state_lock();
-        for _ in 0..10 { holdintr(); }
+        for _ in 0..10 {
+            holdintr();
+        }
     }
 
     /// c:171 — `noholdintr` is idempotent.
     #[test]
     fn noholdintr_idempotent() {
         let _g = crate::test_util::global_state_lock();
-        for _ in 0..10 { noholdintr(); }
+        for _ in 0..10 {
+            noholdintr();
+        }
     }
 
     /// c:194 — `signal_mask(SIGINT)` returns sigset containing SIGINT.
@@ -2958,8 +2968,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let m = signal_mask(libc::SIGINT);
         let contains = unsafe { libc::sigismember(&m, libc::SIGINT) };
-        assert_eq!(contains, 1,
-            "signal_mask(SIGINT) must contain SIGINT");
+        assert_eq!(contains, 1, "signal_mask(SIGINT) must contain SIGINT");
     }
 
     /// c:1791 — `rtsigno` returns Option<i32> (compile-time pin).
@@ -3023,10 +3032,16 @@ mod tests {
     /// matched here. Pin the documented contract.
     #[test]
     fn rtsigno_rejects_regular_signal_names() {
-        assert_eq!(rtsigno("TERM"), None,
-            "rtsigno is rt-only; TERM (regular) must return None");
-        assert_eq!(rtsigno("INT"), None,
-            "rtsigno is rt-only; INT (regular) must return None");
+        assert_eq!(
+            rtsigno("TERM"),
+            None,
+            "rtsigno is rt-only; TERM (regular) must return None"
+        );
+        assert_eq!(
+            rtsigno("INT"),
+            None,
+            "rtsigno is rt-only; INT (regular) must return None"
+        );
     }
 
     /// c:1791 — `rtsigno("0")` empty signal name path doesn't panic.
@@ -3073,7 +3088,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let saved = is_interact();
         set_interact(false);
-        assert!(!is_interact(), "after set(false), is_interact must be false");
+        assert!(
+            !is_interact(),
+            "after set(false), is_interact must be false"
+        );
         set_interact(saved);
     }
 
@@ -3082,10 +3100,14 @@ mod tests {
     fn set_interact_alternation_round_trip() {
         let _g = crate::test_util::global_state_lock();
         let saved = is_interact();
-        set_interact(true);  assert!(is_interact());
-        set_interact(false); assert!(!is_interact());
-        set_interact(true);  assert!(is_interact());
-        set_interact(false); assert!(!is_interact());
+        set_interact(true);
+        assert!(is_interact());
+        set_interact(false);
+        assert!(!is_interact());
+        set_interact(true);
+        assert!(is_interact());
+        set_interact(false);
+        assert!(!is_interact());
         set_interact(saved);
     }
 

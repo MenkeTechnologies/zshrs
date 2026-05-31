@@ -1358,8 +1358,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = ptynonblock(-1).is_err();
         for _ in 0..3 {
-            assert_eq!(ptynonblock(-1).is_err(), first,
-                "ptynonblock(-1) must be deterministic");
+            assert_eq!(
+                ptynonblock(-1).is_err(),
+                first,
+                "ptynonblock(-1) must be deterministic"
+            );
         }
     }
 
@@ -1371,8 +1374,12 @@ mod tests {
         for name in ["", "x", "any", "definitely_missing_xyz"] {
             let first = getptycmd(&cmds, name).is_none();
             for _ in 0..3 {
-                assert_eq!(getptycmd(&cmds, name).is_none(), first,
-                    "getptycmd({:?}) must be deterministic", name);
+                assert_eq!(
+                    getptycmd(&cmds, name).is_none(),
+                    first,
+                    "getptycmd({:?}) must be deterministic",
+                    name
+                );
             }
         }
     }
@@ -1393,8 +1400,11 @@ mod tests {
         let mut feats = Vec::new();
         features_(std::ptr::null(), &mut feats);
         for f in &feats {
-            assert!(f.starts_with("b:") || f.starts_with("p:"),
-                "feature {:?} must use b:/p: prefix", f);
+            assert!(
+                f.starts_with("b:") || f.starts_with("p:"),
+                "feature {:?} must use b:/p: prefix",
+                f
+            );
         }
     }
 
@@ -1423,8 +1433,11 @@ mod tests {
         let mut cmds = HashMap::new();
         let first = ptyhook(&mut cmds);
         for _ in 0..3 {
-            assert_eq!(ptyhook(&mut cmds), first,
-                "ptyhook on empty cmds must be deterministic");
+            assert_eq!(
+                ptyhook(&mut cmds),
+                first,
+                "ptyhook on empty cmds must be deterministic"
+            );
         }
     }
 
@@ -1477,16 +1490,20 @@ mod tests {
     #[test]
     fn getptycmd_empty_map_returns_none() {
         let cmds: HashMap<String, ptycmd> = HashMap::new();
-        assert!(getptycmd(&cmds, "anything").is_none(),
-            "empty map must return None");
+        assert!(
+            getptycmd(&cmds, "anything").is_none(),
+            "empty map must return None"
+        );
     }
 
     /// c:159 — `getptycmd` with empty name returns None on empty map (alt).
     #[test]
     fn getptycmd_empty_name_returns_none_alt() {
         let cmds: HashMap<String, ptycmd> = HashMap::new();
-        assert!(getptycmd(&cmds, "").is_none(),
-            "empty name on empty map must return None");
+        assert!(
+            getptycmd(&cmds, "").is_none(),
+            "empty name on empty map must return None"
+        );
     }
 
     /// c:290 — `deleteptycmd` on empty map is safe (no panic).

@@ -1968,8 +1968,12 @@ mod tests {
     #[test]
     fn is_cond_binary_op_recognizes_every_entry() {
         for &op in COND_BINARY_OPS {
-            assert_eq!(is_cond_binary_op(op), 1,
-                "every COND_BINARY_OPS entry must match itself; failed on {:?}", op);
+            assert_eq!(
+                is_cond_binary_op(op),
+                1,
+                "every COND_BINARY_OPS entry must match itself; failed on {:?}",
+                op
+            );
         }
     }
 
@@ -1977,8 +1981,12 @@ mod tests {
     #[test]
     fn is_cond_binary_op_rejects_non_binary_ops() {
         for s in &["-e", "-z", "-n", "if", "then", "fi", "else"] {
-            assert_eq!(is_cond_binary_op(s), 0,
-                "{:?} must not be classified as binary cond op", s);
+            assert_eq!(
+                is_cond_binary_op(s),
+                0,
+                "{:?} must not be classified as binary cond op",
+                s
+            );
         }
     }
 
@@ -2026,8 +2034,11 @@ mod tests {
         tpending.with(|p| *p.borrow_mut() = None);
         taddpending("x", "");
         let result = tpending.with(|p| p.borrow().clone());
-        assert_eq!(result.as_deref(), Some(b"x" as &[u8]),
-            "first call must create pending from None");
+        assert_eq!(
+            result.as_deref(),
+            Some(b"x" as &[u8]),
+            "first call must create pending from None"
+        );
     }
 
     /// c:89 — `taddpending` with both empty args still allocates.
@@ -2037,8 +2048,11 @@ mod tests {
         tpending.with(|p| *p.borrow_mut() = None);
         taddpending("", "");
         let result = tpending.with(|p| p.borrow().clone());
-        assert_eq!(result.as_deref(), Some(b"" as &[u8]),
-            "both-empty args produces empty buffer (not None)");
+        assert_eq!(
+            result.as_deref(),
+            Some(b"" as &[u8]),
+            "both-empty args produces empty buffer (not None)"
+        );
     }
 
     /// c:128 — `taddchr` is the single-byte form of taddstr in newlins=true.
@@ -2099,17 +2113,19 @@ mod tests {
     /// (-nt, -ot, -ef), 6 arithmetic comparators (-eq..-ge).
     #[test]
     fn cond_binary_ops_has_15_entries() {
-        assert_eq!(COND_BINARY_OPS.len(), 15,
+        assert_eq!(
+            COND_BINARY_OPS.len(),
+            15,
             "cond_binary_ops must have 15 entries; got {}",
-            COND_BINARY_OPS.len());
+            COND_BINARY_OPS.len()
+        );
     }
 
     /// c:48-51 — every cond_binary_ops entry is non-empty.
     #[test]
     fn cond_binary_ops_all_non_empty() {
         for op in COND_BINARY_OPS {
-            assert!(!op.is_empty(),
-                "cond_binary_op must be non-empty: {:?}", op);
+            assert!(!op.is_empty(), "cond_binary_op must be non-empty: {:?}", op);
         }
     }
 
@@ -2117,23 +2133,24 @@ mod tests {
     #[test]
     fn cond_binary_ops_max_length_three() {
         for op in COND_BINARY_OPS {
-            assert!(op.len() <= 3,
-                "cond_binary_op must be ≤ 3 chars: {:?}", op);
+            assert!(op.len() <= 3, "cond_binary_op must be ≤ 3 chars: {:?}", op);
         }
     }
 
     /// c:48-51 — `=~` is the regex match operator (last entry).
     #[test]
     fn cond_binary_ops_last_is_regex_match() {
-        assert_eq!(*COND_BINARY_OPS.last().unwrap(), "=~",
-            "regex-match `=~` must be last");
+        assert_eq!(
+            *COND_BINARY_OPS.last().unwrap(),
+            "=~",
+            "regex-match `=~` must be last"
+        );
     }
 
     /// c:48-51 — `=` is the first entry (assignment-style comparator).
     #[test]
     fn cond_binary_ops_first_is_eq() {
-        assert_eq!(COND_BINARY_OPS[0], "=",
-            "first entry must be `=`");
+        assert_eq!(COND_BINARY_OPS[0], "=", "first entry must be `=`");
     }
 
     /// c:32 — `is_cond_binary_op` returns 0 or 1 (bool-as-i32).
@@ -2141,8 +2158,12 @@ mod tests {
     fn is_cond_binary_op_returns_only_0_or_1() {
         for s in ["=", "==", "==", "foo", "", "[", "<<"] {
             let r = is_cond_binary_op(s);
-            assert!(r == 0 || r == 1,
-                "is_cond_binary_op({:?}) = {} not in {{0,1}}", s, r);
+            assert!(
+                r == 0 || r == 1,
+                "is_cond_binary_op({:?}) = {} not in {{0,1}}",
+                s,
+                r
+            );
         }
     }
 
@@ -2155,8 +2176,10 @@ mod tests {
         let _ = is_cond_binary_op("==");
         let _ = is_cond_binary_op("foo");
         let cap_after = tbuf.with(|tb| tb.borrow().len());
-        assert_eq!(cap_before, cap_after,
-            "is_cond_binary_op must not mutate tbuf");
+        assert_eq!(
+            cap_before, cap_after,
+            "is_cond_binary_op must not mutate tbuf"
+        );
     }
 
     /// c:65 — `taddchr` appends multiple distinct bytes.
@@ -2206,9 +2229,11 @@ mod tests {
     /// `=` is valid; `=A` should be rejected (no prefix-matching).
     #[test]
     fn is_cond_binary_op_rejects_prefix_substring() {
-        assert_eq!(is_cond_binary_op("=A"), 0,
-            "`=A` is NOT a binary op (no prefix-match semantics)");
-        assert_eq!(is_cond_binary_op("=="), 1,
-            "`==` IS a binary op");
+        assert_eq!(
+            is_cond_binary_op("=A"),
+            0,
+            "`=A` is NOT a binary op (no prefix-match semantics)"
+        );
+        assert_eq!(is_cond_binary_op("=="), 1, "`==` IS a binary op");
     }
 }
