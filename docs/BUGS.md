@@ -29602,6 +29602,157 @@ unambiguous shell detection.
 
 ---
 
+## #556 — `typeset -A h=("a b" 1)` quoted key word-splits — extends #528 to assocs
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=("a b" 1); echo "keys=[${(@k)h}]"; echo "h[a b]=[${h[a b]}]"'
+keys=[a b]
+h[a b]=[1]
+
+$ ./target/debug/zshrs --zsh -fc 'typeset -A h=("a b" 1); echo "keys=[${(@k)h}]"; echo "h[a b]=[${h[a b]}]"'
+keys=[a 1]
+h[a b]=[]
+```
+
+`typeset -A h=("a b" 1)` should create an assoc with
+key `"a b"` (the quoted string with space) and value
+`1`. zsh stores this correctly: keys are `[a b]` (one
+key), value is 1.
+
+zshrs **splits the quoted key on whitespace** — treats
+`("a b" 1)` as 4 tokens: "a", "b", "1" plus... actually
+output `keys=[a 1]` suggests it became 2 keys: "a" and
+"1", with "b" as the value of "a" (and nothing for "1").
+
+Same root as #528 (`typeset -a a=("hello world")` splits
+quoted) — typeset arg-parsing path ignores quote
+boundaries.
+
+**Where** — `src/ported/builtins/typeset.rs`: pre-lexed
+quoted-token preservation. Same fix as #528.
+
+**Impact** — assoc-array init with multi-word keys
+(common: filename keys, command-name keys) completely
+broken:
+
+```sh
+typeset -A descriptions=(
+    "git status" "Show working tree status"
+    "git log" "View commit history"
+)
+# zsh: 2 entries, each with multi-word key + value
+# zshrs: 4 entries split on whitespace — totally wrong
+```
+
+**Workaround** — element-by-element assign via subscript:
+```sh
+typeset -A descriptions
+descriptions["git status"]="Show working tree status"
+descriptions["git log"]="View commit history"
+```
+
+---
+
+## #557 — regex `.` doesn't match newline in zshrs — zsh: dot-matches-newline by default
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=$'\''a\nb'\''; [[ "$a" =~ "a.b" ]] && echo "match" || echo "no-match"'
+match
+
+$ ./target/debug/zshrs --zsh -fc 'a=$'\''a\nb'\''; [[ "$a" =~ "a.b" ]] && echo "match" || echo "no-match"'
+no-match
+```
+
+zsh's regex engine (via the system's POSIX regex library
+or PCRE depending on `setopt rematchpcre`) treats `.`
+as **matching newline by default**. So `a.b` matches
+the 3-char sequence `a\nb` in zsh.
+
+zshrs (using Rust's `regex` crate, presumably) treats
+`.` as **NOT matching newline** by default (multi-line
+mode = single-line `.`). So `a.b` doesn't match `a\nb`.
+
+This is a fundamental regex-semantics divergence —
+different engines have different defaults.
+
+**Where** — `src/ported/conditional/regex.rs`: must
+enable `dot_matches_new_line(true)` flag on the regex
+builder. Rust's `regex::RegexBuilder::dot_matches_new_line`.
+
+**Impact** — multiline-string patterns behave
+differently:
+
+```sh
+log_entry=$'TIMESTAMP\nERROR: something'
+if [[ "$log_entry" =~ "TIMESTAMP.ERROR" ]]; then
+    handle_error_log
+fi
+# zsh: matches (dot crosses newline) — handler runs
+# zshrs: doesn't match — handler skipped
+```
+
+Affects any log-parsing or multi-line content analysis
+via `=~`.
+
+**Workaround** — explicit class:
+```sh
+[[ "$log_entry" =~ "TIMESTAMP[[:space:]]ERROR" ]]
+```
+
+---
+
+## #558 — regex `[a-z\n]` char-class with `\n` matches multiline aggressively in zshrs — zsh stops at line
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=$'\''a\nb'\''; [[ "$a" =~ "[a-z\n]+" ]] && echo "[${MATCH}]"'
+[a]
+
+$ ./target/debug/zshrs --zsh -fc 'a=$'\''a\nb'\''; [[ "$a" =~ "[a-z\n]+" ]] && echo "[${MATCH}]"'
+[a
+b]
+```
+
+Within a character class, `\n` should be the newline
+character (literal). zsh's regex engine matches `a` and
+stops (doesn't expand to include the newline + `b`).
+zshrs's matches `a\nb` (the entire string).
+
+This is a meaningful divergence in regex engine
+behavior — likely related to #557 (different default
+flag set).
+
+Combined with #557, multiline-regex pattern matching
+yields completely different results between shells.
+
+**Where** — `src/ported/conditional/regex.rs::compile`:
+character-class handling for `\n` differs from zsh's
+engine. May need different default flags or different
+escape-handling.
+
+**Impact** — pattern-extraction code paths produce
+different captures:
+
+```sh
+[[ "$multiline_log" =~ "([a-z\n]+)" ]]
+field="${match[1]}"
+# zsh: captures first lowercase token only
+# zshrs: captures everything matching, including newlines
+```
+
+Combined with #557, regex behavior across newlines is
+broadly different.
+
+**Workaround** — anchor with `^`/`$` explicitly, or use
+explicit byte ranges.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -30161,11 +30312,14 @@ unambiguous shell detection.
 | 553 | `LC_MESSAGES`/`LC_MONETARY`/... init empty — extends #517 (entire LC_* family pre-seeded) | **port-bug** | `[[ -n $LC_FOO ]]` non-empty check |
 | 554 | `(abc)` plain parens stripped from glob without extended_glob — zsh: "number expected" (qualifier) | **port-bug** | quote the parens |
 | 555 | `compgen` bash builtin shipped as always-available — extends #475/#504 family | **port-bug** | use `$ZSH_VERSION`/`$BASH_VERSION` |
+| 556 | `typeset -A h=("a b" 1)` quoted key word-splits — extends #528 to assocs | **port-bug** | per-element subscript-assign |
+| 557 | regex `.` doesn't match newline in zshrs — zsh: dot-matches-newline by default | **port-bug** | explicit `[[:space:]]` class |
+| 558 | regex `[a-z\\n]` char-class matches multiline aggressively — extends #557 (different regex engine) | **port-bug** | anchor with `^`/`$` |
 
-Of five hundred and fifty-five entries, two are fixed (5, 7), 2 freshly
+Of five hundred and fifty-eight entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and forty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and fifty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
