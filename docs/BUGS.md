@@ -29912,6 +29912,152 @@ error-message-format-divergence count alongside #488
 
 ---
 
+## #562 — `${a:U}` / `${a:C}` / `${a:W}` invalid uppercase modifier suffixes silently accepted
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:U}"'
+zsh:1: unrecognized modifier `U'
+
+$ ./target/debug/zshrs --zsh -fc 'a=hello; echo "${a:U}"'
+hello
+
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:C}"; echo "${a:W}"'
+zsh:1: unrecognized modifier `C'
+
+$ ./target/debug/zshrs --zsh -fc 'a=hello; echo "${a:C}"; echo "${a:W}"'
+hello
+hello
+```
+
+`${var:X}` modifier syntax — `:` followed by a known
+suffix-letter (`h`/`t`/`r`/`e`/`l`/`u`/`q`/`Q`/`s`/`&`/`g`).
+Uppercase `U`, `C`, `W` etc. are not valid modifiers in zsh.
+
+- zsh: errors `unrecognized modifier 'X'`, halts substitution
+- zshrs: silently passes value through as a no-op
+
+Three distinct invalid letters all silently accepted — the
+modifier-parser only checks the recognized whitelist case
+of "did this letter match a known modifier", with no
+fallback "else error" branch.
+
+Same family as #546 (invalid paramexp flag silently
+accepted), #550 (`${((O))a}` nested-paren silently
+accepted) — parser-strictness regression across the
+substitution flag/modifier surface.
+
+**Where** — `src/ported/paramsubst/modifier.rs::apply_modifier`
+(or wherever `:X` post-colon-letter is dispatched): if no
+match arm fires, must emit zsh's
+"unrecognized modifier 'X'" diagnostic and propagate the
+error up through `getsubsh`/equivalent.
+
+**Impact** — user typos in modifiers (uppercase
+instead of lowercase `:u`, etc.) silently leave the value
+unchanged. Code that relies on the modifier transforming
+the value gets a no-op value back and proceeds with the
+wrong data — silent semantic corruption.
+
+**Workaround** — none reliable. Visually audit every
+`${var:X}` modifier site to confirm `X` is lowercase
+and in the recognized set.
+
+---
+
+## #563 — `zformat -F` (no args) error message format diverges from zsh
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zformat -F'
+zsh:zformat:1: not enough arguments
+rc=1
+
+$ ./target/debug/zshrs --zsh -fc 'zformat -F'
+zsh:zformat:1: missing arguments to -f/-F
+rc=1
+```
+
+Both shells reject `zformat -F` with rc=1 (`-F` requires
+following arguments), but the diagnostic text diverges:
+
+- zsh: `not enough arguments`
+- zshrs: `missing arguments to -f/-F`
+
+Same family as #540 (`zformat` no-args error message
+diverges), #488 (cd), #491 (kill), #500 (disown), #548
+(whitespace flag), #561 (flag-with-trailing-digits) — the
+ongoing error-message-format-divergence count.
+
+**Where** — `src/ported/zformat.rs::zformat_main` (or
+wherever `bin_zformat` is) when arg-count check for
+`-f`/`-F` fails: emit "not enough arguments" matching
+zsh's canonical message instead of the verbose Rust-style
+diagnostic.
+
+**Impact** — diagnostic-quality divergence. Test suites
+or zsh-config code paths that grep "not enough arguments"
+won't catch zshrs's error.
+
+**Workaround** — match on rc only, not on message text.
+
+---
+
+## #564 — `\[pat\]` backslash-escaped brackets in `[[ == pat ]]` pattern don't match literal `[`/`]`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ "[hi]" == \[hi\] ]] && echo m'
+m
+
+$ ./target/debug/zshrs --zsh -fc '[[ "[hi]" == \[hi\] ]] && echo m'
+(rc=1, no output)
+
+$ /opt/homebrew/bin/zsh -fc '[[ "[h" == \[h ]] && echo m'
+m
+
+$ ./target/debug/zshrs --zsh -fc '[[ "[h" == \[h ]] && echo m'
+(rc=1, no output)
+```
+
+In `[[ str == pattern ]]`, `\[` and `\]` should produce
+literal `[`/`]` characters in the pattern (escaping the
+glob-bracket-class metacharacters). zsh handles this; zshrs
+treats the escaped brackets differently and the match
+fails.
+
+The bug reproduces even when the bracket is only on one
+side (no closing `]`), so it isn't a paired-bracket-class
+detection error — the `\[` itself isn't being decoded to a
+literal `[` in the pattern compile path.
+
+Same family as #456 (quoted bracket-class), #34
+(`(a*|b*)` paren-alt case), #58 (quoted-RHS star still
+globbed), #14 (`[[ $ch == "{" ]]` parse error) —
+ongoing pattern-compile divergences in `[[ ... == ... ]]`.
+
+**Where** — `src/ported/pattern.rs::patcompile` (or the
+internal pattern-token decoder): `\X` for X in the
+glob-metachar set (`[`, `]`, `*`, `?`, `(`, `)`, `|`, etc.)
+must emit the literal byte, not pass through to the
+bracket-class scanner.
+
+**Impact** — code that escapes brackets in patterns (e.g.
+matching literal `[N]`-suffixed strings, log-prefix patterns
+like `\[ERROR\]`, JSON-array-element matching) silently
+fails to match. False-negative pattern matches.
+
+**Workaround** — wrap pattern in `'...'` single quotes
+when single quotes survive the parse (e.g.
+`[[ "$s" == '[hi]' ]]`) — single-quoted RHS in `[[ == ]]`
+is a literal-match in zsh, sidestepping pattern parsing
+entirely.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -30477,11 +30623,14 @@ error-message-format-divergence count alongside #488
 | 559 | `print -P "%(X.t.f)"` prompt-conditional always picks FALSE branch — `%(c..yes)`/`%(l..no-login)` diverge | **port-bug** | string-form test outside prompt |
 | 560 | `print -- "a\\0b"` strips embedded NUL byte from output — zsh: preserves | **port-bug** | use `printf` (needs verification) |
 | 561 | `${(L99)a}` flag-with-trailing-digits error msg: "bad substitution" — zsh: "error in flags near position N" | **port-bug** | match on rc only |
+| 562 | `${a:U}` / `${a:C}` / `${a:W}` invalid uppercase modifier suffixes silently accepted — zsh: "unrecognized modifier" | **port-bug** | visual audit modifier-letter case |
+| 563 | `zformat -F` (no args) error msg: "missing arguments to -f/-F" — zsh: "not enough arguments" | **port-bug** | match on rc only |
+| 564 | `\[pat\]` backslash-escaped brackets in `[[ == pat ]]` don't match literal `[`/`]` — zsh matches | **port-bug** | single-quote the pattern RHS |
 
-Of five hundred and sixty-one entries, two are fixed (5, 7), 2 freshly
+Of five hundred and sixty-four entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and fifty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and fifty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
