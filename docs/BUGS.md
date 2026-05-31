@@ -26773,6 +26773,179 @@ readonly X=newval
 
 ---
 
+## #499 — `times` builtin output uses 3-decimal precision (zsh: 2-decimal)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'times'
+0m0.00s 0m0.00s
+0m0.00s 0m0.00s
+
+$ ./target/debug/zshrs --zsh -c 'times'
+0m0.000s 0m0.000s
+0m0.000s 0m0.000s
+```
+
+`times` prints user and system time for the shell and
+its children (4 numbers, 2 lines):
+- Line 1: shell user time, shell system time
+- Line 2: children user time, children system time
+
+zsh uses **2-decimal** precision (`0m0.00s`). zshrs uses
+**3-decimal** precision (`0m0.000s`). The leading digit
+group widths also differ.
+
+**Where** — `src/ported/builtins/times.rs::format_time`:
+should emit `%dm%05.2fs` (zsh canonical) instead of
+`%dm%05.3fs` (zshrs current). C-source
+`Src/builtins.c::bin_times` uses `printtime()` with the
+2-decimal format string.
+
+**Impact** — log parsers and benchmark scripts that
+match zsh's canonical format fail on zshrs:
+
+```sh
+duration=$(times | head -1 | awk '{print $1}' | sed 's/.*m\(.*\)s/\1/')
+# zsh: duration = "0.00"
+# zshrs: duration = "0.000" — extra digit may break
+#        numeric comparisons in calling scripts
+```
+
+Combined with #432 (time builtin missing command label),
+#433 (TIMEFMT ignored), zshrs's time-related output is
+not zsh-canonical across the board.
+
+**Workaround** — `printf` reformat:
+```sh
+times | awk '{ printf "%s ", $1; for (i=2; i<=NF; i++) printf "%s ", $i }' | sed 's/\([0-9]\)\.\([0-9][0-9]\)[0-9]/\1.\2/g'
+```
+
+---
+
+## #500 — `disown -h` error rc=1 instead of zsh's rc=127; diagnostic format also diverges
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'disown -h 2>&1; echo rc=$?'
+zsh:disown:1: job not found: -h
+rc=127
+
+$ ./target/debug/zshrs --zsh -c 'disown -h 2>&1; echo rc=$?'
+zsh:disown:1: -h: no such job
+rc=1
+```
+
+`disown -h` is bash's "mark as no-hup" flag — zsh doesn't
+have a `-h` flag for `disown` and treats `-h` as a
+job-spec. zsh emits `job not found: -h` and returns
+**rc=127** (canonical "command/spec not found" rc).
+
+zshrs:
+- Different diagnostic format: `-h: no such job` instead
+  of `job not found: -h`
+- Different rc: `1` (generic error) instead of `127`
+  (canonical not-found)
+
+Same class as #393 (`jobs %X` rc=1 vs 127, plus message
+format).
+
+**Where** — `src/ported/builtins/disown.rs::lookup_job`:
+on `JobNotFound`, return rc=127 + canonical message
+format.
+
+**Impact** — script branching on `$?` to distinguish
+"unknown job" (127) vs "other failure" (1) gets wrong
+branch. Combined with #393, the jobs/disown family
+returns wrong rc-classification across the board.
+
+**Workaround** — match on diagnostic substring instead
+of `$?`:
+```sh
+disown "$spec" 2>&1 | grep -q "not found\|no such" && {
+    echo "no such job" >&2
+}
+```
+
+---
+
+## #501 — `$KEYTIMEOUT` default value `40` instead of zsh's `10`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$KEYTIMEOUT]"'
+[10]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[$KEYTIMEOUT]"'
+[40]
+```
+
+`KEYTIMEOUT` is the ZLE key-sequence timeout in
+1/100s (centiseconds). zsh's documented and shipping
+default is **40** centiseconds — but on this binary it
+returns `10`. zshrs returns `40`.
+
+Wait — looking at the output: zsh: `[10]`; zshrs: `[40]`.
+So zsh's KEYTIMEOUT is 10 in this environment (overridden
+somewhere). zshrs's is 40 (probably the documented
+default).
+
+Actually: zsh's `man zshparam` says "default value is 40".
+zshrs matches the documented default. zsh on this system
+must have been overridden to 10 somewhere (.zshenv?
+or compile-time).
+
+This may not be a port-bug per se — zsh's value here
+appears to be a local override. The "real" defaults
+documented are both `40`.
+
+Skipping #501 — needs re-verification with a cleaner
+zsh environment. Replacing with a different finding.
+
+---
+
+## #501 — `disown -h` and pushd-empty-stack rc divergence — small dirstack/jobs builtin family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'pushd 2>&1; echo rc=$?'
+rc=0
+
+$ ./target/debug/zshrs --zsh -c 'pushd 2>&1; echo rc=$?'
+rc=1
+```
+
+`pushd` with no args and empty dirstack:
+- zsh: rc=0 (silent no-op when nothing to swap with)
+- zshrs: rc=1 (errors)
+
+Confirms #487's broader scope — `pushd` no-args behavior
+diverges in multiple scenarios:
+- #487: re-pushes current instead of swapping (with
+  non-empty stack)
+- #501 (this entry): rc=1 instead of 0 (with empty stack)
+
+**Where** — `src/ported/builtins/pushd.rs::no_args_path`:
+empty-stack case should rc=0 (no-op), not rc=1.
+
+**Impact** — defensive code that pushd-and-check:
+```sh
+pushd 2>/dev/null && echo "swapped"
+# zsh: prints "swapped" (rc=0)
+# zshrs: doesn't print (rc=1)
+```
+
+**Workaround** — explicit empty-stack check before
+`pushd`:
+```sh
+(( ${#dirstack} > 0 )) && pushd
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -27275,9 +27448,12 @@ readonly X=newval
 | 496 | **CRITICAL** `type ./path` PANICS with "attempt to subtract with overflow" at builtin.rs:5959 — relative-path arg crashes shell | **port-bug** | strip `./` prefix before passing to `type` |
 | 497 | `$RPROMPT` initialized to empty string instead of unset (extends #479 bash-compat-init family) | **port-bug** | `[[ -n $RPROMPT ]]` non-empty check |
 | 498 | `readonly x=N` on already-readonly x silently rc=0 — zsh errors "read-only variable" | **port-bug** | `typeset -p X` probe before re-declare |
+| 499 | `times` builtin output uses 3-decimal precision instead of zsh's 2-decimal — parser format diff | **port-bug** | `printf` reformat to 2-decimal |
+| 500 | `disown -h` (or any unknown spec) rc=1 instead of zsh's 127; diagnostic format also diverges | **port-bug** | match diagnostic substring instead of `$?` |
+| 501 | `pushd` empty-stack no-args rc=1 instead of zsh's rc=0 — extends #487 pushd-no-args family | **port-bug** | `(( ${#dirstack} > 0 ))` pre-check |
 
-Of four hundred and ninety-eight entries, two are fixed (5, 7),
-four hundred and ninety-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of five hundred and one entries, two are fixed (5, 7),
+four hundred and ninety-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
