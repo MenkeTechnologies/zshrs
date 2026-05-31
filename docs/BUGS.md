@@ -25736,6 +25736,152 @@ echo "${a:0:$((n))}" # works in both
 
 ---
 
+## #478 — `read "?prompt"` emits prompt to stdout instead of stderr
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo y | read "?prompt> " ans; echo done'
+done
+
+$ ./target/debug/zshrs --zsh -c 'echo y | read "?prompt> " ans; echo done'
+prompt> done
+```
+
+zsh's `read "?TEXT"` form prints TEXT as a prompt **to
+stderr** — the user sees the prompt on the terminal but
+piped/redirected stdout doesn't capture it. The prompt
+is for the human, not the script.
+
+zshrs prints the prompt to **stdout**, which:
+1. Contaminates captured output
+2. Mixes with the read result in pipelines
+
+**Where** — `src/ported/builtins/read.rs::print_prompt`:
+must write the prompt to fd 2 (stderr), not fd 1
+(stdout). C-source `Src/builtins.c::bin_read` calls
+`zputs(prompt, shoutfd)` where `shoutfd` is the tty fd
+(stderr by default).
+
+**Impact** — capture-and-process patterns get corrupted:
+
+```sh
+result=$(echo "y" | read "?Continue? " ans; echo "$ans")
+# zsh: result = "y"
+# zshrs: result = "Continue? y"
+```
+
+User-facing prompt appears in script output that was
+supposed to be data-only.
+
+**Workaround** — manual prompt-to-stderr:
+```sh
+print -n "Continue? " >&2
+read ans
+```
+
+---
+
+## #479 — `$OPTERR` initialized to 1 — zsh leaves unset (bash-compat addition extends #474/#475)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${OPTERR-unset}]"'
+[unset]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[${OPTERR-unset}]"'
+[1]
+```
+
+`$OPTERR` is bash's getopts error-message control
+parameter — bash initializes it to `1` by default; zsh
+doesn't have OPTERR at all.
+
+zshrs initializes OPTERR=1 in `--zsh` mode — another
+bash-compat parameter contaminating the zsh namespace.
+
+Same family as #474 (PIPESTATUS uppercase), #475 (bash
+builtins), #477 (bash-style substring).
+
+**Where** — `src/ported/params/init.rs` (or special-param
+table initializer): in `--zsh` mode, OPTERR should not
+be initialized.
+
+**Impact** — `[[ -v OPTERR ]]` returns true in zshrs,
+false in zsh — breaks shell-detection via parameter
+presence:
+
+```sh
+if [[ -v OPTERR ]]; then
+    echo "bash-like"
+else
+    echo "zsh"
+fi
+# zsh: zsh
+# zshrs: bash-like (wrong)
+```
+
+Combined with #474/#475/#395/#477, zshrs's `--zsh` mode
+has many bash-compat leaks. The cumulative effect:
+fingerprint-based shell detection is broken in multiple
+places.
+
+**Workaround** — use `$ZSH_VERSION` for unambiguous
+detection.
+
+---
+
+## #480 — `[[ -z ]]` (no argument) silently rc=0 — zsh errors "unknown condition"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ -z ]] 2>&1; echo rc=$?'
+zsh:1: unknown condition: -z
+
+$ ./target/debug/zshrs --zsh -c '[[ -z ]] 2>&1; echo rc=$?'
+rc=0
+```
+
+Single-arg test operators (`-z`, `-n`, `-r`, `-w`, `-x`,
+`-d`, `-f`, etc.) require **exactly one operand** after
+the operator. zsh errors "unknown condition" when the
+operand is missing.
+
+zshrs accepts the no-operand form silently, returning
+rc=0 (the test "succeeds" with nothing to test).
+
+Same family as #400 (case esack), #403/#404 (typoed
+loops), #405 (fn no-close-brace), #413 (do standalone),
+#446 (noglob standalone), #476 (empty case pattern) —
+parser/builtin strictness gap.
+
+**Where** — `src/ported/conditional/parse.rs::parse_unary`:
+must require operand after `-z`/`-n`/etc. C-source
+`Src/cond.c::par_cond` errors when expected operand
+token isn't found.
+
+**Impact** — defensive empty checks pass silently when
+the variable name is dropped accidentally:
+
+```sh
+# Typo: missing $var after -z
+if [[ -z ]]; then
+    echo "var was empty"
+fi
+# zsh: parse error caught
+# zshrs: branch always taken (false silent success)
+```
+
+Adds another scenario to the broad parser-strictness
+gap.
+
+**Workaround** — CI lint for unary-op-no-operand
+patterns.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -26217,9 +26363,12 @@ echo "${a:0:$((n))}" # works in both
 | 475 | bash-only builtins (`caller`/`help`/`complete`/`compopt`/`mapfile`) shipped in `--zsh` mode — extends bash-compat-contamination family | **port-bug** | detect zshrs via `$ZSH_VERSION` pattern |
 | 476 | `case "x" in) ...; esac` empty pattern silently accepted as no-op (zsh: parse error) — extends parser-strictness family | **port-bug** | CI lint for empty pattern clauses |
 | 477 | `${a:0:n}` substring with bare-name length accepted (zsh: "unrecognized modifier") — bash-compat permissiveness | **port-bug** | always use `$n` or `$((n))` form |
+| 478 | `read "?prompt"` emits prompt to stdout instead of stderr — corrupts cmdsub-captured output | **port-bug** | `print -n PROMPT >&2; read` form |
+| 479 | `$OPTERR` initialized to 1 — bash-compat addition, zsh leaves unset | **port-bug** | use `$ZSH_VERSION` for shell-detect |
+| 480 | `[[ -z ]]` (no operand) silently rc=0 — zsh errors "unknown condition" — extends parser-strictness family | **port-bug** | CI lint for unary-op-no-operand |
 
-Of four hundred and seventy-seven entries, two are fixed (5, 7),
-four hundred and seventy-one remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and eighty entries, two are fixed (5, 7),
+four hundred and seventy-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
