@@ -28012,6 +28012,135 @@ gap.)
 
 ---
 
+## #523 — `${(q)control_char}` produces raw `\<CHAR>` instead of `$'\X'` ANSI-C-quoted form
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc "a=\$'\\n'; echo \"\${(q)a}\"" | od -c | head -1
+0000000    $   '  \n   '  \n
+
+$ ./target/debug/zshrs --zsh -fc "a=\$'\\n'; echo \"\${(q)a}\"" | od -c | head -1
+0000000    \  \n  \n
+```
+
+Same for `\t`, `\a`, and other control chars: zsh
+produces `$'\X'` (ANSI-C-quoted form — re-parseable shell
+syntax). zshrs produces raw `\<CHAR>` (NOT re-parseable
+as the original char — it's just literal backslash +
+char).
+
+**Where** — `src/ported/paramsubst/flags/q.rs::quote`:
+must emit `$'\X'` form for control characters per zsh's
+`quotestring(s, QT_SINGLE)` semantics. C-source
+`Src/utils.c::quotestring` handles `\n`/`\t`/`\a`/`\b`/`\f`/
+`\r`/`\v`/`\e` via the `QT_BACKSLASH_NEWLINES` /
+`QT_SINGLE` family.
+
+**Impact** — `(q)`-quoted output for control chars
+can't be round-tripped via `eval`:
+
+```sh
+a=$'\thello'
+saved="${(q)a}"
+eval "b=$saved"
+[[ "$b" == "$a" ]] && echo "round-trip"
+# zsh: round-trip (saved = "$'\thello'", evals back)
+# zshrs: NOT round-trip (saved = "\<TAB>hello",
+#         evals to backslash + literal tab + "hello")
+```
+
+Affects serialization helpers in zinit's snapshot,
+zsh-defer's deferred-command storage, p10k's transient-
+prompt cache.
+
+**Workaround** — manual ANSI-C-quote helper before
+storing:
+```sh
+ansic_quote() { printf '%s\n' "$1" | sed "s/$(printf '\t')/\\\\t/g; ..."; }
+```
+
+Brittle; covers only the common chars.
+
+---
+
+## #524 — `%r` prompt escape printed literally — extends prompt-escape gap family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "[%r]"'
+[]
+
+$ ./target/debug/zshrs --zsh -fc 'print -P "[%r]"'
+[%r]
+```
+
+`%r` is the right-prompt RPROMPT integer (or similar
+internal — exact semantics vary by zsh version). zsh
+emits empty (no rprompt in -fc); zshrs emits literal.
+
+Adds to prompt-escape gap census family:
+#390/#391 (PS4), #412 (PS3 default), #414 (unknown %X),
+#429 (%m), #431 (%y/%l), #438 (%N), #439 (%>>/%<<),
+#493 (%i), #508 (%E), #509 (%G/%e), #524 (%r — this).
+
+**Where** — `src/ported/prompts/expand.rs::handle_r`:
+add handler emitting whatever the C source does for `r`.
+C-source `Src/prompt.c::putpromptchar` for `'r'` reads
+the appropriate field.
+
+**Impact** — themes that use `%r` for arrangement
+(uncommon but exists in p9k variants) emit visible `%r`.
+
+**Workaround** — avoid `%r` when targeting zshrs.
+
+---
+
+## #525 — `print -x notanint ARG` accepts non-integer `-x` arg — zsh: "positive integer expected"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -x notanint hi 2>&1; echo rc=$?'
+zsh:print:1: positive integer expected after -x: notanint
+rc=1
+
+$ ./target/debug/zshrs --zsh -fc 'print -x notanint hi 2>&1; echo rc=$?'
+hi
+rc=0
+```
+
+`print -x N ARGS...` is the "indent by N tabs" form —
+zsh requires N to be a positive integer. With
+"notanint" as N, zsh errors "positive integer expected
+after -x: notanint" + rc=1.
+
+zshrs silently accepts the non-integer `notanint` and
+prints `hi` (the second arg) — no diagnostic, rc=0.
+
+Same family as #460 (typeset flag conflict silently
+accepted) — zshrs's option-arg validation is lax across
+multiple builtins.
+
+**Where** — `src/ported/builtins/print.rs::handle_x_flag`:
+must `zstrtol` the `-x` arg and error on failure.
+C-source `Src/builtin.c::bin_print` for OPT_ARG('x')
+calls `mathexpr` or `zstrtol` and validates.
+
+**Impact** — typos in `print -x` invocations swallow the
+intended N as if it were content. Less common pattern
+but real for scripts that programmatically build
+indent-style output.
+
+**Workaround** — pre-validate the N arg:
+```sh
+[[ "$n" =~ ^[1-9][0-9]*$ ]] || { echo "bad N"; exit 1; }
+print -x $n "$content"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -28538,11 +28667,14 @@ gap.)
 | 520 | `HISTSIZE=N` assignment ignored — reads back as default `999999999` regardless | **port-bug** | none — assignment has no effect |
 | 521 | `[[ "" == (#c0,0) ]]` matches in zshrs — zsh rejects as "bad pattern" — extends #489 broken-cN family | **port-bug** | (#c0,0) shouldn't be used |
 | 522 | `TRAPDEBUG()` function-form not invoked before each command — extends #381 family (DEBUG pseudo-signal) | **port-bug** | none — debuggers/profilers can't hook |
+| 523 | `${(q)control_char}` produces raw `\\<CHAR>` instead of `$'\\X'` ANSI-C-quoted form — round-trip broken | **port-bug** | manual ANSI-C-quote helper |
+| 524 | `%r` prompt escape printed literally — extends prompt-escape gap family (#390/#391/#412/etc.) | **port-bug** | avoid `%r` when targeting zshrs |
+| 525 | `print -x notanint ARG` silently rc=0 — zsh: "positive integer expected after -x" | **port-bug** | pre-validate N arg with regex |
 
-Of five hundred and twenty-two entries, two are fixed (5, 7), 2 freshly
+Of five hundred and twenty-five entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and sixteen remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and nineteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
