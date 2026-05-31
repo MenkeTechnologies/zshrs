@@ -26946,6 +26946,181 @@ pushd 2>/dev/null && echo "swapped"
 
 ---
 
+## #502 — `typeset -a b=($var)` word-splits unquoted `$var` — plain `b=($var)` doesn't
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="x y z"; typeset -a b=($a); echo "${#b}=${b[@]}"'
+1=x y z
+
+$ ./target/debug/zshrs --zsh -c 'a="x y z"; typeset -a b=($a); echo "${#b}=${b[@]}"'
+3=x y z
+```
+
+Plain `b=($a)` works correctly in both shells (1
+element, the entire space-containing string). But the
+`typeset -a NAME=(LIST)` / `local -a NAME=(LIST)` /
+`readonly -a NAME=(LIST)` form WORD-SPLITS the unquoted
+RHS in zshrs:
+
+| Form | zsh | zshrs |
+|------|------|-------|
+| `b=($a)` | 1 elem | 1 elem |
+| `typeset -a b=($a)` | 1 elem | **3 elems** |
+| `local -a b=($a)` | 1 elem | **3 elems** |
+| `readonly -a b=($a)` | 1 elem | **3 elems** |
+
+zsh treats all forms identically — unquoted scalar
+expansion doesn't split (zsh's default, no
+`SH_WORD_SPLIT`). zshrs's typeset/local/readonly arg
+parser routes through a code path that DOES split.
+
+**Where** — `src/ported/builtins/typeset.rs::parse_arg_value`:
+must use the standard zsh-mode parameter-expansion
+(no-split) instead of the bash-style splitting path.
+
+**Impact** — array assignments inside function bodies
+(where `local -a` is common) produce wrong-sized
+arrays:
+
+```sh
+process_files() {
+    local files="$1"          # files = "a.txt b.txt c.txt"
+    local -a file_arr=($files)
+    for f in "${file_arr[@]}"; do
+        process "$f"
+    done
+}
+process_files "report1.txt report2.txt"
+# zsh: file_arr has 1 elem ("report1.txt report2.txt")
+#      process called once with single string
+# zshrs: file_arr has 2 elems (correct in some sense
+#      but NOT what zsh does)
+```
+
+The "correct" behavior here is debatable (zsh's no-split
+is arguably worse than bash's split), but **divergence
+from zsh under --zsh mode is the port bug**.
+
+**Workaround** — explicit `${=var}` to force splitting
+in both shells:
+```sh
+local -a b=( ${=a} )
+```
+
+---
+
+## #503 — `${(@k)empty_assoc}` produces one empty-string iteration — zero in zsh
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; for k in "${(@k)h}"; do echo "[$k]"; done; echo done'
+done
+
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; for k in "${(@k)h}"; do echo "[$k]"; done; echo done'
+[]
+done
+```
+
+Iterating over an empty associative array's keys via
+`${(@k)h}` should produce **zero iterations** — zsh's
+behavior. zshrs produces ONE iteration with `$k` set
+to the empty string.
+
+Same family as #406 (`${funcstack[@]}` returns empty
+when should have elements) but opposite direction:
+empty assoc here produces phantom iteration.
+
+**Where** — `src/ported/paramsubst/at.rs::empty_array_handling`:
+`[@]`/`[*]` expansion of empty arrays must emit zero
+words. zshrs emits a single empty word.
+
+**Impact** — empty-iteration safety check broken:
+
+```sh
+typeset -A config
+# ... populate config dynamically ...
+for k in "${(@k)config}"; do
+    apply_config "$k" "${config[$k]}"
+done
+# zsh: empty config = no iterations
+# zshrs: empty config = 1 iteration with k=""; apply_config
+#        called with empty key — likely panics or
+#        misbehaves downstream
+```
+
+**Workaround** — guard with size check:
+```sh
+(( ${#config} > 0 )) && for k in "${(@k)config}"; do ...; done
+```
+
+---
+
+## #504 — bash-only `mapfile`/`readarray` shipped as builtins in `--zsh` mode
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'mapfile 2>&1; echo rc=$?'
+zsh:1: command not found: mapfile
+rc=127
+
+$ ./target/debug/zshrs --zsh -c 'mapfile 2>&1; echo rc=$?'
+rc=0
+
+$ /opt/homebrew/bin/zsh -fc 'readarray 2>&1; echo rc=$?'
+zsh:1: command not found: readarray
+rc=127
+
+$ ./target/debug/zshrs --zsh -c 'readarray 2>&1; echo rc=$?'
+rc=0
+```
+
+Extends #475 — `caller`/`help`/`complete`/`compopt`
+were documented as bash-only builtins shipped in zshrs's
+`--zsh` mode. `mapfile` (and its alias `readarray`)
+are ALSO bash-only builtins that zshrs ships:
+
+- `mapfile` — bash builtin: read lines into array
+- `readarray` — bash alias for `mapfile`
+- `complete` — bash completion (already #475)
+- `compopt` — bash completion options (already #475)
+- `caller` — bash function-stack (already #475)
+- `help` — bash help (already #475)
+
+zsh has none of these. zshrs shipping them as builtins
+in `--zsh` mode is bash-compat contamination.
+
+**Where** — `src/ported/builtins/registry.rs`: same
+fix as #475 — gate bash-compat builtins behind a
+non-`--zsh` mode check.
+
+**Impact** — combined with #475/#395/#474/#477/#479,
+zshrs's `--zsh` mode has accumulated significant bash
+surface. Detection via builtin probes (`command -v X`,
+`type X`) reports the wrong shell:
+
+```sh
+detect_shell() {
+    if command -v mapfile >/dev/null 2>&1; then
+        echo "bash"
+    elif [[ -n $ZSH_VERSION ]]; then
+        echo "zsh"
+    else
+        echo "unknown"
+    fi
+}
+# zsh: echo "zsh"
+# zshrs: echo "bash" — wrong direction
+```
+
+**Workaround** — same as #475 — use `$ZSH_VERSION` /
+`$BASH_VERSION` strings for unambiguous detection.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -27451,9 +27626,12 @@ pushd 2>/dev/null && echo "swapped"
 | 499 | `times` builtin output uses 3-decimal precision instead of zsh's 2-decimal — parser format diff | **port-bug** | `printf` reformat to 2-decimal |
 | 500 | `disown -h` (or any unknown spec) rc=1 instead of zsh's 127; diagnostic format also diverges | **port-bug** | match diagnostic substring instead of `$?` |
 | 501 | `pushd` empty-stack no-args rc=1 instead of zsh's rc=0 — extends #487 pushd-no-args family | **port-bug** | `(( ${#dirstack} > 0 ))` pre-check |
+| 502 | `typeset -a b=($var)` word-splits unquoted `$var` (plain `b=($var)` works) — typeset/local/readonly arg-parse path splits incorrectly | **port-bug** | explicit `${=var}` to force-split in both |
+| 503 | `${(@k)empty_assoc}` produces one empty-string iteration — should be zero (zsh: skip loop entirely) | **port-bug** | guard with `(( ${#assoc} > 0 ))` |
+| 504 | bash-only `mapfile`/`readarray` shipped as builtins in `--zsh` mode — extends #475 bash-compat-contamination | **port-bug** | use `$ZSH_VERSION`/`$BASH_VERSION` for detection |
 
-Of five hundred and one entries, two are fixed (5, 7),
-four hundred and ninety-five remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of five hundred and four entries, two are fixed (5, 7),
+four hundred and ninety-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
