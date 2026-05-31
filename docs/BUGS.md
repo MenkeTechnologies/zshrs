@@ -25573,6 +25573,169 @@ shell.)
 
 ---
 
+## #475 — bash-only builtins shipped in `--zsh` mode (`caller`/`help`/`complete`/`compopt`/`mapfile`)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'caller; help cd; complete; compopt; mapfile'
+zsh:1: command not found: caller
+
+$ ./target/debug/zshrs --zsh -c 'caller'
+0 main
+$ ./target/debug/zshrs --zsh -c 'help cd' | head -1
+cd: cd [-L|-P] [dir]
+$ ./target/debug/zshrs --zsh -c 'complete; echo rc=$?'
+rc=0
+$ ./target/debug/zshrs --zsh -c 'compopt; echo rc=$?'
+rc=0
+$ ./target/debug/zshrs --zsh -c 'mapfile; echo rc=$?'
+rc=0
+```
+
+zsh doesn't ship any of these builtins — they're
+**bash-only**:
+- `caller` — bash function-call-stack inspector
+- `help` — bash interactive help for builtins
+- `complete` — bash completion definition
+- `compopt` — bash completion options
+- `mapfile` (alias `readarray`) — bash file→array reader
+
+In `--zsh` mode, zshrs should match zsh's builtin set —
+making these unavailable so `command -v caller` /
+`command -v help` etc. return false (mirroring zsh).
+
+zshrs ships them as always-present, breaking shell-
+detection via builtin probes and contaminating the
+zsh namespace.
+
+This is the third entry confirming bash-compat
+contamination in --zsh mode (combined with #474
+`PIPESTATUS` and #395 `compdef`). The pattern is broad:
+zshrs's builtin table includes bash-isms that aren't
+gated behind --zsh mode-checking.
+
+**Where** — `src/ported/builtins/registry.rs` (or where
+builtin table is populated): bash-compat builtins should
+be conditional on running without `--zsh` flag.
+C-source `Src/builtins.c::bintab` registers only
+zsh-native builtins; bash compat shims aren't in the
+shipping binary.
+
+**Impact** — shell-detection AND builtin-probe patterns
+break:
+
+```sh
+# Detect bash
+if (( ${+commands[mapfile]} )); then
+    echo "bash-like (has mapfile)"
+else
+    echo "zsh-like"
+fi
+# zsh: prints "zsh-like"
+# zshrs: prints "bash-like" (wrong)
+```
+
+**Workaround** — detect zshrs explicitly via
+`$ZSH_VERSION` pattern or `$0` containing "zshrs".
+
+---
+
+## #476 — `case "x" in) ...; esac` empty pattern silently accepted as no-op (zsh: parse error)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'case "x" in) echo unreachable;; *) echo m;; esac'
+zsh:1: parse error near `)'
+
+$ ./target/debug/zshrs --zsh -c 'case "x" in) echo unreachable;; *) echo m;; esac'
+m
+```
+
+Each `case` clause must have at least one pattern before
+`)`. zsh detects the empty-pattern syntax error.
+
+zshrs accepts the empty pattern silently — treats it as
+"never matches" and falls through to the `*` catch-all,
+which prints `m`. The case statement appears to succeed.
+
+Same family as #400 (`esack` typo), #403 (`for ... don`),
+#404 (`while ... don`), #405 (fn no-close-brace), #413
+(`do` standalone), #446 (`noglob` standalone) — parser
+strictness gap. Each form of malformed syntax is silently
+accepted by zshrs.
+
+**Where** — `src/ported/parser/case.rs::parse_clause`:
+must require ≥1 pattern token before `)`. C-source
+`Src/parse.c::par_case` errors on
+`tok == OUTBRACE`/`OUTPAR` before any pattern.
+
+**Impact** — typos that delete pattern characters pass
+silently:
+
+```sh
+case "$cmd" in) handle_x ;;        # forgot to type "x"
+    y) handle_y ;;
+    *) handle_default ;;
+esac
+# zsh: parse error — typo caught
+# zshrs: handle_default always runs (empty pattern never
+#        matches), handle_x silently dead-code
+```
+
+Cumulative with #400 etc., zshrs's `case` parser has
+multiple lax-validation gaps.
+
+**Workaround** — none syntactic; CI lint for empty
+pattern clauses.
+
+---
+
+## #477 — `${a:0:n}` bash-style substring with bare-name length accepted (zsh: errors)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=helloworld; n=5; echo "${a:0:n}"'
+zsh:1: unrecognized modifier `n'
+
+$ ./target/debug/zshrs --zsh -c 'a=helloworld; n=5; echo "${a:0:n}"'
+hello
+```
+
+`${var:offset:length}` substring syntax:
+- bash: accepts bare-name `n` as length, evaluates it
+  arithmetically → 5 chars
+- zsh: requires explicit dollar sign `${a:0:$n}` or
+  parens `${a:0:$((n))}`. Bare `n` is treated as a
+  modifier, fails.
+
+zshrs accepts bash's bare-name form. Another bash-compat
+addition in --zsh mode (extends #474, #475 family).
+
+**Where** — `src/ported/paramsubst/substring.rs::parse_length`:
+should require explicit `$VAR` or `$((EXPR))` for the
+length, matching zsh. C-source `Src/subst.c::strsub`
+treats unprefixed identifier as modifier suffix.
+
+**Impact** — code that worked under zshrs may fail under
+real zsh (silent migration breakage). User writes
+`${a:0:n}` expecting it to work everywhere; production
+zsh emits "unrecognized modifier" error.
+
+This is the OPPOSITE direction of most port-bugs (zshrs
+accepts more than zsh) — typically zshrs-tested code is
+permissive, then breaks on real zsh.
+
+**Workaround** — always use explicit form:
+```sh
+echo "${a:0:$n}"     # works in both
+echo "${a:0:$((n))}" # works in both
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -26051,9 +26214,12 @@ shell.)
 | 472 | `typeset -H` (hide value) doesn't suppress value in `typeset -p` output — leaks secrets in listings | **port-bug** | `sed` post-process to strip `=value` |
 | 473 | `[[ "ab" == a|b ]]` zshrs runs `b` as command — `\|` in pattern parsed as pipe (security-relevant) | **port-bug** | always parenthesize `(a\|b)` alternations |
 | 474 | `$PIPESTATUS` (uppercase) exposed as alias to `$pipestatus` — zsh has only lowercase; breaks bash-vs-zsh detection | **port-bug** | detect via `$ZSH_VERSION`/`$BASH_VERSION` strings |
+| 475 | bash-only builtins (`caller`/`help`/`complete`/`compopt`/`mapfile`) shipped in `--zsh` mode — extends bash-compat-contamination family | **port-bug** | detect zshrs via `$ZSH_VERSION` pattern |
+| 476 | `case "x" in) ...; esac` empty pattern silently accepted as no-op (zsh: parse error) — extends parser-strictness family | **port-bug** | CI lint for empty pattern clauses |
+| 477 | `${a:0:n}` substring with bare-name length accepted (zsh: "unrecognized modifier") — bash-compat permissiveness | **port-bug** | always use `$n` or `$((n))` form |
 
-Of four hundred and seventy-four entries, two are fixed (5, 7),
-four hundred and sixty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and seventy-seven entries, two are fixed (5, 7),
+four hundred and seventy-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
