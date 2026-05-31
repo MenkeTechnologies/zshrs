@@ -78,7 +78,7 @@ jobs:
           # Prefer the prebuilt binary release over `cargo install`
           # to save ~5 min of compile time per cross-build runner.
           CROSS_VER="v0.2.5"
-          curl -sSL -o /tmp/cross.tar.gz \
+          curl -sSLf -o /tmp/cross.tar.gz \
             "https://github.com/cross-rs/cross/releases/download/${CROSS_VER}/cross-x86_64-unknown-linux-gnu.tar.gz"
           tar -C /tmp -xzf /tmp/cross.tar.gz
           sudo install -m 755 /tmp/cross /usr/local/bin/cross
