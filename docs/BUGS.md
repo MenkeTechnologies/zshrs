@@ -25072,6 +25072,172 @@ recent=( $(ls -t | head -5) )
 
 ---
 
+## #466 — `pushd +N` / `popd +N` directory-stack indexing cycles wrong direction
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /; pushd /tmp; pushd /usr; pushd +1; pwd'
+/usr /tmp /
+/usr /tmp /
+/tmp
+
+$ ./target/debug/zshrs --zsh -c 'cd /; pushd /tmp; pushd /usr; pushd +1; pwd'
+/usr /tmp /
+/usr /tmp /
+/
+```
+
+`pushd +N` cycles the directory stack so that the entry
+at position N (counted from top, 0-indexed) becomes the
+current. With stack `(/usr /tmp /)`:
+- Position 0 = `/usr` (current)
+- Position 1 = `/tmp`
+- Position 2 = `/`
+
+zsh: `pushd +1` → cycles to position 1 = `/tmp`.
+zshrs: `pushd +1` → cycles to position 2 = `/`.
+
+Similar issue with `popd +N`:
+- zsh: `popd +1` removes index 1; current = whatever was
+  at index 0 (`/usr`)
+- zshrs: `popd +1` removes a different index; current ends
+  up at `/`
+
+The +N indexing direction or starting position is
+inverted/off-by-one in zshrs.
+
+**Where** — `src/ported/builtins/pushd.rs::cycle_to_n`
+and `src/ported/builtins/popd.rs::remove_n`: must use
+zsh's documented "from top, 0-indexed" convention.
+C-source `Src/builtins.c::bin_dirs` accepts `+N` and `-N`
+with `+` = count from top, `-` = count from bottom.
+
+**Impact** — dirstack navigation scripts produce wrong
+cwd after pushd/popd cycle:
+
+```sh
+# Rotate through workspace dirs
+pushd ~/proj/web; pushd ~/proj/api; pushd ~/proj/lib
+for i in 0 1 2; do
+    pushd +$i  # visit each workspace
+    run_tests
+done
+# zsh: cycles web → api → lib
+# zshrs: wrong order, may visit same dir twice or skip
+```
+
+Affects everyone who scripts dirstack iteration.
+
+**Workaround** — use absolute paths via `cd`:
+```sh
+local stack=( ~/proj/web ~/proj/api ~/proj/lib )
+for dir in "${stack[@]}"; do
+    cd "$dir"
+    run_tests
+done
+```
+
+---
+
+## #467 — `$-` shell-flags parameter missing `f` flag when shell launched with `-f`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$-]"'
+[569Xf]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[$-]"'
+[569X]
+```
+
+`$-` is the special parameter listing the **currently
+active single-letter shell flags**. zsh's `-f` (no rcs)
+contributes an `f` character.
+
+zshrs's `$-` omits the `f` flag even when the shell was
+launched with `-f`. Other flags (`5`, `6`, `9`, `X`)
+appear correctly. Just `f` is missing.
+
+Likely also affected:
+- `-c` (command mode) — should add `c`
+- `-i` (interactive) — should add `i`
+- `-s` (read stdin) — should add `s`
+- `-l` (login) — should add `l`
+
+Needs separate verification for each.
+
+**Where** — `src/ported/params/dash.rs::compute` or
+similar: must include all set startup flags. C-source
+`Src/params.c::dashsetfn` reads each option's
+`isset()` and emits the corresponding char.
+
+**Impact** — defensive scripts that probe shell-state
+via `$-`:
+
+```sh
+# Check if running with -f (no rcs loaded)
+case "$-" in
+    *f*) echo "minimal shell (no rcs)" ;;
+    *)   echo "full shell" ;;
+esac
+# zsh -f: prints "minimal shell"
+# zshrs --zsh -f: prints "full shell" (wrong)
+```
+
+Combined with #442 (ZSH_VERSION suffix) and #444
+(ZSH_PATCHLEVEL unknown), introspection of the actual
+running-shell-state is broken in multiple ways.
+
+**Workaround** — none for `$-`; use `[[ -o rcs ]]` if
+checking specifically for that opt.
+
+---
+
+## #468 — `functions -t` (list traced) output shows function body instead of name list
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { :; }; functions -T f; functions -t'
+(empty)
+
+$ ./target/debug/zshrs --zsh -c 'f() { :; }; functions -T f; functions -t'
+f () {
+	# traced
+	:
+```
+
+`functions -t` (no args) should list **just the names**
+of traced functions. zsh emits empty output when no
+traced fns exist or under emulate-sh which may suppress.
+
+zshrs emits the **full function body** with a `# traced`
+comment — wrong format. This is the format for
+`functions -p f` (print function definition).
+
+**Where** — `src/ported/builtins/functions.rs::list_traced`:
+should iterate function table, filter `PM_TRACE` flag,
+and emit only the name. zshrs's path falls through to
+"print function definitions" handler.
+
+C-source `Src/builtins.c::bin_functions` with `-t` and no
+args walks `shfunctab` and prints names only.
+
+**Impact** — debugging-tooling consumers expecting just
+names see entire function bodies. Scripts that pipe
+`functions -t | wc -l` for "how many traced fns" get
+wrong counts (multi-line bodies counted as multiple
+fns).
+
+**Workaround** — grep names:
+```sh
+functions -t | grep -E "^[a-zA-Z_]+ \(\)" | awk '{print $1}'
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -25541,9 +25707,12 @@ recent=( $(ls -t | head -5) )
 | 463 | `set` no-args shows special vars (`!`/`#`/`$`/`-`) as empty strings — special-param getters not invoked in dump | **port-bug** | explicit per-param read `echo "!=$!"` |
 | 464 | `emulate sh` doesn't toggle sh-mode setopt block (zsh: ~8 opts on/off) — emulation table missing/no-op | **port-bug** | manual setopt of full sh-emulation list |
 | 465 | `*(om)` glob mtime-sort qualifier returns wrong order — sort ignored; likely all `(oX)`/`(OX)` affected | **port-bug** | external `ls -t` for mtime sort |
+| 466 | `pushd +N` / `popd +N` dirstack indexing cycles wrong direction — +1 lands on wrong stack entry | **port-bug** | use absolute paths via `cd` |
+| 467 | `$-` shell-flags parameter missing `f` flag when shell launched with `-f` — likely `c`/`i`/`s`/`l` also missing | **port-bug** | `[[ -o rcs ]]` for specific opt |
+| 468 | `functions -t` (list traced) emits full function body instead of name list (zsh: empty or names only) | **port-bug** | `grep`-extract names from full output |
 
-Of four hundred and sixty-five entries, two are fixed (5, 7),
-four hundred and fifty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and sixty-eight entries, two are fixed (5, 7),
+four hundred and sixty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
