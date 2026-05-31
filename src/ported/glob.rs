@@ -1457,14 +1457,14 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
     if matches.is_empty() {
         let nullglob = isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
         let csh_nullglob = isset(crate::ported::zsh_h::CSHNULLGLOB); // c:1874
-        // c:Src/glob.c:1843-1854 — `if (!q || errflag) { ... zerr(
-        // "bad pattern", ostr); return; }`. When the qualifier
-        // parser already emitted a diagnostic (e.g. "number expected"
-        // from qgetnum at c:832) and set errflag, the no-matches /
-        // bad-pattern terminal block runs but the prior zerr is what
-        // the user sees first. Skipping the redundant "no matches
-        // found" here matches zsh which has already aborted glob
-        // expansion via the errflag-gated return at c:1787 / c:1843.
+                                                                     // c:Src/glob.c:1843-1854 — `if (!q || errflag) { ... zerr(
+                                                                     // "bad pattern", ostr); return; }`. When the qualifier
+                                                                     // parser already emitted a diagnostic (e.g. "number expected"
+                                                                     // from qgetnum at c:832) and set errflag, the no-matches /
+                                                                     // bad-pattern terminal block runs but the prior zerr is what
+                                                                     // the user sees first. Skipping the redundant "no matches
+                                                                     // found" here matches zsh which has already aborted glob
+                                                                     // expansion via the errflag-gated return at c:1787 / c:1843.
         if errflag.load(Ordering::SeqCst) != 0 {
             return;
         }

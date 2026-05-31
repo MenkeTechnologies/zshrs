@@ -3589,7 +3589,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zshrs"
-version = "0.11.24"
+version = "0.11.25"
 dependencies = [
  "atty",
  "base64",
@@ -3646,7 +3646,7 @@ dependencies = [
 
 [[package]]
 name = "zshrs-daemon"
-version = "0.11.24"
+version = "0.11.25"
 dependencies = [
  "atty",
  "axum",
