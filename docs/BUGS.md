@@ -26031,6 +26031,125 @@ of `(#s)foo*`.
 
 ---
 
+## #484 — `(#l)PATTERN` case-insensitive-lowercase glob flag not recognized — extends #409/#483 family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/ABC; echo /tmp/_zg/(#l)abc'
+/tmp/_zg/ABC
+
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/ABC; echo /tmp/_zg/(#l)abc'
+/tmp/_zg/(#l)abc
+```
+
+`(#l)` enables **case-insensitive matching** for the
+following pattern (only for the next pattern, not
+globally like `(#i)`). zsh matches `ABC`; zshrs treats
+the flag as literal.
+
+Sibling of #409 `(#i)` — same family, distinct flag.
+
+**Where** — `src/ported/glob/pattern.rs::parse_paren_flag`
+needs comprehensive `(#X)` flag handling — current
+implementation handles few or no flags.
+
+**Impact** — case-insensitive substring searches in
+glob context broken:
+
+```sh
+files=( *(#l)readme* )    # match "README", "ReadMe", etc.
+# zsh: matches case-insensitively
+# zshrs: only literal "(#l)readme" files (none)
+```
+
+**Workaround** — `[Aa][Bb][Cc]` explicit case alternation.
+
+---
+
+## #485 — `(#aN)PATTERN` approximate-match glob flag not recognized — extends #409/#483 family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(#a1)abx'
+/tmp/_zg/abc
+
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(#a1)abx'
+/tmp/_zg/(#a1)abx
+```
+
+`(#aN)` is the **approximate-match** flag — allows up
+to N character errors (typos) in the following pattern.
+With `(#a1)abx`, "abc" matches because there's 1
+character difference (b vs c at position 2).
+
+zsh implements approximate matching via Damerau-
+Levenshtein. zshrs treats the flag as literal.
+
+Common use case: forgiving filename completion for
+user-typed prefixes.
+
+**Where** — same as #483/#484: `(#X)` flag family in
+`src/ported/glob/pattern.rs`.
+
+**Impact** — typo-tolerant glob patterns don't work.
+One of zsh's distinctive features for completion
+plugins.
+
+**Workaround** — none direct; external `agrep` or
+similar for approximate matching.
+
+---
+
+## #486 — `~-N` tilde dirstack reference (negative index) not expanded — `~-` alone works, with N fails
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'pushd /tmp >/dev/null; pushd / >/dev/null; echo ~-1'
+/tmp
+
+$ ./target/debug/zshrs --zsh -c 'pushd /tmp >/dev/null; pushd / >/dev/null; echo ~-1'
+~-1
+```
+
+Tilde dirstack expansion forms:
+- `~0` / `~+0` — current dir
+- `~+N` — Nth entry from top (newer end)
+- `~-N` — Nth entry from bottom (older end)
+- `~-` (no N) — most recent prior dir (OLDPWD)
+- `~+` (no N) — current dir
+
+zshrs supports `~+N`, `~-` (no N), `~+` (no N). The
+**`~-N` form with numeric suffix** doesn't expand —
+emits literal.
+
+**Where** — `src/ported/expansion/tilde.rs::expand_dirstack`:
+must parse `~-` + digit-string. Currently `~+N` parsing
+works; `~-N` falls through to literal output.
+
+**Impact** — directory-stack navigation scripts:
+
+```sh
+cd ~-0   # cd to oldest dir in stack
+# zsh: cd to oldest dir
+# zshrs: cd: no such file: ~-0
+```
+
+Less common than `~+N` but real users in deeply-nested
+dir-stack workflows (tmux power users, multi-project
+devs) rely on the negative index.
+
+**Workaround** — use `dirs -l` to find absolute path,
+then explicit cd:
+```sh
+oldest=$(dirs -l | awk 'NR==1')
+cd "$oldest"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -26518,9 +26637,12 @@ of `(#s)foo*`.
 | 481 | `[[ -n/-r/-d/-f/... ]]` ALL unary ops no-operand silently rc=0 (zsh: parse error each) — generalizes #480 | **port-bug** | CI lint each operator |
 | 482 | `[[ 5 -eq ]]` binary op missing RHS silently rc=1 (zsh: parse error) — completes test parse-strictness gap | **port-bug** | CI lint for binary-op-no-rhs |
 | 483 | `(#s)PATTERN` start-anchor glob flag not recognized — extends #409 `(#X)` family ((#e)/(#b)/(#a)/(#l)/(#m) likely too) | **port-bug** | explicit prefix-pattern form |
+| 484 | `(#l)PATTERN` case-insensitive-lowercase glob flag not recognized — extends #483 family | **port-bug** | explicit `[Aa][Bb][Cc]` case alternation |
+| 485 | `(#aN)PATTERN` approximate-match (typo-tolerant) glob flag not recognized — extends #483 family | **port-bug** | external `agrep` for fuzzy match |
+| 486 | `~-N` (negative dirstack index) not expanded — `~-` alone works; numeric suffix fails | **port-bug** | `dirs -l \| awk` + explicit cd |
 
-Of four hundred and eighty-three entries, two are fixed (5, 7),
-four hundred and seventy-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and eighty-six entries, two are fixed (5, 7),
+four hundred and eighty remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
