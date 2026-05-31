@@ -24897,6 +24897,181 @@ Or move the disown out of subshell.
 
 ---
 
+## #463 — `set` no-args shows special vars `!`/`#`/`$`/`-` as empty strings instead of actual values
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set | head -6'
+!=0
+'#'=0
+'$'=8349
+'*'=(  )
+-=569Xf
+0=/opt/homebrew/bin/zsh
+
+$ ./target/debug/zshrs --zsh -c 'set | head -6'
+!=''
+#=''
+$=''
+*=()
+-=''
+0=./target/debug/zshrs
+```
+
+`set` no-args dumps all variables. zsh shows special
+parameters with their actual current values:
+- `!` — last bg PID (0 if no bg)
+- `#` — positional param count
+- `$` — shell PID
+- `-` — shell flags
+- `0` — shell name/path
+
+zshrs shows these as **empty strings** — values are
+collected via the regular parameter getter but return
+empty rather than the live value.
+
+**Where** — `src/ported/builtins/set.rs::list_all` or
+the special-parameter readback path: special params
+need their getter invoked at dump time, not just the
+literal cached value. C-source
+`Src/builtins.c::bin_set` walks `paramtab` and calls
+`getsparam`/`getaparam` per entry (which dispatches to
+the special-param's getfn).
+
+**Impact** — debugging output is useless; sessions saved
+via `set > snapshot.sh` and replayed lose all special
+state. Combined with #386 (`readonly` empty), #444
+(ZSH_PATCHLEVEL unknown), the introspection-listing
+infrastructure has multiple data-extraction gaps.
+
+**Workaround** — explicit per-param read:
+```sh
+echo "!=$!"
+echo "#=$#"
+echo "$=$$"
+echo "-=$-"
+```
+
+---
+
+## #464 — `emulate sh` doesn't toggle sh-mode setopt block (zsh: enables ~8 opts; zshrs: none)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'emulate sh; setopt'
+banghist
+nohashdirs
+nointeractivecomments
+notify
+promptpercent
+nopromptsubst
+norcs
+normstarsilent
+
+$ ./target/debug/zshrs --zsh -c 'emulate sh; setopt'
+(empty)
+```
+
+`emulate sh` is supposed to enter "Bourne shell
+compatibility mode" by toggling about 20-30 setopts to
+their sh-emulation defaults. The visible `setopt` output
+should change dramatically — `banghist`, `notify`,
+`promptpercent`, etc. all toggled on/off compared to
+default zsh.
+
+zshrs's `emulate sh` does nothing visible to setopt
+state. Either:
+1. `emulate` parses but doesn't apply any opts
+2. setopt listing is broken (separately documented as
+   #394 — empty under `-f`)
+3. Both
+
+**Where** — `src/ported/builtins/emulate.rs::apply`:
+must have a table mapping emulation names (`sh`, `ksh`,
+`csh`, `zsh`) to their opt-toggle sets, and apply those
+toggles. C-source `Src/builtins.c::emulate` walks the
+emulation table.
+
+**Impact** — `emulate sh -c 'cmd'` patterns (common
+in zsh-completion plugin invocations of POSIX scripts)
+don't actually enter sh emulation. zsh-specific
+behaviors (extended globbing, brace expansion, etc.)
+remain active when they should be disabled for
+POSIX-compat operation.
+
+Real-world breakage: oh-my-zsh's `omz reload` and
+similar scripts that switch emulation per-section.
+
+**Workaround** — manually setopt the sh-emulation set:
+```sh
+emulate_sh() {
+    setopt banghist nohashdirs nointeractivecomments notify
+    setopt promptpercent nopromptsubst norcs normstarsilent
+    # ... etc, full table from zsh source ...
+}
+```
+
+Tedious; needs full opt-list from zsh.
+
+---
+
+## #465 — `*(om)` glob mtime-sort qualifier returns wrong order — sort ignored
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ mkdir -p /tmp/_zg
+$ touch /tmp/_zg/a; sleep 0.1; touch /tmp/_zg/b; sleep 0.1; touch /tmp/_zg/c
+$ /opt/homebrew/bin/zsh -fc 'echo /tmp/_zg/*(om)'
+/tmp/_zg/c /tmp/_zg/b /tmp/_zg/a
+
+$ ./target/debug/zshrs --zsh -c 'echo /tmp/_zg/*(om)'
+/tmp/_zg/a /tmp/_zg/c /tmp/_zg/b
+```
+
+`(om)` is the "sort by modification time, newest first"
+glob qualifier. With files a < b < c by mtime, zsh
+returns `c b a`.
+
+zshrs returns `a c b` — neither mtime-sorted nor
+alphabetical. The sort doesn't apply correctly.
+
+Same family as #440 (`**` recursive-glob order — BFS
+instead of DFS) — glob ordering primitives have
+implementation gaps.
+
+Related qualifiers likely affected: `(oc)` (ctime),
+`(oa)` (atime), `(on)` (name — should sort), `(oL)`
+(size), `(Om)` (mtime ascending), `(Oc)`, etc.
+
+**Where** — `src/ported/glob/qualifiers/sort.rs`: the
+mtime comparator must call `stat()` per entry and
+compare `st_mtim`. C-source `Src/glob.c::qualifyL` uses
+`statbuf->st_mtime` as the sort key.
+
+**Impact** — "give me N most recent files" patterns
+return wrong files:
+
+```sh
+recent=( *(om[1,5]) )    # 5 newest in cwd
+# zsh: correctly the 5 most recent
+# zshrs: 5 arbitrary files
+```
+
+Combined with #399 (`(YN)` limit ignored), the "recent
+N files" idiom is broken multiple ways in zshrs.
+
+**Workaround** — pipe through external sort:
+```sh
+recent=( $(ls -t | head -5) )
+```
+
+(Heavier; uses external `ls -t` for mtime sort.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -25363,9 +25538,12 @@ Or move the disown out of subshell.
 | 460 | `typeset -aix arr=(...)` flag conflict silently accepted, `-i` dropped (zsh: "inconsistent type") | **port-bug** | manually validate flag combos |
 | 461 | `trap` no-args output omits `TRAPNAME()` function-form handlers (zsh shows them) — extends #381 listing side | **port-bug** | explicit `${+functions[TRAP$sig]}` probe loop |
 | 462 | `disown` in subshell emits "no current job" diagnostic (zsh: silent no-op when subshell's job-table is empty) | **port-bug** | pass explicit pid + `2>/dev/null` |
+| 463 | `set` no-args shows special vars (`!`/`#`/`$`/`-`) as empty strings — special-param getters not invoked in dump | **port-bug** | explicit per-param read `echo "!=$!"` |
+| 464 | `emulate sh` doesn't toggle sh-mode setopt block (zsh: ~8 opts on/off) — emulation table missing/no-op | **port-bug** | manual setopt of full sh-emulation list |
+| 465 | `*(om)` glob mtime-sort qualifier returns wrong order — sort ignored; likely all `(oX)`/`(OX)` affected | **port-bug** | external `ls -t` for mtime sort |
 
-Of four hundred and sixty-two entries, two are fixed (5, 7),
-four hundred and fifty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and sixty-five entries, two are fixed (5, 7),
+four hundred and fifty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
