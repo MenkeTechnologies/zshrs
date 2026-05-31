@@ -208,3 +208,374 @@ fn bug7_dollar_equals_on_unset_var_yields_empty_array() {
         stdout
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #563 — `zformat -F` (no args) error message format diverges
+// Fix: src/ported/builtin.rs BUILTIN("zformat", ...) minargs 0→3,
+// optstring "Faf"→None matching Src/Modules/zutil.c:2136.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug563_zformat_minus_F_no_args_emits_canonical_not_enough_arguments() {
+    let (ec, _stdout, stderr) = run_zshrs(r#"zformat -F"#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 1, "exit 1 expected");
+    assert!(
+        stderr.contains("not enough arguments"),
+        "must emit canonical 'not enough arguments' (zsh dispatcher message), got stderr={:?}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("missing arguments to"),
+        "must NOT emit pre-fix Rust-only message, got stderr={:?}",
+        stderr
+    );
+}
+
+#[test]
+fn bug563_zformat_minus_f_with_valid_args_still_works() {
+    let (ec, stdout, stderr) =
+        run_zshrs(r#"zformat -f r "[%n: %d]" n:Alice d:dept; print -- "$r""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0, "exit 0 expected (stderr={:?})", stderr);
+    assert!(
+        stdout.contains("[Alice: dept]"),
+        "valid zformat -f still substitutes, got stdout={:?}",
+        stdout
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #568 — `read -A` on empty input yields 0-elem array
+// Fix: src/ported/builtin.rs bin_read array branch pushes empty
+// element when no splits produced, mirroring Src/builtin.c:6929.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug568_read_minus_A_on_empty_input_yields_one_elem_empty_array() {
+    let (_ec, stdout, _stderr) =
+        run_zshrs(r#"read -A a </dev/null; echo "len=${#a} elem1=[${a[1]}]""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert!(
+        stdout.contains("len=1"),
+        "read -A on EOF must yield 1-element array (matching zsh), got stdout={:?}",
+        stdout
+    );
+    assert!(
+        stdout.contains("elem1=[]"),
+        "the single element must be empty string, got stdout={:?}",
+        stdout
+    );
+}
+
+#[test]
+fn bug568_read_minus_A_on_real_input_still_splits_correctly() {
+    let (_ec, stdout, _stderr) = run_zshrs(
+        r#"echo "a b c" | { read -A a; echo "len=${#a} e1=${a[1]} e2=${a[2]} e3=${a[3]}"; }"#,
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert!(
+        stdout.contains("len=3"),
+        "non-empty input must still produce 3-element array, got stdout={:?}",
+        stdout
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #572 — `print -S arg` emitted to stdout instead of silent
+// Fix: src/ported/builtin.rs bin_print history branch now matches
+// -s OR -S, mirroring Src/builtin.c:5047.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug572_print_minus_S_does_not_emit_to_stdout() {
+    let (ec, stdout, _stderr) = run_zshrs(r#"print -S "a""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0, "exit 0 expected");
+    assert_eq!(
+        stdout, "",
+        "print -S must save silently to history, not emit to stdout, got stdout={:?}",
+        stdout
+    );
+}
+
+#[test]
+fn bug572_print_minus_S_with_multiple_args_rejects_per_c5058() {
+    let (ec, _stdout, stderr) = run_zshrs(r#"print -S a b c"#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 1, "exit 1 when -S given >1 arg per c:5058-5061");
+    assert!(
+        stderr.contains("option -S takes a single argument"),
+        "must emit canonical -S single-arg error, got stderr={:?}",
+        stderr
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #573 — `*(Lr)` glob qualifier emits "no matches found"
+// instead of zsh's "number expected".
+// Fix: src/ported/glob.rs parse_range_spec emits zerr("number
+// expected") + sets errflag when no digit follows; zglob skips the
+// "no matches found" path when errflag is set. Mirrors qgetnum at
+// Src/glob.c:826-834.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug573_size_qualifier_no_digit_emits_canonical_number_expected() {
+    // Use /tmp/_zg4 with at least one file so the glob would otherwise
+    // produce matches.
+    std::fs::create_dir_all("/tmp/_zg4_bug573_test").ok();
+    std::fs::write("/tmp/_zg4_bug573_test/file_a", "").ok();
+    let (ec, _stdout, stderr) = run_zshrs(r#"echo /tmp/_zg4_bug573_test/*(Lr)"#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 1, "exit 1 expected");
+    assert!(
+        stderr.contains("number expected"),
+        "must emit canonical 'number expected' for malformed size qualifier, got stderr={:?}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("no matches found"),
+        "must NOT emit 'no matches found' once 'number expected' fires, got stderr={:?}",
+        stderr
+    );
+    std::fs::remove_dir_all("/tmp/_zg4_bug573_test").ok();
+}
+
+#[test]
+fn bug573_size_qualifier_with_digit_still_works() {
+    std::fs::create_dir_all("/tmp/_zg4_bug573_ok").ok();
+    std::fs::write("/tmp/_zg4_bug573_ok/file_a", "").ok();
+    let (ec, stdout, stderr) = run_zshrs(r#"echo /tmp/_zg4_bug573_ok/*(L0)"#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0, "valid (L0) still works (stderr={:?})", stderr);
+    assert!(
+        stdout.contains("/tmp/_zg4_bug573_ok/file_a"),
+        "0-byte file matches (L0), got stdout={:?}",
+        stdout
+    );
+    std::fs::remove_dir_all("/tmp/_zg4_bug573_ok").ok();
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #565 — `echo -e "\0NNN"` octal escape literal passthrough
+// Fix: src/ported/utils.rs getkeystring_with added `Some('0')` arm
+// for the no-OCTAL_ESC path mirroring Src/utils.c:7156-7178.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug565_echo_minus_e_zero_octal_decodes_byte() {
+    let (ec, stdout, _stderr) = run_zshrs(r#"echo -e "\0101""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0);
+    assert!(
+        stdout.starts_with("A"),
+        "\\0101 must decode to 'A' (octal 101 = 65), got stdout={:?}",
+        stdout
+    );
+}
+
+#[test]
+fn bug565_echo_minus_e_zero_octal_emits_NUL_byte() {
+    let (_ec, stdout, _stderr) = run_zshrs(r#"echo -ne "x\0y" | od -An -c | head -1"#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    // od -c renders NUL as `\0` with 3 spaces of padding
+    assert!(
+        stdout.contains("\\0"),
+        "embedded \\0 must be a real NUL byte in output, got od stdout={:?}",
+        stdout
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #566 — `echo -e "\uNNNN"` / `echo -e "\UNNNNNNNN"` literal
+// Fix: src/ported/utils.rs getkeystring_with added `Some('u')` (4-hex)
+// and `Some('U')` (8-hex) arms mirroring Src/utils.c:7072-7138.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug566_echo_minus_e_uppercase_U_unicode_8hex_decodes() {
+    let (ec, stdout, _stderr) = run_zshrs(r#"echo -e "\U00000041""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0);
+    assert!(
+        stdout.starts_with("A"),
+        "\\U00000041 must decode to 'A', got stdout={:?}",
+        stdout
+    );
+}
+
+#[test]
+fn bug566_echo_minus_e_lowercase_u_unicode_4hex_decodes() {
+    let (ec, stdout, _stderr) = run_zshrs(r#"echo -e "A""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0);
+    assert!(
+        stdout.starts_with("A"),
+        "\\u0041 must decode to 'A', got stdout={:?}",
+        stdout
+    );
+}
+
+#[test]
+fn bug566_echo_minus_e_unicode_supplementary_plane() {
+    // U+1F600 = grinning face emoji (4-byte UTF-8: F0 9F 98 80)
+    let (ec, stdout, _stderr) = run_zshrs(r#"echo -e "\U0001F600""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0);
+    let bytes = stdout.as_bytes();
+    assert!(
+        bytes.starts_with(&[0xF0, 0x9F, 0x98, 0x80]),
+        "U+1F600 must emit UTF-8 F0 9F 98 80, got first bytes={:02x?}",
+        &bytes[..bytes.len().min(8)]
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #567 — `$'\UNNNNNNNN'` ANSI-C-quoting 8-hex Unicode literal
+// Fix: getkeystring_with's new `Some('U')` arm covers the
+// double-quoted-echo repro path; getkeystring_dollar_quote in lex.rs
+// already handled the canonical $'...' path.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug567_ansi_c_quote_uppercase_U_decodes() {
+    // The original repro: `zshrs --zsh -fc $'echo "\\U00000041"'`
+    // which lands as `echo "\U00000041"` inside zshrs (double-quoted).
+    let (ec, stdout, _stderr) = run_zshrs(r#"echo "\U00000041""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0);
+    assert!(
+        stdout.starts_with("A"),
+        "double-quoted \\U00000041 in echo must decode to 'A', got stdout={:?}",
+        stdout
+    );
+}
+
+#[test]
+fn bug567_real_dollar_quote_uppercase_U_decodes() {
+    // The actual `$'...'` ANSI-C path (lex.rs::getkeystring_dollar_quote).
+    let (ec, stdout, _stderr) = run_zshrs(r#"echo $'\U00000041'"#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0);
+    assert!(
+        stdout.starts_with("A"),
+        "$'\\U00000041' must decode to 'A', got stdout={:?}",
+        stdout
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #562 — `${a:U}` / `${a:C}` / `${a:W}` silently accepted.
+// Fix: src/ported/subst.rs::modify emits unrecognized-modifier zerr
+// per Src/subst.c:3786-3790 for non-modifier letters and for
+// pre-flags consumed without a following modifier letter.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug562_uppercase_U_modifier_emits_canonical_diagnostic() {
+    let (ec, _stdout, stderr) = run_zshrs(r#"a=hello; echo "${a:U}""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 1, "rc must be 1");
+    assert!(
+        stderr.contains("unrecognized modifier `U'"),
+        "must emit canonical error with letter, got stderr={:?}",
+        stderr
+    );
+}
+
+#[test]
+fn bug562_uppercase_C_modifier_emits_canonical_diagnostic() {
+    let (ec, _stdout, stderr) = run_zshrs(r#"a=hello; echo "${a:C}""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 1, "rc must be 1");
+    assert!(
+        stderr.contains("unrecognized modifier `C'"),
+        "must emit canonical error with letter, got stderr={:?}",
+        stderr
+    );
+}
+
+#[test]
+fn bug562_lone_W_preflag_without_modifier_emits_bare_error() {
+    // C source emits the bare form "unrecognized modifier" (no letter)
+    // when the pre-flag W was consumed but no actual modifier letter
+    // followed.
+    let (ec, _stdout, stderr) = run_zshrs(r#"a=hello; echo "${a:W}""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 1, "rc must be 1");
+    assert!(
+        stderr.contains("unrecognized modifier"),
+        "must emit unrecognized-modifier diagnostic, got stderr={:?}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("unrecognized modifier `W'"),
+        "for bare-W case the zsh diagnostic has NO letter, got stderr={:?}",
+        stderr
+    );
+}
+
+#[test]
+fn bug562_valid_lowercase_modifier_still_works() {
+    let (ec, stdout, _stderr) = run_zshrs(r#"a=hello; echo "${a:u}""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0, "valid :u modifier must succeed");
+    assert!(
+        stdout.starts_with("HELLO"),
+        "uppercase modifier output, got {:?}",
+        stdout
+    );
+}
+
+#[test]
+fn bug562_substring_offset_still_works() {
+    let (ec, stdout, _stderr) = run_zshrs(r#"a=hello; echo "${a:0:3}""#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0, "substring offset must still work");
+    assert!(
+        stdout.starts_with("hel"),
+        "substring [0:3] must yield 'hel', got {:?}",
+        stdout
+    );
+}
