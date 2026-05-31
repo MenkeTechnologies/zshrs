@@ -27711,6 +27711,170 @@ specials per #512).
 
 ---
 
+## #517 — `LC_NUMERIC`/`LC_TIME`/`LC_COLLATE`/`LC_CTYPE` initialized to empty string instead of unset
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${LC_TIME-unset}]"'
+[unset]
+
+$ ./target/debug/zshrs --zsh -fc 'echo "[${LC_TIME-unset}]"'
+[]
+```
+
+Confirmed across multiple locale variables: zshrs
+initializes `LC_NUMERIC`, `LC_TIME`, `LC_COLLATE`,
+`LC_CTYPE` (and probably `LC_MESSAGES`, `LC_MONETARY`,
+`LC_PAPER`, etc.) to empty string. zsh leaves them
+unset.
+
+Same family as #479 (`$OPTERR=1`), #497 (`$RPROMPT`
+empty) — `--zsh` mode inherits parameter initialization
+from a non-zsh path (probably libc/Rust's locale
+init).
+
+**Where** — `src/ported/params/init.rs` (or
+locale-param table seed): `LC_*` should not be
+auto-initialized when not present in environment.
+
+**Impact** — `[[ -v LC_TIME ]]` probes return true in
+zshrs (defined-as-empty), false in zsh — breaks locale-
+detection scripts:
+
+```sh
+# Detect explicit locale setting
+if [[ -v LC_TIME ]]; then
+    use_user_locale
+else
+    use_default_locale
+fi
+# zsh: not set → default
+# zshrs: appears set → user-locale path with empty value
+```
+
+Combined with #479/#497, the `--zsh` mode has multiple
+parameters that should be unset but are pre-seeded.
+
+**Workaround** — non-empty check: `[[ -n $LC_TIME ]]`
+instead of `-v`.
+
+---
+
+## #518 — `$PROMPT` / `$PS1` (and PROMPT2/PS2, PROMPT3/PS3, PROMPT4/PS4) NOT bidirectionally aliased
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'PROMPT="custom"; PS1="custom2"; echo "[$PROMPT]"'
+[custom2]
+
+$ ./target/debug/zshrs --zsh -fc 'PROMPT="custom"; PS1="custom2"; echo "[$PROMPT]"'
+[custom]
+```
+
+zsh aliases the long-form prompts to the short-form:
+- `PROMPT` ≡ `PS1`
+- `PROMPT2` ≡ `PS2`
+- `PROMPT3` ≡ `PS3`
+- `PROMPT4` ≡ `PS4`
+
+Assigning to either name updates BOTH (bidirectional
+tie). zshrs treats them as **separate** variables —
+modifying `PS1` doesn't propagate to `PROMPT`.
+
+Verified across all 4 pairs — same gap for each.
+
+**Where** — `src/ported/params/prompts.rs` (or wherever
+prompt params are declared): the PROMPT/PS pairs need
+to be registered as aliases (PM_ALIAS) pointing at the
+same underlying storage. C-source `Src/params.c` declares
+`{ "PROMPT", BR((char **)&prompt_s), ... }` and the
+`PS1` entry shares the same backing variable.
+
+**Impact** — prompt-customization scripts that set
+PS1 don't update PROMPT (or vice versa). p10k, p9k,
+agnoster, and most theme frameworks read one or the
+other inconsistently. Visible effect: setting PS1 in
+.zshrc leaves PROMPT showing the default.
+
+**Workaround** — explicit dual-assign:
+```sh
+PROMPT="$my_prompt"
+PS1="$my_prompt"
+```
+
+---
+
+## #519 — **CRITICAL** infinite-recursion function crashes shell with stack overflow — zsh: FUNCNEST limit catches
+
+**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a() { a; }; (a) 2>&1; echo rc=$?'
+a: maximum nested function level reached; increase FUNCNEST?
+rc=1
+
+$ ./target/debug/zshrs --zsh -fc 'a() { a; }; (a) 2>&1; echo rc=$?'
+
+thread 'main' (77248637) has overflowed its stack
+fatal runtime error: stack overflow, aborting
+exit-code=134
+```
+
+zsh has a **`FUNCNEST` limit** — default 1000 (per
+`Src/exec.c::funcnest_check`) — that catches runaway
+recursion before stack overflow. Emits "maximum nested
+function level reached" and returns rc=1.
+
+zshrs has no `FUNCNEST` check — recursive function
+calls eat the Rust stack until SIGABRT. The shell
+**crashes** with exit code 134 (SIGABRT) and a Rust
+runtime error message exposed to the user.
+
+This is a hard crash on common runaway-recursion
+patterns. Even subshell `(a)` doesn't isolate the
+crash — the entire shell process aborts.
+
+**Where** — `src/ported/exec/funcdef.rs::execfuncdef`
+or wherever function-call dispatch happens: must
+increment a `funcnest` counter on entry, check against
+`FUNCNEST` (default 1000), error and return if
+exceeded. C-source `Src/exec.c::doshfunc` walks
+`funcstack` depth.
+
+**Impact** — **Hard crash on infinite recursion**:
+
+```sh
+# Common bug pattern: function-name-shadow that recurses
+ls() { ls -la "$@"; }   # forgot `command ls`
+ls   # zsh: FUNCNEST error after 1000 frames, shell survives
+     # zshrs: SIGABRT, shell PROCESS DIES
+```
+
+Worse class than #496 (`type ./path` panic which was
+also CRITICAL) — this one is reachable from common user
+patterns (function shadowing builtin/command names).
+
+**Where** specifically — needs a recursion-depth counter
+tied to function-call entry. Pseudocode:
+
+```c
+// C: Src/exec.c::doshfunc (sketch)
+if (funcstack->depth >= FUNCNEST) {
+    zwarnnam(name, "maximum nested function level reached; increase FUNCNEST?");
+    return 1;
+}
+push_funcstack(name);
+// ... call body ...
+pop_funcstack();
+```
+
+**Workaround** — none — user must avoid recursion.
+Shell behavior is "shell dies" on runaway recursion.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -28231,11 +28395,14 @@ specials per #512).
 | 514 | `(#e)` end-anchor glob flag not recognized — extends #483 `(#X)` family | **port-bug** | POSIX-anchored `*.txt` patterns |
 | 515 | `$funcsourcetrace` shows fn-name (`f:1`) instead of file-name (`zsh:1`) — wrong source-location tracking | **port-bug** | none — array is incorrect |
 | 516 | `typeset` no-args dump omits type-flag prefix — `!=0` instead of `integer 10 readonly !=0` | **port-bug** | use `${(t)NAME}` (also limited per #512) |
+| 517 | `LC_NUMERIC`/`LC_TIME`/`LC_COLLATE`/`LC_CTYPE` initialized to empty string instead of unset — bash-init contamination (extends #479/#497) | **port-bug** | use `[[ -n $LC_TIME ]]` non-empty check |
+| 518 | `$PROMPT`/`$PS1` (and PROMPT2-4/PS2-4) NOT bidirectionally aliased — modifying one doesn't update the other | **port-bug** | explicit dual-assign |
+| 519 | **CRITICAL** infinite-recursion function crashes shell with stack overflow (exit 134) — zsh: FUNCNEST limit catches | **port-bug** | none — avoid recursion |
 
-Of five hundred and sixteen entries, two are fixed (5, 7), 2 freshly
+Of five hundred and nineteen entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and ten remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and thirteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
