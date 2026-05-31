@@ -28456,6 +28456,174 @@ status.)
 
 ---
 
+## #532 — Multiple zsh modules (`zsh/stat`, `zsh/zselect`, `zsh/zpty`, `zsh/zftp`) auto-loaded in `--zsh` mode — extends #530
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'type zstat'
+zstat not found
+
+$ ./target/debug/zshrs --zsh -fc 'type zstat'
+zstat is a shell builtin
+```
+
+Verified across multiple opt-in zsh modules:
+
+| Module        | Commands              | zsh                      | zshrs                          |
+|---------------|-----------------------|--------------------------|--------------------------------|
+| `zsh/stat`    | `stat`, `zstat`       | not found / external     | shell builtin                  |
+| `zsh/zselect` | `zselect`             | not found                | shell builtin                  |
+| `zsh/zpty`    | `zpty`                | not found                | shell builtin                  |
+| `zsh/zftp`    | `zftp`                | not found                | shell builtin                  |
+
+Same pattern as #530 (`zsh/files` always-loaded). zshrs
+auto-loads multiple zsh modules at startup in `--zsh`
+mode, where zsh requires explicit `zmodload zsh/<mod>`.
+
+Cumulative auto-loaded modules now confirmed:
+- `zsh/files` (#530) — mkdir/rm/mv/cp/ln/chmod/chown/rmdir
+- `zsh/stat` (#532) — stat/zstat
+- `zsh/zselect` (#532) — zselect
+- `zsh/zpty` (#532) — zpty
+- `zsh/zftp` (#532) — zftp
+
+Likely also: `zsh/datetime`, `zsh/system`, `zsh/zutil`,
+`zsh/mathfunc`, etc.
+
+**Where** — `src/ported/init.rs::setupshfn` or module
+init: zsh modules should only be available after
+`zmodload`. C-source `Src/init.c::setupshin` doesn't
+load these.
+
+**Impact** — `(( ${+commands[zstat]} ))` probes return
+true in zshrs, false in zsh — feature-detection breaks:
+
+```sh
+# Conditional: use zstat if available, else stat
+if (( ${+commands[zstat]} )); then
+    zstat -A info "$file"
+else
+    info=$(stat "$file")
+fi
+# zsh: stat path taken (zstat not available)
+# zshrs: zstat path taken (always available, surprise)
+```
+
+**Workaround** — explicit module detection:
+```sh
+if zmodload -e zsh/stat 2>/dev/null; then
+    use_zstat
+fi
+```
+
+(Even this may be confused by zshrs's auto-load.)
+
+---
+
+## #533 — `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '(( 5 + )) 2>&1; echo rc=$?'
+zsh:1: bad math expression: operand expected at end of string
+rc=2
+
+$ ./target/debug/zshrs --zsh -fc '(( 5 + )) 2>&1; echo rc=$?'
+rc=0
+```
+
+Math expression with trailing operator (no RHS) — zsh
+errors "operand expected at end of string" rc=2.
+
+zshrs returns **rc=0** silently — not even the
+generic-failure rc=1 — actively claims success.
+
+Compounds the arith-error-silent family (#527 empty
+parens, #529 paren mismatch, #411/#494/#505/#506 type
+coercion). Each variant of math-parse-error has its own
+specific silence mode:
+- `(( () ))` — rc=1
+- `$((1+(2))` — rc=0 (no output)
+- `(( 5 + ))` — rc=0 (this entry)
+
+zsh consistently uses rc=2 for arith syntax errors.
+zshrs is inconsistent across the variants.
+
+**Where** — `src/ported/math.rs::mathevall` or arith
+lexer: must check for missing RHS after binary
+operators. C-source `Src/math.c::optop` errors when
+binary operator's expected operand isn't found.
+
+**Impact** — Most insidious of the family — rc=0 means
+`set -e` and `||`-chained commands don't trigger.
+
+```sh
+set -e
+(( var + ))    # typo: forgot RHS
+# zsh: arith error, script aborts via set -e
+# zshrs: silently rc=0, script continues with stale state
+```
+
+**Workaround** — none — visual audit only.
+
+---
+
+## #534 — `builtin 2>&1` (bare redirect on reserved word) silently rc=0 — zsh: "redirection with no command"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'builtin 2>&1; echo "rc=$?"'
+zsh:1: redirection with no command
+
+$ ./target/debug/zshrs --zsh -fc 'builtin 2>&1; echo "rc=$?"'
+rc=0
+```
+
+zsh requires a command after `builtin` keyword — bare
+`builtin` followed only by a redirection is "redirection
+with no command" parse error.
+
+zshrs accepts silently — `builtin` alone is treated as
+a no-op.
+
+Extends parser-strictness family:
+- #400 `case ... esack` typo
+- #403/#404 `for/while ... don` typo
+- #405 fn no-close-brace
+- #413 `do` standalone
+- #446 `noglob` standalone
+- #476 `case "x" in)` empty pattern
+- #480/#481/#482 `[[ -X ]]` no-operand
+- #526 `[[ -a/-o ]]`
+- #529 `$((1+(2))` paren mismatch
+- #534 `builtin 2>&1` (this entry)
+
+Pattern: zshrs's parser is broadly **less strict** than
+zsh, accepting malformed constructs that zsh rejects.
+
+**Where** — `src/ported/parser/command.rs::parse_simple`:
+prefix-keywords (`builtin`/`command`/`exec`/`noglob`/
+`nocorrect`) must require a command word after them.
+C-source `Src/parse.c::par_simple` errors when the
+keyword is followed only by redirect.
+
+**Impact** — typos involving prefix-keywords pass
+silently:
+
+```sh
+builtin                # typo: meant "builtin true"
+echo "still running"
+# zsh: parse error, script doesn't run
+# zshrs: builtin is no-op, echo runs as if nothing wrong
+```
+
+**Workaround** — CI lint for prefix-keyword-no-command.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -28991,11 +29159,14 @@ status.)
 | 529 | `$((1+(2))` paren-mismatch math silently rc=0 (no output) — zsh: parse error | **port-bug** | visual audit |
 | 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **port-bug** | `command mkdir` to force external |
 | 531 | `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 trap-function family | **port-bug** | string-form `trap`/`CHLD` |
+| 532 | zsh modules `zsh/stat`/`zsh/zselect`/`zsh/zpty`/`zsh/zftp` auto-loaded — extends #530 (zmodload-required-but-pre-loaded) | **port-bug** | `zmodload -e` explicit-detect probe |
+| 533 | `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2 (worst-case rc=0 set-e bypass) | **port-bug** | visual audit |
+| 534 | `builtin 2>&1` (bare redirect on reserved word) silently rc=0 — extends parser-strictness family | **port-bug** | CI lint for prefix-keyword-no-command |
 
-Of five hundred and thirty-one entries, two are fixed (5, 7), 2 freshly
+Of five hundred and thirty-four entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and twenty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and twenty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
