@@ -29210,6 +29210,136 @@ flags against the documented list (S/I/V/q/Q/C/U/L/...).
 
 ---
 
+## #547 — `echo "$~"` emits literal `$~` — zsh: empty (drops invalid `$X`)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "$~"' | od -c | head -1
+0000000   \n
+
+$ ./target/debug/zshrs --zsh -fc 'echo "$~"' | od -c | head -1
+0000000    $   ~  \n
+```
+
+`$X` where X is not a valid variable-name character or
+special parameter:
+- zsh: drops the `$X` (replaces with empty)
+- zshrs: keeps `$X` as literal text
+
+`~` after `$` is not a parameter name char (zsh's
+parameter names use `[a-zA-Z_][a-zA-Z0-9_]*`).
+
+Likely also affected: `$%`, `$&`, `$+x` (when `+x` isn't
+the +X test form), other punctuation chars.
+
+**Where** — `src/ported/paramsubst/parse.rs::parse_dollar`:
+unparseable `$X` should produce empty output, not
+literal text. C-source `Src/subst.c::paramsubst` returns
+NULL for unparseable, which gets translated to empty.
+
+**Impact** — string content with `$X` typos appears
+differently:
+
+```sh
+text="Cost: $X dollars"   # typo: should be $x
+echo "$text"
+# zsh: "Cost:  dollars" (empty replaced)
+# zshrs: "Cost: $X dollars" (literal X kept)
+```
+
+Minor — usually the typo's eventual surfaces but
+output-string contents differ.
+
+**Workaround** — none — both are technically incorrect
+behaviors for the unrecognized form, but they diverge.
+
+---
+
+## #548 — `${(   )a}` whitespace-only flag-paren error msg diverges — "error in flags" vs "bad substitution"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=hi; echo "${(   )a}" 2>&1'
+zsh:1: error in flags near position 4 in '${(   )a}"'
+
+$ ./target/debug/zshrs --zsh -fc 'a=hi; echo "${(   )a}" 2>&1'
+zsh:1: bad substitution
+```
+
+Empty `( )` flag-paren (containing only whitespace) is
+invalid syntax. Both shells reject, but:
+- zsh: "error in flags near position N" (with position
+  cursor)
+- zshrs: "bad substitution" (generic)
+
+Diagnostic-text-matching scripts that grep "error in
+flags" don't catch the zshrs case.
+
+**Where** — `src/ported/paramsubst/flags.rs::parse`:
+empty/whitespace flag-paren should emit the canonical
+"error in flags near position N" with the offset.
+
+**Impact** — diagnostic-quality divergence. Less
+impactful than functional bugs but adds to the
+error-message-format-divergence count.
+
+**Workaround** — match on rc only.
+
+---
+
+## #549 — `?(a)` extglob — zsh: "number expected" (glob qualifier); zshrs: matches as zero-or-one (ksh-style)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/a /tmp/_zg/ab; echo /tmp/_zg/?(a)'
+zsh:1: number expected
+
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/a /tmp/_zg/ab; echo /tmp/_zg/?(a)'
+/tmp/_zg/a
+```
+
+Different interpretation of `?(a)` in extended_glob:
+- zsh: parses `?` as single-char glob followed by `(a)`
+  as glob qualifier — `(a)` is invalid since `a` isn't a
+  number → "number expected" error
+- zshrs: interprets `?(a)` as ksh/bash-style **extglob
+  "zero or one a"** — matches `a` (and not `ab`)
+
+zshrs has imported bash's `?(pat)` extglob semantics
+into zsh-compat mode where zsh uses different syntax.
+
+zsh's equivalent for "zero or one" is `(pat|)` or just
+`(pat)` with the surrounding context allowing optional
+match.
+
+**Where** — `src/ported/glob/pattern.rs::parse_paren`:
+the `?(...)` form should be treated as `?` (any char)
+followed by `(...)` qualifier in zsh-compat mode, not
+bash's zero-or-one extglob.
+
+**Impact** — patterns written for zsh's extended_glob
+get different (and incorrect for zsh) results in zshrs:
+
+```sh
+# zsh-style: match a or aa (one or two a's)
+[[ "aa" == a(a|) ]] && echo m
+# zsh: m
+# zshrs: depends on extglob interp
+
+# zshrs's ?(a) matches files that are "a or empty +
+# something" — that's bash semantics
+```
+
+**Workaround** — use explicit alternation:
+```sh
+echo /tmp/_zg/(a|)   # zsh-style optional a
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -29760,11 +29890,14 @@ flags against the documented list (S/I/V/q/Q/C/U/L/...).
 | 544 | `a[0]="x"` zero-index array assignment silently accepted — zsh: "invalid subscript range" (zsh is 1-indexed) | **port-bug** | strict 1-index validation |
 | 545 | `${(s.X.)XXX}` all-separator string gives 4 empty fields — zsh: 2 (extends #542) | **port-bug** | filter via `(parts[@]:#)` |
 | 546 | `${(!)var}` invalid paramexp flag silently accepted — zsh: "error in flags near position N" | **port-bug** | visual audit / CI grep |
+| 547 | `echo "$~"` emits literal `$~` — zsh: drops invalid `$X` to empty | **port-bug** | (acceptable in user code) |
+| 548 | `${(   )a}` whitespace-only flag-paren error: "bad substitution" — zsh: "error in flags near position N" | **port-bug** | match on rc only |
+| 549 | `?(a)` extglob in zsh-mode: zshrs uses bash-style "zero-or-one" — zsh: rejects as broken glob-qualifier | **port-bug** | use `(a|)` explicit alternation |
 
-Of five hundred and forty-six entries, two are fixed (5, 7), 2 freshly
+Of five hundred and forty-nine entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and forty remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and forty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
