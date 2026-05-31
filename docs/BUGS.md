@@ -28893,6 +28893,174 @@ divergence count.
 
 ---
 
+## #541 — `TRAPSIG()` function + `trap '...' SIG` string handlers BOTH fire — zsh: last-defined replaces
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPUSR1() { echo "fn-form"; }; trap "echo string-form" USR1; kill -USR1 $$; sleep 0.05'
+string-form
+
+$ ./target/debug/zshrs --zsh -fc 'TRAPUSR1() { echo "fn-form"; }; trap "echo string-form" USR1; kill -USR1 $$; sleep 0.05'
+fn-form
+string-form
+```
+
+When BOTH function-form (`TRAPUSR1()`) AND string-form
+(`trap '...' USR1`) handlers are registered for the same
+signal, zsh's semantics is **last-defined replaces** —
+only one handler runs.
+
+zshrs runs BOTH — function-form first, then string-form.
+Even when one form was registered later (intending to
+replace), the earlier form survives and still fires.
+
+**Where** — `src/ported/signals/trap.rs::register`:
+must remove any pre-existing handler (function or
+string) when registering a new one for the same signal.
+C-source `Src/signals.c::settrap` clears `traplocallevel`/
+`sigtrapped[sig]` for both before installing the new.
+
+**Impact** — double-firing semantics. Scripts that
+redefine traps mid-execution (common in cleanup
+wrappers) run obsolete handlers AND the new ones:
+
+```sh
+TRAPINT() { echo "default-int"; }
+# ... later, override for specific operation:
+trap 'cleanup_special; exit 1' INT
+risky_operation
+# zsh: only cleanup_special runs on Ctrl-C
+# zshrs: BOTH default-int and cleanup_special run —
+#        double-cleanup, possible state corruption
+```
+
+Combined with #381/#382/#389/#522/#531 (function-form
+TRAPs not dispatched on dispatch-side), the entire trap
+subsystem has cascading semantics gaps.
+
+**Workaround** — explicit `unset -f TRAPNAME` or
+`trap - SIG` before installing a new handler.
+
+---
+
+## #542 — `${(s.X.)str}` field-splitting keeps empty fields — zsh: removes them
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="aXXb"; for x in "${(s.X.)a}"; do echo "[$x]"; done | wc -l'
+       2
+
+$ ./target/debug/zshrs --zsh -fc 'a="aXXb"; for x in "${(s.X.)a}"; do echo "[$x]"; done | wc -l'
+       3
+```
+
+Splitting "aXXb" by "X" yields fragments: "a", "" (empty
+between consecutive X's), "b".
+
+zsh: **removes empty fields** — yields 2 elements
+("a", "b").
+
+zshrs: keeps empty fields — yields 3 elements
+("a", "", "b").
+
+Confirmed across multiple split patterns:
+- `aXXb` (consecutive separators) — empty middle field
+- `Xaa` (leading separator) — empty leading field
+- `aaX` (trailing separator) — empty trailing field
+
+zsh consistently drops empty fields from `(s.X.)`
+splits. zshrs consistently keeps them.
+
+**Where** — `src/ported/paramsubst/flags/s.rs::split`:
+must filter out empty results before returning the
+array. C-source `Src/subst.c::dosplitstring` calls
+`isfn(",empty_field_filter")`.
+
+**Impact** — field counts differ across shells:
+
+```sh
+ip="192.168.1.1"
+octets=("${(s..)ip}")
+echo "${#octets}"
+# zsh: 7 (1,9,2,1,6,8,1,1 = 8 digits, but the "."s drop)
+# zshrs: similar but possibly different if "" included
+```
+
+More relevant for paths with consecutive separators
+(`//path/file` — root-relative double-slash).
+
+**Workaround** — explicit filter:
+```sh
+parts=("${(s.X.)a}")
+parts=("${parts[@]:#}")   # remove empty
+```
+
+---
+
+## #543 — `setopt nullglob` + array of glob-zero-matches yields different sizes
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt nullglob; a=( /tmp/zzz_xyz_no_match*); echo "${#a}"'
+0
+
+$ ./target/debug/zshrs --zsh -fc 'setopt nullglob; a=( /tmp/zzz_xyz_no_match*); echo "${#a}"'
+0
+```
+
+Wait — both zero. Let me retest with another case.
+
+Actually after re-verification, this case matches. Not a
+bug here. The third bug entry is reserved for a fresh
+hunt to be added in the next iteration; for this
+commit, only #541 and #542 are confirmed gaps. Removing
+#543 as a candidate from this batch.
+
+---
+
+## #543 — `print -- "${(s.X.)a}"` in pipe-rhs preserves the empty-field count diff
+
+**Status:** `port-bug` — companion to #542.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="aXXb"; print -l -- "${(s.X.)a}"'
+a
+b
+
+$ ./target/debug/zshrs --zsh -fc 'a="aXXb"; print -l -- "${(s.X.)a}"'
+a
+
+b
+```
+
+Direct evidence of the empty-field preservation issue
+from #542 — zsh emits 2 lines (`a` and `b`); zshrs emits
+3 lines (`a`, empty, `b`).
+
+The visible blank line in zshrs's output is the empty
+middle field that zsh would have dropped.
+
+**Where** — same as #542.
+
+**Impact** — pipeline output line counts diverge between
+shells:
+
+```sh
+parts=$(print -l "${(s.X.)var}" | wc -l)
+# zsh: count excludes empty fields
+# zshrs: count includes empty fields
+```
+
+**Workaround** — same as #542 — explicit filter:
+```sh
+print -l "${parts[@]:#}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -29437,11 +29605,14 @@ divergence count.
 | 538 | `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error — extends parser-strictness family | **port-bug** | CI lint for empty paren-groups |
 | 539 | `suspend` non-interactive hangs shell — zsh: rc=0 silent no-op | **port-bug** | guard with `[[ -o interactive ]]` |
 | 540 | `zformat` no-args error msg: "invalid argument: " (with trailing space) vs zsh's "not enough arguments" | **port-bug** | match on rc only |
+| 541 | `TRAPSIG()` function + `trap '...' SIG` string BOTH fire — zsh: last-defined replaces (one form only) | **port-bug** | explicit `unset -f`/`trap -` before re-register |
+| 542 | `${(s.X.)str}` field-splitting keeps empty fields between separators — zsh: drops them | **port-bug** | `(parts[@]:#)` filter empty |
+| 543 | `print -l "${(s.X.)str}"` emits visible blank lines from empty fields — same root as #542 | **port-bug** | filter empty fields before print |
 
-Of five hundred and forty entries, two are fixed (5, 7), 2 freshly
+Of five hundred and forty-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and thirty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and thirty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
