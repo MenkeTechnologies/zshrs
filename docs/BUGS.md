@@ -26618,6 +26618,161 @@ print "${(C)n1}"
 
 ---
 
+## #496 — `type ./path` (relative-path arg) PANICS with "attempt to subtract with overflow"
+
+**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'type ./target/debug/zshrs'
+./target/debug/zshrs not found
+
+$ ./target/debug/zshrs --zsh -c 'type ./target/debug/zshrs'
+thread 'main' (76147040) panicked at src/ported/builtin.rs:5959:55:
+attempt to subtract with overflow
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+```
+
+Calling `type` with a relative-path arg starting with
+`./` (or `../`) PANICS the shell with a Rust overflow.
+Exit code 101 (Rust panic).
+
+Verified across:
+- `type ./target/debug/zshrs` — panics
+- `type ./test` — panics
+- `type cd` — works
+- `type ls` — works (`ls is /bin/ls`)
+- `type /bin/ls` — works (absolute path)
+- `type /tmp/foo` — `not found` (no panic)
+
+The trigger is specifically **relative-path arg
+starting with `./`**.
+
+**Where** — `src/ported/builtin.rs:5959:55` per the panic
+location. Likely a `usize - usize` operation where the
+operand can be smaller than the subtractor (e.g.,
+stripping a path prefix when the prefix doesn't match).
+
+**Impact** — **Hard crash on common input**:
+
+```sh
+# Build script: probe for own helper
+if type ./helper.sh >/dev/null 2>&1; then
+    ./helper.sh
+fi
+# zsh: type fails (not found), branch skipped
+# zshrs: SHELL PANICS with rc=101
+```
+
+Exposes internal Rust panic format to end users —
+worst class of port-bug.
+
+**Workaround** — strip `./` prefix before passing:
+```sh
+type "${path#./}"
+```
+
+---
+
+## #497 — `$RPROMPT` initialized to empty string instead of unset — extends #479 bash-compat-init family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${RPROMPT-unset}]"'
+[unset]
+
+$ ./target/debug/zshrs --zsh -c 'echo "[${RPROMPT-unset}]"'
+[]
+```
+
+`RPROMPT` (right-side prompt) is **unset** by default
+in zsh — users opt-in. zshrs initializes it to empty
+string, so `${RPROMPT-unset}` returns `[]` (defined-as-
+empty) instead of `[unset]`.
+
+Same pattern as #479 (`$OPTERR=1` in zshrs but unset in
+zsh) — pre-initialized parameters where zsh leaves them
+unset.
+
+Likely also affected: `RPS1` (alias), `RPS2`,
+`SPROMPT`, `LISTMAX`, others.
+
+**Where** — `src/ported/params/init.rs`: RPROMPT/RPS1
+should not be auto-initialized.
+
+**Impact** — `[[ -v RPROMPT ]]` probes mis-report:
+
+```sh
+# Plugin: leave user's prompt alone
+if [[ -v RPROMPT ]]; then
+    echo "user has set RPROMPT"
+else
+    RPROMPT="%T"
+fi
+# zsh: not set, plugin sets default
+# zshrs: looks set (empty) — plugin skips setup; right-
+#        prompt stays empty
+```
+
+**Workaround** — use `[[ -n $RPROMPT ]]` (non-empty
+check) instead of `-v` (set check).
+
+---
+
+## #498 — `readonly x=N` on already-readonly x silently rc=0 — zsh errors "read-only variable"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'readonly x=1; readonly x=2 2>&1 | head -1; echo "rc=${pipestatus[1]}"'
+zsh:1: read-only variable: x
+rc=1
+
+$ ./target/debug/zshrs --zsh -c 'readonly x=1; readonly x=2 2>&1 | head -1; echo "rc=${pipestatus[1]}"'
+rc=0
+```
+
+zsh's `readonly` protects against re-declaration: when
+the parameter is already readonly, attempting `readonly
+x=NEWVAL` emits "read-only variable: x" and returns
+rc=1.
+
+zshrs silently accepts the re-declaration with rc=0 —
+no diagnostic, AND the value may actually change to the
+new value (separate verification needed but earlier
+tests suggest the value also changes in zshrs).
+
+Same family as #419 (`unset LINENO` no diagnostic),
+#374/#373/#375 (special vars missing readonly) — readonly
+protection is broadly underenforced.
+
+**Where** — `src/ported/builtins/readonly.rs::redeclare`:
+must check existing `PM_READONLY` flag and emit the
+"read-only variable" diagnostic + return rc=1 on retry.
+
+**Impact** — silent override of readonly intent —
+configuration values intended to be locked can be silently
+overwritten:
+
+```sh
+readonly LOG_LEVEL=info
+# ... later, typo or careless overwrite:
+readonly LOG_LEVEL=debug
+# zsh: error, LOG_LEVEL stays "info" + script may
+#      exit (errexit) on the rc=1
+# zshrs: silently becomes "debug"
+```
+
+**Workaround** — typeset -p probe before re-declaration:
+```sh
+[[ "$(typeset -p X 2>/dev/null)" == *"-r"* ]] && {
+    echo "X is readonly" >&2; return 1
+}
+readonly X=newval
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -27117,9 +27272,12 @@ print "${(C)n1}"
 | 493 | `%i` prompt escape (line number) returns 0 instead of 1 — off-by-one (extends #385/#396 line-numbering family) | **port-bug** | `$((LINENO + 1))` adjust |
 | 494 | `$((a + 1))` with `a="42xyz"` silently coerces to 0 — zsh: "bad math expression: operator expected" | **port-bug** | pre-validate numeric input with regex |
 | 495 | `${(C)a[1]}` capitalize-flag + array-subscript errors "bad substitution" — extends #436 flag×subscript family | **port-bug** | bind subscript-result to scalar first |
+| 496 | **CRITICAL** `type ./path` PANICS with "attempt to subtract with overflow" at builtin.rs:5959 — relative-path arg crashes shell | **port-bug** | strip `./` prefix before passing to `type` |
+| 497 | `$RPROMPT` initialized to empty string instead of unset (extends #479 bash-compat-init family) | **port-bug** | `[[ -n $RPROMPT ]]` non-empty check |
+| 498 | `readonly x=N` on already-readonly x silently rc=0 — zsh errors "read-only variable" | **port-bug** | `typeset -p X` probe before re-declare |
 
-Of four hundred and ninety-five entries, two are fixed (5, 7),
-four hundred and eighty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and ninety-eight entries, two are fixed (5, 7),
+four hundred and ninety-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
