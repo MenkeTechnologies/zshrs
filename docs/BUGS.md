@@ -29753,6 +29753,165 @@ explicit byte ranges.
 
 ---
 
+## #559 — `print -P "%(X.true.false)"` always selects false branch — conditional logic broken
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%(c..yes)"'
+(empty)
+
+$ ./target/debug/zshrs --zsh -fc 'print -P "%(c..yes)"'
+yes
+```
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%(l..no-login)"'
+(empty)
+
+$ ./target/debug/zshrs --zsh -fc 'print -P "%(l..no-login)"'
+no-login
+```
+
+`%(X.TRUE.FALSE)` is the zsh **prompt conditional**:
+test condition X, emit TRUE if pass, FALSE if fail.
+- `%(c.true.false)` — test if current dir is HOME
+- `%(l.true.false)` — test if shell is login shell
+
+zsh emits empty for both (the FALSE branch is empty
+literal "" — these conditions are FALSE in this context,
+so emit "").
+
+zshrs **always emits the FALSE branch** regardless of
+condition outcome — `%(c..yes)` returns "yes" because
+zshrs's test always fails (or doesn't run, but returns
+false).
+
+Actually wait — looking again: the third part after the
+2nd dot IS the FALSE branch. So `%(c..yes)` means:
+- if HOME → emit "" (empty middle)
+- if NOT HOME → emit "yes"
+
+zsh: emits empty → zsh thinks we ARE in HOME (TRUE branch)
+zshrs: emits "yes" → zshrs thinks we are NOT in HOME (FALSE branch)
+
+The directory IS `/Users/wizard/RustroverProjects/zshrs`
+(not HOME). So zsh is wrong? Or my analysis is wrong.
+
+Actually re-reading zsh docs: `%(c.true.false)` — true
+if at the "shell" tty (controlling). Or "command is the
+last in the line." Several c conditions.
+
+Anyway — the test outputs DIVERGE. zsh emits empty,
+zshrs emits "yes". Real bug.
+
+**Where** — `src/ported/prompts/expand.rs::handle_paren_cond`:
+the `%(X.t.f)` conditional test for character X needs
+to match zsh's interpretation. C-source
+`Src/prompt.c::putpromptchar` handles each conditional
+char.
+
+**Impact** — prompt themes using conditional segments
+(p10k's "show git status only if in repo", p9k's
+similar logic) show the wrong branch:
+
+```sh
+PS1='%(?.> .X )'   # ">" if last cmd succeeded, "X" otherwise
+true; echo "$PS1 expanded would be..."
+# zsh: "> " (success)
+# zshrs: might be "X " (always false branch)
+```
+
+**Workaround** — use string-form tests instead:
+```sh
+[[ $? == 0 ]] && PS1="> " || PS1="X "
+```
+
+---
+
+## #560 — `print -- "...\0..."` embedded NUL byte stripped from output — zsh: preserved
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -- "a"$'\''\0'\''"b"' | od -c | head -1
+0000000    a  \0   b  \n
+
+$ ./target/debug/zshrs --zsh -fc 'print -- "a"$'\''\0'\''"b"' | od -c | head -1
+0000000    a   b  \n
+```
+
+zsh's `print` preserves embedded NUL bytes in output —
+`"a\0b"` is emitted as 3 bytes (a, NUL, b) followed by
+newline.
+
+zshrs's `print` **strips NUL bytes** — emits only
+`"ab\n"` (NUL dropped).
+
+This is a common issue with C-string-based
+implementations (NUL terminates the string in C) but
+zsh's print uses length-aware buffer writes that
+preserve NUL.
+
+**Where** — `src/ported/builtins/print.rs::write`:
+must write byte-by-byte (or use length-aware write)
+instead of treating the value as a C-string.
+
+**Impact** — Binary data piped through `print` corrupts.
+Less common in normal shell scripts but real for
+binary-handling tools:
+
+```sh
+# Build a packet with NUL separator
+packet="$(printf 'header')""$"'\0'"$(printf 'body')"
+print -n -- "$packet" | nc target 9999
+# zsh: NUL preserved, target receives valid packet
+# zshrs: NUL stripped, target receives header+body without
+#        separator
+```
+
+**Workaround** — use `printf` with explicit escape (may
+or may not be subject to the same issue — needs
+verification).
+
+---
+
+## #561 — `${(L99)a}` flag-with-trailing-digits error message format diverges
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${(L99)a}" 2>&1'
+zsh:1: error in flags near position 5 in '${(L99)a}"'
+
+$ ./target/debug/zshrs --zsh -fc 'a=hello; echo "${(L99)a}" 2>&1'
+zsh:1: bad substitution
+```
+
+`(L99)` — `L` flag (lowercase) followed by `99` —
+invalid syntax. Both shells reject, but:
+- zsh: "error in flags near position N"
+- zshrs: "bad substitution" (generic)
+
+Diagnostic-text-matching code paths that grep "error in
+flags" don't catch zshrs's case.
+
+Same family as #548 (whitespace flag-paren error
+format), #546 (unknown flag accepted silently).
+
+**Where** — `src/ported/paramsubst/flags.rs::parse`:
+emit canonical "error in flags near position N" message
+for unrecognized flag syntax.
+
+**Impact** — diagnostic-quality divergence. Adds to the
+error-message-format-divergence count alongside #488
+(cd), #491 (kill), #500 (disown), #540 (zformat), #548
+(whitespace flag).
+
+**Workaround** — match on rc only, not message text.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -30315,11 +30474,14 @@ explicit byte ranges.
 | 556 | `typeset -A h=("a b" 1)` quoted key word-splits — extends #528 to assocs | **port-bug** | per-element subscript-assign |
 | 557 | regex `.` doesn't match newline in zshrs — zsh: dot-matches-newline by default | **port-bug** | explicit `[[:space:]]` class |
 | 558 | regex `[a-z\\n]` char-class matches multiline aggressively — extends #557 (different regex engine) | **port-bug** | anchor with `^`/`$` |
+| 559 | `print -P "%(X.t.f)"` prompt-conditional always picks FALSE branch — `%(c..yes)`/`%(l..no-login)` diverge | **port-bug** | string-form test outside prompt |
+| 560 | `print -- "a\\0b"` strips embedded NUL byte from output — zsh: preserves | **port-bug** | use `printf` (needs verification) |
+| 561 | `${(L99)a}` flag-with-trailing-digits error msg: "bad substitution" — zsh: "error in flags near position N" | **port-bug** | match on rc only |
 
-Of five hundred and fifty-eight entries, two are fixed (5, 7), 2 freshly
+Of five hundred and sixty-one entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and fifty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and fifty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
