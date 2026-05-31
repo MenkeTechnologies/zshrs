@@ -1,0 +1,64 @@
+# cross-rs per-target Docker image overrides.
+#
+# src/ported/modules/{curses,terminfo,cap,db_gdbm}.rs declare
+# `#[link(name = "...")]` for ncurses + tinfo + cap + gdbm. The
+# default `ghcr.io/cross-rs/aarch64-unknown-linux-gnu` image ships
+# gcc-cross + libc6:arm64 but NOT these dev headers, so cargo's
+# linker invocation fails with `cannot find -lncurses` / `-ltinfo`.
+#
+# `pre-build` runs once per cross-build inside the Docker image
+# before cargo. Enable arm64 / armhf multiarch then `apt-get install`
+# the matching `*-dev:<arch>` packages so the cross linker finds the
+# arm64 .so files.
+#
+# Mirror is the same dance for armhf / i686 / riscv64 — each cross
+# target needs its libs in its own multiarch dir.
+
+[target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update",
+    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+]
+
+[target.armv7-unknown-linux-gnueabihf]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update",
+    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+]
+
+[target.arm-unknown-linux-gnueabihf]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update",
+    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+]
+
+[target.i686-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update",
+    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+]
+
+[target.riscv64gc-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update",
+    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+]
+
+[target.powerpc64le-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update",
+    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+]
+
+[target.s390x-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update",
+    "apt-get install -y libncurses-dev:$CROSS_DEB_ARCH libtinfo-dev:$CROSS_DEB_ARCH libgdbm-dev:$CROSS_DEB_ARCH libcap-dev:$CROSS_DEB_ARCH",
+]
