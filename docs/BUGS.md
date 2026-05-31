@@ -27875,6 +27875,143 @@ Shell behavior is "shell dies" on runaway recursion.
 
 ---
 
+## #520 — `HISTSIZE=N` assignment ignored — value reads back as default regardless
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'HISTSIZE=100; echo "[$HISTSIZE]"'
+[100]
+
+$ ./target/debug/zshrs --zsh -fc 'HISTSIZE=100; echo "[$HISTSIZE]"'
+[999999999]
+```
+
+Assigning to `HISTSIZE` is the standard mechanism to set
+the in-memory history buffer size. zsh updates the value;
+zshrs ignores the assignment — `$HISTSIZE` continues to
+return the default cap (`999999999` — likely 10^9 - 1
+hardcoded somewhere).
+
+`typeset -p HISTSIZE` reveals further inconsistency:
+- zsh: `export -i10 HISTSIZE=999999999`
+- zshrs: `export -i HISTSIZE=0`
+
+zshrs stores `0` internally but the getter returns
+`999999999` on read. The setter doesn't propagate.
+
+**Where** — `src/ported/params/histsize.rs::setfn` (or
+the GSU for HISTSIZE): assignment must update both the
+storage and any cached "max" value. C-source
+`Src/params.c::histsizesetfn` updates `histsiz` global.
+
+**Impact** — `.zshrc` lines like `HISTSIZE=10000` are
+no-ops in zshrs. History buffer grows unbounded (or stays
+at whatever the default is) regardless of user config.
+
+```sh
+HISTSIZE=10000
+# zsh: history capped at 10000 entries
+# zshrs: HISTSIZE silently ignored
+```
+
+**Workaround** — none discovered — assignment to
+HISTSIZE doesn't take effect.
+
+---
+
+## #521 — `[[ "" == (#c0,0) ]]` matches in zshrs — zsh rejects as "bad pattern"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; [[ "" == (#c0,0) ]] && echo m'
+zsh:1: bad pattern: (#c0,0)
+
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; [[ "" == (#c0,0) ]] && echo m'
+m
+```
+
+`(#cN,M)` is the count-range glob qualifier. zsh
+**rejects** `(#c0,0)` as invalid (the 0,0 range is
+nonsensical — the qualifier needs a preceding pattern).
+
+zshrs accepts the malformed expression and treats it as
+"match empty string" — returning a match for the empty
+LHS.
+
+Two layers of bug here:
+1. The `(#cN,M)` qualifier IS still partially implemented
+   in zshrs even though #489 documented it as broken for
+   normal cases. Empty input + 0,0 happens to "match"
+   silently.
+2. Bare `(#cN,M)` without a preceding pattern should
+   error.
+
+**Where** — `src/ported/glob/pattern.rs::parse_paren_flag`:
+must reject `(#c...)` without preceding pattern term, AND
+must error on degenerate 0,0 range.
+
+**Impact** — minor — `(#c0,0)` in user code would
+behave inconsistently between zsh and zshrs.
+
+---
+
+## #522 — `TRAPDEBUG()` function-form not invoked before each command — extends #381 family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPDEBUG() { echo "DEBUG"; }; true; true'
+DEBUG
+DEBUG
+
+$ ./target/debug/zshrs --zsh -fc 'TRAPDEBUG() { echo "DEBUG"; }; true; true'
+(empty)
+```
+
+`TRAPDEBUG` is zsh's documented pseudo-signal that fires
+**before each command execution** — distinct from regular
+TRAP* handlers that fire on POSIX signals. Used by:
+- Shell debuggers (zsh-debug)
+- Profilers measuring per-command timings
+- Audit tools recording command execution
+- `set -x`-like custom trace emitters
+
+zshrs doesn't invoke `TRAPDEBUG` — same root cause as
+#381 (TRAPINT not invoked), #382 (TRAPEXIT), #389
+(TRAPZERR) — function-form TRAP* handlers not
+dispatched.
+
+The DEBUG pseudo-signal is structurally different from
+real signals: it must fire from the command-execution
+loop, not the signal handler. So fixing it might need
+a separate dispatch point from the other TRAP* fixes.
+
+**Where** — `src/ported/exec/exec.rs::execcmd` (command-
+exec entry): must check for `TRAPDEBUG` function and
+invoke it before each command. C-source
+`Src/exec.c::execcmd` calls `dotrapargs(SIGDEBUG, ...)`
+which routes through both function-trap and string-trap
+tables.
+
+**Impact** — debuggers / profilers that use TRAPDEBUG
+get zero call-points. Specifically:
+- zsh-debug (the debugger): completely non-functional
+- p10k transient-prompt timing: incorrect (relies on
+  TRAPDEBUG for "command-start" marker)
+- Custom command-counter scripts: never increment
+
+**Workaround** — string-form trap:
+```sh
+trap 'echo "DEBUG"' DEBUG
+```
+
+(Untested — likely also broken since same dispatch
+gap.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -28398,11 +28535,14 @@ Shell behavior is "shell dies" on runaway recursion.
 | 517 | `LC_NUMERIC`/`LC_TIME`/`LC_COLLATE`/`LC_CTYPE` initialized to empty string instead of unset — bash-init contamination (extends #479/#497) | **port-bug** | use `[[ -n $LC_TIME ]]` non-empty check |
 | 518 | `$PROMPT`/`$PS1` (and PROMPT2-4/PS2-4) NOT bidirectionally aliased — modifying one doesn't update the other | **port-bug** | explicit dual-assign |
 | 519 | **CRITICAL** infinite-recursion function crashes shell with stack overflow (exit 134) — zsh: FUNCNEST limit catches | **port-bug** | none — avoid recursion |
+| 520 | `HISTSIZE=N` assignment ignored — reads back as default `999999999` regardless | **port-bug** | none — assignment has no effect |
+| 521 | `[[ "" == (#c0,0) ]]` matches in zshrs — zsh rejects as "bad pattern" — extends #489 broken-cN family | **port-bug** | (#c0,0) shouldn't be used |
+| 522 | `TRAPDEBUG()` function-form not invoked before each command — extends #381 family (DEBUG pseudo-signal) | **port-bug** | none — debuggers/profilers can't hook |
 
-Of five hundred and nineteen entries, two are fixed (5, 7), 2 freshly
+Of five hundred and twenty-two entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and thirteen remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and sixteen remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
