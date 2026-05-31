@@ -24546,6 +24546,192 @@ esac
 
 ---
 
+## #457 — nested `${(j:|:)${(s/:/)a}}` paramexp returns only first split element
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="x:y:z"; echo "${(j:|:)${(s/:/)a}}"'
+x|y|z
+
+$ ./target/debug/zshrs --zsh -c 'a="x:y:z"; echo "${(j:|:)${(s/:/)a}}"'
+x
+```
+
+Nested paramexp: inner `${(s/:/)a}` splits `x:y:z` by
+`:` to array `(x y z)`. Outer `${(j:|:)…}` joins with
+`|`. Combined result: `x|y|z`.
+
+zshrs's nested form returns only the first element from
+the inner split — `x` — discarding the rest.
+
+The outer `(j)` flag is supposed to operate on the array
+result of the inner expansion. zshrs's parser likely
+collapses the inner result to a scalar (taking element 1)
+before applying the outer flag.
+
+**Where** — `src/ported/paramsubst/nested.rs` (or
+equivalent): inner paramexp result must remain an array
+when the outer expression has an array-flag. C-source
+`Src/subst.c::paramsubst` keeps array-ness through nested
+expansions via the `multsub` flag.
+
+**Impact** — common one-line transforms broken:
+
+```sh
+# Convert PATH to one-per-line for pretty-printing
+echo "${(F)${(s/:/)PATH}}"
+# zsh: each PATH component on its own line
+# zshrs: only the first PATH component prints
+
+# Sort and dedupe array elements inline
+echo "${(uo)${(s/:/)var}}"
+# zsh: unique, sorted, joined
+# zshrs: just first element
+```
+
+Common in zsh-style data-transformation pipelines that
+avoid intermediate variables.
+
+**Workaround** — use intermediate variable:
+```sh
+arr=("${(s/:/)a}")
+echo "${(j:|:)arr}"
+```
+
+---
+
+## #458 — `[[ "$a" == $p ]]` treats `$p` as glob pattern by default — zsh requires `${~p}` opt-in
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'p="*"; [[ "abc" == $p ]] && echo m || echo n'
+n
+
+$ ./target/debug/zshrs --zsh -c 'p="*"; [[ "abc" == $p ]] && echo m || echo n'
+m
+```
+
+In zsh, parameter expansion on the RHS of `[[ ... == PAT ]]`
+is **literal by default** — the value of `$p` is used as
+a literal string for comparison, NOT as a glob pattern.
+
+To enable glob interpretation of an expanded parameter,
+zsh requires either:
+- Explicit globbing flag: `${~p}` — pattern-expand
+- Global setopt: `GLOB_SUBST`
+
+zshrs treats `$p` as a glob pattern by default. So
+`$p="*"` makes `[[ "abc" == * ]]` match anything.
+
+When user explicitly uses `${~p}`, both shells correctly
+glob-match. The bug is the default behavior.
+
+**Where** — `src/ported/conditional/match.rs::resolve_pattern`:
+pattern-side of `==`/`!=` must check if the source token
+was a parameter expansion vs an inline literal. Inline
+literals get pattern interpretation; param expansions
+don't (unless `~` flag or GLOB_SUBST).
+
+C-source `Src/cond.c::cond_match` checks the `EXPR_TYPE`
+of the RHS — `EXPR_VAR` doesn't glob-substitute by
+default.
+
+**Impact** — **Inverse behavior between shells**.
+Defensive code that relies on zsh's literal-by-default
+gets clobbered by zshrs's glob-by-default:
+
+```sh
+# Compare user input to known literal pattern
+expected='a*c'   # literal string with asterisk
+if [[ "$user_input" == $expected ]]; then
+    echo "exact match"
+fi
+# zsh: matches only literal "a*c"
+# zshrs: matches any string starting with 'a' ending with 'c'
+```
+
+This is a **security-relevant divergence** when patterns
+contain wildcards intentionally (input validation),
+because zshrs is more permissive.
+
+**Workaround** — quote the RHS:
+```sh
+[[ "$user_input" == "$expected" ]]
+```
+
+Quoted form is literal in both shells.
+
+---
+
+## #459 — `source script.zsh ARGS` doesn't pass positional args to sourced script
+
+**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+
+```sh
+$ cat > /tmp/_src.zsh <<EOF
+echo "received: $@"
+echo "count: $#"
+EOF
+$ /opt/homebrew/bin/zsh -fc 'source /tmp/_src.zsh hello world'
+received: hello world
+count: 2
+
+$ ./target/debug/zshrs --zsh -c 'source /tmp/_src.zsh hello world'
+received:
+count: 0
+```
+
+`source` (and its alias `.`) accept positional arguments
+in zsh — they're available as `$@` / `$#` / `$1` etc.
+inside the sourced script.
+
+zshrs's `source` builtin ignores all arguments after the
+filename — the sourced script sees `$#=0` regardless of
+how many args were passed.
+
+**Where** — `src/ported/builtins/source.rs::execute`:
+must extract args after `argv[0]` (filename) and push
+them as the new positional-param frame for the duration
+of the source. C-source `Src/init.c::sourcehome` and
+`Src/builtins.c::bin_dot` save existing pparams, set
+to the source's argv-tail, execute, restore on return.
+
+**Impact** — **MASSIVE** — every library/plugin/helper
+script that takes args from `source` is broken:
+
+```sh
+# Common: source a helper with config args
+source ~/.zshrc.d/setup.zsh "$ENV" "$USER"
+# Inside setup.zsh:
+env="$1"
+user="$2"
+# zsh: env and user populated
+# zshrs: env and user empty
+```
+
+Real-world: oh-my-zsh's `omz` command, zinit's plugin-
+load with arg passing, zsh-defer's deferred-source pattern,
+any "config-pass-through-source" idiom.
+
+**Workaround** — use environment variables to pass args:
+```sh
+ZSH_ARG1="$ENV" ZSH_ARG2="$USER" source ~/.zshrc.d/setup.zsh
+# Inside setup.zsh use $ZSH_ARG1 instead of $1
+```
+
+Or pre-set positional params before sourcing:
+```sh
+set -- "$ENV" "$USER"
+source ~/.zshrc.d/setup.zsh
+```
+
+But this overwrites the parent's `$@` too, which has its
+own side effects.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -25006,9 +25192,12 @@ esac
 | 454 | keymap creation/deletion (`bindkey -N`/`-D`) in subshell LEAKS to parent — extends #453 to keymap table | **port-bug** | fork explicit child |
 | 455 | function definitions inside `$(...)` cmd-substitution LEAK to parent — extends #451 to cmdsub context | **port-bug** | manual save/restore via `declare -f` |
 | 456 | `[[ "(x)" == "(x)" ]]` doesn't match — quoted parens in pattern not treated as literal (same family as #13/#449) | **port-bug** | use `case` instead of `[[ ]]` for literals |
+| 457 | nested `${(j:|:)${(s/:/)a}}` paramexp returns only first split element instead of joined whole | **port-bug** | use intermediate array variable |
+| 458 | `[[ "$a" == $p ]]` treats `$p` as glob by default — zsh requires `${~p}` or `GLOB_SUBST` opt-in (security-relevant inverse) | **port-bug** | quote the RHS `"$p"` |
+| 459 | **CRITICAL** `source script.zsh ARGS` ignores positional args — sourced script sees `$#=0` | **port-bug** | `set -- ARGS; source script.zsh` |
 
-Of four hundred and fifty-six entries, two are fixed (5, 7),
-four hundred and fifty remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and fifty-nine entries, two are fixed (5, 7),
+four hundred and fifty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
