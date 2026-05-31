@@ -855,46 +855,71 @@ class ZshrsLexer : LexerBase() {
                 c.isDigit() || c in "?!$#*@-_"
         }
 
+        // ── Keyword & builtin sets (regenerated) ──────────────────────
+        // Source: data/grammar/canonical.json
+        // Regenerate: python3 scripts/gen_grammar_intellij.py
+        // Do not hand-edit between BEGIN/END markers.
+
+        // BEGIN-CANONICAL: control-keywords
         private val CONTROL_KEYWORDS = setOf(
-            "if", "then", "else", "elif", "fi",
-            "for", "foreach", "while", "until", "do", "done",
-            "case", "esac", "select", "repeat",
-            "in", "time", "coproc", "always", "nocorrect", "noglob",
+            "!", "[[", "]]", "always", "case", "do", "done", "elif", "else", "end", "esac",
+            "fi", "for", "foreach", "if", "in", "repeat", "select", "then", "until",
+            "while", "{", "}",
         )
+        // END-CANONICAL: control-keywords
+
+        // BEGIN-CANONICAL: decl-keywords
         private val DECL_KEYWORDS = setOf(
-            "local", "typeset", "declare", "export", "readonly",
-            "integer", "float", "private", "functions",
-            "let", "set", "shift",
+            "declare", "export", "float", "integer", "let", "local", "readonly", "set",
+            "shift", "typeset",
         )
+        // END-CANONICAL: decl-keywords
+
+        // BEGIN-CANONICAL: fn-keywords
         private val FN_KEYWORDS = setOf("function")
-        private val LOOP_KEYWORDS = setOf("break", "continue", "return", "exit", "logout")
+        // END-CANONICAL: fn-keywords
+
+        // BEGIN-CANONICAL: loop-keywords
+        private val LOOP_KEYWORDS = setOf(
+            "break", "continue", "exit", "logout", "return",
+        )
+        // END-CANONICAL: loop-keywords
+
+        // BEGIN-CANONICAL: modifier-keywords
         private val MODIFIER_KEYWORDS = setOf(
-            "alias", "unalias", "setopt", "unsetopt", "zstyle", "zmodload", "zle",
-            "autoload", "bindkey", "compdef", "compinit", "compinstall", "compaudit",
-            "zcompile", "zparseopts", "zformat", "zmv", "zcp", "zln",
-            "zftp", "zcalc", "zsh-newuser-install", "ztcp", "zsystem",
-            "fpath", "manpath", "path", "cdpath", "fignore",
+            "alias", "autoload", "bindkey", "builtin", "cdpath", "command", "compaudit",
+            "compdef", "compinit", "compinstall", "coproc", "fignore", "fpath", "manpath",
+            "nocorrect", "noglob", "path", "setopt", "time", "unalias", "unsetopt", "zcalc",
+            "zcompile", "zcp", "zformat", "zftp", "zle", "zln", "zmodload", "zmv",
+            "zparseopts", "zsh-newuser-install", "zstyle", "zsystem", "ztcp",
         )
+        // END-CANONICAL: modifier-keywords
+
+        // BEGIN-CANONICAL: io-keywords
         private val IO_KEYWORDS = setOf(
-            "source", ".", "eval", "exec", "trap",
-            "echo", "print", "printf", "read", "readarray", "mapfile",
-            "true", "false", ":",
+            ".", ":", "echo", "eval", "exec", "false", "mapfile", "print", "printf", "read",
+            "readarray", "source", "trap", "true",
         )
+        // END-CANONICAL: io-keywords
+
+        // BEGIN-CANONICAL: builtins
         private val BUILTINS = setOf(
-            "cd", "pwd", "pushd", "popd", "dirs",
-            "test", "[", "[[", "]]",
-            "umask", "ulimit", "wait", "kill", "jobs", "fg", "bg", "suspend", "disown",
-            "history", "fc", "r", "hash", "unhash", "rehash",
-            "command", "type", "which", "whence", "where",
-            "builtin", "enable", "disable", "noglob",
-            "getopts", "getopt", "shift", "unset", "unfunction",
-            "trap", "exit",
-            "limit", "unlimit", "sched", "vared",
-            "stat", "zstat", "zsocket",
-            "compadd", "compset", "compcall", "compdescribe", "compfiles",
-            "comparguments", "compgroups", "complist", "comppostfuncs", "comppreinit",
-            "compstate", "comptags", "comptry", "compvalues",
-            "true", "false", "null",
+            "[", "bg", "bye", "cap", "cd", "chdir", "chgrp", "chmod", "chown", "clone",
+            "dirs", "disable", "disown", "echotc", "echoti", "emulate", "enable", "example",
+            "fc", "fg", "functions", "getcap", "getln", "getopts", "hash", "hashinfo",
+            "history", "jobs", "kill", "ln", "log", "mem", "mkdir", "mv", "nameref",
+            "patdebug", "pcre_compile", "pcre_match", "pcre_study", "popd", "private",
+            "pushd", "pushln", "pwd", "r", "rehash", "rm", "rmdir", "setcap", "stat",
+            "strftime", "suspend", "sync", "syserror", "sysopen", "sysread", "sysseek",
+            "syswrite", "test", "times", "ttyctl", "type", "umask", "unfunction", "unhash",
+            "unset", "wait", "whence", "where", "which", "zask", "zcache", "zcompdump",
+            "zcomplete", "zcurses", "zd", "zdelattr", "zf_chgrp", "zf_chmod", "zf_chown",
+            "zf_ln", "zf_mkdir", "zf_mv", "zf_rm", "zf_rmdir", "zf_sync", "zgdbmpath",
+            "zgetattr", "zhistory", "zid", "zjob", "zlistattr", "zlock", "zlog", "zls",
+            "znotify", "zping", "zprof", "zpty", "zpublish", "zregexparse", "zselect",
+            "zsend", "zsetattr", "zsocket", "zsource", "zstat", "zsubscribe", "zsuggest",
+            "zsync", "ztag", "ztie", "zunsubscribe", "zuntag", "zuntie", "zwc", "zwhere",
         )
+        // END-CANONICAL: builtins
     }
 }

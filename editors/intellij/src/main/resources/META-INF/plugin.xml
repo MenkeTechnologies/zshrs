@@ -3,6 +3,7 @@
     <name>zshrs</name>
     <vendor email="linux.dev25@gmail.com" url="https://github.com/MenkeTechnologies/zshrs">MenkeTechnologies</vendor>
 
+    <!-- BEGIN-CANONICAL: plugin-description -->
     <description><![CDATA[
         <p>JetBrains IDE support for <b>zshrs</b> — the first compiled Unix shell
         (Rust bytecode VM + fusevm JIT + persistent worker pool).</p>
@@ -24,10 +25,33 @@
                 fetched live from <code>zshrs --dump-reflection</code>.</li>
         </ul>
 
+        <p><b>Grammar coverage</b> (regenerated from canonical zsh sources, see
+        <code>data/grammar/canonical.json</code>):</p>
+        <ul>
+            <li><!-- COUNT:keywords --><b>50</b> reserved keywords (control flow / declaration /
+                modifier / I/O / loop control / grouping).</li>
+            <li><!-- COUNT:builtins --><b>157</b> builtins (POSIX + zsh core +
+                zsh modules + zshrs extensions).</li>
+            <li><!-- COUNT:options --><b>196</b> <code>setopt</code> options (every name
+                from upstream <code>options.c::optns[]</code>).</li>
+            <li><!-- COUNT:special_vars --><b>88</b> special variables from
+                <code>params.c::special_params[]</code>.</li>
+            <li><!-- COUNT:param_flags --><b>38</b> parameter expansion flags
+                (<code>${(L)var}</code>, <code>${(j:x:)arr}</code>, …).</li>
+            <li><!-- COUNT:glob_qualifiers --><b>44</b> glob qualifiers
+                (<code>*(.f-/)</code>, <code>**/*(N)</code>, …).</li>
+            <li><!-- COUNT:operators --><b>55</b> operators / redirections
+                / substitution forms.</li>
+            <li><!-- COUNT:history_expansions --><b>10</b> history expansions and
+                <!-- COUNT:modifiers --><b>16</b> word modifiers
+                (<code>:h</code>, <code>:t</code>, <code>:s/old/new/</code>, …).</li>
+        </ul>
+
         <p><b>Requirements:</b> a paid JetBrains IDE on 2024.2+ (RustRover, IDEA Ultimate, GoLand,
         PyCharm Pro, WebStorm, etc.) because zshrs uses the platform LSP API. Community editions
         are not supported.</p>
     ]]></description>
+    <!-- END-CANONICAL: plugin-description -->
 
     <change-notes><![CDATA[
         <h3>0.11.4</h3>

@@ -71,19 +71,31 @@ class ZshrsColorSettingsPage : ColorSettingsPage {
     override fun getDisplayName(): String = "zshrs"
 
     companion object {
+        // BEGIN-CANONICAL: color-settings-demo
+        // Regenerated from data/grammar/canonical.json by
+        // scripts/gen_grammar_intellij.py. Every grammar/syntax category
+        // appears at least once so each color slot has a live preview.
         private val DEMO = """
             #!/usr/bin/env zshrs
             ## demo.zsh — every token category for color tweaking.
             ## Doc comments (##) get their own color slot, distinct
-            ## from regular # remarks below.
+            ## from regular # remarks below. Sourced from
+            ## data/grammar/canonical.json — regenerate the demo
+            ## via scripts/gen_grammar_intellij.py.
             # Regular code comment — uses the plain Line-comment slot.
-            setopt EXTENDED_GLOB NULL_GLOB PIPE_FAIL
+
+            # ── options + module loading ──
+            setopt EXTENDED_GLOB NULL_GLOB PIPE_FAIL NO_CLOBBER PROMPT_SUBST
+            unsetopt BG_NICE
+            zmodload zsh/datetime zsh/parameter zsh/zle
             autoload -Uz compinit && compinit -d ~/.cache/zshrs/zcompdump
 
-            ## Max worker count, picked up by the LSP as a parameter doc.
+            # ── decl keywords + special vars ──
             typeset -gA Z_PLUGIN_CACHE
             local -i count=0
             local TIMER=${"$"}EPOCHREALTIME
+            integer pid=${"$"}${"$"} ppid=${"$"}PPID
+            readonly RPROMPT_BACKUP=${"$"}RPROMPT
 
             ## Greet the user — attached as `greet`'s function doc.
             function greet() {
@@ -92,27 +104,72 @@ class ZshrsColorSettingsPage : ColorSettingsPage {
                 return 0
             }
 
-            for f in ~/.zsh/*.zsh(N); do
+            # ── for / glob qualifiers / param expansion ──
+            for f in ~/.zsh/*.zsh(N.r); do
                 source "${"$"}f"
                 (( count++ ))
+                printf '%s\n' "${"$"}{f:t:r}"  # :t = tail, :r = root
             done
 
+            # ── conditionals + arithmetic ──
             if [[ -n "${"$"}HOME" && -d "${"$"}HOME/bin" ]]; then
                 path=("${"$"}HOME/bin" ${"$"}path)
-            elif (( count == 0 )); then
+            elif (( count == 0 || ${"$"}#argv == 0 )); then
                 echo "no plugins" >&2
             fi
 
+            # ── heredoc + pipe + redirect + background ──
             cat <<EOF | grep -E 'foo|bar' &>/tmp/out.log &
             multi-line
             heredoc body
             EOF
 
+            # ── case with all 3 branch terminators ──
             case ${"$"}1 in
-                start|run) greet "${"$"}@" ;;
-                stop)      kill %1 ;;
-                *)         print "usage: ${"$"}0 {start|stop}" ;;
+                start|run)  greet "${"$"}@" ;;
+                stop)       kill %1 ;;&  # ;;& fall-through-and-test
+                status)     jobs -l ;|   # ;| fall-through unconditional
+                *)          print "usage: ${"$"}0 {start|stop}" ;;
             esac
+
+            # ── parameter flags + special syntaxes ──
+            print -- ${"$"}{(L)PATH}            # lowercase
+            print -- ${"$"}{(j:,:)path}         # join array with ','
+            print -- ${"$"}{(s:/:)PWD}          # split on '/'
+            print -- ${"$"}{(P)var}             # indirect ref
+            print -- ${"$"}{var//pat/repl}      # replace all
+            print -- ${"$"}{var:#pat}           # remove matching
+
+            # ── strings: ANSI-C, single, double, backtick, locale ──
+            local ansi=$'tab\there\n'
+            local literal='no ${"$"}expand here'
+            local interp="expand ${"$"}var here"
+            local cmdsub=`uname -m`
+            local trans=${"$"}"locale-translated"
+
+            # ── arithmetic command + (( )) + regex + procsub ──
+            (( a = 1 + 2 * 3, b = a ** 2 ))
+            [[ "${"$"}str" =~ ^[A-Z]+${"$"} ]] && print match
+            diff <(sort a.txt) <(sort b.txt) >(tee out.log)
+
+            # ── try/always ──
+            {
+                might_fail
+            } always {
+                cleanup_temp_files
+            }
+
+            # ── history expansion + word modifiers ──
+            !!:gs/foo/bar/  # global substitute on previous cmd
+            !$              # last word of previous cmd
+
+            # ── zshrs-exclusive: parallel + AOP ──
+            parallel for-each url in "https://example.com/"; do
+                curl -s "${"$"}url"
+            done
+            intercept before 'rm' record-trash
+
         """.trimIndent()
+        // END-CANONICAL: color-settings-demo
     }
 }

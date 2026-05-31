@@ -1,0 +1,2762 @@
+{
+  "_meta": {
+    "generated": "2026-05-31",
+    "generator": "scripts/extract_canonical.py",
+    "sources": {
+      "keywords": "src/zsh/Src/hashtable.c::reswds[]",
+      "core_builtins": "src/zsh/Src/builtin.c::builtins[]",
+      "module_builtins": "src/zsh/Src/Modules/*.c",
+      "zshrs_ext_builtins": "daemon/builtins.rs + src/extensions/ext_builtins.rs",
+      "options": "src/zsh/Src/options.c::optns[]",
+      "special_vars": "src/zsh/Src/params.c::special_params[]",
+      "param_flags": "curated (no single C table)",
+      "glob_qualifiers": "curated (no single C table)",
+      "operators": "curated (lexer-scattered)",
+      "history_expansions": "curated",
+      "modifiers": "curated"
+    }
+  },
+  "keywords": [
+    {
+      "name": "[[",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "]]",
+      "category": "control",
+      "origin": "extension"
+    },
+    {
+      "name": "always",
+      "category": "control",
+      "origin": "extension"
+    },
+    {
+      "name": "case",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "do",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "done",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "elif",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "else",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "end",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "esac",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "fi",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "for",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "foreach",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "if",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "in",
+      "category": "control",
+      "origin": "extension"
+    },
+    {
+      "name": "repeat",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "select",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "then",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "until",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "while",
+      "category": "control",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "declare",
+      "category": "decl",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "export",
+      "category": "decl",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "float",
+      "category": "decl",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "integer",
+      "category": "decl",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "let",
+      "category": "decl",
+      "origin": "extension"
+    },
+    {
+      "name": "local",
+      "category": "decl",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "readonly",
+      "category": "decl",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "set",
+      "category": "decl",
+      "origin": "extension"
+    },
+    {
+      "name": "shift",
+      "category": "decl",
+      "origin": "extension"
+    },
+    {
+      "name": "typeset",
+      "category": "decl",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "function",
+      "category": "fn",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "{",
+      "category": "grouping",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "}",
+      "category": "grouping",
+      "origin": "reswds[]"
+    },
+    {
+      "name": ".",
+      "category": "io",
+      "origin": "extension"
+    },
+    {
+      "name": "eval",
+      "category": "io",
+      "origin": "extension"
+    },
+    {
+      "name": "exec",
+      "category": "io",
+      "origin": "extension"
+    },
+    {
+      "name": "source",
+      "category": "io",
+      "origin": "extension"
+    },
+    {
+      "name": "trap",
+      "category": "io",
+      "origin": "extension"
+    },
+    {
+      "name": "break",
+      "category": "loop",
+      "origin": "extension"
+    },
+    {
+      "name": "continue",
+      "category": "loop",
+      "origin": "extension"
+    },
+    {
+      "name": "exit",
+      "category": "loop",
+      "origin": "extension"
+    },
+    {
+      "name": "logout",
+      "category": "loop",
+      "origin": "extension"
+    },
+    {
+      "name": "return",
+      "category": "loop",
+      "origin": "extension"
+    },
+    {
+      "name": "builtin",
+      "category": "modifier",
+      "origin": "extension"
+    },
+    {
+      "name": "command",
+      "category": "modifier",
+      "origin": "extension"
+    },
+    {
+      "name": "coproc",
+      "category": "modifier",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "nocorrect",
+      "category": "modifier",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "noglob",
+      "category": "modifier",
+      "origin": "extension"
+    },
+    {
+      "name": "time",
+      "category": "modifier",
+      "origin": "reswds[]"
+    },
+    {
+      "name": "!",
+      "category": "operator",
+      "origin": "reswds[]"
+    }
+  ],
+  "core_builtins": [
+    {
+      "name": ".",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": ":",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "[",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "alias",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "autoload",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "bg",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "break",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "bye",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "cd",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "chdir",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "continue",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "declare",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "dirs",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "disable",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "disown",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "echo",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "emulate",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "enable",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "eval",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "exit",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "export",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "false",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "fc",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "fg",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "float",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "functions",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "getln",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "getopts",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "hash",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "hashinfo",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "history",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "integer",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "jobs",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "kill",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "let",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "local",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "logout",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "mem",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "patdebug",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "popd",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "print",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "printf",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "pushd",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "pushln",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "pwd",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "r",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "read",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "readonly",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "rehash",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "return",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "set",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "setopt",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "shift",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "source",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "suspend",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "test",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "times",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "trap",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "true",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "ttyctl",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "type",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "typeset",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "umask",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "unalias",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "unfunction",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "unhash",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "unset",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "unsetopt",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "wait",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "whence",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "where",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "which",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "zcompile",
+      "origin": "zsh/Src/builtin.c"
+    },
+    {
+      "name": "zmodload",
+      "origin": "zsh/Src/builtin.c"
+    }
+  ],
+  "module_builtins": [
+    {
+      "name": "cap",
+      "origin": "module:cap"
+    },
+    {
+      "name": "chgrp",
+      "origin": "module:files"
+    },
+    {
+      "name": "chmod",
+      "origin": "module:files"
+    },
+    {
+      "name": "chown",
+      "origin": "module:files"
+    },
+    {
+      "name": "clone",
+      "origin": "module:clone"
+    },
+    {
+      "name": "echotc",
+      "origin": "module:termcap"
+    },
+    {
+      "name": "echoti",
+      "origin": "module:terminfo"
+    },
+    {
+      "name": "example",
+      "origin": "module:example"
+    },
+    {
+      "name": "getcap",
+      "origin": "module:cap"
+    },
+    {
+      "name": "ln",
+      "origin": "module:files"
+    },
+    {
+      "name": "local",
+      "origin": "module:param_private"
+    },
+    {
+      "name": "log",
+      "origin": "module:watch"
+    },
+    {
+      "name": "mkdir",
+      "origin": "module:files"
+    },
+    {
+      "name": "mv",
+      "origin": "module:files"
+    },
+    {
+      "name": "nameref",
+      "origin": "module:ksh93"
+    },
+    {
+      "name": "pcre_compile",
+      "origin": "module:pcre"
+    },
+    {
+      "name": "pcre_match",
+      "origin": "module:pcre"
+    },
+    {
+      "name": "pcre_study",
+      "origin": "module:pcre"
+    },
+    {
+      "name": "private",
+      "origin": "module:param_private"
+    },
+    {
+      "name": "rm",
+      "origin": "module:files"
+    },
+    {
+      "name": "rmdir",
+      "origin": "module:files"
+    },
+    {
+      "name": "setcap",
+      "origin": "module:cap"
+    },
+    {
+      "name": "stat",
+      "origin": "module:stat"
+    },
+    {
+      "name": "strftime",
+      "origin": "module:datetime"
+    },
+    {
+      "name": "sync",
+      "origin": "module:files"
+    },
+    {
+      "name": "syserror",
+      "origin": "module:system"
+    },
+    {
+      "name": "sysopen",
+      "origin": "module:system"
+    },
+    {
+      "name": "sysread",
+      "origin": "module:system"
+    },
+    {
+      "name": "sysseek",
+      "origin": "module:system"
+    },
+    {
+      "name": "syswrite",
+      "origin": "module:system"
+    },
+    {
+      "name": "zcurses",
+      "origin": "module:curses"
+    },
+    {
+      "name": "zdelattr",
+      "origin": "module:attr"
+    },
+    {
+      "name": "zf_chgrp",
+      "origin": "module:files"
+    },
+    {
+      "name": "zf_chmod",
+      "origin": "module:files"
+    },
+    {
+      "name": "zf_chown",
+      "origin": "module:files"
+    },
+    {
+      "name": "zf_ln",
+      "origin": "module:files"
+    },
+    {
+      "name": "zf_mkdir",
+      "origin": "module:files"
+    },
+    {
+      "name": "zf_mv",
+      "origin": "module:files"
+    },
+    {
+      "name": "zf_rm",
+      "origin": "module:files"
+    },
+    {
+      "name": "zf_rmdir",
+      "origin": "module:files"
+    },
+    {
+      "name": "zf_sync",
+      "origin": "module:files"
+    },
+    {
+      "name": "zformat",
+      "origin": "module:zutil"
+    },
+    {
+      "name": "zftp",
+      "origin": "module:zftp"
+    },
+    {
+      "name": "zgdbmpath",
+      "origin": "module:db_gdbm"
+    },
+    {
+      "name": "zgetattr",
+      "origin": "module:attr"
+    },
+    {
+      "name": "zlistattr",
+      "origin": "module:attr"
+    },
+    {
+      "name": "zparseopts",
+      "origin": "module:zutil"
+    },
+    {
+      "name": "zprof",
+      "origin": "module:zprof"
+    },
+    {
+      "name": "zpty",
+      "origin": "module:zpty"
+    },
+    {
+      "name": "zregexparse",
+      "origin": "module:zutil"
+    },
+    {
+      "name": "zselect",
+      "origin": "module:zselect"
+    },
+    {
+      "name": "zsetattr",
+      "origin": "module:attr"
+    },
+    {
+      "name": "zsocket",
+      "origin": "module:socket"
+    },
+    {
+      "name": "zstat",
+      "origin": "module:stat"
+    },
+    {
+      "name": "zstyle",
+      "origin": "module:zutil"
+    },
+    {
+      "name": "zsystem",
+      "origin": "module:system"
+    },
+    {
+      "name": "ztcp",
+      "origin": "module:tcp"
+    },
+    {
+      "name": "ztie",
+      "origin": "module:db_gdbm"
+    },
+    {
+      "name": "zuntie",
+      "origin": "module:db_gdbm"
+    }
+  ],
+  "zshrs_ext_builtins": [
+    {
+      "name": "zask",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zcache",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zcompdump",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zcomplete",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zd",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zhistory",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zid",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zjob",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zlock",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zlog",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zls",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "znotify",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zping",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zpublish",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zsend",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zsource",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zsubscribe",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zsuggest",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zsync",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "ztag",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zunsubscribe",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zuntag",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zwc",
+      "origin": "zshrs-ext"
+    },
+    {
+      "name": "zwhere",
+      "origin": "zshrs-ext"
+    }
+  ],
+  "options": [
+    {
+      "name": "aliases",
+      "origin": "options.c"
+    },
+    {
+      "name": "aliasfuncdef",
+      "origin": "options.c"
+    },
+    {
+      "name": "allexport",
+      "origin": "options.c"
+    },
+    {
+      "name": "alwayslastprompt",
+      "origin": "options.c"
+    },
+    {
+      "name": "alwaystoend",
+      "origin": "options.c"
+    },
+    {
+      "name": "appendcreate",
+      "origin": "options.c"
+    },
+    {
+      "name": "appendhistory",
+      "origin": "options.c"
+    },
+    {
+      "name": "autocd",
+      "origin": "options.c"
+    },
+    {
+      "name": "autocontinue",
+      "origin": "options.c"
+    },
+    {
+      "name": "autolist",
+      "origin": "options.c"
+    },
+    {
+      "name": "automenu",
+      "origin": "options.c"
+    },
+    {
+      "name": "autonamedirs",
+      "origin": "options.c"
+    },
+    {
+      "name": "autoparamkeys",
+      "origin": "options.c"
+    },
+    {
+      "name": "autoparamslash",
+      "origin": "options.c"
+    },
+    {
+      "name": "autopushd",
+      "origin": "options.c"
+    },
+    {
+      "name": "autoremoveslash",
+      "origin": "options.c"
+    },
+    {
+      "name": "autoresume",
+      "origin": "options.c"
+    },
+    {
+      "name": "badpattern",
+      "origin": "options.c"
+    },
+    {
+      "name": "banghist",
+      "origin": "options.c"
+    },
+    {
+      "name": "bareglobqual",
+      "origin": "options.c"
+    },
+    {
+      "name": "bashautolist",
+      "origin": "options.c"
+    },
+    {
+      "name": "bashrematch",
+      "origin": "options.c"
+    },
+    {
+      "name": "beep",
+      "origin": "options.c"
+    },
+    {
+      "name": "bgnice",
+      "origin": "options.c"
+    },
+    {
+      "name": "braceccl",
+      "origin": "options.c"
+    },
+    {
+      "name": "braceexpand",
+      "origin": "options.c"
+    },
+    {
+      "name": "bsdecho",
+      "origin": "options.c"
+    },
+    {
+      "name": "caseglob",
+      "origin": "options.c"
+    },
+    {
+      "name": "casematch",
+      "origin": "options.c"
+    },
+    {
+      "name": "casepaths",
+      "origin": "options.c"
+    },
+    {
+      "name": "cbases",
+      "origin": "options.c"
+    },
+    {
+      "name": "cdablevars",
+      "origin": "options.c"
+    },
+    {
+      "name": "cdsilent",
+      "origin": "options.c"
+    },
+    {
+      "name": "chasedots",
+      "origin": "options.c"
+    },
+    {
+      "name": "chaselinks",
+      "origin": "options.c"
+    },
+    {
+      "name": "checkjobs",
+      "origin": "options.c"
+    },
+    {
+      "name": "checkrunningjobs",
+      "origin": "options.c"
+    },
+    {
+      "name": "clobber",
+      "origin": "options.c"
+    },
+    {
+      "name": "clobberempty",
+      "origin": "options.c"
+    },
+    {
+      "name": "combiningchars",
+      "origin": "options.c"
+    },
+    {
+      "name": "completealiases",
+      "origin": "options.c"
+    },
+    {
+      "name": "completeinword",
+      "origin": "options.c"
+    },
+    {
+      "name": "continueonerror",
+      "origin": "options.c"
+    },
+    {
+      "name": "correct",
+      "origin": "options.c"
+    },
+    {
+      "name": "correctall",
+      "origin": "options.c"
+    },
+    {
+      "name": "cprecedences",
+      "origin": "options.c"
+    },
+    {
+      "name": "cshjunkiehistory",
+      "origin": "options.c"
+    },
+    {
+      "name": "cshjunkieloops",
+      "origin": "options.c"
+    },
+    {
+      "name": "cshjunkiequotes",
+      "origin": "options.c"
+    },
+    {
+      "name": "cshnullcmd",
+      "origin": "options.c"
+    },
+    {
+      "name": "cshnullglob",
+      "origin": "options.c"
+    },
+    {
+      "name": "debugbeforecmd",
+      "origin": "options.c"
+    },
+    {
+      "name": "dotglob",
+      "origin": "options.c"
+    },
+    {
+      "name": "dvorak",
+      "origin": "options.c"
+    },
+    {
+      "name": "emacs",
+      "origin": "options.c"
+    },
+    {
+      "name": "equals",
+      "origin": "options.c"
+    },
+    {
+      "name": "errexit",
+      "origin": "options.c"
+    },
+    {
+      "name": "errreturn",
+      "origin": "options.c"
+    },
+    {
+      "name": "evallineno",
+      "origin": "options.c"
+    },
+    {
+      "name": "exec",
+      "origin": "options.c"
+    },
+    {
+      "name": "extendedglob",
+      "origin": "options.c"
+    },
+    {
+      "name": "extendedhistory",
+      "origin": "options.c"
+    },
+    {
+      "name": "flowcontrol",
+      "origin": "options.c"
+    },
+    {
+      "name": "forcefloat",
+      "origin": "options.c"
+    },
+    {
+      "name": "functionargzero",
+      "origin": "options.c"
+    },
+    {
+      "name": "glob",
+      "origin": "options.c"
+    },
+    {
+      "name": "globalexport",
+      "origin": "options.c"
+    },
+    {
+      "name": "globalrcs",
+      "origin": "options.c"
+    },
+    {
+      "name": "globassign",
+      "origin": "options.c"
+    },
+    {
+      "name": "globcomplete",
+      "origin": "options.c"
+    },
+    {
+      "name": "globdots",
+      "origin": "options.c"
+    },
+    {
+      "name": "globstarshort",
+      "origin": "options.c"
+    },
+    {
+      "name": "globsubst",
+      "origin": "options.c"
+    },
+    {
+      "name": "hashall",
+      "origin": "options.c"
+    },
+    {
+      "name": "hashcmds",
+      "origin": "options.c"
+    },
+    {
+      "name": "hashdirs",
+      "origin": "options.c"
+    },
+    {
+      "name": "hashexecutablesonly",
+      "origin": "options.c"
+    },
+    {
+      "name": "hashlistall",
+      "origin": "options.c"
+    },
+    {
+      "name": "histallowclobber",
+      "origin": "options.c"
+    },
+    {
+      "name": "histappend",
+      "origin": "options.c"
+    },
+    {
+      "name": "histbeep",
+      "origin": "options.c"
+    },
+    {
+      "name": "histexpand",
+      "origin": "options.c"
+    },
+    {
+      "name": "histexpiredupsfirst",
+      "origin": "options.c"
+    },
+    {
+      "name": "histfcntllock",
+      "origin": "options.c"
+    },
+    {
+      "name": "histfindnodups",
+      "origin": "options.c"
+    },
+    {
+      "name": "histignorealldups",
+      "origin": "options.c"
+    },
+    {
+      "name": "histignoredups",
+      "origin": "options.c"
+    },
+    {
+      "name": "histignorespace",
+      "origin": "options.c"
+    },
+    {
+      "name": "histlexwords",
+      "origin": "options.c"
+    },
+    {
+      "name": "histnofunctions",
+      "origin": "options.c"
+    },
+    {
+      "name": "histnostore",
+      "origin": "options.c"
+    },
+    {
+      "name": "histreduceblanks",
+      "origin": "options.c"
+    },
+    {
+      "name": "histsavebycopy",
+      "origin": "options.c"
+    },
+    {
+      "name": "histsavenodups",
+      "origin": "options.c"
+    },
+    {
+      "name": "histsubstpattern",
+      "origin": "options.c"
+    },
+    {
+      "name": "histverify",
+      "origin": "options.c"
+    },
+    {
+      "name": "hup",
+      "origin": "options.c"
+    },
+    {
+      "name": "ignorebraces",
+      "origin": "options.c"
+    },
+    {
+      "name": "ignoreclosebraces",
+      "origin": "options.c"
+    },
+    {
+      "name": "ignoreeof",
+      "origin": "options.c"
+    },
+    {
+      "name": "incappendhistory",
+      "origin": "options.c"
+    },
+    {
+      "name": "incappendhistorytime",
+      "origin": "options.c"
+    },
+    {
+      "name": "interactive",
+      "origin": "options.c"
+    },
+    {
+      "name": "interactivecomments",
+      "origin": "options.c"
+    },
+    {
+      "name": "ksharrays",
+      "origin": "options.c"
+    },
+    {
+      "name": "kshautoload",
+      "origin": "options.c"
+    },
+    {
+      "name": "kshglob",
+      "origin": "options.c"
+    },
+    {
+      "name": "kshoptionprint",
+      "origin": "options.c"
+    },
+    {
+      "name": "kshtypeset",
+      "origin": "options.c"
+    },
+    {
+      "name": "kshzerosubscript",
+      "origin": "options.c"
+    },
+    {
+      "name": "listambiguous",
+      "origin": "options.c"
+    },
+    {
+      "name": "listbeep",
+      "origin": "options.c"
+    },
+    {
+      "name": "listpacked",
+      "origin": "options.c"
+    },
+    {
+      "name": "listrowsfirst",
+      "origin": "options.c"
+    },
+    {
+      "name": "listtypes",
+      "origin": "options.c"
+    },
+    {
+      "name": "localloops",
+      "origin": "options.c"
+    },
+    {
+      "name": "localoptions",
+      "origin": "options.c"
+    },
+    {
+      "name": "localpatterns",
+      "origin": "options.c"
+    },
+    {
+      "name": "localtraps",
+      "origin": "options.c"
+    },
+    {
+      "name": "log",
+      "origin": "options.c"
+    },
+    {
+      "name": "login",
+      "origin": "options.c"
+    },
+    {
+      "name": "longlistjobs",
+      "origin": "options.c"
+    },
+    {
+      "name": "magicequalsubst",
+      "origin": "options.c"
+    },
+    {
+      "name": "mailwarn",
+      "origin": "options.c"
+    },
+    {
+      "name": "mailwarning",
+      "origin": "options.c"
+    },
+    {
+      "name": "markdirs",
+      "origin": "options.c"
+    },
+    {
+      "name": "menucomplete",
+      "origin": "options.c"
+    },
+    {
+      "name": "monitor",
+      "origin": "options.c"
+    },
+    {
+      "name": "multibyte",
+      "origin": "options.c"
+    },
+    {
+      "name": "multifuncdef",
+      "origin": "options.c"
+    },
+    {
+      "name": "multios",
+      "origin": "options.c"
+    },
+    {
+      "name": "nomatch",
+      "origin": "options.c"
+    },
+    {
+      "name": "notify",
+      "origin": "options.c"
+    },
+    {
+      "name": "nullglob",
+      "origin": "options.c"
+    },
+    {
+      "name": "numericglobsort",
+      "origin": "options.c"
+    },
+    {
+      "name": "octalzeroes",
+      "origin": "options.c"
+    },
+    {
+      "name": "onecmd",
+      "origin": "options.c"
+    },
+    {
+      "name": "overstrike",
+      "origin": "options.c"
+    },
+    {
+      "name": "pathdirs",
+      "origin": "options.c"
+    },
+    {
+      "name": "pathscript",
+      "origin": "options.c"
+    },
+    {
+      "name": "physical",
+      "origin": "options.c"
+    },
+    {
+      "name": "pipefail",
+      "origin": "options.c"
+    },
+    {
+      "name": "posixaliases",
+      "origin": "options.c"
+    },
+    {
+      "name": "posixargzero",
+      "origin": "options.c"
+    },
+    {
+      "name": "posixbuiltins",
+      "origin": "options.c"
+    },
+    {
+      "name": "posixcd",
+      "origin": "options.c"
+    },
+    {
+      "name": "posixidentifiers",
+      "origin": "options.c"
+    },
+    {
+      "name": "posixjobs",
+      "origin": "options.c"
+    },
+    {
+      "name": "posixstrings",
+      "origin": "options.c"
+    },
+    {
+      "name": "posixtraps",
+      "origin": "options.c"
+    },
+    {
+      "name": "printeightbit",
+      "origin": "options.c"
+    },
+    {
+      "name": "printexitvalue",
+      "origin": "options.c"
+    },
+    {
+      "name": "privileged",
+      "origin": "options.c"
+    },
+    {
+      "name": "promptbang",
+      "origin": "options.c"
+    },
+    {
+      "name": "promptcr",
+      "origin": "options.c"
+    },
+    {
+      "name": "promptpercent",
+      "origin": "options.c"
+    },
+    {
+      "name": "promptsp",
+      "origin": "options.c"
+    },
+    {
+      "name": "promptsubst",
+      "origin": "options.c"
+    },
+    {
+      "name": "promptvars",
+      "origin": "options.c"
+    },
+    {
+      "name": "pushdignoredups",
+      "origin": "options.c"
+    },
+    {
+      "name": "pushdminus",
+      "origin": "options.c"
+    },
+    {
+      "name": "pushdsilent",
+      "origin": "options.c"
+    },
+    {
+      "name": "pushdtohome",
+      "origin": "options.c"
+    },
+    {
+      "name": "rcexpandparam",
+      "origin": "options.c"
+    },
+    {
+      "name": "rcquotes",
+      "origin": "options.c"
+    },
+    {
+      "name": "rcs",
+      "origin": "options.c"
+    },
+    {
+      "name": "recexact",
+      "origin": "options.c"
+    },
+    {
+      "name": "rematchpcre",
+      "origin": "options.c"
+    },
+    {
+      "name": "rmstarsilent",
+      "origin": "options.c"
+    },
+    {
+      "name": "rmstarwait",
+      "origin": "options.c"
+    },
+    {
+      "name": "sharehistory",
+      "origin": "options.c"
+    },
+    {
+      "name": "shfileexpansion",
+      "origin": "options.c"
+    },
+    {
+      "name": "shglob",
+      "origin": "options.c"
+    },
+    {
+      "name": "shinstdin",
+      "origin": "options.c"
+    },
+    {
+      "name": "shnullcmd",
+      "origin": "options.c"
+    },
+    {
+      "name": "shoptionletters",
+      "origin": "options.c"
+    },
+    {
+      "name": "shortloops",
+      "origin": "options.c"
+    },
+    {
+      "name": "shortrepeat",
+      "origin": "options.c"
+    },
+    {
+      "name": "shwordsplit",
+      "origin": "options.c"
+    },
+    {
+      "name": "singlecommand",
+      "origin": "options.c"
+    },
+    {
+      "name": "singlelinezle",
+      "origin": "options.c"
+    },
+    {
+      "name": "sourcetrace",
+      "origin": "options.c"
+    },
+    {
+      "name": "stdin",
+      "origin": "options.c"
+    },
+    {
+      "name": "sunkeyboardhack",
+      "origin": "options.c"
+    },
+    {
+      "name": "trackall",
+      "origin": "options.c"
+    },
+    {
+      "name": "transientrprompt",
+      "origin": "options.c"
+    },
+    {
+      "name": "trapsasync",
+      "origin": "options.c"
+    },
+    {
+      "name": "typesetsilent",
+      "origin": "options.c"
+    },
+    {
+      "name": "typesettounset",
+      "origin": "options.c"
+    },
+    {
+      "name": "unset",
+      "origin": "options.c"
+    },
+    {
+      "name": "verbose",
+      "origin": "options.c"
+    },
+    {
+      "name": "vi",
+      "origin": "options.c"
+    },
+    {
+      "name": "warncreateglobal",
+      "origin": "options.c"
+    },
+    {
+      "name": "warnnestedvar",
+      "origin": "options.c"
+    },
+    {
+      "name": "xtrace",
+      "origin": "options.c"
+    },
+    {
+      "name": "zle",
+      "origin": "options.c"
+    }
+  ],
+  "special_vars": [
+    {
+      "name": "!",
+      "origin": "params.c"
+    },
+    {
+      "name": "#",
+      "origin": "params.c"
+    },
+    {
+      "name": "$",
+      "origin": "params.c"
+    },
+    {
+      "name": "*",
+      "origin": "params.c"
+    },
+    {
+      "name": "-",
+      "origin": "params.c"
+    },
+    {
+      "name": "0",
+      "origin": "params.c"
+    },
+    {
+      "name": "?",
+      "origin": "params.c"
+    },
+    {
+      "name": "@",
+      "origin": "params.c"
+    },
+    {
+      "name": "ARGC",
+      "origin": "params.c"
+    },
+    {
+      "name": "CDPATH",
+      "origin": "params.c"
+    },
+    {
+      "name": "COLUMNS",
+      "origin": "params.c"
+    },
+    {
+      "name": "EGID",
+      "origin": "params.c"
+    },
+    {
+      "name": "ERRNO",
+      "origin": "params.c"
+    },
+    {
+      "name": "EUID",
+      "origin": "params.c"
+    },
+    {
+      "name": "FIGNORE",
+      "origin": "params.c"
+    },
+    {
+      "name": "FPATH",
+      "origin": "params.c"
+    },
+    {
+      "name": "FUNCNEST",
+      "origin": "params.c"
+    },
+    {
+      "name": "GID",
+      "origin": "params.c"
+    },
+    {
+      "name": "HISTCHARS",
+      "origin": "params.c"
+    },
+    {
+      "name": "HISTCMD",
+      "origin": "params.c"
+    },
+    {
+      "name": "HISTSIZE",
+      "origin": "params.c"
+    },
+    {
+      "name": "HOME",
+      "origin": "params.c"
+    },
+    {
+      "name": "IFS",
+      "origin": "params.c"
+    },
+    {
+      "name": "KEYBOARD_HACK",
+      "origin": "params.c"
+    },
+    {
+      "name": "LANG",
+      "origin": "params.c"
+    },
+    {
+      "name": "LC_ALL",
+      "origin": "params.c"
+    },
+    {
+      "name": "LC_COLLATE",
+      "origin": "params.c"
+    },
+    {
+      "name": "LC_CTYPE",
+      "origin": "params.c"
+    },
+    {
+      "name": "LC_MESSAGES",
+      "origin": "params.c"
+    },
+    {
+      "name": "LC_NUMERIC",
+      "origin": "params.c"
+    },
+    {
+      "name": "LC_TIME",
+      "origin": "params.c"
+    },
+    {
+      "name": "LINENO",
+      "origin": "params.c"
+    },
+    {
+      "name": "LINES",
+      "origin": "params.c"
+    },
+    {
+      "name": "MAILPATH",
+      "origin": "params.c"
+    },
+    {
+      "name": "MANPATH",
+      "origin": "params.c"
+    },
+    {
+      "name": "MODULE_PATH",
+      "origin": "params.c"
+    },
+    {
+      "name": "NULLCMD",
+      "origin": "params.c"
+    },
+    {
+      "name": "OPTARG",
+      "origin": "params.c"
+    },
+    {
+      "name": "OPTIND",
+      "origin": "params.c"
+    },
+    {
+      "name": "PATH",
+      "origin": "params.c"
+    },
+    {
+      "name": "POSTEDIT",
+      "origin": "params.c"
+    },
+    {
+      "name": "PPID",
+      "origin": "params.c"
+    },
+    {
+      "name": "PROMPT",
+      "origin": "params.c"
+    },
+    {
+      "name": "PROMPT2",
+      "origin": "params.c"
+    },
+    {
+      "name": "PROMPT3",
+      "origin": "params.c"
+    },
+    {
+      "name": "PROMPT4",
+      "origin": "params.c"
+    },
+    {
+      "name": "PS1",
+      "origin": "params.c"
+    },
+    {
+      "name": "PS2",
+      "origin": "params.c"
+    },
+    {
+      "name": "PS3",
+      "origin": "params.c"
+    },
+    {
+      "name": "PS4",
+      "origin": "params.c"
+    },
+    {
+      "name": "PSVAR",
+      "origin": "params.c"
+    },
+    {
+      "name": "RANDOM",
+      "origin": "params.c"
+    },
+    {
+      "name": "READNULLCMD",
+      "origin": "params.c"
+    },
+    {
+      "name": "RPROMPT",
+      "origin": "params.c"
+    },
+    {
+      "name": "RPROMPT2",
+      "origin": "params.c"
+    },
+    {
+      "name": "RPS1",
+      "origin": "params.c"
+    },
+    {
+      "name": "RPS2",
+      "origin": "params.c"
+    },
+    {
+      "name": "SAVEHIST",
+      "origin": "params.c"
+    },
+    {
+      "name": "SECONDS",
+      "origin": "params.c"
+    },
+    {
+      "name": "SHLVL",
+      "origin": "params.c"
+    },
+    {
+      "name": "SPROMPT",
+      "origin": "params.c"
+    },
+    {
+      "name": "TERM",
+      "origin": "params.c"
+    },
+    {
+      "name": "TERMINFO",
+      "origin": "params.c"
+    },
+    {
+      "name": "TERMINFO_DIRS",
+      "origin": "params.c"
+    },
+    {
+      "name": "TRY_BLOCK_ERROR",
+      "origin": "params.c"
+    },
+    {
+      "name": "TRY_BLOCK_INTERRUPT",
+      "origin": "params.c"
+    },
+    {
+      "name": "TTYIDLE",
+      "origin": "params.c"
+    },
+    {
+      "name": "UID",
+      "origin": "params.c"
+    },
+    {
+      "name": "USERNAME",
+      "origin": "params.c"
+    },
+    {
+      "name": "WORDCHARS",
+      "origin": "params.c"
+    },
+    {
+      "name": "ZLE_RPROMPT_INDENT",
+      "origin": "params.c"
+    },
+    {
+      "name": "ZSH_EVAL_CONTEXT",
+      "origin": "params.c"
+    },
+    {
+      "name": "ZSH_SUBSHELL",
+      "origin": "params.c"
+    },
+    {
+      "name": "_",
+      "origin": "params.c"
+    },
+    {
+      "name": "argv",
+      "origin": "params.c"
+    },
+    {
+      "name": "cdpath",
+      "origin": "params.c"
+    },
+    {
+      "name": "fignore",
+      "origin": "params.c"
+    },
+    {
+      "name": "fpath",
+      "origin": "params.c"
+    },
+    {
+      "name": "histchars",
+      "origin": "params.c"
+    },
+    {
+      "name": "mailpath",
+      "origin": "params.c"
+    },
+    {
+      "name": "manpath",
+      "origin": "params.c"
+    },
+    {
+      "name": "module_path",
+      "origin": "params.c"
+    },
+    {
+      "name": "path",
+      "origin": "params.c"
+    },
+    {
+      "name": "pipestatus",
+      "origin": "params.c"
+    },
+    {
+      "name": "prompt",
+      "origin": "params.c"
+    },
+    {
+      "name": "psvar",
+      "origin": "params.c"
+    },
+    {
+      "name": "status",
+      "origin": "params.c"
+    },
+    {
+      "name": "zsh_eval_context",
+      "origin": "params.c"
+    }
+  ],
+  "param_flags": [
+    {
+      "flag": "@",
+      "doc": "array-context retain $@ semantics; quoting-preserving even in scalar context"
+    },
+    {
+      "flag": "A",
+      "doc": "create as an array"
+    },
+    {
+      "flag": "a",
+      "doc": "sort by array index"
+    },
+    {
+      "flag": "c",
+      "doc": "count words in a parameter (e.g., scalar split count)"
+    },
+    {
+      "flag": "C",
+      "doc": "capitalize words"
+    },
+    {
+      "flag": "D",
+      "doc": "treat as DIRECTORY name (apply directory substitution like ~/...)"
+    },
+    {
+      "flag": "e",
+      "doc": "perform parameter expansion / arithmetic / etc. on the result"
+    },
+    {
+      "flag": "f",
+      "doc": "split result at newlines"
+    },
+    {
+      "flag": "F",
+      "doc": "join array elements with newlines"
+    },
+    {
+      "flag": "g",
+      "doc": "process escape sequences like print does (g:o: process octals, g:c: process \\c)"
+    },
+    {
+      "flag": "i",
+      "doc": "case-insensitive sort"
+    },
+    {
+      "flag": "j",
+      "doc": "join array with separator: ${(j:sep:)arr}"
+    },
+    {
+      "flag": "k",
+      "doc": "for assoc arrays: keys ${(k)hash}"
+    },
+    {
+      "flag": "K",
+      "doc": "subscript flags: use keys"
+    },
+    {
+      "flag": "L",
+      "doc": "lowercase"
+    },
+    {
+      "flag": "M",
+      "doc": "match: use longest match (also for case-insensitivity in sort)"
+    },
+    {
+      "flag": "n",
+      "doc": "numeric sort"
+    },
+    {
+      "flag": "o",
+      "doc": "sort ascending"
+    },
+    {
+      "flag": "O",
+      "doc": "sort descending"
+    },
+    {
+      "flag": "p",
+      "doc": "interpret embedded escape sequences in j/s separator"
+    },
+    {
+      "flag": "P",
+      "doc": "treat value as parameter name → indirect (P)"
+    },
+    {
+      "flag": "q",
+      "doc": "quote the result (q-/q+/qq/qqq variants for shell-quote levels)"
+    },
+    {
+      "flag": "Q",
+      "doc": "remove quoting"
+    },
+    {
+      "flag": "r",
+      "doc": "right-justify within field width: ${(r:N::pad:)var}"
+    },
+    {
+      "flag": "l",
+      "doc": "left-justify within field width: ${(l:N::pad:)var}"
+    },
+    {
+      "flag": "s",
+      "doc": "split at separator: ${(s:sep:)var}"
+    },
+    {
+      "flag": "S",
+      "doc": "subscript: search subscript ranges"
+    },
+    {
+      "flag": "t",
+      "doc": "test parameter type"
+    },
+    {
+      "flag": "u",
+      "doc": "unique (dedupe array)"
+    },
+    {
+      "flag": "U",
+      "doc": "uppercase"
+    },
+    {
+      "flag": "v",
+      "doc": "for assoc arrays: values ${(v)hash}"
+    },
+    {
+      "flag": "V",
+      "doc": "make invisible / control chars visible"
+    },
+    {
+      "flag": "w",
+      "doc": "split into words"
+    },
+    {
+      "flag": "W",
+      "doc": "split into words (alternate)"
+    },
+    {
+      "flag": "z",
+      "doc": "split as the shell would (z-tokens)"
+    },
+    {
+      "flag": "#",
+      "doc": "expand result as arithmetic; numeric value"
+    },
+    {
+      "flag": "%",
+      "doc": "expand prompt percent escapes in result"
+    },
+    {
+      "flag": "~",
+      "doc": "treat values as patterns (e.g., for /pat/repl)"
+    }
+  ],
+  "glob_qualifiers": [
+    {
+      "sym": "/",
+      "doc": "directories only"
+    },
+    {
+      "sym": ".",
+      "doc": "regular files only"
+    },
+    {
+      "sym": "@",
+      "doc": "symbolic links only"
+    },
+    {
+      "sym": "=",
+      "doc": "sockets only"
+    },
+    {
+      "sym": "p",
+      "doc": "named pipes (FIFOs) only"
+    },
+    {
+      "sym": "*",
+      "doc": "executable plain files only"
+    },
+    {
+      "sym": "%",
+      "doc": "device special files only"
+    },
+    {
+      "sym": "%b",
+      "doc": "block special files"
+    },
+    {
+      "sym": "%c",
+      "doc": "character special files"
+    },
+    {
+      "sym": "r",
+      "doc": "owner-readable"
+    },
+    {
+      "sym": "w",
+      "doc": "owner-writable"
+    },
+    {
+      "sym": "x",
+      "doc": "owner-executable"
+    },
+    {
+      "sym": "A",
+      "doc": "group-readable"
+    },
+    {
+      "sym": "I",
+      "doc": "group-writable"
+    },
+    {
+      "sym": "E",
+      "doc": "group-executable"
+    },
+    {
+      "sym": "R",
+      "doc": "world-readable"
+    },
+    {
+      "sym": "W",
+      "doc": "world-writable"
+    },
+    {
+      "sym": "X",
+      "doc": "world-executable"
+    },
+    {
+      "sym": "s",
+      "doc": "setuid (S_ISUID)"
+    },
+    {
+      "sym": "S",
+      "doc": "setgid (S_ISGID)"
+    },
+    {
+      "sym": "t",
+      "doc": "sticky bit"
+    },
+    {
+      "sym": "d N",
+      "doc": "device number N"
+    },
+    {
+      "sym": "l[+-=]N",
+      "doc": "exactly / less-than / greater-than N hard links"
+    },
+    {
+      "sym": "U",
+      "doc": "owned by EUID"
+    },
+    {
+      "sym": "G",
+      "doc": "owned by EGID"
+    },
+    {
+      "sym": "u N",
+      "doc": "owned by uid N"
+    },
+    {
+      "sym": "g N",
+      "doc": "group gid N"
+    },
+    {
+      "sym": "f spec",
+      "doc": "permission mask: f:o+w: e.g."
+    },
+    {
+      "sym": "L [+-=] N",
+      "doc": "size: blocks / k / m / p suffix (Lk / Lm / Lp)"
+    },
+    {
+      "sym": "a [Mwhms] [+-=] N",
+      "doc": "access time"
+    },
+    {
+      "sym": "m [Mwhms] [+-=] N",
+      "doc": "modify time"
+    },
+    {
+      "sym": "c [Mwhms] [+-=] N",
+      "doc": "ctime"
+    },
+    {
+      "sym": "o [name|size|links|mtime|atime|ctime]",
+      "doc": "sort ascending"
+    },
+    {
+      "sym": "O [name|size|links|mtime|atime|ctime]",
+      "doc": "sort descending"
+    },
+    {
+      "sym": "[N,M]",
+      "doc": "select range of matches"
+    },
+    {
+      "sym": "e:str:",
+      "doc": "external test: each match passed to expression"
+    },
+    {
+      "sym": "+func",
+      "doc": "external test: each match passed to function"
+    },
+    {
+      "sym": "N",
+      "doc": "nullglob: silently drop unmatched pattern"
+    },
+    {
+      "sym": "D",
+      "doc": "include dotfiles"
+    },
+    {
+      "sym": "Y N",
+      "doc": "limit to N results"
+    },
+    {
+      "sym": "M",
+      "doc": "include directory names as if trailing slash"
+    },
+    {
+      "sym": ":mod",
+      "doc": "apply history modifier (e.g., :t :h :r :e)"
+    },
+    {
+      "sym": "^",
+      "doc": "negate the qualifier list"
+    },
+    {
+      "sym": ",",
+      "doc": "OR-combine qualifier groups"
+    }
+  ],
+  "operators": [
+    {
+      "sym": "|",
+      "kind": "pipeline",
+      "doc": "Pipeline. stdout of LHS → stdin of RHS."
+    },
+    {
+      "sym": "|&",
+      "kind": "pipeline",
+      "doc": "Pipeline with stderr merged (= |2>&1)."
+    },
+    {
+      "sym": "&&",
+      "kind": "list",
+      "doc": "Logical AND: run RHS only if LHS exit==0."
+    },
+    {
+      "sym": "||",
+      "kind": "list",
+      "doc": "Logical OR: run RHS only if LHS exit!=0."
+    },
+    {
+      "sym": ";",
+      "kind": "list",
+      "doc": "Sequence: run RHS after LHS regardless of status."
+    },
+    {
+      "sym": "&",
+      "kind": "list",
+      "doc": "Background: run LHS async; sets $!."
+    },
+    {
+      "sym": ";;",
+      "kind": "case",
+      "doc": "End case arm."
+    },
+    {
+      "sym": ";;&",
+      "kind": "case",
+      "doc": "Fall through and test next case pattern."
+    },
+    {
+      "sym": ";|",
+      "kind": "case",
+      "doc": "Fall through without test."
+    },
+    {
+      "sym": "!",
+      "kind": "neg",
+      "doc": "Negate exit status (reserved word)."
+    },
+    {
+      "sym": ">",
+      "kind": "redirect",
+      "doc": "Stdout redirect (overwrite)."
+    },
+    {
+      "sym": ">>",
+      "kind": "redirect",
+      "doc": "Stdout append."
+    },
+    {
+      "sym": "<",
+      "kind": "redirect",
+      "doc": "Stdin redirect."
+    },
+    {
+      "sym": "<<",
+      "kind": "redirect",
+      "doc": "Heredoc; body terminated by marker."
+    },
+    {
+      "sym": "<<-",
+      "kind": "redirect",
+      "doc": "Heredoc, strip leading tabs from body."
+    },
+    {
+      "sym": "<<<",
+      "kind": "redirect",
+      "doc": "Here-string; literal text as stdin."
+    },
+    {
+      "sym": ">|",
+      "kind": "redirect",
+      "doc": "Stdout force-overwrite (bypass NO_CLOBBER)."
+    },
+    {
+      "sym": ">!",
+      "kind": "redirect",
+      "doc": "Same as >|; force-overwrite."
+    },
+    {
+      "sym": "&>",
+      "kind": "redirect",
+      "doc": "Redirect both stdout and stderr (bash-compat)."
+    },
+    {
+      "sym": "&>>",
+      "kind": "redirect",
+      "doc": "Append both stdout and stderr."
+    },
+    {
+      "sym": "2>&1",
+      "kind": "redirect",
+      "doc": "Duplicate fd2 to fd1 (stderr → stdout)."
+    },
+    {
+      "sym": ">&-",
+      "kind": "redirect",
+      "doc": "Close fd."
+    },
+    {
+      "sym": "<>",
+      "kind": "redirect",
+      "doc": "Open for read+write."
+    },
+    {
+      "sym": "<(",
+      "kind": "procsub",
+      "doc": "Process substitution: <(cmd) is a path readable from cmd's stdout."
+    },
+    {
+      "sym": ">(",
+      "kind": "procsub",
+      "doc": "Process substitution: >(cmd) is a path writable into cmd's stdin."
+    },
+    {
+      "sym": "=(",
+      "kind": "procsub",
+      "doc": "Zsh-only =(cmd): tempfile capture."
+    },
+    {
+      "sym": "$(",
+      "kind": "subst",
+      "doc": "Command substitution: $(cmd) captures cmd's stdout."
+    },
+    {
+      "sym": "${",
+      "kind": "subst",
+      "doc": "Parameter expansion: ${var}."
+    },
+    {
+      "sym": "$((",
+      "kind": "subst",
+      "doc": "Arithmetic expansion: $((expr))."
+    },
+    {
+      "sym": "((",
+      "kind": "arith",
+      "doc": "Arithmetic command. ((expr)) exits 0 iff expr != 0."
+    },
+    {
+      "sym": "))",
+      "kind": "arith",
+      "doc": "Close arithmetic command."
+    },
+    {
+      "sym": "[[",
+      "kind": "cond",
+      "doc": "Open conditional command: [[ expr ]]."
+    },
+    {
+      "sym": "]]",
+      "kind": "cond",
+      "doc": "Close conditional command."
+    },
+    {
+      "sym": "=",
+      "kind": "assign",
+      "doc": "Assignment. Also: equality in [[ ]]."
+    },
+    {
+      "sym": "+=",
+      "kind": "assign",
+      "doc": "Append assignment (scalar concat / array push)."
+    },
+    {
+      "sym": "-=",
+      "kind": "assign",
+      "doc": "Numeric subtract-assign (in (( ))). "
+    },
+    {
+      "sym": ":=",
+      "kind": "assign",
+      "doc": "${var:=default}: assign default if unset/empty."
+    },
+    {
+      "sym": "?=",
+      "kind": "assign",
+      "doc": "(arith) ternary."
+    },
+    {
+      "sym": "==",
+      "kind": "compare",
+      "doc": "Equality in (( )) / [[ ]]."
+    },
+    {
+      "sym": "!=",
+      "kind": "compare",
+      "doc": "Inequality."
+    },
+    {
+      "sym": "=~",
+      "kind": "compare",
+      "doc": "Regex match in [[ ]] (POSIX ERE / PCRE depending on opts)."
+    },
+    {
+      "sym": "*",
+      "kind": "glob",
+      "doc": "Glob: match any sequence (including empty)."
+    },
+    {
+      "sym": "**",
+      "kind": "glob",
+      "doc": "Recursive glob (matches dir/subdir/.../ levels)."
+    },
+    {
+      "sym": "?",
+      "kind": "glob",
+      "doc": "Glob: match one character."
+    },
+    {
+      "sym": "~",
+      "kind": "tilde",
+      "doc": "Tilde expansion: ~ → $HOME, ~user, ~+ / ~- / ~N for dirstack."
+    },
+    {
+      "sym": "{a,b,c}",
+      "kind": "brace",
+      "doc": "Brace expansion: comma-separated list."
+    },
+    {
+      "sym": "{1..10}",
+      "kind": "brace",
+      "doc": "Brace expansion: numeric range."
+    },
+    {
+      "sym": "{a..z}",
+      "kind": "brace",
+      "doc": "Brace expansion: character range."
+    },
+    {
+      "sym": "${~var}",
+      "kind": "expansion",
+      "doc": "Treat result of var as pattern."
+    },
+    {
+      "sym": "${^var}",
+      "kind": "expansion",
+      "doc": "Array element rcexpansion."
+    },
+    {
+      "sym": "${=var}",
+      "kind": "expansion",
+      "doc": "Word-split on IFS."
+    },
+    {
+      "sym": "$'…'",
+      "kind": "string",
+      "doc": "ANSI-C quoted string: \\n \\t \\xNN etc."
+    },
+    {
+      "sym": "$\"…\"",
+      "kind": "string",
+      "doc": "Locale-translated string."
+    },
+    {
+      "sym": "`…`",
+      "kind": "subst",
+      "doc": "Backtick command substitution (legacy form of $())."
+    },
+    {
+      "sym": "@{}",
+      "kind": "extension",
+      "doc": "Zshrs @-prefix: dispatch to stryke embedded scripting."
+    }
+  ],
+  "history_expansions": [
+    {
+      "sym": "!!",
+      "doc": "previous command"
+    },
+    {
+      "sym": "!N",
+      "doc": "command N in history"
+    },
+    {
+      "sym": "!-N",
+      "doc": "command N back"
+    },
+    {
+      "sym": "!?str",
+      "doc": "most recent containing str"
+    },
+    {
+      "sym": "!str",
+      "doc": "most recent starting with str"
+    },
+    {
+      "sym": "!$",
+      "doc": "last word of previous command"
+    },
+    {
+      "sym": "!^",
+      "doc": "first arg of previous command"
+    },
+    {
+      "sym": "!*",
+      "doc": "all args of previous command"
+    },
+    {
+      "sym": "!:N",
+      "doc": "Nth word of previous command"
+    },
+    {
+      "sym": "^old^new",
+      "doc": "quick substitute in previous command"
+    }
+  ],
+  "modifiers": [
+    {
+      "sym": ":h",
+      "doc": "head: dirname of path"
+    },
+    {
+      "sym": ":t",
+      "doc": "tail: basename of path"
+    },
+    {
+      "sym": ":r",
+      "doc": "root: strip extension"
+    },
+    {
+      "sym": ":e",
+      "doc": "extension: keep only extension"
+    },
+    {
+      "sym": ":l",
+      "doc": "lowercase"
+    },
+    {
+      "sym": ":u",
+      "doc": "uppercase"
+    },
+    {
+      "sym": ":q",
+      "doc": "quote for shell re-input"
+    },
+    {
+      "sym": ":Q",
+      "doc": "remove quoting"
+    },
+    {
+      "sym": ":s/old/new/",
+      "doc": "substitute first match"
+    },
+    {
+      "sym": ":gs/old/new/",
+      "doc": "global substitute"
+    },
+    {
+      "sym": ":a",
+      "doc": "absolutize (resolve relative path)"
+    },
+    {
+      "sym": ":A",
+      "doc": "absolutize and resolve symlinks"
+    },
+    {
+      "sym": ":P",
+      "doc": "physical resolved path"
+    },
+    {
+      "sym": ":x",
+      "doc": "split into words on whitespace"
+    },
+    {
+      "sym": ":w",
+      "doc": "select words"
+    },
+    {
+      "sym": ":F",
+      "doc": "follow symlinks (in conjunction with above)"
+    }
+  ]
+}
