@@ -28624,6 +28624,154 @@ echo "still running"
 
 ---
 
+## #535 — `zsh/system` module auto-loaded — extends #530/#532 to a 6-module contamination
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'type zsystem'
+zsystem not found
+
+$ ./target/debug/zshrs --zsh -fc 'type zsystem'
+zsystem is a shell builtin
+```
+
+`zsh/system` (provides `zsystem`, `errnos`, `sysread`,
+`syswrite`, `sysopen`, etc.) is another opt-in zsh
+module — requires `zmodload zsh/system`. zshrs ships
+it always-loaded.
+
+Cumulative auto-loaded module census now confirmed:
+- `zsh/files` (#530) — file ops
+- `zsh/stat` (#532) — `stat`/`zstat`
+- `zsh/zselect` (#532)
+- `zsh/zpty` (#532)
+- `zsh/zftp` (#532)
+- `zsh/system` (#535 — this entry)
+
+6 modules and counting. Pattern: zshrs's `--zsh` mode
+loads all modules at startup; zsh requires explicit
+opt-in.
+
+**Where** — `src/ported/init.rs::module_init` (or
+wherever module loading happens at startup): module
+auto-load should respect zmodload-required semantics in
+`--zsh` parity mode. Skip auto-loading in --zsh mode;
+require explicit `zmodload`.
+
+**Impact** — same as #530/#532 — feature-detect probes
+break, error-message formats diverge (when error path
+involves the builtin's own diagnostic), `command -V`
+output differs.
+
+**Workaround** — same as #530/#532 — explicit module
+detection / `command` to force external.
+
+---
+
+## #536 — `function with[bracket] { ... }` accepts bracket char in fn name — zsh: "no matches found"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'function with[bracket] { :; } 2>&1; echo rc=$?'
+zsh:1: no matches found: with[bracket]
+
+$ ./target/debug/zshrs --zsh -fc 'function with[bracket] { :; } 2>&1; echo rc=$?'
+rc=0
+```
+
+In zsh, function names with bracket characters (`[`,
+`]`) are treated as **glob patterns** when defining via
+the `function` keyword (or `()` form). Since no
+existing files match `with[bracket]`, zsh emits
+"no matches found" + rc=1.
+
+zshrs accepts `with[bracket]` as a literal function
+name and registers it in the function table.
+
+This is a parser strictness gap, but in the OPPOSITE
+direction from the usual zshrs-too-permissive: here
+zshrs accepts a definition that zsh rejects via glob
+interpretation.
+
+**Where** — `src/ported/parser/function.rs::parse_decl`:
+function name token must go through globbing in `function
+NAME { ... }` form. If glob fails (which it always will
+for non-filename chars), reject.
+
+**Impact** — code that ACCIDENTALLY uses bracket-name
+form in zshrs builds a function that's hard to call (the
+name itself is unusable as a command word because brackets
+would glob at call site too). The definition path silently
+succeeds; the call path then fails confusingly.
+
+```sh
+function process[v1] { ... }
+# zsh: parse error (helpful)
+# zshrs: function defined as "process[v1]"
+process[v1] arg    # call site fails differently:
+# zshrs: tries to call command "process" with subscript
+```
+
+**Workaround** — strict CI lint for fn names with
+special chars.
+
+---
+
+## #537 — escaped parens `\(abc\)` in glob output stripped — zsh: emits literal `(abc)`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/\(abc\)'
+/tmp/_zg/(abc)
+
+$ ./target/debug/zshrs --zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/\(abc\)'
+/tmp/_zg/
+```
+
+`\(` and `\)` are backslash-escaped parens — meant as
+literal `(` and `)` (not glob alternation). zsh treats
+them as literal characters; the output is `/tmp/_zg/(abc)`.
+
+zshrs **strips the escaped paren section entirely** —
+output is `/tmp/_zg/` (the path prefix without the
+`(abc)` portion).
+
+This is a bigger issue than just losing the parens: the
+entire literal text inside the parens is lost too. The
+backslash-escape isn't being honored.
+
+**Where** — `src/ported/glob/parse.rs` or wherever
+backslash-escaped meta-chars are processed: the
+backslash-escape path for paren chars is dropping the
+content. C-source `Src/glob.c` handles `\X` by emitting
+`X` literally.
+
+**Impact** — file paths/strings with literal parens
+that get backslash-escaped get truncated:
+
+```sh
+file="/path/(group)/data.txt"
+echo "/path/\(group\)/data.txt"
+# zsh: /path/(group)/data.txt
+# zshrs: /path//data.txt  (parens AND content dropped)
+```
+
+Affects code that escapes special chars for use in
+patterns or output.
+
+**Workaround** — quote-instead-of-escape:
+```sh
+echo "/path/(group)/data.txt"   # double-quote literal
+echo '/path/(group)/data.txt'   # single-quote literal
+```
+
+Both work in both shells.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -29162,11 +29310,14 @@ echo "still running"
 | 532 | zsh modules `zsh/stat`/`zsh/zselect`/`zsh/zpty`/`zsh/zftp` auto-loaded — extends #530 (zmodload-required-but-pre-loaded) | **port-bug** | `zmodload -e` explicit-detect probe |
 | 533 | `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2 (worst-case rc=0 set-e bypass) | **port-bug** | visual audit |
 | 534 | `builtin 2>&1` (bare redirect on reserved word) silently rc=0 — extends parser-strictness family | **port-bug** | CI lint for prefix-keyword-no-command |
+| 535 | `zsh/system` module auto-loaded — extends #530/#532 (6-module contamination census now) | **port-bug** | explicit module-detection |
+| 536 | `function with[bracket] { ... }` accepts bracket char in fn name (zsh: "no matches found" via glob) | **port-bug** | strict CI lint for fn-name chars |
+| 537 | `echo /tmp/_zg/\\(abc\\)` strips escaped-paren content entirely — zsh: emits literal `(abc)` | **port-bug** | quote-instead-of-escape |
 
-Of five hundred and thirty-four entries, two are fixed (5, 7), 2 freshly
+Of five hundred and thirty-seven entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and twenty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and thirty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
