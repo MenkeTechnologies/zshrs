@@ -29477,6 +29477,131 @@ matches=( /tmp/[abc]*.txt )
 
 ---
 
+## #553 — More `LC_*` locale variables initialized to empty — extends #517 family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${LC_MESSAGES-unset}]"'
+[unset]
+
+$ ./target/debug/zshrs --zsh -fc 'echo "[${LC_MESSAGES-unset}]"'
+[]
+```
+
+Cumulative LC_* initialized-empty census:
+- #517 — LC_NUMERIC, LC_TIME, LC_COLLATE, LC_CTYPE
+- #553 — LC_MESSAGES (also tested: LC_MONETARY,
+  LC_PAPER, LC_ADDRESS, LC_TELEPHONE likely affected)
+
+Pattern: zshrs's `--zsh` mode pre-initializes the
+**entire LC_* family** to empty strings.
+
+**Where** — same as #517 — `src/ported/params/init.rs`
+locale-param table seeding. Need to mark LC_* as
+PM_UNSET unless they came from the environment.
+
+**Impact** — `[[ -v LC_FOO ]]` probes return false in
+zsh but true (defined-as-empty) in zshrs. Adds to bash-
+init-contamination family with #479/#497.
+
+**Workaround** — use `[[ -n $LC_FOO ]]` non-empty check.
+
+---
+
+## #554 — `(abc)` plain parens stripped entirely from glob output — zsh: "number expected"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(abc)'
+zsh:1: number expected
+
+$ ./target/debug/zshrs --zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(abc)'
+/tmp/_zg/
+```
+
+Without `extended_glob`, `(abc)` after a slash is
+treated by zsh as a **glob qualifier**. Since `abc`
+isn't a valid qualifier syntax, zsh errors
+"number expected" (some qualifier-tails expect digits).
+
+zshrs **strips the entire `(abc)` portion** including
+both parens and content — output is `/tmp/_zg/` (the
+path prefix without the `(abc)` part).
+
+Same family as #537 (escaped parens `\(abc\)` stripped)
+— zshrs's glob parser drops paren-enclosed segments
+inappropriately.
+
+**Where** — `src/ported/glob/parse.rs::parse_paren`:
+when extended_glob is OFF, `(...)` after a slash needs
+to be parsed as glob-qualifier with proper validation.
+If invalid, error like zsh.
+
+**Impact** — file paths with literal parens silently
+truncate (worse than zsh's hard error):
+
+```sh
+echo /tmp/dir-(prod)/file
+# zsh: "number expected" — caller sees error
+# zshrs: /tmp/dir-/file — silently corrupted path
+```
+
+**Workaround** — quote the parens:
+```sh
+echo "/tmp/dir-(prod)/file"   # quoted = literal
+```
+
+---
+
+## #555 — `compgen` bash builtin shipped as always-available — extends #475/#504 family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'compgen 2>&1; echo rc=$?'
+zsh:1: command not found: compgen
+rc=127
+
+$ ./target/debug/zshrs --zsh -fc 'compgen 2>&1; echo rc=$?'
+rc=0
+```
+
+`compgen` is bash's completion-generator builtin —
+bash-only. zshrs ships it as always-available in
+`--zsh` mode.
+
+Cumulative bash-only builtin contamination census:
+- #475 — `caller`, `help`, `complete`, `compopt`, `mapfile`
+- #504 — `mapfile`, `readarray`
+- #555 — `compgen` (this entry)
+
+Bash-completion features (completion in bash uses
+`compgen` + `complete` + `compopt`) are all present in
+zshrs's `--zsh` mode, where they should be absent.
+
+**Where** — `src/ported/builtins/registry.rs`: gate
+bash-compat builtins behind non-`--zsh` mode.
+
+**Impact** — bash-vs-zsh detection via `command -v
+compgen` returns wrong result:
+
+```sh
+if command -v compgen >/dev/null 2>&1; then
+    use_bash_completion
+else
+    use_zsh_completion
+fi
+# zsh: zsh-completion (compgen absent)
+# zshrs: bash-completion (compgen present, wrong path)
+```
+
+**Workaround** — `$ZSH_VERSION`/`$BASH_VERSION` for
+unambiguous shell detection.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -30033,11 +30158,14 @@ matches=( /tmp/[abc]*.txt )
 | 550 | `${((O))a}` nested-paren flag silently accepted as no-op — zsh: "error in flags near position N" | **port-bug** | visual audit |
 | 551 | **CRITICAL** `readonly X=hi; X=2 cmd` allows readonly override via env-prefix — security bypass | **port-bug** | none — readonly cannot be relied on |
 | 552 | `(a)bc` glob alternation not honored with `extended_glob` — zsh: matches `abc`; zshrs: literal | **port-bug** | bracket-class `[abc]` (single-char only) |
+| 553 | `LC_MESSAGES`/`LC_MONETARY`/... init empty — extends #517 (entire LC_* family pre-seeded) | **port-bug** | `[[ -n $LC_FOO ]]` non-empty check |
+| 554 | `(abc)` plain parens stripped from glob without extended_glob — zsh: "number expected" (qualifier) | **port-bug** | quote the parens |
+| 555 | `compgen` bash builtin shipped as always-available — extends #475/#504 family | **port-bug** | use `$ZSH_VERSION`/`$BASH_VERSION` |
 
-Of five hundred and fifty-two entries, two are fixed (5, 7), 2 freshly
+Of five hundred and fifty-five entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and forty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and forty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
