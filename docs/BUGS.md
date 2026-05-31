@@ -27121,6 +27121,142 @@ detect_shell() {
 
 ---
 
+## #505 — `integer x="STRING"` silently coerces to 0 — zsh errors "bad math expression"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'integer x="hello world" 2>&1; echo "[$x]"; echo rc=$?'
+zsh:1: bad math expression: operator expected at `world'
+[]
+rc=0
+
+$ ./target/debug/zshrs --zsh -c 'integer x="hello world" 2>&1; echo "[$x]"; echo rc=$?'
+[0]
+rc=0
+```
+
+zsh's `integer x="STRING"` declaration evaluates the
+RHS as arithmetic. With non-numeric STRING, zsh emits
+"bad math expression" and leaves x unset (or empty).
+
+zshrs silently sets `x=0` with rc=0 — non-numeric input
+silently coerced. Same family as #411 (test `-eq` type
+error), #494 (arith expr with junk).
+
+**Where** — `src/ported/builtins/integer.rs::parse_value`:
+must error on non-numeric assignment. C-source
+`Src/builtins.c::typeset_single` for `-i` flag calls
+`getfloat`/`getint` which error on non-numeric input.
+
+**Impact** — typos in integer declarations silently
+shadow values:
+
+```sh
+integer max_count="${max:-unset}"   # typo: $max may be "unset"
+if (( count > max_count )); then ...
+# zsh: errors immediately, script aborts
+# zshrs: max_count=0, `count > 0` always true, runaway loop
+```
+
+**Workaround** — pre-validate numeric:
+```sh
+[[ "$value" =~ ^-?[0-9]+$ ]] || { echo "not int"; return 1; }
+integer x=$value
+```
+
+---
+
+## #506 — `float f="3.14abc"` silently coerces to 0.0 — zsh errors "bad math expression"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'float f="3.14abc" 2>&1; echo "[$f]"; echo rc=$?'
+zsh:1: bad math expression: operator expected at `abc'
+[]
+rc=0
+
+$ ./target/debug/zshrs --zsh -c 'float f="3.14abc" 2>&1; echo "[$f]"; echo rc=$?'
+[0.000000000e+00]
+rc=0
+```
+
+Float version of #505. zsh errors on non-numeric suffix
+in float assignment; zshrs silently coerces to 0.0.
+
+Same root family — `integer`/`float` parameter
+declarations should validate numeric input strictly,
+matching `getint`/`getfloat` semantics.
+
+**Where** — `src/ported/builtins/float.rs::parse_value`
+(or shared with #505 in typeset arg-parsing): must reject
+non-numeric.
+
+**Impact** — silent zero-default for misconfigured float
+parameters. Same fallout pattern as #505.
+
+**Workaround** — pre-validate:
+```sh
+[[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?(e-?[0-9]+)?$ ]] || return 1
+float f=$value
+```
+
+---
+
+## #507 — `${(Q)var}` unquote-flag with `\"` in value removes the `"` instead of keeping it
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="hello\"world"; echo "${(Q)a}"'
+hello"world
+
+$ ./target/debug/zshrs --zsh -c 'a="hello\"world"; echo "${(Q)a}"'
+helloworld
+```
+
+The `(Q)` paramexp flag is the **inverse of `(q)`** —
+it strips ONE level of shell-quoting from the value.
+
+After shell processing of the assignment:
+- `a` contains: `hello"world` (the `\"` became literal
+  `"`)
+
+Then `${(Q)a}` should:
+- zsh: pass-through (Q is for unquoting; no quoting to
+  remove — outputs `hello"world` unchanged)
+- zshrs: removes the `"` character entirely — outputs
+  `helloworld`
+
+zshrs's Q is over-aggressively removing characters
+that aren't quoting markers. The `"` in the value is
+data, not quoting.
+
+**Where** — `src/ported/paramsubst/flags/q.rs::unquote`:
+the Q flag's parser likely treats ANY `"` char as
+removable quoting instead of only structural quotes
+(i.e., quotes added by `(q)`).
+
+**Impact** — round-trips through `(q)` + `(Q)` are
+incorrect for values containing literal `"`:
+
+```sh
+a='hello "world"'
+b=${(q)a}     # b = 'hello\ \"world\"'
+c=${(Q)b}     # zsh: c = a (round-trip)
+              # zshrs: c may not equal a
+```
+
+Affects data serialization through paramexp flags.
+
+**Workaround** — use external `eval` to round-trip:
+```sh
+eval "result=$b"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -27629,9 +27765,12 @@ detect_shell() {
 | 502 | `typeset -a b=($var)` word-splits unquoted `$var` (plain `b=($var)` works) — typeset/local/readonly arg-parse path splits incorrectly | **port-bug** | explicit `${=var}` to force-split in both |
 | 503 | `${(@k)empty_assoc}` produces one empty-string iteration — should be zero (zsh: skip loop entirely) | **port-bug** | guard with `(( ${#assoc} > 0 ))` |
 | 504 | bash-only `mapfile`/`readarray` shipped as builtins in `--zsh` mode — extends #475 bash-compat-contamination | **port-bug** | use `$ZSH_VERSION`/`$BASH_VERSION` for detection |
+| 505 | `integer x="STRING"` silently coerces to 0 — zsh errors "bad math expression" (extends #411/#494 coercion family) | **port-bug** | pre-validate numeric with regex |
+| 506 | `float f="3.14abc"` silently coerces to 0.0 — zsh errors "bad math expression" (extends #505) | **port-bug** | pre-validate numeric with regex |
+| 507 | `${(Q)var}` unquote-flag with `\"` in value drops the `"` instead of keeping it — round-trips via `(q)`+`(Q)` incorrect | **port-bug** | external `eval` round-trip |
 
-Of five hundred and four entries, two are fixed (5, 7),
-four hundred and ninety-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of five hundred and seven entries, two are fixed (5, 7),
+five hundred and one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
