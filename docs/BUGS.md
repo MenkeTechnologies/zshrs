@@ -26316,6 +26316,150 @@ Tedious; doesn't scale.
 
 ---
 
+## #490 — `>&5` (write to invalid fd) silently rc=0 — zsh: "bad file descriptor" rc=1
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo hi >&5 2>&1; echo rc=$?'
+zsh:1: 5: bad file descriptor
+rc=1
+
+$ ./target/debug/zshrs --zsh -c 'echo hi >&5 2>&1; echo rc=$?'
+rc=0
+```
+
+Writing to an unopened file descriptor (`>&5` when fd 5
+isn't open) should error with "bad file descriptor"
+and rc=1. zsh detects the invalid fd before attempting
+the write; zshrs silently rc=0.
+
+This is the redirect-validation gap analog of the
+parser-strictness family — invalid runtime constructs
+silently accepted.
+
+**Where** — `src/ported/exec/redirect.rs::dup_fd`:
+must check that target fd is open via `fcntl(F_GETFD)`
+before allowing the dup. C-source
+`Src/exec.c::redirsave` checks the fd table.
+
+**Impact** — defensive programs that probe fd
+availability silently succeed:
+
+```sh
+# Check if a coproc fd is open before writing
+echo "test" >&5 2>/dev/null
+if (( $? != 0 )); then
+    open_coproc
+    echo "test" >&5
+fi
+# zsh: branch taken first call, opens coproc, second
+#      write succeeds
+# zshrs: first write "succeeds" silently, coproc never
+#      opened, output lost
+```
+
+**Workaround** — explicit fd-open test:
+```sh
+exec 5>&- 2>/dev/null     # try to close
+exec 5>&1                  # re-open
+```
+
+---
+
+## #491 — error messages leak Rust `std::io::Error` format `(os error N)` — extends #488 family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'kill 9999999 2>&1; echo rc=$?'
+zsh:kill:1: kill 9999999 failed: no such process
+rc=1
+
+$ ./target/debug/zshrs --zsh -c 'kill 9999999 2>&1; echo rc=$?'
+zsh:kill:1: kill 9999999: No such process (os error 3)
+rc=1
+```
+
+Same pattern as #488 (`cd`): Rust's default
+`std::io::Error::Display` format leaks into user-facing
+diagnostics:
+- "No such process (os error 3)" — Rust format
+- "no such process" — zsh canonical format
+
+Confirmed across multiple commands:
+- #488 — `cd /no/such` → "(os error 2)"
+- #491 — `kill 9999999` → "(os error 3)"
+
+Likely also:
+- `read` errno cases
+- `exec` errno cases
+- Any builtin that wraps a syscall
+
+**Where** — error-format helper used across builtins:
+when displaying `std::io::Error`, must strip the
+`(os error N)` suffix and lowercase the first character.
+Wrap: `format!("{}", err).strip_suffix(" (os error ...)").to_lowercase()`.
+
+**Impact** — diagnostic-parsing scripts that match zsh's
+canonical format break across many error sites. Also
+exposes implementation details to users.
+
+**Workaround** — case-insensitive grep + strip parens:
+```sh
+output=$(kill 9 2>&1 | sed 's/ (os error [0-9]*)//')
+```
+
+---
+
+## #492 — `echo hi >&-` close-fd-then-write behavior — zsh writes anyway, zshrs drops output
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo hi >&-; echo done'
+hi
+done
+
+$ ./target/debug/zshrs --zsh -c 'echo hi >&-; echo done'
+done
+```
+
+`>&-` is the "close stdout" redirection. zsh and zshrs
+interpret it differently:
+
+- zsh: `echo hi >&-` writes `hi` to stdout, THEN closes
+  fd 1. Subsequent `echo done` re-opens (or runs in
+  parent fd state), so `done` appears.
+- zshrs: `echo hi >&-` closes fd 1 BEFORE echo runs. The
+  echo can't write — silently drops `hi`. `done` appears
+  via the new fd state.
+
+The visible difference: zsh shows `hi` then `done`;
+zshrs shows only `done`.
+
+This could be argued either way semantically, but the
+zsh behavior is the documented one and most scripts
+expect it.
+
+**Where** — `src/ported/exec/redirect.rs::apply_close`:
+must close fd AFTER the command runs (post-execution
+cleanup), not before. C-source `Src/exec.c::handle_redirs`
+queues the close as part of `redirvars` to apply after
+the builtin completes.
+
+**Impact** — `>&-` semantics divergence. Real scripts
+that use `>&-` to explicitly close a fd after writing
+get truncated output in zshrs.
+
+**Workaround** — separate the write and close:
+```sh
+echo hi
+exec 1>&-
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -26809,9 +26953,12 @@ Tedious; doesn't scale.
 | 487 | `pushd` no-args doesn't swap top two stack entries — re-pushes current dir (zsh: swaps) | **port-bug** | explicit `pushd ~+1` (also affected by #466) |
 | 488 | `cd /no/such` error message includes `(os error 2)` — zsh: plain "no such file or directory" (case-sensitive matches break) | **port-bug** | `${output:l}` case-insensitive matching |
 | 489 | `(#cN,M)` count-range glob flag not recognized — extends #425 (`#cN` exact-count) to ranges | **port-bug** | explicit alternation per-count |
+| 490 | `>&5` (write to invalid fd) silently rc=0 — zsh: "bad file descriptor" rc=1 | **port-bug** | explicit fd-open test before write |
+| 491 | `kill 9999999` error includes `(os error 3)` Rust-format — extends #488 family across all syscall-wrapping builtins | **port-bug** | `sed`-strip `(os error N)` suffix |
+| 492 | `echo hi >&-` close-fd-then-write — zsh: hi written then closed; zshrs: dropped (closed before write) | **port-bug** | separate write and `exec 1>&-` close |
 
-Of four hundred and eighty-nine entries, two are fixed (5, 7),
-four hundred and eighty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and ninety-two entries, two are fixed (5, 7),
+four hundred and eighty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
