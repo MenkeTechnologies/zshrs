@@ -26150,6 +26150,172 @@ cd "$oldest"
 
 ---
 
+## #487 — `pushd` no-args doesn't swap top two stack entries — re-pushes current dir instead
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp; pushd /; pushd; pwd; dirs'
+/tmp / /tmp
+/tmp / /tmp
+/tmp
+/tmp /
+
+$ ./target/debug/zshrs --zsh -c 'cd /tmp; pushd /; pushd; pwd; dirs'
+/tmp / /tmp
+/tmp / /tmp
+/tmp
+/tmp / /tmp
+```
+
+`pushd` (no args) is supposed to **swap the top two
+directory-stack entries** — useful for toggling between
+two dirs without typing paths. After `pushd /`, the
+stack is `(/tmp /)`. After bare `pushd`, the stack
+should become `(/tmp /)` again with current dir back to
+`/tmp` from `/` (via the swap, then current dir is the
+new top).
+
+Actually re-reading zsh's output: after `pushd` with no
+args, dirs shows `/tmp /` (top of stack `/tmp` is
+current, prev is `/`). This is the swap result.
+
+zshrs's output shows `/tmp / /tmp` — pushd ADDED current
+dir to stack instead of swapping with previous.
+
+**Where** — `src/ported/builtins/pushd.rs::no_args_path`:
+must implement the "swap top two entries" semantics
+(equivalent to `pushd ~+1`). C-source
+`Src/builtins.c::bin_pushd` with `argc==0` and a
+non-empty stack does this swap.
+
+**Impact** — common `pushd` toggle pattern broken:
+
+```sh
+# Quick toggle between two project dirs
+cd ~/proj/web
+pushd ~/proj/api    # stack: (api web)
+# work in api
+pushd               # stack: (web api), current is web
+# work in web
+pushd               # stack: (api web), current is api
+```
+
+zshrs corrupts the stack with each bare `pushd` —
+keeps growing.
+
+**Workaround** — explicit `pushd ~+1`:
+```sh
+pushd ~+1
+```
+
+(But also affected by #466 — pushd +N indexing broken.)
+
+---
+
+## #488 — `cd /no/such` error message includes `(os error 2)` — zsh: plain "no such file or directory"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp/zzz_nosuch 2>&1; echo rc=$?'
+zsh:cd:1: no such file or directory: /tmp/zzz_nosuch
+rc=1
+
+$ ./target/debug/zshrs --zsh -c 'cd /tmp/zzz_nosuch 2>&1; echo rc=$?'
+zsh:cd:1: No such file or directory (os error 2): /tmp/zzz_nosuch
+rc=1
+```
+
+Same operation, different error message:
+- zsh: `no such file or directory:` (lowercase, no parens)
+- zshrs: `No such file or directory (os error 2):`
+  (Title-Case, includes os error number from
+  `std::io::Error::Display`)
+
+The `(os error 2)` is the Rust stdlib's default `Display`
+for IO errors. zshrs is exposing this raw form instead
+of the canonical zsh format.
+
+**Where** — `src/ported/builtins/cd.rs::error_msg`:
+must format the error to match zsh's lowercase
+no-parens form. Common pattern: parse the IO error and
+re-emit just `errno_str(err).to_lowercase()` without
+the parenthetical os-error number.
+
+**Impact** — log parsers and error-matching scripts
+that pattern-match on zsh's canonical error format
+break:
+
+```sh
+output=$(cd /bad 2>&1)
+if [[ "$output" == *"no such file"* ]]; then
+    handle_missing_dir
+fi
+# zsh: lowercase "no such" matches
+# zshrs: starts with "No such" — case-sensitive grep fails
+```
+
+Affects every `cd`-error consumer that's case-sensitive.
+
+**Workaround** — case-insensitive matching:
+```sh
+[[ "${output:l}" == *"no such file"* ]] && ...
+```
+
+---
+
+## #489 — `(#cN,M)` count-range glob flag not recognized — extends #425 from exact-count to range
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; [[ "aaa" == a(#c2,4) ]] && echo m'
+m
+
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; [[ "aaa" == a(#c2,4) ]] && echo m'
+(no output, rc=1)
+```
+
+`(#cN,M)` is the **count-range** form — match between N
+and M repetitions of the preceding pattern. With
+`(#c2,4)`, "aaa" matches because it has 3 `a`'s (within
+2-4 range).
+
+zsh implements both `(#cN)` (exact — #425) and
+`(#cN,M)` (range — this entry). zshrs handles neither.
+
+Likely also unsupported variants: `(#c,M)` (max only),
+`(#cN,)` (min only).
+
+**Where** — same as #425: `src/ported/glob/pattern.rs`
+glob-flag parser needs `c` followed by digits with
+optional comma+digits parsing.
+
+**Impact** — bounded-repetition patterns broken:
+
+```sh
+# Version-string match: 2-4 numeric components
+[[ "$version" == [0-9](#c2,4) ]] && valid
+# zsh: matches "12", "123", "1234", "12345" if pattern
+#      had been "[0-9]+" without trailing length
+# zsh actual: matches strings of 2-4 digits
+# zshrs: doesn't match anything (literal flag)
+```
+
+Extends the `(#X)` glob-flag gap census: #409 (#i),
+#421 (^/~/#), #425 (#cN), #483 (#s), #484 (#l), #485
+(#a), #489 (#cN,M).
+
+**Workaround** — explicit alternation:
+```sh
+[[ "$version" == [0-9][0-9] || "$version" == [0-9][0-9][0-9] || ... ]]
+```
+
+Tedious; doesn't scale.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -26640,9 +26806,12 @@ cd "$oldest"
 | 484 | `(#l)PATTERN` case-insensitive-lowercase glob flag not recognized — extends #483 family | **port-bug** | explicit `[Aa][Bb][Cc]` case alternation |
 | 485 | `(#aN)PATTERN` approximate-match (typo-tolerant) glob flag not recognized — extends #483 family | **port-bug** | external `agrep` for fuzzy match |
 | 486 | `~-N` (negative dirstack index) not expanded — `~-` alone works; numeric suffix fails | **port-bug** | `dirs -l \| awk` + explicit cd |
+| 487 | `pushd` no-args doesn't swap top two stack entries — re-pushes current dir (zsh: swaps) | **port-bug** | explicit `pushd ~+1` (also affected by #466) |
+| 488 | `cd /no/such` error message includes `(os error 2)` — zsh: plain "no such file or directory" (case-sensitive matches break) | **port-bug** | `${output:l}` case-insensitive matching |
+| 489 | `(#cN,M)` count-range glob flag not recognized — extends #425 (`#cN` exact-count) to ranges | **port-bug** | explicit alternation per-count |
 
-Of four hundred and eighty-six entries, two are fixed (5, 7),
-four hundred and eighty remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and eighty-nine entries, two are fixed (5, 7),
+four hundred and eighty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
