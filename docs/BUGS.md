@@ -29340,6 +29340,143 @@ echo /tmp/_zg/(a|)   # zsh-style optional a
 
 ---
 
+## #550 — `${((O))a}` nested-paren flag silently accepted as no-op — zsh: "error in flags"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "${((O))a}" 2>&1'
+zsh:1: error in flags near position 4 in '${((O))a}"'
+
+$ ./target/debug/zshrs --zsh -fc 'a=(x y z); echo "${((O))a}" 2>&1'
+x y z
+```
+
+`((O))` (nested flag-paren) is invalid syntax. zsh
+rejects with "error in flags near position N" (and the
+position cursor points to the 4th char).
+
+zshrs accepts the nested-paren as if it's a no-op (or
+parses the inner flag and ignores the outer paren) and
+returns the array value unchanged.
+
+Same family as #546 (`(!)` accepted) — invalid flag
+syntax silently ignored. Cumulative paramexp-validation
+gaps: #436 (valid combo rejected), #546 (invalid char
+accepted), #550 (invalid nested syntax accepted).
+
+**Where** — `src/ported/paramsubst/flags.rs::parse`:
+must require single-paren-only for flag-paren.
+
+**Impact** — typos in flag syntax produce wrong output:
+
+```sh
+# Intended: ${(O)a} — reverse-order
+# Typo: extra paren
+echo "${((O))a}"
+# zsh: errors immediately, typo caught
+# zshrs: returns array unchanged — typo silent
+```
+
+**Workaround** — visual audit.
+
+---
+
+## #551 — `readonly X=hi; X=2 cmd` allows readonly override via env-prefix — security-relevant
+
+**Status:** `port-bug` — **CRITICAL** (security) — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'readonly X=hi; X=2 env | grep "^X="'
+zsh:1: read-only variable: X
+
+$ ./target/debug/zshrs --zsh -fc 'readonly X=hi; X=2 env | grep "^X="'
+zsh:1: read-only variable: X
+X=2
+```
+
+Both shells emit the "read-only variable: X" error
+during command-prefix assignment processing. But:
+- zsh: REJECTS the assignment — `env` runs WITHOUT X=2
+  in its environment (no `X=2` line in output)
+- zshrs: emits the error message but STILL adds X=2 to
+  env's environment
+
+This is a **readonly bypass via command-prefix env**.
+Code that relies on `readonly` for security/integrity
+guarantees can be circumvented:
+
+```sh
+readonly PASSWORD_FILE=/etc/secure
+PASSWORD_FILE=/tmp/attacker dangerous_cmd
+# zsh: rejects, dangerous_cmd sees /etc/secure
+# zshrs: emits warning, dangerous_cmd sees /tmp/attacker
+```
+
+Same family as #498 (readonly redeclare silent), #443
+(EUID assign silent) — readonly protection broadly
+under-enforced in zshrs.
+
+**Where** — `src/ported/exec/command.rs::apply_assignments`:
+the env-prefix assignment code-path must abort the
+command-prefix env-build if any assignment fails the
+readonly check.
+
+**Impact** — security-relevant. Sandbox-escape via
+readonly bypass.
+
+**Workaround** — none — zsh's protection is silently
+bypassed; can't rely on `readonly` semantics in zshrs.
+
+---
+
+## #552 — `(a)bc` glob alternation not honored with extended_glob — zsh: matches `abc`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(a)bc'
+/tmp/_zg/abc
+
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(a)bc'
+/tmp/_zg/(a)bc
+```
+
+`(pattern)` in extended_glob is **alternation** — `(a)`
+alone means "match `a`". `(a)bc` matches files whose
+name starts with `a` then literal `bc` → matches `abc`.
+
+zsh expands the glob and emits `/tmp/_zg/abc`. zshrs
+treats `(a)bc` as a **literal filename** and emits the
+unchanged pattern.
+
+This is opposite-direction from #549 (`?(a)` extglob
+ksh-style) — there zshrs accepts bash semantics; here
+zshrs DOESN'T accept zsh's plain `(pattern)` semantics.
+
+**Where** — `src/ported/glob/pattern.rs::compile`:
+when extended_glob is set, `(pat)` parens should be
+treated as alternation grouping. Currently they may be
+treated as literal or as glob-qualifier.
+
+**Impact** — `(pat)` patterns common in zsh-completion
+code don't match expected files:
+
+```sh
+matches=( /tmp/(a|b|c)*.txt )
+# zsh: files starting with a, b, or c, ending in .txt
+# zshrs: only files literally named "(a|b|c)*.txt"
+```
+
+**Workaround** — explicit alternation using bracket-class:
+```sh
+matches=( /tmp/[abc]*.txt )
+```
+
+(Only works for single-char alternation.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -29893,11 +30030,14 @@ echo /tmp/_zg/(a|)   # zsh-style optional a
 | 547 | `echo "$~"` emits literal `$~` — zsh: drops invalid `$X` to empty | **port-bug** | (acceptable in user code) |
 | 548 | `${(   )a}` whitespace-only flag-paren error: "bad substitution" — zsh: "error in flags near position N" | **port-bug** | match on rc only |
 | 549 | `?(a)` extglob in zsh-mode: zshrs uses bash-style "zero-or-one" — zsh: rejects as broken glob-qualifier | **port-bug** | use `(a|)` explicit alternation |
+| 550 | `${((O))a}` nested-paren flag silently accepted as no-op — zsh: "error in flags near position N" | **port-bug** | visual audit |
+| 551 | **CRITICAL** `readonly X=hi; X=2 cmd` allows readonly override via env-prefix — security bypass | **port-bug** | none — readonly cannot be relied on |
+| 552 | `(a)bc` glob alternation not honored with `extended_glob` — zsh: matches `abc`; zshrs: literal | **port-bug** | bracket-class `[abc]` (single-char only) |
 
-Of five hundred and forty-nine entries, two are fixed (5, 7), 2 freshly
+Of five hundred and fifty-two entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and forty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and forty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
