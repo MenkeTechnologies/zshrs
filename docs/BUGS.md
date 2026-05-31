@@ -26460,6 +26460,164 @@ exec 1>&-
 
 ---
 
+## #493 — `%i` prompt escape (line number) returns 0 instead of 1 — off-by-one (extends #385/#396)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%i"'
+1
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%i"'
+0
+```
+
+`%i` is the prompt escape for the **line number in the
+current source file/function**. On the first line of
+a `-c` script, zsh emits `1`. zshrs emits `0`.
+
+Same off-by-one issue as #385 (`$LINENO` inside fn
+returns `1` instead of `0` — same bug, opposite direction
+since LINENO is 0-based at fn entry but the prompt escape
+%i should be 1-based always).
+
+Wait re-checking: #385 is "LINENO returns 1 instead of
+0 inside function (off-by-one in base-index)". #396 is
+"funcsourcetrace records line:0 instead of line:1".
+#493 is "%i prompt escape returns 0 instead of 1".
+
+So #385 and #493 are OPPOSITE — one wants 0, the other
+wants 1 — but both reflect zshrs's line-numbering being
+off-by-one from zsh's.
+
+**Where** — `src/ported/prompts/expand.rs::handle_i`:
+should emit `LINENO` value. C-source
+`Src/prompt.c::putpromptchar` for `'i'` reads
+`tagcurrentline`.
+
+**Impact** — debug prompts that include `%i` show wrong
+line numbers. Often used in `PS4` for trace-mode
+debugging. Combined with #391 (PS4 escapes not expanded),
+`set -x` output is doubly broken in zshrs.
+
+**Workaround** — use `$LINENO + 1` in the prompt
+function (combined with the inverse off-by-one of #385,
+the values may align).
+
+---
+
+## #494 — `$(("42xyz" + 1))` silently coerces to 0+1=1 — zsh errors "operator expected"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="42xyz"; echo $((a + 1)) 2>&1; echo rc=$?'
+zsh:1: bad math expression: operator expected at `xyz'
+rc=1
+
+$ ./target/debug/zshrs --zsh -c 'a="42xyz"; echo $((a + 1)) 2>&1; echo rc=$?'
+1
+rc=0
+```
+
+When arithmetic encounters a string parameter with
+numeric prefix followed by non-numeric junk:
+- zsh: errors "bad math expression: operator expected at
+  `xyz`" — strict parse, demands the operand be entirely
+  numeric
+- zshrs: silently treats the entire value as **0** and
+  evaluates `0 + 1 = 1`
+
+This is the same family as #411 (`[ "abc" -eq 5 ]` test
+type-error coerced to 0) — arithmetic context silently
+coerces non-numeric to 0 instead of erroring.
+
+**Where** — `src/ported/arith/eval.rs::parse_operand`:
+must reject mid-string junk and emit the diagnostic.
+C-source `Src/math.c::mathevall` calls `zerror` on
+trailing non-numeric chars.
+
+**Impact** — silent acceptance of malformed numeric
+input. Defensive code that uses arithmetic comparisons
+on user-supplied values doesn't catch invalid input:
+
+```sh
+read user_input
+if (( user_input > 100 )); then
+    apply_threshold "$user_input"
+fi
+# user typed "42abc"
+# zsh: arith errors, branch skipped (script aborts on
+#       errexit)
+# zshrs: arith returns 42 (or 0 with abc junk), branch
+#       proceeds with malformed input
+```
+
+Combined with #411 (test-op type coerce), zshrs's
+arithmetic-context type-coercion is overly permissive.
+
+**Workaround** — validate numeric input separately:
+```sh
+[[ "$user_input" =~ ^-?[0-9]+$ ]] || { echo "not int"; exit 1; }
+(( user_input > 100 )) && apply_threshold "$user_input"
+```
+
+---
+
+## #495 — `${(C)a[1]}` capitalize-flag + array-subscript errors "bad substitution" — extends #436 family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(a b c); echo "${(C)a[1]}"'
+A
+
+$ ./target/debug/zshrs --zsh -c 'a=(a b c); echo "${(C)a[1]}"'
+zsh:1: bad substitution
+```
+
+`(C)` is the capitalize-first-letter flag. Applied to
+`a[1]` (first element of array a), zsh capitalizes the
+element: `a` → `A`.
+
+zshrs's flag+subscript parser rejects with "bad
+substitution" — same root cause as #436 (`(q)a[1]`),
+#407 (`(e)key`), #408 (3-arg slice), #447 ((flag)scalar[@]).
+
+Confirmed flags affected by the flag+subscript parsing
+gap:
+- `(q)` — quote — #436
+- `(qq)` — single-quote — likely (untested)
+- `(C)` — capitalize — #495 (this entry)
+- `(U)` / `(L)` — upper/lower — #441 listed as parts
+- `(w)` — words — earlier test
+- `(e)` — exact — #407 (works but wrong semantic)
+
+Most paramexp flags applied with subscripts fail.
+
+**Where** — same as #436: `src/ported/paramsubst/parse.rs`
+needs comprehensive flag+subscript composition support.
+
+**Impact** — generic per-element transformations broken:
+
+```sh
+names=(alice bob charlie)
+print -l -- "${(C)names[1]}" "${(C)names[2]}" "${(C)names[3]}"
+# zsh: "Alice", "Bob", "Charlie"
+# zshrs: bad substitution × 3
+```
+
+Affects formatting helpers that capitalize specific
+array entries.
+
+**Workaround** — bind to scalar first:
+```sh
+n1="${names[1]}"
+print "${(C)n1}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -26956,9 +27114,12 @@ exec 1>&-
 | 490 | `>&5` (write to invalid fd) silently rc=0 — zsh: "bad file descriptor" rc=1 | **port-bug** | explicit fd-open test before write |
 | 491 | `kill 9999999` error includes `(os error 3)` Rust-format — extends #488 family across all syscall-wrapping builtins | **port-bug** | `sed`-strip `(os error N)` suffix |
 | 492 | `echo hi >&-` close-fd-then-write — zsh: hi written then closed; zshrs: dropped (closed before write) | **port-bug** | separate write and `exec 1>&-` close |
+| 493 | `%i` prompt escape (line number) returns 0 instead of 1 — off-by-one (extends #385/#396 line-numbering family) | **port-bug** | `$((LINENO + 1))` adjust |
+| 494 | `$((a + 1))` with `a="42xyz"` silently coerces to 0 — zsh: "bad math expression: operator expected" | **port-bug** | pre-validate numeric input with regex |
+| 495 | `${(C)a[1]}` capitalize-flag + array-subscript errors "bad substitution" — extends #436 flag×subscript family | **port-bug** | bind subscript-result to scalar first |
 
-Of four hundred and ninety-two entries, two are fixed (5, 7),
-four hundred and eighty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and ninety-five entries, two are fixed (5, 7),
+four hundred and eighty-nine remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
