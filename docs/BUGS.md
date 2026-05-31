@@ -25238,6 +25238,170 @@ functions -t | grep -E "^[a-zA-Z_]+ \(\)" | awk '{print $1}'
 
 ---
 
+## #469 — `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/bar.c /tmp/_zg/foo.txt; echo /tmp/_zg/*(e:'\''[[ $REPLY == *.c ]]'\'':)'
+/tmp/_zg/bar.c
+
+$ ./target/debug/zshrs --zsh -c 'mkdir -p /tmp/_zg && touch /tmp/_zg/bar.c /tmp/_zg/foo.txt; echo /tmp/_zg/*(e:'\''[[ $REPLY == *.c ]]'\'':)'
+zsh:1: unrecognized modifier `['
+/tmp/_zg/foo.txt
+/tmp/_zg/bar.c
+```
+
+`*(e:CODE:)` is the **eval glob qualifier** — for each
+matched file, sets `$REPLY` to the filename and runs
+CODE; if CODE's exit status is 0, the file is included.
+
+zsh: filters to just `.c` files via the eval.
+zshrs: errors "unrecognized modifier `['" (the `e:...:`
+qualifier handler isn't implemented) and falls through
+to no-filter, returning all matched files.
+
+Same family as #409/#421/#425 (glob qualifier handlers
+missing): the `e:CODE:` modifier is a powerful zsh
+feature — arbitrary shell filter — not in zshrs.
+
+**Where** — `src/ported/glob/qualifiers/eval.rs` (or
+equivalent): must parse `e:CODE:` and evaluate per
+match. C-source `Src/glob.c::qualifyeval` sets `REPLY`
+and calls `execcmd` for each filename.
+
+**Impact** — custom-filter patterns broken:
+
+```sh
+# Find files matching custom predicate
+files=( /var/log/*(e:'[[ $(file -b "$REPLY") == *"text"* ]]':) )
+# zsh: list only text files
+# zshrs: errors, returns all files OR none
+```
+
+A workhorse pattern in zsh-completion plugins for
+filtering by complex criteria.
+
+**Workaround** — pipe through external filter:
+```sh
+files=( /var/log/*(.) )
+filtered=()
+for f in "${files[@]}"; do
+    [[ $(file -b "$f") == *"text"* ]] && filtered+=("$f")
+done
+```
+
+---
+
+## #470 — `emulate -L sh` shows `localoptions`/`localpatterns`/`localtraps` instead of sh-mode setopts
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'emulate -L sh; setopt' | head -3
+banghist
+nohashdirs
+nointeractivecomments
+
+$ ./target/debug/zshrs --zsh -c 'emulate -L sh; setopt' | head -3
+localoptions
+localpatterns
+localtraps
+```
+
+`emulate -L MODE`:
+- Apply MODE's emulation opts
+- AND enable `localoptions`, `localpatterns`, `localtraps`
+  (auto-restore on function return)
+
+zsh shows BOTH: the local* meta-flags AND the actual
+emulation opts (banghist, etc.).
+
+zshrs shows ONLY the local* meta-flags. The actual
+sh-emulation opt block isn't applied.
+
+Distinct from #464 (`emulate sh` plain — no -L flag —
+also doesn't apply opts): #470 confirms even the -L
+form half-works (sets the meta-flags but skips the real
+emulation work).
+
+**Where** — same as #464: `src/ported/builtins/emulate.rs`
+needs the mode→opts table populated. The local* flag
+side works in zshrs; the per-mode opt-toggle side
+doesn't.
+
+**Impact** — `emulate -L sh -c 'sh-script'` patterns
+(common for POSIX-compat code blocks inside zsh) don't
+actually run in sh emulation:
+
+```sh
+emulate -L sh
+# expected: $arr [@] expansion gets sh semantics, etc.
+[[ -n "${arr[@]}" ]] && ...
+# zsh: sh semantics — different array-test behavior
+# zshrs: still in full zsh mode
+```
+
+Combined with #464, `emulate` is broken for both `-L`
+and non-`-L` forms.
+
+**Workaround** — same as #464 — manual setopt of
+sh-emulation list.
+
+---
+
+## #471 — `zmodload -u zsh/nonexistent` silently succeeds — should error "no such module"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload -u zsh/nonexistent; echo rc=$?'
+zsh:zmodload:1: no such module zsh/nonexistent
+rc=1
+
+$ ./target/debug/zshrs --zsh -c 'zmodload -u zsh/nonexistent; echo rc=$?'
+rc=0
+```
+
+`zmodload -u NAME` should unload module NAME. If NAME
+isn't loaded (or doesn't exist), zsh emits "no such
+module" and returns rc=1.
+
+zshrs silently returns rc=0 — no diagnostic, no error.
+This is the unload-side analog of #376 (zmodload load
+failure silent).
+
+**Where** — `src/ported/builtins/zmodload.rs::unload`:
+must check if module is loaded; emit "no such module"
+error and return non-zero if not. C-source
+`Src/init.c::unload_module` walks `modules` list and
+errors when name not found.
+
+**Impact** — defensive unload scripts can't distinguish
+"successfully unloaded" from "wasn't loaded":
+
+```sh
+# Unload a module if loaded
+zmodload -u zsh/regex 2>/dev/null || true
+# zsh: error message suppressed but rc=1 captured
+# zshrs: always rc=0 — caller can't tell what happened
+```
+
+Combined with #376 (load-fail silent) and #377
+(no-args lists wrong table), `zmodload` is broken across
+all three operations: load (silent error), list (wrong
+output), unload (silent error).
+
+**Workaround** — list loaded modules separately:
+```sh
+zmodload | grep -q zsh/regex && zmodload -u zsh/regex
+```
+
+But #377 says zmodload no-args lists wrong table —
+so this workaround is also unreliable.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -25710,9 +25874,12 @@ functions -t | grep -E "^[a-zA-Z_]+ \(\)" | awk '{print $1}'
 | 466 | `pushd +N` / `popd +N` dirstack indexing cycles wrong direction — +1 lands on wrong stack entry | **port-bug** | use absolute paths via `cd` |
 | 467 | `$-` shell-flags parameter missing `f` flag when shell launched with `-f` — likely `c`/`i`/`s`/`l` also missing | **port-bug** | `[[ -o rcs ]]` for specific opt |
 | 468 | `functions -t` (list traced) emits full function body instead of name list (zsh: empty or names only) | **port-bug** | `grep`-extract names from full output |
+| 469 | `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier" | **port-bug** | manual filter loop after glob |
+| 470 | `emulate -L sh` shows `localoptions`/`localpatterns`/`localtraps` but doesn't apply sh-mode opts — same root as #464 | **port-bug** | manual setopt of sh list |
+| 471 | `zmodload -u zsh/nonexistent` silently rc=0 — should error "no such module" (zsh: rc=1) | **port-bug** | manual module-list check before unload |
 
-Of four hundred and sixty-eight entries, two are fixed (5, 7),
-four hundred and sixty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and seventy-one entries, two are fixed (5, 7),
+four hundred and sixty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
