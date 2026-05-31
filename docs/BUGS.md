@@ -25882,6 +25882,155 @@ patterns.
 
 ---
 
+## #481 — `[[ -n ]]`/`[[ -r ]]`/`[[ -d ]]`/`[[ -f ]]` and ALL unary ops silently rc=0 — generalizes #480
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ -n ]] 2>&1; echo rc=$?'
+zsh:1: unknown condition: -n
+
+$ ./target/debug/zshrs --zsh -c '[[ -n ]] 2>&1; echo rc=$?'
+rc=0
+```
+
+Same for `-r`, `-d`, `-f`, `-w`, `-x`, `-e`, `-O`, `-G`,
+`-h`, `-S`, `-N`, `-s`, `-u`, `-g`, `-k`, etc. — every
+unary test operator without an operand:
+- zsh: "unknown condition: -X" parse error
+- zshrs: silent rc=0
+
+Generalizes #480 (`-z` specifically) — confirms ALL
+unary ops have the same gap.
+
+**Where** — `src/ported/conditional/parse.rs::parse_unary`:
+must require an operand after every unary operator.
+C-source `Src/cond.c::par_cond` enforces this at parse
+time, not runtime.
+
+**Impact** — typos that drop the variable name silently
+"succeed":
+
+```sh
+if [[ -f $config_file ]]; then
+    apply_config
+fi
+# Typo: missing $config_file
+if [[ -f ]]; then
+    apply_config
+fi
+# zsh: parse error, script aborts
+# zshrs: branch always taken (rc=0) — wrong config
+#        applied silently
+```
+
+Combined with #480 / parser-strictness family, this is
+yet another lax-validation gap that lets bugs ship.
+
+**Workaround** — CI lint to require operand after `-X`
+test ops.
+
+---
+
+## #482 — `[[ 5 -eq ]]` binary op missing RHS silently rc=1 — zsh: parse error
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ 5 -eq ]] 2>&1; echo rc=$?'
+zsh:1: parse error: condition expected: 5
+
+$ ./target/debug/zshrs --zsh -c '[[ 5 -eq ]] 2>&1; echo rc=$?'
+rc=1
+```
+
+Binary test operators (`-eq`, `-ne`, `-lt`, `-gt`, `-le`,
+`-ge`, `==`, `!=`, `<`, `>`, `-nt`, `-ot`, `-ef`) require
+both LHS and RHS. zsh detects the missing RHS at parse
+time, errors "parse error: condition expected: <lhs>".
+
+zshrs accepts the malformed expression silently — the
+test "fails" with rc=1 as if it were a real comparison
+that returned false.
+
+Same family as #481 but for binary operators. Both
+expand the parser-strictness gap (#480 was specifically
+`-z`).
+
+**Where** — `src/ported/conditional/parse.rs::parse_binary`:
+must require RHS token after binary operator.
+
+**Impact** — typos that drop the comparison value pass
+silently:
+
+```sh
+threshold=100
+if [[ $value -gt ]]; then     # typo: missing $threshold
+    alert
+fi
+# zsh: parse error caught
+# zshrs: rc=1 silently — alert never fires regardless
+#        of $value
+```
+
+**Workaround** — CI lint for binary-op-no-rhs patterns.
+
+---
+
+## #483 — `(#s)PATTERN` start-anchor glob flag not recognized — extends #409 family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(#s)abc'
+/tmp/_zg/abc
+
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(#s)abc'
+/tmp/_zg/(#s)abc
+```
+
+`(#s)` is the EXTENDED_GLOB start-anchor flag — forces
+the following pattern to match starting at the beginning
+of the string. Useful for substring vs prefix matching:
+- `(#s)foo` — match only at start
+- `foo` — match anywhere as substring
+
+zsh: matches `abc`.
+zshrs: treats `(#s)abc` as a literal filename, no match.
+
+Cumulative `(#X)` flag census in zshrs:
+- #409 — `(#i)` case-fold not recognized
+- #421 — `^`/`~`/`#` gated incorrectly
+- #425 — `(#cN)` count not recognized
+- #483 — `(#s)` start-anchor not recognized (this entry)
+
+Likely also unimplemented: `(#e)` end-anchor, `(#b)`
+backref, `(#a)` approximate-match, `(#l)`
+case-insensitive lowercase, `(#m)` match capture.
+
+**Where** — `src/ported/glob/pattern.rs::parse_paren_flag`:
+the EXTENDED_GLOB `(#X)` flag family needs comprehensive
+handling — most flags missing. C-source
+`Src/pattern.c::patcompile` handles them as
+`Tabackref`/`Tabackrefs`/etc. tokens.
+
+**Impact** — substring-vs-anchored matching:
+
+```sh
+setopt extended_glob
+files=( *(#s)foo* )   # files starting with "foo"
+files=( *foo* )       # files containing "foo" anywhere
+# zsh: distinct results
+# zshrs: both return same — (#s) treated as literal
+```
+
+Affects refined matching in any extended_glob script.
+
+**Workaround** — explicit prefix pattern: `foo*` instead
+of `(#s)foo*`.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -26366,9 +26515,12 @@ patterns.
 | 478 | `read "?prompt"` emits prompt to stdout instead of stderr — corrupts cmdsub-captured output | **port-bug** | `print -n PROMPT >&2; read` form |
 | 479 | `$OPTERR` initialized to 1 — bash-compat addition, zsh leaves unset | **port-bug** | use `$ZSH_VERSION` for shell-detect |
 | 480 | `[[ -z ]]` (no operand) silently rc=0 — zsh errors "unknown condition" — extends parser-strictness family | **port-bug** | CI lint for unary-op-no-operand |
+| 481 | `[[ -n/-r/-d/-f/... ]]` ALL unary ops no-operand silently rc=0 (zsh: parse error each) — generalizes #480 | **port-bug** | CI lint each operator |
+| 482 | `[[ 5 -eq ]]` binary op missing RHS silently rc=1 (zsh: parse error) — completes test parse-strictness gap | **port-bug** | CI lint for binary-op-no-rhs |
+| 483 | `(#s)PATTERN` start-anchor glob flag not recognized — extends #409 `(#X)` family ((#e)/(#b)/(#a)/(#l)/(#m) likely too) | **port-bug** | explicit prefix-pattern form |
 
-Of four hundred and eighty entries, two are fixed (5, 7),
-four hundred and seventy-four remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and eighty-three entries, two are fixed (5, 7),
+four hundred and seventy-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
