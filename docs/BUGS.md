@@ -29061,6 +29061,155 @@ print -l "${parts[@]:#}"
 
 ---
 
+## #544 — `a[0]="x"` zero-index array assignment silently accepted — zsh: "assignment to invalid subscript range"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(); a[0]="zero" 2>&1; echo "[${a[@]}]"'
+zsh:1: a: assignment to invalid subscript range
+
+$ ./target/debug/zshrs --zsh -fc 'a=(); a[0]="zero" 2>&1; echo "[${a[@]}]"'
+[zero]
+```
+
+zsh arrays are **1-indexed** — `a[0]` is invalid for
+assignment. zsh emits "assignment to invalid subscript
+range" rc=1 and leaves the array unchanged.
+
+zshrs accepts `a[0]=...` (bash-style 0-indexing) and
+stores the value. Subsequent `${a[@]}` returns the
+value as if it were a legitimate element.
+
+This is bash-compat permissiveness — bash uses 0-indexed
+arrays where `a[0]` is the first element. zshrs has
+imported this semantic.
+
+**Where** — `src/ported/params/array.rs::set_at_index`:
+in zsh-compat mode, must reject index 0 (treat as
+invalid range). C-source `Src/params.c::setarrlim`
+errors on `idx == 0` AND `idx > max`.
+
+**Impact** — code that relies on zsh's 1-indexing for
+input validation silently accepts invalid index:
+
+```sh
+if (( ${#a} >= 1 )); then
+    a[$((${#a} + 1))]=new
+elif (( ${#a} == 0 )); then
+    # First element should be a[1]
+    a[1]=first
+fi
+# Typo: a[0]=first
+# zsh: errors, branch fails — caller notices
+# zshrs: silently stores at "0" position, array still
+#        appears empty under standard 1-indexed access
+```
+
+Read-side `${a[0]}` may also differ (returning either
+the 0-stored value or empty depending on
+implementation).
+
+**Workaround** — strict 1-index validation in user code.
+
+---
+
+## #545 — `${(s.X.)XXX}` all-separator string yields 4 empty fields — zsh: 2 (extends #542 family)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="XXX"; for x in "${(s.X.)a}"; do echo "[$x]"; done | wc -l'
+       2
+
+$ ./target/debug/zshrs --zsh -fc 'a="XXX"; for x in "${(s.X.)a}"; do echo "[$x]"; done | wc -l'
+       4
+```
+
+String of 3 separators alone: split-by-X yields 4
+fields (3 separators = 4 gaps): "", "", "", "".
+
+zsh: collapses to 2 (boundary fields kept).
+zshrs: keeps all 4.
+
+More extreme demonstration of #542 — when the input
+contains MORE separators than data:
+
+| Input string | Split by X | zsh count | zshrs count |
+|--------------|------------|-----------|-------------|
+| `aXXb`       | `a`, `b`   | 2         | 3 (empty mid)|
+| `XXX`        | (all empty)| 2         | 4           |
+| `aaX`       | `aa`       | 1         | 2 (empty end)|
+| `Xaa`       | `aa`       | 1         | 2 (empty start)|
+
+zsh's behavior: empty fields filtered at boundaries AND
+within. zshrs: keeps everything.
+
+Same root as #542 — split implementation doesn't filter
+empties.
+
+**Where** — same as #542.
+
+**Impact** — string-processing patterns that count
+fields get wrong counts. Token-stream analysis,
+CSV-style parsing (zsh-style with separators), all
+diverge.
+
+**Workaround** — `${arr[@]:#}` to filter empties
+post-split.
+
+---
+
+## #546 — `${(!)var}` invalid flag silently accepted — zsh: "error in flags"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="hi"; echo "${(!)a}" 2>&1; echo rc=$?'
+zsh:1: error in flags near position 4 in '${(!)a}"'
+
+$ ./target/debug/zshrs --zsh -fc 'a="hi"; echo "${(!)a}" 2>&1; echo rc=$?'
+hi
+rc=0
+```
+
+`(!)` is **not a documented zsh paramexp flag**. zsh
+rejects it with "error in flags near position N"
+showing the offending char position. The expansion
+fails entirely (rc=1).
+
+zshrs **ignores the unknown flag** and returns the
+parameter value unchanged.
+
+This silent acceptance of unknown flags is dangerous:
+typos like `(!)` for `(@)` or `(s)` for `(z)` produce
+wrong output silently instead of erroring.
+
+Same family as #398 (printf unknown directive accepted)
+— but for paramexp flags instead of printf directives.
+
+Confirmed unknown flags accepted silently:
+- `(!)` → no-op, returns value
+- Likely also `(?)`, `(#)`, `(@@)`, `(zz)`, etc. (untested)
+
+**Where** — `src/ported/paramsubst/flags.rs::parse_flag`:
+unknown flag chars should error rather than fall
+through to no-op. C-source `Src/subst.c::paramsubst`
+walks the flag table; unrecognized chars trigger
+`zerror("error in flags near position %d", idx)`.
+
+**Impact** — paramexp typos silently produce wrong
+output. Combined with #436 (flag+subscript errors) and
+#447 (flag+@ empty), paramexp flag handling has
+multiple "wrong direction" errors:
+- Valid combos rejected (e.g., `(q)a[1]`)
+- Invalid flags silently accepted (`(!)`)
+
+**Workaround** — visual audit / CI grep for paramexp
+flags against the documented list (S/I/V/q/Q/C/U/L/...).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -29608,11 +29757,14 @@ print -l "${parts[@]:#}"
 | 541 | `TRAPSIG()` function + `trap '...' SIG` string BOTH fire — zsh: last-defined replaces (one form only) | **port-bug** | explicit `unset -f`/`trap -` before re-register |
 | 542 | `${(s.X.)str}` field-splitting keeps empty fields between separators — zsh: drops them | **port-bug** | `(parts[@]:#)` filter empty |
 | 543 | `print -l "${(s.X.)str}"` emits visible blank lines from empty fields — same root as #542 | **port-bug** | filter empty fields before print |
+| 544 | `a[0]="x"` zero-index array assignment silently accepted — zsh: "invalid subscript range" (zsh is 1-indexed) | **port-bug** | strict 1-index validation |
+| 545 | `${(s.X.)XXX}` all-separator string gives 4 empty fields — zsh: 2 (extends #542) | **port-bug** | filter via `(parts[@]:#)` |
+| 546 | `${(!)var}` invalid paramexp flag silently accepted — zsh: "error in flags near position N" | **port-bug** | visual audit / CI grep |
 
-Of five hundred and forty-three entries, two are fixed (5, 7), 2 freshly
+Of five hundred and forty-six entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and thirty-seven remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and forty remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
