@@ -28772,6 +28772,127 @@ Both work in both shells.
 
 ---
 
+## #538 — `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ ( ) ]] 2>&1; echo "rc=$?"'
+zsh:1: parse error near `)'
+
+$ ./target/debug/zshrs --zsh -fc '[[ ( ) ]] 2>&1; echo "rc=$?"'
+(no output)
+```
+
+Empty paren-group inside `[[ ]]` is a parse error in
+zsh — the parens must contain a condition. zshrs accepts
+silently.
+
+Extends parser-strictness family (#480-#482 unary/
+binary missing operand, #526 `-a`/`-o` in `[[ ]]`,
+#534 builtin-with-redirect). zshrs's `[[ ]]` parser
+accepts MANY malformed constructs that zsh rejects.
+
+**Where** — `src/ported/parser/cond.rs::parse_paren`:
+must require ≥1 condition token inside `( ... )`.
+C-source `Src/cond.c::par_cond_double` errors on empty.
+
+**Impact** — typos accidentally producing `[[ ( ) ]]`
+(e.g., from var-expansion of an empty list) silently
+succeed.
+
+**Workaround** — CI lint for `[[ ( ) ]]` pattern.
+
+---
+
+## #539 — `suspend` builtin attempts process suspension in non-interactive shell — zsh: rc=0 silent no-op
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'suspend 2>&1; echo rc=$?'
+rc=0
+
+$ ./target/debug/zshrs --zsh -fc 'suspend 2>&1; echo rc=$?'
+(hangs / process suspended; gtimeout kills after 2s)
+```
+
+`suspend` is the shell builtin that sends SIGSTOP to the
+shell process — meant for interactive use only. In a
+non-interactive shell (`-fc`, no controlling tty), zsh
+**silently no-ops** with rc=0.
+
+zshrs actually attempts the suspension — the process
+hangs (gets SIGSTOP) until external SIGCONT (or in this
+case, `gtimeout` kills it after 2s).
+
+zsh has a check for interactive-vs-non-interactive
+before issuing the SIGSTOP.
+
+**Where** — `src/ported/builtins/suspend.rs::execute`:
+must check `interactive` opt (or controlling-tty status)
+before sending SIGSTOP. C-source
+`Src/Modules/cap.c::bin_suspend` or
+`Src/builtin.c::bin_suspend` (depending on zsh version)
+checks `isset(MONITOR)`.
+
+**Impact** — non-interactive scripts that accidentally
+or programmatically call `suspend` hang the shell:
+
+```sh
+# Script that conditionally suspends
+if [[ "$do_suspend" == "yes" ]]; then
+    suspend
+fi
+# zsh non-interactive: rc=0 no-op (typical safe-guard)
+# zshrs non-interactive: HANGS shell process
+```
+
+**Workaround** — guard with interactivity check:
+```sh
+[[ -o interactive ]] && suspend
+```
+
+---
+
+## #540 — `zformat` no-args error message diverges — "not enough arguments" vs "invalid argument: "
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/zutil; zformat 2>&1; echo "rc=$?"'
+zsh:zformat:1: not enough arguments
+rc=1
+
+$ ./target/debug/zshrs --zsh -fc 'zmodload zsh/zutil; zformat 2>&1; echo "rc=$?"'
+zsh:zformat:1: invalid argument: 
+rc=1
+```
+
+Both shells reject `zformat` with no args (rc=1). The
+diagnostic message differs:
+- zsh: `not enough arguments` (canonical)
+- zshrs: `invalid argument: ` (note the trailing space —
+  the empty arg is the "invalid" one)
+
+Real bug — error-message format diff. Scripts that
+match diagnostic substrings get wrong results.
+
+**Where** — `src/ported/modules/zutil.rs::bin_zformat`
+(or wherever zformat lives): no-args path should emit
+"not enough arguments" via `zwarnnam`. C-source
+`Src/Modules/zutil.c::bin_zformat` checks
+`argc < something` and emits the canonical message.
+
+**Impact** — diagnostic-text-matching code paths break.
+Less common than message-format issues for builtins like
+`cd` (#488) but adds to the cumulative diagnostic-
+divergence count.
+
+**Workaround** — match on rc only, not message text.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -29313,11 +29434,14 @@ Both work in both shells.
 | 535 | `zsh/system` module auto-loaded — extends #530/#532 (6-module contamination census now) | **port-bug** | explicit module-detection |
 | 536 | `function with[bracket] { ... }` accepts bracket char in fn name (zsh: "no matches found" via glob) | **port-bug** | strict CI lint for fn-name chars |
 | 537 | `echo /tmp/_zg/\\(abc\\)` strips escaped-paren content entirely — zsh: emits literal `(abc)` | **port-bug** | quote-instead-of-escape |
+| 538 | `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error — extends parser-strictness family | **port-bug** | CI lint for empty paren-groups |
+| 539 | `suspend` non-interactive hangs shell — zsh: rc=0 silent no-op | **port-bug** | guard with `[[ -o interactive ]]` |
+| 540 | `zformat` no-args error msg: "invalid argument: " (with trailing space) vs zsh's "not enough arguments" | **port-bug** | match on rc only |
 
-Of five hundred and thirty-seven entries, two are fixed (5, 7), 2 freshly
+Of five hundred and forty entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and thirty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and thirty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
