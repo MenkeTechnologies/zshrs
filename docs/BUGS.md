@@ -27553,6 +27553,164 @@ parse_args() {
 
 ---
 
+## #514 — `(#e)` end-anchor glob flag not recognized — extends #483 family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/foo; echo /tmp/_zg/foo(#e)bar'
+zsh:1: no matches found: /tmp/_zg/foo(#e)bar
+
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/foo; echo /tmp/_zg/foo(#e)bar'
+/tmp/_zg/foo(#e)bar
+```
+
+`(#e)` is the EXTENDED_GLOB **end-anchor** — forces the
+pattern preceding it to match at end-of-string. With
+`foo(#e)bar`, zsh sees "foo at end, then bar" — which
+can't match anything (foo can't be both at end AND have
+bar after it). Result: no matches.
+
+zshrs doesn't recognize `(#e)` — treats the entire
+expression as a literal filename.
+
+Extends the `(#X)` glob-flag census family:
+- #409 `(#i)` case-fold not recognized
+- #421 `^`/`~`/`#` extended-glob operators always parsed
+- #425 `(#cN)` exact-count not recognized
+- #483 `(#s)` start-anchor not recognized
+- #484 `(#l)` case-insensitive-lowercase not recognized
+- #485 `(#aN)` approximate-match not recognized
+- #489 `(#cN,M)` count-range not recognized
+- #514 `(#e)` end-anchor not recognized (this entry)
+
+**Where** — `src/ported/glob/pattern.rs::parse_paren_flag`
+needs comprehensive `(#X)` flag handling. C-source
+`Src/pattern.c::patcompile` handles all variants.
+
+**Impact** — `(#s)` / `(#e)` anchor patterns broken —
+common in compsys completion functions that anchor
+prefix/suffix matches strictly:
+
+```sh
+[[ "$word" == (#s)cmd ]] && handle_cmd_prefix
+[[ "$file" == *.txt(#e) ]] && handle_txt_suffix
+```
+
+Both fail in zshrs.
+
+**Workaround** — POSIX-style anchored patterns:
+```sh
+[[ "$word" == cmd* ]]   # equivalent to (#s)cmd
+[[ "$file" == *.txt ]]  # equivalent to *.txt(#e)
+```
+
+---
+
+## #515 — `$funcsourcetrace` shows fn-name (`f:1`) instead of file-name (`zsh:1`)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "[$funcsourcetrace[1]]"; }; f'
+[zsh:1]
+
+$ ./target/debug/zshrs --zsh -fc 'f() { echo "[$funcsourcetrace[1]]"; }; f'
+[f:1]
+```
+
+`$funcsourcetrace` is the array tracking **file:line
+locations where each active function was DEFINED**. For
+a function `f` defined at top-level of `-fc`, zsh records
+`zsh:1` — the shell name (script context) + line 1.
+
+zshrs records `f:1` — the **function name** instead of
+the shell/file name. This conflates "where defined" with
+"name of frame" — those should be different fields.
+
+zsh has separate arrays for the function-call stack
+(`$funcstack` — function names) and source locations
+(`$funcsourcetrace` — file:line). zshrs's
+`$funcsourcetrace` appears to use function-names where
+it should use file names.
+
+**Where** — `src/ported/exec/funcdef.rs::register_function`
+or the funcsourcetrace push: must record the source
+file/script name at definition time, not the function
+name. C-source `Src/exec.c::execfuncdef` records
+`scriptname` (or "zsh" / "(eval)" etc.).
+
+**Impact** — debug-trace output points to the wrong
+location. Combined with #396 (`$funcsourcetrace` records
+line:0 instead of line:1 — partial fix), this array is
+broadly broken:
+
+```sh
+TRAPZERR() {
+    echo "ERROR at ${funcsourcetrace[1]}" >&2
+}
+# zsh: "ERROR at ~/.zshrc:42" — clickable in iTerm2
+# zshrs: "ERROR at handle_zerr:0" — useless
+```
+
+**Workaround** — none — array is wrong.
+
+---
+
+## #516 — `typeset` no-args omits type-flag prefix — `!=0` instead of `integer 10 readonly !=0`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset 2>&1 | head -1'
+integer 10 readonly !=0
+
+$ ./target/debug/zshrs --zsh -fc 'typeset 2>&1 | head -1'
+!=0
+```
+
+`typeset` no-args dumps all parameters with their **type
+metadata** prefix. zsh emits `integer 10 readonly !=0`
+which means:
+- `integer` — type (PM_INTEGER)
+- `10` — output base (10 = decimal)
+- `readonly` — flags (PM_READONLY)
+- `!=0` — name=value
+
+zshrs emits just `!=0` — no type-flag prefix at all.
+
+The bash-like form `set` output (different builtin) DOES
+show types correctly per #463 (special vars empty in set).
+This is a **typeset-specific dump format** gap.
+
+**Where** — `src/ported/builtins/typeset.rs::dump_all`:
+must use the verbose format with type-flag prefix.
+C-source `Src/builtins.c::printparamnode` walks
+PM_INTEGER/PM_READONLY/PM_HIDE/PM_HIDEVAL/PM_SPECIAL/
+PM_LEFT/PM_RIGHT_B/PM_RIGHT_Z/PM_LOWER/PM_UPPER/
+PM_TAGGED flags and emits each as a keyword prefix.
+
+**Impact** — script-introspection tools that parse
+`typeset` output to discover parameter types break:
+
+```sh
+get_type() {
+    typeset | grep "^.*${1}=" | awk '{print $1}'
+}
+get_type HISTSIZE
+# zsh: "integer"
+# zshrs: "HISTSIZE=..."  (treats name=val as field 1)
+```
+
+Affects any "what type is this var" introspection in
+zsh-completion plugins, zinit's snapshot/restore.
+
+**Workaround** — use `${(t)NAME}` instead of parsing
+typeset output (though `(t)` is also broken for some
+specials per #512).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -28070,11 +28228,14 @@ parse_args() {
 | 511 | integer overflow in `$((...))` silently returns 0 — zsh: "number truncated after 18 digits" warning + truncated value | **port-bug** | pre-validate literal length |
 | 512 | `${(t)EPOCHSECONDS}` / `${(t)EPOCHREALTIME}` empty — type-flag missing on GSU-backed datetime specials | **port-bug** | hardcode known specials |
 | 513 | `OPTIND=N` inside function LEAKS to parent — zsh: implicitly function-local | **port-bug** | manual save/restore around `getopts` |
+| 514 | `(#e)` end-anchor glob flag not recognized — extends #483 `(#X)` family | **port-bug** | POSIX-anchored `*.txt` patterns |
+| 515 | `$funcsourcetrace` shows fn-name (`f:1`) instead of file-name (`zsh:1`) — wrong source-location tracking | **port-bug** | none — array is incorrect |
+| 516 | `typeset` no-args dump omits type-flag prefix — `!=0` instead of `integer 10 readonly !=0` | **port-bug** | use `${(t)NAME}` (also limited per #512) |
 
-Of five hundred and thirteen entries, two are fixed (5, 7), 2 freshly
+Of five hundred and sixteen entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and seven remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and ten remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
