@@ -30058,6 +30058,144 @@ entirely.
 
 ---
 
+## #565 — `echo -e "\0NNN"` octal escape passed through literally despite explicit `-e` flag
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo -e "\0101"'
+A
+
+$ ./target/debug/zshrs --zsh -fc 'echo -e "\0101"'
+\0101
+```
+
+`\0NNN` is the standard zsh `echo -e` syntax for octal
+byte (3-digit octal after the `0` prefix marker). `\0101`
+= octal 0101 = decimal 65 = ASCII 'A'.
+
+zsh's echo decodes per `Src/builtin.c::bin_echo` calling
+`getkeystring()`, which recognizes `\0NNN` as a
+backslash-zero-octal sequence.
+
+zshrs's echo -e escape decoder doesn't have this branch —
+emits the literal characters `\`, `0`, `1`, `0`, `1`.
+
+Distinct from #176 (echo's default-mode interpretation
+missing — pre-`-e` flag). #565 is the followup: even
+when `-e` IS supplied to force interpretation, the
+decoder's coverage is incomplete.
+
+**Where** — `src/ported/builtin_echo.rs::interpret_escapes`
+(or the actual function name): add `\0NNN` octal branch
+matching `getkeystring()`'s octal logic in
+`Src/string.c`. Sister bug #566 (same decoder, missing
+`\u`/`\U`).
+
+**Impact** — scripts using `echo -e "\0NNN"` for
+non-printable bytes (terminal control, binary protocol
+framing, NUL injection, octal-encoded ASCII for
+portability) silently emit literal `\0NNN` text instead
+of the intended byte.
+
+**Workaround** — use `printf '\NNN'` (printf decodes
+its own format string) or `$'\NNN'` ANSI-C quoting
+(which decodes at parse time, separate code path).
+
+---
+
+## #566 — `echo -e "\uNNNN"` / `echo -e "\UNNNNNNNN"` Unicode escapes passed through literally despite `-e`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo -e "A"'
+A
+
+$ ./target/debug/zshrs --zsh -fc 'echo -e "A"'
+A
+
+$ /opt/homebrew/bin/zsh -fc 'echo -e "\U00000041"'
+A
+
+$ ./target/debug/zshrs --zsh -fc 'echo -e "\U00000041"'
+\U00000041
+```
+
+`\uNNNN` = 4-hex-digit Unicode codepoint; `\UNNNNNNNN` =
+8-hex-digit Unicode codepoint. Both are standard zsh
+`echo -e` escape forms recognized by `getkeystring()`.
+
+zsh decodes both; zshrs emits the literal characters
+including the leading backslash.
+
+Sister bug to #565 (`\0NNN` octal) — both are gaps in
+the same `echo -e` decoder. Distinct from #364
+(`$'\uNNNN'` in ANSI-C-quoting context — separate code
+path at parse-time).
+
+**Where** — `src/ported/builtin_echo.rs::interpret_escapes`:
+add `\uNNNN` (4-hex) and `\UNNNNNNNN` (8-hex) Unicode
+branches that decode the codepoint and emit UTF-8 bytes,
+matching `getkeystring()` in `Src/string.c`. C-source
+calls `hexval()` + `wctoutf8()` for the conversion.
+
+**Impact** — scripts emitting Unicode characters via
+`echo -e` (emoji indicators, box-drawing chars, special
+symbols) get literal `\uNNNN` text instead of the
+character. Visible UI breakage in status output.
+
+**Workaround** — embed Unicode characters literally in
+the source (e.g. `echo "A"` not `echo -e "A"`), or
+use `printf` if its decoder is more complete.
+
+---
+
+## #567 — `$'\UNNNNNNNN'` ANSI-C-quoting 8-hex-digit Unicode escape passed through literally
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc $'echo "\\U00000041"'
+A
+
+$ ./target/debug/zshrs --zsh -fc $'echo "\\U00000041"'
+\U00000041
+```
+
+zsh's ANSI-C `$'...'` string-syntax decodes `\UNNNNNNNN`
+(uppercase `U` followed by 8 hex digits) as a Unicode
+codepoint, emitting UTF-8 bytes for the character.
+
+zshrs's parser-level ANSI-C-quoting decoder doesn't
+recognize the uppercase `\U` long form — emits literal
+backslash + the 9-char sequence.
+
+Extends #364 (lowercase `$'\uNNNN'` (4-hex) returns
+literal `uNNNN`) — same parse-side ANSI-C decoder, the
+8-hex `\U` form is missing too.
+
+**Where** — `src/ported/parse/c_string.rs` (or the
+parse-time `$'...'` decoder): add `\UNNNNNNNN`
+(8-hex-digit Unicode-codepoint) branch matching
+`getkeystring()` in `Src/string.c`. Same hexval +
+wctoutf8 logic as #364's fix, just consuming 8 hex digits
+instead of 4.
+
+**Impact** — codepoints above U+FFFF (emoji,
+supplementary planes, ancient scripts) require the `\U`
+form because `\u` only encodes the BMP. zshrs scripts
+emitting these characters via `$'...'` get raw
+`\UNNNNNNNN` text instead.
+
+**Workaround** — embed the literal Unicode character in
+source rather than escape-form, or build the byte
+sequence manually via concatenation of `\xNN` bytes
+(which has its own bug per #325 — UTF-8 byte sequencing
+incorrect).
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -30626,11 +30764,14 @@ entirely.
 | 562 | `${a:U}` / `${a:C}` / `${a:W}` invalid uppercase modifier suffixes silently accepted — zsh: "unrecognized modifier" | **port-bug** | visual audit modifier-letter case |
 | 563 | `zformat -F` (no args) error msg: "missing arguments to -f/-F" — zsh: "not enough arguments" | **port-bug** | match on rc only |
 | 564 | `\[pat\]` backslash-escaped brackets in `[[ == pat ]]` don't match literal `[`/`]` — zsh matches | **port-bug** | single-quote the pattern RHS |
+| 565 | `echo -e "\\0NNN"` octal escape passed through literally despite `-e` — zsh decodes | **port-bug** | use `printf '\\NNN'` or `$'\\NNN'` |
+| 566 | `echo -e "\\uNNNN"` / `echo -e "\\UNNNNNNNN"` Unicode escapes passed through literally — zsh decodes | **port-bug** | embed UTF-8 char literal |
+| 567 | `$'\\UNNNNNNNN'` ANSI-C 8-hex Unicode escape passed through literally — zsh decodes (extends #364) | **port-bug** | embed UTF-8 char literal |
 
-Of five hundred and sixty-four entries, two are fixed (5, 7), 2 freshly
+Of five hundred and sixty-seven entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and fifty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and sixty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
