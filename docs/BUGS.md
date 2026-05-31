@@ -30196,6 +30196,166 @@ incorrect).
 
 ---
 
+## #568 — `read -A a </dev/null` on empty input creates 0-elem array; zsh: 1-elem empty array
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'read -A a </dev/null; echo "len=${#a} elem1=[${a[1]}]"'
+len=1 elem1=[]
+
+$ ./target/debug/zshrs --zsh -fc 'read -A a </dev/null; echo "len=${#a} elem1=[${a[1]}]"'
+len=0 elem1=[]
+```
+
+`read -A name` reads a line into array `name` split on
+`IFS`. With empty input (immediate EOF), zsh creates an
+array with 1 element (the empty pre-newline-or-EOF
+content). zshrs creates an empty array.
+
+Both shells return rc=1 from `read` (EOF reached), but
+the resulting array state diverges. Downstream code
+checking `${#a}` to detect "got a line" gets the wrong
+answer.
+
+**Where** — `src/ported/builtin_read.rs::read_array`:
+when EOF before any data, must still assign single-empty
+array `(("",))` not empty `()`. Matches C-source behavior
+in `Src/builtin.c::bin_read` array-assignment path.
+
+**Impact** — `read`-loop early-termination logic that
+peeks at `${#a}` after a `read -A` to distinguish
+"empty line consumed" from "EOF reached" gets identical
+0/0 values from zshrs where zsh distinguishes them as
+1/0.
+
+**Workaround** — check `read`'s rc directly (rc=0 means
+got data, rc=1 means EOF) rather than inspecting array
+length.
+
+---
+
+## #569 — `bindkey` no-args listing omits range-compaction; emits each key on its own line
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'bindkey 2>&1 | head -6'
+"^A"-"^C" self-insert
+"^D" list-choices
+"^E"-"^F" self-insert
+"^G" list-expand
+"^H" vi-backward-delete-char
+"^I" expand-or-complete
+
+$ ./target/debug/zshrs --zsh -fc 'bindkey 2>&1 | head -6'
+"^@" set-mark-command
+"^A" beginning-of-line
+"^B" backward-char
+"^D" delete-char-or-list
+"^E" end-of-line
+"^F" forward-char
+
+$ /opt/homebrew/bin/zsh -fc 'bindkey 2>&1 | wc -l'
+31
+
+$ ./target/debug/zshrs --zsh -fc 'bindkey 2>&1 | wc -l'
+117
+```
+
+zsh's `bindkey` listing collapses consecutive keys that
+share the same widget into a range form
+(`"^A"-"^C" self-insert`). C-source
+`Src/Zle/zle_keymap.c::scanbinding` walks the binding
+table and emits range-syntax when adjacent keys map to
+the same widget.
+
+zshrs's listing emits one line per bound key — 117 lines
+vs zsh's 31. Output is 3.8× longer and breaks scripts
+that parse `bindkey` output expecting the compact form.
+
+Note: this entry covers the output FORMAT divergence —
+the underlying default keymap content also differs
+(zshrs binds `^A` to `beginning-of-line`, zsh leaves it
+in `self-insert` range), but the keymap-content divergence
+is a separate bug class outside this entry's scope.
+
+**Where** — `src/ported/zle/keymap.rs::print_keymap` (or
+wherever `bindkey` no-args dispatches): walk bindings in
+key-order, group adjacent same-widget runs, emit
+`"K1"-"Kn" widget` for runs ≥2 and `"K" widget` for
+single bindings. Match `scanbinding` from
+`Src/Zle/zle_keymap.c`.
+
+**Impact** — scripts parsing `bindkey | grep '"^A"'` to
+detect a specific binding break when the key is part of a
+collapsed range. Also: shell-startup that pipes
+`bindkey` to a logger triples log volume.
+
+**Workaround** — query specific keys directly with
+`bindkey '^A'` instead of grepping the full listing.
+
+---
+
+## #570 — `${(n)a[1,-1]}` paramsubst flag + array-slice errors "bad substitution"; extends #436 to slice form
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(3 1 2); echo "${(n)a[1,-1]}"'
+3 1 2
+
+$ ./target/debug/zshrs --zsh -fc 'a=(3 1 2); echo "${(n)a[1,-1]}"'
+zsh:1: bad substitution
+
+$ /opt/homebrew/bin/zsh -fc 'a=(3 1 2); echo "${(@n)a[1,-1]}"'
+1 2 3
+
+$ ./target/debug/zshrs --zsh -fc 'a=(3 1 2); echo "${(@n)a[1,-1]}"'
+zsh:1: bad substitution
+```
+
+`${(flag)name[N,M]}` — paramsubst flag + 2-arg array
+slice. zsh's parser admits both: flag-tokens parsed
+first, then subscript or slice, then value-fetch.
+
+zshrs rejects the combination at parse time with
+"bad substitution", regardless of which flag (`(n)`,
+`(@n)`, `(o)`, etc.). Confirmed: numeric sort and
+keep-array flags both error.
+
+Extends #436 (`${(q)a[N]}` flag + single-subscript) —
+same parser gap also rejects 2-arg slice. Companion to
+#408 (3-arg slice silently accepted) — the slice surface
+of paramsubst is broken multiple ways.
+
+**Where** — `src/ported/paramsubst/parse.rs`: after
+matching closing flag-paren, must continue into
+subscript/slice parsing before binding the value-source.
+C-source `Src/subst.c::paramsubst` parses
+flags → subscript-or-slice → value-fetch as a single
+unit.
+
+**Impact** — common pattern broken — apply
+quoting/sort/case flag to a slice:
+
+```sh
+# Sort last 3 elements numerically:
+last_three="${(n)a[-3,-1]}"  # zsh: works; zshrs: bad substitution
+```
+
+User must split into temp-var + flag, doubling allocation
+and obscuring intent.
+
+**Workaround** — fetch the slice first, then apply the
+flag to the temp:
+
+```sh
+local tmp=("${a[1,-1]}"); print "${(n)tmp}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -30767,11 +30927,14 @@ incorrect).
 | 565 | `echo -e "\\0NNN"` octal escape passed through literally despite `-e` — zsh decodes | **port-bug** | use `printf '\\NNN'` or `$'\\NNN'` |
 | 566 | `echo -e "\\uNNNN"` / `echo -e "\\UNNNNNNNN"` Unicode escapes passed through literally — zsh decodes | **port-bug** | embed UTF-8 char literal |
 | 567 | `$'\\UNNNNNNNN'` ANSI-C 8-hex Unicode escape passed through literally — zsh decodes (extends #364) | **port-bug** | embed UTF-8 char literal |
+| 568 | `read -A a </dev/null` on empty input creates 0-elem array — zsh: 1-elem empty array | **port-bug** | use `$?` from `read` not `${#a}` |
+| 569 | `bindkey` no-args listing omits range-compaction `"^A"-"^C" self-insert` — emits each key (117 lines vs zsh 31) | **port-bug** | query specific keys with `bindkey '^X'` |
+| 570 | `${(n)a[1,-1]}` paramsubst flag + array-slice errors "bad substitution" — extends #436 to slice form | **port-bug** | fetch slice into temp then apply flag |
 
-Of five hundred and sixty-seven entries, two are fixed (5, 7), 2 freshly
+Of five hundred and seventy entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and sixty-one remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and sixty-four remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
