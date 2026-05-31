@@ -28299,6 +28299,163 @@ names+=("Bob Jones")
 
 ---
 
+## #529 — `$((1+(2))` paren-mismatch math expression silently rc=0 — zsh: parse error
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo $((1+(2))' 2>&1
+zsh:1: parse error near `$((1+(2)) 2>&1; echo...'
+
+$ ./target/debug/zshrs --zsh -fc 'echo $((1+(2))' 2>&1
+(no output)
+```
+
+Unmatched parens in `$(())` arith should be a parse
+error. zsh detects the missing close-paren at parse
+time. zshrs silently returns empty output with rc=0.
+
+Same family as #527 (`(( () ))` empty math silent),
+#411/#494/#505/#506 — arith parser-error gaps.
+
+**Where** — `src/ported/math.rs::mathevall` or arith
+lexer: must track paren-depth and emit "parse error"
+on unmatched close.
+
+**Impact** — typos in arith expressions go unnoticed:
+
+```sh
+result=$((a+(b)c+d))   # typo: missing close paren
+if (( result > 0 )); then ...; fi
+# zsh: parse error caught immediately
+# zshrs: result is empty/0, branch silently wrong
+```
+
+**Workaround** — none — must visually audit `$(())`
+expressions.
+
+---
+
+## #530 — zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) shipped as always-available — zsh: require `zmodload zsh/files`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'type mkdir'
+mkdir is /bin/mkdir
+
+$ ./target/debug/zshrs --zsh -fc 'type mkdir'
+mkdir is a shell builtin
+```
+
+Verified across the entire zsh/files command set:
+| Command | zsh                | zshrs                  |
+|---------|--------------------|------------------------|
+| mkdir   | `/bin/mkdir`       | shell builtin          |
+| rmdir   | `/bin/rmdir`       | shell builtin          |
+| mv      | `/bin/mv`          | shell builtin          |
+| rm      | `/bin/rm`          | shell builtin          |
+| ln      | `/bin/ln`          | shell builtin          |
+| chmod   | `/bin/chmod`       | shell builtin          |
+| chown   | `/usr/sbin/chown`  | shell builtin          |
+
+zsh provides these via the `zsh/files` module — but only
+after explicit `zmodload zsh/files`. The user opts in.
+zshrs ships them as **always-available builtins** in
+`--zsh` mode.
+
+Extends bash-compat-contamination family (#475/#504 with
+caller/help/complete/compopt/mapfile/readarray) AND
+zsh-module-auto-load contamination — multiple opt-in
+features are pre-loaded in zshrs.
+
+The visible symptom: error message format diverges.
+Builtin `mkdir` emits Rust-format errors (`(os error
+17)`) where external `/bin/mkdir` emits OS-native
+errors. Scripts that grep stderr for specific error
+patterns get different results.
+
+**Where** — `src/ported/builtins/registry.rs` (or the
+module loader): zsh/files commands should be in the
+`zsh/files` module — registered only when the module
+loads. C-source `Src/Modules/files.c` is a module gated
+behind `zmodload`.
+
+**Impact** — error-message format differences,
+PATH-resolution differences, and detection-via-`type`
+differences. Plugins that probe `type cmd` to decide
+between builtin and external get wrong answers.
+
+**Workaround** — `command mkdir` to force external
+binary even when builtin exists:
+```sh
+command mkdir -p ...   # always external
+```
+
+---
+
+## #531 — `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 family
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPCHLD() { echo "child-trap"; }; (sleep 0.05) & wait; echo done'
+child-trap
+done
+
+$ ./target/debug/zshrs --zsh -fc 'TRAPCHLD() { echo "child-trap"; }; (sleep 0.05) & wait; echo done'
+done
+```
+
+`TRAPCHLD` is the SIGCHLD signal handler — fires when a
+child process exits. Critical for job-control aware
+scripts (background-job watchers, async pipelines, npm-
+style task runners).
+
+zshrs doesn't invoke the function-form. Same root cause
+as #381/#382/#389/#522 (function-form TRAP* handlers
+not dispatched).
+
+Cumulative TRAP-function gap census:
+- #381 TRAPINT
+- #382 TRAPEXIT
+- #389 TRAPZERR
+- #522 TRAPDEBUG
+- #531 TRAPCHLD (this entry)
+
+Likely also: TRAPHUP, TRAPTERM, TRAPUSR1, TRAPUSR2,
+TRAPWINCH, TRAPCONT, TRAPSTOP, TRAPTSTP, TRAPCHLD,
+TRAPALRM — every documented signal.
+
+**Where** — same as #381 — central trap-dispatcher must
+check the function table.
+
+**Impact** — async job-tracking patterns broken:
+
+```sh
+declare -A child_counts
+TRAPCHLD() {
+    ((child_counts[$$]++))
+    echo "child exited; total: ${child_counts[$$]}"
+}
+for cmd in build test lint; do
+    $cmd &
+done
+wait
+# zsh: trap fires 3x, prints incrementing counts
+# zshrs: trap never fires; counts never increment
+```
+
+**Workaround** — string-form trap:
+```sh
+trap 'echo "child exited"' CHLD
+```
+
+(May ALSO be broken — needs verification per #381 family
+status.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -28831,11 +28988,14 @@ names+=("Bob Jones")
 | 526 | `[[ N -lt M -a ... ]]` `-a`/`-o` parsed as command (rc=127) — zsh: "condition expected" parse error | **port-bug** | use `&&`/`\|\|` instead |
 | 527 | `(( () ))` empty math silently rc=1 — zsh: "bad math expression: operand expected" rc=2 | **port-bug** | collapse rc 1/2 → non-zero check |
 | 528 | `typeset -a a=("hello world")` splits QUOTED string into multiple elements — worse than #502 | **port-bug** | element-by-element `+=` build |
+| 529 | `$((1+(2))` paren-mismatch math silently rc=0 (no output) — zsh: parse error | **port-bug** | visual audit |
+| 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **port-bug** | `command mkdir` to force external |
+| 531 | `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 trap-function family | **port-bug** | string-form `trap`/`CHLD` |
 
-Of five hundred and twenty-eight entries, two are fixed (5, 7), 2 freshly
+Of five hundred and thirty-one entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and twenty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and twenty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
