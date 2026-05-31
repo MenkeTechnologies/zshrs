@@ -9100,7 +9100,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
 
         let modifier = match chars.next() {
             // c:4531
-            Some(c) => c,  // c:4531
+            Some(c) => c, // c:4531
             None => {
                 // c:Src/subst.c:3786-3790 — when the pre-flag loop
                 // consumed `g`/`w`/`W`/`f`/`F` but no actual modifier

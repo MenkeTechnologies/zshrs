@@ -577,10 +577,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         // skip the home strip (FALLTHROUGH from above
                         // bypassed). Honor that:
                         let strip_home = matches!(tc, b'c' | b'.' | b'~');
-                        let ss: &str = if strip_home
-                            && !home.is_empty()
-                            && pwd == home
-                        {
+                        let ss: &str = if strip_home && !home.is_empty() && pwd == home {
                             arg -= 1; // c:400
                             ""
                         } else if strip_home
@@ -600,7 +597,11 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                             arg -= 1; // c:407
                         }
                         // c:408-410 — remaining `/` chars each decrement.
-                        let skip_first = if !bytes.is_empty() && bytes[0] == b'/' { 1 } else { 0 };
+                        let skip_first = if !bytes.is_empty() && bytes[0] == b'/' {
+                            1
+                        } else {
+                            0
+                        };
                         for &b in &bytes[skip_first..] {
                             if b == b'/' {
                                 arg -= 1; // c:410
