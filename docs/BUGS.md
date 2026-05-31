@@ -27388,6 +27388,171 @@ saved="${(q)a[@]:-''}"
 
 ---
 
+## #511 — integer overflow in `$((...))` silently returns 0 — zsh: warns "number truncated after 18 digits"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo $((-9223372036854775808))'
+zsh:1: number truncated after 18 digits: 9223372036854775808
+-922337203685477580
+
+$ ./target/debug/zshrs --zsh -fc 'echo $((-9223372036854775808))'
+0
+```
+
+When an arithmetic literal exceeds 18 digits, zsh emits
+"number truncated after 18 digits: NUM" to stderr and
+returns the 18-digit truncated value (`-922337203685477580`
+here — the last digit silently dropped).
+
+zshrs silently returns **0** — no diagnostic, no
+truncation, completely-wrong result. Same behavior for
+out-of-range positive literals (`9999999999999999999`
+also returns 0).
+
+**Where** — `src/ported/math.rs::mathevall` or the
+literal-parser: must detect the >18-digit case and emit
+the truncation diagnostic. C-source
+`Src/math.c::lex_num` checks digit-count and warns.
+
+**Impact** — silent corruption of arithmetic when
+literals overflow:
+
+```sh
+typeset -i x=99999999999999999999    # 20-digit literal
+if (( x > 100 )); then run_check; fi
+# zsh: x=999999999999999999 (truncated, warning emitted)
+#      branch taken
+# zshrs: x=0
+#      branch not taken — opposite result
+```
+
+Same family as #411/#494/#505/#506 numeric-coercion —
+arithmetic-context permissiveness with no diagnostic.
+
+**Workaround** — pre-validate literal length:
+```sh
+[[ ${#numstr} -le 18 ]] || { echo "too large"; return 1; }
+val=$((numstr))
+```
+
+---
+
+## #512 — `${(t)EPOCHSECONDS}` and `${(t)EPOCHREALTIME}` empty — type-flag missing on zsh/datetime specials
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime; echo "${(t)EPOCHSECONDS}"'
+integer-readonly-hide-hideval-special
+
+$ ./target/debug/zshrs --zsh -fc 'zmodload zsh/datetime; echo "${(t)EPOCHSECONDS}"'
+(empty)
+```
+
+The `(t)` paramexp flag returns the type descriptor of
+a parameter — for zsh's `EPOCHSECONDS` it's
+`integer-readonly-hide-hideval-special` (5 flag tokens
+joined by `-`). `EPOCHREALTIME` is similar but `float`.
+
+zshrs returns empty — the `(t)` introspection doesn't
+populate descriptors for these zsh/datetime specials.
+
+Likely also affected: `SECONDS`, `RANDOM`, `LINENO`,
+`COLUMNS`, and other GSU-backed special parameters
+where type comes from the `Param->node.flags` rather
+than the storage class.
+
+**Where** — `src/ported/paramsubst/flags/t.rs::type_str`:
+must walk PM_INTEGER / PM_READONLY / PM_HIDE /
+PM_HIDEVAL / PM_SPECIAL flags and emit them. C-source
+`Src/subst.c::paramsubst` for `(t)` flag calls
+`paramtypestr(pm)` (params.c:1873).
+
+**Impact** — type-discovery scripts that probe
+parameter classification fail:
+
+```sh
+declare_type() {
+    local t="${(t)$1}"
+    case $t in
+        *readonly*) echo "$1 is readonly" ;;
+        *integer*) echo "$1 is integer" ;;
+        *) echo "$1 is scalar" ;;
+    esac
+}
+declare_type EPOCHSECONDS
+# zsh: "EPOCHSECONDS is readonly"
+# zshrs: "EPOCHSECONDS is scalar" (empty $t falls through)
+```
+
+**Workaround** — hardcode known specials:
+```sh
+[[ "$1" == EPOCHSECONDS ]] && echo "readonly integer special"
+```
+
+---
+
+## #513 — `OPTIND=N` inside function LEAKS to parent — zsh: function-local
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'OPTIND=10; f() { OPTIND=99; }; f; echo "[$OPTIND]"'
+[10]
+
+$ ./target/debug/zshrs --zsh -fc 'OPTIND=10; f() { OPTIND=99; }; f; echo "[$OPTIND]"'
+[99]
+```
+
+`OPTIND` is the getopts position cursor. In zsh, OPTIND
+is **implicitly function-local** — each function frame
+gets its own OPTIND that snaps back to the caller's
+value on return.
+
+zshrs treats OPTIND as a regular global — the function-
+local assignment leaks to the parent scope.
+
+This is similar to the subshell-scope-leak family
+(#450-#455) but for **function scope** rather than
+subshell scope, and for the implicit-local OPTIND
+specifically.
+
+**Where** — `src/ported/exec/funcdef.rs::enter_func`
+should push OPTIND onto the function-scope stack at
+entry, restore on exit. C-source
+`Src/exec.c::execfuncdef` calls `startparamscope` which
+preserves OPTIND.
+
+**Impact** — getopts patterns inside functions corrupt
+the caller's getopts state:
+
+```sh
+parse_args() {
+    OPTIND=1   # standard reset before getopts in fn
+    while getopts "a:b:" opt "$@"; do ... done
+}
+# After parse_args returns, caller's OPTIND should be
+# unchanged. In zshrs, caller's OPTIND becomes whatever
+# the function left it at.
+```
+
+Affects every getopts-using helper function. Common in
+zsh-completion plugins, argument-parsing utilities.
+
+**Workaround** — manual save/restore:
+```sh
+parse_args() {
+    local _save_optind=$OPTIND
+    OPTIND=1
+    while getopts ...; do ... done
+    OPTIND=$_save_optind
+}
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -27902,9 +28067,14 @@ saved="${(q)a[@]:-''}"
 | 508 | `%E` (clear-to-EOL) prompt escape printed literally — zsh emits `\\033[K` | **port-bug** | embed literal `\\e[K` |
 | 509 | `%G`/`%e` prompt escapes (zero-width marker / parser-indent) printed literally — extends prompt-escape gap family | **port-bug** | avoid these escapes |
 | 510 | `${(q)empty_array}` returns empty instead of `''` — empty-array-quoting semantics lost; breaks `(q)`+`eval` round-trips | **port-bug** | explicit `''` insertion |
+| 511 | integer overflow in `$((...))` silently returns 0 — zsh: "number truncated after 18 digits" warning + truncated value | **port-bug** | pre-validate literal length |
+| 512 | `${(t)EPOCHSECONDS}` / `${(t)EPOCHREALTIME}` empty — type-flag missing on GSU-backed datetime specials | **port-bug** | hardcode known specials |
+| 513 | `OPTIND=N` inside function LEAKS to parent — zsh: implicitly function-local | **port-bug** | manual save/restore around `getopts` |
 
-Of five hundred and ten entries, two are fixed (5, 7),
-five hundred and four remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of five hundred and thirteen entries, two are fixed (5, 7), 2 freshly
+fixed in this session (#398, #496) but counts remain accurate to
+total-discovered count;
+five hundred and seven remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
