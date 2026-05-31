@@ -27257,6 +27257,137 @@ eval "result=$b"
 
 ---
 
+## #508 — `%E` (clear-to-end-of-line) prompt escape printed literally — zsh emits `\033[K`
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%E"' | od -c | head -1
+0000000  033   [   K  \n
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%E"' | od -c | head -1
+0000000    %   E  \n
+```
+
+`%E` is the prompt escape for **clear from cursor to end
+of line** — emits ANSI `\033[K` (CSI K). zsh expands;
+zshrs leaves literal.
+
+Extends prompt-escape gap census family already
+covering: #390/#391 (PS4), #412 (PS3), #414 (unknown
+%X), #429 (%m), #431 (%y/%l), #438 (%N), #439
+(%>>/%<<), #493 (%i).
+
+**Where** — `src/ported/prompts/expand.rs::handle_E`:
+add handler emitting `\x1b[K`. C-source
+`Src/prompt.c::putpromptchar` for `'E'` writes the
+clear-to-EOL escape.
+
+**Impact** — multi-line prompts that clear remnants on
+redraw (powerline-style themes) leave visible cruft.
+Affects p9k/p10k segment-redraw logic.
+
+**Workaround** — embed the literal escape:
+```sh
+PS1=$'%n@%m \e[K> '
+```
+
+---
+
+## #509 — `%G`/`%e` prompt escapes (zero-width marker / parser-indent) printed literally
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%G"' | od -c | head -1
+0000000   \n
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%G"' | od -c | head -1
+0000000    %   G  \n
+```
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%e"'
+0
+
+$ ./target/debug/zshrs --zsh -c 'print -P "%e"'
+%e
+```
+
+`%G` — zero-width zero-byte marker, used inside `%{ %}`
+blocks for non-printing sequence length-counting. zsh
+emits empty; zshrs literal.
+
+`%e` — parser-context indent depth (`0` at top-level).
+zsh expands to a number; zshrs literal.
+
+Both extend the prompt-escape gap family. `%w` and
+`%W` (date forms) DO work correctly in both — gaps are
+sporadic per-directive.
+
+**Where** — `src/ported/prompts/expand.rs::handle_G` /
+`handle_e`. C-source `Src/prompt.c::putpromptchar` for
+`'G'` (skip) and `'e'` (read parser depth).
+
+**Impact** — line-counting prompt themes (those that
+embed `%{ ... %G %}` for length accounting) emit
+visible `%G` markers in the rendered prompt.
+
+**Workaround** — avoid these escapes when targeting
+zshrs.
+
+---
+
+## #510 — `${(q)empty_array}` returns empty instead of `''` — empty-array-quoting semantics
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(); echo "[${(q)a}]"'
+['']
+
+$ ./target/debug/zshrs --zsh -c 'a=(); echo "[${(q)a}]"'
+[]
+```
+
+The `(q)` quoting flag on an **empty array** should
+emit `''` (empty quoted string), preserving the
+"empty-but-present" semantic. zsh emits `''`; zshrs
+emits nothing.
+
+Empty-array analog of #392 (`(qq)` under-quotes
+non-whitespace elements) — `(q)` quote-emission is
+broken when input doesn't have "obvious" need for
+quoting. Same family as #503
+(`${(@k)empty_assoc}` phantom iteration) — empty
+arrays handled inconsistently by paramexp flags.
+
+**Where** — `src/ported/paramsubst/flags/q.rs::quote`:
+empty input must produce `''`. C-source
+`Src/utils.c::quotestring` with `QT_SINGLE` and empty
+input emits `''`.
+
+**Impact** — round-tripping arrays through `(q)`+`eval`
+loses the "empty array existed" semantic:
+
+```sh
+a=()
+saved="${(q)a}"
+unset a
+eval "b=( $saved )"
+echo "${#b}"
+# zsh: 1 (empty quoted element preserved)
+# zshrs: 0 (lost)
+```
+
+**Workaround** — explicit `''` insertion before
+quote-emit:
+```sh
+saved="${(q)a[@]:-''}"
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -27768,9 +27899,12 @@ eval "result=$b"
 | 505 | `integer x="STRING"` silently coerces to 0 — zsh errors "bad math expression" (extends #411/#494 coercion family) | **port-bug** | pre-validate numeric with regex |
 | 506 | `float f="3.14abc"` silently coerces to 0.0 — zsh errors "bad math expression" (extends #505) | **port-bug** | pre-validate numeric with regex |
 | 507 | `${(Q)var}` unquote-flag with `\"` in value drops the `"` instead of keeping it — round-trips via `(q)`+`(Q)` incorrect | **port-bug** | external `eval` round-trip |
+| 508 | `%E` (clear-to-EOL) prompt escape printed literally — zsh emits `\\033[K` | **port-bug** | embed literal `\\e[K` |
+| 509 | `%G`/`%e` prompt escapes (zero-width marker / parser-indent) printed literally — extends prompt-escape gap family | **port-bug** | avoid these escapes |
+| 510 | `${(q)empty_array}` returns empty instead of `''` — empty-array-quoting semantics lost; breaks `(q)`+`eval` round-trips | **port-bug** | explicit `''` insertion |
 
-Of five hundred and seven entries, two are fixed (5, 7),
-five hundred and one remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of five hundred and ten entries, two are fixed (5, 7),
+five hundred and four remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
