@@ -28141,6 +28141,164 @@ print -x $n "$content"
 
 ---
 
+## #526 — `-a`/`-o` POSIX operators inside `[[ ]]` parsed as commands — zsh: "condition expected"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ 1 -lt 2 -a 3 -lt 4 ]] 2>&1; echo rc=$?'
+zsh:1: condition expected: 1
+
+$ ./target/debug/zshrs --zsh -fc '[[ 1 -lt 2 -a 3 -lt 4 ]] 2>&1; echo rc=$?'
+zsh:1: command not found: -a
+rc=127
+```
+
+zsh's `[[ ]]` syntax uses `&&` and `||` for AND/OR.
+POSIX `-a`/`-o` operators are only valid in `[` (the
+POSIX test). Inside `[[ ]]`, zsh rejects them with
+"condition expected".
+
+zshrs's `[[ ]]` parser doesn't recognize `-a`/`-o` as
+either valid OR invalid — it splits the expression at
+`-a` and tries to run `-a` as a **command**, which fails
+with "command not found: -a" rc=127.
+
+Same root as #473 (`|` inside `[[ ]]` parsed as pipe) —
+the `[[` lexer doesn't fully consume the bracket context.
+
+**Where** — `src/ported/parser/cond.rs::parse_cond` (or
+the `[[ ]]` lexer): must error on `-a`/`-o` (and other
+POSIX-only tokens) inside `[[ ]]` with the canonical
+"condition expected" diagnostic. C-source
+`Src/cond.c::par_cond` rejects.
+
+**Impact** — scripts that mistakenly use `-a`/`-o`
+inside `[[ ]]` get a confusing "command not found"
+diagnostic instead of the helpful "condition expected"
+zsh error — making the bug harder to find.
+
+**Workaround** — use `&&`/`||`:
+```sh
+[[ 1 -lt 2 ]] && [[ 3 -lt 4 ]]
+```
+
+(That's the zsh-canonical form anyway.)
+
+---
+
+## #527 — `(( () ))` empty math expression silently rc=1 — zsh: "bad math expression: operand expected" rc=2
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '(( () )) 2>&1; echo rc=$?'
+zsh:1: bad math expression: operand expected at `) '
+rc=2
+
+$ ./target/debug/zshrs --zsh -fc '(( () )) 2>&1; echo rc=$?'
+rc=1
+```
+
+Empty math expression `()` should error with a
+"bad math expression: operand expected" diagnostic and
+rc=2 (canonical "arith syntax error" rc).
+
+zshrs silently returns rc=1 (no diagnostic, generic
+failure rc).
+
+Same family as #411 (test type-error), #494 (arith
+trailing junk), #505 (integer assign coerce), #506
+(float assign coerce) — arithmetic-context permissive
+silence.
+
+**Where** — `src/ported/math.rs::mathevall` or arith
+parser: must reject empty operand inside parens and
+emit the diagnostic via `zerror`. C-source
+`Src/math.c::lex_num` returns `nullret` for empty,
+caught by `arith()` which errors.
+
+**Impact** — typos in arith expressions produce wrong
+rc. Combined with #411/#494/#505/#506, the arithmetic
+diagnostic infrastructure has multiple gaps:
+
+```sh
+result=$(( ${unset_var} ))
+case $? in
+    0) echo "ok" ;;
+    1) echo "result is 0/false" ;;
+    2) echo "arith syntax error" ;;
+esac
+# zsh: "arith syntax error" (rc=2)
+# zshrs: "result is 0/false" (rc=1, wrong branch)
+```
+
+**Workaround** — collapse 1/2 → "any non-zero":
+```sh
+(( EXPR )) || echo "arith failed: $?"
+```
+
+---
+
+## #528 — `typeset -a a=("hello world")` splits QUOTED string into multiple elements — extends #502
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -a a=("hello world"); echo "[${#a}][${a[1]}]"'
+[1][hello world]
+
+$ ./target/debug/zshrs --zsh -fc 'typeset -a a=("hello world"); echo "[${#a}][${a[1]}]"'
+[2][hello]
+```
+
+Worse than #502 (which was about UNQUOTED `$var` being
+word-split). Here the value is **explicitly quoted** —
+`"hello world"` is a single double-quoted string literal
+— and zshrs STILL word-splits it into 2 elements.
+
+zsh keeps the 1-element array (correct quoting
+semantics). zshrs decomposes:
+- `a[1]="hello"` (was the whole quoted string)
+- `a[2]="world"` (split off)
+
+Same code path as #502 — `typeset -a` arg-parsing
+routes through a path that ignores quote markers.
+
+**Where** — `src/ported/builtins/typeset.rs::parse_arg_value`:
+the parser walks raw tokens without honoring the quote
+state from the lexer. C-source
+`Src/builtins.c::bin_typeset` reads pre-lexed elements
+that preserve quote-grouping.
+
+**Impact** — `typeset -a NAME=( "with spaces" )` patterns
+break. Common in:
+- Path-array initialization with paths containing spaces
+- Config-array setup with multi-word values
+- Test-data arrays
+
+```sh
+typeset -a names=("Alice Smith" "Bob Jones")
+echo "${#names}"
+# zsh: 2 (two people)
+# zshrs: 4 (Alice, Smith, Bob, Jones)
+```
+
+**Workaround** — assign without `typeset -a`:
+```sh
+names=("Alice Smith" "Bob Jones")   # works
+typeset -a names                     # promote to array decl after
+```
+
+Or build element-by-element:
+```sh
+typeset -a names
+names+=("Alice Smith")
+names+=("Bob Jones")
+```
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -28670,11 +28828,14 @@ print -x $n "$content"
 | 523 | `${(q)control_char}` produces raw `\\<CHAR>` instead of `$'\\X'` ANSI-C-quoted form — round-trip broken | **port-bug** | manual ANSI-C-quote helper |
 | 524 | `%r` prompt escape printed literally — extends prompt-escape gap family (#390/#391/#412/etc.) | **port-bug** | avoid `%r` when targeting zshrs |
 | 525 | `print -x notanint ARG` silently rc=0 — zsh: "positive integer expected after -x" | **port-bug** | pre-validate N arg with regex |
+| 526 | `[[ N -lt M -a ... ]]` `-a`/`-o` parsed as command (rc=127) — zsh: "condition expected" parse error | **port-bug** | use `&&`/`\|\|` instead |
+| 527 | `(( () ))` empty math silently rc=1 — zsh: "bad math expression: operand expected" rc=2 | **port-bug** | collapse rc 1/2 → non-zero check |
+| 528 | `typeset -a a=("hello world")` splits QUOTED string into multiple elements — worse than #502 | **port-bug** | element-by-element `+=` build |
 
-Of five hundred and twenty-five entries, two are fixed (5, 7), 2 freshly
+Of five hundred and twenty-eight entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
 total-discovered count;
-five hundred and nineteen remain open port-bugs/perf-issues (4, 8, 9, 10,
+five hundred and twenty-two remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
