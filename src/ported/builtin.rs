@@ -6978,7 +6978,22 @@ pub fn bin_print(
         } else {
             &args[1..]
         };
-        let out = printf_format(&fmt, rest);
+        // c:builtin.c:5430-5443 — printf returns 1 on unknown
+        // directive after `zwarnnam(name, "%s: invalid directive",
+        // start)`. The partial output produced before the bad
+        // directive is still printed (C emits via fwrite/fprintf
+        // throughout the format walk).
+        let out = match printf_format(&fmt, rest) {
+            Ok(s) => s,
+            Err((partial, bad)) => {
+                print!("{}", partial); // c: partial output already in fout
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                let msg = format!("%{}: invalid directive", bad); // c:5435
+                crate::ported::utils::zwarnnam(name, &msg);
+                return 1; // c:5443
+            }
+        };
         // c:4854-4856 — `if (OPT_ISSET(ops, 'v') || (fmt && (OPT_ISSET
         //   (ops, 'z') || OPT_ISSET(ops, 's')))) ASSIGN_MSTREAM(...)`.
         // For -f combined with -z or -s, capture output then route
@@ -11379,7 +11394,14 @@ fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
 /// Full C printf-spec engine (Src/builtin.c:4691-5500) is much more
 /// elaborate (width/precision/flag chars/%b/%q/etc.); this is the
 /// minimal subset that covers the common script patterns.
-fn printf_format(fmt: &str, args: &[String]) -> String {
+///
+/// Returns `Ok(output)` on success, or `Err((output_so_far, bad_char))`
+/// when an unknown `%X` directive is hit. The C source emits
+/// `zwarnnam(name, "%s: invalid directive", start)` at builtin.c:5435
+/// then `return 1` — partial output already written stays written. The
+/// Rust caller (bin_print, c:4854+) mirrors that: print the partial
+/// output, emit `zwarnnam`, return 1.
+fn printf_format(fmt: &str, args: &[String]) -> Result<String, (String, char)> {
     // c:Src/builtin.c:4711 — `fmt = getkeystring(fmt, &flen, ...,
     // GETKEYS_PRINTF_FMT, ...);`. The format string is first run
     // through getkeystring to interpret backslash escapes (`\n`,
@@ -11552,9 +11574,15 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
                 Some('n') => {
                     arg_i += 1;
                 }
+                // c:builtin.c:5430-5443 — unknown directive in C is
+                // a hard error: `zwarnnam(name, "%s: invalid
+                // directive", start); ...; return 1;`. Bubble the
+                // bad char up via Err; the caller emits the warning
+                // and returns rc=1. Partial output already written
+                // is preserved (matches C — the warning fires AFTER
+                // earlier output bytes have already been emitted).
                 Some(other) => {
-                    out.push('%');
-                    out.push(other);
+                    return Err((out, other)); // c:5430-5443
                 }
                 None => out.push('%'),
             }
@@ -11563,7 +11591,7 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
             break;
         }
     }
-    out
+    Ok(out)
 }
 
 /// Apply a printf-style `%[-flag][width][.prec]s` spec to a string.
