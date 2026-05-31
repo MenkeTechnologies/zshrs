@@ -25402,6 +25402,177 @@ so this workaround is also unreliable.
 
 ---
 
+## #472 — `typeset -H` (hide value) doesn't suppress value in `typeset -p` output
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -rH a=hi; typeset -p a'
+typeset -r a
+
+$ ./target/debug/zshrs --zsh -c 'typeset -rH a=hi; typeset -p a'
+typeset -r a=hi
+```
+
+`typeset -H` is the **"hide value"** flag — the variable
+is set but its value is NOT shown in `typeset`/`set`
+listings. Used by zsh internally for sensitive values
+(passwords, keys) and by user scripts that want a
+variable's existence visible but value private.
+
+zsh: omits the `=value` part in `typeset -p` output.
+zshrs: shows the value anyway.
+
+The variable is still accessible via `$a` — both shells
+return `hi`. The `-H` flag affects only the listing
+output.
+
+**Where** — `src/ported/builtins/typeset.rs::print_param`:
+must check `PM_HIDEVAL` flag and emit name only (no
+`=value`) when set. C-source
+`Src/builtins.c::printparamnode` checks `PM_HIDEVAL` and
+emits `key` without value.
+
+**Impact** — sensitive-value listings expose values.
+Scripts using `-H` for "set this but don't echo it back
+in diagnostics" leak the value:
+
+```sh
+typeset -H password=$(read_secret)
+typeset -p password
+# zsh: "typeset password"
+# zshrs: "typeset -H password=plaintext-secret-leaked"
+```
+
+Combined with #410 (tied-param display broken), #386
+(readonly listing empty), #444 (patchlevel unknown),
+typeset's introspection-output has multiple flag-honoring
+gaps.
+
+**Workaround** — pipe `typeset -p` through `sed` to
+strip values for `-H` vars:
+```sh
+typeset -p | sed 's/^typeset -[^ ]*H[^ ]* \([^=]*\)=.*$/typeset \1/'
+```
+
+(Brittle; depends on `-H` appearing in the flag part.)
+
+---
+
+## #473 — `[[ "ab" == a|b ]]` zshrs tries to run `b` as command — `|` in pattern not pipe-safe
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ "ab" == a|b ]] 2>&1; echo "[rc=$?]"'
+zsh:1: parse error near `|'
+
+$ ./target/debug/zshrs --zsh -c '[[ "ab" == a|b ]] 2>&1; echo "[rc=$?]"'
+zsh:1: command not found: b
+[rc=127]
+```
+
+zsh treats `|` inside `[[ ... ]]` as part of the pattern
+(extended_glob alternation requires `(a|b)` form;
+unparenthesized `a|b` is a parse error).
+
+zshrs splits the `[[ ... ]]` expression at `|` —
+interprets it as a pipe between two commands: `[[ "ab" == a` and `b]] 2>&1`. The first half is a malformed test; the
+second half tries to execute `b` as a command, which
+fails with "command not found".
+
+This is a **lexer-level bug** — `|` inside `[[ ]]`
+should not start a pipe.
+
+**Where** — `src/ported/parser/lexer.rs::tokenize`:
+inside `[[ ]]` context, the lexer must not split on
+shell-meta `|`. C-source `Src/lex.c::gettokstr` checks
+the `incond` flag and disables meta-recognition.
+
+**Impact** — Patterns containing `|` cause script
+hijacking risk if user input flows into the pattern:
+
+```sh
+[[ "$user_input" == $known_pattern ]]
+# user_input = "ab"; known_pattern = "a|rm -rf /"
+# zsh: parse error or pattern interpretation
+# zshrs: runs `rm -rf /` as the "command" half of the pipe
+```
+
+**Security-relevant** for any code that interpolates
+non-validated patterns. Defensive parenthesization
+`(a|b)` works in both:
+
+```sh
+[[ "ab" == "(a|b)" ]]
+```
+
+**Workaround** — always parenthesize alternation
+patterns; never interpolate untrusted strings as pattern
+RHS in `[[ ]]`.
+
+---
+
+## #474 — `$PIPESTATUS` (uppercase) added as bash-compat alias to `$pipestatus` — breaks shell-detection
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'true | false | true; echo "pipestatus=[$pipestatus] PIPESTATUS=[${PIPESTATUS[@]}]"'
+pipestatus=[0 1 0] PIPESTATUS=[]
+
+$ ./target/debug/zshrs --zsh -c 'true | false | true; echo "pipestatus=[$pipestatus] PIPESTATUS=[${PIPESTATUS[@]}]"'
+pipestatus=[0 1 0] PIPESTATUS=[0 1 0]
+```
+
+zsh exposes only **lowercase** `$pipestatus` (zsh
+convention). Uppercase `$PIPESTATUS` is bash-only —
+unset in zsh.
+
+zshrs exposes BOTH `$pipestatus` (lowercase) AND
+`$PIPESTATUS` (uppercase) — likely as a bash-compat
+addition. The uppercase form mirrors the lowercase one.
+
+**Bash-vs-zsh detection broken**:
+```sh
+# Common: detect if running in bash or zsh
+if [[ -v PIPESTATUS ]]; then
+    echo "bash (or compat)"
+else
+    echo "zsh"
+fi
+# zsh: prints "zsh"
+# zshrs: prints "bash (or compat)" — WRONG, this IS zsh
+```
+
+This may be intentional (compat helper) but is incorrect
+zsh-emulation behavior. In `--zsh` mode, the shell
+should match zsh's parameter table exactly.
+
+**Where** — `src/ported/params/pipestatus.rs::register`:
+in `--zsh` mode, expose only `pipestatus`. The
+`PIPESTATUS` alias should be conditional on running
+without `--zsh` (i.e., zshrs's native mode).
+
+**Impact** — shell-fingerprinting code paths take wrong
+branch. Most affected: cross-shell scripts that
+fall back to different behavior based on which shell
+they detect themselves running in.
+
+**Workaround** — detect zshrs more explicitly:
+```sh
+if [[ -n $ZSH_VERSION ]]; then
+    echo "zsh-like (could be zsh or zshrs)"
+elif [[ -n $BASH_VERSION ]]; then
+    echo "bash"
+fi
+```
+
+(Uses VERSION strings which are uniquely populated per
+shell.)
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -25877,9 +26048,12 @@ so this workaround is also unreliable.
 | 469 | `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier" | **port-bug** | manual filter loop after glob |
 | 470 | `emulate -L sh` shows `localoptions`/`localpatterns`/`localtraps` but doesn't apply sh-mode opts — same root as #464 | **port-bug** | manual setopt of sh list |
 | 471 | `zmodload -u zsh/nonexistent` silently rc=0 — should error "no such module" (zsh: rc=1) | **port-bug** | manual module-list check before unload |
+| 472 | `typeset -H` (hide value) doesn't suppress value in `typeset -p` output — leaks secrets in listings | **port-bug** | `sed` post-process to strip `=value` |
+| 473 | `[[ "ab" == a|b ]]` zshrs runs `b` as command — `\|` in pattern parsed as pipe (security-relevant) | **port-bug** | always parenthesize `(a\|b)` alternations |
+| 474 | `$PIPESTATUS` (uppercase) exposed as alias to `$pipestatus` — zsh has only lowercase; breaks bash-vs-zsh detection | **port-bug** | detect via `$ZSH_VERSION`/`$BASH_VERSION` strings |
 
-Of four hundred and seventy-one entries, two are fixed (5, 7),
-four hundred and sixty-five remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and seventy-four entries, two are fixed (5, 7),
+four hundred and sixty-eight remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
