@@ -24732,6 +24732,171 @@ own side effects.
 
 ---
 
+## #460 — `typeset -aix arr=(...)` flag conflict silently accepted, `-i` dropped — zsh: "inconsistent type for assignment"
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -aix arr=(1 2 3) 2>&1; echo rc=$?; typeset -p arr'
+zsh:typeset:1: arr: inconsistent type for assignment
+rc=0
+
+$ ./target/debug/zshrs --zsh -c 'typeset -aix arr=(1 2 3) 2>&1; echo rc=$?; typeset -p arr'
+rc=0
+typeset -ax arr=( 1 2 3 )
+```
+
+The flags `-a` (array) and `-i` (integer) are
+**mutually exclusive** — a parameter can't be both array
+and integer. zsh detects the conflict and errors
+"inconsistent type for assignment".
+
+zshrs silently accepts the conflicting flags by **dropping
+the `-i`** — the resulting parameter is `-ax` only. No
+diagnostic emitted.
+
+**Where** — `src/ported/builtins/typeset.rs::parse_flags`:
+must check for flag-pair conflicts (`-a`+`-i`, `-a`+`-F`,
+`-a`+`-E`, `-A`+`-i`, etc.) and emit
+"inconsistent type for assignment" + return error.
+C-source `Src/builtins.c::bin_typeset` validates the
+flag combinations before any modification.
+
+**Impact** — silent loss of intent. User code that
+explicitly requested integer-array behavior silently gets
+a plain string array:
+
+```sh
+typeset -aix counts=(0 0 0)
+counts[1]="not-a-number"   # zsh: integer-coerced to 0
+                           # zshrs: silently stores as string
+echo "${counts[1]}"
+```
+
+Less common pattern but the silent flag-drop is a sign of
+broader laxness in typeset's option validation.
+
+**Workaround** — manually validate flag combos in user
+code, or split into separate `typeset` calls.
+
+---
+
+## #461 — `trap` no-args output omits `TRAPNAME()` function-form handlers (zsh shows them)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPUSR1() { :; }; trap "echo X" USR2; trap'
+TRAPUSR1 () {
+	:
+}
+trap -- 'echo X' USR2
+
+$ ./target/debug/zshrs --zsh -c 'TRAPUSR1() { :; }; trap "echo X" USR2; trap'
+trap -- 'echo X' USR2
+```
+
+zsh's `trap` no-args lists **all** registered trap
+handlers — both the string-form `trap CMD SIG` and the
+function-form `TRAPNAME()`.
+
+zshrs's `trap` listing only shows the string-form
+handlers. Function-form `TRAPNAME()` are not enumerated
+even when the function exists.
+
+Same root cause as #381/#382/#384/#389/#461 — the
+function-form trap handlers aren't being registered into
+the same dispatch/listing infrastructure as string-form
+traps.
+
+**Where** — `src/ported/builtins/trap.rs::list_all`:
+must walk the function table for names starting with
+`TRAP` matching signal names. C-source
+`Src/signals.c::list_traps` shows both `traplist` and
+`getshfunc("TRAP$SIGNAME")` for each signal.
+
+**Impact** — debugging traps becomes harder. The
+canonical "what signals does this script handle?" query
+`trap` misses half the handlers under zshrs:
+
+```sh
+# .zshrc has TRAPINT, TRAPHUP, TRAPEXIT all as functions
+$ trap
+# zsh: shows all 3 functions + string traps
+# zshrs: shows nothing (assuming no string-form traps set)
+```
+
+**Workaround** — explicit probe:
+```sh
+for sig in INT HUP USR1 USR2 EXIT ZERR; do
+    (( ${+functions[TRAP$sig]} )) && echo "TRAP$sig active"
+done
+```
+
+---
+
+## #462 — `disown` in subshell errors "no current job" (zsh: silent no-op)
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'sleep 0.3 & (disown); jobs'
+[1]  + running    sleep 0.3
+
+$ ./target/debug/zshrs --zsh -c 'sleep 0.3 & (disown); jobs'
+zsh:disown:1: no current job
+```
+
+`disown` with no args removes the current job from the
+job table. In a subshell, the job table is supposed to
+be **empty** (subshells don't inherit parent's job-list
+entries — POSIX behavior).
+
+zsh: subshell's `disown` finds no jobs in its own table,
+silently no-ops; parent's job table is untouched.
+
+zshrs: emits "no current job" diagnostic from subshell.
+And the parent's `jobs` output is empty too — suggesting
+either the subshell shares parent's job table OR the
+subshell's diagnostic corrupted output somehow.
+
+Either way, the behaviors diverge:
+1. zsh subshell silently no-ops; zshrs errors
+2. Parent's job table state after subshell exits is
+   different (empty in zshrs)
+
+Tangentially related to the subshell-scope-leak family
+(#450-#455) — the job table is another piece of
+per-shell state that should be isolated from subshells.
+
+**Where** — `src/ported/exec/subshell.rs` (job-table
+isolation) AND/OR `src/ported/builtins/disown.rs`
+(empty-job-table handling).
+
+C-source `Src/jobs.c::bin_disown` with no args looks up
+`curjob` — in subshell context this is the subshell's
+own empty curjob, returns 0 silently.
+
+**Impact** — background-cleanup patterns with subshell
+context emit spurious diagnostics:
+
+```sh
+sleep 100 &
+( disown $! )      # detach in subshell
+# zsh: clean
+# zshrs: "no current job" — looks like an error even
+#        though the disown intent was correct
+```
+
+**Workaround** — pass explicit pid:
+```sh
+( disown $! 2>/dev/null )
+```
+
+Or move the disown out of subshell.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -25195,9 +25360,12 @@ own side effects.
 | 457 | nested `${(j:|:)${(s/:/)a}}` paramexp returns only first split element instead of joined whole | **port-bug** | use intermediate array variable |
 | 458 | `[[ "$a" == $p ]]` treats `$p` as glob by default — zsh requires `${~p}` or `GLOB_SUBST` opt-in (security-relevant inverse) | **port-bug** | quote the RHS `"$p"` |
 | 459 | **CRITICAL** `source script.zsh ARGS` ignores positional args — sourced script sees `$#=0` | **port-bug** | `set -- ARGS; source script.zsh` |
+| 460 | `typeset -aix arr=(...)` flag conflict silently accepted, `-i` dropped (zsh: "inconsistent type") | **port-bug** | manually validate flag combos |
+| 461 | `trap` no-args output omits `TRAPNAME()` function-form handlers (zsh shows them) — extends #381 listing side | **port-bug** | explicit `${+functions[TRAP$sig]}` probe loop |
+| 462 | `disown` in subshell emits "no current job" diagnostic (zsh: silent no-op when subshell's job-table is empty) | **port-bug** | pass explicit pid + `2>/dev/null` |
 
-Of four hundred and fifty-nine entries, two are fixed (5, 7),
-four hundred and fifty-three remain open port-bugs/perf-issues (4, 8, 9, 10,
+Of four hundred and sixty-two entries, two are fixed (5, 7),
+four hundred and fifty-six remain open port-bugs/perf-issues (4, 8, 9, 10,
 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
