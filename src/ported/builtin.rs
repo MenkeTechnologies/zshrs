@@ -5944,21 +5944,25 @@ pub fn bin_whence(
                     continue;
                 } // c:4097
             }
-            // c:4099-4107 — suffix-alias check. C: arg has `.SUFFIX`
-            // AND suffix char before `.` isn't Meta AND sufaliastab
-            // has matching suf entry. Route through printaliasnode for
-            // sufaliastab — same printnode callback as aliastab
-            // (Src/hashtable.c:1255 `sufaliastab->printnode = printaliasnode`).
+            // c:4099 /* Look for suffix alias */
+            // c:4100-4102 — `if ((suf = strrchr(*argv, '.')) && suf[1] &&
+            //   suf > *argv && suf[-1] != Meta &&
+            //   (hn = sufaliastab->getnode(sufaliastab, suf+1)))`.
+            // The order is load-bearing: C short-circuits, so `suf[-1]`
+            // (the byte BEFORE `.`) is read only after `suf > *argv`
+            // confirms `.` is not at position 0.
             if let Some(idx) = arg.rfind('.') {
-                // c:4100 strrchr(*argv, '.')
-                let after_dot_nonempty = idx + 1 < arg.len();
-                let dot_not_at_start = idx > 0;
-                // c:4101 — `suf[-1] != Meta`. Rust strings are UTF-8;
-                // skip when the byte immediately before `.` would be
-                // a metafy escape (rare in real shell usage).
-                let pre_dot_not_meta = arg.as_bytes()[idx - 1] as u8 != Meta;
-                if after_dot_nonempty && dot_not_at_start && pre_dot_not_meta {
-                    let suf = &arg[idx + 1..];
+                // c:4100 — suf = strrchr(*argv, '.'); suf[1] (char after `.`
+                // is non-NUL) AND c:4101 suf > *argv (`.` not at start)
+                // AND suf[-1] != Meta (char before `.` is not Meta-escape).
+                // Chained into one `if` so Rust short-circuits identically
+                // to C; reading `arg.as_bytes()[idx - 1]` eagerly with
+                // idx==0 panics with subtract-overflow.
+                if idx + 1 < arg.len()
+                    && idx > 0
+                    && arg.as_bytes()[idx - 1] as u8 != Meta
+                {
+                    let suf = &arg[idx + 1..]; // c:4102 suf+1
                     let suf_alias = sufaliastab_lock()
                         .read()
                         .ok()
