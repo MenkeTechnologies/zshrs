@@ -371,7 +371,18 @@ Demos 239, 240 use workaround 1 (inline subscript).
 
 ## #11 — `printf "%d" "'<space>"` returns 0 instead of 32
 
-**Status:** `port-bug` — surfaced 2026-05-29 writing demo 279.
+**Status:** `fixed` 2026-05-30 (`src/ported/builtin.rs::parse_int_arg`).
+Surfaced 2026-05-29 writing demo 279.
+
+Fix: bin_printf's `%d` arg parser used to `trim()` whitespace from
+the arg BEFORE testing for the leading `'` / `"` char-constant prefix
+(c:Src/builtin.c:5447 `*curarg == '\''`). For input `"' "` the trim
+stripped the trailing space, leaving just `"'"`, then the
+char-constant branch saw no char after the quote and returned 0.
+C zsh's check operates on the RAW arg pointer, taking `curarg[1]`
+regardless of whitespace. Moved the char-constant test ahead of the
+trim so the space byte is read correctly. Now matches zsh: returns
+32 for `' '`, 10 for `'$'\n'`, etc.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'printf "%d" "'\'' "'
@@ -403,7 +414,26 @@ Demos 279, 280 switched to the `$(( #ch ))` form.
 
 ## #12 — `${var%|*}` treats `|` as glob alternation, matches empty
 
-**Status:** `port-bug` — surfaced 2026-05-29 writing demo 279.
+**Status:** `fixed` 2026-05-30 (`src/ported/subst.rs::paramsubst`
+`escape_bare_alt_pipes` closure applied at the four strip-op call
+sites: `#`, `##`, `%`, `%%`). Surfaced 2026-05-29 writing demo 279.
+
+Fix: C zsh's shell lexer pre-tokenizes bare `|` to `Bar` (0x8e —
+zsh.h:169) only INSIDE `(...)` groups; outside groups it stays
+literal `|` (0x7c). `Src/pattern.c:248
+zpc_chars[ZPC_BAR] = Bar` means `patcompbranch` only treats the
+tokenized Bar byte as an alt terminator, so raw ASCII `|` outside
+groups passes through as a literal pattern atom. zshrs's parser
+doesn't yet run the pre-tokenize pass, so raw `|` reached
+`patcompile` and was mis-interpreted as alternation, leaving the
+first alt empty and silently no-op'ing the strip.
+
+Conservative port: at each `${var#pat}` / `${var##pat}` /
+`${var%pat}` / `${var%%pat}` site, walk the substituted pattern
+tracking paren depth and `\`-escape every bare `|` at depth 0
+before calling `glob_match_static`. Pipes inside `(...)`, inside
+`[...]` brackets, or already escaped (`\|`) are untouched, so the
+existing grouped-alternation path (`${p%(b|c)}`) still works.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'p="hello|key"; echo "${p%|*}"'
