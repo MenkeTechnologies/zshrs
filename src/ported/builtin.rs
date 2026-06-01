@@ -11652,14 +11652,17 @@ fn format_spec_str(spec: &str, s: &str) -> String {
 /// position threaded through, which the current refactor scope
 /// doesn't justify).
 fn parse_int_arg(s: &str) -> i64 {
+    // c:Src/builtin.c bin_print c:5447 — character-constant check
+    // operates on the RAW arg, not after trim. `*curarg == '\''`
+    // → take `curarg[1]` as a byte regardless of whitespace.
+    // Otherwise `printf "%d" "' "` returns 0 instead of 32 because
+    // the trailing space gets stripped before the leading-quote test.
+    if let Some(rest) = s.strip_prefix('\'').or_else(|| s.strip_prefix('"')) {
+        return rest.chars().next().map(|c| c as i64).unwrap_or(0);
+    }
     let t = s.trim();
     if t.is_empty() {
         return 0;
-    }
-    // Character literal: leading `'` or `"` followed by a char →
-    // the char's code point.
-    if let Some(rest) = t.strip_prefix('\'').or_else(|| t.strip_prefix('"')) {
-        return rest.chars().next().map(|c| c as i64).unwrap_or(0);
     }
     // Negative sign handled at the top so the inner branches don't
     // each duplicate the prefix logic.

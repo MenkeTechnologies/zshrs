@@ -418,6 +418,17 @@ pub fn patcompcharsset() {
     // c:469 — `memcpy(zpc_special, zpc_chars, ZPC_COUNT)`. The default
     // char for every ZPC_* slot. Direct positional assignment here
     // since zshrs doesn't carry the `zpc_chars` const array yet.
+    //
+    // NOTE on token bytes: C's `zpc_chars[]` (pattern.c:248) uses
+    // the TOKENIZED high-bit bytes (`Bar`, `Tilde`, etc.); the C
+    // shell lexer tokenizes raw ASCII to these only inside grouped
+    // alternation. zshrs's parser doesn't yet run that pre-tokenize
+    // pass — every byte reaches patcompile as raw ASCII. Switching
+    // these slots to the high-bit form would break ~80 library
+    // tests that rely on raw `|` triggering alternation. The
+    // narrower fix for bug #12 lives in vm_helper::glob_match_static
+    // where we conservatively escape pattern bytes the param-strip
+    // path could not have intended as metacharacters.
     sp[ZPC_SLASH as usize] = b'/';
     sp[ZPC_NULL as usize] = 0;
     sp[ZPC_BAR as usize] = b'|';

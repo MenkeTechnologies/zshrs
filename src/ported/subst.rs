@@ -2693,6 +2693,67 @@ pub fn paramsubst(
     let mut pos = start_pos + 1; // Skip $ or Qstring       // c:1625
     let mut result_nodes = Vec::new(); // c:1625
 
+    // c:Src/pattern.c:248 — pre-tokenize `|` for `${var%pat}` /
+    // `${var#pat}` strip patterns. In C zsh the shell lexer
+    // tokenizes bare `|` to `Bar` (0x8e) only INSIDE `(...)` groups;
+    // outside groups it stays literal `|` (0x7c). `patcompile`
+    // depends on that distinction (`zpc_chars[ZPC_BAR] = Bar` at
+    // pattern.c:248 means `patcompbranch` only treats Bar — not
+    // ASCII `|` — as an alternation terminator). zshrs doesn't yet
+    // run a pre-tokenize pass, so raw ASCII `|` would be mis-read
+    // as alternation. This closure escapes every bare `|` at depth
+    // 0 (literal context) by prefixing `\` — matches C zsh's bug
+    // #12 behavior in docs/BUGS.md: `${p%|*}` strips `|key` from
+    // "hello|key". Pipes inside `(...)`, inside `[...]`, or already
+    // escaped with `\` are left untouched.
+    let escape_bare_alt_pipes = |s: &str| -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut depth = 0i32;
+        let mut in_class = false;
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let c = bytes[i];
+            if c == b'\\' && i + 1 < bytes.len() {
+                out.push(c as char);
+                out.push(bytes[i + 1] as char);
+                i += 2;
+                continue;
+            }
+            if in_class {
+                if c == b']' {
+                    in_class = false;
+                }
+                out.push(c as char);
+                i += 1;
+                continue;
+            }
+            match c {
+                b'[' => {
+                    in_class = true;
+                    out.push('[');
+                }
+                b'(' => {
+                    depth += 1;
+                    out.push('(');
+                }
+                b')' => {
+                    if depth > 0 {
+                        depth -= 1;
+                    }
+                    out.push(')');
+                }
+                b'|' if depth == 0 => {
+                    out.push('\\');
+                    out.push('|');
+                }
+                _ => out.push(c as char),
+            }
+            i += 1;
+        }
+        out
+    };
+
     // Check what follows the $
     let c = chars.get(pos).copied().unwrap_or('\0'); // c:1625
 
@@ -5953,7 +6014,7 @@ pub fn paramsubst(
                 }
             } else if let Some(pat) = r.strip_prefix("##") {
                 // c:3540 (longest prefix strip)
-                let p = singsub(pat);
+                let p = escape_bare_alt_pipes(&singsub(pat));
                 // has_subscript guard — same as `/`/`//` arms.
                 // Per subst.c:2915 + 3422-3451, scalar subscript
                 // dispatches to getmatch on the single element.
@@ -6016,7 +6077,7 @@ pub fn paramsubst(
                 }
             } else if let Some(pat) = r.strip_prefix('#') {
                 // c:3540 (shortest prefix strip)
-                let p = singsub(pat);
+                let p = escape_bare_alt_pipes(&singsub(pat));
                 let has_scalar_sub = subscript
                     .as_deref()
                     .map(|s| {
@@ -6074,7 +6135,7 @@ pub fn paramsubst(
                 }
             } else if let Some(pat) = r.strip_prefix("%%") {
                 // c:3540 (longest suffix strip)
-                let p = singsub(pat);
+                let p = escape_bare_alt_pipes(&singsub(pat));
                 let has_scalar_sub = subscript
                     .as_deref()
                     .map(|s| {
@@ -6152,7 +6213,7 @@ pub fn paramsubst(
                 }
             } else if let Some(pat) = r.strip_prefix('%') {
                 // c:3540 (shortest suffix strip)
-                let p = singsub(pat);
+                let p = escape_bare_alt_pipes(&singsub(pat));
                 let has_scalar_sub = subscript
                     .as_deref()
                     .map(|s| {
