@@ -10124,6 +10124,15 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             let v = crate::ported::modules::datetime::getcurrentrealtime();
             Some(format!("{:.10}", v))
         }
+        "epochtime" => {
+            // c:Src/Modules/datetime.c:220 `getcurrenttime` returns
+            // [tv_sec, tv_nsec]. Bare `$epochtime` joins the two with
+            // ` ` (the default IFS separator), matching the C path
+            // `getstrvalue` → sepjoin on PM_ARRAY. Bug #317 in
+            // docs/BUGS.md.
+            let arr = crate::ported::modules::datetime::getcurrenttime();
+            Some(arr.join(" "))
+        }
         // Cached-state callbacks. C dispatches `pm->gsu.s->getfn(pm)`
         // where pm is `paramtab->getnode(name)`. Mirror: look up pm,
         // pass it through. Each getfn here ignores pm (matches C's

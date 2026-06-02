@@ -23558,7 +23558,50 @@ the missing builtins.
 
 ## #317 — `epochtime` array autovar from `zsh/datetime` not registered
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `getcurrenttime()` (the C port already
+existed in `modules/datetime.rs`) wasn't wired into any of the
+param-read paths; corrected 2026-06-02.
+
+**Root cause** — `src/ported/modules/datetime.rs::getcurrenttime`
+returns `[tv_sec, tv_nsec]` as a `Vec<String>` matching
+`Src/Modules/datetime.c:220`. But the array-param dispatch had
+no `epochtime` arm in any of:
+- `src/ported/subst.rs::arrays_get` (paramsubst's array source)
+- `src/ported/subst.rs::arrays_contains` (type-introspection)
+- `src/fusevm_bridge.rs::BUILTIN_ARRAY_ALL` (runtime `[@]`)
+- `src/ported/params.rs::lookup_special_var` (bare `$name`)
+
+So `${epochtime[1]}` / `${epochtime[@]}` / `$epochtime` all
+returned empty even though the underlying C-equivalent function
+already existed.
+
+**Fix:** Add `epochtime` arms in all four sites, each calling
+`getcurrenttime()` and returning the two-element array (or
+sepjoin for the scalar form). Citation: Src/Modules/datetime.c:256
+`SPECIALPMDEF("epochtime", PM_ARRAY|PM_READONLY, ...)`.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime; echo "[${epochtime[1]}]"'
+[1780440739]
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/datetime; echo "[${epochtime[1]}]"'
+[1780440741]
+
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime; echo "[$epochtime]"'
+[1780440741 79307000]
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/datetime; echo "[$epochtime]"'
+[1780440789 362252000]
+
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime; echo "[${#epochtime}]"'
+[2]
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/datetime; echo "[${#epochtime}]"'
+[2]
+```
+
+Slight numerical differences across the two invocations are
+independent-process timing; the shape and 2-element count match.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime 2>/dev/null; echo "n=${#epochtime} [${epochtime[1]}]"'

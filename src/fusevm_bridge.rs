@@ -2447,6 +2447,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // returns empty for these specials) and `[@]` came out
             // empty. Bug #276 in docs/BUGS.md. Mirrors the parallel
             // arrays_get handler at src/ported/subst.rs ~10685.
+            // c:Src/Modules/datetime.c:256 — `epochtime` PM_ARRAY|
+            // PM_READONLY backed by getcurrenttime(). Same parallel
+            // arrangement as the FUNCSTACK-backed specials below.
+            if name == "epochtime" {
+                let arr = crate::ported::modules::datetime::getcurrenttime();
+                return Value::Array(arr.into_iter().map(Value::str).collect());
+            }
             if matches!(
                 name.as_str(),
                 "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace"

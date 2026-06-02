@@ -10696,6 +10696,16 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
             return Some(f.iter().rev().map(|fs| fs.name.clone()).collect());
         }
     }
+    // c:Src/Modules/datetime.c:256 — `epochtime` PM_ARRAY|PM_READONLY
+    // backed by getcurrenttime() returning [tv_sec, tv_nsec] as
+    // decimal strings. Without registration here `${epochtime[1]}`
+    // / `${epochtime[@]}` returned empty. Bug #317 in
+    // docs/BUGS.md. Module-load gate is implicit: getcurrenttime
+    // is always linkable since the module is statically compiled
+    // in.
+    if name == "epochtime" {
+        return Some(crate::ported::modules::datetime::getcurrenttime());
+    }
     if name == "funcfiletrace" || name == "funcsourcetrace" || name == "functrace" {
         if let Ok(f) = crate::ported::modules::parameter::FUNCSTACK.lock() {
             // Sibling arrays — also innermost-first.
@@ -10743,7 +10753,7 @@ fn arrays_contains(name: &str) -> bool {
     // subscript path needed the array-shape signal.
     if matches!(
         name,
-        "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace"
+        "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace" | "epochtime"
     ) {
         return true;
     }
