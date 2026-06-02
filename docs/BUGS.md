@@ -1743,7 +1743,7 @@ zshrs_shell regression: 925/127 (baseline preserved with
 
 ## #31 — `${EPOCHSECONDS:-default}` always uses default — `:-` and `:+` think dynamic params are unset
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-01.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime
@@ -1785,25 +1785,46 @@ Tested all dynamic-special parameters — divergence is specific to
   | `HISTCMD`         | works  | works       | works   | built-in PM_SPECIAL    |
   | `SHLVL`           | works  | works       | works   | environment            |
 
-**Where** — `src/ported/modules/datetime.rs` registers
-`EPOCHSECONDS`/`EPOCHREALTIME` with the `set` flag not being
-properly set on the `Param` struct, so the `is_param_set` check
-in `paramsubst` for `:-` / `:+` / `${+x}` returns false.
+**Root cause** — `src/ported/subst.rs::vars_contains` (the is-set
+predicate paramsubst uses for `${+name}`, `${name:-default}`,
+`${name:+set}`) only consulted paramtab and `std::env::var`.
+Dynamic special parameters from module-loaded sources (EPOCHSECONDS,
+EPOCHREALTIME, the `zsh/datetime` module) don't have a paramtab
+entry in zshrs — direct value access works because
+`getsparam` routes through `lookup_special_var` which has a
+hard-coded callback chain dispatching to
+`modules::datetime::getcurrentsecs` / `getcurrentrealtime`.
 
-**Workaround** — fall back to direct access without the `:-` check:
-```sh
-ts=$EPOCHSECONDS
-[[ -n $ts ]] && echo "set to $ts"
+The mismatch: `getsparam` consults the callback chain so `$EPOCHSECONDS`
+returns the live value; `vars_contains` did NOT, so the is-set check
+returned false and `${EPOCHSECONDS:-DEFAULT}` always fired the
+default.
 
-# Or assign-then-test:
-local epoch="$EPOCHSECONDS"
-local fallback="${epoch:-default}"   # epoch is a REGULAR var, the :- works
-```
+C zsh doesn't hit this because module load (`zmodload zsh/datetime`)
+calls the `paramdef` `createspecial` path which DOES install a Param
+in paramtab. The Rust port hasn't fully ported the module/paramtab
+wireup, so the same name has two views: paramtab (empty) and
+`lookup_special_var` (works). The fix bridges that gap from the
+is-set side.
 
-Demos 77, 254, 260, 285, 300, 310, 335, 350, 360, 367 all use
-`${EPOCHSECONDS:-N/A}` patterns that silently fall back to the
-default. The display works because the value still gets printed
-via `strftime $EPOCHSECONDS` (direct access path).
+**Fix** (`src/ported/subst.rs::vars_contains`) — extend with a
+`lookup_special_var(name).is_some()` arm. Now `is_set` and the
+direct-read path consult the same source of truth.
+
+Verified:
+
+  * `${EPOCHSECONDS:-DEFAULT}` → live epoch seconds (not DEFAULT).
+  * `${+EPOCHSECONDS}` → `1` (not 0).
+  * `${EPOCHSECONDS:+set}` → `set` (not empty).
+  * `${EPOCHSECONDS}` → live epoch seconds (unchanged).
+  * `${EPOCHREALTIME:-DEFAULT}` / `${+EPOCHREALTIME}` work.
+  * Regular set var (`X=hello; ${X:-D}`) → `hello` (unchanged).
+  * Regular unset var (`${NOPE_UNSET:-D}`) → `D` (unchanged).
+  * UID/RANDOM/SECONDS callbacks still work for both reads AND
+    is-set checks.
+
+zshrs_shell regression: 925/127 (baseline preserved with
+`--test-threads=1`).
 
 ---
 

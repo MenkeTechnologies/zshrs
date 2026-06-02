@@ -9948,17 +9948,30 @@ fn vars_get(name: &str) -> Option<String> {
 }
 
 /// True if `name` exists in `paramtab` (any type), OR in the process
-/// environment. zsh imports every env var into paramtab at startup
+/// environment, OR is a dynamic special parameter (EPOCHSECONDS,
+/// EPOCHREALTIME, UID, RANDOM, SECONDS, etc.) that `lookup_special_var`
+/// can resolve. zsh imports every env var into paramtab at startup
 /// (createparamtable → addenv → setsparam loop); the Rust port's
 /// env import is lazy — env reads route through getsparam's env
-/// fallback only on access. \`\${+ENVVAR}\` queried env vars that
+/// fallback only on access. `${+ENVVAR}` queried env vars that
 /// hadn't been touched yet returned 0 even though zsh would treat
 /// them as set. Add the env::var check so the chkset path matches.
+///
+/// Bug #31 in docs/BUGS.md: `${EPOCHSECONDS:-DEFAULT}` always fired
+/// the default and `${+EPOCHSECONDS}` returned 0 because the dynamic
+/// special params from `zsh/datetime` don't have a paramtab entry
+/// (the module-loaded variant goes through a `lookup_special_var`
+/// callback chain instead of paramtab). C zsh creates a Param via
+/// `paramdef`'s `createspecial` path so it WAS in paramtab. The
+/// Rust port routes those names through `lookup_special_var`
+/// callbacks at read time without a backing Param, so the is-set
+/// check has to consult the same callback path.
 fn vars_contains(name: &str) -> bool {
     paramtab()
         .read()
         .map_or(false, |tab| tab.contains_key(name))
         || std::env::var(name).is_ok()
+        || lookup_special_var(name).is_some()
 }
 
 /// Read an array parameter from `paramtab`. Equivalent to C's
