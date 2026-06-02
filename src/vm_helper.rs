@@ -691,7 +691,18 @@ impl ShellExecutor {
             "ZSH_VERSION",
             crate::ported::patchlevel::ZSH_VERSION,
         );
-        setsparam("ZSH_PATCHLEVEL", zsh_version::ZSH_PATCHLEVEL);
+        // c:Src/params.c:43 + Src/patchlevel.h — `ZSH_PATCHLEVEL` is
+        // a git-describe-style identifier (`zsh-MAJOR.MINOR-N-gHASH`)
+        // of the upstream commit zshrs targets. `build.rs` emits
+        // "unknown" because the vendored zsh tarball doesn't ship a
+        // CUSTOM_PATCHLEVEL define; use the canonical const in
+        // `patchlevel.rs` instead (snapshot of `src/zsh/Src/patchlevel.h`).
+        // Bug #90 in docs/BUGS.md — scripts that fingerprint by
+        // $ZSH_PATCHLEVEL fell to the wildcard arm under "unknown".
+        setsparam(
+            "ZSH_PATCHLEVEL",
+            crate::ported::patchlevel::ZSH_PATCHLEVEL,
+        );
         setsparam(
             "ZSHRS_VERSION",
             crate::ported::patchlevel::ZSHRS_VERSION,

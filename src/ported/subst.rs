@@ -6729,7 +6729,13 @@ pub fn paramsubst(
                     // "txt md" instead of "md". Parity bug #28.
                     let sepjoined_for_qt = || -> String {
                         if let Some(arr) = arrays_get(&var_name) {
-                            arr.join(" ") // c:3030 sepjoin via IFS
+                            // c:3030 sepjoin — when (j:STR:) was given,
+                            // join with STR; else join with " " (IFS
+                            // default). Bug #91 in docs/BUGS.md:
+                            // `"${(j: :)paths:t}"` joined with " " but
+                            // then ran :t on the wrong joined form.
+                            let sep_str = sep.as_deref().unwrap_or(" ");
+                            arr.join(sep_str)
                         } else {
                             value.clone()
                         }
@@ -6818,7 +6824,33 @@ pub fn paramsubst(
                         }
                     } else if qt && arrays_contains(&var_name) {
                         // c:3030-3034 DQ sepjoin cleared isarr → scalar
-                        value = mod_one(&sepjoined_for_qt());
+                        let joined = sepjoined_for_qt();
+                        value = mod_one(&joined);
+                        // Seed split_parts with the single modified
+                        // scalar so the downstream (j:STR:) join arm
+                        // (subst.rs:7479) sees the modifier's result
+                        // and doesn't re-fetch arrays_get and rejoin
+                        // the original unmodified elements. Bug #91 in
+                        // docs/BUGS.md: `${(j: :)paths:t}` printed the
+                        // joined raw array because the (j) handler
+                        // overwrote `value` after the modifier ran.
+                        split_parts = Some(vec![value.clone()]);
+                        isarr = 0;
+                    } else if sep.is_some() && arrays_contains(&var_name) {
+                        // c:Src/subst.c:3906-3907 — `(j:X:)` flag joins
+                        // the array with X then clears isarr; the
+                        // modifier then runs on the joined SCALAR, not
+                        // per-element. Bug #91 in docs/BUGS.md:
+                        // `${(j: :)paths:t}` applied :t per-element
+                        // (yielding `c.txt f.log`) instead of running
+                        // :t on the joined "/a/b/c.txt /d/e/f.log"
+                        // (yielding `f.log` — the basename of the
+                        // joined-as-path).
+                        let sep_str = sep.as_deref().unwrap_or(" ");
+                        let joined = arrays_get(&var_name)
+                            .map(|a| a.join(sep_str))
+                            .unwrap_or_else(|| value.clone());
+                        value = mod_one(&joined);
                         split_parts = None;
                     } else if let Some(parts) = split_parts.clone() {
                         let new_parts: Vec<String> = parts.iter().map(|s| mod_one(s)).collect();
