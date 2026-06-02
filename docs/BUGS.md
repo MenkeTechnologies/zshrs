@@ -1830,48 +1830,67 @@ zshrs_shell regression: 925/127 (baseline preserved with
 
 ## #32 — `hash -d name=~` doesn't expand `~` in the value
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'hash -d zh=~; hash -d'
 zh=/Users/wizard
 
-$ zshrs --zsh -c 'hash -d zh=~; hash -d'
+$ zshrs --zsh -c 'hash -d zh=~; hash -d'   # before
 zh='~'
+$ zshrs --zsh -c 'hash -d zh=~; hash -d'   # after
+zh=/Users/wizard
 ```
 
-`hash -d` (named directory hash) should expand `~`, `~user`, `~+`,
-`~-` as paths when the value is being stored. zshrs stores the
-LITERAL tilde character — `'~'` quoted in the listing output
-proves the value is the unprocessed string.
+**Root cause** — `Src/builtin.c:80` declares hash with
+`BINF_MAGICEQUALS`. C's parser/prefork applies MAGIC_EQUAL_SUBST
+on `name=value` argv entries before the builtin is called
+(`Src/utils.c:6304`), so by the time `bin_hash` runs the value's
+leading `~` / `~user` / `~+` has already been expanded.
 
-Same with `hash -d name=$VAR`:
-```sh
-$ zshrs --zsh -c 'foo=/tmp; hash -d zh=$foo; hash -d'
-zh=/tmp     # this works (variable expansion happens at parse)
+zshrs's pipeline doesn't apply MAGICEQUALS at the parser/compile
+level for `hash -d` args yet — the BINF_MAGICEQUALS flag is
+recognized but the expansion side hasn't been ported. The literal
+`~` reaches `bin_hash` untouched and gets stored verbatim in the
+nameddir table; the listing output shows `'~'` quoted because the
+printer escapes the unprocessed tilde.
 
-$ zshrs --zsh -c 'hash -d zh=~root; hash -d'
-zh='~root'  # but tilde expansion is skipped
+**Fix** (`src/ported/builtin.rs::bin_hash` `-d` branch) — apply
+tilde expansion locally before storing. Route the value through
+the existing `subst::filesubstr` port (`Src/subst.c:737`). That
+function keys strictly on the Tilde TOKEN (`\u{98}`, per its
+contract at subst.rs:1761), so prefix the leading `~` with the
+token before the call:
+
+```rust
+let expanded_v = if v.starts_with('~') {
+    let tokenized = format!("\u{98}{}", &v[1..]);
+    filesubstr(&tokenized, false).unwrap_or_else(|| v.to_string())
+} else {
+    v.to_string()
+};
 ```
 
-**Where** — `src/ported/builtin.rs::bin_hash` `-d` branch should
-call the filename-expansion path (`tilde_expand` from
-`Src/glob.c::tilde_expand`) before storing the value in the named
-directory table.
+The narrower fix lives at the bin_hash call site rather than in
+the parser/compile pipeline because BINF_MAGICEQUALS would touch
+typeset/declare/export/etc. too — porting the flag end-to-end is
+its own larger pass. Bin_hash's value is the only place hash
+needs the expansion, so handle it there for now.
 
-**Affected callers** — every user shell `~/.zshrc` that uses the
-common pattern:
-```sh
-hash -d proj=~/projects/main
-hash -d dl=~/Downloads
-cd ~proj    # works in zsh; in zshrs, "~proj" stays unexpanded literal
-```
+Verified:
 
-**Workaround** — pre-expand:
-```sh
-hash -d proj=$HOME/projects/main    # works
-# or use $HOME directly instead of ~
-```
+  * `hash -d zh=~` → `zh=/Users/wizard` (BUGS.md case).
+  * `hash -d zh=~root` → `zh=/var/root`.
+  * `hash -d proj=~/projects/main` → `proj=/Users/wizard/projects/main`.
+  * `hash -d zh=$HOME/projects` → `zh=/Users/wizard/projects`
+    (unchanged — already worked via $-expansion).
+  * `hash -d zh=/var/log` → `zh=/var/log` (non-tilde absolute path
+    unchanged).
+  * `hash -d proj=~; cd ~proj; pwd` → `/Users/wizard` (named-dir
+    table populated, cd lookup works).
+
+zshrs_shell regression: 925/127 (baseline preserved with
+`--test-threads=1`).
 
 ---
 
