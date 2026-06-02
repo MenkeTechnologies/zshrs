@@ -2723,9 +2723,16 @@ pub fn chrealpath(path: &str, mode: u8, _use_heap: bool) -> Option<String> {
 /// Port of `char *remtpath(char **str, int count)` from Src/hist.c:2056.
 pub fn remtpath(s: &str, count: i32) -> String {
     // c:2056
+    // c:2068-2074 — when `str` lands before `*junkptr` (path entirely
+    // consumed by trim+skip-filename), C picks `/` vs `.` based on the
+    // FIRST byte of the ORIGINAL `*junkptr`: `IS_DIRSEP(**junkptr)` →
+    // `/`, else `.`. For empty input the first byte is `\0`, not a
+    // dirsep, so C returns `.`. The previous Rust port returned `/`
+    // for empty input, diverging from zsh — bug #134.
+    let original_first_is_sep = s.as_bytes().first().copied() == Some(b'/');
     let s = s.trim_end_matches('/');
     if s.is_empty() {
-        return "/".to_string();
+        return if original_first_is_sep { "/" } else { "." }.to_string();
     }
     if count == 0 {
         if let Some(pos) = s.rfind('/') {
