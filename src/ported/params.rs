@@ -8832,14 +8832,21 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
                     print!("\n  ");
                 }
             }
-            print!("{}", arr[0]);
+            // c:Src/params.c:6166-6171 — each array element goes
+            // through `quotedzputs` so elements containing spaces,
+            // quotes, or other shell-meta chars round-trip through
+            // `eval`. zshrs previously emitted bare elements; output
+            // like `( red blue green yellow )` for `(red "blue green"
+            // yellow)` was 4 words when re-parsed, not 3. Bug #181
+            // in docs/BUGS.md.
+            print!("{}", quotedzputs(&arr[0]));
             for el in &arr[1..] {
                 if (printflags & PRINT_LINE) != 0 {
                     print!("\n  ");
                 } else {
                     print!(" ");
                 }
-                print!("{}", el);
+                print!("{}", quotedzputs(el));
             }
             if (printflags & (PRINT_LINE | PRINT_KV_PAIR)) == PRINT_LINE {
                 println!();
