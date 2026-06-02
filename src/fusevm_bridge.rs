@@ -666,7 +666,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `-p` as the first element because precmd-modifier opt
         // parsing isn't wired here. Strip it manually so the dispatch
         // below sees the real command name.
-        let post: Vec<String> = if dash_p {
+        let mut post: Vec<String> = if dash_p {
             post.iter()
                 .filter(|a| {
                     let s = a.as_str();
@@ -679,6 +679,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             post.to_vec()
         };
+        // c:Src/exec.c:3176-3177 — `BINF_COMMAND` arm strips a single
+        // leading `--` end-of-options marker.
+        // `execcmd_compile_head` (src/ported/exec.rs:1042) performs
+        // this removal on its LOCAL `preargs` Vec but doesn't surface
+        // the modified args; the caller still sees `--` in `full` and
+        // tried to dispatch it as the command name. Bug #251. Mirror
+        // the C strip here so `command -- echo hi` and
+        // `command -p -- echo hi` route correctly.
+        if let Some(first) = post.first() {
+            if first == "--" {
+                post.remove(0);
+            }
+        }
         let post = post.as_slice();
         let _path_guard = if dash_p {
             let saved = env::var("PATH").ok();

@@ -18299,7 +18299,74 @@ log_clean="${${arr[*]}//[^a-z]/.}"
 
 ## #250 — `typeset -ia` / `typeset -Fa` silently accepted (zsh: rejects "inconsistent type for assignment")
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `bin_typeset` was missing the C inconsistency
+check at Src/builtin.c:2342-2347 AND the array-auto-promote at
+c:2095-2097; both ported 2026-06-02.
+
+**Root cause** — `src/ported/builtin.rs::bin_typeset` paren-init
+arm (the `x=(elem ...)` array assignment dispatch) lacked the two
+companion C-source guards that decide whether the array-RHS shape
+is compatible with the requested type:
+
+1. **c:2095-2097 array-auto-promote.** When the assign shape is
+   array (`ASG_ARRAY` flag), no explicit type bit is set in
+   `on` (`PM_TYPE(on) == PM_SCALAR`), and no conflicting type is
+   already on the existing pm, C silently does `on |= PM_ARRAY`.
+   This is what makes plain `local arr=(a b c)` (which carries
+   only `PM_LOCAL` and no PM_ARRAY) work — by the time the
+   c:2342 check runs, the auto-promote has set PM_ARRAY.
+
+2. **c:2342-2347 inconsistency check.** After the
+   conflict-resolution pass at c:2718-2742 (`on & PM_INTEGER →
+   off |= PM_ARRAY|PM_HASHED; on &= ~off`), if the assign is
+   array but `on` has neither PM_ARRAY nor PM_HASHED, error out:
+   ```c
+   if ((asg->flags & ASG_ARRAY) ?
+       !(on & (PM_ARRAY|PM_HASHED)) :
+       (asg->value.scalar && (on & (PM_ARRAY|PM_HASHED)))) {
+       zerrnam(cname, "%s: inconsistent type for assignment", pname);
+       return NULL;
+   }
+   ```
+
+   For `typeset -ia x=(1 2 3)`: conflict-pass turns `-i` into
+   off+=PM_ARRAY, clearing PM_ARRAY from on. PM_TYPE(on) is now
+   PM_INTEGER (≠ PM_SCALAR), so the c:2095 auto-promote DOES
+   NOT fire. The c:2342 check then sees `on & PM_ARRAY == 0` →
+   error.
+
+**Fix:** `src/ported/builtin.rs::bin_typeset` paren-init branch
+now runs the c:2095 auto-promote (`PM_TYPE(on) == PM_SCALAR →
+on |= PM_ARRAY`) followed by the c:2342 inconsistency check. The
+auto-promote ensures `local arr=(...)`, `typeset arr=(...)`,
+`typeset -a arr=(...)`, and `typeset -A H=(k v)` all keep
+working; the check fires only when a conflicting type was
+explicitly requested.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -ia x=(1 2 3) 2>&1; echo "exit=$?"'
+zsh:typeset:1: x: inconsistent type for assignment
+exit=1
+$ ./target/debug/zshrs --zsh -c 'typeset -ia x=(1 2 3) 2>&1; echo "exit=$?"'
+zsh:typeset:1: x: inconsistent type for assignment
+exit=1
+
+$ /opt/homebrew/bin/zsh -fc 'typeset -Fa x=(1.0 2.0) 2>&1; echo "exit=$?"'
+zsh:typeset:1: x: inconsistent type for assignment
+exit=1
+$ ./target/debug/zshrs --zsh -c 'typeset -Fa x=(1.0 2.0) 2>&1; echo "exit=$?"'
+zsh:typeset:1: x: inconsistent type for assignment
+exit=1
+
+# Regression: bare array assign still works
+$ ./target/debug/zshrs --zsh -c 'f() { local arr=(a b c); echo ${arr[2]}; }; f'
+b
+$ ./target/debug/zshrs --zsh -c 'typeset arr=(a b c); typeset -p arr'
+typeset -a arr=( a b c )
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -ia arr=(10 20 30); echo "[${arr[2]}]"'
@@ -18367,7 +18434,57 @@ typeset -a counts=(10 20 30)
 
 ## #251 — `command -- echo hi` doesn't recognize `--` end-of-options separator
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `BUILTIN_COMMAND` runtime handler missed
+the `--` strip that `execcmd_compile_head` does on its local
+preargs Vec (without surfacing the modified args back to the
+caller); corrected 2026-06-02.
+
+**Root cause** — `src/ported/exec.rs::execcmd_compile_head`
+implements the C `bin_command -p / -v / -V / --` parsing at
+Src/exec.c:3104-3187 and DOES strip a leading `--` from its
+local `preargs: Vec<String>` (exec.rs:1042-1049 ports
+c:3176-3177). But it returns only an `execcmd_dispatch` struct
+with metadata (`precmd_skip`, `is_builtin`, `has_command_vv`,
+etc.), NOT the modified preargs.
+
+`BUILTIN_COMMAND` in `src/fusevm_bridge.rs` (line 646) builds
+`full = ["command", ...args]`, calls `execcmd_compile_head(full)`,
+then reads `post = &full[dispatch.precmd_skip..]`. Since `full`
+is the unmodified caller-built Vec, `post` still contains the
+`--` even though the helper "removed" it from its local
+copy. Dispatcher then ran the external command lookup with
+`--` as argv[0] → `command not found: --`.
+
+**Fix:** `src/fusevm_bridge.rs::BUILTIN_COMMAND` handler mirrors
+the same c:3176-3177 strip on its `post` Vec after the dash-p
+filter: if `post.first() == Some("--")`, remove it. Added a
+comment explaining the divergence (helper modifies local, caller
+reads original).
+
+A cleaner long-term fix would be to extend `execcmd_dispatch`
+with a `stripped_args: Vec<String>` field and return the modified
+preargs — but that requires touching every caller. The runtime-
+side strip in BUILTIN_COMMAND is the smallest scope fix.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'command -- echo hi'
+hi
+$ ./target/debug/zshrs --zsh -c 'command -- echo hi'
+hi
+
+$ /opt/homebrew/bin/zsh -fc 'command -p -- echo hi'
+hi
+$ ./target/debug/zshrs --zsh -c 'command -p -- echo hi'
+hi
+
+$ /opt/homebrew/bin/zsh -fc 'command -v -- echo'
+echo
+$ ./target/debug/zshrs --zsh -c 'command -v -- echo'
+echo
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'command -- echo hi'
