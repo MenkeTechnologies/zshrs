@@ -5207,10 +5207,12 @@ pub fn glob_path(pattern: &str) -> Vec<String> {
             if !out.is_empty() {
                 return out;
             }
-            if null_glob {
-                return Vec::new();
-            }
-            return vec![pattern.to_string()];
+            // c:Src/glob.c:1872-1888 — when matches empty, defer the
+            // nomatch / nullglob / literal-fallback dispatch to zglob's
+            // handler. Returning `vec![pattern.to_string()]` here
+            // pre-empted that and produced a literal match even when
+            // `NOMATCH` was set (default). Bug #62 family.
+            return Vec::new();
         }
         // c:155 — top-level `~` exclusion.
         let chars: Vec<char> = pattern.chars().collect();
@@ -5245,10 +5247,11 @@ pub fn glob_path(pattern: &str) -> Vec<String> {
             if !filtered.is_empty() {
                 return filtered;
             }
-            if null_glob {
-                return Vec::new();
-            }
-            return vec![pattern.to_string()];
+            // c:Src/glob.c:1872-1888 — defer nomatch/nullglob/literal
+            // dispatch to zglob. Returning `vec![pattern.to_string()]`
+            // here suppressed `no matches found` errors for the
+            // `pat1~pat2` exclusion form. Bug #62 in docs/BUGS.md.
+            return Vec::new();
         }
     }
 
