@@ -7445,6 +7445,31 @@ pub fn bin_print(
 
     // c:4604-4612 — printf format-string handling.
     if _printf_mode {
+        // c:Src/builtin.c:4701-4706 — `if (func == BIN_PRINTF) { if
+        // (!strcmp(*args, "--") && !*++args) { ...not enough args...
+        // } fmt = *args++; }`. Consume a leading `--` end-of-options
+        // marker (printf is BINF_SKIPDASH but NOT BINF_DASHDASHVALID,
+        // so the generic flag-parser doesn't strip `--` — bin_print
+        // does the strip itself for BIN_PRINTF). Without this,
+        // `printf -- "%s\n" hi` used `--` as the format string. Bug
+        // #284.
+        let args_owned: Vec<String>;
+        let args: &[String] = if func == BIN_PRINTF
+            && !OPT_HASARG(ops, b'f')
+            && !args.is_empty()
+            && args[0] == "--"
+        {
+            // Slice past the `--` for the rest of this arm only.
+            if args.len() == 1 {
+                // c:4703 `not enough arguments`.
+                zwarnnam(name, "not enough arguments");
+                return 1;
+            }
+            args_owned = args[1..].to_vec();
+            &args_owned
+        } else {
+            args
+        };
         let fmt = if let Some(f) = OPT_ARG(ops, b'f') {
             f.to_string()
         } else if !args.is_empty() {
