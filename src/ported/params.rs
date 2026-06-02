@@ -4959,10 +4959,40 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 .insert(key.to_string(), val.to_string());
         } else if let Ok(idx) = key.parse::<i64>() {
             // PM_ARRAY + numeric subscript (c:3357 `assignaparam`).
+            // c:Src/params.c:2125-2150 + c:2911 — `a[0]=val` under
+            // default zsh semantics (no KSHARRAYS, no KSHZEROSUBSCRIPT)
+            // produces VALFLAG_EMPTY in getarg, which setarrvalue
+            // then rejects with "assignment to invalid subscript
+            // range". zsh arrays are 1-based; index 0 is "before
+            // the first element" — invalid for write. Under
+            // KSHARRAYS, indexing is 0-based (so `a[0]` is valid =
+            // first element); under KSHZEROSUBSCRIPT, index 0 is
+            // an alias for index 1 (also valid).
+            //
+            // Previous Rust port computed `real_idx = -1` for idx=0
+            // (the `idx - 1` arithmetic), then `.max(0) = 0`, then
+            // silently wrote to arr[0]. Bug #110 in docs/BUGS.md.
+            let kshzero = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT);
+            if idx == 0 && !isset(KSHARRAYS) && !kshzero {
+                zerr(&format!(
+                    "{}: assignment to invalid subscript range",
+                    name
+                )); // c:2911 (effective)
+                drop(tab);
+                unqueue_signals();
+                return None;
+            }
             let arr = pm.u_arr.get_or_insert_with(Vec::new);
             let len = arr.len() as i64;
-            // 1-based forward, negative-from-end.
-            let real_idx = if idx < 0 { len + idx } else { idx - 1 };
+            // 1-based forward, negative-from-end. Under KSHARRAYS,
+            // skip the 1-based shift (idx == 0 IS the first element).
+            let real_idx = if idx < 0 {
+                len + idx
+            } else if isset(KSHARRAYS) {
+                idx
+            } else {
+                idx - 1
+            };
             let real_idx = real_idx.max(0) as usize;
             while arr.len() <= real_idx {
                 arr.push(String::new());
