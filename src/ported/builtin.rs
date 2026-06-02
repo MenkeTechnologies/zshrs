@@ -8594,6 +8594,20 @@ pub fn bin_dot(
     // unwinding to the source caller. Also clear RETFLAG after the
     // sourced script returns so the unwind doesn't propagate to the
     // outer compile unit.
+    // c:Src/init.c:1557-1558 — `char *old_scriptname = scriptname;
+    // char *old_scriptfilename = scriptfilename;`
+    // c:1591-1592 — `scriptname = s; scriptfilename = s;`
+    // For the duration of source execution, both scriptname and
+    // scriptfilename point to the sourced file path. zerr/zwarnnam
+    // diagnostics emitted from inside the sourced file then use this
+    // path as the prefix (`/path/to/foo:N: ...` instead of `zsh:1:`).
+    // Bug #139 in docs/BUGS.md. The `path` here is the resolved
+    // absolute path; C uses the user-supplied `s` (the bin_dot
+    // argv[0]) but `arg0` (the user-supplied name) is what zsh
+    // actually shows in diagnostics, so use arg0.
+    let old_scriptname = crate::ported::utils::scriptname_get(); // c:1557
+    crate::ported::utils::set_scriptname(Some(arg0.clone())); // c:1591
+
     crate::ported::init::sourcelevel.fetch_add(1, Relaxed); // c:1606
     let result = match fs::read_to_string(&path) {
         // c:6140
@@ -8602,6 +8616,8 @@ pub fn bin_dot(
         Err(_) => 128 - 2,
     };
     crate::ported::init::sourcelevel.fetch_sub(1, Relaxed); // c:1644
+    // c:1666 — `scriptname = old_scriptname;`
+    crate::ported::utils::set_scriptname(old_scriptname);
                                                             // c:5842 RETFLAG is set by bin_break's BIN_RETURN arm. Once the
                                                             // sourced file's execute_script unwinds, the return has been
                                                             // serviced; clear the flag so the outer compile unit's main loop
