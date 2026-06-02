@@ -1775,7 +1775,83 @@ impl ZshCompiler {
                 self.assign_context_depth += 1;
                 self.scalar_assign_depth += 1;
                 if needs_dq_wrap {
-                    let wrapped = format!("\u{9e}{}\u{9e}", s);
+                    // Bug #9 in docs/BUGS.md: `v=${arr[(expr)*N + M]}`
+                    // unquoted scalar assign returned empty because the
+                    // bare lexer tokenizes `[`/`(`/`)`/`]` inside the
+                    // subscript (Inbrack/Inpar/Outpar/Outbrack) where
+                    // the DQ-context lexer keeps them literal. The
+                    // existing Dnull wrap (`\u{9e}…\u{9e}`) signals
+                    // "treat as DQ" to compile_word_str but doesn't
+                    // detokenize the inner subscript chars, so the
+                    // downstream paramsubst's subscript-flag detector
+                    // failed to recognize the `(...)` arith form and
+                    // returned empty.
+                    //
+                    // Fix: when wrapping a bare RHS that the bridge
+                    // would otherwise process via singsub, convert
+                    // tokenized subscript markers to their literal
+                    // equivalents so the body matches what the lexer
+                    // would have emitted for the `v="${arr[…]}"` form
+                    // — which already works (BUGS.md confirms quoted
+                    // and interpolated paths return `p`). Limited to
+                    // the four chars that are token-vs-literal
+                    // depending on quote context: Inbrack(`[`),
+                    // Outbrack(`]`), Inpar(`(`), Outpar(`)`). Other
+                    // markers (Stringg, Qstring, Inbrace, Bnull,
+                    // glob metas) keep their tokenized form because
+                    // their handling does not differ by quote context.
+                    // Detokenize chars the lexer would have kept literal
+                    // had this been a DQ-quoted RHS. Inside `${...}` the
+                    // DQ-context lexer preserves `[`, `]`, `(`, `)`,
+                    // `*`, `?`, `^`, `~`, `,`, `-`, `!`, `<`, `>` as
+                    // raw characters (no glob in DQ; no flag-grouping
+                    // inside subscript), while the bare-context lexer
+                    // tokenizes them. Pre-converting these markers
+                    // here makes the wrapped form structurally
+                    // equivalent to what the lexer would have produced
+                    // for `v="${arr[…]}"`, which singsub/paramsubst
+                    // already handle correctly.
+                    //
+                    // Markers NOT detokenized: Stringg(`$`), Qstring,
+                    // Inbrace/Outbrace, Bnull (escape marker), Snull
+                    // (SQ marker). Compile_word_str + downstream
+                    // paramsubst already handle both forms uniformly
+                    // for those.
+                    //
+                    // Inpar/Outpar handling: ONLY detokenize Inpar/
+                    // Outpar that appear INSIDE Inbrack..Outbrack
+                    // brackets (subscript context). Top-level `$(...)`
+                    // command substitution uses Stringg+Inpar and the
+                    // runtime relies on the Inpar token to recognize
+                    // the cmd-subst form — detokenizing those would
+                    // turn `$(cmd)` into a literal string. Track
+                    // bracket depth across the walk so subscript-
+                    // internal parens are converted while cmd-subst
+                    // parens are left tokenized.
+                    let mut bracket_depth = 0_i32;
+                    let detok: String = s
+                        .chars()
+                        .map(|c| match c {
+                            '\u{91}' => { bracket_depth += 1; '[' }   // Inbrack
+                            '\u{92}' => {                              // Outbrack
+                                if bracket_depth > 0 { bracket_depth -= 1; }
+                                ']'
+                            }
+                            '\u{88}' if bracket_depth > 0 => '(',     // Inpar inside subscript
+                            '\u{8a}' if bracket_depth > 0 => ')',     // Outpar inside subscript
+                            '\u{86}' => '^',                          // Hat
+                            '\u{87}' => '*',                          // Star
+                            '\u{94}' => '<',                          // Inang
+                            '\u{95}' => '>',                          // Outang
+                            '\u{97}' => '?',                          // Quest
+                            '\u{98}' => '~',                          // Tilde
+                            '\u{9a}' => ',',                          // Comma
+                            '\u{9b}' => '-',                          // Dash
+                            '\u{9c}' => '!',                          // Bang
+                            other => other,
+                        })
+                        .collect();
+                    let wrapped = format!("\u{9e}{}\u{9e}", detok);
                     self.compile_word_str(&wrapped);
                 } else {
                     self.compile_word_str(s);
