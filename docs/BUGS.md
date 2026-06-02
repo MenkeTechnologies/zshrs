@@ -5609,7 +5609,26 @@ echo "P:${arr[*]}"     # both shells: P:a b c
 
 ## #83 — `${a[(s.,.)N,M]}` array slice with subscript flag returns full array
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — the array-subscript slice handler in
+`src/ported/subst.rs:4452` did `sub.split_once(',')` on the raw
+subscript. For `(s.,.)3,7` the FIRST comma is inside the flag
+block (`s.,.`), so the split produced `("(s.", ".)3,7")`. Both halves
+failed numeric parse and defaulted to start=1, end=arr.len —
+returning the full array.
+
+C's `Src/params.c:1396-1431` parser strips the leading `(...)` flag
+block before reaching the integer slice path. Mirrored that here:
+peek for a leading `(`, find the matching `)`, slice past it, then
+`split_once(',')` on the remainder.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `${a[(s.,.)3,7]}` (primary) → `2 3 4 5 6` in both.
+- `${a[3,7]}` (no flag) → `2 3 4 5 6` in both.
+- `${a[(s.|.)2,5]}` (different separator) → `1 2 3 4` in both.
+- `${a[(s.,.)-3,-1]}` (negative range) → `7 8 9` in both.
+- `${a[(i)blue]}` (different flag class, unaffected) → `2` in both.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(1 2 3 4 5 6 7 8 9 10); echo "${a[(s.,.)3,7]}"'
