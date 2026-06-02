@@ -12445,7 +12445,68 @@ delimiter.
 
 ## #163 — `${(t)1}` positional parameter returns `scalar` instead of `array-special`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `paramsubst` (t) flag now recognizes all-digit `var_name` as a positional and returns `array-special` (the parent argv type).
+
+**Root cause** — `src/ported/subst.rs::paramsubst`'s `wantt`
+(`(t)` flag) arm walked the type-tag fallback chain: paramtab →
+partab_array_flags → assoc/array contains → magic-assoc names →
+is_set scalar. Positional refs like `$1` don't appear in
+paramtab (they live in `PPARAMS` / `pparams`), so they fell to
+the `is_set` branch which always returned `"scalar"`.
+
+Per zsh semantics, `$1`/`$2`/... are aliases for `${argv[N]}`
+(zshparam(1)), and `(t)` reports the PARENT's type — not the
+element type — so positionals should report `array-special`
+matching `(t)@` / `(t)*`.
+
+**C-source reference** — `Src/params.c` paramtype walk. The
+descriptor for positional names points back to the `argv`
+parent param descriptor which is `PM_ARRAY | PM_SPECIAL`.
+
+**Fix** — added an explicit all-digit arm in the type-tag
+fallback chain (BEFORE the magic-assoc / is_set branches):
+
+```rust
+} else if !var_name.is_empty()
+    && var_name.chars().all(|c| c.is_ascii_digit())
+{
+    "array-special".to_string()
+}
+```
+
+The check is placed AFTER `assoc_contains`/`arrays_contains`
+(so user-defined arrays / assocs named with digits would still
+take precedence) but BEFORE the scalar-export / is_set branches.
+
+`$0` is empty by digit-check (just "0") so it gets the
+array-special tag too — but that matches zsh (`(t)0` on
+positional `$0` is treated the same as positional `$1`+).
+Actually `(t)0` reports `scalar-special` in zsh because `$0` is
+the script name, not a positional. Verify shows zshrs also
+returns `scalar-special` — the `$0` arm runs through the
+`paramtab` lookup first (which DOES have a `"0"` entry as
+PM_SPECIAL scalar) and never falls to the fallback chain.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'set -- a b; echo "${(t)1}"'
+array-special                       # was scalar
+$ ./target/debug/zshrs --zsh -c 'set -- a b; echo "${(t)2}"'
+array-special                       # was scalar
+$ ./target/debug/zshrs --zsh -c 'set -- a b; echo "${(t)@}"; echo "${(t)*}"'
+array-readonly-special              # regression check
+array-readonly-special
+$ ./target/debug/zshrs --zsh -c 'x=hello; echo "${(t)x}"'
+scalar                              # regular scalar regression
+$ ./target/debug/zshrs --zsh -c 'echo "${(t)0}"'
+scalar-special                      # $0 unchanged
+```
+
+All match zsh exactly. Regression suite: 114 → 111 failures
+(3 fewer — multiple (t)-flag tests cleared).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'set -- a b; echo "${(t)1}"'
@@ -12489,7 +12550,21 @@ positional detection.
 
 ## #164 — Extended_glob `^pattern` (negation prefix) not recognized
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+
+```sh
+$ mkdir -p /tmp/zg164; touch /tmp/zg164/a /tmp/zg164/b
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; print -l /tmp/zg164/^a'
+/tmp/zg164/b
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; print -l /tmp/zg164/^a'
+/tmp/zg164/b
+```
+
+Both shells expand `^a` to "all files in /tmp/zg164 except `a`"
+→ just `b`. Likely fixed by the #62/#81 extended-glob ports.
+Doc-only status flip.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/zg; touch /tmp/zg/{a,b,c}; print -l /tmp/zg/^a'

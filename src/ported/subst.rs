@@ -7431,6 +7431,17 @@ pub fn paramsubst(
                             "association".to_string() // c:2814
                         } else if arrays_contains(&var_name) {
                             "array".to_string() // c:2814
+                        } else if !var_name.is_empty()
+                            && var_name.chars().all(|c| c.is_ascii_digit())
+                        {
+                            // c:Src/params.c — `$1`/`$2`/... are aliases
+                            // for `${argv[N]}`. The `(t)` flag reads the
+                            // PARENT (argv) type, not the element type,
+                            // so positionals report `array-special`
+                            // matching `(t)@` / `(t)*`. Bug #163 in
+                            // docs/BUGS.md. Empty $0 falls through to
+                            // the standard scalar handling below.
+                            "array-special".to_string()
                         } else if matches!(
                             var_name.as_str(),
                             "aliases"
