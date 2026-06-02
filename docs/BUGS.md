@@ -20395,7 +20395,57 @@ test instead of `[[ ]]`:
 
 ## #284 — `printf -- "%s\n" hi` doesn't recognize `--` end-of-options separator (extends #251 family)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `bin_print` BIN_PRINTF mode wasn't consuming
+the leading `--` end-of-options marker that C `bin_print` does
+inline at Src/builtin.c:4701-4706; ported 2026-06-02.
+
+**Root cause** — `printf` is registered with `BINF_SKIPINVALID |
+BINF_SKIPDASH` (Src/builtin.c:104) but NOT `BINF_DASHDASHVALID`,
+so the generic prefix-flag parser at Src/builtin.c:310 doesn't
+strip `--`. Instead, `bin_print` itself does the strip inline
+when invoked as BIN_PRINTF:
+
+```c
+if (func == BIN_PRINTF) {
+    if (!strcmp(*args, "--") && !*++args) {
+        zwarnnam(name, "not enough arguments");
+        return 1;
+    }
+    fmt = *args++;
+}
+```
+
+The Rust port at `src/ported/builtin.rs::bin_print` went
+straight to `let fmt = args[0].clone()` without consuming `--`,
+so `printf -- "%s\n" hi` used `--` as the format string and
+emitted `--` literal (skipping `hi` since no specifiers).
+
+**Fix:** `src/ported/builtin.rs::bin_print` — before the
+fmt-extraction at the `_printf_mode` branch, add the c:4701
+inline strip: if `func == BIN_PRINTF`, no `-f` flag arg,
+`args[0] == "--"`, then either error (no further args) or slice
+past `--` for the rest of this arm. Cites Src/builtin.c:4701.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'printf -- "%s\n" hi'
+hi
+$ ./target/debug/zshrs --zsh -c 'printf -- "%s\n" hi'
+hi
+
+$ /opt/homebrew/bin/zsh -fc 'printf -- 2>&1; echo ec=$?'
+zsh:printf:1: not enough arguments
+ec=1
+$ ./target/debug/zshrs --zsh -c 'printf -- 2>&1; echo ec=$?'
+zsh:printf:1: not enough arguments
+ec=1
+
+# Regression: -v X + -- still works
+$ ./target/debug/zshrs --zsh -c 'printf -v X -- "%s" hi; echo "[$X]"'
+[hi]
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'printf -- "%s\n" hi'
