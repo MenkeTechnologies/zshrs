@@ -8504,7 +8504,9 @@ pub fn bin_dot(
         }
     }
 
-    // c:6125-6128 — restore pparams.
+    // c:6125-6128 — restore pparams. (saved_pparams was bumped when
+    // `source` got positional args; restore the prior set whether or
+    // not the file actually exists.)
     if let Some(saved) = saved_pparams {
         // c:6126
         let mut pp = PPARAMS.lock().unwrap_or_else(|e| {
@@ -8512,12 +8514,6 @@ pub fn bin_dot(
             e.into_inner()
         });
         *pp = saved; // c:6128
-    }
-    // c:6149 — `if (isset(FUNCTIONARGZERO)) { zsfree(argzero); argzero = old0; }`.
-    // Restore the prior argzero (paired with the FUNCTIONARGZERO
-    // save at the top of bin_dot).
-    if let Some(prev) = saved_argzero.clone() {
-        set_argzero(prev);
     }
 
     // c:6130-6137 — error path. C: `if (ret == SOURCE_NOT_FOUND)`
@@ -8530,6 +8526,19 @@ pub fn bin_dot(
     let path = match found_path {
         Some(p) => p,
         None => {
+            // c:6149 — restore argzero on the error path BEFORE
+            // emitting the diagnostic and returning. C's structure is
+            // `source(); if (isset(FUNCTIONARGZERO)) restore`; for the
+            // file-not-found early-return, the restore still has to
+            // happen so the outer shell's $0 doesn't keep the dropped
+            // arg0. Bug #103 in docs/BUGS.md: the previous port did
+            // this unconditional pre-check restore which ran BEFORE
+            // `execute_script` on the file-found branch — clobbering
+            // the just-set arg0 so the sourced script saw the shell
+            // binary as $0 instead of its own path.
+            if let Some(prev) = saved_argzero.clone() {
+                set_argzero(prev);
+            }
             // c:6130
             let msg = format!("{}: {}", "no such file or directory", arg0); // c:6135
             zwarnnam(name, &msg); // c:6135
