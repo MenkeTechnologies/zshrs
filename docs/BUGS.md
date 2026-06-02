@@ -6990,7 +6990,7 @@ option test instead:
 
 ## #103 — `$0` inside sourced script returns shell binary path, not sourced file
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — argzero-restore ordering in `bin_dot`.
 
 ```sh
 $ echo 'echo "0=$0"' > /tmp/zsrc.zsh
@@ -6998,41 +6998,38 @@ $ /opt/homebrew/bin/zsh -fc 'source /tmp/zsrc.zsh'
 0=/tmp/zsrc.zsh
 
 $ ./target/debug/zshrs --zsh -c 'source /tmp/zsrc.zsh'
-0=./target/debug/zshrs
+0=/tmp/zsrc.zsh    # now matches
 ```
 
-Inside a sourced script, `$0` should reflect the path of the
-currently-sourced file (per zsh behavior, controlled by
-`POSIX_ARGZERO`). zsh returns `/tmp/zsrc.zsh`. zshrs returns the
-shell binary `./target/debug/zshrs`.
+**Root cause** — `bin_dot` at `src/ported/builtin.rs:8438` was
+correctly saving the prior `argzero` and installing the sourced
+file path under FUNCTIONARGZERO (mirroring `Src/builtin.c:6077-6080`
+`if (isset(FUNCTIONARGZERO)) { old0 = argzero; argzero = ztrdup(arg0); }`).
+But the restore at line 8519 fired BEFORE the `execute_script` call
+at line 8568 — which inverts the C ordering (C restores at
+`builtin.c:6149`, AFTER `source()` at c:6140 has finished running
+the script). With the early restore, by the time `execute_script`
+ran, `argzero` had already reverted to the shell binary path, so
+`$0` inside the sourced body resolved to `./target/debug/zshrs`
+through `getsparam("0") → lookup_special_var("0") → argzero`.
 
-Per `man zshparam`:
-> `$0` — Inside a function, $0 is the name of the function. When
-> a shell script is sourced via the `source` or `.` builtins, $0
-> is normally the name of the script.
+**Fix** — move the early restore into the `found_path == None` arm
+only (file-not-found early-return path needs the restore before
+the diagnostic + return). The success path falls through to the
+existing post-`execute_script` restore at lines 8581-8583, matching
+C's order exactly: `source()` runs with `argzero == arg0`, then on
+return `argzero` is freed/restored.
 
-**Where** — `src/ported/builtin_source.rs::source_file`: doesn't
-push/pop the `$0` parameter to the script's name during sourcing.
-C-source `Src/builtin.c::bin_dot` saves the prior `$0`, sets to
-script path, executes, restores on return.
-
-**Impact** — common idiom in sourced library scripts:
-
+**Verify**:
 ```sh
-# /lib/utils.sh
-SELF_DIR=${0:A:h}
-SELF_NAME=${0:t}
-# zsh: SELF_DIR=/lib, SELF_NAME=utils.sh
-# zshrs: SELF_DIR=., SELF_NAME=zshrs (wrong)
-```
+$ ./target/debug/zshrs --zsh -c 'source /tmp/zsrc.zsh'
+0=/tmp/zsrc.zsh
 
-Breaks every sourced library that uses `$0` to find its own
-companion files (config, themes, sub-modules).
-
-**Workaround** — use `${(%):-%x}` (prompt expansion `%x` = current
-file) to get the script's own path:
-```sh
-SELF=${(%):-%x}    # both shells: path to the script being sourced
+$ cat > /tmp/zsrc2.zsh <<'EOF'
+echo "outer: 0=$0"
+EOF
+$ ./target/debug/zshrs --zsh -c 'source /tmp/zsrc2.zsh'
+outer: 0=/tmp/zsrc2.zsh
 ```
 
 ---
