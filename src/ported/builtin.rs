@@ -4133,6 +4133,45 @@ pub fn bin_typeset(
             // literal first/last bytes. Strip them and split on
             // whitespace to recover the element list.
             let is_paren_init = raw_v.starts_with('(') && raw_v.ends_with(')') && raw_v.len() >= 2;
+            // c:Src/builtin.c:2095-2097 — `if (ASG_ARRAYP(asg) &&
+            // PM_TYPE(on) == PM_SCALAR && ...) on |= PM_ARRAY;`. Auto-
+            // promote to array when the assignment shape is array but
+            // no explicit type was requested. Required so plain
+            // `local arr=(a b c)` (which carries on=PM_LOCAL with
+            // no PM_TYPE bits) reaches the array-init path. Without
+            // it the c:2342 inconsistency check below errors on every
+            // bare array assign.
+            let mut on = on;
+            if is_paren_init && crate::ported::zsh_h::PM_TYPE(on) == PM_SCALAR {
+                on |= PM_ARRAY;
+            }
+            // c:Src/builtin.c:2342-2347 — `inconsistent type for
+            // assignment`: when the user types an array RHS
+            // (`x=(...)`) but the resolved type flags don't include
+            // PM_ARRAY|PM_HASHED, error out. C source:
+            // ```
+            // if ((asg->flags & ASG_ARRAY) ?
+            //     !(on & (PM_ARRAY|PM_HASHED)) :
+            //     (asg->value.scalar && (on & (PM_ARRAY|PM_HASHED)))) {
+            //     zerrnam(cname, "%s: inconsistent type for assignment", pname);
+            //     return NULL;
+            // }
+            // ```
+            // The C conflict-resolution pass at c:2718-2742 clears
+            // PM_ARRAY/PM_HASHED from `on` when a conflicting type
+            // (`-i` / `-E` / `-F`) is requested (`on & PM_INTEGER →
+            // off |= PM_ARRAY; on &= ~off`), so `-ia x=(1 2 3)` lands
+            // here with PM_INTEGER set + PM_ARRAY cleared. The
+            // c:2095 auto-promote above doesn't fire either (PM_TYPE
+            // is non-zero from PM_INTEGER), so the inconsistency
+            // error fires correctly. Bug #250.
+            if is_paren_init && (on & (PM_ARRAY | PM_HASHED)) == 0 {
+                zerrnam(
+                    name, // cname
+                    &format!("{}: inconsistent type for assignment", n),
+                );
+                return 1;
+            }
             if is_paren_init {
                 let inner = &raw_v[1..raw_v.len() - 1]; // c:2950
                 let split_elems: Vec<String> = inner
