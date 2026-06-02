@@ -1086,6 +1086,41 @@ pub fn qgetmodespec(s: &str) -> Option<(u32, char, u32, &str)> {
             _ => break,
         }
     }
+    // c:Src/glob.c:903-913 — `while ((c = *p) == '?' || (c >= '0'
+    // && c <= '7')) { ... val = (val << 3) | (c - '0'); }`.
+    // In the C code path, perm letters (`r`/`w`/`x`/`s`/`t`) only
+    // get parsed when an explicit `who` mask was set (the `if
+    // (mask)` arm at c:877). When there's NO who (the
+    // bare-spec form like `f=644`), C falls through to the
+    // numeric digit loop in the `else if` arm at c:901. The
+    // Rust port previously accepted letters in either case but
+    // rejected digits — `f=644` would parse op='=' then break
+    // on digit '6' and return spec_perm = 0, which the caller
+    // computed as yes=0, no=0o7777 (essentially "match
+    // nothing"). After also accepting digits here, `f=644`
+    // builds spec_perm = 0o644 like C, and the matcher
+    // resolves `*(.f=644)` correctly. Bug #105 in
+    // docs/BUGS.md.
+    if perm == 0 {
+        let mut val = 0u32;
+        let mut any_digit = false;
+        while let Some(&c) = chars.peek() {
+            if c == '?' {
+                val <<= 3;
+                chars.next();
+                any_digit = true;
+            } else if c.is_ascii_digit() && c < '8' {
+                val = (val << 3) | (c as u32 - '0' as u32);
+                chars.next();
+                any_digit = true;
+            } else {
+                break;
+            }
+        }
+        if any_digit {
+            perm = val;
+        }
+    }
     spec_perm = perm & who;
 
     let rest_pos = s.len() - chars.collect::<String>().len();
@@ -3569,11 +3604,28 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             // by separator character. Direct port of qgetmodespec
             // dispatch + mode-bit accumulator in qgetmodespec.
             'f' => {
-                // Skip optional delimiter char (zsh allows `f:0755`
-                // or `f-0755` etc.; the delim is the next char).
+                // c:Src/glob.c:849 — qgetmodespec dispatches on the
+                // first char: if it's `=`/`+`/`-`/`?` or a digit
+                // (`(c >= '0' && c <= '7')`) the spec is bare (no
+                // surrounding delimiter, no who) — `f+x` / `f-w` /
+                // `f=755` / `f0644`. Otherwise the char is the
+                // OPENING DELIMITER paired with a matching closer
+                // (`<` → `>`, `[` → `]`, `{` → `}`, anything else
+                // → itself, e.g. `f:u+x:` uses `:` on both sides).
+                // The previous port used `!d.is_alphanumeric()`
+                // which incorrectly classified `+`, `-`, `=`, `?`
+                // as delimiters, sending `f+x` down the
+                // delimiter-string path that then called
+                // qgetmodespec on body "x" — qgetmodespec rejects
+                // `x` (no op char) and silently dropped the
+                // qualifier, so `*(.f+x)` matched ALL files. Bug
+                // #105 in docs/BUGS.md.
                 let rest: String = chars.clone().collect();
                 let trimmed: &str = match rest.chars().next() {
-                    Some(d) if !d.is_alphanumeric() => {
+                    Some(d)
+                        if !d.is_alphanumeric()
+                            && !matches!(d, '+' | '-' | '=' | '?' | ',') =>
+                    {
                         // consume delim and everything until matching
                         // delim or end of qualifier
                         for _ in 0..1 {
