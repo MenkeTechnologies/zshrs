@@ -1849,6 +1849,14 @@ pub fn createparamtable() {
     setsparam("ZSH_ARGZERO", &ztrdup(&argv0)); // c:965 (ztrdup, not _metafy: posixzero)
     setsparam("ZSH_VERSION", &ztrdup_metafy(ZSH_VERSION)); // c:966 (Config/version.mk VERSION via patchlevel::ZSH_VERSION)
     setsparam("ZSH_PATCHLEVEL", &ztrdup_metafy(ZSH_PATCHLEVEL)); // c:967
+    // zshrs-only identity. No C counterpart. Surfaced so scripts can
+    // detect zshrs (vs. upstream zsh) cleanly without inspecting a
+    // `-test` suffix on `$ZSH_VERSION`. See `patchlevel::ZSHRS_VERSION`
+    // for the value and bug #73 in docs/BUGS.md for the rationale.
+    setsparam(
+        "ZSHRS_VERSION",
+        &ztrdup_metafy(crate::ported::patchlevel::ZSHRS_VERSION),
+    );
 
     // c:968-979 — `setaparam("signals", sigptr = zalloc((TRAPCOUNT
     // + 1) * sizeof(char *))); t = sigs; while (t - sigs <= SIGCOUNT)

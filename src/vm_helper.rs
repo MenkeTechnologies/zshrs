@@ -676,11 +676,26 @@ impl ShellExecutor {
         // `createparamtable` (Src/params.c:817-988) + the `setupvals`
         // tail. Writes through canonical `setsparam` (Src/params.c:3350).
         //
-        // c:params.c:972-973 — ZSH_VERSION / ZSH_PATCHLEVEL from the
-        // vendored zsh source. build.rs parses Config/version.mk and
-        // emits the constants in `zsh_version`.
-        setsparam("ZSH_VERSION", zsh_version::ZSH_VERSION);
+        // c:params.c:972-973 — ZSH_VERSION / ZSH_PATCHLEVEL.
+        // `zsh_version::ZSH_VERSION` (emitted by build.rs from the
+        // vendored `Config/version.mk`) is the development snapshot
+        // tag `5.9.0.3-test`; shipped zsh binaries report the clean
+        // release form (`5.9`). Bug #73 in docs/BUGS.md — cross-shell
+        // scripts that gate on `[[ $ZSH_VERSION = 5.9 ]]` or split on
+        // `.` expecting MAJOR.MINOR break on the `-test` suffix.
+        //
+        // Use the cleaned `patchlevel::ZSH_VERSION` here ("5.9") and
+        // surface the full snapshot tag as `$ZSHRS_VERSION` for
+        // zshrs-specific identity checks.
+        setsparam(
+            "ZSH_VERSION",
+            crate::ported::patchlevel::ZSH_VERSION,
+        );
         setsparam("ZSH_PATCHLEVEL", zsh_version::ZSH_PATCHLEVEL);
+        setsparam(
+            "ZSHRS_VERSION",
+            crate::ported::patchlevel::ZSHRS_VERSION,
+        );
         setsparam("ZSH_NAME", "zsh");
         // c:params.c:971 — ZSH_ARGZERO from `posixzero` (Src/init.c:271).
         // The bin entrypoint overrides this with the script path for
