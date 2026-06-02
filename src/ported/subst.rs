@@ -1106,19 +1106,58 @@ fn stringsubst(
             let chars: Vec<char> = str3.chars().collect(); // c:237
             let cmd_start = pos + 1; // c:237
             let mut end = cmd_start; // c:237
+            // c:Src/subst.c — walk body looking for closing
+            // backtick. Skip past escape markers: `\\` (raw
+            // backslash-escape from a non-tokenized source) AND
+            // Bnull (`\u{9f}`, the lexer's escape sentinel that
+            // dquote_parse emits for `\\``/`\\\\`/`\\$`). Bug
+            // #46 in docs/BUGS.md: nested `` `cmd \`inner\` cmd` ``
+            // had the inner backslash-escaped backticks tokenized
+            // to Bnull+`` ` `` pairs by the lexer; without the
+            // Bnull skip the walker matched the FIRST literal
+            // backtick (the escaped inner one) as the closer and
+            // truncated the command to `echo ` + Bnull.
             while end < chars.len()
                 && chars[end] != Tick
                 && chars[end] != Qtick
                 && chars[end] != '`'
             {
-                if chars[end] == '\\' && end + 1 < chars.len() {
+                if (chars[end] == '\\' || chars[end] == '\u{9f}') && end + 1 < chars.len() {
                     end += 1;
                 } // c:237
                 end += 1; // c:237
             } // c:237
             if end < chars.len() {
                 // c:237
-                let cmd: String = chars[cmd_start..end].iter().collect(); // c:237
+                let cmd_raw: String = chars[cmd_start..end].iter().collect(); // c:237
+                // c:Src/subst.c — strip one level of escape from the
+                // backtick body before re-parsing. The lexer's
+                // `dquote_parse` LX2_BQUOTE arm emits `Bnull + X`
+                // (\u{9f}+X) for each `\X` it saw inside the
+                // backquotes (X ∈ {`` ` ``, `\`, `$`}). For the
+                // re-parse to see the right shape, drop the Bnull
+                // and keep the literal char. The result is what the
+                // user would have typed at the next nesting level.
+                // Bug #46 in docs/BUGS.md: nested `` `cmd \`inner\`
+                // ` `` had the inner `` \` `` escapes preserved as
+                // `Bnull + `` ` ``` into getoutput's inner shell,
+                // which couldn't tokenize the Bnull byte and treated
+                // the whole thing as a literal.
+                let cmd: String = {
+                    let cv: Vec<char> = cmd_raw.chars().collect();
+                    let mut out = String::with_capacity(cmd_raw.len());
+                    let mut i = 0;
+                    while i < cv.len() {
+                        if cv[i] == '\u{9f}' && i + 1 < cv.len() {
+                            out.push(cv[i + 1]);
+                            i += 2;
+                        } else {
+                            out.push(cv[i]);
+                            i += 1;
+                        }
+                    }
+                    out
+                };
                                                                           // c:exec.c:4712 — `getoutput(cmd, 1)`. String-
                                                                           // splice caller (qt=1).
                 let output = getoutput(&cmd, 1).join("");
