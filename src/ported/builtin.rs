@@ -7396,10 +7396,12 @@ pub fn bin_print(
     }
     // c:Src/builtin.c:4930-4958 — `-C N` column-grid output. Layout
     // N args per row (nr = ceil(argc/nc) rows), each cell padded
-    // to widest arg + 2 spaces. Mirrors zsh's column-major fill
-    // (col 1 takes first nr items, col 2 the next nr, etc.).
-    // Without this support `print -C 2 a b c d e` emitted the args
-    // space-separated on one line instead of the column grid.
+    // to widest arg + 2 spaces. Default mode is COLUMN-MAJOR (col 1
+    // takes first nr items, col 2 the next nr, etc.). The `-a` flag
+    // (c:4980 "print across, i.e. columns first") switches to
+    // ROW-MAJOR fill — items flow across each row before moving to
+    // the next row. Bug #40 in docs/BUGS.md: zshrs ignored `-a` and
+    // always produced column-major output.
     let body = if !_printf_mode && OPT_HASARG(ops, b'C') {
         let nc: usize = OPT_ARG(ops, b'C')
             .and_then(|s| s.trim().parse().ok())
@@ -7407,24 +7409,48 @@ pub fn bin_print(
             .unwrap_or(1);
         let argc = processed_args.len();
         let nr = (argc + nc - 1) / nc;
-        // Maximum width of cells that are NOT in the last column
-        // (the last column gets no trailing padding, per c:4946-4956).
+        let across = OPT_ISSET(ops, b'a'); // c:4947 / c:4980
+        // c:Src/builtin.c:4946-4956 — max-width walk skips
+        // last-column items because they don't need trailing
+        // padding. The skip set differs by mode:
+        //   -a (row-major): skip i where (i % nc) == nc-1
+        //   default (col-major): skip i where i >= nr * (nc-1)
         let max_w = processed_args
             .iter()
-            .take(nr * (nc - 1).max(0))
-            .map(|s| s.chars().count())
+            .enumerate()
+            .filter(|(i, _)| {
+                if across {
+                    (i % nc) != nc - 1
+                } else {
+                    *i < nr * (nc.saturating_sub(1))
+                }
+            })
+            .map(|(_, s)| s.chars().count())
             .max()
             .unwrap_or(0);
         let sc = max_w + 2;
         let mut out = String::new();
         for row in 0..nr {
             for col in 0..nc {
-                let idx = col * nr + row;
+                // c:4982-4986 (-a) — `idx = row*nc + col` for
+                // row-major fill across columns first.
+                // c:4994-5005 (default) — `idx = col*nr + row` for
+                // column-major fill down columns first.
+                let idx = if across {
+                    row * nc + col
+                } else {
+                    col * nr + row
+                };
                 if idx >= argc {
                     break;
                 }
                 let cell = &processed_args[idx];
-                if col == nc - 1 || col * nr + row + nr >= argc {
+                // Padding skip rule mirrors max_w gate:
+                // last-column-of-row (-a) or last-column-of-grid
+                // (default) gets no trailing padding.
+                let is_last_col_of_row = col == nc - 1;
+                let is_after_last_grid_col = !across && col * nr + row + nr >= argc;
+                if is_last_col_of_row || is_after_last_grid_col {
                     out.push_str(cell);
                 } else {
                     out.push_str(cell);
