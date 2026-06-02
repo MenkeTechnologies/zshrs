@@ -1444,7 +1444,8 @@ fn par_case() -> Option<ZshCommand> {
         // path the lexer absorbs `(...)` into one Stringg and the
         // hack at c:1322 strips the surrounding parens later. Both
         // paths land here.
-        if tok() == INPAR_TOK {
+        let leading_inpar_consumed = tok() == INPAR_TOK;
+        if leading_inpar_consumed {
             zshlex();
         }
 
@@ -1516,11 +1517,37 @@ fn par_case() -> Option<ZshCommand> {
 
         // c:1305 — expect OUTPAR (arm-close) when the hack didn't
         // already swallow it.
+        //
+        // Bug #34 in docs/BUGS.md: the absorbed-pattern hack assumed
+        // the leading `(` and the case-arm closing `)` were both
+        // absorbed into the single STRING token. That's true for
+        // `(x))` (the inner `)` closes the absorbed group; the second
+        // `)` is the arm closer) only when the lexer slurps BOTH.
+        // The Rust lexer slurps just `(x|y)` (one balanced pair); the
+        // second `)` arrives as a separate OUTPAR_TOK that must still
+        // be consumed as the case-arm closer. Detect and consume it.
         if !absorbed_outpar {
             if tok() != OUTPAR_TOK {
                 zerr("expected ')' in case pattern");
                 return None;
             }
+            set_incmdpos(true);
+            zshlex();
+            // When the lexer emitted a separate INPAR_TOK at the
+            // arm start (consumed via `leading_inpar_consumed`
+            // above), the OUTPAR_TOK we just consumed closed the
+            // alternation GROUP. If the next token is ALSO
+            // OUTPAR_TOK, the user wrote `(pat))` and that second
+            // `)` is the case-arm closer that still needs to be
+            // consumed before body parsing. Bug #34 in
+            // docs/BUGS.md.
+            if leading_inpar_consumed && tok() == OUTPAR_TOK {
+                zshlex();
+            }
+        } else if tok() == OUTPAR_TOK {
+            // The lexer absorbed `(pat)` as the pattern but left the
+            // case-arm closing `)` as a separate OUTPAR_TOK. Consume
+            // it now so body parsing starts at the body, not at `)`.
             set_incmdpos(true);
             zshlex();
         } else {
