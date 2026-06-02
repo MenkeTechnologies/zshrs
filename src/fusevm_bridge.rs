@@ -807,6 +807,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 args.remove(i);
                 break;
             }
+            // c:Src/builtin.c:42 `BIN_PREFIX("-", BINF_DASH)`. A bare
+            // `-` is its own BINF_PREFIX builtin (BINF_DASH flag —
+            // "login shell, prepend `-` to argv[0]"). In the canonical
+            // precmd-walk at Src/exec.c:3056-3091 a bare `-` after
+            // `exec` is recognized AS a builtin and stripped from
+            // preargs (precmd_skip++), accumulating BINF_DASH into
+            // cflags. The fast-path here bypasses execcmd_compile_head,
+            // so we mirror the strip locally: bare `-` → set login,
+            // remove, continue. Without this `exec -` (with no command
+            // following) tried to exec `-` as a literal command and
+            // exited the shell. Bug #252.
+            if a == "-" {
+                login = true;
+                args.remove(i);
+                continue;
+            }
             if !a.starts_with('-') || a.len() < 2 {
                 break;
             }
