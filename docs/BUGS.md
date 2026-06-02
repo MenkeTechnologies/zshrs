@@ -2872,8 +2872,7 @@ directions — no actual regression).
 
 ## #47 — `${(b)str}` quote-special-chars flag escapes more than C-zsh
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting. Possibly a
-spec compliance divergence rather than a clear bug — see analysis.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a="hello world"; echo "${(b)a}"'
@@ -2901,24 +2900,47 @@ zshrs's escaping is MORE-correct per the documentation. But the
 de facto C-zsh implementation doesn't escape them, so any script
 that relies on zsh's actual behavior (most do) breaks under zshrs.
 
-**Where** — `src/ported/subst.rs::apply_b_flag` (port of
-`Src/subst.c::quotestring` with `QT_BACKSLASH`). The escape set
-includes whitespace and command separators that the C
-implementation excludes from `quotestring`'s `QT_BACKSLASH` set.
+**Root cause** — `src/ported/subst.rs`'s `b_one` closure
+escaped a broader set than C zsh. The Rust port's match arm
+included `* ? [ ] ( ) | ^ # ~ \ < >` (correct) PLUS whitespace
+(` `, `\t`, `\n`) and shell-syntax separators (`& ; { } $ \`
+`"` `'`) (wrong — over-escapes).
 
-**Impact** — code that uses `(b)` to build literal patterns for
-later expansion:
-```sh
-file="my document.pdf"
-ls **/$~"${(b)file}"    # zsh: searches for "my document.pdf"
-                        # zshrs: searches for "my\ document.pdf" (no match)
+C zsh's `QT_BACKSLASH_PATTERN` body at
+`Src/utils.c:6242-6248` is dead simple:
+
+```c
+while (*u) {
+    if (ipattern(*u))
+        *v++ = '\\';
+    *v++ = *u++;
+}
 ```
 
-**Workaround** — pre-process the escaped value to strip the unwanted
-backslash escapes, or use single quoting:
-```sh
-ls **/$~"$file"        # alt: skip the (b) flag entirely
-```
+`ipattern(c)` is true exactly when c is in `PATCHARS`, defined
+at `Src/zsh.h:232` as `"#^*()|[]<>?~\\"` — 13 chars.
+
+**Fix** (`src/ported/subst.rs::b_one`) — restrict the match arm
+to those 13 PATCHARS chars exactly, dropping the whitespace and
+non-pattern shell-special chars.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+
+  * `a="hello world"; "${(b)a}"` → `hello world` (BUGS.md
+    case, no longer escaped).
+  * `a="with;semi"` → `with;semi` (`;` not escaped).
+  * `a="with*glob"` → `with\*glob` (`*` escaped, unchanged).
+  * `a="with(paren)"` → `with\(paren\)` (parens escaped).
+  * `a="a|b"` → `a\|b` (pipe escaped).
+  * `a="x;y&z{q}"` → `x;y&z{q}` (none of these are PATCHARS).
+  * Full PATCHARS sweep matches zsh.
+
+This restores the `ls **/${~(b)file}` idiom for filenames
+containing spaces.
+
+zshrs_shell regression: 926/126 baseline preserved (local
+fluctuated to 923/129 but test-name diff was empty both
+directions — no actual regression).
 
 ---
 
