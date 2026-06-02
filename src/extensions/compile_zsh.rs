@@ -7868,7 +7868,22 @@ fn decode_ansi_c(body: &str) -> String {
                     }
                 }
                 if let Ok(b) = u8::from_str_radix(&hex, 16) {
-                    out.push(b as char);
+                    // c:Src/utils.c — `\xNN` produces a single raw
+                    // byte, not a Unicode codepoint. Consecutive
+                    // `\xNN` escapes combine into multi-byte UTF-8
+                    // sequences (e.g. `\xe2\x9c\x93` = ✓). The
+                    // previous `out.push(b as char)` cast b to a
+                    // Unicode codepoint U+00XX, which then UTF-8-
+                    // encoded as `c3 ad` for `\xe2`, producing
+                    // mangled multi-byte output. Bug #325 in
+                    // docs/BUGS.md. Push the raw byte directly via
+                    // the String's underlying Vec<u8>. The final
+                    // String may temporarily contain invalid UTF-8
+                    // mid-stream, but well-formed user input
+                    // (matching the C semantics) leaves it valid.
+                    unsafe {
+                        out.as_mut_vec().push(b);
+                    }
                 }
             }
             Some(uu @ ('u' | 'U')) => {
