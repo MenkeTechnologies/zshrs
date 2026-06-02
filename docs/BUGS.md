@@ -3604,7 +3604,32 @@ config=$(load_config_with_timeout 2>/dev/null)
 
 ## #57 — `setopt octal_zeroes` doesn't trigger octal arith parsing
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — original "doesn't trigger" framing
+was inaccurate; valid octal (`010`, `0755`) already parsed correctly.
+The actual gap was the **invalid-octal-digit** case: `$((08))` returned
+`8` instead of erroring with `operator expected at '8'`.
+
+Root cause: `src/ported/math.rs` `_ =>` branch (after leading `0`)
+walked all digits, then if any was `8`/`9` rewound `m_pos_set(oct_start)`
+and re-emitted the leading 0 — falling through to the decimal path,
+which happily consumed `08` as `8`. C's `Src/math.c:489-512` instead
+calls `zstrtol_underscore(ptr, &ptr, 0, 1)` with base 0; strtol's
+auto-octal mode stops at the first invalid octal digit, leaving the
+`8`/`9` in the input for the outer parser to fail on.
+
+Rewrote the OCTALZEROES branch to mirror that semantics — probe ahead
+for `.`/`e`/`E`/`#` to detect float/base disqualification (c:501);
+otherwise consume only valid octal digits (0-7) + underscores; STOP
+at 8/9 so the leftover digit produces the canonical
+`bad math expression: operator expected at 'N'` diagnostic.
+
+Verified vs `/opt/homebrew/bin/zsh` across:
+- `$((08))` / `$((09))` / `$((099))` — all error identically.
+- `$((010))` → 8, `$((0755))` → 493, `$((0_7))` → 7.
+- `$((0.5))` → `0.5`, `$((0e10))` → `0.` (float fallthrough).
+- Without `setopt`: `08` → 8, `010` → 10, `0755` → 755 (decimal).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt octal_zeroes; echo $((08))'

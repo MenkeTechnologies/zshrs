@@ -548,28 +548,67 @@ pub(crate) fn lexconstant() -> i32 {
             _ => {
                 // Could be octal or just 0
                 if m_octal_zeroes() {
-                    // Check if this looks like octal
+                    // c:Src/math.c:489-512 — OCTALZEROES enabled.
+                    // C scans all digits then calls
+                    // `zstrtol_underscore(ptr, &ptr, 0, 1)` with base 0;
+                    // strtol's base-0 octal mode stops at the first
+                    // invalid octal digit (8 or 9), so the leftover
+                    // digit is seen by the outer parser and produces
+                    // "operator expected at `N'".
+                    //
+                    // To match: scan VALID octal digits (0-7) +
+                    // underscores, STOP at 8/9, then emit NUM. Do NOT
+                    // roll back over the 8/9 — it stays in the input
+                    // for the outer parser.
+                    //
+                    // `.`/`e`/`E`/`#` (c:501) disqualify the whole
+                    // number — fall through to decimal/float by
+                    // rewinding to before the leading 0.
                     let oct_start = m_pos();
-                    let mut is_octal = true;
-                    while let Some(c) = peek() {
-                        if c.is_ascii_digit() || c == '_' {
-                            if ('8'..='9').contains(&c) {
-                                is_octal = false;
+                    let mut is_float_or_base = false;
+                    let mut hit_invalid_octal = false;
+                    // First peek-ahead: scan all digits to detect the
+                    // terminator type. This matches C's `for (ptr2 = nptr;
+                    // idigit(*ptr2) || *ptr2 == '_'; ptr2++)` peek.
+                    let mut probe = oct_start;
+                    let input = m_input_clone();
+                    while let Some(&b) = input.as_bytes().get(probe) {
+                        if (b as char).is_ascii_digit() || b == b'_' {
+                            if b == b'8' || b == b'9' {
+                                hit_invalid_octal = true;
                             }
-                            advance();
-                        } else if c == '.' || c == 'e' || c == 'E' || c == '#' {
-                            is_octal = false;
-                            break;
+                            probe += 1;
                         } else {
+                            if b == b'.' || b == b'e' || b == b'E' || b == b'#' {
+                                is_float_or_base = true;
+                            }
                             break;
                         }
                     }
-                    if is_octal && m_pos() > oct_start {
+                    if is_float_or_base {
+                        // c:501 — `.`/`e`/`E`/`#` after digits means
+                        // float/base-notation; treat as decimal/float.
+                        m_pos_sub(1); // rewind over leading 0
+                    } else {
+                        // Octal path. Advance over valid octal digits
+                        // only (0-7) + underscores; stop at 8/9.
+                        while let Some(c) = peek() {
+                            if ('0'..='7').contains(&c) || c == '_' {
+                                advance();
+                            } else {
+                                break;
+                            }
+                        }
                         let oct_str: String = m_input_clone()[oct_start..m_pos()]
                             .chars()
                             .filter(|&c| c != '_')
                             .collect();
-                        let val = i64::from_str_radix(&oct_str, 8).unwrap_or(0);
+                        let val = if oct_str.is_empty() {
+                            0 // c:zstrtol leading-0-only → value 0
+                        } else {
+                            i64::from_str_radix(&oct_str, 8).unwrap_or(0)
+                        };
+                        let _ = hit_invalid_octal; // implicit via leftover digit
                         m_lastbase_set(8);
                         m_yyval_set(if m_force_float() {
                             mnumber {
@@ -586,10 +625,10 @@ pub(crate) fn lexconstant() -> i32 {
                         });
                         return NUM;
                     }
-                    m_pos_set(oct_start);
+                } else {
+                    // Put back the 0 — fall through to decimal parser.
+                    m_pos_sub(1);
                 }
-                // Put back the 0
-                m_pos_sub(1);
             }
         }
     }
