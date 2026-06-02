@@ -8399,7 +8399,52 @@ intent is matching at varying depths.
 
 ## #118 — `(( y = x ))` doesn't coerce string `x` to integer; stores raw string
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — ArithCompiler pre-load now uses BUILTIN_GET_MATH_VAR.
+
+**Root cause** — `compile_arith_str` pre-loads each variable
+referenced by the expression via `BUILTIN_GET_VAR`, which returns
+the raw scalar value as `Value::Str(...)`. For `(( y = x ))` with
+`x="hello"`, the slot for `x` held the literal string "hello".
+ArithCompiler's `Assign` arm copied that string into y's slot and
+post-sync called `BUILTIN_SET_VAR("y", "hello")` — storing y as
+a PM_SCALAR holding "hello" instead of a PM_INTEGER holding 0.
+
+C-zsh's path goes through `getmathparam` (`Src/math.c:337`),
+which:
+1. Tries int / float parse on the raw string.
+2. If not numeric, recursively evaluates the string AS an arith
+   expression (so `x="3+2"; $((x))` → 5).
+3. Falls back to 0 on parse failure.
+
+The result is always a numeric value, so the assignment target
+inherits PM_INTEGER / PM_FFLOAT via `assignnparam`'s typed write.
+
+**Fix** — Add `BUILTIN_GET_MATH_VAR` (opcode 529) that pops a name
+and pushes the math-coerced value, mirroring `getmathparam`
+exactly. Swap the `BUILTIN_GET_VAR` call in
+`compile_arith_str`'s pre-load loop for the new opcode. The
+math-coerced `Value::Int(0)` then flows through ArithCompiler →
+BUILTIN_SET_VAR, which detects integer values and calls
+`setiparam` (Src/params.c:3767) instead of `setsparam` — y ends
+up as `typeset -i y=0`.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'x=hello; (( y = x )); typeset -p y; echo "val=[$y]"'
+typeset -i y=0
+val=[0]
+
+$ ./target/debug/zshrs --zsh -c 'x=42; (( y = x )); typeset -p y'
+typeset -i y=42
+
+$ ./target/debug/zshrs --zsh -c 'i=5; (( i++ )); echo i=$i'
+i=6   # no regression on counter increment
+
+$ ./target/debug/zshrs --zsh -c 'x=hello; (( y = x + 1 )); echo y=$y'
+y=1
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'x=hello; (( y = x )); echo "type: $(typeset -p y) val=[$y]"'
