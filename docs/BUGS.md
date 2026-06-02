@@ -7282,7 +7282,51 @@ done
 
 ## #106 — `disable BUILTIN` doesn't actually disable the builtin
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — dispatcher consults BUILTINS_DISABLED.
+
+**Root cause** — `bin_enable` correctly recorded disabled names in
+`BUILTINS_DISABLED` (the parallel set the comment at builtin.rs:812
+documents), but the dispatch path never consulted it. C-zsh's
+`Src/exec.c:3056` does `builtintab->getnode(builtintab, cmdarg)`,
+and the canonical `getnode` accessor returns NULL for entries with
+the `DISABLED` flag — so execcmd falls through to PATH lookup.
+zshrs called `createbuiltintable().contains_key(name)` (an
+immutable static), which always reported the builtin as present
+regardless of disablement; both `dispatch_builtin` (BUILTIN_*
+opcode handlers + reg_passthru! callsites) and `call_function`
+(non-opcode command-name resolution) ran the builtin anyway.
+
+**Fix:**
+- `fusevm_bridge.rs::dispatch_builtin`: after the
+  `try_user_fn_override` gate, check `BUILTINS_DISABLED`. If the
+  name is disabled, route through `exec.execute_external(name,
+  args, &[])` so the command falls through to PATH.
+- `fusevm_bridge.rs::call_function`: gate `bn_in_tab` on the
+  disabled set so the same fallthrough happens for command-name
+  dispatch that didn't take the opcode fast-path.
+
+Both sites use the high-level wrappers; `dispatch_builtin_raw`
+keeps the unfiltered semantics so `bin_builtin` (the `builtin
+name` command form) can still force-run a disabled entry — though
+zsh's `builtin` does also respect disable, so there's a remaining
+small divergence on `builtin <disabled-name>` (zsh: "no such
+builtin"; zshrs: runs the builtin). Not addressed here.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'disable echo; echo hi'
+hi   # /bin/echo, not the builtin
+
+$ ./target/debug/zshrs --zsh -c 'disable cd; cd /tmp 2>&1; pwd'
+/Users/wizard/RustroverProjects/zshrs
+# cd fell through to PATH, no external `cd` → silent failure,
+# pwd unchanged
+
+$ ./target/debug/zshrs --zsh -c 'disable echo; enable echo; echo hi'
+hi   # builtin restored
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'disable echo; type echo; echo hi'

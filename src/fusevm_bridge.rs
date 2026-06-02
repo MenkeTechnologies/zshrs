@@ -257,6 +257,36 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         crate::ported::jobs::waitonejob(&mut synth);
         return status;
     }
+    // c:Src/builtin.c:587 + Src/exec.c:3056 — a builtin disabled via
+    // `disable <name>` has its `DISABLED` flag set in `builtintab`;
+    // `builtintab->getnode` (the DISABLED-filtering accessor) returns
+    // NULL for it at lookup time, so execcmd_exec falls through to
+    // PATH lookup and runs the external. The Rust port stores the
+    // disabled set in `BUILTINS_DISABLED`; the previous dispatcher
+    // only checked the immutable `createbuiltintable` HashMap which
+    // never reflects disablement — so `disable echo; echo hi` kept
+    // running the bin_echo builtin. Bug #106 in docs/BUGS.md.
+    //
+    // dispatch_builtin (the high-level wrapper used by the BUILTIN_*
+    // opcode handlers and reg_passthru! callsites) is the correct
+    // gate: `dispatch_builtin_raw` is the low-level entry point
+    // used by `bin_builtin` itself which MUST bypass the disabled
+    // set (man zshbuiltins: `builtin name` runs the builtin
+    // regardless of disable state). Place the check here so the
+    // bypass path stays clean.
+    let disabled = crate::ported::builtin::BUILTINS_DISABLED
+        .lock()
+        .map(|s| s.contains(name))
+        .unwrap_or(false);
+    if disabled {
+        let status = with_executor(|exec| exec.execute_external(name, &args, &[]))
+            .unwrap_or(127);
+        crate::ported::builtin::LASTVAL
+            .store(status, std::sync::atomic::Ordering::Relaxed);
+        let mut synth = crate::ported::zsh_h::job::default();
+        crate::ported::jobs::waitonejob(&mut synth);
+        return status;
+    }
     let status = dispatch_builtin_raw(name, args);
     // c:Src/jobs.c:1748 waitonejob — canonical single-command pipestats update.
     crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
@@ -5879,7 +5909,17 @@ impl fusevm::ShellHost for ZshrsHost {
         // first so a user `log() { ... }` shadows the module bin_log.
         let has_user_fn = with_executor(|exec| exec.functions_compiled.contains_key(name));
         if !has_user_fn {
-            let bn_in_tab = crate::ported::builtin::createbuiltintable().contains_key(name);
+            // c:Src/exec.c:3056 — `builtintab->getnode(builtintab,
+            // cmdarg)` returns NULL for DISABLED entries, falling
+            // execcmd through to PATH lookup. Mirror by gating the
+            // bn_in_tab match on the BUILTINS_DISABLED set. Bug #106
+            // in docs/BUGS.md.
+            let disabled = crate::ported::builtin::BUILTINS_DISABLED
+                .lock()
+                .map(|s| s.contains(name))
+                .unwrap_or(false);
+            let bn_in_tab = !disabled
+                && crate::ported::builtin::createbuiltintable().contains_key(name);
             if bn_in_tab {
                 return Some(dispatch_builtin_raw(name, args));
             }
