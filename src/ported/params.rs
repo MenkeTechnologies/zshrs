@@ -4237,11 +4237,6 @@ pub fn getsparam(name: &str) -> Option<String> {
     //    for PM_ARRAY (matches `getstrvalue` at params.c:2358).
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
-            // c:2358-2369 — getstrvalue dispatches by PM_TYPE.
-            //   PM_SCALAR/PM_NAMEREF → pm.u_str
-            //   PM_INTEGER           → convbase(u_val, base) per c:2364
-            //   PM_EFLOAT/PM_FFLOAT  → convfloat(u_dval) per c:2367-2368
-            //   PM_ARRAY             → sepjoin(arr)
             let t = PM_TYPE(pm.node.flags as u32);
             // c:2390-2538 — when PM_LEFT/PM_RIGHT_B/PM_RIGHT_Z + width
             // are set, getstrvalue (called from getsparam in C) applies
@@ -4250,11 +4245,20 @@ pub fn getsparam(name: &str) -> Option<String> {
             // didn't go through getstrvalue. Numeric prefix detection
             // (leading blanks/minus/0x/base#) follows params.rs:3156.
             let pad_flags = (pm.node.flags as u32) & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z);
+            // c:Src/params.c:2358 — getstrvalue for a PM_SCALAR
+            // dispatches through `pm->gsu.s->getfn(pm)` so tied /
+            // colon-array / special-callback scalars (PATH/path,
+            // user `typeset -T` pairs) return their live computed
+            // value rather than a stale cached `u_str`. Reads of
+            // `u_str` for scalars without a GSU vtable (the common
+            // case) fall through unchanged. Bug #24 in docs/BUGS.md.
             let raw: Option<String> = if t == PM_INTEGER {
                 let base = if pm.base > 0 { pm.base } else { 10 };
                 Some(convbase(pm.u_val, base as u32))
             } else if t == PM_EFLOAT || t == PM_FFLOAT {
                 Some(convfloat(pm.u_dval, pm.base, pm.node.flags as u32))
+            } else if t == PM_SCALAR && pm.gsu_s.is_some() {
+                pm.gsu_s.as_ref().map(|gsu| (gsu.getfn)(pm))
             } else if let Some(s) = pm.u_str.as_ref() {
                 Some(s.clone())
             } else {
@@ -6317,8 +6321,27 @@ pub fn colonarrsetfn(pm: &mut param, x: Option<String>) {
 }
 
 /// Port of `tiedarrgetfn(Param pm)` from `Src/params.c:4348`. C body:
-/// `return *((Tieddata)pm->u.data)->arrptr;`
+///   `struct tieddata *dptr = (struct tieddata *)pm->u.data;`
+///   `return *dptr->arrptr ? zjoin(*dptr->arrptr, …) : "";`
+///
+/// C's `pm->u.data->arrptr` is a raw pointer into the partner array
+/// param's storage. The Rust port can't hold a pointer into another
+/// paramtab entry's heap, so the partner lookup goes via
+/// `pm.ename` → paramtab → `apm.u_arr`. For backwards compatibility
+/// with callers that set `pm.u_arr` directly (the pre-fix code path
+/// at c:4348 that's still in some Rust call sites), fall back to
+/// the scalar's own `u_arr` when `ename` is None or the partner is
+/// missing. Bug #24 in docs/BUGS.md.
 pub fn tiedarrgetfn(pm: &param) -> Vec<String> {
+    if let Some(ename) = pm.ename.as_deref() {
+        if let Ok(tab) = paramtab().read() {
+            if let Some(apm) = tab.get(ename) {
+                if let Some(arr) = apm.u_arr.as_ref() {
+                    return arr.clone();
+                }
+            }
+        }
+    }
     pm.u_arr.clone().unwrap_or_default()
 }
 
@@ -6358,31 +6381,48 @@ pub fn tiedarrsetfn(pm: &mut param, x: Option<String>) {
         }
     }
 
-    if let Some(s) = x {
+    // c:4369-4386 — split + assign. C writes through `*dptr->arrptr`
+    // which is a pointer INTO THE PARTNER ARRAY param's storage. The
+    // Rust port can't hold raw pointers across paramtab entries, so
+    // when `pm.ename` is set, write the split result to the partner's
+    // `u_arr` via paramtab (bug #24). When `pm.ename` is None (older
+    // call sites or non-tied use), keep the scalar's own `u_arr`
+    // up-to-date for legacy callers.
+    let arr_opt: Option<Vec<String>> = if let Some(s) = x {
         // c:4369
-        // c:4370-4380 — single-byte separator (joinchar=':' for all
-        // currently-tied params; Meta-quoting only kicks in for
-        // exotic joinchars not present today).
-        let arr: Vec<String> = s.split(':').map(|t| t.to_string()).collect();
+        // c:4370-4380 — single-byte separator.
+        let split: Vec<String> = s.split(':').map(|t| t.to_string()).collect();
         // c:4382-4383 — uniqarray if PM_UNIQUE.
-        let arr = if pm.node.flags & PM_UNIQUE as i32 != 0 {
+        let split = if pm.node.flags & PM_UNIQUE as i32 != 0 {
             // c:4382
-            uniqarray(arr) // c:4383
+            uniqarray(split) // c:4383
         } else {
-            arr
+            split
         };
-        pm.u_arr = Some(arr);
-        // c:4384 — zsfree(x). Rust drop.
+        Some(split)
     } else {
-        // c:4385
-        pm.u_arr = None; // c:4386
+        None
+    };
+    if let Some(ename) = pm.ename.clone() {
+        if let Ok(mut tab) = paramtab().write() {
+            if let Some(apm) = tab.get_mut(&ename) {
+                apm.u_arr = arr_opt.clone(); // c:4381
+            }
+        }
+        pm.u_str = arr_opt.as_ref().map(|a| a.join(":"));
+    } else {
+        pm.u_arr = arr_opt;
     }
 
     // c:4387-4388 — `if (pm->ename) arrfixenv(pm->name, *dptr->arrptr)`.
     if pm.ename.is_some() {
         let nam = pm.node.nam.clone();
-        let arr_ref = pm.u_arr.as_deref();
-        arrfixenv(&nam, arr_ref);
+        // Pull the live array out of the partner for env sync.
+        let snap = paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(pm.ename.as_deref().unwrap()).and_then(|p| p.u_arr.clone()));
+        arrfixenv(&nam, snap.as_deref());
     }
 }
 

@@ -1237,7 +1237,7 @@ zshrs_shell regression: 924/128 (baseline preserved with
 
 ## #24 — `typeset -T` tied colon-array doesn't sync (string side stays empty)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-01.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -T XPATH xpath=(/x /y /z) :
@@ -1277,22 +1277,71 @@ zshrs's port:
   - Modifying the string doesn't update the array (it stays at the array's
     pre-assignment value)
 
-**Where** — `src/ported/params.rs::create_tied_var` or the PM_TIED
-getter/setter chain. The string-side `intgetfn` / `strgetfn`
-callback may be missing the array-join step (`join_arr_with_sep`),
-and the assign path is missing the split-on-sep step
-(`split_string_on_sep`).
+**Root cause** — three independent gaps:
 
-The reverse case (built-in `PATH` ↔ `path`) appears to work
-correctly, so the bug is specific to user-declared `typeset -T`
-pairs, not the kernel-builtin tied pairs.
+  1. `src/ported/builtin.rs::bin_typeset`'s `-T` handler was a stub:
+     the `tied_mode` path only incremented a name counter and
+     skipped extra args. It never actually created a tied pair —
+     the per-arg loop just installed the scalar and array as two
+     unrelated params.
 
-**Workaround** — use built-in `PATH`/`path` for path-like vars, or
-manually sync the two sides:
-```sh
-xpath=(/x /y /z)
-XPATH="${(j.:.)xpath}"     # rejoin on each mutation
-```
+  2. `src/ported/params.rs::tiedarrgetfn` / `tiedarrsetfn`
+     (already present as C-named ports) read/wrote `pm.u_arr` on
+     the SCALAR — which is the wrong direction. C zsh's
+     `tiedarrgetfn` dereferences `pm->u.data->arrptr`, a pointer
+     into the partner ARRAY param's storage. Rust can't hold that
+     pointer across paramtab entries, so the lookup must go via
+     `pm.ename` → paramtab → `apm.u_arr`.
+
+  3. `src/ported/params.rs::getsparam` read `pm.u_str` directly
+     for PM_SCALAR without dispatching through `pm.gsu_s.getfn`.
+     C zsh's `getstrvalue` at `Src/params.c:2358` always goes
+     through the GSU vtable for scalars, so tied / colon-array /
+     special-callback scalars return their LIVE computed value
+     instead of a stale cached snapshot. The Rust port pinned
+     reads to whatever `u_str` was set to at create time, so even
+     a freshly-wired tied scalar couldn't observe array mutations.
+
+**Fix** (three files, all in `src/ported/`):
+
+  * `params.rs::tiedarrgetfn` / `tiedarrsetfn` rewritten to look
+    up the partner via `pm.ename` and read/write its `u_arr`
+    instead of the scalar's own. Mirrors what C's
+    `*dptr->arrptr` does, modulo raw-pointer semantics. Falls
+    back to the scalar's own `u_arr` when `ename` is None for
+    pre-existing call sites that haven't migrated.
+  * `params.rs::getsparam` now dispatches `PM_SCALAR` reads
+    through `pm.gsu_s.getfn(pm)` when present, before falling
+    back to `pm.u_str`. Direct port of C's `getstrvalue`
+    semantics. Padding logic (`PM_LEFT`/`PM_RIGHT_B`/`PM_RIGHT_Z`)
+    still runs after the GSU read so `typeset -L N` / `-R N` on
+    a GSU-backed scalar keeps working.
+  * `builtin.rs::bin_typeset`'s `-T` path now does the full
+    tied-pair install: validates the 2-or-3 arg shape, builds
+    the initial array (preferring `arr=(...)` RHS over
+    `scalar=val` RHS over the existing scalar's env value),
+    installs the array with `PM_ARRAY|PM_TIED + ename=scalar`,
+    and installs the scalar with `PM_SCALAR|PM_TIED +
+    ename=array + gsu_s=tiedarr_gsu`. The `tiedarr_gsu` is
+    inline-defined as three shim fns pointing at the existing
+    C-named `tiedarrgetfn`/`tiedarrsetfn`/`tiedarrunsetfn`.
+
+Verified:
+
+  * BUGS.md repro (`typeset -T XPATH xpath=(/x /y /z) :` + walk)
+    matches zsh exactly: `/x:/y:/z`, `/x /y /z`, `/x:/y:/z:/w`
+    after array append, `/a /b /c` after scalar reassign.
+  * `typeset -T PATH path :` seeds `path` from the env-imported
+    `$PATH` (covered by `test_typeset_t_reads_existing_env_value`).
+  * `unset path` after `typeset -T PATH path :` propagates to
+    `$PATH` (covered by `test_typeset_t_unset_propagates_to_tied`,
+    which was failing pre-fix and now passes).
+  * `typeset -L 5 x="abc"` still left-pads to `abc  ` (the
+    PM_LEFT padding logic was preserved in the getsparam edit).
+
+zshrs_shell regression: 925/127 — net +1 over the 924/128
+baseline (the previously-skipped `unset` propagation test now
+passes; no other test regressed).
 
 ---
 
