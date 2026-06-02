@@ -1801,7 +1801,26 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
         if let Some(ret) = cd_try_chdir("", dest, hard) {
             return Some(ret);
         }
-        zwarnnam(cnam, &format!("{}: {}", io::Error::last_os_error(), dest));
+        // c:Src/builtin.c — `zwarnnam(nam, "%e: %s", errno, dest)`.
+        // C's %e printf format expands to strerror(errno) then
+        // LOWERCASES the first letter unless the errno is EIO
+        // (Src/utils.c:362-368 comment: "If the message is not
+        // about I/O problems, it looks better if we uncapitalize
+        // the first letter of the message"). Previous Rust port
+        // used `io::Error::last_os_error()`'s Display impl, which
+        // appends ` (os error N)` — leaked the Rust-internal
+        // suffix into user-visible cd output. Bug #112 in
+        // docs/BUGS.md. Route through compat::strerror to drop
+        // the suffix AND apply the lowercase-first-letter rule so
+        // the message matches C exactly.
+        let errno = io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        let mut msg = crate::ported::compat::strerror(errno);
+        if errno != libc::EIO {
+            if let Some(c) = msg.chars().next() {
+                msg = format!("{}{}", c.to_ascii_lowercase(), &msg[c.len_utf8()..]);
+            }
+        }
+        zwarnnam(cnam, &format!("{}: {}", msg, dest));
         return None;
     }
 

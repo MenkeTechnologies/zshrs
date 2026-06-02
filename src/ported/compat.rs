@@ -132,7 +132,32 @@ pub fn difftime(t2: i64, t1: i64) -> f64 {
 /// routes through libc strerror internally.
 pub fn strerror(errnum: i32) -> String {
     // c:194
-    std::io::Error::from_raw_os_error(errnum).to_string()
+    // c:Src/compat.c:194 — `return sys_errlist[errnum]` (or libc
+    // `strerror(errnum)` on HAVE_STRERROR systems). The C strerror
+    // returns the bare message ("No such file or directory") with
+    // no suffix. The previous Rust port used
+    // `std::io::Error::from_raw_os_error(errnum).to_string()`,
+    // whose Display impl appends ` (os error N)` — so every
+    // builtin that formatted an error through strerror leaked the
+    // Rust-internal suffix into user-visible output
+    // (`cat: file: No such file or directory (os error 2)` vs the
+    // C-faithful `cat: file: No such file or directory`). Bug
+    // #112 in docs/BUGS.md.
+    //
+    // Call libc::strerror directly to match C strerror exactly.
+    // libc::strerror returns a pointer into a thread-local static
+    // buffer; safe to read here because we copy into an owned
+    // String before returning (no escape of the pointer).
+    unsafe {
+        let p = libc::strerror(errnum);
+        if p.is_null() {
+            return String::new();
+        }
+        match std::ffi::CStr::from_ptr(p).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned(),
+        }
+    }
 }
 
 // Neither of these should happen, but resort to OPEN_MAX rather            // c:291
