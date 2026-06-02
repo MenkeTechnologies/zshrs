@@ -347,43 +347,70 @@ IFS).
 
 ## #9 — `var=${arr[(expr)*N + M]}` returns empty when unquoted-assigned
 
-**Status:** `port-bug` — surfaced 2026-05-29 while writing demo 239.
+**Status:** `fixed` 2026-06-01.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(p q r s t); r=1; c=1; v=${a[(r-1)*2 + c]}; echo "[$v]"'
 [p]
 
-$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; v=${a[(r-1)*2 + c]}; echo "[$v]"'
+$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; v=${a[(r-1)*2 + c]}; echo "[$v]"'   # before
 []
-```
-
-`(r-1)*2 + c` is a valid arithmetic subscript and the C-zsh path
-returns `a[1]` = `p`. zshrs returns empty when assigned to a
-variable unquoted. The same expression works as an interpolation
-target and as a quoted-assigned RHS:
-
-```sh
-$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; echo "${a[(r-1)*2 + c]}"'
-p
-
-$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; v2="${a[(r-1)*2 + c]}"; echo "[$v2]"'
+$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; v=${a[(r-1)*2 + c]}; echo "[$v]"'   # after
 [p]
 ```
 
-**Where** — `${arr[…]}` subscript parsing in `src/ported/subst.rs`
-(port of `Src/subst.c::paramsubst`). The leading `(` of `(r-1)`
-collides with the C parser's subscript-flag dispatch (e.g. `(r)`,
-`(R)`, `(i)`, `(I)`, `(k)`, `(v)`, `(w)`, `(W)`, `(e)`, `(n)`).
-C-zsh's subscript flag parser (`Src/subst.c::strstartsfn` chain at
-c:3650-3750) rejects malformed flag content with a hard error AND
-then falls through to math-eval the entire subscript body. The
-Rust port appears to take a "no valid flag → bail with empty" path
-when assigning unquoted to a scalar — but treats the same
-expression as math correctly in interpolated/quoted contexts.
+**Root cause** — `paramsubst`'s numeric / math-subscript arm in
+`src/ported/subst.rs` couldn't decode the tokenized subscript body
+that bare-context delivers. The zshrs lexer (and the C lexer it
+ports) tokenizes subscript chars `(`/`)`/`-`/`*`/`?`/etc. to their
+META markers (Inpar `\u{88}`, Outpar `\u{8a}`, Dash `\u{9b}`, …)
+in bare context but keeps them literal inside DQ. The DQ-quoted
+form `v="${arr[(1+0)]}"` worked because `singsub` saw a literal
+`(1+0)` body and `mathevali` could parse it. The bare form
+delivered `\u{88}1+0\u{8a}` to the same path:
 
-**Workaround** — compute the index in a separate `$((...))` step
-first: `idx=$(( (r-1)*2 + c )); v="${arr[idx]}"`. Demo 239 is
-written this way pending the underlying fix.
+  * The paren-strip retry (`s.starts_with('(') && s.ends_with(')')`)
+    required LITERAL parens.
+  * The mathevali fallback received tokenized parens, which its
+    tokenizer treated as unknown chars, so it returned an error
+    and the whole subscript silently bailed with empty.
+
+**Fix** (`src/ported/subst.rs`, paramsubst's numeric-index arm
+inside the `arrays_get` lookup):
+
+  * Paren-strip retry now also accepts `Inpar` / `Outpar` tokens
+    as open/close markers, mirroring the C lexer's tokenized
+    output.
+  * mathevali fallback untokenizes its input when any byte falls
+    in the ITOK range `0x84..=0xa1`. The untokenize step converts
+    Inpar→`(`, Outpar→`)`, Dash→`-`, Star→`*`, etc. so the math
+    parser sees ASCII operators regardless of how the lexer
+    handed the subscript body off.
+
+Fix lives entirely in `src/ported/` — no compile-time workaround
+in `src/extensions/compile_zsh.rs`. Earlier attempt that
+detokenized subscript chars during the assign-RHS DQ wrap was
+reverted (the bridge-side hack belonged in the C-source port).
+
+Verified:
+
+  * `v=${a[(r-1)*2 + c]}` → p (BUGS.md main case)
+  * `v=${a[(1+0)]}` → p
+  * `v=${a[-1]}` → t (negative-index paren strip + math)
+  * `v="${a[(1+0)]}"` → p (DQ form unchanged)
+  * `v=${a[(r)foo]}` → empty (reverse-search miss — correct)
+  * `exit_test=$(false; echo "exit=$?")` → `exit=1` (cmd-subst
+    in scalar assign unaffected — fix is downstream of
+    compile_assign)
+
+Unfixed but pre-existing (not a regression of this fix):
+
+  * `v=${a[(r)q]}` returns empty in zshrs vs `q` in
+    `/opt/homebrew/bin/zsh`. Confirmed empty on the pre-patch
+    tree as well — separate bug in the (r)/(R) reverse-value-
+    search arm.
+
+zshrs_shell regression: 924/128 (baseline preserved).
 
 ---
 

@@ -4260,9 +4260,21 @@ pub fn paramsubst(
                         // `(`, returning empty. Strip a balanced outermost
                         // paren pair and retry the integer parse — covers
                         // `(N)`, `(-N)`, `(+N)`.
+                        //
+                        // Accept Inpar/Outpar tokens too: the bare-context
+                        // lexer tokenizes `[...(N)]` subscript parens to
+                        // Inpar/Outpar (bug #9 in docs/BUGS.md). C zsh's
+                        // path sees the tokenized form because its lexer
+                        // does the same; this paren-strip must match.
                         let s = sub.trim();
-                        if s.starts_with('(') && s.ends_with(')') && s.len() >= 2 {
-                            s[1..s.len() - 1].trim().parse::<i64>().ok()
+                        let s_chars: Vec<char> = s.chars().collect();
+                        let first_is_open = s_chars.first().map_or(false, |&c|
+                            c == '(' || c == Inpar);
+                        let last_is_close = s_chars.last().map_or(false, |&c|
+                            c == ')' || c == Outpar);
+                        if first_is_open && last_is_close && s_chars.len() >= 2 {
+                            let inner: String = s_chars[1..s_chars.len() - 1].iter().collect();
+                            inner.trim().parse::<i64>().ok()
                         } else {
                             None
                         }
@@ -4278,10 +4290,32 @@ pub fn paramsubst(
                         // the downstream split_once arm. mathevali
                         // would evaluate the comma as the C-style
                         // sequence operator and mask the slice.
+                        //
+                        // Bug #9 in docs/BUGS.md — untokenize before
+                        // handing to mathevali. The bare-context lexer
+                        // tokenizes `(`/`)`/`[`/`]`/`*`/`-`/`?` etc. to
+                        // their META markers (Inpar/Outpar/Inbrack/
+                        // Outbrack/Star/Dash/Quest). mathevali's
+                        // tokenizer expects ASCII operators, so the
+                        // tokenized subscript `\u{88}1+0\u{8a}` was
+                        // unparseable and the unquoted scalar-assign
+                        // form `v=${arr[(1+0)]}` returned empty. The
+                        // DQ-quoted form `v="${arr[(1+0)]}"` worked
+                        // because the lexer keeps subscript chars
+                        // literal inside DQ. Untokenize here so both
+                        // forms hit the same math path.
                         if sub.contains(',') {
                             None
                         } else {
-                            crate::ported::math::mathevali(sub).ok()
+                            let untoked = if sub.chars().any(|c| {
+                                let cu = c as u32;
+                                (0x84..=0xa1).contains(&cu)
+                            }) {
+                                crate::lex::untokenize(sub)
+                            } else {
+                                sub.to_string()
+                            };
+                            crate::ported::math::mathevali(&untoked).ok()
                         }
                     })
                 {
