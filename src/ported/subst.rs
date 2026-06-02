@@ -4162,6 +4162,19 @@ pub fn paramsubst(
             // Subscripted lookup: assoc-key, array-index, or slice.
             if let Some(map) = assoc_get(&var_name) {
                 // c:2926 (assoc lookup)
+                // c:Src/params.c — `${assoc[@]}` and `${assoc[*]}`
+                // enumerate VALUES (matching the unquoted-bare
+                // splat `$assoc[@]` semantics handled in
+                // multsub_get_node_array at subst.c:3950). Without
+                // this special-case, the generic `map.get(sub)` at
+                // the bottom of this arm looked up a key literally
+                // named "@" / "*" and returned empty — so
+                // `${h[@]}` came out blank instead of enumerating
+                // the value bag. Bug #109 in docs/BUGS.md.
+                if sub == "@" || sub == "*" {
+                    // Values in insertion order (IndexMap iter order).
+                    map.values().cloned().collect::<Vec<_>>().join(" ")
+                } else
                 // Subscript-flag form: (I)pat / (i)pat (search keys
                 // for pattern, return matching key) and (R)pat /
                 // (r)pat (search values, return matching value).
