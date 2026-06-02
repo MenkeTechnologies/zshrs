@@ -1165,6 +1165,59 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 b'i' => {
                     stradd(bv, "0");
                 }
+                // c:Src/prompt.c:554-555 — `%N` (name of script or
+                // function being executed; falls back to argzero/$0
+                // for top-level). For function calls C uses the
+                // funcname; we approximate by reading ZSH_SCRIPT for
+                // script files and falling back to ZSH_NAME ("zsh")
+                // for -c mode. Common synonym `%0N` is the same value
+                // without padding. Bug #44 in docs/BUGS.md — used
+                // heavily in the default colored PS4.
+                b'N' => {
+                    let nam = crate::ported::params::getsparam("ZSH_SCRIPT")
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| {
+                            crate::ported::params::getsparam("ZSH_NAME")
+                                .filter(|s| !s.is_empty())
+                        })
+                        .unwrap_or_else(|| "zsh".to_string());
+                    stradd(bv, &nam);
+                }
+                // c:Src/prompt.c:931-940 — `%x` (file name of script
+                // being executed; same surface as %N for most contexts,
+                // differs inside autoloaded functions). Prefers
+                // ZSH_SCRIPT, falls back to ZSH_NAME for -c mode.
+                b'x' => {
+                    let nam = crate::ported::params::getsparam("ZSH_SCRIPT")
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| {
+                            crate::ported::params::getsparam("ZSH_NAME")
+                                .filter(|s| !s.is_empty())
+                        })
+                        .unwrap_or_else(|| "zsh".to_string());
+                    stradd(bv, &nam);
+                }
+                // c:Src/prompt.c — `%I` (line number in source file).
+                // Distinct from `%i` (interactive line); for -c mode
+                // and scripts, %I is the line number where the
+                // current command appears. zshrs doesn't track
+                // per-statement source linenos through xtrace yet,
+                // so fall back to LINENO if available, else "1".
+                b'I' => {
+                    let ln = crate::ported::params::getsparam("LINENO")
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "1".to_string());
+                    stradd(bv, &ln);
+                }
+                // c:Src/prompt.c — `%_` (parser context: the stack
+                // of `cmdpush` tokens like `for`, `while`, `case`,
+                // `cmdsubst`, etc.). zshrs doesn't expose the
+                // cmd_stack through prompt expansion; emit empty so
+                // the trace line stays clean (zsh emits an empty
+                // string at top level too).
+                b'_' => {
+                    // Empty — matches zsh's top-level rendering.
+                }
                 // c:777-784 — `%l` (controlling tty, trimmed of
                 // `/dev/tty` or `/dev/` prefix). Bug #38 in
                 // docs/BUGS.md.
