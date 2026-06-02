@@ -11819,7 +11819,64 @@ done
 
 ## #155 — `${str[N,M+1]}` slice subscript doesn't evaluate variable/arith expressions
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — scalar slice subscript bounds now route through `singsub` + `mathevali` (matches C `Src/params.c::getarg`).
+
+**Root cause** — `src/ported/subst.rs` scalar-slice arm parsed
+both bounds with `i64::parse`:
+
+```rust
+let lo: i64 = lo.trim().parse().unwrap_or(1);
+let hi: i64 = hi.trim().parse().unwrap_or(s_chars.len() as i64);
+```
+
+Bare digit literals worked (`${s[1,3]}` → `hel`). Any non-numeric
+expression — variable refs (`n`), arith (`n+1`), `${...}` —
+failed the parse and fell back to the full-string default,
+returning the entire scalar instead of the requested slice.
+
+**C-source reference** — `Src/params.c::getarg` runs each
+subscript bound through `mathevali` (Src/math.c:367) which
+in turn calls `singsub` to expand `$var` refs, then evaluates
+the resulting expression. Both legs of `[lo,hi]` flow through
+this evaluator.
+
+**Fix** — replaced the parse calls with an `eval_idx` helper:
+
+```rust
+let eval_idx = |expr: &str, default: i64| -> i64 {
+    let trimmed = expr.trim();
+    // Fast-path bare integer literal.
+    if let Ok(n) = trimmed.parse::<i64>() { return n; }
+    // c:Src/params.c::getarg — singsub then mathevali.
+    let expanded = singsub(trimmed);
+    crate::ported::math::mathevali(&expanded).unwrap_or(default)
+};
+let lo: i64 = eval_idx(lo, 1);
+let hi: i64 = eval_idx(hi, s_chars.len() as i64);
+```
+
+Fast-path on bare digits avoids round-tripping the common
+`${s[1,3]}` case through the math evaluator.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 's=hello; n=2; echo "${s[1,n+1]}"'
+hel                                # was hello
+
+$ ./target/debug/zshrs --zsh -c 's="hello world"; n=5; echo "[${s[1,n]}]"'
+[hello]                            # was [hello world]
+
+$ ./target/debug/zshrs --zsh -c 's="hello world"; echo "[${s[1,5]}]"'
+[hello]                            # bare-digit regression check
+
+$ ./target/debug/zshrs --zsh -c 'text="The quick brown fox"; end=${#text}; mid=$((end / 2)); echo "${text[1,mid]}"'
+The quick                          # impact-section example
+```
+
+All four match zsh exactly. Regression suite unchanged (111 same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's=hello; n=2; echo "${s[1,n+1]}"'
