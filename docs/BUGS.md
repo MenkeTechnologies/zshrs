@@ -7487,7 +7487,50 @@ done
 
 ## #108 — `${array/pat/repl}` treats as per-element instead of scalar-joined
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — quoted-bare form now scalar-joins first.
+
+**Root cause** — `src/ported/subst.rs` pattern-substitution arms had
+the wrong dispatch for the QUOTED no-subscript form. zsh's rules:
+
+| Form                            | Behavior                       |
+|---------------------------------|--------------------------------|
+| `${a[N]/p/r}` (literal index)   | scalar: replace in element N   |
+| `${a[@]/p/r}`, `${(@)a/p/r}`    | per-element                    |
+| `${a/p/r}` (unquoted, no flags) | per-element (word-splitting)   |
+| `"${a/p/r}"` (quoted, no flags) | **scalar join** then replace   |
+
+For the `//` arm at line 6018, the previous Rust port did
+per-element unconditionally when there was no scalar subscript. For
+the `/` arm at line 6204, it handled "quoted bare" with a "first
+matching element wins" walk that produced `red X green` instead of
+`red X` for `"${a/b*/X}"` on `(red blue green)` — the greedy `b*`
+in the per-element walk only swallowed `blue` (one element)
+instead of `blue green` (across the join).
+
+C-zsh's path: `subst.c:3870` joins via `sepjoin` first when the
+context is scalar (no `[@]`, no `(@)`, quoted), then calls
+`getmatch` once on the joined string.
+
+**Fix** — Add the gate `per_element = is_at_star || nojoin == 2 ||
+!qt` to both arms. When the gate is false (quoted no-subscript
+no-flag), sepjoin the array with `$IFS[0]` (default space) and run
+the matcher on the joined string once.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'a=(red blue green); echo "[${a/b*/X}]"'
+[red X]                    # quoted: scalar join
+$ ./target/debug/zshrs --zsh -c 'a=(red blue green); echo "[${a[@]/b*/X}]"'
+[red X green]              # [@]: per-element
+$ ./target/debug/zshrs --zsh -c 'csv=(red blue green); echo "${csv/blue green/COMBINED}"'
+red COMBINED               # across-element match works via join
+$ ./target/debug/zshrs --zsh -c 'a=(red blue green yellow); echo "${a//b*/X}"'
+red X                      # // quoted: scalar join + greedy global
+$ ./target/debug/zshrs --zsh -c 'a=(red blue green yellow); echo ${a//b*/X}'
+red X green yellow         # // unquoted: per-element
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(red blue green); echo "[${a/b*/X}]"'

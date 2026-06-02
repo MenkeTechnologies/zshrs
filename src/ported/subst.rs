@@ -6016,14 +6016,27 @@ pub fn paramsubst(
                     o
                 };
                 let mut handled_array = false;
-                // Subscripted lookup (`${arr[N]//pat/repl}`) clears
-                // isarr in C (subst.c:2915 `v->scanflags ? 1 : 0`)
-                // and dispatches to getmatch on the single element
-                // at subst.c:3451 — not getmatcharr per-element.
-                // Only single-element subscripts trigger this: `[@]`
-                // and `[*]` keep array shape (still per-element); a
-                // range `[N,M]` also keeps array shape; only literal
-                // `[N]` / `[key]` reduces to scalar.
+                // c:Src/subst.c:3870 — array-vs-scalar context for
+                // `${arr//pat/repl}`. Shapes:
+                //   - `[N]`/`[key]` (literal-index subscript) → scalar
+                //     context: replace operates on the single element
+                //     (subst.c:2915 clears isarr; dispatches to
+                //     getmatch on that element at subst.c:3451).
+                //   - `[@]`/`[*]` subscript, OR `(@)`/(*) flag
+                //     (nojoin == 2), OR unquoted bare form (qt=false)
+                //     → array/per-element context. zsh's word-
+                //     splitting treats the array as element-wise so
+                //     unquoted `${a//pat/repl}` runs getmatch on each
+                //     element independently.
+                //   - Quoted no-subscript no-(@) form (qt=true) →
+                //     SCALAR context: join array first (via $IFS[0]),
+                //     then run getmatch once on the joined string.
+                //     Bug #108 in docs/BUGS.md — the previous Rust
+                //     port did per-element for this case too, so
+                //     `"${a/b*/X}"` on `(red blue green)` came out
+                //     `red X green` instead of `red X` (the C path
+                //     joins "red blue green" first and the greedy
+                //     `b*` swallows past element boundaries).
                 let has_scalar_subscript = subscript
                     .as_deref()
                     .map(|s| {
@@ -6031,11 +6044,25 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
-                let has_subscript = has_scalar_subscript;
-                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_subscript) {
-                    let new_arr: Vec<String> = arr.iter().map(|e| replace_global(e)).collect();
-                    value = new_arr.join(" "); // c:3870
-                    split_parts = Some(new_arr); // c:3870 (auto-splat)
+                let is_at_star =
+                    matches!(subscript.as_deref(), Some("@") | Some("*"));
+                let per_element = is_at_star || nojoin == 2 || !qt;
+                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_subscript) {
+                    if per_element {
+                        let new_arr: Vec<String> =
+                            arr.iter().map(|e| replace_global(e)).collect();
+                        value = new_arr.join(" "); // c:3870
+                        split_parts = Some(new_arr); // c:3870 (auto-splat)
+                    } else {
+                        // Scalar-join path (c:subst.c sepjoin). Use
+                        // $IFS first char; default is space.
+                        let ifs = crate::ported::params::getsparam("IFS")
+                            .unwrap_or_else(|| " \t\n".to_string());
+                        let sep = ifs.chars().next().unwrap_or(' ').to_string();
+                        let joined = arr.join(&sep);
+                        value = replace_global(&joined);
+                        split_parts = None;
+                    }
                     handled_array = true;
                 }
                 if handled_array {
@@ -6202,51 +6229,42 @@ pub fn paramsubst(
                     })
                     .unwrap_or(false);
                 if let Some(arr) = arrays_get(&var_name).filter(|_| !has_subscript_one) {
-                    // c:Src/subst.c:3870 — single-`/` semantics:
-                    //   bare `${a/p/P}` (no `[@]`, no `(@)`):
-                    //       first MATCH across whole array, others
-                    //       pass through unchanged. `(ap b cp)/p/P`
-                    //       → `aP b cp`.
-                    //   `${a[@]/p/P}` / `${(@)a/p/P}` (array-shape
-                    //   preserved): first match WITHIN EACH element.
-                    //       `(ap b cp)[@]/p/P` → `aP b cP`.
+                    // c:Src/subst.c:3870 — single-`/` array shapes:
+                    //   `${a[@]/p/P}` / `${(@)a/p/P}` (array shape):
+                    //       per-element, first match within each.
+                    //   `${a/p/P}` (unquoted, no `[@]`, no `(@)`):
+                    //       per-element word-splitting — first match
+                    //       within each element.
+                    //   `"${a/p/P}"` (quoted, no `[@]`, no `(@)`):
+                    //       SCALAR JOIN first via $IFS[0], then one
+                    //       getmatch on the joined string.
                     //
-                    // Detect the array-shape variant via either the
-                    // explicit @/* subscript OR the (@) flag
-                    // (nojoin == 2 means the (@) flag set up the
-                    // word-array shape upstream at subst.c:1817).
+                    // Bug #108 in docs/BUGS.md: the previous Rust
+                    // port handled the quoted no-subscript case by
+                    // walking elements with a "done" flag instead
+                    // of doing the proper scalar-join+single-match,
+                    // so `"${a/b*/X}"` on `(red blue green)` came
+                    // out `red X green` instead of `red X` — the
+                    // greedy `b*` only swallowed "blue" (one
+                    // element) instead of "blue green" (joined).
                     let is_at_star_subscript =
                         matches!(subscript.as_deref(), Some("@") | Some("*"));
-                    // c:Src/subst.c:3870 — per-element replacement applies
-                    // to: `[@]`/`[*]` subscripts, `(@)` flag (nojoin==2),
-                    // AND unquoted bare `${a/p/P}` (word-splitting context
-                    // treats array as per-element). Only QUOTED bare
-                    // `"${a/p/P}"` (qt=true, no subscript, no (@) flag)
-                    // takes the "first match across whole array" path.
-                    let array_shape = is_at_star_subscript || nojoin == 2 || !qt;
-                    if array_shape {
+                    let per_element = is_at_star_subscript || nojoin == 2 || !qt;
+                    if per_element {
                         let new_arr: Vec<String> = arr.iter().map(|e| replace_one(e)).collect();
                         value = new_arr.join(" "); // c:3870 per-element
                         split_parts = Some(new_arr);
                     } else {
-                        // Quoted bare form: first matching element wins.
-                        let mut done = false;
-                        let new_arr: Vec<String> = arr
-                            .iter()
-                            .map(|e| {
-                                if done {
-                                    e.clone()
-                                } else {
-                                    let replaced = replace_one(e);
-                                    if replaced != *e {
-                                        done = true;
-                                    }
-                                    replaced
-                                }
-                            })
-                            .collect();
-                        value = new_arr.join(" "); // c:3870
-                        split_parts = Some(new_arr); // c:3870
+                        // Scalar-join path: sepjoin with $IFS[0],
+                        // then one replacement. Mirrors C's getmatch
+                        // (not getmatcharr) dispatch at subst.c:3451
+                        // for the array-collapsed-to-scalar case.
+                        let ifs = crate::ported::params::getsparam("IFS")
+                            .unwrap_or_else(|| " \t\n".to_string());
+                        let sep = ifs.chars().next().unwrap_or(' ').to_string();
+                        let joined = arr.join(&sep);
+                        value = replace_one(&joined);
+                        split_parts = None;
                     }
                 } else {
                     value = replace_one(&raw_value); // c:3870
