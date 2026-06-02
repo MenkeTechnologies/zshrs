@@ -3928,15 +3928,26 @@ pub fn paramsubst(
         let name_start = idx;
         // c:Src/subst.c:1942 — `${(flags)"literal"}` is a parse
         // error in zsh ("bad substitution"). The compile fast path
-        // at extensions/compile_zsh.rs:2290 tags literal-operand
+        // at extensions/compile_zsh.rs:2929 tags literal-operand
         // reconstructions with `\u{01}` prefix so paramsubst (this
         // function) can recognize them and emit the canonical error.
-        // Previously this gate lived in the bridge; per the bridge-
-        // is-passthru contract it moved here.
         if idx < body_chars.len() && body_chars[idx] == '\u{01}' {
             zerr("bad substitution");
             errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
             return (String::new(), idx + 1, Vec::new());
+        }
+        // c:Src/subst.c — `${(flags)NAME[KEY]}` value-passthru
+        // shape. The compile fast path at compile_zsh.rs:~3188
+        // pre-resolves the NAME[KEY] lookup to a scalar value, then
+        // re-enters paramsubst via BUILTIN_PARAM_FLAG to apply the
+        // flag chain to that value. The `\u{08}` sentinel marks
+        // "rest of body IS the scalar value — skip name lookup,
+        // skip the literal-operand error". Bug #128 in docs/BUGS.md.
+        let mut prefiltered_value: Option<String> = None;
+        if idx < body_chars.len() && body_chars[idx] == '\u{08}' {
+            let val: String = body_chars[idx + 1..].iter().collect();
+            prefiltered_value = Some(val);
+            idx = body_chars.len();
         }
         if subexp_value.is_none() {
             while idx < body_chars.len() {
@@ -4185,8 +4196,13 @@ pub fn paramsubst(
         // subst.c:2965 getstrvalue / getarrvalue dispatch.
         // If subexp_value is set, the value comes from the recursive
         // $(...)/${...} expansion and we skip var-name lookup.
-        let used_subexp = subexp_value.is_some();
-        let raw_value: String = if let Some(sv) = subexp_value {
+        let used_subexp = subexp_value.is_some() || prefiltered_value.is_some();
+        let raw_value: String = if let Some(pv) = prefiltered_value.clone() {
+            // Pre-resolved scalar value from `${(flags)NAME[KEY]}`
+            // fast-path. Skip lookup entirely; the flag chain
+            // (casmod / quoting / etc.) runs on this value below.
+            pv
+        } else if let Some(sv) = subexp_value {
             sv // c:2681 (subexp result)
         } else if let Some(sub) = subscript.as_deref() {
             // Subscripted lookup: assoc-key, array-index, or slice.
