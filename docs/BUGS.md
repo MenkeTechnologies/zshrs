@@ -18103,7 +18103,57 @@ esac
 
 ## #246 — `setopt rc_expand_param` applied inside double quotes (zsh: unquoted-only)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `BUILTIN_CONCAT_DISTRIBUTE` consulted the
+option state without knowing whether the word was DQ-wrapped, so
+the cartesian-distribute path fired inside double quotes too;
+corrected 2026-06-02.
+
+**Root cause** — per `Src/options.c` and zsh docs,
+`RC_EXPAND_PARAM` applies to UNQUOTED parameter expansions only:
+`echo x${arr}y` cartesian-distributes, but `echo "x${arr}y"`
+joins via `$IFS[0]`. The Rust runtime's
+`BUILTIN_CONCAT_DISTRIBUTE` (which gets the segments stacked and
+folds them) read `opt_state_get("rcexpandparam")` directly,
+without any DQ-context awareness. Inside `"x${a}y"` (where `a=(1
+2)`) it produced `x1y x2y` instead of zsh's `x1 2y`.
+
+The compiler (`compile_zsh.rs::compile_word_str`) knows whether
+the parent word is DQ-wrapped via `dq_marker_wrap` / the
+`dq_context_depth` counter (`parent_is_dq`). The runtime
+`in_dq_context` flag is also bumped during EXPAND_TEXT mode 1/5,
+but by the time the outer CONCAT op runs, the segment-level
+EXPAND_TEXT calls have already decremented it back to 0.
+
+**Fix:** Wire the compile-time `parent_is_dq` signal through the
+opcode's argc:
+- `src/extensions/compile_zsh.rs::compile_word_str` — when
+  emitting `Op::CallBuiltin(BUILTIN_CONCAT_DISTRIBUTE, _)` for
+  a DQ-wrapped parent, pass `argc=1` instead of the default `2`.
+  SPLICE / DISTRIBUTE_FORCED variants ignore argc.
+- `src/fusevm_bridge.rs::BUILTIN_CONCAT_DISTRIBUTE` handler —
+  read `argc == 1` as "DQ context, suppress rc_expand." The
+  default UNQUOTED call still passes `argc=2`, and the option-
+  based cartesian path runs as before.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt rc_expand_param; a=(1 2); echo "x${a}y"'
+x1 2y
+$ ./target/debug/zshrs --zsh -c 'setopt rc_expand_param; a=(1 2); echo "x${a}y"'
+x1 2y
+
+# Regression: unquoted still distributes
+$ /opt/homebrew/bin/zsh -fc 'setopt rc_expand_param; a=(1 2); echo x${a}y'
+x1y x2y
+$ ./target/debug/zshrs --zsh -c 'setopt rc_expand_param; a=(1 2); echo x${a}y'
+x1y x2y
+
+# Regression: without rc_expand_param, DQ still joins via IFS
+$ ./target/debug/zshrs --zsh -c 'a=(1 2); echo x${a}y'
+x1 2y
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt rc_expand_param; a=(1 2); echo "prefix$a"'

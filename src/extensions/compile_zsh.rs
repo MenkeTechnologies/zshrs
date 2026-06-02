@@ -3625,6 +3625,20 @@ impl ZshCompiler {
                     WordSegment::Expansion(exp) => is_distribute_expansion(exp),
                     _ => false,
                 });
+                // If the parent word is DQ-wrapped (raw form starts and
+                // ends with Dnull), each Expansion segment inherits the
+                // DQ context. Track via the compiler's
+                // `dq_context_depth` counter so child compile_word_str
+                // calls can see they're being expanded inside DQ
+                // without us having to re-wrap (which would recurse).
+                // `parent_is_dq` is true if EITHER (a) the word itself
+                // is wrapped in DQ markers, or (b) the calling context
+                // already bumped `dq_context_depth` (e.g. cond's RHS
+                // pattern wants variable expansion but no filesystem
+                // glob — `[[ "$PATH" != *"$SCRIPTS"* ]]`).
+                let dq_marker_wrap =
+                    s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+                let parent_is_dq = dq_marker_wrap || self.dq_context_depth > 0;
                 let concat_builtin = if has_splice_seg {
                     Some(crate::vm_helper::BUILTIN_CONCAT_SPLICE)
                 } else if has_distribute_seg {
@@ -3641,20 +3655,6 @@ impl ZshCompiler {
                     // Value::Array because the option is set).
                     Some(crate::vm_helper::BUILTIN_CONCAT_DISTRIBUTE)
                 };
-                // If the parent word is DQ-wrapped (raw form starts and
-                // ends with Dnull), each Expansion segment inherits the
-                // DQ context. Track via the compiler's
-                // `dq_context_depth` counter so child compile_word_str
-                // calls can see they're being expanded inside DQ
-                // without us having to re-wrap (which would recurse).
-                // `parent_is_dq` is true if EITHER (a) the word itself
-                // is wrapped in DQ markers, or (b) the calling context
-                // already bumped `dq_context_depth` (e.g. cond's RHS
-                // pattern wants variable expansion but no filesystem
-                // glob — `[[ "$PATH" != *"$SCRIPTS"* ]]`).
-                let dq_marker_wrap =
-                    s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
-                let parent_is_dq = dq_marker_wrap || self.dq_context_depth > 0;
                 if dq_marker_wrap {
                     self.dq_context_depth += 1;
                 }
@@ -3721,7 +3721,22 @@ impl ZshCompiler {
                     }
                     if i > 0 {
                         if let Some(b) = concat_builtin {
-                            self.builder.emit(Op::CallBuiltin(b, 2), 0);
+                            // c:Src/options.c — RC_EXPAND_PARAM
+                            // applies UNQUOTED only. When the parent
+                            // word is DQ-wrapped, pass argc=1 to
+                            // BUILTIN_CONCAT_DISTRIBUTE so its handler
+                            // suppresses the cartesian path and joins
+                            // arrays via $IFS[0] regardless of the
+                            // option state. Bug #246 in docs/BUGS.md.
+                            // SPLICE and FORCED variants ignore argc.
+                            let argc = if parent_is_dq
+                                && b == crate::vm_helper::BUILTIN_CONCAT_DISTRIBUTE
+                            {
+                                1
+                            } else {
+                                2
+                            };
+                            self.builder.emit(Op::CallBuiltin(b, argc), 0);
                         } else {
                             self.builder.emit(Op::Concat, 0);
                         }
