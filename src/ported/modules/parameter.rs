@@ -2684,37 +2684,58 @@ pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {
 }
 
 /// Direct port of `getpmnameddir(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:1597.
-/// C body (c:1600-1620): `nameddirtab[name]` → emit nd.dir; otherwise
-/// fall back to getpwnam (same passwd path getpmuserdir uses).
+/// C body (c:1600-1615):
+/// ```c
+/// pm = (Param) hcalloc(sizeof(struct param));
+/// pm->node.nam = dupstring(name);
+/// pm->node.flags = PM_SCALAR;
+/// pm->gsu.s = &pmnamedir_gsu;
+/// if ((nd = (Nameddir) nameddirtab->getnode(nameddirtab, name)) &&
+///     !(nd->node.flags & ND_USERNAME))
+///     pm->u.str = dupstring(nd->dir);
+/// else {
+///     pm->u.str = dupstring("");
+///     pm->node.flags |= (PM_UNSET|PM_SPECIAL);
+/// }
+/// ```
+/// `nameddirs` enumerates `hash -d NAME=path` entries — entries
+/// added at runtime via the hash builtin (Src/hashnameddir.c:104,
+/// `addnameddirnode`). The username branch is a separate path
+/// (`userdirs`, getpmuserdir at c:1646).
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn getpmnameddir(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1597
-    let cname = std::ffi::CString::new(name).ok()?;
-    let pwd = unsafe { libc::getpwnam(cname.as_ptr()) }; // c:1611
-    let (value, found) = if !pwd.is_null() {
-        let dir = unsafe { std::ffi::CStr::from_ptr((*pwd).pw_dir) };
-        (dir.to_string_lossy().into_owned(), true)
-    } else {
-        (String::new(), false)
+    let (value, found) = match crate::ported::hashnameddir::nameddirtab()
+        .lock()
+        .ok()
+        .and_then(|t| t.get(name).cloned())
+    {
+        // c:1607 — `nd = nameddirtab->getnode(nameddirtab, name)`
+        Some(nd) if (nd.node.flags & crate::ported::zsh_h::ND_USERNAME) == 0 => {
+            // c:1608 — `!(nd->node.flags & ND_USERNAME)`
+            (nd.dir.clone(), true) // c:1609 nd->dir
+        }
+        _ => (String::new(), false), // c:1611 ""
     };
     let pm = Box::new(param {
+        // c:1601 hcalloc
         node: hashnode {
             next: None,
-            nam: name.to_string(),
+            nam: name.to_string(), // c:1602
             flags: if found {
-                (PM_SCALAR | PM_READONLY) as i32
+                PM_SCALAR as i32 // c:1603
             } else {
-                (PM_SCALAR | PM_READONLY | PM_UNSET | PM_SPECIAL) as i32
+                (PM_SCALAR | PM_UNSET | PM_SPECIAL) as i32 // c:1612
             },
         },
         u_data: 0,
         u_arr: None,
-        u_str: Some(value),
+        u_str: Some(value), // c:1609 / c:1611
         u_val: 0,
         u_dval: 0.0,
         u_hash: None,
-        gsu_s: None,
+        gsu_s: None, // c:1604 pmnamedir_gsu
         gsu_i: None,
         gsu_f: None,
         gsu_a: None,
@@ -2726,13 +2747,28 @@ pub fn getpmnameddir(ht: *mut HashTable, name: &str) -> Option<Param> {
         old: None,
         level: 0,
     });
-    Some(pm)
+    Some(pm) // c:1614
 }
 
 /// Direct port of `scanpmnameddirs(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:1618.
-/// C body (c:1621-1643): nameddirtab->filltable then walk each
-/// nameddir entry. Static-link path enumerates /etc/passwd via
-/// getpwent(3) — same data source nameddirtab fills from.
+/// C body (c:1621-1641):
+/// ```c
+/// memset(&pm, 0, sizeof(struct param));
+/// pm.node.flags = PM_SCALAR;
+/// pm.gsu.s = &pmnamedir_gsu;
+/// for (i = 0; i < nameddirtab->hsize; i++)
+///     for (hn = nameddirtab->nodes[i]; hn; hn = hn->next)
+///         if (!((nd = (Nameddir) hn)->node.flags & ND_USERNAME)) {
+///             pm.node.nam = hn->nam;
+///             if (func != scancountparams &&
+///                 ((flags & (SCANPM_WANTVALS|SCANPM_MATCHVAL)) ||
+///                  !(flags & SCANPM_WANTKEYS)))
+///                 pm.u.str = dupstring(nd->dir);
+///             func(&pm.node, flags);
+///         }
+/// ```
+/// Walks the `hash -d` named directories table, NOT /etc/passwd.
+/// The passwd enumeration belongs to `scanpmuserdirs` (c:1669).
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, func) vs C=(ht, func, flags)
 pub fn scanpmnameddirs(
@@ -2741,25 +2777,21 @@ pub fn scanpmnameddirs(
     flags: i32,
 ) {
     if let Some(f) = func {
-        unsafe {
-            libc::setpwent();
-        } // c:1622
-        loop {
-            let pwd = unsafe { libc::getpwent() }; // c:1626
-            if pwd.is_null() {
-                break;
+        if let Ok(tab) = crate::ported::hashnameddir::nameddirtab().lock() {
+            for (nam, nd) in tab.iter() {
+                // c:1627-1628
+                // c:1629 — `!(nd->node.flags & ND_USERNAME)`
+                if (nd.node.flags & crate::ported::zsh_h::ND_USERNAME) != 0 {
+                    continue;
+                }
+                let node = Box::new(hashnode {
+                    next: None,
+                    nam: nam.clone(), // c:1630
+                    flags: PM_SCALAR as i32, // c:1623 pm.node.flags
+                });
+                f(&node, flags); // c:1640
             }
-            let name = unsafe { std::ffi::CStr::from_ptr((*pwd).pw_name) };
-            let node = Box::new(hashnode {
-                next: None,
-                nam: name.to_string_lossy().into_owned(), // c:1632
-                flags: 0,
-            });
-            f(&node, flags); // c:1641
         }
-        unsafe {
-            libc::endpwent();
-        } // c:1643
     }
 }
 

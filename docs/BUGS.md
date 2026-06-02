@@ -16651,7 +16651,74 @@ later from a saved copy.
 
 ## #228 — `hash -d NAME=path` doesn't populate `nameddirs` introspection assoc
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `getpmnameddir` and `scanpmnameddirs` were
+porting the wrong C bodies (each walked `/etc/passwd` via
+`getpwent` / `getpwnam`, which is the `userdirs` path at
+parameter.c:1646-1696, not the `nameddirs` path at 1597-1641);
+re-ported faithfully against parameter.c, fixed 2026-06-02.
+
+**Root cause** — `src/ported/modules/parameter.rs::getpmnameddir`
+(c:1597) had been written as a copy of `getpmuserdir` (c:1646),
+calling `libc::getpwnam(name)` and emitting the matching passwd
+entry's `pw_dir`. Same for `scanpmnameddirs` (c:1618) which was
+written as a copy of `scanpmuserdirs` walking
+`libc::setpwent/getpwent/endpwent`. The actual C bodies walk
+`nameddirtab` (the runtime hash for `hash -d NAME=path` entries,
+defined at Src/hashnameddir.c:48). Consequence: `${nameddirs[wt]}`
+after `hash -d wt=/tmp` returned empty because we were asking
+the system passwd database for a user named `wt`, not consulting
+the named-directories hash that just got populated.
+
+Source-level proof from C:
+```c
+/* getpmnameddir c:1607-1612 */
+if ((nd = (Nameddir) nameddirtab->getnode(nameddirtab, name)) &&
+    !(nd->node.flags & ND_USERNAME))
+    pm->u.str = dupstring(nd->dir);
+/* scanpmnameddirs c:1627-1640 */
+for (i = 0; i < nameddirtab->hsize; i++)
+    for (hn = nameddirtab->nodes[i]; hn; hn = hn->next)
+        if (!((nd = (Nameddir) hn)->node.flags & ND_USERNAME)) {
+            pm.node.nam = hn->nam;
+            ...
+            func(&pm.node, flags);
+        }
+```
+
+Both walk `nameddirtab` filtered to entries WITHOUT `ND_USERNAME`
+(since `ND_USERNAME` marks passwd-derived entries that belong to
+`userdirs`, not `nameddirs`).
+
+**Fix:**
+- `src/ported/modules/parameter.rs::getpmnameddir` — rewritten
+  to call `nameddirtab().lock().get(name)`, filter
+  `flags & ND_USERNAME == 0`, return `nd.dir`; PM flags drop
+  `PM_READONLY` to match C `pm->node.flags = PM_SCALAR` exactly
+  (only the UNSET path ORs PM_SPECIAL too).
+- `src/ported/modules/parameter.rs::scanpmnameddirs` — rewritten
+  to walk `nameddirtab().lock().iter()`, skip
+  `flags & ND_USERNAME != 0`, emit one hashnode per entry.
+
+`userdirs` path (`getpmuserdir`, `scanpmuserdirs`) untouched —
+still uses `getpwnam/getpwent` which is correct for the C body at
+c:1646-1696.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'hash -d wt=/tmp; echo "nameddirs=[${nameddirs[wt]}]"'
+nameddirs=[/tmp]
+$ ./target/debug/zshrs --zsh -c 'hash -d wt=/tmp; echo "nameddirs=[${nameddirs[wt]}]"'
+nameddirs=[/tmp]
+
+$ /opt/homebrew/bin/zsh -fc 'hash -d a=/tmp; hash -d b=/var; for k in "${(@k)nameddirs}"; do echo "$k -> ${nameddirs[$k]}"; done | sort'
+a -> /tmp
+b -> /var
+$ ./target/debug/zshrs --zsh -c 'hash -d a=/tmp; hash -d b=/var; for k in "${(@k)nameddirs}"; do echo "$k -> ${nameddirs[$k]}"; done | sort'
+a -> /tmp
+b -> /var
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'hash -d foo=/tmp; echo "nameddirs=[${nameddirs[foo]}]"; echo "~foo"; hash -d'
@@ -16781,7 +16848,27 @@ done
 
 ## #230 — `echo "a\0b"` doesn't interpret `\0` as null byte (zsh: outputs literal NUL char)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "a\0b"' | od -c | head -1
+0000000    a  \0   b  \n
+$ ./target/debug/zshrs --zsh -c 'echo "a\0b"' | od -c | head -1
+0000000    a  \0   b  \n
+
+$ /opt/homebrew/bin/zsh -fc 'echo "a\012b"' | od -c | head -1
+0000000    a  \n   b  \n
+$ ./target/debug/zshrs --zsh -c 'echo "a\012b"' | od -c | head -1
+0000000    a  \n   b  \n
+```
+
+Both shells now interpret `\0` as NUL and `\012` as newline,
+matching `getkeystring()` (Src/utils.c) which `bin_echo`
+(Src/builtin.c) dispatches through. Likely closed by an earlier
+echo-escape sweep landing the full `\0NNN` octal lookup path.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "a\0b"' | od -c | head -1
