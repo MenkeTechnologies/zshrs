@@ -13143,7 +13143,16 @@ is just `$(cmdsub)` directly.
 
 ## #174 — `type fn` (user-defined function) shows "from zsh" suffix
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'foo() { echo v1; }; functions[bar]="$functions[foo]"; type bar'
+bar is a shell function           # matches zsh exactly
+```
+
+Likely fixed by prior `type` / `printfunc` work. Doc-only flip.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'foo() { echo v1; }; functions[bar]="$functions[foo]"; type bar'
@@ -13239,7 +13248,16 @@ force base display.
 
 ## #176 — Bare `echo "\033"` doesn't interpret backslash escapes by default
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'echo "\033"' | od -c
+0000000  033  \n                      # matches zsh exactly
+```
+
+Likely fixed by prior `echo` builtin work. Doc-only flip.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "\033"' | od -c
@@ -13350,7 +13368,59 @@ fi
 
 ## #178 — `IFS` doesn't affect cmdsub field-splitting in `for`/array context
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `compile_for_words` no longer double-emits `BUILTIN_WORD_SPLIT`; the inner emit (from `compile_word_str`'s cmdsub arm) now does the IFS split, the outer suppressed.
+
+**Root cause** — for `for x in $(cmd)`, two `WORD_SPLIT` opcodes
+were emitted:
+
+1. The inner one from `compile_word_str` at line 3551
+   (cmdsub-handling arm) when not in DQ/assign context.
+2. The outer one from `compile_for_words` after
+   `compile_word_str` returns, gated on `has_unquoted_expansion`.
+
+The first split correctly partitioned `$(cmd)` output by IFS,
+returning a `Value::Array`. The second split then called
+`pop().to_str()` which JOINED the Array elements with space
+(per `Value::Array.to_str()` semantics), then ran `multsub` on
+the joined string. With `IFS=","`, the joined `"a b c"` had no
+comma to split on — it collapsed back to a single 1-element
+Array `["a b c"]`.
+
+This bug only manifested with non-default IFS because joining
+the split Array with space happened to match the default IFS
+separators, so the second split re-produced the same shape.
+Non-space-only IFS (`,`, `:`, etc.) exposed the double-split
+collapse.
+
+**C-source reference** — `Src/exec.c` — `for` loop runs ONE
+wordsplit pass on each list element.
+
+**Fix** — bump `assign_context_depth` around the
+`compile_word_str(word)` call when `has_unquoted_expansion(word)`
+is true. This suppresses `compile_word_str`'s internal
+WORD_SPLIT emit (per the existing assign-context check at line
+3552-3556). The outer `if has_unquoted_expansion` block then
+emits a single WORD_SPLIT on the un-split cmdsub result.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'IFS=,; for x in $(echo "a,b,c"); do printf "[%s]" "$x"; done; echo'
+[a][b][c]                              # was [a b c]
+
+# Default IFS regression:
+$ ./target/debug/zshrs --zsh -c 'for x in $(echo "a b c"); do printf "[%s]" "$x"; done; echo'
+[a][b][c]
+
+# IFS=, with internal spaces preserved within each comma-delimited field:
+$ ./target/debug/zshrs --zsh -c 'IFS=,; for x in $(echo "a b,c d"); do printf "[%s]" "$x"; done; echo'
+[a b][c d]
+```
+
+All three match zsh exactly. Regression suite unchanged
+(114 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'IFS=$'\''\n'\''; for x in $(printf "a\nb\nc"); do echo "[$x]"; done'
