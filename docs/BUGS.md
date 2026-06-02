@@ -10928,7 +10928,71 @@ echo "key=${(qq)config}" >> /etc/myapp.conf
 
 ## #145 — `${(k)h[name]}` key-existence query errors "bad substitution"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — compile_zsh fast-path now emits BUILTIN_ASSOC_HAS_KEY runtime check (was constant-folding to the key text).
+
+**Root cause** — `src/extensions/compile_zsh.rs` had a fast-path for
+`(k)NAME[simple_key]` that constant-folded to the literal subscript
+text:
+
+```rust
+if only_k_flag && key_is_simple {
+    let key_const = self.builder.add_constant(Value::str(key));
+    self.builder.emit(Op::LoadConst(key_const), 0);
+    return;
+}
+```
+
+The comment said "the subscript IS the key" — true for the
+present-key case (returns `red` for `${(k)h[red]}`), but wrong for
+the absent-key case (returns `nope` instead of empty for
+`${(k)h[nope]}` when `nope` isn't in the assoc).
+
+Note: original report said zshrs errored with "bad substitution"
+on the present-key case; at the time of the fix it was actually
+returning the literal text (post-fast-path) — the bug had evolved
+but the absent-key gap remained.
+
+**C-source reference** — `Src/params.c:1396-1431` (assoc-subscript
+existence check). The `(k)` flag with a literal subscript returns
+the key on present, empty on absent. zshparam(1) "Parameter
+Expansion Flags" documents this as the canonical existence query.
+
+**Fix** — three parts:
+
+1. New opcode `BUILTIN_ASSOC_HAS_KEY` (id 531) in
+   `src/fusevm_bridge.rs`: pops `[assoc_name, key]`, returns
+   `Value::str(key)` if the key is present in the assoc, empty
+   `Value::str("")` otherwise. Uses `gethkparam(name)` to list
+   the actual keys.
+2. `src/extensions/compile_zsh.rs` `(k)NAME[simple_key]` fast-path
+   now emits this opcode instead of constant-folding the subscript
+   text.
+3. Cite the C source location and the existence-vs-text distinction
+   in the comment for future readers.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(red 1 blue 2); echo "[${(k)h[red]}]"; echo "[${(k)h[nope]}]"; echo "[${(k)h[blue]}]"'
+[red]
+[]
+[blue]
+# Matches zsh exactly. Previously [red] [nope] [blue] (literal subscript).
+
+# Real-world idiom from impact section:
+$ ./target/debug/zshrs --zsh -c 'typeset -A user_perms=(alice read bob write); for u in alice bob charlie; do if [[ -n "${(k)user_perms[$u]}" ]]; then echo "$u has perms"; fi; done'
+alice has perms
+bob has perms
+# (no charlie line — now correctly absent)
+
+# All-keys regressions still work:
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(red 1 blue 2); echo "${(k)h}"'    # → red blue
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(red 1 blue 2); echo "${(k)h[@]}"' # → red blue
+```
+
+Regression suite unchanged (114 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h=(red 1 blue 2); echo "[${(k)h[red]}]"; echo "[${(k)h[nope]}]"'

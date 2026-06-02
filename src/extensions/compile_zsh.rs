@@ -3118,12 +3118,23 @@ impl ZshCompiler {
                     || (only_v_flag && key_starts_with_value_flag)
                     || (only_v_or_V_flag && key_is_simple)
                     || (only_kv_flag && key_is_simple);
-                // `(k)NAME[simple_key]` — return the key (subscript
-                // text) instead of doing ARRAY_INDEX which would
-                // return the value.
+                // `(k)NAME[simple_key]` — KEY-EXISTENCE query per
+                // zsh: present → return key, absent → return empty
+                // (Src/params.c:1396-1431 + zshparam(1) "(k)" flag
+                // semantics). Previously a constant-fold to the
+                // subscript text — that returned the literal key text
+                // unconditionally, missing the existence check (Bug
+                // #145 in docs/BUGS.md).
+                //
+                // Use BUILTIN_ASSOC_HAS_KEY to test at runtime and
+                // emit the key text on hit, empty on miss.
                 if only_k_flag && key_is_simple {
+                    let name_const = self.builder.add_constant(Value::str(base));
                     let key_const = self.builder.add_constant(Value::str(key));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
                     self.builder.emit(Op::LoadConst(key_const), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ASSOC_HAS_KEY, 2), 0);
                     return;
                 }
                 if redundant {
