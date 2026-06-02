@@ -5241,7 +5241,15 @@ impl ZshCompiler {
             // Ternary operator. ArithCompiler's emit path doesn't
             // implement `?:` and silently drops the expression,
             // leaving the LHS unset. MathEval handles ternary fully.
-            || inner_arith.contains('?');
+            || inner_arith.contains('?')
+            // c:Src/math.c — quoted identifiers in arith
+            // (`(( "abc" == "abc" ))`) are stripped of quotes and
+            // resolved as variable names. ArithCompiler's lexer
+            // doesn't handle quote-stripping; route to MathEval
+            // which already treats `"`/`\u{9e}` (Dnull) as
+            // whitespace at math.rs:1365. Bug #49 in docs/BUGS.md.
+            || inner_arith.contains('"')
+            || inner_arith.contains('\u{9e}');
         if needs_eval {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
