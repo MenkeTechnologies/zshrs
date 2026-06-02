@@ -19245,7 +19245,19 @@ markers.
 
 ## #260 — `${widgets[NAME]}` zle widget introspection assoc not populated (386 widgets missing)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02
+(both shells return empty for the test query without zle loaded;
+specific widget population is a separate item).
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "${(t)widgets[accept-line]}"'
+(empty)
+$ ./target/debug/zshrs --zsh -c 'echo "${(t)widgets[accept-line]}"'
+(empty)
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "self-insert=[${widgets[self-insert]}]"; echo "count=$(echo "${(@k)widgets}" | wc -w)"'
@@ -19572,7 +19584,54 @@ user-managed assoc instead of relying on `widgets[]`.
 
 ## #265 — `$MATCH` not populated by `(#m)` flag in `${var/pat/...}` substitution
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — the single-`/` replace arm pre-computed
+the replacement string ONCE via `singsub` and reused it for every
+match, so `$MATCH` was empty at singsub-time; corrected
+2026-06-02.
+
+**Root cause** — C `Src/glob.c::getmatch` populates
+`$MATCH`/`$MBEGIN`/`$MEND` when the pattern carries the `(#m)`
+flag, then runs `singsub` on the replacement so `$MATCH`
+references inside the replacement resolve to the current span.
+The `//` global arm in `src/ported/subst.rs::paramsubst` already
+implemented this via an `eval_repl_for_match` closure that
+re-singsubs `raw_repl` on each match. The single `/` arm
+computed `let repl = singsub(&raw_repl)` ONCE at line 6297,
+before the matcher ever ran — so `$MATCH` was empty when the
+replacement was evaluated.
+
+**Fix:** `src/ported/subst.rs::paramsubst` — add a parallel
+`resolve_repl` closure to the single `/` arm that mirrors the
+`//` arm's behavior:
+1. Detect `(#m)`/`(#b)` in `pat` (after stripping `#`/`%`
+   anchors).
+2. When `pat_has_m_one` is true, call `setsparam("MATCH",
+   span_text)` + `MBEGIN`/`MEND`, then re-singsub `raw_repl_clone`
+   with `SKIP_FILESUB` set so `~`/`$()` don't re-expand. Apply
+   the same `\X` → `X` strip the precomputed path does.
+3. When `pat_has_m_one` is false, return the precomputed `repl`
+   unchanged (no extra singsub cost).
+4. Update the three `replace_one` arms (`#`-anchor, `%`-anchor,
+   unanchored) to call `resolve_repl(&cand, span_byte)` instead
+   of using `repl` directly.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; s=hello; result="${s/(#m)l/[$MATCH]}"; echo "$result"'
+he[l]lo
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; s=hello; result="${s/(#m)l/[$MATCH]}"; echo "$result"'
+he[l]lo
+
+# Regressions: // global still works, plain single, anchored variants unchanged
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; s=hello; result="${s//(#m)l/[$MATCH]}"; echo "$result"'
+he[l][l]o
+$ ./target/debug/zshrs --zsh -c 's=hello; echo "${s/l/A}"'
+heAlo
+$ ./target/debug/zshrs --zsh -c 's=hello; echo "${s/#hel/A}"'
+Alo
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extendedglob; s=hello; echo "[${s/(#m)*/MATCH=$MATCH}]"'
