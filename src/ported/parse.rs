@@ -8119,8 +8119,20 @@ fn parse_cond_primary() -> Option<ZshCond> {
     // LX2_DASH — `-` always becomes Dash, untokenized later). Match
     // either form here, and use char-count not byte-count since Dash
     // is 2 UTF-8 bytes (`\xc2\x9b`).
+    //
+    // c:Src/parse.c par_cond — when the leading token is `-` followed
+    // ENTIRELY by digits (`-5`, `-123`), it's a numeric literal
+    // operand, not a unary test flag. zsh's parser checks the C
+    // `isdigit` of the trailing chars to disambiguate; without the
+    // check, `[[ -5 -lt -3 ]]` reads `-5` as a one-arg test flag,
+    // then `-lt` as the operand, then `-3` as a leftover token —
+    // emitting "unknown condition: -5" and falling through to a
+    // command-not-found dispatch on `-3`. Bug #121 in docs/BUGS.md.
     let s1_chars: Vec<char> = s1.chars().collect();
-    if s1_chars.len() == 2 && IS_DASH(s1_chars[0]) {
+    let is_negative_number = s1_chars.len() >= 2
+        && IS_DASH(s1_chars[0])
+        && s1_chars[1..].iter().all(|c| c.is_ascii_digit());
+    if s1_chars.len() == 2 && IS_DASH(s1_chars[0]) && !is_negative_number {
         let s2 = match tok() {
             STRING_LEX => {
                 let s = tokstr().unwrap_or_default();

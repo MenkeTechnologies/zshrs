@@ -8724,7 +8724,44 @@ done
 
 ## #121 — `[[ -N -op -M ]]` with negative numbers errors "unknown condition"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — parse_cond_primary distinguishes negative literals from unary flags.
+
+**Root cause** — `src/ported/parse.rs::parse_cond_primary` at line
+8123 checked `s1_chars.len() == 2 && IS_DASH(s1_chars[0])` to
+detect a `-X` unary test flag (`-d`, `-f`, `-n`, etc.). For
+`-5`, that pattern matches too — `len=2`, first char is `-` —
+so the parser routed `-5` as a unary file-test flag, consumed
+`-lt` as its operand, and left `-3` dangling as an unrecognized
+trailing token.
+
+C-zsh's `Src/parse.c::par_cond_2` disambiguates by checking if
+the chars after the leading `-` are all digits — that signals a
+numeric literal operand, not a flag.
+
+**Fix** — Add an `is_negative_number` predicate (chars after
+the leading `-` are all `is_ascii_digit()`). When it's a
+numeric literal, skip the unary-flag arm and fall through to
+the binary-operator path. The binary path then sees `-lt` /
+`-eq` etc. and emits `Binary(s1, op, s2)` correctly.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c '[[ -5 -lt -3 ]] && echo yes'
+yes
+$ ./target/debug/zshrs --zsh -c '[[ -100 -lt -50 ]] && echo yes'
+yes
+$ ./target/debug/zshrs --zsh -c 'delta=$((3 - 5)); [[ $delta -lt 0 ]] && echo below'
+below
+# Regression checks: unary flags still work.
+$ ./target/debug/zshrs --zsh -c '[[ -d /tmp ]] && echo dir'
+dir
+$ ./target/debug/zshrs --zsh -c '[[ -n "x" ]] && echo nonempty'
+nonempty
+$ ./target/debug/zshrs --zsh -c '[[ 5 -lt 10 ]] && echo yes'
+yes
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ -5 -lt -3 ]] && echo "yes" || echo "no"'
