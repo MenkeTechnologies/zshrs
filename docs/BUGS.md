@@ -5833,7 +5833,29 @@ output=$(f 2>&1 | sed 's/:[0-9]*: \([0-9]*\):/: \1:/')
 
 ## #87 — `setopt` (no args) outputs nothing under `-fc`; zsh shows defaults
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — original report tested with
+`./target/debug/zshrs --zsh -c 'setopt'`, which doesn't apply `-f`'s
+option flips. With the actual `-fc` invocation matching the zsh
+control, both shells now output identically:
+```
+$ /opt/homebrew/bin/zsh -fc 'setopt'
+nohashdirs
+norcs
+$ ./target/debug/zshrs -fc 'setopt'
+nohashdirs
+norcs
+```
+And `$options[rcs]`/`$options[hashdirs]` both return `off` under
+`-fc`, matching zsh. The listing logic in
+`printoptionnode` (`src/ported/options.rs:128`) correctly filters by
+"differs from default" — likely a prior fix landed since the report.
+
+`--zsh -c` is a zshrs-specific flag that selects the zsh-emulation
+parser/runtime without applying the no-rcs / no-hashdirs side
+effects of `-f`. That's intentional: rcs/hashdirs default ON in zsh,
+and `--zsh` reflects that default state.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt'
@@ -5882,7 +5904,22 @@ echo "rcs=${options[rcs]} hashdirs=${options[hashdirs]}"
 
 ## #88 — `setopt nounset` doesn't fire on undefined var in arith `$((x+1))`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `getmathparam` (`src/ported/math.rs:200`)
+fell through to `mnumber { l: 0, ... }` on unresolved variables
+without checking `nounset`. C's `Src/math.c:345-346` emits
+`zerr("%s: parameter not set", mptr->lval)` when `unset(UNSET)`
+(i.e., nounset enabled) and the lookup fails. Added the equivalent
+check at the bottom of the fall-through path: if `!isset(UNSET)`,
+call `zerr` (which sets `errflag`); script abort then propagates
+via bug #74's `EXIT_PENDING` mechanism.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `setopt nounset; unset x; echo $((x+1))` → both error
+  `x: parameter not set`, EC=1, no `after`.
+- `unset x; echo $((x+1))` (no nounset) → both print `1`, EC=0.
+- `setopt nounset; x=5; echo $((x+1))` → both print `6`, EC=0.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt nounset; unset x; echo $((x+1)); echo "after"'
