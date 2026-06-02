@@ -4372,7 +4372,24 @@ pushd $OLDPWD    # both shells: bounce back to /a
 
 ## #68 — `trap` listing prints in insertion order, not signal number
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `bin_trap` in `src/ported/builtin.rs:9509`
+iterated the trap map directly: `for (sig, body) in traps.iter()`.
+`traps_table()` is a `HashMap<String, String>` whose iteration order
+is non-deterministic — the listing came out in random order while
+zsh walks `sigtrapped[]` by index (HUP=1 → INT=2 → … → USR1=30).
+
+Fix: sort the (name, body) pairs by `getsigidx(name)` before
+printing, so the iteration matches C's array walk
+(`Src/builtin.c:7359-7375`). Unknown signal names sort last via
+`i32::MAX`.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `trap "echo h" HUP; trap "echo u" USR1; trap "echo c" INT; trap
+  "echo t" TERM; trap` → both produce `HUP INT TERM USR1` order.
+- With EXIT/HUP/INT mix — both produce same order (EXIT=0 first).
+- Empty body trap (`trap "" PIPE`) — same listing form in both.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'trap "echo h" HUP; trap "echo u" USR1; trap "echo c" INT; trap "echo t" TERM; trap'
@@ -4421,7 +4438,30 @@ new_traps=$(trap | sort)
 
 ## #69 — `$sysparams` auto-loaded without `zmodload zsh/system`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `init_partab_params` (Rust-only init
+helper at `src/vm_helper.rs`) seeded paramtab with placeholder Params
+for EVERY `PARTAB` / `PARTAB_ARRAY` entry on startup, including
+`sysparams`/`errnos` (provided by `zsh/system`, C
+`Src/Modules/system.c:902,904`) and `mapfile` (`zsh/mapfile`). zsh
+only registers those after explicit `zmodload`.
+
+Two-part fix:
+1. `init_partab_params` now skips a `module_gated` allowlist
+   (`sysparams`, `errnos`, `mapfile`).
+2. New `seed_partab_param` + `module_gated_params_for(module)` helpers;
+   `modulestab::load_module` (`src/ported/module.rs:1175`) calls them
+   after the module boot completes, so `zmodload zsh/system` flips
+   `${+sysparams}` from `0` to `1`.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `${+sysparams}` without `zmodload` — both `0`.
+- `zmodload zsh/system; ${+sysparams}` — both `1`.
+- `zmodload zsh/system; sysparams[pid]` — both return the live pid.
+- `${+errnos}` / `${+mapfile}` — both `0` by default.
+- Non-gated magic-assocs (`${+aliases}`, `${+commands}`,
+  `${+functions}`) still return `1` — unchanged.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "${+sysparams}"'

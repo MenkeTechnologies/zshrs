@@ -9510,7 +9510,20 @@ pub fn bin_trap(
         // c:7357
         queue_signals(); // c:7358
         let traps = traps_table().lock().map(|t| t.clone()).unwrap_or_default();
-        for (sig, body) in traps.iter() {
+        // c:Src/builtin.c:7359-7375 — C walks `sigtrapped[]` by signal
+        // number index, so the listing is naturally sorted by sig num
+        // (HUP=1, INT=2, …, USR1=30, …). zshrs stores traps in a
+        // HashMap<name, body> whose iteration order is non-deterministic
+        // — bug #68 in docs/BUGS.md: `trap` output came out in random
+        // order vs zsh's stable signum-sorted view. Sort by getsigidx
+        // before printing so the iteration matches C's array walk.
+        let mut sorted: Vec<(String, String)> =
+            traps.into_iter().map(|(k, v)| (k, v)).collect();
+        sorted.sort_by_key(|(sig, _)| {
+            let idx = getsigidx(sig);
+            if idx == -1 { i32::MAX } else { idx }
+        });
+        for (sig, body) in &sorted {
             // c:7359
             // c:7370-7375 — `printf("trap -- "); quotedzputs(...); printf(" %s\n", name);`
             print!("trap -- "); // c:7372
