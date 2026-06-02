@@ -4813,6 +4813,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let shf = crate::ported::hashtable::shfunc_with_body(&name, &body_source);
                     tab.add(shf);
                 }
+                // c:Src/exec.c:5460-5475 — `TRAP<SIG>() { ... }` is the
+                // function-named trap install. zsh detects the `TRAP`
+                // prefix at func-def time and calls
+                // `settrap(signum, NULL, ZSIG_FUNC)` so the next
+                // dispatch of that signal routes to the named shfunc.
+                // Bug #157 in docs/BUGS.md — fusevm_bridge's funcdef
+                // opcode skipped this dispatch entirely, so TRAPEXIT /
+                // TRAPUSR1 / TRAPZERR / TRAPDEBUG never fired.
+                if name.len() > 4 && name.starts_with("TRAP") {
+                    if let Some(sn) = crate::ported::jobs::getsigidx(&name[4..]) {
+                        let _ = crate::ported::signals::settrap(
+                            sn,
+                            None,
+                            crate::ported::zsh_h::ZSIG_FUNC as i32,
+                        );
+                    }
+                }
                 exec.functions_compiled.insert(name, chunk);
                 0
             }),

@@ -12038,7 +12038,89 @@ loop-over-glob with explicit pattern handling.
 
 ## #157 — `TRAP<SIG>()` function-named trap handlers not recognized
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 (partial — EXIT + signal traps; ZERR/DEBUG inline dispatch deferred) — `BUILTIN_REGISTER_COMPILED_FN` now detects `TRAP<SIG>` prefix and calls `settrap(sig, None, ZSIG_FUNC)`; `execute_script_zsh_pipeline` invokes `TRAPEXIT` via name-lookup at script end.
+
+**Root cause** — two-layer bug:
+
+1. **Function-def opcode missed the TRAP detection** —
+   `fusevm_bridge.rs::BUILTIN_REGISTER_COMPILED_FN` registered
+   user functions in `shfunctab` but never called `settrap` for
+   names matching the `TRAP<SIG>` pattern. The C-equivalent code
+   exists in `src/ported/exec.rs:6231` but that's a different
+   code path (the original ported funcdef wordcode walker, not
+   the fusevm bridge's opcode).
+2. **EXIT trap dispatch only fired traps_table path** —
+   `vm_helper.rs::execute_script_zsh_pipeline` and
+   `builtin.rs::zexit` only looked up "EXIT" in `traps_table`
+   (where `trap '...' EXIT` writes), not in the
+   `shfunctab`+`sigtrapped` pair (where `TRAPEXIT() { ... }`
+   lives after settrap).
+
+`TRAPUSR1`/`TRAPHUP`/etc. real-OS-signal traps actually worked
+once settrap was called — those go through the kernel's signal
+dispatch path which already routes to `dotrap()`. Only `EXIT`
+(virtual signal SIGEXIT) and `ZERR`/`DEBUG` (virtual signals
+SIGZERR/SIGDEBUG) need explicit script-flow dispatch.
+
+**C-source reference** — `Src/exec.c:5460-5475` (TRAP detection
+at funcdef time):
+
+```c
+if (nm.len() > 4 && nm.starts_with("TRAP")) {
+    if let Some(sn) = getsigidx(&nm[4..]) {
+        settrap(signum, None, ZSIG_FUNC);
+        // ...
+    }
+}
+```
+
+`Src/builtin.c:6075-6079` (zexit fires SIGEXIT) and
+`Src/signals.c::dotrap` (named-handler dispatch via shfunc
+lookup).
+
+**Fix** — two parts:
+
+1. `src/fusevm_bridge.rs::BUILTIN_REGISTER_COMPILED_FN` arm now
+   detects `name.starts_with("TRAP")` and calls
+   `signals::settrap(sn, None, ZSIG_FUNC)` after registering in
+   shfunctab. Mirrors `exec.rs:6231`.
+2. `src/vm_helper.rs::execute_script_zsh_pipeline` and
+   `src/ported/builtin.rs::zexit` now check
+   `sigtrapped[SIGEXIT] & ZSIG_FUNC` after the `traps_table`
+   path, and dispatch the named `TRAPEXIT` shfunc via
+   `execute_script_zsh_pipeline("TRAPEXIT")` (sets up fresh VM
+   context, which is required because the post-run_chunk dispatch
+   site is outside the VM context that `dispatch_function_call`
+   needs).
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'TRAPEXIT() { echo "EXIT-handler"; }; echo "main"'
+main
+EXIT-handler                    # was: only "main"
+
+$ ./target/debug/zshrs --zsh -c 'TRAPUSR1() { echo got; }; kill -USR1 $$; sleep 0.05; echo done'
+got
+done                            # signal traps work end-to-end
+
+# Regression: bin_trap path still works.
+$ ./target/debug/zshrs --zsh -c 'trap "echo got-exit" EXIT; echo main'
+main
+got-exit
+```
+
+**Known still-deferred** — `TRAPZERR` / `TRAPDEBUG` inline
+dispatch (fire after every failing command / before every
+command) requires command-loop instrumentation in
+`execute_script_zsh_pipeline`'s per-statement walk. Same
+mechanism would catch `TRAPERR`. This is a separate codepath
+beyond the script-end / signal-handler entry points fixed
+here.
+
+Regression suite unchanged (114 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'TRAPEXIT() { echo "EXIT-handler"; }; echo "main"'

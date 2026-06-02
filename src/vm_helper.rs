@@ -1356,9 +1356,19 @@ impl ShellExecutor {
         let chunk = compiler.compile(&program);
         let status = self.run_chunk(chunk, "execute_script_zsh_pipeline")?;
 
-        // Fire EXIT trap if set. Remove first to prevent infinite
-        // recursion, then run. Reads from canonical traps_table —
-        // `bin_trap` writes (`Src/builtin.c`).
+        // Fire EXIT trap if set. Two storage paths:
+        //   (a) `trap 'cmd' EXIT` writes the body text into
+        //       `traps_table` via bin_trap (Src/builtin.c) — fire
+        //       directly via execute_script.
+        //   (b) `TRAPEXIT() { ... }` function-named form goes
+        //       through settrap(SIGEXIT, None, ZSIG_FUNC) at
+        //       funcdef time (fusevm_bridge.rs BUILTIN_REGISTER_COMPILED_FN
+        //       arm) and lives in shfunctab + sigtrapped — fire
+        //       via dotrap(SIGEXIT) which dispatches the named
+        //       shfunc. Bug #157 in docs/BUGS.md.
+        // Remove the trap from `traps_table` first to prevent
+        // infinite recursion of `(a)`; `(b)`'s sigtrapped flag
+        // is cleared by dotrap's own intrap guard.
         let exit_body = crate::ported::builtin::traps_table()
             .lock()
             .ok()
@@ -1375,6 +1385,28 @@ impl ShellExecutor {
             let _ = self.execute_script_zsh_pipeline(&action);
             self.set_last_status(status);
         }
+        // c:Src/signals.c::dotrap(SIGEXIT) — fire TRAPEXIT() shfunc
+        // if installed via the function-name path. The TRAPEXIT()
+        // form goes through settrap(SIGEXIT, None, ZSIG_FUNC) at
+        // funcdef time (sets sigtrapped[SIGEXIT] |= ZSIG_FUNC).
+        // Dispatching from here AFTER run_chunk returns means we're
+        // outside the VM context — dotrap can't safely re-enter
+        // via dispatch_function_call (which uses with_executor).
+        // Route through execute_script_zsh_pipeline which sets up
+        // a fresh VM context — invoke the function by name.
+        let trapped = crate::ported::signals::sigtrapped
+            .lock()
+            .ok()
+            .and_then(|g| g.get(crate::signals_h::SIGEXIT as usize).copied())
+            .unwrap_or(0);
+        if (trapped & crate::ported::zsh_h::ZSIG_FUNC as i32) != 0 {
+            // The TRAP<SIG> function is stored in shfunctab as
+            // "TRAPEXIT"; calling it by name re-enters
+            // execute_script_zsh_pipeline with a fresh VM context.
+            let _ = self.execute_script_zsh_pipeline("TRAPEXIT");
+        }
+        // Preserve script status; trap body shouldn't override it.
+        self.set_last_status(status);
 
         let _ = status;
         Ok(self.last_status())
