@@ -5556,10 +5556,20 @@ fn is_splice_expansion(s: &str) -> bool {
         // each element becomes its own arg; surrounding literals
         // should stick to first/last (so `[${(@)a}]` for empty `a`
         // still emits `[]` rather than dropping the brackets).
+        // Also: `(z)`/`(s.….)`/`(f)`/`(0)`/`(w)` produce a word
+        // array from a scalar; in DQ context with surrounding
+        // literals zsh first/last-sticks (`"[${(z)s}]"` → first
+        // arg `[foo`, last arg `baz]`, middle bare) rather than
+        // cartesian. Bug #37 in docs/BUGS.md: routing through
+        // CONCAT_DISTRIBUTE produced `"[foo] [bar] [baz]"` cartesian
+        // instead of `"[foo bar baz]"` splice. The is_distribute
+        // path was claiming (z)/(s)/(f)/(0)/(w) for itself; splice
+        // should win since it more closely matches C zsh's
+        // first/last-sticking semantics for array splats in DQ.
         if let Some(rest) = inner.strip_prefix('(') {
             if let Some(close) = rest.find(')') {
                 let flags = &rest[..close];
-                if flags.chars().any(|c| c == '@') {
+                if flags.chars().any(|c| matches!(c, '@' | 'z' | 's' | 'f' | '0' | 'w')) {
                     return true;
                 }
             }

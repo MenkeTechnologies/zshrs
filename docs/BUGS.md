@@ -2196,7 +2196,7 @@ cat /tmp/a /tmp/b | other_cmd      # explicit concat
 
 ## #37 — `${(z)str}` inside double quotes splits fields unexpectedly
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=" foo bar baz "; echo "[${(z)a}]"'
@@ -2215,23 +2215,47 @@ echo "[${b[@]}]"` → `[foo bar baz]` in both).
 
 The divergence is specific to `"${(z)a}"` interpolation.
 
-**Where** — `src/ported/subst.rs::paramsubst` treats the `(z)`
-result as an array even when the surrounding context is a quoted
-scalar. The IFS-rejoin step is missing for quoted `(z)` results.
+**Root cause** — `src/extensions/compile_zsh.rs` segment splitter
+classified `${(z)NAME}` (and `${(s/…/)NAME}`, `${(f)NAME}`,
+`${(0)NAME}`, `${(w)NAME}`) as DISTRIBUTE expansions —
+`is_distribute_expansion` returns true for flag chars `f z w 0 s`
+at line 5623. The CONCAT operator emitted around them was
+`BUILTIN_CONCAT_DISTRIBUTE_FORCED` which produces cartesian
+output: every array element paired with every literal segment.
+For `"[${(z)a}]"` with `a=" foo bar baz "`, that gave three
+results `"[foo]"`, `"[bar]"`, `"[baz]"` — the BUGS.md bug.
 
-Related: `(s/sep/)` likely has the same issue:
-```sh
-$ zshrs --zsh -c 'a="x,y,z"; echo "[${(s/,/)a}]"'
-[x] [y] [z]
+The correct concat operator is `BUILTIN_CONCAT_SPLICE` (first/
+last sticking): first arg gets the prefix, last gets the suffix,
+middle args are bare. `[foo`, `bar`, `baz]` — which `echo` joins
+with space → `[foo bar baz]`. That's what zsh does because
+shsplit/sepsplit results are SPLICE-shaped, not DISTRIBUTE-shaped.
 
-$ /opt/homebrew/bin/zsh -fc 'a="x,y,z"; echo "[${(s/,/)a}]"'
-[x y z]
-```
+The misdiagnosis in the original BUGS.md ("IFS-rejoin step
+missing") would have broken `print -l "${(z)a}"` which correctly
+splats three lines in zsh — the right shape IS the array, just
+with splice not cartesian semantics for concat.
 
-**Workaround** — use `(j: :)` to rejoin explicitly:
-```sh
-echo "[${(j: :)${(z)a}}]"   # both: [foo bar baz]
-```
+**Fix** (`src/extensions/compile_zsh.rs::is_splice_expansion`) —
+add flag chars `z`, `s`, `f`, `0`, `w` to the splice-detection
+arm alongside the existing `@`. Splice takes priority over
+distribute in the concat-operator selection (compile_zsh.rs:
+3539-3565), so the new classification routes through
+`BUILTIN_CONCAT_SPLICE` and produces first/last sticking.
+
+Verified:
+
+  * `"[${(z)a}]"` → `[foo bar baz]` (BUGS.md case).
+  * `"[${(s/,/)a}]"` → `[x y z]` (related case).
+  * `"[${(f)a}]"` → `[line1 line2 line3]`.
+  * `print -l "${(z)a}"` → 3 lines (splat preserved).
+  * `print -l "${(s/,/)a}"` → 3 lines.
+  * `print -l "${(f)a}"` → 3 lines.
+  * `"[${a[@]}]"` / `"[${(@)a}]"` regressions: unchanged
+    (already splice).
+
+zshrs_shell regression: 925/127 (baseline preserved with
+`--test-threads=1`).
 
 ---
 
