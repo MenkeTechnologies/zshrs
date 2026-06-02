@@ -12491,8 +12491,40 @@ fn parse_int_arg(s: &str) -> i64 {
         // parse-int falls back to math.rs::mathevall on failure
         // (returning 0 on real error, matching zsh's
         // "no math result" fallback).
+        //
+        // c:Src/utils.c:2511 — `zstrtol` accepts overflow with
+        // truncation and a "number truncated after N digits"
+        // warning. Bug #258 in docs/BUGS.md — plain bare
+        // `parse::<i64>` returns None on overflow, so the math
+        // fallback fires and silently returns 0. Mirror C by
+        // detecting all-digit overflow input, emitting the
+        // warning, and wrapping via u128 → i64 cast (matching
+        // zsh's truncated-then-cast semantics).
         match body.parse::<i64>() {
             Ok(n) => n,
+            Err(_) if body.chars().all(|c| c.is_ascii_digit()) && !body.is_empty() => {
+                // i64 overflow on an all-digit input. C zstrtol
+                // (Src/utils.c:2511) accepts digits up to the
+                // overflow point — typically 19 digits for i64 —
+                // then sets `trunc` at the first overflowing
+                // digit, divides calc back by the base (drops the
+                // overflowing digit), and returns the result as
+                // signed i64. So "99999999999999999999" truncates
+                // to "9999999999999999999" (19 nines), parses as
+                // u64, casts to i64 = -8446744073709551617.
+                let truncated = if body.len() > 19 {
+                    &body[..19]
+                } else {
+                    body
+                };
+                let val = truncated.parse::<u64>().map(|u| u as i64).unwrap_or(0);
+                let trunc_after = truncated.len();
+                zwarnnam(
+                    "printf",
+                    &format!("number truncated after {} digits: {}", trunc_after, body),
+                );
+                val
+            }
             Err(_) => matheval(body).map(|f| f.l).unwrap_or(0),
         }
     };
