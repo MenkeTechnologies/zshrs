@@ -1343,11 +1343,16 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 b')' => pputc(bv, b')'),
                 // c:899 — null terminator inside an escape
                 0 => return 0,
-                // c:900-904 — unknown: emit `%X` literally
-                _ => {
-                    pputc(bv, b'%');
-                    pputc(bv, xc);
-                }
+                // c:Src/prompt.c — unknown `%X`: C's putpromptchar
+                // switch has NO default arm. Recognized cases handle
+                // their own emit + break; unrecognized chars fall
+                // through to the end of the switch and the loop
+                // advances `bv->fm` past the unknown char with no
+                // output. So `%J`, `%Z`, `%X`, etc. produce empty
+                // string in zsh (test: `print -P "before%Jafter"` →
+                // `beforeafter`). Bug #239 in docs/BUGS.md — the
+                // previous Rust port emitted `%X` literally.
+                _ => {}
             }
             // Advance past the escape opcode byte.
             bv.fm_pos += 1;
