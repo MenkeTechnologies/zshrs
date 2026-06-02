@@ -5445,7 +5445,33 @@ via early-return wrappers.
 
 ## #81 — Glob with `extended_glob ~` exclusion produces duplicates + matches dir itself
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partial-fixed` 2026-06-02 — original framing pointed at the
+glob engine. Deep tracing (via temporary eprintln in
+`glob_path`/`expand_glob`/`BUILTIN_PRINT`/`bin_print`) showed that
+the engine itself returns the CORRECT 2-element result for
+`/tmp/zgq/*~*b*` — `[/tmp/zgq/a, /tmp/zgq/c]`. The 4 extra lines
+(`/tmp/zgq/a /tmp/zgq/c /tmp/zgq/b /tmp/zgq`) appear AFTER
+`bin_print` completes its write loop, originating from outside the
+shell's expansion path entirely.
+
+Likely source: the running `zshrs-daemon` process emits fsnotify
+output (mkdir + touch events for `/tmp/zgq` and its contents)
+through a shared stdout. Bug #70 (filesystem watcher leaks to
+stderr) is the underlying issue; the lines look like glob-engine
+output by coincidence because the pattern matches the files the
+daemon is reporting on.
+
+Status flipped from `port-bug` to `partial-fixed` since the glob
+engine is verified-correct; the residual stdout leak belongs in
+bug #70's territory (daemon notify routing). #62's bug-fix already
+covered the `pat~pat` exclusion in `glob_path`.
+
+Verified: with daemon idle / dir pre-existing (no events), output
+matches zsh exactly: `/tmp/zgq/a / /tmp/zgq/c`. The duplicate +
+extras only appear when fsnotify events fire concurrently with
+the shell's stdout.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; print -l /tmp/zgq/*~*b*'
@@ -5506,7 +5532,17 @@ done
 
 ## #82 — `"PREFIX${(s.X.)var}"` repeats prefix per split element inside double quotes
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+```
+$ /opt/homebrew/bin/zsh -fc 's="a b c"; echo "P:${(s. .)s}"'
+P:a b c
+$ zshrs --zsh -c 's="a b c"; echo "P:${(s. .)s}"'
+P:a b c
+```
+Both shells now produce identical output. Likely covered by a prior
+DQ-context split-flag handling fix in subst.rs.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's="a b c"; echo "P:${(s. .)s}"'
