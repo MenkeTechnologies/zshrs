@@ -4044,10 +4044,34 @@ pub fn bin_typeset(
         // locallevel — the c:2575 `pm->level = locallevel` stamp that
         // endparamscope unwinds. Without this, `local x=inside`
         // modifies the outer-scope x instead of installing a shadow.
+        // c:Src/builtin.c:2469 — `if ((on & PM_LOCAL) && (!pm ||
+        // pm->level < locallevel)) { ...createparam... }`. The
+        // condition is: PM_LOCAL set AND (no existing pm OR existing
+        // pm is at a LOWER scope than the current locallevel). At
+        // TOP scope (locallevel=0), `pm->level < 0` is never true,
+        // so C doesn't call createparam — it reuses the existing
+        // param in place. The previous Rust port called createparam
+        // unconditionally, which routed through the reuse arm at
+        // params.rs:2062-2068 and then clobbered pm.node.flags via
+        // params.rs:2132 (`pm->node.flags = flags & ~PM_LOCAL`).
+        // That wiped PM_INTEGER, leaving u_val=42 with PM_SCALAR
+        // flags → getsparam returned empty. Bug #326 in
+        // docs/BUGS.md. Mirror the C guard so the createparam call
+        // only fires when we genuinely need to allocate a new shadow.
+        let needs_new_shadow = if pname_in_tab {
+            paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(arg_name).map(|pm| pm.level < cur_locallevel))
+                .unwrap_or(true)
+        } else {
+            true
+        };
         if (on as u32 & PM_LOCAL) != 0                                       // c:2469
             && !arg_name.is_empty()
             && !arg_name.starts_with('-')
             && !arg_name.starts_with('+')
+            && needs_new_shadow
         {
             let kind = if is_hashed {
                 PM_HASHED
@@ -4572,6 +4596,31 @@ pub fn bin_typeset(
             if getsparam(arg).is_none() {
                 // c:3072 — `if (!getsparam(arg)) setsparam(arg, "")`.
                 setsparam(arg, ""); // c:3074
+            }
+            // c:Src/builtin.c::typeset_single c:2374-2378 — the `+i`
+            // / `+E` / `+F` / `+l` / `+u` / `+r` / `+n` paths
+            // REMOVE the corresponding PM_* flag and migrate the
+            // stored value back to u_str. C captures
+            // `s = ztrdup(getsparam(pname))` BEFORE the type-conversion
+            // unset and restores it after. Without this branch,
+            // `typeset +i n` (where n was an integer with value 42)
+            // cleared u_str without copying the integer value back —
+            // result was `typeset n=''`. Bug #326 in docs/BUGS.md.
+            let pre_assign_to_clear = (off
+                & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_NAMEREF))
+                as i32;
+            if pre_assign_to_clear != 0 {
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(arg) {
+                        pm.node.flags &= !pre_assign_to_clear;
+                    }
+                }
+                // Restore the captured scalar so the cleared-type
+                // param has its value as a string (PM_SCALAR
+                // semantics now apply).
+                if let Some(ref val) = saved_val {
+                    setsparam(arg, val);
+                }
             }
             if pre_assign_to_set != 0 {
                 if let Ok(mut tab) = paramtab().write() {
