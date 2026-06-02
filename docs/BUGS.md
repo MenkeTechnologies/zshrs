@@ -13588,7 +13588,59 @@ echo "${(C):-default}"   # both shells: "Default"
 
 ## #181 — `typeset -p` doesn't quote array elements containing spaces
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `printparamvalue` now routes each array element through `quotedzputs` (matches C `Src/params.c:6166-6171`).
+
+**Root cause** — `src/ported/params.rs::printparamvalue` array
+arm at line 8835/8842 emitted bare elements:
+
+```rust
+print!("{}", arr[0]);
+for el in &arr[1..] {
+    // separator ...
+    print!("{}", el);
+}
+```
+
+C zsh uses `quotedzputs` for each element so elements
+containing spaces / quotes / shell-meta chars are wrapped in
+single quotes (with `'\''` escape for embedded apostrophes).
+The bare emit broke round-trip: `(red "blue green" yellow)`
+printed as `red blue green yellow` re-parsed as 4 elements
+instead of 3.
+
+**Fix** — wrap each element in `quotedzputs(el)`:
+
+```rust
+print!("{}", quotedzputs(&arr[0]));
+for el in &arr[1..] {
+    // separator ...
+    print!("{}", quotedzputs(el));
+}
+```
+
+`quotedzputs` already exists in the port and is used for
+scalar/assoc value printing in the same function. The array
+arm just needed the same treatment.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'a=(red "blue green" yellow); typeset -p a'
+typeset -a a=( red 'blue green' yellow )       # was: red blue green yellow
+
+# Regression: simple no-quoting-needed case unchanged.
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3); typeset -p a'
+typeset -a a=( 1 2 3 )
+
+# Embedded apostrophe handled (POSIX '...'\''...' form).
+$ ./target/debug/zshrs --zsh -c "a=(one \"two'three\" four); typeset -p a"
+typeset -a a=( one 'two'\''three' four )
+```
+
+All three match zsh exactly. Regression suite unchanged
+(114 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(red "blue green" yellow); typeset -p a'
