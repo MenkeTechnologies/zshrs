@@ -10742,7 +10742,70 @@ error message per parse failure.
 
 ## #143 — `$TRY_BLOCK_ERROR` initial value is `0` in zshrs (zsh: `-1`)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — PM_UNSET preserved through vm_helper init; `lookup_special_var` reads -1 sentinel when flag set.
+
+**Root cause** — two-layer bug:
+
+1. **`special_paramdef.pm_flags`** for `TRY_BLOCK_ERROR` and
+   `TRY_BLOCK_INTERRUPT` lacked `PM_UNSET` — without it,
+   `lookup_special_var`'s "uninitialized → return -1 sentinel"
+   branch never fired.
+2. **`vm_helper.rs` IPDEF-attribute mask** at the special-param init
+   loop stripped PM_UNSET: `safe_pm_flags = entry.pm_flags &
+   (PM_TIED | PM_DI)`. So even if pm_flags HAD PM_UNSET, the runtime
+   entry created in vm_helper would lose it.
+
+C zsh tracks `try_errflag = -1` (Src/loop.c:719) as the module-
+static sentinel — the C IPDEF gsu reads it directly without going
+through paramtab. Rust special-params have a paramtab entry instead;
+PM_UNSET is the proxy for "the C global is at its -1 sentinel
+value, nothing has overwritten it."
+
+**C-source reference** — `Src/loop.c:719`:
+
+```c
+zlong try_errflag = -1;
+```
+
+The C reader's IPDEF function returns the C global directly. In
+Rust the proxy is: PM_UNSET → return -1; PM_UNSET cleared → return
+stored value. assignstrvalue clears PM_UNSET on any write
+(Src/params.c equivalent — Rust at `params.rs:3660`).
+
+**Fix** — three parts:
+
+1. `src/ported/params.rs::special_params` — added `PM_UNSET` to
+   `pm_flags` for `TRY_BLOCK_ERROR` and `TRY_BLOCK_INTERRUPT`.
+2. `src/vm_helper.rs` IPDEF init loop — added `PM_UNSET` to the
+   `safe_pm_flags` mask so the bit survives the
+   `entry.pm_flags & (PM_TIED | PM_DI | PM_UNSET)` filter.
+3. `lookup_special_var` arm for `TRY_BLOCK_ERROR` restored to the
+   PM_UNSET-based "is uninitialized?" check, returning -1 default
+   when the flag is set.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'echo "[$TRY_BLOCK_ERROR]"'
+[-1]                                        # was [0]
+
+$ ./target/debug/zshrs --zsh -c '{ true } always { echo "[$TRY_BLOCK_ERROR]"; }'
+[0]                                         # in always-arm after success
+
+$ ./target/debug/zshrs --zsh -c '{ false } always { echo "[$TRY_BLOCK_ERROR]"; }'
+[0]                                         # in always-arm after false
+
+$ ./target/debug/zshrs --zsh -c 'TRY_BLOCK_ERROR=5; echo "[$TRY_BLOCK_ERROR]"'
+[5]                                         # direct assignment respected
+
+$ ./target/debug/zshrs --zsh -c 'echo "[$TRY_BLOCK_INTERRUPT]"'
+[-1]                                        # initial sentinel
+```
+
+All five cases match zsh exactly. Regression suite unchanged at
+114 failures (same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[$TRY_BLOCK_ERROR]"'
