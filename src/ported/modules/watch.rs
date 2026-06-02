@@ -661,17 +661,19 @@ pub fn bin_log(
     _ops: &crate::ported::zsh_h::options,
     _func: i32,
 ) -> i32 {
-    // c:661 — `if (!watch) return 1;`. C `watch` is the global
-    // array tied to $watch/$WATCH via partab GSU. zshrs reads it
-    // through `$WATCH` (the colon-separated scalar tie that
-    // c:716-718 hooks to colonarr_gsu) — an empty/unset value
-    // matches the C `!watch` early-out.
-    let watch_set = crate::ported::params::getsparam("WATCH")
-        .map(|s| !s.is_empty())
-        .unwrap_or(false);
-    if !watch_set {
-        return 1;
-    }
+    // c:661 — `if (!watch) return 1;`. C's `watch` is a `char**`
+    // initialized via the watch module's GSU at module-boot (`partab`
+    // ties `$WATCH` ↔ `watch` via `colonarr_gsu`). At runtime, `watch`
+    // is a non-NULL pointer to an array — empty when `$WATCH` is
+    // unset — so the `!watch` check almost never fires; observable
+    // behavior on macOS zsh is `log` returning 0 even with `$WATCH`
+    // empty (bug #72 in docs/BUGS.md).
+    //
+    // The previous port mapped "WATCH empty" to the C `!watch` early
+    // return-1, but C only fires that on a literally NULL `watch`
+    // pointer (effectively never after setup_). Drop the early-out;
+    // run dowatch unconditionally so empty-WATCH callers see exit 0
+    // matching zsh.
     // c:663-667 — `if (wtab) free(wtab); wtab = zalloc(1); wtabsz = 0;
     //              lastutmpcheck = 0;`
     WTAB.with(|t| t.borrow_mut().clear());
