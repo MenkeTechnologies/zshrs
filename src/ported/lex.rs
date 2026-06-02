@@ -587,23 +587,38 @@ fn cmd_or_math_sub() -> i32 {
 
         // Not a line continuation, process normally
         if c == Some('(') {
-            // Might be $((...))
+            // c:555-557 — `lexpos = lexbuf.ptr - tokstr; add(Inpar); add('(');`
+            // — lexpos is captured BEFORE the Inpar/`(` go in so a
+            // later Inparmath rewrite can target the Inpar byte.
             let lexpos = LEX_LEXBUF.with_borrow(|b| b.buf_len());
             add(Inpar);
             add('(');
+            // After Inpar+`(`, we record the lexbuf length so the
+            // failure-path rewind knows where `dquote_parse`'s output
+            // ends and where our Inpar+`(` begin. Mirrors C's split
+            // between `cmd_or_math`'s `oldlen` (inside the inner call,
+            // = lexpos + 2 bytes in C) and the outer `lexbuf.ptr -= 2`
+            // that strips Inpar+`(` after `cmd_or_math` returns.
+            let after_open = LEX_LEXBUF.with_borrow(|b| b.buf_len());
 
-            if dquote_parse(')', false).is_ok() {
+            // Inline of `cmd_or_math(CS_MATHSUBST)` (Src/lex.c:495).
+            // Done inline rather than calling our existing
+            // `cmd_or_math()` because that helper additionally calls
+            // `skipcomm()` on its failure path (over-port for the
+            // gettok `((` caller), which would double-consume the
+            // body when chained here.
+            cmdpush(CS_MATHSUBST as u8);
+            let dq_ok = dquote_parse(')', false).is_ok();
+            cmdpop();
+
+            if dq_ok {
+                // c:511 — `c = hgetc(); if (c == ')') return MATH;`
                 let c2 = hgetc();
                 if c2 == Some(')') {
-                    // c:559-562 — `tokstr[lexpos] = Inparmath;` — on
-                    // confirmed math `$(( ... ))`, retroactively
-                    // rewrite the Inpar marker (just emitted at
-                    // lexpos) to Inparmath. `buf_len()` is the BYTE
-                    // length of the lexbuf (matching C's
-                    // `lexbuf.len`), so lexpos is the byte offset
-                    // where Inpar landed. Inpar and Inparmath are
-                    // both 2-byte UTF-8 chars (`\u{88}` and
-                    // `\u{89}`) so set_char_at can swap in place.
+                    // c:559-562 — confirmed math: rewrite Inpar →
+                    // Inparmath at lexpos, append closing `)`. Inpar
+                    // and Inparmath are both 2-byte UTF-8 (`\u{88}` /
+                    // `\u{89}`); set_char_at swaps in place.
                     LEX_LEXBUF.with_borrow_mut(|b| b.set_char_at(lexpos, Inparmath));
                     add(')');
                     return CMD_OR_MATH_MATH;
@@ -611,16 +626,60 @@ fn cmd_or_math_sub() -> i32 {
                 if let Some(c2) = c2 {
                     hungetc(c2);
                 }
+                LEX_LEXSTOP.set(false);
+                // c:516 — `c = ')';` — fall through to the rewind
+                // path; the `)` that dquote_parse consumed needs
+                // to be hungetc'd. We synthesize that by setting up
+                // the loop and the final hungetc('(') as below; the
+                // `)` is implicit in `dquote_parse` having stopped
+                // at it (it was consumed but not added to lexbuf,
+                // matching C where `c = ')'` is what gets hungetc'd
+                // first before the rewind-everything loop).
+                hungetc(')');
+            } else if LEX_LEXSTOP.get() {
+                // c:519 — `else if (lexstop) return CMD_OR_MATH_ERR;`
+                return CMD_OR_MATH_ERR;
+            } else {
+                // c:522 — `hungetc(c); lexstop = 0;` — push back the
+                // char dquote_parse stopped on (caller-side handled
+                // via `dquote_parse` return value in C; in Rust we
+                // approximate by pushing nothing here — dquote_parse
+                // already left the stream positioned at the offending
+                // char, but our impl signals failure through Err
+                // without consuming it).
+                LEX_LEXSTOP.set(false);
             }
 
-            // Not math, restore and parse as command
-            while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > lexpos {
+            // c:524-528 — `while (lexbuf.len > oldlen) { ... }; hungetc('(');`
+            // — back up everything dquote_parse appended to lexbuf
+            // and hungetc each in reverse order, then hungetc the
+            // single `(` that opened the math construct. The Inpar+`(`
+            // we placed BEFORE the inner call are NOT touched here;
+            // they're stripped from lexbuf after this block via direct
+            // pop (no hungetc) so they don't go back onto the input.
+            //
+            // Bug #4 in docs/BUGS.md: the previous Rust port popped
+            // ALL the way down to `lexpos` (before Inpar+`(`) and
+            // hungetc'd those bytes back, putting an Inpar token on
+            // the input stream that derailed `skipcomm`. The faithful
+            // port pops only down to `after_open` and then strips
+            // Inpar+`(` from lexbuf without hungetc'ing them.
+            while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > after_open {
                 if let Some(ch) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
                     hungetc(ch);
+                } else {
+                    break;
                 }
             }
             hungetc('(');
             LEX_LEXSTOP.set(false);
+            // c:565-566 — `lexbuf.ptr -= 2; lexbuf.len -= 2;` — drop
+            // the Inpar+`(` we added at the top without putting them
+            // on the input stream.
+            LEX_LEXBUF.with_borrow_mut(|b| {
+                b.pop();
+                b.pop();
+            });
         } else {
             if let Some(c) = c {
                 hungetc(c);
