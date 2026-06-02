@@ -4600,6 +4600,23 @@ pub fn bin_typeset(
                     }
                 }
             }
+            // c:Src/builtin.c::typeset_single — `typeset +x VAR`
+            // clears PM_EXPORTED via the `off` mask. C zsh calls
+            // removeenv on the param, which strips the var from the
+            // OS environment so child processes no longer see it.
+            // Must fire INDEPENDENTLY of post_assign_to_set since `+x`
+            // alone sets `off` (PM_EXPORTED) but `on` is 0, so the
+            // post_assign_to_set block above doesn't run. Also clear
+            // the flag bit on the paramtab entry so `(t)V` no longer
+            // reports `-export`. Bug #201 in docs/BUGS.md.
+            if (off as u32 & PM_EXPORTED) != 0 {
+                env::remove_var(arg);
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(arg) {
+                        pm.node.flags &= !(PM_EXPORTED as i32);
+                    }
+                }
+            }
         }
     }
     unqueue_signals();

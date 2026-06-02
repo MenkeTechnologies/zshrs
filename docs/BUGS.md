@@ -14712,7 +14712,61 @@ fi
 
 ## #201 — `typeset +x VAR` doesn't remove VAR from environment
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `bin_typeset` now calls `env::remove_var(arg)` when `off & PM_EXPORTED` is set (`+x` flag).
+
+**Root cause** — `bin_typeset`'s post-assign attribute block at
+`builtin.rs:4590-4602` only ran when `post_assign_to_set != 0`
+(i.e. when `on` had at least one of the post-assign mask bits).
+For `typeset +x VAR`, the `off` mask had `PM_EXPORTED` set but
+`on` was 0, so `post_assign_to_set = on & MASK = 0`. The entire
+block — including any env mutation — was skipped.
+
+Also, the PM_EXPORTED flag bit was being cleared from the
+paramtab entry implicitly by `post_assign_to_set == 0` not
+running its `flags & !mask` update, so `(t)V` still reported
+`-export` after `+x`.
+
+**C-source reference** — `Src/builtin.c::typeset_single` calls
+`removeenv(value)` when the `-x` flag is being removed (i.e.
+when the `off` mask has PM_EXPORTED).
+
+**Fix** — moved the PM_EXPORTED clearing OUT of the
+`post_assign_to_set != 0` block so it fires independently when
+`off & PM_EXPORTED` is set:
+
+```rust
+if (off as u32 & PM_EXPORTED) != 0 {
+    env::remove_var(arg);
+    // also clear the flag bit on the paramtab entry so (t)V
+    // no longer reports -export.
+    if let Ok(mut tab) = paramtab().write() {
+        if let Some(pm) = tab.get_mut(arg) {
+            pm.node.flags &= !(PM_EXPORTED as i32);
+        }
+    }
+}
+```
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'typeset -x V=1; typeset +x V; env | grep "^V="'
+# (empty — V removed from env)              matches zsh
+
+$ ./target/debug/zshrs --zsh -c 'typeset -x V=1; typeset +x V; echo "V=$V"'
+V=1                                          # var still defined
+
+$ ./target/debug/zshrs --zsh -c 'typeset -x V=1; env | grep "^V="'
+V=1                                          # -x still exports (regression)
+
+$ ./target/debug/zshrs --zsh -c 'typeset -x V=1; typeset +x V; typeset -p V'
+typeset V=1                                  # no -x flag (matches zsh)
+```
+
+All four match zsh exactly. Regression suite unchanged
+(114 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -x V=1; typeset +x V; env | grep "^V="'
