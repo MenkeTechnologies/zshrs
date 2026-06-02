@@ -4814,8 +4814,33 @@ pub fn paramsubst(
                     // of getarrvalue's range arm operating on a per-char
                     // pseudo-array. Direct port of Src/params.c:1625
                     // getstrvalue's slice path.
-                    let lo: i64 = lo.trim().parse().unwrap_or(1);
-                    let hi: i64 = hi.trim().parse().unwrap_or(s_chars.len() as i64);
+                    //
+                    // c:Src/params.c::getarg — the subscript expression
+                    // is evaluated via `mathevali` (math.c:367), so
+                    // variable references and arith expressions like
+                    // `n+1` resolve. Previous Rust port used
+                    // `i64::parse` which only accepts bare digit
+                    // literals — bare `n` or `n+1` fell through to the
+                    // default bounds and returned the full string.
+                    // Bug #155 in docs/BUGS.md.
+                    let eval_idx = |expr: &str, default: i64| -> i64 {
+                        let trimmed = expr.trim();
+                        // Fast-path bare integer literal so tests
+                        // exercising the simple `[1,3]` form don't
+                        // round-trip through the math evaluator.
+                        if let Ok(n) = trimmed.parse::<i64>() {
+                            return n;
+                        }
+                        // c:Src/params.c::getarg routes the subscript
+                        // through singsub (param expansion) then
+                        // mathevali. The math evaluator handles
+                        // identifier refs (`n` → 5) and the operator
+                        // grammar (`n+1`).
+                        let expanded = singsub(trimmed);
+                        crate::ported::math::mathevali(&expanded).unwrap_or(default)
+                    };
+                    let lo: i64 = eval_idx(lo, 1);
+                    let hi: i64 = eval_idx(hi, s_chars.len() as i64);
                     let chars_arr: Vec<String> = s_chars.iter().map(|c| c.to_string()).collect();
                     getarrvalue(&chars_arr, lo, hi).concat()
                 } else {
