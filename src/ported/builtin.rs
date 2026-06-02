@@ -9394,6 +9394,34 @@ pub fn bin_test(
         argv.remove(0); // c:7272
     }
 
+    // c:Src/builtin.c:7276-7280 — `[ ]`/`test` uses `parse_cond`
+    // which has no rule for TEST_INANG (`<`) or TEST_OUTANG (`>`) as
+    // binary string-comparators; the parser errors with
+    // `condition expected: <`. Only `[[ ]]` (which routes through
+    // `execcond` instead of this builtin) accepts `<`/`>` for lex
+    // compare. Bug #98 in docs/BUGS.md — zshrs's `bin_test` routed
+    // through the shared `cond::evalcond` which accepts them as
+    // COND_STRLT/COND_STRGTR, so `[ a \< b ]` silently evaluated.
+    //
+    // Detect `<`/`>` in a binary-op position (the middle of a 3-arg
+    // form, or any position after an operand) and emit the canonical
+    // diagnostic before reaching evalcond.
+    if argv.iter().any(|a| a == "<" || a == ">") {
+        let offending = argv
+            .iter()
+            .find(|a| a.as_str() == "<" || a.as_str() == ">")
+            .map(|s| s.as_str())
+            .unwrap_or("<");
+        // Use zwarn (cmd=None) — zsh's `[ ]` parse-error format is
+        // `<script>:<line>: condition expected: <`, NOT
+        // `<script>:test:<line>:...`. zwarn omits the builtin-name
+        // segment that zwarnnam adds; zwarn also doesn't set
+        // errflag, so `echo $?` after the failed test still runs.
+        crate::ported::utils::zwarn(&format!("condition expected: {}", offending));
+        let _ = name;
+        return 2;
+    }
+
     // c:7276-7301 — zcontext_save + par_cond + evalcond.
     // Static-link path: route through cond.rs's evalcond which handles
     // the full tokenization + parse + eval inline.

@@ -6629,7 +6629,29 @@ listing them.
 
 ## #98 — `[ "a" \< "b" ]` lexicographic comparison accepted (bash extension)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — zshrs's `bin_test` routed `[ ]` /
+`test` through the shared `cond::evalcond` which accepts `<` / `>`
+as `COND_STRLT` / `COND_STRGTR`. That's correct for `[[ ]]` (which
+goes through `execcond`, not `bin_test`) but wrong for single-bracket
+`[ ]`: C zsh's `bin_test` uses `parse_cond` which has no rule for
+`TEST_INANG`/`TEST_OUTANG` as binary string-comparators and errors
+with `condition expected: <`.
+
+Added a pre-check in `bin_test` (before reaching `evalcond`): if any
+argv entry is `<` or `>`, emit `condition expected: <op>` via `zwarn`
+(no errflag — zsh leaves the script running so `echo $?` after the
+failed test still fires) and return 2.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `[ a \< b ]; echo "exit=$?"` → both `zsh:1: condition expected:
+  <` + `exit=2`.
+- `test a \< b; echo $?` → same format, returns 2.
+- `[[ "a" < "b" ]] && echo yes` → still works (different code path
+  via execcond).
+- `[ "x" = "x" ] && echo same; [ 5 -lt 9 ] && echo less` —
+  unchanged.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[ a \< b ]; echo "exit=$?"'
