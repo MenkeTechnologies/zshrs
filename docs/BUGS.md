@@ -8127,7 +8127,44 @@ printf "%${width}s\n" "$p"   # both shells: same output
 
 ## #115 — Prompt `%s`/`%b`/`%u` use full reset `\e[0m` instead of selective
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — applytextattributes emits selective SGR off codes.
+
+**Root cause** — `src/ported/prompt.rs::applytextattributes` had a
+`need_reset` gate: if ANY attribute was turning off, emit
+`\x1b[0m` (full reset) and then re-emit the surviving attributes.
+The full-reset wipes every other active SGR state — including
+foreground / background color, italic, dim — so a prompt like
+`%F{red}%Bbold%b regular%f` lost the red color when `%b` fired.
+
+C-zsh's tsetcap sequence (`Src/prompt.c:1640-1718`) emits the
+terminfo `me` / `se` / `ue` caps for attribute-off, which on
+every SGR-aware terminal map to:
+- bold off → SGR 22 (`\x1b[22m`)
+- underline off → SGR 24 (`\x1b[24m`)
+- standout off → SGR 27 (`\x1b[27m`)
+
+These selective off-codes only clear the targeted attribute,
+preserving everything else.
+
+**Fix** — Drop the `need_reset` branch. Always emit per-attribute
+on/off pairs:
+- on: SGR 1 / 4 / 7 (existing).
+- off: SGR 22 / 24 / 27 (new, matching C tsetcap mapping).
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'print -P "%Sx%s"' | od -c | head -1
+0000000  033 [ 7 m  x  033 [ 2 7 m  \n
+$ ./target/debug/zshrs --zsh -c 'print -P "%Bx%b"' | od -c | head -1
+0000000  033 [ 1 m  x  033 [ 2 2 m  \n
+$ ./target/debug/zshrs --zsh -c 'print -P "%Ux%u"' | od -c | head -1
+0000000  033 [ 4 m  x  033 [ 2 4 m  \n
+$ ./target/debug/zshrs --zsh -c 'print -P "%F{red}%Bbold%b regular%f"' | od -c | head -2
+0000000  033 [ 3 1 m  033 [ 1 m  b o l d  033 [ 2 2 m   r e g u l a r  033 [ 3 9 m  \n
+# red preserved through bold→bold-off transition
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%Sstandout%s normal %Bbold%b plain %Uunder%u final"' | od -c
