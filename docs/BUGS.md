@@ -3671,7 +3671,18 @@ perms=$(( 8#755 | 8#10 ))   # both shells: 501 decimal
 
 ## #58 — Quoted `*` on RHS of `[[ == ]]` still treated as glob
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+- `[[ "a*b" == "a*b" ]]` → both shells print `literal`.
+- `[[ "a*b" == a\*b ]]` → both shells print `bksl`.
+- `[[ "log_*.txt" == "log_*.txt" ]]` → both match.
+- `[[ "axxb" == "$pat" ]]` (where `pat="a*b"`) → both: `*` is meta in
+  unquoted-var-expansion form, no match (both empty output, same).
+
+Likely already corrected by a prior `[[`/`cond.rs` pattern-quote fix
+or by the `Snull`/`Dnull` quote-token handling that landed before
+this entry was written.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ "a*b" == "a*b" ]] && echo literal; [[ "a*b" == a\*b ]] && echo bksl'
@@ -3722,7 +3733,37 @@ Or use the pattern as bare-unquoted with deliberate backslashes:
 
 ## #59 — `setopt no_clobber` allows `>>` to CREATE new file
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `host_apply_redirect` in
+`src/fusevm_bridge.rs` `r::APPEND` arm unconditionally used
+`OpenOptions::new().create(true).append(true)` — so `>>` always
+created the file regardless of NO_CLOBBER + !APPEND_CREATE state.
+
+Ported the C gate from `Src/exec.c:3924-3927`:
+```c
+if (!isset(CLOBBER) && !isset(APPENDCREATE) && !IS_CLOBBER_REDIR(fn->type))
+    mode = O_WRONLY | O_APPEND | O_NOCTTY;       // no O_CREAT
+else
+    mode = O_WRONLY | O_APPEND | O_CREAT | O_NOCTTY;
+```
+Read both `noclobber` and inverted-`clobber` opt-state keys (the
+flag's stored in either form depending on the setopt path) and the
+`appendcreate`/`append_create` keys; when noclobber+!appendcreate
+hits, skip `.create(true)` so missing files yield ENOENT and zsh's
+"no such file or directory" diagnostic via `redir_open_or_fail`.
+
+Note: `>>!` / `>>|` (`IS_CLOBBER_REDIR(fn->type)`) currently
+flatten to the same `redirect_op::APPEND` opcode at compile time
+(`src/extensions/compile_zsh.rs:1654-1655`), so the bang/pipe
+override forms behave like plain `>>` for now — separate gap.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `setopt no_clobber; echo a >> /tmp/zexa` (missing) → both error
+  identically + non-zero exit + file not created.
+- `setopt no_clobber` + pre-existing file → both append.
+- `setopt no_clobber append_create` + missing file → both create.
+- Default (no opt) + missing file → both create.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt no_clobber; echo a >> /tmp/zexa; echo b >> /tmp/zexa; cat /tmp/zexa'
