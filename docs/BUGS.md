@@ -4842,7 +4842,33 @@ But the right fix is upstream.
 
 ## #74 — `local -r` violation in function doesn't abort, continues execution
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 (execution-continuation arm) —
+`BUILTIN_ERREXIT_CHECK` (`src/fusevm_bridge.rs:3825`) cleared
+`errflag` inside the function after firing the unwind, then returned
+`Value::Int(1)` to trigger the local return-patch. That worked at
+function scope, but the OUTER script's next `ERREXIT_CHECK` saw a
+clean `errflag` (we just cleared it) and let execution continue.
+
+C zsh propagates non-interactive abort across the function boundary
+via `Src/init.c loop()` which exits on any `errflag` it sees.
+Mirrored by setting `EXIT_PENDING + EXIT_VAL=1` alongside the
+errflag clear, so the script-level check at the next command takes
+the `EXIT_PENDING` arm and aborts.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `f() { local -r x=5; x=10; ... }; f; echo "after fn call"` — both
+  shells suppress `after fn call` and exit with status 1.
+- `readonly Y=5; Y=10; echo "still alive"` (global readonly) — both
+  error and abort (unchanged).
+- Normal function call without readonly violation runs through to
+  `echo after` — both shells.
+
+Format diff remaining: zshrs emits `f:1: read-only variable: x` vs
+zsh's `f: read-only variable: x` (extra `:1:` line-number). That's a
+separate `zwarning` format issue, not the abort-propagation gap
+fixed here.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { local -r x=5; x=10; echo "after assign in fn"; }; f; echo "after fn call"'
