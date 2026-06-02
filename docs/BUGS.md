@@ -19688,7 +19688,51 @@ fi
 
 ## #266 — `$match[N]` backref array not populated by `(#b)` flag in substitution
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `${var//pat/repl}` global-replace
+match-loop used plain `pattry`, which only returns a success
+bit; switched to `glob_match_static` which routes through
+`pattryrefs` to populate `match`/`mbegin`/`mend` arrays for
+`(#b)`-flagged patterns; corrected 2026-06-02.
+
+**Root cause** — `src/ported/subst.rs::paramsubst`'s
+`replace_global` closure (the `//` global-replace arm) iterated
+candidate substrings via `patcompile(&pat) + pattry(&prog,
+&cand)`. `pattry` returns only the boolean success — it doesn't
+populate the C source's `patstralloc` / globreal arrays.
+
+`src/vm_helper.rs::glob_match_static` (line 2810) checks
+`prog.0.globflags & GF_BACKREF` and routes through
+`pattryrefs`, which surfaces per-group `begp`/`endp` offsets
+into `Vec<i32>` and then writes them as the `match` /
+`mbegin` / `mend` parameter arrays via
+`setaparam`. So `${...//(#b)pat/repl}` needs to go through
+`glob_match_static`, not `pattry`.
+
+**Fix:** `src/ported/subst.rs::paramsubst` `replace_global`
+closure — replace the three `pattry(&prog, &cand)` call sites
+(prefix anchor `#`, suffix anchor `%`, unanchored sliding-window
+loop) with `crate::vm_helper::glob_match_static(&cand, &pat)`.
+glob_match_static is a strict superset of `pattry`: it falls
+back to plain pattry when `GF_BACKREF` isn't set, so non-(#b)
+patterns pay no extra cost. Cite Src/pattern.c GF_BACKREF
+handling.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; s=hello; r="${s//(#b)(*)l/[$match[1]]}"; echo "$r"'
+[hel]o
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; s=hello; r="${s//(#b)(*)l/[$match[1]]}"; echo "$r"'
+[hel]o
+
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; s=abc; r="${s//(#b)(a)(b)(c)/[$match[1]][$match[2]][$match[3]]}"; echo "$r"'
+[a][b][c]
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; s=abc; r="${s//(#b)(a)(b)(c)/[$match[1]][$match[2]][$match[3]]}"; echo "$r"'
+[a][b][c]
+
+# Regressions: plain // replace, anchors, (#m) MATCH all unchanged
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extendedglob; s="abc123"; echo "[${s/(#b)([a-z]##)/[$match[1]]}]"'
