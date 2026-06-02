@@ -1117,6 +1117,25 @@ fn par_cmd() -> Option<ZshCommand> {
                 trailing.push(redir);
             }
         }
+        // c:Src/parse.c:par_cmd — compound forms (Cursh `{...}`, Subsh
+        // `(...)`, If/While/Until/For/Case/Select/Repeat/Funcdef) must
+        // be followed by a valid sublist/list separator (`;`, `\n`,
+        // `&`, `|`, `&&`, `||`, redirect-op) — STRING_LEX after a
+        // compound is a parse error. zshrs's outer par_list loop
+        // silently treated trailing words as a new command, masking
+        // syntax errors like `{ echo a; } b c`. Mirror C's strict
+        // post-compound terminator check. Bug #146 in docs/BUGS.md.
+        if !matches!(inner, ZshCommand::Simple(_)) && tok() == STRING_LEX {
+            let bad = tokstr().unwrap_or_default();
+            zerr(&format!("parse error near `{}'", bad));
+            // Reset state before returning so the outer loop's None
+            // detection unwinds cleanly.
+            set_incmdpos(true);
+            set_incasepat(0);
+            set_incond(0);
+            set_intypeset(false);
+            return None;
+        }
         // c:1072-1075 — every par_cmd tail resets the lexer state
         // toggles so the NEXT command starts in cmd position with
         // case/cond/typeset off. par_simple/par_cond set `incmdpos=0`

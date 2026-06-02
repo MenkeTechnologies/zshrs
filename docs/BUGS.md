@@ -7003,7 +7003,30 @@ replacement.
 
 ## #102 — `$-` (current option flags) doesn't include `f` from `-f` startup flag
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — the original report compared
+`zsh -fc` to `zshrs --zsh -c` (-f vs no -f). Apples-to-oranges:
+`--zsh -c` is a zshrs-specific mode that selects the zsh-emulation
+parser/runtime WITHOUT applying `-f`'s rcs/hashdirs flips (same
+distinction as bug #87).
+
+When invoked identically, both shells match byte-for-byte:
+```
+$ /opt/homebrew/bin/zsh -fc 'echo "[$-]"'           # [569Xf]
+$ ./target/debug/zshrs --zsh -fc 'echo "[$-]"'      # [569Xf]
+$ ./target/debug/zshrs -fc 'echo "[$-]"'            # [569Xf]
+```
+`f` correctly appears when `-f` is passed. The `('f', "rcs", true)`
+mapping at `src/ported/options.rs:96` and the `FIRST_OPT..=LAST_OPT`
+walk at `dashgetfn` (options.rs:905-938) already wire `$-` to read
+the live `rcs` opt-state through the negation flag.
+
+`set -x; echo "[$-]"` also correctly adds `x`, confirming the
+walk handles runtime-toggled options too.
+
+No code change required. Status updated to match observed behavior;
+the bug report misframed `--zsh -c` as equivalent to `-fc`.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[$-]"'
@@ -11214,7 +11237,47 @@ fi
 
 ## #146 — `{ cmd; } arg arg` compound-with-trailing-args silently accepted
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — par_cmd now rejects STRING_LEX
+after a compound command.
+
+**Root cause** — `src/ported/parse.rs::par_cmd` returned the
+compound `Cursh`/`Subsh`/`If`/`While`/etc. result and let the
+outer par_list loop iterate. The next iteration saw STRING_LEX
+(`b`) and parsed `b c` as a fresh simple command, masking the
+syntax error.
+
+C `Src/parse.c::par_cmd` requires a valid sublist/list separator
+(`;`, `\n`, `&`, `|`, `&&`, `||`, redirect-op, end-token) after
+any compound; STRING_LEX is rejected at parse time.
+
+**Fix** — `src/ported/parse.rs::par_cmd` tail (after trailing-
+redir collection): when the dispatched cmd is anything other
+than `Simple` AND `tok() == STRING_LEX`, emit
+`parse error near \`<tok>'` via zerr and return None. The lexer-
+state reset still runs so the outer loop unwinds cleanly.
+
+Covers all compound forms — `Cursh` (`{...}`), `Subsh`
+(`(...)`), `If`/`While`/`Until`/`For`/`Case`/`Select`/`Repeat`/
+`Funcdef` — since the check is at par_cmd's exit gate rather
+than in each helper.
+
+**Verify**
+```sh
+$ zshrs --zsh -c '{ echo a; } b c'         # zsh:1: parse error near `b'
+$ zshrs --zsh -c 'if true; then a; fi b c' # zsh:1: parse error near `b'
+$ zshrs --zsh -c '( echo a ) b c'          # zsh:1: parse error near `b'
+$ zshrs --zsh -c 'while false; do a; done b c'  # zsh:1: parse error near `b'
+
+# Legal continuations still work:
+$ zshrs --zsh -c '{ echo a; } | cat'       # a
+$ zshrs --zsh -c '{ echo a; } && echo b'   # a, b
+$ zshrs --zsh -c '{ echo a; } > /tmp/x'    # (writes to file)
+$ zshrs --zsh -c '{ echo a; }; echo b'     # a, b
+```
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '{ echo a; } b c' 2>&1
@@ -11224,40 +11287,6 @@ $ ./target/debug/zshrs --zsh -c '{ echo a; } b c' 2>&1
 a
 zshrs: command not found: b
 ```
-
-zsh rejects `{ cmd; } arg arg` syntax at parse time (compound
-groups can't take trailing args). zshrs splits it into two
-commands: runs `{ echo a; }` (printing `a`) then runs `b c` as
-a separate command (which fails with "command not found").
-
-The split behavior masks the syntax error — the user might not
-notice the parser is treating their code differently than
-intended.
-
-Per zsh grammar, `{ ... }` is a `sublist_terminator` and
-shouldn't be followed by additional words on the same logical
-line. zsh strictly enforces this.
-
-**Where** — `src/ported/parse.rs::parse_compound`: doesn't
-require newline/`;`/`&` after `}` before next command starts.
-Treats whitespace after `}` as command separator. C-source
-`Src/parse.c::par_cmd` requires explicit terminator.
-
-**Impact** — typos that accidentally place tokens after a
-compound group don't get caught:
-
-```sh
-# user typo: forgot to wrap "echo b" in the braces
-{ echo a; } echo b
-# zsh: parse error (caught immediately)
-# zshrs: runs `echo a`, then fails to find command `echo b`
-#   — partial execution + unclear error
-```
-
-Similar to bug #141 (`;;` outside case silently accepted) — permissive
-parser hides programming errors.
-
-**Workaround** — none — be careful with brace syntax.
 
 ---
 
@@ -37909,7 +37938,7 @@ qualifiers always have a digit suffix.
 | 99 | `(#cN,M)` count quantifier + other `(#x)` flags not recognized | **port-bug** | `=~ {N,M}` regex form |
 | 100 | `typeset -R N x="hello"` doesn't right-truncate (full string kept) | **port-bug** | `printf "%Ns"` instead |
 | 101 | `exec funcname` errors "not found" instead of running shell fn | **port-bug** | drop `exec`, call fn directly |
-| 102 | `$-` doesn't include `f` from `-f` startup flag | **port-bug** | `[[ -o no_rcs ]]` direct option test |
+| 102 | `$-` doesn't include `f` from `-f` startup flag | **fixed** 2026-06-02 | n/a |
 | 103 | `$0` inside sourced script returns shell binary, not sourced file | **port-bug** | `${(%):-%x}` prompt-expansion |
 | 104 | Signal `kill -X $$` from inside fn is lost (trap never fires) | **port-bug** | direct invocation post-fn |
 | 105 | `(f<NNN>)` permission glob qualifier ignored | **port-bug** | `stat`-based loop |
@@ -37953,7 +37982,7 @@ qualifiers always have a digit suffix.
 | 143 | `$TRY_BLOCK_ERROR` initial value is `0` in zshrs (zsh: `-1`) | **port-bug** | explicit state-flag |
 | 144 | `${(q)str}` with newline uses `\<newline>` not `$'\n'` form | **port-bug** | `(qq)` double-quote form |
 | 145 | `${(k)h[name]}` key-existence query errors "bad substitution" | **port-bug** | `(( ${+h[name]} ))` |
-| 146 | `{ cmd; } arg` trailing args silently accepted (zsh: parse error) | **port-bug** | careful braces |
+| 146 | `{ cmd; } arg` trailing args silently accepted (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 147 | `${(@)arr:mod}` modifier dropped after `(@)` flag | **port-bug** | `${arr[@]:mod}` subscript form |
 | 148 | `zsh/mathfunc` missing cbrt/asinh/erfc/gamma/j0/rand48/... | **port-bug** | external `bc`/`python` |
 | 149 | `${(q)str}` with tab/control chars uses `\X` not `$'\X'` form | **port-bug** | `(qq)` double-quote form |
