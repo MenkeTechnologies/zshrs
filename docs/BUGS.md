@@ -22938,7 +22938,70 @@ set -x
 
 ## #319 — `eval -- "cmd"` end-of-options separator not recognized
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `BUILTIN_EVAL` fast-path bypassed
+`execbuiltin` (which holds the C `--` strip for builtins with
+NULL optstr) so the marker leaked into the joined eval body;
+corrected 2026-06-02.
+
+**Root cause** — C `Src/builtin.c:407-411` (inside `execbuiltin`)
+has a generic `--` strip applied to ALL builtins that:
+  1. Have NULL `optstr` (so the option-parse loop above wasn't
+     entered), AND
+  2. Don't carry `BINF_HANDLES_OPTS`.
+
+```c
+} else if (!(flags & BINF_HANDLES_OPTS) && *argv &&
+           !strcmp(*argv, "--")) {
+    ops.ind['-'] = 1;
+    argv++;
+}
+```
+
+`eval` is registered at `Src/builtin.c:65` with
+`BUILTIN("eval", BINF_PSPECIAL, bin_eval, 0, -1, BIN_EVAL, NULL,
+NULL)` — `optstr=NULL`, no `BINF_HANDLES_OPTS`. So execbuiltin's
+strip fires and removes the leading `--` before `bin_eval` sees
+argv.
+
+The Rust `execbuiltin` port at `src/ported/builtin.rs:538` has
+this strip too, so the path through `dispatch_builtin_raw →
+execbuiltin → bin_eval` would work correctly. But the
+`BUILTIN_EVAL` opcode in `src/fusevm_bridge.rs:592` is a fast-
+path that bypasses `execbuiltin` entirely — it just `pop_args`,
+joins, and calls `execute_script`. The `--` was preserved in the
+joined string and the parser then tried to dispatch `--` as a
+command (`command not found: --`).
+
+**Fix:** Two-place fix —
+- `src/fusevm_bridge.rs::BUILTIN_EVAL` (the fast-path that
+  actually runs) — strip a leading `--` from args before joining,
+  with citation to Src/builtin.c:407-411.
+- `src/ported/builtin.rs::bin_eval` (the canonical handler, in
+  case anything calls it directly) — same strip at the top,
+  defensively. Cite c:407-411.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'eval -- "echo hi"'
+hi
+$ ./target/debug/zshrs --zsh -c 'eval -- "echo hi"'
+hi
+
+$ /opt/homebrew/bin/zsh -fc 'eval -- echo hi'
+hi
+$ ./target/debug/zshrs --zsh -c 'eval -- echo hi'
+hi
+
+# Regressions
+$ ./target/debug/zshrs --zsh -c 'eval "echo hi"'
+hi
+$ ./target/debug/zshrs --zsh -c 'eval --; echo "ec=$?"'
+ec=0
+$ ./target/debug/zshrs --zsh -c 'eval; echo "ec=$?"'
+ec=0
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'eval -- "echo hi"'
