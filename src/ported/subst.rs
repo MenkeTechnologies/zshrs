@@ -6940,6 +6940,37 @@ pub fn paramsubst(
                     // to 0 on any non-digit input (parens, spaces), so
                     // `${str: -5}` silently returned the entire string
                     // (offset clamped to 0).
+                    //
+                    // c:Src/subst.c:3781-3792 — empty operand after `:`
+                    // is malformed. `${s:}` (bare colon, no operand)
+                    // errors "unrecognized modifier" via C's
+                    // unrecognized-modifier-letter path; `${s:N:}` and
+                    // `${s::}` (length-missing after second colon) also
+                    // error. zsh rejects them at parse time; the Rust
+                    // port silently treated empty mathevali results as
+                    // 0 and returned the wrong substring. Bug #126 in
+                    // docs/BUGS.md.
+                    // c:Src/subst.c:3781-3792 — empty length operand
+                    // after `:N:` is malformed. zsh errors
+                    // "unrecognized modifier". The empty-offset
+                    // shorthand `${a::N}` is VALID (treated as
+                    // `${a:0:N}`), so the gate is specifically
+                    // "length separator present AND length is empty"
+                    // OR "no length separator AND offset is empty".
+                    // Bug #126 in docs/BUGS.md.
+                    let has_length_sep = parts.len() == 2;
+                    let length_empty =
+                        has_length_sep && parts[1].trim().is_empty();
+                    let bare_empty_no_sep =
+                        !has_length_sep && parts[0].trim().is_empty();
+                    if length_empty || bare_empty_no_sep {
+                        zerr("unrecognized modifier");
+                        errflag.fetch_or(
+                            crate::ported::zsh_h::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        return (String::new(), 0, Vec::new());
+                    }
                     let off = crate::ported::math::mathevali(&singsub(parts[0])).unwrap_or(0);
                     // Array context: ${arr:offset:length} slices the
                     // ARRAY (1-based, like Bash's offset), not the joined

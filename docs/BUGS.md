@@ -9100,7 +9100,22 @@ norm_fn() { typeset -f "$1" | tr -s '[:space:]' ' '; }
 
 ## #125 — `var=${a[-1]}` assignment from negative subscript returns empty
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — confirmed already passing 2026-06-02.
+
+Both standalone and assignment-context forms now return the
+last element correctly; the pop-loop pattern works too:
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3 4); last=${a[-1]}; echo "[$last]"'
+[4]
+$ ./target/debug/zshrs --zsh -c 'a=(host1 host2 host3 host4); while (( ${#a} > 0 )); do last=${a[-1]}; a=("${a[@]:0:-1}"); echo "$last"; done'
+host4
+host3
+host2
+host1
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(1 2 3 4); last=${a[-1]}; echo "[$last]"'
@@ -9171,7 +9186,52 @@ last=${a[${#a}]}    # positive subscript = ${#a}, gets last
 
 ## #126 — `${s:N:}` (empty length suffix) silently empty; zsh errors
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — substring parser rejects empty operand after `:`.
+
+**Root cause** — `src/ported/subst.rs` substring slice arm at
+~line 6928 split `slice` on `:` and called `mathevali` on each
+part with `.unwrap_or(0)`. Empty operands silently became 0, so
+`${s:N:}` and `${s::}` returned zero-length substrings (or the
+entire string for `${s:}`) instead of erroring.
+
+C-zsh at `Src/subst.c:3781-3792` errors with "unrecognized
+modifier" when the empty operand path is hit — the parser sees
+the bare/trailing colon and falls through to the modifier-letter
+check, where it can't recognize any.
+
+**Fix** — Detect the two malformed shapes:
+- `length separator present AND length is empty` (`${s:2:}` /
+  `${s::}`)
+- `no length separator AND offset is empty` (`${s:}` / `${s: }`)
+
+`${s::N}` shorthand (empty offset, non-empty length) stays
+VALID — treated as `${s:0:N}` per zsh's standard semantics.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 's="hello"; echo "[${s:2:}]"' 2>&1
+zshrs:1: unrecognized modifier
+$ ./target/debug/zshrs --zsh -c 's="hello"; echo "[${s::}]"' 2>&1
+zshrs:1: unrecognized modifier
+$ ./target/debug/zshrs --zsh -c 's="hello"; echo "[${s:}]"' 2>&1
+zshrs:1: unrecognized modifier
+
+# Empty-offset shorthand still works.
+$ ./target/debug/zshrs --zsh -c 'a=foo; echo "${a::1}"'
+f
+$ ./target/debug/zshrs --zsh -c 'a=foo; echo "${a::-1}"'
+fo
+
+# Regular forms unchanged.
+$ ./target/debug/zshrs --zsh -c 's="hello"; echo "[${s:0:2}]"'
+[he]
+$ ./target/debug/zshrs --zsh -c 's="hello"; echo "[${s:0:-1}]"'
+[hell]
+```
+
+Baseline: 937/115 (+3 tests pass).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's="hello"; echo "[${s:0:2}${s:2:}]"' 2>&1
