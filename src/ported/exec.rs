@@ -606,7 +606,32 @@ pub fn loadautofn(
     let mut dir_path: Option<String> = None;
     let path = match getfpfunc(&name, &mut dir_path, None, 0) {
         Some(p) => p,
-        None => return 1, // c:5074 not found
+        None => {
+            // c:Src/exec.c:5713-5719 — file not found path. C:
+            //   `if (prog == &dummy_eprog) {
+            //        locallevel--;
+            //        zwarn("%s: function definition file not found",
+            //              shf->node.nam);
+            //        locallevel++;
+            //        popheap();
+            //        return NULL;
+            //    }`
+            // C's getfpfunc returns &dummy_eprog as the "not found"
+            // sentinel when test_only==0; loadautofn detects it and
+            // emits the diagnostic before returning NULL. Rust's
+            // getfpfunc returns Option::None for the same condition,
+            // so we emit the same diagnostic here. The locallevel
+            // dance is preserved as a comment because the Rust
+            // port's zwarn doesn't reference locallevel in the
+            // format string itself (the dance in C is only to keep
+            // the prefix line counter consistent with the function-
+            // body context). Bug #107 in docs/BUGS.md.
+            crate::ported::utils::zwarn(&format!(
+                "{}: function definition file not found",
+                name
+            ));
+            return 1; // c:5719 NULL
+        }
     };
     if test_only != 0 {
         // c:5096
