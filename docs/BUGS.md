@@ -23442,7 +23442,55 @@ epoch=$(date -j -f "%Y" "2024" "+%s")
 
 ## #325 — `$'\xNN\xNN'` C-string hex escapes treat UTF-8 as separate bytes (zsh: combines into multibyte char)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `decode_ansi_c` cast each `\xNN` byte to
+`char`, promoting it to a Unicode codepoint U+00XX and re-
+encoding as UTF-8; corrected 2026-06-02.
+
+**Root cause** — `src/extensions/compile_zsh.rs::decode_ansi_c`
+`\x` arm:
+
+```rust
+if let Ok(b) = u8::from_str_radix(&hex, 16) {
+    out.push(b as char);
+}
+```
+
+`b as char` converts byte `0xE2` to codepoint U+00E2 (`â`),
+which Rust's `String::push` UTF-8-encodes as `c3 a2`. So
+`$'\xe2\x9c\x93'` produced 6 mangled bytes (`c3 a2 c2 9c c2 93`)
+instead of the intended 3 raw bytes that form the UTF-8 encoding
+of `✓` (U+2713).
+
+zsh's C implementation stores each `\xNN` as a single raw byte
+(no UTF-8 promotion), so consecutive escapes correctly combine
+into multi-byte UTF-8 sequences.
+
+**Fix:** push the raw byte directly to the String's underlying
+`Vec<u8>` via `unsafe { out.as_mut_vec().push(b) }`. The String
+may temporarily contain invalid UTF-8 mid-stream, but
+well-formed user input (matching C semantics) leaves it valid at
+the end. Citation: Src/utils.c `\xNN` octet handling.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc $'echo $\'\\xe2\\x9c\\x93\'' | od -An -c | head -1
+   ✓  **  **  \n
+$ ./target/debug/zshrs --zsh -c $'echo $\'\\xe2\\x9c\\x93\'' | od -An -c | head -1
+   ✓  **  **  \n
+
+$ /opt/homebrew/bin/zsh -fc $'echo $\'\\xc3\\xa9\'' | od -An -c | head -1
+   é  **  \n
+$ ./target/debug/zshrs --zsh -c $'echo $\'\\xc3\\xa9\'' | od -An -c | head -1
+   é  **  \n
+
+# Regressions: ASCII \x41, \t \n, \u all unchanged
+$ ./target/debug/zshrs --zsh -c $'echo $\'a\\x41b\''
+aAb
+$ ./target/debug/zshrs --zsh -c $'echo $\'\\u2713\''
+✓
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc $'s=$\'\\xc3\\xa9\'; echo "len=${#s}"; echo "[$s]"'
