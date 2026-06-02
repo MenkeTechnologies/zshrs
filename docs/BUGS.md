@@ -7680,7 +7680,47 @@ for score in "${(v)scores[@]}"; do ... done
 
 ## #110 — `a[0]=val` silently accepted instead of erroring (zsh is 1-indexed)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — assignsparam now rejects index 0 under default semantics.
+
+**Root cause** — `assignsparam`'s numeric-subscript branch
+(`src/ported/params.rs:4960`) computed `real_idx = idx - 1` for
+positive indices, then `.max(0)` clamped negative results to 0.
+For input `a[0]=val`: `idx=0 → real_idx = -1 → .max(0) = 0`, then
+silently wrote to `arr[0]`. C-zsh's path goes through
+`getarg` (params.c:2125-2150), which detects `start == 0 && end == 0`
+and sets `VALFLAG_EMPTY` (under default mode — not KSHZEROSUBSCRIPT,
+not KSHARRAYS). `setarrvalue` (c:2911) then rejects with
+`"assignment to invalid subscript range"`.
+
+**Fix** — Add the KSHARRAYS + KSHZEROSUBSCRIPT gate at the
+numeric-subscript arm in assignsparam. When `idx == 0` and
+neither option is set, emit the canonical diagnostic and return
+without mutating the array. Also: under KSHARRAYS, skip the
+1-based-shift entirely so `a[0]` IS the first element (matches
+c:1595's `r = isset(KSHARRAYS) ? 1 : 0`).
+
+**Verify:**
+```sh
+# Default (1-indexed): index 0 rejected.
+$ ./target/debug/zshrs --zsh -c 'a=(); a[0]=val'
+zsh:1: a: assignment to invalid subscript range
+
+# KSH_ARRAYS (0-indexed): index 0 valid.
+$ ./target/debug/zshrs --zsh -c 'setopt KSH_ARRAYS; a=(); a[0]=val; echo "[${a[*]}]"'
+[val]
+
+# Index 1 still works (regression check).
+$ ./target/debug/zshrs --zsh -c 'a=(); a[1]=val; echo "[${a[*]}]"'
+[val]
+
+# Assoc allows key "0" — it's a string, not an array index.
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[0]=val; echo "[${h[0]}]"'
+[val]
+```
+
+Baseline: 930/122 (+1 test passes).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(); a[0]=val; echo "[${a[*]}] len=${#a}"' 2>&1
