@@ -50,7 +50,8 @@ use crate::ported::zsh_h::{
     ASSPM_ENV_IMPORT, ASSPM_WARN, AUTONAMEDIRS, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION,
     ERRFLAG_ERROR, EXECOPT, FS_FUNC, KSHARRAYS, PM_ARRAY, PM_AUTOLOAD, PM_DECLARED, PM_DEFAULTED,
     PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HASHELEM,
-    PM_HIDE, PM_INTEGER, PM_LEFT, PM_LOCAL, PM_NAMEDDIR, PM_NAMEREF, PM_NORESTORE, PM_READONLY,
+    PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOCAL, PM_NAMEDDIR, PM_NAMEREF, PM_NORESTORE,
+    PM_READONLY,
     PM_READONLY_SPECIAL, PM_REMOVABLE, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN, PM_SCALAR,
     PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER, POSIXARGZERO,
     PRINT_INCLUDEVALUE, PRINT_KV_PAIR, PRINT_LINE, PRINT_NAMEONLY, PRINT_POSIX_EXPORT,
@@ -9201,7 +9202,17 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         // hashelem path: print key without name= leader.
     }
     print!("{}", hn.node.nam);
-    if (printflags & PRINT_NAMEONLY) != 0 {
+    // c:6289 — `(printflags & PRINT_NAMEONLY) ||
+    //   ((p->node.flags & PM_HIDEVAL) && !(printflags & PRINT_INCLUDEVALUE))`
+    // PM_HIDEVAL (set by `typeset -H`, see TYPESET_OPTSTR position
+    // 15 in Src/builtin.c bin_typeset → PM_HIDEVAL = 1<<15) hides
+    // the value in `typeset -p` output. Bare `typeset NAME` passes
+    // PRINT_INCLUDEVALUE (Src/builtin.c:2246) which overrides the
+    // hide. Bug #233 in docs/BUGS.md — printparamnode didn't honor
+    // PM_HIDEVAL, so `typeset -H X=hello; typeset -p X` printed the
+    // value instead of just the name.
+    let hideval = (f & PM_HIDEVAL) != 0 && (printflags & PRINT_INCLUDEVALUE) == 0;
+    if (printflags & PRINT_NAMEONLY) != 0 || hideval {
         if (printflags & PRINT_KV_PAIR) == 0 {
             println!();
         }
