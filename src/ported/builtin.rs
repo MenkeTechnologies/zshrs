@@ -9110,6 +9110,35 @@ pub fn bin_eval(
     _ops: &options,
     _func: i32,
 ) -> i32 {
+    // c:Src/builtin.c:407-411 — generic `--` end-of-options strip
+    // applied by `execbuiltin` for builtins that:
+    //   1. Have NULL optstr (so the `if (optstr) { option parse }`
+    //      loop didn't run), AND
+    //   2. Don't have BINF_HANDLES_OPTS in their flags.
+    // ```c
+    // } else if (!(flags & BINF_HANDLES_OPTS) && *argv &&
+    //            !strcmp(*argv, "--")) {
+    //     ops.ind['-'] = 1;
+    //     argv++;
+    // }
+    // ```
+    // `eval` has optstr=NULL (Src/builtin.c:65) and no
+    // BINF_HANDLES_OPTS, so the strip applies. The Rust dispatch
+    // path bypasses execbuiltin, so we need to do the strip
+    // explicitly here. Without it `eval -- "echo hi"` joined to
+    // `-- echo hi` and tried to dispatch `--` as a command. Bug
+    // #319 in docs/BUGS.md.
+    let stripped: Vec<String>;
+    let argv: &[String] = if let Some(first) = argv.first() {
+        if first == "--" {
+            stripped = argv[1..].to_vec();
+            &stripped
+        } else {
+            argv
+        }
+    } else {
+        argv
+    };
     eval(argv) // c:6396
 }
 

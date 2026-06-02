@@ -597,7 +597,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // The execode invocation lives here (not in the canonical
         // free-fn) because it must run through the bytecode VM's
         // current executor — the same VM that's mid-dispatch.
-        let args = pop_args(vm, argc);
+        let mut args = pop_args(vm, argc);
+        // c:Src/builtin.c:407-411 — generic `--` end-of-options
+        // strip applied by `execbuiltin` for builtins that have
+        // NULL optstr AND no BINF_HANDLES_OPTS. `eval` qualifies
+        // (Src/builtin.c:65 `BUILTIN("eval", BINF_PSPECIAL, ...,
+        // NULL, NULL)`). The BUILTIN_EVAL fast-path bypasses
+        // execbuiltin, so we mirror the strip inline. Bug #319.
+        if args.first().is_some_and(|s| s == "--") {
+            args.remove(0);
+        }
         if args.is_empty() {
             return Value::Status(0); // c:6160
         }
