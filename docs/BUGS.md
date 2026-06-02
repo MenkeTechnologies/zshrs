@@ -10513,7 +10513,92 @@ must be diagnosed manually by reading the source.
 
 ## #140 — `exec /not/found` uses generic "not found" with wrong program prefix
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — exec error path now routes through `zerr` with `%e`-style strerror + path/PATH distinction (matches C `Src/exec.c:797`/`872-876`).
+
+**Root cause** — `src/fusevm_bridge.rs` exec dispatch emitted
+errors via `eprintln!("zshrs: exec: {}: not found", cmd)`. Three
+distinct gaps:
+
+1. **Wrong program prefix**: `zshrs:` instead of `zsh:` (in --zsh
+   mode the scriptname is `"zsh"` — `eprintln!` bypassed the
+   normal `scriptname:lineno:` prefix logic in `zwarning`).
+2. **Missing line number**: no `:LINE:` segment.
+3. **Wrong error string**: hardcoded `"not found"` instead of
+   `strerror(errno)` with the C `%e`-style first-letter
+   lowercasing (Src/utils.c:362-368 "looks better if we
+   uncapitalize the first letter").
+4. **No path vs PATH distinction**: C zsh emits
+   `<strerror>: <path>` for paths containing `/`, but
+   `command not found: <cmd>` for bare names when PATH search
+   exhausts (Src/exec.c:872-876).
+
+**C-source reference** — `Src/exec.c:797` (path with `/`):
+
+```c
+zerr("%e: %s", lerrno, arg0);
+_exit((lerrno == EACCES || lerrno == ENOEXEC) ? 126 : 127);
+```
+
+and `Src/exec.c:871-881` (PATH search):
+
+```c
+if (eno)
+    zerr("%e: %s", eno, arg0);
+else if (commandnotfound(arg0, args) == 0)
+    _realexit();
+else
+    zerr("command not found: %s", arg0);
+_exit((eno == EACCES || eno == ENOEXEC) ? 126 : 127);
+```
+
+**Fix** — both subshell and direct-exec branches in
+`src/fusevm_bridge.rs::reg_passthru!(BUILTIN_EXEC)`:
+
+```rust
+let errno = err.raw_os_error().unwrap_or(libc::ENOENT);
+let has_slash = cmd.contains('/');
+if !has_slash && errno == libc::ENOENT {
+    crate::ported::utils::zerr(&format!("command not found: {}", cmd));
+} else {
+    let mut errmsg = crate::ported::compat::strerror(errno);
+    if errno != libc::EIO {
+        if let Some(c) = errmsg.chars().next() {
+            errmsg = format!("{}{}", c.to_ascii_lowercase(), &errmsg[c.len_utf8()..]);
+        }
+    }
+    crate::ported::utils::zerr(&format!("{}: {}", errmsg, cmd));
+}
+let code = if errno == libc::EACCES || errno == libc::ENOEXEC { 126 } else { 127 };
+```
+
+`zerr` automatically prepends `scriptname:lineno:` so the format
+matches zsh's `zsh:N: <errmsg>: <cmd>` canonical exactly. The
+lowercase-first-letter EIO exception mirrors Src/utils.c:362-368.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'exec /no/such/cmd'
+zsh:1: no such file or directory: /no/such/cmd     # matches zsh
+
+$ ./target/debug/zshrs --zsh -c 'exec nosuchcmd1234'
+zsh:1: command not found: nosuchcmd1234            # matches zsh
+
+$ ./target/debug/zshrs --zsh -c 'exec /etc/hosts'
+zsh:1: permission denied: /etc/hosts               # matches zsh
+```
+
+All three variants match. Exit codes match too (127 for not-found,
+126 for EACCES/ENOEXEC). Regression suite unchanged (110 failures,
+same set).
+
+**Note on scope** — this is an inline-fix in `fusevm_bridge.rs` (a
+bridge file). A full port of `execcmd` into `src/ported/` is a much
+larger effort; this fix patches the error-format gap without that
+broader port. Bridge addition is bounded to the same three opcodes
+that previously held the bug.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'exec /no/such/cmd 2>&1'
