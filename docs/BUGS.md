@@ -861,22 +861,64 @@ zsh's parse-time rejection; only the diagnostic phrasing differs
 
 ## #19 — Quoted special-char / reserved-word case patterns fail in non-first branch
 
-**Status:** `port-bug` — surfaced 2026-05-29 writing demos 363, 365.
-Empirically narrowed 2026-05-30: the trigger condition is "non-first
-branch", NOT "inside function" (the latter was a misdiagnosis).
+**Status:** `fixed` 2026-06-01.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'case x in plain) echo p;; "!") echo b;; *) echo o;; esac'
 o
 
-$ zshrs --zsh -c 'case x in plain) echo p;; "!") echo b;; *) echo o;; esac'
+$ zshrs --zsh -c '...'   # before
 zsh:1: expected ')' in case pattern
-zshrs: parse error
-
-# But move "!" to FIRST branch and it works:
-$ zshrs --zsh -c 'case x in "!") echo b;; plain) echo p;; *) echo o;; esac'
+$ zshrs --zsh -c '...'   # after
 o
 ```
+
+**Root cause** — `src/ported/lex.rs::exalias`'s reserved-word
+lookup (port of `Src/lex.c:1973-2014`) consulted `lextext` (the
+untokenized form) without first checking whether the original
+`tokstr` had any quote markers. zshrs's `untokenize` at
+`src/ported/lex.rs:4275` STRIPS `Snull`/`Dnull`/`Bnull` markers
+entirely. So `"!"` arrived as `\u{9e}!\u{9e}` in `tokstr`, became
+plain `!` in `lextext`, matched the reswdtab entry, and got
+promoted to `BANG_TOK`. The "non-first branch" trigger was
+misleading: the first branch worked accidentally because the
+parser's pre-`in` state set the lexer up such that the first
+pattern's `STRING_LEX` wasn't subjected to the reswd promotion
+arm. After `;;`, the loop re-enters with `incmdpos` still true,
+exalias runs the reswd lookup, and the quoted reswd gets promoted.
+
+C zsh doesn't hit this because its `untokenize` REPLACES the
+quote markers with the literal quote chars (per the `ztokens`
+table). So C's `lextext` for `"if"` is the 4-byte string `"if"`
+(quotes intact); the reswdtab lookup for `"if"` never matches the
+reswd `if`. zshrs's untokenize stripped to bare text, so the
+lookup spuriously matched.
+
+The previous fix for bug #14 added a `tokstr_has_quote_marker`
+check for the `}` close-brace special case. This commit
+generalizes the same gate to the GENERAL reswd lookup.
+
+**Fix** (`src/ported/lex.rs::exalias`) — extend the existing
+`tokstr_has_quote_marker` test (already computed for the
+`is_close_brace_special` arm) to gate the `reswdtab.get(&lextext)`
+lookup. When the original tokstr carries any `Snull`/`Dnull`/
+`Bnull` marker, the text was quoted and must keep its literal
+meaning — reswd promotion is suppressed.
+
+Verified all affected tokens from the BUGS.md table:
+
+  * `"!"`, `"if"`, `"{"`, `"}"`, `"while"`, `"do"`, `"then"`,
+    `"else"`, `"let"` in second case branch → all pattern-match
+    correctly.
+  * `x=do; case $x in plain) echo p;; "then") echo t;; "do") echo d;; *) echo o; esac` → `d`
+  * Unquoted `if true; then echo yes; fi` → `yes` (reswd still
+    promoted when not quoted).
+  * Unquoted `! false && echo passed` → `passed` (bang negation
+    intact).
+  * Quoted non-reswd `"foo"` in second branch → still works.
+
+zshrs_shell regression: 924/128 (baseline preserved with
+`--test-threads=2`).
 
 **Affected tokens** (verified by enumeration):
 

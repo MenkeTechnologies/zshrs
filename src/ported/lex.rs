@@ -3217,7 +3217,22 @@ pub fn exalias() -> bool {
         // lookup the same as a non-gated path so the cond branches
         // get their turn.
         let reswd_path_eligible = LEX_INCMDPOS.get() || is_close_brace_special;
-        let rw_tok: Option<lextok> = if reswd_path_eligible {
+        // c:Src/lex.c:1973-1980 — C's untokenize keeps Snull/Dnull/Bnull
+        // quote markers AS THEIR LITERAL QUOTE CHARS in `lextext` (via
+        // the ztokens table). So C's lextext for `"if"` is the 4-byte
+        // string `"if"` (quotes intact) and reswd_lookup against `"if"`
+        // never matches the bare reswd `if`. zshrs's untokenize at
+        // lex.rs:4275 STRIPS those markers entirely (so lextext is
+        // `if`), which would spuriously promote a quoted token to a
+        // reserved word. Bug #19 in docs/BUGS.md: quoted patterns like
+        // `"!"`, `"if"`, `"{"`, `"}"` in non-first case branches
+        // parsed as the corresponding reswd (BANG_TOK / IF / INBRACE
+        // / OUTBRACE) and triggered "expected ')' in case pattern".
+        // Same root cause as bug #14's `is_close_brace_special` gate
+        // above: when the original tokstr carries any Snull/Dnull/Bnull
+        // marker, the text WAS quoted by the user and must keep its
+        // literal meaning — reswd promotion is suppressed.
+        let rw_tok: Option<lextok> = if reswd_path_eligible && !tokstr_has_quote_marker {
             let guard = reswdtab_lock().read().expect("reswdtab poisoned");
             guard.get(&lextext).map(|r| r.token)
         } else {
