@@ -6497,13 +6497,37 @@ pub fn bin_hash(
                     returnval = 1; // c:4308
                     continue; // c:4309
                 }
+                // c:Src/builtin.c:80 — `BUILTIN("hash", BINF_MAGICEQUALS,
+                // …)`. The MAGICEQUALS flag causes the C parser to
+                // apply tilde/equals expansion to `name=value` argv
+                // entries via Src/utils.c::quotestring's MAGICEQUALSUBST
+                // arm at c:6304. By the time argv reaches bin_hash, the
+                // value has already been tilde-expanded.
+                //
+                // The Rust pipeline doesn't apply MAGICEQUALS at the
+                // parser/compile level for `hash -d` args, so the
+                // literal `~` reaches here untouched. Bug #32 in
+                // docs/BUGS.md: `hash -d zh=~` stored `'~'` instead
+                // of $HOME. Apply tilde expansion locally by routing
+                // the value through filesubstr — re-tokenize a
+                // leading `~` to the Tilde TOKEN (\u{98}) which
+                // filesubstr keys on per its strict-token
+                // contract (subst.rs:1761).
+                let expanded_v: String = if v.starts_with('~') {
+                    let rest = &v[1..];
+                    let tokenized = format!("\u{98}{}", rest);
+                    crate::ported::subst::filesubstr(&tokenized, false)
+                        .unwrap_or_else(|| v.to_string())
+                } else {
+                    v.to_string()
+                };
                 let nd = nameddir {
                     node: hashnode {
                         next: None,
                         nam: n.to_string(),
                         flags: 0,
                     },
-                    dir: v.to_string(),
+                    dir: expanded_v,
                     diff: 0,
                 };
                 addnameddirnode(n, nd); // c:4314
