@@ -190,17 +190,19 @@ fn shname() -> String {
 }
 
 pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
-    let bn_idx = crate::ported::builtin::BUILTINS
-        .iter()
-        .position(|b| b.node.nam == name);
-    if let Some(idx) = bn_idx {
-        let bn_static: &'static crate::ported::zsh_h::builtin =
-            &crate::ported::builtin::BUILTINS[idx];
-        let bn_ptr = bn_static as *const _ as *mut _;
-        crate::ported::builtin::execbuiltin(args, Vec::new(), bn_ptr)
-    } else {
-        1
+    // c:Src/exec.c:3050-3068 — builtin lookup hits `builtintab` (the
+    // merged table containing module-provided builtins). The previous
+    // port walked only the core `BUILTINS` slice, so per-module
+    // entries like `log` (Src/Modules/watch.c:693 `BUILTIN("log", …,
+    // bin_log, …)`) were registered into builtintab via
+    // createbuiltintable but never reached at dispatch — `log` fell
+    // through to PATH and ran `/usr/bin/log`. Bug #72 in docs/BUGS.md.
+    let tab = crate::ported::builtin::createbuiltintable();
+    if let Some(bn_static) = tab.get(name) {
+        let bn_ptr = *bn_static as *const _ as *mut _;
+        return crate::ported::builtin::execbuiltin(args, Vec::new(), bn_ptr);
     }
+    1
 }
 
 /// Shadow-aware dispatch matching zsh's name-resolution order:
@@ -5745,6 +5747,28 @@ impl fusevm::ShellHost for ZshrsHost {
                 return Some(crate::daemon::builtins::try_dispatch(n, &argv).unwrap_or(1));
             }
             _ => {}
+        }
+
+        // c:Src/exec.c:3050-3068 — module-provided builtins (registered
+        // via each module's `bintab` and folded into the canonical
+        // `builtintab` by `createbuiltintable`) must dispatch BEFORE
+        // PATH lookup. fusevm's `shell_builtins::builtin_id` doesn't
+        // know about per-module entries like `log`
+        // (Src/Modules/watch.c:693) — they reach call_function as
+        // CallFunction ops. Consult the merged builtintab here so
+        // `log` runs the canonical `bin_log` instead of falling
+        // through to `/usr/bin/log` on macOS. Bug #72 in docs/BUGS.md.
+        //
+        // User-defined functions still take precedence over builtins
+        // (zsh's `alias → function → builtin → external` resolution
+        // order, c:Src/exec.c:3038-3068). Check `functions_compiled`
+        // first so a user `log() { ... }` shadows the module bin_log.
+        let has_user_fn = with_executor(|exec| exec.functions_compiled.contains_key(name));
+        if !has_user_fn {
+            let bn_in_tab = crate::ported::builtin::createbuiltintable().contains_key(name);
+            if bn_in_tab {
+                return Some(dispatch_builtin_raw(name, args));
+            }
         }
 
         // c:Src/lex.c — alias expansion is a LEXER-TIME pass, not a

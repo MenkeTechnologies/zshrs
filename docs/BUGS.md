@@ -4516,7 +4516,27 @@ correct semantics in both shells.
 
 ## #70 — Filesystem watcher leaks newly-created paths to stderr
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting. Severe.
+**Status:** `fixed?` 2026-06-02 — no longer reproduces in the
+original form. Re-ran the exact reproducer:
+```sh
+mkdir -p /tmp/zwatch
+./target/debug/zshrs --zsh -c '
+cd /tmp/zwatch
+touch a b c; sleep 0.3
+touch d e f; sleep 0.3
+echo done' 2>/tmp/zee 1>/dev/null
+wc -c </tmp/zee   # 0 bytes
+```
+zee is empty during the run. Some path-leak still occurs at process
+teardown via the daemon-cleanup hook (visible AFTER the script
+finishes, on `rm -rf /tmp/zwatch`) but no longer during normal
+execution. Likely covered by a prior `tracing` migration that swept
+the watcher's `eprintln!` into `tracing::debug!`.
+
+Leaving status as `fixed?` (not `fixed`) until a follow-up audit
+confirms the teardown-time leak is gone too.
+
+### Original report
 
 Reproducer:
 ```sh
@@ -4584,7 +4604,17 @@ instead of stderr.
 
 ## #71 — `${var:N:M}` substring accepts non-digit-leading offset (bashism)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+```
+$ /opt/homebrew/bin/zsh -fc 's="abcdef"; n=1; echo "${s:n:3}"'
+zsh:1: unrecognized modifier `n'
+$ zshrs --zsh -c 's="abcdef"; n=1; echo "${s:n:3}"'
+zsh:1: unrecognized modifier `n'
+```
+Both shells now error identically. Likely covered by a prior
+substring-parse tightening in subst.rs.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's="abcdef"; n=1; echo "${s:n:3}"'
@@ -4637,7 +4667,35 @@ Or use parens: `${s:(n):3}` works in zsh.
 
 ## #72 — `log` builtin registered but execution dispatches to `/usr/bin/log`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — two-layer issue:
+
+1. **Dispatch layer**: fusevm's `shell_builtins::builtin_id` only
+   knows the core builtin set. Module-provided builtins (folded into
+   the merged `builtintab` by `createbuiltintable` at startup, see
+   `src/ported/builtin.rs:135`) reached the host via
+   `Op::CallFunction`, then call_function's lookup chain (alias →
+   user fn → external) skipped them and PATH-resolved `/usr/bin/log`.
+   Added a builtintab consult in `call_function` (`fusevm_bridge.rs`)
+   AFTER the user-function check, BEFORE PATH dispatch. Mirrors C's
+   `Src/exec.c:3050-3068` resolution order.
+2. **Exit-code layer**: ported `bin_log` returned `1` when `$WATCH`
+   was empty (`Src/Modules/watch.c:661` `if (!watch) return 1;`); C
+   semantics treat `watch` as a non-NULL empty array after
+   `setup_()`, so the early-return effectively never fires.
+   macOS-shipped zsh always returns 0. Dropped the early-return so
+   bin_log runs `dowatch` unconditionally.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `log; echo $?` → both `0`.
+- `log() { echo "user"; }; log` — user function shadows builtin in
+  both shells.
+- `command log` — both reach the external `/usr/bin/log`.
+- `whence -v log` → `log is a shell builtin` in both.
+- `WATCH=all; log` — zsh emits the user list; zshrs reaches the
+  builtin but `dowatch()` body is a stub (separate gap, doesn't
+  emit the user list yet).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'log; echo "exit=$?"'
