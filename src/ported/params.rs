@@ -4925,6 +4925,71 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         }
     }
 
+    // c:Src/params.c:3262 IPDEF9 — `argv`, `@`, `*` are aliases for
+    // the global `pparams` (positional parameter vector). Whole-
+    // array writes (`argv=(...)`) route through assignaparam at
+    // params.rs:5487 which updates PPARAMS. Subscripted writes
+    // (`argv[N]=val`) must do the same — without this, the value
+    // landed in paramtab's u_arr but `$@`/`$1`/`$2`/... continued
+    // reading from PPARAMS, so the update was invisible. Bug #281
+    // in docs/BUGS.md.
+    if let Some(key) = subscript {
+        if matches!(name, "argv" | "@" | "*") {
+            if let Ok(idx) = key.trim().parse::<i64>() {
+                if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
+                    let len = pp.len() as i64;
+                    let kshzero =
+                        crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT);
+                    if idx == 0 && !isset(KSHARRAYS) && !kshzero {
+                        zerr(&format!(
+                            "{}: assignment to invalid subscript range",
+                            name
+                        ));
+                        drop(pp);
+                        unqueue_signals();
+                        return None;
+                    }
+                    let real_idx = if idx < 0 {
+                        (len + idx).max(0) as usize
+                    } else if isset(KSHARRAYS) {
+                        idx.max(0) as usize
+                    } else {
+                        (idx - 1).max(0) as usize
+                    };
+                    while pp.len() <= real_idx {
+                        pp.push(String::new());
+                    }
+                    pp[real_idx] = val.to_string();
+                }
+                unqueue_signals();
+                return Some(Box::new(param {
+                    node: hashnode {
+                        next: None,
+                        nam: name.to_string(),
+                        flags: PM_ARRAY as i32,
+                    },
+                    u_data: 0,
+                    u_arr: None,
+                    u_str: None,
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                }));
+            }
+        }
+    }
+
     // Subscripted path (c:3210-3231).
     if let Some(key) = subscript {
         let mut tab = paramtab().write().unwrap();

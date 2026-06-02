@@ -20538,7 +20538,55 @@ unset HOST
 
 ## #281 — `argv[N]=value` and `argv+=(x)` don't sync with positionals (`$@`/`$*`) — argv is read-only mirror
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `assignsparam` subscripted path didn't have
+an `argv`/`@`/`*` magic-store gate, so subscripted writes
+landed in paramtab's `u_arr` while positional reads continued
+consulting `PPARAMS`; corrected 2026-06-02.
+
+**Root cause** — `Src/params.c:3262` (`IPDEF9`) defines `argv`,
+`@`, `*` as aliases for the global `pparams` (positional
+parameter vector). The Rust port's `assignaparam`
+(`params.rs:5487`) DID handle the whole-array assign
+(`argv=(...)`) by mirroring to `PPARAMS`. But the subscripted
+assign path (`assignsparam("argv[2]", "B", ...)` — reached via
+`BUILTIN_SET_ASSOC` for `argv[N]=v`) had no `argv` short-
+circuit. It fell through to the generic paramtab subscript
+store (around line 4983), wrote `"B"` into paramtab's `u_arr`,
+and left `PPARAMS` untouched. Reads of `$1`/`$2`/`$@`/`$*`
+continued to see the original positionals.
+
+**Fix:** `src/ported/params.rs::assignsparam` — before the
+generic subscripted path, intercept `name in {argv, @, *}` with
+a numeric key. Resolve the index (1-based by default, 0-based
+under `KSHARRAYS`, `idx == 0` rejected without
+`KSHZEROSUBSCRIPT`), grow `PPARAMS` to the index if needed, write
+the value. Return a synthetic `PM_ARRAY` Param. Comment cites
+c:3262 IPDEF9.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- a b c; argv[2]=B; echo "$@"'
+a B c
+$ ./target/debug/zshrs --zsh -c 'set -- a b c; argv[2]=B; echo "$@"'
+a B c
+
+$ /opt/homebrew/bin/zsh -fc 'set -- a b c; argv[2]=B; echo "$1 $2 $3"'
+a B c
+$ ./target/debug/zshrs --zsh -c 'set -- a b c; argv[2]=B; echo "$1 $2 $3"'
+a B c
+
+# Grow positional list via subscript
+$ /opt/homebrew/bin/zsh -fc 'set -- a b; argv[3]=C; echo "$#: $@"'
+3: a b C
+$ ./target/debug/zshrs --zsh -c 'set -- a b; argv[3]=C; echo "$#: $@"'
+3: a b C
+
+# Regression: regular array a[N]= unchanged
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); a[2]=Y; echo "${a[@]}"'
+x Y z
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'set -- a b c; argv[2]=Z; echo "positional=[$@] argv=[${argv[@]}]"'
