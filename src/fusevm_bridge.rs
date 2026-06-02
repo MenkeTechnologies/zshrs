@@ -330,6 +330,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // OnceLock makes the call idempotent — repeated invocations from
     // every `ShellExecutor::new` are no-ops.
     install_exec_hooks();
+    // Engage fusevm's tiered JIT (block + tracing) so hot, fully-eligible
+    // numeric chunks run in native code and — with the `jit-disk-cache`
+    // feature (on by default) — persist that native code to
+    // `~/.cache/fusevm-jit`, letting repeated zsh invocations skip Cranelift
+    // codegen. fusevm gates the JIT on per-chunk eligibility and warms up by
+    // an invocation threshold, falling back to the interpreter for any chunk
+    // it cannot compile (e.g. host-builtin/`Extended` command dispatch), so
+    // enabling it here never changes observable behaviour — it only caches
+    // the numeric hot path. Idempotent: re-enabling on each VM is a no-op.
+    vm.enable_tracing_jit();
     // Macro for builtins that user functions are allowed to shadow.
     // zsh dispatch order is alias → function → builtin; without the
     // try_user_fn_override probe a `cat() { ... }; cat` would silently
@@ -5876,9 +5886,26 @@ impl ShellExecutor {
                 // zsh internally stores the inverted-name `clobber`
                 // (default ON); `setopt noclobber` writes
                 // `clobber=false`. Honor both keys.
+                //
+                // c:Src/exec.c:2241-2245 clobber_open recover path:
+                // after O_EXCL fails, reopen and `if (!S_ISREG(...))
+                // return fd;` — non-regular targets (char/block-
+                // special, FIFO, socket) bypass the noclobber check.
+                // Bug #30 in docs/BUGS.md: this bridge-side check did
+                // a bare `Path::exists()` and treated `/dev/null` as
+                // a protected file, breaking `setopt no_clobber; echo
+                // hi > /dev/null` and every `2> /dev/null` idiom.
+                // Add a regular-file stat gate that matches the C
+                // semantic. The canonical clobber_open at
+                // src/ported/exec.rs:2123 already handles this; the
+                // bridge duplicates a stripped-down version here and
+                // must mirror the same check.
                 let noclobber = opt_state_get("noclobber").unwrap_or(false)
                     || !opt_state_get("clobber").unwrap_or(true);
-                if noclobber && std::path::Path::new(target).exists() {
+                let target_is_regular_file = std::fs::metadata(target)
+                    .map(|m| m.file_type().is_file())
+                    .unwrap_or(false);
+                if noclobber && target_is_regular_file {
                     eprintln!("{}:1: file exists: {}", shname(), target);
                     self.set_last_status(1);
                     // c:Src/exec.c — set redirect_failed so the scope-end

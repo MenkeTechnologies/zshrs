@@ -1684,45 +1684,60 @@ zshrs_shell regression: 925/127 (baseline preserved with
 
 ## #30 — `setopt no_clobber` rejects `> /dev/null` (and any char-special device)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-01.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt no_clobber; echo hi > /dev/null'
 # (no error — succeeds)
 
-$ zshrs --zsh -c 'setopt no_clobber; echo hi > /dev/null'
+$ zshrs --zsh -c 'setopt no_clobber; echo hi > /dev/null'   # before
 zsh:1: file exists: /dev/null
+$ zshrs --zsh -c 'setopt no_clobber; echo hi > /dev/null'   # after
+# (no error — succeeds)
 ```
 
-`setopt no_clobber` (a.k.a. `>!` requirement) should only protect
-REGULAR files from being overwritten. Real zsh exempts character
-special, block special, FIFO, and symlinks-to-non-regular targets
-from the check — overwriting `/dev/null` or `/dev/stdout` always
-works. zshrs's port treats `/dev/null` as a protected file.
+**Root cause** — `src/fusevm_bridge.rs` has its own noclobber
+check (separate from the canonical `src/ported/exec.rs::clobber_open`
+port which IS correct). The bridge check at line 5891 did a bare
+`std::path::Path::new(target).exists()` without distinguishing
+regular files from char-special, block-special, FIFO, or socket
+targets. `/dev/null` exists → check fires → "file exists" error
+even though zsh would allow the overwrite.
 
-Affects EVERY common idiom that uses `> /dev/null` or `2> /dev/null`
-once a script sets `no_clobber`:
+The original BUGS.md "Where" pointed at
+`src/ported/exec.rs::add_fd_or_open` (which routes to
+clobber_open), but the bridge path executed first and short-
+circuited the canonical opener — clobber_open was never reached
+for redirect writes in -c / -f mode.
 
-```sh
-setopt no_clobber
+C-zsh semantic (`Src/exec.c:2241-2245` clobber_open recover
+path): after O_EXCL fails, reopen without O_EXCL, fstat, and
+`if (!S_ISREG(...)) return fd;` — non-regular targets bypass
+the noclobber check entirely.
 
-# All of these fail in zshrs, work in zsh:
-some_cmd > /dev/null
-some_cmd 2> /dev/null
-some_cmd &> /dev/null
-echo "fd 1 to stdout dup" >&1
-```
+**Fix** (`src/fusevm_bridge.rs` WRITE redirect noclobber check)
+— extend the existence check with a `std::fs::metadata` call:
+gate the "file exists" error on the target ALSO being a regular
+file. Mirrors C's `S_ISREG` check. The canonical clobber_open
+port stays untouched — eventually the bridge should defer to
+it, but for now the bridge mirrors the same semantic inline.
 
-**Where** — `src/ported/exec.rs::add_fd_or_open` or the redirection
-opener path that calls `O_CREAT | O_EXCL` style flags. Should
-`stat()` the target first and skip the existence check for
-non-regular files.
+Verified:
 
-**Workaround** — use `>|` to force-clobber:
-```sh
-setopt no_clobber
-some_cmd >| /dev/null    # force overwrite, bypasses noclobber
-```
+  * `setopt no_clobber; echo hi > /dev/null` → succeeds (EC=0).
+  * `setopt no_clobber; cat /nonexistent 2> /dev/null` →
+    cat's error suppressed; EC=1 from cat's own failure.
+  * `setopt no_clobber; { echo out; echo err >&2; } &> /dev/null`
+    → succeeds, no output.
+  * Regular file IS still protected: `setopt no_clobber; echo
+    new > /tmp/existing_file` → `file exists:` error; original
+    content preserved.
+  * `>|` force-clobber still works.
+  * FIFO write works (named pipe, non-regular).
+  * New file creation still works.
+
+zshrs_shell regression: 925/127 (baseline preserved with
+`--test-threads=1`).
 
 ---
 
