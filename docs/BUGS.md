@@ -2261,8 +2261,9 @@ zshrs_shell regression: 925/127 (baseline preserved with
 
 ## #38 — Many prompt escapes missing / printed-literally (extends bug #5)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting. Extends bug
-#5 which only listed `%j`, `%T`, `%D{}`.
+**Status:** `fixed` 2026-06-02 (partial — `%m`, `%C`, `%l`, `%y`,
+`%v`, `%E` added; `%I`, `%H`, `%b`/`%u`/`%s`/`%f`/`%k` "off"
+escapes deferred to a separate terminfo pass).
 
 Direct sweep against `/opt/homebrew/bin/zsh` 5.9:
 
@@ -2296,23 +2297,59 @@ where zsh emits the corresponding ANSI/terminfo escape sequence —
 this leaves users with prompts where colors/styles don't reset
 after `%F{red}...%f` etc.
 
-**Where** — `src/ported/prompt.rs::putpromptchar` (port of
-`Src/prompt.c::putpromptchar` switch table). Each missing case
-needs to:
-  - `%m`: short hostname from `gethostname()`
-  - `%C`: last segment of `$PWD`
-  - `%i`: current line number (`$LINENO`)
-  - `%l`/`%y`: tty name from `ttyname(0)` or `()` when no tty
-  - `%E`: ANSI clear-to-EOL (`\x1b[K`)
-  - `%v`: `$psvar[1]`
-  - `%b`/`%u`/`%s`/`%f`/`%k`: terminfo string for "off" of B/U/S/F/K
+**Fix** (`src/ported/prompt.rs::putpromptchar`) — added the
+missing switch arms by porting the matching `Src/prompt.c` case
+bodies:
 
-**Workaround** — substitute manually in prompts:
-```sh
-PS1='%n@$HOST:%~%# '       # use $HOST instead of %m
-PS1='%F{red}error%f'        # zshrs: red text, but %f doesn't reset
-PS1='%F{red}error%F{default}' # workaround: explicit "default" color
-```
+  * **`%m`** (c:576-596) — short hostname with optional `N`
+    segment count. Positive N keeps the FIRST N components from
+    the left; negative N keeps the LAST |N|. `HOST=foo.bar.baz`
+    + `%2m` → `foo.bar`; `%-2m` → `bar.baz`.
+  * **`%C`** (c:551-556) — trailing path component(s) of `$PWD`,
+    without the home-tilde strip that `%c`/`%.` does. Default
+    arg=1 yields the last segment.
+  * **`%l`** (c:777-784) — controlling tty name, with
+    `/dev/tty` or `/dev/` prefix stripped. `()` when no tty
+    (matches zsh in -c mode).
+  * **`%y`** (c:785-792) — controlling tty name, with `/dev/`
+    prefix stripped (does NOT also strip `tty` like `%l` does).
+    `()` when no tty.
+  * **`%v`** (c:818-824) — `$psvar[arg-1]`. Default arg=1
+    selects element 1. Negative N counts from the end.
+  * **`%E`** (c:828-830) — ANSI clear-to-end-of-line escape
+    `\x1b[K`, bracketed by Inpar/Outpar so the width-counter
+    ignores it.
+
+Verified end-to-end against `/opt/homebrew/bin/zsh`:
+
+  * `print -P "%m"` → `codelabs-arm` (matches hostname).
+  * `HOST=foo.bar.baz print -P "%2m / %-2m"` → `foo.bar /
+    bar.baz`.
+  * `cd /tmp; print -P "%C"` → `/tmp`.
+  * `print -P "%l"` (-c mode, no tty) → `()`.
+  * `psvar=(hello world); print -P "%v / %2v"` → `hello /
+    world`.
+  * `print -P "%E"` emits `\x1b[K`.
+  * Regression: `%n`, `%M`, `%F{...}`, `%B/%U/%S`, `%%`, `%(?)`
+    all unchanged.
+
+**Still unfixed** (separate terminfo pass needed):
+
+  * `%I` — line in source. Always `0` currently (same as `%i`).
+  * `%H` — highlight on (`%H{N}…` form).
+  * `%b`/`%u`/`%s`/`%f`/`%k` "off" arms — they emit empty
+    instead of the terminfo "off" escape. The B/U/S/F/K "on"
+    counterparts work; the "off" arms need the per-attribute
+    cancellation sequences (`\x1b[22m` for `%b`, `\x1b[24m`
+    for `%u`, `\x1b[27m` for `%s`, `\x1b[39m` for `%f`,
+    `\x1b[49m` for `%k`).
+
+The most impactful missing escape from the original BUGS.md
+sweep (`%m`) is now covered.
+
+zshrs_shell regression: 926/126 — net +1 over the 925/127
+baseline (`test_print_P_y_no_tty_outputs_parens` now passes;
+no other test regressed).
 
 ---
 

@@ -796,6 +796,21 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     };
                     stradd(bv, &tail);
                 }
+                // c:551-556 — `%C` (trailing path component, NO home-tilde).
+                // Like `%c` but skips the home-strip step. Bug #38 in
+                // docs/BUGS.md: previously fell through to the
+                // literal-`%C` default.
+                b'C' => {
+                    let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
+                    let n = if arg > 0 { arg as usize } else { 1 };
+                    let parts: Vec<&str> = pwd.split('/').filter(|s| !s.is_empty()).collect();
+                    let tail = if parts.len() <= n {
+                        pwd
+                    } else {
+                        parts[parts.len() - n..].join("/")
+                    };
+                    stradd(bv, &tail);
+                }
                 // c:540 — `%n` (username)
                 b'n' => {
                     let u = prompt_tls::USER.with(|c| c.borrow().clone());
@@ -805,6 +820,27 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 b'M' => {
                     let h = prompt_tls::HOST.with(|c| c.borrow().clone());
                     stradd(bv, &h);
+                }
+                // c:576-596 — `%m` (short hostname; numeric arg N
+                // truncates to N segments from the LEFT for positive,
+                // from the RIGHT for negative). C body reads
+                // `getsparam("HOST")` and truncates around `.`.
+                // Bug #38 in docs/BUGS.md: previously fell through
+                // to the literal-`%m` default.
+                b'm' => {
+                    let h = prompt_tls::HOST.with(|c| c.borrow().clone());
+                    let n = if arg == 0 { 1 } else { arg };
+                    let parts: Vec<&str> = h.split('.').collect();
+                    let out: String = if n > 0 {
+                        // First n segments from the LEFT.
+                        let take = (n as usize).min(parts.len());
+                        parts[..take].join(".")
+                    } else {
+                        // Last |n| segments from the RIGHT.
+                        let take = ((-n) as usize).min(parts.len());
+                        parts[parts.len() - take..].join(".")
+                    };
+                    stradd(bv, &out);
                 }
                 // c:563-570 — `%S` (standout on) / `%s` (off)
                 b'S' => {
@@ -1128,6 +1164,91 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 // number; in -c mode there's no editor so we report 0.
                 b'i' => {
                     stradd(bv, "0");
+                }
+                // c:777-784 — `%l` (controlling tty, trimmed of
+                // `/dev/tty` or `/dev/` prefix). Bug #38 in
+                // docs/BUGS.md.
+                b'l' => {
+                    let tty = unsafe {
+                        let p = libc::ttyname(0);
+                        if p.is_null() {
+                            String::new()
+                        } else {
+                            std::ffi::CStr::from_ptr(p)
+                                .to_str()
+                                .unwrap_or("")
+                                .to_string()
+                        }
+                    };
+                    if tty.is_empty() {
+                        stradd(bv, "()");
+                    } else if let Some(rest) = tty.strip_prefix("/dev/tty") {
+                        stradd(bv, rest);
+                    } else if let Some(rest) = tty.strip_prefix("/dev/") {
+                        stradd(bv, rest);
+                    } else {
+                        stradd(bv, &tty);
+                    }
+                }
+                // c:785-792 — `%y` (controlling tty, trimmed of
+                // `/dev/` only — does NOT strip `tty` prefix like
+                // `%l` does).
+                b'y' => {
+                    let tty = unsafe {
+                        let p = libc::ttyname(0);
+                        if p.is_null() {
+                            String::new()
+                        } else {
+                            std::ffi::CStr::from_ptr(p)
+                                .to_str()
+                                .unwrap_or("")
+                                .to_string()
+                        }
+                    };
+                    if tty.is_empty() {
+                        stradd(bv, "()");
+                    } else if let Some(rest) = tty.strip_prefix("/dev/") {
+                        stradd(bv, rest);
+                    } else {
+                        stradd(bv, &tty);
+                    }
+                }
+                // c:818-824 — `%v` (psvar[arg-1], default arg=1).
+                // psvar is the `$psvar` array.
+                b'v' => {
+                    let n = if arg == 0 { 1 } else { arg };
+                    let psvar = crate::ported::params::getsparam("psvar");
+                    let arr: Vec<String> = if let Some(s) = psvar {
+                        s.split(' ').map(String::from).collect()
+                    } else {
+                        crate::ported::exec_hooks::array("psvar").unwrap_or_default()
+                    };
+                    let idx: i32 = if n < 0 {
+                        arr.len() as i32 + n
+                    } else {
+                        n - 1
+                    };
+                    if idx >= 0 && (idx as usize) < arr.len() {
+                        stradd(bv, &arr[idx as usize]);
+                    }
+                }
+                // c:828-830 — `%E` (clear-to-end-of-line ANSI escape).
+                // C: `tsetcap(TCCLEAREOL, TSC_PROMPT);` — emit the
+                // terminal's `el` capability. Use the canonical ANSI
+                // `ESC [ K` which works on every modern terminal;
+                // matches what `tput el` would emit. Bracketed by
+                // Inpar/Outpar so the width-counter ignores it.
+                b'E' => {
+                    let esc = "\x1b[K";
+                    addbufspc(bv, 1);
+                    bv.buf[bv.bp] = Inpar as u8;
+                    bv.bp += 1;
+                    for &b in esc.as_bytes() {
+                        pputc(bv, b);
+                    }
+                    addbufspc(bv, 1);
+                    bv.buf[bv.bp] = Outpar as u8;
+                    bv.bp += 1;
                 }
                 // c:894-896 — `%%` (literal percent)
                 b'%' => pputc(bv, b'%'),
