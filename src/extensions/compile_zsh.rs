@@ -1250,11 +1250,23 @@ impl ZshCompiler {
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.break_patches[idx].push(j);
             } else {
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_BREAK, 0), 0);
-                self.builder.emit(Op::Pop, 0);
-                let j = self.builder.emit(Op::Jump(0), 0);
-                self.return_patches.push(j);
+                // c:Src/builtin.c:5832-5835 — `break` outside any
+                // loop: `zwarnnam(name, "not in while, until,
+                // select, or repeat loop"); return 1;`. Route through
+                // BUILTIN_BREAK so `bin_break` (which already handles
+                // the loops==0 check + LASTVAL=1 + zwarnnam) runs.
+                // Previously the no-loop arm emitted SET_BREAK + Pop
+                // + Jump-to-script-end, which silently exited without
+                // any error message. Bug #285.
+                for word in &simple.words[1..] {
+                    self.compile_word_str(word);
+                }
+                let argc = (simple.words.len() - 1) as u8;
+                self.builder.emit(
+                    Op::CallBuiltin(fusevm::shell_builtins::BUILTIN_BREAK, argc),
+                    0,
+                );
+                self.builder.emit(Op::SetStatus, 0);
             }
             return;
         }
@@ -1290,13 +1302,19 @@ impl ZshCompiler {
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.continue_patches[idx].push(j);
             } else {
+                // c:Src/builtin.c:5831-5834 — `continue` outside any
+                // loop: same error path as `break`. Route through
+                // BUILTIN_CONTINUE so bin_break (with func=BIN_CONTINUE)
+                // emits the warning + returns 1. Bug #285.
+                for word in &simple.words[1..] {
+                    self.compile_word_str(word);
+                }
+                let argc = (simple.words.len() - 1) as u8;
                 self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_CONTINUE, 0),
+                    Op::CallBuiltin(fusevm::shell_builtins::BUILTIN_CONTINUE, argc),
                     0,
                 );
-                self.builder.emit(Op::Pop, 0);
-                let j = self.builder.emit(Op::Jump(0), 0);
-                self.return_patches.push(j);
+                self.builder.emit(Op::SetStatus, 0);
             }
             return;
         }
