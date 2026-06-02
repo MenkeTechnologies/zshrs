@@ -21230,7 +21230,66 @@ result=$(_convert_input)
 
 ## #292 — `case "$x" in $var)`/`$((expr)))`/`$(cmd)))` — case pattern doesn't expand variables/arith/cmdsub
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `compile_case` pushed each pattern as a
+literal constant without running it through singsub for
+parameter / arith / cmdsub expansion; corrected 2026-06-02.
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_case`
+emitted:
+
+```rust
+let pat_clean = crate::lex::untokenize(pattern);
+let pat_const = self.builder.add_constant(Value::str(pat_clean.as_str()));
+self.builder.emit(Op::LoadConst(pat_const), 0);
+self.builder.emit(Op::StrMatch, 0);
+```
+
+— pushed the literal pattern text as a const. For
+`case "$x" in $pat)`, the pattern arrives lexer-encoded as
+`\u{85}pat` (META-`$`+name); untokenize converts it to `$pat`
+which goes directly to StrMatch as a literal string. The matcher
+compared `hi` against the string `$pat` (no expansion) and
+returned false.
+
+C `Src/loop.c::execcase` routes each pattern through `subst`
+before pattern-compile, which expands `$var` / `$((...))` /
+`$(...)` / `` `cmd` `` without globbing (glob chars survive into
+the pattern text for the matcher).
+
+**Fix:** `src/extensions/compile_zsh.rs::compile_case` —
+detect lexer-encoded expansion markers (`\u{85}` Stringg,
+`\u{8c}` Qstring/ANSI-C, `\u{99}` Tick) or raw `$`/backtick. When
+found, emit `BUILTIN_EXPAND_TEXT` mode 4 (singsub-only —
+parameter / cmdsub / arith expansion, NO globbing, NO brace
+expansion). Plain-glob patterns (`foo*`, literal `abc`) still
+take the const fast-path so they don't pay the runtime
+expansion cost.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'x=hi; pat=hi; case "$x" in $pat) echo match ;; esac'
+match
+$ ./target/debug/zshrs --zsh -c 'x=hi; pat=hi; case "$x" in $pat) echo match ;; esac'
+match
+
+$ /opt/homebrew/bin/zsh -fc 'x=5; case "$x" in $((2+3))) echo match ;; esac'
+match
+$ ./target/debug/zshrs --zsh -c 'x=5; case "$x" in $((2+3))) echo match ;; esac'
+match
+
+$ /opt/homebrew/bin/zsh -fc 'x=hello; case "$x" in $(echo hello)) echo match ;; esac'
+match
+$ ./target/debug/zshrs --zsh -c 'x=hello; case "$x" in $(echo hello)) echo match ;; esac'
+match
+
+# Regressions: literal/glob patterns unchanged
+$ ./target/debug/zshrs --zsh -c 'x=foo123; case "$x" in foo*) echo match ;; esac'
+match
+$ ./target/debug/zshrs --zsh -c 'x=abc; case "$x" in abc) echo match ;; esac'
+match
+```
+
+**Original report:**
 
 ```sh
 # Variable in pattern:
