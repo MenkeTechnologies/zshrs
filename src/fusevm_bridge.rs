@@ -2643,6 +2643,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let Some(chunk) = chunk_opt else {
             return Value::Status(0);
         };
+        // c:Src/jobs.c:1968 — `getrusage(RUSAGE_CHILDREN, &ti)` before
+        // and after the timed sublist gives accurate per-stage user/sys
+        // CPU. Wall-time-only approximation (0.7×/0.1× fudge factors)
+        // produced bogus user/sys columns and ignored TIMEFMT. Bug #66
+        // in docs/BUGS.md.
+        let ru_before: libc::rusage = unsafe {
+            let mut r: libc::rusage = std::mem::zeroed();
+            libc::getrusage(libc::RUSAGE_CHILDREN, &mut r);
+            r
+        };
         let start = Instant::now();
         crate::fusevm_disasm::maybe_print_stdout("time_sublist", &chunk);
         let mut sub_vm = fusevm::VM::new(chunk);
@@ -2650,21 +2660,41 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let _ = sub_vm.run();
         let status = sub_vm.last_status;
         let elapsed = start.elapsed();
-        // c:Src/exec.c — zsh's `time` keyword reads rusage from
-        // waitpid, which is only populated for forked external
-        // processes. A pure builtin (`time true`, `time echo`)
-        // produces zero user/system and zsh skips the print
-        // entirely. Mirror by suppressing when elapsed is below
-        // 1ms (heuristic for "no external work happened").
-        if elapsed.as_secs_f64() >= 0.001 {
-            eprintln!(
-                "{:.2}s user {:.2}s system {:.0}% cpu {:.3} total",
-                elapsed.as_secs_f64() * 0.7,
-                elapsed.as_secs_f64() * 0.1,
-                ((elapsed.as_secs_f64() * 0.8) / elapsed.as_secs_f64() * 100.0).min(100.0),
-                elapsed.as_secs_f64()
-            );
-        }
+        let ru_after: libc::rusage = unsafe {
+            let mut r: libc::rusage = std::mem::zeroed();
+            libc::getrusage(libc::RUSAGE_CHILDREN, &mut r);
+            r
+        };
+        // Delta children rusage = timed work's CPU.
+        let mut delta = ru_after;
+        let sub = |a: libc::timeval, b: libc::timeval| -> libc::timeval {
+            let mut sec = a.tv_sec - b.tv_sec;
+            let mut usec = a.tv_usec as i64 - b.tv_usec as i64;
+            if usec < 0 {
+                sec -= 1;
+                usec += 1_000_000;
+            }
+            libc::timeval {
+                tv_sec: sec,
+                tv_usec: usec as libc::suseconds_t,
+            }
+        };
+        delta.ru_utime = sub(ru_after.ru_utime, ru_before.ru_utime);
+        delta.ru_stime = sub(ru_after.ru_stime, ru_before.ru_stime);
+        let ti = crate::ported::zsh_h::timeinfo::from_rusage(&delta);
+        // c:Src/jobs.c:808-809 — `s = getsparam("TIMEFMT"); s ||
+        // DEFAULT_TIMEFMT`. Honor user-set TIMEFMT, fall back to the
+        // canonical default.
+        let fmt = crate::ported::params::getsparam("TIMEFMT")
+            .unwrap_or_else(|| crate::ported::zsh_system_h::DEFAULT_TIMEFMT.to_string());
+        // c:Src/jobs.c:768 `desc` arg — for the `time { sublist }` /
+        // `time simple-cmd` keyword path, zsh passes the sublist's
+        // source text (used by %J). zshrs's compiler doesn't yet
+        // thread the source text through to this handler, so %J
+        // expands to the empty string — separate gap, but lets the
+        // rest of TIMEFMT work correctly.
+        let line = crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, "");
+        eprintln!("{}", line);
         Value::Status(status)
     });
 

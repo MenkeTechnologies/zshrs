@@ -4131,7 +4131,18 @@ any code that needs to be zsh-portable, and never read
 
 ## #65 — `${+EPOCHSECONDS}` returns 0 even after `zmodload zsh/datetime`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+```
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime; echo "EPOCH=$EPOCHSECONDS plus=${+EPOCHSECONDS}"'
+EPOCH=1780383736 plus=1
+$ zshrs --zsh -c 'zmodload zsh/datetime; echo "EPOCH=$EPOCHSECONDS plus=${+EPOCHSECONDS}"'
+EPOCH=1780383736 plus=1
+```
+Both shells return `plus=1` now. Likely fixed by a prior
+`zmodload`/`createparam` patch that wired the `PM_SPECIAL` flag so
+the `${+VAR}` query at `Src/subst.c::paramsubst` finds the entry.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime; echo "EPOCH=$EPOCHSECONDS plus=${+EPOCHSECONDS}"'
@@ -4187,7 +4198,34 @@ fi
 
 ## #66 — `time` builtin ignores `TIMEFMT` and omits `%J` (command name)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` (TIMEFMT) 2026-06-02 — `BUILTIN_TIME_SUBLIST` in
+`src/fusevm_bridge.rs:2640` used a hardcoded format string and
+wall-time-only fudge factors (`elapsed*0.7` for user, `elapsed*0.1`
+for system, computed `cpu%` from those bogus values). Replaced
+with a faithful port of the C runner at `Src/jobs.c:1964-1968`:
+- snapshot `getrusage(RUSAGE_CHILDREN)` before AND after the timed
+  sublist; subtract to get accurate user/sys CPU for forked
+  externals (sleep, perl, …);
+- read `$TIMEFMT` via `getsparam`, fall back to `DEFAULT_TIMEFMT`;
+- call the already-ported `crate::ported::jobs::printtime`
+  (params.rs:906, full port of `Src/jobs.c:768-1015`) which handles
+  `%U`/`%S`/`%E`/`%P`/`%J`/`%mE`/`%uE`/`%nE`/`%*E`/`%M`/`%F`/...
+
+`%J` (command-name) still expands to empty because zshrs's compiler
+doesn't thread the sublist's source text into `BUILTIN_TIME_SUBLIST`
+yet — separate gap noted in the handler. Rest of TIMEFMT now works.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `time sleep 0.01` — both `0.00s user 0.00s system 0% cpu 0.017
+  total` (zshrs lacks the `sleep 0.01` `%J` prefix; numeric columns
+  match).
+- `TIMEFMT="USER=%U SYS=%S CPU=%P"; time sleep 0.01` — both
+  `USER=0.00s SYS=0.00s CPU=0%`.
+- `TIMEFMT="%mE elapsed"; time sleep 0.01` — both `~16ms elapsed`.
+- `time perl -e '…CPU work…'` — both show real `0.01s user` and
+  >50% CPU.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'TIMEFMT="USER=%U SYS=%S CPU=%P"; time sleep 0.05'
