@@ -16932,7 +16932,21 @@ print "a\0b"   # works in zshrs for NUL
 
 ## #231 — `${(t)tied_var}` returns `scalar`/`scalar` instead of `scalar-tied`/`array-tied` (tied pair concept missing)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -T FOO foo; echo "(t)FOO=[${(t)FOO}] (t)foo=[${(t)foo}]"'
+(t)FOO=[scalar-tied] (t)foo=[array-tied]
+$ ./target/debug/zshrs --zsh -c 'typeset -T FOO foo; echo "(t)FOO=[${(t)FOO}] (t)foo=[${(t)foo}]"'
+(t)FOO=[scalar-tied] (t)foo=[array-tied]
+```
+
+Both shells emit `scalar-tied` / `array-tied` for the scalar and
+array sides of a tied pair. Likely closed by an earlier (t)-flag
+sweep that added the `PM_TIED` suffix to the type-tag walk.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -T STR str ":"; STR="a:b"; echo "STR=${(t)STR}; str=${(t)str}; n=${#str}"'
@@ -16995,7 +17009,21 @@ my_path=("${(@s/:/)MY_PATH}")
 
 ## #232 — `TRAPEXIT()` named-function form of EXIT trap not fired on shell exit
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPEXIT() { echo "exit hook"; }'
+exit hook
+$ ./target/debug/zshrs --zsh -c 'TRAPEXIT() { echo "exit hook"; }'
+exit hook
+```
+
+Both shells fire the named `TRAPEXIT` function on shell exit.
+Likely closed by the #215 zshexit hook dispatch work that also
+threaded named-fn TRAP* dispatch through the exit path.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'TRAPEXIT() { echo "TRAPEXIT-FIRED"; }; echo "before"; exit 0'
@@ -17054,7 +17082,65 @@ signal.
 
 ## #233 — `typeset -H VAR=val` then `typeset -p VAR` shows value (zsh: hides via `typeset H`)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `printparamnode` didn't honor `PM_HIDEVAL`;
+corrected 2026-06-02.
+
+**Root cause** —
+`src/ported/params.rs::printparamnode` (port of
+Src/params.c:6232+) was missing the PM_HIDEVAL check at the
+"print the value or the name" branch (Src/params.c:6289). The C
+condition reads:
+
+```c
+if ((printflags & PRINT_NAMEONLY) ||
+    ((p->node.flags & PM_HIDEVAL) && !(printflags & PRINT_INCLUDEVALUE)))
+    quotedzputs(p->node.nam, stdout);
+else { ... printparamvalue(p, printflags); }
+```
+
+`typeset -H X=val` sets `PM_HIDEVAL` on the param (bit position
+15 in `TYPESET_OPTSTR = "aiEFALRZlurtxUhHT"`, see
+zsh.h:1910 `#define PM_HIDEVAL (1<<15)`). When the user then
+runs `typeset -p X`, `bin_typeset` dispatches
+`paramtab->printnode(&pm->node, PRINT_TYPESET|with_ns)` at
+Src/builtin.c:2243 — no `PRINT_INCLUDEVALUE`, so the
+`PM_HIDEVAL && !INCLUDEVALUE` branch fires and only the name
+prints.
+
+Bare `typeset X` is the exception: Src/builtin.c:2246 dispatches
+with `PRINT_INCLUDEVALUE|with_ns`, which overrides the hide so
+the user can still inspect the value at the bare-name path.
+
+The Rust port had `if (printflags & PRINT_NAMEONLY) != 0`
+short-circuit only, so `typeset -p X` (no NAMEONLY bit) fell
+through to `printparamvalue` regardless of PM_HIDEVAL.
+
+**Fix:**
+- `src/ported/params.rs::printparamnode` — extend the short-
+  circuit at `print!("{}", hn.node.nam);` site to
+  `(printflags & PRINT_NAMEONLY) != 0 ||
+   ((f & PM_HIDEVAL) != 0 && (printflags & PRINT_INCLUDEVALUE) == 0)`.
+  Imports updated to include `PM_HIDEVAL` from `zsh_h`.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -H X=hello; typeset -p X'
+typeset X
+$ ./target/debug/zshrs --zsh -c 'typeset -H X=hello; typeset -p X'
+typeset X
+
+$ /opt/homebrew/bin/zsh -fc 'typeset -H X=hello; typeset X'
+X=hello
+$ ./target/debug/zshrs --zsh -c 'typeset -H X=hello; typeset X'
+X=hello
+
+$ /opt/homebrew/bin/zsh -fc 'Y=val; typeset -p Y'
+typeset Y=val
+$ ./target/debug/zshrs --zsh -c 'Y=val; typeset -p Y'
+typeset Y=val
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -H H=v; typeset -p H'
@@ -17167,7 +17253,23 @@ u2+=(a)                       # works correctly
 
 ## #235 — `typeset -m "glob"` errors instead of glob-matching parameter names
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'FOO=1; BAR=2; typeset -m "FOO|BAR"' | sort
+BAR=2
+FOO=1
+$ ./target/debug/zshrs --zsh -c 'FOO=1; BAR=2; typeset -m "FOO|BAR"' | sort
+BAR=2
+FOO=1
+```
+
+Both shells now glob-match parameter names with `typeset -m
+PATTERN`. Likely closed by an earlier `bin_typeset -m` sweep
+landing the canonical `patcompile`/`pattry` walk.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'foo1=a; foo2=b; bar=c; typeset -m "foo*"'
@@ -17405,7 +17507,20 @@ workaround.
 
 ## #238 — `setopt promptbang` doesn't enable `!` → history-number expansion in prompts
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt promptbang; print -P "%!"'
+0
+$ ./target/debug/zshrs --zsh -c 'setopt promptbang; print -P "%!"'
+0
+```
+
+Both shells now expand `%!` to the current history number when
+`promptbang` is set.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt promptbang; PS1="!"; print -P "$PS1"'
@@ -17558,7 +17673,23 @@ guarantees.
 
 ## #241 — `${assoc[@]}` and `${assoc[*]}` return empty (basic assoc value iteration broken)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[a]=1; h[b]=2; echo "[${h[@]}]"; print -l "${h[@]}" | sort'
+[1 2]
+1
+2
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[a]=1; h[b]=2; echo "[${h[@]}]"; print -l "${h[@]}" | sort'
+[1 2]
+1
+2
+```
+
+Both shells now emit the assoc values via `${h[@]}` / `${h[*]}`.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[a]=1; h[b]=2; echo "star=[${h[*]}] at=[${h[@]}]"'
@@ -17682,7 +17813,20 @@ fi
 
 ## #243 — `${(t)var}` returns empty for `TIMEFMT` and other special parameters
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "(t)TIMEFMT=[${(t)TIMEFMT}]"'
+(t)TIMEFMT=[scalar]
+$ ./target/debug/zshrs --zsh -c 'echo "(t)TIMEFMT=[${(t)TIMEFMT}]"'
+(t)TIMEFMT=[scalar]
+```
+
+Both shells now report `scalar` for `${(t)TIMEFMT}` and other
+specials.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "type=${(t)TIMEFMT}; val=[$TIMEFMT]"'
