@@ -905,6 +905,14 @@ impl ZshCompiler {
                     0,
                 );
                 self.builder.emit(Op::SetStatus, 0);
+                // c:Src/exec.c — errexit applies to the whole
+                // `{ try } always { finally }` construct: when the
+                // restored try-block status is non-zero, the shell
+                // aborts at the end of the construct. Without this
+                // emit, `setopt err_exit; { false } always { :; };
+                // echo after` printed `after`. Bug #240 in
+                // docs/BUGS.md.
+                self.emit_errexit_check();
                 // If the try-block fired a return/break/continue, the
                 // canonical RETFLAG / BREAKS / CONTFLAG atomics are
                 // restored by RESTORE_TRY_BLOCK_STATUS. Emit one

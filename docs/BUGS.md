@@ -17663,7 +17663,52 @@ introspection-table family).
 
 ## #240 — `setopt err_exit` + `{ false } always { :; }` doesn't trigger errexit after always block
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — the `{ try } always { finally }` compile
+arm emitted `SetStatus` after restoring the try-block's status
+but didn't call `emit_errexit_check`; corrected 2026-06-02.
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_command`
+handling for `ZshCommand::Try` (around line 893+) emits the
+sequence:
+
+```rust
+self.builder.emit(Op::CallBuiltin(BUILTIN_RESTORE_TRY_BLOCK_STATUS, 0), 0);
+self.builder.emit(Op::SetStatus, 0);
+// then conditional re-jump emit blocks for return/break/continue
+```
+
+The `RESTORE_TRY_BLOCK_STATUS` builtin pushes the try-block's
+exit status onto the stack so `SetStatus` writes it as the
+whole-construct status. But there's no `emit_errexit_check`
+after the `SetStatus`, so the errexit-aborts-on-nonzero pass
+that normal commands run never fires for the try-block.
+
+For `setopt err_exit; { false } always { :; }; echo after`, the
+construct's status becomes 1 (from `false`), but the missing
+errexit check let `echo after` run anyway.
+
+**Fix:** `src/extensions/compile_zsh.rs::compile_command` Try
+arm — add a single `self.emit_errexit_check()` call after the
+`SetStatus` emit, before the return/break/continue conditional
+re-jumps. Comment cites Src/exec.c errexit semantics.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt err_exit; { false } always { :; }; echo after'
+(no output)
+$ ./target/debug/zshrs --zsh -c 'setopt err_exit; { false } always { :; }; echo after'
+(no output)
+
+# Regressions
+$ ./target/debug/zshrs --zsh -c '{ true } always { :; }; echo after'
+after
+$ ./target/debug/zshrs --zsh -c '{ false } always { :; }; echo after'
+after
+$ ./target/debug/zshrs --zsh -c 'setopt err_exit; { true } always { :; }; echo after'
+after
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '(setopt err_exit; { false } always { :; }; echo never)'
