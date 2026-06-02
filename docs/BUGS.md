@@ -10228,7 +10228,20 @@ PROMPT='%~ '$'\e[K''$ '
 
 ## #137 — `(( "str" == "str" ))` returns false (string-equality coercion in arith)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+
+```sh
+$ ./target/debug/zshrs --zsh -c '(( "abc" == "abc" )); echo "$?"'
+0
+$ ./target/debug/zshrs --zsh -c '(( "abc" == "abd" )); echo "$?"'
+0
+```
+
+Both shells coerce non-numeric quoted strings to 0 in arith context
+and `0 == 0` → true → `(( ))` returns 0. Likely fixed by the
+#67/#114/#118/#132 arith coercion ports. Doc-only.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '(( "abc" == "abc" )); echo "$?"'
