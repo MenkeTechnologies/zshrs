@@ -2752,7 +2752,8 @@ directions — no actual regression).
 
 ## #45 — `${#$}`, `${#PPID}` length operator returns 0 for special-PID params
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 (already-fixed by bug #43 work — no
+longer reproduces).
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "PID=$$; len=${#$}"'
@@ -2787,11 +2788,25 @@ Related to bug #43 but specific to single-char special params
 parse doesn't resolve special single-char params before computing
 length.
 
+**Resolution** — verified 2026-06-02:
+
+  * `${#$}` → 5 (PID length, matches zsh).
+  * `${#PPID}` → 5 (parent PID length).
+  * `${#?}` → 1 (exit status length).
+  * `${#!}` → 5 (last bg PID length).
+  * `${#-}` → 4 (option flags length).
+
+Likely fixed by bug #43's length-arm rewrite, which now routes
+`${#name<modifier>}` through `singsub` for non-default modifier
+chains and also fixed the name-resolution path so single-char
+specials see the canonical `lookup_special_var` chain. No
+additional work in this commit beyond the status flip.
+
 ---
 
 ## #46 — Nested backquotes `` `echo \`echo X\`` `` mishandled
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo `echo \`echo deep\``'
@@ -2812,21 +2827,46 @@ The `$(...)` form works correctly in both shells for nesting:
   - `` `echo $(echo deep)` `` → both: `deep` (mixed reverse)
   - `` `echo \`echo deep\`` `` → **zshrs: `echo deep\`\``; zsh: `deep`**
 
-**Where** — `src/ported/lex.rs::lex_bq` (the backquote-substitution
-lexer; ports `Src/lex.c::bquote`). Escape handling for `\`` inside
-a backquote context appears to suppress the backquote interpretation
-without then re-treating the escaped backquote as the START of a
-nested cmd-sub.
+**Root cause** — two bugs in `src/ported/subst.rs`'s backtick
+cmd-sub handler (the closing-backtick walker around line 1109):
 
-POSIX-style nested backquotes are rarely written today (most code
-uses `$()` since the 1990s), but legacy `~/.zshrc` files and
-shellcheck-flagged third-party scripts still contain them. The
-`$()` workaround is universal.
+  1. **Wrong escape marker** — the walker treated only literal
+     `\` (`\\`) as the escape-skip char, but the lexer's
+     `dquote_parse` LX2_BQUOTE arm emits `Bnull` (`\u{9f}`) +
+     X for each `\X` it saw inside the backquotes (X ∈ `` ` ``
+     `\` `$`). The walker matched the FIRST literal `` ` `` it
+     hit, which was the ESCAPED inner backtick — truncating
+     the cmd to just `echo ` + Bnull.
+  2. **Missing unescape pass** — even after the walker found
+     the correct closing backtick, the extracted cmd still
+     contained the `Bnull + \`` lexer sentinels. When
+     `getoutput` re-parses the cmd as a sub-shell, the inner
+     lexer can't tokenize Bnull and treats `Bnull + \`` as
+     literal — so the nested cmd-sub never fires.
 
-**Workaround** — use `$(...)`:
-```sh
-$(echo $(echo deep))    # works everywhere
-```
+**Fix** (`src/ported/subst.rs` backtick arm):
+
+  1. Extend the closing-backtick walker to recognize `Bnull`
+     (`\u{9f}`) as an escape-marker alongside `\`. Skips the
+     escaped char and continues searching for the real closer.
+  2. Add an unescape pass that strips one Bnull from each
+     `Bnull + X` pair before passing the body to `getoutput`.
+     The inner shell then sees what the user would have typed
+     at the next nesting level (e.g. `echo \`inner\``) and
+     re-tokenizes correctly, triggering the nested cmd-sub.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+
+  * `` `echo \`echo deep\`` `` → `deep` (BUGS.md case).
+  * `` `echo hello` `` simple → `hello` (regression check).
+  * `$(echo \`echo deep\`)` mixed → `deep`.
+  * `` `echo $(echo deep)` `` mixed-reverse → `deep`.
+  * Triple nesting `` `echo \`echo \\\`echo deeper\\\`\`` ``
+    → `deeper` (matches zsh exactly).
+
+zshrs_shell regression: 926/126 baseline preserved (local
+fluctuated to 923/129 but test-name diff was empty both
+directions — no actual regression).
 
 ---
 
