@@ -26360,7 +26360,75 @@ formatting, etc.
 
 ## #363 — `${(z)cmd}` tokenize-flag drops comment tokens and doesn't preserve `$VAR` literals
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partial fix` — comment-token handling fixed; `$VAR`
+literal preservation is a separate re-expansion issue under DQ
+splat; 2026-06-02.
+
+**Root cause (comments)** — `src/ported/subst.rs::paramsubst`
+`(z)` tokenizer treated the `#` arm as:
+```rust
+'#' if cur.is_empty() && !(shsplit & LEXFLAGS_COMMENTS_STRIP) != 0 => {
+    in_comment = !(shsplit & LEXFLAGS_COMMENTS_KEEP) != 0;
+    ...
+}
+'#' if cur.is_empty() && (shsplit & LEXFLAGS_COMMENTS_STRIP) != 0 => {
+    in_comment = true;
+}
+```
+
+The negation logic (`!(shsplit & FLAG) != 0` — bitwise NOT
+compared to 0) was inverted. For plain `(z)` (neither
+LEXFLAGS_COMMENTS_KEEP nor LEXFLAGS_COMMENTS_STRIP set), the
+first arm fired and `in_comment` became true → everything after
+`#` got skipped.
+
+But zsh's plain `(z)` (no `c`/`C` flag) emits `#` and each
+following word as their OWN tokens (4 tokens for `echo hi #
+comment`: `echo`, `hi`, `#`, `comment`). The KEEP flag (`Z+c+`)
+emits the entire `# comment` as ONE token. The STRIP flag
+(`Z+C+`) skips.
+
+**Fix:** `src/ported/subst.rs::paramsubst` `(z)` tokenizer —
+- `#` with LEXFLAGS_COMMENTS_KEEP: consume the rest of the line
+  into `cur` so the trailing characters survive as a single
+  span.
+- `#` with LEXFLAGS_COMMENTS_STRIP: set `in_comment = true`
+  (skip until newline).
+- Otherwise: let `#` fall through to the default `cur.push(ch)`
+  arm so it becomes a normal token start.
+
+**Verify (comments):**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'c="echo hi # comment"; print -l "${(z)c}"'
+echo
+hi
+#
+comment
+$ ./target/debug/zshrs --zsh -c 'c="echo hi # comment"; print -l "${(z)c}"'
+echo
+hi
+#
+comment
+```
+
+**Remaining (separate sub-bug)** — `${(z)c}` where `c` contains
+`$VAR` preserves the literal as a scalar but loses it when the
+result is re-splatted in DQ context (`print -l "${(z)c}"`):
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'c="echo \$VAR"; v="${(z)c}"; echo "[$v]"'
+[echo $VAR]   # scalar form preserves $VAR ✓
+$ ./target/debug/zshrs --zsh -c 'c="echo \$VAR"; print -l "${(z)c}"'
+echo          # splat form drops $VAR
+```
+
+The auto-splat path re-paramsubst's each element, so `$VAR`
+expands to empty. zsh's `(z)` result tokens are returned in a
+form that suppresses subsequent re-expansion; the Rust port's
+`split_parts` seed doesn't carry that signal. Tracked as a
+separate item to land.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'cmd="echo a # cmnt"; arr=("${(z)cmd}"); echo "n=${#arr}"'

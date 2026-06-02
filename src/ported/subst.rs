@@ -8201,18 +8201,38 @@ pub fn paramsubst(
                         cur.push(ch);
                         in_dq = true;
                     } // c:2439
-                    '#' if cur.is_empty() && !(shsplit & LEXFLAGS_COMMENTS_STRIP) != 0 => {
-                        // c:2451
-                        // Start of comment word — keep or skip.
-                        in_comment = !(shsplit & LEXFLAGS_COMMENTS_KEEP) != 0; // c:2451
-                        if (shsplit & LEXFLAGS_COMMENTS_KEEP) != 0 {
-                            cur.push(ch);
-                        } // c:2451
-                    } // c:2451
-                    '#' if cur.is_empty() && (shsplit & LEXFLAGS_COMMENTS_STRIP) != 0 => {
-                        // c:2456
+                    // c:Src/lex.c LEXFLAGS_COMMENTS_KEEP — `(Z+c+)`
+                    // emits the entire `# comment` as ONE token.
+                    // Grab the rest of the line into the current
+                    // word so the trailing characters survive as a
+                    // single span.
+                    '#' if cur.is_empty()
+                        && (shsplit & LEXFLAGS_COMMENTS_KEEP) != 0 =>
+                    {
+                        cur.push(ch);
+                        let mut q = p + 1;
+                        while q < chars_v.len() && chars_v[q] != '\n' {
+                            cur.push(chars_v[q]);
+                            q += 1;
+                        }
+                        p = q.saturating_sub(1);
+                    }
+                    // c:Src/lex.c LEXFLAGS_COMMENTS_STRIP — `(Z+C+)`
+                    // skips the comment entirely (in_comment ends
+                    // the word at the newline).
+                    '#' if cur.is_empty()
+                        && (shsplit & LEXFLAGS_COMMENTS_STRIP) != 0 =>
+                    {
                         in_comment = true; // c:2456
-                    } // c:2456
+                    }
+                    // Plain `(z)` with neither flag: `#` is a normal
+                    // token start. Bug #363 in docs/BUGS.md — the
+                    // previous Rust port skipped the whole rest of
+                    // the line whenever STRIP was not set, even when
+                    // KEEP also wasn't set. zsh's actual default
+                    // emits `#` and each following word as their own
+                    // tokens, which the regular cur.push fallthrough
+                    // produces.
                     '\n' if (shsplit & LEXFLAGS_NEWLINE) != 0 => {
                         // c:2461 (n: nl as ws)
                         push_word(&mut cur, &mut words); // c:2461
