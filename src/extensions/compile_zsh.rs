@@ -4490,14 +4490,50 @@ impl ZshCompiler {
             let mut match_jumps = Vec::new();
             for pattern in &arm.patterns {
                 self.builder.emit(Op::GetSlot(word_slot), 0);
-                // Patterns are RAW glob strings. The lexer encodes glob
-                // chars (`*`, `?`, `[`, `]`) in the META range so the
-                // grammar can distinguish syntax from literal. For the
-                // matcher we want the original glob char back —
-                // un-tokenize before pushing.
-                let pat_clean = crate::lex::untokenize(pattern);
-                let pat_const = self.builder.add_constant(Value::str(pat_clean.as_str()));
-                self.builder.emit(Op::LoadConst(pat_const), 0);
+                // c:Src/loop.c — case patterns expand parameter
+                // references / arith / cmdsub at match time via a
+                // `singsub` pass on the pattern body (no globbing —
+                // glob chars are the pattern itself). Without
+                // expansion, `case $x in $pat) ...` compared $x
+                // against the literal string "$pat" and never
+                // matched. Bug #292 in docs/BUGS.md.
+                //
+                // Detect tokenized expansion markers (lexer encodes
+                // `$` as `\u{85}` Stringg, `$'...'` as `\u{8c}`
+                // Qstring, backticks as `\u{99}` Tick) AND raw `$` /
+                // backtick chars. When found, push the original
+                // tokenized pattern as a const and run
+                // BUILTIN_SINGSUB_PAT at runtime which calls
+                // singsub() — parameter / arith / cmdsub expansion
+                // WITHOUT globbing (glob chars survive into the
+                // returned string for the matcher).
+                let raw = pattern.as_str();
+                let needs_runtime_expand = raw.contains('$')
+                    || raw.contains('`')
+                    || raw.contains('\u{85}') // META-`$`
+                    || raw.contains('\u{8c}') // Qstring (ANSI-C)
+                    || raw.contains('\u{99}'); // META-`` ` ``
+                if needs_runtime_expand {
+                    // BUILTIN_EXPAND_TEXT mode 4 = singsub-only
+                    // (variable / cmdsub / arith expansion; no glob,
+                    // no brace). Stack: [text, mode].
+                    let pat_const = self.builder.add_constant(Value::str(pattern.as_str()));
+                    self.builder.emit(Op::LoadConst(pat_const), 0);
+                    self.builder.emit(Op::LoadInt(4), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 0),
+                        0,
+                    );
+                } else {
+                    // Patterns are RAW glob strings. The lexer encodes
+                    // glob chars (`*`, `?`, `[`, `]`) in the META range
+                    // so the grammar can distinguish syntax from literal.
+                    // For the matcher we want the original glob char
+                    // back — un-tokenize before pushing.
+                    let pat_clean = crate::lex::untokenize(pattern);
+                    let pat_const = self.builder.add_constant(Value::str(pat_clean.as_str()));
+                    self.builder.emit(Op::LoadConst(pat_const), 0);
+                }
                 self.builder.emit(Op::StrMatch, 0);
                 match_jumps.push(self.builder.emit(Op::JumpIfTrue(0), 0));
             }
