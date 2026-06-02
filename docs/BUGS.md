@@ -1431,59 +1431,66 @@ arg_zero="${ZSH_ARGZERO:-$0}"
 
 ## #26 — `emulate -L sh` doesn't switch arrays to 0-indexed (KSH_ARRAYS missing)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-01.
 
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'inner() {
-    emulate -L sh
-    a=(1 2 3)
-    echo "[0]: ${a[0]}"
-    echo "[1]: ${a[1]}"
-}
-inner'
-[0]: 1
-[1]: 2
+$ /opt/homebrew/bin/zsh -fc 'emulate -L sh; a=(1 2 3); echo "${a[0]}"'
+1
 
-$ zshrs --zsh -c 'inner() {
-    emulate -L sh
-    a=(1 2 3)
-    echo "[0]: ${a[0]}"
-    echo "[1]: ${a[1]}"
-}
-inner'
-[0]:
-[1]: 1
+$ zshrs --zsh -c 'emulate -L sh; a=(1 2 3); echo "${a[0]}"'   # before
+                                                                # empty
+$ zshrs --zsh -c 'emulate -L sh; a=(1 2 3); echo "${a[0]}"'   # after
+1
 ```
 
-`emulate -L sh` (sticky local emulation) should switch the function
-into POSIX-shell mode, which includes 0-indexed array access (the
-`KSH_ARRAYS` option). zshrs's `emulate` correctly does some option
-adjustment (the leading `in sh emulation` print proves the call
-itself works), but doesn't enable `KSH_ARRAYS` — arrays stay
-1-indexed inside the sh-emulated function.
+**Root cause** — `src/ported/builtin.rs::bin_emulate` stored the
+new emulation tag and built a `cmdopts` HashMap snapshot but never
+actually wrote the new emulation's option defaults into the live
+option store. The Rust port has a faithful
+`src/ported/options.rs::emulate()` helper (port of
+`Src/options.c:533` + the embedded `installemulation` walk at
+c:523-528) that does write through to OPTS_LIVE — but
+`bin_emulate` never called it. The function carried a stale
+comment hinting at "the per-option setter loop below to mirror
+emulation defaults into OPTS_LIVE", but that loop didn't exist.
 
-C-zsh's emulate dispatch in `Src/init.c::zsh_emulate` sets
-`KSH_ARRAYS`, `SH_NULLCMD`, `SH_GLOB`, `SH_WORD_SPLIT`, and others
-when the target emulation is `sh`. zshrs's port at
-`src/ported/init.rs` appears to skip the `KSH_ARRAYS` step.
+So `emulate -L sh`:
 
-Verify with `emulate -R ksh` (similar issue):
-```sh
-$ /opt/homebrew/bin/zsh -fc 'emulate -L ksh; a=(x y z); echo "${a[0]}"'
-x
-$ zshrs --zsh -c 'emulate -L ksh; a=(x y z); echo "${a[0]}"'
-            # empty
-```
+  1. Flipped the `emulation` atomic to `EMULATE_SH`.
+  2. Snapshotted current options into `cmdopts` (still
+     zsh-default values).
+  3. Set LOCALOPTIONS/LOCALTRAPS/LOCALPATTERNS for the `-L`
+     scope.
+  4. Returned 0 — without ever touching `KSH_ARRAYS`,
+     `SH_NULLCMD`, `SH_GLOB`, `SH_WORD_SPLIT`,
+     `POSIX_ALIASES`, or any other OPT_EMULATE / OPT_BOURNE
+     option.
 
-**Workaround** — explicitly set `KSH_ARRAYS` after emulate:
-```sh
-fn() {
-    emulate -L sh
-    setopt ksh_arrays    # ← required workaround
-    a=(1 2 3)
-    echo "${a[0]}"
-}
-```
+The original BUGS.md "Where" diagnosis blamed `init.rs` (the
+shell-startup emulation walk), but the actual gap was in the
+runtime `emulate` builtin.
+
+**Fix** (`src/ported/builtin.rs::bin_emulate`) — call
+`crate::ported::options::emulate(shname, opt_r)` in the
+non-`-l` branch. The helper walks `ZSH_OPTIONS_SET` via the
+`installemulation` → `setemulate` chain, computing each
+option's default via `defset(opt_name, target_emulation)`, and
+writes the result through `opt_state_set` to OPTS_LIVE. After
+the helper returns, `cmdopts` is re-synced from OPTS_LIVE so
+the later `-L` LOCALOPTIONS write-back sees the new defaults.
+
+Verified:
+
+  * `emulate -L sh; a=(1 2 3); echo "${a[0]}"` → 1 (matches zsh).
+  * `emulate -L ksh; a=(x y z); echo "${a[0]}"` → x.
+  * Inside function: `inner() { emulate -L sh; ... }` works same.
+  * LOCALOPTIONS restore after function: outer scope reverts to
+    zsh defaults (1-indexed arrays).
+  * Default zsh mode (no emulate): `a=(1 2 3); echo "${a[1]}"`
+    still returns `1` (1-indexed unchanged).
+
+zshrs_shell regression: 925/127 (baseline preserved with
+`--test-threads=1`).
 
 ---
 

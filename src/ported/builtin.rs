@@ -8633,15 +8633,28 @@ pub fn bin_emulate(
                 crate::ported::options::opt_state_get(n).unwrap_or(false),
             );
         }
-        // For !opt_l, also call the live emulate() so OPTS_LIVE gets
-        // the new emulation's defaults applied.
+        // c:6286 — `emulate(shname, opt_R, &emulation, cmdopts)` ALSO
+        // populates `cmdopts` (when !opt_l, `cmdopts` aliases the live
+        // `opts[]`). The Rust port has a per-emulation defaults walker
+        // at options::emulate() that writes through to OPTS_LIVE — call
+        // it here so `emulate -L sh` flips KSH_ARRAYS / SH_NULLCMD /
+        // POSIX_ALIASES / etc. to their target-emulation defaults.
+        //
+        // Bug #26 in docs/BUGS.md — without this, `emulate -L sh`
+        // changed the emulation tag but left every option at its zsh
+        // default, so `a=(1 2 3); echo ${a[0]}` stayed 1-indexed
+        // (empty result) instead of switching to KSH_ARRAYS 0-indexed.
         if !opt_l {
-            let mode = shname.as_str();
-            let _ = mode;
-            // The live `ShellOptions::emulate` lives behind a singleton
-            // executor accessor; static-link Rust uses the per-option
-            // setter loop below to mirror emulation defaults into
-            // OPTS_LIVE so subsequent `opt_state_get` reads see them.
+            crate::ported::options::emulate(shname.as_str(), opt_r);
+            // Re-sync cmdopts from OPTS_LIVE so the snapshot the
+            // opt_L block writes back into reflects the new defaults
+            // (rather than the pre-emulate state captured above).
+            for n in ZSH_OPTIONS_SET.iter() {
+                cmdopts.insert(
+                    n.to_string(),
+                    crate::ported::options::opt_state_get(n).unwrap_or(false),
+                );
+            }
         }
 
         // c:6287-6289 — opt_L: set LOCALOPTIONS/LOCALTRAPS/LOCALPATTERNS=1
