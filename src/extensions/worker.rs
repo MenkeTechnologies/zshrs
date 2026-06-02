@@ -246,7 +246,18 @@ impl Drop for WorkerPool {
                 drop(handle);
             }
         }
-        tracing::info!(
+        // Demoted from `info!` to `debug!` so the default tracing
+        // filter (INFO) suppresses it. The bare shutdown announcement
+        // has no operational value — interesting telemetry would be
+        // a non-zero error count or a stuck worker, which warrants its
+        // own surface. Empirically (bug #23 in docs/BUGS.md) the
+        // existing info! also leaked to stdout when a script left a
+        // duped fd open (`exec 3>&1`): by the time worker Drop runs,
+        // the file-backed log writer is closed, and tracing's fallback
+        // writes to fd 1 — which is the original stdout the dup
+        // pointed at. Default INFO filter no longer triggers this code
+        // path at all in normal use.
+        tracing::debug!(
             tasks_completed = self.completed.load(Ordering::Relaxed),
             "worker pool shut down"
         );

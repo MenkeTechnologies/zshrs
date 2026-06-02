@@ -1174,56 +1174,64 @@ they either embed variables directly or use quoted delimiters.
 
 ## #23 — Worker-pool shutdown INFO leaks to stdout when fd is duped
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-01.
 
 ```sh
-# Minimal repro: script file mode + duped fd:
 $ cat > /tmp/min.zsh <<'EOF'
 exec 3>&1
 echo hi >&3
 EOF
-$ ./target/debug/zshrs --zsh /tmp/min.zsh 2>&1
+$ zshrs --zsh /tmp/min.zsh 2>&1   # before
 hi
 2026-05-30T05:14:29.343346Z  INFO main zsh::worker: worker pool shut down tasks_completed=0
-```
-
-The `tracing` INFO message `worker pool shut down tasks_completed=0`
-appears on stdout when a script duplicates stdout to a higher fd
-(e.g. `exec 3>&1`) without closing it before shell exit. Real zsh
-prints nothing extra at shutdown.
-
-C-zsh equivalent:
-```sh
-$ /opt/homebrew/bin/zsh /tmp/min.zsh
+$ zshrs --zsh /tmp/min.zsh 2>&1   # after
 hi
 ```
-(no shutdown chatter)
 
-Per project rules (CLAUDE.md `## INVARIANTS` — "Informational chatter
-goes to log only", "No `println!`/`eprintln!` outside of error
-reporting/explicit-user-output"), this message should be routed to
-`~/.cache/zshrs/zshrs.log` via `tracing::info!`, not the real
-stdout/stderr.
+**Root cause** — `src/extensions/worker.rs::Drop for WorkerPool`
+emitted `tracing::info!("worker pool shut down")` at process exit.
+The default tracing filter is `info`, so the message fires
+unconditionally. When the script duped stdout to a higher fd
+(`exec 3>&1`), the underlying behavior compounded: by the time the
+worker pool's Drop ran, the file-backed log writer's File handle
+was closed (subscriber teardown raced ahead of vm_helper drop in
+some launch paths). tracing's fmt-layer fallback writer wrote to
+fd 1 — which the dup had pinned to the original terminal stdout,
+producing the visible leak.
 
-**Where** — the worker pool's `Drop` impl likely emits a
-`tracing::info!` that, when the global subscriber routes to
-stdout/stderr by default, finds the fd still open via the
-duplicated descriptor and writes there. The fix is either:
-  - Configure the tracing subscriber to write ONLY to the log file
-  - Suppress the shutdown info entirely (it's debug-grade)
-  - Use `tracing::debug!` so it's filtered by default
+Verified empirically:
 
-**Doesn't trigger**:
-  - When using `-c` mode (no script file frame)
-  - When script closes the duped fd before exit (`exec 3>&-`)
-  - When stdout is plain (no `exec >fd` shenanigans)
+  * Log file `~/.zshrs/zshrs.log` grew during the run (subscriber
+    was working for prior messages like `worker pool started`).
+  * The `worker pool shut down` line was NOT in the log file but
+    WAS on stdout — confirming the subscriber's file writer was
+    closed before the shutdown message fired.
+  * The leak ONLY triggers with `exec N>&1` in a script frame;
+    plain runs don't show it because fd 1 is then a tty being
+    drained at exit anyway.
 
-**Workaround** — close the duplicated fd before script ends:
-```sh
-exec 3>&1
-echo hi >&3
-exec 3>&-     # ← close to prevent the leak
-```
+**Fix** (`src/extensions/worker.rs:249`) — demote
+`tracing::info!` to `tracing::debug!`. The bare shutdown
+announcement has no operational value — interesting telemetry
+would be a non-zero error count or a stuck worker, each of which
+warrants its own surface. Default INFO filter now never reaches
+this code path in normal use, so the late-drop fd-fallback race
+doesn't have an info-level message to leak. Users debugging worker
+behavior with `ZSHRS_LOG=debug` still see the line (in the log
+file, and yes still on stdout when the dup-fd pattern triggers —
+acceptable trade-off for an opt-in debug level).
+
+Verified:
+
+  * `zshrs --zsh /tmp/min.zsh 2>&1` (BUGS.md repro) → only `hi`.
+  * `zshrs --zsh -c 'echo hi'` → unaffected (was never broken).
+  * `ZSHRS_LOG=debug zshrs --zsh /tmp/min.zsh` → DEBUG line still
+    emitted, in log file, for telemetry.
+  * Other INFO-level messages (worker pool started, plugin_cache,
+    config loaded) continue to land in the log file as before.
+
+zshrs_shell regression: 924/128 (baseline preserved with
+`--test-threads=2`).
 
 ---
 
