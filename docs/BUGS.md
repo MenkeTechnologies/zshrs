@@ -23556,7 +23556,77 @@ handling gaps; needs separate verification.)
 
 ## #326 — `typeset +i n` removes integer attribute AND clears the value
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — bin_typeset's per-arg loop called
+`createparam` unconditionally when `PM_LOCAL` was set, which
+clobbered the existing param's flags (including `PM_INTEGER`)
+via the reuse arm at `params.rs:2132`; corrected 2026-06-02.
+
+**Root cause** — Two compounding defects:
+
+1. `src/ported/builtin.rs::bin_typeset` per-arg loop (around line
+   4047) called `createparam(arg_name, PM_LOCAL)` whenever `PM_LOCAL`
+   was set in `on`, regardless of whether the param already existed
+   at the current scope. C `Src/builtin.c:2469` has a stricter
+   guard:
+   ```c
+   if ((on & PM_LOCAL) && (!pm || pm->level < locallevel)) {
+       ...createparam...
+   }
+   ```
+   The condition fires ONLY when no existing pm exists OR the
+   existing pm is at a LOWER scope. At top scope (`locallevel=0`),
+   `pm->level < 0` is never true, so C skips createparam. The Rust
+   port called it anyway — routing through the reuse arm at
+   `params.rs:2062-2068` and then clobbering `pm.node.flags = flags
+   & ~PM_LOCAL` at `params.rs:2132`. That wiped PM_INTEGER, leaving
+   `u_val=42` paired with PM_SCALAR flags → `getsparam` returned
+   empty (it dispatches on `PM_TYPE(flags)` and reads `u_str` for
+   PM_SCALAR, which was None for the integer-typed param).
+
+2. The bare-typeset arm at `src/ported/builtin.rs:4538` only handled
+   `on`-bit set requests (`pre_assign_to_set`). The `off`-bit clear
+   requests (`+i`, `+E`, `+F`, `+l`, `+u`, `+n`) silently no-oped,
+   so even if the createparam guard didn't fire, PM_INTEGER would
+   stay and the int-to-scalar value migration wouldn't happen.
+
+**Fix:**
+- Gate the `createparam` call with `needs_new_shadow`: only
+  fire when no existing pm OR existing pm is at a lower scope
+  (mirrors c:2469 exactly). Cite c:2469.
+- Add a `pre_assign_to_clear` branch parallel to the existing
+  `pre_assign_to_set` block: when `off` contains any of
+  `PM_INTEGER|PM_EFLOAT|PM_FFLOAT|PM_LOWER|PM_UPPER|PM_NAMEREF`,
+  clear those bits from `pm.node.flags` and re-assign the saved
+  scalar via `setsparam` so the value migrates from `u_val`/
+  `u_dval` back to `u_str`. Cite c:2374-2378.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -i n=42; typeset +i n; typeset -p n'
+typeset n=42
+$ ./target/debug/zshrs --zsh -c 'typeset -i n=42; typeset +i n; typeset -p n'
+typeset n=42
+
+$ /opt/homebrew/bin/zsh -fc 'typeset -F f=3.14; typeset +F f; typeset -p f'
+typeset f=3.1400000000
+$ ./target/debug/zshrs --zsh -c 'typeset -F f=3.14; typeset +F f; typeset -p f'
+typeset f=3.1400000000
+
+# Regressions
+$ ./target/debug/zshrs --zsh -c 'typeset -i n=42; typeset -p n'
+typeset -i n=42
+$ ./target/debug/zshrs --zsh -c 'n=outer; f() { local n=inner; echo "in:$n"; }; f; echo "out:$n"'
+in:inner
+out:outer
+```
+
+The `+l`/`+u` paths still diverge from zsh — zsh stores `u_str`
+as the unfolded original and applies the case fold on read, so
+`+l` "restores" the uppercase form; zshrs folds on write, so the
+stored string is already lowered. That's a separate deeper
+issue (different storage model), not part of #326.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -i n=5; typeset +i n; echo "[$n]"'
