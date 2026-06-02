@@ -1750,6 +1750,38 @@ impl ZshCompiler {
         let untoked_name = crate::lex::untokenize_preserve_quotes(&assign.name);
         if let Some((base, key)) = split_subscript(&untoked_name) {
             if let ZshAssignValue::Scalar(s) = &assign.value {
+                // c:Src/params.c:2895 setarrvalue — range subscript
+                // `a[lo,hi]=val` SPLICES the value into the array,
+                // replacing positions lo..=hi with the (single-element)
+                // RHS. With a scalar RHS, that means lo..=hi shrinks to
+                // ONE element. Route through BUILTIN_SET_SUBSCRIPT_RANGE
+                // which already does this splice. Bug #295 in
+                // docs/BUGS.md: SET_ASSOC's resolved_key path treated
+                // "2,3" as a comma-expression via mathevali → returned
+                // 3, so a[2,3]=X overwrote only position 3 instead of
+                // shrinking the range. Detect bare comma in the key
+                // (no `$` / backtick — those expand at runtime to
+                // single keys, not ranges) and dispatch as a single-
+                // element array RHS.
+                let key_is_range = !key.contains('$')
+                    && !key.contains('`')
+                    && key.contains(',')
+                    && !assign.append;
+                if key_is_range {
+                    // Stack order matches the Array RHS path at line
+                    // 1879+: [elem0, name, key], argc = 1 + 2 = 3.
+                    self.compile_word_str(s);
+                    let name_const = self.builder.add_constant(Value::str(base));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    let key_const = self.builder.add_constant(Value::str(key));
+                    self.builder.emit(Op::LoadConst(key_const), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_SUBSCRIPT_RANGE, 3),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0);
+                    return;
+                }
                 let name_const = self.builder.add_constant(Value::str(base));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 // Subscript may contain $-refs (`_loaded[$plugin]=1`)

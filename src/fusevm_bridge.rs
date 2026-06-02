@@ -3390,24 +3390,41 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // setarrvalue (Src/params.c:2895) expects 1-based start/
             // end inclusive where start==end means replace one
             // element. Negative bounds translate to len+n+1 (1-based).
+            //
+            // c:Src/params.c — the END side accepts 0 as a valid value
+            // that signals "insert BEFORE start position" (the canonical
+            // `a[N,N-1]=val` prepend / mid-insert idiom). Bug #275 in
+            // docs/BUGS.md: the previous Rust port clamped end up to 1,
+            // collapsing `a[1,0]=(X Y)` into `a[1,1]=(X Y)` which
+            // OVERWRITES position 1 instead of prepending. Provide two
+            // translators — start_translate clamps to 1 (1-based);
+            // end_translate keeps 0 intact so the splice in
+            // setarrvalue (start_idx=0..end_idx=0) inserts at the front.
             let len = exec.array(&name).map(|a| a.len() as i64).unwrap_or(0);
-            let translate = |raw: i64| -> i32 {
+            let start_translate = |raw: i64| -> i32 {
                 if raw < 0 {
                     (len + raw + 1).max(1) as i32
                 } else {
                     raw.max(1) as i32
                 }
             };
+            let end_translate = |raw: i64| -> i32 {
+                if raw < 0 {
+                    (len + raw + 1).max(0) as i32
+                } else {
+                    raw.max(0) as i32
+                }
+            };
             let (start, end) = if let Some((s_str, e_str)) = key.split_once(',') {
                 let s = s_str.trim().parse::<i64>().unwrap_or(0);
                 let e = e_str.trim().parse::<i64>().unwrap_or(0);
-                (translate(s), translate(e))
+                (start_translate(s), end_translate(e))
             } else {
                 let i = key.trim().parse::<i64>().unwrap_or(0);
                 if i == 0 {
                     return;
                 }
-                let n = translate(i);
+                let n = start_translate(i);
                 (n, n)
             };
             // Route through canonical setarrvalue (Src/params.c:2895).
