@@ -5620,14 +5620,41 @@ pub fn paramsubst(
                 // element. Parity bug: zshrs filtered per-element in
                 // DQ too, returning "one three" instead of leaving
                 // the joined scalar untouched.
-                let per_element_array = !has_subscript && (!qt || is_array_subscript);
+                //
+                // c:Src/subst.c:2167 — the `(@)` flag sets nojoin=2
+                // which forces array-shape preservation even in DQ.
+                // Without nojoin==2 in this gate, `${(@)arr:#pat}` in
+                // DQ fell into the scalar arm and skipped per-element
+                // filtering. Bug #236 surfaced via `${(@)a:#}` (empty
+                // pattern) ignoring the (@)-flag and never filtering
+                // empties out.
+                let per_element_array = !has_subscript
+                    && (!qt || is_array_subscript || nojoin == 2);
+                // c:Src/subst.c:3417 + Src/glob.c:2727 — empty
+                // pattern. C's `patcompile("")` returns a Patprog
+                // whose body matches only the empty string (no
+                // tokens to consume → `pattry` succeeds iff the
+                // subject's remaining length is zero). The Rust
+                // patcompile/pattry pair returns false for empty
+                // pattern vs empty subject, so the per-element
+                // filter never drops empties as zsh does.
+                // Short-circuit with an explicit `elem.is_empty()`
+                // check that mirrors C's effective semantics.
+                let match_fn = |elem: &str| -> bool {
+                    if p.is_empty() {
+                        // c:3417 — empty pattern ⇔ empty subject
+                        elem.is_empty()
+                    } else {
+                        patcompile(&p, PAT_HEAPDUP as i32, None)
+                            .map_or(false, |__p| pattry(&__p, elem))
+                    }
+                };
                 if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
                     let kept: Vec<String> = arr
                         .into_iter() // c:3540
                         .filter(|elem| {
                             // c:3540
-                            let m = patcompile(&p, PAT_HEAPDUP as i32, None)
-                                .map_or(false, |__p| pattry(&__p, elem)); // c:3540
+                            let m = match_fn(elem); // c:3540
                             if invert {
                                 m
                             } else {
@@ -5643,8 +5670,7 @@ pub fn paramsubst(
                     split_parts = Some(kept); // c:3540
                 } else {
                     // c:3540
-                    let m = patcompile(&p, PAT_HEAPDUP as i32, None)
-                        .map_or(false, |__p| pattry(&__p, &raw_value)); // c:3540
+                    let m = match_fn(&raw_value); // c:3540
                     value = if invert {
                         // c:3540
                         if m {

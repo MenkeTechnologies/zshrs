@@ -16783,7 +16783,22 @@ done
 
 ## #229 — `${(j: :)${(@kv)h}}` join-on-kv drops values (only keys joined)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[k1]=v1; echo "[${(j: :)${(@kv)h}}]"'
+[k1 v1]
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[k1]=v1; echo "[${(j: :)${(@kv)h}}]"'
+[k1 v1]
+```
+
+Both shells now produce `[k1 v1]` — the outer `(j: :)` preserves
+the full kv-interleaved array from inner `${(@kv)h}` instead of
+dropping values. Likely closed by an earlier paramsubst nested-
+expansion sweep landing the kv-flat shape through the join arm.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[k1]=v1; echo "${(j: :)${(@kv)h}}"'
@@ -17214,7 +17229,66 @@ done
 
 ## #236 — `${(@)arr:#}` empty-pattern filter doesn't filter out empty elements
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — two compounding paramsubst defects in the
+`:#` arm: (a) empty pattern compiled but never matched empty
+elements, and (b) the per-element-vs-scalar gate didn't consult
+the `(@)`-flag-driven `nojoin==2` signal so DQ-context
+`${(@)arr:#}` fell into the scalar arm; both corrected 2026-06-02.
+
+**Root cause** — two issues in
+`src/ported/subst.rs::paramsubst` `:#` arm (around c:3417):
+
+1. **Empty pattern never matched empty elements.** C's
+   `patcompile("")` returns a Patprog whose body has zero tokens
+   to consume, so `pattry` succeeds only on a zero-length
+   subject. The Rust `patcompile/pattry` pair returns `false` for
+   `(pattern="", subject="")`, so the per-element filter NEVER
+   dropped empty elements no matter how the surrounding flags
+   were set.
+2. **`(@)` flag ignored in DQ for filter dispatch.** The
+   per_element_array gate read `!has_subscript && (!qt ||
+   is_array_subscript)` — so `"${(@)a:#}"` in DQ context (`qt=true`)
+   with no `[@]` subscript fell into the scalar-context arm and
+   filtered the joined string rather than the per-element view.
+   But the `(@)` flag sets `nojoin=2` in C
+   (`Src/subst.c:2167`), exactly so array-shape survives DQ.
+
+**Fix:**
+- `src/ported/subst.rs::paramsubst` `:#` arm:
+  - Added an explicit `match_fn(elem)` closure that
+    short-circuits empty pattern to `elem.is_empty()` — mirrors
+    C's effective semantics (empty pattern ⇔ empty subject) per
+    Src/subst.c:3417 + Src/glob.c:2727. Both the array and
+    scalar paths now route through `match_fn`.
+  - Extended the per_element_array gate to include
+    `|| nojoin == 2`, so `${(@)arr:#}` filters per-element even
+    in DQ context. Comment cites Src/subst.c:2167 for the (@) →
+    nojoin=2 link.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x "" y); echo "[${(@)a:#}]"'
+[x y]
+$ ./target/debug/zshrs --zsh -c 'a=(x "" y); echo "[${(@)a:#}]"'
+[x y]
+
+$ /opt/homebrew/bin/zsh -fc 'a=(x "" y); print -l "${(@)a:#}"' | wc -l
+       2
+$ ./target/debug/zshrs --zsh -c 'a=(x "" y); print -l "${(@)a:#}"' | wc -l
+       2
+
+# Non-empty pattern unchanged
+$ ./target/debug/zshrs --zsh -c 'a=(foo bar baz); print -l "${(@)a:#b*}"'
+foo
+
+# DQ scalar (no (@), no [@]) still joins-then-tests
+$ /opt/homebrew/bin/zsh -fc 'a=(one two three); echo "[${a:#two}]"'
+[one two three]
+$ ./target/debug/zshrs --zsh -c 'a=(one two three); echo "[${a:#two}]"'
+[one two three]
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(x "" y); print -l "${(@)a:#}"'
