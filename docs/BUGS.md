@@ -8220,7 +8220,66 @@ PROMPT='%F{red}%Bbold%b%F{red}regular%f'
 
 ## #116 — `GLOB_SUBST` option default is ON in zshrs (zsh: OFF by default)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — added BUILTIN_GLOB_SUBST_GUARD runtime opcode.
+
+**Root cause** — the diagnosis in the original report (default
+value of `GLOB_SUBST`) was a misdirection. `createoptiontable` at
+`src/ported/options.rs:170` correctly initializes
+`opt_state_set("globsubst", defset("globsubst", EMULATE_ZSH))`
+which evaluates to `false` per the C optns table flags
+(`OPT_EMULATE | OPT_NONZSH`, c:146). The option IS off by
+default. The bug surfaces at PATTERN-MATCH time.
+
+C-zsh's pattern engine differentiates literal pattern chars
+(tokenized to high-bit `Star` / `Inpar` / etc. bytes by the lexer)
+from substituted chars (raw ASCII bytes from `$pat` expansion).
+`patcompile` (`Src/pattern.c`) treats ONLY the tokenized form as
+glob meta. With `GLOB_SUBST` off, expansion-produced chars stay
+raw ASCII → literal. With it on, `prefork` runs `shtokenize` on
+the substituted result → meta-active.
+
+The Rust port's `patcompile` accepts BOTH tokenized AND raw ASCII
+metas (see `pattern.rs:2966` / `2979` disjunctions like
+`b == Star as u8 || b == b'*'`). This was deliberate for
+un-tokenized call sites, but it silently lost the `GLOB_SUBST`
+distinction — `pat="h*"; [[ hello == $pat ]]` matched regardless
+of the option.
+
+**Fix** — Add a runtime guard opcode `BUILTIN_GLOB_SUBST_GUARD`
+(constant 528 in `src/fusevm_bridge.rs`). At compile time, in
+`compile_zsh::compile_cond_expr`'s pattern-RHS branch
+(`is_pattern_op && needs_expand`), emit the guard CallBuiltin
+AFTER `compile_word_str` so the runtime pattern goes through it
+before `StrMatch`. The guard:
+- Pops the pattern string.
+- Reads the live `isset(GLOBSUBST)`.
+- If ON: pushes the string unchanged (matches `setopt glob_subst`
+  semantics).
+- If OFF: escapes every glob metachar (`*?[]()|<>#^~\\`) with
+  `\` so the downstream `patcompile` treats them as literals.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'pat="hel*"; [[ "hello" == $pat ]] && echo match; echo done'
+done
+$ ./target/debug/zshrs --zsh -c 'setopt glob_subst; pat="hel*"; [[ "hello" == $pat ]] && echo match; echo done'
+match
+done
+$ ./target/debug/zshrs --zsh -c 'expected="*.log"; file="app.log"; [[ "$file" == "$expected" ]] && echo "literal"; echo done'
+done
+$ ./target/debug/zshrs --zsh -c '[[ "hello" == h* ]] && echo match-literal'
+match-literal
+```
+
+**Known limitation** — mixed-source patterns like `${pat}*`
+(expansion result + literal `*` adjacent) are over-escaped: the
+entire compile_word_str output goes through the guard, which
+treats the literal `*` as if it came from the expansion. zsh
+preserves per-character provenance and matches such patterns.
+The fully-from-expansion case (`$pat` alone) is the common idiom
+and is now correct.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'pat="hel*"; s=hello; [[ "$s" == $pat ]] && echo "match"; echo done'
