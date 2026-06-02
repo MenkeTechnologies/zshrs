@@ -20571,7 +20571,62 @@ esac
 
 ## #283 — `[[ "!" == "..." ]]` misparses bare `!` token as negation operator (even when quoted/escaped)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — lexer's `[[ ]]` BANG_TOK promotion didn't
+consult the `tokstr_has_quote_marker` gate that the parallel
+reserved-word and brace-special promotions already used;
+corrected 2026-06-02.
+
+**Root cause** — `src/ported/lex.rs` (around line 3253) had:
+
+```rust
+} else if LEX_INCOND.get() == 1 && lextext == "!" {
+    // lex.c:2013-2014 — `!` inside `[[ ]]` is the Bang
+    // negation, not a literal.
+    set_tok(BANG_TOK);
+}
+```
+
+The `lextext == "!"` check fires whether the user typed bare `!`
+or quoted `"!"`. C `Src/lex.c:1973-1980` keeps quote-marker bytes
+(Snull/Dnull/Bnull) in the lextext for quoted tokens; zshrs's
+`untokenize` strips those markers, so the same lextext compares
+equal for both forms. The fix shape was already in place for
+reserved-word promotion (line 3235) and close-brace promotion
+(line 3201) — both gated on `!tokstr_has_quote_marker` (computed
+at line 3199 by scanning the original tokstr for Snull/Dnull/Bnull
+markers). Bugs #14 and #19 closed the parallel
+`quoted-keyword → reswd` paths the same way.
+
+**Fix:** `src/ported/lex.rs` — add `&& !tokstr_has_quote_marker`
+to the BANG_TOK promotion guard so quoted `"!"` / `'!'` /
+escaped `\!` keep their literal STRING_LEX token instead of
+collapsing to negation. Citation to lex.c:2013-2014 retained
+and extended with the quote-marker rationale.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ "!" == "!" ]] && echo yes || echo no'
+yes
+$ ./target/debug/zshrs --zsh -c '[[ "!" == "!" ]] && echo yes || echo no'
+yes
+
+$ /opt/homebrew/bin/zsh -fc '[[ "!" == "x" ]] && echo yes || echo no'
+no
+$ ./target/debug/zshrs --zsh -c '[[ "!" == "x" ]] && echo yes || echo no'
+no
+
+# Regressions: unquoted negation unchanged
+$ ./target/debug/zshrs --zsh -c '[[ ! 1 -eq 2 ]] && echo neg-works'
+neg-works
+$ ./target/debug/zshrs --zsh -c '[[ ! "x" == "y" ]] && echo neg-eq-works'
+neg-eq-works
+$ ./target/debug/zshrs --zsh -c '[[ \! == \! ]] && echo y || echo n'
+y
+$ ./target/debug/zshrs --zsh -c '[[ "ab!" == "ab!" ]] && echo y || echo n'
+y
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ "!" == "!" ]] && echo Y'

@@ -3250,9 +3250,18 @@ pub fn exalias() -> bool {
             // lex.c:2010-2012 — `]]` closes the cond expression.
             set_tok(DOUTBRACK);
             LEX_INCOND.set(0);
-        } else if LEX_INCOND.get() == 1 && lextext == "!" {
+        } else if LEX_INCOND.get() == 1
+            && lextext == "!"
+            && !tokstr_has_quote_marker
+        {
             // lex.c:2013-2014 — `!` inside `[[ ]]` is the Bang
-            // negation, not a literal.
+            // negation, not a literal. Gate on
+            // `tokstr_has_quote_marker` so QUOTED `"!"` (which
+            // carries Snull/Dnull/Bnull markers in the original
+            // tokstr) stays as a literal STRING token. Same fix
+            // shape as #14/#19 above: any user-applied quotes
+            // suppress the special-token promotion. Bug #283 in
+            // docs/BUGS.md.
             set_tok(BANG_TOK);
         }
     }
