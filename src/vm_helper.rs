@@ -1735,6 +1735,20 @@ impl ShellExecutor {
             }
             return String::new();
         }
+        // Flush Rust's stdout BufWriter against the ORIGINAL fd before
+        // dup2 swaps fd 1 to the capture pipe. Without this, bytes left
+        // buffered by a prior `print -n` get drained to fd 1 AFTER the
+        // dup2, which routes them into the cmd-subst's pipe — they end
+        // up in the captured result and disappear from terminal output.
+        //
+        // Bug #10 in docs/BUGS.md — `print -n "A"; v=$(true); print -n
+        // "B"; v=$(true); print -n "C"; echo` printed only `C` because
+        // `A` and `B` were redirected into the empty cmd-subst's pipe
+        // and discarded as its "output". C zsh's getoutput() forks, so
+        // the child inherits the buffer COPY and the parent's buffer
+        // stays untouched; zshrs runs cmd-subst in-process so the
+        // parent buffer is the only one — must flush before the swap.
+        let _ = io::stdout().flush();
         unsafe {
             libc::dup2(write_fd, libc::STDOUT_FILENO);
             libc::close(write_fd);

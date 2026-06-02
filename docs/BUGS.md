@@ -416,7 +416,7 @@ zshrs_shell regression: 924/128 (baseline preserved).
 
 ## #10 — `v=$(...)` inside nested for-loop in function corrupts inner iteration
 
-**Status:** `port-bug` — surfaced 2026-05-29 writing demos 239/240.
+**Status:** `fixed` 2026-06-01.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '
@@ -427,31 +427,67 @@ $ /opt/homebrew/bin/zsh -fc '
 [0][0][0]
 [0][0][0]
 
-$ zshrs --zsh -c '
-> fn() { for r in 1 2 3; do for c in 1 2 3; do v=$(echo 0); printf "[%s]" "$v"; done; echo; done; }
-> fn
-> '
+$ zshrs --zsh -c '...fn...'   # before
 [[[0]0]0]
 [[[0]0]0]
 [[[0]0]0]
+$ zshrs --zsh -c '...fn...'   # after
+[0][0][0]
+[0][0][0]
+[0][0][0]
 ```
 
-The C-zsh path produces `[0][0][0]` per row (9 well-formed iterations).
-zshrs interleaves the assignments and printfs into `[[[0]0]0]`,
-implying the cmd-sub result lands one or two iterations late — the
-first 2 printfs see an empty `$v` and emit only `[` (no closing
-`]`); the third sees the catch-up value and emits `0]0]0]`. With
-an `if (( v )); then …; else …; fi` branch in the loop, the
-inner loop falls through after one iteration: 3 rows of single-cell
-output instead of 3×3.
+**Root cause** — `run_command_substitution` in `src/vm_helper.rs`
+swapped fd 1 to the capture pipe via `dup2(write_fd,
+STDOUT_FILENO)` WITHOUT first flushing Rust's stdout `BufWriter`.
+The original misdiagnosis (deferred queue inside function frame)
+was wrong — the bug reproduced at top level with two sequential
+reassigning cmd-subs and no function:
 
-**Where** — `src/ported/exec.rs` execution of nested for-lists when
-the function frame holds a deferred cmd-sub completion. The C path
-in `Src/exec.c::execcmd` runs cmd-sub to completion (sets the param
-via `setsparam`) before the next statement; the Rust port appears to
-schedule the substitution result onto a queue that drains one
-statement late inside a function frame. Outside a function (top-level
-nested for + cmd-sub) the bug doesn't reproduce.
+```sh
+$ zshrs --zsh -c 'print -n "A"; v=$(true); print -n "B"; v=$(true); print -n "C"; echo'   # before
+C        ← `A` and `B` lost
+```
+
+Sequence in the broken pipeline:
+
+  1. `print -n "A"` lands in the Rust stdout buffer (not flushed —
+     no newline, terminal is line-buffered).
+  2. `v=$(true)` enters run_command_substitution:
+     * `dup2(write_fd, 1)` repoints fd 1 to the pipe.
+     * Inner program runs (`true`, produces no output).
+     * Line 1903-1905 flushes Rust's stdout. The buffered `A`
+       drains to fd 1 — which is now THE PIPE — and gets read
+       back as the captured output. `v` is set to `A`.
+     * fd 1 is restored. `A` is gone from the terminal.
+  3. `print -n "B"` buffered, then captured into the next `v=$(true)`.
+  4. Only `C` reaches the real terminal at exit.
+
+C zsh doesn't hit this — `getoutput` forks before capturing, and
+the child inherits a COPY of the parent's stdio buffers. The
+parent's buffer stays intact across the cmd-subst. zshrs runs
+cmd-subst in-process so the parent buffer IS the only buffer; it
+must be flushed against the original fd before the dup2 swap.
+
+The for-loop / function symptom from the original BUGS.md report
+(`[[[0]0]0]` per row) was the same buffer-leak, just with more
+calls compounding the misordering (printf's literal prefix
+buffered, then captured by the next iteration's cmd-subst).
+
+**Fix** (`src/vm_helper.rs::run_command_substitution`) — add
+`io::stdout().flush()` immediately before `dup2(write_fd,
+STDOUT_FILENO)`. Drains all pending buffered bytes to the real
+stdout fd while it's still fd 1, then the swap is safe.
+
+Verified:
+
+  * BUGS.md original (3×3 nested loop in function) → `[0][0][0]`
+    per row (9 well-formed iterations).
+  * `print -n "A"; v=$(true); print -n "B"; v=$(true); print -n "C"; echo` → `ABC`
+  * Two-printf reassign: `v=$(echo 0); printf "[%s]" "$v"; v=$(echo
+    1); printf "[%s]" "$v"; echo` → `[0][1]`
+
+zshrs_shell regression: 924/128 (baseline preserved).
 
 **Workaround** — restructure to one of:
 
