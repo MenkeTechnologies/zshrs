@@ -1188,10 +1188,16 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     let rendered = crate::ported::utils::ztrftime(&tmfmt, now);
                     stradd(bv, &rendered);
                 }
-                // c:923-927 — `%i` (line number). The interactive line
-                // number; in -c mode there's no editor so we report 0.
+                // c:923-929 — `%i` reads the global `lineno`. The Rust
+                // mirror is `crate::ported::input::lineno` (thread-local
+                // Cell<usize>, init 1). C also has a fallthrough from
+                // `'I'` when inside a funcstack with FS_INSCRIPT —
+                // omitted here since the funcstack-line branch is
+                // already handled at the `'I'` arm. Bug #138 in
+                // docs/BUGS.md.
                 b'i' => {
-                    stradd(bv, "0");
+                    let ln = crate::ported::input::lineno.with(|l| l.get());
+                    stradd(bv, &format!("{}", ln));
                 }
                 // c:Src/prompt.c:554-555 — `%N` (name of script or
                 // function being executed; falls back to argzero/$0

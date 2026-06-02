@@ -10307,7 +10307,62 @@ divergence is real.)
 
 ## #138 — `%i` prompt escape returns `0` instead of current input line
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `%i` now reads `crate::ported::input::lineno` (C's `lineno` global mirror).
+
+**Root cause** — the `'i'` arm in `src/ported/prompt.rs::putpromptchar`
+hardcoded `"0"`:
+
+```rust
+b'i' => {
+    stradd(bv, "0");
+}
+```
+
+Comment claimed "in -c mode there's no editor so we report 0" but
+C zsh reads the global `lineno` (Src/prompt.c:923-929):
+
+```c
+case 'i':
+    addbufspc(DIGBUFSIZE);
+    bv->bp += sprintf(bv->bp, "%lld", lineno);
+    break;
+```
+
+`lineno` is the parser-tracked current line number, init 1 at
+program entry, advanced by the lexer as it consumes newlines. In
+`-c` mode the first line is 1, not 0.
+
+**Fix** — `%i` now reads `crate::ported::input::lineno.with(|l|
+l.get())` (the thread-local that mirrors C's `lineno` global) and
+formats as decimal:
+
+```rust
+b'i' => {
+    let ln = crate::ported::input::lineno.with(|l| l.get());
+    stradd(bv, &format!("{}", ln));
+}
+```
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'print -P "%i"'
+1
+# matches zsh exactly for the original single-line repro
+```
+
+**Known follow-up gap** — multiline `-c` and script execution
+still emits `1` on every line because the lineno counter isn't
+advanced by the executor between statements. Original report was
+specifically the single-line `-c` case returning `0` vs `1`; that's
+fixed. The per-statement lineno tracking through `execcmd` is a
+separate gap (tracked by the existing
+`putpromptchar_i_emits_lineno` test which is `#[ignore]`-d on the
+multiline path — left ignored since the parse-time counter
+threading is not yet wired through the executor; see
+[[lineno_threading]]).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%i"'
