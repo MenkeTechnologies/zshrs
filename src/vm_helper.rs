@@ -974,7 +974,7 @@ impl ShellExecutor {
                 // names aren't in the special_params table directly
                 // but C zsh's createparamtable emits IPDEF9 rows for
                 // them at Src/params.c:425-432.
-                use crate::ported::zsh_h::{hashnode, param, PM_DONTIMPORT as PM_DI};
+                use crate::ported::zsh_h::{hashnode, param, PM_DONTIMPORT as PM_DI, PM_UNSET};
                 for entry in special_params.iter() {
                     // c:384/394 IPDEF8/9 — `D|PM_SCALAR|PM_SPECIAL` or
                     // `D|PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT`.
@@ -992,7 +992,16 @@ impl ShellExecutor {
                     // etc. read `integer-special` instead of zsh's
                     // `integer-readonly-special` — a parity gap on
                     // introspection metadata; runtime behavior matches.
-                    let safe_pm_flags = entry.pm_flags & (PM_TIED | PM_DI);
+                    //
+                    // PM_UNSET is included: lookup_special_var arms for
+                    // TRY_BLOCK_ERROR / TRY_BLOCK_INTERRUPT (and other
+                    // PM_UNSET entries with sentinel defaults) check
+                    // this bit to decide between "stored value" vs
+                    // "uninitialized → return -1 sentinel". The flag
+                    // gets cleared by assignstrvalue at c:3660 on any
+                    // write, so it correctly tracks "ever assigned".
+                    // Bug #143 in docs/BUGS.md.
+                    let safe_pm_flags = entry.pm_flags & (PM_TIED | PM_DI | PM_UNSET);
                     let mut bits = safe_pm_flags | PM_SPECIAL;
                     if entry.pm_type == PM_ARRAY {
                         bits |= PM_DI;

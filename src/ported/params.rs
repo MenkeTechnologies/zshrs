@@ -692,15 +692,22 @@ pub const special_params: &[special_paramdef] = &[
         tied_name: None,
     },
     special_paramdef {
+        // c:Src/loop.c:719 — `zlong try_errflag = -1`. PM_UNSET so the
+        // reader returns the -1 sentinel until something writes the
+        // entry (either BUILTIN_SET_TRY_BLOCK_ERROR after a try block,
+        // or `TRY_BLOCK_ERROR=N` direct assignment — both go through
+        // assignstrvalue which clears PM_UNSET at c:3660). Bug #143.
         name: "TRY_BLOCK_ERROR",
         pm_type: PM_INTEGER,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | PM_UNSET,
         tied_name: None,
     },
     special_paramdef {
+        // c:Src/loop.c — `try_interrupt = -1`. Same PM_UNSET pattern
+        // as TRY_BLOCK_ERROR.
         name: "TRY_BLOCK_INTERRUPT",
         pm_type: PM_INTEGER,
-        pm_flags: PM_DONTIMPORT,
+        pm_flags: PM_DONTIMPORT | PM_UNSET,
         tied_name: None,
     },
     // Scalar variables bound to C globals
@@ -10028,20 +10035,19 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // and treat a present-but-empty u_str as 0 too.
         "TRY_BLOCK_ERROR" => {
             // c:Src/loop.c:719 — internal sentinel `try_errflag = -1`
-            // means "no try block has run yet in this scope". As soon
-            // as a try block runs, BUILTIN_SET_TRY_BLOCK_ERROR stores
-            // 0 (success) or last_status (errored) into paramtab.
-            // The user-visible read should reflect whatever is stored;
-            // -1 is only the default when no entry exists yet.
+            // means "no try block has run yet in this scope". PM_UNSET
+            // tracks this: the entry is created with PM_UNSET set
+            // (special_paramdef pm_flags + vm_helper init mask
+            // preserves the bit), and assignstrvalue clears it on any
+            // write (c:3660). BUILTIN_SET_TRY_BLOCK_ERROR writes via
+            // set_scalar (u_str); direct `TRY_BLOCK_ERROR=N` assigns
+            // via assignsparam (u_val). Both routes clear PM_UNSET.
+            // Bug #143 in docs/BUGS.md.
             let v = paramtab().read().ok().and_then(|t| {
                 t.get("TRY_BLOCK_ERROR").and_then(|pm| {
                     if (pm.node.flags as u32 & PM_UNSET) != 0 {
                         return None;
                     }
-                    // Entry exists → trust it. u_str holds the value
-                    // for setsparam writes; u_val for integer
-                    // assigns. Either way, an existing entry means
-                    // "some try block stored a value."
                     if let Some(ref s) = pm.u_str {
                         return Some(s.parse::<i64>().unwrap_or(0));
                     }
