@@ -905,20 +905,52 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     Ok(s) => s.code().unwrap_or(127),
                     Err(_) => 127,
                 },
-                Err(e) => match e.kind() {
-                    std::io::ErrorKind::NotFound => {
-                        eprintln!("zshrs: exec: {}: not found", cmd);
-                        127
+                Err(e) => {
+                    // c:Src/exec.c:797 — `zerr("%e: %s", lerrno, arg0)`
+                    //                     when arg0 contains `/`.
+                    // c:872-876 — when arg0 has no `/` (PATH search
+                    //              path), C tracks the "good" errno
+                    //              via `isgooderr`; if all PATH entries
+                    //              were ENOENT-not-good, eno stays 0
+                    //              and C emits `command not found: %s`
+                    //              instead of strerror.
+                    // %e expands to strerror(errno) with the first
+                    // letter lowercased (unless errno == EIO; see
+                    // Src/utils.c:362-368). `zerr` prepends the
+                    // scriptname:lineno: prefix — matching zsh's
+                    // canonical `zsh:N: <errmsg>: <cmd>` pattern.
+                    // Previously emitted `zshrs: exec: {}: not found`
+                    // (wrong prefix, hardcoded message, missing
+                    // lineno). Bug #140 in docs/BUGS.md.
+                    let errno = e.raw_os_error().unwrap_or(libc::ENOENT);
+                    let has_slash = cmd.contains('/');
+                    if !has_slash && errno == libc::ENOENT {
+                        // c:876 — PATH search exhausted with no good
+                        // errno → `command not found: arg0`.
+                        crate::ported::utils::zerr(&format!(
+                            "command not found: {}",
+                            cmd
+                        ));
+                    } else {
+                        let mut errmsg = crate::ported::compat::strerror(errno);
+                        if errno != libc::EIO {
+                            if let Some(c) = errmsg.chars().next() {
+                                errmsg = format!(
+                                    "{}{}",
+                                    c.to_ascii_lowercase(),
+                                    &errmsg[c.len_utf8()..]
+                                );
+                            }
+                        }
+                        crate::ported::utils::zerr(&format!("{}: {}", errmsg, cmd));
                     }
-                    std::io::ErrorKind::PermissionDenied => {
-                        eprintln!("zshrs: exec: {}: permission denied", cmd);
+                    // c:881 — `_exit((eno == EACCES || eno == ENOEXEC) ? 126 : 127);`
+                    if errno == libc::EACCES || errno == libc::ENOEXEC {
                         126
-                    }
-                    _ => {
-                        eprintln!("zshrs: exec: {}: {}", cmd, e);
+                    } else {
                         127
                     }
-                },
+                }
             };
             // Mark the subshell as exec-replaced so subsequent body
             // commands skip — mirrors the post-execvp "child process
@@ -943,19 +975,32 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // the `exec` prefix and exit 127 (cmd not found) or 126 (not
         // executable).
         let err = command.exec();
-        let code = match err.kind() {
-            std::io::ErrorKind::NotFound => {
-                eprintln!("zshrs: exec: {}: not found", cmd);
-                127
+        // c:Src/exec.c:797 / c:872-876 — same format as in-subshell
+        // branch. arg0-has-/ → `<strerror>: <cmd>`; arg0-no-/ +
+        // ENOENT → `command not found: <cmd>`. Lowercase strerror
+        // first letter unless EIO. Bug #140 in docs/BUGS.md.
+        let errno = err.raw_os_error().unwrap_or(libc::ENOENT);
+        let has_slash = cmd.contains('/');
+        if !has_slash && errno == libc::ENOENT {
+            crate::ported::utils::zerr(&format!("command not found: {}", cmd));
+        } else {
+            let mut errmsg = crate::ported::compat::strerror(errno);
+            if errno != libc::EIO {
+                if let Some(c) = errmsg.chars().next() {
+                    errmsg = format!(
+                        "{}{}",
+                        c.to_ascii_lowercase(),
+                        &errmsg[c.len_utf8()..]
+                    );
+                }
             }
-            std::io::ErrorKind::PermissionDenied => {
-                eprintln!("zshrs: exec: {}: permission denied", cmd);
-                126
-            }
-            _ => {
-                eprintln!("zshrs: exec: {}: {}", cmd, err);
-                127
-            }
+            crate::ported::utils::zerr(&format!("{}: {}", errmsg, cmd));
+        }
+        // c:881 — `_exit((eno == EACCES || eno == ENOEXEC) ? 126 : 127);`
+        let code = if errno == libc::EACCES || errno == libc::ENOEXEC {
+            126
+        } else {
+            127
         };
         std::process::exit(code);
     });
