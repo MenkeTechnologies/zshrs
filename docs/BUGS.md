@@ -2059,7 +2059,7 @@ zshrs_shell regression: 925/127 (baseline preserved with
 
 ## #35 — `${(v)h[key]}` flag on single subscript errors with `bad substitution`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2); echo "${(v)h[a]}"'
@@ -2079,21 +2079,63 @@ Works without the flag:
   - `${(@v)h}`       → both: `1 2`
   - `${(v)h[a]}`     → **zshrs: error; zsh: `1`** ← the bug
 
-**Where** — `src/ported/subst.rs::paramsubst` doesn't handle the
-combination of a value-extraction flag with a subscript expression.
-The `[a]` parses as a normal subscript but the `(v)` then errors
-trying to apply value-flag to a result that's already a scalar.
+**Root cause** — `src/extensions/compile_zsh.rs` has a fast path
+for `${(flags)NAME[KEY]}` (around line 3005). For unrecognized
+flag combinations it:
 
-**Workaround** — drop the `(v)` since for single-subscript access
-the result IS the value:
-```sh
-echo "${h[a]}"      # works, equivalent
-```
-Or extract via key-then-value chain:
-```sh
-local val="${h[a]}"
-echo "$val"
-```
+  1. Emits `BUILTIN_ARRAY_INDEX(NAME, KEY)` → pushes the
+     pre-resolved value onto the stack.
+  2. Prepends `\u{01}` sentinel to that value.
+  3. Calls `BUILTIN_PARAM_FLAG(value, flags)` — which
+     reconstructs `${(flags)\u{01}value}` and passes to
+     paramsubst.
+
+The `\u{01}` was meant to signal "this operand is a pre-resolved
+scalar, apply the flag to it directly." But `paramsubst` at
+`src/ported/subst.rs:3868` treats ANY `\u{01}` prefix as the
+literal-operand error sentinel (designed for the `${(v)"foo"}`
+parse-error case) and emits "bad substitution". Two designs for
+the same sentinel collided.
+
+For `${(v)NAME[key]}` / `${(V)NAME[key]}` / `${(kv)NAME[key]}` on
+a simple-key subscript, the value-extraction flag is a NO-OP —
+the subscript already picks the single value. For
+`${(k)NAME[key]}` on simple key, the flag returns the KEY which
+is the subscript text itself. Neither case needs to round-trip
+through `BUILTIN_PARAM_FLAG`.
+
+**Fix** (`src/extensions/compile_zsh.rs` flag-subscript fast
+path) — extend the existing `redundant` check that already
+handles `(v)NAME[(R)pat]` / `(k)NAME[(I)pat]` to also cover the
+simple-key cases:
+
+  * `(v)NAME[simple_key]` → `BUILTIN_ARRAY_INDEX`, no flag wrap.
+  * `(V)NAME[simple_key]` → same.
+  * `(kv)NAME[simple_key]` → same (single result collapses to
+    just the value in zsh).
+  * `(k)NAME[simple_key]` → emit LoadConst(key_text), no
+    ARRAY_INDEX (the answer is literally the subscript text).
+
+`simple_key` = no `(`/`[`/`@`/`*`/`,` in the subscript text.
+
+Verified:
+
+  * `${(v)h[a]}` → `1`
+  * `${(k)h[a]}` → `a`
+  * `${(V)h[a]}` → `1`
+  * `${(kv)h[a]}` → `1` (matches zsh's single-result collapse)
+  * `${(v)h}` / `${(v)h[@]}` → `1 2` (full splat unchanged)
+  * `${(k)h}` → `a b` (full key splat unchanged)
+  * `${(v)arr[2]}` → `y` (indexed array works too)
+  * `${(v)h[(I)a]}` → `a` (flag+(I) pattern subscript still
+    routes through paramsubst correctly)
+  * `${(v)"foo"}` (the error case the `\u{01}` sentinel was
+    originally designed for) — still treated as error (no
+    output, status 0 per zsh's silent-on-this-shape behavior).
+  * `${(P)ref}` (nested-flag form) — unchanged.
+
+zshrs_shell regression: 925/127 (baseline preserved with
+`--test-threads=1`).
 
 ---
 
