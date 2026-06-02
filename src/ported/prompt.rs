@@ -1874,29 +1874,38 @@ pub fn applytextattributes(flags: i32) -> String {
     let old_s = old & TXTSTANDOUT != 0;
     let new_s = new & TXTSTANDOUT != 0;
 
-    let need_reset = (old_b && !new_b) || (old_u && !new_u) || (old_s && !new_s);
-
-    if need_reset {
-        result.push_str("\x1b[0m");
-        if new_b {
-            result.push_str("\x1b[1m");
-        }
-        if new_u {
-            result.push_str("\x1b[4m");
-        }
-        if new_s {
-            result.push_str("\x1b[7m");
-        }
-    } else {
-        if !old_b && new_b {
-            result.push_str("\x1b[1m");
-        }
-        if !old_u && new_u {
-            result.push_str("\x1b[4m");
-        }
-        if !old_s && new_s {
-            result.push_str("\x1b[7m");
-        }
+    // c:Src/prompt.c:1640-1718 — the C tsetcap sequence emits
+    // SELECTIVE attribute-off escapes via the terminfo `me` /
+    // `se` / `ue` caps (TCALLATTRSOFF / TCSTANDOUTEND /
+    // TCUNDERLINEEND). On every SGR-aware terminal those map to:
+    //   bold off      → SGR 22  (`\x1b[22m`)
+    //   underline off → SGR 24  (`\x1b[24m`)
+    //   standout off  → SGR 27  (`\x1b[27m`)
+    //
+    // The previous Rust port emitted the full reset `\x1b[0m`
+    // whenever any attribute was turning off, then re-enabled the
+    // surviving attributes — which clobbered any active color
+    // alongside the targeted attribute. Bug #115 in
+    // docs/BUGS.md: `%F{red}%Bbold%b regular%f` lost the red
+    // color when `%b` fired. Emit selective off-codes so other
+    // attributes (including colors) survive.
+    if old_b && !new_b {
+        result.push_str("\x1b[22m"); // bold off
+    }
+    if old_u && !new_u {
+        result.push_str("\x1b[24m"); // underline off
+    }
+    if old_s && !new_s {
+        result.push_str("\x1b[27m"); // standout off
+    }
+    if !old_b && new_b {
+        result.push_str("\x1b[1m");
+    }
+    if !old_u && new_u {
+        result.push_str("\x1b[4m");
+    }
+    if !old_s && new_s {
+        result.push_str("\x1b[7m");
     }
 
     if (old & TXT_ATTR_FG_MASK) != (new & TXT_ATTR_FG_MASK) {
