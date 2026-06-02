@@ -7124,7 +7124,15 @@ pub fn paramsubst(
         }
         // Apply post-processing flags to the substituted value.
         // C lines 3950-4070 — case mods, quoting, etc.
-        if wantt {
+        if wantt && used_subexp {
+            // c:Src/subst.c — `${(t)$(cmdsub)}` and `${(t)$((arith))}`
+            // have no underlying parameter to type-check, so zsh
+            // passes the resolved value through unchanged rather
+            // than emitting "scalar". value here is already the
+            // resolved sub-expression result (raw_value flowed from
+            // subexp_value at c:2730). Bug #173 in docs/BUGS.md.
+            let _ = wantt;
+        } else if wantt {
             // c:2807
             // ${(t)var} — emit type tag. var_attrs takes
             // precedence (carries typeset flags); fall back to

@@ -13049,7 +13049,54 @@ empty strings instead of catching the error.
 
 ## #173 — `${(t)$(cmdsub)}` returns `scalar` instead of cmdsub output
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `paramsubst` wantt arm now passes the value through when `used_subexp` is true (cmdsub / arith body).
+
+**Root cause** — `${(t)$(cmdsub)}` has no parameter to type-
+check; the body came from a sub-expression (`$(...)` or
+`$((...))`). zsh special-cases this by passing the resolved
+value through unchanged rather than emitting `"scalar"`. The
+Rust port walked the standard wantt fallback chain even when
+`used_subexp` was set, falling to the `is_set` branch that
+returned `"scalar"`.
+
+**C-source reference** — `Src/subst.c` — the wantt arm's
+paramtab walk requires a `v` (Value descriptor) which is NULL
+when the body came from a sub-expression, so the type-tag
+logic gets skipped and the resolved string passes through.
+
+**Fix** — gate the wantt processing on `!used_subexp`:
+
+```rust
+if wantt && used_subexp {
+    // No parameter to type-check; value already holds the
+    // resolved sub-expression result. Skip wantt processing.
+} else if wantt {
+    // ... existing paramtab type-tag walk ...
+}
+```
+
+`used_subexp` is set when either `subexp_value` or
+`prefiltered_value` was populated (line 4199 declares it).
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'echo "${(t)$(echo hi)}"'
+hi                                  # was scalar
+
+# Regression: real parameter (t) still returns type tag.
+$ ./target/debug/zshrs --zsh -c 'x=hello; echo "${(t)x}"'
+scalar
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3); echo "${(t)a}"'
+array
+```
+
+cmdsub case matches zsh exactly. `${(t)$((arith))}` still
+returns empty (arith subexp doesn't set `used_subexp`; that's
+a separate code path — same root as bug #165). Regression
+suite unchanged (111 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "${(t)$(echo hi)}"'
