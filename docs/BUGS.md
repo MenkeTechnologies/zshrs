@@ -19493,7 +19493,24 @@ output="${match[3]}/${match[2]}/${match[1]}"
 
 ## #267 — Bare `setopt` (no args) prints nothing instead of listing currently-set options
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt' | wc -l
+       2
+$ ./target/debug/zshrs -fc 'setopt' | wc -l
+       2
+$ diff <(/opt/homebrew/bin/zsh -fc 'setopt') <(./target/debug/zshrs -fc 'setopt')
+(no output)
+```
+
+Both shells emit the same flipped-from-default options
+(`nohashdirs`, `norcs` under `-f`). The previous probe at
+report-time using `--zsh -c` (not `-fc`) didn't replicate the
+diverged option state, masking the actual fix.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt' | head -10
@@ -20046,7 +20063,75 @@ array updated on entry/exit (cumbersome).
 
 ## #277 — `${(o)@}` sort flag not applied to positional parameters
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `paramsubst` set `isarr=1` (instead of `-1`)
+for the bare `@`/`*` pseudo-names, so the c:3032 DQ-collapse
+fired and zeroed isarr before the c:4245 sort block could run;
+corrected 2026-06-02.
+
+**Root cause** — C `Src/subst.c:2916` sets
+`isarr = (v->scanflags & SCANPM_ISVAR_AT) ? -1 :
+v->scanflags ? 1 : 0`. `SCANPM_ISVAR_AT` is asserted both for
+`arr[@]`/`arr[*]` subscripts AND for the bare `@`/`*`
+positional-splat pseudo-names. Setting `isarr=-1` keeps
+`isarr > 0` false at the c:3032 qt-collapse
+(`if (qt && !getlen && isarr > 0) { val = sepjoin(...); isarr = 0; }`),
+so the array shape survives into the c:4245 sort/unique block.
+
+The Rust port at `src/ported/subst.rs::paramsubst` `else` arm
+(around line 5525) read:
+
+```rust
+let is_at_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"));
+if (arrays_contains(&var_name) || assoc_contains(&var_name))
+    && (subscript.is_none() || is_at_subscript)
+{
+    isarr = if is_at_subscript { -1 } else { 1 };
+}
+```
+
+For `${(o)@}`, `subscript` is None (no `[...]`), so
+`is_at_subscript` is false → `isarr=1`. Then the c:3032 collapse
+ran (`qt=true`, `isarr=1>0`, `spsep=None`), zeroing isarr. The
+sort block at line 7618 gated on `isarr != 0` was skipped, and
+the positional output stayed in original order.
+
+**Fix:** `src/ported/subst.rs::paramsubst` — extend the
+isarr-stamp to also assert `-1` when the bare var_name is `@`
+or `*`. Cite Src/subst.c:2916 SCANPM_ISVAR_AT semantics. The
+`argv` alias (PM_ARRAY, no splat-preserve) still gets `isarr=1`
+via the regular path. The sort-block source for `@`/`*`/`argv`
+in the same file now also pulls directly from `PPARAMS` instead
+of whitespace-re-splitting the joined view, so positionals with
+embedded spaces survive `${(o)@}`.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- z c a; echo "${(o)@}"'
+a c z
+$ ./target/debug/zshrs --zsh -c 'set -- z c a; echo "${(o)@}"'
+a c z
+
+$ /opt/homebrew/bin/zsh -fc 'set -- z c a; echo "${(O)@}"'
+z c a
+$ ./target/debug/zshrs --zsh -c 'set -- z c a; echo "${(O)@}"'
+z c a
+
+$ /opt/homebrew/bin/zsh -fc 'set -- a b a c b; echo "${(u)@}"'
+a b c
+$ ./target/debug/zshrs --zsh -c 'set -- a b a c b; echo "${(u)@}"'
+a b c
+
+# Regressions: bare ${@} / ${*} / iteration unchanged
+$ ./target/debug/zshrs --zsh -c 'set -- z c a; echo "${@}"; echo "${*}"'
+z c a
+z c a
+$ ./target/debug/zshrs --zsh -c 'set -- z c a; for v in "$@"; do print "[$v]"; done'
+[z]
+[c]
+[a]
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'set -- c a b; echo "${(o)@}"'
@@ -21280,7 +21365,19 @@ arr[$idx]=YELLOW
 
 ## #294 — Nested backtick `` `outer \`inner\` outer` `` parses wrong
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo `echo \`echo hi\``'
+hi
+$ ./target/debug/zshrs --zsh -c 'echo `echo \`echo hi\``'
+hi
+```
+
+Both shells now parse the nested-backtick form identically.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "`echo \`echo nested\``"'

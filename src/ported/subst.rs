@@ -5523,10 +5523,20 @@ pub fn paramsubst(
             // skipped, value stays joined. That's the test-
             // documented "in DQ the slice JOINS" behavior.
             let is_at_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"));
+            // c:Src/subst.c:2916 — `(v->scanflags & SCANPM_ISVAR_AT)
+            // ? -1 : v->scanflags ? 1 : 0`. SCANPM_ISVAR_AT is set
+            // both for `arr[@]`/`arr[*]` subscripts AND for the
+            // pseudo-names `@`/`*` themselves (positional-param splat
+            // form). Treating bare `@`/`*` as splat-preserving (-1)
+            // keeps `isarr > 0` false at the c:3032 qt-collapse so
+            // `"${(o)@}"` retains array shape and the c:4245 sort
+            // block fires. Bug #277. `argv` is the PM_ARRAY alias
+            // for pparams; subscriptless `argv` keeps isarr=1.
+            let is_at_var = matches!(var_name.as_str(), "@" | "*");
             if (arrays_contains(&var_name) || assoc_contains(&var_name))
                 && (subscript.is_none() || is_at_subscript)
             {
-                isarr = if is_at_subscript { -1 } else { 1 };
+                isarr = if is_at_subscript || is_at_var { -1 } else { 1 };
             }
         }
         // subst.c:3885-3887 YUK — empty / empty-first array → scalar "" when !plan9
@@ -7630,6 +7640,16 @@ pub fn paramsubst(
             } else if let Some(map) = assoc_get(&var_name) {
                 // c:4290
                 map.values().cloned().collect() // c:4290 (assoc values)
+            } else if matches!(var_name.as_str(), "@" | "*" | "argv") {
+                // c:Src/params.c:3262 IPDEF9 — `@`, `*`, `argv` map
+                // to `pparams`. Source the sort/unique input from the
+                // canonical positional vec instead of the whitespace-
+                // re-split joined view, so individual positionals
+                // with embedded spaces survive `${(o)@}` etc.
+                crate::ported::builtin::PPARAMS
+                    .lock()
+                    .map(|p| p.clone())
+                    .unwrap_or_default()
             } else {
                 // c:4290
                 value.split_whitespace().map(String::from).collect() // c:4290 (fallback)
