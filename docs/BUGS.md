@@ -7772,7 +7772,19 @@ are desired throughout.
 
 ## #111 — `%y` prompt escape (current tty) not expanded
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — confirmed already passing 2026-06-02.
+
+`%y` and `%l` are wired up in `src/ported/prompt.rs`; current
+output matches zsh's `()` placeholder for non-tty contexts:
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'print -P "%y"'
+()
+$ ./target/debug/zshrs --zsh -c 'print -P "%l"'
+()
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%y"'
@@ -7823,7 +7835,43 @@ PROMPT="%n@%m ${TTY##*/} %# "
 
 ## #112 — Builtin error format leaks Rust's `io::Error` "(os error N)" suffix
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — strerror now calls libc directly; cd applies C's %e lowercasing.
+
+**Root cause** — `ported::compat::strerror` was implemented as
+`std::io::Error::from_raw_os_error(errnum).to_string()`. The
+Display impl on Rust's `io::Error` appends ` (os error N)` to
+strerror's message. Every builtin or extension that called
+strerror (cat, head, tail, etc.) and `bin_cd`'s direct
+`io::Error::last_os_error()` formatting leaked that suffix into
+user-visible output.
+
+C's `Src/utils.c:352-368` handles the `%e` printf format by
+calling `strerror(errno)` and lowercasing the first letter
+(unless `errno == EIO` — IO errors stay capitalized because they
+read as proper-noun-style messages like "Input/output error").
+The Rust port did neither: no lowercase, plus the `(os error N)`
+tail.
+
+**Fix:**
+- `src/ported/compat.rs::strerror` — call `libc::strerror(errnum)`
+  directly via FFI and copy the result into an owned `String`. No
+  suffix, matches C exactly.
+- `src/ported/builtin.rs` bin_cd absolute-path error: route
+  through the updated `strerror` AND apply the `errno != EIO`
+  lowercase-first-letter rule from `Src/utils.c:362-368`.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'cd /nonexistent_xyz 2>&1'
+zsh:cd:1: no such file or directory: /nonexistent_xyz
+
+$ ./target/debug/zshrs --zsh -c 'cat /nonexistent_xyz 2>&1'
+cat: /nonexistent_xyz: No such file or directory
+```
+
+Baseline: 932/120 (+2 tests pass).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'cd /nonexistent_xyz 2>&1'
