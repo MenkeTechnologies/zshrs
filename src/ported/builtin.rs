@@ -9421,7 +9421,22 @@ pub fn bin_read(
             }
         }
     } else {
-        setsparam(&reply, &buf);
+        // c:Src/builtin.c:6843 — `read VAR` single-var path strips
+        // leading/trailing IFS-whitespace exactly like the multi-var
+        // last-var fallback above. C's read loop discards leading
+        // whitespace-IFS via `if (c == sep && IS_SPACE(c)) ... loop`
+        // (c:6843) before building each word, then on word-end it
+        // either emits the word or, on the last var, keeps building
+        // until newline — at which point the trailing whitespace-IFS
+        // gets discarded by the same skip. Without this, `read line`
+        // on `   hello   ` set `line` to `   hello   ` (with spaces)
+        // instead of `hello` — bug #247.
+        let ifs = getsparam("IFS").unwrap_or_else(|| " \t\n".to_string());
+        let is_ifs = |c: char| ifs.contains(c);
+        let trimmed = buf
+            .trim_start_matches(|c: char| is_ifs(c) && c.is_whitespace())
+            .trim_end_matches(|c: char| is_ifs(c) && c.is_whitespace());
+        setsparam(&reply, trimmed);
     }
     // c:Src/builtin.c:6534 — partial-EOF post-assign exit.
     if partial_eof {
