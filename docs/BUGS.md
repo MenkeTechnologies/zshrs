@@ -530,7 +530,47 @@ form. The check on `"/"` (not a glob char) was unaffected.
 
 ## #14 — `[[ $ch == "{" ]]` causes parse error "unterminated if"
 
-**Status:** `port-bug` — surfaced 2026-05-29 writing demo 301.
+**Status:** `fixed` 2026-05-30 (`src/ported/lex.rs::exalias`).
+Surfaced 2026-05-29 writing demo 301.
+
+Root cause: zshrs's `untokenize` (lex.rs:4275) STRIPS the `Snull` /
+`Dnull` / `Bnull` quote-marker bytes (`\u{9d}`/`\u{9e}`/`\u{9f}`)
+entirely. C zsh's untokenize at `Src/lex.c:1973-1980` REPLACES them
+with the literal quote chars `'`/`"`/`\\` via the `ztokens` table.
+
+So for input `"}"`:
+  - C zsh's `zshlextext` = `"}"` (3 bytes). C's reswd-promote check at
+    `lex.c:2003` (`zshlextext[0] == '}' && !zshlextext[1]`) FAILS
+    because `zshlextext[0] == '"'`.
+  - zshrs's `lextext` = `}` (1 byte after stripping Dnulls).
+    `lextext == "}"` is TRUE → reswd-promote fires → quoted `}` got
+    promoted to OUTBRACE_TOK → parser saw a close-brace at random
+    arg positions, silently dropping the quoted arg and breaking
+    `[[ ... ]]` parsing.
+
+Same failure surfaced as `echo "}"` printing nothing (the `"}"` arg
+silently became a close-brace token after `echo`).
+
+Fix: keep the existing untokenize behavior (markers stripped) — many
+call sites depend on that — but in exalias, before treating `lextext
+== "}"` as a reswd candidate, ALSO check the original `tokstr`
+contains NO `Snull`/`Dnull`/`Bnull` markers. A `}` that came from a
+quoted source has those markers in `tokstr`, so the reswd lookup is
+suppressed and the parser sees the literal `}` string.
+
+Verified against /opt/homebrew/bin/zsh:
+```
+echo "}"                              → } (was: empty)
+echo '}'                              → } (was: empty)
+echo \}                               → } (was: empty)
+c="}"; [[ "$c" == "}" ]]              → MATCH (was: parse error)
+c="{"; [[ "$c" == "{" ]]              → MATCH (was: parse error)
+f() { echo inside; }; f               → inside (reswd `}` still works)
+{ echo a; echo b; }                   → a / b (brace group still works)
+```
+
+tests/zshrs_shell: 919 pass / 133 fail (baseline) → 923 pass / 129
+fail (+4 tests passing). bug #11 / #12 / #13 still pass.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'c="{"; [[ "$c" == "{" ]] && echo MATCH'

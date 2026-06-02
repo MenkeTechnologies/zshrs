@@ -3119,8 +3119,30 @@ pub fn exalias() -> bool {
         // position OR when the text is bare `}` and IGNOREBRACES
         // / IGNORECLOSEBRACES are both unset (so `}` ends a brace
         // block).
-        let is_close_brace_special =
-            lextext == "}" && unset(IGNOREBRACES) && unset(IGNORECLOSEBRACES);
+        //
+        // c:Src/lex.c:1973-1980 (un-tokenize loop): C's untokenize
+        // REPLACES Snull/Dnull/Bnull with the literal quote chars
+        // (`'`, `"`, `\\`) via `ztokens`. So C's lextext for `"}"` is
+        // the 3-byte string `"}"` (quotes intact). The
+        // `zshlextext[0] == '}' && !zshlextext[1]` check at c:2003
+        // therefore FAILS for any quoted `}` and the reswd lookup
+        // never fires.
+        //
+        // zshrs's untokenize at lex.rs:4275 STRIPS Snull/Dnull/Bnull
+        // entirely (intentional — many call sites rely on the
+        // markers being gone), so lextext for `"}"` is just `}` (1
+        // byte). To still reject quoted `}` from the reswd path, we
+        // gate `is_close_brace_special` on the original tokstr NOT
+        // containing any quote-marker bytes. Bug #14 in BUGS.md:
+        // `[[ x == "}" ]]` and `echo "}"` both used to silently
+        // discard the `}` because exalias promoted the quoted `}`
+        // to OUTBRACE_TOK.
+        let tokstr_has_quote_marker = tokstr.chars().any(|c|
+            c == Snull || c == Dnull || c == Bnull);
+        let is_close_brace_special = lextext == "}"
+            && unset(IGNOREBRACES)
+            && unset(IGNORECLOSEBRACES)
+            && !tokstr_has_quote_marker;
         // lex.c:2002-2014 — the C structure is
         //     if ((incmdpos || ...) && (rw = reswd_lookup)) { ... }
         //     else if (incond && lextext == "]]") { ... }
