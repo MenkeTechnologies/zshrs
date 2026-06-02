@@ -800,6 +800,58 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
         };
+        // c:Src/exec.c — `exec` inside a subshell (`(exec cmd)`)
+        // replaces ONLY the subshell child process; the parent shell
+        // continues. C zsh always forks for `(...)`, so the actual
+        // execvp lands in the forked child. zshrs runs subshells via
+        // a snapshot/restore pattern in the SAME process — calling
+        // execvp here would replace the parent too. Bug #94 in
+        // docs/BUGS.md.
+        //
+        // Detect subshell context via the non-empty
+        // `subshell_snapshots` stack. When in a subshell: spawn the
+        // command as a child, wait for it, then signal the subshell
+        // body to abort (return Status(N) and the caller's
+        // subshell_end will pop the snapshot and resume the parent).
+        let in_subshell = with_executor(|exec| !exec.subshell_snapshots.is_empty());
+        if in_subshell {
+            let mut command = std::process::Command::new(&cmd);
+            command.arg0(&display_argv0);
+            command.args(&rest);
+            if clean_env {
+                command.env_clear();
+            }
+            let status = match command.spawn() {
+                Ok(mut child) => match child.wait() {
+                    Ok(s) => s.code().unwrap_or(127),
+                    Err(_) => 127,
+                },
+                Err(e) => match e.kind() {
+                    std::io::ErrorKind::NotFound => {
+                        eprintln!("zshrs: exec: {}: not found", cmd);
+                        127
+                    }
+                    std::io::ErrorKind::PermissionDenied => {
+                        eprintln!("zshrs: exec: {}: permission denied", cmd);
+                        126
+                    }
+                    _ => {
+                        eprintln!("zshrs: exec: {}: {}", cmd, e);
+                        127
+                    }
+                },
+            };
+            // Mark the subshell as exec-replaced so subsequent body
+            // commands skip — mirrors the post-execvp "child process
+            // is gone" reality in C. EXIT_PENDING + EXIT_VAL drive
+            // the next ERREXIT_CHECK to unwind to the subshell-end
+            // patch.
+            crate::ported::builtin::EXIT_VAL
+                .store(status, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::builtin::EXIT_PENDING
+                .store(1, std::sync::atomic::Ordering::Relaxed);
+            return Value::Status(status);
+        }
         let mut command = std::process::Command::new(&cmd);
         command.arg0(&display_argv0);
         command.args(&rest);
