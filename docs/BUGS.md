@@ -19152,7 +19152,61 @@ jobs -l | while read jobline; do echo "$jobline"; done
 
 ## #258 — `printf "%d" $hugenum` silently overflows to 0 (zsh: errors "number truncated after 19 digits")
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `parse_int_arg`'s `body.parse::<i64>()`
+returned `Err` on overflow and fell through to `matheval` which
+silently returned 0; corrected 2026-06-02.
+
+**Root cause** — `src/ported/builtin.rs::parse_int_arg` (used
+by printf's `%d` format) had:
+
+```rust
+match body.parse::<i64>() {
+    Ok(n) => n,
+    Err(_) => matheval(body).map(|f| f.l).unwrap_or(0),
+}
+```
+
+For a 20-digit decimal like `99999999999999999999`, `i64::parse`
+returns Err (overflow). The fallback called `matheval` which
+ALSO can't parse the overflowing literal and returned 0.
+
+C zsh's `Src/utils.c:2511 zstrtol` accepts digits up to the
+overflow point — typically 19 digits for i64 — then sets
+`trunc` at the first overflowing digit, divides calc back by the
+base (drops the overflowing digit), and returns the result as
+signed i64. The truncated value `9999999999999999999` (19 nines)
+parses as u64, casts to i64 = `-8446744073709551617`. zsh emits
+the warning `number truncated after 19 digits: NUM` to stderr
+and prints the truncated value to stdout.
+
+**Fix:** `src/ported/builtin.rs::parse_int_arg` — when
+`i64::parse` errors on an all-ascii-digit body, truncate to the
+first 19 digits, parse as `u64`, cast to `i64` (matches zsh's
+wrapping semantics), and emit `zwarnnam("printf",
+"number truncated after N digits: ARG")`. Citation:
+Src/utils.c:2511.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'printf "%d\n" 99999999999999999999' 2>&1
+zsh:1: number truncated after 19 digits: 99999999999999999999
+-8446744073709551617
+$ ./target/debug/zshrs --zsh -c 'printf "%d\n" 99999999999999999999' 2>&1
+zsh:printf:1: number truncated after 19 digits: 99999999999999999999
+-8446744073709551617
+
+# Regressions: normal %d, arith, negative, hex all unchanged
+$ ./target/debug/zshrs --zsh -c 'printf "%d\n" 42'
+42
+$ ./target/debug/zshrs --zsh -c 'printf "%d\n" "1+2"'
+3
+$ ./target/debug/zshrs --zsh -c 'printf "%d\n" -42'
+-42
+$ ./target/debug/zshrs --zsh -c 'printf "%d\n" 0x10'
+16
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'printf "%d\n" 99999999999999999999 2>&1 | head -1'
