@@ -81,44 +81,75 @@ exact-case lookups.
 
 ## #4 — `$(() { … } arg)` silently drops without newline before `()`
 
-**Status:** `port-bug` — still open after 2026-05-29 lexer attempt.
+**Status:** `fixed` 2026-06-01.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'r=$(() { echo $(( $1 * $1 )) } 7); echo $r'
 49
 
-$ zshrs --zsh -c 'r=$(() { echo $(( $1 * $1 )) } 7); echo $r'
+$ zshrs --zsh -c 'r=$(() { echo $(( $1 * $1 )) } 7); echo $r'   # before
 # silent: no output, EC=0, parse-time abort
-
-# WORKS with leading space:
-$ zshrs --zsh -c 'r=$( () { echo $(( $1 * $1 )) } 7); echo $r'
+$ zshrs --zsh -c 'r=$(() { echo $(( $1 * $1 )) } 7); echo $r'   # after
 49
 ```
 
-Diagnosis: zshrs's `src/ported/lex.rs::cmd_or_math_sub` (port of
-`Src/lex.c:540`) enters its math-disambiguation when it sees `$((`.
-It calls `dquote_parse(')', false)` which, for the empty body of
-`()`, matches the first `)` immediately and returns success. The
-next char is `{` (not `)`) so math fails. The rewind path then has
-to push back the matched `)` so `skipcomm` sees the original literal
-closing paren — but the Rust port drops it. The outer `$(...)` body
-then never re-balances and the whole script aborts at parse time
-with no output and EC=0.
+**Root cause** — `src/ported/lex.rs::cmd_or_math_sub` was a structural
+port of `Src/lex.c:540` that inlined `dquote_parse` rather than
+delegating to a faithful `cmd_or_math(CS_MATHSUBST)` call. The C
+source splits the work cleanly:
 
-Attempted 2026-05-29 fix: hungetc the matched `)` in cmd_or_math_sub.
-Result: still silent. The pop loop in cmd_or_math_sub additionally
-re-injects the Inpar+`(` bytes that cmd_or_math_sub itself appended
-to lexbuf — bytes which the C source discards silently (`lexbuf.ptr
--= 2; lexbuf.len -= 2;` at Src/lex.c:564-565). Suppressing those
-hungets fixed bug 4 but regressed `$(($((2+3))*5))` from 25 to a
-garbled `(5*5))`. The clean fix needs cmd_or_math_sub to thread
-the dquote-content-vs-Inpar/`(`-padding distinction through the
-hungetc queue precisely — a wider lexer rework than this pass
-covers.
+  * cmd_or_math_sub: `lexpos = lexbuf.ptr; add(Inpar); add('(');`
+    then `cmd_or_math(CS_MATHSUBST)`; on non-math, `lexbuf.ptr -= 2;
+    lexbuf.len -= 2;` strips Inpar+`(` from lexbuf (no hungetc) and
+    skipcomm picks up the single `(` that cmd_or_math already
+    hungetc'd.
+  * cmd_or_math: walks lexbuf back to ITS `oldlen` (which is
+    lexpos + 2, AFTER Inpar+`(`) and hungetc's only the
+    dquote_parse contributions plus one fresh `(`.
 
-**Workaround** — demo 80 routes through a named helper:
-`square_fn() { echo $(( $1 * $1 )); }; r=$(square_fn 7)`. Or insert
-a space: `$( () { … } 7)` parses correctly today.
+The previous Rust port collapsed both halves: it set `lexpos` BEFORE
+Inpar+`(` and then popped down to `lexpos` in the rewind loop,
+hungetc'ing Inpar AND `(` back onto the input stream. `skipcomm`
+then saw an Inpar token where it expected a literal `(`, plus a
+doubled `(`, and the outer `$(...)` parse derailed silently with
+EC=0 — the exact failure mode demo 80 hit.
+
+The previous BUGS.md entry's first attempted fix (hungetc the matched
+`)` only) regressed `$(($((2+3))*5))` because suppressing all the
+hungets dropped lexbuf content the outer math needed.
+
+**Fix** — rewrite `cmd_or_math_sub`'s `(` branch as a line-by-line
+port of `Src/lex.c:540` with two byte-offsets:
+
+  * `lexpos` — captured BEFORE `add(Inpar); add('(')` — marks the
+    byte where Inparmath would be rewritten on a math success.
+  * `after_open` — captured AFTER those two adds — anchors the
+    rewind loop so it pops only `dquote_parse`'s contributions, not
+    our Inpar+`(`.
+
+The inner math attempt is open-coded (`cmdpush(CS_MATHSUBST);
+dquote_parse(')', false); cmdpop();`) rather than calling the
+existing `cmd_or_math()` helper, because that helper additionally
+calls `skipcomm()` on its failure path (over-port for the gettok
+`((` caller) and would double-consume the body. After a non-math
+result the function:
+
+  1. hungetc's the `)` dquote_parse stopped on,
+  2. pops `dquote_parse`'s contributions off lexbuf and hungetc's
+     each in reverse,
+  3. hungetc's the single `(` that opened the math construct, and
+  4. strips the Inpar+`(` it added by `pop()`-ing twice — without
+     hungetc — matching C's `lexbuf.ptr -= 2; lexbuf.len -= 2;`.
+
+`skipcomm` then sees the original `(...)` body intact and parses it
+as a command substitution. Verified end-to-end:
+
+  * `$(() { echo $(($1*$1)) } 7)` → `49`
+  * `$(($((2+3))*5))` → `25` (the prior trap case)
+  * `$((2+3))` → `5`, `$(echo nested)` → `nested`,
+    `(( 2 + 3 ))` → EC=0, `(echo subshell)` → `subshell`.
+
+zshrs_shell regression: 924/128 (baseline preserved).
 
 ---
 
