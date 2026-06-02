@@ -15227,7 +15227,55 @@ unfunction helper 2>/dev/null
 
 ## #209 — Alias defined inside `(...)` subshell leaks into parent shell
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `SubshellSnapshot` now captures and restores the alias table around `(...)` execution.
+
+**Root cause** — `SubshellSnapshot` captured paramtab, env_vars,
+cwd, umask, traps, and options — but NOT the alias table. zsh
+forks for `(...)` so alias mutations inside the subshell die
+with the child process. zshrs runs subshells in-process, so any
+mutation persisted to the parent's `aliastab`.
+
+**C-source reference** — `Src/exec.c::entersubsh` (fork-time
+state copy) + the natural post-`exit` discard of child state.
+No specific "save/restore aliases" path because fork() handles
+it implicitly.
+
+**Fix** — three parts:
+
+1. `SubshellSnapshot` (`vm_helper.rs`) — added
+   `aliases: Vec<(String, String)>` field. Flat Vec of
+   (name, text) is sufficient since `alias NAME` lookup observes
+   only those two; the hashnode metadata isn't user-visible.
+2. `enter_subshell` (`fusevm_bridge.rs:5768`) snapshots the
+   aliastab via
+   `aliastab_lock().read().map(|t| t.iter().map((k,v)|
+   (k.clone(), v.text.clone())).collect())`.
+3. `subshell_end` (`fusevm_bridge.rs:5919`) — after restoring
+   opts/traps/etc., clears `aliastab` and re-adds each
+   parent-snapshot entry via `tab.add(alias { node:
+   hashnode { nam: ..., ... }, text: ..., inuse: 0 })`.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c '(alias xx="yy"); alias xx 2>&1'
+# (empty — xx alias dies with subshell)        matches zsh
+
+# Parent's pre-existing aliases survive the subshell.
+$ ./target/debug/zshrs --zsh -c 'alias before="A"; (alias xx="yy"); alias'
+before=A
+run-help=man
+which-command=whence                          # only parent's aliases + built-ins
+
+# Parent's override survives subshell's same-name re-definition.
+$ ./target/debug/zshrs --zsh -c 'alias yy="bb"; (alias yy="ZZ"); alias yy'
+yy=bb                                         # outer yy=bb preserved
+```
+
+All three match zsh exactly. Regression suite unchanged
+(114 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '(alias foo=bar); alias foo 2>&1; echo "ec=$?"'
@@ -15325,7 +15373,21 @@ the mutation in the parent shell.
 
 ## #211 — `$-` (current option chars) missing one or more flag letters
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces with `-fc` (the original report's invocation). Verified:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$-]"'
+[569Xf]
+$ ./target/debug/zshrs --zsh -fc 'echo "[$-]"'
+[569Xf]                                  # matches zsh
+```
+
+The `f` letter (negation of `rcs`) appears when `-f` is active.
+zshrs's `-f` correctly clears `rcs`, and `dashgetfn` correctly
+emits `f` per the `('f', "rcs", true)` letter-mapping entry.
+Doc-only flip.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "$-"'
@@ -15418,7 +15480,18 @@ instead, which targets shell quoting (not glob escaping).
 
 ## #213 — `${assoc[(R)value]}` reverse-search-by-value rejected as bad substitution
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(a 1 b 2); echo "[${h[(R)1]}]"; echo "[${h[(R)2]}]"'
+[1]
+[2]                                       # matches zsh
+```
+
+Both `(R)` lookups return the matching value. Likely fixed by
+the #77 / #145 assoc-subscript-flag dispatch ports. Doc-only flip.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[a]=1; h[b]=2; h[c]=2; print -l "${(@k)h[(R)2]}"' | sort

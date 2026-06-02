@@ -5792,6 +5792,20 @@ impl fusevm::ShellHost for ZshrsHost {
                 // Snapshot option store so `(set -e)` /
                 // `(setopt extendedglob)` don't leak to parent.
                 opts: crate::ported::options::opt_state_snapshot(),
+                // c:Src/exec.c — fork() copies the alias table to
+                // the subshell. `(alias x=y)` inside the subshell
+                // dies with the child; the parent doesn't see x.
+                // Snapshot here so subshell_end can restore.
+                // Bug #209 in docs/BUGS.md.
+                aliases: crate::ported::hashtable::aliastab_lock()
+                    .read()
+                    .ok()
+                    .map(|t| {
+                        t.iter()
+                            .map(|(k, v)| (k.clone(), v.text.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             });
             // Subshell starts with EXIT trap cleared so the parent's
             // EXIT handler doesn't fire when the subshell ends. zsh:
@@ -5903,6 +5917,24 @@ impl fusevm::ShellHost for ZshrsHost {
                 // subshells so child option changes die with the
                 // child; we run in-process and must restore.
                 crate::ported::options::opt_state_restore(snap.opts);
+                // c:Src/exec.c — fork() means alias mutations in a
+                // subshell die with the child. Restore parent's
+                // alias table from snapshot. Clear current entries
+                // then re-add parent's. Bug #209 in docs/BUGS.md.
+                if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
+                    tab.clear();
+                    for (name, text) in snap.aliases {
+                        tab.add(crate::ported::zsh_h::alias {
+                            node: crate::ported::zsh_h::hashnode {
+                                next: None,
+                                nam: name,
+                                flags: 0,
+                            },
+                            text,
+                            inuse: 0,
+                        });
+                    }
+                }
             }
         });
         // Decrement SUBSHELL_DEPTH. If a deferred subshell exit
