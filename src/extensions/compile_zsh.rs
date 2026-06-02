@@ -6117,13 +6117,19 @@ fn strip_arith_subst(s: &str) -> Option<String> {
 /// = `\u{93}`, Qtick = `\u{99}`). The Stringg+Inparmath sequence
 /// (`\u{85}\u{89}`) is `$((` arithmetic — skip.
 fn scalar_rhs_has_cmd_subst(s: &str) -> bool {
-    use crate::ported::zsh_h::{Inpar, Inparmath, Qtick, Stringg, Tick};
+    use crate::ported::zsh_h::{Inpar, Inparmath, Qstring, Qtick, Stringg, Tick};
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
-        // Tokenized `$(`: Stringg followed by Inpar.
-        if c == Stringg && i + 1 < chars.len() {
+        // Tokenized `$(`: Stringg or Qstring (DQ-context `$`) followed
+        // by Inpar. Bug #122 in docs/BUGS.md: the previous port only
+        // matched Stringg+Inpar, missing the DQ-wrapped form. For
+        // `y="${x:-$(false)}"` the lexer emits Qstring (\u{8c}) for the
+        // inner `$` because the outer DQ context tokenized it, so the
+        // detector falsely returned false and the post-assignment
+        // status reset clobbered the cmd-subst's exit.
+        if (c == Stringg || c == Qstring) && i + 1 < chars.len() {
             let nxt = chars[i + 1];
             if nxt == Inparmath {
                 i += 2; // `$((` arithmetic
