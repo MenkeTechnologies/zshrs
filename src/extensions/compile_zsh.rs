@@ -4741,16 +4741,38 @@ impl ZshCompiler {
                     //   then matches the LHS against the assembled
                     //   pattern at evaluation time.
                     // - Otherwise use the literal-pattern path with
-                    //   pre-escaped quoted-glob metas.
+                    //   pre-escaped quoted-glob metas — UNLESS the RHS
+                    //   is wholly double-quoted, in which case StrEq
+                    //   below does a literal compare and any `\X`
+                    //   escapes added here become part of the
+                    //   compared bytes (bug #13 in docs/BUGS.md —
+                    //   `[[ "?" == "?" ]]` returned NOMATCH because
+                    //   the escape made the RHS `\?` while the LHS
+                    //   stayed `?`).
                     let needs_expand = right.contains('\u{85}')   // META-$
                         || right.contains('\u{8c}')                  // Qstring-$
                         || right.contains('\u{93}')                  // Tick
                         || right.contains('$')
                         || right.contains('`');
+                    // Detect DQ-wrapped RHS upfront so we can pick the
+                    // right RHS-emit shape. See the comment at the
+                    // dispatch below — when the RHS is one DQ span,
+                    // zsh treats it as a literal string for `[[ == ]]`.
+                    let rhs_is_pure_dq_pre = right.starts_with('\u{9e}')
+                        && right.ends_with('\u{9e}')
+                        && right.chars().filter(|&c| c == '\u{9e}').count() == 2;
                     if needs_expand {
                         self.dq_context_depth += 1;
                         self.compile_word_str(right);
                         self.dq_context_depth -= 1;
+                    } else if rhs_is_pure_dq_pre {
+                        // Literal-compare path: untokenize WITHOUT
+                        // escaping glob metas. StrEq does a byte
+                        // compare; an `\?` escape would mismatch
+                        // the LHS's literal `?`.
+                        let right_clean = crate::lex::untokenize(right);
+                        let idx = self.builder.add_constant(Value::str(right_clean.as_str()));
+                        self.builder.emit(Op::LoadConst(idx), 0);
                     } else {
                         let escaped = escape_quoted_glob_metas(right);
                         let right_clean = crate::lex::untokenize(&escaped);
