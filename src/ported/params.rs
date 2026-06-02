@@ -4357,6 +4357,17 @@ pub fn getsparam(name: &str) -> Option<String> {
                             out.extend(std::iter::repeat(pad_char).take(pad_count));
                             out.push_str(rest);
                             s = out;
+                        } else if charlen > fwidth {
+                            // c:Src/params.c:2496-2500 — right-justify
+                            // with charlen > fwidth: truncate from the
+                            // FRONT to fit fwidth codepoints. Bug #100
+                            // in docs/BUGS.md — the getsparam path had
+                            // the pad arm but missed the truncation
+                            // arm. The parallel getstrvalue path at
+                            // ~line 3355 has it; this is the
+                            // missing-symmetry fix.
+                            let skip = charlen - fwidth;
+                            s = s.chars().skip(skip).collect();
                         }
                     }
                 }
