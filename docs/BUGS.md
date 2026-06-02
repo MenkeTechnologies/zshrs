@@ -464,7 +464,39 @@ a different separator. Demo 279 switched from `|` to `~` separator.
 
 ## #13 — `[[ "$x" == "?" ]]` fails for literal `?` (double-quoted RHS)
 
-**Status:** `port-bug` — surfaced 2026-05-29 writing demo 301.
+**Status:** `fixed` 2026-05-30
+(`src/extensions/compile_zsh.rs::compile_cond_expr`'s `is_pattern_op`
+arm). Surfaced 2026-05-29 writing demo 301.
+
+Root cause: zshrs's lexer wraps double-quoted content with `Dnull`
+markers (`\u{9e}` — zsh.h:194). When the cond-compiler emitted the
+RHS, it ran `escape_quoted_glob_metas` (which back-slash-escapes
+glob metas inside DQ regions so the pattern path sees them as
+literal), then `untokenize` (which strips the Dnull markers). For
+`"?"` that produced `\?` as the RHS bytes. **But** when the RHS is
+wholly DQ-wrapped (the `rhs_is_pure_dq` check just below), the
+emitter switches from `StrMatch` to `Op::StrEq` (literal byte
+compare); the leftover `\` from the pattern-escape step then
+mismatched the literal LHS `?`.
+
+Fix: detect `rhs_is_pure_dq` upfront. When it's true, skip
+`escape_quoted_glob_metas` and just `untokenize` the RHS so `StrEq`
+gets the raw literal bytes. Pattern-path RHSs (containing `$`,
+backticks, or with unquoted glob metas — `rhs_is_pure_dq` is false)
+still go through the escape step so glob meta-chars inside DQ
+remain literal under the pattern-match runtime.
+
+Verified against /opt/homebrew/bin/zsh:
+```
+[[ "?" == "?" ]]            → MATCH (was NOMATCH)
+c="?"; [[ "$c" == "?" ]]    → MATCH (was NOMATCH)
+[[ "(abc)" == "(abc)" ]]    → MATCH (was NOMATCH)
+[[ "{" == "{" ]]            → MATCH (was NOMATCH, related bug #14)
+[[ "abc" == "*" ]]          → NOMATCH (already correct — quoted * literal)
+[[ "abc" == * ]]            → MATCH  (already correct — unquoted * wildcard)
+```
+
+`}` still fails (separate parse-level issue tracked under bug #14).
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'c="?"; [[ "$c" == "?" ]] && echo MATCH'
