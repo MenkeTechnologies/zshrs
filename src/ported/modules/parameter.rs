@@ -1107,13 +1107,16 @@ pub fn getfunction_source(_ht: *mut HashTable, name: &str, _dis: i32) -> Option<
     let g = shfunctab_lock().read().ok()?;
     let entry = g.get(name);
     let (value, found) = if let Some(shf) = entry {
-        // c:545
-        // c:548-555 — `pm.u.str = dyncat(shf->filename ?: "", ":lineno")`.
-        // Static-link path: ShFunc.filename is the source file; lineno
-        // tracking isn't yet stored, so we emit "filename:0" matching
-        // C's c:553 fallback when filename was set without line info.
-        let fname = shf.filename.as_deref().unwrap_or("");
-        (format!("{}:0", fname), true)
+        // c:547-551 — `pm->u.str = getshfuncfile(shf); if (!pm->u.str)
+        // pm->u.str = dupstring("");`. The canonical
+        // `getshfuncfile` (Src/hashtable.c:1059) does NOT append a
+        // lineno suffix — it returns either `filename` (or
+        // `filename/name` for PM_LOADDIR autoloaders). Bug #261 in
+        // docs/BUGS.md: the previous Rust port concatenated `":0"`
+        // unconditionally, so `${functions_source[f]}` returned `zsh:0`
+        // where zsh returns `zsh`.
+        let fname = shf.filename.clone().unwrap_or_default();
+        (fname, true)
     } else {
         (String::new(), false) // c:586
     };

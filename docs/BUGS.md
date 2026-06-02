@@ -19113,7 +19113,44 @@ zle -la my-widget 2>/dev/null && echo exists
 
 ## #261 — `${functions_source[fn]}` format diverges (`zsh` vs `zsh:0`)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `getfunction_source` emitted
+`"{filename}:0"` where C `getshfuncfile` returns just `filename`;
+corrected 2026-06-02.
+
+**Root cause** — `src/ported/modules/parameter.rs::getfunction_source`
+formatted the value as `format!("{}:0", fname)`, hardcoding a
+`:0` lineno suffix that doesn't exist in zsh. The canonical
+`getshfuncfile` (`Src/hashtable.c:1059`) returns either
+`filename` plain or `filename + "/" + name` for PM_LOADDIR
+autoloaders — never with a `:N` suffix:
+
+```c
+if (shf->node.flags & PM_LOADDIR)
+    return zhtricat(shf->filename, "/", shf->node.nam);
+else if (shf->filename)
+    return dupstring(shf->filename);
+else
+    return NULL;
+```
+
+The `c:548-555 dyncat ":lineno"` comment in the Rust port was a
+misread of the C body; `c:547-551` just does
+`pm->u.str = getshfuncfile(shf); if (!pm->u.str) pm->u.str = "";`.
+
+**Fix:** `src/ported/modules/parameter.rs::getfunction_source`
+— strip the `:0` suffix, return `shf.filename` directly. PM_LOADDIR
+autoloader join (filename/name) is a separate item; the common
+inline-defined function case (`f() {:;}` → `zsh`) now matches.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() {:;}; echo "[${functions_source[f]}]"'
+[zsh]
+$ ./target/debug/zshrs --zsh -c 'f() {:;}; echo "[${functions_source[f]}]"'
+[zsh]
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { :; }; echo "[${functions_source[f]}]"'
@@ -19678,7 +19715,19 @@ checking code, fall back to `(( ${+watch} ))` existence test
 
 ## #271 — `h=([k]=v)` bash-style assoc init treated as glob pattern (errors "no matches found")
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=([k]=v); echo "[${h[k]}]"'
+[v]
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=([k]=v); echo "[${h[k]}]"'
+[v]
+```
+
+Both shells now accept the `[k]=v` bracket-shape assoc init.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h; h=([a]=1 [b]=2); echo "[${h[a]}][${h[b]}]"'
@@ -20099,7 +20148,59 @@ basenames=("${_args[@]:t}")
 
 ## #279 — `$_` (last-arg-of-previous-cmd) empty inside function (zsh: contains the function name)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `call_function` pre-body set `$_` via
+`set_scalar` (writes paramtab) but the canonical `$_` reader
+(`underscoregetfn`) consults the separate `zunderscore` Mutex;
+corrected 2026-06-02.
+
+**Root cause** — C `Src/exec.c:3491` sets `$_` BEFORE every
+command (including function call) via
+`setunderscore((args && nonempty(args)) ?
+((char *) getdata(lastnode(args))) : "")`. The args list at
+that point includes argv[0], so for a no-arg `f`, `$_` becomes
+`"f"` inside the body.
+
+`src/fusevm_bridge.rs::ZshrsHost::call_function` ran the
+pre-body set:
+
+```rust
+let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
+exec.set_scalar("_".to_string(), dollar_underscore.clone());
+exec.pending_underscore = Some(dollar_underscore);
+```
+
+`set_scalar` calls `setsparam("_", value)` which writes the
+paramtab entry. But `${_}` is a special param: its read funnel
+is `underscoregetfn` (`src/ported/params.rs:7836`) which reads
+the standalone `zunderscore` Mutex (`zunderscore_lock`). Writing
+paramtab without updating that mutex means subsequent reads
+returned the stale (empty) zunderscore.
+
+**Fix:** `src/fusevm_bridge.rs::call_function` — the pre-body
+block also calls
+`crate::ported::params::set_zunderscore(slice::from_ref(&dollar_underscore))`
+so both the paramtab entry AND the canonical zunderscore store
+land before `dispatch_function_call` runs.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "_=$_"; }; f'
+_=f
+$ ./target/debug/zshrs --zsh -c 'f() { echo "_=$_"; }; f'
+_=f
+
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "_=$_"; }; f arg1 arg2'
+_=arg2
+$ ./target/debug/zshrs --zsh -c 'f() { echo "_=$_"; }; f arg1 arg2'
+_=arg2
+
+# Regression: non-fn $_ unchanged
+$ ./target/debug/zshrs --zsh -c 'echo hi; echo "_=$_"'
+hi
+_=hi
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'foo() { echo "_=[$_]"; }; foo'

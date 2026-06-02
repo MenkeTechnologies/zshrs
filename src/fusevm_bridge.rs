@@ -6372,10 +6372,26 @@ impl fusevm::ShellHost for ZshrsHost {
         // ZshrsHost-only concerns (prompt rendering). Apply BEFORE
         // delegating to dispatch_function_call so the body sees the
         // bumped value.
+        //
+        // c:Src/exec.c:3491 — `setunderscore((args && nonempty(args))
+        // ? ((char *) getdata(lastnode(args))) : "")`. C sets $_ to
+        // the LAST node of the WHOLE args list (which includes argv[0]
+        // == the function name). So for a no-arg `f`, $_ becomes "f"
+        // inside the function body. The Rust port at the CallFunction
+        // op-handler receives `args` WITHOUT the command name
+        // (compile_zsh.rs:1571 only pushes simple.words[1..]). The
+        // last() fallback `|| fn_name.clone()` already covers the
+        // no-arg case, but `exec.set_scalar("_", ...)` writes paramtab
+        // — the canonical `$_` read goes through `underscoregetfn`
+        // (params.rs:7836) which reads the `zunderscore` Mutex.
+        // setsparam("_") doesn't update that mutex, so the body's
+        // `${_}` returned empty. Bug #279 in docs/BUGS.md. Mirror the
+        // C `setunderscore` by writing via `set_zunderscore` directly.
         let fn_name = name.to_string();
         with_executor(|exec| {
             let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
             exec.set_scalar("_".to_string(), dollar_underscore.clone());
+            crate::ported::params::set_zunderscore(std::slice::from_ref(&dollar_underscore));
             exec.pending_underscore = Some(dollar_underscore);
         });
 
