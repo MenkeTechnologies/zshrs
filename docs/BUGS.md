@@ -347,76 +347,43 @@ IFS).
 
 ## #9 — `var=${arr[(expr)*N + M]}` returns empty when unquoted-assigned
 
-**Status:** `fixed` 2026-06-01.
+**Status:** `port-bug` — surfaced 2026-05-29 while writing demo 239.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(p q r s t); r=1; c=1; v=${a[(r-1)*2 + c]}; echo "[$v]"'
 [p]
 
-$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; v=${a[(r-1)*2 + c]}; echo "[$v]"'  # before
+$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; v=${a[(r-1)*2 + c]}; echo "[$v]"'
 []
-$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; v=${a[(r-1)*2 + c]}; echo "[$v]"'  # after
+```
+
+`(r-1)*2 + c` is a valid arithmetic subscript and the C-zsh path
+returns `a[1]` = `p`. zshrs returns empty when assigned to a
+variable unquoted. The same expression works as an interpolation
+target and as a quoted-assigned RHS:
+
+```sh
+$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; echo "${a[(r-1)*2 + c]}"'
+p
+
+$ zshrs --zsh -c 'a=(p q r s t); r=1; c=1; v2="${a[(r-1)*2 + c]}"; echo "[$v2]"'
 [p]
 ```
 
-**Root cause** — the zshrs lexer tokenizes subscript-context chars
-(`[`/`]`/`(`/`)`/`-`/`*`/`?`/etc.) into their META markers when
-the surrounding word is bare, but keeps them LITERAL when the
-word is DQ-wrapped (`"${arr[(…)]}"`). The downstream
-`singsub`/`paramsubst` subscript-flag detector matches against
-LITERAL chars and silently returns empty when fed the tokenized
-form. `compile_assign`'s `needs_dq_wrap` heuristic was wrapping
-bare RHS in Dnull markers to route through the DQ-mode bridge,
-but the Dnull wrap alone did not detokenize the inner subscript
-chars — so the wrapped form was structurally different from what
-the lexer would have emitted for the equivalent DQ literal.
+**Where** — `${arr[…]}` subscript parsing in `src/ported/subst.rs`
+(port of `Src/subst.c::paramsubst`). The leading `(` of `(r-1)`
+collides with the C parser's subscript-flag dispatch (e.g. `(r)`,
+`(R)`, `(i)`, `(I)`, `(k)`, `(v)`, `(w)`, `(W)`, `(e)`, `(n)`).
+C-zsh's subscript flag parser (`Src/subst.c::strstartsfn` chain at
+c:3650-3750) rejects malformed flag content with a hard error AND
+then falls through to math-eval the entire subscript body. The
+Rust port appears to take a "no valid flag → bail with empty" path
+when assigning unquoted to a scalar — but treats the same
+expression as math correctly in interpolated/quoted contexts.
 
-Verified empirically — for `v=${a[(1+0)]}`:
-
-  * bare s   = `\u{85}\u{8f}a\u{91}\u{88}1+0\u{8a}\u{92}\u{90}`
-                (Stringg, Inbrace, `a`, Inbrack, Inpar, `1+0`,
-                 Outpar, Outbrack, Outbrace)
-  * DQ s     = `\u{9e}\u{8c}\u{8f}a[(1+0)]\u{90}\u{9e}`
-                (Dnull, Qstring, Inbrace, LITERAL `a[(1+0)]`,
-                 Outbrace, Dnull)
-
-The Inbrack/Inpar/Outpar/Outbrack tokens never reach paramsubst's
-flag-detector loop in a form it understands.
-
-**Fix** — detokenize subscript-context chars during the
-`needs_dq_wrap` wrap step in `compile_assign`. Walk `s` once
-tracking Inbrack/Outbrack depth so:
-
-  * Hat / Star / Quest / Tilde / Comma / Dash / Bang / Inang /
-    Outang / Inbrack / Outbrack are unconditionally rewritten to
-    their literal forms — these are always literal inside DQ
-    context (no glob, no flag-grouping inside subscript).
-  * Inpar / Outpar are rewritten ONLY when `bracket_depth > 0`
-    so a top-level `$(…)` cmd-subst (`Stringg + Inpar`) keeps
-    its tokenized form. The runtime needs the Inpar token to
-    recognize cmd-subst; rewriting it would turn `$(false)` into
-    a literal string. The regression that originally caught this
-    was `exit_test=$(false; echo "exit=$?")` (Quest tripped
-    `needs_dq_wrap` even though the RHS had no subscript).
-
-Markers NOT touched: Stringg/Qstring (handled symmetrically by
-compile_word_str), Inbrace/Outbrace (subst body delimiters), Bnull
-(escape marker), Snull (SQ region).
-
-Verified end-to-end:
-
-  * `v=${a[(r-1)*2 + c]}` → p (BUGS.md main case)
-  * `v=${a[(1+0)]}` → p (simpler form)
-  * `v=${a[-1]}` → t (negative index, Dash detok)
-  * `v=${a[(r)foo]}` → empty (reverse-search miss — correct)
-  * `exit_test=$(false; echo "exit=$?")` → `exit=1` (cmd-subst
-    in scalar assign preserved)
-  * `p=*.toml; echo "$p"` → `*.toml` (glob meta literal in
-    assignment RHS — Star detok inside wrap but DQ context
-    suppresses glob anyway)
-  * `p=foo[bar]; echo "$p"` → `foo[bar]` (Inbrack literal)
-
-zshrs_shell regression: 924/128 (baseline preserved).
+**Workaround** — compute the index in a separate `$((...))` step
+first: `idx=$(( (r-1)*2 + c )); v="${arr[idx]}"`. Demo 239 is
+written this way pending the underlying fix.
 
 ---
 
