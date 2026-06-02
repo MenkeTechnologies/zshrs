@@ -119,6 +119,16 @@ pub struct ZshCompiler {
     /// no assign in the chain had cmd-subst — matches C zsh's
     /// addvars + `lastval = cmdoutval` at Src/exec.c:3395).
     pub last_assign_had_cmd_subst: bool,
+    /// Names of functions defined earlier in this compile unit.
+    /// Tracked so `compile_simple`'s command-name dispatch can route
+    /// shadowing user functions through `CallFunction` instead of the
+    /// builtin fast-path. C zsh's runtime function lookup wins over
+    /// builtins (per `Src/exec.c::execcmd` shfunctab → bintab order);
+    /// zshrs's compile-time builtin_id() lookup at the dispatch site
+    /// previously beat the function check for zshrs-extension-only
+    /// names (caller, help — not in C zsh's bintab). Bug #27 in
+    /// docs/BUGS.md.
+    pub defined_functions: std::collections::HashSet<String>,
 }
 
 impl Default for ZshCompiler {
@@ -146,6 +156,7 @@ impl ZshCompiler {
             cmd_stack_depth: 0,
             try_block_depth: 0,
             last_assign_had_cmd_subst: false,
+            defined_functions: std::collections::HashSet::new(),
         }
     }
 
@@ -1448,7 +1459,19 @@ impl ZshCompiler {
             first
         };
         let first_clean = crate::lex::untokenize(dispatch_first_raw);
-        let builtin_id = if dispatch_first_raw == "shopt" || first_clean == "shopt" {
+        // c:Src/exec.c::execcmd — runtime function lookup wins over
+        // builtins (shfunctab → bintab order). When the user defined a
+        // function with the dispatch name earlier in this compile unit,
+        // skip the builtin fast-path so the call routes through
+        // CallFunction (host.call_function → dispatch_function_call →
+        // doshfunc). Bug #27 in docs/BUGS.md: zshrs-extension-only
+        // builtins (caller, help, …) shadowed user functions because
+        // the builtin_id table beat the shfunctab check.
+        let user_function_shadow = self.defined_functions.contains(&first_clean)
+            || self.defined_functions.contains(dispatch_first_raw);
+        let builtin_id = if user_function_shadow {
+            None
+        } else if dispatch_first_raw == "shopt" || first_clean == "shopt" {
             None
         } else if dispatch_first_raw == "declare" || first_clean == "declare" {
             Some(fusevm::shell_builtins::BUILTIN_DECLARE)
@@ -4453,6 +4476,10 @@ impl ZshCompiler {
                 .trim_end_matches('\u{8a}')
                 .trim_end_matches('\u{88}');
             let cleaned = crate::lex::untokenize(stripped);
+            // Bug #27: track defined names so later dispatch sites can
+            // route to CallFunction (user fn) instead of the extension
+            // builtin fast-path.
+            self.defined_functions.insert(cleaned.clone());
             let name_const = self.builder.add_constant(Value::str(cleaned.as_str()));
             self.builder.emit(Op::LoadConst(name_const), 0);
             let body_const = self.builder.add_constant(Value::str(body_str.as_str()));
