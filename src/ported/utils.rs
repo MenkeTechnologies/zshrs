@@ -7721,6 +7721,125 @@ pub fn getkeystring(s: &str) -> (String, usize) {
                     result.push((c as u8 & 0x1f) as char);
                 }
             }
+            Some(mod_letter @ ('C' | 'M')) => {
+                // c:Src/utils.c:7029-7052 + c:7265-7275 — `\C` /
+                // `\M` set control / meta flags; optional `-`
+                // separator; then read the next char (possibly
+                // through additional `\C`/`\M` chains) and apply
+                // the mask: control → `& 0x9f` (or `\C-?` → 0x7f),
+                // meta → `| 0x80`. Bug #113 in docs/BUGS.md: the
+                // previous Rust port matched these in the default
+                // arm and emitted literal `\C` / `\M`. This is the
+                // second getkeystring (utils.rs); the in-tree
+                // `getkeystring_dollar_quote` (lex.rs) also needs
+                // the fix and gets it in the same commit.
+                consumed += 1;
+                let mut control = mod_letter == 'C';
+                let mut meta = mod_letter == 'M';
+                // Consume optional `-` separator + chained `\C`/`\M`.
+                loop {
+                    if chars.peek() == Some(&'-') {
+                        chars.next();
+                        consumed += 1;
+                        continue;
+                    }
+                    // chained `\C` / `\M`?
+                    let mut iter_clone = chars.clone();
+                    if iter_clone.next() == Some('\\') {
+                        if let Some(nx) = iter_clone.next() {
+                            if nx == 'C' || nx == 'M' {
+                                chars.next(); // consume '\'
+                                chars.next(); // consume C/M
+                                consumed += 2;
+                                if nx == 'C' {
+                                    control = true;
+                                } else {
+                                    meta = true;
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    break;
+                }
+                // Read one base character (allowing nested simple
+                // escapes for common cases).
+                let base: Option<char> = if chars.peek() == Some(&'\\') {
+                    chars.next();
+                    consumed += 1;
+                    match chars.next() {
+                        Some('n') => {
+                            consumed += 1;
+                            Some('\n')
+                        }
+                        Some('t') => {
+                            consumed += 1;
+                            Some('\t')
+                        }
+                        Some('r') => {
+                            consumed += 1;
+                            Some('\r')
+                        }
+                        Some('a') => {
+                            consumed += 1;
+                            Some('\x07')
+                        }
+                        Some('b') => {
+                            consumed += 1;
+                            Some('\x08')
+                        }
+                        Some('e') | Some('E') => {
+                            consumed += 1;
+                            Some('\x1b')
+                        }
+                        Some('f') => {
+                            consumed += 1;
+                            Some('\x0c')
+                        }
+                        Some('v') => {
+                            consumed += 1;
+                            Some('\x0b')
+                        }
+                        Some('\\') => {
+                            consumed += 1;
+                            Some('\\')
+                        }
+                        Some('\'') => {
+                            consumed += 1;
+                            Some('\'')
+                        }
+                        Some('"') => {
+                            consumed += 1;
+                            Some('"')
+                        }
+                        Some(other) => {
+                            consumed += 1;
+                            Some(other)
+                        }
+                        None => None,
+                    }
+                } else {
+                    chars.next().inspect(|c| {
+                        consumed += c.len_utf8();
+                    })
+                };
+                if let Some(ch) = base {
+                    let mut byte = ch as u32;
+                    if control {
+                        if byte == '?' as u32 {
+                            byte = 0x7f;
+                        } else {
+                            byte &= 0x9f;
+                        }
+                    }
+                    if meta {
+                        byte |= 0x80;
+                    }
+                    if let Some(c) = char::from_u32(byte) {
+                        result.push(c);
+                    }
+                }
+            }
             Some(c) => {
                 consumed += 1;
                 result.push('\\');
