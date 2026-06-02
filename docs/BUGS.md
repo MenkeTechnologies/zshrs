@@ -5149,7 +5149,37 @@ done
 
 ## #78 — `echoti` output emitted AFTER next command's stdout (buffer flush ordering)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `bin_echoti` (`src/ported/modules/terminfo.rs`)
+calls `putp` which writes through ncurses → C `stdout` (libc FILE*).
+Rust's `println!` writes through `io::Stdout`'s `BufWriter`. Two
+independent buffers flushing at different times reversed the byte
+order in the output stream.
+
+C zsh's `Src/Modules/termcap.c` uses `outsh` which is the shell's
+own output func; here the equivalent is to flush both buffers around
+the libc call:
+- `std::io::stdout().flush()` BEFORE `putp` so prior Rust writes
+  land first;
+- `libc::fflush(NULL)` AFTER `putp` (POSIX: flushes all C streams)
+  so the terminfo escape reaches fd 1 before the next Rust write
+  buffers content. `fflush(NULL)` avoids the macOS-`__stdoutp` vs
+  Linux-`stdout` symbol divergence.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'echoti cup 0 0; echo done' | od -c
+0000000  033   [   1   ;   1   H   d   o   n   e  \n
+$ ./target/debug/zshrs --zsh -c 'echoti cup 0 0; echo done' | od -c
+0000000  033   [   1   ;   1   H   d   o   n   e  \n
+```
+Order matches exactly.
+
+`echotc` has the same buffer-ordering pattern; this fix is `echoti`-
+specific. (A separate echotc gap exists in its tparm template
+handling — `%i%p1%d;%p2%dH` isn't expanded to `%d`/`%2`/`%3` form by
+the current naive `replacen` substitution. Different concern.)
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echoti cup 0 0; echo done' | od -c

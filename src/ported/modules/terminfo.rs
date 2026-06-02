@@ -164,7 +164,21 @@ pub fn bin_echoti(
         }
     }
 
-    // c:122 — `if (!arg) putp(t); else putp(tparm(t, pars[0..8]));`
+    // c:Src/Modules/terminfo.c:122 — `putp(t)` writes through ncurses
+    // which targets C `stdout` (libc FILE*). Rust's `println!` writes
+    // through its own `io::Stdout` Mutex<BufWriter>. The two buffers
+    // flush at different times → escape sequences ended up AFTER the
+    // next `echo`'s output in the byte stream (bug #78 in docs/BUGS.md).
+    //
+    // Fix: flush Rust's stdout BEFORE calling putp so prior writes
+    // reach fd 1 first, then fflush(libc::stdout) AFTER putp so the
+    // escape sequence reaches fd 1 before the next println! buffers
+    // its content. Both flushes are needed — without the pre-flush,
+    // any prior `print!`/`println!` in this builtin would land
+    // post-escape; without the post-flush, the escape sits in C
+    // stdio's buffer until exit and trails the next println!.
+    use std::io::Write as _;
+    let _ = std::io::stdout().flush();
     if argv_rest.is_empty() {
         // c:122
         unsafe {
@@ -182,6 +196,13 @@ pub fn bin_echoti(
                 putp(formatted);
             }
         }
+    }
+    // `fflush(NULL)` flushes ALL open C streams (POSIX). Portable
+    // across macOS/Linux where `stdout` is a macro/function rather
+    // than a linker symbol — avoids the `__stdoutp` vs `stdout`
+    // platform divergence.
+    unsafe {
+        libc::fflush(std::ptr::null_mut());
     }
     drop(keep_alive);
     0 // c:128
