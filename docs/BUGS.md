@@ -3364,7 +3364,36 @@ zshrs_shell regression: 926/126 baseline preserved.
 
 ## #54 — `setopt warn_create_global` and `warn_nested_var` don't emit warnings
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `check_warn_pm` was already correctly
+ported (`src/ported/params.rs:4524`, mirror of `Src/params.c:3160`),
+but the three call sites in C (`Src/params.c:3268` scalar,
+`Src/params.c:3432` array, `Src/params.c:3649` assoc) were never wired
+in the Rust ports of `assignsparam`/`assignaparam`/`sethparam`. Added:
+
+- `assignsparam` (params.rs:~5107) captures `created_now = !existing`
+  before `createparam` and calls
+  `check_warn_pm(pm, "scalar", created_now, 1)` under `ASSPM_WARN` —
+  matches `c:3266-3268`.
+- `assignaparam` (params.rs:~5351) calls
+  `check_warn_pm(pm, "array", created_now, may_nested)` under
+  `ASSPM_WARN`, where `may_nested = !(flags & ASSPM_AUGMENT)` — matches
+  `c:3372 + c:3432`.
+- `sethparam` (params.rs:~5481) calls
+  `check_warn_pm(pm, "associative array", checkcreate, 1)`
+  unconditionally (no `ASSPM_WARN` gate in C) — matches `c:3649`.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'setopt warn_create_global; fn() { x=5; }; fn'
+fn: scalar parameter x created globally in function fn
+$ ./target/debug/zshrs -c 'setopt warn_create_global; fn() { x=5; }; fn'
+fn:1: scalar parameter x created globally in function fn
+```
+Array variant matches similarly. Minor cosmetic: zshrs's `zwarn`
+prefixes the script line (`fn:1:` vs zsh's bare `fn:`) — separate
+formatting concern in `zwarning`, not in the warn-pm dispatch fixed here.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt warn_create_global
