@@ -2438,6 +2438,36 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if name == "@" || name == "*" || name == "argv" {
                 return Value::Array(exec.pparams().iter().map(Value::str).collect());
             }
+            // c:Src/Modules/parameter.c — funcstack/funcfiletrace/
+            // funcsourcetrace/functrace are PM_ARRAY|PM_READONLY
+            // specials backed by the canonical FUNCSTACK Vec.
+            // `${funcstack[@]}` inside a function call should splat
+            // the innermost-first names; without this branch the
+            // runtime fell to the scalar fallback (get_variable
+            // returns empty for these specials) and `[@]` came out
+            // empty. Bug #276 in docs/BUGS.md. Mirrors the parallel
+            // arrays_get handler at src/ported/subst.rs ~10685.
+            if matches!(
+                name.as_str(),
+                "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace"
+            ) {
+                if let Ok(f) = crate::ported::modules::parameter::FUNCSTACK.lock() {
+                    let vals: Vec<Value> = f
+                        .iter()
+                        .rev()
+                        .map(|fs| {
+                            let s = match name.as_str() {
+                                "funcstack" => fs.name.clone(),
+                                "funcfiletrace" => fs.filename.clone().unwrap_or_default(),
+                                // funcsourcetrace / functrace
+                                _ => format!("{}:{}", fs.name, fs.lineno),
+                            };
+                            Value::str(s)
+                        })
+                        .collect();
+                    return Value::Array(vals);
+                }
+            }
             // c:Src/params.c — `${assoc[@]}` enumerates VALUES (per
             // params.c:1696-1750 hashparam splat). Check assoc
             // storage BEFORE the scalar fallback so an associative

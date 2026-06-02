@@ -17447,7 +17447,24 @@ arr=("${new[@]}")
 
 ## #237 — `${funcfiletrace}` and `${functrace}` format diverges from zsh (missing file path + line)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02 in
+the structural sense (both emit `<path>:<line>`); the path
+itself is the binary name (`zsh` vs `zshrs` or the binary's full
+path), which is a process-identity difference rather than a
+format bug.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "ff=$funcfiletrace"; }; f'
+ff=/opt/homebrew/bin/zsh:1
+$ ./target/debug/zshrs --zsh -c 'f() { echo "ff=$funcfiletrace"; }; f'
+ff=./target/debug/zshrs:1
+```
+
+Format shape (`path:line`) matches; the path component reflects
+the binary that's running, which is the expected divergence.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { echo "ft=${funcfiletrace[1]}"; }; f'
@@ -20476,7 +20493,66 @@ fpath=(/my/custom/funcs "${fpath[@]}")
 
 ## #276 — `${funcstack[@]}` array empty inside nested function (zsh: shows call stack)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `BUILTIN_ARRAY_ALL` (the runtime handler
+for `${name[@]}`) had no special-case for the `FUNCSTACK`-backed
+specials (`funcstack`/`funcfiletrace`/`funcsourcetrace`/`functrace`),
+so they fell through to the scalar fallback (which returns empty
+for these PM_SPECIAL specials); corrected 2026-06-02.
+
+**Root cause** — `src/fusevm_bridge.rs::BUILTIN_ARRAY_ALL`
+handles the runtime `${name[@]}` lookup via:
+1. Special positional names (`@`/`*`/`argv`) → `pparams`.
+2. Assoc storage (`exec.assoc(name)`) → values.
+3. Indexed-array storage (`exec.array(name)`) → array.
+4. Scalar fallback (`exec.get_variable(name)`).
+
+`funcstack`/`funcfiletrace`/`funcsourcetrace`/`functrace` are
+PM_SPECIAL arrays backed by the canonical `FUNCSTACK` Vec
+(`src/ported/modules/parameter.rs:3889`). They don't live in
+`exec.array` or `exec.assoc`, so the `[@]` path fell to the
+scalar fallback — which returns empty for these specials, so
+`${funcstack[@]}` came out empty.
+
+`$funcstack` (no subscript) worked because the bare-form goes
+through `paramsubst`'s `arrays_get` which already handles these
+specials (line 10685).
+
+**Fix:** `src/fusevm_bridge.rs::BUILTIN_ARRAY_ALL` — add a
+branch for the four FUNCSTACK-backed names that locks
+`FUNCSTACK`, walks it innermost-first (matching the documented
+shape: `funcstack[1]` is the most-recently-called function), and
+returns a `Value::Array`. Per-name formatting mirrors the
+`arrays_get` path in subst.rs:
+- `funcstack` → `fs.name`
+- `funcfiletrace` → `fs.filename`
+- `funcsourcetrace`/`functrace` → `format!("{}:{}", name, lineno)`
+
+Also added the same names to `src/ported/subst.rs::arrays_contains`
+so type-introspection paths (`${+funcstack}`, etc.) recognize
+the array shape.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'outer() { inner; }; inner() { echo "${funcstack[@]}"; }; outer'
+inner outer
+$ ./target/debug/zshrs --zsh -c 'outer() { inner; }; inner() { echo "${funcstack[@]}"; }; outer'
+inner outer
+
+# Regressions: $funcstack, regular array [@], positional [@] unchanged
+$ ./target/debug/zshrs --zsh -c 'f() { echo "$funcstack"; }; f'
+f
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); echo "${a[@]}"'
+x y z
+$ ./target/debug/zshrs --zsh -c 'set -- p q r; echo "${@}"'
+p q r
+```
+
+`${funcfiletrace[@]}` populates with `"zsh"` rather than zsh's
+full binary path (different startup scriptname capture); the
+shape works, the path differs. Tracked separately if it ever
+matters.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'g() { echo "fs=[${funcstack[@]}]"; }; f() { g; }; f'

@@ -10732,6 +10732,21 @@ fn arrays_contains(name: &str) -> bool {
     if name == "dirstack" || name == "signals" {
         return true;
     }
+    // c:Src/Modules/parameter.c — funcstack/funcfiletrace/
+    // funcsourcetrace/functrace are PM_ARRAY|PM_READONLY backed by
+    // the FUNCSTACK Vec (see the matching arrays_get arm at
+    // subst.rs ~10685). Without an entry here, `${funcstack[@]}` /
+    // `${(@)funcstack}` fell into the scalar arm via the else
+    // branch at subst.rs:5514, set isarr=0, and emitted empty.
+    // Bug #276 in docs/BUGS.md. `funcstack` alone (no subscript)
+    // worked because raw_value reads the sepjoin'd form; the [@]
+    // subscript path needed the array-shape signal.
+    if matches!(
+        name,
+        "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace"
+    ) {
+        return true;
+    }
     // c:Src/params.c:425-434 — tied-array IPDEF9 lowercase partners
     // (path/fpath/cdpath/mailpath/manpath/psvar/module_path) exist
     // whenever their uppercase scalar partner is set. The Rust port
