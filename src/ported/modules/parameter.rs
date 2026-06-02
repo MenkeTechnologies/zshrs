@@ -3263,20 +3263,20 @@ pub fn getpmdisgalias(ht: *mut HashTable, name: &str) -> Option<Param> {
 
 /// Port of `getpmsalias(HashTable ht, const char *name)` from Src/Modules/parameter.c:1951.
 /// C: `static HashNode getpmsalias(HashTable ht, const char *name)` →
-///   `return getalias(saliastab, ht, name, 0);`
+///   `return getalias(sufaliastab, ht, name, ALIAS_SUFFIX);`
 #[allow(non_snake_case)]
 pub fn getpmsalias(ht: *mut HashTable, name: &str) -> Option<Param> {
-    // c:1951
-    getalias(std::ptr::null_mut(), ht, name, 0) // c:1951
+    // c:1953
+    getalias(std::ptr::null_mut(), ht, name, ALIAS_SUFFIX) // c:1953
 }
 
 /// Port of `getpmdissalias(HashTable ht, const char *name)` from Src/Modules/parameter.c:1958.
 /// C: `static HashNode getpmdissalias(HashTable ht, const char *name)` →
-///   `return getalias(saliastab, ht, name, DISABLED);`
+///   `return getalias(sufaliastab, ht, name, ALIAS_SUFFIX|DISABLED);`
 #[allow(non_snake_case)]
 pub fn getpmdissalias(ht: *mut HashTable, name: &str) -> Option<Param> {
-    // c:1958
-    getalias(std::ptr::null_mut(), ht, name, DISABLED) // c:1958
+    // c:1960
+    getalias(std::ptr::null_mut(), ht, name, ALIAS_SUFFIX | DISABLED) // c:1960
 }
 
 /// Port of `scanaliases(HashTable alht, UNUSED(HashTable ht), ScanFunc func, int pmflags, int alflags)` from Src/Modules/parameter.c:1965.
@@ -3306,9 +3306,14 @@ pub fn scanaliases(
         };
         if let Ok(tab) = lock.read() {
             for (_, alias) in tab.iter() {
-                // c:1970
-                // c:1972 — `if (al->node.flags & alflags) continue;`
-                if alflags != 0 && alflags != ALIAS_SUFFIX && (alias.node.flags & alflags) == 0 {
+                // c:1976 — `for (al = ...; al; ...)`
+                // c:1977 — `if (alflags == al->node.flags)` strict
+                // equality: scanpmraliases passes alflags=0 (regular,
+                // flags==0), scanpmdisraliases passes DISABLED,
+                // scanpmgaliases ALIAS_GLOBAL, scanpmsaliases
+                // ALIAS_SUFFIX, scanpmdissaliases ALIAS_SUFFIX|DISABLED
+                // etc. Anything else is skipped.
+                if alias.node.flags != alflags {
                     continue;
                 }
                 let node = Box::new(hashnode {
