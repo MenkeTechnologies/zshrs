@@ -761,22 +761,50 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
 
             // c:509 — `switch (*bv->fm)` — the real escape dispatch.
             let xc = bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0);
+            // c:Src/prompt.c — numeric prefix N on `%/` / `%~` / `%d`
+            // keeps only the trailing N path components. Bug #96 in
+            // docs/BUGS.md: zshrs ignored the prefix and emitted the
+            // full PWD for `%1/` / `%2~` / etc. Reuse the same
+            // truncation helper as `%c`/`%C` arms below.
+            let trunc_to_last = |path: &str, n: usize| -> String {
+                let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+                if parts.len() <= n {
+                    path.to_string()
+                } else {
+                    parts[parts.len() - n..].join("/")
+                }
+            };
             match xc {
-                // c:511-514 — `%~` (pwd with home-tilde)
+                // c:511-514 — `%~` (pwd with home-tilde, optional N
+                // trailing components).
                 b'~' => {
                     let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
                     let home = prompt_tls::HOME.with(|c| c.borrow().clone());
-                    let s = if !home.is_empty() && pwd.starts_with(&home) {
+                    let mut s = if !home.is_empty() && pwd.starts_with(&home) {
                         format!("~{}", &pwd[home.len()..])
                     } else {
                         pwd
                     };
+                    if arg > 0 {
+                        // C `Src/prompt.c::promptpath` walks last N
+                        // components of the post-tilde path. `~/foo/bar`
+                        // with N=1 → `bar`; the tilde itself counts as
+                        // a regular component for the walk, so `~`
+                        // alone (or `~/` after strip) stays unchanged.
+                        s = trunc_to_last(&s, arg as usize);
+                    }
                     stradd(bv, &s);
                 }
-                // c:515-518 — `%d` / `%/` (pwd, no tilde)
+                // c:515-518 — `%d` / `%/` (pwd, no tilde, optional N
+                // trailing components).
                 b'd' | b'/' => {
                     let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
-                    stradd(bv, &pwd);
+                    let s = if arg > 0 {
+                        trunc_to_last(&pwd, arg as usize)
+                    } else {
+                        pwd
+                    };
+                    stradd(bv, &s);
                 }
                 // c:519-522 — `%c`/`%.` (trailing path component, tilde-home)
                 b'c' | b'.' => {

@@ -6502,7 +6502,26 @@ subshell boundary not safe in zshrs.
 
 ## #96 — `%N/` prompt escape doesn't truncate path to last N components
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — the `%/`/`%d`/`%~` arms in
+`src/ported/prompt.rs:766-780` emitted the full PWD unconditionally,
+ignoring the numeric prefix that the dispatcher captured into `arg`.
+The `%c`/`%C` arms below already honored it via the same
+"keep-last-N-components" walk, so factored that into a `trunc_to_last`
+closure and applied it to all four arms. C source
+`Src/prompt.c::promptpath` (~line 511) walks the path backwards
+counting separators per the numeric prefix.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `%1/` → `zshrs` (last component).
+- `%2/` → `RustroverProjects/zshrs`.
+- `%3/` → `wizard/RustroverProjects/zshrs`.
+- `%1~` / `%2~` / `%3~` — same shape with the tilde substitution.
+- Bare `%/` / `%~` / `%d` — unchanged (full path).
+- `%0/` — `arg == 0` falls through to "no truncation" (full path).
+- Deep path with N exceeding component count → full path
+  (`%5/` on a 4-component path returns the whole path).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'cd /Users/wizard/RustroverProjects/zshrs; print -P "[%1/]"; print -P "[%2/]"; print -P "[%3/]"'
