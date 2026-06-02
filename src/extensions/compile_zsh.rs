@@ -4811,7 +4811,18 @@ impl ZshCompiler {
                     let idx = self.builder.add_constant(Value::str(arg_clean.as_str()));
                     self.builder.emit(Op::LoadConst(idx), 0);
                 } else {
+                    // c:Src/cond.c — `[[ ]]` arguments undergo parameter
+                    // expansion but NOT filesystem globbing. Per zsh's
+                    // documented semantic, `[[ -e /tmp/*.txt ]]` tests
+                    // the LITERAL path `/tmp/*.txt`, not whatever the
+                    // glob would match. Bump dq_context_depth so
+                    // compile_word_str suppresses BUILTIN_GLOB_EXPAND
+                    // on the operand — mirrors the existing
+                    // suppression logic for binary-cond LHS at line
+                    // 4857. Bug #156 in docs/BUGS.md.
+                    self.dq_context_depth += 1;
                     self.compile_word_str(arg);
+                    self.dq_context_depth -= 1;
                 }
                 self.emit_file_test(&op_clean);
             }
@@ -4833,7 +4844,13 @@ impl ZshCompiler {
                         let idx = self.builder.add_constant(Value::str(op_clean_arg.as_str()));
                         self.builder.emit(Op::LoadConst(idx), 0);
                     } else {
+                        // c:Src/cond.c — `[[ ]]` unary file tests don't
+                        // glob-expand operands. Same logic as the
+                        // ZshCond::Unary arm above (line 4814+).
+                        // Bug #156 in docs/BUGS.md.
+                        self.dq_context_depth += 1;
                         self.compile_word_str(op);
+                        self.dq_context_depth -= 1;
                     }
                     self.emit_file_test(&left_clean);
                     return;
