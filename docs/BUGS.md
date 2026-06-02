@@ -9787,7 +9787,86 @@ done
 
 ## #133 — `zstat -F "fmt"` format flag ignored; output uses default date string
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `bin_stat` now captures `-F FMT` into the module-static timefmt and `stattimeprint` reads it.
+
+**Root cause** — `src/ported/modules/stat.rs::bin_stat` had a stub
+`'F'` arm that advanced past the format argument index but never
+captured the value:
+
+```rust
+'F' => {
+    i += 1;
+    if i >= args.len() {
+        zwarnnam(nam, "missing time format");
+        return 1;
+    }
+    // c:447 — force string format.
+    ops[b's' as usize] = true;
+    break;
+}
+```
+
+`stattimeprint` then hardcoded `"%a %b %e %k:%M:%S %Z %Y"` rather
+than reading the global. `-F "%Y"` and `-F "%Y-%m-%d"` were silently
+dropped.
+
+**C-source reference** — `Src/Modules/stat.c:187` declares
+`static char *timefmt;`. `Src/Modules/stat.c:376` initializes it to
+the default at `bin_stat` entry. `Src/Modules/stat.c:442-451`
+captures `-F`:
+
+```c
+} else if (*arg == 'F') {
+    if (arg[1]) {
+        timefmt = arg+1;
+    } else if (!(timefmt = *++args)) {
+        zwarnnam(name, "missing time format");
+        return 1;
+    }
+    /* force string format in order to use time format */
+    ops->ind['s'] = 1;
+    break;
+}
+```
+
+`Src/Modules/stat.c:201` reads it in `stattimeprint`:
+`ztrftime(oend, 40, timefmt, ...)`.
+
+**Fix** — three parts in `src/ported/modules/stat.rs`:
+
+1. Module-static `TIMEFMT: OnceLock<Mutex<String>>` mirrors C's
+   `static char *timefmt;` (c:187). Default constant
+   `TIMEFMT_DEFAULT = "%a %b %e %k:%M:%S %Z %Y"` matches c:376.
+2. `bin_stat` resets the static to default on every entry (c:376
+   semantics — fresh invocation without `-F` reverts to default).
+3. The `'F'` arm now captures the format string (inline form `-F%Y`
+   AND separated form `-F %Y`), stores it in `TIMEFMT`, and forces
+   `-s` (c:444-450). `stattimeprint` reads `TIMEFMT` instead of the
+   hardcoded format.
+
+No new function helpers — accessor logic is inlined at the three
+call sites (read in `stattimeprint`, reset in `bin_stat` entry, set
+in `'F'` arm) per the no-Rust-only-helpers rule. `TIMEFMT_DEFAULT`
+is a `const`, not a fn.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/stat; zstat -F "%Y" +mtime /etc/hosts'
+2026
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/stat; zstat -F "%Y-%m-%d" +mtime /etc/hosts'
+2026-05-18
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/stat; zstat -F "%s" +mtime /etc/hosts'
+1779128736
+# No -F (default still works):
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/stat; zstat -s +mtime /etc/hosts'
+Mon May 18 14:25:36 EDT 2026
+```
+
+All four match real zsh exactly. Regression count 116 → 115. Stat
+lib tests 197/197 still pass.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zmodload zsh/stat; zstat -F "%Y" +mtime /etc/hosts'

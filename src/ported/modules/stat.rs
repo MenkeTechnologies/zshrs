@@ -192,6 +192,16 @@ pub fn statgidprint(gid: u32, flags: i32) -> String {
     out
 }
 
+/// Port of `static char *timefmt;` from `Src/Modules/stat.c:187`. C uses a
+/// module-static global initialized to the ctime-like default at the top of
+/// `bin_stat` (c:376) and overwritten by `-F FMT`. Rust mirrors with a
+/// `Mutex<String>` so `stattimeprint` (c:201) can read the same global.
+/// Default constant lives next to the static; callers read/write the lock
+/// directly (no accessor helpers — those would be Rust-only fns).
+const TIMEFMT_DEFAULT: &str = "%a %b %e %k:%M:%S %Z %Y"; // c:376
+
+static TIMEFMT: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+
 /// Port of `stattimeprint(time_t tim, long nsecs, char *outbuf, int flags)` from `Src/Modules/stat.c:191`. Renders
 /// a Unix timestamp + nsec offset: raw form is integer seconds;
 /// string form is `ctime(3)` (or strftime via the timefmt global).
@@ -209,9 +219,16 @@ pub fn stattimeprint(tim: i64, _nsecs: i64, flags: i32) -> String {
     }
     if (flags & STF_STRING) != 0 {
         // c:199
-        // c:200 — `ztrftime(buf, ..., timefmt, localtime(&tim), nsecs);`
+        // c:201 — `ztrftime(oend, 40, timefmt, localtime(&tim), nsecs);`
+        // C reads the module-static `timefmt` here (initialized to the
+        // ctime default at bin_stat entry, possibly overwritten by -F).
         let st = std::time::UNIX_EPOCH + std::time::Duration::from_secs(tim.max(0) as u64);
-        let formatted = ztrftime("%a %b %e %k:%M:%S %Z %Y", st);
+        let fmt: String = TIMEFMT
+            .get_or_init(|| std::sync::Mutex::new(TIMEFMT_DEFAULT.to_string()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| TIMEFMT_DEFAULT.to_string());
+        let formatted = ztrftime(&fmt, st);
         out.push_str(&formatted);
         if (flags & STF_RAW) != 0 {
             // c:211
@@ -310,6 +327,16 @@ pub fn bin_stat(
     let mut arrnam: Option<String> = None;
     let mut hashnam: Option<String> = None;
     let mut fd: i32 = 0;
+    // c:376 — `timefmt = "%a %b %e %k:%M:%S %Z %Y";`. Reset the module-
+    // static every entry so a prior `-F` doesn't leak into a fresh
+    // invocation without `-F`.
+    if let Ok(mut g) = TIMEFMT
+        .get_or_init(|| std::sync::Mutex::new(TIMEFMT_DEFAULT.to_string()))
+        .lock()
+    {
+        g.clear();
+        g.push_str(TIMEFMT_DEFAULT);
+    }
     // The C `Options ops` bitmap is parsed inline by this fn (the
     // BUILTIN spec at c:637 is `NULL`, so the framework doesn't pre-
     // parse). Per PORT_CHECKLIST.md rule 3 we keep `ops` as a local
@@ -395,13 +422,32 @@ pub fn bin_stat(
                         break;
                     }
                     'F' => {
-                        i += 1;
-                        if i >= args.len() {
-                            zwarnnam(nam, "missing time format");
-                            return 1;
+                        // c:442-451 — `-F FMT`. If the same arg has chars
+                        // after 'F' (e.g. `-F%Y`), use those; else consume
+                        // the next argv entry. Force STF_STRING via -s so
+                        // the format actually gets used (c:449-450).
+                        let inline: &str = &arg[arg.find('F').unwrap() + 1..];
+                        let fmt: &str = if !inline.is_empty() {
+                            // c:443-444
+                            inline
+                        } else {
+                            i += 1;
+                            if i >= args.len() {
+                                // c:446
+                                zwarnnam(nam, "missing time format");
+                                return 1;
+                            }
+                            args[i]
+                        };
+                        // c:444 — `timefmt = arg+1;` / c:445 — `timefmt = *++args;`
+                        if let Ok(mut g) = TIMEFMT
+                            .get_or_init(|| std::sync::Mutex::new(TIMEFMT_DEFAULT.to_string()))
+                            .lock()
+                        {
+                            g.clear();
+                            g.push_str(fmt);
                         }
-                        // c:447 — force string format.
-                        ops[b's' as usize] = true;
+                        ops[b's' as usize] = true; // c:450 — force STF_STRING.
                         break;
                     }
                     _ => {
