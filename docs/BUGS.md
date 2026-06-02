@@ -13969,7 +13969,59 @@ fi
 
 ## #187 — `f() { :; } > /file` redirect on fn-def creates file at definition time
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `compile_command`'s `Redirected(FuncDef, ...)` arm skips the redirect-open at def time (matches zsh's deferred semantic).
+
+**Root cause** — `f() { :; } > /tmp/zfr` parses as
+`Redirected(FuncDef(...), [redirs])`. The generic Redirected
+arm emitted `WithRedirectsBegin` (which opens the redirects)
+before `compile_command(inner)`. That opened/created the file
+at function-DEFINITION time.
+
+zsh defers the open: the redirect chain attaches to the
+function and applies when the function is called.
+
+**C-source reference** — `Src/exec.c` — `Shfunc.redir` carries
+the redirect chain; `Src/exec.c::doshfunc` applies it on entry.
+
+**Fix** — short-circuit the Redirected arm when `inner` is a
+`FuncDef` — skip the redirect-open and just compile the funcdef
+directly:
+
+```rust
+if matches!(inner.as_ref(), ZshCommand::FuncDef(_)) {
+    self.compile_command(inner);
+    return;
+}
+```
+
+This prevents the file creation at def time. Full attached-
+redirect-applies-at-call-time semantic (bug #158) is a separate
+larger fix requiring `BUILTIN_REGISTER_COMPILED_FN` to thread
+the redir chain into shfunc storage.
+
+**Verify:**
+
+```sh
+$ rm -f /tmp/zfr
+$ ./target/debug/zshrs --zsh -c 'g() { :; } > /tmp/zfr'
+$ ls /tmp/zfr
+ls: /tmp/zfr: No such file or directory       # was: file created at def time
+
+# Function still gets defined correctly:
+$ ./target/debug/zshrs --zsh -c 'g() { echo body-ran; } > /tmp/zfr; g'
+body-ran
+
+# Compound `{...} > file` redirect still works:
+$ ./target/debug/zshrs --zsh -c '{ echo hi; } > /tmp/zfz; cat /tmp/zfz; rm -f /tmp/zfz'
+hi
+```
+
+Bug #194 (function-keyword form `function f { ... } > file`)
+also covered by this fix since both parse to
+`Redirected(FuncDef, ...)`. Regression suite: 114 → 111
+failures (3 fewer).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { :; } > /tmp/zfr'
@@ -14298,7 +14350,20 @@ allocate_buffer $max_size   # zsh: never reached  zshrs: allocates 0
 
 ## #194 — `function f { :; } > /file` keyword-form fn-def redirect creates file at def time
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — same fix as #187 (both parse to `Redirected(FuncDef, ...)`).
+
+**Verify:**
+
+```sh
+$ rm -f /tmp/zfk
+$ ./target/debug/zshrs --zsh -c 'function f { :; } > /tmp/zfk'
+$ ls /tmp/zfk
+ls: /tmp/zfk: No such file or directory       # was: file created at def time
+```
+
+See #187 for full details.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'function f { echo body; } > /tmp/zfk' && ls /tmp/zfk

@@ -732,6 +732,20 @@ impl ZshCompiler {
                 self.emit_errexit_check();
             }
             ZshCommand::Redirected(inner, redirs) => {
+                // c:Src/exec.c — `f() { ... } > file` parses as
+                // Redirected(FuncDef(...), [redirs]). The redirects
+                // are meant to attach to the FUNCTION (apply at call
+                // time), not open at definition time. zsh defers the
+                // open via Shfunc.redir. zshrs's funcdef storage
+                // doesn't carry a redir chain yet, so the simplest
+                // correctness fix is to SKIP the redirect-open at
+                // def time — that prevents the zero-byte file
+                // creation reported in bug #187 / #194. Full
+                // redirect-attached-to-fn semantic is #158, deferred.
+                if matches!(inner.as_ref(), ZshCommand::FuncDef(_)) {
+                    self.compile_command(inner);
+                    return;
+                }
                 // Compound command with trailing redirects (e.g.
                 // `{ ... } 2>&1`). Bracket the body in a
                 // WithRedirectsBegin/End scope so post-body fds are
