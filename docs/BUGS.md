@@ -18323,7 +18323,43 @@ Note: this still doesn't handle multi-char IFS whitespace
 
 ## #248 — `read "?prompt" var` prints prompt to stdout when stdin is not a tty
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `bin_read` printed the `?prompt` argument
+unconditionally (to stderr), so non-interactive callers saw it
+leak into stderr; corrected 2026-06-02.
+
+**Root cause** — `src/ported/builtin.rs::bin_read` had:
+
+```rust
+if let Some(ref p) = prompt {
+    eprint!("{}", p);
+    let _ = Write::flush(&mut io::stderr());
+}
+```
+
+C `Src/builtin.c:6499-6510` gates the prompt write on
+`isatty(0)` so when stdin is redirected from a pipe or file, the
+prompt is suppressed entirely. Without that gate, the original
+report's probe (which checked stdout) saw the prompt mistakenly
+reported as going to stdout — the actual leak was stderr-side,
+but the symptom (prompt fragment in non-interactive output) was
+real.
+
+**Fix:** `src/ported/builtin.rs::bin_read` — gate the prompt
+write on `libc::isatty(0) != 0`. Citation to c:6499-6510.
+
+**Verify:**
+```sh
+$ echo input | /opt/homebrew/bin/zsh -fc 'read "?prompt: " v; echo "got=[$v]"' 2>&1
+got=[input]
+$ echo input | ./target/debug/zshrs --zsh -c 'read "?prompt: " v; echo "got=[$v]"' 2>&1
+got=[input]
+
+# stderr also clean (prompt suppressed entirely on non-tty stdin)
+$ echo input | ./target/debug/zshrs --zsh -c 'read "?prompt: " v; echo "got=[$v]"' >/dev/null
+(no output)
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "ans" | read "?Question: " line; echo "[$line]"'

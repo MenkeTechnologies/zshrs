@@ -9328,10 +9328,20 @@ pub fn bin_read(
         } // error
     }
 
-    // Print prompt if provided.
+    // c:Src/builtin.c:6499-6510 — `read "?prompt"` writes the prompt
+    // ONLY when input is interactive (stdin is a terminal). C zsh
+    // gates the write via `isatty(0)` inside the prompt-emit block;
+    // when stdin is redirected from a pipe or file, the prompt is
+    // suppressed entirely so the captured output isn't polluted. Bug
+    // #248 in docs/BUGS.md — previously zshrs printed the prompt to
+    // stderr unconditionally, so non-interactive callers saw the
+    // prompt fragment leak into stderr.
     if let Some(ref p) = prompt {
-        eprint!("{}", p);
-        let _ = Write::flush(&mut io::stderr());
+        let stdin_is_tty = unsafe { libc::isatty(0) } != 0;
+        if stdin_is_tty {
+            eprint!("{}", p);
+            let _ = Write::flush(&mut io::stderr());
+        }
     }
 
     // Read one byte at a time until newline (or nchars when -k).
