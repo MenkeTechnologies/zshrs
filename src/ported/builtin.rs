@@ -8405,16 +8405,30 @@ pub fn zexit(val: i32, from_where: i32) {
     // LASTVAL below) and runs in the shell process. Remove the
     // entry from traps_table first so the trap body's own commands
     // don't re-trigger it recursively.
+    //
+    // Two trap-storage paths: (a) `trap 'cmd' EXIT` stores raw
+    // body text in `traps_table` (no settrap), handled by the
+    // direct execute_script below; (b) `TRAPEXIT() { ... }`
+    // function-named form goes through settrap(SIGEXIT, None,
+    // ZSIG_FUNC) at funcdef time and lives in the
+    // shfunctab+sigtrapped pair, dispatched via `dotrap(SIGEXIT)`.
+    // C zsh's dotrap handles BOTH paths internally; Rust splits
+    // them. Call dotrap to cover the function-named form. Bug
+    // #157 in docs/BUGS.md.
     let exit_trap = traps_table().lock().ok().and_then(|mut t| t.remove("EXIT"));
+    LASTVAL.store(val, Relaxed); // c:6076 — $? inside trap = val
+    crate::ported::signals::in_exit_trap.store(1, Relaxed);
     if let Some(body) = exit_trap {
         // Set LASTVAL to the requested exit value so `$?` inside
         // the trap body sees the right number (matches `(exit 7)`
         // → trap body reads $?=7).
-        LASTVAL.store(val, Relaxed);
-        crate::ported::signals::in_exit_trap.store(1, Relaxed);
         let _ = crate::ported::exec_hooks::execute_script(&body);
-        crate::ported::signals::in_exit_trap.store(0, Relaxed);
     }
+    // c:Src/signals.c::dotrap(SIGEXIT) — fire ZSIG_FUNC handler
+    // installed by `TRAPEXIT() { ... }` (settrap with ZSIG_FUNC
+    // sets sigtrapped[SIGEXIT] = ZSIG_TRAPPED | ZSIG_FUNC).
+    let _ = crate::ported::signals::dotrap(crate::signals_h::SIGEXIT);
+    crate::ported::signals::in_exit_trap.store(0, Relaxed);
     realexit(); // c:6082
 }
 
