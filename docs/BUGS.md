@@ -16527,7 +16527,75 @@ done
 
 ## #227 — `disable -a NAME` neither populates `dis_aliases` nor removes from active `aliases` table
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — root cause traced to `getalias` using
+`.get()` instead of C's `getnode2` (which ignores DISABLED), plus
+`bin_alias` single-name display path using `get_including_disabled`
+where C uses `getnode` (which masks DISABLED); corrected
+2026-06-02.
+
+**Root cause** — two complementary lookup-side mistakes in the
+disable/introspection round-trip:
+
+1. `src/ported/modules/parameter.rs::getalias` at the C-source
+   line c:1911 called Rust `.get(name)` on the alias table — which
+   filters out DISABLED entries (`hashtable.rs:790` applies
+   `.filter(|a| (flags & DISABLED) == 0)`). The C source at
+   c:1911 calls `alht->getnode2(alht, name)`. The wrapper
+   `gethashnode2` (Src/hashtable.c:255) does NOT mask DISABLED.
+   Consequence: `${dis_aliases[foo]}` for a disabled `foo`
+   returned empty — getalias couldn't see foo at all because the
+   Rust filter dropped it before the strict-equality
+   `node.flags == DISABLED` check could even run. Fix: use
+   `g.get_including_disabled(name)` to mirror C `getnode2`.
+2. `src/ported/builtin.rs::bin_alias` single-name display
+   (around c:4530) called `t.get_including_disabled(n)` where C
+   uses `(Alias) ht->getnode(ht, asg->name)` — the C `gethashnode`
+   wrapper (Src/hashtable.c:231) returns NULL for DISABLED
+   entries. So `alias foo` after `disable -a foo` should print
+   nothing; zshrs printed `foo=bar` regardless. Fix: switch to
+   `t.get(n)` which applies the same DISABLED filter as C's
+   `gethashnode`.
+
+Bug #226's strict-equality fix to `scanaliases` and the
+flag-routing fixes for `getpmsalias` / `getpmdissalias` also
+contribute here: `${(@k)dis_aliases}` enumeration now only emits
+nodes with `node.flags == DISABLED`, matching zsh's strict-equality
+filter at parameter.c:1977.
+
+**Fix:**
+- `src/ported/modules/parameter.rs:3181` — `g.get(name)` →
+  `g.get_including_disabled(name)`, with citation to c:1911 +
+  Src/hashtable.c:255 explaining the C `getnode2` ignore-DISABLED
+  semantics.
+- `src/ported/builtin.rs:7262` — `t.get_including_disabled(n)` →
+  `t.get(n)`, citing c:4530 + Src/hashtable.c:231 explaining the
+  C `getnode` mask-DISABLED semantics.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'alias foo=bar; disable -a foo; echo "dis_aliases=[${dis_aliases[foo]}]"; alias foo; foo 2>&1; echo "exit=$?"'
+dis_aliases=[bar]
+zsh:1: command not found: foo
+exit=127
+$ ./target/debug/zshrs --zsh -c 'alias foo=bar; disable -a foo; echo "dis_aliases=[${dis_aliases[foo]}]"; alias foo; foo 2>&1; echo "exit=$?"'
+dis_aliases=[bar]
+zsh:1: command not found: foo
+exit=127
+
+$ /opt/homebrew/bin/zsh -fc 'alias a=1; alias b=2; disable -a a; for k in "${(@k)dis_aliases}"; do echo "$k=${dis_aliases[$k]}"; done'
+a=1
+$ ./target/debug/zshrs --zsh -c 'alias a=1; alias b=2; disable -a a; for k in "${(@k)dis_aliases}"; do echo "$k=${dis_aliases[$k]}"; done'
+a=1
+```
+
+Same lookup-side pattern likely fixes the `${dis_galiases[k]}` and
+`${dis_saliases[k]}` paths automatically (both route through
+`getalias` from `getpmdisgalias` and `getpmdissalias`). The
+`disable -s SUFFIX` builtin path will still need its own work to
+toggle DISABLED on sufaliastab nodes, but the lookup machinery
+behind the introspection is now correct.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'alias foo=bar; disable -a foo; echo "dis_aliases=[${dis_aliases[foo]}]"; alias foo; foo 2>&1'
