@@ -5757,12 +5757,27 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             j
         }
         // Also catch META-$ + Inparmath directly for arith forms.
+        // Track depth so nested `$((expr1 + $((expr2)) ))` finds the
+        // OUTER Outparmath, not the first inner one. Bug #21 in
+        // docs/BUGS.md: without depth tracking, `"$(( a + $((2*5)) ))"`
+        // truncated at the inner `\u{8b}` and left the outer's ` )\u{8b}`
+        // dangling in the literal-suffix segment — paramsubst then saw
+        // half a math expression and emitted the literal `( a + 10 ))`
+        // instead of `12`. Mirror the `\u{88}` (Inpar) arm above which
+        // already depth-tracks for nested cmd-substitution.
         Some('\u{89}') => {
+            let mut depth = 1;
             let mut j = i + 2;
-            while j < chars.len() && chars[j] != '\u{8b}' {
+            while j < chars.len() && depth > 0 {
+                let c = chars[j];
+                if c == '\u{89}' {
+                    depth += 1;
+                } else if c == '\u{8b}' {
+                    depth -= 1;
+                }
                 j += 1;
             }
-            (j + 1).min(chars.len())
+            j
         }
         // Inbrack: $[...]
         Some('\u{91}') => {
