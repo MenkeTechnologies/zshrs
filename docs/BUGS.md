@@ -25890,7 +25890,78 @@ rm -f "$tmpfile"
 
 ## #355 — `${s/#%pat/repl}` both-anchored (start AND end) substitution pattern unsupported
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — single-anchor `#` strip was the only
+prefix the `/` and `//` arms recognized, so `#%` decoded as
+`#` (start anchor) + `%pat` (literal pattern) which never
+matched zsh's "must match the entire string" semantics;
+corrected 2026-06-02.
+
+**Root cause** — `src/ported/subst.rs::paramsubst` `/` and `//`
+arms parsed the leading anchor via:
+
+```rust
+if let Some(rest) = raw_pat.strip_prefix('#') {
+    ('#', rest.to_string())
+} else if let Some(rest) = raw_pat.strip_prefix('%') {
+    ('%', rest.to_string())
+}
+```
+
+For `${s/#%abc/X}`, `raw_pat = "#%abc"` → strips `#` → anchor
+`#`, pattern `%abc`. Since `s = abc` doesn't start with the
+literal `%`, no match.
+
+zsh recognizes `#%` as the both-anchor form (the pattern must
+match the entire string for the replace to fire) — verified
+against the installed shell:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 's=abc; echo "${s/#%abc/X}"'
+X
+$ /opt/homebrew/bin/zsh -fc 's="%abc"; echo "${s/#%abc/X}"'
+%abc   # confirms #% IS the both-anchor, not literal %
+$ /opt/homebrew/bin/zsh -fc 's=abc; echo "${s/%#abc/X}"'
+abc    # %# is NOT recognized; treated as % anchor + #abc pattern
+```
+
+**Fix:** `src/ported/subst.rs::paramsubst` —
+- `//` arm: extend anchor detection. If `#` strips and the
+  next char is `%`, set `pat_anchor='B'` (both) and use the
+  rest as the pattern. `%#` is left alone (not a both-anchor
+  in zsh).
+- `//` arm `replace_global`: add a `pat_anchor == 'B'` branch
+  that tests the WHOLE val against pat and replaces iff
+  successful.
+- `/` arm: detect `pat.strip_prefix("#%")` as a
+  `both_anchor_pat`, and prepend a both-anchor case to
+  `replace_one` that does the full-string match.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 's=abc; echo "${s/#%abc/X}"'
+X
+$ ./target/debug/zshrs --zsh -c 's=abc; echo "${s/#%abc/X}"'
+X
+
+$ /opt/homebrew/bin/zsh -fc 's=abc; echo "${s//#%abc/X}"'
+X
+$ ./target/debug/zshrs --zsh -c 's=abc; echo "${s//#%abc/X}"'
+X
+
+# %# stays unmatched (not a both-anchor in zsh)
+$ /opt/homebrew/bin/zsh -fc 's=abc; echo "${s/%#abc/X}"'
+abc
+$ ./target/debug/zshrs --zsh -c 's=abc; echo "${s/%#abc/X}"'
+abc
+
+# Regressions: # alone, % alone unchanged
+$ ./target/debug/zshrs --zsh -c 's=hello; echo "${s/#hel/X}"'
+Xlo
+$ ./target/debug/zshrs --zsh -c 's=hello; echo "${s/%llo/X}"'
+heX
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's=abc; echo "${s/#%abc/X}"'
