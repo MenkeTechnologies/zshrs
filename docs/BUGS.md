@@ -9707,7 +9707,30 @@ precmd() {
 
 ## #132 — `(( x = "5" + "3" ))` doesn't coerce quoted numeric strings to int
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+
+```sh
+$ ./target/debug/zshrs --zsh -c '(( x = "5" + "3" )); echo "[$x]"'
+[8]
+$ ./target/debug/zshrs --zsh -c '(( x = "5" * "3" )); echo "[$x]"'
+[15]
+$ ./target/debug/zshrs --zsh -c '(( x = "10" - "3" )); echo "[$x]"'
+[7]
+$ ./target/debug/zshrs --zsh -c '(( x = "3.14" + "1.86" )); echo "[$x]"'
+[5.0000000000]
+
+# Realistic forms from original-report impact section:
+$ ./target/debug/zshrs --zsh -c 'csv_field="42"; total=0; (( total += "$csv_field" )); echo "total=$total"'
+total=42
+$ ./target/debug/zshrs --zsh -c 'prices=("19" "29" "39"); total=0; for p in "${prices[@]}"; do (( total += "$p" )); done; echo "total=$total"'
+total=87
+```
+
+All match real zsh. Likely fixed by one of the earlier arith /
+`mathevali` / `lexconstant` ports in the math.c/subst.c family
+(bug #67, #114, #118 + others). Doc-only status flip.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '(( x = "5" + "3" )); echo "[$x]"'
