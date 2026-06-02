@@ -4121,6 +4121,25 @@ impl ZshCompiler {
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
             }
+            // c:Src/options.c GLOB_SUBST. When the word contains
+            // unquoted parameter / command substitution AND the
+            // option is set at runtime, the substituted chars
+            // become eligible for filename generation. Emit the
+            // runtime guard that conditionally runs expand_glob.
+            // Bug #119 in docs/BUGS.md. has_unquoted_expansion above
+            // only matches `$(...)` / backticks; the GLOB_SUBST gate
+            // also fires for `$VAR` / `${VAR}` references — detect
+            // via the lexer's $-token (META-$, Qstring) plus literal
+            // `$` outside quotes.
+            if has_unquoted_param_or_subst(word) {
+                self.builder.emit(
+                    Op::CallBuiltin(
+                        crate::vm_helper::BUILTIN_GLOB_SUBST_EXPAND,
+                        1,
+                    ),
+                    0,
+                );
+            }
         }
         self.builder.emit(
             Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_FLATTEN, words.len() as u8),
@@ -7353,6 +7372,51 @@ fn bare_subscript_with_suffix(s: &str) -> Option<(&str, &str, &str)> {
 /// is set, so we deliberately don't trigger on those.
 ///
 /// Lexer markers: `\u{85}` = META-$, `\u{88}` = Inpar.
+/// Detect any unquoted parameter expansion (`$VAR`, `${VAR}`,
+/// `${VAR:...}`) OR command substitution (`$(...)`, backticks) in
+/// the lexer-tokenized word `s`. Superset of `has_unquoted_expansion`:
+/// the latter only matches `$(...)` and backticks, intentionally
+/// excluding bare `$VAR` so WORD_SPLIT doesn't fire on every
+/// parameter ref. The GLOB_SUBST gate (bug #119) needs the
+/// broader detection because `pat="*.txt"; for f in /tmp/X/$pat`
+/// counts as substitution for option purposes.
+fn has_unquoted_param_or_subst(s: &str) -> bool {
+    let chars: Vec<char> = s.chars().collect();
+    let mut in_dq = false;
+    let mut in_sq = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\u{9d}' {
+            in_sq = !in_sq;
+            i += 1;
+            continue;
+        }
+        if c == '\u{9e}' {
+            in_dq = !in_dq;
+            i += 1;
+            continue;
+        }
+        if !in_dq && !in_sq {
+            // META-$ (Stringg = \u{85}) — any param / cmd-subst marker.
+            if c == '\u{85}' || c == '$' {
+                return true;
+            }
+            // Qstring (\u{8c}) — DQ-context $-marker; in non-DQ here
+            // it's a real expansion marker too.
+            if c == '\u{8c}' {
+                return true;
+            }
+            // Backticks (literal or Tick = \u{96}, Qtick = \u{95}).
+            if c == '`' || c == '\u{96}' || c == '\u{95}' {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 fn has_unquoted_expansion(s: &str) -> bool {
     let mut in_dq = false;
     let mut in_sq = false;

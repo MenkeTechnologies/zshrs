@@ -2184,6 +2184,43 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
+    // c:Src/options.c GLOB_SUBST — runtime glob expansion of
+    // substituted words. Pop a Value (Str or Array); when
+    // GLOB_SUBST is ON, run expand_glob on each string element;
+    // when OFF, pass through unchanged. Bug #119 in docs/BUGS.md.
+    vm.register_builtin(BUILTIN_GLOB_SUBST_EXPAND, |vm, _argc| {
+        let raw = vm.pop();
+        let glob_subst =
+            crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
+        if !glob_subst {
+            return raw;
+        }
+        // Collect input strings (Str → vec![s]; Array → multiple).
+        let inputs: Vec<String> = match raw {
+            Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
+            other => vec![other.to_str()],
+        };
+        // Run expand_glob on each. Empty matches collapse to a
+        // single literal pass-through to mirror nullglob-off default.
+        let mut out: Vec<String> = Vec::with_capacity(inputs.len());
+        for pattern in inputs {
+            let matches = with_executor(|exec| exec.expand_glob(&pattern));
+            if matches.is_empty() {
+                // No match: keep the literal (like nullglob off).
+                out.push(pattern);
+            } else {
+                for m in matches {
+                    out.push(m);
+                }
+            }
+        }
+        if out.len() == 1 {
+            Value::str(out.into_iter().next().unwrap())
+        } else {
+            Value::Array(out.into_iter().map(Value::str).collect())
+        }
+    });
+
     // c:Src/math.c:337 — `getmathparam` for ArithCompiler pre-load.
     // Pop a variable name, return its math-coerced value. Mirrors
     // the routing in math::getmathparam: try i64, then f64, then
@@ -5310,6 +5347,30 @@ pub const BUILTIN_GLOB_SUBST_GUARD: u16 = 528;
 /// Stack: pops `name` (string), pushes coerced numeric Value.
 /// argc = 1.
 pub const BUILTIN_GET_MATH_VAR: u16 = 529;
+
+/// GLOB_SUBST runtime gate for words containing parameter / command
+/// substitution. C-zsh's `prefork` (Src/subst.c) runs `shtokenize`
+/// on the substituted value when `GLOB_SUBST` is set, making the
+/// substituted chars eligible for filename generation. With the
+/// option off, substituted chars stay literal.
+///
+/// The Rust port's compile_zsh emits `compile_word_str` for words
+/// like `/tmp/X/$pat`, which returns the post-expansion string but
+/// never runs glob expansion (no path here triggers
+/// BUILTIN_GLOB_EXPAND). Bug #119 in docs/BUGS.md: with `setopt
+/// glob_subst`, `for f in /tmp/X/$pat` (pat="*.txt") never matched
+/// `*.txt` files.
+///
+/// This opcode wraps the substitution result and dispatches at
+/// runtime: when GLOB_SUBST is OFF, return unchanged; when ON,
+/// pass the value through `expand_glob` so glob metas become
+/// active. Emitted by `compile_for_words` (and similar sites)
+/// after WORD_SPLIT for words with unquoted expansion.
+///
+/// Stack: pops a Value (Str or Array of Str), pushes the glob-
+/// expanded result (still Str or Array depending on input shape).
+/// argc = 1.
+pub const BUILTIN_GLOB_SUBST_EXPAND: u16 = 530;
 
 /// Bridge into subst_port::substitute_brace_array for nested forms
 /// that need to PRESERVE array shape across the expand_string

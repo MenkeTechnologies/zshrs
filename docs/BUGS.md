@@ -8503,7 +8503,63 @@ Or pre-validate:
 
 ## #119 — `setopt glob_subst` doesn't trigger filename expansion of substituted patterns in for-loop
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — added BUILTIN_GLOB_SUBST_EXPAND in for-list compile.
+
+**Root cause** — `compile_for_words` emitted `compile_word_str` for
+each for-list word then optionally `BUILTIN_WORD_SPLIT` when
+`has_unquoted_expansion` matched. That helper only recognized
+`$(...)` / backticks, NOT bare `$VAR` / `${VAR}`. And neither path
+emitted a glob-expansion opcode for substituted values, so
+`for f in /tmp/X/$pat` (pat="*.txt") with `setopt glob_subst` saw
+the literal post-substitution string `/tmp/X/*.txt` as the
+iteration value — no filename generation.
+
+C-zsh's `prefork` (Src/subst.c) runs `shtokenize` on substituted
+values when GLOB_SUBST is set, making the substituted chars
+eligible for filename generation. The Rust port doesn't tokenize
+the substitution result, so the downstream glob path can't tell
+literal `*` (already meta) from substituted `*` (option-gated).
+
+**Fix:**
+- Add `BUILTIN_GLOB_SUBST_EXPAND` (opcode 530) — pops the
+  substituted value (Str or Array), reads `isset(GLOBSUBST)`. If
+  off: pass through; if on: run `expand_glob` on each string
+  element (literal pass-through on no-match to mirror nullglob
+  off semantics).
+- Add `has_unquoted_param_or_subst` helper that recognizes the
+  superset of `$VAR` / `${VAR}` / `$(...)` / backticks.
+- `compile_for_words`: after the optional `BUILTIN_WORD_SPLIT`,
+  emit `BUILTIN_GLOB_SUBST_EXPAND` when the word contains any
+  unquoted parameter / cmd substitution.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'setopt glob_subst; pat="*.txt"; for f in /tmp/zgs/$pat; do echo "$f"; done'
+/tmp/zgs/a.txt
+/tmp/zgs/b.txt
+
+$ ./target/debug/zshrs --zsh -c 'pat="*.txt"; for f in /tmp/zgs/$pat; do echo "$f"; done'
+/tmp/zgs/*.txt    # default-off keeps literal
+
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); for f in $a; do echo "$f"; done'
+x
+y
+z
+
+$ ./target/debug/zshrs --zsh -c 'for f in /tmp/zgs/*.txt; do echo "$f"; done'
+/tmp/zgs/a.txt
+/tmp/zgs/b.txt
+```
+
+Baseline: 935/117 (+4 tests pass).
+
+Note: only the for-list path is gated here. Command-arg sites
+(`echo /tmp/X/$pat`, `print -l`, etc.) still emit a literal
+substitution result with no glob expansion. The single
+high-value daily-driver idiom (`for f in DIR/$pat`) is now
+correct.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt glob_subst; pat="*.txt"; for f in /tmp/zgs/$pat; do echo "$f"; done'
