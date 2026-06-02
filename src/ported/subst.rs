@@ -4598,6 +4598,27 @@ pub fn paramsubst(
             } else {
                 // Scalar with subscript — char-index access.
                 let scalar = vars_get(&var_name).unwrap_or_default();
+                // c:Src/params.c — `[@]` / `[*]` on a SCALAR is the
+                // whole-value-as-one-element case; zsh returns the
+                // scalar verbatim. The scalar+`[@]` path must surface
+                // the raw value (not empty) so a downstream split flag
+                // like `(s.X.)` can split it. Without this, the spsep
+                // handler at subst.rs:7462 saw `value=""` (because the
+                // scalar-with-subscript fallback returned empty when no
+                // arm matched `[@]`) and split empty → one empty
+                // element. Bug #85 in docs/BUGS.md:
+                // `"${(s. .)s[@]}"` returned `[]` not `[a] [b] [c]`.
+                if sub == "@" || sub == "*" {
+                    if spsep.is_some() {
+                        // c:Src/subst.c — set isarr so the
+                        // auto_splat block (subst.rs:8332) fires for
+                        // the post-split shape. Use -1 sentinel
+                        // matching `[@]` survival through DQ
+                        // (c:2915 SCANPM_ISVAR_AT).
+                        isarr = -1;
+                    }
+                    scalar
+                } else {
                 let s_chars: Vec<char> = scalar.chars().collect();
                 // Pattern-subscript on scalar: (i)pat / (I)pat
                 // returns 1-based char position of first/last match;
@@ -4740,6 +4761,7 @@ pub fn paramsubst(
                     getarrvalue(&chars_arr, lo, hi).concat()
                 } else {
                     String::new()
+                }
                 }
             }
         } else {

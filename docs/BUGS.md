@@ -5734,7 +5734,27 @@ But the right fix is parity with zsh's `-R` collapsed output.
 
 ## #85 — `"${(s. .)s[@]}"` on scalar with `[@]` subscript returns empty
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — the scalar-with-subscript path in
+`src/ported/subst.rs:4599+` handled char-index (`${s[2]}`),
+pattern-flag (`(i)/(I)/(r)/(R)/(e)`), and slice (`N,M`) subscripts
+but had no arm for `[@]`/`[*]`. Those fell through to `String::new()`,
+so the downstream spsep handler at `subst.rs:7462` saw `value=""`
+and split empty into one empty element.
+
+Added an explicit `sub == "@" || sub == "*"` arm at the top of the
+scalar-with-subscript path: return the scalar value verbatim, and
+when `spsep.is_some()` also set `isarr = -1` (the `[@]`-survival
+sentinel from `c:2915 SCANPM_ISVAR_AT`) so the auto_splat block at
+`subst.rs:8332` fires and splats the post-split parts.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `"${(s. .)s[@]}"` (primary) — 3 elements `[a] [b] [c]`.
+- `"${s[@]}"` (no flag) — single `[a b c]` (unchanged, scalar-as-one).
+- `"${s[2]}"` (char index) — `e` (unchanged).
+- `"${(s.,.)s[*]}"` — 3 elements via different separator.
+- `"${(@s. .)s}"` (flag-first form) — already worked, no regression.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's="a b c"; for x in "${(s. .)s[@]}"; do echo "[$x]"; done'
