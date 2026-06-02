@@ -8621,7 +8621,53 @@ for f in $(eval "echo /var/data/$pattern"); do ... done
 
 ## #120 — `a=("${a[@]:0:-1}")` on empty array creates 1-element array
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — multsub + CONCAT_SPLICE preserve zero-words.
+
+**Root cause** — chain of three layers all collapsed
+"zero-words" into "one empty word":
+
+1. `src/ported/subst.rs::multsub` returned `vec![String::new()]`
+   when the post-prefork list had zero nodes — one empty word.
+   C-zsh's `Src/subst.c:655` returns `*s = dupstring("")` but
+   the caller observes the empty node count via the linked
+   list's `l == 0` state; the Rust port masked that by
+   producing a single-element Vec. Fix: return `Vec::new()` for
+   the zero-node case so consumers can detect it via
+   `.is_empty()`.
+
+2. `src/fusevm_bridge.rs::BUILTIN_EXPAND_TEXT` mode 1 (DQ argv)
+   returned `Value::str("")` for empty `nodes`. Fix: return
+   `Value::Array(Vec::new())` so the downstream array
+   assignment / argv flattening sees zero args.
+
+3. `src/fusevm_bridge.rs::BUILTIN_CONCAT_SPLICE` collapsed
+   `("" Concat Array(vec![]))` → `Value::str("")` (one empty
+   word). Fix: when one side is an empty Array AND the other is
+   an empty scalar, return `Value::Array(vec![])` (preserve
+   zero-words). Non-empty scalar + empty Array still returns
+   the scalar as Value::str (preserves the prefix as one word).
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'a=(x); a=("${a[@]:0:-1}"); echo "len=${#a}"'
+len=0
+
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); while (( ${#a} > 0 )); do a=("${a[@]:0:-1}"); done; echo done'
+done   # pop-until-empty terminates (was infinite loop)
+
+$ ./target/debug/zshrs --zsh -c 'x=""; b=("$x"); echo "len=${#b}"'
+len=1  # empty scalar still 1 word (regression check)
+
+$ ./target/debug/zshrs --zsh -c 'a=(); b=("${a[@]}"); echo "len=${#b}"'
+len=0  # direct empty splat still works
+
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); a=("${a[@]:0:-1}"); echo "len=${#a} val=[${a[*]}]"'
+len=2 val=[x y]   # non-empty slice still works
+```
+
+Baseline: 936/116 (+1 test pass).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(); a=("${a[@]:0:-1}"); echo "len=${#a}"'

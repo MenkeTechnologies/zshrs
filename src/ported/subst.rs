@@ -1589,8 +1589,19 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
         let result = list.getdata(0).cloned().unwrap_or_default(); // c:653
         return (result.clone(), vec![result], false, ms_flags); // c:653
     }
-    // C: `*s = dupstring("");` — empty result.
-    (String::new(), vec![String::new()], false, ms_flags) // c:655
+    // c:Src/subst.c:655 — `*s = dupstring("");` with zero-length list.
+    // C returns isarr=0 + one empty string as the joined result, BUT
+    // the list itself is empty (zero nodes). Callers that observe the
+    // node count (e.g. `addvars` for `arr=("${empty[@]}")`) elide the
+    // word entirely; callers expecting at least one word (scalar
+    // context) consume the empty joined value. The Rust port's
+    // previous `vec![String::new()]` return masked the zero-node
+    // case with one-empty-word, so quoted-array-splat that resolved
+    // to zero words leaked through as ONE empty word — `a=(x);
+    // b=("${a[@]:0:-1}")` gave len=1 instead of zsh's len=0. Bug
+    // #120 in docs/BUGS.md. Return Vec::new() for the nodes slot
+    // so consumers can detect the zero-word case via .is_empty().
+    (String::new(), Vec::new(), false, ms_flags) // c:655
 } // c:660
 
 /// Port of `filesub(char **namptr, int assign)` from `Src/subst.c:667`.

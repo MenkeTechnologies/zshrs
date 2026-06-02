@@ -3344,27 +3344,43 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 Value::Array(la)
             }
             (Value::Array(mut la), rhs_scalar) => {
+                // c:Src/subst.c paramsubst splice — empty array on
+                // either side preserves the empty (zero words),
+                // doesn't collapse into a single-empty-string scalar.
+                // Bug #120 in docs/BUGS.md: empty array slice
+                // concatenated with empty literal returned
+                // Value::str("") which surfaced as one empty arg
+                // instead of zero args.
+                let rhs_s = rhs_scalar.as_str_cow();
                 if la.is_empty() {
-                    return Value::str(rhs_scalar.as_str_cow().to_string());
+                    if rhs_s.is_empty() {
+                        return Value::Array(Vec::new());
+                    }
+                    return Value::str(rhs_s.to_string());
                 }
                 let last = la.pop().unwrap();
                 let l_s = last.as_str_cow();
-                let r_s = rhs_scalar.as_str_cow();
-                let mut s = String::with_capacity(l_s.len() + r_s.len());
+                let mut s = String::with_capacity(l_s.len() + rhs_s.len());
                 s.push_str(&l_s);
-                s.push_str(&r_s);
+                s.push_str(&rhs_s);
                 la.push(Value::str(s));
                 Value::Array(la)
             }
             (lhs_scalar, Value::Array(mut ra)) => {
+                let lhs_s = lhs_scalar.as_str_cow();
                 if ra.is_empty() {
-                    return Value::str(lhs_scalar.as_str_cow().to_string());
+                    // Empty-array RHS — preserve emptiness when the
+                    // LHS is also empty (no prefix to attach). Bug
+                    // #120 in docs/BUGS.md.
+                    if lhs_s.is_empty() {
+                        return Value::Array(Vec::new());
+                    }
+                    return Value::str(lhs_s.to_string());
                 }
                 let first = ra.remove(0);
-                let l_s = lhs_scalar.as_str_cow();
                 let r_s = first.as_str_cow();
-                let mut s = String::with_capacity(l_s.len() + r_s.len());
-                s.push_str(&l_s);
+                let mut s = String::with_capacity(lhs_s.len() + r_s.len());
+                s.push_str(&lhs_s);
                 s.push_str(&r_s);
                 let mut out = Vec::with_capacity(ra.len() + 1);
                 out.push(Value::str(s));
@@ -4387,8 +4403,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     Value::str(out)
                 } else {
                     let (_first, nodes, _ms_ws, _ret) = crate::ported::subst::multsub(&prepped, 0);
+                    // c:Src/subst.c:655 — multsub returns Vec::new()
+                    // for zero-word results (quoted array splat that
+                    // resolved to empty array). Surface as
+                    // Value::Array(vec![]) so the downstream array
+                    // assignment / argv flattening sees ZERO args.
+                    // Previous Rust port returned Value::str("") which
+                    // surfaced as ONE empty arg. Bug #120 in
+                    // docs/BUGS.md.
                     if nodes.is_empty() {
-                        Value::str(String::new())
+                        Value::Array(Vec::new())
                     } else if nodes.len() == 1 {
                         Value::str(nodes.into_iter().next().unwrap())
                     } else {
