@@ -3763,7 +3763,25 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 let ival: i64 = if (flags & ASSPM_ENV_IMPORT) != 0 {
                     s.parse::<i64>().unwrap_or(0)
                 } else {
-                    mathevali(s).unwrap_or(0)
+                    // c:Src/params.c:2774 — `mathevali(val)`. C's
+                    // matheval calls zerr (Src/math.c:1462+) on parse
+                    // failures, which sets `errflag |= ERRFLAG_ERROR`
+                    // and the caller propagates the abort. The Rust
+                    // port returns Result<i64,String>; `unwrap_or(0)`
+                    // silently swallowed "operator expected at 'def'"
+                    // and stored 0 instead. Bug #75 in docs/BUGS.md.
+                    //
+                    // Mirror the C semantic: surface the error via
+                    // zerr (which sets errflag), then fall back to 0
+                    // for the stored value (C also stores whatever the
+                    // partial parse computed, which is typically 0).
+                    match mathevali(s) {
+                        Ok(v) => v,
+                        Err(msg) => {
+                            zerr(&msg);
+                            0
+                        }
+                    }
                 };
                 // c:2775-2778 — `if (flags & ASSPM_AUGMENT) pm->u.val += val.l;
                 //                else pm->u.val = val.l;`. The augment

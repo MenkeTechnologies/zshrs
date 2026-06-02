@@ -4926,7 +4926,30 @@ fully tested either (related to bug #33).
 
 ## #75 — `typeset -i x; x="bad math"` silently coerces to 0
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `assignstrvalue`'s `PM_INTEGER` arm
+(`src/ported/params.rs:3766`) wrapped `mathevali(s)` in
+`.unwrap_or(0)`, silently swallowing the `Result::Err` returned for
+unparseable input. C's `Src/params.c:2774` `mathevali(val)` propagates
+the abort via `errflag` (set by `Src/math.c:1462+ zerr`).
+
+The Rust `mathevali` already had the correct trailing-character
+check (`mathevall` at math.rs:404-415 returns
+`Err("illegal character: …")`); the gap was just the swallow at the
+call site. Replaced `.unwrap_or(0)` with an explicit `match`:
+- `Ok(v)` → store `v`.
+- `Err(msg)` → call `zerr(&msg)` (sets `errflag`) + fall back to 0.
+
+The script-level `BUILTIN_ERREXIT_CHECK` then takes the errflag arm
+and aborts (bug #74's `EXIT_PENDING` propagation also kicks in).
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `typeset -i x=42; x="abc def"` → both error `bad math expression:
+  operator expected at 'def'` + EC=1.
+- `typeset -i x; x="abc"` (single token) → both silently coerce to 0.
+- `typeset -i x; x="2+3"` → both store 5.
+- `typeset -i x; x="42"` → both store 42.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -i x=42; x="abc def"; echo "still alive: x=$x"'
