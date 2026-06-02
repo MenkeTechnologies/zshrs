@@ -10412,7 +10412,59 @@ PS4='+$LINENO> '
 
 ## #139 — Sourced-file error location reports `zsh:1:` instead of `/sourced/file:N`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `bin_dot` saves/restores `scriptname` around `execute_script` (matches `Src/init.c::source` c:1557/1591/1666).
+
+**Root cause** — `src/ported/builtin.rs::bin_dot` didn't save/set/
+restore `scriptname` around the `execute_script` call, so the
+zerr/zwarnnam diagnostic prefix (read from `scriptname` via
+`utils::scriptname_get()`) stayed at whatever the outer caller had
+(typically `"zsh"` from the `--zsh` startup default) regardless of
+which file was being sourced.
+
+**C-source reference** — `Src/init.c::source` does the
+save/set/restore around the wordcode walk:
+
+```c
+char *old_scriptname = scriptname, *us;        // c:1557
+char *old_scriptfilename = scriptfilename;     // c:1558
+...
+scriptname = s;                                // c:1591
+scriptfilename = s;                            // c:1592
+...
+scriptname = old_scriptname;                   // c:1666
+scriptfilename = old_scriptfilename;           // c:1667
+```
+
+**Fix** — `bin_dot` now snapshots `scriptname` before the read +
+`execute_script` block and restores after. The mid-region value is
+set to `arg0` (the user-supplied filename) so error diagnostics
+emit `/path/to/foo:N:` instead of `zsh:N:`.
+
+**Verify:**
+
+```sh
+$ echo 'definitely_not_a_cmd_xyz' > /tmp/zsl139
+$ ./target/debug/zshrs --zsh -c 'source /tmp/zsl139'
+/tmp/zsl139:1: command not found: definitely_not_a_cmd_xyz   # MATCHES zsh
+
+$ ./target/debug/zshrs --zsh -c '. /etc/hosts' 2>&1 | head -2
+/etc/hosts:1: command not found: 127.0.0.1
+/etc/hosts:1: command not found: 127.0.0.1
+
+# Non-sourced case unchanged:
+$ ./target/debug/zshrs --zsh -c 'definitely_not_a_cmd_xyz'
+zsh:1: command not found: definitely_not_a_cmd_xyz
+```
+
+**Known follow-up gap** — line numbers from multi-statement sourced
+files don't advance (always show `:1:` instead of the actual line).
+Same root as bug #138's multiline-counter gap — the per-statement
+lineno threading through the executor is not yet wired. Filename
+context is correct; line tracking is the next layer.
+
+Regression suite unchanged (110 failures, same set).
+
+**Original report:**
 
 ```sh
 $ echo 'definitely_not_a_cmd_xyz' > /tmp/zsl
