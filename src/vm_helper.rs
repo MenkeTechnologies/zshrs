@@ -1415,6 +1415,52 @@ impl ShellExecutor {
             // execute_script_zsh_pipeline with a fresh VM context.
             let _ = self.execute_script_zsh_pipeline("TRAPEXIT");
         }
+        // c:Src/init.c::zexit — `callhookfunc("zshexit", NULL, 1, NULL)`.
+        // Fire the `zshexit` shfunc + walk `zshexit_functions` array.
+        // Routed through execute_script_zsh_pipeline calls because
+        // we're outside the VM context here (post-run_chunk). Iterate
+        // the array directly + call zshexit by name. Bug #215 in
+        // docs/BUGS.md.
+        //
+        // Re-entry guard: each call to execute_script_zsh_pipeline
+        // (whether top-level script or the named-fn dispatch below)
+        // hits this code at its tail. Without a guard, the zshexit
+        // hook recurses infinitely (calls itself at end via this
+        // path). Use a thread-local depth counter and skip the
+        // dispatch when depth > 0.
+        thread_local! {
+            static ZSHEXIT_HOOK_DEPTH: std::cell::Cell<u32> = const {
+                std::cell::Cell::new(0)
+            };
+        }
+        let hook_depth = ZSHEXIT_HOOK_DEPTH.with(|c| c.get());
+        if hook_depth == 0 {
+            ZSHEXIT_HOOK_DEPTH.with(|c| c.set(hook_depth + 1));
+            if crate::ported::hashtable::shfunctab_lock()
+                .read()
+                .ok()
+                .map(|t| t.contains_key("zshexit"))
+                .unwrap_or(false)
+            {
+                let _ = self.execute_script_zsh_pipeline("zshexit");
+            }
+            let exit_arr = crate::ported::params::paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get("zshexit_functions").and_then(|p| p.u_arr.clone()))
+                .unwrap_or_default();
+            for fn_name in exit_arr {
+                let exists = crate::ported::hashtable::shfunctab_lock()
+                    .read()
+                    .ok()
+                    .map(|t| t.contains_key(&fn_name))
+                    .unwrap_or(false);
+                if exists {
+                    let _ = self.execute_script_zsh_pipeline(&fn_name);
+                }
+            }
+            ZSHEXIT_HOOK_DEPTH.with(|c| c.set(hook_depth));
+        }
         // Preserve script status; trap body shouldn't override it.
         self.set_last_status(status);
 

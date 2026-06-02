@@ -8445,6 +8445,12 @@ pub fn zexit(val: i32, from_where: i32) {
     // installed by `TRAPEXIT() { ... }` (settrap with ZSIG_FUNC
     // sets sigtrapped[SIGEXIT] = ZSIG_TRAPPED | ZSIG_FUNC).
     let _ = crate::ported::signals::dotrap(crate::signals_h::SIGEXIT);
+    // c:Src/init.c::zexit — `callhookfunc("zshexit", NULL, 1, NULL)`.
+    // The hook fires both a `zshexit` function (if defined) AND
+    // walks the `zshexit_functions` array. Distinct from SIGEXIT
+    // trap dispatch above — zshexit is a zsh-specific shell-event
+    // hook that operates parallel to trap. Bug #215 in docs/BUGS.md.
+    let _ = crate::ported::utils::callhookfunc("zshexit", None, 1, std::ptr::null_mut());
     crate::ported::signals::in_exit_trap.store(0, Relaxed);
     realexit(); // c:6082
 }

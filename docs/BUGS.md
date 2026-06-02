@@ -15544,7 +15544,19 @@ done
 
 ## #214 — `chpwd` hook and `chpwd_functions` array not fired on `cd`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'chpwd() { echo "cwd: $PWD"; }; builtin cd /tmp; builtin cd /'
+cwd: /tmp
+cwd: /                                  # matches zsh
+```
+
+The `chpwd` hook fires after each `cd`. Likely fixed by the
+`bin_cd` callhookfunc work referenced at `builtin.rs:1997`
+("runhookdef chpwd"). Doc-only flip.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'chpwd() { echo "cwd: $PWD"; }; builtin cd /tmp; builtin cd /'
@@ -15604,7 +15616,57 @@ cd() {
 
 ## #215 — `zshexit` hook function not fired on shell exit
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `zexit` calls `callhookfunc("zshexit", ...)`; `execute_script_zsh_pipeline` also dispatches the hook on natural script end (with re-entry guard).
+
+**Root cause** — two missing dispatch points:
+
+1. `zexit` (`builtin.rs::zexit`) — fires when explicit `exit N`
+   runs. Already dispatched `traps_table["EXIT"]` + `dotrap(SIGEXIT)`
+   but not the zsh-specific `zshexit` hook.
+2. `execute_script_zsh_pipeline` (`vm_helper.rs`) — fires when the
+   script ends naturally (no explicit `exit`). Already dispatched
+   `traps_table["EXIT"]` + `TRAPEXIT()` shfunc but not `zshexit`.
+
+zsh fires `zshexit` (and walks `zshexit_functions` array) from
+`Src/init.c::zexit` via `callhookfunc("zshexit", NULL, 1, NULL)`.
+
+**C-source reference** — `Src/init.c::zexit` + `Src/utils.c::callhookfunc`.
+
+**Fix** — three parts:
+
+1. `builtin.rs::zexit` — added
+   `callhookfunc("zshexit", None, 1, std::ptr::null_mut())` after
+   the `dotrap(SIGEXIT)` call.
+2. `vm_helper.rs::execute_script_zsh_pipeline` — added inline
+   dispatch (calling `execute_script_zsh_pipeline("zshexit")` and
+   each `zshexit_functions[i]` by name). Can't use
+   `callhookfunc` here because we're outside the VM context.
+3. Re-entry guard — thread-local `ZSHEXIT_HOOK_DEPTH` counter
+   prevents infinite recursion (each
+   `execute_script_zsh_pipeline("zshexit")` call hits this same
+   code at its tail, which would re-dispatch zshexit forever).
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'zshexit() { echo "EXIT-HOOK"; }; echo "before"'
+before
+EXIT-HOOK                              # matches zsh (natural end)
+
+$ ./target/debug/zshrs --zsh -c 'h1() { echo "h1"; }; h2() { echo "h2"; }; zshexit_functions=(h1 h2); echo "before"'
+before
+h1
+h2                                     # array form, walks in order
+
+$ ./target/debug/zshrs --zsh -c 'zshexit() { echo "EH"; }; echo "before"; exit 0'
+before
+EH                                     # explicit exit path
+```
+
+All three forms match zsh exactly. Regression suite unchanged
+(114 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zshexit() { echo "EXIT-HOOK"; }; echo "before"; exit 0'
