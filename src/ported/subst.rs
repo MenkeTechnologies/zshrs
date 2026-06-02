@@ -4860,8 +4860,28 @@ pub fn paramsubst(
                                        // the Rust port computes length early and returns, so we
                                        // need an inline modifier pre-pass for the empty-or-unset
                                        // case.
+            // c:Src/subst.c:3845 — `getlen` runs AFTER the modifier
+            // chain so `${#var:h}` counts the head-stripped value,
+            // `${#var/foo/X}` counts the replaced value, etc.
+            // Bug #43 in docs/BUGS.md: the Rust port computed length
+            // on `raw_value` which is the pre-modifier value, losing
+            // every transform.
+            //
+            // Construct the equivalent transform-applied expansion by
+            // dropping the leading `#` from the body and routing
+            // through `singsub`. This recursively re-enters paramsubst
+            // with the same name + subscript + modifier chain but
+            // without the length operator, then we count chars on the
+            // result. Handles `:h`/`:t`/`:r`/`:e`/`:s` history mods,
+            // `/pat/rep`/`//pat/rep` substitution, prefix/suffix strip
+            // `#`/`%`/`##`/`%%`, and any combination — paramsubst
+            // applies them in their canonical order.
             let raw_value_for_len = {
                 let r = rest.as_str();
+                // Pre-modifier shortcuts for the colon-default /
+                // colon-alt operators that work on the raw value
+                // BEFORE any chain transform. The C source's
+                // `${#var:-default}` also goes through this fast path.
                 if let Some(default) = r.strip_prefix(":-") {
                     if raw_value.is_empty() {
                         singsub(default)
@@ -4892,6 +4912,19 @@ pub fn paramsubst(
                     } else {
                         String::new()
                     }
+                } else if !r.is_empty() {
+                    // Re-invoke paramsubst on the same name + subscript
+                    // + modifier chain WITHOUT the length operator.
+                    // The result is the transformed value; we'll count
+                    // its chars below. Build the body string carefully:
+                    // include the subscript if present (so `${#a[1,2]:h}`
+                    // routes to `${a[1,2]:h}` correctly).
+                    let body = if let Some(sub) = subscript.as_deref() {
+                        format!("${{{}[{}]{}}}", var_name, sub, r)
+                    } else {
+                        format!("${{{}{}}}", var_name, r)
+                    };
+                    singsub(&body)
                 } else {
                     raw_value.clone()
                 }
@@ -4933,7 +4966,34 @@ pub fn paramsubst(
                 // c:3849 if (isarr)
                 if getlen == 1 {
                     // c:3853 element count
-                    if let Some(arr) = arrays_get(&var_name) {
+                    // For array SLICE `${#arr[lo,hi]}`, return the
+                    // slice length, not the full array length. Bug
+                    // #43 in docs/BUGS.md: the C source's getlen
+                    // runs AFTER subscript resolution so the slice
+                    // count survives; the Rust port short-circuited
+                    // on the full array.
+                    if let Some(sub) = subscript.as_deref() {
+                        if let Some((lo_s, hi_s)) = sub.split_once(',') {
+                            if let Some(arr) = arrays_get(&var_name) {
+                                let len = arr.len() as i64;
+                                let lo: i64 = singsub(lo_s).parse().unwrap_or(1);
+                                let hi: i64 = singsub(hi_s).parse().unwrap_or(len);
+                                let lo_idx = if lo < 0 { (len + lo).max(0) } else { (lo - 1).max(0) };
+                                let hi_idx = if hi < 0 { (len + hi + 1).max(0) } else { hi.min(len) };
+                                (hi_idx - lo_idx).max(0) as usize
+                            } else {
+                                0
+                            }
+                        } else if let Some(arr) = arrays_get(&var_name) {
+                            arr.len()
+                        } else if let Some(map) = assoc_get(&var_name) {
+                            map.len()
+                        } else if let Some(ref keys) = magic_keys {
+                            keys.len()
+                        } else {
+                            0
+                        }
+                    } else if let Some(arr) = arrays_get(&var_name) {
                         arr.len() // c:3854
                     } else if let Some(map) = assoc_get(&var_name) {
                         map.len() // c:3854 (assoc len)

@@ -2589,7 +2589,7 @@ both directions — no actual regression).
 
 ## #43 — `${#var:modifier}` / `${#var/pat/rep}` / `${#arr[a,b]}` length operator ignores the transform
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'p=/foo/bar/baz
@@ -2629,40 +2629,51 @@ every kind of transform:
   - array slice: `${#arr[i,j]}`
   - prefix/suffix strip: `${#var#pat}` / `${#var%pat}` (likely; not tested)
 
-**Where** — `src/ported/subst.rs::paramsubst` applies the `#`
-length-operator BEFORE the modifier chain runs. The length should
-be computed as the LAST step after all transforms (or equivalently:
-apply `#` to the transformed result, not the raw param).
+**Root cause** — `src/ported/subst.rs::paramsubst`'s length
+arm (line 4850+) computed length on `raw_value` (the pre-modifier
+parameter value). The modifier chain `:h`/`:t`/`:r`/`:e`/`:s`/
+`/pat/rep`/`#`/`##`/`%`/`%%` was never applied before counting.
+C zsh's `subst.c:3845` runs getlen AFTER the modifier chain
+(`singsub` recurses through all transforms first).
 
-C-zsh's `paramsubst` runs transforms in order and applies `#` on
-the final string value (see `Src/subst.c::singsub` chain).
+Two paths needed fixing:
 
-**Impact** — any defensive script checking "is the resulting path
-non-trivial":
+  1. **Scalar branch** (line 4988) — when `rest` was non-empty
+     (any modifier chain), counting `raw_value.chars().count()`
+     ignored the chain entirely.
+  2. **Array branch** (line 4934) — for `${#arr[lo,hi]}` the
+     subscript slice wasn't applied; the full array's `.len()`
+     was returned.
 
-```sh
-path=/usr/local/bin/script.sh
-if (( ${#path:h} > 0 )); then       # zsh: 13, zshrs: 22 (same path length)
-    echo "head exists"
-fi
+**Fix** (`src/ported/subst.rs` length-arm):
 
-# array bounds check after slice:
-if (( ${#words[2,5]} == 4 )); then  # zsh: 4 (length of slice)
-    process_them                    # zshrs: ${#words} (full array length)
-fi
-```
+  * **Scalar**: when `rest` has any non-default modifier chain,
+    construct the equivalent `${name<rest>}` (or
+    `${name[sub]<rest>}` if a subscript is present) and pass to
+    `singsub`. That recursively re-enters paramsubst, applies
+    every transform in canonical order, and returns the
+    transformed scalar. Then `chars().count()` produces the
+    correct length. Default-operator fast paths (`:-`/`-`/`:+`/
+    `+`) are preserved so they don't pay the singsub cost.
+  * **Array**: when subscript is a comma-range `[lo,hi]`, parse
+    bounds (allowing negative indices) and return `(hi-lo).max(0)`
+    as the slice length.
 
-**Workaround** — assign to a temporary then take its length:
-```sh
-local h="${p:h}"
-echo "len=${#h}"        # zshrs: correct (8 for /foo/bar)
+Verified vs `/opt/homebrew/bin/zsh`:
 
-local slice=("${a[1,2]}")
-echo "len=${#slice}"    # correct array slice length
-```
-
-This single bug affects ALL parameter expansion modifiers in
-length context — a wide compat surface.
+  * `p=/foo/bar/baz; echo "${#p:h}"` → 8 (head len).
+  * `echo "${#p:t}"` → 3 (tail len).
+  * `echo "${#p/foo/X}"` → 10 ("X/bar/baz" len).
+  * `echo "${#p[1,5]}"` → 5 (already correct, regression check).
+  * `a=(one two three); echo "${#a[1,2]}"` → 2 (slice len).
+  * `f=/tmp/file.txt; echo "${#f:r};${#f:e}"` → `9;3`
+    (root + ext).
+  * `echo "${#NOPE:-default}"` → 7 (default operator fast path
+    unchanged).
+  * `${#x}` plain → 5 (no modifier path unchanged).
+  * `${#a}` array → 4 (no subscript unchanged).
+  * `${#a[@]}` → 3 (full splat unchanged).
+  * `${#h}` assoc → 3 (assoc count unchanged).
 
 ---
 
