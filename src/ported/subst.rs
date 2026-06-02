@@ -4173,9 +4173,18 @@ pub fn paramsubst(
                     let close = rest.find(')')?;
                     let flags = rest[..close].to_string();
                     let pat = rest[close + 1..].to_string();
+                    // c:Src/params.c:1396-1431 — assoc subscript handles
+                    // (r)/(R) (value-match → value), (k)/(K) (key-match
+                    // → value), and (e)/(n)/(b) modifiers. (i)/(I) set
+                    // SCANPM_MATCHKEY on the value-bag and the actual
+                    // key extraction lands in a deferred scan path
+                    // (c:1719-1735) that returns no rows in practice for
+                    // hash-with-(i)/(I) — observable zsh returns empty.
+                    // Don't accept i/I here; let direct-subscript take
+                    // them (which also returns empty).
                     if flags
                         .chars()
-                        .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b'))
+                        .all(|c| matches!(c, 'R' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b'))
                     {
                         Some((flags, pat))
                     } else {
@@ -4183,20 +4192,42 @@ pub fn paramsubst(
                     }
                 })(sub)
                 {
-                    let by_key = flags.contains('I') || flags.contains('i');
-                    let return_all = flags.contains('I') || flags.contains('R');
+                    // c:Src/params.c:1696-1750 assoc-subscript flag
+                    // dispatch:
+                    //   (r)/(R): match against VALUE, return VALUE(s)
+                    //   (k)/(K): match against KEY,   return VALUE(s)
+                    // Uppercase variants set down=1 → return ALL matches.
+                    //
+                    // Bug #77 in docs/BUGS.md: the previous Rust port
+                    // gated `by_key` on `I/i` (value-matchers that
+                    // return keys), not on `k/K` (the actual
+                    // key-matchers), so `${h[(k)foo]}` searched VALUES
+                    // for `foo` and returned empty when no value
+                    // matched. `${h[(k)-a]}` had the same root cause
+                    // (the leading-dash framing in BUGS.md was a
+                    // misdirection — all `(k)` lookups were broken).
+                    let match_against_key = flags.contains('k') || flags.contains('K');
+                    let return_all =
+                        flags.contains('R') || flags.contains('K');
                     let exact = flags.contains('e'); // c:1419 e flag — literal compare
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
-                        let hay = if by_key { k.as_str() } else { v.as_str() };
-                        let matched = if exact {
+                        let hay = if match_against_key {
+                            k.as_str()
+                        } else {
+                            v.as_str()
+                        };
+                        // c:Src/params.c — k/K (key-match path) is
+                        // exact-only, no glob; r/R use patcompile.
+                        let matched = if match_against_key || exact {
                             hay == pat.as_str()
                         } else {
                             patcompile(&pat, PAT_HEAPDUP as i32, None)
                                 .map_or(false, |__p| pattry(&__p, hay))
                         };
                         if matched {
-                            out.push(if by_key { k.clone() } else { v.clone() });
+                            // (k)/(K)/(r)/(R) all return VALUE.
+                            out.push(v.clone());
                             if !return_all {
                                 break;
                             }

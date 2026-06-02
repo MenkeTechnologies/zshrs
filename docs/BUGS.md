@@ -5064,7 +5064,38 @@ metadata table but defer dlopen/symbol-bind until first
 
 ## #77 — `${h[(k)-key]}` flag-lookup of leading-dash key returns empty
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — original "leading-dash" framing was a
+misdirection. Probing showed **all** `(k)`/`(K)` lookups on assoc
+returned empty (`(k)foo` on `[foo]=bar` returned `<>` too); the
+flag-dispatch handler in `src/ported/subst.rs:4170-4205` (assoc
+subscript path) had:
+```rust
+let by_key = flags.contains('I') || flags.contains('i');
+```
+— but `I`/`i` are **value-matchers that return keys**, not
+key-matchers. The actual key-matchers are `k`/`K`. So `${h[(k)foo]}`
+searched VALUES for `foo`, found no value matching, returned empty.
+
+Rewired per `Src/params.c:1396-1431`:
+- `(k)`/`(K)`: match against KEY, return VALUE (uppercase → all).
+- `(r)`/`(R)`: match against VALUE, return VALUE (uppercase → all).
+- `(i)`/`(I)` on assoc are dropped from the flag-handler — observable
+  zsh returns empty (the C path sets `SCANPM_MATCHKEY` and lands in a
+  deferred-scan code path at `c:1719-1735` that yields no rows for
+  hash-with-(i)/(I)). Falling through to direct-subscript lookup
+  matches zsh's empty.
+- `(k)`/`(K)` use exact match (no glob), matching C's `keymatch=1`
+  path. `(r)`/`(R)` use `patcompile` glob match.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `h=( [-a]=val1 ); ${h[(k)-a]}` → `val1` (primary bug).
+- `h=( [foo]=bar ); ${h[(k)foo]}` → `bar`.
+- `h=( [a]=val [b]=other ); ${h[(r)val]}` → `val`.
+- `h=( [a]=val [b]=val ); ${h[(R)val]}` → `val val` (multi).
+- `${h[(i)val]}` on assoc → empty in both shells.
+- Direct `${h[foo]}` still returns `bar`.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h=( [-a]=val1 ); echo "1: ${h[-a]}"; echo "2: ${h[(k)-a]}"'
