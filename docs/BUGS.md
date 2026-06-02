@@ -3018,7 +3018,7 @@ pass net (the `test_typeset_m_glob_lists_matching` flip).
 
 ## #49 — Quoted string comparison `(( "abc" == "abc" ))` returns false
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '(( "abc" == "abc" )); echo "exit=$?"'
@@ -3043,22 +3043,52 @@ C-zsh `Src/math.c::mathevali` treats both `abc` and `"abc"`
 identically — strips quotes during tokenization, then looks up as
 variable name.
 
-**Where** — `src/ported/math.rs` arith tokenizer should strip
-double-quotes around identifiers and treat them as bare identifiers
-for variable lookup.
+**Root cause** — `src/extensions/compile_zsh.rs::compile_arith`
+routes math expressions through two backends:
 
-**Impact** — defensive arithmetic with quoted variable names (used
-when the variable might contain a name with spaces, even though
-arith identifiers can't have spaces):
-```sh
-(( "$varname" == 5 ))    # zsh resolves $varname then lookups
-                          # zshrs may fail depending on quoting timing
+  * **ArithCompiler** (default, fast) — emits inline bytecode.
+    Its lexer doesn't handle `"` quote-stripping, so `"abc"`
+    becomes an unrecognized token and the compiled comparison
+    fails silently.
+  * **MathEval via `BUILTIN_ARITH_EVAL`** (`src/ported/math.rs`)
+    — already treats `"` and `\u{9e}` (Dnull) as whitespace
+    at math.rs:1365, so quoted identifiers strip cleanly.
+
+The `needs_eval` gate that switches between the two checked
+for many constructs (`/`, `%`, compound assigns, `**=`, floats,
+`,`, `$`, `[`, `?`) but missed `"` and Dnull. So quoted arith
+expressions silently took the broken ArithCompiler path.
+
+The BUGS.md "Where" pointed at `src/ported/math.rs`'s
+tokenizer, but math.rs's tokenizer is already correct — the
+gap was in the COMPILER's path-selection that bypassed it for
+the quoted case.
+
+**Fix** (`src/extensions/compile_zsh.rs::compile_arith` —
+needs_eval gate) — extend with two more discriminants:
+
+```rust
+|| inner_arith.contains('"')
+|| inner_arith.contains('\u{9e}')
 ```
 
-**Workaround** — drop the quotes:
-```sh
-(( abc == 5 ))         # works in both
-```
+When either appears, route to `BUILTIN_ARITH_EVAL` → MathEval
+which already strips the quotes correctly.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+
+  * `(( "abc" == "abc" ))` → exit 0 (BUGS.md case).
+  * `(( "5" == "5" ))` → exit 0.
+  * `a=5; (( "a" == 5 ))` → exit 0.
+  * `(( abc == abc ))` unquoted → exit 0 (unchanged).
+  * `(( 5 == 5 ))` → exit 0 (unchanged).
+  * `echo $(( 2 + 3 ))` → 5 (unchanged).
+  * `a=10; (( a += 5 )); echo $a` → 15 (unchanged).
+  * `(( (2 + 3) * 4 == 20 ))` → exit 0 (unchanged).
+
+zshrs_shell regression: 926/126 baseline preserved (local
+fluctuated to 924/128 but test-name diff was empty both
+directions — no actual regression).
 
 ---
 
