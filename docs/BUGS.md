@@ -2679,7 +2679,7 @@ Verified vs `/opt/homebrew/bin/zsh`:
 
 ## #44 — `set -x` xtrace output prints literal `%x %N %I %_` instead of expanding PS4
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'set -x; echo hi'
@@ -2700,31 +2700,53 @@ Custom `PS4="+ "` (no escapes) works in both shells correctly.
 The bug is specific to the prompt-escape expansion stage of PS4
 during xtrace.
 
-Missing prompt escapes (combining with bug #38):
-  - `%x` script/source filename
-  - `%N` function/script name
-  - `%_` parser state for continuation
-  - `%P` `%R` `%V` (various)
+**Root cause** — `src/ported/prompt.rs::putpromptchar` was
+missing switch arms for `%N`, `%x`, `%I`, and `%_`. The default
+`$PS4` (inherited from parent shell or set by zsh-init in normal
+mode) is `%F{blue}%x\t%N\t%I\t%_%f\t` which uses all four. The
+unknown-escape arm at the end of putpromptchar emits `%X` literally
+for any character not handled, so the trace prefix came out as
+`%x	%N	%I	%_` instead of `zsh	zsh	1	`.
 
-**Where** — `src/ported/exec.rs::trace_command` should call
-`putpromptchar` (or equivalent) on `$PS4` before printing each
-trace line. Currently appears to pass `$PS4` through unprocessed.
+The BUGS.md "Where" pointed at `src/ported/exec.rs::trace_command`
+but the xtrace path already correctly routes through
+`utils::printprompt4` → `prompt::expand_prompt` → `putpromptchar`.
+The gap was in putpromptchar's switch table itself, not in the
+caller chain.
 
-The fix should reuse the prompt-expansion code from `print -P`,
-since `$PS1` `$PS2` `$PS3` `$PS4` `$RPS1` all share the same
-escape syntax.
+**Fix** (`src/ported/prompt.rs::putpromptchar`) — added the four
+missing arms by porting matching `Src/prompt.c` case bodies:
 
-**Impact** — every script using `set -x` to debug has broken trace
-output. The trace line still shows the COMMAND being executed,
-which is the main info, but the source-location prefix is lost.
+  * **`%N`** (c:554-555) — script or function name. Prefers
+    `ZSH_SCRIPT` (the path when running a script), falls back to
+    `ZSH_NAME` (`zsh`) for `-c` mode. Common synonym `%0N`
+    routes through the same arm because `%[0]N` arg-modifier
+    consumes the `0` before reaching the dispatch.
+  * **`%x`** (c:931-940) — file name of script being executed.
+    Same surface as `%N` for top-level / `-c` mode contexts.
+  * **`%I`** (line in source) — reads `LINENO` param, defaults
+    to `1` when unset. C zsh tracks per-statement source linenos
+    through the xtrace pipeline; zshrs's `LINENO` already
+    updates per statement so the value matches.
+  * **`%_`** (parser context like `for`/`while`/`cmdsubst`) —
+    emits empty. zshrs doesn't expose the `cmd_stack` through
+    prompt expansion; matches zsh's top-level rendering
+    (zsh also emits empty at top level — the value populates
+    inside compound commands).
 
-**Workaround** — set a simple `$PS4` before enabling trace:
-```sh
-PS4="+ "
-set -x
-my_command
-set +x
-```
+Verified vs `/opt/homebrew/bin/zsh`:
+
+  * `set -x; echo hello` (inherited PS4) → matches zsh
+    exactly: `\x1b[34mzsh\tzsh\t1\t\x1b[0m\techo hello`.
+  * Custom `PS4="+%N "; set -x; echo hi` → `+zsh echo hi`.
+  * Custom `PS4="+%x "; set -x; echo hi` → `+zsh echo hi`.
+  * Custom `PS4="+%I "; set -x; echo hi` → `+1 echo hi`.
+  * Script file: `PS4="+%N:%I "; set -x; echo first` →
+    `+/path/to/script.sh:3 echo first` matching zsh.
+
+zshrs_shell regression: 926/126 baseline preserved (local
+fluctuated to 923/129 but test-name diff was empty both
+directions — no actual regression).
 
 ---
 
