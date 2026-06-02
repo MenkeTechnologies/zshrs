@@ -8018,16 +8018,47 @@ pub fn paramsubst(
         }; // c:4034
         if quotemod > 0 && quotetype != QT_BACKSLASH_PATTERN {
             // c:4033 (already-applied b above)
+            // c:Src/subst.c — array dispatch differs by `(@)` flag:
+            //   `(@q)`: per-element quote, keep array shape.
+            //   `(q)`:  join with IFS-first-char (space), then quote
+            //           the JOINED scalar — so the join spaces also
+            //           get backslash-escaped, producing
+            //           `foo\\ bar\\ baz\\ qux` from `(foo "bar baz"
+            //           qux)`. The previous Rust port only quoted
+            //           per-element, leaving the join spaces literal
+            //           and ambiguous if the result was later
+            //           re-split. Bug #52 in docs/BUGS.md.
+            //
+            // nojoin == 2 means `(@)` was present in the flag chain.
+            // In unquoted context, the result splats as an array too
+            // — `print -l ${(q)arr}` shows each element on its own
+            // line with per-element quoting. Join-first only applies
+            // in DQ context where the result is forced to a scalar.
+            let want_per_element = nojoin == 2 || !qt;
             // c:2237
             if let Some(parts) = split_parts.clone() {
-                // c:2237
-                let new_parts: Vec<String> = parts.iter().map(|s| quote_one(s)).collect();
-                value = new_parts.join(" ");
-                split_parts = Some(new_parts);
+                if want_per_element {
+                    let new_parts: Vec<String> = parts.iter().map(|s| quote_one(s)).collect();
+                    value = new_parts.join(" ");
+                    split_parts = Some(new_parts);
+                } else {
+                    // Join then quote the joined scalar.
+                    let joined = parts.join(" ");
+                    let quoted = quote_one(&joined);
+                    value = quoted.clone();
+                    split_parts = Some(vec![quoted]);
+                }
             } else if let Some(arr) = arrays_get(&var_name) {
-                let new_arr: Vec<String> = arr.iter().map(|s| quote_one(s)).collect();
-                value = new_arr.join(" ");
-                split_parts = Some(new_arr);
+                if want_per_element {
+                    let new_arr: Vec<String> = arr.iter().map(|s| quote_one(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    let joined = arr.join(" ");
+                    let quoted = quote_one(&joined);
+                    value = quoted.clone();
+                    split_parts = Some(vec![quoted]);
+                }
             } else {
                 value = quote_one(&value);
             }

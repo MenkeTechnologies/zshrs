@@ -3217,7 +3217,7 @@ fn() {
 
 ## #52 — `${(q)arr}` on array doesn't join+quote — per-element quote only
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(foo "bar baz" qux); echo "${(q)a}"'
@@ -3243,15 +3243,40 @@ elements are lost.
 `${(@q)arr}` (per-element form) works identically in both shells —
 that's not affected.
 
-**Where** — `src/ported/subst.rs::paramsubst` should apply `(q)`
-AFTER joining, not before. The early per-element quoting bypasses
-the post-join quoting pass.
+**Root cause** — `src/ported/subst.rs`'s `(q)` flag arm always
+quoted per-element when the value source was an array (or
+`split_parts`). For DQ context without `(@)`, zsh joins first
+(with space, the IFS first char) then quotes the joined scalar
+— so the join spaces also get backslash-escaped, producing
+`foo\ bar\ baz\ qux`. The Rust port produced
+`foo bar\ baz qux` (only inner spaces escaped).
 
-**Workaround** — explicitly use `(@q)` (per-element) and then
-`(j)` to join:
-```sh
-echo "${(j: :)${(@q)a}}"   # explicit join after per-element quote
-```
+**Fix** (`src/ported/subst.rs` quotemod arm at line 8019) —
+branch by context:
+
+  * `(@q)` (`nojoin == 2`) OR unquoted context (`!qt`) →
+    per-element quote, preserve array shape so `print -l
+    ${(q)arr}` still splats per-line.
+  * Plain `(q)` in DQ context → join then quote the joined
+    scalar.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+
+  * `"${(q)a}"` (DQ, array) → `foo\ bar\ baz\ qux` (BUGS.md
+    case).
+  * `"${(@q)a}"` (per-element) → `foo bar\ baz qux` (unchanged).
+  * `"${(qq)a}"` → `'foo bar baz qux'` (single-quote form,
+    join + quote).
+  * `${(q)a}` unquoted (in `print -l`) → splats to 3 lines
+    `foo` / `bar baz` / `qux` (matches zsh).
+  * `"${(q)scalar}"` → `hello\ world` (scalar unchanged).
+  * `"${(q)single_elem_array}"` → `one\ element\ with\ spaces`.
+
+Previously-failing test `test_qq_flag_empty_array_emits_quoted_pair`
+now passes; no other test regressed.
+
+zshrs_shell regression: 926/126 baseline preserved with +1 pass
+net.
 
 ---
 
