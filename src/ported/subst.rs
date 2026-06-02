@@ -6110,13 +6110,23 @@ pub fn paramsubst(
                     // start; `%` anchor: match only at end (longest
                     // tail). Without an anchor, the global sliding
                     // window runs across every position.
+                    //
+                    // c:Src/pattern.c GF_BACKREF — `(#b)pat` populates
+                    // the `match`/`mbegin`/`mend` arrays alongside the
+                    // scalar MATCH/MBEGIN/MEND. The match-loop here
+                    // uses `pattry`, which only returns the success
+                    // bit — `match[N]` stays untouched. Route through
+                    // `glob_match_static` which already sets the
+                    // backref arrays via `pattryrefs` when the pattern
+                    // carries GF_BACKREF (vm_helper.rs:2810). Bug
+                    // #266 in docs/BUGS.md. Calling
+                    // glob_match_static unconditionally is safe — it
+                    // falls back to plain pattry when (#b) isn't on.
                     if pat_anchor == '#' {
                         let mut matched: Option<usize> = None;
                         for end in (1..=nn).rev() {
                             let cand: String = cv[..end].iter().collect();
-                            if patcompile(&pat, PAT_HEAPDUP as i32, None)
-                                .map_or(false, |__p| pattry(&__p, &cand))
-                            {
+                            if crate::vm_helper::glob_match_static(&cand, &pat) {
                                 matched = Some(end);
                                 break;
                             }
@@ -6134,9 +6144,7 @@ pub fn paramsubst(
                         let mut matched: Option<usize> = None;
                         for start in 0..=nn {
                             let cand: String = cv[start..].iter().collect();
-                            if patcompile(&pat, PAT_HEAPDUP as i32, None)
-                                .map_or(false, |__p| pattry(&__p, &cand))
-                            {
+                            if crate::vm_helper::glob_match_static(&cand, &pat) {
                                 matched = Some(start);
                                 break;
                             }
@@ -6156,9 +6164,7 @@ pub fn paramsubst(
                         let mut m: Option<usize> = None;
                         for e in (q + 1..=nn).rev() {
                             let c: String = cv[q..e].iter().collect();
-                            if patcompile(&pat, PAT_HEAPDUP as i32, None)
-                                .map_or(false, |__p| pattry(&__p, &c))
-                            {
+                            if crate::vm_helper::glob_match_static(&c, &pat) {
                                 m = Some(e);
                                 break;
                             }
