@@ -3935,7 +3935,39 @@ in zsh and zshrs.
 
 ## #62 — `setopt extended_glob` doesn't recognize `~` (and-not) operator
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — original "doesn't recognize" framing
+was inaccurate; the `pat1~pat2` exclusion DID compile and filter
+matches correctly when the directory had matching files. The actual
+gap was the **no-matches fall-through**: `glob_path` under
+`extended_glob` returned `vec![pattern.to_string()]` as a literal
+single-element result when the filtered set was empty, pre-empting
+zglob's nomatch handler (`Src/glob.c:1872-1888`).
+
+C source semantics:
+```c
+if (matchct) { ... }
+else if (!gf_nullglob) {
+    if (isset(CSHNULLGLOB)) { ... }
+    else if (isset(NOMATCH)) { zerr("no matches found"); return; }
+    else { /* untokenize as literal */ }
+}
+```
+
+Removed the unconditional literal fall-through from both extended_glob
+branches in `glob_path` (`src/ported/glob.rs`): the `^pat` negation
+arm (~line 5210) and the `pat1~pat2` exclusion arm (~line 5248) now
+return `Vec::new()` on no matches, letting `zglob` (~line 1457-1487)
+run its full nomatch / nullglob / literal-fallback dispatch.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `a*~aa` no matches + `setopt extended_glob` (default NOMATCH) → both
+  error identically.
+- `a*~ab*` with matching files → both produce identical match list.
+- `^z*` negation with matches → both work.
+- `unsetopt nomatch; a*~aa` → both literal-fallthrough output.
+- `setopt nullglob; a*~aa` → both produce empty output.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; echo a*~ab'
@@ -4026,7 +4058,24 @@ echo "${(j:-:)arr}"
 
 ## #64 — `$PIPESTATUS` (uppercase, bash-style) exists when it shouldn't
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — C zsh's special-params table
+(`Src/params.c:265,438`) only registers lowercase `pipestatus`;
+there's no `PIPESTATUS` entry. zshrs's pipeline runner in
+`src/fusevm_bridge.rs:1334-1341` populated BOTH names "for portability"
+— but that's the divergence: a script using `[[ -z $PIPESTATUS ]]`
+to detect zsh-vs-bash would mis-classify zshrs as bash.
+
+Dropped the `exec.set_array("PIPESTATUS", ...)` write; only
+`pipestatus` (the canonical zsh form) gets populated.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+```
+true | false | true
+echo "pipestatus=[${pipestatus[@]}] PIPESTATUS=[${PIPESTATUS[@]}]"
+```
+Both now print `pipestatus=[0 1 0] PIPESTATUS=[]`.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'true | false | true; echo "pipestatus=[${pipestatus[@]}] PIPESTATUS=[${PIPESTATUS[@]}]"'

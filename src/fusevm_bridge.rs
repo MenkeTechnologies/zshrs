@@ -1331,13 +1331,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             *pipestatus.last().unwrap_or(&0)
         };
 
-        // Populate `pipestatus` (zsh) and `PIPESTATUS` (bash) arrays so
-        // scripts can inspect per-stage exit codes. Both names are common
-        // in user code; populating both removes a portability foot-gun.
+        // c:Src/params.c:265,438 — only `pipestatus` (lowercase) is the
+        // zsh special parameter; bash's `PIPESTATUS` doesn't exist in
+        // zsh's special-params table. Prior port also populated
+        // `PIPESTATUS` "for portability" — but that's a real divergence
+        // from zsh: a script doing `[[ -z $PIPESTATUS ]]` to detect
+        // zsh-vs-bash would mis-classify. Bug #64 in docs/BUGS.md.
         with_executor(|exec| {
             let strs: Vec<String> = pipestatus.iter().map(|s| s.to_string()).collect();
-            exec.set_array("pipestatus".to_string(), strs.clone());
-            exec.set_array("PIPESTATUS".to_string(), strs);
+            exec.set_array("pipestatus".to_string(), strs);
         });
 
         Value::Status(last_status)
