@@ -356,6 +356,15 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
             return r;
         }
     }
+    // c:Src/math.c:345-346 — `if (unset(UNSET)) zerr("%s: parameter
+    // not set", mptr->lval);`. When `nounset` is set (i.e., the
+    // canonical `UNSET` option is OFF), referring to an unset
+    // parameter in arith context is an error. Bug #88 in
+    // docs/BUGS.md: zshrs silently used 0, masking typos and
+    // breaking defensive `set -u` scripts.
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
+        crate::ported::utils::zerr(&format!("{}: parameter not set", name));
+    }
     mnumber {
         l: 0,
         d: 0.0,
