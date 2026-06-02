@@ -4246,7 +4246,45 @@ secs=$(zmodload zsh/datetime; t=$EPOCHREALTIME; sleep 0.05; \
 
 ## #67 — `pushd` with no args doesn't swap top of dir stack
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `cd_get_dest` in
+`src/ported/builtin.rs:1675` returned `d.first().cloned()` for bare
+`pushd` (no PUSHDTOHOME), reading the top of DIRSTACK without
+removing it. Then `cd_new_pwd` (lines ~1573-1581) unconditionally
+inserted `pre_pwd` at DIRSTACK[0], producing a 3-entry stack instead
+of swapping.
+
+C source `Src/builtin.c:876-885`:
+```c
+if (func == BIN_PUSHD && unset(PUSHDTOHOME))
+    dir = nextnode(firstnode(dirstack));
+if (dir)
+    zinsertlinknode(dirstack, dir, getlinknode(dirstack));
+else if (func != BIN_POPD) {
+    zpushnode(dirstack, ztrdup(home));
+}
+```
+C's `dirstack` includes PWD at index 0; the `getlinknode` extracts
+that, then reinserts after the original index-1 — net swap.
+
+zshrs's DIRSTACK omits PWD (it lives in paramtab). To get the
+equivalent: POP DIRSTACK[0] in `cd_get_dest`, then let `cd_new_pwd`
+re-push `pre_pwd` onto DIRSTACK[0]. The net result is the same
+swap. For the single-entry case (`DIRSTACK.is_empty()` here =
+C's `nextnode == NULL`), fall through to HOME — which the existing
+code already did, but the prior `and_then(|d| d.first().cloned())`
+returned `None` and was treated as an error before reaching the
+HOME fallback.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- Two-arg swap: `cd /tmp; pushd $HOME; pushd` → both produce
+  `~ /tmp` then `/tmp ~`.
+- One-arg → HOME: `cd /tmp; pushd` → both produce `~ /tmp`.
+- Triple bounce: `cd /tmp; pushd /Users; pushd; pushd` → both
+  produce `/Users` (pwd) and `/Users /tmp` (dirs).
+- `setopt pushdtohome; pushd` skips swap, goes HOME → both produce
+  `~ /Users /tmp`.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'cd /tmp; pushd $HOME 2>&1; dirs; pushd 2>&1; dirs'
