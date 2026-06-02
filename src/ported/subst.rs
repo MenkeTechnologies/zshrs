@@ -4449,7 +4449,30 @@ pub fn paramsubst(
                     } else {
                         String::new()
                     }
-                } else if let Some((start_s, end_s)) = sub.split_once(',') {
+                } else if let Some((start_s, end_s)) = {
+                    // c:Src/params.c:1437 — `(s.X.)` subscript flag
+                    // specifies the join-separator for word-mode subscript
+                    // (only meaningful with `(w)`/`(W)`). For a plain
+                    // `[N,M]` range on an indexed array the flag is a
+                    // no-op (zsh's `Src/params.c:1396-1431` parser strips
+                    // it and falls through to the integer slice path),
+                    // but zshrs's `sub.split_once(',')` was finding the
+                    // comma INSIDE the flag (`(s.,.)`) instead of the
+                    // range separator. Bug #83 in docs/BUGS.md.
+                    //
+                    // Strip a leading flag block `(...)` before
+                    // split_once so the range parser sees `N,M`.
+                    let stripped = if let Some(rest) = sub.strip_prefix('(') {
+                        if let Some(close) = rest.find(')') {
+                            &rest[close + 1..]
+                        } else {
+                            sub
+                        }
+                    } else {
+                        sub
+                    };
+                    stripped.split_once(',')
+                } {
                     // c:2944 (slice) — Src/params.c:2548 getarrvalue.
                     // Clone arr first to release the borrow, since
                     // singsub needs &mut state.
