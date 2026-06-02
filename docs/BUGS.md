@@ -2502,7 +2502,9 @@ both directions — no actual regression).
 
 ## #42 — Bare `typeset` prints `var=val` instead of full declarations
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 (attribute words now print; full
+zsh-parity on int-base and readonly-special detection is a
+followup).
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset' | head -5
@@ -2533,15 +2535,55 @@ attributes, and also breaks the "round-trip" property where
 `typeset -p NAME` (with a specific name) DOES print the full
 declaration correctly in zshrs — only the bare form is wrong.
 
-**Where** — `src/ported/builtin.rs::bin_typeset`'s no-arg listing
-path. Should iterate all params and print using the same logic as
-`-p` mode.
+**Root cause** — `src/ported/params.rs::printparamnode` had the
+PRINT_TYPE attribute walk NESTED inside the PRINT_TYPESET
+prefix block. C zsh has TWO parallel blocks:
 
-**Workaround** — pass explicit `-p`:
-```sh
-typeset -p   # zshrs: correct full declarations
-typeset -m '*' -p   # also works, matches all
+```c
+if (printflags & (PRINT_TYPESET|PRINT_POSIX_READONLY|PRINT_POSIX_EXPORT)) {
+    // prefix: `typeset ` / `export ` / `local ` / `readonly `
+}
+/* Print the attributes of the parameter */
+if (printflags & (PRINT_TYPE|PRINT_TYPESET)) {
+    // attribute walk: `integer`, `readonly`, `array`, etc.
+}
 ```
+
+bare `typeset` (no -p) sets `PRINT_TYPE` alone. The first block
+is skipped (no prefix), but the SECOND block should still fire
+to print the attribute words. The Rust port nested the
+attribute walk inside the first block, so PRINT_TYPE alone never
+reached it and bare `typeset` dropped the attribute prefix.
+
+**Fix** (`src/ported/params.rs::printparamnode`) — widen the
+outer gate to also accept PRINT_TYPE, and gate the prefix-print
+arms (typeset/export/local/readonly) on the narrower
+`PRINT_TYPESET | PRINT_POSIX_*` set via a `needs_prefix`
+boolean. Same structural effect as splitting into two parallel
+blocks, but minimal-diff to the existing code.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+
+  * `typeset | head` → `integer !=0`, `integer #=0`,
+    `array *=( )`, etc. (BUGS.md case).
+  * `typeset -p` → `typeset -i !=0`, `typeset -a *=( )`, etc.
+    (unchanged).
+  * `export -p` → `export NAME=value` (unchanged).
+  * `typeset -i x=42; typeset` → includes `integer x=42`.
+
+**Still divergent** (separate followups, not bug #42 core):
+
+  * zsh prints `integer 10 readonly !=0` (int base + readonly)
+    while zshrs prints `integer !=0` — the `10` comes from
+    `pm.base` which the Rust IPDEF4 port doesn't initialize,
+    and the `readonly` is missing because the special-param
+    setup doesn't flip `PM_READONLY` on `!`/`?`/`#`/etc. These
+    are PMTYPES-data issues, not the print-path bug this fix
+    addresses.
+
+zshrs_shell regression: 926/126 baseline preserved (the local
+run fluctuated to 923/129 but the test-name diff was empty
+both directions — no actual regression).
 
 ---
 

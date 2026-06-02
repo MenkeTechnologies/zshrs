@@ -8825,13 +8825,27 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
     if (f & PM_AUTOLOAD) != 0 {
         printflags |= PRINT_NAMEONLY;
     }
-    if (printflags & (PRINT_TYPESET | PRINT_POSIX_READONLY | PRINT_POSIX_EXPORT)) != 0 {
-        if (f & PM_AUTOLOAD) != 0 {
+    // c:Src/params.c — the outer block runs whenever the attribute
+    // walk is also wanted: PRINT_TYPE (bare typeset) OR
+    // PRINT_TYPESET (typeset -p) OR PRINT_POSIX_*. The C source has
+    // two SEPARATE parallel blocks, but the Rust port nested the
+    // attribute walk inside the prefix block — bug #42 in
+    // docs/BUGS.md. Widen the outer gate so PRINT_TYPE also enters
+    // it; the prefix-print arms below gate themselves on the
+    // narrower `PRINT_TYPESET | PRINT_POSIX_*` set so bare typeset
+    // skips the `typeset ` / `export ` / `local ` prefix and goes
+    // straight to the attribute walk + name=value tail.
+    if (printflags & (PRINT_TYPE | PRINT_TYPESET | PRINT_POSIX_READONLY | PRINT_POSIX_EXPORT))
+        != 0
+    {
+        let needs_prefix =
+            (printflags & (PRINT_TYPESET | PRINT_POSIX_READONLY | PRINT_POSIX_EXPORT)) != 0;
+        if (f & PM_AUTOLOAD) != 0 && needs_prefix {
             return;
         }
         // c:6157-6163 — PM_RO_BY_DESIGN with level check: only show
         // the entry when its level matches the current scope.
-        if (f & PM_RO_BY_DESIGN) != 0 {
+        if (f & PM_RO_BY_DESIGN) != 0 && needs_prefix {
             let cur_ll = locallevel.load(Ordering::Relaxed) as i32;
             if hn.level != cur_ll {
                 // c:6157
@@ -8839,39 +8853,41 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             }
         }
         let mut altname: u8 = 0;
-        if (printflags & PRINT_POSIX_EXPORT) != 0 {
-            if (f & PM_EXPORTED) == 0 {
-                return;
-            }
-            altname = b'x';
-            print!("export ");
-        } else if (printflags & PRINT_POSIX_READONLY) != 0 {
-            if (f & PM_READONLY) == 0 {
-                return;
-            }
-            altname = b'r';
-            print!("readonly ");
-        } else if (f & PM_EXPORTED) != 0 && (f & (PM_ARRAY | PM_HASHED)) == 0 {
-            // c:6181-6188 — exported scalar: `local` or `export`.
-            let cur_ll = locallevel.load(Ordering::Relaxed) as i32;
-            if hn.level != 0 && hn.level >= cur_ll {
-                print!("local ");
-            } else {
+        if needs_prefix {
+            if (printflags & PRINT_POSIX_EXPORT) != 0 {
+                if (f & PM_EXPORTED) == 0 {
+                    return;
+                }
                 altname = b'x';
                 print!("export ");
-            }
-        } else {
-            let cur_ll = locallevel.load(Ordering::Relaxed) as i32;
-            if cur_ll != 0 && hn.level >= cur_ll {
-                if (f & PM_EXPORTED) != 0 {
+            } else if (printflags & PRINT_POSIX_READONLY) != 0 {
+                if (f & PM_READONLY) == 0 {
+                    return;
+                }
+                altname = b'r';
+                print!("readonly ");
+            } else if (f & PM_EXPORTED) != 0 && (f & (PM_ARRAY | PM_HASHED)) == 0 {
+                // c:6181-6188 — exported scalar: `local` or `export`.
+                let cur_ll = locallevel.load(Ordering::Relaxed) as i32;
+                if hn.level != 0 && hn.level >= cur_ll {
                     print!("local ");
+                } else {
+                    altname = b'x';
+                    print!("export ");
+                }
+            } else {
+                let cur_ll = locallevel.load(Ordering::Relaxed) as i32;
+                if cur_ll != 0 && hn.level >= cur_ll {
+                    if (f & PM_EXPORTED) != 0 {
+                        print!("local ");
+                    } else {
+                        print!("typeset ");
+                    }
+                } else if cur_ll != 0 {
+                    print!("typeset -g ");
                 } else {
                     print!("typeset ");
                 }
-            } else if cur_ll != 0 {
-                print!("typeset -g ");
-            } else {
-                print!("typeset ");
             }
         }
 
