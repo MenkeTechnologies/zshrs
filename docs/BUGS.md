@@ -10164,7 +10164,20 @@ done
 
 ## #136 — `%E` prompt escape (clear-to-EOL) not expanded; returns literal `%E`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%E"' | od -c
+0000000  033   [   K  \n
+$ ./target/debug/zshrs --zsh -c 'print -P "%E"' | od -c
+0000000  033   [   K  \n
+```
+
+Both emit the expected `\033[K\n` (terminal "erase to end of line"
+escape). Likely fixed by the #38/#115 prompt-escape coverage work.
+Doc-only status flip.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%E"' | od -c
