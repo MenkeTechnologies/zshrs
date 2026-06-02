@@ -1287,40 +1287,43 @@ fn() {
 
 ## #27 — Extra `caller` and `help` builtins shadow user functions silently
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-01.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'caller() { echo my-fn; }; caller'
 my-fn
 
-$ zshrs --zsh -c 'caller() { echo my-fn; }; caller'
+$ zshrs --zsh -c 'caller() { echo my-fn; }; caller'   # before
 0 main
+$ zshrs --zsh -c 'caller() { echo my-fn; }; caller'   # after
+my-fn
 ```
 
-zshrs has two bash-specific builtins that real zsh does not:
-  - **`caller`** — prints `<index> <fn>` stack info (bash compat)
-  - **`help`** — prints `zshrs shell builtins:` listing (bash compat)
+**Root cause** — `src/extensions/compile_zsh.rs::compile_simple`
+resolved the dispatched command name via
+`fusevm::shell_builtins::builtin_id()` at compile time. That lookup
+returns `BUILTIN_CALLER` / `BUILTIN_HELP` (zshrs-extension-only
+opcodes) before any check against user-defined functions, so a
+function defined earlier in the same compile unit was never
+consulted. C zsh's `Src/exec.c::execcmd` walks `shfunctab` before
+`bintab`, so functions always win.
 
-User scripts that define functions with those names get silently
-shadowed in zshrs. Real zsh treats those names as ordinary
-identifiers and runs the user function correctly.
+**Fix** — track function names defined in this compile unit on the
+`ZshCompiler` and consult that set before the builtin_id lookup.
+When a user function with the same name exists, skip the fast-path
+so the call routes through `CallFunction` → `dispatch_function_call`
+→ `doshfunc`, matching C zsh's lookup order.
 
-Compounding the issue: `type caller` and `whence caller` both
-report **"not found"** — so the user has no way to discover that
-the name is taken by a hidden builtin.
+  * Added `defined_functions: HashSet<String>` field on
+    `ZshCompiler` (compile_zsh.rs).
+  * Populated in `compile_funcdef` immediately after the function
+    name is cleaned.
+  * Consulted in `compile_simple` ahead of the `shopt`/`declare`/…
+    builtin_id resolution chain; when the name matches, force
+    `builtin_id = None` so the normal command path runs.
 
-**Where** — `src/ported/builtin.rs` registers `bin_caller` and
-`bin_help` at startup. These should either:
-  - be removed (they don't exist in zsh)
-  - be guarded behind a `--bash-compat` flag
-  - at minimum: register with `type` / `whence` so users can detect them
-
-**Workaround** — for now, use different names for user functions
-(`my_caller`, `usage` instead of `help`), OR shadow with `disable`:
-```sh
-disable caller help
-caller() { echo my-fn; }   # now works
-```
+Bash-compat `caller`/`help` keep firing when no user function
+shadows them (`zshrs --zsh -c 'caller'` → `0 main`).
 
 ---
 
