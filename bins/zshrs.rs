@@ -1122,7 +1122,9 @@ pub fn zshrs_main() {
                 last_status = match executor.execute_script(&file.source) {
                     Ok(s) => s,
                     Err(e) => {
-                        eprintln!("zshrs: {}: {}", file.name, e);
+                        if e != "__SILENCED__" {
+                            eprintln!("zshrs: {}: {}", file.name, e);
+                        }
                         std::process::exit(1);
                     }
                 };
@@ -1741,7 +1743,13 @@ pub fn zshrs_main() {
         }
 
         if let Err(e) = result {
-            eprintln!("zshrs: {}", e);
+            // c:Src/init.c — `__SILENCED__` sentinel from
+            // `execute_script_zsh_pipeline` means the parser already
+            // emitted the diagnostic via zerr; binary-side print
+            // would double it. Bug #142 in docs/BUGS.md.
+            if e != "__SILENCED__" {
+                eprintln!("zshrs: {}", e);
+            }
             std::process::exit(1);
         }
         std::process::exit(executor.last_status());
@@ -1788,7 +1796,9 @@ pub fn zshrs_main() {
         // argv[0] (the zshrs binary path) instead of the script path.
         zsh::ported::params::setsparam("ZSH_ARGZERO", &args[1]);
         if let Err(e) = executor.execute_script_file(&args[1]) {
-            eprintln!("zshrs: {}: {}", args[1], e);
+            if e != "__SILENCED__" {
+                eprintln!("zshrs: {}: {}", args[1], e);
+            }
             std::process::exit(1);
         }
         return;
@@ -2285,7 +2295,9 @@ fn run_non_interactive() {
     io::stdin().lock().read_to_string(&mut script).unwrap_or(0);
     if !script.is_empty() {
         if let Err(e) = executor.execute_script(&script) {
-            eprintln!("zshrs: {}", e);
+            if e != "__SILENCED__" {
+                eprintln!("zshrs: {}", e);
+            }
             std::process::exit(1);
         }
         std::process::exit(executor.last_status());
@@ -2561,7 +2573,9 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str)
     // /etc/zshrc:25 zkbd test, broke `case ARM) c1='…'; …;;` SQ
     // assignments, broke any function defined across lines.
     if let Err(e) = executor.execute_script(contents) {
-        eprintln!("zshrs: {}: {}", path.display(), e);
+        if e != "__SILENCED__" {
+            eprintln!("zshrs: {}: {}", path.display(), e);
+        }
     }
 
     // Restore `$0` per Src/builtin.c:6139-6142.
@@ -3008,7 +3022,9 @@ fn process_line(line: &str, executor: &mut ShellExecutor) {
     }
 
     if let Err(e) = executor.execute_script(line) {
-        eprintln!("zshrs: {}", e);
+        if e != "__SILENCED__" {
+            eprintln!("zshrs: {}", e);
+        }
     }
 }
 

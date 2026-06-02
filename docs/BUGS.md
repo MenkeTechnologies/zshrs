@@ -3196,7 +3196,36 @@ fn() {
 
 ## #51 — `${#*}` access corrupts `$@`/`$*` for subsequent use in same function
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — repro no longer reproduces. The
+`${#*}` form now returns the count without corrupting `$@`/`$*` for
+subsequent iteration.
+
+Likely fixed by a prior `*`/`@` parameter resolution change (the
+two are paramsubst synonyms in C `Src/subst.c::paramsubst`). No new
+code change required this turn; updating status to match observed
+behavior.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'fn() { echo "${#*}"; for x in "$@"; do echo "[$x]"; done }; fn a b c'
+3
+[a]
+[b]
+[c]
+
+$ ./target/debug/zshrs --zsh -c 'fn() { echo "${#*}"; for x in "$@"; do echo "[$x]"; done }; fn a b c'
+3
+[a]
+[b]
+[c]
+```
+
+All listed access patterns now pass: `local n=${#*}`, `echo "${#*}"`,
+`echo "${#*}suffix"`, `echo "prefix${#*}"`, `echo "X: ${#*}"`,
+`${#@}` — each followed by `for x in "$@"` correctly iterates the
+three elements.
+
+**Original report:**
 
 ```sh
 $ cat > /tmp/t.zsh <<'EOF'
@@ -10741,7 +10770,52 @@ scripts before running under zshrs.
 
 ## #142 — Orphan terminator parse error uses generic "orphan terminator" + double-print
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — two-half fix at the parser and
+binary-error-print sites.
+
+**Root cause — half 1 (generic token name)** —
+`src/ported/parse.rs:7210` emitted `zerr("parse error near orphan
+terminator")` for ANY of `DONE`/`FI`/`ESAC` instead of the specific
+keyword. C `Src/parse.c::par_event` formats with the actual offending
+token via `parse error near \`<tok>'`.
+
+**Root cause — half 2 (double print)** — `vm_helper.rs:1371`
+returned `Err("parse error".to_string())` after the parser had
+already emitted the diagnostic via zerr. The binary's
+`execute_script(...)` call sites all wrap with
+`eprintln!("zshrs: {}", e)` — doubling up on the message C zsh
+emits once.
+
+**Fix**
+
+  1. `src/ported/parse.rs:7210` — branch on `tok()` for the
+     `DONE | FI | ESAC` arm; emit `parse error near \`<name>'`
+     where `<name>` is `"done"`, `"fi"`, or `"esac"` per the
+     matched token.
+  2. `src/vm_helper.rs:1371` — return `Err("__SILENCED__")`
+     sentinel when `parse_failed` (zerr already fired). All
+     binary-side `execute_script` Err handlers in
+     `bins/zshrs.rs` now skip the `eprintln!` print when the
+     error string equals `"__SILENCED__"`; the process still
+     exits with status 1.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'esac 2>&1'             # zsh:1: parse error near `esac'
+$ ./target/debug/zshrs --zsh -c 'esac 2>&1' 2>&1    # zsh:1: parse error near `esac'
+
+$ /opt/homebrew/bin/zsh -fc 'fi 2>&1'               # zsh:1: parse error near `fi'
+$ ./target/debug/zshrs --zsh -c 'fi 2>&1' 2>&1      # zsh:1: parse error near `fi'
+
+$ /opt/homebrew/bin/zsh -fc 'done 2>&1'             # zsh:1: parse error near `done'
+$ ./target/debug/zshrs --zsh -c 'done 2>&1' 2>&1    # zsh:1: parse error near `done'
+```
+
+Single-line output, byte-matched against zsh in all three cases.
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'esac 2>&1'
@@ -10751,40 +10825,6 @@ $ ./target/debug/zshrs --zsh -c 'esac 2>&1' 2>&1
 zsh:1: parse error near orphan terminator
 zshrs: parse error
 ```
-
-When a control-flow terminator (`esac`, `fi`, `done`) appears
-outside its matching block, zsh emits a single error naming the
-specific token: `parse error near 'esac'`. zshrs emits:
-1. Generic descriptor "orphan terminator" instead of naming the
-   actual token.
-2. A second redundant `zshrs: parse error` line.
-
-Same for `fi` and `done`:
-```sh
-$ /opt/homebrew/bin/zsh -fc 'fi 2>&1'
-zsh:1: parse error near `fi'
-
-$ ./target/debug/zshrs --zsh -c 'fi 2>&1' 2>&1
-zsh:1: parse error near orphan terminator
-zshrs: parse error
-```
-
-**Where** — `src/ported/parse.rs::handle_orphan_terminator`:
-emits a hardcoded "orphan terminator" string instead of the
-specific keyword. Also wraps the error in two layers of error
-reporting (parser-level + outer "zshrs: parse error" wrapper).
-C-source `Src/parse.c::par_event` reports the exact token from
-the offending position.
-
-**Impact** — error-parsing tools (linters, editor-integrated
-checkers) that extract token-specific error positions can't
-identify the actual unmatched terminator. CI pipelines that grep
-for the offending keyword fail.
-
-The double-print also confuses log-parsing tools expecting one
-error message per parse failure.
-
-**Workaround** — none portable.
 
 ---
 
@@ -37818,7 +37858,7 @@ qualifiers always have a digit suffix.
 | 48 | `typeset -m PAT` rejects pattern arg | **port-bug** | iterate `${(k)parameters}` |
 | 49 | `(( "abc" == "abc" ))` quoted strings → false | **port-bug** | drop quotes |
 | 50 | Trap inherited from outer doesn't fire in fn | **port-bug** | re-install trap in fn |
-| 51 | `${#*}` access corrupts `$@`/`$*` for rest of fn | **port-bug** | use `${#@}` or `$#` |
+| 51 | `${#*}` access corrupts `$@`/`$*` for rest of fn | **fixed** 2026-06-02 | n/a |
 | 52 | `${(q)arr}` per-element quote, doesn't quote join-sep | **port-bug** | `${(j: :)${(@q)a}}` explicit |
 | 53 | `${(P)$ref}` doesn't resolve `name[idx]` indirect | **port-bug** | `eval "val=\\${$ref}"` |
 | 54 | `warn_create_global` / `warn_nested_var` warnings silent | **port-bug** | strict `local` discipline |
@@ -37909,7 +37949,7 @@ qualifiers always have a digit suffix.
 | 139 | Sourced-file errors report `zsh:1:` instead of `/file:N` | **port-bug** | none — debug manually |
 | 140 | `exec /no/such` uses generic "not found" + wrong `zshrs:` prefix | **port-bug** | pre-check `[[ -x cmd ]]` |
 | 141 | `;;` outside case context not a parse error (silent drop) | **port-bug** | careful review |
-| 142 | Orphan-terminator parse error: "orphan terminator" + double-print | **port-bug** | none |
+| 142 | Orphan-terminator parse error: "orphan terminator" + double-print | **fixed** 2026-06-02 | n/a |
 | 143 | `$TRY_BLOCK_ERROR` initial value is `0` in zshrs (zsh: `-1`) | **port-bug** | explicit state-flag |
 | 144 | `${(q)str}` with newline uses `\<newline>` not `$'\n'` form | **port-bug** | `(qq)` double-quote form |
 | 145 | `${(k)h[name]}` key-existence query errors "bad substitution" | **port-bug** | `(( ${+h[name]} ))` |
