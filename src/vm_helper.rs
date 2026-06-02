@@ -223,6 +223,16 @@ pub struct SubshellSnapshot {
     /// so child options die with the child. We run in-process, so we
     /// must restore the option store on subshell_end.
     pub opts: HashMap<String, bool>,
+    /// Parent's alias entries at subshell entry. zsh forks for
+    /// `(...)` so `(alias x=y)` inside a subshell dies with the
+    /// child and doesn't leak to the parent. zshrs runs subshells
+    /// in-process, so we must restore the alias table on
+    /// subshell_end. Bug #209 in docs/BUGS.md. Stored as a flat
+    /// Vec<(name, text)> snapshot — the underlying alias_table holds
+    /// an IndexMap<String, alias> but `alias` carries hashnode
+    /// metadata we don't need to round-trip; only name + text are
+    /// observable via `alias NAME` lookup.
+    pub aliases: Vec<(String, String)>,
 }
 
 #[allow(unused_imports)]
