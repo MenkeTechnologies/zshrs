@@ -8546,6 +8546,35 @@ pub fn paramsubst(
                     s.to_string()
                 }
             };
+            // c:Src/subst.c:1404-1416 DPUTS — singsub asserts that the
+            // result list has ≤1 element. The PREFORK_SINGLE caller
+            // (heredoc body, scalar-assign RHS, `${var:-…}` default
+            // expression, etc.) needs the array splat collapsed to a
+            // sepjoined scalar before return; otherwise singsub takes
+            // only the first node and the remaining elements silently
+            // disappear. C zsh's prefork-on-singsub path falls through
+            // the `if (l > 1) sepjoin` arm at multsub c:633-647 with
+            // PREFORK_SINGLE clearing isarr at c:3029-3036, so the
+            // splat block doesn't fire there. The Rust port's
+            // auto_splat fires for isarr=-1 even under
+            // PREFORK_SINGLE — collapse here to compensate. Bug #123
+            // in docs/BUGS.md: `cat <<END\n${arr[@]}\nEND` returned
+            // only the first array element because singsub's
+            // result-zero-of-many fell through to the truncated form.
+            if pf_flags & PREFORK_SINGLE != 0 && parts.len() > 1 {
+                // c:Src/params.c sepjoin default sep — IFS first char.
+                let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
+                let default_sep = ifs
+                    .chars()
+                    .next()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| " ".to_string());
+                let sep_str: &str = sep.as_deref().unwrap_or(default_sep.as_str());
+                let joined = parts.join(sep_str);
+                let full = format!("{}{}{}", prefix, joined, suffix);
+                let new_pos = prefix.chars().count() + joined.chars().count();
+                return (full.clone(), new_pos, vec![full]);
+            }
             let mut nodes: Vec<String> = Vec::with_capacity(parts.len());
             for (i, part) in parts.iter().enumerate() {
                 let s = if parts.len() == 1 {

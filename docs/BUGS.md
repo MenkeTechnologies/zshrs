@@ -8918,7 +8918,58 @@ fi
 
 ## #123 — `${arr[@]}` inside heredoc body returns only first element
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — paramsubst auto_splat sepjoins under PREFORK_SINGLE.
+
+**Root cause** — `src/ported/subst.rs::paramsubst`'s auto_splat
+block at line ~8472 produced multiple result nodes for
+`${arr[@]}` regardless of the calling context. `singsub` (called
+by mode-4 heredoc-body expansion in `BUILTIN_EXPAND_TEXT`) wraps
+prefork with `PREFORK_SINGLE` and then reads `list.getdata(0)`
+— if the param expansion splatted into multiple nodes, only the
+first survived and the rest silently disappeared.
+
+C zsh's parallel handling: `multsub` at `Src/subst.c:633-647`
+falls through the `if (l > 1) sepjoin` arm under PREFORK_SINGLE
+because `c:3029-3036` clears `isarr` in singsub context. The
+Rust port keeps `isarr=-1` (set by `[@]`/`[*]` subscript) past
+that gate, so auto_splat fires unconditionally.
+
+**Fix** — At the start of the auto_splat splat-emit block,
+detect `pf_flags & PREFORK_SINGLE != 0 && parts.len() > 1` and
+sepjoin the parts with `$IFS[0]` (default space) before
+returning. Single-result callers see one joined word — matching
+C's singsub assertion (`DPUTS singsub() produced > 1`). The
+multi-result auto_splat path (heredocs aside: argv lists, array
+assigns) still splats unchanged.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'arr=(a b c); cat <<END
+${arr[@]}
+END'
+a b c
+
+$ ./target/debug/zshrs --zsh -c 'arr=(a b c); cat <<END
+${arr[*]}
+END'
+a b c
+
+# Regressions: argv splat and array assigns unaffected.
+$ ./target/debug/zshrs --zsh -c 'arr=(a b c); echo "${arr[@]}"'
+a b c
+$ ./target/debug/zshrs --zsh -c 'arr=(a b c); for f in ${arr[@]}; do echo "f=$f"; done'
+f=a
+f=b
+f=c
+$ ./target/debug/zshrs --zsh -c 'arr=(a b c); b=("${arr[@]}"); echo "len=${#b}"'
+len=3
+$ ./target/debug/zshrs --zsh -c 'arr=(a b c); s="${arr[@]}"; echo "[$s]"'
+[a b c]
+```
+
+Baseline: 934/118 (+1 test pass).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'arr=(a b c); cat <<END
