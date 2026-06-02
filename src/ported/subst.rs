@@ -7793,44 +7793,32 @@ pub fn paramsubst(
         } // c:2229
 
         // (b) backslash-bslashquote pattern metachars — output is safe to
-        // feed back into a glob/regex context as a literal. Port of
-        // subst.c:2255 QT_BACKSLASH_PATTERN: every char that has
-        // pattern meaning (`* ? [ ] ( ) | ^ # ~ \ < >` plus IFS
-        // whitespace and shell metachars `& ; { } $ \` " '`) gets
-        // a leading backslash. Used by `[[ x =~ ${(b)pat} ]]` and
-        // `case x in ${(b)pat}` to neutralize a user-supplied
-        // string before it's interpreted as a pattern.
-        // (b) per-element backslash-bslashquote. Direct port of subst.c:2255
-        // QT_BACKSLASH_PATTERN iterating aval per-element.
+        // feed back into a glob/regex context as a literal.
+        //
+        // c:Src/utils.c:6242-6248 QT_BACKSLASH_PATTERN body:
+        //   while (*u) {
+        //       if (ipattern(*u))
+        //           *v++ = '\\';
+        //       *v++ = *u++;
+        //   }
+        //
+        // `ipattern(c)` is true when c is in PATCHARS, defined at
+        // Src/zsh.h:232 as `"#^*()|[]<>?~\\"` — exactly 12 chars.
+        // Bug #47 in docs/BUGS.md: the previous Rust port also
+        // escaped whitespace (space/tab/newline) and shell-syntax
+        // separators (; & { } $ ` " '), over-escaping vs C zsh and
+        // breaking the `ls **/${~(b)file}` idiom for filenames
+        // containing spaces.
         let b_one = |s: &str| -> String {
-            // c:2255
+            // c:6242
             let mut out = String::with_capacity(s.len() * 2);
             for ch in s.chars() {
+                // c:6244 `if (ipattern(*u)) *v++ = '\\';` — chars in
+                // PATCHARS only.
                 if matches!(
                     ch,
-                    '*' | '?'
-                        | '['
-                        | ']'
-                        | '('
-                        | ')'
-                        | '|'
-                        | '^'
-                        | '#'
-                        | '~'
-                        | '\\'
-                        | '<'
-                        | '>'
-                        | '&'
-                        | ';'
-                        | '{'
-                        | '}'
-                        | '$'
-                        | '`'
-                        | '"'
-                        | '\''
-                        | ' '
-                        | '\t'
-                        | '\n'
+                    '#' | '^' | '*' | '(' | ')' | '|' | '[' | ']'
+                        | '<' | '>' | '?' | '~' | '\\'
                 ) {
                     out.push('\\');
                 }
