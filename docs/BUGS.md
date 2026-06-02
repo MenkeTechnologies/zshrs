@@ -2355,7 +2355,79 @@ no other test regressed).
 
 ## #39 — `${arr:#"literal pattern"}` doesn't honor quoting (still globs)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — quote-preserving untokenize at the
+compile-side `:#` and bridge_array paths emits `\X` escapes for
+pattern metachars that were inside `Dnull`/`Snull` lex spans.
+
+**Root cause** — zsh's lexer outputs DIFFERENT bytes for quoted vs
+unquoted pattern metacharacters:
+
+  * `"*"` → `Dnull '*' Dnull` (literal ASCII `*` between quote-span
+    sentinels)
+  * unquoted `*` → `Star` token byte (`\u{87}`)
+
+`Src/pattern.c::patcompile` then matches `zpc_special[ZPC_STAR] = Star`
+(the token byte, not ASCII `*`), so literal `*` (between Dnulls,
+ASCII 0x2A) never triggers the glob-star arm. The Rust port's
+`pattern.rs` uses `sp[ZPC_STAR] = b'*'` (pattern.rs:439) — ASCII
+star, not the Star token — so it can't distinguish the two.
+
+Worse, the compile-side at `src/extensions/compile_zsh.rs` calls
+`untokenize(s)` which:
+  * Strips Dnull/Snull/Bnull/Bnullkeep markers
+  * Converts Star → ASCII `*`, Quest → `?`, etc.
+
+So both `"*"` and unquoted `*` collapse to the same ASCII `*` byte by
+the time `parse_param_modifier` extracts the `:#` pattern. The Dnull
+markers that would have preserved the literal/glob distinction are
+already gone.
+
+**Fix** — added `untokenize_preserve_quoted_pat_literals` in
+`src/extensions/compile_zsh.rs`: walks the RAW tokenized `s` and
+emits `\X` for any pattern metachar that was inside a Dnull/Snull
+span. Bnull/Bnullkeep are unconditionally emitted as `\X`.
+
+Two callers:
+  1. `parse_param_modifier`'s `FilterRemoveMatching` arm — re-extract
+     the pattern from raw `s` via the new helper, override the
+     plain-untokenized pattern stored on the modifier.
+  2. `BUILTIN_BRIDGE_BRACE_ARRAY` body path — apply the helper to the
+     whole inner body so `${(M)a:#"PAT"}` carries `\X` escapes when
+     paramsubst reconstructs and re-evaluates.
+
+Downstream `patcompile` (zshrs's `Src/pattern.c:1494` port at
+`pattern.rs:1494`) emits `\X` → `P_EXACTLY` (literal X), preserving
+the original zsh literal-pattern semantics without a deeper rewrite
+of `zpc_chars[]` token byte handling.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(foo "*" bar); print -l ${a:#"*"}'   # foo, bar
+$ ./target/debug/zshrs --zsh -c 'a=(foo "*" bar); print -l ${a:#"*"}'  # foo, bar
+
+$ /opt/homebrew/bin/zsh -fc 'a=(foo "*" bar); print -l ${a:#*}'  # (empty — glob match-all)
+$ ./target/debug/zshrs --zsh -c 'a=(foo "*" bar); print -l ${a:#*}'  # (empty)
+
+$ /opt/homebrew/bin/zsh -fc 'a=(cat "[bc]*" bird); print -l ${(M)a:#"[bc]*"}'  # [bc]*
+$ ./target/debug/zshrs --zsh -c 'a=(cat "[bc]*" bird); print -l ${(M)a:#"[bc]*"}'  # [bc]*
+
+$ /opt/homebrew/bin/zsh -fc 'a=(cat "[bc]*" bird); print -l ${(M)a:#[bc]*}'  # cat bird
+$ ./target/debug/zshrs --zsh -c 'a=(cat "[bc]*" bird); print -l ${(M)a:#[bc]*}'  # cat bird
+```
+
+`${var:-"default*text"}` (default with quoted star) still emits
+`hello*world` literally — the helper is NOT applied to default
+operands (only to `:#` filter pattern and bridge_array body), so
+quoted text in default position keeps its plain-untokenize behavior.
+
+Pre-existing DQ-context divergence (`"[${(M)a:#"*"}]"` returns
+`[foo * bar]` instead of `[]`) is NOT addressed by this fix — that
+sits in the DQ-scalar-join path in `subst.rs::paramsubst` and is a
+separate bug.
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(cat "[bc]*" bird); echo "[${(M)a:#"[bc]*"}]"'
@@ -2363,30 +2435,6 @@ $ /opt/homebrew/bin/zsh -fc 'a=(cat "[bc]*" bird); echo "[${(M)a:#"[bc]*"}]"'
 
 $ zshrs --zsh -c 'a=(cat "[bc]*" bird); echo "[${(M)a:#"[bc]*"}]"'
 [cat [bc]* bird]   # treats as glob, matches cat (c*) and bird (b*) and the literal one
-```
-
-Per zsh docs, when a pattern inside `${arr:#...}` or `${(M)arr:#...}`
-is quoted, the quote chars make the contents LITERAL — `[bc]*` becomes
-the exact 5-character string, not a glob pattern.
-
-zshrs ignores the quotes and treats `"[bc]*"` as a glob anyway. This
-breaks any code that uses quoted patterns to match literal special
-characters.
-
-Backslash-escaped (`\[bc\]\*`) form works in zshrs but doesn't work
-identically in zsh either — so quoting is the only reliable way
-to mean "literal pattern" and it fails in zshrs.
-
-**Where** — `src/ported/subst.rs::paramsubst` pattern parsing for
-`:#` and `(M):#`. Quoted segments should be added to the pattern
-as literal-only nodes, not glob nodes.
-
-**Workaround** — match exact strings via per-element iteration:
-```sh
-local -a result
-for el in "${a[@]}"; do
-    [[ $el == '[bc]*' ]] && result+=("$el")
-done
 ```
 
 ---
@@ -37758,7 +37806,7 @@ qualifiers always have a digit suffix.
 | 36 | MULTIOS not implemented (multiple `>` / `<` redirects) | **port-bug** | explicit `tee`/`cat` |
 | 37 | `"${(z)str}"` quoted form splits fields | **port-bug** | `${(j: :)${(z)str}}` rejoin |
 | 38 | prompt escapes `%m`/`%C`/`%i`/`%l`/`%y`/`%E`/`%v`/`%b`/`%u`/`%s`/`%f`/`%k` missing | **port-bug** | use `$HOST`/`$PWD` etc |
-| 39 | `${arr:#"literal"}` quoted pat still globbed | **port-bug** | per-element iteration |
+| 39 | `${arr:#"literal"}` quoted pat still globbed | **fixed** 2026-06-02 | n/a |
 | 40 | `print -aC N` ignores `-a` (column-major instead of row) | **port-bug** | sort input in advance |
 | 41 | Glob qualifier `Yn` (limit) returns all matches | **port-bug** | `head -n` or array slice |
 | 42 | Bare `typeset` prints `name=val` only, no attrs | **port-bug** | use `typeset -p` |

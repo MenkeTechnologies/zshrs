@@ -3361,7 +3361,23 @@ impl ZshCompiler {
                         || has_filter_with_match_flag
                         || at_with_index_subscript;
                     if need_array {
-                        let body_const = self.builder.add_constant(Value::str(inner));
+                        // c:Src/subst.c — patterns in `:#PAT`, `[(I)PAT]`,
+                        // etc. preserve quoted/unquoted distinction via
+                        // Dnull/Snull markers all the way to patcompile.
+                        // The plain `untokenize` collapses quoted `*`
+                        // and unquoted `*` to ASCII `*`, so the bridge
+                        // path treated quoted patterns as glob. Re-
+                        // derive `inner` from raw tokenized `s` with
+                        // `untokenize_preserve_quoted_pat_literals` so
+                        // chars that were inside `"…"` / `'…'` carry
+                        // `\X` escapes through to patcompile. Bug #39
+                        // in docs/BUGS.md. The bridge_array path only
+                        // fires for pattern-bearing operators (`:#`,
+                        // `[@]`, `[(I)]`, `[(R)]`, `[(K)]`) so escaping
+                        // quoted metachars is correct in all cases
+                        // that reach this gate.
+                        let inner_safe = strip_brace_wrap_for_bridge(s).unwrap_or_else(|| inner.to_string());
+                        let body_const = self.builder.add_constant(Value::str(&inner_safe));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -3551,7 +3567,7 @@ impl ZshCompiler {
         let raw_dq_word = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
         let in_dq = raw_dq_word || self.dq_context_depth > 0;
         if (!has_bnull || modifier_safe_with_bnull) && !in_dq {
-            if let Some(modifier) = parsed_mod {
+            if let Some(mut modifier) = parsed_mod {
                 // The whole-word Dnull wrapping (`"${...}"`) gets
                 // stripped from `untoked` before parse_param_modifier
                 // sees it, but downstream emitters need to know the
@@ -3565,6 +3581,28 @@ impl ZshCompiler {
                 let raw_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
                 if raw_dq {
                     self.dq_context_depth += 1;
+                }
+                // c:Src/subst.c — `:#` filter pattern preserves
+                // quoted/unquoted distinction via Dnull/Snull
+                // markers all the way to patcompile. The Rust port's
+                // plain `untokenize` collapses both shapes to ASCII
+                // `*`/`?`/etc., so a quoted pattern (`"*"` → literal)
+                // was treated as glob (matched everything) instead
+                // of literal `*`. Re-extract the pattern from the raw
+                // tokenized `s` using the quote-preserving
+                // untokenize, so the constant emitted into the
+                // bytecode carries `\X` escapes for chars that were
+                // inside `"…"` / `'…'`. Bug #39 in docs/BUGS.md.
+                //
+                // Shape: `${NAME[(@)…]:#PAT}` → raw s is
+                // `\u{85}\u{8f}NAME…:\u{84}PAT\u{90}` where
+                // `\u{84}` = Pound (the `#`) and `\u{90}` = Outbrace
+                // (the closing `}`).
+                if let ParamModifierKind::FilterRemoveMatching { .. } = &modifier.kind {
+                    if let Some(new_pat) = extract_filter_pat_from_raw_s(s) {
+                        modifier.kind =
+                            ParamModifierKind::FilterRemoveMatching { pattern: new_pat };
+                    }
                 }
                 self.emit_param_modifier(&modifier);
                 if raw_dq {
@@ -6444,6 +6482,172 @@ pub(crate) enum ParamModifierKind {
     /// scalar if it matches). For arrays, returns a Value::Array of the
     /// non-matching elements.
     FilterRemoveMatching { pattern: String },
+}
+
+/// Strip the outer Stringg+Inbrace prefix and Outbrace suffix from the
+/// raw tokenized word `s`, then run the pattern-preserving untokenize
+/// over the inner body. Returns `None` if `s` doesn't have the
+/// expected `${…}` token shape (caller falls back to plain untokenized
+/// inner). Used by the `BUILTIN_BRIDGE_BRACE_ARRAY` path so quoted
+/// pattern bodies (e.g. `${(M)a:#"*"}`) reach paramsubst with
+/// backslash-escaped metachars instead of bare glob characters.
+fn strip_brace_wrap_for_bridge(s: &str) -> Option<String> {
+    use crate::ported::zsh_h::{Inbrace, Outbrace, Stringg};
+    let inner_raw = s
+        .strip_prefix(Stringg)?
+        .strip_prefix(Inbrace)?
+        .strip_suffix(Outbrace)?;
+    Some(untokenize_preserve_quoted_pat_literals(inner_raw))
+}
+
+/// Extract the `:#PAT` pattern body from the raw tokenized `s` for the
+/// fast-path `${NAME:#PAT}` shape. Walks the raw token form (Stringg /
+/// Inbrace prefix, `:` + Pound delimiter, Outbrace suffix) and returns
+/// the pattern text run through `untokenize_preserve_quoted_pat_literals`
+/// so quoted segments survive as `\X` escapes. Returns `None` if `s`
+/// doesn't match the simple `${NAME:#…}` shape (e.g. has leading
+/// `(@)`-flag, has subscript, has nested expansions) — caller falls
+/// back to the plain untokenized pattern.
+fn extract_filter_pat_from_raw_s(s: &str) -> Option<String> {
+    use crate::ported::zsh_h::{Inbrace, Outbrace, Pound, Stringg};
+    let mid = s
+        .strip_prefix(Stringg)?
+        .strip_prefix(Inbrace)?
+        .strip_suffix(Outbrace)?;
+    let marker = format!(":{}", Pound);
+    let idx = mid.find(&marker)?;
+    let name_part = &mid[..idx];
+    // Only handle simple `NAME` (identifier) shape for now. Skip when
+    // the name has a flag or subscript so we don't misextract patterns
+    // for shapes like `${(@)a:#…}` or `${a[i]:#…}`.
+    if !name_part
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '@' || c == '*')
+    {
+        return None;
+    }
+    let pat_raw = &mid[idx + marker.len()..];
+    Some(untokenize_preserve_quoted_pat_literals(pat_raw))
+}
+
+/// Pattern-preserving untokenize.
+///
+/// Mirrors `lex::untokenize` for token bytes (Star → `*`, Pound → `#`,
+/// etc.) but treats spans wrapped in `Snull`/`Dnull` (single/double
+/// quotes from lex) as LITERAL: pattern metachars inside such spans get
+/// a `\` prefix so the downstream pattern compiler sees them as
+/// `P_EXACTLY` (literal) rather than glob metacharacters.
+///
+/// `Bnull`/`Bnullkeep` lex sentinels (backslash-quoted next-char) emit
+/// `\X` directly so the same literal semantics carry through.
+///
+/// Used by the `:#` filter / `/pat/repl` family fast-paths to
+/// distinguish quoted patterns (`"*"` → literal star) from unquoted
+/// patterns (`*` → glob). Bug #39 in docs/BUGS.md: zshrs treated quoted
+/// patterns as glob because both shapes collapsed to ASCII `*` after
+/// the plain `untokenize`.
+///
+/// Mirrors `Src/subst.c` post-`parse_subst_string` behavior where the
+/// pattern retains zsh's Dnull/Bnull markers all the way to
+/// `patcompile`, which then matches against `zpc_special[ZPC_STAR] =
+/// Star` (the token byte) — never against ASCII `*`. zshrs's pattern
+/// compiler uses ASCII `*` as the trigger byte (pattern.rs:439), so
+/// the same literal-preservation needs to happen at the source level
+/// via `\X` escapes.
+fn untokenize_preserve_quoted_pat_literals(s: &str) -> String {
+    use crate::ported::zsh_h::{
+        Bang, Bar, Bnull, Bnullkeep, Dash, Dnull, Equals, Hat, Inang, Inbrace, Inbrack, Inpar,
+        Inparmath, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, Pound, Qstring,
+        Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
+    };
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut in_dq = false;
+    let mut in_sq = false;
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == Snull {
+            in_sq = !in_sq;
+            i += 1;
+            continue;
+        }
+        if c == Dnull {
+            in_dq = !in_dq;
+            i += 1;
+            continue;
+        }
+        if c == Bnull || c == Bnullkeep {
+            // Bnull/Bnullkeep mark "next char is backslash-escaped"
+            // from the lex DQ path (c:1499). Emit `\X` so the pattern
+            // compiler treats X as literal regardless of whether it
+            // is a metachar.
+            if i + 1 < chars.len() {
+                out.push('\\');
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        let unt = match c {
+            x if x == Pound => '#',
+            x if x == Stringg => '$',
+            x if x == Hat => '^',
+            x if x == Star => '*',
+            x if x == Inpar => '(',
+            x if x == Outpar => ')',
+            x if x == Inparmath => '(',
+            x if x == Outparmath => ')',
+            x if x == Qstring => '$',
+            x if x == Equals => '=',
+            x if x == Bar => '|',
+            x if x == Inbrace => '{',
+            x if x == Outbrace => '}',
+            x if x == Inbrack => '[',
+            x if x == Outbrack => ']',
+            x if x == Tick => '`',
+            x if x == Inang => '<',
+            x if x == Outang => '>',
+            x if x == OutangProc => '>',
+            x if x == Quest => '?',
+            x if x == Tilde => '~',
+            x if x == Qtick => '`',
+            x if x == Dash => '-',
+            x if x == Bang => '!',
+            other => other,
+        };
+        // Inside Snull/Dnull spans the original source had the char
+        // quoted, so pattern-metachar interpretation must be
+        // suppressed. Prefix `\` for chars that the pattern compiler
+        // would otherwise treat as glob metas.
+        if (in_dq || in_sq)
+            && matches!(
+                unt,
+                '*' | '?'
+                    | '['
+                    | ']'
+                    | '('
+                    | ')'
+                    | '|'
+                    | '~'
+                    | '#'
+                    | '^'
+                    | '<'
+                    | '>'
+                    | '\\'
+                    | '+'
+                    | '@'
+                    | '!'
+            )
+        {
+            out.push('\\');
+        }
+        out.push(unt);
+        i += 1;
+    }
+    out
 }
 
 /// Parse `${...}` and detect a Phase 1 param-modifier shape. Returns
