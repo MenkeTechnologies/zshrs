@@ -2946,7 +2946,7 @@ directions — no actual regression).
 
 ## #48 — `typeset -m PATTERN` rejects pattern argument
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=1; b=2; aa=3; typeset -m "a*"'
@@ -2964,32 +2964,55 @@ this context". Same with `typeset -mp PAT` (patterned print).
 `unset -m PAT` and `unalias -m PAT` also potentially affected
 (not yet exhaustively tested).
 
-**Where** — `src/ported/builtin.rs::bin_typeset` `-m` flag handler
-fails to switch the argument parser into pattern mode and instead
-runs the standard "name[=value]" parser, which rejects `*`.
+**Root cause** — `src/ported/builtin.rs::bin_typeset` had no
+`-m PATTERN` arm with args. The control flow:
 
-**Impact** — `typeset -m` is THE standard way to enumerate
-parameters by pattern. Used heavily for introspection scripts,
-shellcheck-like tools, debug helpers:
+  1. `if !hasargs { ... }` handled the no-args case correctly
+     (`typeset -m` alone — print every param).
+  2. With args, the code fell through to the per-arg loop that
+     validates each name as an identifier via
+     `isident()`, which rejects `*` and friends.
 
-```sh
-# Common pattern: dump all DEBUG_* vars
-typeset -m 'DEBUG_*'   # zshrs: parse error
+C zsh's `Src/builtin.c:3042-3088` has a dedicated `-m PATTERN`
+arm that runs BEFORE the per-arg loop: each arg is
+`patcompile()`'d and `scanmatchtable()`'d against `paramtab`.
 
-# Common pattern: remove all temp vars
-unset -m '_TMP_*'     # zshrs: same issue if affected
-```
+**Fix** (`src/ported/builtin.rs::bin_typeset`) — inject a new
+`-m` arm after the `-T` tied-pair handling and before the
+per-arg loop. Mirrors C's arm at c:3042-3088:
 
-Demo 305 uses `typeset -m 'report_*'` with `2>/dev/null` suppressing
-the error — the demo silently produces empty output instead of
-the matched variables.
+  * Compile each arg as a pattern via the canonical
+    `pattern::patcompile`. On compile failure, emit `bad
+    pattern:` and continue (returnval = 1 per c:3068).
+  * Walk `paramtab` (sorted) filtering on `pattry()` match AND
+    `on|roff` flag intersection.
+  * For each match, call `printparamnode` with
+    `printflags | PRINT_TYPE` (when no `-p` and no on-bits).
 
-**Workaround** — iterate manually:
-```sh
-for name in ${(k)parameters}; do
-    [[ $name == a* ]] && echo "$name=${(P)name}"
-done
-```
+Verified vs `/opt/homebrew/bin/zsh`:
+
+  * `typeset -m "a*"` after `a=1; b=2; aa=3` → prints `a=1`
+    and `aa=3` (BUGS.md case).
+  * `typeset -mp "a*"` → `typeset a=1` / `typeset aa=3`
+    (full declarations).
+  * `typeset -m "DEBUG_*"` → lists all `DEBUG_*` vars.
+  * `typeset -m "z*"` with no matches → silent, EC=0.
+  * Bare `typeset` (no -m) → unchanged.
+  * `typeset -p NAME` (specific name) → unchanged.
+  * Previously-failing test `test_typeset_m_glob_lists_matching`
+    now passes; no other test regressed.
+
+Minor remaining divergence (not bug #48 core):
+
+  * Output formatting for PM_HIDE / PM_SPECIAL params shows
+    extra attribute words versus zsh's terser format
+    (`association hide aliases=(  )` vs `aliases`). The match
+    set is correct; only the value-emission differs. This is
+    the same PMTYPES-data issue called out under bug #42 and
+    will be addressed in the same followup.
+
+zshrs_shell regression: 926/126 baseline preserved with +1
+pass net (the `test_typeset_m_glob_lists_matching` flip).
 
 ---
 

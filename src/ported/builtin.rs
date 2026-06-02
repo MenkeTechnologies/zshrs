@@ -3766,6 +3766,87 @@ pub fn bin_typeset(
         }
         return 0;
     }
+
+    // c:Src/builtin.c:3042-3088 — `-m PATTERN` lists params matching
+    // the glob pattern instead of treating args as name[=value]
+    // pairs. Without this, `typeset -m "a*"` errored
+    // "not valid in this context: a*" because the per-arg loop's
+    // identifier validation rejected `*`. Bug #48 in docs/BUGS.md.
+    if OPT_ISSET(&ops, b'm') && !argv.is_empty() {
+        // c:3041 — set PRINT_TYPE and PRINT_NAMEONLY appropriately
+        // for the pattern-list path. Without `-p`, PRINT_TYPE flips
+        // on (so each match prints with attribute words like the
+        // no-args path); when no on-bits, PRINT_NAMEONLY suppresses
+        // value emission (zsh lists only names by default with
+        // -m + value-less arg).
+        let mut local_printflags = printflags;
+        if !OPT_ISSET(&ops, b'p') {
+            if (on | roff) == 0 {
+                local_printflags |= PRINT_TYPE;
+            }
+            if on == 0 {
+                // c:3054 — when not setting attributes, list names only.
+                // BUT `typeset -m "a*"` in zsh shows `a=1` (name=value)
+                // form too — that's because PRINT_TYPE format prints
+                // value AFTER the attribute words. The PRINT_NAMEONLY
+                // gate at the C source only applies when -p is also
+                // false; keep value-emission unless explicit `-p`.
+                let _ = on;
+            }
+        }
+        for pattern in argv.iter() {
+            // c:3061 — `patcompile(asg->name, 0, NULL)` glob-compile.
+            // Use the canonical pattern.rs port. On compile failure,
+            // emit "bad pattern" and continue to the next arg.
+            let pat = crate::ported::pattern::patcompile(
+                pattern,
+                crate::ported::zsh_h::PAT_HEAPDUP as i32,
+                None,
+            );
+            let pat = match pat {
+                Some(p) => p,
+                None => {
+                    zwarnnam(name, &format!("bad pattern: {}", pattern));
+                    returnval = 1;
+                    continue;
+                }
+            };
+            // c:3068 — `scanmatchtable(paramtab, pprog, 1, on|roff,
+            // 0, paramtab->printnode, printflags);` — walk paramtab
+            // entries whose name matches the pattern AND whose flag
+            // bits intersect on|roff.
+            let names: Vec<String> = {
+                let tab = paramtab().read().unwrap();
+                let on_roff = (on as u32) | (roff as u32);
+                let mut names: Vec<String> = tab
+                    .iter()
+                    .filter(|(k, pm)| {
+                        let f = pm.node.flags as u32;
+                        if (f & PM_UNSET) != 0 {
+                            return false;
+                        }
+                        if on_roff != 0 && (f & on_roff) == 0 {
+                            return false;
+                        }
+                        crate::ported::pattern::pattry(&pat, k)
+                    })
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                names.sort_by(|a, b| hnamcmp(a, b));
+                names
+            };
+            for k in names {
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(&k) {
+                        printparamnode(pm, local_printflags);
+                    }
+                }
+            }
+        }
+        unqueue_signals();
+        return returnval;
+    }
+
     let mut tied_name_count: usize = 0;
     for arg in argv {
         // c:Src/builtin.c typeset_single — when PM_LOCAL is in
