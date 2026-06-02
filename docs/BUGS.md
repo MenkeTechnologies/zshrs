@@ -1962,7 +1962,7 @@ both directions — no actual regression).
 
 ## #34 — `case` `(a*|b*))` paren-grouped alternation doesn't match with `extended_glob`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob
@@ -1989,17 +1989,71 @@ Tested:
   - `case x in x|y) echo ok ;; esac`           → both: `ok`     ✓
   - `case x in ((x|y))) echo ok ;; esac`       → both: `ok`     ✓ (extra paren)
 
-**Where** — `src/ported/parse.rs::par_case` interprets `(pat))` as
-an empty pattern followed by extra `)`. C-zsh strips the outer
-parens and matches against the inner pattern.
+**Root cause** — `src/ported/parse.rs::par_case` has two paths
+for the leading `(` of a case pattern depending on what the
+lexer produced:
 
-**Workaround** — drop the outer parens or double them up:
-```sh
-case x in
-    a*|b*) ...        # bare form works
-    ((a*|b*))) ...    # doubled outer works
-esac
-```
+  1. **Absorbed-STRING path** (arm-1, incmdpos=false): the
+     lexer slurps `(pat)` as a single STRING token. The
+     existing strip-hack (parse.rs:1474-1494) removes the
+     outer parens from the tokstr and sets `absorbed_outpar
+     = true`. The code at parse.rs:1519 then skipped the
+     OUTPAR_TOK consumption assuming the absorbed token
+     consumed BOTH parens — but the lexer only consumed the
+     single balanced pair, leaving the case-arm-closing `)`
+     as a separate OUTPAR_TOK that body parsing then choked
+     on.
+
+  2. **Separate-INPAR-TOK path** (arm-2+, incmdpos=true
+     after the prior arm's terminator): the lexer emits
+     INPAR_TOK separately, par_case consumes it at the loop
+     top, and the inner loop reads patterns as separate
+     STRING / BAR tokens. The OUTPAR_TOK that ends the inner
+     loop closes the alternation GROUP. For `(pat))` the
+     SECOND `)` is the case-arm closer that still needs
+     consumption before body parsing.
+
+For input `case x in (a*|b*)) echo a ;; (x|y)) echo b ;;
+*) echo o ;; esac`:
+
+  * Arm 1 hit path (1) — absorbed `(a*|b*)`, strip-hack
+    fired, but the second `)` was treated as body and the
+    arm broke silently.
+  * Arm 2 hit path (2) — leading `(` consumed via INPAR_TOK,
+    inner loop read `x`, `y`, then consumed `)` as the
+    alt-group closer. The second `)` (case-arm closer) was
+    left for body parsing which choked.
+
+**Fix** (`src/ported/parse.rs::par_case`) — both paths now
+consume any trailing OUTPAR_TOK as a potential case-arm
+closer:
+
+  * Absorbed path: after the strip-hack, if the next token
+    is OUTPAR_TOK, consume it as the case-arm closer.
+  * Separate-INPAR path: after consuming the alt-group's
+    closing OUTPAR_TOK, if the next token is ALSO OUTPAR_TOK
+    (we tracked the leading `(` via `leading_inpar_consumed`),
+    consume that too.
+
+Both forms `(pat)` (single `)` does double-duty) and
+`(pat))` (separate group-close + arm-close) now parse the
+same way. Mirrors C's behavior where the parser accepts
+both shapes.
+
+Verified:
+
+  * `(a*|b*))` with `extended_glob` → matches (BUGS.md case).
+  * `(x|y))` → matches.
+  * `(x|y)` single close → still matches (already worked).
+  * `x|y)` bare → still matches.
+  * `(x))` → still matches.
+  * `((x|y)))` doubled outer → still matches.
+  * Multi-arm `(a*|b*)) ;; (x|y)) ;; *)` — now hits arm 2
+    when x doesn't match arm 1.
+  * No-match fallback `*)` still fires.
+
+zshrs_shell regression: 925/127 (baseline preserved with
+`--test-threads=1`).
 
 ---
 
