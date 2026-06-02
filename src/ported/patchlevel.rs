@@ -25,11 +25,30 @@ pub const ZSH_PATCHLEVEL: &str = "zsh-5.9-465-g6b9704e"; // c:1
 ///
 /// C body: `echo '#define ZSH_VERSION "'$(VERSION)'"' > $@`
 /// — the build glue writes `VERSION` from `Config/version.mk` into
-/// a generated header that init.c reads. zshrs holds the same value
-/// as a Rust `const` since the build is cargo-driven, not make-driven.
+/// a generated header that init.c reads.
+///
+/// Upstream `Config/version.mk` ships `VERSION=5.9.0.3-test` (the
+/// in-development snapshot tag), but every shipped zsh binary
+/// (Homebrew, distro packages, etc.) reports `5.9` — release builds
+/// strip the `.0.3-test` development suffix before tagging. Scripts
+/// in the wild gate on the release form (`[[ $ZSH_VERSION = 5.9 ]]`,
+/// `IFS=. read -r maj min pat <<< $ZSH_VERSION` expecting two parts,
+/// `${ZSH_VERSION%%.*-*}` etc.) — bug #73 in docs/BUGS.md.
+///
+/// Report the clean release form here. zshrs-specific identity lives
+/// in `ZSHRS_VERSION` below; the full upstream snapshot tag is
+/// still tracked via `ZSH_PATCHLEVEL` above.
+///
 /// Read by `params.rs::createparamtable` (c:966 — `setsparam("ZSH_VERSION", ZSH_VERSION)`)
 /// and by the `--version` startup banner.
-pub const ZSH_VERSION: &str = "5.9.0.3-test"; // Config/version.mk:VERSION
+pub const ZSH_VERSION: &str = "5.9"; // clean release form (bug #73)
+
+/// zshrs-specific identity. C zsh has no equivalent. Surfaced as the
+/// `$ZSHRS_VERSION` parameter and the `--version` banner so scripts
+/// that need to distinguish zshrs from upstream zsh have a clean
+/// detection point (vs. clobbering `$ZSH_VERSION` with a `-test`
+/// suffix).
+pub const ZSHRS_VERSION: &str = "5.9.0.3-test"; // snapshot tag for zshrs identity
 
 #[cfg(test)]
 mod tests {
@@ -52,13 +71,15 @@ mod tests {
 
     /// `$ZSH_VERSION` is read at params.rs `createparamtable` (c:966)
     /// and by the `--version` startup banner (Src/init.c:436). Pin
-    /// the upstream Config/version.mk VERSION value so version-aware
-    /// scripts (e.g. `[[ $ZSH_VERSION = 5.9.* ]]`) keep working when
-    /// the snapshot rolls forward.
+    /// the clean release form so script-side gates
+    /// (`[[ $ZSH_VERSION = 5.9 ]]`, MAJOR.MINOR parsing) match shipped
+    /// zsh — bug #73 in docs/BUGS.md. The full snapshot tag stays in
+    /// `ZSHRS_VERSION` below + `ZSH_PATCHLEVEL` above.
     #[test]
     fn zsh_version_matches_upstream_config_version() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(ZSH_VERSION, "5.9.0.3-test");
+        assert_eq!(ZSH_VERSION, "5.9");
+        assert_eq!(ZSHRS_VERSION, "5.9.0.3-test");
         // Shape: MAJOR.MINOR[.PATCH[.SUB][-tag]]
         let major = ZSH_VERSION.split('.').next().unwrap_or("");
         assert!(

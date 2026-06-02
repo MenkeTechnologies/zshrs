@@ -4756,7 +4756,32 @@ state).
 
 ## #73 — `$ZSH_VERSION` reports `5.9.0.3-test` (custom suffix), not `5.9`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `$ZSH_VERSION` was set from
+`zsh_version::ZSH_VERSION` (a build-time const emitted by `build.rs`
+parsing the vendored `Config/version.mk`, which ships
+`VERSION=5.9.0.3-test`). Shipped zsh binaries strip the development
+`-test` suffix before tagging; cross-shell scripts that gate on
+`[[ $ZSH_VERSION = 5.9 ]]` or split MAJOR.MINOR.PATCH expected the
+clean form.
+
+Per the bug's stated wish, separated the two concerns:
+- `patchlevel::ZSH_VERSION` const → `"5.9"` (release form). vm_helper's
+  runtime init now sets `$ZSH_VERSION` from this clean form.
+- `patchlevel::ZSHRS_VERSION` const → `"5.9.0.3-test"` (development
+  snapshot). New `$ZSHRS_VERSION` runtime param surfaces this for
+  zshrs-vs-upstream identity checks.
+- `$ZSH_PATCHLEVEL` unchanged (still the git-describe form).
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `[[ "$ZSH_VERSION" == 5.9* ]]` — both shells match.
+- `IFS=. read -r maj min pat <<< "$ZSH_VERSION"` → zshrs `5 / 9 /
+  empty`, zsh `5 / 9 / 1` (different patch slot because Homebrew
+  ships 5.9.1, but the shape matches).
+- `${ZSH_VERSION%%.*}` → `5` in both.
+- `[[ -n "$ZSHRS_VERSION" ]]` cleanly distinguishes zshrs (true) from
+  zsh (false).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[$ZSH_VERSION]"'
