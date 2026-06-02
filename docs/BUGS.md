@@ -1145,7 +1145,37 @@ XPATH="${(j.:.)xpath}"     # rejoin on each mutation
 
 ## #25 — `$ZSH_SCRIPT` unset and `$ZSH_ARGZERO` wrong in script mode
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-05-30 (`bins/zshrs.rs` script-mode dispatch).
+Surfaced 2026-05-30 hunting.
+
+Root cause: the ported `setupvals` at `src/ported/init.rs:853` does
+the canonical `setsparam("ZSH_SCRIPT", runscript)` (port of
+`Src/init.c:1330`) and the canonical `setsparam("ZSH_ARGZERO", ...)`
+at line 1849 (port of c:965). But the bin-entry dispatcher in
+`bins/zshrs.rs:1752` never routes through `setupvals` — it instead
+calls `executor.execute_script_file(args[1])` directly, leaving
+both vars unset (so $ZSH_SCRIPT was empty) and ZSH_ARGZERO carrying
+argv[0] (the zshrs binary path) instead of the script path.
+
+Fix: at the script-mode dispatch site, after setting $0 and pparams,
+call `setsparam("ZSH_SCRIPT", args[1])` and `setsparam("ZSH_ARGZERO",
+args[1])` directly — mirrors the C source's
+`Src/init.c:1330,965` setsparam calls that the bin entry needs to
+perform itself since it skips the full setupvals path.
+
+Verified against /opt/homebrew/bin/zsh:
+```
+zshrs --zsh /tmp/d.zsh:
+  ZSH_SCRIPT=/tmp/d.zsh  (was: N/A)
+  ZSH_ARGZERO=/tmp/d.zsh (was: target/debug/zshrs)
+  $0=/tmp/d.zsh           (unchanged — already correct)
+```
+
+-c mode unchanged: ZSH_SCRIPT stays unset, ZSH_ARGZERO carries the
+shell binary path — matches zsh's `-c` semantics.
+
+tests/zshrs_shell baseline 132 failures (unchanged — no regression).
+Bug #8 / #11 / #12 / #13 / #14 / #22 all still pass.
 
 ```sh
 $ cat > /tmp/d.zsh <<'EOF'
