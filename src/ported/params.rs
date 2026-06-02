@@ -5731,6 +5731,22 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
     // place.
     if let Ok(mut tab) = paramtab().write() {
         if let Some(pm) = tab.get_mut(s) {
+            // c:Src/params.c — setnumvalue (the C function this
+            // reassign-path mirrors) eventually calls setfn which
+            // goes through assignstrvalue (params.c:2899-2904) where
+            // PM_READONLY rejection lives. The Rust port writes
+            // u_val / u_dval / u_str directly, bypassing that path,
+            // so the readonly check has to happen here. Without it,
+            // `(( x++ ))` / `let "x = ..."` could mutate readonly
+            // params silently. Bug #154 in docs/BUGS.md.
+            if (pm.node.flags as u32 & PM_READONLY) != 0 {
+                // zerr internally sets ERRFLAG_ERROR via the
+                // c:194 path in Src/utils.c. Match the existing
+                // readonly check at params.rs:3951 (assignstrvalue
+                // arm) — same call shape, same behavior.
+                zerr(&format!("read-only variable: {}", pm.node.nam));
+                return None;
+            }
             pm.node.flags &= !(PM_DEFAULTED as i32);
             let t = PM_TYPE(pm.node.flags as u32);
             if t == PM_INTEGER {

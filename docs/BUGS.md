@@ -11694,7 +11694,73 @@ echo "$((${#tokens}))"
 
 ## #154 — Readonly variable modifiable via `(( ))` / `let` arith ops
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `assignnparam` (the numeric-assignment path used by `(( ))` / `let` / `setiparam`) now checks `PM_READONLY` before writing to paramtab.
+
+**Root cause** — `src/ported/params.rs::assignnparam` writes
+`u_val` / `u_dval` / `u_str` directly into the paramtab entry
+without going through the `setfn` vtable that C zsh's
+`setnumvalue` routes through. That vtable's chain reaches
+`assignstrvalue` (params.c:2899-2904) where the PM_READONLY
+rejection lives. Bypassing it meant `(( x++ ))`, `let "x = N"`,
+and any other arith-context numeric write would silently mutate
+a readonly variable.
+
+The direct-string-assignment path (`assignsparam` →
+`assignstrvalue`) had the check at `params.rs:3951`; the numeric
+path didn't.
+
+**C-source reference** — `Src/params.c::assignstrvalue` c:2899-2904:
+
+```c
+if (pm->node.flags & PM_READONLY) {
+    zerr("read-only variable: %s", pm->node.nam);
+    return;
+}
+```
+
+**Fix** — `assignnparam`'s reassign block (where it mutates
+the paramtab pm directly) now front-loads the same readonly
+gate:
+
+```rust
+if let Some(pm) = tab.get_mut(s) {
+    if (pm.node.flags as u32 & PM_READONLY) != 0 {
+        zerr(&format!("read-only variable: {}", pm.node.nam));
+        return None;
+    }
+    pm.node.flags &= !(PM_DEFAULTED as i32);
+    // ... existing write logic
+}
+```
+
+`zerr` internally sets `ERRFLAG_ERROR` via `Src/utils.c:194`, so
+no explicit flag manipulation is needed.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'readonly x=5; (( x++ )); echo "x=$x"'
+zsh:1: read-only variable: x
+
+$ ./target/debug/zshrs --zsh -c 'readonly y=10; let "y = 100"; echo "y=$y"'
+zsh:1: read-only variable: y
+y=10                              # let-path errflag continues (matches zsh)
+
+# Regression: writable arith unaffected.
+$ ./target/debug/zshrs --zsh -c 'x=5; (( x++ )); echo "x=$x"'
+x=6
+$ ./target/debug/zshrs --zsh -c 'integer i=0; for j in 1 2 3; do (( i+=j )); done; echo "i=$i"'
+i=6
+```
+
+Readonly enforcement is the primary fix. zsh's specific
+post-`(( ))`-error continuation behavior (vs post-direct-assign
+abort) is a known errflag-propagation asymmetry handled in
+a separate codepath; doesn't impact the readonly enforcement.
+
+Regression suite unchanged (111 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'readonly x=5; (( x++ )); echo "x=$x"' 2>&1
