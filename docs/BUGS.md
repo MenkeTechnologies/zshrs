@@ -6760,7 +6760,28 @@ class and `{N,M}` quantifier:
 
 ## #100 — `typeset -R N x="hello"` doesn't right-truncate the value
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — the getsparam-level `$var`-expansion
+padding (`src/ported/params.rs:4265-4364`) had the right-justify
+**pad** arm (`if charlen < fwidth`) but missed the **truncate** arm
+(`else if charlen > fwidth`). The parallel `getstrvalue` path at
+~line 3355 already had it for completeness; this was a copy-paste
+asymmetry between the two readers.
+
+Added the missing `else if charlen > fwidth { skip = charlen -
+fwidth; s = s.chars().skip(skip).collect(); }` arm — direct port of
+`Src/params.c:2496-2500` which truncates from the FRONT to fit
+`fwidth` codepoints (left side dropped, rightmost N kept).
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `typeset -L 3 x="hello"` → `hel` (unchanged).
+- `typeset -R 3 y="hello"` → `llo` (primary fix).
+- `typeset -R 5 y="hi"` → `   hi` (pad still works).
+- `typeset -R 5 num=42; typeset -L 8 name="alice"; "$num | $name"`
+  → `   42 | alice   `.
+- `typeset -Z 4 -i n=42` → `0042` (zero-pad numeric).
+- Exact-fit `-R 5 y="hello"` → `hello` (no change).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -L 3 x="hello"; echo "L: [$x]"; typeset -R 3 y="hello"; echo "R: [$y]"'
