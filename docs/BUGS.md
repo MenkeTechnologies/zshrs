@@ -6212,7 +6212,32 @@ joined="${(j.:.)tailed}"
 
 ## #92 — `$PS4` default is empty in zshrs; zsh defaults to `\e[34m%x\t%0N\t%I\t%_\e[0m\t`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — original-report's "blue-color template
+is the default" was inaccurate; that template comes from the user's
+environment (`env -i zsh -fc 'echo $PS4'` shows the actual C source
+default `+%N:%i> ` per `Src/init.c:1192-1193`). zshrs's gap was
+that it never seeded ANY default — `$PS4` read empty when neither
+the env nor a script set it.
+
+Added default-seeding for `PS1`/`PS2`/`PS3`/`PS4`/`SPROMPT` in
+vm_helper's runtime init from `Src/init.c:1186-1194`:
+- `PS1 = "%m%# "`
+- `PS2 = "%_> "`
+- `PS3 = "?# "`
+- `PS4 = "+%N:%i> "`
+- `SPROMPT = "zsh: correct '%R' to '%r' [nyae]? "`
+
+Each gated on `getsparam(...).map_or(true, |s| s.is_empty())` so the
+env-imported value (when present) wins; defaults only fill the
+otherwise-empty slot.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `env -i zsh -fc 'echo $PS4'` → both `+%N:%i>`.
+- `PS4='+CUSTOM' zsh -fc 'echo $PS4'` → both `+CUSTOM` (env wins).
+- `set -x` output now has the `+zsh:N>` prefix (still has a
+  separate lineno-tracking gap noted in bug #86).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo -n "$PS4"' | od -c | head -2

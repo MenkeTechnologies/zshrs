@@ -742,6 +742,44 @@ impl ShellExecutor {
             })
             .unwrap_or_else(|| "!^#".to_string());
         setsparam("histchars", &histchars_val);
+        // c:Src/init.c:1186-1193 — default prompt strings. zsh sets
+        // PS4 to "+%N:%i> " for ZSH emulation ("+ " for KSH/SH).
+        // Without seeding, PS4 reads empty and `set -x` output has
+        // no prefix at all. Bug #92 in docs/BUGS.md. Only seed if
+        // the slot is currently empty — preserve user's exported
+        // PS4 from the inherited env.
+        if crate::ported::params::getsparam("PS4")
+            .map_or(true, |s| s.is_empty())
+        {
+            setsparam("PS4", "+%N:%i> ");
+        }
+        // c:Src/init.c:1188-1189 — `prompt = ztrdup("%m%# "); prompt2
+        // = ztrdup("%_> ");` for the interactive primary/secondary
+        // prompts. PS1 may be reset by the prompt-theme layer; only
+        // seed when the slot is empty so any prior theme write wins.
+        if crate::ported::params::getsparam("PS1")
+            .map_or(true, |s| s.is_empty())
+        {
+            setsparam("PS1", "%m%# ");
+        }
+        if crate::ported::params::getsparam("PS2")
+            .map_or(true, |s| s.is_empty())
+        {
+            setsparam("PS2", "%_> ");
+        }
+        // c:Src/init.c:1191 — `prompt3 = ztrdup("?# ");`
+        if crate::ported::params::getsparam("PS3")
+            .map_or(true, |s| s.is_empty())
+        {
+            setsparam("PS3", "?# ");
+        }
+        // c:Src/init.c:1194 — `sprompt = ztrdup("zsh: correct '%R'
+        // to '%r' [nyae]? ");` — spelling-correction prompt.
+        if crate::ported::params::getsparam("SPROMPT")
+            .map_or(true, |s| s.is_empty())
+        {
+            setsparam("SPROMPT", "zsh: correct '%R' to '%r' [nyae]? ");
+        }
         // c:params.c:858-860 — standard non-special param defaults.
         setsparam("MAILCHECK", "60");
         setsparam("KEYTIMEOUT", "40");
