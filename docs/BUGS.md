@@ -11928,7 +11928,65 @@ echo "${s[1,m]}"
 
 ## #156 — `[[ -e /path/*.glob ]]` glob-expands in test (zsh: literal match)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `compile_zsh::compile_cond_expr` unary-arg compilation now bumps `dq_context_depth` to suppress filesystem globbing, matching C `Src/cond.c` semantics.
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_cond_expr`
+routed unary file-test args (e.g. the `arg` in `[[ -e ARG ]]`)
+through `self.compile_word_str(arg)` without suppressing
+`BUILTIN_GLOB_EXPAND`. The binary arm at line 4857 had the
+existing `dq_context_depth` bump for LHS-with-globs, but the
+unary arm and the Binary-as-Unary-packed arm both glob-
+expanded operands.
+
+Per zsh docs, `[[ ]]` operands undergo parameter expansion but
+NOT filesystem globbing — `[[ -e /tmp/*.txt ]]` tests the
+literal `/tmp/*.txt` path, not whatever the glob matches.
+`-v` was already special-cased to skip glob (Bug #145-related);
+the other unary tests (`-e`/`-d`/`-f`/`-r`/`-w`/`-x`/etc.)
+fell through to the unsuppressed expand path.
+
+**C-source reference** — `Src/cond.c::evalcond`. Operand
+evaluation goes through the wordcode walker but the dispatcher
+doesn't invoke `globlist` on operands — only param expansion
+and arith eval. Filesystem matching is suppressed for `[[ ]]`
+arguments by design.
+
+**Fix** — both code paths for unary file tests now bump
+`dq_context_depth` around the operand compile, mirroring the
+existing suppression logic at line 4857 for binary LHS with
+globs:
+
+```rust
+self.dq_context_depth += 1;
+self.compile_word_str(arg);
+self.dq_context_depth -= 1;
+```
+
+Applied to:
+- `ZshCond::Unary(op, arg)` arm (line 4814)
+- `ZshCond::Binary` "Binary-as-Unary packed" arm (line 4836)
+
+**Verify:**
+
+```sh
+$ mkdir -p /tmp/zgt; touch /tmp/zgt/a.txt
+$ ./target/debug/zshrs --zsh -c '[[ -e /tmp/zgt/*.txt ]] && echo y || echo n'
+n                                  # was y (matched a.txt)
+
+$ ./target/debug/zshrs --zsh -c '[[ -e /tmp/zgt/a.txt ]] && echo y || echo n'
+y                                  # real file, no regression
+
+$ ./target/debug/zshrs --zsh -c 'log="/tmp/zgt/*.txt"; [[ -e "$log" ]] && echo y || echo n'
+n                                  # quoted variable, no regression
+
+$ ./target/debug/zshrs --zsh -c '[[ -d /tmp/zgt/* ]] && echo dy || echo dn; [[ -f /tmp/zgt/*.txt ]] && echo fy || echo fn'
+dn
+fn                                 # other unary tests fixed too
+```
+
+All match zsh exactly. Regression suite unchanged (111 same set).
+
+**Original report:**
 
 ```sh
 $ mkdir -p /tmp/zgt; touch /tmp/zgt/a.txt
