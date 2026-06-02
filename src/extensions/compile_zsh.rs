@@ -720,7 +720,17 @@ impl ZshCompiler {
             ZshCommand::Repeat(r) => self.compile_repeat(r),
             ZshCommand::FuncDef(f) => self.compile_funcdef(f),
             ZshCommand::Cond(c) => self.compile_cond(c),
-            ZshCommand::Arith(expr) => self.compile_arith(expr),
+            ZshCommand::Arith(expr) => {
+                self.compile_arith(expr);
+                // c:Src/exec.c WC_ARITH — math command's status is part
+                // of the errexit check: `set -e; (( 0 ))` should exit
+                // because the math evaluates to 0 → status 1. The
+                // compile_arith path emits SetStatus(0/1) per the
+                // result but never invoked emit_errexit_check, so
+                // `set -e` had no opportunity to fire on the math
+                // command's non-zero status. Bug #33 in docs/BUGS.md.
+                self.emit_errexit_check();
+            }
             ZshCommand::Redirected(inner, redirs) => {
                 // Compound command with trailing redirects (e.g.
                 // `{ ... } 2>&1`). Bracket the body in a

@@ -1896,7 +1896,7 @@ zshrs_shell regression: 925/127 (baseline preserved with
 
 ## #33 — `set -e` (errexit) doesn't fire on `(( false_cond ))`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'set -e; (( 0 )); echo "still here"'
@@ -1918,29 +1918,45 @@ Confirmed working with same scaffolding:
   - `set -e; (( 0 )); echo "after"`         → **zsh exits, zshrs continues**
   - `set -e; (( 1 == 0 )); echo "after"`    → **zsh exits, zshrs continues**
 
-**Where** — `src/ported/exec.rs::exec_arith_or_test` (the `(( ))`
-execution path) doesn't propagate non-zero exit status to the
-errexit checker. The `let` and `false` paths do.
+**Root cause** — `src/extensions/compile_zsh.rs::compile_command`
+dispatched `ZshCommand::Arith(expr)` straight to `compile_arith`
+WITHOUT a trailing `emit_errexit_check()`. The `compile_arith`
+body itself does emit `SetStatus(0)` / `SetStatus(1)` based on
+the math result (0 → status 1, non-zero → status 0), but the
+errexit check that compile_simple emits after every other
+command was never paired with the math command. So `(( 0 ))`
+set $? to 1 but `set -e` had no opportunity to fire.
 
-**Affected scripts** — defensive scripts using `(( var > 0 ))`
-patterns under `set -euo pipefail` to abort early when a counter
-or guard variable is wrong:
+C zsh handles this at the execlist level — every sublist's
+trailing errexit check at `Src/exec.c:1608` fires uniformly
+regardless of whether the leaf was a builtin, an external, or
+a WC_ARITH math command. zshrs's compile path emits the check
+per-call-site instead of at a single execlist boundary, so the
+math arm needed an explicit emit.
 
-```sh
-set -euo pipefail
-load_config
+**Fix** (`src/extensions/compile_zsh.rs::compile_command`'s
+`ZshCommand::Arith` dispatch) — pair `compile_arith(expr)` with
+`emit_errexit_check()`. The check respects
+`errexit_suppress_depth` so contexts like `if (( 0 )); then …
+else …; fi` still don't unwantedly trigger (the `if` cond bumps
+the suppress counter around the math expression).
 
-# zsh: exits here if count == 0 (correct)
-# zshrs: continues anyway (silent failure mode)
-(( count > 0 ))
-do_thing
-```
+Verified:
 
-**Workaround** — wrap in if/then with explicit exit:
-```sh
-set -e
-(( count > 0 )) || exit 1   # || branch fires correctly
-```
+  * `set -e; (( 0 )); echo "still here"` → exit before echo
+    (BUGS.md repro).
+  * `set -e; (( 1 )); echo "should print"` → prints; EC=0.
+  * `set -e; (( 5 + 3 )); echo "should print"` → prints; EC=0.
+  * `(( 0 )); echo "should print: $?"` → prints `should print: 1`
+    (without `set -e`, $? gets set but no exit).
+  * `set -e; if (( 0 )); then echo a; else echo b; fi; echo done`
+    → `b` then `done`; EC=0 (errexit suppressed inside `if` cond
+    via the existing `errexit_suppress_depth` mechanism).
+  * `set -e; false; echo after` → exit before echo (unchanged).
+
+zshrs_shell regression: 925/127 stable baseline preserved (the
+local run fluctuated to 924/128 but the test-name diff was empty
+both directions — no actual regression).
 
 ---
 
