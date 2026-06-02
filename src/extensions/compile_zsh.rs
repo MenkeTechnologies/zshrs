@@ -4880,6 +4880,21 @@ impl ZshCompiler {
                         self.dq_context_depth += 1;
                         self.compile_word_str(right);
                         self.dq_context_depth -= 1;
+                        // c:Src/options.c GLOB_SUBST. When the RHS
+                        // pattern came from variable / cmd
+                        // substitution, zsh's default-OFF
+                        // GLOB_SUBST keeps the resulting chars
+                        // LITERAL (no glob meta promotion).
+                        // Emit the runtime guard that consults
+                        // GLOB_SUBST and escapes meta chars when
+                        // off. Bug #116 in docs/BUGS.md.
+                        self.builder.emit(
+                            Op::CallBuiltin(
+                                crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD,
+                                1,
+                            ),
+                            0,
+                        );
                     } else if rhs_is_pure_dq_pre {
                         // Literal-compare path: untokenize WITHOUT
                         // escaping glob metas. StrEq does a byte

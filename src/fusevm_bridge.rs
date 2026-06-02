@@ -2184,6 +2184,33 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
+    // c:Src/options.c GLOB_SUBST + Src/cond.c:552 cond_match.
+    // Pop pattern string; when GLOB_SUBST is OFF, escape every glob
+    // metachar with `\` so the downstream StrMatch + patcompile
+    // treat them as literals (matching C's tokenization-based
+    // gate). When GLOB_SUBST is ON, pass through unchanged.
+    // See BUILTIN_GLOB_SUBST_GUARD docs above for full rationale.
+    vm.register_builtin(BUILTIN_GLOB_SUBST_GUARD, |vm, _argc| {
+        let p = vm.pop().to_str();
+        let glob_subst =
+            crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
+        if glob_subst {
+            return Value::str(p);
+        }
+        let mut out = String::with_capacity(p.len() * 2);
+        for c in p.chars() {
+            match c {
+                '*' | '?' | '[' | ']' | '(' | ')' | '|' | '<' | '>' | '#' | '^'
+                | '~' | '\\' => {
+                    out.push('\\');
+                    out.push(c);
+                }
+                _ => out.push(c),
+            }
+        }
+        Value::str(out)
+    });
+
     vm.register_builtin(BUILTIN_ARRAY_JOIN_STAR, |vm, _argc| {
         let name = vm.pop().to_str();
         let result = with_executor(|exec| {
@@ -5216,6 +5243,28 @@ pub const BUILTIN_XTRACE_ASSIGN: u16 = 525;
 ///
 /// Stack: untouched. argc = 0.
 pub const BUILTIN_XTRACE_NEWLINE: u16 = 526;
+
+/// GLOB_SUBST guard for `[[ x == $pat ]]` pattern RHS coming from
+/// parameter / command substitution. C-zsh's `[[ == ]]` semantics
+/// (Src/options.c GLOB_SUBST default OFF + Src/cond.c:552
+/// `cond_match` + Src/pattern.c patcompile tokenization-based
+/// meta detection) treat chars from substitution as LITERAL
+/// unless GLOB_SUBST is on. The Rust patcompile accepts both
+/// tokenized and raw-ASCII meta chars, losing the distinction,
+/// so `pat="h*"; [[ hello == $pat ]]` matched in zshrs but not
+/// in zsh. Bug #116 in docs/BUGS.md.
+///
+/// Compile-time signal: emitted by `compile_cond_expr` ONLY when
+/// the RHS contains `$` or backtick. Runtime checks the live
+/// option state. If GLOB_SUBST is OFF, the popped string has
+/// its glob metachars escaped with `\` so the downstream StrMatch
+/// → patcompile treats them as literals. If GLOB_SUBST is ON,
+/// the value passes through unchanged so `setopt glob_subst`
+/// restores zsh's pattern-on-expansion behavior.
+///
+/// Stack: pops one string, pushes the (possibly escaped) result.
+/// argc = 1.
+pub const BUILTIN_GLOB_SUBST_GUARD: u16 = 528;
 
 /// Bridge into subst_port::substitute_brace_array for nested forms
 /// that need to PRESERVE array shape across the expand_string
