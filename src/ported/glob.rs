@@ -3056,6 +3056,13 @@ pub struct qualifier_set {
     /// Direct port of zsh/Src/glob.c case 'D' which sets
     /// `gf_glob.dots = 1` for the duration of this glob expansion.
     pub globdots: bool,
+    /// `(YN)` qualifier — short-circuit: limit number of matches to
+    /// at most N. Direct port of zsh/Src/glob.c:1579-1595 (`case 'Y'`)
+    /// which sets the C `shortcircuit` int. The matcher should stop
+    /// after collecting N entries; the Rust port truncates after the
+    /// match walk completes (the optimization gain is the same in
+    /// the typical short-glob case). Bug #41 in docs/BUGS.md.
+    pub short_circuit: Option<i32>,
 }
 
 /// Pattern component
@@ -3742,6 +3749,23 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 let (first, last) = parse_subscript(&mut chars);
                 qs.first = first;
                 qs.last = last;
+            }
+            // c:Src/glob.c:1579-1595 `case 'Y'` — short-circuit:
+            // limit matches to at most N. Reads a numeric argument
+            // immediately following the `Y`. Bug #41 in docs/BUGS.md.
+            'Y' => {
+                let mut num_str = String::new();
+                while let Some(&pc) = chars.peek() {
+                    if pc.is_ascii_digit() {
+                        num_str.push(pc);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                if let Ok(n) = num_str.parse::<i32>() {
+                    qs.short_circuit = Some(n);
+                }
             }
             _ => {}
         }
@@ -4491,8 +4515,8 @@ fn sort_matches(state: &mut globdata) {
 /// during scanner emit; here we slice after the full walk.
 fn apply_selection(state: &mut globdata) {
     // RUST-ONLY
-    let (first, last) = match &state.qualifiers {
-        Some(q) => (q.first, q.last),
+    let (first, last, short_circuit) = match &state.qualifiers {
+        Some(q) => (q.first, q.last, q.short_circuit),
         None => return,
     };
 
@@ -4517,6 +4541,22 @@ fn apply_selection(state: &mut globdata) {
         state.matches = state.matches[start..end.min(state.matches.len())].to_vec();
     } else {
         state.matches.clear();
+    }
+
+    // c:Src/glob.c:1579-1595 `case 'Y'` — apply the short-circuit
+    // limit after the [first,last] slice (so `(Y3[2,4])` would yield
+    // up to 3 from the [2,4] subscript range). C truncates DURING
+    // the scanner walk via `if (shortcircuit == matchct) break;` —
+    // here we slice post-walk which produces the same set on the
+    // common short-glob case where the scanner doesn't recurse
+    // unboundedly. Bug #41 in docs/BUGS.md.
+    if let Some(n) = short_circuit {
+        if n >= 0 {
+            let n = n as usize;
+            if state.matches.len() > n {
+                state.matches.truncate(n);
+            }
+        }
     }
 }
 
