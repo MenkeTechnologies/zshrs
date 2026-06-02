@@ -6252,7 +6252,22 @@ impl fusevm::ShellHost for ZshrsHost {
         // (zsh's `alias → function → builtin → external` resolution
         // order, c:Src/exec.c:3038-3068). Check `functions_compiled`
         // first so a user `log() { ... }` shadows the module bin_log.
-        let has_user_fn = with_executor(|exec| exec.functions_compiled.contains_key(name));
+        // c:Src/exec.c — shfunctab->getnode (the DISABLED-filtering
+        // accessor) returns NULL for entries flipped to DISABLED via
+        // `disable -f NAME`. functions_compiled holds the body
+        // independently of the DISABLED flag, so check shfunctab first
+        // and mask the lookup when the entry is disabled. Bug #221
+        // in docs/BUGS.md.
+        let user_fn_disabled = crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .ok()
+            .and_then(|t| {
+                let entry = t.get_including_disabled(name)?;
+                Some((entry.node.flags as u32 & crate::ported::zsh_h::DISABLED as u32) != 0)
+            })
+            .unwrap_or(false);
+        let has_user_fn = !user_fn_disabled
+            && with_executor(|exec| exec.functions_compiled.contains_key(name));
         if !has_user_fn {
             // c:Src/exec.c:3056 — `builtintab->getnode(builtintab,
             // cmdarg)` returns NULL for DISABLED entries, falling
