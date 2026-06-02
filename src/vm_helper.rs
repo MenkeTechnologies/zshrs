@@ -724,9 +724,12 @@ impl ShellExecutor {
         setsparam("SHLVL", &shlvl);
         // POSIX/zsh default IFS: space + tab + newline + NUL.
         setsparam("IFS", " \t\n\0");
-        // POSIX getopts: OPTIND starts at 1, errors enabled.
+        // POSIX getopts: OPTIND starts at 1.
         setsparam("OPTIND", "1");
-        setsparam("OPTERR", "1");
+        // Note: OPTERR is NOT pre-initialised. zsh leaves it unset
+        // even after `getopts` calls (verified: `getopts ":a" opt -a`
+        // does not set it). It's a user-writable variable that
+        // starts unset. Bug #150 in docs/BUGS.md.
         // zsh wipes inherited `$_` (unlike bash).
         setsparam("_", "");
         // c:params.c:5064 — histchars derives from bangchar+hatchar+
