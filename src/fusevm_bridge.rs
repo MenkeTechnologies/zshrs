@@ -1975,6 +1975,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let body = format!("${{{}[{}]}}", name, idx);
         paramsubst_to_value(&body)
     });
+    // BUILTIN_ASSOC_HAS_KEY — `${(k)assoc[name]}` key-existence query.
+    // Pops [assoc_name, key]; returns key (Str) if present in the
+    // assoc, empty Str otherwise. Mirrors zsh's `${(k)h[name]}`
+    // documented semantics in zshparam(1) "Parameter Expansion Flags".
+    // Distinct from BUILTIN_ARRAY_INDEX (which returns the VALUE) and
+    // from `${+h[name]}` (which returns "0"/"1"). Bug #145.
+    vm.register_builtin(BUILTIN_ASSOC_HAS_KEY, |vm, _argc| {
+        let key = vm.pop().to_str();
+        let name = vm.pop().to_str();
+        let exists = crate::ported::params::gethkparam(&name)
+            .map(|keys| keys.iter().any(|k| k == &key))
+            .unwrap_or(false);
+        if exists {
+            Value::str(key)
+        } else {
+            Value::str("")
+        }
+    });
     vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, _argc| {
         // Inner body of `${(...)...}` (already stripped of `${`/`}` by
         // the caller). The compiler optionally prefixes Qstring
@@ -5440,6 +5458,9 @@ pub const BUILTIN_GET_MATH_VAR: u16 = 529;
 /// expanded result (still Str or Array depending on input shape).
 /// argc = 1.
 pub const BUILTIN_GLOB_SUBST_EXPAND: u16 = 530;
+/// `BUILTIN_ASSOC_HAS_KEY` constant — `${(k)assoc[name]}` key-existence
+/// query. Returns the key text on hit, empty string on miss. Bug #145.
+pub const BUILTIN_ASSOC_HAS_KEY: u16 = 531;
 
 /// Bridge into subst_port::substitute_brace_array for nested forms
 /// that need to PRESERVE array shape across the expand_string
