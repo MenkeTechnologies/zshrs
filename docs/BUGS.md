@@ -3282,7 +3282,7 @@ net.
 
 ## #53 — `${(P)$ref}` indirect doesn't resolve `name[subscript]` references
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(x y z); ref="a[2]"; echo "${(P)ref}"'
@@ -3305,30 +3305,60 @@ Affects:
 Works:
   - `${(P)$ref}` where `ref="varname"` → both shells correct
 
-**Where** — `src/ported/subst.rs::paramsubst` `(P)` flag handler
-should parse the indirect string as a full parameter expression
-(including `[idx]`), not just a bare identifier. The subscript
-part needs to flow through the parameter-lookup path.
+**Root cause** — `src/ported/subst.rs::paramsubst` `(P)` flag
+arm (aspar handling at line 4104) resolved `var_name` to the
+indirect target string but didn't parse the `[idx]` portion.
+For `ref="a[2]"`, `var_name` became `"a[2]"`; the downstream
+`arrays_get`/`assoc_get` lookups looked for a param named
+`"a[2]"` (no such name) and returned empty.
 
-**Impact** — limits the usefulness of `(P)` for building dynamic
-references to array elements:
-```sh
-# Common pattern: store "config.PORT" type references:
-keys=(server.host server.port db.name)
-typeset -A config=(server.host localhost server.port 8080 db.name myapp)
+C zsh's `Src/subst.c` aspar arm re-enters the paramsubst
+dispatch via `getstrvalue(v)` which routes through `getindex`
+to parse and apply the subscript.
 
-for k in "${keys[@]}"; do
-    ref="config[$k]"
-    echo "$k = ${(P)ref}"   # zsh: works; zshrs: prints empty
-done
+**Fix** (`src/ported/subst.rs` aspar arm) — after resolving the
+indirect target, detect a trailing `[…]` subscript on the
+resolved name and pull it into the outer `subscript` slot.
+Mirror the existing bare-`${arr[expr]}` subscript handler's
+singsub call so `$`-refs inside the subscript (`a[$n]`,
+`m[$k]`) get resolved at lookup time.
+
+```rust
+if subscript.is_none() {
+    if let Some(open_idx) = var_name.find('[') {
+        if var_name.ends_with(']') {
+            let raw_key = var_name[open_idx + 1 .. len - 1].to_string();
+            let base = var_name[..open_idx].to_string();
+            let key = if raw_key.contains('$') || raw_key.contains('`') {
+                singsub(&raw_key)
+            } else {
+                raw_key
+            };
+            var_name = base;
+            subscript = Some(key);
+        }
+    }
+}
 ```
 
-**Workaround** — assign through eval:
-```sh
-ref="a[2]"
-eval "val=\${$ref}"
-echo "$val"           # works in both shells
-```
+The downstream subscript handler then applies the key normally,
+hitting the assoc-lookup / array-index / range / `(I)`/`(R)`
+arms uniformly.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+
+  * `ref="a[2]"; ${(P)ref}` → `y` (BUGS.md case).
+  * `ref="h[k1]"; ${(P)ref}` → `v1` (assoc-key form).
+  * `ref="a"; ${(P)ref}` → bare name still works
+    (regression check).
+  * `ref="a[-1]"; ${(P)ref}` → `z` (negative index).
+  * `ref="a[2,3]"; ${(P)ref}` → `y z` (range subscript).
+  * `n=2; ref="a[$n]"; ${(P)ref}` → `y` ($n inside subscript
+    expanded by singsub).
+  * `ref="a"; ${(P)ref}` on array → `x y z` (full array splat
+    unchanged).
+
+zshrs_shell regression: 926/126 baseline preserved.
 
 ---
 

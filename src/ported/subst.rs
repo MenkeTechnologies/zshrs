@@ -4119,6 +4119,36 @@ pub fn paramsubst(
                     .unwrap_or_default(); // c:2741
                 var_name = target; // c:2741
             } // c:2741
+
+            // c:Src/subst.c — when the indirect name carries a
+            // subscript (`(P)ref` where `$ref` = "arr[2]" or
+            // "hash[key]"), parse the `[idx]` and apply it. The C
+            // source re-enters the paramsubst dispatch via
+            // `getstrvalue(v)` which handles the subscript through
+            // `getindex`. The Rust port previously stored the full
+            // `"arr[2]"` as var_name and the downstream lookup
+            // missed it (no array/assoc entry by that name).
+            // Bug #53 in docs/BUGS.md.
+            if subscript.is_none() {
+                if let Some(open_idx) = var_name.find('[') {
+                    if var_name.ends_with(']') {
+                        let raw_key = var_name[open_idx + 1..var_name.len() - 1].to_string();
+                        let base = var_name[..open_idx].to_string();
+                        // Subscript may contain $-refs (`a[$n]`,
+                        // `m[$key]`) — singsub them so the lookup
+                        // sees the resolved index/key. Matches the
+                        // singsub call at line 3998 of the bare
+                        // `${arr[expr]}` subscript handler.
+                        let key = if raw_key.contains('$') || raw_key.contains('`') {
+                            singsub(&raw_key)
+                        } else {
+                            raw_key
+                        };
+                        var_name = base;
+                        subscript = Some(key);
+                    }
+                }
+            }
         }
 
         // Look up var (with subscript if present). Port of
