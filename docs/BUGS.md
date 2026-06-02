@@ -23151,7 +23151,71 @@ eval "$1"
 
 ## #320 — `${@/pat/repl}` single-slash sub / `${@#pre}` / `${@%suf}` apply only to first positional (zsh: per-element)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — five paramsubst arms (`/`, `//`, `#`, `##`,
+`%`, `%%`) gated per-element-vs-scalar on `is_at_star`
+(`subscript == "@"|"*"`) and `nojoin == 2` (the `(@)` flag) but
+missed the bare `@`/`*` pseudo-name itself; corrected 2026-06-02.
+
+**Root cause** — Same family as #277 (`(o)@` sort). C
+`Src/subst.c:2916` sets `SCANPM_ISVAR_AT` both for explicit
+`arr[@]`/`arr[*]` subscripts AND for the bare `@`/`*` positional-
+splat pseudo-names. The Rust paramsubst arms only checked the
+former — when the var_name itself was `@` or `*` (no
+subscript, no `(@)` flag), the qt-collapse fired and the
+operator ran on the joined scalar rather than per-element.
+
+For `"${@/o/O}"` with positionals `foo bar baz`:
+- `subscript`=None → `is_at_star`=false
+- `nojoin`=0 (no `(@)` flag)
+- `qt`=true (DQ)
+- `per_element = is_at_star || nojoin==2 || !qt` = false
+- Falls into scalar-join arm → joined "foo bar baz", first
+  match replaced → "fOo bar baz"
+
+zsh's per-element semantics give "fOo bar baz" only because the
+FIRST positional matched first; the divergence shows on the
+`//` global form: zsh "fOO bar" (per-element), zshrs "fOo bar"
+(first occurrence in joined scalar).
+
+**Fix:** `src/ported/subst.rs::paramsubst` — extend the
+per-element gate in five arms (`/`, `//`, `#`, `##`, `%`, `%%`)
+to also fire when `var_name` is `@` or `*`. Same shape as
+#277's `isarr=-1` adjustment for the bare splat pseudo-names.
+All four strip arms share a unified
+`(!qt || is_at_star || nojoin == 2 || matches!(var_name, "@"|"*"))`
+expression; the replace arms (`/`, `//`) add an explicit
+`is_at_var` named binding.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- foo bar baz; echo "${@/o/O}"'
+fOo bar baz
+$ ./target/debug/zshrs --zsh -c 'set -- foo bar baz; echo "${@/o/O}"'
+fOo bar baz
+
+$ /opt/homebrew/bin/zsh -fc 'set -- foo bar; echo "${@//o/O}"'
+fOO bar
+$ ./target/debug/zshrs --zsh -c 'set -- foo bar; echo "${@//o/O}"'
+fOO bar
+
+$ /opt/homebrew/bin/zsh -fc 'set -- foo bar; echo "${@#f}"'
+oo bar
+$ ./target/debug/zshrs --zsh -c 'set -- foo bar; echo "${@#f}"'
+oo bar
+
+$ /opt/homebrew/bin/zsh -fc 'set -- foo bar; echo "${@%r}"'
+foo ba
+$ ./target/debug/zshrs --zsh -c 'set -- foo bar; echo "${@%r}"'
+foo ba
+
+# Regressions: scalar # strip, unquoted array, [@] subscript all unchanged
+$ ./target/debug/zshrs --zsh -c 'x=foobar; echo "${x#foo}"'
+bar
+$ ./target/debug/zshrs --zsh -c 'a=(foo bar); echo ${a/o/O}'
+fOo bar
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'set -- abc def ghi; echo "${@/?/X}"'
@@ -23268,7 +23332,19 @@ KEYTIMEOUT=10
 
 ## #322 — `${arr[*]/pat/repl}` (and `[*]#`/`[*]%`) applies per-element instead of scalar-context
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(foo bar); echo "${a[*]/o/O}"'
+fOo bar
+$ ./target/debug/zshrs --zsh -c 'a=(foo bar); echo "${a[*]/o/O}"'
+fOo bar
+```
+
+Both shells match.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(abc def ghi); echo "star=[${a[*]/?/X}]"; echo "at=[${a[@]/?/X}]"'
