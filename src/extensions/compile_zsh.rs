@@ -1698,7 +1698,16 @@ impl ZshCompiler {
         // Subscripted scalar assignment: `name[key]=value` and
         // `name[key]+=tail`. Untokenize the raw name (which carries
         // Inbrack/Outbrack markers) and split on the subscript brackets.
-        let untoked_name = crate::lex::untokenize(&assign.name);
+        //
+        // c:Src/exec.c:2077 untokenize replaces Snull/Dnull/Bnull with
+        // their literal quote chars (`'`/`"`/`\\`) via ztokens; zshrs's
+        // canonical untokenize() STRIPS them (intentional divergence at
+        // lex.rs:4371-4373 because many call sites want bare text).
+        // For subscript LHS we need the C semantic — `h["k2"]=v` stores
+        // the literal 4-char key `"k2"`, NOT `k2`. Use the
+        // quote-preserving variant so the key chars survive into the
+        // BUILTIN_SET_ASSOC load below. Bug #61 in docs/BUGS.md.
+        let untoked_name = crate::lex::untokenize_preserve_quotes(&assign.name);
         if let Some((base, key)) = split_subscript(&untoked_name) {
             if let ZshAssignValue::Scalar(s) = &assign.value {
                 let name_const = self.builder.add_constant(Value::str(base));
