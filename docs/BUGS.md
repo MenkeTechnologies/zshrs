@@ -15808,7 +15808,91 @@ cd "$projects"
 
 ## #218 — `typeset NAME` for assoc array prints nothing (zsh: shows `h=( [k]=v ... )` literal)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `bin_typeset`'s per-arg loop now emits the bare assoc/array/scalar form when no user flags + no assignment + top scope.
+
+**Root cause** — `bin_typeset`'s per-arg loop (the
+`if let Some(eq) = arg.find('=') { ... } else { ... }` branch)
+handled type-flag stamping but never emitted the bare display
+form for `typeset NAME` (no `=`, no flag args). Three issues:
+
+1. The no-args path at `builtin.rs:3477` (when `!hasargs`) had a
+   display loop, but `typeset h` HAS args so this didn't fire.
+2. The standalone `typeset_single` function at line 3181 has
+   the print logic, but `bin_typeset`'s per-arg loop never
+   delegates to it — it does its own inline work.
+3. `bin_typeset` auto-applies `PM_LOCAL` to `on` at
+   `c:2808` when not `-g`/`-x`/`-m`, so a naive
+   `on == 0 && off == 0` check would fail (`on` already
+   has `PM_LOCAL`).
+
+Additionally, direct array assignment `a=(1 2 3)` leaves
+`pm.node.flags` without `PM_ARRAY` set even though `pm.u_arr`
+is populated (a separate substrate issue), so `getaparam`
+returns None for these. My fix walks multiple storage paths
+to find the data.
+
+**C-source reference** — `Src/builtin.c::typeset_single` at
+c:2241-2246:
+
+```c
+if (OPT_ISSET(ops,'p'))
+    paramtab->printnode(&pm->node, PRINT_TYPESET|with_ns);
+else if (!OPT_ISSET(ops,'g') && (!isset(TYPESETSILENT) ||
+                                  OPT_ISSET(ops,'m')))
+    paramtab->printnode(&pm->node, PRINT_INCLUDEVALUE|with_ns);
+```
+
+**Fix** — added a display block after the type-stamp logic in
+the per-arg loop. Conditions:
+- `user_on = on & !PM_LOCAL` is 0 (no user flags)
+- `off == 0`
+- `at_top_scope` (locallevel == 0; in a function, `typeset NAME`
+  localizes instead of printing)
+- `!OPT_ISSET(b'p')` and TYPESETSILENT respected
+- `pname_in_tab` (var actually exists)
+
+Walks three storage paths in order (assoc → array via getaparam
+→ array via exec_hooks → array via paramtab u_arr fallback →
+scalar), emitting the appropriate form with `quotedzputs` on
+values:
+
+```rust
+let assoc = paramtab_hashed_storage().lock().ok()
+    .and_then(|s| s.get(arg).cloned());
+if let Some(map) = assoc {
+    // format as "name=( [k]=v ... )"
+} else if let Some(arr) = getaparam(arg)
+    .or_else(|| exec_hooks::array(arg))
+    .or_else(|| paramtab().read().ok()
+        .and_then(|t| t.get(arg).and_then(|pm| pm.u_arr.clone()))
+        .filter(|v| !v.is_empty()))
+{
+    // format as "name=( elem1 elem2 ... )"
+} else if let Some(val) = getsparam(arg) {
+    // format as "name=value"
+}
+```
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[k]=v; h[k2]=v2; typeset h'
+h=( [k]=v [k2]=v2 )                  # was empty
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3); typeset a'
+a=( 1 2 3 )                          # was a=''
+$ ./target/debug/zshrs --zsh -c 'x=hello; typeset x'
+x=hello
+
+# Regression: bare typeset inside function still localizes.
+$ ./target/debug/zshrs --zsh -c 'x=outer; f() { typeset x; echo "in=[$x]"; }; f; echo "after=[$x]"'
+in=[]
+after=[outer]
+```
+
+All four cases match zsh exactly. Regression suite unchanged
+(114 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[k]=v; h[k2]=v2; typeset h'

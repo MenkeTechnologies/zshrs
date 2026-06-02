@@ -4617,6 +4617,93 @@ pub fn bin_typeset(
                     }
                 }
             }
+            // c:Src/builtin.c::typeset_single c:2241-2246 — when no
+            // type flags and no value assignment, `typeset NAME` is a
+            // display request: print the existing param in the
+            // canonical form. C uses
+            // `printparamnode(&pm->node, PRINT_INCLUDEVALUE|with_ns)`.
+            // Without this, `typeset h` (where h is an assoc) emitted
+            // nothing. The earlier per-arg print at typeset_single
+            // line 3181 isn't called from bin_typeset's per-arg loop
+            // — the loop does its own inline work. Bug #218 in
+            // docs/BUGS.md.
+            // c:Src/builtin.c::typeset_single c:2241-2246 — bare
+            // `typeset NAME` (no on/off flags except PM_LOCAL which
+            // bin_typeset auto-applies at c:2808) prints the param.
+            // PM_LOCAL is added implicitly when not -g / -x / -m so
+            // mask it out when checking "are any user flags set".
+            //
+            // Only fire at top scope: inside a function (`local x` /
+            // `typeset x`), the bare form localizes the variable
+            // rather than printing it.
+            let user_on = (on as u32) & !PM_LOCAL;
+            let at_top_scope = locallevel.load(Relaxed) == 0;
+            if user_on == 0
+                && off == 0
+                && at_top_scope
+                && !OPT_ISSET(&ops, b'p')
+                && (!isset(TYPESETSILENT) || OPT_ISSET(&ops, b'm'))
+                && pname_in_tab
+            {
+                let with_ns = if OPT_ISSET(&ops, b'm') {
+                    PRINT_WITH_NAMESPACE
+                } else {
+                    0
+                };
+                let _ = with_ns;
+                // The paramtab entry for assoc/array shapes set via
+                // direct assignment (`a=(1 2 3)` / `h[k]=v`) doesn't
+                // always have PM_ARRAY/PM_HASHED set on flags — the
+                // values live in the executor's arrays/assoc_arrays
+                // storage, separate from paramtab. Check the canonical
+                // storage paths and emit the right form directly,
+                // mirroring printparamvalue's PM_ARRAY/PM_HASHED arms
+                // (params.rs:8819+).
+                let assoc = crate::ported::params::paramtab_hashed_storage()
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.get(arg).cloned());
+                if let Some(map) = assoc {
+                    let mut entries: Vec<(&String, &String)> = map.iter().collect();
+                    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+                    let mut s = format!("{}=( ", arg);
+                    let mut first = true;
+                    for (k, v) in entries {
+                        if !first {
+                            s.push(' ');
+                        }
+                        first = false;
+                        s.push_str(&format!(
+                            "[{}]={}",
+                            k,
+                            crate::ported::utils::quotedzputs(v)
+                        ));
+                    }
+                    s.push_str(" )");
+                    println!("{}", s);
+                } else if let Some(arr) = crate::ported::params::getaparam(arg)
+                    .or_else(|| crate::ported::exec_hooks::array(arg))
+                    .or_else(|| {
+                        // Fallback: paramtab entry's u_arr may be set
+                        // even when PM_TYPE doesn't include PM_ARRAY
+                        // (direct `a=(1 2 3)` assignment doesn't always
+                        // update the flag).
+                        paramtab()
+                            .read()
+                            .ok()
+                            .and_then(|t| t.get(arg).and_then(|pm| pm.u_arr.clone()))
+                            .filter(|v| !v.is_empty())
+                    })
+                {
+                    let parts: Vec<String> = arr
+                        .iter()
+                        .map(|v| crate::ported::utils::quotedzputs(v))
+                        .collect();
+                    println!("{}=( {} )", arg, parts.join(" "));
+                } else if let Some(val) = getsparam(arg) {
+                    println!("{}={}", arg, crate::ported::utils::quotedzputs(&val));
+                }
+            }
         }
     }
     unqueue_signals();
