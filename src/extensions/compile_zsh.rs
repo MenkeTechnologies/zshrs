@@ -4141,7 +4141,26 @@ impl ZshCompiler {
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_ALL, 0), 0);
                 continue;
             }
+            // c:Src/exec.c — `for x in $(cmd)` undergoes ONE wordsplit
+            // pass. compile_word_str's cmdsub arm at line 3551 already
+            // emits WORD_SPLIT when not in DQ/assign context, so let
+            // it handle the split and skip the outer WORD_SPLIT below.
+            // Suppress the inner emit by bumping assign_context_depth
+            // when the word contains a cmdsub — the outer for-loop
+            // WORD_SPLIT runs next, doing the actual IFS split.
+            // Without this, both emitted: the inner split correctly
+            // (e.g. IFS=, splits "a,b,c" to ["a","b","c"]), then the
+            // outer ran on the Array.to_str() join "a b c" which has
+            // no IFS chars, collapsing back to 1 element. Bug #178
+            // in docs/BUGS.md.
+            let has_cmdsub = has_unquoted_expansion(word);
+            if has_cmdsub {
+                self.assign_context_depth += 1;
+            }
             self.compile_word_str(word);
+            if has_cmdsub {
+                self.assign_context_depth -= 1;
+            }
             // Unquoted command/variable substitution in a for-list should
             // IFS-split. zsh's for-list naturally word-splits the result
             // of `$(...)` or unquoted `$var`. Quoted forms keep one word.
