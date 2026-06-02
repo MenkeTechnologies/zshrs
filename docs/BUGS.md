@@ -7924,7 +7924,60 @@ modulo case).
 
 ## #113 — `$'\C-X'` ANSI-C control-character escape not honored (literal)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — \C and \M handled in three ANSI-C decoders.
+
+**Root cause** — the `$'...'` ANSI-C decoder at multiple layers
+didn't recognize `\C` (control) or `\M` (meta) modifier escapes.
+zsh's getkeystring (Src/utils.c:7029-7052) treats them as flags
+that set `control = 1` or `meta = 1`, consumes the optional `-`
+separator, reads the next char (which can itself be a chained
+`\C`/`\M`), then applies the mask at c:7265-7275:
+- `control` → byte `& 0x9f` (or `\C-?` → 0x7f)
+- `meta` → byte `| 0x80`
+
+Three decoders in zshrs all dropped `\C`/`\M` into their
+"unknown escape" default branch, emitting the literal letter
+without applying the mask:
+- `src/extensions/compile_zsh.rs::decode_ansi_c` — the
+  compile-time decoder reached by `compile_word_str`. This is
+  the actual parse-time path that feeds the `Op::LoadConst`
+  argument to `echo $'\C-a'`.
+- `src/ported/lex.rs::getkeystring_dollar_quote` — used by
+  `untokenize` to convert `$'...'` regions back to literal text.
+- `src/ported/utils.rs::getkeystring` — used by
+  `subst::stringsubstquote` at runtime expansion.
+
+**Fix** — Add a parallel `'C' | 'M'` arm to all three decoders:
+read the modifier flags (including chained `\C\M`), consume the
+optional `-`, read one base char (allowing nested simple
+escapes like `\C-\t`), then apply the mask in C's order: control
+first (`& 0x9f` or `\C-?` → 0x7f), meta second (`| 0x80`).
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c "echo \$'\\C-a'" | od -c | head -1
+0000000  001  \n      # byte 0x01
+
+$ ./target/debug/zshrs --zsh -c "echo \$'\\C-h'" | od -c | head -1
+0000000   \b  \n      # backspace
+
+$ ./target/debug/zshrs --zsh -c "echo \$'\\C-?'" | od -c | head -1
+0000000  177  \n      # 0x7f DEL
+
+$ ./target/debug/zshrs --zsh -c "echo \$'\\C-x\\C-e'" | od -c | head -1
+0000000  030 005  \n  # 0x18 0x05 — Ctrl-X Ctrl-E
+```
+
+**Known limitation** — `\M-X` produces a Unicode codepoint
+(UTF-8 encoded) rather than a raw single byte:
+- zsh: `echo $'\M-a'` → single byte 0xe1.
+- zshrs: `echo $'\M-a'` → two bytes 0xc3 0xa1 (UTF-8 of U+00E1).
+Both have the high bit semantic (`| 0x80`); zsh's metafy
+convention uses raw single bytes which Rust `String` doesn't
+support without `Vec<u8>` plumbing. ASCII-range control chars
+via `\C-X` work identically.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc "echo \$'\\C-a'" | od -c | head -1

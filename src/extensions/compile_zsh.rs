@@ -7651,6 +7651,80 @@ fn decode_ansi_c(body: &str) -> String {
                     out.push(c);
                 }
             }
+            Some(mod_letter @ ('C' | 'M')) => {
+                // c:Src/utils.c:7029-7052 + c:7265-7275 — `\C` /
+                // `\M` modifiers set control / meta flags; the
+                // optional `-` separator is consumed; then the next
+                // char (possibly chained `\C` / `\M`) is read and
+                // the mask applied (control → `& 0x9f` unless
+                // `\C-?` → 0x7f; meta → `| 0x80`). Bug #113 in
+                // docs/BUGS.md: decode_ansi_c (the parse-time
+                // `$'...'` decoder used by compile_word_str) dropped
+                // `\C` / `\M` into the default arm and emitted
+                // literal `C-a` / `M-a` instead of the masked byte.
+                let mut control = mod_letter == 'C';
+                let mut meta = mod_letter == 'M';
+                // Consume optional `-` separator + chained modifiers.
+                loop {
+                    if chars.peek() == Some(&'-') {
+                        chars.next();
+                        continue;
+                    }
+                    let mut iter_clone = chars.clone();
+                    if iter_clone.next() == Some('\\') {
+                        if let Some(nx) = iter_clone.next() {
+                            if nx == 'C' || nx == 'M' {
+                                chars.next();
+                                chars.next();
+                                if nx == 'C' {
+                                    control = true;
+                                } else {
+                                    meta = true;
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    break;
+                }
+                // Read one base char (allowing nested simple escapes).
+                let base: Option<char> = if chars.peek() == Some(&'\\') {
+                    chars.next();
+                    match chars.next() {
+                        Some('n') => Some('\n'),
+                        Some('t') => Some('\t'),
+                        Some('r') => Some('\r'),
+                        Some('a') => Some('\x07'),
+                        Some('b') => Some('\x08'),
+                        Some('e') | Some('E') => Some('\x1b'),
+                        Some('f') => Some('\x0c'),
+                        Some('v') => Some('\x0b'),
+                        Some('\\') => Some('\\'),
+                        Some('\'') => Some('\''),
+                        Some('"') => Some('"'),
+                        Some(other) => Some(other),
+                        None => None,
+                    }
+                } else {
+                    chars.next()
+                };
+                if let Some(ch) = base {
+                    let mut byte = ch as u32;
+                    if control {
+                        if byte == '?' as u32 {
+                            byte = 0x7f;
+                        } else {
+                            byte &= 0x9f;
+                        }
+                    }
+                    if meta {
+                        byte |= 0x80;
+                    }
+                    if let Some(c) = char::from_u32(byte) {
+                        out.push(c);
+                    }
+                }
+            }
             Some(other) => {
                 // c:Src/utils.c:6915 — `$'\X'` for any X not in the
                 // recognized escape set strips the backslash and

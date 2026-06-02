@@ -4282,6 +4282,88 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
                     }
                     i += consumed;
                 }
+                'C' | 'M' => {
+                    // c:Src/utils.c:7029-7052 — `\C` and `\M` set
+                    // `control` / `meta` flags; the optional `-`
+                    // separator is consumed; then the NEXT char (or
+                    // chained `\C`/`\M` modifier) is read and the
+                    // mask applied at c:7265-7275 (control → `& 0x9f`,
+                    // meta → `| 0x80`). `\C-?` is special-cased to
+                    // 0x7f. Bug #113 in docs/BUGS.md: the previous
+                    // Rust port dropped `\C` / `\M` into the
+                    // unknown-escape default branch, so `$'\C-a'`
+                    // emitted literal `C-a` instead of byte 0x01.
+                    let mut control = nc == 'C';
+                    let mut meta = nc == 'M';
+                    let mut j = i + 2;
+                    // Consume any chain of `-`, additional `\C`/`\M`
+                    // modifiers (e.g. `\M-\C-x` → meta+control on x).
+                    loop {
+                        if j < chars.len() && chars[j] == '-' {
+                            j += 1;
+                            continue;
+                        }
+                        if j + 1 < chars.len()
+                            && chars[j] == '\\'
+                            && (chars[j + 1] == 'C' || chars[j + 1] == 'M')
+                        {
+                            if chars[j + 1] == 'C' {
+                                control = true;
+                            } else {
+                                meta = true;
+                            }
+                            j += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    if j >= chars.len() {
+                        // Malformed — preserve literal per
+                        // Src/utils.c:7050 fallthrough.
+                        out.push('\\');
+                        out.push(nc);
+                        i += 2;
+                        continue;
+                    }
+                    // Read one base char (allowing nested `\xNN` /
+                    // `\NNN` / `\u…` / literal). For simplicity,
+                    // accept either a literal char or a one-char
+                    // escape.
+                    let (mut ch, advance): (char, usize) =
+                        if chars[j] == '\\' && j + 1 < chars.len() {
+                            let nn = chars[j + 1];
+                            match nn {
+                                'a' => ('\x07', 2),
+                                'b' => ('\x08', 2),
+                                'e' | 'E' => ('\x1b', 2),
+                                'f' => ('\x0c', 2),
+                                'n' => ('\n', 2),
+                                'r' => ('\r', 2),
+                                't' => ('\t', 2),
+                                'v' => ('\x0b', 2),
+                                '\\' | '\'' | '"' => (nn, 2),
+                                _ => (nn, 2), // unknown — take literal char
+                            }
+                        } else {
+                            (chars[j], 1)
+                        };
+                    let mut byte = ch as u32;
+                    if control {
+                        // c:7265-7269 — `\C-?` → 0x7f; else AND 0x9f.
+                        if byte == '?' as u32 {
+                            byte = 0x7f;
+                        } else {
+                            byte &= 0x9f;
+                        }
+                    }
+                    if meta {
+                        // c:7272-7274 — OR 0x80.
+                        byte |= 0x80;
+                    }
+                    ch = char::from_u32(byte).unwrap_or('\0');
+                    out.push(ch);
+                    i = j + advance;
+                }
                 _ => {
                     // Unknown escape — keep `\` per
                     // Src/utils.c:7180-7185 default branch
