@@ -1561,7 +1561,19 @@ impl ZshCompiler {
                     // glob pattern that fails NOMATCH. Mode 4 routes
                     // through expand_string only (variable / cmd-subst
                     // / arith), skipping glob+brace.
-                    let trimmed = content_clean.trim_end_matches('\n').to_string();
+                    //
+                    // c:Src/exec.c:4641 — `parsestr(&buf)` in `gethere`
+                    // already tokenized backslash-escapes (`\$` →
+                    // Bnull+$, `\\` → Bnull+\, etc) so the saved
+                    // `hd.content` carries the Bnull markers. Pass the
+                    // RAW content (not the untokenize'd form) to
+                    // BUILTIN_EXPAND_TEXT — singsub respects Bnull and
+                    // treats the marked byte as literal, so `\$N` ends
+                    // up as `$N` in the output. Bug #22 in BUGS.md
+                    // (`\$N` was expanding to the variable's value
+                    // because untokenize stripped the Bnull marker
+                    // before mode-4 expansion).
+                    let trimmed = hd.content.trim_end_matches('\n').to_string();
                     let text_const = self.builder.add_constant(Value::str(trimmed));
                     self.builder.emit(Op::LoadConst(text_const), 0);
                     self.builder.emit(Op::LoadInt(4), 0); // mode = HeredocBody

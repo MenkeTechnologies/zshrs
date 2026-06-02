@@ -956,7 +956,36 @@ this two-step form to fit zshrs.
 
 ## #22 — Heredoc `\$VAR` escape not honored (variable still expands)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-05-30
+(`src/extensions/compile_zsh.rs::compile_redir`). Surfaced 2026-05-30
+hunting.
+
+Root cause: `gethere` (exec.rs:325, port of `Src/exec.c:4641
+parsestr`) correctly tokenizes the heredoc body — `\$` becomes
+`<Bnull>$` (Bnull = `\u{9f}`, the backslash-escape marker that tells
+the substitution layer "next byte is literal"). But the
+compile-time wiring at `compile_zsh.rs:1541` ran `untokenize` on
+`hd.content` BEFORE passing it to `BUILTIN_EXPAND_TEXT` mode 4
+(HeredocBody). `untokenize` strips Bnull entirely so the
+substitution layer (singsub) saw plain `$N` and expanded it.
+
+Fix: pass `hd.content` verbatim (with Bnull markers intact) to
+`BUILTIN_EXPAND_TEXT`. `singsub` already honors Bnull via the
+prefork pipeline (mirrors C's `Src/subst.c` Bnull-aware
+backslash-escape recognition), so `\$N` ends up as literal `$N`
+in the output.
+
+Verified against /opt/homebrew/bin/zsh:
+```
+N=world; cat <<END
+escaped: \$N      → escaped: $N (was: escaped: world)
+plain: $N         → plain: world (unchanged — non-escape baseline)
+backslash: \\     → backslash: \ (was already correct)
+END
+```
+
+tests/zshrs_shell baseline 923 / 129 → 924 / 128 (+1 passing).
+Bug #11 / #12 / #13 / #14 / #8 all still pass.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'N=world; cat <<END
