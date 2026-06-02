@@ -3596,10 +3596,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
     });
 
-    vm.register_builtin(BUILTIN_CONCAT_DISTRIBUTE, |vm, _argc| {
+    vm.register_builtin(BUILTIN_CONCAT_DISTRIBUTE, |vm, argc| {
         let rhs = vm.pop();
         let lhs = vm.pop();
-        let rc_expand = with_executor(|exec| opt_state_get("rcexpandparam").unwrap_or(false));
+        // c:Src/options.c — RC_EXPAND_PARAM applies to UNQUOTED
+        // expansions only; inside DQ `"$foo${arr}bar"` joins via
+        // $IFS[0] regardless of the option. The compiler emits
+        // CallBuiltin(BUILTIN_CONCAT_DISTRIBUTE, 1) when the parent
+        // word is DQ-wrapped (compile_zsh.rs parent_is_dq); the
+        // default UNQUOTED path emits argc=2 (lhs + rhs). Treat
+        // argc==1 as "force rc_expand off." Bug #246 in docs/BUGS.md.
+        let dq_suppress = argc == 1;
+        let rc_expand = !dq_suppress
+            && with_executor(|exec| opt_state_get("rcexpandparam").unwrap_or(false));
         let ifs_first = || -> String {
             with_executor(|exec| {
                 exec.get_variable("IFS")
