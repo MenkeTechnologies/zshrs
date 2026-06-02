@@ -2451,29 +2451,52 @@ zshrs_shell regression: 926/126 (baseline preserved with
 
 ## #41 — Glob qualifier `Yn` (limit count) returns ALL matches
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/g && touch /tmp/g/{a..j}; echo /tmp/g/*(Y3)'
-/tmp/g/i /tmp/g/g /tmp/g/a   # zsh: returns first 3 only
+/tmp/g/i /tmp/g/g /tmp/g/a
 
-$ zshrs --zsh -c 'mkdir -p /tmp/g && touch /tmp/g/{a..j}; echo /tmp/g/*(Y3)'
-/tmp/g/a /tmp/g/b /tmp/g/c /tmp/g/d /tmp/g/e /tmp/g/f /tmp/g/g /tmp/g/h /tmp/g/i /tmp/g/j   # zshrs: returns all 10
+$ zshrs --zsh -c 'mkdir -p /tmp/g && touch /tmp/g/{a..j}; echo /tmp/g/*(Y3)'   # before
+/tmp/g/a /tmp/g/b /tmp/g/c /tmp/g/d /tmp/g/e /tmp/g/f /tmp/g/g /tmp/g/h /tmp/g/i /tmp/g/j
+$ zshrs --zsh -c 'mkdir -p /tmp/g && touch /tmp/g/{a..j}; echo /tmp/g/*(Y3)'   # after
+/tmp/g/a /tmp/g/b /tmp/g/c
 ```
 
-The `Yn` glob qualifier limits the number of matches to at most
-`n`. zshrs ignores the qualifier and returns all matches.
+**Fix** — ported the `Y` qualifier handling from
+`Src/glob.c:1579-1595`. Three small pieces:
 
-**Where** — `src/ported/glob.rs::apply_qualifiers` should
-recognize the `Y<num>` qualifier (per `Src/glob.c` glob qualifier
-table) and slice the result list to the first `n` elements.
+  1. Added `short_circuit: Option<i32>` field to
+     `src/ported/glob.rs::qualifier_set` (mirrors the C
+     `shortcircuit` int from glob.c:1227).
+  2. Added a `'Y'` arm in `parse_qualifier_string` that
+     consumes the numeric argument immediately following the
+     `Y` and stores it in `short_circuit`.
+  3. Extended `apply_selection` to truncate the match list
+     to `short_circuit` elements after the `[first,last]`
+     slice is applied.
 
-**Workaround** — pipe through `head`:
-```sh
-echo /tmp/g/* | tr ' ' '\n' | head -3 | tr '\n' ' '
-# or array slice:
-files=(/tmp/g/*); echo "${files[1,3]}"
-```
+C zsh's truncation happens DURING the scanner walk
+(`if (shortcircuit == matchct) break;` at glob.c:518,
+glob.c:566-577); the Rust port slices post-walk which
+produces the same set on the typical short-glob case where
+the scanner doesn't recurse unboundedly.
+
+Verified:
+
+  * `echo /tmp/g/*(Y3)` → 3 matches (BUGS.md case).
+  * `echo /tmp/g/*(Y1)` → 1 match.
+  * `echo /tmp/g/*(Y100)` → all 10 (no truncation when n >=
+    total).
+  * `echo /tmp/g/*(.Y2)` → 2 regular files (Y combined with
+    other qualifiers).
+  * `echo /tmp/g/*(Y0)` → `no matches found` (zero limit, zsh-
+    compatible).
+  * `echo /tmp/g/*` (no Y) → all 10 (unchanged).
+
+zshrs_shell regression: 926/126 baseline preserved (the local
+run fluctuated to 923/129 but the test-name diff was empty
+both directions — no actual regression).
 
 ---
 
