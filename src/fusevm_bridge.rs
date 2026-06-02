@@ -2199,6 +2199,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if name == "@" || name == "*" || name == "argv" {
                 return exec.pparams().join(&sep);
             }
+            // c:Src/params.c — assoc-splat values for `"${h[@]}"`
+            // / `"${h[*]}"`. Bug #109 in docs/BUGS.md: BUILTIN_
+            // ARRAY_JOIN_STAR (the quoted form) only consulted
+            // exec.array(); for an assoc-named param, that missed
+            // and fell through to scalar (also empty). Mirror the
+            // BUILTIN_ARRAY_ALL fix one floor up.
+            if let Some(assoc_map) = exec.assoc(&name) {
+                return assoc_map.values().cloned().collect::<Vec<_>>().join(&sep);
+            }
             if let Some(arr) = exec.array(&name) {
                 arr.join(&sep)
             } else {
@@ -2214,6 +2223,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // Special positional names — splice the positional list.
             if name == "@" || name == "*" || name == "argv" {
                 return Value::Array(exec.pparams().iter().map(Value::str).collect());
+            }
+            // c:Src/params.c — `${assoc[@]}` enumerates VALUES (per
+            // params.c:1696-1750 hashparam splat). Check assoc
+            // storage BEFORE the scalar fallback so an associative
+            // array named X resolves `${X[@]}` to the values, not
+            // empty. Bug #109 in docs/BUGS.md: `${h[@]}` on an
+            // assoc routed through BUILTIN_ARRAY_ALL, which only
+            // consulted `exec.array(name)` (the indexed-array map)
+            // — that lookup missed for assocs, fell through to
+            // `get_variable("h")` (also empty for an assoc-only
+            // name), and returned `Array(vec![])`. zsh's expected
+            // behavior is to enumerate values.
+            if let Some(assoc_map) = exec.assoc(&name) {
+                return Value::Array(
+                    assoc_map.values().cloned().map(Value::str).collect(),
+                );
             }
             match exec.array(&name) {
                 Some(v) => Value::Array(v.iter().map(Value::str).collect()),

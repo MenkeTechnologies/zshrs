@@ -7589,7 +7589,40 @@ echo "${joined/blue green/COMBINED}"
 
 ## #109 — `${assoc[@]}` returns empty; cannot enumerate associative array values
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — BUILTIN_ARRAY_ALL / BUILTIN_ARRAY_JOIN_STAR consult assoc.
+
+**Root cause** — fusevm compiles `${name[@]}` into a BUILTIN_ARRAY_ALL
+opcode (unquoted) or BUILTIN_ARRAY_JOIN_STAR (quoted). Both
+handlers in `src/fusevm_bridge.rs` looked the name up in
+`exec.array(name)` (the indexed-array map) and, on miss, fell
+through to `exec.get_variable(name)` (the scalar bag) — but
+associative arrays live in a third map, `paramtab_hashed_storage`,
+accessed via `exec.assoc(name)`. The assoc lookup wasn't wired
+in, so `${h[@]}` on a PM_HASHED param hit the scalar fallback
+which returned empty.
+
+C-zsh's `params.c:1696-1750` handles the assoc splat by reading
+the value bag — the same enumeration C uses to back `$assoc[@]`,
+`(@)assoc`, etc.
+
+**Fix** — In both `BUILTIN_ARRAY_ALL` and `BUILTIN_ARRAY_JOIN_STAR`
+handlers, check `exec.assoc(&name)` BEFORE `exec.array(&name)`:
+- ARRAY_ALL: return values as `Value::Array`.
+- ARRAY_JOIN_STAR: return values joined by `$IFS[0]`.
+
+The `${assoc[a]}` (literal-key) path was unaffected because it
+goes through a different opcode that already consulted assoc
+storage.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(a 1 b 2 c 3); echo "[${h[@]}]"'
+[1 2 3]
+$ ./target/debug/zshrs --zsh -c 'typeset -A scores=(alice 95 bob 87); total=0; for s in "${scores[@]}"; do (( total += s )); done; echo total=$total'
+total=182
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2 c 3); echo "${h[@]}"; for v in ${h[@]}; do echo "$v"; done'
