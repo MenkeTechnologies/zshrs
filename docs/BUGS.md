@@ -12666,7 +12666,68 @@ result="$((bytes * 8))"
 
 ## #166 — `for x in $@` (unquoted) keeps empty elements (zsh: removes)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `compile_for_words` emits `BUILTIN_ARRAY_DROP_EMPTY` for unquoted `$@` / `$*`.
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_for_words`
+treated bare `$@` / `$*` like any other word — pushed the
+`GET_VAR` array result directly without empty-filtering. zsh
+drops empty elements when `$@` / `$*` is unquoted (POSIX-ish
+behavior).
+
+Note: zsh's specific semantic is "drop empties but DON'T
+IFS-split each element". So `set -- "hello world" foo;
+for x in $@` keeps `"hello world"` as one element (no internal
+word-split) but drops empties. This is distinct from POSIX's
+full IFS wordsplit which would split on internal whitespace.
+
+**C-source reference** — `Src/subst.c::wordsplit` + the multsub
+path. The empty-field elimination happens regardless of whether
+SH_WORD_SPLIT is set; the internal-IFS-split is gated on the
+option.
+
+**Fix** — two parts:
+
+1. New opcode `BUILTIN_ARRAY_DROP_EMPTY` (id 532) in
+   `src/fusevm_bridge.rs`: pops a `Value`, filters out empty
+   `Value::Str` entries when it's `Value::Array`, returns the
+   filtered Array. Distinct from `BUILTIN_WORD_SPLIT` (which
+   would also split on internal whitespace — wrong for zsh).
+2. `compile_for_words` detects unquoted `$@` / `$*` (via
+   untokenize check + absence of DQ/SQ markers) and emits the
+   new opcode after `compile_word_str`:
+
+```rust
+let is_unquoted_at_or_star = !word.contains('\u{9e}')
+    && !word.contains('\u{9d}')
+    && (untoked_w == "$@" || untoked_w == "$*");
+if is_unquoted_at_or_star {
+    self.builder.emit(
+        Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 0),
+        0,
+    );
+}
+```
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'set -- a "" b; for x in $@; do printf "[%s]" "$x"; done; echo'
+[a][b]                                  # was [a][][b]
+
+$ ./target/debug/zshrs --zsh -c 'set -- a "" b; for x in "$@"; do printf "[%s]" "$x"; done; echo'
+[a][][b]                                # DQ preserves (regression)
+
+$ ./target/debug/zshrs --zsh -c 'set -- "hello world" foo; for x in $@; do printf "[%s]" "$x"; done; echo'
+[hello world][foo]                      # internal space kept (zsh-quirk)
+
+$ ./target/debug/zshrs --zsh -c 'set -- "" a "" b ""; for x in $@; do printf "[%s]" "$x"; done; echo'
+[a][b]                                  # multiple empties all dropped
+```
+
+All four match zsh exactly. Regression suite unchanged
+(111 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'set -- a "" b; for x in $@; do printf "[%s]" "$x"; done; echo'
