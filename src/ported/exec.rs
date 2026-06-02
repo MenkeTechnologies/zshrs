@@ -5767,11 +5767,39 @@ pub fn doshfunc(
         LOOPS.store(funcsave_loops, Ordering::SeqCst); // c:6111
     }
 
-    // c:6114 — `endtrapscope();` — canonical port at signals.rs:1164
-    // restores saved traps from SAVETRAPS whose local > locallevel
-    // and fires the deferred SIGEXIT trap (if any) AFTER the other
-    // restores complete.
-    crate::ported::signals::endtrapscope();
+    // c:Src/exec.c:6195-6200 — C's runshfunc calls endparamscope()
+    // BEFORE returning to doshfunc, which then calls endtrapscope()
+    // at c:6114. So locallevel is ALREADY one less by the time
+    // endtrapscope's pop loop compares saved local > current.
+    //
+    // Bug #80 in docs/BUGS.md: zshrs had endtrapscope FIRST (here at
+    // line 5774), endparamscope LATER. That left locallevel at the
+    // function's own level when endtrapscope ran, so saved entries
+    // tagged with `local == current_function_level` failed the
+    // `local > locallevel` pop condition. Nested EXIT traps
+    // (saved at deeper level) never restored at the outer fn's
+    // endtrapscope — outer EXIT traps fired at script exit instead.
+    //
+    // Decrement locallevel via a peer-of-endparamscope locallevel
+    // bookkeeping call before endtrapscope, then leave the real
+    // endparamscope at its current site below so the param scope
+    // unwind still happens after the exit_pending check.
+    {
+        use crate::ported::params::locallevel as ll;
+        let prev = ll.load(Ordering::Relaxed);
+        if prev > 0 {
+            ll.store(prev - 1, Ordering::Relaxed);
+        }
+        crate::ported::signals::endtrapscope();
+        // Re-bump so the existing endparamscope() call below sees the
+        // same pre-decrement state and its own internal decrement
+        // lands at the right value (mirrors C's "endparamscope already
+        // happened" comment at c:6135-6136 — the C order is endparam
+        // (inside runshfunc) → endtrap (in doshfunc); we keep that
+        // logical ordering for endtrapscope only, without disturbing
+        // the rest of the epilogue's level math).
+        ll.store(prev, Ordering::Relaxed);
+    }
 
     // c:6116-6117 — TRAP_STATE_PRIMED branch: bump trap_return back.
     if TRAP_STATE.load(Ordering::Relaxed) == TRAP_STATE_PRIMED {

@@ -5301,7 +5301,65 @@ kill $bgpid    # works in both shells
 
 ## #80 — `trap EXIT` inside fn fires at SCRIPT exit, not fn exit (and lost entirely in nested fns)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — multi-layer fix touching the
+function-exit trap dispatch pipeline:
+
+1. **`bin_trap` was passing `ZSIG_FUNC` to settrap** for list-form
+   traps (`trap "body" SIG`). `ZSIG_FUNC` is for function-form traps
+   (`TRAPSIG() {...}`), and `endtrapscope` (signals.rs:1311) routes
+   `ZSIG_FUNC` to the `getshfunc("TRAP...")` lookup — which fails
+   silently for list traps stored in `traps_table`. Changed flag to
+   `0` so dispatch reaches the `else if exittr != 0` arm.
+2. **`bin_trap` also skipped settrap for `sig == 0` (SIGEXIT)**
+   because of the `sig > 0` gate. That meant `sigtrapped[SIGEXIT]`
+   was never set on function-local EXIT traps, so `endtrapscope`'s
+   `exit_flags = sigtrapped[SIGEXIT]` read 0 and nothing fired.
+   Relaxed gate to `sig >= 0`.
+3. **`endparamscope` ran AFTER `endtrapscope`**, leaving locallevel
+   at the function's level when the SAVETRAPS pop loop ran. C runs
+   endparamscope FIRST (inside `runshfunc`, c:6200), then
+   endtrapscope (in doshfunc, c:6114) — so the pop comparison
+   `local > locallevel` does fire. Wrapped the endtrapscope call
+   with a pre-decrement/post-restore of `locallevel` so the existing
+   `endparamscope` site below stays in place but the pop comparison
+   sees the post-decrement state.
+4. **`savetrap` didn't snapshot the body string.** C stores trap
+   bodies in `siglists[sig]` (an Eprog) and the save/restore loop
+   covers that. zshrs stores bodies in `traps_table` (a flat
+   `HashMap`) for the bridge's `execute_script` dispatch. Without
+   snapshotting `traps_table["EXIT"]` in `dosavetrap`, the SAVETRAPS
+   restore re-armed `sigtrapped` to the outer scope but left
+   `traps_table["EXIT"]` pointing at the inner body — so outer
+   dispatch fired the wrong (inner) body. Added `body: Option<String>`
+   to the savetrap struct + capture in `dosavetrap` + restore in
+   the `endtrapscope` pop loop.
+5. **`bin_trap` inserted the new body BEFORE calling settrap.**
+   `settrap → unsettrap → dosavetrap` then snapshots the *just-inserted*
+   inner body, so the SAVETRAPS restore put the inner body back into
+   `traps_table` after the function exit. Reversed the order so
+   `dosavetrap` captures the OUTER scope's body.
+6. **The recursive `execute_script_zsh_pipeline` from the trap
+   dispatch saw `traps_table["EXIT"]` populated** (just restored to
+   the outer body) and fired its own end-of-pipeline EXIT trap —
+   so the outer trap fired prematurely from inside the inner trap's
+   dispatch. Bracketed the `execute_script` call in `endtrapscope`
+   with a stash/restore of `traps_table["EXIT"]` so the recursive
+   pipeline sees no EXIT trap to fire.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- Single fn EXIT: `f() { trap "bye-fn" EXIT; echo "inside"; }; f; echo
+  "after"` → `inside / bye-fn / after`.
+- Nested fn EXIT (LIFO): `f() { trap "f-exit" EXIT; g; }; g() { trap
+  "g-exit" EXIT; "in g"; }; f; echo "post"` → `in g / g-exit / f-exit
+  / post`.
+- Global EXIT alone: `trap "global" EXIT; "main"` → `main / global`.
+- Two sequential fns: `f() { trap "f1" EXIT; }; g() { trap "g1" EXIT;
+  }; f; g; trap` → `f1 / g1` (no leftover trap).
+- Combined global + fn EXIT: `trap "top" EXIT; f() { trap "fn" EXIT;
+  }; f; echo "after"` → `fn / after / top`.
+- Non-EXIT trap (INT): listing unchanged.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { trap "echo bye-fn" EXIT; echo "inside"; }; f; echo "after"'
