@@ -431,14 +431,28 @@ pub fn run_queued_signals() {
             .ok()
             .and_then(|g| g.get(nf).copied());
         queue_front.store(nf, Ordering::SeqCst);
-        if let Some(m) = mask {
-            let _ = crate::ported::signals::signal_setmask(&m);
-        }
-        // Re-deliver via raise() so the installed handler runs again
-        // with the original sig number.
-        unsafe {
-            libc::raise(sig);
-        }
+        // c:81-84 — `oset = signal_setmask(signal_mask_queue[queue_front]);
+        //            zhandler(signal_queue[queue_front]);
+        //            signal_setmask(oset);` C invokes zhandler DIRECTLY
+        // — not raise(2). Earlier port used libc::raise(sig), but the
+        // raise route goes through the kernel which (a) checks the
+        // current process signal mask, leaving the signal pending if
+        // the sig is blocked, (b) re-invokes zhandler with the
+        // queueing flags transient kernel state, so raise+queue ping
+        // pong losing the queued sig. Bug #104 in docs/BUGS.md was
+        // exactly this: SIGUSR1 sent from inside a function ran
+        // zhandler once (queued under doshfunc's queue_signals), but
+        // unqueue_signals → run_queued_signals → libc::raise →
+        // (signal stayed pending behind the saved mask) so the trap
+        // never dispatched. Direct synchronous zhandler call matches
+        // C and avoids the kernel mask race.
+        let oset = if let Some(m) = mask {
+            crate::ported::signals::signal_setmask(&m)
+        } else {
+            unsafe { std::mem::zeroed::<libc::sigset_t>() }
+        };
+        crate::ported::signals::zhandler(sig);
+        let _ = crate::ported::signals::signal_setmask(&oset);
     }
 }
 

@@ -348,7 +348,18 @@ pub fn wait_for_processes() -> Vec<(i32, i32)> {
 /// handletrap with platform-specific fallback; default →
 /// handletrap).
 #[cfg(unix)]
-extern "C" fn zhandler(sig: libc::c_int) {
+/// Direct port of `static RETSIGTYPE zhandler(int sig)` from
+/// `Src/signals.c:393`. Exposed as `pub` so the Rust queue drainer
+/// (`run_queued_signals` in signals_h.rs) can call it synchronously,
+/// matching C's `zhandler(signal_queue[queue_front])` at c:83. C's
+/// version is `static` because all queue draining happens inside
+/// signals.c; Rust splits the macro (queue) from the handler
+/// (signals.rs) across two modules, so `pub` is the equivalent of C's
+/// in-file visibility. (Earlier port routed via `libc::raise(sig)`,
+/// which is the wrong analog — raise(2) goes through the kernel and
+/// loses the queued signal behind the process signal mask. See Bug
+/// #104 in docs/BUGS.md.)
+pub extern "C" fn zhandler(sig: libc::c_int) {
     last_signal.store(sig, Ordering::Relaxed); // c:403
 
     // c:405-407 — `sigfillset(&newmask); oldmask = signal_block(newmask);`
