@@ -77,6 +77,23 @@ pub struct gmatch {
     pub target_ctime: i64,
     /// `target_links` field.
     pub target_links: u64,
+    // Sub-second timestamp components — port of `long ansec/mnsec/cnsec` +
+    // `long _ansec/_mnsec/_cnsec` in `struct gmatch` (Src/glob.c:63-74).
+    // gmatchcmp tie-breaks equal-second mtimes/atimes/ctimes by these
+    // nanosecond fields (c:992/999/1006/1019/1026/1033) — without them,
+    // files touched <1s apart sort by name rather than mtime.
+    /// `ansec` field. c:64
+    pub ansec: i64,
+    /// `mnsec` field. c:68
+    pub mnsec: i64,
+    /// `cnsec` field. c:72
+    pub cnsec: i64,
+    /// `_ansec` field. c:65
+    pub target_ansec: i64,
+    /// `_mnsec` field. c:69
+    pub target_mnsec: i64,
+    /// `_cnsec` field. c:73
+    pub target_cnsec: i64,
     // For exec sort strings
     /// `sort_strings` field.
     pub sort_strings: Vec<String>,
@@ -551,6 +568,12 @@ pub fn insert(s: &str, checked: i32) {
             target_mtime: 0,
             target_ctime: 0,
             target_links: 0,
+            ansec: 0,
+            mnsec: 0,
+            cnsec: 0,
+            target_ansec: 0,
+            target_mnsec: 0,
+            target_cnsec: 0,
             sort_strings: Vec::new(),
         };
         if (statted & 1) != 0 {
@@ -562,6 +585,12 @@ pub fn insert(s: &str, checked: i32) {
                 entry.mtime = b.mtime(); // c:450
                 entry.ctime = b.ctime(); // c:451
                 entry.links = b.nlink(); // c:452
+                // c:454/457/460 — GET_ST_{ATIME,MTIME,CTIME}_NSEC(buf).
+                // MetadataExt provides *_nsec() for the sub-second
+                // components of each timestamp.
+                entry.ansec = b.atime_nsec(); // c:454
+                entry.mnsec = b.mtime_nsec(); // c:457
+                entry.cnsec = b.ctime_nsec(); // c:460
             }
         }
         if (statted & 2) != 0 {
@@ -573,6 +602,9 @@ pub fn insert(s: &str, checked: i32) {
                 entry.target_mtime = b.mtime(); // c:466
                 entry.target_ctime = b.ctime(); // c:467
                 entry.target_links = b.nlink(); // c:468
+                entry.target_ansec = b.atime_nsec(); // c:470
+                entry.target_mnsec = b.mtime_nsec(); // c:473
+                entry.target_cnsec = b.ctime_nsec(); // c:476
             }
         }
         // c:479 — `matchptr++;`
@@ -1189,24 +1221,50 @@ pub fn gmatchcmp(
                 a.size.cmp(&b.size)
             }
         } else if key_unshifted == GS_ATIME {
-            // c:988
-            if follow {
+            // c:988-994 — `r = a->atime - b->atime;` then tie-break by
+            // `a->ansec - b->ansec` (under GET_ST_ATIME_NSEC).
+            let primary = if follow {
                 b.target_atime.cmp(&a.target_atime)
             } else {
                 b.atime.cmp(&a.atime)
+            };
+            if primary != std::cmp::Ordering::Equal {
+                primary
+            } else if follow {
+                b.target_ansec.cmp(&a.target_ansec) // c:1019
+            } else {
+                b.ansec.cmp(&a.ansec) // c:992
             }
         } else if key_unshifted == GS_MTIME {
-            // c:995
-            if follow {
+            // c:995-1001 — `r = a->mtime - b->mtime;` then tie-break by
+            // `a->mnsec - b->mnsec` (under GET_ST_MTIME_NSEC). Without
+            // the nsec tie-break, files touched <1s apart sort by name.
+            let primary = if follow {
                 b.target_mtime.cmp(&a.target_mtime)
             } else {
                 b.mtime.cmp(&a.mtime)
+            };
+            if primary != std::cmp::Ordering::Equal {
+                primary
+            } else if follow {
+                b.target_mnsec.cmp(&a.target_mnsec) // c:1026
+            } else {
+                b.mnsec.cmp(&a.mnsec) // c:999
             }
         } else if key_unshifted == GS_CTIME {
-            if follow {
+            // c:1002-1008 — `r = a->ctime - b->ctime;` then tie-break by
+            // `a->cnsec - b->cnsec` (under GET_ST_CTIME_NSEC).
+            let primary = if follow {
                 b.target_ctime.cmp(&a.target_ctime)
             } else {
                 b.ctime.cmp(&a.ctime)
+            };
+            if primary != std::cmp::Ordering::Equal {
+                primary
+            } else if follow {
+                b.target_cnsec.cmp(&a.target_cnsec) // c:1033
+            } else {
+                b.cnsec.cmp(&a.cnsec) // c:1006
             }
         } else if key_unshifted == GS_LINKS {
             if follow {
@@ -4175,10 +4233,19 @@ fn scan_pattern(
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_default();
-                        let (tsize, tatime, tmtime, tctime, tlinks) =
+                        let (tsize, tatime, tmtime, tctime, tlinks, tansec, tmnsec, tcnsec) =
                             if meta.file_type().is_symlink() {
                                 if let Ok(tm) = fs::metadata(&path) {
-                                    (tm.size(), tm.atime(), tm.mtime(), tm.ctime(), tm.nlink())
+                                    (
+                                        tm.size(),
+                                        tm.atime(),
+                                        tm.mtime(),
+                                        tm.ctime(),
+                                        tm.nlink(),
+                                        tm.atime_nsec(),
+                                        tm.mtime_nsec(),
+                                        tm.ctime_nsec(),
+                                    )
                                 } else {
                                     (
                                         meta.size(),
@@ -4186,6 +4253,9 @@ fn scan_pattern(
                                         meta.mtime(),
                                         meta.ctime(),
                                         meta.nlink(),
+                                        meta.atime_nsec(),
+                                        meta.mtime_nsec(),
+                                        meta.ctime_nsec(),
                                     )
                                 }
                             } else {
@@ -4195,6 +4265,9 @@ fn scan_pattern(
                                     meta.mtime(),
                                     meta.ctime(),
                                     meta.nlink(),
+                                    meta.atime_nsec(),
+                                    meta.mtime_nsec(),
+                                    meta.ctime_nsec(),
                                 )
                             };
                         state.matches.push(gmatch {
@@ -4215,6 +4288,12 @@ fn scan_pattern(
                             target_mtime: tmtime,
                             target_ctime: tctime,
                             target_links: tlinks,
+                            ansec: meta.atime_nsec(),
+                            mnsec: meta.mtime_nsec(),
+                            cnsec: meta.ctime_nsec(),
+                            target_ansec: tansec,
+                            target_mnsec: tmnsec,
+                            target_cnsec: tcnsec,
                             sort_strings: Vec::new(),
                         });
                         state.matchct += 1; // c:gd_matchct++

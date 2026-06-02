@@ -10043,7 +10043,73 @@ dir="${file:h}"
 
 ## #135 — `*(om)` glob qualifier mtime ordering broken (zsh: newest→oldest sorted)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `gmatchcmp` now tie-breaks equal-second mtimes by nanoseconds (matching C zsh).
+
+**Root cause** — `src/ported/glob.rs::gmatch` was missing the sub-
+second timestamp fields (`ansec`/`mnsec`/`cnsec` + `_ansec`/`_mnsec`/
+`_cnsec` from `Src/glob.c:63-74`). The sort comparator at c:995-1001
+in C zsh tie-breaks files with identical second-level mtimes using
+`mnsec`. Without that tie-break, files touched within the same
+wall-clock second silently fall back to alphabetical name order —
+producing wrong results when the filesystem records sub-second
+mtimes (HFS+ / APFS / ext4 on modern Linux all do).
+
+The 1-second-gap repro happened to work because seconds DID
+differ. The 10ms-gap unit-test repro (and most real-world
+"newest-N log files" idioms where files churn in the same second)
+broke.
+
+**C-source reference** — `Src/glob.c:995-1001`:
+
+```c
+case GS_MTIME:
+    r = a->mtime - b->mtime;
+#ifdef GET_ST_MTIME_NSEC
+    if (!r)
+      r = a->mnsec - b->mnsec;
+#endif
+    break;
+```
+
+Same pattern for GS_ATIME (c:988-994), GS_CTIME (c:1002-1008), and
+their follow-symlink variants (c:1019/1026/1033).
+
+**Fix** — three parts in `src/ported/glob.rs`:
+
+1. Added `ansec`/`mnsec`/`cnsec` + `target_ansec`/`target_mnsec`/
+   `target_cnsec` fields to `gmatch` (mirrors C c:63-74).
+2. `apply_glob_qualifiers` and `scan_pattern` now populate the
+   nsec fields via `MetadataExt::atime_nsec()` /
+   `mtime_nsec()` / `ctime_nsec()` (mirrors C c:454/457/460 +
+   c:470/473/476).
+3. `gmatchcmp`'s GS_MTIME/GS_ATIME/GS_CTIME arms now tie-break
+   equal-second results by comparing nsec fields (mirrors C
+   c:992/999/1006 + follow variants c:1019/1026/1033).
+
+**Verify:**
+
+```sh
+# 1s gap — worked before (different seconds):
+$ ./target/debug/zshrs --zsh -c 'print -l /tmp/zgs135/*(om)'
+/tmp/zgs135/newest
+/tmp/zgs135/new
+/tmp/zgs135/old
+
+# 10ms gap (same wall-clock second) — was broken, now correct:
+$ d=/tmp/zgs_10ms; rm -rf $d; mkdir $d; for n in a b c; do touch $d/$n; sleep 0.01; done
+$ ./target/debug/zshrs --zsh -c "cd $d && echo *(om)"
+c b a   # was "a c b" before fix
+
+$ ./target/debug/zshrs --zsh -c "cd $d && echo *(Om)"
+a b c   # was "a c b" before fix
+```
+
+Unit tests `test_glob_om_sort_newest_first` +
+`test_glob_Om_sort_oldest_first` now both pass. Shell regression
+suite: 115 → 110 failures (5 fewer — multiple glob-ordering tests
+clear simultaneously).
+
+**Original report:**
 
 ```sh
 $ touch /tmp/zgs/old; sleep 0.5; touch /tmp/zgs/new; sleep 0.5; touch /tmp/zgs/newest
