@@ -2073,6 +2073,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             | "atanh"
             | "cbrt"
             | "ceil"
+            | "copysign"
             | "cos"
             | "cosh"
             | "erf"
@@ -2082,6 +2083,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             | "fabs"
             | "float"
             | "floor"
+            | "fmod"
             | "gamma"
             | "hypot"
             | "ilogb"
@@ -2269,33 +2271,88 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         };
     }
 
-    // Built-in math functions
+    // c:Src/Modules/mathfunc.c:24-44 — extern math fns provided by
+    // libc on every UNIX. Rust's `f64` exposes most directly
+    // (acosh/asinh/atanh/sqrt/...). The libgm-only ones (erf/erfc/
+    // tgamma/lgamma/j0/j1/y0/y1/ilogb/logb/cbrt/expm1/log1p/
+    // copysign/nextafter/fmod) need an explicit C ABI binding.
+    #[cfg(unix)]
+    extern "C" {
+        fn erf(x: f64) -> f64;
+        fn erfc(x: f64) -> f64;
+        fn lgamma(x: f64) -> f64;
+        fn tgamma(x: f64) -> f64;
+        fn ilogb(x: f64) -> i32;
+        fn logb(x: f64) -> f64;
+        fn j0(x: f64) -> f64;
+        fn j1(x: f64) -> f64;
+        fn y0(x: f64) -> f64;
+        fn y1(x: f64) -> f64;
+        fn cbrt(x: f64) -> f64;
+        fn expm1(x: f64) -> f64;
+        fn log1p(x: f64) -> f64;
+        fn copysign(x: f64, y: f64) -> f64;
+        fn nextafter(x: f64, y: f64) -> f64;
+        fn fmod(x: f64, y: f64) -> f64;
+    }
+    // Built-in math functions — mirrors `math_func()` dispatch table
+    // at Src/Modules/mathfunc.c:198-432.
     let result = match name {
         "abs" => args.first().map(|x| x.abs()).unwrap_or(0.0),
         "acos" => args.first().map(|x| x.acos()).unwrap_or(0.0),
+        "acosh" => args.first().map(|x| x.acosh()).unwrap_or(0.0), // c:212
         "asin" => args.first().map(|x| x.asin()).unwrap_or(0.0),
+        "asinh" => args.first().map(|x| x.asinh()).unwrap_or(0.0), // c:220
         "atan" => args.first().map(|x| x.atan()).unwrap_or(0.0),
         "atan2" => {
             let y = args.first().copied().unwrap_or(0.0);
             let x = args.get(1).copied().unwrap_or(1.0);
             y.atan2(x)
         }
+        "atanh" => args.first().map(|x| x.atanh()).unwrap_or(0.0), // c:233
+        "cbrt" => unsafe { cbrt(args.first().copied().unwrap_or(0.0)) }, // c:237
         "ceil" => args.first().map(|x| x.ceil()).unwrap_or(0.0),
+        "copysign" => {
+            let x = args.first().copied().unwrap_or(0.0);
+            let y = args.get(1).copied().unwrap_or(0.0);
+            unsafe { copysign(x, y) } // c:245
+        }
         "cos" => args.first().map(|x| x.cos()).unwrap_or(1.0),
         "cosh" => args.first().map(|x| x.cosh()).unwrap_or(1.0),
+        "erf" => unsafe { erf(args.first().copied().unwrap_or(0.0)) },   // c:257
+        "erfc" => unsafe { erfc(args.first().copied().unwrap_or(0.0)) }, // c:261
         "exp" => args.first().map(|x| x.exp()).unwrap_or(1.0),
+        "expm1" => unsafe { expm1(args.first().copied().unwrap_or(0.0)) }, // c:269
+        "fabs" => args.first().map(|x| x.abs()).unwrap_or(0.0),          // c:273
         "floor" => args.first().map(|x| x.floor()).unwrap_or(0.0),
+        "fmod" => {
+            let x = args.first().copied().unwrap_or(0.0);
+            let y = args.get(1).copied().unwrap_or(1.0);
+            unsafe { fmod(x, y) } // c:285
+        }
+        "gamma" => unsafe { tgamma(args.first().copied().unwrap_or(0.0)) }, // c:289
         "hypot" => {
             let x = args.first().copied().unwrap_or(0.0);
             let y = args.get(1).copied().unwrap_or(0.0);
             x.hypot(y)
         }
+        "ilogb" => unsafe { ilogb(args.first().copied().unwrap_or(0.0)) as f64 }, // c:304
         "int" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
+        "j0" => unsafe { j0(args.first().copied().unwrap_or(0.0)) }, // c:325
+        "j1" => unsafe { j1(args.first().copied().unwrap_or(0.0)) }, // c:331
+        "lgamma" => unsafe { lgamma(args.first().copied().unwrap_or(0.0)) }, // c:341
         "log" => args.first().map(|x| x.ln()).unwrap_or(0.0),
         "log10" => args.first().map(|x| x.log10()).unwrap_or(0.0),
+        "log1p" => unsafe { log1p(args.first().copied().unwrap_or(0.0)) }, // c:357
         "log2" => args.first().map(|x| x.log2()).unwrap_or(0.0),
+        "logb" => unsafe { logb(args.first().copied().unwrap_or(0.0)) }, // c:365
         "max" => args.iter().copied().fold(f64::NEG_INFINITY, f64::max),
         "min" => args.iter().copied().fold(f64::INFINITY, f64::min),
+        "nextafter" => {
+            let x = args.first().copied().unwrap_or(0.0);
+            let y = args.get(1).copied().unwrap_or(0.0);
+            unsafe { nextafter(x, y) } // c:373
+        }
         "pow" => {
             let base = args.first().copied().unwrap_or(0.0);
             let exp = args.get(1).copied().unwrap_or(1.0);
@@ -2309,6 +2366,8 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         "tan" => args.first().map(|x| x.tan()).unwrap_or(0.0),
         "tanh" => args.first().map(|x| x.tanh()).unwrap_or(0.0),
         "trunc" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
+        "y0" => unsafe { y0(args.first().copied().unwrap_or(0.0)) }, // c:417
+        "y1" => unsafe { y1(args.first().copied().unwrap_or(0.0)) }, // c:423
         // `float(x)` — widen int/float to float. Identity on
         // floats; on ints, returns same value tagged as float so
         // `printf "%.4f"` prints "3.0000" instead of "3". Direct
