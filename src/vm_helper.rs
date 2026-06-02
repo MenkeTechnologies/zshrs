@@ -2493,11 +2493,94 @@ pub fn init_partab_params() {
             level: 0,
         })
     };
+    // c:Src/Modules/system.c:902,904 + Src/Modules/mapfile.c — these
+    // params are provided by modules that real zsh requires explicit
+    // `zmodload` for. Seeding them unconditionally makes
+    // `${+sysparams}` return 1 by default (bug #69 in docs/BUGS.md),
+    // diverging from zsh which returns 0 until the user runs
+    // `zmodload zsh/system`. Skip here; `seed_partab_param` below adds
+    // them on demand from the module's load path.
+    let module_gated: &[&str] = &[
+        "sysparams", // zsh/system
+        "errnos",    // zsh/system
+        "mapfile",   // zsh/mapfile
+    ];
     for entry in PARTAB.iter() {
+        if module_gated.contains(&entry.name) {
+            continue;
+        }
         tab.insert(entry.name.to_string(), mk_pm(entry.name, entry.flags));
     }
     for entry in PARTAB_ARRAY.iter() {
+        if module_gated.contains(&entry.name) {
+            continue;
+        }
         tab.insert(entry.name.to_string(), mk_pm(entry.name, entry.flags));
+    }
+}
+
+/// Insert a single PARTAB / PARTAB_ARRAY entry into paramtab. Called
+/// from `zmodload <module>` once the module's boot completes, so that
+/// `${+sysparams}` (etc.) flip from 0 → 1 only after explicit load.
+/// No direct C counterpart — the C path runs through the module's
+/// `setup_/boot_` chain which adds the SPECIALPMDEF entry via the
+/// general hashtable machinery. Bug #69 in docs/BUGS.md.
+pub fn seed_partab_param(name: &str) {
+    use crate::ported::modules::parameter::{PARTAB, PARTAB_ARRAY};
+    use crate::ported::zsh_h::{hashnode, param, PM_HIDE, PM_HIDEVAL, PM_READONLY, PM_SPECIAL};
+    let mut tab = match crate::ported::params::paramtab().write() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    if tab.contains_key(name) {
+        return; // already seeded
+    }
+    let flags = PARTAB
+        .iter()
+        .find(|e| e.name == name)
+        .map(|e| e.flags)
+        .or_else(|| PARTAB_ARRAY.iter().find(|e| e.name == name).map(|e| e.flags));
+    let Some(flags) = flags else {
+        return;
+    };
+    let pm = Box::new(param {
+        node: hashnode {
+            next: None,
+            nam: name.to_string(),
+            flags: (flags & !(PM_READONLY as i32))
+                | PM_SPECIAL as i32
+                | PM_HIDE as i32
+                | PM_HIDEVAL as i32,
+        },
+        u_data: 0,
+        u_arr: None,
+        u_str: None,
+        u_val: 0,
+        u_dval: 0.0,
+        u_hash: None,
+        gsu_s: None,
+        gsu_i: None,
+        gsu_f: None,
+        gsu_a: None,
+        gsu_h: None,
+        base: 0,
+        width: 0,
+        env: None,
+        ename: None,
+        old: None,
+        level: 0,
+    });
+    tab.insert(name.to_string(), pm);
+}
+
+/// Names provided by `zsh/system` / `zsh/mapfile` etc. that are
+/// gated on explicit `zmodload`. Used by the bin_zmodload path to
+/// re-seed paramtab after the module's boot completes.
+pub fn module_gated_params_for(module: &str) -> &'static [&'static str] {
+    match module {
+        "zsh/system" => &["sysparams", "errnos"],
+        "zsh/mapfile" => &["mapfile"],
+        _ => &[],
     }
 }
 impl ShellExecutor {

@@ -1177,6 +1177,16 @@ impl modulestab {
             m.node.flags |= MOD_INIT_B; // c:2322
             m.node.flags &= !MOD_SETUP; // c:2323
         }
+        // c:Src/Modules/system.c:902,904 + zsh/mapfile — `SPECIALPMDEF`
+        // entries get added to paramtab via the module's feature
+        // dispatch (`enables_` → `handlefeatures` → addparam). zshrs's
+        // simplified module framework runs that path implicitly via
+        // PARTAB, but `init_partab_params` skips zmodload-gated names
+        // to avoid them appearing before explicit load (bug #69 in
+        // docs/BUGS.md). Re-seed them here once boot completes.
+        for nm in crate::vm_helper::module_gated_params_for(name) {
+            crate::vm_helper::seed_partab_param(nm);
+        }
         unqueue_signals(); // c:2324
         true // c:2325 return bootret (0)
     }
