@@ -20491,7 +20491,69 @@ printf "%s\n" hi
 
 ## #285 — `break`/`continue` outside loop silently succeed (zsh: errors with ec=1)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `compile_simple`'s `break`/`continue`
+inline-compile path skipped the C-source loops==0 check at
+Src/builtin.c:5832-5835 when there was no enclosing loop;
+corrected 2026-06-02.
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_simple`
+intercepts the `break` and `continue` keywords directly at
+compile-time, emitting jumps to the enclosing loop's break/
+continue patch list. The "no enclosing loop" arm (`depth == 0`)
+emitted:
+
+```rust
+CallBuiltin(BUILTIN_SET_BREAK, 0)   // bump BREAKS atomic
+Pop
+Jump(script_end)                     // bail out to script end
+```
+
+This bypassed `bin_break` (which lives in `BUILTIN_BREAK` /
+`BUILTIN_CONTINUE` dispatch IDs via `reg_passthru!`). C
+`bin_break` at Src/builtin.c:5832-5835 does:
+
+```c
+if (loops == 0) {
+    zwarnnam(name, "not in while, until, select, or repeat loop");
+    return 1;
+}
+```
+
+— exactly what we need at the top-level. Skipping that path
+meant `break` from a script with no enclosing loop silently
+exited with status 0 and no warning.
+
+**Fix:** `src/extensions/compile_zsh.rs::compile_simple` — both
+`break` and `continue` no-loop arms now push args and emit
+`Op::CallBuiltin(BUILTIN_BREAK/CONTINUE, argc) + SetStatus`. The
+inside-loop arms (`depth > 0`) are unchanged so existing
+inside-loop control-flow keeps working.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'break' 2>&1; echo "ec=$?"
+zsh:break:1: not in while, until, select, or repeat loop
+ec=1
+$ ./target/debug/zshrs --zsh -c 'break' 2>&1; echo "ec=$?"
+zsh:break:1: not in while, until, select, or repeat loop
+ec=1
+
+$ /opt/homebrew/bin/zsh -fc 'continue' 2>&1; echo "ec=$?"
+zsh:continue:1: not in while, until, select, or repeat loop
+ec=1
+$ ./target/debug/zshrs --zsh -c 'continue' 2>&1; echo "ec=$?"
+zsh:continue:1: not in while, until, select, or repeat loop
+ec=1
+
+# Regressions: inside-loop unchanged
+$ ./target/debug/zshrs --zsh -c 'for x in a b c; do echo $x; break; done'
+a
+$ ./target/debug/zshrs --zsh -c 'for x in a b c; do [[ $x == b ]] && continue; echo $x; done'
+a
+c
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'break'
@@ -20770,7 +20832,24 @@ zmodload | while read mod; do echo "zmodload $mod"; done > saved.zsh
 
 ## #290 — `${(q)arr}` / `${(qq)arr}` drops empty array elements from quoted output
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x "" y); print -l "${(@q)a}"'
+x
+''
+y
+$ ./target/debug/zshrs --zsh -c 'a=(x "" y); print -l "${(@q)a}"'
+x
+''
+y
+```
+
+Both shells now preserve the empty element as `''` in the
+quoted output.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(x "" y); echo "${(q)a[@]}"'
