@@ -4955,6 +4955,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // c:3232 non-subscripted branch.
     let mut tab = paramtab().write().unwrap();
     let existing = tab.contains_key(name);
+    let created_now = !existing; // c:3232 createparam path sets `created = 1`
     if !existing {
         // c:3234 `createparam(t, PM_SCALAR); created = 1;`
         let mut pm_flags = PM_SCALAR as i32;
@@ -5104,6 +5105,12 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         }
     }
 
+    // c:3266-3268 `if (flags & ASSPM_WARN) check_warn_pm(v->pm, "scalar", created, 1);`
+    if (flags & ASSPM_WARN) != 0 {
+        if let Some(pm_ref) = tab.get(name) {
+            check_warn_pm(pm_ref, "scalar", created_now as i32, 1); // c:3268
+        }
+    }
     // c:3269 `v->pm->node.flags &= ~PM_DEFAULTED;`
     let pm = tab.get_mut(name).unwrap(); // c:3269
     pm.node.flags &= !(PM_DEFAULTED as i32); // c:3269
@@ -5277,6 +5284,7 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         zwarn(&format!("{}: can't change type of a named reference", name));
         return None;
     }
+    let created_now = !existed; // c:3393 createparam path sets `created = 1`
     if !existed {
         createparam(name, PM_ARRAY as i32)?;
     }
@@ -5339,6 +5347,15 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         };
         let appended: Vec<String> = prior_arr.into_iter().chain(val.into_iter()).collect();
         val = appended;
+    }
+
+    // c:3432 `if (flags & ASSPM_WARN) check_warn_pm(v->pm, "array", created, may_warn_about_nested_vars);`
+    // c:3372 — `may_warn_about_nested_vars = !(flags & ASSPM_AUGMENT)`.
+    if (flags & ASSPM_WARN) != 0 {
+        let may_nested = if (flags & ASSPM_AUGMENT) != 0 { 0 } else { 1 };
+        if let Some(pm_ref) = paramtab().read().unwrap().get(name) {
+            check_warn_pm(pm_ref, "array", created_now as i32, may_nested); // c:3432
+        }
     }
 
     // c:3434 — setarrvalue(v, val): store array in pm.u_arr.
@@ -5454,8 +5471,15 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
 
     // c:3625 — fetchvalue / createparam(PM_HASHED) if missing.
     let exists = paramtab().read().unwrap().contains_key(name);
+    let checkcreate = !exists; // c:3626 `checkcreate = 1;`
     if !exists {
         createparam(name, PM_HASHED as i32)?;
+    }
+
+    // c:3649 `check_warn_pm(v->pm, "associative array", checkcreate, 1);`
+    // — sethparam always warns (no ASSPM_WARN gate in C).
+    if let Some(pm_ref) = paramtab().read().unwrap().get(name) {
+        check_warn_pm(pm_ref, "associative array", checkcreate as i32, 1); // c:3649
     }
 
     // Build the IndexMap from flat (k,v) pairs (mirrors c:arrhashsetfn
