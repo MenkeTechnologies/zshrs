@@ -8827,7 +8827,41 @@ fi
 
 ## #122 — Exit status of `$()` inside `${x:-$(...)}` not propagated to `$?`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — scalar_rhs_has_cmd_subst now recognizes Qstring+Inpar.
+
+**Root cause** — `compile_zsh::scalar_rhs_has_cmd_subst` (the
+detector that gates the post-assignment `$?` reset) only matched
+the tokenized `$(...)` form via `Stringg + Inpar` (\u{85}\u{88}).
+For `y="${x:-$(false)}"`, the outer `"..."` puts the inner `$`
+into DQ context, where the lexer emits `Qstring` (\u{8c}) instead
+of `Stringg` (\u{85}). The detector returned false, so the
+compile path thought no cmd-subst could run, and emitted the
+"assignment-only reset $? to 0" path — overwriting the `$(false)`
+exit status (1) with 0.
+
+**Fix** — Extend `scalar_rhs_has_cmd_subst` to also recognize
+`Qstring + Inpar` as a tokenized `$(...)` form (mirrors the
+existing dual `$(`/raw + tokenized) handling for the `$` marker).
+Bug entirely in `src/extensions/compile_zsh.rs::scalar_rhs_has_cmd_subst`.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'unset x; y="${x:-$(false)}"; echo ec=$?'
+ec=1
+$ ./target/debug/zshrs --zsh -c 'unset x; y="${x:-$(exit 7)}"; echo ec=$?'
+ec=7
+$ ./target/debug/zshrs --zsh -c 'false; a=plain; echo ec=$?'
+ec=0   # plain assignment still resets
+$ ./target/debug/zshrs --zsh -c 'a=$(false); echo ec=$?'
+ec=1   # direct cmd-subst still propagates
+$ ./target/debug/zshrs --zsh -c 'false; x=$?; echo $x; echo $?'
+1
+0      # $? captured before reset (regression check)
+$ ./target/debug/zshrs --zsh -c 'unset x; y="${x:-`false`}"; echo ec=$?'
+ec=1   # backtick variant also works
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'unset x; y="${x:-$(false)}"; echo "1:ec=$?"; y="${x:-$(exit 7)}"; echo "2:ec=$?"'
