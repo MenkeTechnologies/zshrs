@@ -3832,6 +3832,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
             with_executor(|exec| exec.set_last_status(1));
             vm.last_status = 1;
+            // c:Src/init.c loop() — a non-interactive errflag-fired
+            // abort propagates to the SHELL, not just the current
+            // function/sourced file. Inside a function, the local
+            // BUILTIN_ERREXIT_CHECK unwinds the function scope; but
+            // the caller's next ERREXIT_CHECK only sees errflag if we
+            // didn't clear it — and we did (above). Set EXIT_PENDING
+            // so the outer ERREXIT_CHECK at script-level takes the
+            // EXIT_PENDING arm and aborts. Bug #74 in docs/BUGS.md:
+            // `f() { local -r x=5; x=10; }; f; echo after` printed
+            // `after` because errflag-clear above let the script-level
+            // check see a clean state.
+            crate::ported::builtin::EXIT_VAL.store(1, Ordering::Relaxed);
+            crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
             return Value::Int(1);
         }
         let last = vm.last_status;
