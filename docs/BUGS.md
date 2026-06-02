@@ -8027,7 +8027,43 @@ bindkey "$'\x18\x05'" edit-command-line   # Ctrl-X (0x18), Ctrl-E (0x05)
 
 ## #114 — `${(l.W.)s}` left-pad width must be literal; variable name parses as "bad substitution"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `(l.N.)` / `(r.N.)` width now goes through singsub + mathevali.
+
+**Root cause** — `src/ported/subst.rs` `(l|r)` flag parser (the
+arm at line 3153) only accepted `[0-9]+` literal digits for the
+width N, then defaulted to 0 on miss. C's `get_intarg` at
+`Src/subst.c:1428-1454`:
+1. Reads the delimited region via `get_strarg`.
+2. Runs `parsestr` + `singsub` — so `$var` references and
+   command substitutions expand.
+3. Runs `mathevali` on the result — so `w`, `w*2`, `((w+1))`
+   all evaluate.
+4. Returns `abs(ret)` (negative widths flipped positive).
+
+The previous Rust port skipped steps 2-4 entirely. For input
+`(l.w.)` the digit loop matched zero chars (w is not a digit),
+n came out as 0, the matched-delim check then bailed.
+
+**Fix** — Read the raw delimited region (chars between `del` and
+`close_del`), `singsub` it to expand `$var` / backticks, then
+`mathevali` to resolve to an integer. Apply C's `if (ret < 0)
+ret = -ret` rule via `.abs()` per c:1451-1452.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'w=5; s=hi; echo "[${(l.w.)s}]"'
+[   hi]
+$ ./target/debug/zshrs --zsh -c 'w=3; s=hi; echo "[${(l.w*2.)s}]"'
+[    hi]
+$ ./target/debug/zshrs --zsh -c 'w=5; s=hi; echo "[${(r.w.)s}]"'
+[hi   ]
+$ ./target/debug/zshrs --zsh -c 'w=5; s=hi; echo "[${(l.w..-.)s}]"'
+[---hi]
+```
+
+Baseline: 935/117 (+3 tests pass).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'w=5; s=hi; echo "[${(l.w.)s}]"'

@@ -3186,13 +3186,32 @@ pub fn paramsubst(
                             other => other,
                         };
                         idx += 1; // get_strarg(s) advances past opening del
-                                  // Parse N — digits up to closing del.
-                        let mut num_str = String::new();
-                        while idx < body_chars.len() && body_chars[idx].is_ascii_digit() {
-                            num_str.push(body_chars[idx]);
+                                  // c:Src/subst.c:1428-1454 — `get_intarg`
+                                  // reads the delimited region (`get_strarg`),
+                                  // `singsub`s it so `$var` refs expand, then
+                                  // `mathevali`s the result. The previous Rust
+                                  // port only accepted bare `[0-9]+` digits,
+                                  // so `(l.w.)` / `(l.$w.)` / `(l.w*2.)` all
+                                  // failed with "bad substitution" (n=0
+                                  // collapsed the pad to a no-op or the
+                                  // matched-delim check rejected later).
+                                  // Bug #114 in docs/BUGS.md.
+                        let n_start = idx;
+                        while idx < body_chars.len() && body_chars[idx] != close_del {
                             idx += 1;
                         }
-                        let n: i64 = num_str.parse().unwrap_or(0); // c:2326
+                        let raw_expr: String = body_chars[n_start..idx].iter().collect();
+                        // singsub expands `$var` / backticks / arith; then
+                        // mathevali resolves the result string.
+                        let expanded = singsub(&raw_expr);
+                        let n: i64 = if expanded.is_empty() {
+                            0
+                        } else {
+                            match crate::ported::math::mathevali(&expanded) {
+                                Ok(v) => v.abs(),       // c:1451-1452 `if (ret < 0) ret = -ret`
+                                Err(_) => 0,
+                            }
+                        };
                                                                    // c:1441 — `*s = t + arglen` advances PAST the
                                                                    // closing delimiter. Mirror by skipping the
                                                                    // closing del.
