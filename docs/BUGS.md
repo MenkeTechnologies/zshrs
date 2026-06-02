@@ -6831,7 +6831,37 @@ printf "%5s | %-8s\n" "$num" "$name"   # both shells: same output
 
 ## #101 — `exec funcname` (shell function) errors "not found" instead of running
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `BUILTIN_EXEC` (`src/fusevm_bridge.rs`)
+went straight to `command.exec()` / `command.spawn()` (PATH-only
+lookup) without consulting the shell function table or the
+builtin table. C zsh's dispatcher falls through from the `BINF_EXEC`
+prefix into the normal Builtin/External/Function resolution and
+only `execvp`s if the target ISN'T resolvable in the shell — so
+`exec funcname` runs the function in-process as the shell's last
+act.
+
+Added two pre-PATH checks in BUILTIN_EXEC:
+1. `exec.functions_compiled.contains_key(&cmd)` → dispatch through
+   `dispatch_function_call` and either `process::exit(status)` (top
+   level) or set `EXIT_PENDING + EXIT_VAL` (subshell context, via
+   bug #94's mechanism).
+2. `createbuiltintable().contains_key(&cmd)` → dispatch through
+   `dispatch_builtin_raw` with the same exit-vs-EXIT_PENDING
+   branching.
+
+If neither matches, fall through to the original execvp/spawn path.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `f() { echo "in fn"; }; exec f` — both print `in fn` and exit.
+- `f() { ...}; (exec f); echo after` — both print `in fn / after`.
+- `exec echo external` — both replace shell with echo.
+- `(exec true); echo $?` — both `0`.
+- `exec /nonexistent` — both EC=127 (diagnostic wording differs:
+  zsh `no such file or directory`; zshrs `exec: …: not found`).
+- Exit-status propagation `g() { return 42; }; (exec g); echo $?`
+  → `42` in both.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { echo "in fn"; }; exec f'
