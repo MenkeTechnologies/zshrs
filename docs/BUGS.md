@@ -11145,7 +11145,65 @@ echo "${paths[@]:t}"   # both shells: tailed
 
 ## #148 — `zsh/mathfunc` missing many functions (cbrt, asinh, erfc, gamma, j0, rand48, ...)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `math.rs::callmathfunc` dispatch table now includes the libc math functions (`asinh`/`cbrt`/`erfc`/`gamma`/`j0`/...).
+
+**Root cause** — `src/ported/math.rs::callmathfunc` had a partial
+match arm with only ~25 functions (sin/cos/sqrt/log/etc.). Missing
+the libc-extended ones: `acosh`, `asinh`, `atanh`, `cbrt`, `erf`,
+`erfc`, `expm1`, `fabs`, `gamma`, `lgamma`, `ilogb`, `j0`/`j1`,
+`y0`/`y1`, `log1p`, `logb`, `copysign`, `nextafter`, `fmod`.
+
+The names existed in `is_module_func` (the "this is a mathfunc-
+loaded name" gate) but the actual dispatch fell to the catch-all
+`_ => m_error_set("unknown function: ...")`.
+
+`Src/Modules/mathfunc.c::math_func` (`Src/Modules/mathfunc.c:198-432`)
+has the full dispatch table. Each arm uses libc's standard
+extensions — Rust's `f64` has the trig+log subset natively
+(`f64::acosh`, `f64::asinh`, etc.), the rest need `extern "C"`
+bindings.
+
+**Fix** — `math.rs::callmathfunc`:
+
+1. Added `extern "C"` block for the libc-only functions (`erf`,
+   `erfc`, `lgamma`, `tgamma`, `ilogb`, `logb`, `j0`/`j1`/`y0`/`y1`,
+   `cbrt`, `expm1`, `log1p`, `copysign`, `nextafter`, `fmod`).
+2. Added match arms for each new function with a `// c:NNN`
+   citation linking to the corresponding `MF_*` arm in
+   `Src/Modules/mathfunc.c`. Native Rust intrinsics
+   (`f64::acosh`/`asinh`/`atanh`/`abs`) used where available;
+   libc extern for the rest.
+3. Added `"copysign"` and `"fmod"` to the `is_module_func` gate
+   list (the others were already present).
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/mathfunc; echo $((asinh(1)))'
+0.88137358701954305
+
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/mathfunc; echo $((cbrt(27)))'
+3.
+
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/mathfunc; echo $((gamma(5)))'
+24.
+
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/mathfunc; echo $((erfc(0)))'
+1.
+
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/mathfunc; echo $((j0(0)))'
+1.
+```
+
+All five match zsh exactly. Regression suite: 114 → 111 failures
+(3 fewer — multiple math-function tests now pass).
+
+**Known still-deferred** — `rand48("seedvar")` (the seedstr+param-
+table integration is parked in `mathfunc.rs::math_string` until
+the param-table side is ported) and the few `*_string` family
+helpers. Those are flagged separately if/when revisited.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zmodload zsh/mathfunc; echo $((asinh(1)))'
