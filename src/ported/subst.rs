@@ -6328,6 +6328,63 @@ pub fn paramsubst(
                     }
                     out
                 };
+                // c:Src/glob.c::getmatch — `(#m)` flag in the pattern
+                // populates `$MATCH` / `$MBEGIN` / `$MEND` with the
+                // matched span at replace-time. The `//` arm above
+                // (line ~6056) handles this; the single-`/` arm
+                // didn't, so `"${s/(#m)l/[$MATCH]}"` rendered `MATCH`
+                // empty. Bug #265 in docs/BUGS.md. Detect the flag,
+                // and on each successful match, set MATCH and
+                // re-singsub the raw replacement string before using
+                // it.
+                let pat_has_m_one = {
+                    let pat_after_anchor =
+                        pat.strip_prefix('#').or(pat.strip_prefix('%')).unwrap_or(&pat);
+                    pat_after_anchor.contains("(#m)") || pat_after_anchor.contains("(#b)")
+                };
+                let raw_repl_clone = raw_repl.clone();
+                let repl_default = repl.clone();
+                let resolve_repl = move |span_text: &str, span_start_byte: usize| -> String {
+                    if !pat_has_m_one {
+                        return repl_default.clone();
+                    }
+                    crate::ported::params::setsparam("MATCH", span_text);
+                    let base = if isset(crate::ported::zsh_h::KSHARRAYS) {
+                        0i64
+                    } else {
+                        1
+                    };
+                    crate::ported::params::setiparam("MBEGIN", span_start_byte as i64 + base);
+                    crate::ported::params::setiparam(
+                        "MEND",
+                        (span_start_byte as i64 + span_text.len() as i64 + base)
+                            .saturating_sub(1),
+                    );
+                    let saved_skip = SKIP_FILESUB.with(|c| c.get());
+                    SKIP_FILESUB.with(|c| c.set(true));
+                    let s = untokenize(&singsub(&raw_repl_clone));
+                    SKIP_FILESUB.with(|c| c.set(saved_skip));
+                    // Strip `\X` → `X` to mirror the precomputed
+                    // path. Keep `\\` → `\` as a single backslash.
+                    let mut out = String::with_capacity(s.len());
+                    let mut it = s.chars().peekable();
+                    while let Some(c) = it.next() {
+                        if c == '\\' {
+                            if let Some(&nx) = it.peek() {
+                                if nx == '\\' {
+                                    out.push('\\');
+                                    it.next();
+                                    continue;
+                                }
+                                out.push(nx);
+                                it.next();
+                                continue;
+                            }
+                        }
+                        out.push(c);
+                    }
+                    out
+                };
                 // Single-replace helper. Variants: anchor-prefix
                 // (pat starts with `#`), anchor-suffix (`%`), or
                 // unanchored. Returns the post-replacement string.
@@ -6340,7 +6397,12 @@ pub fn paramsubst(
                             if patcompile(anchor_pat, PAT_HEAPDUP as i32, None)
                                 .map_or(false, |__p| pattry(&__p, &cand))
                             {
-                                return format!("{}{}", repl, cv[end..].iter().collect::<String>());
+                                let dyn_repl = resolve_repl(&cand, 0);
+                                return format!(
+                                    "{}{}",
+                                    dyn_repl,
+                                    cv[end..].iter().collect::<String>()
+                                );
                             }
                         }
                         val.to_string()
@@ -6352,10 +6414,13 @@ pub fn paramsubst(
                             if patcompile(anchor_pat, PAT_HEAPDUP as i32, None)
                                 .map_or(false, |__p| pattry(&__p, &cand))
                             {
+                                let span_byte: usize =
+                                    cv[..start].iter().map(|c| c.len_utf8()).sum();
+                                let dyn_repl = resolve_repl(&cand, span_byte);
                                 return format!(
                                     "{}{}",
                                     cv[..start].iter().collect::<String>(),
-                                    repl
+                                    dyn_repl
                                 );
                             }
                         }
@@ -6369,9 +6434,12 @@ pub fn paramsubst(
                                 if patcompile(&pat, PAT_HEAPDUP as i32, None)
                                     .map_or(false, |__p| pattry(&__p, &cand))
                                 {
+                                    let span_byte: usize =
+                                        cv[..start].iter().map(|c| c.len_utf8()).sum();
+                                    let dyn_repl = resolve_repl(&cand, span_byte);
                                     let mut out = String::with_capacity(val.len());
                                     out.extend(cv[..start].iter());
-                                    out.push_str(&repl);
+                                    out.push_str(&dyn_repl);
                                     out.extend(cv[end..].iter());
                                     return out;
                                 }
