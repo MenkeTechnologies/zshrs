@@ -6021,8 +6021,19 @@ pub fn paramsubst(
                 // the pattern and constrain where matches may fire:
                 //   `#` — only at position 0 (start of string).
                 //   `%` — only at the very end (longest tail match).
+                // c:Src/subst.c — `${var/#%pat/repl}` anchors the
+                // match at BOTH start AND end — the pattern must
+                // match the entire string for the replace to fire.
+                // zsh recognizes the `#` before `%` ordering only;
+                // `%#` is parsed as `%` anchor + `#pat` (where
+                // the leading `#` is literal pattern data).
+                // Bug #355 in docs/BUGS.md.
                 let (pat_anchor, pat_after_anchor) = if let Some(rest) = raw_pat.strip_prefix('#') {
-                    ('#', rest.to_string())
+                    if let Some(rest2) = rest.strip_prefix('%') {
+                        ('B', rest2.to_string()) // 'B' = both anchors
+                    } else {
+                        ('#', rest.to_string())
+                    }
                 } else if let Some(rest) = raw_pat.strip_prefix('%') {
                     ('%', rest.to_string())
                 } else {
@@ -6141,6 +6152,19 @@ pub fn paramsubst(
                     // #266 in docs/BUGS.md. Calling
                     // glob_match_static unconditionally is safe — it
                     // falls back to plain pattry when (#b) isn't on.
+                    if pat_anchor == 'B' {
+                        // c:Src/subst.c — both-anchored `#%`/`%#`: the
+                        // pattern must match the ENTIRE string. Test
+                        // the whole val and replace iff successful.
+                        // Bug #355 in docs/BUGS.md.
+                        let whole: String = cv.iter().collect();
+                        if crate::vm_helper::glob_match_static(&whole, &pat) {
+                            o.push_str(&eval_repl_for_match(&whole, 0));
+                        } else {
+                            o.push_str(val);
+                        }
+                        return o;
+                    }
                     if pat_anchor == '#' {
                         let mut matched: Option<usize> = None;
                         for end in (1..=nn).rev() {
@@ -6410,10 +6434,26 @@ pub fn paramsubst(
                     }
                     out
                 };
-                // Single-replace helper. Variants: anchor-prefix
-                // (pat starts with `#`), anchor-suffix (`%`), or
-                // unanchored. Returns the post-replacement string.
+                // c:Src/subst.c — `${var/#%pat/repl}` anchors the
+                // match at BOTH start AND end (the pattern must
+                // match the entire string). zsh only recognizes
+                // the `#` before `%` ordering. Bug #355 in
+                // docs/BUGS.md.
+                let both_anchor_pat: Option<&str> = pat.strip_prefix("#%");
+                // Single-replace helper. Variants: both-anchored
+                // (`#%`/`%#`), anchor-prefix (pat starts with `#`),
+                // anchor-suffix (`%`), or unanchored. Returns the
+                // post-replacement string.
                 let replace_one = |val: &str| -> String {
+                    if let Some(whole_pat) = both_anchor_pat {
+                        if patcompile(whole_pat, PAT_HEAPDUP as i32, None)
+                            .map_or(false, |__p| pattry(&__p, val))
+                        {
+                            let dyn_repl = resolve_repl(val, 0);
+                            return dyn_repl;
+                        }
+                        return val.to_string();
+                    }
                     if let Some(anchor_pat) = pat.strip_prefix('#') {
                         let cv: Vec<char> = val.chars().collect();
                         let nn = cv.len();
