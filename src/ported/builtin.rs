@@ -3584,12 +3584,188 @@ pub fn bin_typeset(
         out
     };
     let argv = argv.as_slice();
-    // c:Src/builtin.c:2813+ — under PM_TIED (`-T scalar array [sep]`)
+    // c:Src/builtin.c:2813-3030 — under PM_TIED (`-T scalar array [sep]`)
     // the third positional is the SEPARATOR character, not a param
-    // name. Track arg index so we can skip validation/createparam
-    // on the separator. Beyond index 2 under -T is a usage error
-    // in C zsh but we follow the lenient "ignore" path.
+    // name. The scalar and array become a tied pair: writing the
+    // scalar splits the joined string back into the array; reading
+    // the scalar joins the array on the separator. Direct port of the
+    // C body's tied-pair setup at c:2813-2940 (validation) + the
+    // typeset_single+tiedarr_gsu wiring at c:1956 + c:2945+.
+    //
+    // The Rust port handles the validation / scalar-array tie + value
+    // installation as one block here rather than threading PM_TIED
+    // through the generic per-arg loop. Beyond index 2 under -T is a
+    // usage error in C zsh; the Rust port mirrors the same "too many
+    // arguments" rejection.
+    //
+    // Bug #24 in docs/BUGS.md.
     let tied_mode = (on & PM_TIED) != 0;
+    if tied_mode {
+        // c:2827-2830 — `if (nargs < 2)` reject.
+        if argv.len() < 2 {
+            zwarnnam(name, "-T requires names of scalar and array");
+            return 1;
+        }
+        // c:2831-2833 — `if (nargs > 3)` reject.
+        if argv.len() > 3 {
+            zwarnnam(name, "too many arguments for -T");
+            return 1;
+        }
+        // First arg: SCALAR name (with optional =value). c:2838-2840
+        // `if (ASG_ARRAYP(&asg0))` — first arg can NOT be an array
+        // assign; we accept either no-value or =scalar.
+        let (sname, sval_opt): (&str, Option<String>) = match argv[0].find('=') {
+            Some(i) => (&argv[0][..i], Some(argv[0][i + 1..].to_string())),
+            None => (argv[0].as_str(), None),
+        };
+        // Second arg: ARRAY name (with optional =(elements...) init).
+        // Per c:2847-2854, second arg must be array-shape if it carries
+        // a value. The Rust port accepts either `arr` or `arr=(a b c)`.
+        let (aname, aval_opt): (&str, Option<Vec<String>>) = {
+            let a = argv[1].as_str();
+            if let Some(eq_idx) = a.find("=(") {
+                let aname = &a[..eq_idx];
+                // Strip `=(` prefix and `)` suffix; split inner on
+                // whitespace. Matches the splitting C's getasg would
+                // have done on a single concatenated argv element.
+                let rest = &a[eq_idx + 2..];
+                let inner = rest.trim_end_matches(')');
+                let parts: Vec<String> = inner
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect();
+                (aname, Some(parts))
+            } else if let Some(eq_idx) = a.find('=') {
+                // `arr=val` (scalar form for array slot) — reject per
+                // c:2849-2854 "second argument of tie must be array".
+                let _ = eq_idx;
+                zwarnnam(
+                    name,
+                    &format!("second argument of tie must be array: {}", a),
+                );
+                return 1;
+            } else {
+                (a, None)
+            }
+        };
+        // c:2857-2860 — `can't tie a variable to itself`.
+        if sname == aname {
+            zerrnam(name, &format!("can't tie a variable to itself: {}", sname));
+            return 1;
+        }
+        // c:2861-2864 — `can't tie array elements` (subscripted name).
+        if sname.contains('[') || aname.contains('[') {
+            zerrnam(name, &format!("can't tie array elements: {}", sname));
+            return 1;
+        }
+        // c:2866-2870 — `only one tied parameter can have value`.
+        if sval_opt.is_some() && aval_opt.is_some() {
+            zerrnam(
+                name,
+                &format!("only one tied parameter can have value: {}", sname),
+            );
+            return 1;
+        }
+        // c:2876-2895 — joinchar parse. Third arg is the separator. The
+        // Rust impl accepts `:` (canonical) and silently rejects other
+        // chars (full joinchar support is a deferred port — see WARNING
+        // on tied_scalar_get_via_ename in params.rs). When omitted, the
+        // default per c:2895 is `:`.
+        let _joinchar: char = if argv.len() == 3 {
+            let s = argv[2].as_str();
+            if s.is_empty() {
+                ':'
+            } else {
+                s.chars().next().unwrap()
+            }
+        } else {
+            ':'
+        };
+
+        // c:Src/builtin.c:2940-2944 — when the scalar already exists
+        // and has a value, save it for seeding the tied array:
+        //   `oldval = ztrdup(getsparam(asg0.name));`
+        // The Rust port checks paramtab AND the environ inherited at
+        // startup so `typeset -T PATH path :` over an env-imported
+        // PATH seeds `path` from the live PATH instead of clobbering
+        // it with empty.
+        let existing_scalar: Option<String> = {
+            let from_tab = paramtab().read().ok().and_then(|t| {
+                t.get(sname).and_then(|p| p.u_str.clone())
+            });
+            from_tab.or_else(|| std::env::var(sname).ok())
+        };
+
+        // Build the initial array value: prefer the array RHS, then
+        // the scalar RHS (split on `:`), then the existing scalar's
+        // env value (split on `:`). Mirrors C's sequence at
+        // c:2960-3030 where typeset_single is called on both names;
+        // if the scalar had a value it gets passed to tiedarrsetfn
+        // which colon-splits.
+        let init_arr: Vec<String> = if let Some(arr) = aval_opt {
+            arr
+        } else if let Some(sval) = sval_opt.as_deref() {
+            sval.split(':').map(|s| s.to_string()).collect()
+        } else if let Some(old) = existing_scalar.as_deref() {
+            if old.is_empty() {
+                Vec::new()
+            } else {
+                old.split(':').map(|s| s.to_string()).collect()
+            }
+        } else {
+            Vec::new()
+        };
+
+        // Install the array side first (matching C c:2980 "Do it
+        // first because we need the address"). Build a plain
+        // PM_ARRAY|PM_TIED param.
+        let mut apm = param::default();
+        apm.node.nam = aname.to_string();
+        apm.node.flags = (PM_ARRAY | PM_TIED) as i32;
+        apm.u_arr = Some(init_arr.clone());
+        apm.ename = Some(sname.to_string());
+        apm.level = locallevel.load(Relaxed) as i32;
+
+        // Install the scalar side with PM_TIED + gsu_s wired to the
+        // tied-via-ename getters/setters so reads/writes propagate
+        // through paramtab to apm.u_arr.
+        let mut spm = param::default();
+        spm.node.nam = sname.to_string();
+        spm.node.flags = (PM_SCALAR | PM_TIED) as i32;
+        spm.ename = Some(aname.to_string());
+        spm.u_str = Some(init_arr.join(":"));
+        spm.level = locallevel.load(Relaxed) as i32;
+        // c:Src/builtin.c:1956 — `static const struct gsu_scalar
+        // tiedarr_gsu = { tiedarrgetfn, tiedarrsetfn, tiedarrunsetfn };`
+        // The scalar side of a tied pair routes its reads/writes
+        // through these so the partner array stays in sync. C's
+        // tiedarrgetfn returns the joined string; tiedarrsetfn splits
+        // and writes through `*dptr->arrptr`. The Rust port adapts
+        // those to paramtab lookups via `pm.ename` (see params.rs
+        // commentary). The C tiedarrgetfn returns `char*` (joined
+        // scalar); the Rust signature returns `Vec<String>` because
+        // the existing typing — adapt with a closure that joins.
+        fn tied_scalar_getfn_shim(pm: &param) -> String {
+            crate::ported::params::tiedarrgetfn(pm).join(":")
+        }
+        fn tied_scalar_setfn_shim(pm: &mut param, val: String) {
+            crate::ported::params::tiedarrsetfn(pm, Some(val))
+        }
+        fn tied_scalar_unsetfn_shim(pm: &mut param, exp: i32) {
+            crate::ported::params::tiedarrunsetfn(pm, exp)
+        }
+        spm.gsu_s = Some(Box::new(crate::ported::zsh_h::gsu_scalar {
+            getfn: tied_scalar_getfn_shim,
+            setfn: tied_scalar_setfn_shim,
+            unsetfn: tied_scalar_unsetfn_shim,
+        }));
+
+        if let Ok(mut tab) = paramtab().write() {
+            tab.insert(aname.to_string(), Box::new(apm));
+            tab.insert(sname.to_string(), Box::new(spm));
+        }
+        return 0;
+    }
     let mut tied_name_count: usize = 0;
     for arg in argv {
         // c:Src/builtin.c typeset_single — when PM_LOCAL is in
