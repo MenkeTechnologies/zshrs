@@ -21207,7 +21207,50 @@ process_data | save_output
 
 ## #287 — `${(@)assoc}` in for-iteration produces single concatenated element instead of one-per-value
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — paramsubst's `nojoin == 2` value-fetch arm
+fell through to empty `value` for assocs (only consulted
+`arrays_get`), and `split_parts` wasn't seeded with the assoc's
+values so the auto-splat block had nothing to emit; corrected
+2026-06-02.
+
+**Root cause** — For `${(@)h}` on assoc `h=(a 1 b 2)`:
+- `nojoin == 2` from the `(@)` flag
+- The nojoin==2 branch in `paramsubst` called `arrays_get(&var_name)`
+  which returns None for assocs (assocs live in
+  `paramtab_hashed_storage`, not `u_arr`).
+- The fallback was `raw_value` (empty for assoc names).
+- `isarr` got stamped to 1 via the
+  `arrays_contains || assoc_contains` check.
+- But `split_parts` was None, so the c:4245 auto-splat block had
+  nothing to emit. Result: single empty element via the joined
+  `value` string.
+
+C `Src/subst.c` handles this via `SCANPM_WANTVALS` set when
+`(@)` applies to an assoc, which dispatches to the assoc-value
+walk. The Rust port handled the explicit `(@v)` / `(@k)` /
+`(@kv)` flag combinations but missed bare `(@)` on assocs.
+
+**Fix:** `src/ported/subst.rs::paramsubst` — two places:
+1. In the `nojoin == 2` value-init branch, fall back to
+   `assoc_get(&var_name)` joined values when `arrays_get` is None.
+2. After the `magic_assoc_array` seed block, add a parallel seed
+   for user-defined assocs: when `nojoin == 2 && subscript.is_none()
+   && magic_assoc_array.is_none()`, populate `split_parts` with
+   `assoc_get(&var_name)` values so the auto-splat fires.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2); for v in "${(@)h}"; do print "[$v]"; done' | sort
+[1]
+[2]
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(a 1 b 2); for v in "${(@)h}"; do print "[$v]"; done' | sort
+[1]
+[2]
+
+# Regressions: ${h[@]}, ${(@k)h}, ${(@v)h}, ${(@)scalar} all unchanged
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[k1]=v1; h[k2]=v2; for v in "${(@)h}"; do echo "v=[$v]"; done | sort'

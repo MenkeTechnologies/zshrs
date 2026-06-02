@@ -5494,9 +5494,18 @@ pub fn paramsubst(
             // (@) array splat — preserve element shape via space-join.
             // For full splat into multiple result_nodes, the
             // multsub-aware caller handles it; we emit space-joined here.
+            //
+            // c:Src/subst.c — `${(@)assoc}` enumerates the assoc's
+            // VALUES (parameter.c hashparam splat). Without this assoc
+            // fallback the values stayed empty and the splat block
+            // had nothing to emit. Bug #287 in docs/BUGS.md.
             value = arrays_get(&var_name)
                 .as_ref()
                 .map(|a| a.join(" "))
+                .or_else(|| {
+                    assoc_get(&var_name)
+                        .map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
+                })
                 .unwrap_or_else(|| raw_value.clone());
             // c:2922 — getarrvalue sets isarr=1; nojoin=2 keeps it.
             if arrays_contains(&var_name) || assoc_contains(&var_name) {
@@ -5607,6 +5616,22 @@ pub fn paramsubst(
             if !keys.is_empty() {
                 split_parts = Some(keys.clone());
                 isarr = 1;
+            }
+        }
+        // c:Src/subst.c — `${(@)assoc}` (no (k)/(v) flags, just (@))
+        // splats the assoc's VALUES one per result_node. Seed
+        // split_parts here so the auto-splat block at c:4245 emits
+        // each value separately. Bug #287 in docs/BUGS.md. Gated on
+        // nojoin == 2 (the (@) flag) AND no subscript (the bare
+        // assoc-name form). Mirrors the magic_assoc_array seed above
+        // but covers user-defined assocs (not just magic ones).
+        if nojoin == 2 && subscript.is_none() && magic_assoc_array.is_none() {
+            if let Some(map) = assoc_get(&var_name) {
+                let values: Vec<String> = map.values().cloned().collect();
+                if !values.is_empty() {
+                    split_parts = Some(values);
+                    isarr = 1;
+                }
             }
         }
         if !rest.is_empty() {
