@@ -799,11 +799,21 @@ pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
 #[allow(non_camel_case_types)]
 pub struct savetrap {
     // c:611
-    pub sig: i32,            // c:613
-    pub flags: i32,          // c:614
-    pub local: i32,          // c:615 locallevel at save
-    pub posix: i32,          // c:616 exit_trap_posix snapshot
-    pub list: Option<Eprog>, // c:617 trap eval-list Eprog
+    pub sig: i32,                // c:613
+    pub flags: i32,              // c:614
+    pub local: i32,              // c:615 locallevel at save
+    pub posix: i32,              // c:616 exit_trap_posix snapshot
+    pub list: Option<Eprog>,     // c:617 trap eval-list Eprog
+    /// Snapshot of the body string from `traps_table` at save time.
+    /// Rust-only — C zsh stores the body in `siglists[sig]` as an
+    /// Eprog (already covered by `list` above), but zshrs stores the
+    /// raw body string in `traps_table` for the bridge's
+    /// `execute_script` dispatch path. Without snapshotting it here,
+    /// `endtrapscope`'s restore loop puts back `sigtrapped` flags
+    /// matching the outer scope but the body in `traps_table` still
+    /// reflects the inner scope's overwrite — so the outer EXIT
+    /// trap dispatches the inner body. Bug #80 in docs/BUGS.md.
+    pub body: Option<String>,
 }
 
 /// Direct port of `void dosavetrap(int sig, int level)` from
@@ -833,12 +843,23 @@ pub fn dosavetrap(sig: i32, level: i32) {
     } else {
         0
     };
+    // Snapshot the body string from `traps_table` so the matching
+    // restore in `endtrapscope` can write back the outer scope's body
+    // — see `savetrap::body` doc above for the bug #80 context.
+    let body = {
+        let signame = getsigname(sig);
+        crate::ported::builtin::traps_table()
+            .lock()
+            .ok()
+            .and_then(|g| g.get(&signame).cloned())
+    };
     let st = savetrap {
         sig,
         flags,
         local: level,
         posix,
         list,
+        body,
     };
     if let Ok(mut g) = SAVETRAPS.get_or_init(|| Mutex::new(Vec::new())).lock() {
         g.insert(0, st); // c:689 front-insert
@@ -1161,11 +1182,26 @@ pub fn endtrapscope() {
         .and_then(|g| g.get(SIGEXIT as usize).copied())
         .unwrap_or(0);
     let mut exittr: i32 = 0;
+    // Bug #80 — capture the body BEFORE the SAVETRAPS pop loop
+    // potentially writes back an outer scope's body into traps_table.
+    // Without this snapshot, a nested fn EXIT trap could fire the
+    // wrong (outer) body when the deepest level exits.
+    let mut exit_body: Option<String> = None;
     if intrap.load(Ordering::Relaxed) == 0                                   // c:891 !intrap
         && !EXIT_TRAP_POSIX.load(Ordering::Relaxed)                          // c:892 !exit_trap_posix
         && exit_flags != 0
     {
         exittr = exit_flags;
+        // Snapshot the body so the dispatch at the end of this fn
+        // fires THIS scope's trap, not whatever traps_table got
+        // restored to.
+        exit_body = {
+            let signame = getsigname(SIGEXIT);
+            crate::ported::builtin::traps_table()
+                .lock()
+                .ok()
+                .and_then(|g| g.get(&signame).cloned().or_else(|| g.get("EXIT").cloned()))
+        };
         // c:902-906 — clear SIGEXIT slot.
         if let Ok(mut g) = sigtrapped.lock() {
             if let Some(slot) = g.get_mut(SIGEXIT as usize) {
@@ -1176,6 +1212,14 @@ pub fn endtrapscope() {
             if let Some(slot) = g.get_mut(SIGEXIT as usize) {
                 *slot = None;
             }
+        }
+        // Clear the inner-scope's body from traps_table; if a saved
+        // outer body needs restoring, the SAVETRAPS pop loop below
+        // writes it back.
+        if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+            let signame = getsigname(SIGEXIT);
+            t.remove(&signame);
+            t.remove("EXIT"); // alias-safe
         }
         if exit_flags & ZSIG_TRAPPED != 0 {
             nsigtrapped.fetch_sub(1, Ordering::Relaxed); // c:904
@@ -1195,6 +1239,22 @@ pub fn endtrapscope() {
             // be truthy. The previous Rust port used `||` (either),
             // wrongly firing the restore branch on a flags-only or
             // list-only savetrap entry.
+            // Bug #80 — restore the saved body string into
+            // traps_table before settrap re-arms sigtrapped, so the
+            // outer scope's dispatch finds the right body.
+            {
+                let signame = getsigname(st.sig);
+                if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                    match &st.body {
+                        Some(b) => {
+                            t.insert(signame, b.clone());
+                        }
+                        None => {
+                            t.remove(&signame);
+                        }
+                    }
+                }
+            }
             if st.flags != 0 && st.list.is_some() {
                 // c:919
                 // c:921-922 — prevent settrap from saving this.
@@ -1210,6 +1270,16 @@ pub fn endtrapscope() {
                     EXIT_TRAP_POSIX.store(st.posix != 0, Ordering::Relaxed); // c:929
                 }
                 DONTSAVETRAP.fetch_sub(1, Ordering::Relaxed); // c:930
+            } else if st.flags != 0 && st.body.is_some() {
+                // Saved entry was a list-trap installed via bin_trap
+                // (body in traps_table, no Eprog). Re-arm sigtrapped
+                // with the saved flags so the dispatch path finds it.
+                DONTSAVETRAP.fetch_add(1, Ordering::Relaxed);
+                let _ = settrap(st.sig, None, st.flags);
+                if st.sig == SIGEXIT {
+                    EXIT_TRAP_POSIX.store(st.posix != 0, Ordering::Relaxed);
+                }
+                DONTSAVETRAP.fetch_sub(1, Ordering::Relaxed);
             } else {
                 // c:933 — `else if (sigtrapped[sig])`. Only fires when
                 // the current slot has a trap set. The previous Rust
@@ -1252,15 +1322,28 @@ pub fn endtrapscope() {
         // `bin_trap` / settrap). Dispatch through the execute_script
         // hook installed by fusevm_bridge — same path used by
         // signals.rs dotrap for non-FUNC traps.
-        let body = {
-            let signame = getsigname(SIGEXIT);
-            let t = crate::ported::builtin::traps_table().lock();
-            t.ok()
-                .and_then(|g| g.get(&signame).cloned().or_else(|| g.get("EXIT").cloned()))
-                .unwrap_or_default()
-        };
+        //
+        // Bug #80 — use the body snapshot taken BEFORE the SAVETRAPS
+        // pop loop, so the dispatch fires THIS scope's body (not the
+        // outer body restored by the loop).
+        let body = exit_body.unwrap_or_default();
         if !body.is_empty() {
+            // Bracket the dispatch so the recursive
+            // `execute_script_zsh_pipeline`'s own end-of-pipeline EXIT
+            // check doesn't see the OUTER scope's body (which the
+            // SAVETRAPS pop loop just restored into traps_table) and
+            // fire it prematurely. Pull "EXIT" aside for the duration
+            // of the dispatch, restore after.
+            let stash = crate::ported::builtin::traps_table()
+                .lock()
+                .ok()
+                .and_then(|mut t| t.remove("EXIT"));
             let _ = crate::ported::exec_hooks::execute_script(&body); // c:961 eprog body
+            if let Some(b) = stash {
+                if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                    t.insert("EXIT".to_string(), b);
+                }
+            }
         }
     }
 }

@@ -9626,17 +9626,41 @@ pub fn bin_trap(
                 .unwrap_or(sigarg.as_str())
                 .to_uppercase()
         };
-        if let Ok(mut t) = traps_table().lock() {
-            t.insert(canonical.clone(), arg.clone()); // c:7448 (effective)
-        }
         // c:Src/signals.c settrap — register both the libc signal
         // handler AND the sigtrapped[idx] flag. Without setting
         // sigtrapped, handletrap() early-returns 0 (sees the slot
         // as "not trapped") and the dotrap dispatch never fires.
         // The traps_table entry alone isn't enough — handletrap
         // gates on sigtrapped[idx] != 0.
-        if sig > 0 && sig <= crate::ported::signals_h::SIGCOUNT && sig != libc::SIGCHLD as i32 {
-            settrap(sig, None, ZSIG_FUNC);
+        //
+        // c:Src/signals.c:693 settrap flag semantics:
+        //   ZSIG_FUNC → trap body is a shell function (TRAPSIG)
+        //   no flag   → trap body is an Eprog in siglists[sig]
+        // zshrs stores the body STRING in `traps_table` instead of
+        // either, but the runtime's `endtrapscope`/`dotrap` dispatch
+        // (signals.rs:1249) requires the !ZSIG_FUNC arm to fire so
+        // the traps_table lookup happens. Passing ZSIG_FUNC sent it
+        // down the shfunc-dispatch arm which fails silently when no
+        // TRAPSIG function exists — bug #80 in docs/BUGS.md.
+        //
+        // SIGEXIT (sig=0) must also reach settrap so locallevel
+        // tagging lands and `endtrapscope` fires the function-local
+        // EXIT trap at function exit (the previous `sig > 0` gate
+        // skipped it entirely).
+        //
+        // CRITICAL ORDER: settrap calls unsettrap → dosavetrap which
+        // SNAPSHOTS the current traps_table body for the save-stack.
+        // settrap MUST run BEFORE inserting the new body so the saved
+        // entry captures the OUTER scope's body, not the one we're
+        // about to install. (Reversed order led to the save loop
+        // restoring the just-installed body back into traps_table
+        // after the function exit, causing the script-end trap fire
+        // to re-run the inner body.)
+        if sig >= 0 && sig <= crate::ported::signals_h::SIGCOUNT && sig != libc::SIGCHLD as i32 {
+            settrap(sig, None, 0);
+        }
+        if let Ok(mut t) = traps_table().lock() {
+            t.insert(canonical.clone(), arg.clone()); // c:7448 (effective)
         }
     }
     trap_install_error
