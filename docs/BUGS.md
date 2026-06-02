@@ -18533,7 +18533,58 @@ command "$user_cmd" "$@"
 
 ## #252 — `exec -` (dash with no command) errors instead of being a no-op
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `BUILTIN_EXEC` fast-path didn't recognize
+the bare `-` BINF_DASH precmd-modifier; corrected 2026-06-02.
+
+**Root cause** — `Src/builtin.c:42` declares `BIN_PREFIX("-",
+BINF_DASH)` — `-` is its own BINF_PREFIX builtin with the
+"login shell, prepend `-` to argv[0]" semantic. In the canonical
+precmd-walk at `Src/exec.c:3056-3091`, a bare `-` after `exec`
+is recognized AS a builtin and stripped from preargs, with
+BINF_DASH accumulated into cflags. If nothing follows, the
+empty-command path runs `lastval=0` and returns.
+
+`src/extensions/compile_zsh.rs::compile_simple` has a fast-path
+that emits `Op::CallBuiltin(BUILTIN_EXEC, argc)` for the
+`exec ...` command without going through
+`execcmd_compile_head`. The `BUILTIN_EXEC` handler in
+`src/fusevm_bridge.rs:798` parsed `-a`, `-c`, `-l`, `--` but
+didn't recognize a bare `-`. So `exec -` saw `args=["-"]`,
+treated `-` as the command name (since `a.len() < 2` broke the
+flag-parse loop), and tried to spawn `-` → exit shell.
+
+**Fix:** `src/fusevm_bridge.rs::BUILTIN_EXEC` — after the `--`
+end-of-options check, add an arm for bare `-`: set `login =
+true`, remove from args, continue the loop. Falls through to
+the existing "no command remaining → Status(0) no-op" branch.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo before; exec -; echo after'
+before
+after
+$ ./target/debug/zshrs --zsh -c 'echo before; exec -; echo after'
+before
+after
+
+$ /opt/homebrew/bin/zsh -fc 'exec -; echo "$?"'
+0
+$ ./target/debug/zshrs --zsh -c 'exec -; echo "$?"'
+0
+
+$ /opt/homebrew/bin/zsh -fc 'exec - echo hi'
+hi
+$ ./target/debug/zshrs --zsh -c 'exec - echo hi'
+hi
+
+# Regressions
+$ ./target/debug/zshrs --zsh -c 'exec; echo after'
+after
+$ ./target/debug/zshrs --zsh -c 'exec -l echo hi'
+hi
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'exec -; echo after'
@@ -18582,7 +18633,21 @@ exec my_cmd "$@"
 
 ## #253 — `$0` inside sourced file isn't updated to sourced-file path (at top-level scope of the file)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ echo 'echo "0=$0"' > /tmp/x.sh
+$ /opt/homebrew/bin/zsh -fc 'source /tmp/x.sh'
+0=/tmp/x.sh
+$ ./target/debug/zshrs --zsh -c 'source /tmp/x.sh'
+0=/tmp/x.sh
+```
+
+Both shells set `$0` to the sourced-file path at the file's top
+scope.
+
+**Original report:**
 
 ```sh
 $ cat > /tmp/zs0.sh <<'EOF'
@@ -18705,7 +18770,22 @@ assignment.
 
 ## #255 — `local -h NAME` doesn't hide parent scope's value (`-h` flag ignored)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'X=outer; f() { local -h X; echo "in=[$X]"; }; f; echo "out=[$X]"'
+in=[]
+out=[outer]
+$ ./target/debug/zshrs --zsh -c 'X=outer; f() { local -h X; echo "in=[$X]"; }; f; echo "out=[$X]"'
+in=[]
+out=[outer]
+```
+
+Both shells hide the parent-scope value inside the function with
+`local -h`, then restore on scope exit.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { local -h PATH; echo "[${PATH}]"; }; f'
@@ -18763,7 +18843,20 @@ run_isolated() {
 
 ## #256 — `zstyle -e PATTERN KEY CODE` dynamic-eval form not honored
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zstyle -e ":completion:*" formats "reply=(loaded)"; zstyle -L'
+zstyle -e ':completion:*' formats 'reply=(loaded)'
+$ ./target/debug/zshrs --zsh -c 'zstyle -e ":completion:*" formats "reply=(loaded)"; zstyle -L'
+zstyle -e ':completion:*' formats 'reply=(loaded)'
+```
+
+Both shells now register and list the `-e` dynamic-eval form
+with the same display shape.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zmodload zsh/zutil; zstyle -e ":x" key "reply=(dynamic)"; zstyle -a ":x" key arr; echo "[${arr[1]}]"'
