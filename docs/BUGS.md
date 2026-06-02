@@ -18069,7 +18069,57 @@ log "Processing files: ${a[*]}"
 
 ## #247 — `read line` doesn't strip leading/trailing IFS whitespace
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `bin_read` single-var path stored `buf`
+verbatim instead of applying the leading+trailing IFS-whitespace
+strip the multi-var last-var path already had; corrected
+2026-06-02.
+
+**Root cause** — `src/ported/builtin.rs::bin_read` had three
+assignment paths after the line read:
+
+1. `want_array` (`read -A`) — strips leading + trailing IFS-
+   whitespace from `buf`, then splits.
+2. `argi < args.len()` (multi-var, `read x y z`) — same strip,
+   then per-field split with last-var fallback.
+3. Single-var else-branch (`read l`) — `setsparam(&reply, &buf)`
+   stored the raw read buffer with leading/trailing whitespace
+   intact.
+
+Path (3) diverged from zsh: C's `bin_read` loop at
+Src/builtin.c:6843 discards whitespace-IFS *between* words and
+on word boundaries. For a single-var read, that translates to
+"strip leading and trailing IFS-whitespace; keep interior
+whitespace" — same as the multi-var last-var fallback. Without
+this strip, `echo "   hello   " | read l; echo "[$l]"` produced
+`[   hello   ]` instead of `[hello]`.
+
+**Fix:** `src/ported/builtin.rs::bin_read` single-var path now
+applies the same `trim_start_matches`/`trim_end_matches` pair
+the array and multi-var paths use, gated on
+`is_ifs(c) && c.is_whitespace()` so non-whitespace IFS chars
+(e.g. `IFS=:`) preserve their delimiters as zsh does.
+
+**Verify:**
+```sh
+$ echo "   hello   " | /opt/homebrew/bin/zsh -fc 'read l; echo "[$l]"'
+[hello]
+$ echo "   hello   " | ./target/debug/zshrs --zsh -c 'read l; echo "[$l]"'
+[hello]
+
+# Interior whitespace preserved
+$ echo "   hello   world   " | ./target/debug/zshrs --zsh -c 'read l; echo "[$l]"'
+[hello   world]
+
+# Multi-var path unchanged
+$ echo "  a  b  c  " | ./target/debug/zshrs --zsh -c 'read x y z; echo "x=[$x] y=[$y] z=[$z]"'
+x=[a] y=[b] z=[c]
+
+# Custom IFS=: keeps `:` (non-whitespace) verbatim
+$ echo "::hello::world::" | IFS=: ./target/debug/zshrs --zsh -c 'read l; echo "[$l]"'
+[::hello::world::]
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "  hello  " | { read line; echo "[$line]"; }'
@@ -18176,7 +18226,20 @@ read ans
 
 ## #249 — `${arr//pat/repl}` on bare array applies replacement per-element instead of scalar-join (zsh: joins first)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "[${a//y/Y}]"'
+[x Y z]
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); echo "[${a//y/Y}]"'
+[x Y z]
+```
+
+Both shells now apply the replacement before/after the
+join-shape decision identically.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(abc def); echo "[${a//?/X}]"'
