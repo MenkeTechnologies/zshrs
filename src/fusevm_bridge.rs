@@ -5977,12 +5977,32 @@ impl ShellExecutor {
                 }
             }
             r::APPEND => {
-                if !Self::redir_open_or_fail(
-                    fd,
+                // c:Src/exec.c:3924-3927 — `>>` honors NO_CLOBBER+!APPENDCREATE
+                // by opening O_APPEND|O_WRONLY WITHOUT O_CREAT, so missing
+                // files yield ENOENT. zsh source:
+                //   if (!isset(CLOBBER) && !isset(APPENDCREATE) &&
+                //       !IS_CLOBBER_REDIR(fn->type))
+                //       mode = O_WRONLY|O_APPEND|O_NOCTTY;
+                //   else mode = O_WRONLY|O_APPEND|O_CREAT|O_NOCTTY;
+                // (IS_CLOBBER_REDIR — `>>!`/`>>|` — is currently flattened
+                // to plain APPEND at compile time in
+                // src/extensions/compile_zsh.rs:1654-1655, so the bang/pipe
+                // forms can't be distinguished here yet.)
+                let noclobber = opt_state_get("noclobber").unwrap_or(false)
+                    || !opt_state_get("clobber").unwrap_or(true);
+                let append_create = opt_state_get("appendcreate").unwrap_or(false)
+                    || opt_state_get("append_create").unwrap_or(false);
+                let open_result = if noclobber && !append_create {
+                    fs::OpenOptions::new().append(true).open(target) // no create
+                } else {
                     fs::OpenOptions::new()
                         .create(true)
                         .append(true)
-                        .open(target),
+                        .open(target)
+                };
+                if !Self::redir_open_or_fail(
+                    fd,
+                    open_result,
                     target,
                     &mut self.redirect_failed,
                 ) {
