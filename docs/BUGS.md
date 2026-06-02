@@ -7169,7 +7169,63 @@ save_state    # call directly instead of relying on signal
 
 ## #105 — `(f<NNN>)` file-permission glob qualifier ignored (returns all files)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — two glob.rs bugs in the `f` qualifier parser.
+
+**Root cause 1 — delimiter check mis-classified operators.**
+`src/ported/glob.rs::apply_qualifier`'s `'f'` arm at line 3571
+checked `!d.is_alphanumeric()` to decide whether the next char
+after `f` was an opening delimiter (matched closer form, e.g.
+`f:0755:`) or a bare spec (e.g. `f0755`). But `+`, `-`, `=`, `?`
+are also non-alphanumeric — so `f+x` / `f-w` / `f=644` were sent
+down the delimited-string path, which then called `qgetmodespec`
+on the body `"x"` / `"w"` / `"644"` and silently dropped the
+qualifier when parsing failed. With no `f` qualifier applied,
+`*(.f+x)` matched all regular files.
+
+C's `qgetmodespec` at `Src/glob.c:849` distinguishes these
+exactly: `(c == '=' || c == '+' || c == '-' || c == '?' ||
+(c >= '0' && c <= '7'))` → bare spec; anything else →
+delimiter.
+
+**Fix 1** — exclude `+`, `-`, `=`, `?`, `,` (and digits via
+`is_alphanumeric`) from the delim path.
+
+**Root cause 2 — `qgetmodespec` didn't accept digits after op.**
+The symbolic-mode parser broke when it hit the perm letters loop
+(`r`/`w`/`x`/`s`/`t`); if the body was `=644` it ran the op-parse
+for `=`, then the perm-letter loop broke on `'6'` (not a valid
+perm letter), and `spec_perm` came out as 0. The caller's
+`yes / no` calculation then made the matcher reject everything.
+
+C handles this in the `else if (!(end && c == end) && c != ','
+&& c)` arm at `Src/glob.c:901`: when there's no who-mask, the
+parser reads a digit loop (`while ((c = *p) == '?' || (c >= '0'
+&& c <= '7'))`) and builds `val` from octal digits.
+
+**Fix 2** — `qgetmodespec`: after the perm-letter loop, if no
+letters were consumed, fall through to a digit-loop that
+matches `Src/glob.c:903-913` (octal digits + `?` placeholder).
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'print -l /tmp/zgp/*(.f+x)'
+/tmp/zgp/b
+$ ./target/debug/zshrs --zsh -c 'print -l /tmp/zgp/*(.f=644)'
+/tmp/zgp/a
+$ ./target/debug/zshrs --zsh -c 'print -l /tmp/zgp/*(.f:u+x:)'
+/tmp/zgp/b
+$ ./target/debug/zshrs --zsh -c 'print -l /tmp/zgp/*(.f600)'
+/tmp/zgp/c
+```
+
+Known minor divergence: `fa+x` (no delim, with `who=a`) is
+rejected by zsh ("invalid mode specification") but accepted by
+zshrs's qgetmodespec. C requires the explicit-delim form (`f:a+x:`)
+for who-letters. zshrs accepts the bare form and produces the
+correct match result; not strict-enough validation, but the
+output isn't wrong.
+
+**Original report:**
 
 ```sh
 $ mkdir -p /tmp/zgp; touch /tmp/zgp/{a,b,c}; chmod 644 /tmp/zgp/a; chmod 755 /tmp/zgp/b; chmod 600 /tmp/zgp/c
