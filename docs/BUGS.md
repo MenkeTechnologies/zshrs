@@ -2393,7 +2393,7 @@ done
 
 ## #40 — `print -aC N` ignores `-a` flag — outputs column-major instead of row-major
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -aC 3 a b c d e f g h i'
@@ -2416,20 +2416,36 @@ zshrs honors `print -C N` correctly (column-major) but **ignores
 the `-a` flag** — both `print -C N` and `print -aC N` produce
 column-major output.
 
-**Where** — `src/ported/builtin.rs::bin_print` `-C` branch. After
-parsing `-a` flag (likely setting an `across_rows` boolean), the
-print path needs to switch the inner/outer loop order. Currently
-just always does column-major.
+**Root cause** — `src/ported/builtin.rs::bin_print` `-C` branch
+(around line 7397) hard-coded the column-major index formula
+`idx = col * nr + row`. The `-a` flag (which C zsh handles via
+the `if (OPT_ISSET(ops, 'a'))` arm at `Src/builtin.c:4980`)
+should switch the formula to row-major `idx = row * nc + col`
+AND change the max-width / padding gates accordingly:
 
-**Affected demos** — 73, 88, 303, 325 use `print -aC N` for tabular
-output and show column-major where row-major was intended.
+  * `-a` mode: max-width skip rule = `(i % nc) != nc-1`; pad
+    skip = `col == nc-1`.
+  * default mode: max-width skip = `i < nr * (nc-1)`; pad skip =
+    `col == nc-1 || col*nr+row+nr >= argc`.
 
-**Workaround** — sort the input order manually before passing:
-```sh
-# To get row-major a b c / d e f / g h i,
-# pass items in zshrs's column-major sort order:
-print -aC 3 a d g b e h c f i   # zshrs renders as row-major
-```
+**Fix** — read `across = OPT_ISSET(ops, b'a')`, branch the
+index formula, and adjust the skip gates per the C source's
+parallel arms.
+
+Verified against `/opt/homebrew/bin/zsh`:
+
+  * `print -aC 3 a b c d e f g h i` → row-major
+    `a  b  c / d  e  f / g  h  i` (BUGS.md case).
+  * `print -C 3 a b c d e f g h i` → column-major
+    `a  d  g / b  e  h / c  f  i` (unchanged).
+  * `print -aC 3 a b c d e f g` (uneven) → `a  b  c / d  e  f
+    / g` matches zsh.
+  * `print -aC 1 a b c` (single column) → 3 lines `a`, `b`, `c`.
+  * `print -aC 3 short medium longest aaa bbb` (variable widths)
+    → `short   medium  longest / aaa     bbb` matches zsh.
+
+zshrs_shell regression: 926/126 (baseline preserved with
+`--test-threads=1`).
 
 ---
 
