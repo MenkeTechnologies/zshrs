@@ -3593,6 +3593,23 @@ pub fn bin_typeset(
                                          // separates it. Reconstruct the single arg here: when one entry
                                          // starts with `NAME=(` and a later entry ends with `)`, rejoin
                                          // the run with spaces between elements.
+    // c:Src/builtin.c — paren-init rejoin. C's parser hands the whole
+    // `NAME=(e1 e2 …)` shape as one ENVARRAY token via parse-time paren-
+    // walking so empty elements (`""` quoted to lexer Dnull-Dnull) stay
+    // as separate list nodes. zshrs's compile path emits the args
+    // pre-split through prefork — each `""` produces a true empty
+    // entry in argv. The previous rejoin glued them with single-space
+    // separators, then split_whitespace collapsed consecutive empties
+    // → key/value swap on `typeset -A h=( "" val )`. Bug #93 in
+    // docs/BUGS.md.
+    //
+    // Use `\u{1f}` (ASCII US — unit separator) as the rejoin
+    // separator. The paren-init branch below splits on `\u{1f}` AND
+    // whitespace, preserving consecutive `\u{1f}` as empty elements
+    // (the original quoted-empty args) while still tolerating
+    // single-arg-form paren-init like `a=(1 2 3)` where no rejoin
+    // ran.
+    const REJOIN_SEP: char = '\u{1f}';
     let argv: Vec<String> = {
         let mut out: Vec<String> = Vec::with_capacity(argv.len());
         let mut i = 0;
@@ -3621,7 +3638,7 @@ pub fn bin_typeset(
                 let mut buf = arg.clone();
                 let mut j = i + 1;
                 while depth > 0 && j < argv.len() {
-                    buf.push(' ');
+                    buf.push(REJOIN_SEP);
                     buf.push_str(&argv[j]);
                     for c in argv[j].chars() {
                         if c == '(' {
@@ -4212,10 +4229,45 @@ pub fn bin_typeset(
             }
             if is_paren_init {
                 let inner = &raw_v[1..raw_v.len() - 1]; // c:2950
-                let split_elems: Vec<String> = inner
-                    .split_whitespace() // c:2952
-                    .map(String::from)
-                    .collect();
+                // c:2952 globlist — each list node is one element. When
+                // the multi-arg rejoin loop above ran, elements are
+                // separated by the `\u{1f}` REJOIN_SEP sentinel
+                // (consecutive sentinels preserve quoted-empty args).
+                // Otherwise (single-arg paren-init form like `a=(1 2 3)`)
+                // the inner is plain-whitespace separated.
+                // Bug #93 in docs/BUGS.md.
+                let split_elems: Vec<String> = if inner.contains('\u{1f}') {
+                    inner
+                        .split('\u{1f}')
+                        .filter(|s| !s.chars().all(|c| c.is_ascii_whitespace()) || s.is_empty())
+                        .map(|s| s.trim_matches(|c: char| c == ' ' || c == '\t' || c == '\n').to_string())
+                        .filter(|s| !s.is_empty() || true) // keep empties
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        // Drop leading/trailing empties created when the
+                        // open/close `=(`/`)` argv segments contribute
+                        // an empty fragment before the first sentinel
+                        // / after the last sentinel.
+                        .collect::<Vec<_>>()
+                } else {
+                    inner.split_whitespace().map(String::from).collect()
+                };
+                let split_elems = if inner.contains('\u{1f}') {
+                    let mut v: Vec<String> = split_elems;
+                    // Trim only the FIRST leading empty (from the open
+                    // `=(` arg's tail after stripping `(`) and the LAST
+                    // trailing empty (from the close `)` arg's head),
+                    // preserving any genuine empties in the middle.
+                    if v.first().is_some_and(|s| s.is_empty()) {
+                        v.remove(0);
+                    }
+                    if v.last().is_some_and(|s| s.is_empty()) {
+                        v.pop();
+                    }
+                    v
+                } else {
+                    split_elems
+                };
                 // c:Src/subst.c:2558-2571 — `$=var` IFS-split operator.
                 // The full paramsubst path in subst.rs doesn't yet
                 // handle the `=` flag (spbreak=2 in C) when invoked

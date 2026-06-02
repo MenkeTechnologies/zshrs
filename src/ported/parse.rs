@@ -7208,7 +7208,19 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
         // above.
         match tok() {
             DONE | FI | ESAC if end_tokens.is_none() => {
-                zerr("parse error near orphan terminator");
+                // c:Src/parse.c:par_event — emit the specific token
+                // name (`done`, `fi`, `esac`) so error-parsing tools
+                // can identify the unmatched terminator. C zsh writes
+                // `parse error near \`<tok>'`; the Rust port was
+                // emitting a generic "orphan terminator" string. Bug
+                // #142 in docs/BUGS.md.
+                let name = match tok() {
+                    DONE => "done",
+                    FI => "fi",
+                    ESAC => "esac",
+                    _ => "orphan terminator",
+                };
+                zerr(&format!("parse error near `{}'", name));
                 break;
             }
             OUTBRACE_TOK | DSEMI | SEMIAMP | SEMIBAR | DONE | FI | ESAC | ZEND => break,

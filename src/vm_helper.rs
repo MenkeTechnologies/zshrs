@@ -1368,7 +1368,16 @@ impl ShellExecutor {
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
         if parse_failed {
-            return Err("parse error".to_string());
+            // c:Src/init.c — when the parser fires `zerr(...)`, the C
+            // shell's `loop()` body skips the eval pass and continues;
+            // there's no second "parse error" diagnostic. The Rust
+            // binary's call sites print `zshrs: <e>` on Err, doubling
+            // up on the message the parser already emitted via zerr.
+            // Use a `__SILENCED__` sentinel that the binary's
+            // execute_script wrapper recognizes as "already reported,
+            // exit silently". Bug #142 in docs/BUGS.md (double-print
+            // half).
+            return Err("__SILENCED__".to_string());
         }
 
         let compiler = crate::compile_zsh::ZshCompiler::new();
