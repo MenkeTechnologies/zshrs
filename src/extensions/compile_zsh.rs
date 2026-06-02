@@ -3185,7 +3185,24 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(key_const), 0);
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
-                let sentinel = self.builder.add_constant(Value::str("\u{01}"));
+                // c:Src/subst.c — `${(flags)NAME[KEY]}` form. The
+                // post-ARRAY_INDEX value needs flag processing. The
+                // bridge wraps as `${(flags){body}}` and re-enters
+                // paramsubst, so we need a sentinel byte that
+                // paramsubst recognizes as "the body is a
+                // PRE-RESOLVED scalar value, apply the flags to it"
+                // — distinct from `\u{01}` which paramsubst uses to
+                // flag `${(flags)"literal"}` as a parse error (zsh
+                // emits "bad substitution" for that form per
+                // subst.rs:3937).
+                //
+                // Bug #128 in docs/BUGS.md: the previous Rust port
+                // used `\u{01}` for BOTH the error case AND the
+                // pre-resolved-value case. paramsubst couldn't
+                // distinguish them and unconditionally errored,
+                // breaking `${(C)a[N]}` / `${(L)a[N]}` / `${(U)a[N]}`
+                // / etc. Use `\u{08}` for the value-passthru form.
+                let sentinel = self.builder.add_constant(Value::str("\u{08}"));
                 self.builder.emit(Op::LoadConst(sentinel), 0);
                 self.builder.emit(Op::Swap, 0);
                 self.builder.emit(Op::Concat, 0);

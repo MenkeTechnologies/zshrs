@@ -9341,7 +9341,57 @@ Verify with `od -c` after to confirm bytes are correct.
 
 ## #128 — `${(C)arr[N]}` capitalize on indexed array element errors "bad substitution"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — separate sentinel for pre-resolved value path.
+
+**Root cause** — `compile_zsh::compile_word_str` had TWO code
+paths emitting `\u{01}` as a sentinel byte ahead of a paramsubst
+operand:
+
+1. `${(C)"literal"}` form (`compile_zsh.rs:2929` —
+   `parse_zsh_flag_literal` match) tagged the literal string
+   with `\u{01}` so `paramsubst` at `subst.rs:3937` could emit
+   `"bad substitution"` (matching zsh's error for that form).
+2. `${(C)NAME[KEY]}` form (`compile_zsh.rs:3188`) — after
+   `BUILTIN_ARRAY_INDEX` pre-resolved the lookup, the resolved
+   scalar value was tagged with `\u{01}` and passed to
+   `BUILTIN_PARAM_FLAG` so the flag chain could process it.
+
+Both paths used the SAME sentinel byte. The error gate at
+`subst.rs:3937` couldn't distinguish them and unconditionally
+emitted "bad substitution" — breaking `${(C)a[N]}`,
+`${(L)a[N]}`, `${(U)a[N]}`, `${(C)assoc[key]}`, etc.
+
+**Fix:**
+- `compile_zsh.rs:3188` now emits `\u{08}` (distinct sentinel)
+  for the pre-resolved-value path.
+- `subst.rs::paramsubst` (after the existing `\u{01}` error
+  gate) recognizes `\u{08}` as "rest of body is a pre-resolved
+  scalar — skip the name lookup, run the flag chain on this
+  value." Threads through as `prefiltered_value` which the
+  `raw_value` selector picks up alongside the existing
+  `subexp_value` path.
+
+The `${(C)"literal"}` error gate keeps `\u{01}` and continues to
+match zsh's "bad substitution" behavior.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'a=(red blue green); echo "[${(C)a[2]}]"'
+[Blue]
+$ ./target/debug/zshrs --zsh -c 'a=(RED BLUE); echo "[${(L)a[1]}]"'
+[red]
+$ ./target/debug/zshrs --zsh -c 'a=(red blue); echo "[${(U)a[1]}]"'
+[RED]
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(a hello b world); echo "[${(C)h[a]}]"'
+[Hello]
+# Regressions:
+$ ./target/debug/zshrs --zsh -c 'a=(red blue); echo "[${(C)a}]"'
+[Red Blue]
+$ ./target/debug/zshrs --zsh -c 's=hello; echo "[${(C)s}]"'
+[Hello]
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(red blue green); echo "[${(C)a[2]}]"'
