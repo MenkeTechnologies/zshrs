@@ -6058,7 +6058,25 @@ ls /var/log/[0-9]*.log    # POSIX, both shells
 
 ## #90 — `$ZSH_PATCHLEVEL` set to literal `"unknown"` vs zsh's git-described commit
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — vm_helper's runtime init set
+`$ZSH_PATCHLEVEL` from `zsh_version::ZSH_PATCHLEVEL`, a `build.rs`
+emitted const that defaults to `"unknown"` because the vendored zsh
+tarball ships no `CUSTOM_PATCHLEVEL`. Switched to
+`crate::ported::patchlevel::ZSH_PATCHLEVEL` (the canonical const
+mirroring `src/zsh/Src/patchlevel.h`'s `"zsh-5.9-465-g6b9704e"`).
+
+Verified vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'echo "[$ZSH_PATCHLEVEL]"'
+[zsh-5.9.1-0-g0e0d4ea]
+$ ./target/debug/zshrs --zsh -c 'echo "[$ZSH_PATCHLEVEL]"'
+[zsh-5.9-465-g6b9704e]
+```
+Hash differs (different upstream commit targets) but the
+git-describe shape (`zsh-MAJOR.MINOR-N-gHASH`) matches. Scripts
+case-matching on `zsh-5.9-*` now hit the right arm.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[${ZSH_PATCHLEVEL:-unset}]"'
@@ -6115,7 +6133,33 @@ esac
 
 ## #91 — `:t` modifier ignored when applied to `${(j:X:)arr:t}` joined array
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — two-part interaction bug:
+
+1. **`sepjoined_for_qt`** in `src/ported/subst.rs:6730` joined the
+   array with `" "` regardless of any `(j:STR:)` flag. Updated to
+   read the `sep` variable so the joined value reflects the (j)
+   separator. Without this, even with the modifier-on-joined-scalar
+   path firing, the joined input would be wrong.
+2. **DQ-modifier arm** at `subst.rs:6819` set `value = mod_one(...)`
+   but left `split_parts = None` — so the downstream `(j:STR:)`
+   sepjoin handler (`subst.rs:7479`) re-fetched the original array
+   via `arrays_get` and overwrote `value` with the un-modified join.
+   Seed `split_parts = Some(vec![value.clone()])` + flip `isarr = 0`
+   so the sepjoin handler sees a single-element pre-joined result
+   and passes it through unchanged.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `${(j: :)paths:t}` (primary, no DQ) → `f.log`.
+- `"${(j: :)paths:t}"` (DQ) → `f.log`.
+- `${(j: :)paths:r}` → `/a/b/c.txt /d/e/f`.
+- `${(j:|:)paths:t}` (different sep) → `f.log`.
+- `${paths:t}` (unquoted, no (j)) → `c.txt f.log` (unchanged
+  per-element).
+- `"${paths:t}"` (DQ, no (j)) → `f.log` (unchanged scalar mode).
+- `${(j:|:)paths}` (no modifier) → `/a/b/c.txt|/d/e/f.log`
+  (unchanged).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'paths=(/a/b/c.txt /d/e/f.log); echo "${(j: :)paths:t}"'
