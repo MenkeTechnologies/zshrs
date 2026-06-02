@@ -9608,7 +9608,44 @@ echo "${(q)x}"     # quote
 
 ## #131 — `%(N~.A.B)` prompt-conditional evaluates path-depth wrong
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified across
+all path-depth cases (N=0..5) and edge locations (HOME, /tmp deep,
+filesystem root, project dir). Both shells agree on every case
+checked:
+
+```sh
+# In /Users/wizard/RustroverProjects/zshrs (project dir, ~2 components under HOME):
+$ /opt/homebrew/bin/zsh -fc 'print -P "%(0~.A.B)"; print -P "%(1~.A.B)"; print -P "%(2~.A.B)"; print -P "%(3~.A.B)"'
+A
+A
+A
+A
+$ ./target/debug/zshrs --zsh -c 'print -P "%(0~.A.B)"; print -P "%(1~.A.B)"; print -P "%(2~.A.B)"; print -P "%(3~.A.B)"'
+A
+A
+A
+A
+
+# In /tmp/deep1/deep2/deep3 (4 components under root, none under HOME):
+zsh : %(1~)=A %(3~)=A %(5~)=B
+zshrs: %(1~)=A %(3~)=A %(5~)=B   # matches
+
+# At HOME (0 components under HOME):
+zsh : %(0~)=A %(1~)=A
+zshrs: %(0~)=A %(1~)=A   # matches
+
+# At / (outside HOME entirely):
+zsh : %(0~)=A %(1~)=B
+zshrs: %(0~)=A %(1~)=B   # matches
+```
+
+Likely fixed incidentally by bug #115 (selective vs full prompt
+reset / SGR off codes) or one of the other prompt-expansion fixes
+in the #38/#96/#111/#115 family. Original report came from an
+earlier zshrs revision where the ternary's `~` discriminator
+returned the wrong boolean; no longer the case.
+
+**Original report:**
 
 ```sh
 $ pwd
