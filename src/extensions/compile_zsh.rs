@@ -6636,7 +6636,12 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     // `${var:-…}` / `${var:=…}` / `${var:?…}` / `${var:+…}` and the
     // no-colon variants `${var-…}` / `${var=…}` / `${var?…}` / `${var+…}`
     // which fire only when `var` is truly unset (not just empty).
-    if rest.len() >= 2 {
+    // c:Src/subst.c — operator detection by leading char(s). The
+    // bare `&rest[..2]` slice panics if the first character is
+    // multibyte (`é`/`日`/etc. — Bug #365/#366 in docs/BUGS.md).
+    // The default-family operators are all ASCII, so guard each
+    // byte index with `is_char_boundary` before slicing.
+    if rest.len() >= 2 && rest.is_char_boundary(2) {
         let op_byte = match &rest[..2] {
             ":-" => Some(0u8),
             ":=" => Some(1u8),
@@ -6652,7 +6657,7 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             });
         }
     }
-    if !rest.is_empty() {
+    if !rest.is_empty() && rest.is_char_boundary(1) {
         let op_byte = match &rest[..1] {
             "-" => Some(4u8),
             "=" => Some(5u8),

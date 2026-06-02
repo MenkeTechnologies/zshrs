@@ -26540,7 +26540,55 @@ print "✓ done"
 
 ## #365 — `${s/multibyte_char/repl}` pattern substitution PANICS with "not a char boundary"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `parse_param_modifier`'s default-family
+detection sliced `&rest[..2]` / `&rest[..1]` unconditionally,
+panicking when the leading byte was multibyte; corrected
+2026-06-02.
+
+**Root cause** — `src/extensions/compile_zsh.rs::parse_param_modifier`
+detects the `${var:OP...}` / `${var OP...}` operators by
+byte-slicing the first 1-2 bytes of `rest`:
+
+```rust
+if rest.len() >= 2 {
+    let op_byte = match &rest[..2] {
+        ":-" => Some(0u8), ...
+    };
+}
+if !rest.is_empty() {
+    let op_byte = match &rest[..1] { ... };
+}
+```
+
+When `rest` starts with a multibyte character (`é` = 2 bytes,
+`日` = 3 bytes, etc.), `&rest[..2]` panics with `end byte index
+2 is not a char boundary`. All default-family operators
+(`:-`/`:=`/`:?`/`:+`/`-`/`=`/`?`/`+`) are ASCII, so guarding
+each byte index with `is_char_boundary` is safe.
+
+**Fix:** `src/extensions/compile_zsh.rs::parse_param_modifier`
+— add `rest.is_char_boundary(2)` and `rest.is_char_boundary(1)`
+guards before the byte-slices. When the leading char is
+multibyte, the operator isn't ASCII so no match is possible
+anyway; skip cleanly. Cite #365/#366.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 's=héllo; echo "${s/é/E}"'
+hEllo
+$ ./target/debug/zshrs --zsh -c 's=héllo; echo "${s/é/E}"'
+hEllo
+
+# Regressions: ASCII default, ASCII subst, etc.
+$ ./target/debug/zshrs --zsh -c 's=hello; echo "${s/e/E}"'
+hEllo
+$ ./target/debug/zshrs --zsh -c 'echo "${UNSET:-default}"'
+default
+$ ./target/debug/zshrs --zsh -c 'X=hi; echo "${X:-é}"'
+hi
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's="日本"; echo "[${s/日/J}]"'
@@ -26590,7 +26638,21 @@ strings; use sed/external for multibyte text processing.
 
 ## #366 — `h[multibyte_key]=v` assoc array with multibyte key PANICS with "not a char boundary"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — same root cause as #365 (compile_zsh's
+`parse_param_modifier` byte-sliced `&rest[..2]`/`&rest[..1]`
+without a `is_char_boundary` guard); see #365 above for the
+full root-cause analysis and fix details. Both bugs closed by
+the same edit.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[éaccent]=v; echo "${h[éaccent]}"'
+v
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[éaccent]=v; echo "${h[éaccent]}"'
+v
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[日]=v; echo "[${h[日]}]"'
