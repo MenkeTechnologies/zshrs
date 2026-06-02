@@ -6345,7 +6345,34 @@ sentinel like `__EMPTY__` or `\0`.
 
 ## #94 — `(exec cmd); cmd2` — parent shell terminates with subshell
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — C zsh always forks for `(...)` so the
+actual `execvp` inside the subshell lands in the forked child;
+parent waits and continues. zshrs runs subshells via a
+snapshot/restore pattern in the SAME process, so the
+`BUILTIN_EXEC` handler's `command.exec()` call replaced the parent
+process too — terminating the entire shell after `(exec ...)`.
+
+Added a subshell-context branch to `BUILTIN_EXEC` (`src/fusevm_bridge.rs`):
+when `exec.subshell_snapshots.is_empty()` is false, spawn the
+command as a child, wait for its exit, then set
+`EXIT_PENDING + EXIT_VAL` so the next `ERREXIT_CHECK` unwinds to
+the subshell-end patch and the parent resumes via `subshell_end`'s
+state restore. Outside a subshell the original `execvp` path stays
+in place — `exec cmd` at top level still replaces the shell.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `(exec true); echo o2` (primary) — both print `o1 / o2`.
+- Multi-line subshell: `outer-1 / sub-1 / sub-replaced / outer-2`
+  in both.
+- Exit-status propagation: `(exec false); echo $?` → `ret=1` in both.
+- Top-level `exec echo replaced; echo unreached` — both end after
+  `replaced` (exec replaces parent as expected).
+- `(exec /nonexistent)` — both continue parent; error message
+  wording differs (zsh: `no such file or directory`; zshrs:
+  `exec: …: not found`).
+- Plain `( echo sub1; echo sub2 )` — unchanged.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo o1; ( exec true ); echo o2'
