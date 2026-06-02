@@ -2093,6 +2093,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     // Brace expansion. Routes through executor.xpandbraces (already
     // implemented for the pre-fusevm executor). Returns Value::Array.
+    // BUILTIN_ARRAY_DROP_EMPTY — filter out empty Value::Str entries
+    // from a Value::Array on the stack. Used by `for x in $@` /
+    // `for x in $*` unquoted forms which drop empty positionals
+    // (POSIX-like) but do NOT IFS-split each element internally
+    // (zsh-specific — scalar word splitting is off by default).
+    // Distinct from BUILTIN_WORD_SPLIT which routes through
+    // multsub PREFORK_SPLIT (full IFS-split). Bug #166.
+    vm.register_builtin(BUILTIN_ARRAY_DROP_EMPTY, |vm, _argc| {
+        let v = vm.pop();
+        match v {
+            Value::Array(items) => {
+                let filtered: Vec<Value> = items
+                    .into_iter()
+                    .filter(|x| !x.to_str().is_empty())
+                    .collect();
+                Value::Array(filtered)
+            }
+            Value::Str(s) if s.is_empty() => Value::Array(Vec::new()),
+            other => other,
+        }
+    });
+
     // BUILTIN_WORD_SPLIT — `${=var}` IFS-split runtime.
     // PURE PASSTHRU: route through canonical `subst::multsub` with
     // PREFORK_SPLIT flag (C port of `Src/subst.c::multsub` at c:544
@@ -5478,6 +5500,10 @@ pub const BUILTIN_GLOB_SUBST_EXPAND: u16 = 530;
 /// `BUILTIN_ASSOC_HAS_KEY` constant — `${(k)assoc[name]}` key-existence
 /// query. Returns the key text on hit, empty string on miss. Bug #145.
 pub const BUILTIN_ASSOC_HAS_KEY: u16 = 531;
+/// `BUILTIN_ARRAY_DROP_EMPTY` constant — filter empty elements from
+/// an Array on the stack. Used by `for x in $@` / `for x in $*`
+/// unquoted forms. Bug #166.
+pub const BUILTIN_ARRAY_DROP_EMPTY: u16 = 532;
 
 /// Bridge into subst_port::substitute_brace_array for nested forms
 /// that need to PRESERVE array shape across the expand_string
