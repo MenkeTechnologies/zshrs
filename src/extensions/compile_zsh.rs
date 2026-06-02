@@ -3079,8 +3079,44 @@ impl ZshCompiler {
                 // requested shape (verified vs /bin/zsh).
                 let only_k_flag = flags == "k";
                 let only_v_flag = flags == "v";
+                let only_v_or_V_flag = flags == "v" || flags == "V";
+                let only_kv_flag = flags == "kv" || flags == "vk";
+                // c:Src/subst.c — `(v)NAME[key]` / `(V)NAME[key]` /
+                // `(kv)NAME[key]` on a simple-key subscript: the
+                // flag's value-extraction is a no-op because the
+                // subscript already picks the single value. zsh
+                // returns the value at `key` directly. Bug #35 in
+                // docs/BUGS.md: routing through BUILTIN_PARAM_FLAG
+                // with the `\u{01}` pre-resolved-value sentinel
+                // triggered paramsubst's literal-operand bad-sub gate
+                // (subst.rs:3868) which was designed for the error
+                // case `${(v)"literal"}`.
+                //
+                // `(k)NAME[key]` on simple subscript returns the
+                // KEY (the subscript text itself) — also redundant
+                // since the subscript IS the key.
+                //
+                // Detect the simple-key case: subscript has no
+                // `[`/`@`/`*` inside, doesn't start with a flag
+                // group `(...)`, no top-level comma slice. `$`-vars
+                // in the key are OK (the runtime resolves them; key
+                // shape is still simple).
+                let key_is_simple = !key.starts_with('(')
+                    && !key.contains('@')
+                    && !key.contains('*')
+                    && !key.contains(',');
                 let redundant = (only_k_flag && key_starts_with_idx_flag)
-                    || (only_v_flag && key_starts_with_value_flag);
+                    || (only_v_flag && key_starts_with_value_flag)
+                    || (only_v_or_V_flag && key_is_simple)
+                    || (only_kv_flag && key_is_simple);
+                // `(k)NAME[simple_key]` — return the key (subscript
+                // text) instead of doing ARRAY_INDEX which would
+                // return the value.
+                if only_k_flag && key_is_simple {
+                    let key_const = self.builder.add_constant(Value::str(key));
+                    self.builder.emit(Op::LoadConst(key_const), 0);
+                    return;
+                }
                 if redundant {
                     let name_const = self.builder.add_constant(Value::str(base));
                     let key_const = self.builder.add_constant(Value::str(key));
