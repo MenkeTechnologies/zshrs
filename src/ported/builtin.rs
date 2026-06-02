@@ -1673,11 +1673,36 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
             return DIRSTACK.lock().ok().and_then(|d| d.first().cloned());
         }
         if func == BIN_PUSHD {
-            // c:877 — bare pushd without PUSHDTOHOME swaps top two.
-            // In Rust's pre-push-free model that's just dirstack[0].
+            // c:876-879 — bare pushd without PUSHDTOHOME swaps top two
+            // entries of dirstack. C represents dirstack with PWD at
+            // index 0, so it walks `nextnode(firstnode(dirstack))` to
+            // get index 1, then extracts index 0 via `getlinknode` and
+            // reinserts after — net swap of [0]<->[1]. zshrs's DIRSTACK
+            // omits PWD entirely (PWD lives in paramtab); index 0 here
+            // = C's index 1.
+            //
+            // To achieve the same swap in this model: POP DIRSTACK[0]
+            // (the saved target) and return it. cd_new_pwd at line ~1573
+            // then re-pushes pre_pwd onto DIRSTACK[0]. Net result:
+            // DIRSTACK[0] becomes pre_pwd, PWD becomes the popped value.
+            //
+            // Bug #67 in docs/BUGS.md: prior port read `d.first().cloned()`
+            // (no pop), so cd_new_pwd's push added a 3rd entry instead
+            // of swapping.
+            //
+            // c:881-885 — empty dirstack (only PWD in C's model, i.e.
+            // DIRSTACK.is_empty() here) falls through to HOME below;
+            // cd_new_pwd's push then leaves DIRSTACK = [pre_pwd].
             let pushdtohome = isset(PUSHDTOHOME);
             if !pushdtohome {
-                return DIRSTACK.lock().ok().and_then(|d| d.first().cloned());
+                let popped = DIRSTACK
+                    .lock()
+                    .ok()
+                    .and_then(|mut d| if d.is_empty() { None } else { Some(d.remove(0)) });
+                if let Some(target) = popped {
+                    return Some(target);
+                }
+                // Empty DIRSTACK → fall through to HOME below.
             }
         }
         // c:880-884 — fall through to $HOME.
