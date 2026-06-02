@@ -2184,6 +2184,33 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
+    // c:Src/math.c:337 — `getmathparam` for ArithCompiler pre-load.
+    // Pop a variable name, return its math-coerced value. Mirrors
+    // the routing in math::getmathparam: try i64, then f64, then
+    // recursive arith-eval, else 0. Bug #118 in docs/BUGS.md.
+    vm.register_builtin(BUILTIN_GET_MATH_VAR, |vm, _argc| {
+        let name = vm.pop().to_str();
+        let raw = crate::ported::params::getsparam(&name).unwrap_or_default();
+        // Empty / unset → 0.
+        if raw.is_empty() {
+            return Value::Int(0);
+        }
+        // Direct int / float parse.
+        if let Ok(n) = raw.parse::<i64>() {
+            return Value::Int(n);
+        }
+        if let Ok(f) = raw.parse::<f64>() {
+            return Value::Float(f);
+        }
+        // Recursive arith eval (matches getmathparam fallback at
+        // Src/math.c:337). If that fails too, return 0 — C's
+        // mathevall returns 0 with errflag set on parse failure.
+        match crate::ported::math::mathevali(&raw) {
+            Ok(n) => Value::Int(n),
+            Err(_) => Value::Int(0),
+        }
+    });
+
     // c:Src/options.c GLOB_SUBST + Src/cond.c:552 cond_match.
     // Pop pattern string; when GLOB_SUBST is OFF, escape every glob
     // metachar with `\` so the downstream StrMatch + patcompile
@@ -5265,6 +5292,24 @@ pub const BUILTIN_XTRACE_NEWLINE: u16 = 526;
 /// Stack: pops one string, pushes the (possibly escaped) result.
 /// argc = 1.
 pub const BUILTIN_GLOB_SUBST_GUARD: u16 = 528;
+
+/// Coerce a string parameter value to a math number (Int or Float)
+/// for arithmetic-context reads, mirroring C-zsh's `getmathparam`
+/// (Src/math.c:337). When the variable holds a string like "hello"
+/// that isn't numeric, C falls back to recursively evaluating the
+/// raw string as an arith expression; if that fails too, returns 0.
+///
+/// Used by the ArithCompiler pre-load path so `(( y = x ))` with
+/// `x="hello"` reads `x` as integer 0, then assigns y as integer 0
+/// — matching zsh's behaviour. The previous Rust port used
+/// BUILTIN_GET_VAR which returned the raw string "hello"; the
+/// ArithCompiler stored it verbatim in y's slot, and the post-sync
+/// BUILTIN_SET_VAR wrote y="hello" as scalar instead of y=0 as
+/// integer. Bug #118 in docs/BUGS.md.
+///
+/// Stack: pops `name` (string), pushes coerced numeric Value.
+/// argc = 1.
+pub const BUILTIN_GET_MATH_VAR: u16 = 529;
 
 /// Bridge into subst_port::substitute_brace_array for nested forms
 /// that need to PRESERVE array shape across the expand_string

@@ -5348,13 +5348,19 @@ impl ZshCompiler {
         // Pre-load: any var the arith expression touches needs its current
         // value pulled from executor.variables into its slot. Without this
         // `i=5; (( i+1 ))` reads 0 from the uninitialized slot.
+        // c:Src/math.c:337 getmathparam — arith reads of NAMED params
+        // coerce to numeric (int / float, falling back to 0 for non-
+        // numeric strings via recursive arith eval). BUILTIN_GET_VAR
+        // returns the raw string, which left `(( y = x ))` with
+        // x="hello" storing y="hello" as scalar. Use BUILTIN_GET_MATH_VAR
+        // which mirrors getmathparam exactly. Bug #118 in docs/BUGS.md.
         let pre_load_names = ac.collect_identifiers(&expr_clean);
         for name in &pre_load_names {
             let slot = ac.slot_for(name);
             let name_const = ac.builder.add_constant(Value::str(name.as_str()));
             ac.builder.emit(Op::LoadConst(name_const), 0);
             ac.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_MATH_VAR, 1), 0);
             ac.builder.emit(Op::SetSlot(slot), 0);
         }
 
