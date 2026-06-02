@@ -11397,7 +11397,22 @@ control chars in both shells).
 
 ## #150 — `$OPTERR` initialized to `1` in zshrs (zsh: empty/unset)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — removed eager `setsparam("OPTERR", "1")` from vm_helper init. zsh doesn't have OPTERR at all (not in any C source); the variable starts unset and stays unset until user explicitly assigns.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'echo "[$OPTERR]"'
+[]                              # was [1]
+
+# Explicit assignment still works:
+$ ./target/debug/zshrs --zsh -c 'OPTERR=5; echo "[$OPTERR]"'
+[5]
+```
+
+Matches zsh exactly. Regression suite unchanged (111 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[$OPTERR]"'
@@ -11450,7 +11465,56 @@ or pair-check both:
 
 ## #151 — `${(@qq)arr}` only quotes the first array element
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — quote_one output wrapped in Snull markers so downstream stringsubst doesn't re-strip the literal `'` chars in subsequent result nodes.
+
+**Root cause** — paramsubst's `quote_one` correctly produced
+`['hello', 'world']` for `${(@qq)a}`, set `split_parts` to the
+quoted vec, and auto_splat emitted both nodes. But each emitted
+node re-entered `stringsubst` (Src/subst.c:100 — the per-node
+substitution loop), and zshrs's stringsubst has a literal-`'`
+arm (`subst.rs:710`) added to handle "recursive paths that re-
+enter with already-untokenized text". That arm fired on the
+raw `'…'` quoted output, stripping the surrounding quotes.
+
+The FIRST node sometimes escaped this because the prefix
+shifted the `'` past stringsubst's re-scan position; the
+second + nodes always lost their quotes.
+
+**Fix** — in `paramsubst`'s quote application block, wrap
+`quote_one`'s output in Snull (`\u{9d}`) markers whenever the
+output contains a `'`. The Snull handler at `subst.rs:641`
+strips THE WRAPPERS and keeps the body verbatim, so the literal
+`'…'` chars survive downstream.
+
+```rust
+let wrap_snull = |s: String| -> String {
+    if s.contains('\'') {
+        format!("\u{9d}{}\u{9d}", s)
+    } else { s }
+};
+// applied to the QT_SINGLE/QT_DOUBLE/QT_DOLLARS results
+wrap_snull(quotestring(s, quotetype))
+```
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'a=("hello" "world"); echo "${(@qq)a}"'
+'hello' 'world'                  # was 'hello' world
+
+$ ./target/debug/zshrs --zsh -c 'a=("hello" "world"); print -l "${(@qq)a}"'
+'hello'
+'world'                          # was 'hello' / world
+
+# Regression check: (qq) without @ — join-then-quote still works:
+$ ./target/debug/zshrs --zsh -c 'a=("hello" "world"); echo "${(qq)a}"'
+'hello world'                    # matches zsh
+```
+
+All three match zsh exactly. Regression suite unchanged
+(111 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=("hello" "world"); echo "${(@qq)a}"'
@@ -11507,7 +11571,20 @@ echo "valid_hosts=( ${quoted_parts[*]} )" > /etc/myapp.conf
 
 ## #152 — `${(qq)arr}` (no @) per-element-quotes when zsh joins-then-quotes
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=("hello" "world"); echo "${(qq)a}"'
+'hello world'
+
+$ ./target/debug/zshrs --zsh -c 'a=("hello" "world"); echo "${(qq)a}"'
+'hello world'                    # matches zsh
+```
+
+Likely fixed by the join-before-quote logic in `paramsubst` (bug #52
+family). Doc-only status flip.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=("hello" "world"); echo "${(qq)a}"'

@@ -8235,6 +8235,27 @@ pub fn paramsubst(
         // Quote flags (q/qq/qqq/qqqq/q-/q+) operate per-element when
         // array-shaped. Direct port of subst.c:4030+ quotemod > 0 arm
         // which dispatches by quotetype.
+        //
+        // Bug #151: when the auto_splat block emits MULTIPLE result
+        // nodes, each goes back through stringsubst (Src/subst.c:100).
+        // zshrs's stringsubst has a literal-`'` arm (subst.rs:710)
+        // that treats raw `'…'` in a node as a single-quoted span
+        // and strips the surrounding quotes — fine when the lexer
+        // produced raw `'` from source code, BUT wrong for `'…'`
+        // characters emitted BY paramsubst (e.g. `(qq)` quoting).
+        // Wrap quote_one's output in Snull (\u{9d}) markers so the
+        // Snull handler at subst.rs:641 strips THE WRAPPERS and
+        // keeps the inner body (including literal `'` chars) verbatim.
+        // First node was sometimes fine because the prefix context
+        // shifted the `'` past the position where stringsubst would
+        // re-process; the second + nodes always lost their quotes.
+        let wrap_snull = |s: String| -> String {
+            if s.contains('\'') {
+                format!("\u{9d}{}\u{9d}", s)
+            } else {
+                s
+            }
+        };
         let quote_one = |s: &str| -> String {
             // c:4030
             if quotetype == QT_SINGLE_OPTIONAL {
@@ -8268,7 +8289,7 @@ pub fn paramsubst(
                 // (q)/(qq)/(qqq)/(qqqq). quotetype starts at QT_NONE=0
                 // and is incremented per q: QT_BACKSLASH(1) /
                 // QT_SINGLE(2) / QT_DOUBLE(3) / QT_DOLLARS(4).
-                quotestring(s, quotetype) // c:4070
+                wrap_snull(quotestring(s, quotetype)) // c:4070
             } else {
                 // c:4034
                 s.to_string() // c:4034
