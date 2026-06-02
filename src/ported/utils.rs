@@ -7037,13 +7037,45 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         }
         result
     } else if quote_type == QT_BACKSLASH || quote_type == QT_BACKSLASH_SHOWNULL {
-        // Backslash quoting (lines 6260-6416)
+        // c:Src/utils.c:6260-6452 QT_BACKSLASH. Three sub-cases per
+        // input char (after the special-syntax handling above):
+        //   - `\n` → emit `$'\n'` literal 5 bytes (c:6366-6371)
+        //   - special-and-printable → emit `\<char>` (c:6385-6395)
+        //   - non-printable (ctrl, multibyte outside printable
+        //     range) → emit `$'<addunprintable>'` (c:6412-6422)
+        // Bug #144/#149 in docs/BUGS.md: previous port mapped ALL
+        // ispecial chars to `\<char>`, so `\n`/`\t`/etc. came out
+        // as `\<actual-byte>` instead of `$'\n'`/`$'\t'`.
         let mut result = String::with_capacity(s.len() * 2);
         for c in s.chars() {
-            if ispecial(c) {
+            if c == '\n' {
+                // c:6366-6371 — newline gets dedicated `$'\n'` form.
+                result.push_str("$'\\n'");
+            } else if ispecial(c) && c.is_ascii() && !c.is_ascii_control() {
+                // c:6385-6395 — printable special → `\<char>`.
                 result.push('\\');
+                result.push(c);
+            } else if c.is_ascii_control() {
+                // c:6412-6422 — control chars → `$'<addunprintable>'`.
+                // `addunprintable` (Src/utils.c) emits the C-string
+                // escape (`\t`, `\r`, `\a`, etc.) inside the `$'…'`
+                // wrapper, falling back to octal for unrecognised
+                // control bytes.
+                result.push_str("$'");
+                match c {
+                    '\t' => result.push_str("\\t"),
+                    '\r' => result.push_str("\\r"),
+                    '\x07' => result.push_str("\\a"),
+                    '\x08' => result.push_str("\\b"),
+                    '\x0c' => result.push_str("\\f"),
+                    '\x0b' => result.push_str("\\v"),
+                    '\x1b' => result.push_str("\\e"),
+                    c => result.push_str(&format!("\\{:03o}", c as u8)),
+                }
+                result.push('\'');
+            } else {
+                result.push(c);
             }
-            result.push(c);
         }
         result
     } else if quote_type == QT_SINGLE {

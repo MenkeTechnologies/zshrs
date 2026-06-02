@@ -10872,7 +10872,87 @@ of relying on `TRY_BLOCK_ERROR`'s initial value.
 
 ## #144 — `${(q)str}` with embedded newline uses `\<newline>` form instead of `$'\n'`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `quotestring` QT_BACKSLASH arm now special-cases newline + non-printable chars to `$'…'` ANSI-C form. Fixes both this bug and #149 (tab + all control chars).
+
+**Root cause** — `src/ported/utils.rs::quotestring` QT_BACKSLASH
+arm naively mapped EVERY `ispecial(c)` char to `\<c>`:
+
+```rust
+} else if quote_type == QT_BACKSLASH || quote_type == QT_BACKSLASH_SHOWNULL {
+    let mut result = String::with_capacity(s.len() * 2);
+    for c in s.chars() {
+        if ispecial(c) {
+            result.push('\\');
+        }
+        result.push(c);
+    }
+    result
+}
+```
+
+For control chars (newline, tab, CR, etc.) this produced
+`\<literal-byte>` — a backslash followed by the actual control
+byte — which is line-continuation form (the byte breaks output
+into two lines for newline). zsh's canonical output uses
+`$'\n'` / `$'\t'` ANSI-C form for these.
+
+**C-source reference** — `Src/utils.c:6260-6452` QT_BACKSLASH
+dispatch. Three sub-cases per input char:
+
+1. `\n` → emit literal `$'\n'` (5 bytes) at c:6366-6371:
+
+```c
+if (*u == '\n') {
+    *v++ = '$'; *v++ = '\''; *v++ = '\\'; *v++ = 'n'; *v++ = '\'';
+}
+```
+
+2. Printable special → emit `\<char>` at c:6385-6395.
+3. Non-printable (`!WC_ISPRINT`) → emit `$'<addunprintable>'`
+   wrapper at c:6412-6422.
+
+**Fix** — `quotestring` QT_BACKSLASH arm now switches on the input
+char:
+
+```rust
+if c == '\n' {
+    result.push_str("$'\\n'");                              // c:6366
+} else if ispecial(c) && c.is_ascii() && !c.is_ascii_control() {
+    result.push('\\'); result.push(c);                      // c:6385
+} else if c.is_ascii_control() {
+    result.push_str("$'");
+    match c {
+        '\t' => result.push_str("\\t"),
+        '\r' => result.push_str("\\r"),
+        // ... rest of named control escapes ...
+        c => result.push_str(&format!("\\{:03o}", c as u8)), // octal fallback
+    }
+    result.push('\'');                                      // c:6412-6422
+} else {
+    result.push(c);
+}
+```
+
+**Verify (byte-exact via xxd):**
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'x=$'\''a\nb'\''; printf "%s" "${(q)x}"' | xxd
+00000000: 6124 275c 6e27 62                        a$'\n'b
+
+$ ./target/debug/zshrs --zsh -c 'x=$'\''a\nb'\''; printf "%s" "${(q)x}"' | xxd
+00000000: 6124 275c 6e27 62                        a$'\n'b   # MATCHES
+
+$ ./target/debug/zshrs --zsh -c 'x=$'\''a\tb'\''; printf "%s" "${(q)x}"' | xxd
+00000000: 6124 275c 7427 62                        a$'\t'b   # MATCHES
+
+$ ./target/debug/zshrs --zsh -c 'x=$'\''a\rb'\''; printf "%s" "${(q)x}"' | xxd
+00000000: 6124 275c 7227 62                        a$'\r'b   # MATCHES
+```
+
+Regression: `${(q)"a b"}` (printable special) still emits `a\ b`
+correctly. Suite unchanged (111 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'x=$'\''a\nb'\''; echo "[${(q)x}]"'
@@ -11260,7 +11340,21 @@ pi=$(echo 'scale=10; 4*a(1)' | bc -l)
 
 ## #149 — `${(q)str}` with tab uses `\<tab>` (extending #144 to all control chars)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — fixed alongside #144 with the same `quotestring` QT_BACKSLASH overhaul. See #144 for details.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'x=$'\''a\tb'\''; printf "%s" "${(q)x}"' | xxd
+00000000: 6124 275c 7427 62                        a$'\t'b   # MATCHES zsh
+
+$ ./target/debug/zshrs --zsh -c 'x=$'\''line\ttab\nnl'\''; printf "%s" "${(q)x}"' | xxd
+00000000: 6c69 6e65 2427 5c74 2774 6162 2427 5c6e  line$'\t'tab$'\n
+00000010: 276e 6c                                  'nl
+                                                       # MATCHES zsh
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'x=$'\''a\tb'\''; echo "[${(q)x}]"'
