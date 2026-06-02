@@ -7068,15 +7068,27 @@ pub fn paramsubst(
                         };
                     }
                 } // close is_modifier else
-            } else if r.starts_with('^') || r.starts_with(',') {
-                // c:Src/subst.c — `${var^^}`, `${var^}`, `${var,,}`,
-                // `${var,}` are bash case-conversion operators that
-                // zsh does NOT implement. zsh emits "bad
-                // substitution" and exits 1; zsh-native case mods
-                // are `${(U)var}` / `${(L)var}` / `${(C)var}`.
+            } else if r.starts_with('^') || r.starts_with(',') || r.starts_with('@') {
+                // c:Src/subst.c:2993-3003 — after var-name parsing, the
+                // accepted next chars are `-`/`+`/`:`/`%`/`/`/`=`/`#`/
+                // `?`/`}` (plus their token variants). Anything else
+                // emits `zerr("bad substitution"); return NULL`.
+                //
+                // `${var^^}`, `${var^}`, `${var,,}`, `${var,}` are
+                // bash case-conversion operators that zsh does NOT
+                // implement; zsh-native case mods are `${(U)var}` /
+                // `${(L)var}` / `${(C)var}`.
+                //
+                // `${var@X}` is bash parameter-transformation
+                // notation (`@Q`, `@U`, `@L`, `@P`, `@A`); zsh has no
+                // such syntax — zsh-canonical is `${(q)var}` /
+                // `${(U)var}` / `${(L)var}` etc. Bug #130 in
+                // docs/BUGS.md.
+                //
                 // Without this gate, paramsubst silently ignored the
-                // unknown operator and returned the variable's
-                // value unchanged.
+                // unknown operator and returned the variable's value
+                // unchanged (or with an incorrect bash-style
+                // transform applied).
                 zerr("bad substitution");
                 errflag.fetch_or(
                     crate::ported::zsh_h::ERRFLAG_ERROR,

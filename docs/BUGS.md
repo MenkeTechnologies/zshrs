@@ -9500,7 +9500,71 @@ a=("$@")
 
 ## #130 — `${var@X}` bash parameter-transform notation accepted (zsh errors)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — paramsubst now rejects `@` after var-name with "bad substitution".
+
+**Root cause** — `paramsubst` in `src/ported/subst.rs` had a partial
+"unknown postfix operator" gate at the tail of the modifier-dispatch
+chain that caught `^` and `,` (bash case-conversion operators) but
+NOT `@` (bash parameter-transformation: `@Q`/`@U`/`@L`/`@P`/`@A`).
+For `${x@Q}`, no `strip_prefix` arm matched the `@Q` rest-string, and
+the unmatched-rest branch silently fell through, returning the raw
+unprocessed value (`a b`) instead of erroring.
+
+**C-source reference** — `Src/subst.c:2993-3003` (the post-name gate):
+
+```c
+if (inbrace) {
+    c = *s;
+    if (!IS_DASH(c) &&
+        c != '+' && c != ':' && c != '%'  && c != '/' &&
+        c != '=' && c != Equals &&
+        c != '#' && c != Pound &&
+        c != '?' && c != Quest &&
+        c != '}' && c != Outbrace) {
+        zerr("bad substitution");
+        return NULL;
+    }
+}
+```
+
+C accepts only `-`/`+`/`:`/`%`/`/`/`=`/`#`/`?`/`}` (plus token
+variants) as the first char after var-name parsing. Anything else
+(including `@`, `^`, `,`, `*`, `|`, bare letters that aren't part of
+the name) is a hard "bad substitution" error.
+
+**Fix** — Extended the existing `r.starts_with('^') || r.starts_with(',')`
+arm in `paramsubst` to also include `r.starts_with('@')`. Cites the C
+gate location (c:2993-3003) and lists the bash extensions zsh
+rejects (`@Q`/`@U`/`@L`/`@P`/`@A` parameter transforms + `^^`/`,,`
+case conversions).
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'x="a b"; echo "[${x@Q}]"' 2>&1
+zsh:1: bad substitution
+
+$ ./target/debug/zshrs --zsh -c 'x="A"; echo "[${x@L}]"' 2>&1
+zsh:1: bad substitution
+
+$ ./target/debug/zshrs --zsh -c 'x="a"; echo "[${x@U}]"' 2>&1
+zsh:1: bad substitution
+
+# Regressions — (q)/(U)/(L) flag syntax + [@] subscript still work:
+$ ./target/debug/zshrs --zsh -c 'x="a b"; echo "${(q)x}"'
+a\ b
+$ ./target/debug/zshrs --zsh -c 'arr=(1 2 3); echo "${arr[@]}"'
+1 2 3
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3); echo "${(@)a}"'
+1 2 3
+```
+
+All three `@X` forms match real zsh "bad substitution" output. The
+regression suite count went from 117 failures → 116 (one fewer
+because the gate now correctly catches one previously-passing
+"accepts bash syntax" case).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'x="a b"; echo "[${x@Q}]"' 2>&1
