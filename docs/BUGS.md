@@ -7036,6 +7036,70 @@ outer: 0=/tmp/zsrc2.zsh
 
 ## #104 — Signal sent via `kill -X $$` from inside function is lost (trap never fires)
 
+**Status:** `fixed` 2026-06-02 — two root causes in bin_trap + run_queued_signals.
+
+**Root cause 1: bin_trap never installed the libc handler.**
+C-zsh's `bin_trap` parses the body string into an `Eprog` via
+`parse_string()` then calls `settrap(sig, parsed_eprog, 0)`. In
+`Src/signals.c:712`, settrap branches on `empty_eprog(l)`:
+- empty body → `sigtrapped[sig] = ZSIG_IGNORED; signal_ignore(sig);`
+- non-empty body → `sigtrapped[sig] = ZSIG_TRAPPED; install_handler(sig);`
+
+zshrs's port stores body text in `traps_table` (the dispatch lookup
+in dotrap) and passed `settrap(sig, None, 0)` — but `empty_eprog`
+returns true for `None`, so settrap unconditionally took the
+ZSIG_IGNORED + signal_ignore branch. Result: `install_handler` was
+never called for trapped signals. The kernel's signal disposition
+stayed at SIG_IGN, so SIGUSR1 was silently swallowed; zhandler
+never ran; nothing landed in the queue.
+
+(The top-level `trap "X" SIG; kill -SIG $$` case worked because
+some other init path was installing the handler for those specific
+signals first — but inside doshfunc, where queue_signals raises
+the queue level, the path needed handler+queueing both wired.)
+
+**Fix 1** — `src/ported/builtin.rs` bin_trap: pass a placeholder
+non-empty Eprog when `arg.is_empty()` is false, so settrap steers
+to ZSIG_TRAPPED + install_handler. The placeholder body is never
+executed (dotrap reads from traps_table).
+
+**Root cause 2: run_queued_signals used libc::raise instead of
+calling zhandler directly.**
+C's `run_queued_signals` (Src/signals.c:81-84) invokes
+`zhandler(signal_queue[queue_front])` synchronously while
+restoring the saved mask around it. The Rust port used
+`libc::raise(sig)` — which goes through the kernel signal-mask
+check. When draining the queue from inside `unqueue_signals` at
+doshfunc's tail, raise(USR1) delivered through the kernel hit the
+saved mask (which had USR1 unblocked, but the in-flight delivery
+state stuck the signal pending) — and zhandler never re-fired, so
+the queued signal was silently dropped.
+
+**Fix 2** — `src/ported/signals_h.rs::run_queued_signals`: call
+`crate::ported::signals::zhandler(sig)` directly (matches
+`Src/signals.c:83` exactly) instead of `libc::raise(sig)`. Pre-
+restore the saved mask, post-restore the previous mask around the
+call.
+
+**Verify**:
+```sh
+$ ./target/debug/zshrs --zsh -c 'trap "echo TRAP" USR1; f() { kill -USR1 $$; }; f; echo "post-fn"'
+TRAP
+post-fn
+
+$ ./target/debug/zshrs --zsh -c 'trap "echo save_state" USR1
+update_state() { echo refresh_data; kill -USR1 $$; }
+update_state; echo continuing'
+refresh_data
+save_state
+continuing
+```
+
+Note on related issue #95 (signal-from-inside-subshell): different
+code path (forked subshell), not addressed here.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh

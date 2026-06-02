@@ -9694,7 +9694,42 @@ pub fn bin_trap(
         // after the function exit, causing the script-end trap fire
         // to re-run the inner body.)
         if sig >= 0 && sig <= crate::ported::signals_h::SIGCOUNT && sig != libc::SIGCHLD as i32 {
-            settrap(sig, None, 0);
+            // c:Src/signals.c:712 — `if (!(flags & ZSIG_FUNC) && empty_eprog(l))`.
+            // settrap treats an `l == None` (or empty Eprog) body as
+            // `trap '' SIG` — i.e. ZSIG_IGNORED + signal_ignore(sig).
+            // That suppresses the signal entirely AND skips
+            // install_handler, so a non-empty `trap "echo TRAP" SIG`
+            // would never reach handletrap → dotrap. C-zsh's bin_trap
+            // parses the body string into an Eprog via parse_string()
+            // before passing to settrap. The zshrs port stores the
+            // body as plain text in `traps_table` and dispatches via
+            // execute_script (the Eprog parser isn't on the
+            // critical path), so we need a placeholder Eprog whose
+            // only purpose is to make empty_eprog() return false and
+            // steer settrap down the ZSIG_TRAPPED + install_handler
+            // branch. The placeholder body is never executed — dotrap
+            // reads the dispatch text from traps_table.
+            //
+            // Bug #104 in docs/BUGS.md: signal sent from inside a
+            // function via `kill -X $$` was lost because settrap had
+            // routed USR1 to signal_ignore at trap-install time, so
+            // when the signal hit while doshfunc had queue_signals()
+            // active, nothing in the queue → nothing to dispatch on
+            // unqueue. Empty-body path (`trap '' SIG`) still passes
+            // None as before so the ZSIG_IGNORED branch fires.
+            let body_eprog: Option<crate::ported::zsh_h::Eprog> = if arg.is_empty() {
+                None
+            } else {
+                let mut prog = crate::ported::zsh_h::eprog::default();
+                // c:Src/parse.c:584 — empty_eprog returns true on
+                // `prog[0] == WCB_END`; push any non-WCB_END value
+                // (1 is arbitrary, matches the existing
+                // `empty_eprog_non_empty_non_end_returns_false`
+                // pin test in parse.rs).
+                prog.prog.push(1);
+                Some(Box::new(prog))
+            };
+            settrap(sig, body_eprog, 0);
         }
         if let Ok(mut t) = traps_table().lock() {
             t.insert(canonical.clone(), arg.clone()); // c:7448 (effective)
