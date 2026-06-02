@@ -9913,7 +9913,71 @@ stat --format "%Y" /etc/hosts    # GNU: epoch
 
 ## #134 — `${var:h}` modifier on empty string returns `/` (zsh: `.`)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `remtpath` now mirrors C's `IS_DIRSEP(**junkptr)` check on the ORIGINAL first byte.
+
+**Root cause** — `src/ported/hist.rs::remtpath` short-circuited on
+empty input AFTER trimming trailing slashes:
+
+```rust
+let s = s.trim_end_matches('/');
+if s.is_empty() {
+    return "/".to_string();
+}
+```
+
+This conflated two distinct cases — empty input (`""`) vs slash-only
+input (`"/"`/`"//"`) — both produce empty after trim, but C zsh
+distinguishes them by inspecting the FIRST byte of the ORIGINAL
+path before any trimming.
+
+**C-source reference** — `Src/hist.c:2068-2074`:
+
+```c
+if (str < *junkptr) {
+    if (IS_DIRSEP(**junkptr))
+        *junkptr = dupstring ("/");
+    else
+        *junkptr = dupstring (".");
+    return 0;
+}
+```
+
+After the trim-trailing-slashes + skip-filename passes drop `str`
+below the original start, C picks `/` only when the FIRST byte of
+the original path was a dirsep. For empty input the first byte is
+`\0` (not a dirsep), so C returns `.`.
+
+**Fix** — Capture `original_first_is_sep = s.as_bytes().first() ==
+Some(b'/')` BEFORE the trim, then use it to choose between `/` and
+`.` when the trimmed result is empty:
+
+```rust
+let original_first_is_sep = s.as_bytes().first().copied() == Some(b'/');
+let s = s.trim_end_matches('/');
+if s.is_empty() {
+    return if original_first_is_sep { "/" } else { "." }.to_string();
+}
+```
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'for p in "" "/" "//" "foo" "a/b" "/a/b" "/foo/"; do printf "p=[%s] h=[%s]\n" "$p" "${p:h}"; done'
+p=[] h=[.]        # was [/] before fix
+p=[/] h=[/]
+p=[//] h=[/]
+p=[foo] h=[.]
+p=[a/b] h=[a]
+p=[/a/b] h=[/a]
+p=[/foo/] h=[/]
+```
+
+All seven cases now match real zsh. `remtpath_count_zero_strips_last_component`
++ `remtpath_root_is_always_root` + `remtpath_positive_count_keeps_n_components_from_front`
+unit tests all pass (4/4). Shell regression suite unchanged
+(115 failures — same set, just reordered nondeterministically).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f=""; echo "${f:h}"'
