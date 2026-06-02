@@ -4641,14 +4641,22 @@ pub fn eval_autoload(
         1
     };
     let _d = OPT_ISSET(ops, b'd');
-    // loadautofn lives in Src/exec.c:5050 — full fpath search + parse_string
-    // + install. Static-link path: returns 0 (success), so `!loadautofn` is 1.
-    let r = loadautofn(shf, mode, 1, _d as i32); // c:3193
-    if r == 0 {
-        1
-    } else {
-        0
-    }
+    // c:3184 — `return !loadautofn(shf, ...)`. C's loadautofn returns
+    // `Shfunc` (pointer): NULL = failure, non-NULL = success. C's
+    // `!loadautofn` yields 1 (true) when the pointer is NULL —
+    // i.e. eval_autoload returns 1 on failure, 0 on success.
+    //
+    // The Rust port's loadautofn returns an i32 with the OPPOSITE
+    // sign convention: 0 = success, non-zero = failure (the
+    // canonical Rust ShellExecutor-status convention used throughout
+    // this file). The previous Rust port literally translated `!`
+    // as `if r == 0 { 1 } else { 0 }` — but that double-inverts the
+    // already-flipped convention, so file-not-found (Rust r=1)
+    // returned eval_autoload=0 (zsh-success), and the broken
+    // `autoload +X totally_fake` silently exited 0 instead of 1.
+    // The C-faithful return for the Rust convention is just `r`.
+    // Bug #107 in docs/BUGS.md.
+    loadautofn(shf, mode, 1, _d as i32) // c:3184
 }
 
 /// Port of `check_autoload(Shfunc shf, char *name, Options ops, int func)` from Src/builtin.c:3193.

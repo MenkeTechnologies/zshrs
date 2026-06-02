@@ -7385,7 +7385,47 @@ command echo hi    # bypasses builtin, calls /bin/echo
 
 ## #107 — `autoload -U +X funcname` doesn't validate function exists in fpath
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — two bugs in the +X immediate-load path.
+
+**Root cause 1 — loadautofn dropped the "not found" diagnostic.**
+C-zsh's `loadautofn` (Src/exec.c:5713-5719) detects the `&dummy_eprog`
+sentinel that `getfpfunc` returns for the not-found case, prints
+`%s: function definition file not found` via `zwarn`, and returns
+NULL. The Rust port at `src/ported/exec.rs::loadautofn` matched the
+None arm with a bare `return 1` — no diagnostic, but still
+propagated the error code.
+
+**Root cause 2 — eval_autoload double-inverted the success convention.**
+C's `loadautofn` returns `Shfunc` (a pointer): NULL = fail,
+non-NULL = success. C's `eval_autoload` returns `!loadautofn(...)`,
+which gives 1 on failure and 0 on success.
+
+The Rust port's `loadautofn` returns `i32` with the standard shell
+convention: 0 = success, non-zero = failure. The literal-`!`
+translation in `eval_autoload` did `if r == 0 { 1 } else { 0 }` —
+double-inverting an already-flipped convention. So a missing
+function file (Rust r=1) made `eval_autoload` return 0 (zsh-success),
+which `check_autoload` propagated to `bin_functions` as exit 0.
+
+**Fix:**
+- `loadautofn`: emit `zwarn("<name>: function definition file not
+  found")` in the None arm so the caller and user both see the
+  C-equivalent diagnostic.
+- `eval_autoload`: drop the double-inversion. The C-faithful return
+  for the Rust 0/non-zero convention is just the raw `loadautofn`
+  result.
+
+**Verify:**
+```sh
+$ ./target/debug/zshrs --zsh -c 'autoload -U +X totally_fake; echo ec=$?'
+zsh:1: totally_fake: function definition file not found
+ec=1
+
+$ ./target/debug/zshrs --zsh -c 'autoload -U totally_fake; echo ec=$?'
+ec=0   # without +X, registration is lazy — error fires only on first call
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'autoload -U +X totally_fake_function_name; echo "ec=$?"'
