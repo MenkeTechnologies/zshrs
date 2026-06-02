@@ -18904,7 +18904,68 @@ plugin_init "$1"   # caller passes the source path
 
 ## #254 — `UID=N` / `EUID=N` writes silently accepted (zsh: attempts setuid syscall)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `intsetfn`'s name-based dispatch was wired
+for SECONDS/RANDOM but not the UID/EUID/GID/EGID setfns, and the
+existing setfns formatted errno via `std::io::Error::Display`
+instead of `strerror` so the message diverged from zsh's
+output; corrected 2026-06-02.
+
+**Root cause** — Two pieces:
+
+1. `src/ported/params.rs::intsetfn` had a name-based dispatch
+   for `SECONDS` → `intsecondssetfn` and `RANDOM` → `randomsetfn`
+   but no arms for `UID`/`EUID`/`GID`/`EGID`. Writes to those
+   special params hit the default `pm.u_val = x` write only,
+   never calling the underlying `setuid`/`seteuid`/`setgid`/
+   `setegid` syscalls.
+
+2. The `uidsetfn`/`euidsetfn`/`gidsetfn`/`egidsetfn` ports
+   formatted the error via `std::io::Error::last_os_error()`'s
+   `Display` impl, which produces
+   `"Operation not permitted (os error 1)"` — diverging from
+   zsh's `%e` formatter which calls `strerror(errno)` and
+   produces just `"operation not permitted"` (lowercase, no
+   suffix).
+
+**Fix:**
+- `src/ported/params.rs::intsetfn` — add `"UID"`, `"EUID"`,
+  `"GID"`, `"EGID"` arms that dispatch to the respective
+  setfns. Cite c:4698/4719/4740/4761.
+- `src/ported/params.rs::uidsetfn`/`euidsetfn`/`gidsetfn`/
+  `egidsetfn` — replace the
+  `format!("...: {}", std::io::Error::last_os_error())`
+  with an explicit `libc::strerror(errno)` call wrapped in
+  `to_lowercase()` to mirror C's `%e` strerror output.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'UID=999999999 2>&1'
+zsh:1: failed to change user ID: operation not permitted
+$ ./target/debug/zshrs --zsh -c 'UID=999999999 2>&1'
+zsh:1: failed to change user ID: operation not permitted
+
+$ /opt/homebrew/bin/zsh -fc 'EUID=999999999 2>&1'
+zsh:1: failed to change effective user ID: operation not permitted
+$ ./target/debug/zshrs --zsh -c 'EUID=999999999 2>&1'
+zsh:1: failed to change effective user ID: operation not permitted
+
+$ /opt/homebrew/bin/zsh -fc 'GID=999999999 2>&1'
+zsh:1: failed to change group ID: operation not permitted
+$ ./target/debug/zshrs --zsh -c 'GID=999999999 2>&1'
+zsh:1: failed to change group ID: operation not permitted
+
+# Regressions: reads unchanged
+$ ./target/debug/zshrs --zsh -c 'echo "UID=$UID"'
+UID=501
+# Regression: SECONDS write unchanged
+$ ./target/debug/zshrs --zsh -c 'SECONDS=100; echo "$SECONDS"'
+100
+# Regression: UID=$UID (no-op same value) doesn't error
+$ ./target/debug/zshrs --zsh -c 'UID=$UID; echo ec=$?'
+ec=0
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'UID=999'
