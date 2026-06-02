@@ -4539,8 +4539,23 @@ pub fn paramsubst(
                     let len = arr_clone.len() as i64;
                     let start_str = start_s.to_string();
                     let end_str = end_s.to_string();
-                    let start: i64 = singsub(&start_str).parse().unwrap_or(1);
-                    let end: i64 = singsub(&end_str).parse().unwrap_or(len);
+                    // c:Src/params.c::getarg — the subscript expression
+                    // is routed through singsub then mathevali
+                    // (math.c:367), so bare identifier names like `n`
+                    // and arith expressions like `n+1` resolve. Plain
+                    // `parse::<i64>` only accepts digit literals — bare
+                    // `n` fell through to `unwrap_or(len)`, returning
+                    // the full array. Bug #298. Same shape as the
+                    // scalar slice arm above (subst.rs:4826-4840).
+                    let eval_idx = |expr: &str, default: i64| -> i64 {
+                        let expanded = singsub(expr);
+                        if let Ok(n) = expanded.trim().parse::<i64>() {
+                            return n;
+                        }
+                        crate::ported::math::mathevali(expanded.trim()).unwrap_or(default)
+                    };
+                    let start: i64 = eval_idx(&start_str, 1);
+                    let end: i64 = eval_idx(&end_str, len);
                     // c:Src/params.c:2567-2570 — negative-index resolve.
                     // For negative `start`, raw position = len + start
                     // (0-based). For negative `end`, raw = len + end +

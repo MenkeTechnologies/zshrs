@@ -21354,7 +21354,62 @@ typeset -p > /tmp/state.dump   # both shells emit reproducible form
 
 ## #298 — Bare variable name in array slice subscript `${a[1,n]}` doesn't arith-evaluate
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — array slice arm in `paramsubst` used
+`parse::<i64>()` instead of routing through
+`singsub + mathevali` like the scalar slice arm and the C
+`getarg` path; corrected 2026-06-02.
+
+**Root cause** — `src/ported/subst.rs::paramsubst` array-slice
+arm (around line 4538) had:
+
+```rust
+let start: i64 = singsub(&start_str).parse().unwrap_or(1);
+let end: i64 = singsub(&end_str).parse().unwrap_or(len);
+```
+
+`singsub` performs `$`-prefixed parameter expansion only — bare
+identifier `n` (no leading `$`) passes through unchanged. Then
+`parse::<i64>("n")` fails and the fallback returns the full
+array length. Result: `${a[1,n]}` always reduced to
+`${a[1,len(a)]}`.
+
+C `Src/params.c::getarg` routes every subscript expression
+through `mathevali` (`math.c:367`), which evaluates bare
+identifier references as parameter reads — so `n` evaluates to
+the param's integer value. The scalar slice arm in the same
+file (subst.rs:4826-4840, ported as part of bug #155) already
+does this; the array slice arm missed the same treatment.
+
+**Fix:** `src/ported/subst.rs::paramsubst` array-slice arm —
+replace the bare `parse().unwrap_or(...)` with an `eval_idx`
+closure that mirrors the scalar arm: `singsub(expr)` → fast-
+path digit-literal `parse` → `mathevali` fallback for bare
+identifiers and arith expressions like `n+1`.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); n=2; echo "[${a[1,n]}]"'
+[x y]
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); n=2; echo "[${a[1,n]}]"'
+[x y]
+
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z w); n=1; echo "[${a[1,n+1]}]"'
+[x y]
+$ ./target/debug/zshrs --zsh -c 'a=(x y z w); n=1; echo "[${a[1,n+1]}]"'
+[x y]
+
+# Regressions: literals + $-prefixed + start-side var + negatives
+$ ./target/debug/zshrs --zsh -c 'a=(a b c d e); echo "[${a[1,3]}]"'
+[a b c]
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); n=2; echo "[${a[1,$n]}]"'
+[x y]
+$ ./target/debug/zshrs --zsh -c 'a=(a b c d e); n=2; echo "[${a[n,3]}]"'
+[b c]
+$ ./target/debug/zshrs --zsh -c 'a=(a b c d); echo "[${a[-2,-1]}]"'
+[c d]
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(a b c d); n=2; echo "[${a[1,n]}]"'
