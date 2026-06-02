@@ -3857,7 +3857,37 @@ anonymous form `() { body }` (no `function` keyword).
 
 ## #61 — `h["key"]=v` subscript form embeds literal quotes in the key
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `compile_assign` in
+`src/extensions/compile_zsh.rs:1701` called the canonical `untokenize`
+on the LHS name, and that variant STRIPS `Snull`/`Dnull`/`Bnull` quote
+markers (intentional zshrs divergence at `lex.rs:4371-4373` since most
+call sites want bare text). For the assoc subscript LHS path that
+strip changes semantics — `h["k2"]=v` lost the literal `"` chars in
+the key.
+
+C's `untokenize` (`Src/exec.c:2077`) replaces `Snull`→`'`,
+`Dnull`→`"`, `Bnull`→`\\` via the `ztokens` table; the quote chars
+become part of the key string and only get removed during expansion
+(`Src/subst.c`), not parsing.
+
+Switched the subscripted-LHS path to `untokenize_preserve_quotes`
+(`lex.rs:4093`) which already implements the C semantic. The bare-name
+match arms below still go through canonical `untokenize` via
+`assign.name.as_str()`.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+- `h["k1"]=hello; ${h[\"k1\"]}` → `hello` (literal-quote key round-trip).
+- `h["k1"]=hello; ${h[k1]}` → empty (bare `k1` doesn't match).
+- `h[plain]=v` → key `plain` (no quotes preserved).
+- `h[$k]=v` → key from var expansion preserved.
+- `a[1]=hi; a[2]=bye` → indexed-array assign unaffected.
+
+`typeset -p` output still differs cosmetically (`'"k2"'` vs `"k2"`)
+because the printparam quoter wraps the key differently — but the
+stored key bytes match, which is what round-trip retrieval cares
+about.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h; h["k2"]=v2; typeset -p h'
