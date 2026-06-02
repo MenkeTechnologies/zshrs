@@ -3178,7 +3178,13 @@ pub fn getalias(
         aliastab_lock()
     };
     let g = table.read().ok()?;
-    let entry = g.get(name); // c:1911 alht->getnode2
+    // c:1911 — `alht->getnode2(alht, name)`. C `getnode2` is
+    // `gethashnode2` (Src/hashtable.c:255) which returns the entry
+    // REGARDLESS of the DISABLED flag (unlike `getnode` which masks
+    // disabled ones). Without `_including_disabled`, `${dis_aliases[k]}`
+    // would never find a disabled entry because Rust `.get()` filters
+    // them out.
+    let entry = g.get_including_disabled(name); // c:1911 alht->getnode2
     let (value, found) = if let Some(al) = entry {
         // c:1912
         // c:1912 — `flags == al->node.flags` strict equality match.

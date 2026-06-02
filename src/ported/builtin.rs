@@ -7259,8 +7259,14 @@ pub fn bin_alias(
         } else {
             aliastab_lock()
         };
+        // c:4530 — `(a = (Alias) ht->getnode(ht, asg->name))`. C
+        // `getnode` is `gethashnode` (Src/hashtable.c:231) which
+        // returns NULL for DISABLED entries; skipping disabled at
+        // lookup time is what makes `alias FOO` print nothing after
+        // `disable -a FOO` (bug #227). Must use `.get()` not
+        // `.get_including_disabled()` here.
         let found = lock.read().ok().and_then(|t| {
-            t.get_including_disabled(n)
+            t.get(n)
                 .map(|a| (a.node.nam.clone(), a.node.flags as u32, a.text.clone()))
         });
         match found {
