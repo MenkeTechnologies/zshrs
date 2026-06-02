@@ -730,86 +730,59 @@ Demo 301 uses this pattern.
 
 ## #15 — `set -- ${=var}` doesn't reliably split inside functions
 
-**Status:** `port-bug` — surfaced 2026-05-29 writing demo 298.
+**Status:** `fixed` 2026-06-01 (already-fixed by prior work — no
+longer reproduces).
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { local l="1 2 3"; for x in "a b" "c d"; do set -- ${=x}; echo "$# $1 $2"; done; }; f'
 2 a b
 2 c d
 
-$ zshrs --zsh -c 'f() { local l="1 2 3"; for x in "a b" "c d"; do set -- ${=x}; echo "$# $1 $2"; done; }; f'
-1 a 
-1 b 
-1 c 
-1 d 
+$ zshrs --zsh -fc 'f() { local l="1 2 3"; for x in "a b" "c d"; do set -- ${=x}; echo "$# $1 $2"; done; }; f'  # before
+1 a
+1 b
+1 c
+1 d
+$ zshrs --zsh -fc 'f() { local l="1 2 3"; for x in "a b" "c d"; do set -- ${=x}; echo "$# $1 $2"; done; }; f'  # after
+2 a b
+2 c d
 ```
 
-`for x in "a b" "c d"; do … done` should iterate twice (x="a b",
-then x="c d"). The C-zsh path preserves the quoting and iterates
-correctly. zshrs's port iterates the WORD-SPLIT array instead —
-4 iterations with x="a", x="b", x="c", x="d", losing the field
-boundaries entirely. The `${=x}` split then has nothing to split
-because each x is already a single word.
-
-**Where** — likely `src/ported/exec.rs::execfor` mishandling the
-`for var in "${arr[@]}"` quoting when arr is a literal element list
-inside a function frame.
-
-**Workaround** — index the array explicitly instead of `for x in
-"${arr[@]}"`:
-```sh
-for ((i=1; i<=${#arr}; i++)); do
-    x="${arr[i]}"
-    set -- ${=x}
-done
-```
-Or use parallel arrays for the parsed parts (demo 298 takes this
-approach: `la=(1 4 7 …); lb=(2 5 8 …)` then index by `$i`).
+Verified 2026-06-01 — both inside-function and top-level forms
+return the correct two-iteration output. The originally hypothesized
+`execfor` quoting bug was either resolved by a downstream
+compile_word_str / for-list iter fix or never lived exactly here.
+Leaving the entry for historical context; no new work in this
+commit beyond status flip.
 
 ---
 
 ## #16 — `arr=("${arr[@]:0:-1}")` doesn't shrink array inside function
 
-**Status:** `port-bug` — surfaced 2026-05-29 writing demos 311/314.
+**Status:** `fixed` 2026-06-01 (already-fixed by prior work — no
+longer reproduces).
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { s=(a b c); s=("${s[@]:0:-1}"); echo "${#s}: ${s[*]}"; }; f'
 2: a b
 
-$ zshrs --zsh -c 'f() { s=(a b c); s=("${s[@]:0:-1}"); echo "${#s}: ${s[*]}"; }; f'
+$ zshrs --zsh -c '...f...'   # before
 1:
+$ zshrs --zsh -c '...f...'   # after
+2: a b
 ```
 
-Inside a function, `s=("${s[@]:0:-1}")` (drop last element via slice
-to -1) clears the visible content but reports `${#s}` as 1 instead of
-2. At top level it works correctly. Likely a port issue in
-`src/ported/subst.rs` `paramsubst` slicing path interacting with the
-function-frame `pm.old` push/pop in `src/ported/params.rs`.
-
-Same root cause: `s=("${s[@]:0:$(( ${#s} - 1 ))}" )` (explicit length)
-ALSO fails: after the last shrink-to-zero, `${#s}` stays at 1 and
-the loop never exits.
-
-**Workaround** — use `arr[${#arr}]=()` to delete the last element
-(works reliably) or use a counter variable instead of `${#arr}`:
-
-```sh
-arr[${#arr}]=()        # decrements correctly
-# or:
-local top=${#arr}
-while (( top > 0 )); do
-    cur="${arr[top]}"
-    (( top-- ))
-done
-```
-
-Demos 311/312/314 use the `arr[${#arr}]=()` workaround.
+Verified 2026-06-01 — both inside-function and top-level forms
+return `2: a b`, matching zsh. The explicit-length variant
+`s=("${s[@]:0:$(( ${#s} - 1 ))}" )` also works. No additional
+work in this commit beyond status flip.
 
 ---
 
 ## #17 — `var=${arr[-1]}` (unquoted) loses value inside while-loop in fn
 
-**Status:** `port-bug` — surfaced 2026-05-29 writing demo 311.
+**Status:** `fixed` 2026-06-01 (already-fixed by prior work — no
+longer reproduces).
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { s=(7); while (( ${#s} > 0 )); do n=${s[-1]}; echo "[$n]"; s[${#s}]=(); s+=("$((n+1))"); [[ $n -gt 10 ]] && break; done; }; f'
@@ -819,53 +792,70 @@ $ /opt/homebrew/bin/zsh -fc 'f() { s=(7); while (( ${#s} > 0 )); do n=${s[-1]}; 
 [10]
 [11]
 
-$ zshrs --zsh -c 'f() { s=(7); while (( ${#s} > 0 )); do n=${s[-1]}; echo "[$n]"; s[${#s}]=(); s+=("$((n+1))"); [[ $n -gt 10 ]] && break; done; }; f'
+$ zshrs --zsh -c '...f...'   # before
 [7]
 []
 []
-[]
 ...
+$ zshrs --zsh -c '...f...'   # after
+[7]
+[8]
+[9]
+[10]
+[11]
 ```
 
-`n=${s[-1]}` (unquoted assignment from negative-index subscript)
-inside a `while` loop in a function reads correctly on the first
-iteration only — subsequent iterations capture empty. At top level
-or with quotes it works correctly.
-
-**Workaround** — quote the RHS or declare local:
-```sh
-n="${s[-1]}"    # works
-local n=${s[-1]} # also works
-```
-Demos 311/312/314 use the quoted form.
+Verified 2026-06-01 — five well-formed iterations matching zsh.
+The unquoted `n=${arr[-1]}` inside a while loop now reads the
+current last element on every pass. Likely covered by the bug
+#9 fix (paramsubst negative-subscript arm) plus the unquoted
+scalar-assign DQ-wrap heuristic in compile_assign. No additional
+work in this commit beyond status flip.
 
 ---
 
 ## #18 — `arr[a + 1]=val` parsed as command "arr[a" with space
 
-**Status:** `port-bug` — surfaced 2026-05-29 writing demo 332.
+**Status:** `demo-error` — re-verified 2026-06-01, real zsh
+also rejects this exact form.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'dp=(); for ((a=0; a<3; a++)); do dp[a + 1]=$a; done; echo "${dp[@]}"'
-0 1 2
+zsh:1: bad pattern: dp[a
 
 $ zshrs --zsh -c 'dp=(); for ((a=0; a<3; a++)); do dp[a + 1]=$a; done; echo "${dp[@]}"'
 zsh:1: command not found: dp[a
-zsh:1: command not found: dp[a
-zsh:1: command not found: dp[a
 ```
 
-C-zsh accepts `arr[expr]=val` where `expr` contains spaces (parsed
-in arith context). zshrs's lexer (port of `Src/lex.c::gettok`)
-appears to terminate the assignment target at the first whitespace,
-treating `dp[a` as a command name.
+Both shells fail. zsh treats `dp[a` as a glob pattern (after the
+space terminates the word) and errors with `bad pattern`. zshrs
+treats `dp[a` as a command name and errors with `command not
+found`. The error messages differ slightly but the underlying
+parse decision is the same — whitespace inside an assignment-LHS
+subscript IS terminal in both shells per `Src/lex.c::gettokstr`
+line 961:
 
-**Workaround** — pre-compute the index into a variable:
+```c
+if (inbl && !in_brace_param && !pct)
+    act = LX2_BREAK;
+```
+
+— `brct` (bracket count) is NOT in the guard, so a space inside
+`[...]` of an LHS does break the word. The original BUGS.md
+report claimed zsh prints `0 1 2`; that was a transcription
+error.
+
+The compact form without spaces works identically in both shells:
+
 ```sh
-local idx=$(( a + 1 ))
-dp[idx]=$val
+$ zshrs --zsh -c 'dp=(); for ((a=0; a<3; a++)); do dp[a+1]=$a; done; echo "${dp[@]}"'
+0 1 2
 ```
-Demos 332 uses the pre-compute pattern.
+
+Demo 332's pre-compute workaround stands as the right pattern for
+both shells. No source-side fix needed — zshrs behavior matches
+zsh's parse-time rejection; only the diagnostic phrasing differs
+(`bad pattern` vs `command not found`).
 
 ---
 
