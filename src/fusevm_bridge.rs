@@ -3807,11 +3807,36 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // c:Src/signals.c:1245 dotrap(SIGZERR) — canonical ZERR trap
         // dispatch. Fires whenever a command exits non-zero.
         let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR);
+        // c:Src/exec.c:1605-1610 — compute errreturn / errexit.
+        //   errreturn = ERRRETURN && (INTERACTIVE || locallevel || sourcelevel)
+        //               && !(noerrexit & NOERREXIT_RETURN)
+        //   errexit   = (ERREXIT || (ERRRETURN && !errreturn))
+        //               && !(noerrexit & NOERREXIT_EXIT)
+        let no_err = crate::ported::exec::noerrexit.load(Ordering::Relaxed);
+        let locallvl = crate::ported::params::locallevel.load(Ordering::Relaxed);
+        let sourcelvl = crate::ported::init::sourcelevel.load(Ordering::Relaxed);
+        let errreturn_opt = isset(crate::ported::zsh_h::ERRRETURN);
+        let in_unwindable_scope = isset(crate::ported::zsh_h::INTERACTIVE)
+            || locallvl != 0
+            || sourcelvl != 0;
+        let errreturn = errreturn_opt
+            && in_unwindable_scope
+            && (no_err & crate::ported::zsh_h::NOERREXIT_RETURN) == 0;
+        if errreturn {
+            // c:1620-1623 — `retflag = 1; breaks = loops;` — unwind to
+            // function boundary without exiting the shell.
+            crate::ported::builtin::RETFLAG.store(1, Ordering::Relaxed);
+            let loops = crate::ported::builtin::LOOPS.load(Ordering::Relaxed);
+            crate::ported::builtin::BREAKS.store(loops, Ordering::Relaxed);
+            return Value::Int(1);
+        }
         let (errexit_on, in_subshell) = with_executor(|exec| {
-            let on_canonical = isset(ERREXIT);
+            let on_canonical = isset(ERREXIT)
+                || (errreturn_opt && !errreturn); // c:1608-1609
             let on_legacy = opt_state_get("errexit").unwrap_or(false);
             (
-                on_canonical || on_legacy,
+                (on_canonical || on_legacy)
+                    && (no_err & crate::ported::zsh_h::NOERREXIT_EXIT) == 0,
                 !exec.subshell_snapshots.is_empty(),
             )
         });

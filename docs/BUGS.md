@@ -3454,7 +3454,43 @@ the safety net is missing. Or run periodic audits via real zsh.
 
 ## #55 — `setopt err_return` doesn't return from function on command failure
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `BUILTIN_ERREXIT_CHECK` in
+`src/fusevm_bridge.rs` already implemented `errexit` (`set -e`) but
+never computed `errreturn` — silently ignored `ERRRETURN`. Ported the
+post-sublist trigger block at `Src/exec.c:1605-1623`:
+
+```c
+errreturn = isset(ERRRETURN)
+            && (isset(INTERACTIVE) || locallevel || sourcelevel)
+            && !(noerrexit & NOERREXIT_RETURN);
+errexit   = (isset(ERREXIT)
+             || (isset(ERRRETURN) && !errreturn))
+            && !(noerrexit & NOERREXIT_EXIT);
+if (errreturn) { retflag = 1; breaks = loops; }
+```
+
+Reads `noerrexit` / `locallevel` / `sourcelevel` directly from the
+already-ported atomics; sets `RETFLAG`/`BREAKS=LOOPS` for the
+unwind-to-function path; falls through to the existing `errexit`
+arm (with C's `ERREXIT || (ERRRETURN && !errreturn)` widening so
+`err_return` at top-level acts like `err_exit` and exits).
+
+Verified vs `/opt/homebrew/bin/zsh`:
+```
+setopt err_return
+fn() { false; echo unreached; }
+fn
+echo "after"
+```
+Both shells now suppress `unreached` and `after`. Nested function
+case (function declared inside another, called and triggering the
+outer's err_return) also matches.
+
+(Exit-status propagation diff — zsh `EC=1`, zshrs `EC=0` after the
+unwind — is a pre-existing gap in zshrs's script-exit path that
+also affects plain `set -e` and is bug-tracked separately.)
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt err_return
