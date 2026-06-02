@@ -20733,7 +20733,70 @@ done
 
 ## #288 — `typeset -A h; h[]=value` empty-subscript assignment silently accepted (zsh: errors)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `isident` accepted `name[]` as a valid
+identifier because the bracket-balance walk didn't require any
+content between `[` and `]`; corrected 2026-06-02.
+
+**Root cause** — `src/ported/params.rs::isident` walks the
+identifier characters and, on hitting `[`, runs a bracket-
+balance loop expecting `depth` to return to 0 before
+end-of-string. The loop accepted `h[]` because seeing `]`
+immediately after `[` decrements depth from 1 to 0 and returns
+success. But C `Src/params.c:1288`'s `isident`:
+
+```c
+/* Require balanced [ ] pairs with something between */
+if (!(ss = parse_subscript(++ss, 1, ']')))
+    return 0;
+return !ss[1];
+```
+
+calls `parse_subscript` on the body, which rejects empty content
+(`h[]` returns NULL). So zsh emits `not an identifier: h[]` and
+returns 1; zshrs accepted the assignment silently for assoc and
+scalar shapes (the array shape went through a different
+assignment path that emitted a different error).
+
+**Fix:** `src/ported/params.rs::isident` — track whether any
+non-bracket char appeared inside the `[...]` walk. If the
+balanced `]` was reached without any intermediate content,
+return false to mirror C `parse_subscript`'s empty-subscript
+rejection.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[]=val 2>&1; echo ec=$?'
+zsh:1: not an identifier: h[]
+ec=1
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[]=val 2>&1; echo ec=$?'
+zsh:1: not an identifier: h[]
+ec=1
+
+$ /opt/homebrew/bin/zsh -fc 'x=hi; x[]=val 2>&1; echo ec=$?'
+zsh:1: not an identifier: x[]
+ec=1
+$ ./target/debug/zshrs --zsh -c 'x=hi; x[]=val 2>&1; echo ec=$?'
+zsh:1: not an identifier: x[]
+ec=1
+```
+
+The array shape (`a=(); a[]=val`) still errors but with text
+`a: assignment to invalid subscript range` rather than
+`not an identifier: a[]` — different message, same exit code,
+both shells reject the assignment. The wording divergence
+traces to the `setarrvalue` (Src/params.c) path, which has its
+own subscript parser separate from `isident`; fixing the
+message-shape divergence is a separate item.
+
+# Regressions: normal subscript works
+```sh
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[k]=val; echo "[${h[k]}]"'
+[val]
+$ ./target/debug/zshrs --zsh -c 'a=(x); a[1]=Y; echo "${a[1]}"'
+Y
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[]=val; echo "[${h[""]:-empty}]"'

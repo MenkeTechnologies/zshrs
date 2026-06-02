@@ -2410,21 +2410,36 @@ pub fn isident(s: &str) -> bool {
             // remaining bytes suffices. Count `[` / `]` and require
             // the depth to return to 0 before end-of-string.
             let mut depth = 1i32;
+            // c:Src/params.c:1334 — `if (!(ss = parse_subscript(++ss,
+            // 1, ']'))) return 0;`. C's parse_subscript rejects empty
+            // subscripts: `h[]` returns NULL. Mirror by tracking
+            // whether ANY non-bracket char appears before the depth
+            // returns to 0. Without this, `h[]=val` was accepted as a
+            // valid assoc element write — but zsh errors
+            // `not an identifier: h[]` (bug #288 in docs/BUGS.md).
+            let mut saw_content = false;
             let saw_close = s.split('[').skip(1).next().is_some_and(|tail| {
                 for ch in tail.chars() {
                     match ch {
-                        '[' => depth += 1,
+                        '[' => {
+                            depth += 1;
+                            saw_content = true;
+                        }
                         ']' => {
                             depth -= 1;
                             if depth == 0 {
                                 return true;
                             }
+                            saw_content = true;
                         }
-                        _ => {}
+                        _ => saw_content = true,
                     }
                 }
                 false
             });
+            if !saw_content {
+                return false; // c:1334 empty subscript rejected
+            }
             return saw_close;
         }
         if !c.is_alphanumeric() && c != '_' && c != '.' {
