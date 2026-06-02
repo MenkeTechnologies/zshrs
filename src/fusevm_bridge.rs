@@ -800,6 +800,55 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
         };
+        // c:Src/exec.c::execcmd — `exec funcname` runs the function
+        // in-process as the shell's last act, then exits with the
+        // function's status. zsh's dispatcher falls through from the
+        // BINF_EXEC prefix into the normal Builtin/External/Function
+        // resolution and only execvp's if the target ISN'T a
+        // function. Bug #101 in docs/BUGS.md: zshrs's exec went
+        // straight to execvp and errored `not found` for shell
+        // functions.
+        //
+        // For both subshell and top-level contexts: dispatch through
+        // the function/builtin lookup first; only fall through to
+        // execvp/spawn if the name isn't shell-resolvable.
+        let has_user_fn = with_executor(|exec| exec.functions_compiled.contains_key(&cmd));
+        if has_user_fn {
+            let status = with_executor(|exec| {
+                exec.dispatch_function_call(&cmd, &rest).unwrap_or(127)
+            });
+            // Top-level `exec funcname` — exit the shell with the
+            // function's status (mirrors C's "exec replaces shell as
+            // last act"). Subshell `(exec funcname)` — return through
+            // the EXIT_PENDING path so the subshell body aborts and
+            // the parent resumes via subshell_end.
+            let in_subshell_now =
+                with_executor(|exec| !exec.subshell_snapshots.is_empty());
+            if in_subshell_now {
+                crate::ported::builtin::EXIT_VAL
+                    .store(status, std::sync::atomic::Ordering::Relaxed);
+                crate::ported::builtin::EXIT_PENDING
+                    .store(1, std::sync::atomic::Ordering::Relaxed);
+                return Value::Status(status);
+            }
+            std::process::exit(status);
+        }
+        // c:Src/exec.c — builtin path: `exec builtin` runs the
+        // builtin in-process and exits.
+        let bn_in_tab = crate::ported::builtin::createbuiltintable().contains_key(&cmd);
+        if bn_in_tab {
+            let status = dispatch_builtin_raw(&cmd, rest.clone());
+            let in_subshell_now =
+                with_executor(|exec| !exec.subshell_snapshots.is_empty());
+            if in_subshell_now {
+                crate::ported::builtin::EXIT_VAL
+                    .store(status, std::sync::atomic::Ordering::Relaxed);
+                crate::ported::builtin::EXIT_PENDING
+                    .store(1, std::sync::atomic::Ordering::Relaxed);
+                return Value::Status(status);
+            }
+            std::process::exit(status);
+        }
         // c:Src/exec.c — `exec` inside a subshell (`(exec cmd)`)
         // replaces ONLY the subshell child process; the parent shell
         // continues. C zsh always forks for `(...)`, so the actual
