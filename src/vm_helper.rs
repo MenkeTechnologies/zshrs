@@ -1564,6 +1564,26 @@ impl ShellExecutor {
     }
 
     pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
+        // c:Src/exec.c — `disable -f NAME` flips the DISABLED flag on
+        // the shfunctab entry. `lookupshfunc` (which dispatch consults)
+        // returns NULL for DISABLED entries, falling through to PATH
+        // lookup → "command not found". zshrs keeps the compiled body
+        // in functions_compiled independently of the flag, so check
+        // shfunctab and short-circuit when DISABLED is set. Bug #221
+        // in docs/BUGS.md.
+        let is_disabled = crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .ok()
+            .and_then(|t| {
+                let entry = t.get_including_disabled(name)?;
+                Some(
+                    (entry.node.flags as u32 & crate::ported::zsh_h::DISABLED as u32) != 0,
+                )
+            })
+            .unwrap_or(false);
+        if is_disabled {
+            return None;
+        }
         // zshrs-original: `[compsys] backend = "rust"` short-circuit.
         // When a `_NAME` has a Rust port AND the user opted into the
         // rust backend, run the Rust fn directly here — but still

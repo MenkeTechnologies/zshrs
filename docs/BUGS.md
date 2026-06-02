@@ -15992,7 +15992,9 @@ scores[alice]=95
 
 ## #220 — `setopt err_return` doesn't abort function on failed command
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Both shells abort the function on `false` under `setopt err_return`. Doc-only flip.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt err_return; f() { false; echo "in-fn"; }; f; echo "after"'
@@ -16041,7 +16043,53 @@ inside the function (back to pre-err_return defensive style).
 
 ## #221 — `disable -f FNAME` doesn't actually disable the function
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `dispatch_function_call` short-circuits when shfunctab's DISABLED flag is set on the entry.
+
+**Root cause** — `disable -f g` correctly flipped the
+`DISABLED` flag on the shfunctab entry via `disableshfuncnode`,
+but zshrs's dispatcher consulted only `functions_compiled`
+(which holds the compiled chunk independently of the flag). So
+the disabled fn still ran.
+
+C zsh's `lookupshfunc` returns NULL for DISABLED entries,
+falling execcmd through to PATH lookup → "command not found".
+
+**Fix** — added DISABLED check at the start of
+`dispatch_function_call` in `vm_helper.rs`:
+
+```rust
+let is_disabled = shfunctab_lock().read().ok()
+    .and_then(|t| {
+        let entry = t.get_including_disabled(name)?;
+        Some((entry.node.flags as u32 & DISABLED as u32) != 0)
+    })
+    .unwrap_or(false);
+if is_disabled { return None; }
+```
+
+Returning None falls through to the standard "function not
+found" path which eventually emits `command not found`.
+
+Same gate added to `call_function` in `fusevm_bridge.rs` for
+the host-side dispatch path.
+
+**Verify:**
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'g() { echo body; }; disable -f g; g 2>&1'
+zsh:1: command not found: g           # matches zsh
+
+$ ./target/debug/zshrs --zsh -c 'g() { echo body; }; disable -f g; enable -f g; g'
+body                                  # re-enable works
+
+$ ./target/debug/zshrs --zsh -c 'g() { echo body; }; g'
+body                                  # regression: normal call works
+```
+
+All three match zsh exactly. Regression suite unchanged
+(114 failures, same set).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'g() { echo body; }; disable -f g; echo "dis=[${dis_functions[g]:-empty}]"; g 2>&1'
@@ -16147,7 +16195,20 @@ need verification — could be a separate gap.)
 
 ## #223 — `setopt warn_create_global` doesn't emit warning on implicit global creation
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — no longer reproduces. Verified:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt warn_create_global; f() { X=1; }; f'
+f: scalar parameter X created globally in function f
+$ ./target/debug/zshrs --zsh -c 'setopt warn_create_global; f() { X=1; }; f'
+f:1: scalar parameter X created globally in function f
+```
+
+Both shells emit the warning. zshrs adds a `:1:` line number
+that zsh omits (minor cosmetic diff), but the warning fires
+correctly. Doc-only status flip.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt warn_create_global; f() { X=1; }; f'
