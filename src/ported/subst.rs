@@ -5699,7 +5699,26 @@ pub fn paramsubst(
                             .map_or(false, |__p| pattry(&__p, elem))
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
+                // c:Src/subst.c — when a prior operator (e.g. (@k)/
+                // (@v) on an assoc, or (s::) split, or assoc-splat)
+                // populated `split_parts`, the :# filter operates on
+                // THAT element list rather than re-reading from
+                // arrays_get. Without this, `${(@k)h:#a}` fell into
+                // the scalar arm and tested "a b" against "a" once
+                // → no match → kept everything. Bug #311 in
+                // docs/BUGS.md. The arrays_get path stays as the
+                // primary check (indexed-array source); split_parts
+                // is the operator-result source.
+                let source_arr: Option<Vec<String>> = arrays_get(&var_name)
+                    .filter(|_| per_element_array)
+                    .or_else(|| {
+                        if per_element_array {
+                            split_parts.clone()
+                        } else {
+                            None
+                        }
+                    });
+                if let Some(arr) = source_arr {
                     let kept: Vec<String> = arr
                         .into_iter() // c:3540
                         .filter(|elem| {

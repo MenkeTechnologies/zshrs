@@ -22999,7 +22999,53 @@ filtered=("${source_arr[@]:#prefix*}")
 
 ## #311 — `${(@k)assoc:#pat}` / `${(@v)assoc:#pat}` filter on assoc keys/values not applied
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `:#` filter arm in `paramsubst` consulted
+only `arrays_get(&var_name)` for the per-element source,
+ignoring `split_parts` (which prior operators like (@k)/(@v) on
+assocs populated); corrected 2026-06-02.
+
+**Root cause** — For `${(@k)h:#a}`:
+- The (@k) flag handling at `paramsubst` line 5370 populates
+  `magic_assoc_array` and seeds `split_parts` with the assoc's
+  keys.
+- The `:#` filter arm at line 5639 then ran its
+  per-element-filter check using
+  `arrays_get(&var_name).filter(|_| per_element_array)`. For an
+  assoc, `arrays_get` returns None, so the array-filter branch
+  was skipped.
+- The scalar fallback then tested the joined "a b" string
+  against "a" once → no match → kept everything as-is.
+
+The fix needs to extend the per-element source to include
+`split_parts` when it's been populated by a prior operator.
+
+**Fix:** `src/ported/subst.rs::paramsubst` `:#` arm — add a
+`source_arr` Option computed as
+`arrays_get(&var_name).filter(|_| per_element_array)` first,
+then fall back to `split_parts.clone()` when
+per_element_array. The filter loop drives off `source_arr`
+instead of `arrays_get` directly.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2); echo "[${(@k)h:#a}]"'
+[b]
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(a 1 b 2); echo "[${(@k)h:#a}]"'
+[b]
+
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2); echo "[${(@v)h:#1}]"'
+[2]
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(a 1 b 2); echo "[${(@v)h:#1}]"'
+[2]
+
+# Regressions: indexed-array :#, scalar :# unchanged
+$ ./target/debug/zshrs --zsh -c 'a=(foo bar baz); echo "[${(@)a:#foo}]"'
+[bar baz]
+$ ./target/debug/zshrs --zsh -c 's=hello; echo "[${s:#hello}]"'
+[]
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[abc]=1; h[xyz]=2; print -l "${(@k)h:#a*}" | sort'
