@@ -2371,19 +2371,40 @@ impl ZshCompiler {
         // positional/array subscript. Route through BUILTIN_ARRAY_INDEX
         // which calls paramsubst with `${name[sub]}` so the full
         // subscript dispatch (range, @, *, negatives, etc.) applies.
+        //
+        // The `$` prefix is REQUIRED. Bug #29 in docs/BUGS.md: the
+        // previous `strip_prefix('$').unwrap_or(&untoked)` accepted
+        // bare `argv[...]` (no `$`) as if it were `$argv[...]`, so a
+        // DQ word like `"argv[1]=$a[1]"` (which after Dnull-strip
+        // untokenizes to literal text + a paramsubst) was misread as
+        // a single `${argv[KEY]}` lookup with KEY = `1]=$a[1`. The
+        // whole literal prefix got consumed. Also require that the
+        // untokenized input has EXACTLY ONE `$` — multiple `$`s
+        // indicate a literal-with-expansions word that the segment
+        // splitter further down should handle instead.
         if !has_bnull {
-            let inner = untoked.strip_prefix('$').unwrap_or(&untoked);
-            if let Some(lb) = inner.find('[') {
-                let nm = &inner[..lb];
-                if matches!(nm, "@" | "*" | "argv") && inner.ends_with(']') {
-                    let key = &inner[lb + 1..inner.len() - 1];
-                    let name_const = self.builder.add_constant(Value::str(nm));
-                    let key_const = self.builder.add_constant(Value::str(key));
-                    self.builder.emit(Op::LoadConst(name_const), 0);
-                    self.builder.emit(Op::LoadConst(key_const), 0);
-                    self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
-                    return;
+            if let Some(inner) = untoked.strip_prefix('$') {
+                if !inner.contains('$') {
+                    if let Some(lb) = inner.find('[') {
+                        let nm = &inner[..lb];
+                        if matches!(nm, "@" | "*" | "argv") && inner.ends_with(']') {
+                            let key = &inner[lb + 1..inner.len() - 1];
+                            // Inner key must not itself contain a `$` /
+                            // `[` / `]` — those would be a nested subscript
+                            // or paramsubst that needs the runtime path.
+                            if !key.contains('$') && !key.contains('[') && !key.contains(']') {
+                                let name_const = self.builder.add_constant(Value::str(nm));
+                                let key_const = self.builder.add_constant(Value::str(key));
+                                self.builder.emit(Op::LoadConst(name_const), 0);
+                                self.builder.emit(Op::LoadConst(key_const), 0);
+                                self.builder.emit(
+                                    Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2),
+                                    0,
+                                );
+                                return;
+                            }
+                        }
+                    }
                 }
             }
         }

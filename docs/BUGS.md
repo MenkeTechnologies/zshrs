@@ -1616,51 +1616,69 @@ names (`mkdir`, `rm`, etc.) opt-in.
 
 ## #29 — Literal `argv[N]` inside double quotes gets stripped when string also contains `$other[idx]`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-01.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "argv[1]=$a[1]"'
 argv[1]=x
 
-$ zshrs --zsh -c 'a=(x y z); echo "argv[1]=$a[1]"'
+$ zshrs --zsh -c 'a=(x y z); echo "argv[1]=$a[1]"'   # before
 x
+$ zshrs --zsh -c 'a=(x y z); echo "argv[1]=$a[1]"'   # after
+argv[1]=x
 ```
 
-The literal text `argv[1]=` inside the double-quoted string is
-silently consumed by zshrs. The output drops the prefix and shows
-only the value of `$a[1]`.
+**Root cause** — `src/extensions/compile_zsh.rs::compile_word_str`
+has a fast path for `$@[SUB]` / `$*[SUB]` / `$argv[SUB]`. The
+matcher computed `untoked = untokenize(s)` (which strips Dnull
+markers AND maps Qstring/Stringg to literal `$`), then did:
 
-Triggers when ALL of:
-  1. inside double quotes
-  2. literal text contains the exact name `argv[<idx>]`
-  3. the same string also contains a separate `$var[idx]` expansion
-
-Does NOT trigger for any other parameter name. Tested
-`funcstack[1]=$a[1]`, `path[1]=$a[1]`, `pipestatus[1]=$a[1]`,
-`fpath[1]=$a[1]`, `functrace[1]=$a[1]`, `funcfiletrace[1]=$a[1]`,
-`funcsourcetrace[1]=$a[1]` — all work correctly. Only `argv` fails.
-
-zshrs's lexer (port of `Src/lex.c` + `Src/subst.c paramsubst`)
-appears to have a special-case for `argv` that triggers
-parameter-style subscript expansion on a bare (no `$`) identifier
-within double quotes, but only when followed somewhere in the same
-string by a legitimate `$var[idx]` reference (the second expansion
-probably re-tickles the parser's "we're in subscript mode" flag).
-
-**Where** — `src/ported/subst.rs::stringsubst` (port of
-`Src/subst.c::stringsubst`) — the double-quoted-string state
-machine's identifier scanner reuses the same code path for `$argv`
-and bare `argv` recognition.
-
-**Workaround** — escape the `[`:
-```sh
-echo "argv\[1\]=$a[1]"   # zsh: argv[1]=x ; zshrs: argv[1]=x
+```rust
+let inner = untoked.strip_prefix('$').unwrap_or(&untoked);
+if let Some(lb) = inner.find('[') {
+    let nm = &inner[..lb];
+    if matches!(nm, "@" | "*" | "argv") && inner.ends_with(']') { ... }
+}
 ```
-Or use `\$argv[1]` literal:
-```sh
-echo "\\argv[1]=$a[1]"
-```
-Or just don't use the literal name `argv` in messages.
+
+`.unwrap_or(&untoked)` made the `$` prefix OPTIONAL. So a DQ word
+like `"argv[1]=$a[1]"` — which the lexer emits as
+`\u{9e}argv[1]=\u{8c}a[1]\u{9e}` and `untokenize` collapses to
+`argv[1]=$a[1]` — found the FIRST `[` at byte 4, picked
+`nm = "argv"`, saw the trailing `]`, and routed the whole word
+through `BUILTIN_ARRAY_INDEX` with `key = "1]=$a[1"`. The runtime
+math-evaluated the key as 1 and returned `$argv[1]`, dropping
+the literal `argv[1]=` prefix completely.
+
+The original BUGS.md "Where" blamed `src/ported/subst.rs`, but the
+problem was upstream — compile_zsh's fast-path matcher swallowed
+the input before the segment splitter or paramsubst saw it.
+
+**Fix** (`src/extensions/compile_zsh.rs` compile_word_str fast
+path) — three gates:
+
+  1. Require the `$` prefix literally (use `strip_prefix('$')`
+     and bail when None instead of `unwrap_or(&untoked)`).
+  2. Require exactly ONE `$` in `untoked` — multiple `$`s mean a
+     literal-with-expansions word that the segment splitter
+     further down should handle (`"argv[1]=$a[1]"` has two `$`s
+     after Qstring→$ collapse, so the fast path no longer fires).
+  3. Require the key (between `[` and `]`) to NOT contain `$`,
+     `[`, or `]` — nested subscripts or paramsubsts need the
+     runtime path, not this compile-time shortcut.
+
+Verified:
+
+  * `"argv[1]=$a[1]"` → `argv[1]=x` (BUGS.md repro).
+  * `"$argv[1]"` → `p` (legitimate fast path still fires).
+  * `$argv[1]` unquoted → `p`.
+  * `"$@[1,2]"` → `p q`.
+  * `"$*[1]"` → `p`.
+  * `"argv[1]=$a"` (no second `[1]`) → `argv[1]=hello`.
+  * `"argv[1]=stuff"` (pure literal) → `argv[1]=stuff`.
+
+zshrs_shell regression: 925/127 (baseline preserved with
+`--test-threads=1`).
 
 ---
 
