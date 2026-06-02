@@ -6151,6 +6151,29 @@ pub fn intsetfn(pm: &mut param, x: i64) {
             randomsetfn(x);
             return;
         }
+        // c:Src/params.c:4698 uidsetfn / c:4719 euidsetfn / c:4740
+        // gidsetfn / c:4761 egidsetfn — `UID=N` / `EUID=N` /
+        // `GID=N` / `EGID=N` attempt the corresponding setuid /
+        // seteuid / setgid / setegid syscall and emit
+        // `failed to change [effective ]{user,group} ID: ERRNO`
+        // on failure. Bug #254 in docs/BUGS.md. Same name-based
+        // dispatch shape as SECONDS/RANDOM above.
+        "UID" => {
+            uidsetfn(x);
+            return;
+        }
+        "EUID" => {
+            euidsetfn(x);
+            return;
+        }
+        "GID" => {
+            gidsetfn(x);
+            return;
+        }
+        "EGID" => {
+            egidsetfn(x);
+            return;
+        }
         _ => {}
     }
     pm.u_val = x;
@@ -7026,10 +7049,23 @@ pub static TERMFLAGS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI3
 pub fn uidsetfn(x: i64) {
     // c:4698
     if unsafe { libc::setuid(x as libc::uid_t) } != 0 {
-        // c:4701
+        // c:4701 — `zerr("failed to change user ID: %e", errno)`.
+        // C's `%e` formatter consumes errno and prints
+        // `strerror(errno)` with the system's casing (typically
+        // lowercase on macOS/Linux). Rust's
+        // `std::io::Error::last_os_error()` displays the same
+        // text but with capital first letter + `(os error N)`
+        // suffix, diverging from zsh. Mirror the C format by
+        // calling strerror via libc directly. Bug #254 in
+        // docs/BUGS.md.
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        let msg = unsafe {
+            let p = libc::strerror(errno);
+            std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+        };
         zerr(&format!(
             "failed to change user ID: {}",
-            std::io::Error::last_os_error()
+            msg.to_lowercase()
         )); // c:4702
     }
 }
@@ -7047,10 +7083,16 @@ pub fn euidgetfn() -> i64 {
 pub fn euidsetfn(x: i64) {
     // c:4719
     if unsafe { libc::seteuid(x as libc::uid_t) } != 0 {
-        // c:4722
+        // c:4722 — strerror format to match C zerr's `%e`. See
+        // uidsetfn above.
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        let msg = unsafe {
+            let p = libc::strerror(errno);
+            std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+        };
         zerr(&format!(
             "failed to change effective user ID: {}",
-            std::io::Error::last_os_error()
+            msg.to_lowercase()
         )); // c:4723
     }
 }
@@ -7067,10 +7109,16 @@ pub fn gidgetfn() -> i64 {
 pub fn gidsetfn(x: i64) {
     // c:4740
     if unsafe { libc::setgid(x as libc::gid_t) } != 0 {
-        // c:4743
+        // c:4743 — strerror format to match C zerr's `%e`. See
+        // uidsetfn above.
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        let msg = unsafe {
+            let p = libc::strerror(errno);
+            std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+        };
         zerr(&format!(
             "failed to change group ID: {}",
-            std::io::Error::last_os_error()
+            msg.to_lowercase()
         )); // c:4744
     }
 }
@@ -7087,10 +7135,16 @@ pub fn egidgetfn() -> i64 {
 pub fn egidsetfn(x: i64) {
     // c:4761
     if unsafe { libc::setegid(x as libc::gid_t) } != 0 {
-        // c:4764
+        // c:4764 — strerror format to match C zerr's `%e`. See
+        // uidsetfn above.
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        let msg = unsafe {
+            let p = libc::strerror(errno);
+            std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+        };
         zerr(&format!(
             "failed to change effective group ID: {}",
-            std::io::Error::last_os_error()
+            msg.to_lowercase()
         )); // c:4765
     }
 }
