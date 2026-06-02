@@ -26921,7 +26921,43 @@ to infer "is positional" from outside).
 
 ## #371 — `typeset -A` with no args lists random unrelated assocs instead of being no-op or erroring
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `src/ported/builtin.rs` no-arg
+list-path filter now skips `PM_HIDE` entries.
+
+**Root cause** — `typeset -A` with no name falls into the
+"list parameters" path at `src/ported/builtin.rs:3507-3534`,
+which iterates `paramtab` and filters by `on|roff` (here
+`PM_HASHED`). In real zsh, the magic-assoc names (`aliases`,
+`builtins`, `commands`, `functions`, etc.) live in a
+separate PARTAB (`Src/Modules/parameter.c`), so the C
+`scanhashtable(paramtab, …)` walk never sees them. The Rust
+port shoves the magic-assoc placeholders INTO `paramtab` via
+`vm_helper::init_partab_params` (tagged `PM_SPECIAL | PM_HIDE
+| PM_HIDEVAL`) so name-based lookup works. The list-path
+filter never excluded `PM_HIDE`, so every PM_HIDE-tagged
+magic-assoc with `PM_HASHED` matched the `-A` filter and got
+printed.
+
+**Fix** — add `if (f & PM_HIDE) != 0 { return false; }` to
+the iterator filter in `src/ported/builtin.rs:3507-3534`. PM_HIDE
+mirrors the C invisibility (magic-assocs never appearing in
+paramtab scans). Filter cite: zshrs is structurally different
+from C (paramtab vs PARTAB), so the gate is in the iterator
+predicate rather than at populate-time.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A'              # (empty)
+$ ./target/debug/zshrs --zsh -c 'typeset -A'          # (empty)
+
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; typeset -A'   # h=( )
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; typeset -A'  # h=(  )
+```
+
+Bare `typeset -A` no longer lists internal magic-assocs.
+User-defined assocs still appear correctly.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A 2>&1'
@@ -26937,25 +26973,6 @@ aliases=(  )
 
 zshrs prints the empty `aliases=( )` introspection assoc as
 if `-A` were a display request. This leaks internal state.
-
-The display contains other introspection assocs too (the
-full output may show `commands=`, `parameters=`, etc. — only
-`aliases=` was caught by the diff because the others got
-filtered).
-
-**Where** — `src/ported/builtins/typeset.rs::handle_A_no_args`:
-treats `-A` no-name as "show all assocs" instead of either
-erroring or no-op. C-source `Src/builtin.c::typeset_single`
-with no name argument and `-A` flag silently succeeds.
-
-**Impact** — leaks introspection-assoc data to stdout
-unexpectedly. Scripts that probe whether `typeset -A` errored
-(to verify behavior) get wrong info.
-
-**Workaround** — provide explicit assoc name:
-```sh
-typeset -A myname     # declares empty assoc named "myname"
-```
 
 ---
 
@@ -38073,7 +38090,7 @@ qualifiers always have a digit suffix.
 | 368 | `$#` bare `#` in `$((...))` arith not resolved — treats as `0` instead of positional count | **port-bug** | explicit `$#` |
 | 369 | `wait %1` job-spec resolution fails "no such job" — zsh: succeeds (ec=0) | **port-bug** | capture `$!` and wait by PID |
 | 370 | `${(t)1}` positional-param type returns `scalar` instead of `array-special` | **port-bug** | manual detection of positional context |
-| 371 | `typeset -A` with no args lists random assocs instead of being no-op (zsh: silent success) | **port-bug** | always provide explicit name |
+| 371 | `typeset -A` with no args lists random assocs instead of being no-op (zsh: silent success) | **fixed** 2026-06-02 | n/a |
 | 372 | `print -P "%F{invalid}"` drops entire format instead of emitting default-color escape | **port-bug** | use ANSI escapes directly |
 | 373 | `pipestatus=(...)` user-overwrite accepted — pipestatus not readonly (zsh: silently rejects) | **port-bug** | defensive copy before user-code |
 | 374 | `reswords=...` user-overwrite accepted — reswords not readonly (zsh: "read-only variable") | **port-bug** | defensive copy |

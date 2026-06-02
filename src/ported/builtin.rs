@@ -3514,6 +3514,20 @@ pub fn bin_typeset(
                     if (f & PM_UNSET) != 0 {
                         return false;
                     }
+                    // c:Src/Modules/parameter.c — magic-assoc names
+                    // (aliases/builtins/commands/options/functions/
+                    // parameters/etc.) live in a separate PARTAB in
+                    // C, NOT paramtab; the user-space scanhashtable
+                    // never sees them. The Rust port shoves them
+                    // into paramtab via vm_helper::init_partab_params
+                    // as PM_HIDE-tagged placeholders. Mirror the C
+                    // invisibility by skipping PM_HIDE entries here.
+                    // Bug #371 in docs/BUGS.md: `typeset -A`
+                    // (no args) listed all magic-assocs instead of
+                    // only user-defined ones.
+                    if (f & PM_HIDE) != 0 {
+                        return false;
+                    }
                     // c:2792 scanmatchtable flags1=on|roff, flags2=0.
                     let on_roff = (on as u32) | (roff as u32);
                     on_roff == 0 || (f & on_roff) != 0
