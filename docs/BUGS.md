@@ -1001,40 +1001,59 @@ arrays instead of nested hash structures. Demo 362 was trimmed from
 
 ## #21 — Nested `$(( expr1 + $((expr2)) ))` garbles outer expansion
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-01.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'n=5; m=$(( n + $((n * 2)) )); echo "m: $m"'
 m: 15
 
-$ zshrs --zsh -c 'n=5; m=$(( n + $((n * 2)) )); echo "m: $m"'
+$ zshrs --zsh -c '...'   # before
 m: ( n + 10 ))
+$ zshrs --zsh -c '...'   # after
+m: 15
 ```
 
-A `$(( ))` expression containing a nested `$(( ))` does not parse
-the inner correctly into the outer. The inner expression evaluates
-fine in isolation (`$((n * 2))` prints `10`), but when embedded
-inside the outer `$(( n + ... ))`, the outer expression captures
-the literal text `( n + 10 ))` instead of evaluating to `15`.
+**Root cause** — `find_expansion_end` in
+`src/extensions/compile_zsh.rs` (segment-splitter helper used by
+compile_word_str) had a `META-$ + Inparmath` arm that walked to
+the FIRST `Outparmath` without depth-tracking. For nested
+`$((expr1 + $((expr2)) ))` the lexer produces:
 
-**Where** — `src/ported/lex.rs::cmd_or_math_sub` (port of
-`Src/lex.c:540`'s math-vs-cmd-sub disambiguation). When the outer
-arith scan encounters `$((`, it tries to recursively parse a math
-expression but the inner `$((...))` confuses the bracket counter,
-leading to the outer `))` being consumed at the wrong nesting depth.
-Related to bug #4 (`$(() { … } arg)` silent abort) which lives in
-the same disambiguation path.
-
-**Workaround** — extract the inner expression to a temporary
-variable:
-```sh
-inner=$((n * 2))      # evaluate inner first
-m=$(( n + inner ))    # use as plain var in outer math
-echo "m: $m"          # → 15
+```
+Qstring Inparmath (  expr1 + Qstring Inparmath ( expr2 ) Outparmath  ) Outparmath
+^^^^^^^^^^^^^^^^^^^                                       ^^^^^^^^^^   ^^^^^^^^^^
+outer open                                                inner close  outer close
 ```
 
-Numerous demos that originally used nested arith were rewritten to
-this two-step form to fit zshrs.
+The arm stopped at the INNER Outparmath, truncating the outer's
+` ) Outparmath` into the trailing literal segment. compile_word_str
+then emitted only the inner portion through BUILTIN_EXPAND_TEXT,
+and the literal ` ))` got concatenated as-is — producing
+`( a + 10 ))` rather than `15`.
+
+The misdiagnosis in the original BUGS.md report blamed
+`src/ported/lex.rs::cmd_or_math_sub`, but the lexer was actually
+producing the correct nested token shape. The corruption happened
+later in compile_word_str's segment splitter.
+
+**Fix** (`src/extensions/compile_zsh.rs::find_expansion_end`,
+`Some('\u{89}')` arm) — track depth: increment on each Inparmath
+encountered inside the body, decrement on each Outparmath, stop
+when depth hits zero. Mirror the existing depth tracking in the
+`Some('\u{88}')` (Inpar) arm above which already handled nested
+cmd-substitution correctly.
+
+Verified:
+
+  * `"$(( a + $((2*5)) ))"` → 12 (BUGS.md case)
+  * `"$(( 2 + $((3*4)) ))"` → 14
+  * `"$(($((2+3))*5))"` → 25 (bug #4's trap case still works)
+  * `"$(( $(( $(( 1+1 )) + 2 )) * 3 ))"` → 12 (triple nest)
+  * `echo $((2+3))` → 5 (unquoted still works)
+  * `echo $(($((2+3))*5))` → 25 (unquoted nested still works)
+  * `echo "$(echo hi)"` → hi (cmd-sub regression check)
+
+zshrs_shell regression: 924/128 (baseline preserved).
 
 ---
 
