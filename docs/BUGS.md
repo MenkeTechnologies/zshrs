@@ -233,7 +233,45 @@ cases.
 
 ## #8 — `local IFS=:` leaks past function return
 
-**Status:** `port-bug` — surfaced while testing bug 7.
+**Status:** `fixed` 2026-05-30 (`src/ported/params.rs::createparam` +
+`endparamscope`). Surfaced while testing bug 7.
+
+Root cause: PM_SPECIAL params (IFS, PATH, HOME, TERM, WORDCHARS,
+…) store their canonical value in C globals (`ifs_lock`,
+`home_lock`, etc.), NOT in `pm.u_str`. The shell value is read via
+GSU getfn / written via GSU setfn — the pm slot is just a routing
+header.
+
+Two-part fix to mirror `Src/builtin.c:2382-2424` newspecial path
+and `Src/params.c:5867-5933` scanendscope:
+
+1. **Save side** (`createparam`, params.rs:2058): when allocating
+   a fresh local-shadow pm for a PM_SPECIAL outer, snapshot the
+   outer's canonical value via `oldpm.gsu_s.getfn(&oldpm)` BEFORE
+   moving the outer into `pm.old`. Mirrors C's `copyparam(tpm, pm,
+   1)` which calls `pm->gsu.s->getfn(pm)`. Without this the saved
+   chain carries an empty `u_str` and there's nothing to restore.
+
+2. **Restore side** (`endparamscope`, params.rs:8320): after
+   restoring the outer pm via `tab.insert(n, prev)`, detect
+   PM_SPECIAL and queue the setfn + saved value for deferred
+   firing. The setfns (ifssetfn, homesetfn, …) re-enter paramtab
+   (e.g. ifssetfn → inittyptab → paramtab.read), so the write
+   lock must be released first. Mirrors C's `pm->gsu.s->setfn(pm,
+   tpm->u.str)` at `Src/params.c:5915`.
+
+Verified against /opt/homebrew/bin/zsh:
+```
+f() { local IFS=:; }; f; echo "[$IFS]"
+                              → [ \t\n] (was: [:])
+f() { local HOME=/tmp; }; f; echo "[$HOME]"
+                              → [/orig] when set in-shell (was leaked)
+                              → still leaks for env-imported HOME
+                                (separate issue — env-bypass path)
+```
+
+tests/zshrs_shell: 923 / 129 (unchanged — IFS scoping isn't in the
+test corpus, but no regression).
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '

@@ -2055,6 +2055,29 @@ pub fn createparam(
         // outer Param into pm.old (c:1137) so endparamscope can
         // restore it. c:1144 paramtab->removenode is implicit since
         // we re-insert below.
+        //
+        // c:Src/builtin.c:2382-2424 newspecial path — for PM_SPECIAL
+        // shadows (`local IFS=...`), the C source allocates a
+        // separate `tpm`, calls `copyparam(tpm, pm, 1)` which uses
+        // the GSU getfn to read the current value into tpm.u.str,
+        // then sets `pm->old = tpm`. zshrs's createparam path moves
+        // `oldpm` into pm.old as-is; for specials whose value lives
+        // in a global (ifs_lock, paramtab-external) the bare
+        // `oldpm.u_str` is empty and endparamscope can't restore the
+        // real outer value. Snapshot the current value via the GSU
+        // getfn now so the saved chain carries the right string.
+        // Bug #8 in docs/BUGS.md (`local IFS=:` leaked past return).
+        let oldpm = if let Some(mut op) = oldpm {
+            if (op.node.flags as u32 & PM_SPECIAL) != 0 {
+                let getfn_ptr = op.gsu_s.as_ref().map(|g| g.getfn);
+                if let Some(getfn) = getfn_ptr {
+                    op.u_str = Some(getfn(&op));
+                }
+            }
+            Some(op)
+        } else {
+            None
+        };
         Box::new(param {
             node: hashnode {
                 next: None,
@@ -2279,8 +2302,20 @@ pub fn copyparam(
     match PM_TYPE(pm.node.flags as u32) {
         // c:1252
         t if t == PM_SCALAR || t == PM_NAMEREF => {
-            // c:1253-1254
-            tpm.u_str = Some(strgetfn(pm)); // c:1255
+            // c:1255 — `tpm->u.str = ztrdup(pm->gsu.s->getfn(pm));`.
+            // C dispatches through the GSU getfn pointer so PM_SPECIAL
+            // params (IFS, PATH, HOME, ...) return their canonical
+            // global value (ifsgetfn reads `ifs_lock`, etc.). Without
+            // this dispatch, `local IFS=:` saved an empty pm.u_str
+            // (the bare strgetfn read) and endparamscope could not
+            // restore the real outer value on scope exit (bug #8 in
+            // docs/BUGS.md).
+            let getfn_ptr = pm.gsu_s.as_ref().map(|g| g.getfn);
+            tpm.u_str = Some(if let Some(getfn) = getfn_ptr {
+                getfn(pm)
+            } else {
+                strgetfn(pm)
+            });
         }
         t if t == PM_INTEGER => {
             // c:1257
@@ -8317,6 +8352,20 @@ pub fn endparamscope() {
     // the live paramtab (HashMap-backed until the hashtable.c vtable
     // is wired) and apply scanendscope's `pm->level > locallevel`
     // filter, restoring the `pm.old` chain or removing the entry.
+    // c:Src/params.c:5867-5933 — for PM_SPECIAL scalar params the
+    // gsu setfn must be re-fired with the restored value so global
+    // side-effects (ifs char buffer, PATH chunks, lc_update_needed
+    // flag, etc.) get rolled back. Bug #8 in docs/BUGS.md: `local
+    // IFS=:` inside a function left the global ifs buffer pinned
+    // to ":" after return.
+    //
+    // The setfn closures often re-enter paramtab (ifssetfn → inittyptab
+    // → paramtab.read), so we MUST drop the write lock before calling
+    // them. Collect (name, setfn, value) into a deferred list inside
+    // the lock, restore the pm.old chain, drop the lock, then re-fire
+    // setfn on each special.
+    type DeferredSetfn = (String, fn(&mut param, String), String);
+    let mut deferred: Vec<DeferredSetfn> = Vec::new();
     if let Ok(mut tab) = paramtab().write() {
         let stale: Vec<(String, bool)> = tab
             .iter()
@@ -8335,7 +8384,16 @@ pub fn endparamscope() {
                 let had_outer = pm.old.is_some();
                 if let Some(prev) = pm.old {
                     // c:scanendscope:5933 pm->old = tpm->old
+                    let restored_is_special = (prev.node.flags as u32 & PM_SPECIAL) != 0;
+                    let restored_val = prev.u_str.clone();
+                    let restored_setfn =
+                        prev.gsu_s.as_ref().map(|g| g.setfn);
                     tab.insert(n.clone(), prev); // restore outer binding (Box<param>)
+                    if restored_is_special {
+                        if let (Some(setfn), Some(val)) = (restored_setfn, restored_val) {
+                            deferred.push((n.clone(), setfn, val));
+                        }
+                    }
                 }
                 // else: c:5966 unsetparam_pm — name unset entirely
                 // RUST-ONLY: the assoc-storage shadow lives in a
@@ -8353,6 +8411,19 @@ pub fn endparamscope() {
                         .map(|m| m.remove(&n));
                 }
             }
+        }
+    }
+    // c:Src/params.c:5915-5933 — re-fire PM_SPECIAL setfns NOW that
+    // the paramtab write lock is released. Each setfn takes its own
+    // paramtab read (via inittyptab / similar) so the deferred call
+    // is the only deadlock-safe path.
+    for (n, setfn, val) in deferred {
+        let mut pm_copy: Option<param> = None;
+        if let Ok(tab) = paramtab().read() {
+            pm_copy = tab.get(&n).map(|p| (**p).clone());
+        }
+        if let Some(mut pm) = pm_copy {
+            setfn(&mut pm, val);
         }
     }
 
