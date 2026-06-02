@@ -20144,7 +20144,66 @@ PROMPT3="?# "
 
 ## #275 — Array splice `a[1,0]=(...)` reverse-range form doesn't prepend — replaces first element
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `BUILTIN_SET_SUBSCRIPT_RANGE`'s `translate`
+helper clamped both start and end to 1, collapsing `end=0`
+(the canonical "insert BEFORE start" idiom) into a normal
+overwriting replace; corrected 2026-06-02.
+
+**Root cause** — C `Src/params.c::setarrvalue` accepts an `end`
+of 0 as "insert before start position." The Rust port at
+`src/fusevm_bridge.rs::BUILTIN_SET_SUBSCRIPT_RANGE` had a single
+`translate` helper that did `raw.max(1)` for both start and end:
+
+```rust
+let translate = |raw: i64| -> i32 {
+    if raw < 0 {
+        (len + raw + 1).max(1) as i32
+    } else {
+        raw.max(1) as i32
+    }
+};
+```
+
+For `a[1,0]=(X Y)`: `translate(1)=1`, `translate(0)=max(0,1)=1`.
+So start=1, end=1. `setarrvalue` then spliced `arr[0..1]` =
+`(X Y)`, OVERWRITING position 1 instead of inserting before it.
+
+The C setarrvalue path computes `start_idx=0, end_idx=0` when
+input is `[1,0]`, so `splice(0..0, val)` inserts at the front
+without removing anything.
+
+**Fix:** Split `translate` into `start_translate` (`.max(1)` —
+start must be ≥ 1 in 1-based indexing) and `end_translate`
+(`.max(0)` — end may be 0 to signal "before start"). Range
+parsing uses both; single-index parsing uses start_translate.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(b c d); a[1,0]=(X Y); echo "[${a[@]}]"'
+[X Y b c d]
+$ ./target/debug/zshrs --zsh -c 'a=(b c d); a[1,0]=(X Y); echo "[${a[@]}]"'
+[X Y b c d]
+
+# Mid-insert variants
+$ /opt/homebrew/bin/zsh -fc 'a=(b c d); a[2,1]=(X Y); echo "[${a[@]}]"'
+[b X Y c d]
+$ ./target/debug/zshrs --zsh -c 'a=(b c d); a[2,1]=(X Y); echo "[${a[@]}]"'
+[b X Y c d]
+$ /opt/homebrew/bin/zsh -fc 'a=(b c d); a[3,2]=(X Y); echo "[${a[@]}]"'
+[b c X Y d]
+$ ./target/debug/zshrs --zsh -c 'a=(b c d); a[3,2]=(X Y); echo "[${a[@]}]"'
+[b c X Y d]
+
+# Regressions: forward ranges, single index, negative ranges all unchanged
+$ ./target/debug/zshrs --zsh -c 'a=(a b c d); a[2,3]=(X Y); echo "[${a[@]}]"'
+[a X Y d]
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); a[2]=Y; echo "[${a[@]}]"'
+[x Y z]
+$ ./target/debug/zshrs --zsh -c 'a=(a b c d); a[-2,-1]=X; echo "[${a[@]}]"'
+[a b X]
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(b c); a[1,0]=(A); echo "[${a[@]}]"'
@@ -21777,7 +21836,58 @@ LAST_COMMIT_TIME=$(date -d "$(git log -1 --format=%ai)" +%s)
 
 ## #295 — Array splice `a[N,M]=X` with single value doesn't shrink range — replaces only last index
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `compile_assign`'s subscripted scalar
+branch routed range-key assigns through `BUILTIN_SET_ASSOC`,
+whose `mathevali` resolver evaluated `"N,M"` as a comma-
+expression (returning `M`), so only position `M` got overwritten;
+corrected 2026-06-02.
+
+**Root cause** — Two interlocking issues:
+
+1. `src/extensions/compile_zsh.rs::compile_assign` Scalar branch
+   emitted `BUILTIN_SET_ASSOC` for any subscripted scalar assign,
+   regardless of whether the key was a range (`N,M`) or single
+   index. SET_ASSOC's runtime resolver (fusevm_bridge.rs:2117-2126)
+   ran `mathevali(singsub("2,3"))` to coerce non-integer keys to
+   numbers — and zsh's math grammar accepts comma as a sequence
+   operator, returning the last sub-expression's value (3). So
+   `a[2,3]=X` became effectively `a[3]=X`, overwriting position 3
+   and leaving the array length unchanged.
+
+2. C semantics (`Src/params.c::setarrvalue`): `a[N,M]=val` SPLICES
+   the value into the array, replacing positions N..=M with the
+   RHS contents. With a single scalar RHS, the range shrinks to
+   one element.
+
+**Fix:** `src/extensions/compile_zsh.rs::compile_assign` Scalar
+branch — detect range keys (`key.contains(',')` AND no `$` /
+backtick AND not an append) and route through
+`BUILTIN_SET_SUBSCRIPT_RANGE` (the same builtin the Array RHS
+path uses), passing the scalar as a single-element array.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(a b c d); a[2,3]=X; echo "[${a[@]}]"'
+[a X d]
+$ ./target/debug/zshrs --zsh -c 'a=(a b c d); a[2,3]=X; echo "[${a[@]}]"'
+[a X d]
+
+# Longer shrink
+$ /opt/homebrew/bin/zsh -fc 'a=(1 2 3 4 5); a[2,4]=Y; echo "[${a[@]}]"'
+[1 Y 5]
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3 4 5); a[2,4]=Y; echo "[${a[@]}]"'
+[1 Y 5]
+
+# Regressions
+$ ./target/debug/zshrs --zsh -c 'a=(a b c d); a[2,3]=(X Y); echo "[${a[@]}]"'
+[a X Y d]
+$ ./target/debug/zshrs --zsh -c 'a=(a b c); a[2]=B; echo "[${a[@]}]"'
+[a B c]
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[k]=v; echo "[${h[k]}]"'
+[v]
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(1 2 3 4 5); a[2,4]=X; echo "[${a[@]}] count=${#a}"'
