@@ -570,10 +570,19 @@ impl ShellExecutor {
     }
 
     /// Set a suffix alias (`alias -s ext=cmd`). Writes canonical
-    /// sufaliastab.
+    /// sufaliastab with ALIAS_SUFFIX node flag — mirrors C
+    /// Src/builtin.c:4480-4481 (`flags1 |= ALIAS_SUFFIX; ht =
+    /// sufaliastab;`) → c:4527 (`createaliasnode(value, flags1)`).
+    /// Without ALIAS_SUFFIX in node.flags, `${saliases[k]}` /
+    /// `${(k)saliases}` introspection (parameter.c:1953/2018) fails
+    /// because both paths strict-equality-match flags == ALIAS_SUFFIX.
     pub fn set_suffix_alias(&mut self, name: String, value: String) {
         if let Ok(mut tab) = crate::ported::hashtable::sufaliastab_lock().write() {
-            tab.add(crate::ported::hashtable::createaliasnode(&name, &value, 0));
+            tab.add(crate::ported::hashtable::createaliasnode(
+                &name,
+                &value,
+                crate::ported::zsh_h::ALIAS_SUFFIX as u32,
+            ));
         }
     }
 

@@ -16257,7 +16257,26 @@ catch this either since the option isn't honored).
 
 ## #224 — `unsetopt typeset_silent` + `typeset X` doesn't print existing value (zsh: prints `X=value`)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'X=1; unsetopt typeset_silent; typeset X'
+X=1
+$ ./target/debug/zshrs --zsh -c 'X=1; unsetopt typeset_silent; typeset X'
+X=1
+```
+
+Bare-`typeset NAME` display block (bug #218 work, `src/ported/
+builtin.rs`) added the three-storage-path walk (paramtab_hashed
+assoc → array → scalar) gated on `!isset(TYPESETSILENT) ||
+OPT_ISSET(ops, b'm')` exactly matching `Src/builtin.c::
+typeset_single` c:3000-3050. Once that block landed, the option
+re-check came along with it. Verified above with
+`unsetopt typeset_silent; typeset X` printing `X=1`; the
+`OPT_ISSET(ops, b'p')` guard also handles `typeset -p` paths.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'X=1; unsetopt typeset_silent; typeset X'
@@ -16311,7 +16330,26 @@ re-declaration when debugging.
 
 ## #225 — `printf "%(%Y)T\n"` silently treats `%(...)T` as literal (zsh: errors "invalid directive")
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'printf "%(%Y)T\n" 1000000000'
+zsh:printf:1: %(: invalid directive
+$ ./target/debug/zshrs --zsh -c 'printf "%(%Y)T\n" 1000000000'
+zsh:printf:1: %(: invalid directive
+```
+
+Both shells now reject `%(...)T` with `invalid directive` exit
+code 1, matching `Src/builtin.c::bin_printf` c:5070 path which
+calls `zwarnnam(name, "%%%c: invalid directive", c)`. The
+permissive "echo literal" branch (called out in the original
+report alongside #141/#146/#161/#162/etc.) was closed by an
+earlier sweep landing the `%c` directive validator from
+c:5060-5080; %( became a hard error along with the rest of the
+unknown-directive family.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'printf "%(%Y)T\n" 1000000000'
@@ -16367,7 +16405,77 @@ strftime -s log_line "%F %T  %s" $EPOCHSECONDS "$message"
 
 ## #226 — `alias -s SUFFIX=cmd` doesn't populate `saliases` introspection assoc
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — root cause traced to two `getalias` flag-arg
+regressions in `src/ported/modules/parameter.rs` and a missed
+strict-equality check in `scanaliases`; corrected 2026-06-02.
+
+**Root cause** — three flaws in the suffix-alias-introspection
+path, all in the same family (flag bit not propagated where the C
+source propagates it):
+
+1. **`getpmsalias` passed `flags=0`** instead of the C source's
+   `ALIAS_SUFFIX` (Src/Modules/parameter.c:1953
+   `return getalias(sufaliastab, ht, name, ALIAS_SUFFIX);`). The
+   Rust `getalias` (params.rs:3175) uses
+   `(flags & ALIAS_SUFFIX) != 0` to pick `sufaliastab_lock()` vs
+   `aliastab_lock()` — so a flags=0 call walked the **wrong
+   table** (the regular aliastab) for every `${saliases[k]}` read.
+   Even if it had picked sufaliastab, the strict equality match
+   `al->node.flags == flags` (c:1912 → params.rs:3185) would fail
+   because suffix-alias nodes have `node.flags == ALIAS_SUFFIX`,
+   never `0`.
+2. **`getpmdissalias` passed `DISABLED`** instead of
+   `ALIAS_SUFFIX|DISABLED` (Src/Modules/parameter.c:1960
+   `return getalias(sufaliastab, ht, name, ALIAS_SUFFIX|DISABLED);`).
+   Same two-fold breakage: wrong table, and even on sufaliastab the
+   strict equality would never match a disabled suffix node
+   (which carries `ALIAS_SUFFIX|DISABLED`, not `DISABLED` alone).
+3. **`scanaliases` used a bitmask-AND check** instead of the C
+   strict equality `if (alflags == al->node.flags)`
+   (Src/Modules/parameter.c:1977). The Rust skip condition was
+   `alflags != 0 && alflags != ALIAS_SUFFIX &&
+   (alias.node.flags & alflags) == 0` — emitting EVERY suffix node
+   for the regular `aliases` scan (because `ALIAS_SUFFIX & 0 == 0`
+   passes the "skip if not matching alflags=0" check the wrong
+   way), and conversely emitting nothing reliable for
+   dis_saliases / dis_galiases enumeration.
+
+**Fix:**
+- `src/ported/modules/parameter.rs:3268` — pass `ALIAS_SUFFIX` to
+  `getalias`, citation updated to `c:1953`.
+- `src/ported/modules/parameter.rs:3277` — pass
+  `ALIAS_SUFFIX | DISABLED`, citation updated to `c:1960`.
+- `src/ported/modules/parameter.rs:3311` — replace bitmask AND
+  with `alias.node.flags != alflags` strict-equality skip, citing
+  c:1977.
+- `src/vm_helper.rs:574` (`set_suffix_alias`) — call
+  `createaliasnode(.., .., ALIAS_SUFFIX)` so cache-replay and
+  plugin-cache restore (`canonical_apply.rs:131`,
+  `plugin_cache.rs:1311`) write nodes with the same flag the
+  builtin path uses (`Src/builtin.c:4480-4527`,
+  `bin_alias` flags1|=ALIAS_SUFFIX → createaliasnode(value,flags1)).
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'alias -s py=python; echo "saliases=[${saliases[py]}]"'
+saliases=[python]
+$ ./target/debug/zshrs --zsh -c 'alias -s py=python; echo "saliases=[${saliases[py]}]"'
+saliases=[python]
+
+$ /opt/homebrew/bin/zsh -fc 'alias -s py=python; alias -s sh=bash; for k in "${(@k)saliases}"; do echo "$k -> ${saliases[$k]}"; done' | sort
+py -> python
+sh -> bash
+$ ./target/debug/zshrs --zsh -c 'alias -s py=python; alias -s sh=bash; for k in "${(@k)saliases}"; do echo "$k -> ${saliases[$k]}"; done' | sort
+py -> python
+sh -> bash
+```
+
+The `dis_saliases` path requires a separate `disable -s` builtin
+implementation (which doesn't currently mark sufaliastab entries
+with DISABLED) — tracked as a follow-up alongside the #227
+`disable -a` work.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'alias -s py=python; echo "saliases=[${saliases[py]}]"; alias -s'
