@@ -1769,6 +1769,24 @@ pub fn zshrs_main() {
         // verbatim script path the user passed (NOT canonicalized).
         executor.set_scalar("0".to_string(), args[1].clone());
         executor.set_pparams(args.iter().skip(2).cloned().collect());
+        // c:Src/init.c:1330 — `if (runscript) setsparam("ZSH_SCRIPT",
+        // ztrdup(runscript));`. Also bug #25 in docs/BUGS.md.
+        // setupshin in ported/init.rs runs at a different init path
+        // (it's currently dead code via init_exec which the bin entry
+        // doesn't call); set ZSH_SCRIPT here at the bin-level
+        // script-dispatch site so user scripts can introspect their
+        // own path. Mirrors the -c branch above which sets
+        // ZSH_EXECUTION_STRING.
+        zsh::ported::params::setsparam("ZSH_SCRIPT", &args[1]);
+        // c:Src/init.c:965 — `setsparam("ZSH_ARGZERO", ztrdup(posixzero));`
+        // posixzero is the script path under script mode (or the
+        // shell binary path under -c/interactive). In zshrs's script
+        // dispatch posixzero is the script path (args[1]); the bin
+        // entry's setupvals in ported/init.rs only runs through
+        // init_exec which isn't reached on this code path, so set
+        // ZSH_ARGZERO directly. Without this, ZSH_ARGZERO carried
+        // argv[0] (the zshrs binary path) instead of the script path.
+        zsh::ported::params::setsparam("ZSH_ARGZERO", &args[1]);
         if let Err(e) = executor.execute_script_file(&args[1]) {
             eprintln!("zshrs: {}: {}", args[1], e);
             std::process::exit(1);
