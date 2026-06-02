@@ -17569,7 +17569,63 @@ escape coverage gaps in the #38 family).
 
 ## #239 — `print -P "%J"` (jobs-count prompt escape) treats as literal
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — `putpromptchar` default arm emitted the
+unknown `%X` literally instead of dropping it; corrected
+2026-06-02.
+
+**Root cause** — C `Src/prompt.c::putpromptchar` switch has NO
+default case. Recognized prompt escapes (`%c`, `%~`, `%n`, `%j`,
+etc.) handle their own emit + `break`; unrecognized chars fall
+through the entire switch with no output, and the loop advances
+`bv->fm` past the unknown byte. So `%J`, `%Z`, `%X`, etc.
+produce empty in zsh:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "before%Jafter"'
+beforeafter
+```
+
+The Rust port at `src/ported/prompt.rs::putpromptchar` mistakenly
+added a default arm:
+
+```rust
+// c:900-904 — unknown: emit `%X` literally
+_ => {
+    pputc(bv, b'%');
+    pputc(bv, xc);
+}
+```
+
+— the `c:900-904` citation was a misread; that range covers
+`case 'I'` (the funcstack lineno escape), not a default fall-
+through. zshrs emitted `%J` literally where zsh emits nothing.
+
+**Fix:** `src/ported/prompt.rs::putpromptchar` — replace the
+default arm with `_ => {}` (no emit), mirroring C's behavior of
+silently dropping the unknown char.
+
+**Verify:**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%J"' | od -c | head -1
+0000000   \n
+$ ./target/debug/zshrs --zsh -c 'print -P "%J"' | od -c | head -1
+0000000   \n
+
+$ /opt/homebrew/bin/zsh -fc 'print -P "before%Jafter"'
+beforeafter
+$ ./target/debug/zshrs --zsh -c 'print -P "before%Jafter"'
+beforeafter
+
+# Regressions: recognized escapes unchanged
+$ ./target/debug/zshrs --zsh -c 'print -P "%%"'
+%
+$ ./target/debug/zshrs --zsh -c 'print -P "%n"'
+wizard
+$ ./target/debug/zshrs --zsh -c 'true; print -P "%?"'
+0
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "[%J]"'
