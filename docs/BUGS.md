@@ -3889,7 +3889,74 @@ zshrs/permissive behavior.
 
 ## #60 — `function {body}` (no name) parses + echoes stray `}`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `par_funcdef` accepted any
+brace-attached body (`function {echo X}` → ran `echo X}`)
+because zshrs's lexer keeps `X}` as one STRING word when no
+whitespace separator precedes `}`. C zsh hits the same lexer
+behavior but `par_list` errors when no clean OUTBRACE token
+appears at body end — the brace-attached `}` was merged into
+the previous word, so par_list never finds OUTBRACE.
+
+**Root cause** — `src/ported/parse.rs::par_funcdef` extracted
+the body via `parse_program_until(OUTBRACE_TOK)` and silently
+accepted the parse when no OUTBRACE was found, registering the
+funcdef with the `}` still attached to the last arg. C
+`Src/parse.c:1735-1741` errors via `YYERRORV` when `tok !=
+OUTBRACE` at body end. Adding the unconditional check would
+break `function () {echo X}` (which works in zsh somehow
+despite same lexer shape — separate latent issue), so the
+fix targets only the no-names + no-paren anonymous form which
+is the actual bug.
+
+**Fix** — `src/ported/parse.rs::par_funcdef`: when both
+`names` is empty AND `saw_paren` is false (the `function
+{body}` anonymous-via-keyword form), peek the next source
+byte right after the `{` token. If it's not a whitespace
+separator (space/tab/newline/semicolon), emit `parse error
+near \`}'` and return None. `function { body }` (proper
+spacing, no parens, no name) is still accepted because the
+post-`{` byte is a space; `function () {body}` is unaffected
+because `saw_paren` is true; `function name {body}` is
+unaffected because `names` is non-empty.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'function {echo X}' 2>&1; echo $?
+zsh:1: parse error near `}'
+1
+
+$ ./target/debug/zshrs --zsh -c 'function {echo "empty name"}' 2>&1; echo $?
+zsh:1: parse error near `}'
+1
+
+$ ./target/debug/zshrs --zsh -c 'function { echo X }'
+X
+
+$ ./target/debug/zshrs --zsh -c 'function { echo X; }'
+X
+
+$ ./target/debug/zshrs --zsh -c 'function foo { echo X }; foo'
+X
+
+$ ./target/debug/zshrs --zsh -c 'function () { echo X }'
+X
+
+$ ./target/debug/zshrs --zsh -c 'function () { for x in "$@"; do echo "arg=$x"; done } a b c'
+arg=a
+arg=b
+arg=c
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Baseline 947/105 (up from 944/108).
+
+**Known related issue (not part of #60 fix):**
+`function () {echo X}` (parens + no space inside braces)
+still produces `X}` in zshrs vs `X` in zsh. The lexer's `bct`
+tracking for funcdef-body braces post-INOUTPAR is the gap;
+distinct enough to defer as a follow-up.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'function {echo "empty name"}'
@@ -3898,37 +3965,6 @@ zsh:1: parse error near `}'
 $ zshrs --zsh -c 'function {echo "empty name"}'
 empty name}
 ```
-
-`function` keyword in zsh requires either a name or zero names
-(anonymous function uses `() { body }` syntax, NOT `function
-{ body }`). Real zsh treats `function {…}` as a parse error because
-`{` is parsed as the start of the name, not as the body brace.
-
-zshrs evidently splits `function` from `{echo`, treats `{echo` as
-the function name, then runs the rest as if `echo` was a literal
-command — but it leaks the closing `}` into the output, suggesting
-the brace-parser is in some intermediate state.
-
-**Where** — `src/ported/parse.rs::parse_function_def`: doesn't
-require a name token between `function` and `{` brace. Should reject
-when next token after `function` is `{`.
-
-**Impact** — accepts malformed input that zsh rejects. Worse, the
-stray `}` is echoed to stdout, so scripts that defensively wrap
-`function foo { … }` in nested constructs may produce surprising
-output if `function` is mis-typed without a name.
-
-```sh
-# typo: forgot the function name
-function {
-    echo "set up"
-}                     # zsh: parse error on line 1
-                       # zshrs: prints "set up\n}\n" to stdout
-```
-
-**Workaround** — always use `funcname() { … }` syntax (the POSIX
-form) which both shells parse identically. Or use the explicit
-anonymous form `() { body }` (no `function` keyword).
 
 ---
 
@@ -38531,7 +38567,7 @@ qualifiers always have a digit suffix.
 | 57 | `setopt octal_zeroes` ignored by arith parser | **port-bug** | `8#NNN` explicit base |
 | 58 | `[[ "x*" == "x*" ]]` quoted-RHS-star still globbed | **port-bug** | escape `\*` on RHS |
 | 59 | `setopt no_clobber` allows `>>` to create new file | **port-bug** | pre-`touch` the file |
-| 60 | `function {body}` (no name) parses + stray `}` echo | **port-bug** | use `funcname() { body }` form |
+| 60 | `function {body}` (no name) parses + stray `}` echo | **fixed** 2026-06-02 | n/a |
 | 61 | `h["key"]=v` subscript quotes not embedded in key | **port-bug** | use `h=( k v )` paren init |
 | 62 | `extended_glob` `~` (and-not) operator not honored | **port-bug** | iterate + skip with `[[` |
 | 63 | `${(j:s:)${(s:t:)var}}` nested split-then-join → first element only | **port-bug** | intermediate `arr=(...)` |
