@@ -7443,11 +7443,20 @@ pub fn paramsubst(
                     let is_at = subscript.as_deref() == Some("@");
                     let is_star = matches!(subscript.as_deref(), Some("*") | Some("\u{87}"));
                     let is_range = subscript.as_deref().map_or(false, |s| s.contains(','));
-                    // Per-element mode: `[@]` always; `[*]` only
-                    // outside DQ; slice only outside DQ. Anything
-                    // else is scalar (single index, named key,
-                    // sepjoined range/star in DQ).
-                    let per_element = is_at || ((is_star || is_range) && !qt);
+                    // c:Src/subst.c:2916 SCANPM_ISVAR_AT — bare `@`
+                    //   pseudo-name keeps per-element shape in DQ (same
+                    //   as `[@]` subscript). `${@:t}` loops the
+                    //   modifier per positional; `${*:t}` stays scalar
+                    //   (sepjoins to one word first). Bug #278 in
+                    //   docs/BUGS.md: zshrs treated bare `@` as scalar
+                    //   in DQ and fell into the qt-sepjoin arm,
+                    //   returning the tail of only the last positional.
+                    let is_at_var = var_name == "@";
+                    // Per-element mode: `[@]` always; bare `@`
+                    // pseudo-name always; `[*]` only outside DQ; slice
+                    // only outside DQ. Anything else is scalar (single
+                    // index, named key, sepjoined range/star in DQ).
+                    let per_element = is_at || is_at_var || ((is_star || is_range) && !qt);
                     let scalar_subscript = subscript.is_some() && !per_element;
                     if scalar_subscript {
                         // c:2859/2887 isarr=0 after subscript → scalar.

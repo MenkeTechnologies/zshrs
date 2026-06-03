@@ -11921,7 +11921,28 @@ echo "config=${(qq)${(j: :)parts}}"
 
 ## #153 — `${#${(z)s}}` returns wrong count (5 vs 4 for 4-word input)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+Likely fixed via earlier nested-subexp / multsub array-shape
+propagation patch (same family as #63).
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 's="hello world foo bar"; echo "${#${(z)s}}"'
+4
+
+$ ./target/debug/zshrs --zsh -c 's="a b c"; echo "${#${(z)s}}"'
+3
+
+$ ./target/debug/zshrs --zsh -c 's=""; echo "${#${(z)s}}"'
+0
+
+$ ./target/debug/zshrs --zsh -c 's="hello world foo bar"; words=("${(@z)s}"); echo "${#words}"'
+4
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's="hello world foo bar"; echo "${#${(z)s}}"'
@@ -21430,7 +21451,48 @@ sorted_args=("${(o)_args[@]}")   # works (regular array)
 
 ## #278 — `${@:t}` (and other modifiers) applied to only the last positional, dropping the rest
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — the modifier dispatch
+`per_element` predicate at `subst.rs:7450` only considered
+`subscript`-form `@`/`*`/`[N,M]`. The bare pseudo-name `@`
+(without subscript) wasn't in the predicate, so `${@:t}` fell
+into the qt-sepjoin scalar arm and ran the modifier once on
+the joined positional string, returning the tail of only the
+last positional.
+
+**Root cause** — `is_at` checked `subscript.as_deref() ==
+Some("@")` (the `[@]` form) but not `var_name == "@"` (the
+bare `$@` form). C `Src/subst.c:2916` SCANPM_ISVAR_AT fires
+for BOTH `[@]` subscripts AND the bare `@`/`*` pseudo-names,
+so the bare-`@` modifier path should also loop per-element.
+
+**Fix** — `src/ported/subst.rs` modifier dispatch
+`per_element` predicate: add `is_at_var = var_name == "@"`
+alongside `is_at`. `${@:t}` now falls into the per-element
+loop. `${*:t}` stays scalar (the C path sepjoins `*` in DQ
+before the modifier per c:3032).
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'set -- /a/b /c/d /e/f; echo "${@:t}"'
+b d f
+
+$ ./target/debug/zshrs --zsh -c 'set -- /a/b /c/d /e/f; echo "${@:h}"'
+/a /c /e
+
+$ ./target/debug/zshrs --zsh -c 'set -- foo.bar baz.qux; echo "${@:e}"'
+bar qux
+
+$ ./target/debug/zshrs --zsh -c 'set -- /a/b /c/d /e/f; echo "${*:t}"'
+f
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Regressions clean: `${a[@]:t}` subscript form still works
+per-element; `${a:t}` (no subscript, no flag) still joined-
+scalar; `${(@)a:t}` flag form still per-element (from #147).
+`${*:t}` correctly stays scalar. Baseline 946/106 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'set -- /a/b /c/d /e/f; echo "${@:t}"'
@@ -38955,7 +39017,7 @@ qualifiers always have a digit suffix.
 | 150 | `$OPTERR` initialized to `1` (zsh: empty/unset) | **port-bug** | `(( OPTIND > 1 ))` check |
 | 151 | `${(@qq)arr}` only quotes first element (rest unquoted) | **port-bug** | explicit per-element loop |
 | 152 | `${(qq)arr}` per-element when zsh joins-then-quotes | **port-bug** | `${(qq)${(j: :)arr}}` |
-| 153 | `${#${(z)s}}` returns 5 vs 4 (off-by-one count) | **port-bug** | intermediate `arr=(...)` |
+| 153 | `${#${(z)s}}` returns 5 vs 4 (off-by-one count) | **fixed** 2026-06-02 | n/a |
 | 154 | Readonly var modifiable via `(( ))` / `let` arith | **port-bug** | post-assignment check |
 | 155 | `${str[N,M+1]}` slice subscript ignores var/arith | **port-bug** | pre-compute index |
 | 156 | `[[ -e /path/*.glob ]]` glob-expands in test (zsh: literal) | **port-bug** | external `ls` test |
@@ -39080,7 +39142,7 @@ qualifiers always have a digit suffix.
 | 275 | Array splice `a[1,0]=(...)` reverse-range form replaces first elem instead of prepending (data loss) | **port-bug** | explicit `a=(NEW "${a[@]}")` |
 | 276 | `${funcstack[@]}` array empty in nested fn — breaks caller-introspection / stack-trace plugins | **port-bug** | manual call-stack tracking |
 | 277 | `${(o)@}` sort flag not applied to positionals — `$@`/`$*` returns unsorted | **port-bug** | copy to temp array first |
-| 278 | `${@:t}` (and other modifiers) applies to last positional only, drops the rest (data loss) | **port-bug** | copy to array, modifier there |
+| 278 | `${@:t}` (and other modifiers) applies to last positional only, drops the rest (data loss) | **fixed** 2026-06-02 | n/a |
 | 279 | `$_` (last-arg-prev-cmd) empty inside function — zsh: contains fn name | **port-bug** | use `${history[1]}` or manual tracking |
 | 280 | `setopt typeset_to_unset` ignored — `typeset X` always creates parameter (set+empty) | **port-bug** | explicit `unset` after typeset |
 | 281 | `argv[N]=value`/`argv+=(x)`/`unset argv` don't sync with `$@` — argv is read-only mirror (data corruption on append) | **port-bug** | use `set -- ...` to rewrite positionals |
