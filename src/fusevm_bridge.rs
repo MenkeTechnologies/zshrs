@@ -4487,13 +4487,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // failure: the math command exits 2 and the script continues.
     vm.register_builtin(BUILTIN_ARITH_CMD_FINISH, |vm, _argc| {
         use std::sync::atomic::Ordering;
-        let err = crate::ported::utils::errflag.load(Ordering::Relaxed)
-            & crate::ported::zsh_h::ERRFLAG_ERROR;
+        let live = crate::ported::utils::errflag.load(Ordering::Relaxed);
+        let err = live & crate::ported::zsh_h::ERRFLAG_ERROR;
+        let hard = live & crate::ported::zsh_h::ERRFLAG_HARD;
         if err != 0 {
-            crate::ported::utils::errflag
-                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
-            vm.last_status = 2;
-            Value::Status(2)
+            // c:Src/subst.c:3344 — when `${var:?msg}` fires, errflag
+            // is OR'd with ERRFLAG_HARD to signal a script-abort
+            // error (vs a recoverable math error like `$((1/0))`).
+            // Clear only the ERRFLAG_ERROR bit; preserve
+            // ERRFLAG_HARD so the next ERREXIT_CHECK aborts the
+            // script. Bug #193 in docs/BUGS.md.
+            if hard != 0 {
+                // Keep ERRFLAG_HARD AND ERRFLAG_ERROR set so the
+                // script-abort gate downstream still fires.
+                vm.last_status = 2;
+                Value::Status(2)
+            } else {
+                crate::ported::utils::errflag
+                    .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+                vm.last_status = 2;
+                Value::Status(2)
+            }
         } else {
             Value::Status(vm.last_status)
         }
