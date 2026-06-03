@@ -37447,7 +37447,42 @@ declare_type EPOCHSECONDS
 
 ## #513 — `OPTIND=N` inside function LEAKS to parent — zsh: function-local
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `doshfunc` now snapshots
+OPTIND / OPTARG at function entry and restores them at the
+post-body epilogue, mirroring C's `funcsave->zoptind /
+zoptarg` save/restore pair at `Src/exec.c:5904-5908` /
+`Src/exec.c:6060-6062`.
+
+**Root cause** — `src/ported/exec.rs::doshfunc` had a
+comment at the c:5904-5908 site explicitly skipping the
+OPTIND/OPTARG snapshot:
+
+> zshrs's zoptind/optcind aren't ported as separate
+> statics yet — they live in the getopts builtin's local
+> state. Skip the snapshot until that port lands.
+
+zshrs stores OPTIND/OPTARG in paramtab as regular
+int/scalar params, so the C "separate statics" gap
+doesn't actually exist — they just need a save/restore
+through the canonical `getsparam` / `setiparam` pair.
+
+**Fix** (`src/ported/exec.rs::doshfunc`) —
+1. At the c:5904-5908 site, snapshot OPTIND / OPTARG via
+   `getsparam`.
+2. After the pparams + argv0 restore (c:6054-6058 site),
+   restore both via `setiparam` (for OPTIND if parseable
+   as `i64`) and `setsparam` (for OPTARG).
+
+**Verify**:
+- `OPTIND=10; f() { OPTIND=99; }; f; echo $OPTIND` → `10`
+  (matches zsh; the inner write is contained).
+- `OPTIND=5; f() { OPTIND=1; while getopts "a:" opt -a x;
+  do echo "got $opt $OPTARG"; done }; f; echo OPTIND=$OPTIND`
+  → `got a x / OPTIND=5` (getopts loop inside the function
+  uses its own counter; caller's stays at 5).
+- zshrs_shell baseline 953/99 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'OPTIND=10; f() { OPTIND=99; }; f; echo "[$OPTIND]"'
