@@ -1574,9 +1574,22 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
     // C lines 633-650: count nodes; if > 1 or LF_ARRAY, return as
     // array; else single scalar (or empty).
     let l = list.len(); // c:633
+    // c:Src/glob.c:3649 remnulargs — strip the Nularg (`\u{a1}`)
+    //   sentinel and other INULL bytes (Snull/Dnull/Bnull) that
+    //   paramsubst's splat block emits for empty array elements to
+    //   prevent prefork's empty-node-delete pass from dropping them.
+    //   Downstream consumers (cond builtin `-z`/`-n`, command args,
+    //   etc.) see the post-remnulargs strings, NOT the sentinel.
+    //   Bug #185 in docs/BUGS.md: `[[ -z "${b[@]}" ]]` for b=("")
+    //   returned false because the leftover `\u{a1}` had StringLen=1.
+    let strip_nul = |s: String| -> String {
+        let mut s = s;
+        crate::ported::glob::remnulargs(&mut s);
+        s
+    };
     if l > 1 || (list.flags & LF_ARRAY != 0) {
         // c:633
-        let arr: Vec<String> = list.iter().cloned().collect(); // c:635-637
+        let arr: Vec<String> = list.iter().cloned().map(strip_nul).collect(); // c:635-637
                                                                // C: `*s = sepjoin(r, sep, 1);` — join with IFS first-char
                                                                // when sep is NULL. Use first IFS char as join separator,
                                                                // matching zsh's sepjoin defaults.
@@ -1586,7 +1599,7 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
     }
     if l == 1 {
         // c:653
-        let result = list.getdata(0).cloned().unwrap_or_default(); // c:653
+        let result = strip_nul(list.getdata(0).cloned().unwrap_or_default()); // c:653
         return (result.clone(), vec![result], false, ms_flags); // c:653
     }
     // c:Src/subst.c:655 — `*s = dupstring("");` with zero-length list.

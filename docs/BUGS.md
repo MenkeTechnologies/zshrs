@@ -14180,7 +14180,31 @@ done
 
 ## #184 — `$((${a[@]} + 0))` arith with array spread silently uses first element
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+Likely fixed by earlier math/arith input validation patch.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3); echo "$((${a[@]} + 0))"' 2>&1; echo $?
+zsh:1: bad math expression: operator expected at `2 3 + 0'
+1
+
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3); echo $((${a[@]}))' 2>&1; echo $?
+zsh:1: bad math expression: operator expected at `2 3'
+1
+
+$ ./target/debug/zshrs --zsh -c 'a=(5); echo $((${a[@]}))'
+5
+
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3); echo $((${a[1]} + 0))'
+1
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte. Arith
+now errors on multi-token spread; single-element array OK;
+indexed subscript OK.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(1 2 3); echo "$((${a[@]} + 0))"' 2>&1
@@ -14188,46 +14212,6 @@ zsh:1: bad math expression: operator expected at `2 3 + 0'
 
 $ ./target/debug/zshrs --zsh -c 'a=(1 2 3); echo "$((${a[@]} + 0))"'
 1
-```
-
-Inside `$((...))` arith context, `${a[@]}` spreads array as
-space-joined string. zsh tries to parse `1 2 3 + 0` as arith,
-fails with "operator expected". zshrs silently uses only the
-first element (`1 + 0 = 1`).
-
-Different failure modes:
-- zsh: clear syntax error, exit non-zero, user notices
-- zshrs: silent wrong result, no error
-
-Per zsh arith semantics, `${a[@]}` in arith should either:
-1. Expand to first element only (per shell-history convention),
-2. Error (zsh's choice),
-3. Sum all elements (Python-like).
-
-zshrs picks option 1 silently. zsh picks option 2 explicitly.
-Both behaviors are defensible; the silent-wrong-result is the bug.
-
-**Where** — `src/ported/math.rs::eval_array_token`: takes only
-the first element when an array expansion appears in arith.
-Should either error or process the entire spread. C-source
-`Src/math.c::mathevalreal` errors on multi-token arith input.
-
-**Impact** — common pattern of summing array via arith silently
-produces wrong totals:
-
-```sh
-prices=(10 20 30)
-total=$((${prices[@]}))    # user intended sum
-# zsh: errors (caught)
-# zshrs: total=10 (silently wrong)
-```
-
-**Workaround** — explicit loop:
-```sh
-total=0
-for p in "${prices[@]}"; do
-    (( total += p ))
-done
 ```
 
 ---
@@ -38838,7 +38822,7 @@ qualifiers always have a digit suffix.
 | 181 | `typeset -p` doesn't quote array elements with spaces | **port-bug** | manual `${(qq)}` loop |
 | 182 | `${${(P)name}[N]}` after-deref indexing returns full array | **port-bug** | temp `deref=("${(@P)name}")` |
 | 183 | `"${@:1:2}"` positional slice returns all instead of slicing | **fixed** 2026-06-02 | n/a |
-| 184 | `$((${a[@]} + 0))` arith with array spread silently uses first elem | **port-bug** | explicit loop summation |
+| 184 | `$((${a[@]} + 0))` arith with array spread silently uses first elem | **fixed** 2026-06-02 | n/a |
 | 185 | `[[ -z "${arr[@]}" ]]` for single-empty arr returns false (zsh: true) | **port-bug** | `${arr[*]}` star form |
 | 186 | `${(@)b:-default}` for single-empty arr returns default (zsh: empty) | **fixed** 2026-06-02 | n/a |
 | 187 | `f() { :; } > /file` redirect on fn-def creates file at def time | **port-bug** | redirect at call site |

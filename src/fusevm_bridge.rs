@@ -5140,12 +5140,26 @@ fn paramsubst_to_value(body: &str) -> Value {
 /// Str, >1 → Array. Same unwrap idiom every handler that calls a
 /// canonical Vec-returning fn does.
 fn nodes_to_value(nodes: Vec<String>) -> Value {
-    if nodes.is_empty() {
+    // c:Src/glob.c:3649 remnulargs — strip the Nularg (`\u{a1}`)
+    //   sentinel and other INULL bytes that paramsubst's splat block
+    //   emits for empty array elements (so prefork's empty-node-delete
+    //   pass doesn't drop them). Downstream consumers (cond `-z`/`-n`,
+    //   command args, etc.) must see the post-remnulargs strings. Bug
+    //   #185 in docs/BUGS.md: `[[ -z "${b[@]}" ]]` for b=("") returned
+    //   false because the leftover `\u{a1}` had StringLen=1.
+    let stripped: Vec<String> = nodes
+        .into_iter()
+        .map(|mut s| {
+            crate::ported::glob::remnulargs(&mut s);
+            s
+        })
+        .collect();
+    if stripped.is_empty() {
         Value::Array(Vec::new())
-    } else if nodes.len() == 1 {
-        Value::str(nodes.into_iter().next().unwrap())
+    } else if stripped.len() == 1 {
+        Value::str(stripped.into_iter().next().unwrap())
     } else {
-        Value::Array(nodes.into_iter().map(Value::str).collect())
+        Value::Array(stripped.into_iter().map(Value::str).collect())
     }
 }
 
