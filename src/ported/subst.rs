@@ -6642,11 +6642,39 @@ pub fn paramsubst(
                 // Direct port of subst.c:3540 patmatch dispatch.
                 // (M) handling per c:3176 — keep matched portion, discard rest.
                 let match_only = (sub_flags_get() & SUB_MATCH) != 0;
+                // c:Src/glob.c igetmatch SUB_SUBSTR — `(S)` flag makes
+                // `##` search the WHOLE string for a substring match
+                // (leftmost), longest at that position. Bug #179 in
+                // docs/BUGS.md.
+                let substr_mode = (sub_flags_get() & SUB_SUBSTR) != 0;
                 let strip_one = |val: &str, op: u8| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
                     match op {
                         1 => {
+                            if substr_mode {
+                                // Leftmost longest substring match.
+                                for start in 0..=nn {
+                                    for k in (0..=(nn - start)).rev() {
+                                        let candidate: String =
+                                            cv[start..start + k].iter().collect();
+                                        if crate::vm_helper::glob_match_static(&candidate, &p) {
+                                            if match_only {
+                                                return candidate;
+                                            }
+                                            let before: String = cv[..start].iter().collect();
+                                            let after: String =
+                                                cv[start + k..].iter().collect();
+                                            return before + &after;
+                                        }
+                                    }
+                                }
+                                return if match_only {
+                                    String::new()
+                                } else {
+                                    val.to_string()
+                                };
+                            }
                             let mut k = nn;
                             loop {
                                 let prefix: String = cv[..k].iter().collect();
@@ -6708,9 +6736,32 @@ pub fn paramsubst(
                 // default returns the rest (after the match); with (M)
                 // returns the matched prefix and discards the rest.
                 let match_only = (sub_flags_get() & SUB_MATCH) != 0;
+                // c:Src/glob.c igetmatch SUB_SUBSTR — `(S)` flag makes
+                // `#` search the WHOLE string for a substring match
+                // (leftmost), shortest at that position. Bug #179 in
+                // docs/BUGS.md.
+                let substr_mode = (sub_flags_get() & SUB_SUBSTR) != 0;
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
+                    if substr_mode {
+                        // Leftmost shortest substring match.
+                        for start in 0..=total {
+                            for k in 0..=(total - start) {
+                                let candidate: String =
+                                    cv[start..start + k].iter().collect();
+                                if crate::vm_helper::glob_match_static(&candidate, &p) {
+                                    if match_only {
+                                        return candidate;
+                                    }
+                                    let before: String = cv[..start].iter().collect();
+                                    let after: String = cv[start + k..].iter().collect();
+                                    return before + &after;
+                                }
+                            }
+                        }
+                        return if match_only { String::new() } else { val.to_string() };
+                    }
                     for k in 0..=total {
                         let prefix: String = cv[..k].iter().collect();
                         // (#b) capture wiring via glob_match_static.
@@ -6760,9 +6811,37 @@ pub fn paramsubst(
                         || matches!(var_name.as_str(), "@" | "*"));
                 // c:Src/subst.c:3176 — SUB_MATCH for `%%` (longest suffix).
                 let match_only = (sub_flags_get() & SUB_MATCH) != 0;
+                // c:Src/glob.c:3107 igetmatch SUB_END+SUB_LONG+SUB_SUBSTR
+                // — `(S)` flag makes `%%` search the WHOLE string for a
+                // substring match (rightmost), longest at that position.
+                // Bug #179 in docs/BUGS.md.
+                let substr_mode = (sub_flags_get() & SUB_SUBSTR) != 0;
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
+                    if substr_mode {
+                        // Rightmost longest substring match.
+                        let mut best: Option<(usize, usize)> = None;
+                        for start in 0..=total {
+                            for k in (0..=(total - start)).rev() {
+                                let candidate: String =
+                                    cv[start..start + k].iter().collect();
+                                if crate::vm_helper::glob_match_static(&candidate, &p) {
+                                    best = Some((start, start + k));
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some((start, end)) = best {
+                            if match_only {
+                                return cv[start..end].iter().collect();
+                            }
+                            let before: String = cv[..start].iter().collect();
+                            let after: String = cv[end..].iter().collect();
+                            return before + &after;
+                        }
+                        return if match_only { String::new() } else { val.to_string() };
+                    }
                     let mut k = total;
                     loop {
                         let suffix_start_char = total - k;
@@ -6840,9 +6919,37 @@ pub fn paramsubst(
                         || matches!(var_name.as_str(), "@" | "*"));
                 // c:Src/subst.c:3176 — SUB_MATCH for `%` (shortest suffix).
                 let match_only = (sub_flags_get() & SUB_MATCH) != 0;
+                // c:Src/glob.c:3106 igetmatch SUB_END+SUB_SUBSTR — `(S)`
+                // flag makes `%`/`%%` search the WHOLE string for a
+                // substring match (rightmost), then take shortest/longest
+                // at that position. Bug #179 in docs/BUGS.md.
+                let substr_mode = (sub_flags_get() & SUB_SUBSTR) != 0;
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
+                    if substr_mode {
+                        // Rightmost shortest substring match.
+                        let mut best: Option<(usize, usize)> = None;
+                        for start in 0..=total {
+                            for k in 0..=(total - start) {
+                                let candidate: String =
+                                    cv[start..start + k].iter().collect();
+                                if crate::vm_helper::glob_match_static(&candidate, &p) {
+                                    best = Some((start, start + k));
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some((start, end)) = best {
+                            if match_only {
+                                return cv[start..end].iter().collect();
+                            }
+                            let before: String = cv[..start].iter().collect();
+                            let after: String = cv[end..].iter().collect();
+                            return before + &after;
+                        }
+                        return if match_only { String::new() } else { val.to_string() };
+                    }
                     for k in 0..=total {
                         let suffix: String = cv[total - k..].iter().collect();
                         // (#b) capture wiring via glob_match_static.
