@@ -4997,6 +4997,51 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         }
     }
 
+    // c:Src/Modules/parameter.c — read-only magic-assoc names. C
+    // zsh's SPECIALPMDEF / createspecialhash sets PM_READONLY on
+    // these so userspace assignment errors with `read-only
+    // variable: NAME`. `vm_helper::init_partab_params` strips
+    // PM_READONLY off the paramtab stub to allow INTERNAL writes
+    // (function-call funcstack push, etc.) — see comment at
+    // vm_helper.rs:2799. The trade-off is that USERSPACE writes
+    // now slip through too. Intercept here, AFTER the writable-
+    // magic-assoc dispatch arms above (functions, aliases,
+    // dis_aliases, galiases, saliases, dis_functions) but BEFORE
+    // the generic paramtab subscript store, so the userspace path
+    // emits the canonical diagnostic and exits non-zero. Internal
+    // table mutations that bypass `assignsparam` stay free. Bug
+    // #242 in docs/BUGS.md.
+    if subscript.is_some() {
+        let is_readonly_magic = matches!(
+            name,
+            "builtins"
+                | "commands"
+                | "modules"
+                | "options"
+                | "parameters"
+                | "dis_builtins"
+                | "history"
+                | "historywords"
+                | "jobtexts"
+                | "jobstates"
+                | "jobdirs"
+                | "nameddirs"
+                | "userdirs"
+                | "usergroups"
+                | "widgets"
+                | "functions_source"
+                | "dis_functions_source"
+                | "terminfo"
+                | "termcap"
+        );
+        if is_readonly_magic {
+            zerr(&format!("read-only variable: {}", name));
+            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+            unqueue_signals();
+            return None;
+        }
+    }
+
     // Subscripted path (c:3210-3231).
     if let Some(key) = subscript {
         let mut tab = paramtab().write().unwrap();

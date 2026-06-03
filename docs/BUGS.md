@@ -19199,6 +19199,65 @@ done
 
 ## #242 — Introspection assocs (`builtins`/`parameters`/`modules`/etc.) not read-only — writes silently accepted
 
+**Status:** `fixed` 2026-06-03 — `assignsparam` rejects writes
+to known read-only magic-assocs with the canonical
+`read-only variable: NAME` diagnostic.
+
+**Root cause** — `vm_helper::init_partab_params` (`vm_helper.rs
+:2799`) intentionally strips PM_READONLY off the paramtab stubs
+for these magic-assocs because INTERNAL writes (function-call
+funcstack push, etc.) go through `setaparam` and would be
+rejected by the PM_READONLY guard at `params.rs:4055`. The
+trade-off was that USERSPACE writes also slipped through —
+`builtins[xx]=foo` returned ec=0 instead of zsh's ec=1.
+
+Same architectural pattern as #97/#280: the GSU vtable that C
+zsh uses to discriminate "internal setfn" from "userspace
+assignment" isn't wired in zshrs. The intercept has to live at
+the userspace-entry layer.
+
+**Fix** — `src/ported/params.rs::assignsparam`: after the
+explicit writable-magic-assoc dispatch arms (functions /
+aliases / dis_aliases / galiases / saliases / dis_functions —
+which DO modify the underlying tables) but BEFORE the generic
+paramtab subscript store, check whether the bare `name` is in
+the read-only magic-assoc set. If so, emit
+`zerr("read-only variable: {}")` + ERRFLAG_ERROR and return
+None.
+
+Read-only list (from `Src/Modules/parameter.c` SPECIALPMDEF
+entries that don't have a setter callback):
+`builtins`, `commands`, `modules`, `options`, `parameters`,
+`dis_builtins`, `history`, `historywords`, `jobtexts`,
+`jobstates`, `jobdirs`, `nameddirs`, `userdirs`, `usergroups`,
+`widgets`, `functions_source`, `dis_functions_source`,
+`terminfo`, `termcap`.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'builtins[xx]=foo'; echo "ec=$?"
+zsh:1: read-only variable: builtins
+ec=1
+$ ./target/debug/zshrs --zsh -c 'builtins[xx]=foo'; echo "ec=$?"
+zsh:1: read-only variable: builtins
+ec=1
+
+$ /opt/homebrew/bin/zsh -fc 'modules[zsh/main]=mine'; echo "ec=$?"
+zsh:1: read-only variable: modules
+ec=1
+$ ./target/debug/zshrs --zsh -c 'modules[zsh/main]=mine'; echo "ec=$?"
+zsh:1: read-only variable: modules
+ec=1
+
+# Regression: writable magic-assocs still work.
+$ ./target/debug/zshrs --zsh -c 'aliases[myalias]="echo hi"; alias myalias'
+myalias='echo hi'
+```
+
+zshrs_shell baseline preserved (948/104 in flake range).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
