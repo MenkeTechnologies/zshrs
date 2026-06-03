@@ -20,7 +20,8 @@ use crate::ported::params::{getsparam, isident, setiparam, setsparam};
 use crate::ported::utils::{metafy, zwarnnam};
 use crate::ported::zsh_h::{features, module, options, MAX_OPS, OPT_ARG, OPT_ISSET};
 use crate::ported::zsh_system_h::timespec;
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use chrono::format::{Parsed, StrftimeItems};
+use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -44,18 +45,40 @@ pub fn reverse_strftime(
     }
     let format = argv[0];
     let input = argv[1];
-    // c:64 — `strptime(timestring, format, &tm)`. Rust uses chrono's
-    // NaiveDateTime parser for the same effect.
-    let dt = match NaiveDateTime::parse_from_str(input, format) {
-        Ok(d) => d,
-        Err(_) => {
-            // c:67-71 mismatch
+    // c:64 — `strptime(timestring, format, &tm)`. C's strptime
+    // accepts PARTIAL formats: `%Y` + `"2024"` parses just the
+    // year and fills the rest of struct tm with zeros (which
+    // mktime then resolves to 2024-01-01 00:00:00). chrono's
+    // `NaiveDateTime::parse_from_str` REQUIRES every field
+    // (year, month, day, hour, minute, second) and fails on
+    // partial input, so route through `Parsed` which holds
+    // any subset of fields then fill missing pieces with
+    // defaults to mirror strptime + mktime semantics. Bug #324.
+    let mut parsed = Parsed::new();
+    if chrono::format::parse(&mut parsed, input, StrftimeItems::new(format)).is_err() {
+        // c:67-71 mismatch
+        if quiet == 0 {
+            zwarnnam(nam, &format!("format not matched: {}", input));
+        }
+        return 1;
+    }
+    let year = parsed.year.or_else(|| parsed.year_div_100.zip(parsed.year_mod_100).map(|(d, m)| d * 100 + m)).unwrap_or(1970);
+    let month = parsed.month.unwrap_or(1);
+    let day = parsed.day.unwrap_or(1);
+    let hour = parsed.hour_div_12.zip(parsed.hour_mod_12).map(|(d, m)| (d * 12 + m) as u32).unwrap_or(0);
+    let minute = parsed.minute.unwrap_or(0);
+    let second = parsed.second.unwrap_or(0);
+    let date = match NaiveDate::from_ymd_opt(year, month, day) {
+        Some(d) => d,
+        None => {
             if quiet == 0 {
                 zwarnnam(nam, &format!("format not matched: {}", input));
             }
             return 1;
         }
     };
+    let time = NaiveTime::from_hms_opt(hour, minute, second).unwrap_or_else(|| NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    let dt = NaiveDateTime::new(date, time);
     let secs = match Local.from_local_datetime(&dt) {
         // c:78 mktime
         chrono::LocalResult::Single(d) => d.timestamp(),
