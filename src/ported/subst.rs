@@ -5972,6 +5972,19 @@ pub fn paramsubst(
                        // C: zerr("%s: %s", idbeg, msg) — Src/subst.c:3337
                     zerr(&format!("{}: {}", var_name, m));
                     errflag_set_error();
+                    // c:Src/subst.c:3344 — `errflag |= ERRFLAG_HARD;`.
+                    // `:?` is a FATAL error — non-interactive shell
+                    // exits, interactive returns to prompt — distinct
+                    // from a normal math/parse error that just clears
+                    // and continues. Set ERRFLAG_HARD so downstream
+                    // gates (e.g. BUILTIN_ARITH_CMD_FINISH) preserve
+                    // the propagation instead of clearing the next-
+                    // statement script-abort signal. Bug #193 in
+                    // docs/BUGS.md.
+                    crate::ported::utils::errflag.fetch_or(
+                        crate::ported::zsh_h::ERRFLAG_HARD,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
                 }
             } else if let Some(msg) = r.strip_prefix('?') {
                 // c:3193 (?msg — not-set only)
@@ -5989,6 +6002,12 @@ pub fn paramsubst(
                        // C: zerr("%s: parameter not set", idbeg) — Src/subst.c:3472
                     zerr(&format!("{}: {}", var_name, m));
                     errflag_set_error();
+                    // c:Src/subst.c:3344 — `errflag |= ERRFLAG_HARD;`
+                    // (same fatal-abort semantics as `:?`). Bug #193.
+                    crate::ported::utils::errflag.fetch_or(
+                        crate::ported::zsh_h::ERRFLAG_HARD,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
                 }
             } else if let Some(rep) = r.strip_prefix(":/") {
                 // c:3870 (whole-element replace)

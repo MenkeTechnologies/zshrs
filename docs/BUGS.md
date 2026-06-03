@@ -14555,57 +14555,58 @@ basename="${deref[1]:t}"
 
 ## #193 — `(( y = ${x:?msg} ))` continues after required-param error in arith context
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `:?`/`?` now sets
+`ERRFLAG_HARD`, and `BUILTIN_ARITH_CMD_FINISH` preserves it.
 
+**Root cause** — `subst.rs::paramsubst`'s `:?`/`?` arms called
+`errflag_set_error()` which set the `ERRFLAG_ERROR` bit only.
+`BUILTIN_ARITH_CMD_FINISH` (the cleanup hook emitted after
+every `(( … ))`) cleared `ERRFLAG_ERROR` and overrode status
+to 2 — intentionally lossy for recoverable math errors like
+`$((1/0))` so the script continues. But this also clobbered
+the script-abort signal from `:?` / `?`, which C zsh
+specifically marks with `ERRFLAG_HARD` (`Src/subst.c:3344`)
+so it survives downstream resets.
+
+**Fix** — two complementary parts:
+
+  1. `subst.rs::paramsubst` `:?` and `?` arms — after the
+     existing `errflag_set_error()`, OR in `ERRFLAG_HARD`
+     matching C `Src/subst.c:3344`.
+  2. `fusevm_bridge.rs::BUILTIN_ARITH_CMD_FINISH` — when both
+     `ERRFLAG_ERROR` and `ERRFLAG_HARD` are set, leave the
+     errflag bits intact (don't clear). Set status=2 and let
+     the next `ERREXIT_CHECK` abort the script. When only
+     `ERRFLAG_ERROR` is set (recoverable math error like
+     `1/0`), the original clear-and-continue path runs.
+
+**Verify** (byte-matched against zsh)
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'unset x; (( y = ${x:?msg} )); echo "after: ec=$?"' 2>&1
+$ /opt/homebrew/bin/zsh -fc 'unset x; (( y = ${x:?msg} )); echo "after"'
 zsh:1: x: msg
-(no "after" — aborted)
+$ zshrs --zsh -c 'unset x; (( y = ${x:?msg} )); echo "after"'
+zsh:1: x: msg
+# (no "after" in either)
 
-$ ./target/debug/zshrs --zsh -c 'unset x; (( y = ${x:?msg} )); echo "after: ec=$?"' 2>&1
+# ? form (unset-only) same path:
+$ zshrs --zsh -c 'unset x; (( y = ${x?msg} )); echo "after"'
 zsh:1: x: msg
+
+# Standalone $:? still aborts (was already correct):
+$ zshrs --zsh -c 'unset x; echo "${x:?msg}"; echo "after"'
+zsh:1: x: msg
+
+# Set value bypasses the error:
+$ zshrs --zsh -c 'x=5; (( y = ${x:?msg} )); echo "after: y=$y"'
+after: y=5
+
+# Recoverable math error still continues (regression check):
+$ zshrs --zsh -c '(( 1/0 )); echo "after: ec=$?"'
+zsh:1: division by zero
 after: ec=2
 ```
 
-When `${x:?msg}` errors (x is unset), zsh aborts script
-execution. zshrs prints the error but continues to next
-statement.
-
-Specifically the arith-context `(( ))` path is affected. The
-standalone `${x:?msg}` outside arith correctly aborts in both
-shells:
-
-```sh
-$ both-shells -fc 'unset x; echo "${x:?msg}"; echo "after"' 2>&1
-zsh:1: x: msg
-# (no "after" in either shell)
-```
-
-Related to bug #74 (`local -r` violation in fn doesn't abort)
-— both stem from error-propagation gaps in non-statement
-contexts.
-
-**Where** — `src/ported/math.rs::eval_required_substitution`:
-when the substitution errors via `:?`, prints the error but
-doesn't set `errflag |= ERRFLAG_ERROR`. C-source
-`Src/math.c::matheval` propagates the substitution error
-through the arith evaluator.
-
-**Impact** — defensive arith patterns with required-param
-guards silently continue past errors:
-
-```sh
-(( max_size = ${MAX_SIZE_BYTES:?MAX_SIZE_BYTES must be set} ))
-# zsh: aborts at error
-# zshrs: max_size left as scalar default (0), continues
-allocate_buffer $max_size   # zsh: never reached  zshrs: allocates 0
-```
-
-**Workaround** — explicit guard before arith:
-```sh
-[[ -v MAX_SIZE_BYTES ]] || { echo "MAX_SIZE_BYTES required" >&2; exit 1; }
-(( max_size = MAX_SIZE_BYTES ))
-```
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ---
 
@@ -38173,7 +38174,7 @@ qualifiers always have a digit suffix.
 | 190 | `kill -L` lists signals (zsh: errors "unknown signal: SIGL") | **port-bug** | always use `-l` lowercase |
 | 191 | `${(l.5..)s}` empty-fill silently accepted with garbage output | **port-bug** | always specify fill chars |
 | 192 | `${(P)name[N]:mod}` indirect-arr-elem with modifier works (zsh: errors) | **port-bug** | temp var split |
-| 193 | `(( y = ${x:?msg} ))` continues after required-param error | **port-bug** | explicit `[[ -v ]]` guard before arith |
+| 193 | `(( y = ${x:?msg} ))` continues after required-param error | **fixed** 2026-06-02 | n/a |
 | 194 | `function f { :; } > /file` keyword-form fn-def redirect at def time | **port-bug** | redirect at call site |
 | 195 | `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored | **port-bug** | temp `deref=("${(@P)name}")` |
 | 196 | Anonymous fn output lost in `$(() { :; })` cmdsub or `(() { :; })` subshell | **port-bug** | named fn called inside subshell |
