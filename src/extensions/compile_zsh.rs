@@ -4853,6 +4853,23 @@ impl ZshCompiler {
         // `[[ -r $HOME ]]`) — emit_cond_trace_runtime builds the line
         // at runtime by interleaving static op text with expanded
         // operands.
+        // c:Src/exec.c:5210-5214 — trace-string building must be gated
+        // on the live xtrace opt-state. The operand-expansion path
+        // (compile_word_str on `$((i++))` / `$(cmd)`) has side
+        // effects; running it unconditionally when xtrace is OFF
+        // double-evaluates the operand (once for trace, once for
+        // condition) — `while [[ $((i++)) -lt N ]]` only iterated
+        // once because each pass incremented i twice. Bug #159 in
+        // docs/BUGS.md.
+        //
+        // Runtime check via BUILTIN_XTRACE_IS_ON: push 1/0; if 0
+        // (xtrace off), JumpIfFalse skips the entire trace block —
+        // no operand expansion, no side effects.
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_IS_ON, 0),
+            0,
+        );
+        let trace_skip = self.builder.emit(Op::JumpIfFalse(0), 0);
         let lit_const = self.builder.add_constant(Value::str("[[ "));
         self.builder.emit(Op::LoadConst(lit_const), 0);
         self.emit_cond_trace_runtime(c);
@@ -4862,6 +4879,8 @@ impl ZshCompiler {
         self.builder
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
         self.builder.emit(Op::Pop, 0);
+        let trace_done = self.builder.current_pos();
+        self.builder.patch_jump(trace_skip, trace_done);
         self.emit_cmd_push(crate::ported::zsh_h::CS_COND as u8);
         // c:Src/cond.c:502 — bare `[[ -o NAME ]]` returns tri-state
         // 0=set / 1=unset / 3=invalid-name. The generic bool→status
