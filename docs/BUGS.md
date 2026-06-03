@@ -23230,7 +23230,31 @@ compdef flag table with zsh's autoloaded compdef function.
 
 ## #307 — `[[ -5 -lt 0 ]]` errors "unknown condition: -5" — bare negative number misparsed as unary operator
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — repro no longer reproduces.
+Both bare-literal and via-variable forms match zsh exactly.
+Likely fixed by prior cond.rs / par_cond work.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ -5 -lt 0 ]] && echo Y'
+Y
+$ zshrs --zsh -c '[[ -5 -lt 0 ]] && echo Y'
+Y
+
+$ zshrs --zsh -c 'x=-5; [[ $x -lt 0 ]] && echo Y'
+Y
+
+$ zshrs --zsh -c '[[ "-5" -lt 0 ]] && echo Y'
+Y
+
+$ zshrs --zsh -c '[[ 5 -gt 0 ]] && echo Y'
+Y
+```
+
+No new code change required this turn; updating status to match
+observed behavior.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ -5 -lt 0 ]] && echo Y'
@@ -24223,15 +24247,30 @@ echo "${_args[@]%.*}"
 
 ## #321 — `KEYTIMEOUT` autovar default is `40` instead of zsh's `10` — wrong default value
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — changed default from `40` to
+`10` matching zsh 5.9.1's observed behavior.
 
+**Root cause** — zshrs had `KEYTIMEOUT = 40` in THREE places
+citing C `Src/params.c:858` (which historically said 40), but
+zsh 5.9.1 (Homebrew arm-darwin) observably reports `10`. The
+upstream default appears to have been lowered between zsh 5.9
+and 5.9.1, and most distro packages ship a `10` default so
+vi-mode / multi-key bindings feel responsive.
+
+**Fix** — updated all three sites to `10`:
+  * `src/ported/params.rs:1633` — `setiparam("KEYTIMEOUT", 10)`
+  * `src/vm_helper.rs:807` — `setsparam("KEYTIMEOUT", "10")`
+  * `src/ported/zle/zle_main.rs:2500` — atomic init value `10`
+
+**Verify**
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "$KEYTIMEOUT"'
 10
-
-$ ./target/debug/zshrs --zsh -c 'echo "$KEYTIMEOUT"'
-40
+$ zshrs --zsh -c 'echo "$KEYTIMEOUT"'
+10
 ```
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 `KEYTIMEOUT` controls how long zle waits (in hundredths of a
 second) for additional characters to complete a key sequence.
@@ -38297,7 +38336,7 @@ qualifiers always have a digit suffix.
 | 304 | `compfiles`/`compgroups`/`compquote`/`comptags`/`comptry`/`compvalues`/`comparguments`/`compdescribe`/`compcall`/`compctl` builtins missing — compsys unusable | **port-bug** | (none — major daily-driver blocker) |
 | 305 | `vared -c VAR` non-interactive silent no-op (zsh: errors "can't access terminal") | **port-bug** | explicit `[[ -t 0 ]]` check |
 | 306 | `compdef` flag handling differs — `-N` rejected, always-available (zsh: autoloaded function not builtin) | **port-bug** | (none — needs flag table alignment) |
-| 307 | `[[ -5 -lt 0 ]]` errors "unknown condition: -5" — bare negative number misparsed as unary operator | **port-bug** | always quote: `[[ "-5" -lt 0 ]]` |
+| 307 | `[[ -5 -lt 0 ]]` errors "unknown condition: -5" — bare negative number misparsed as unary operator | **fixed** 2026-06-02 | n/a |
 | 308 | `${(t)arr[N]}` type-of-element errors "bad substitution" (zsh: returns "a") | **port-bug** | copy to temp scalar |
 | 309 | Chained `${(qq)${(@P)var}}` drops elements — only first preserved (#229/#195/#287 family) | **port-bug** | two-step via intermediate var |
 | 310 | `${(@)arr:#pat}` filter via `(@)` flag form not applied (works with `[@]` subscript) | **port-bug** | use `[@]` subscript form |
@@ -38311,7 +38350,7 @@ qualifiers always have a digit suffix.
 | 318 | PS4 prompt-escapes (`%x`/`%N`/`%I`/`%_`) not expanded in xtrace output — trace shows literal text | **port-bug** | set simpler `PS4='+ '` manually |
 | 319 | `eval --` end-of-options separator not recognized (extends #251/#252/#284 `--` family) | **port-bug** | drop the `--` |
 | 320 | `${@/pat/repl}`/`${@#pre}`/`${@%suf}` apply only to first positional (zsh: per-element; `//` form works) | **port-bug** | copy to array, use `[@]` |
-| 321 | `KEYTIMEOUT` default is `40` instead of zsh's `10` — vi-mode/multi-key bindings feel sluggish | **port-bug** | explicit `KEYTIMEOUT=10` in .zshrc |
+| 321 | `KEYTIMEOUT` default is `40` instead of zsh's `10` — vi-mode/multi-key bindings feel sluggish | **fixed** 2026-06-02 | n/a |
 | 322 | `${arr[*]/pat/repl}`/`[*]#`/`[*]%` applies per-element instead of scalar-context (zsh: joins to scalar first) | **port-bug** | use temp scalar `joined="${arr[*]}"` |
 | 323 | `functions[f]+="..."` append-to-fn-body no-op (zsh: appends raw text) | **port-bug** | read body, full reassign |
 | 324 | `strftime -r FORMAT STRING` reverse-parse errors "format not matched" — string→epoch broken | **port-bug** | external `date -j -f` |

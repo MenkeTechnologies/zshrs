@@ -2496,8 +2496,9 @@ pub static ZLE_RECURSIVE: std::sync::atomic::AtomicI32 = std::sync::atomic::Atom
 
 /// Port of `time_t keytimeout` from `Src/Zle/zle_main.c`. Multi-byte
 /// key-sequence timeout in 100ths of a second. 0 = no timeout. The
-/// default 40 (0.4s) matches zsh's `$KEYTIMEOUT` startup default.
-pub static KEYTIMEOUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(40);
+/// default 10 (0.1s) matches zsh 5.9.1's observed `$KEYTIMEOUT`
+/// startup default. Bug #321 in docs/BUGS.md.
+pub static KEYTIMEOUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(10);
 
 /// Port of `int lastcmd` from `Src/Zle/zle_main.c:145`. Flags of
 /// the most-recently-executed widget — drives `yank`/`yank-pop`
