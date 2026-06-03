@@ -5369,15 +5369,29 @@ impl ZshCompiler {
                 return;
             }
             "-z" => {
-                self.builder.emit(Op::StringLen, 0);
-                self.builder.emit(Op::LoadInt(0), 0);
-                self.builder.emit(Op::NumEq, 0);
+                // Op::StringLen calls `Value::len` which returns
+                // ARRAY length for `Value::Array` — not the joined
+                // string length, and not the cond-context "is empty"
+                // semantic zsh uses. For `b=(""); [[ -z "${b[@]}" ]]`
+                // the stack carries `Value::Array([""])` whose
+                // `len()` is 1, so the inline StringLen → NumEq
+                // sequence returned false. Route through the runtime
+                // helper which inspects Array vs Str directly per
+                // `Src/cond.c:347 case 'z'` semantics. Bug #185 in
+                // docs/BUGS.md.
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_STR_EMPTY, 1),
+                    0,
+                );
                 return;
             }
             "-n" => {
-                self.builder.emit(Op::StringLen, 0);
-                self.builder.emit(Op::LoadInt(0), 0);
-                self.builder.emit(Op::NumNe, 0);
+                // Companion to `-z` above; see comment block there
+                // for the cond-context Array-vs-Str rationale.
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_STR_NONEMPTY, 1),
+                    0,
+                );
                 return;
             }
             "-v" => {

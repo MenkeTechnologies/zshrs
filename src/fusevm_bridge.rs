@@ -4189,6 +4189,40 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         crate::ported::exec::DONETRAP.store(0, std::sync::atomic::Ordering::Relaxed);
         Value::Status(0)
     });
+
+    // `[[ -z X ]]` operand-empty test. Pops a `Value`, returns `1`
+    // (empty/true) per zsh's cond-context semantics — see
+    // `BUILTIN_COND_STR_EMPTY` docstring for the case table. Bug
+    // #185 in docs/BUGS.md.
+    vm.register_builtin(BUILTIN_COND_STR_EMPTY, |vm, _argc| {
+        let v = vm.pop();
+        let empty = match v {
+            Value::Array(arr) => match arr.len() {
+                0 => true,
+                1 => arr[0].as_str_cow().is_empty(),
+                _ => false,
+            },
+            Value::Str(s) => s.is_empty(),
+            other => other.to_str().is_empty(),
+        };
+        Value::Int(if empty { 1 } else { 0 })
+    });
+
+    // `[[ -n X ]]` operand-non-empty test (complement of
+    // BUILTIN_COND_STR_EMPTY).
+    vm.register_builtin(BUILTIN_COND_STR_NONEMPTY, |vm, _argc| {
+        let v = vm.pop();
+        let empty = match v {
+            Value::Array(arr) => match arr.len() {
+                0 => true,
+                1 => arr[0].as_str_cow().is_empty(),
+                _ => false,
+            },
+            Value::Str(s) => s.is_empty(),
+            other => other.to_str().is_empty(),
+        };
+        Value::Int(if empty { 0 } else { 1 })
+    });
     // c:Src/exec.c — block-level redirect-failure gate. When a
     // compound command (`{ … } < file`, `( … ) > file`, etc.) has a
     // failing redirect (e.g. `< /nonexistent`), zsh skips the entire
@@ -5679,6 +5713,34 @@ pub const BUILTIN_XTRACE_IS_ON: u16 = 611;
 /// (sublist boundary). Mirrors C `Src/exec.c:1455` — `donetrap = 0`.
 /// Stack: untouched. argc = 0. Bug #303 in docs/BUGS.md.
 pub const BUILTIN_DONETRAP_RESET: u16 = 612;
+
+/// `[[ -z X ]]` / `[[ -n X ]]` operand-empty test that honours zsh's
+/// array-splice semantics. C zsh evaluates `[[ -z X ]]` per
+/// `Src/cond.c:347` (case 'z'): `s` is the SCALAR operand passed
+/// through `cond_str`'s singsub. For `"${arr[@]}"` zsh expands per
+/// `Src/subst.c:multsub` which yields each element as its own word
+/// list node; cond.c then sees the joined-or-single-element form.
+///
+/// The compile-side `-z` shortcut at `compile_zsh.rs:5371` used
+/// `Op::StringLen` which calls `Value::len` — for `Value::Array`
+/// that returns ARRAY LENGTH, not string length. `b=("")` produced
+/// `Value::Array([""])` → `len = 1` → `-z` returned false.
+///
+/// This builtin pops one `Value` and pushes `1` (empty) or `0`
+/// (non-empty) per the cond context:
+///   - `Value::Str(s)` → s.is_empty()
+///   - `Value::Array([])` → true (zero words → vacuous-empty)
+///   - `Value::Array([s])` → s.is_empty() (single-word case)
+///   - `Value::Array([_; n>=2])` → false (multiple non-empty
+///     words; zsh would raise "unknown condition" but the
+///     observable test result is non-empty/false)
+///
+/// Companion to BUILTIN_COND_STR_NONEMPTY (#185 in docs/BUGS.md).
+pub const BUILTIN_COND_STR_EMPTY: u16 = 613;
+
+/// `[[ -n X ]]` operand-non-empty test (logical complement of
+/// BUILTIN_COND_STR_EMPTY).
+pub const BUILTIN_COND_STR_NONEMPTY: u16 = 614;
 
 /// GLOB_SUBST guard for `[[ x == $pat ]]` pattern RHS coming from
 /// parameter / command substitution. C-zsh's `[[ == ]]` semantics
