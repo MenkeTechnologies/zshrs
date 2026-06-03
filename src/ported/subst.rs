@@ -6393,13 +6393,16 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
-                let is_at_star =
-                    matches!(subscript.as_deref(), Some("@") | Some("*"));
-                // c:Src/subst.c:2916 SCANPM_ISVAR_AT — bare `@`/`*`
-                // pseudo-names splat per-element in DQ, same as
-                // `[@]`/`[*]` subscripts (bug #320 family).
-                let is_at_var = matches!(var_name.as_str(), "@" | "*");
-                let per_element = is_at_star || is_at_var || nojoin == 2 || !qt;
+                // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
+                // element on `[@]`/bare `@` — `[*]`/bare `*` join with
+                // IFS in DQ context (`"$*"` / `"${a[*]/x/y}"` semantics).
+                // Bug #322 in docs/BUGS.md: the previous gate folded `*`
+                // subscript into `@`, so `${a[*]//?/X}` in DQ ran per-
+                // element instead of joining first. Unquoted (`!qt`) and
+                // explicit `(@)` flag still trigger per-element regardless.
+                let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
+                let is_at_var = matches!(var_name.as_str(), "@");
+                let per_element = is_at_subscript || is_at_var || nojoin == 2 || !qt;
                 if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_subscript) {
                     if per_element {
                         let new_arr: Vec<String> =
@@ -6414,7 +6417,12 @@ pub fn paramsubst(
                         let sep = ifs.chars().next().unwrap_or(' ').to_string();
                         let joined = arr.join(&sep);
                         value = replace_global(&joined);
-                        split_parts = None;
+                        // c:Src/subst.c:3034 — DQ `[*]` sepjoins to scalar
+                        // BEFORE the operator runs; suppress downstream
+                        // auto_splat re-fetch of the original array.
+                        // Matches existing pattern at subst.rs:7378.
+                        split_parts = Some(vec![value.clone()]);
+                        isarr = 0;
                     }
                     handled_array = true;
                 }
@@ -6684,18 +6692,15 @@ pub fn paramsubst(
                     // out `red X green` instead of `red X` — the
                     // greedy `b*` only swallowed "blue" (one
                     // element) instead of "blue green" (joined).
-                    let is_at_star_subscript =
-                        matches!(subscript.as_deref(), Some("@") | Some("*"));
-                    // c:Src/subst.c:2916 SCANPM_ISVAR_AT — bare `@`/`*`
-                    // pseudo-names splat per-element in DQ, same as
-                    // `[@]`/`[*]` subscripts. Without this, `"${@/o/O}"`
-                    // fell into the scalar-join arm and applied the
-                    // replace once to the joined string. Bug #320 in
-                    // docs/BUGS.md (same shape as #277's sort-flag
-                    // fix).
-                    let is_at_var = matches!(var_name.as_str(), "@" | "*");
+                    // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
+                    // element on `[@]`/bare `@`. `[*]`/bare `*` join in
+                    // DQ; bug #322 in docs/BUGS.md. `!qt` (unquoted) and
+                    // explicit `(@)` flag (nojoin==2) still trigger per-
+                    // element regardless of subscript form.
+                    let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
+                    let is_at_var = matches!(var_name.as_str(), "@");
                     let per_element =
-                        is_at_star_subscript || is_at_var || nojoin == 2 || !qt;
+                        is_at_subscript || is_at_var || nojoin == 2 || !qt;
                     if per_element {
                         let new_arr: Vec<String> = arr.iter().map(|e| replace_one(e)).collect();
                         value = new_arr.join(" "); // c:3870 per-element
@@ -6710,7 +6715,11 @@ pub fn paramsubst(
                         let sep = ifs.chars().next().unwrap_or(' ').to_string();
                         let joined = arr.join(&sep);
                         value = replace_one(&joined);
-                        split_parts = None;
+                        // c:Src/subst.c:3034 — DQ `[*]` sepjoins to scalar
+                        // BEFORE the operator runs; suppress downstream
+                        // auto_splat re-fetch of the original array.
+                        split_parts = Some(vec![value.clone()]);
+                        isarr = 0;
                     }
                 } else {
                     value = replace_one(&raw_value); // c:3870
@@ -6730,10 +6739,13 @@ pub fn paramsubst(
                     .unwrap_or(false);
                 // c:Src/subst.c:3317 — under qt without @/*-subscript
                 // and without (@) flag, sepjoin first.
-                let is_at_star = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
+                // element on `[@]`/bare `@`. `[*]`/bare `*` join in DQ;
+                // bug #322 in docs/BUGS.md.
+                let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
                 let per_element_array = !has_scalar_sub
-                    && (!qt || is_at_star || nojoin == 2
-                        || matches!(var_name.as_str(), "@" | "*"));
+                    && (!qt || is_at_subscript || nojoin == 2
+                        || matches!(var_name.as_str(), "@"));
                 // Strip-one helper. op: 0=#, 1=##, 2=%, 3=%%.
                 // Direct port of subst.c:3540 patmatch dispatch.
                 // (M) handling per c:3176 — keep matched portion, discard rest.
@@ -6807,6 +6819,16 @@ pub fn paramsubst(
                     split_parts = Some(new_arr); // c:3540
                 } else {
                     value = strip_one(&raw_value, 1); // c:3540
+                    // c:Src/subst.c:3034 — DQ `[*]` sepjoined to scalar
+                    // upstream; suppress auto_splat re-fetch. Bug #322
+                    // in docs/BUGS.md.
+                    if matches!(subscript.as_deref(), Some("*"))
+                        && qt
+                        && arrays_contains(&var_name)
+                    {
+                        split_parts = Some(vec![value.clone()]);
+                        isarr = 0;
+                    }
                 }
             } else if let Some(pat) = r.strip_prefix('#') {
                 // c:3540 (shortest prefix strip)
@@ -6824,10 +6846,13 @@ pub fn paramsubst(
                 // strip applies. \`"\${a#pat}"\` strips the joined
                 // "a b c" once, not per element. Parity bug: zshrs
                 // applied per-element in DQ too.
-                let is_at_star = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
+                // element on `[@]`/bare `@`. `[*]`/bare `*` join in DQ;
+                // bug #322 in docs/BUGS.md.
+                let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
                 let per_element_array = !has_scalar_sub
-                    && (!qt || is_at_star || nojoin == 2
-                        || matches!(var_name.as_str(), "@" | "*"));
+                    && (!qt || is_at_subscript || nojoin == 2
+                        || matches!(var_name.as_str(), "@"));
                 // c:Src/subst.c:3176 — SUB_MATCH inverts strip semantics:
                 // default returns the rest (after the match); with (M)
                 // returns the matched prefix and discards the rest.
@@ -6890,6 +6915,15 @@ pub fn paramsubst(
                     split_parts = Some(new_arr); // c:3540
                 } else {
                     value = strip_one(&raw_value); // c:3540
+                    // c:Src/subst.c:3034 — DQ `[*]` sepjoined to scalar
+                    // upstream; suppress auto_splat re-fetch. Bug #322.
+                    if matches!(subscript.as_deref(), Some("*"))
+                        && qt
+                        && arrays_contains(&var_name)
+                    {
+                        split_parts = Some(vec![value.clone()]);
+                        isarr = 0;
+                    }
                 }
             } else if let Some(pat) = r.strip_prefix("%%") {
                 // c:3540 (longest suffix strip)
@@ -6901,10 +6935,13 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
-                let is_at_star = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
+                // element on `[@]`/bare `@`. `[*]`/bare `*` join in DQ;
+                // bug #322 in docs/BUGS.md.
+                let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
                 let per_element_array = !has_scalar_sub
-                    && (!qt || is_at_star || nojoin == 2
-                        || matches!(var_name.as_str(), "@" | "*"));
+                    && (!qt || is_at_subscript || nojoin == 2
+                        || matches!(var_name.as_str(), "@"));
                 // c:Src/subst.c:3176 — SUB_MATCH for `%%` (longest suffix).
                 let match_only = (sub_flags_get() & SUB_MATCH) != 0;
                 // c:Src/glob.c:3107 igetmatch SUB_END+SUB_LONG+SUB_SUBSTR
@@ -6998,6 +7035,15 @@ pub fn paramsubst(
                     split_parts = Some(new_arr); // c:3540
                 } else {
                     value = strip_one(&raw_value); // c:3540
+                    // c:Src/subst.c:3034 — DQ `[*]` sepjoined to scalar
+                    // upstream; suppress auto_splat re-fetch. Bug #322.
+                    if matches!(subscript.as_deref(), Some("*"))
+                        && qt
+                        && arrays_contains(&var_name)
+                    {
+                        split_parts = Some(vec![value.clone()]);
+                        isarr = 0;
+                    }
                 }
             } else if let Some(pat) = r.strip_prefix('%') {
                 // c:3540 (shortest suffix strip)
@@ -7009,10 +7055,13 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
-                let is_at_star = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
+                // element on `[@]`/bare `@`. `[*]`/bare `*` join in DQ;
+                // bug #322 in docs/BUGS.md.
+                let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
                 let per_element_array = !has_scalar_sub
-                    && (!qt || is_at_star || nojoin == 2
-                        || matches!(var_name.as_str(), "@" | "*"));
+                    && (!qt || is_at_subscript || nojoin == 2
+                        || matches!(var_name.as_str(), "@"));
                 // c:Src/subst.c:3176 — SUB_MATCH for `%` (shortest suffix).
                 let match_only = (sub_flags_get() & SUB_MATCH) != 0;
                 // c:Src/glob.c:3106 igetmatch SUB_END+SUB_SUBSTR — `(S)`
@@ -7068,6 +7117,15 @@ pub fn paramsubst(
                     split_parts = Some(new_arr); // c:3540
                 } else {
                     value = strip_one(&raw_value); // c:3540
+                    // c:Src/subst.c:3034 — DQ `[*]` sepjoined to scalar
+                    // upstream; suppress auto_splat re-fetch. Bug #322.
+                    if matches!(subscript.as_deref(), Some("*"))
+                        && qt
+                        && arrays_contains(&var_name)
+                    {
+                        split_parts = Some(vec![value.clone()]);
+                        isarr = 0;
+                    }
                 }
             } else if let Some(rhs) = r.strip_prefix(":|") {
                 // c:3540 (set difference)

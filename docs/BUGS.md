@@ -24574,17 +24574,74 @@ KEYTIMEOUT=10
 
 ## #322 — `${arr[*]/pat/repl}` (and `[*]#`/`[*]%`) applies per-element instead of scalar-context
 
-**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+**Status:** `fixed` 2026-06-02 — six paramsubst arms (`/`, `//`,
+`#`, `##`, `%`, `%%`) folded `[*]` into `[@]` in the per-element
+gate, so DQ `${a[*]/?/X}` ran per-element instead of joining
+first. C `Src/subst.c:3030-3034` only keeps `isarr=-1`
+(per-element shape) for `[@]`/bare `@`; `[*]`/bare `*` sepjoins
+to a scalar before the operator runs (c:3034 `isarr=0` when
+`qt && !getlen && isarr>0`). Prior `fixed` flip was wrong — a
+2-element test (`a=(foo bar)`) converged because "fOo bar" is
+the same under per-element and scalar-join semantics.
 
-**Verify:**
+**Root cause** — two-stage gap.
+1. In all six arms, `is_at_star = matches!(subscript, Some("@") |
+   Some("*"))` collapsed `*` into `@`, so the per-element gate
+   `is_at_star || nojoin == 2 || !qt || is_at_var` fired
+   incorrectly on `[*]` in DQ.
+2. Even after differentiating subscripts so the gate falls to
+   the scalar-join else-branch, the downstream auto_splat block
+   (subst.rs:9133-9176) re-fetched `arrays_get(&var_name)` and
+   splatted the ORIGINAL array (`["abc","def","ghi"]`),
+   discarding our scalar `value` (`"XXXXXXXXXXX"`). Same shape
+   as the existing fix at subst.rs:7378 for the modify-arm —
+   needed to be replicated in the strip/sub arms.
+
+**Fix** — `src/ported/subst.rs`:
+1. Differentiate `Some("@")` (per-element in DQ) from `Some("*")`
+   (scalar-join in DQ) in the `is_at_*` predicates of all six
+   arms (`//`, `/`, `#`, `##`, `%`, `%%`). `var_name == "@"`
+   stays as per-element trigger; `var_name == "*"` drops (bare
+   `$*` joins in DQ same as `[*]`). `!qt` (unquoted) and `nojoin
+   == 2` ((@) flag) still trigger per-element regardless of
+   subscript shape.
+2. In the scalar-join else-branch of `//` and `/`, set
+   `split_parts = Some(vec![value.clone()]); isarr = 0` so the
+   auto_splat block emits the scalar instead of re-fetching the
+   array. Mirrors the existing pattern at subst.rs:7378.
+3. In the else-branch of the 4 strip arms (`#`/`##`/`%`/`%%`),
+   add the same auto_splat suppression gated on `subscript ==
+   Some("*") && qt && arrays_contains(&var_name)` — strip arms'
+   else fires for both scalar variables and array+[*] DQ; only
+   the latter needs suppression.
+
+**Verify (post-fix):**
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'a=(foo bar); echo "${a[*]/o/O}"'
-fOo bar
-$ ./target/debug/zshrs --zsh -c 'a=(foo bar); echo "${a[*]/o/O}"'
-fOo bar
+$ ./target/debug/zshrs --zsh -c 'a=(abc def ghi); echo "[${a[*]/?/X}]"'
+[Xbc def ghi]
+
+$ ./target/debug/zshrs --zsh -c 'a=(abc def ghi); echo "[${a[*]//?/X}]"'
+[XXXXXXXXXXX]
+
+$ ./target/debug/zshrs --zsh -c 'a=(abc def cgi); echo "[${a[*]#*c}]"'
+[ def cgi]
+
+$ ./target/debug/zshrs --zsh -c 'a=(abc def cgi); echo "[${a[*]##*c}]"'
+[gi]
+
+$ ./target/debug/zshrs --zsh -c 'a=(abc xyz def); echo "[${a[*]%?}]"'
+[abc xyz de]
+
+$ ./target/debug/zshrs --zsh -c 'a=(abc xyz def); echo "[${a[*]%%?*}]"'
+[]
 ```
 
-Both shells match.
+All six arms match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Regression checks unchanged: `${a[@]/…}` still per-element;
+unquoted `${a[*]/…}` still per-element via `!qt`; `(@)` flag
+still overrides via `nojoin == 2`; bare `$*` joins (`[Xbc def
+ghi]`); bare `$@` per-element (`[Xbc Xef Xhi]`). Baseline 947/105
+(was 945/107).
 
 **Original report:**
 
@@ -38613,7 +38670,7 @@ qualifiers always have a digit suffix.
 | 319 | `eval --` end-of-options separator not recognized (extends #251/#252/#284 `--` family) | **port-bug** | drop the `--` |
 | 320 | `${@/pat/repl}`/`${@#pre}`/`${@%suf}` apply only to first positional (zsh: per-element; `//` form works) | **port-bug** | copy to array, use `[@]` |
 | 321 | `KEYTIMEOUT` default is `40` instead of zsh's `10` — vi-mode/multi-key bindings feel sluggish | **fixed** 2026-06-02 | n/a |
-| 322 | `${arr[*]/pat/repl}`/`[*]#`/`[*]%` applies per-element instead of scalar-context (zsh: joins to scalar first) | **port-bug** | use temp scalar `joined="${arr[*]}"` |
+| 322 | `${arr[*]/pat/repl}`/`[*]#`/`[*]%` applies per-element instead of scalar-context (zsh: joins to scalar first) | **fixed** 2026-06-02 | n/a |
 | 323 | `functions[f]+="..."` append-to-fn-body no-op (zsh: appends raw text) | **port-bug** | read body, full reassign |
 | 324 | `strftime -r FORMAT STRING` reverse-parse errors "format not matched" — string→epoch broken | **port-bug** | external `date -j -f` |
 | 325 | `$'\xNN\xNN'` C-string hex escapes treat UTF-8 sequence as 2 bytes (zsh: combines into multibyte char via locale) | **port-bug** | use `\uNNNN` Unicode form (unverified) |
