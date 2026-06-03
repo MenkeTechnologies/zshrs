@@ -26438,7 +26438,43 @@ functions[f]="$body"$'\n'"echo b"
 
 ## #324 — `strftime -r FORMAT STRING` reverse-parse not implemented — "format not matched"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `reverse_strftime` switched
+from `NaiveDateTime::parse_from_str` (which requires every
+field) to `chrono::format::Parsed` (which accepts any subset
+of fields) plus default-fill for missing pieces — mirrors
+C's `strptime` + `mktime` semantics that fill zeros for
+unspecified parts.
+
+**Root cause** — `src/ported/modules/datetime.rs::reverse_strftime`
+called `NaiveDateTime::parse_from_str(input, format)` which
+fails on partial formats. C `Src/Modules/datetime.c:64`
+calls `strptime` which writes any parsed `tm` fields and
+leaves the rest at zero; `mktime` then resolves the partial
+tm to a unix timestamp (e.g. `"%Y"` + `"2024"` → 2024-01-01
+00:00:00 → 1704085200).
+
+**Fix** (`src/ported/modules/datetime.rs:reverse_strftime`) —
+replaced `NaiveDateTime::parse_from_str` with
+`chrono::format::parse(&mut Parsed::new(), input,
+StrftimeItems::new(format))`. Then pulled year/month/day/
+hour/minute/second from `Parsed` fields with sensible defaults
+(year=1970 / month=1 / day=1 / hour=0 / minute=0 / second=0)
+and built `NaiveDate::from_ymd_opt(...) + NaiveTime::from_hms_opt(...)`.
+Year recovered from either `parsed.year` or
+`year_div_100 * 100 + year_mod_100` for `%y`-only forms;
+hour reconstructed from `hour_div_12` + `hour_mod_12`.
+
+**Verify**:
+- `strftime -rs out "%Y" 2024` → `[1704085200]` (matches zsh).
+- `strftime -rs out "%Y-%m-%d" "2024-06-15"` → `[1718424000]`
+  (matches zsh).
+- `strftime -rs out "%Y-%m-%d %H:%M:%S" "2024-06-15 12:30:45"`
+  → `[1718469045]` (matches zsh).
+- `strftime -rs out "%Y" abc` → format-mismatch error (matches
+  zsh; cosmetic suffix `: abc` is zshrs-side and harmless).
+- zshrs_shell baseline 952/100 (improved from 949/103).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime; strftime -rs out "%Y" 2024; echo "[$out]"'
