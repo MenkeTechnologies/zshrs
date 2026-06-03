@@ -23916,7 +23916,71 @@ done
 
 ## #313 — `${(s.X.)str}` in scalar/echo context returns multiple args instead of single joined string
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — the original `echo` repro case
+was actually already correct (both shells produce `[a b c]` —
+inside DQ with prefix/suffix, the splat-then-concat yields
+three echo args joined with space). The latent bug surfaced in
+`r="${(s.:.)s}"; echo "[$r]"` — zsh assigned `a:b:c`
+(preserving original delimiter), zshrs assigned `a b c`
+(splat-then-space-rejoined). Two related defects in the spsep
+arm of paramsubst.
+
+**Root cause** —
+1. `src/ported/subst.rs::paramsubst` spsep branch
+   (subst.rs:8228+) unconditionally overwrote `value =
+   parts.join(" ")`. C `Src/subst.c:3920-3928` leaves `val`
+   unchanged when `sepsplit` produces multiple elements —
+   only `aval` (split_parts) and `isarr` change. Without this,
+   the original-delimiter scalar form was lost.
+2. After the spsep block, `isarr = 2` survived into the
+   downstream auto_splat block (subst.rs:9195), which fired
+   even in PREFORK_SINGLE contexts (scalar assignment RHS,
+   singsub). C `Src/subst.c:4215` collapses `isarr=0` for
+   ssub-callers so the scalar `val` propagates instead of the
+   array `aval`.
+
+**Fix** —
+1. Replace `value = parts.join(" ")` with C-faithful
+   `aval`-only logic: empty parts → `value = ""`; single part
+   → `value = parts[0]`; multiple parts → leave `value`
+   unchanged. When an explicit `(j:Y:)` `sep` is set, the join
+   uses it (force-rejoin path).
+2. After setting `isarr = nojoin ? 1 : 2`, port c:4215:
+   `if (pf_flags & PREFORK_SINGLE) != 0 { isarr = 0; }`. The
+   single-result caller now reads the preserved `value`.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 's=a:b:c; r="${(s.:.)s}"; echo "[$r]"'
+[a:b:c]
+
+$ ./target/debug/zshrs --zsh -c 's=a:b:c; echo "[${(s.:.)s}]"'
+[a b c]
+
+$ ./target/debug/zshrs --zsh -c 's=a:b:c; r="X${(s.:.)s}A"; echo "[$r]"'
+[Xa:b:cA]
+
+$ ./target/debug/zshrs --zsh -c 's=a:b:c; for x in ${(s.:.)s}; do echo "<$x>"; done'
+<a>
+<b>
+<c>
+
+$ ./target/debug/zshrs --zsh -c 's=a:b:c; printf "<%s>\n" "${(s.:.)s}"'
+<a>
+<b>
+<c>
+
+$ ./target/debug/zshrs --zsh -c 's=a:b:c; arr=("${(@s.:.)s}"); echo "n=${#arr}"'
+n=3
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Regression checks unchanged: unquoted for-loop still splats;
+printf splats; (@s:) array assignment still gives 3 elements;
+empty input → `[]`; single-element split → preserved.
+Baseline 947/105 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's=a:b:c; echo "[${(s.:.)s}]"'
@@ -38674,7 +38738,7 @@ qualifiers always have a digit suffix.
 | 310 | `${(@)arr:#pat}` filter via `(@)` flag form not applied (works with `[@]` subscript) | **fixed** 2026-06-02 | n/a |
 | 311 | `${(@k)assoc:#pat}`/`${(@v)assoc:#pat}` filter on assoc keys/values not applied | **port-bug** | explicit `for k v in "${(@kv)h}"` loop |
 | 312 | `${(v)assoc:#pat}` scalar-context filter on assoc values not applied | **fixed** 2026-06-02 | n/a |
-| 313 | `${(s.X.)str}` scalar-context split returns multiple echo args instead of joined string | **port-bug** | `${(j: :)${(@s.X.)str}}` rejoin |
+| 313 | `${(s.X.)str}` scalar-context split returns multiple echo args instead of joined string | **fixed** 2026-06-02 | n/a |
 | 314 | `${(os.X.)str}` sort flag not applied after split — flag-composition gap | **port-bug** | two-step: split into array, then `(o)` |
 | 315 | `${(us.X.)str}` unique flag not applied after split — PATH-dedup idiom broken | **port-bug** | two-step: split into array, then `(u)` |
 | 316 | `zsh/system` module builtins `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` missing | **port-bug** | (none — needs builtin registration) |
