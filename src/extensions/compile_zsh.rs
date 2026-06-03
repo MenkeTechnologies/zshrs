@@ -2406,9 +2406,15 @@ impl ZshCompiler {
             // glob metachar — needed for `/etc/hosts(mh-100)` style.
             // Conservative: require closing `)` at end and a bare `(`
             // somewhere before (no other meta chars in between).
+            // Bnull-gate: backslash-escaped parens (`\(...\)`) must NOT
+            // fire. After untokenize the `\u{9f}` markers are gone, so
+            // `(abc)` looks like a qualifier suffix — check the raw `s`
+            // for at least one un-escaped `(` and `)`. Bug #537.
             || (untoked.ends_with(')')
                 && untoked.contains('(')
-                && !untoked.contains('|'))
+                && !untoked.contains('|')
+                && (unquoted(s, '(') || unquoted(s, '\u{88}'))
+                && (unquoted(s, ')') || unquoted(s, '\u{8a}')))
             // Unclosed `(` (or `(` anywhere not already covered by the
             // qualifier-suffix / alternation arms above). C zsh's
             // `Src/pattern.c:4326-4335 haswilds` returns true on any
