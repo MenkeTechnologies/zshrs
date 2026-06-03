@@ -778,7 +778,30 @@ pub(crate) fn lexconstant() -> i32 {
         .chars()
         .filter(|&c| c != '_')
         .collect();
-    let val: i64 = int_str.parse().unwrap_or(0);
+    // c:Src/utils.c:2511 zstrtol — accept overflow with truncation
+    // and a `"number truncated after N digits"` warning rather
+    // than silently producing 0. zsh truncates digits past i64's
+    // 18-decimal-digit safe band, parses the leading slice as
+    // u64, casts to i64 (wrapping). Bug #350; mirrors the
+    // parse_int_arg port at builtin.rs:12794 for #258.
+    let val: i64 = match int_str.parse::<i64>() {
+        Ok(n) => n,
+        Err(_) if !int_str.is_empty() && int_str.chars().all(|c| c.is_ascii_digit()) => {
+            let truncated = if int_str.len() > 18 {
+                &int_str[..18]
+            } else {
+                int_str.as_str()
+            };
+            let v = truncated.parse::<u64>().map(|u| u as i64).unwrap_or(0);
+            crate::ported::utils::zwarn(&format!(
+                "number truncated after {} digits: {}",
+                truncated.len(),
+                int_str
+            ));
+            v
+        }
+        Err(_) => 0,
+    };
     m_yyval_set(if m_force_float() {
         mnumber {
             l: 0,

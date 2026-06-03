@@ -27971,7 +27971,38 @@ export api_endpoints_serialized="$(typeset -p api_endpoints)"
 
 ## #350 — Integer arithmetic at INT64 boundary returns `0` silently (zsh: truncates digit, returns approximation)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — math.rs decimal-int parser
+now mirrors zstrtol's truncate-with-warning semantics
+(matching the parse_int_arg port from #258).
+
+**Root cause** — `src/ported/math.rs::m_num_yylex` decimal
+arm at line ~781 read `int_str.parse::<i64>().unwrap_or(0)`,
+so any literal exceeding i64::MAX silently produced 0.
+C `Src/utils.c:2511 zstrtol` accepts overflowing digits up
+to the 18-decimal-digit safe band, then truncates the last
+digit(s), parses the remainder as u64, casts to i64
+(wrapping), and emits `"number truncated after N digits"`.
+
+**Fix** (`src/ported/math.rs::m_num_yylex`, decimal arm) —
+replace `unwrap_or(0)` with match: on `Err(_)` with
+all-digit non-empty input, truncate to first 18 chars,
+parse as `u64`, cast to `i64`, and `zwarn("number truncated
+after N digits: NUM")`. Non-numeric fallthrough still
+returns 0 (preserves the existing error-suppression
+behavior on math-parse failure).
+
+**Verify**:
+- `echo $((9223372036854775808))` → warning +
+  `922337203685477580` (matches zsh).
+- `echo $((-9223372036854775808))` → warning +
+  `-922337203685477580` (matches zsh).
+- `echo $((9223372036854775807))` → `9223372036854775807`
+  (i64::MAX, no warning — regression preserved).
+- `echo $((100*200))`, `echo $((-5))`, `echo $((1_000_000))`
+  → `20000`, `-5`, `1000000` (regressions preserved).
+- zshrs_shell baseline 952/100 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo $((-9223372036854775808))'
