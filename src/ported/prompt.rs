@@ -2962,6 +2962,32 @@ fn zattr_set_bg_rgb(attrs: zattr, r: u8, g: u8, b: u8) -> zattr {
 /// promptexpand c:1286), runs the per-`%X` walker, then unmetafies
 /// the resulting buffer back to a UTF-8 String for display.
 pub fn expand_prompt(s: &str) -> String {
+    // c:Src/prompt.c:192-212 — when PROMPTSUBST is set, run
+    //   parsestr + singsub on the prompt string BEFORE the `%`
+    //   escape expansion. This expands `$()`, `${var}`, `$((expr))`
+    //   in the prompt at display time (vs at assignment time). Bug
+    //   #204 in docs/BUGS.md. Stash/restore errflag + lastval per C
+    //   so prompt-subst errors don't propagate into the script exit
+    //   status (preserve user-interrupt bit per c:210).
+    let s_owned: String;
+    let s = if crate::ported::zsh_h::isset(crate::ported::zsh_h::PROMPTSUBST) {
+        let saved_errflag = crate::ported::utils::errflag
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let saved_lastval = crate::ported::builtin::LASTVAL
+            .load(std::sync::atomic::Ordering::Relaxed);
+        s_owned = crate::ported::subst::singsub(s);
+        let cur = crate::ported::utils::errflag
+            .load(std::sync::atomic::Ordering::Relaxed);
+        crate::ported::utils::errflag.store(
+            saved_errflag | (cur & crate::ported::zsh_h::ERRFLAG_INT),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        crate::ported::builtin::LASTVAL
+            .store(saved_lastval, std::sync::atomic::Ordering::Relaxed);
+        s_owned.as_str()
+    } else {
+        s
+    };
     prompt_tls::sync_from_globals();
     // Ensure TYPTAB is populated so idigit/imeta/etc. work — C zsh
     // initializes typtab in zsh_init; in test environments and some
