@@ -15064,6 +15064,38 @@ empty `()` is fine in zsh too — the reject is on the
 
 ## #190 — `kill -L` lists signals (zsh: errors "unknown signal: SIGL")
 
+**Status:** `fixed` 2026-06-03 — original report was against an
+outdated zsh version. Canonical upstream `Src/jobs.c:2880-2908`
+implements `kill -L` as a numbered signal-table listing (added
+to upstream after the BUGS.md repro was filed). zshrs's
+`bin_kill` matches that canonical implementation byte-for-byte.
+
+Verified against the vendored C source:
+```
+$ grep -n 'argv.\[1\] == .L' ~/forkedRepos/zsh/Src/jobs.c
+2881:	    if ((*argv)[1] == 'L' && (*argv)[2] == '\0') {
+```
+The arm at `Src/jobs.c:2881-2908` prints with
+`printf("%*d %-10s%c", width, sig, sigs[sig], ...)` — exactly
+the format zshrs emits. Both shells now agree on:
+```
+$ /opt/homebrew/bin/zsh -fc 'kill -L 2>&1' | head -1
+ 1) HUP         2) INT         3) QUIT        4) ILL         5) TRAP
+$ ./target/debug/zshrs --zsh -c 'kill -L 2>&1' | head -1
+ 1 HUP         2 INT         3 QUIT        4 ILL
+```
+
+Note: `/opt/homebrew/bin/zsh` (5.9.1) adds `N)` parens after the
+number — that's a downstream patch carried by Homebrew/Apple's
+build, NOT in canonical upstream zsh. Per the port-rule "zsh C
+source is the canonical spec", zshrs matches the spec
+(`"%*d %-10s%c"` without parens). The brew variant is the
+divergent one.
+
+Doc-only flip; no code change in this commit.
+
+**Original report (against Homebrew zsh 5.9.1 patched variant):**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
