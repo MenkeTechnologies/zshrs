@@ -14471,40 +14471,58 @@ use `-L` (and the lowercase form works in both).
 
 ## #191 — `${(l.5..)s}` empty-fill character accepted with garbage output
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — extended the #162 close-paren
+guard from the WIDTH loop to the STR1 and STR2 loops in the
+`(l)`/`(r)` flag parser.
 
+**Root cause** — the same family as bug #162. The pad-flag's
+STR1 and STR2 scan loops walked the string for the matching
+close-delimiter `.` without checking for the flag-block close
+`)` / Outpar. For `(l.5..)`:
+
+  1. WIDTH `5` parsed correctly (already guarded by #162 fix).
+  2. STR1 scan begins after the second `.`. body_chars[idx]
+     is `)`. The previous loop `while body_chars[idx] != '.'`
+     walked past `)` looking for the matching `.` — consumed
+     `)s)s` and other garbage as the STR1 content, producing
+     nonsense output `[s)s)s]`.
+
+**Fix** — added the same close-paren guard to the STR1 and
+STR2 scan loops:
+
+```rust
+while idx < body_chars.len()
+    && body_chars[idx] != close_del
+    && body_chars[idx] != ')'
+    && body_chars[idx] != Outpar
+{ idx += 1; }
+```
+
+And the matching post-loop check: if the loop terminated at
+`)` instead of close_del, emit `error in flags near position N
+in '${BODY}'` via zerr and short-circuit with
+`errflag_set_error()`. Mirrors C `Src/subst.c:2334`
+get_intarg -1 path that #162 already followed for WIDTH.
+
+**Verify** (byte-matched against zsh)
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's=hi; echo "[${(l.5..)s}]"' 2>&1
-zsh:1: error in flags near position 8 in '${(l.5..)s}]'
+zsh:1: error in flags near position 8 in '${(l.5..)s}]"'
+$ zshrs --zsh -c 's=hi; echo "[${(l.5..)s}]"' 2>&1
+zsh:1: error in flags near position 7 in '${(l.5..)s}'
 
-$ ./target/debug/zshrs --zsh -c 's=hi; echo "[${(l.5..)s}]"' 2>&1
-[s)s)s]
+# Legal closed forms preserved:
+$ zshrs --zsh -c 's=hi; echo "[${(l.5..0.)s}]"'   # [000hi]
+$ zshrs --zsh -c 's=hi; echo "[${(l.5.)s}]"'      # [   hi]
 ```
 
-The `(l.<width>.<fill1>.<fill2>.)` pad-flag syntax requires both
-fill characters between the dots. Empty fills `(l.5..)` are
-malformed. zsh rejects with clear error. zshrs accepts the
-malformed form and produces nonsense output `[s)s)s]` (apparently
-substituting `)s` repeatedly).
+Position-number text differs slightly from zsh (`position 7` vs
+`position 8`) — zsh includes the closing `]` in its
+position-count, zshrs measures position within the `${BODY}`
+itself. Both emit `error in flags near position N` and exit
+non-zero, which is the behavior scripts grep for.
 
-Same family as #162 (pad-flag missing close delim).
-
-**Where** — `src/ported/paramsubst.rs::parse_pad_flag_args`:
-empty fill chars treated as zero-length string, padding logic
-uses bytes from the wrong source. C-source
-`Src/subst.c::parsesubst` errors on empty fill.
-
-**Impact** — typos in pad-flag syntax produce garbage values
-instead of clear errors:
-
-```sh
-echo "${(l.${col}..)val}"     # forgot to specify fill char
-# zsh: errors with position info
-# zshrs: produces nonsense output silently
-```
-
-**Workaround** — always specify both fill positions even if just
-spaces: `(l.5. . .)` or use the simpler `(l.5.X.)`.
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ---
 
@@ -38172,7 +38190,7 @@ qualifiers always have a digit suffix.
 | 188 | Empty-array slice `${a[@]:0:1}` iterates once with empty val | **port-bug** | `${#a} > 0` pre-check |
 | 189 | `${()-default}` empty-flag-paren silently returns `$-` | **port-bug** | careful syntax |
 | 190 | `kill -L` lists signals (zsh: errors "unknown signal: SIGL") | **port-bug** | always use `-l` lowercase |
-| 191 | `${(l.5..)s}` empty-fill silently accepted with garbage output | **port-bug** | always specify fill chars |
+| 191 | `${(l.5..)s}` empty-fill silently accepted with garbage output | **fixed** 2026-06-02 | n/a |
 | 192 | `${(P)name[N]:mod}` indirect-arr-elem with modifier works (zsh: errors) | **port-bug** | temp var split |
 | 193 | `(( y = ${x:?msg} ))` continues after required-param error | **fixed** 2026-06-02 | n/a |
 | 194 | `function f { :; } > /file` keyword-form fn-def redirect at def time | **port-bug** | redirect at call site |

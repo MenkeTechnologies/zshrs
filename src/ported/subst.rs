@@ -3293,8 +3293,36 @@ pub fn paramsubst(
                         // reads from `:` and walks until matching `:`.
                         idx += 1; // skip opening del
                         let s1_start = idx;
-                        while idx < body_chars.len() && body_chars[idx] != close_del {
+                        // c:Src/subst.c:1366-1456 — same flag-block
+                        // close-paren guard as the WIDTH loop (bug #162).
+                        // STR1 / STR2 loops also need to stop at `)` /
+                        // Outpar so the parser doesn't walk past the
+                        // flag-block close looking for the matching
+                        // delimiter — `(l.5..)` previously consumed
+                        // `)s)s` as the STR1 content. Bug #191 in
+                        // docs/BUGS.md.
+                        while idx < body_chars.len()
+                            && body_chars[idx] != close_del
+                            && body_chars[idx] != ')'
+                            && body_chars[idx] != Outpar
+                        {
                             idx += 1;
+                        }
+                        // If we hit `)` without finding the close
+                        // delimiter, STR1 was unterminated — error per
+                        // C `Src/subst.c:2334` get_intarg -1 path,
+                        // mirroring bug #162's WIDTH fix.
+                        if idx >= body_chars.len()
+                            || body_chars[idx] != close_del
+                        {
+                            let pos_1based = idx + 1;
+                            zerr(&format!(
+                                "error in flags near position {} in '${{{}}}'",
+                                pos_1based,
+                                body.as_str()
+                            ));
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
                         }
                         let s1_raw: String = body_chars[s1_start..idx].iter().collect();
                         let s1 = untok_and_escape(&s1_raw, escapes, tok_arg);
@@ -3314,8 +3342,25 @@ pub fn paramsubst(
                         // c:2360 — STR2 (one-time pad).
                         idx += 1;
                         let s2_start = idx;
-                        while idx < body_chars.len() && body_chars[idx] != close_del {
+                        while idx < body_chars.len()
+                            && body_chars[idx] != close_del
+                            && body_chars[idx] != ')'
+                            && body_chars[idx] != Outpar
+                        {
                             idx += 1;
+                        }
+                        // Same close-paren guard for STR2. Bug #191.
+                        if idx >= body_chars.len()
+                            || body_chars[idx] != close_del
+                        {
+                            let pos_1based = idx + 1;
+                            zerr(&format!(
+                                "error in flags near position {} in '${{{}}}'",
+                                pos_1based,
+                                body.as_str()
+                            ));
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
                         }
                         let s2_raw: String = body_chars[s2_start..idx].iter().collect();
                         let s2 = untok_and_escape(&s2_raw, escapes, tok_arg);
