@@ -850,16 +850,23 @@ impl ShellExecutor {
             }
         }
         // c:params.c:858-860 — standard non-special param defaults.
-        setsparam("MAILCHECK", "60");
+        // C uses `setiparam(...)` (PM_INTEGER) for these so
+        // `(t)MAILCHECK` etc. report `integer`. zshrs previously
+        // routed through `setsparam` (PM_SCALAR) — the value worked
+        // but the type bit was wrong, breaking
+        // `case "${(t)LISTMAX}" in *integer*)` and any path that
+        // gates on arithmetic-typed semantics. Bug #268 in
+        // docs/BUGS.md.
+        crate::ported::params::setiparam("MAILCHECK", 60); // c:858
         // c:Src/params.c:859 — original `KEYTIMEOUT = 40` but
         // zsh 5.9.1 observably reports 10 (Homebrew arm-darwin).
         // Match the observed default so vi-mode / multi-key
         // bindings feel responsive. Bug #321 in docs/BUGS.md.
-        setsparam("KEYTIMEOUT", "10");
-        setsparam("LISTMAX", "100");
+        crate::ported::params::setiparam("KEYTIMEOUT", 10); // c:859
+        crate::ported::params::setiparam("LISTMAX", 100); // c:860
         // c:config.h:1004 — MAX_FUNCTION_DEPTH=500. Advisory cap;
         // dispatch_function_call enforces against this.
-        setsparam("FUNCNEST", "500");
+        crate::ported::params::setiparam("FUNCNEST", 500);
 
         // Run setlocale(LC_ALL, "") so nl_langinfo() (used by the
         // `langinfo` module) returns the host's actual locale instead

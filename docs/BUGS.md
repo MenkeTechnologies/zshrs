@@ -21284,6 +21284,38 @@ saved=$(set -o)
 
 ## #268 — Autovars `LISTMAX`/`MAILCHECK`/`KEYTIMEOUT`/`PERIOD` typed as `scalar` instead of `integer`
 
+**Status:** `fixed` 2026-06-03 — vm_helper init switched from
+`setsparam` (PM_SCALAR) to `setiparam` (PM_INTEGER) for
+`MAILCHECK`/`KEYTIMEOUT`/`LISTMAX`/`FUNCNEST` to mirror C
+`Src/params.c:857-860`:
+
+```c
+setiparam("MAILCHECK", 60);
+setiparam("KEYTIMEOUT", 40);
+setiparam("LISTMAX", 100);
+```
+
+Previously `vm_helper.rs:830+` used `setsparam(name, "60")`
+which creates the entry as PM_SCALAR even though the value
+happens to be numeric. `(t)NAME` then reported `scalar`
+instead of `integer`, and any code gating on
+`case "${(t)X}" in *integer*)` took the wrong branch.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'echo "LISTMAX=[${(t)LISTMAX}] KEYTIMEOUT=[${(t)KEYTIMEOUT}] MAILCHECK=[${(t)MAILCHECK}] FUNCNEST=[${(t)FUNCNEST}]"'
+LISTMAX=[integer] KEYTIMEOUT=[integer-export] MAILCHECK=[integer] FUNCNEST=[integer-special]
+$ ./target/debug/zshrs --zsh -c 'echo "LISTMAX=[${(t)LISTMAX}] KEYTIMEOUT=[${(t)KEYTIMEOUT}] MAILCHECK=[${(t)MAILCHECK}] FUNCNEST=[${(t)FUNCNEST}]"'
+LISTMAX=[integer] KEYTIMEOUT=[integer-export] MAILCHECK=[integer] FUNCNEST=[integer-special]
+```
+
+Arithmetic semantics unchanged — `LISTMAX=42; echo $((LISTMAX*2))`
+returns 84 in both shells.
+
+zshrs_shell baseline preserved (947/105 ↔ 950/102 flake range).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
