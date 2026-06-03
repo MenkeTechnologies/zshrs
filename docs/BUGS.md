@@ -21688,7 +21688,40 @@ SPROMPT="zsh: correct '%R' to '%r' [nyae]? "
 
 ## #270 — `${(t)watch}` autovar absent entirely (zsh: `array-special`)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `boot_(zsh/watch)` now registers
+`watch` and `WATCH` in paramtab during `zmodload zsh/watch`.
+
+**Root cause** — `zsh/watch`'s `boot_()` port at
+`src/ported/modules/watch.rs:737` mirrored the C body's
+`WATCHFMT`/`LOGCHECK` default-seeding and prepromptfn hook, but
+omitted the `PARAMDEF("watch", PM_ARRAY|PM_SPECIAL, ...)` and
+`PARAMDEF("WATCH", PM_SCALAR|PM_SPECIAL, ...)` partab entries
+from `Src/Modules/watch.c:697-699`. Worse, the simplified
+zshrs module framework never dispatched the per-module
+`boot_(m)` callback at all — C `Src/module.c:1910` does
+`(m->u.linked->boot)(m)`, but zshrs's `boot_module` at
+`src/ported/module.rs:2215` was a bare `return 0`.
+
+**Fix** — two-part:
+1. `src/ported/modules/watch.rs:751-768` — added two
+   `createparam()` calls inside `boot_` for `watch` (PM_ARRAY |
+   PM_SPECIAL) and `WATCH` (PM_SCALAR | PM_SPECIAL),
+   guarded against re-creation. Direct port of C
+   `Src/Modules/watch.c:697-699` PARTAB entries — without the
+   tie-via-ename twin link, which still depends on #231.
+2. `src/ported/module.rs:1216-1230` — added per-module
+   `boot_(m)` dispatch arm (currently only `zsh/watch`) at the
+   already-existing module-load completion site, just after
+   the `module_gated_params_for` loop. This is the bridge for
+   C `Src/module.c:1910 (m->u.linked->boot)(m)`. Future
+   modules whose boot_ has paramtab side effects get added
+   here.
+
+**Verify** — `zmodload zsh/watch; echo "[${(t)watch}]"` →
+`[array-special]` (matches zsh). Same for `${(t)WATCH}` →
+`[scalar-special]`.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[${(t)watch}]"'
@@ -21861,6 +21894,31 @@ typeset -x u                          # then export
 ---
 
 ## #273 — `TIMEFMT` autovar in inconsistent state — value present, but `(t)` and `${-NONE}` both signal "unset"
+
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+TIMEFMT is now properly registered in paramtab with PM_SCALAR
+type (likely closed by the same `setsparam("TIMEFMT", ...)` init
+path at `params.rs::createparamtable` + the PM_UNSET semantics
+fixed by earlier patches).
+
+Verified parity:
+```
+$ /opt/homebrew/bin/zsh -fc 'echo "val=[$TIMEFMT]"; echo "default=${TIMEFMT-NONE}"; echo "type=${(t)TIMEFMT}"'
+val=[%J  %U user %S system %P cpu %*E total]
+default=%J  %U user %S system %P cpu %*E total
+type=scalar
+$ ./target/debug/zshrs --zsh -c 'echo "val=[$TIMEFMT]"; echo "default=${TIMEFMT-NONE}"; echo "type=${(t)TIMEFMT}"'
+val=[%J  %U user %S system %P cpu %*E total]
+default=%J  %U user %S system %P cpu %*E total
+type=scalar
+```
+
+All three paths agree: value read, unset-default fallback, and
+`(t)` type all confirm TIMEFMT is a set scalar with content.
+
+Doc-only flip; no code change.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
