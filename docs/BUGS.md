@@ -13119,51 +13119,34 @@ Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ## #169 — `{...} always {...} always {...}` chained-always silently accepted (zsh: parse error)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — automatically resolved by
+bug #146 (par_cmd's STRING_LEX-after-compound rejection) and
+#168 (parse_program_until's orphan-`}` arm) together.
 
+After consuming the first `{ try } always { handler }`,
+parse_cursh returns. The trailing `always { ... }` then arrives
+at par_cmd's exit gate as a STRING_LEX (the `always` keyword
+is lexed as a plain string in this position) — the #146 fix
+emits `parse error near \`always'` immediately.
+
+**Verify**
 ```sh
 $ /opt/homebrew/bin/zsh -fc '{ echo a } always { echo b } always { echo c }' 2>&1
 zsh:1: parse error near `always'
+$ zshrs --zsh -c '{ echo a } always { echo b } always { echo c }' 2>&1
+zsh:1: parse error near `always'
 
-$ ./target/debug/zshrs --zsh -c '{ echo a } always { echo b } always { echo c }' 2>&1
-a
-b
+$ /opt/homebrew/bin/zsh -fc '{ echo a } always { echo b } extra' 2>&1
+zsh:1: parse error near `extra'
+$ zshrs --zsh -c '{ echo a } always { echo b } extra' 2>&1
+zsh:1: parse error near `extra'
+
+# Legal single always still works:
+$ zshrs --zsh -c '{ echo a } always { echo b }'  # a, b
 ```
 
-The `{ try } always { handler }` construct in zsh allows
-exactly one `always` block. Chaining multiple `always` blocks
-is a parse error. zshrs silently runs the first try-block + the
-first always-block, then ignores the second `always`.
-
-Same permissive-parser family:
-- #141 (`;;` outside case)
-- #146 (`{ cmd; } arg` trailing args)
-- #161 (empty case pattern)
-- #162 (unclosed pad-delim)
-- #167 (unclosed `{`)
-- #168 (extra `}`)
-- #169 (this — chained `always`)
-
-Even worse: `{ a } always { b } extra` (trailing tokens after
-always) is also silently accepted in zshrs.
-
-**Where** — `src/ported/parse.rs::parse_always_block`: parses
-a single `always` block then returns, ignoring trailing tokens
-without erroring. C-source `Src/parse.c::par_event` errors on
-the second `always`.
-
-**Impact** — typos in `always`-chained code silently produce
-partial execution:
-
-```sh
-{ critical_section
-} always { cleanup1
-} always { cleanup2 }    # typo: meant to nest, not chain
-# zsh: parse error caught immediately
-# zshrs: cleanup1 runs, cleanup2 silently dropped
-```
-
-**Workaround** — careful syntax review.
+No new code change required this turn; updating status to match
+observed behavior.
 
 ---
 
@@ -13436,58 +13419,70 @@ prefix in any output-parsing.
 
 ## #175 — `(( x = 0xFF ))` doesn't preserve integer base in display
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `compile_arith`'s ArithCompiler
+gate now routes base-tagged literals through MathEval, AND the
+assignnparam reassign path inherits `lastbase` for `pm.base == 0`.
 
+**Root cause** — `compile_arith` used a fast-path `ArithCompiler`
+for "simple" expressions and routed complex ones through
+`BUILTIN_ARITH_EVAL` (MathEval / math.rs). The `needs_eval`
+gate didn't list base-tagged literals (`0x`, `0X`, `0b`, `0B`,
+`N#…`), so `(( x = 0xFF ))` went through ArithCompiler which
+evaluates the literal at COMPILE time and emits
+`LoadInt(255)` — by the time `BUILTIN_SET_VAR` runs at runtime,
+the `lastbase` TLS slot has long been clobbered (-1), so the
+assignnparam reassign path couldn't inherit the source base.
+
+Additionally, even when MathEval set `lastbase` correctly at
+runtime, the reassign path in `assignnparam`
+(params.rs:5813-5860) only updated `pm.u_val` and never
+inherited `lastbase` for `pm.base == 0`. C
+`Src/params.c::setnumvalue` → `setstrvalue` runs the
+`if (!pm->base && lastbase != -1) pm->base = lastbase;`
+inheritance at c:2801.
+
+**Fix** — two complementary parts:
+
+  1. `src/extensions/compile_zsh.rs::compile_arith` `needs_eval`
+     gate — extended with `0x`/`0X`/`0b`/`0B`/`#` so base-tagged
+     literals route through `BUILTIN_ARITH_EVAL`. MathEval sets
+     `lastbase` at runtime right before the assignment fires.
+  2. `src/ported/params.rs::assignnparam` reassign-path PM_INTEGER
+     arm — added `if pm.base == 0 { lastbase().filter(|&lb| lb >
+     0).map(|lb| pm.base = lb); }` after the `pm.u_val` write.
+     Mirrors C `Src/params.c:2801`. The create-path already had
+     this at params.rs:5759-5768; the reassign path was missing
+     it.
+
+**Verify** (byte-matched against zsh)
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'integer x=5; (( x = 0xFF )); echo "[$x]"; typeset -p x'
+$ zshrs --zsh -c 'integer x=5; (( x = 0xFF )); echo "[$x]"; typeset -p x'
 [16#FF]
 typeset -i16 x=255
 
-$ ./target/debug/zshrs --zsh -c 'integer x=5; (( x = 0xFF )); echo "[$x]"; typeset -p x'
-[255]
-typeset -i x=255
-```
+$ zshrs --zsh -c 'integer x=5; (( x = 2#1011 )); echo "[$x]"; typeset -p x'
+[2#1011]
+typeset -i2 x=11
 
-When an integer variable is assigned a hexadecimal literal via
-`(( var = 0xN ))`, zsh tracks the base in the variable's
-metadata: `typeset -p` shows `-i16` (base-16) and `$var` displays
-as `16#FF` (radix notation).
+$ zshrs --zsh -c 'integer x=5; (( x = 0b1011 )); echo "[$x]"; typeset -p x'
+[2#1011]
+typeset -i2 x=11
 
-zshrs stores only the decimal value (255), losing the base
-information. Display is decimal-only.
-
-Direct assignment `x=0xff` (without `(( ))`) DOES preserve base
-in both shells:
-```sh
-$ both-shells -fc 'integer x; x=0xff; echo "[$x]"'
+$ zshrs --zsh -c '(( y = 0xFF )); echo "[$y]"; typeset -p y'
 [16#FF]
+typeset -i16 y=255
+
+# Explicit -i16 preserved (decimal literal doesn't reset base):
+$ zshrs --zsh -c 'typeset -i16 x=100; (( x = 42 )); echo "[$x]"; typeset -p x'
+[16#2A]
+typeset -i16 x=42
+
+# Simple arith still uses fast-path ArithCompiler:
+$ zshrs --zsh -c '(( x = 5 + 3 )); echo $x'
+8
 ```
 
-So the bug is specifically the `(( var = HEX ))` path.
-
-Per `man zshparam`:
-> `-i[BASE]` — Use an integer numeric type. ... The argument to
-> `-i` specifies the output base; with no argument, the same
-> base used to assign.
-
-**Where** — `src/ported/math.rs::assign_with_base_track`: the
-arith-assignment path stores the result but doesn't update the
-target's `base` attribute when the source was hex/octal/binary.
-C-source `Src/math.c::matheval` calls `setiparam` with the
-base from the most-recent literal.
-
-**Impact** — visual aid for hex bitmasks lost. Permission /
-mask manipulation scripts that use hex for clarity get decimal
-output:
-
-```sh
-integer perm=0
-(( perm = 0o644 ))   # zsh: shows "8#644" — readable
-                      # zshrs: shows "420" — must convert to verify
-```
-
-**Workaround** — explicit `typeset -i 16 x=$(( 0xFF ))` to
-force base display.
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ---
 
@@ -38133,13 +38128,13 @@ qualifiers always have a digit suffix.
 | 166 | `for x in $@` keeps empty elements (zsh: removes via IFS-split) | **port-bug** | `[[ -z $arg ]] continue` |
 | 167 | Unclosed `{ cmd` silently runs (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 168 | Extra `}` after command silently ignored (zsh: parse error) | **fixed** 2026-06-02 | n/a |
-| 169 | `{} always {} always {}` chained-always silently accepted | **port-bug** | careful review |
+| 169 | `{} always {} always {}` chained-always silently accepted | **fixed** 2026-06-02 | n/a |
 | 170 | `echo (abc` unclosed paren treated as literal | **port-bug** | careful review |
 | 171 | `cmd \| \| cmd`/`&& &&`/`\|\| \|\|` empty operands silently accepted | **fixed** 2026-06-02 | n/a |
 | 172 | `${ }` whitespace-only param name silently empty (zsh: error) | **fixed** 2026-06-02 | n/a |
 | 173 | `${(t)$(cmdsub)}` returns `scalar` (zsh: cmdsub output) | **port-bug** | drop `(t)` flag |
 | 174 | `type fn` for user-defined function shows "from zsh" suffix | **port-bug** | match `*shell function*` loosely |
-| 175 | `(( x = 0xFF ))` doesn't preserve integer base in display | **port-bug** | `typeset -i 16 x` explicit |
+| 175 | `(( x = 0xFF ))` doesn't preserve integer base in display | **fixed** 2026-06-02 | n/a |
 | 176 | Bare `echo "\033"` doesn't interpret backslash escapes by default | **port-bug** | `print` or `printf '%b'` |
 | 177 | `vared -c X` no-tty silent (zsh: "can't access terminal") | **port-bug** | `[[ -t 0 ]]` tty pre-check |
 | 178 | `IFS` doesn't affect cmdsub field-splitting in `for`/array | **port-bug** | `${(@f)$(...)}` explicit |
