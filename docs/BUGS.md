@@ -32366,6 +32366,11 @@ bisect manually.
 
 ## #423 — `PATH=str` assignment doesn't propagate to tied `path` array — one-way tie broken
 
+(See diagnosis + verify block under #424 above — the same
+`assignsparam` tail cascade fixes both #423 and #424.)
+
+**Original report:**
+
 **Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -32380,6 +32385,35 @@ path=[/opt/homebrew/anaconda3/bin /Users/wizard/.opam/default/bin ...
 `PATH` and `path` are bidirectionally tied:
 - Setting PATH (colon-string) should update path (array)
 - Setting path (array) should update PATH (colon-string)
+
+**Status:** `fixed` 2026-06-03 — `assignsparam`'s tail
+cascades scalar→array splits for the five canonical tied
+pairs.
+
+**Root cause** — `src/ported/params.rs::assignsparam` wrote
+the scalar value via `assignstrvalue` but never updated the
+tied array side. C `Src/params.c` has `pathsetfn /
+fpathsetfn / manpathsetfn / cdpathsetfn / psvarsetfn` GSU
+callbacks that call `splitstring(value, ":", &globalarr)` to
+keep `path[]` etc. in sync. zshrs lacks per-name GSU setfns
+for these pairs.
+
+**Fix** — at the bottom of `assignsparam`, after
+`assignstrvalue` returns successfully, check if `name` is
+one of PATH/FPATH/MANPATH/CDPATH/PSVAR; if so, split the
+value on `:` and write the array side directly into the
+paramtab entry (creating it as PM_ARRAY|PM_SPECIAL if
+missing). Also call `emptycmdnamtable()` when PATH changes
+(c:Src/params.c:5291 path-invalidate-cmdnamtab).
+
+**Verify**:
+- `PATH=/a:/b; echo "[${path[@]}]"` → `[/a /b]` (matches zsh).
+- `MANPATH=/x:/y; echo "[${manpath[@]}]"` → `[/x /y]`.
+- `FPATH=/x:/y; echo "[${fpath[@]}]"` → `[/x /y]`.
+- `CDPATH=/x:/y; echo "[${cdpath[@]}]"` → `[/x /y]`.
+- `path=(/a /b); echo "PATH=[$PATH]"` → `/a:/b`
+  (reverse direction regression preserved).
+- zshrs_shell baseline 949/103 (flake range).
 
 zsh implements both directions. zshrs implements only
 **path → PATH** (verified working):
@@ -32436,6 +32470,25 @@ Tedious but covers the most common case.
 ---
 
 ## #424 — scalar→array tie broken for ALL tied params (MANPATH/FPATH/CDPATH) — generalizes #423
+
+**Status:** `fixed` 2026-06-03 — covered by the #423 fix.
+`assignsparam`'s tail now cascades `PATH/FPATH/MANPATH/CDPATH/
+PSVAR` writes to `path/fpath/manpath/cdpath/psvar` via colon-
+split. See #423 below for diagnosis + fix details.
+
+Verified post-fix:
+```
+$ ./target/debug/zshrs --zsh -c 'MANPATH=/x:/y; echo "[${manpath[@]}]"'
+[/x /y]
+$ ./target/debug/zshrs --zsh -c 'FPATH=/x:/y; echo "[${fpath[@]}]"'
+[/x /y]
+$ ./target/debug/zshrs --zsh -c 'CDPATH=/x:/y; echo "[${cdpath[@]}]"'
+[/x /y]
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'`.
+
+**Original report:**
 
 **Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
 

@@ -5357,6 +5357,61 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             .unwrap()
             .insert(name.to_string(), pm_back); // c:3343
     } // c:3343
+    // c:Src/params.c pathsetfn / fpathsetfn / manpathsetfn /
+    // cdpathsetfn — when the SCALAR side of a tied colon-array
+    // pair is assigned, the canonical setfn split-rebuilds the
+    // ARRAY side via `splitstring(value, ":", &globalarr)`. zshrs
+    // lacks per-name GSU setfns for these, so the array stayed
+    // stale after `PATH=/a:/b`. Mirror the split cascade
+    // explicitly for the five canonical pairs (PATH↔path,
+    // FPATH↔fpath, MANPATH↔manpath, CDPATH↔cdpath, PSVAR↔psvar).
+    // Bug #423/#424.
+    let alt: Option<&str> = match name {
+        "PATH" => Some("path"),
+        "FPATH" => Some("fpath"),
+        "MANPATH" => Some("manpath"),
+        "CDPATH" => Some("cdpath"),
+        "PSVAR" => Some("psvar"),
+        _ => None,
+    };
+    if let Some(alt_name) = alt {
+        let parts: Vec<String> = val.split(':').map(String::from).collect();
+        if let Ok(mut tab) = paramtab().write() {
+            let entry = tab.entry(alt_name.to_string()).or_insert_with(|| {
+                Box::new(param {
+                    node: hashnode {
+                        next: None,
+                        nam: alt_name.to_string(),
+                        flags: (PM_ARRAY | PM_SPECIAL) as i32,
+                    },
+                    u_data: 0,
+                    u_arr: Some(Vec::new()),
+                    u_str: None,
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                })
+            });
+            entry.u_arr = Some(parts);
+            entry.u_str = None;
+        }
+        // c:Src/params.c:5291 — `if (t == path) cmdnamtab->emptytable
+        // (cmdnamtab)`. PATH change invalidates the command-name cache.
+        if name == "PATH" {
+            crate::ported::hashtable::emptycmdnamtable();
+        }
+    }
     unqueue_signals(); // c:3344
     cloned // c:3345
 }
