@@ -1026,6 +1026,39 @@ pub fn bin_vared(
         return 1; // c:1731
     }
     unqueue_signals();
+    // c:1799-1814 — `if (SHTTY == -1 || OPT_ISSET(ops,'t'))` open /dev/tty
+    //   (or `-t <path>`). On open failure: `zwarnnam(name, "can't access
+    //   terminal"); return 1;`. Non-interactive callers without a
+    //   controlling tty error loudly instead of silently no-opping into
+    //   the stdin-fallback path below.
+    {
+        use std::sync::atomic::Ordering;
+        let need_open = SHTTY.load(Ordering::Relaxed) == -1 || OPT_ISSET(ops, b't');
+        if need_open {
+            let path = OPT_ARG_SAFE(ops, b't').unwrap_or("/dev/tty"); // c:1802
+            let cpath = std::ffi::CString::new(path).unwrap_or_default();
+            let fd = unsafe {
+                libc::open(
+                    cpath.as_ptr(),
+                    libc::O_RDWR | libc::O_NOCTTY, // c:1803
+                )
+            };
+            if fd == -1 {
+                zwarnnam(name, "can't access terminal"); // c:1804
+                return 1; // c:1806
+            }
+            if unsafe { libc::isatty(fd) } == 0 {
+                zwarnnam(name, &format!("{}: not a terminal", path)); // c:1809
+                unsafe {
+                    libc::close(fd);
+                }
+                return 1; // c:1813
+            }
+            unsafe {
+                libc::close(fd);
+            } // not yet wired into SHTTY/shout
+        }
+    }
     // c:1841-1860 — zleread(ZLCON_VARED) drives the actual edit. Static-
     // link path: the live ZLE editor isn't reachable from this lib-side
     // entrypoint. Delegate to vared_zle_run when the ZLE entrypoint is
