@@ -7577,7 +7577,36 @@ pub fn paramsubst(
             // resolved sub-expression result (raw_value flowed from
             // subexp_value at c:2730). Bug #173 in docs/BUGS.md.
             let _ = wantt;
-        } else if wantt {
+        } else if wantt && {
+            // c:Src/subst.c:2812 — `if (v && v->pm && ((flags &
+            // PM_DECLARED) || !(flags & PM_UNSET)))`. C skips the
+            // type-tag emit entirely when the parameter is unset
+            // (no v->pm or PM_UNSET set), leaving `val` as whatever
+            // the prior `:-`/`:=` etc. modifier substituted. Bug
+            // #216 in docs/BUGS.md: zshrs unconditionally entered
+            // the wantt arm and overwrote value with `String::new()`
+            // (the "unset → empty tag" fallback below), clobbering
+            // the default that `:-` already substituted.
+            //
+            // Approximation of C's PM_DECLARED || !PM_UNSET check:
+            // skip the wantt arm when the var is fully unset (no
+            // paramtab entry, no env, no array/assoc store, not a
+            // recognized magic-assoc name). For "declared but unset"
+            // (`typeset -i x; ${(t)x}`), paramtab still has the
+            // entry — `paramtab().read().get(&var_name).is_some()`
+            // returns true and we DO emit the tag matching zsh.
+            let declared = paramtab()
+                .read()
+                .ok()
+                .and_then(|tab| tab.get(&var_name).cloned())
+                .is_some()
+                || arrays_contains(&var_name)
+                || assoc_contains(&var_name)
+                || crate::vm_helper::partab_array_flags(&var_name).is_some()
+                || (var_name.chars().all(|c| c.is_ascii_digit()) && !var_name.is_empty())
+                || std::env::var(&var_name).is_ok();
+            is_set || declared
+        } {
             // c:2807
             // ${(t)var} — emit type tag. var_attrs takes
             // precedence (carries typeset flags); fall back to

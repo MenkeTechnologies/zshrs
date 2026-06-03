@@ -14934,40 +14934,27 @@ typeset -p var | tr -d $'\n' | ... # before checksumming
 
 ## #200 — `${(k)assoc[key]}` key-flag with subscript returns empty (zsh: returns key when subscript matches)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — repro no longer reproduces.
+Likely fixed by prior `(k)` flag / subscript path work.
 
+**Verify**
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[k1]=v1; echo "${(k)h[k1]}"'
-k1
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[k1]=v1; echo "[${(k)h[k1]}]"'
+[k1]
+$ zshrs --zsh -c 'typeset -A h; h[k1]=v1; echo "[${(k)h[k1]}]"'
+[k1]
 
-$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[k1]=v1; echo "${(k)h[k1]}"'
-(empty)
+# Missing key still returns empty:
+$ zshrs --zsh -c 'typeset -A h; h[k1]=v1; echo "[${(k)h[k2]}]"'
+[]
+
+# Full-keys form still works:
+$ zshrs --zsh -c 'typeset -A h; h[k1]=v1; h[k2]=v2; echo "[${(k)h}]"'
+[k1 k2]
 ```
 
-The `(k)` key-flag combined with subscript `[key]` is zsh's
-idiom for "return the key if it exists in the assoc array".
-zshrs returns empty regardless of whether the key exists.
-
-This is the assoc-array analog of "test existence":
-```sh
-[[ -n "${(k)config[$user_input]}" ]] && echo "key exists"
-# zsh: detects existence correctly
-# zshrs: always reports key as missing because (k) returns empty
-```
-
-The full-array form `${(k)h}` (return all keys) works:
-```sh
-$ both-shells -fc 'typeset -A h; h[k1]=v1; h[k2]=v2; echo "${(k)h}"'
-k1 k2
-```
-
-Just the with-subscript form is broken.
-
-**Where** —
-`src/ported/paramsubst.rs::apply_k_flag_with_subscript`:
-doesn't honor `(k)` when subscript is present. C-source
-`Src/subst.c::paramsubst` checks `PRINT_KIND_KEY` flag after
-subscript resolution and re-emits the key string.
+No new code change required this turn; updating status to match
+observed behavior.
 
 **Impact** — assoc-array key-existence idiom returns
 false-negative for every key in zshrs, breaking common
@@ -15718,43 +15705,27 @@ norcs` instead of `$-`.
 
 ## #212 — `${(b)str}` over-escapes non-glob characters (tab)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — repro no longer reproduces.
+Likely fixed by prior `(b)` flag escape-table work.
 
+**Verify**
 ```sh
 $ /opt/homebrew/bin/zsh -fc $'s=$\'a\\tb\'; echo "${(b)s}"' | od -c | head -1
 0000000    a  \t   b  \n
+$ zshrs --zsh -c $'s=$\'a\\tb\'; echo "${(b)s}"' | od -c | head -1
+0000000    a  \t   b  \n
 
-$ ./target/debug/zshrs --zsh -c $'s=$\'a\\tb\'; echo "${(b)s}"' | od -c | head -1
-0000000    a   \  \t   b  \n
+# Glob metas still escaped (regression check):
+$ zshrs --zsh -c 's="a*b"; echo "${(b)s}"' | od -c | head -1
+0000000    a   \   *   b  \n
+
+# Newline preserved unescaped:
+$ zshrs --zsh -c $'s=$\'a\\nb\'; echo "${(b)s}"' | od -c | head -1
+0000000    a  \n   b  \n
 ```
 
-The `(b)` flag is supposed to make a string safe to use as a
-glob pattern by escaping glob metacharacters: `* ? [ ] ( ) | <
-> ^ # ~ = -`. Tab (`\t`) is NOT a glob metacharacter, so zsh
-leaves it unescaped. zshrs inserts a redundant `\` before tab.
-
-The bug is over-escaping — affecting any string containing
-non-metachar whitespace or control chars (tab, newline,
-carriage return).
-
-**Where** — `src/ported/paramflags.rs::escape_for_pattern`:
-escape table is too broad — includes characters that aren't
-zsh-glob metachars. C-source `Src/utils.c::quotestring` with
-`QT_BACKSLASH | QT_GLOB` only escapes documented metachars.
-
-**Impact** — when `(b)`-escaped strings are concatenated into
-patterns, the extra backslashes change pattern semantics:
-
-```sh
-suffix=$'\t'      # literal tab
-pattern="prefix${(b)suffix}*"
-[[ "prefix"$'\t'"x" == $pattern ]] && echo match
-# zsh: matches (pattern is "prefix\tab*", real tab in input)
-# zshrs: no match (pattern is "prefix\\\t*", requires literal backslash-tab)
-```
-
-**Workaround** — for whitespace-safe escaping, use `(q)`
-instead, which targets shell quoting (not glob escaping).
+No new code change required this turn; updating status to match
+observed behavior.
 
 ---
 
@@ -15989,40 +15960,67 @@ top-level (not inside a fn, per #203).
 
 ## #216 — `${(t)var:-default}` after `unset var` returns empty instead of falling through to default
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `(t)` flag arm now gates on
+"declared OR set" instead of running unconditionally.
 
+**Root cause** — paramsubst's wantt block at subst.rs:7580 fires
+AFTER the `:-` modifier (5848). For unset var + `:-default`,
+the `:-` arm correctly substituted `value = "NONE"`, then the
+wantt arm overwrote it with `String::new()` (the unset
+fallback) — clobbering the default. C `Src/subst.c:2812`
+gates the entire wantt block on `(v && v->pm && ((flags &
+PM_DECLARED) || !(flags & PM_UNSET)))`, so unset vars skip
+the tag-emit entirely and preserve the prior modifier's
+substitution.
+
+**Fix** — added a declared-or-set gate to the wantt arm in
+subst.rs:
+
+```rust
+} else if wantt && {
+    let declared = paramtab().read().ok()
+        .and_then(|tab| tab.get(&var_name).cloned()).is_some()
+        || arrays_contains(&var_name)
+        || assoc_contains(&var_name)
+        || partab_array_flags(&var_name).is_some()
+        || (var_name.chars().all(|c| c.is_ascii_digit())
+            && !var_name.is_empty())
+        || std::env::var(&var_name).is_ok();
+    is_set || declared
+} {
+```
+
+Approximates C's `PM_DECLARED || !PM_UNSET`. Skips wantt for
+fully-unset vars (no paramtab entry, no env, no array/assoc
+store, not a recognized magic-name or positional). For
+"declared but unset" (`typeset -i x; ${(t)x}`), paramtab still
+has the entry so the tag emits.
+
+**Verify** (byte-matched against zsh)
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[k]=v; unset h; echo "[${(t)h:-NONE}]"'
+$ zshrs --zsh -c 'typeset -A h; h[k]=v; unset h; echo "[${(t)h:-NONE}]"'
 [NONE]
 
-$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[k]=v; unset h; echo "[${(t)h:-NONE}]"'
+$ zshrs --zsh -c 'echo "[${(t)nevermeh:-NONE}]"'
+[NONE]
+
+$ zshrs --zsh -c 'typeset -A h; h[k]=v; echo "[${(t)h:-NONE}]"'
+[association]
+
+# Declared but unset → tag emitted (regression check):
+$ zshrs --zsh -c 'typeset -i x; echo "[${(t)x:-NONE}]"'
+[integer]
+
+# Bare (t) on unset preserves empty:
+$ zshrs --zsh -c 'unset h; echo "[${(t)h}]"'
 []
+
+# Common type-checks still work:
+$ zshrs --zsh -c 'a=(1 2); echo "[${(t)a}]"'        # [array]
+$ zshrs --zsh -c 'integer i=5; echo "[${(t)i}]"'    # [integer]
 ```
 
-`${(t)var}` returns the type string ("association", "array",
-"integer", etc.). For an unset variable, the type lookup
-should produce no value — and the `:-NONE` default
-substitution should kick in.
-
-zsh returns the default. zshrs returns an empty string but
-doesn't apply the `:-` default. This means zshrs's `(t)` flag
-returns an empty *value* (not unset state) — the `:-` operator
-distinguishes "unset" from "empty string" by colon presence,
-and zshrs is producing "empty" not "unset" after the type
-lookup of an unset var.
-
-```sh
-# Common type-test idiom
-[[ "${(t)h:-none}" == "association"* ]] && process_assoc h || error "h is not assoc: ${(t)h:-none}"
-# zsh: error path prints "h is not assoc: none"
-# zshrs: error path prints "h is not assoc: " (truncated)
-```
-
-**Where** — `src/ported/paramflags.rs::apply_t_flag`: when var
-is unset, returns `""` (empty string state) instead of
-preserving unset state for downstream `:-`/`:=`/`:?` operators.
-C-source `Src/subst.c::dosubst` with `PARAMSUBST_TYPESET`
-sentinels unset state so subsequent default operators trigger.
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 **Impact** — defensive type-checking idioms produce
 incorrect/empty output when the variable being introspected
@@ -38199,7 +38197,7 @@ qualifiers always have a digit suffix.
 | 197 | `typeset -f` function-body display collapses statement newlines into `; ` | **port-bug** | sed `'s/; /\n\t/g'` post-filter |
 | 198 | `bindkey -L` output uses individual entries instead of `-R` range-compressed | **port-bug** | round-trip via zshrs's own output |
 | 199 | `${(qq)x}` with embedded newline emits mixed `'a'$'\n''b'` instead of literal | **port-bug** | use `(q+)` flag explicitly |
-| 200 | `${(k)assoc[key]}` key-flag with subscript returns empty (zsh: key when exists) | **port-bug** | `[[ -v assoc[key] ]]` existence test |
+| 200 | `${(k)assoc[key]}` key-flag with subscript returns empty (zsh: key when exists) | **fixed** 2026-06-02 | n/a |
 | 201 | `typeset +x VAR` doesn't remove VAR from environment (security-relevant) | **port-bug** | `unset VAR; typeset VAR=$saved` re-bind |
 | 202 | `set -eo pipefail; false \| true` doesn't abort — pipefail ignored entirely | **port-bug** | `${pipestatus[1]}` explicit check |
 | 203 | `trap EXIT` in fn runs at shell exit instead of fn return (scope leak) | **port-bug** | wrap fn body in subshell `(...)` |
@@ -38211,11 +38209,11 @@ qualifiers always have a digit suffix.
 | 209 | Alias defined inside `(...)` subshell leaks into parent shell | **port-bug** | explicit `unalias` after |
 | 210 | `(unfunction f)`/`(zmodload m)` in subshell mutate parent state (destructive) | **port-bug** | never use subshell for state-mutating builtins |
 | 211 | `$-` (option chars) missing `f`/other letters (option-to-char table incomplete) | **port-bug** | use `setopt \| grep ...` instead |
-| 212 | `${(b)str}` over-escapes non-glob chars (tab, etc) — extra `\` inserted | **port-bug** | use `(q)` for shell quoting instead |
+| 212 | `${(b)str}` over-escapes non-glob chars (tab, etc) — extra `\` inserted | **fixed** 2026-06-02 | n/a |
 | 213 | `${assoc[(R)value]}` reverse-search-by-value errors `bad substitution` | **port-bug** | manual `for k v in "${(@kv)h}"` loop |
 | 214 | `chpwd`/`chpwd_functions` hook not fired on `cd` — breaks p10k/oh-my-zsh/zoxide/direnv | **port-bug** | wrap `cd` in function dispatching hooks |
 | 215 | `zshexit` hook function not fired on shell exit (also breaks combined with #203) | **port-bug** | `trap "..." EXIT` at top-level |
-| 216 | `${(t)var:-default}` after `unset var` returns empty instead of default | **port-bug** | explicit `(( ${+var} ))` existence check |
+| 216 | `${(t)var:-default}` after `unset var` returns empty instead of default | **fixed** 2026-06-02 | n/a |
 | 217 | `setopt cdable_vars` ignored — `cd VAR` doesn't deref VAR as path | **port-bug** | explicit `cd "$VAR"` deref |
 | 218 | `typeset NAME` for assoc array prints nothing (zsh: `h=( [k]=v ... )` form) | **port-bug** | `typeset -p h` explicit |
 | 219 | `typeset -i "h[k]"` integer-on-assoc-element silently accepted (zsh: rejects) | **port-bug** | apply attribute to whole assoc `typeset -iA` |
