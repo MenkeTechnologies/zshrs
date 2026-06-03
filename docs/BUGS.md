@@ -36217,7 +36217,35 @@ exec 5>&1                  # re-open
 
 ## #491 — error messages leak Rust `std::io::Error` format `(os error N)` — extends #488 family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `bin_kill`'s PID and PGID
+error paths now mirror C `Src/jobs.c:2994/3022 "kill %s
+failed: %e"` exactly.
+
+**Root cause** — `src/ported/jobs.rs::bin_kill` PID + PGID
+arms formatted the libc error via
+`std::io::Error::last_os_error()` whose `Display` impl
+appends `(os error N)` and leaves the first letter
+capitalized. C zsh's `%e` formatter at
+`Src/utils.c:362-368` calls `strerror` and lowercases the
+first character (except for EIO).
+
+**Fix** (`src/ported/jobs.rs`, both `kill PID` arm at
+line ~3242 and `kill -PGID` arm at line ~3182) — replace
+the `last_os_error()` interpolation with: extract the
+errno via `raw_os_error`, route through the existing
+`compat::strerror` port, lowercase the first character
+unless errno == EIO. Format: `kill ARG failed: errmsg`.
+
+**Verify**:
+- `kill 9999999` → `zsh:kill:1: kill 9999999 failed: no
+  such process; rc=1` (matches zsh byte-for-byte).
+- `kill -- -9999999` → `kill -9999999 failed: no such
+  process; rc=1` (PGID path also fixed).
+- `sleep 0.05 & kill $!; wait` → rc=0 (legit kill path
+  preserved).
+- zshrs_shell baseline 953/99 (improved from 951/101).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'kill 9999999 2>&1; echo rc=$?'
