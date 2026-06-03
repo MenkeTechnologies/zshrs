@@ -6343,6 +6343,21 @@ pub fn intsetfn(pm: &mut param, x: i64) {
             egidsetfn(x);
             return;
         }
+        // c:Src/params.c:4974 histsizesetfn / c:4998 savehistsizesetfn —
+        // `HISTSIZE=N` / `SAVEHIST=N` must update the canonical
+        // `histsiz` / `savehistsiz` globals AND clamp to >= 1 +
+        // call `resizehistents()` so the in-memory history buffer
+        // shrinks/grows. Without this dispatch the assignment
+        // lands in `pm.u_val` and `histsizegetfn` (which reads the
+        // global) keeps returning the un-touched default. Bug #520.
+        "HISTSIZE" => {
+            histsizesetfn(x);
+            return;
+        }
+        "SAVEHIST" => {
+            savehistsizesetfn(x);
+            return;
+        }
         _ => {}
     }
     pm.u_val = x;
