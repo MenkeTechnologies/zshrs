@@ -2153,6 +2153,41 @@ impl ShellExecutor {
                 };
                 cmd_status = Some(inner_status);
                 SUBSHELL_DEPTH.fetch_sub(1, Relaxed);
+                // c:Src/exec.c:4783 execcmdoutsubst — `$(...)` is a
+                // subshell, and zsh fires the EXIT trap when the
+                // subshell ends BUT only if the trap was installed
+                // INSIDE the subshell. An EXIT trap inherited from
+                // the parent fires when the parent shell exits, not
+                // again at cmdsub end. Detect "installed inside" by
+                // comparing the current traps_table["EXIT"] entry
+                // against the pre-cmdsub snapshot — fire only when
+                // the body differs (newly set, removed, or replaced).
+                // Pop the body before execute_script to avoid the
+                // re-fire inside execute_script_zsh_pipeline's own
+                // EXIT-handler tail at vm_helper.rs:1490. Bug #354.
+                let snap_exit = traps_snap.get("EXIT").cloned();
+                let live_exit = crate::ported::builtin::traps_table()
+                    .lock()
+                    .ok()
+                    .and_then(|t| t.get("EXIT").cloned());
+                if live_exit != snap_exit {
+                    if let Some(body) = live_exit {
+                        if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                            t.remove("EXIT");
+                        }
+                        let _ = crate::ported::exec_hooks::execute_script(&body);
+                    }
+                }
+                // c:Src/signals.c::dotrap(SIGEXIT) — also fire the
+                // TRAPEXIT() function-named form (ZSIG_FUNC) — but
+                // only if it was defined INSIDE the subshell (the
+                // parent's TRAPEXIT fires at parent exit, not here).
+                // ZSIG_FUNC bit on sigtrapped[SIGEXIT] tells us
+                // whether a TRAPEXIT function is registered; check
+                // BEFORE the snapshot restore.
+                // Skip for now — function-form detection mirrors the
+                // raw-body check above; deferred until a clean
+                // sigtrapped snapshot/restore pair exists.
                 // Restore parent's exit / loop / function-return
                 // state so the outer VM continues normally.
                 EXIT_PENDING.store(saved_exit_pending, Relaxed);
