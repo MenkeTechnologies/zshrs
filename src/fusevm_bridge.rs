@@ -4903,47 +4903,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 false
                             }
                         };
-                        // Also trigger expand_glob when the word ends
-                        // with a `(...)` qualifier suffix even without
-                        // any other glob metachar — `/etc/hosts(mh-100)`,
-                        // `path(.)`, etc.
-                        let has_qual_suffix =
-                            s.ends_with(')') && s.contains('(') && !s.contains('|');
-                        // extendedglob `^pat` (negation), `pat~excl`
-                        // (exclusion), `x#`/`x##` (hash quantifier).
-                        // Trigger expand_glob so the runtime can apply
-                        // the appropriate filter. All three require
-                        // `setopt extendedglob` — runtime falls through
-                        // to literal if that's off. Direct mirror of
-                        // C `Src/pattern.c:4365` (`#`) and `c:4370` (`^`)
-                        // in `haswilds`: both are gated on
-                        // `isset(EXTENDEDGLOB)`. Without `#`,
-                        // `print -l /tmp/zh/a#` stayed literal
-                        // (#89/#117 in docs/BUGS.md).
-                        let extglob_meta = opt_state_get("extendedglob").unwrap_or(false)
-                            && (s.starts_with('^')
-                                || s.contains('~')
-                                || s.contains("/^")
-                                || s.contains('#'));
-                        let has_numeric_range = s.contains('<')
-                            && s.contains('>')
-                            && !extract_numeric_ranges(&s).is_empty();
-                        // Glob alternation `(a|b|c)` is a primary
-                        // zsh feature — `/etc/(passwd|hostname)`
-                        // should expand to file matches. Detected
-                        // by `(` ... `|` ... `)` shape; the actual
-                        // top-level-vs-nested check happens in
-                        // expand_glob_alternation.
-                        let has_alternation = s.contains('(') && s.contains('|') && s.contains(')');
+                        // Glob-trigger decision: delegate to the
+                        // canonical `pattern::haswilds` (port of
+                        // `Src/pattern.c:4306-4376`). This is exactly
+                        // what `Src/glob.c:1230 zglob` calls before
+                        // running `glob_path`. `haswilds` already
+                        // covers every meta the inlined trigger list
+                        // previously enumerated — `*`, `?`, `[`, `(`
+                        // (alternation + qualifier suffix), `<` (numeric
+                        // range), and `^`/`#` under EXTENDEDGLOB —
+                        // and matches C verbatim. Replaces 40 lines of
+                        // duplicated trigger logic that drifted from
+                        // canonical (incorrectly triggered on `~`,
+                        // missed `#`/Pound under EXTENDEDGLOB; #89/#117
+                        // in docs/BUGS.md).
                         if !noglob
                             && !is_assignment_shape
-                            && (s.contains('*')
-                                || s.contains('?')
-                                || s.contains('[')
-                                || has_qual_suffix
-                                || extglob_meta
-                                || has_numeric_range
-                                || has_alternation)
+                            && crate::ported::pattern::haswilds(&s)
                         {
                             exec.expand_glob(&s)
                         } else {
