@@ -74,7 +74,7 @@ atty = "0.2"
 reedline = "0.47.0"
 nu-ansi-term = "0.50"
 zshrs-daemon = { workspace = true, optional = true }
-fusevm = { version = "0.13.3", features = ["jit-disk-cache"] }
+fusevm = { version = "0.13.9", features = ["jit-disk-cache"] }
 regex = "1.11"
 glob = "0.3"
 libc = "0.2"
