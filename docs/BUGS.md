@@ -13791,7 +13791,7 @@ done
 
 ## #179 — `${(S)pat}` shortest-match flag treated as no-op
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 (per fix details below).
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's="hello.world.txt"; echo "[${s%.*}]"; echo "[${(S)s%.*}]"; echo "[${s%%.*}]"'
@@ -14067,7 +14067,59 @@ echo "primary: ${deref[1]}"
 
 ## #183 — `"${@:1:2}"` positional slice returns full args instead of slicing
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — paramsubst's slice arm
+already produced the correct `split_parts=["a b", "c"]` array
+and `auto_splat` fired correctly, but the compile path's
+splice-shape detector (`is_splice_expansion` in
+`src/extensions/compile_zsh.rs`) didn't recognize the
+`${@:offset:length}` form as a splice. Without splice
+detection, the DQ-wrapped `"${@:1:2}"` routed through scalar
+concat (BUILTIN_CONCAT default) which IFS-joined the slice
+result, collapsing the 2-element array to a single arg
+`"a b c"`. For loop saw 1 iter.
+
+**Root cause** — `is_splice_expansion` checked for `$@`, `$*`,
+`${@}`, `${*}`, `[@]`/`[*]` subscripts, `${=NAME}`, flag-based
+forms (`(@)`, `(z)`, `(s)`, `(f)`, `(0)`, `(w)`), and range
+subscripts `[N,M]` — but NOT the bare positional slice form
+`${@:offset:length}` (and `${*:…}`). C zsh's `Src/subst.c`
+treats `${@:N:M}` and `${*:N:M}` as array-shape (first/last
+sticking, each element separate); the compile path needs to
+emit `BUILTIN_CONCAT_SPLICE` to preserve element boundaries
+through surrounding DQ-context literals.
+
+**Fix** — `src/extensions/compile_zsh.rs::is_splice_expansion`:
+add a check for `inner.starts_with("@:") || inner.starts_with
+("*:")` after the existing `[@]`/`[*]` check. Each kept
+positional element splices as its own arg with first/last
+sticking semantics — same shape as `${@}` / `${arr[@]}`.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'set -- "a b" c; for x in "${@:1:2}"; do echo "[$x]"; done'
+[a b]
+[c]
+
+$ ./target/debug/zshrs --zsh -c 'set -- a b c d; for x in "${@:2}"; do echo "[$x]"; done'
+[b]
+[c]
+[d]
+
+$ ./target/debug/zshrs --zsh -c 'set -- a b c; for x in "${@:1:0}"; do echo "iter[$x]"; done; echo done'
+done
+
+$ ./target/debug/zshrs --zsh -c 'set -- "x y" "z" w; echo "[${@:1:2}]"'
+[x y z]
+
+$ ./target/debug/zshrs --zsh -c 'set -- a b c d e; echo "[${@:2:3}]"'
+[b c d]
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Regressions clean: `"${@}"`, `"${arr[@]}"` still work; unquoted
+`${@:1:2}` still splits correctly. Baseline 944/108 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'set -- "a b" c; for x in "${@:1:2}"; do echo "[$x]"; done'
@@ -14082,10 +14134,6 @@ $ ./target/debug/zshrs --zsh -c 'set -- "a b" c; for x in "${@:1:2}"; do echo "[
 position START, take LENGTH elements. zsh: 2 elements (preserves
 quoting of `"a b"` as first element). zshrs: returns a single
 joined string for all positional parameters.
-
-Same family as #155 (string slice ignores arith) and #147 (`@`
-flag + modifier dropped) — array-slice handling broken across
-multiple paths.
 
 Verified other slice forms:
 ```sh
@@ -38789,7 +38837,7 @@ qualifiers always have a digit suffix.
 | 180 | `${(C)-text}` no-colon default with flag silently accepted | **fixed** 2026-06-02 | n/a |
 | 181 | `typeset -p` doesn't quote array elements with spaces | **port-bug** | manual `${(qq)}` loop |
 | 182 | `${${(P)name}[N]}` after-deref indexing returns full array | **port-bug** | temp `deref=("${(@P)name}")` |
-| 183 | `"${@:1:2}"` positional slice returns all instead of slicing | **port-bug** | manual loop |
+| 183 | `"${@:1:2}"` positional slice returns all instead of slicing | **fixed** 2026-06-02 | n/a |
 | 184 | `$((${a[@]} + 0))` arith with array spread silently uses first elem | **port-bug** | explicit loop summation |
 | 185 | `[[ -z "${arr[@]}" ]]` for single-empty arr returns false (zsh: true) | **port-bug** | `${arr[*]}` star form |
 | 186 | `${(@)b:-default}` for single-empty arr returns default (zsh: empty) | **fixed** 2026-06-02 | n/a |

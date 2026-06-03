@@ -5953,6 +5953,16 @@ fn is_splice_expansion(s: &str) -> bool {
         if inner.contains("[@]") || inner.contains("[*]") {
             return true;
         }
+        // `${@:offset:length}` / `${*:offset:length}` positional slice.
+        // Each kept positional element splices as its own arg with
+        // first/last sticking semantics — same shape as `${@}` /
+        // `${arr[@]}`. Without this, `"${@:1:2}"` fell through to
+        // scalar concat which IFS-joined the slice and the for-loop
+        // saw one arg `[a b c]` instead of two `[a b]` and `[c]`.
+        // Bug #183 in docs/BUGS.md.
+        if inner.starts_with("@:") || inner.starts_with("*:") {
+            return true;
+        }
         // `${=NAME}` — forced word-split per Src/subst.c:2558. The
         // resulting words splice with first/last sticking semantics,
         // same as `${arr[@]}`. Without this, `"split ${=str} wise"`
