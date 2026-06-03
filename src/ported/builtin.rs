@@ -87,7 +87,7 @@ use crate::ported::zsh_h::{
     OPT_ISSET, OPT_MINUS, OPT_PLUS, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_ABSPATH_USED, PM_ARRAY,
     PM_AUTOLOAD, PM_CUR_FPATH, PM_DECLARED, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE,
     PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER, PM_NAMEREF,
-    PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TAGGED_LOCAL,
+    PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN, PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TAGGED_LOCAL,
     PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNDEFINED, PM_UNIQUE, PM_UNSET, PM_UPPER, PM_WARNNESTED,
     PM_ZSHSTORED, POSIXBUILTINS, POSIXCD, POSIXTRAPS, PRINT_INCLUDEVALUE, PRINT_LINE, PRINT_LIST,
     PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET,
@@ -3615,7 +3615,22 @@ pub fn bin_typeset(
                     }
                     // c:2792 scanmatchtable flags1=on|roff, flags2=0.
                     let on_roff = (on as u32) | (roff as u32);
-                    on_roff == 0 || (f & on_roff) != 0
+                    // PM_RO_BY_DESIGN expansion: zshrs's special-param
+                    // setup (vm_helper.rs:1054+) replaces the dropped
+                    // PM_READONLY bit with PM_RO_BY_DESIGN so internal
+                    // writes still pass assignstrvalue's PM_READONLY
+                    // guard. `typeset -r` listing must match on either
+                    // bit to surface those entries. Mirrors C zsh's
+                    // PM_READONLY_SPECIAL (= PM_SPECIAL | PM_READONLY |
+                    // PM_RO_BY_DESIGN) where the scanhashtable bit-mask
+                    // implicitly matches RO_BY_DESIGN too (both bits
+                    // set on the same params in C). #97 in docs/BUGS.md.
+                    let on_roff_expanded = if (on_roff & PM_READONLY) != 0 {
+                        on_roff | PM_RO_BY_DESIGN
+                    } else {
+                        on_roff
+                    };
+                    on_roff_expanded == 0 || (f & on_roff_expanded) != 0
                 })
                 .map(|(k, _)| k.clone())
                 .collect();

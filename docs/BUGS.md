@@ -6895,6 +6895,73 @@ precmd() {
 
 ## #97 — `typeset -r` listing doesn't include shell-internal readonly params
 
+**Status:** `fixed` 2026-06-03 — three-point fix surfacing
+PM_RO_BY_DESIGN as the listing analog of PM_READONLY for
+internal-readonly special params.
+
+**Root cause** — `vm_helper.rs::init_partab_params` (line 1054)
+masked `special_paramdef::pm_flags` down to `PM_TIED | PM_DI |
+PM_UNSET` when stamping flags onto each special param, dropping
+PM_READONLY entirely. The mask exists for a real reason:
+`assignstrvalue` (`src/ported/params.rs:4055`) rejects writes to
+PM_READONLY params, and internal-runtime paths must keep writing
+to `LINENO` (parser bumps), `$!` (lastpid), `$?` (lastval), etc.
+C zsh's GSU setfn bypasses the guard at the assignment site; the
+Rust port hasn't wired that vtable, so the workaround was to
+clear PM_READONLY entirely. The cost: `typeset -r` saw zero
+matches.
+
+C zsh actually carries both bits on each readonly special:
+`PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY |
+PM_RO_BY_DESIGN` (`src/ported/zsh_h.rs:3240`). PM_RO_BY_DESIGN
+is the "logically readonly, but writable via the GSU setfn" bit
+that the C scanhashtable filter doesn't distinguish from
+PM_READONLY (both bits set on the same params).
+
+**Fix:**
+1. **`vm_helper.rs::init_partab_params`** — when an entry has
+   `pm_flags & PM_READONLY`, OR `PM_RO_BY_DESIGN` (instead of
+   PM_READONLY) onto the param. Writes still pass
+   `assignstrvalue`'s `PM_READONLY` guard; the param is marked
+   as logically-readonly for introspection paths.
+2. **`bin_typeset` listing filter** — expand the `on_roff` mask:
+   when `PM_READONLY` is part of the requested filter, also
+   match `PM_RO_BY_DESIGN`. Mirrors C's "both bits set on same
+   entry" effect: `let on_roff_expanded = if (on_roff &
+   PM_READONLY) != 0 { on_roff | PM_RO_BY_DESIGN } else {
+   on_roff };`.
+3. **`printparamnode` name emission** — route through
+   `quotedzputs(&hn.node.nam)` per `Src/params.c:6290` so
+   names containing shell metacharacters get single-quoted
+   (`'#'=0`, `'$'=2609`, `'?'=0`). Bare `print!("{}", nam)`
+   produced unparseable `#=0`.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'typeset -r' | head -5
+!=0
+'#'=0
+'$'=8994
+'*'=(  )
+-=569Xf
+$ ./target/debug/zshrs --zsh -c 'typeset -r' | head -5
+!=0
+'#'=0
+'$'=0
+'*'=(  )
+-=''
+```
+
+Same set + same quoting shape. Numeric values for `$` (PID),
+`PPID`, `TTYIDLE`, and the `-` option-letter string diverge
+because the underlying getters aren't all wired to live
+state — those are separate bugs, not the listing failure
+that #97 reports.
+
+zshrs_shell baseline preserved at 950/102.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh

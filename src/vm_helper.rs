@@ -1053,6 +1053,22 @@ impl ShellExecutor {
                     // Bug #143 in docs/BUGS.md.
                     let safe_pm_flags = entry.pm_flags & (PM_TIED | PM_DI | PM_UNSET);
                     let mut bits = safe_pm_flags | PM_SPECIAL;
+                    // c:Src/params.c — IPDEF4/IPDEF1 set
+                    // PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY |
+                    // PM_RO_BY_DESIGN. zshrs masks PM_READONLY out
+                    // because assignstrvalue (params.rs:4055) would
+                    // reject internal-runtime writes (LINENO bumps,
+                    // `$!`/`$$` updates, etc.) — the GSU vtable that
+                    // bypasses PM_READONLY isn't wired here. Replace
+                    // the dropped PM_READONLY with PM_RO_BY_DESIGN so
+                    // `typeset -r` can recognise these entries as
+                    // logically-readonly without blocking writes. The
+                    // listing filter in `bin_typeset` expands its
+                    // PM_READONLY match to also pick up
+                    // PM_RO_BY_DESIGN. Bug #97 in docs/BUGS.md.
+                    if (entry.pm_flags & crate::ported::zsh_h::PM_READONLY) != 0 {
+                        bits |= crate::ported::zsh_h::PM_RO_BY_DESIGN;
+                    }
                     if entry.pm_type == PM_ARRAY {
                         bits |= PM_DI;
                     }
