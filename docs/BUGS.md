@@ -22346,54 +22346,62 @@ expansion timing vs quoted-literal matching.)
 
 ## #293 — `arr[(i)pat]=value` — subscript flag on LHS of assignment silently fails
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `BUILTIN_SET_ASSOC` runtime
+now resolves `(i)`/`(I)`/`(R)`/`(r)` flag subscripts on
+indexed-array LHS to a numeric index before
+`assignsparam`.
 
+**Root cause** — `src/fusevm_bridge.rs::BUILTIN_SET_ASSOC`
+already arith-resolved numeric subscripts (`a[i+1]=v`) but
+silently passed `(i)pat`-shaped keys through to
+`assignsparam`, which then either stored the literal
+`(i)pat` as an assoc key (when name was assoc) or dropped
+the assignment entirely (indexed-array path). The read-form
+`${a[(i)pat]}` already had a working subscript-flag resolver
+at `subst.rs:4400-4445`; the LHS path was missing the same
+treatment.
+
+C `Src/params.c::getindex` evaluates `(i)`/`(I)`/`(R)`/`(r)`
+subscript flags via the same scan-and-match logic regardless
+of LHS / RHS context.
+
+**Fix** — added a `(flags)pat` shape detector to the
+`is_indexed` arm of `BUILTIN_SET_ASSOC`'s key resolver. When
+detected:
+
+  * Walk the array with iteration direction per flag (`I`/`R`
+    = end → start; `i`/`r` = start → end).
+  * Match each element via `patcompile`+`pattry` (or exact
+    string compare when `e` flag set).
+  * Return the 1-based index of the first match; or
+    `arr.len() + 1` (append-style) on miss — mirroring the
+    read-form semantics.
+
+**Verify** (byte-matched against zsh)
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); a[(i)blue]=YELLOW; echo "${a[@]}"'
+$ zshrs --zsh -c 'a=(red blue green); a[(i)blue]=YELLOW; echo "${a[@]}"'
 red YELLOW green
 
-$ ./target/debug/zshrs --zsh -c 'a=(red blue green); a[(i)blue]=YELLOW; echo "${a[@]}"'
-(empty — no output)
+$ zshrs --zsh -c 'a=(x y x); a[(I)x]=Z; echo "${a[@]}"'
+x y Z
+
+$ zshrs --zsh -c 'a=(red blue green); a[(r)blu*]=YELLOW; echo "${a[@]}"'
+red YELLOW green
+
+# Miss → append-style at len+1:
+$ zshrs --zsh -c 'a=(red blue green); a[(i)nope]=APPENDED; echo "${a[@]}"'
+red blue green APPENDED
+
+# Regression: regular subscript unchanged:
+$ zshrs --zsh -c 'a=(x y z); a[2]=Y; echo "${a[@]}"'
+x Y z
+
+# Regression: assoc subscript unchanged:
+$ zshrs --zsh -c 'typeset -A h; h[k1]=v1; h[k1]=NEW; echo "${h[k1]}"'
+NEW
 ```
 
-zsh's `arr[(i)pat]=value` syntax computes the index of the
-first match of `pat` in `arr` and assigns to that slot. So
-`a[(i)blue]` resolves to index 2 (where "blue" is), and the
-assignment makes `a[2]=YELLOW`.
-
-zshrs silently fails — the array is unchanged AND the line
-appears to produce no output (the subsequent `echo` returns
-empty, suggesting the assignment broke parsing). Likely the
-subscript-flag form isn't recognized in lvalue context.
-
-The read form `${a[(i)blue]}` (which returns the index)
-likely works (per zsh's documented index-search semantics).
-
-**Where** — `src/ported/parse/assignment.rs::parse_subscript_lhs`:
-subscript-flag forms `(i)`/`(I)`/`(R)`/`(r)` not recognized
-on the LHS. C-source `Src/parse.c::par_simple` recognizes
-the flag in subscript-context and converts to integer index
-before assignment dispatch.
-
-**Impact** — array element update by pattern-search broken:
-
-```sh
-# Update existing entry if found, else append
-update_or_add() {
-    local val="$1"
-    if [[ "${arr[(i)$val]}" -le "${#arr}" ]]; then
-        arr[(i)$val]="$val (updated)"      # zsh: updates; zshrs: silent fail
-    else
-        arr+=("$val")
-    fi
-}
-```
-
-**Workaround** — manual two-step:
-```sh
-local idx="${arr[(i)pat]}"
-arr[$idx]=YELLOW
-```
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ---
 
@@ -22851,15 +22859,27 @@ required; updating status to match observed behavior.
 
 ## #300 — `typeset -i n; n=0o10` Python-style octal prefix silently parses as 0
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — repro no longer reproduces.
+Both shells now reject `0o` prefix with the same diagnostic.
+Likely fixed by prior `mathevali` strict-trailing-char work
+(bug #75 / #258).
 
+**Verify**
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'typeset -i n; n=0o10; echo "[$n]"'
+$ /opt/homebrew/bin/zsh -fc 'typeset -i n; n=0o10; echo "[$n]"' 2>&1
 zsh:1: bad math expression: operator expected at `o10'
 
-$ ./target/debug/zshrs --zsh -c 'typeset -i n; n=0o10; echo "[$n]"'
-[0]
+$ zshrs --zsh -c 'typeset -i n; n=0o10; echo "[$n]"' 2>&1
+zsh:1: bad math expression: operator expected at `o10'
+
+# Regressions — legitimate base prefixes still work:
+$ zshrs --zsh -c 'typeset -i n; n=0x10; echo "[$n]"'     # [16#10]
+$ zshrs --zsh -c 'typeset -i n; n=010; echo "[$n]"'       # [10]
+$ zshrs --zsh -c 'typeset -i n; n=8#10; echo "[$n]"'      # [8#10]
 ```
+
+No new code change required this turn; updating status to match
+observed behavior.
 
 zsh's arith parser recognizes `0x...` (hex), `0...` (octal,
 when `OCTAL_ZEROES` opt set), `N#...` (base-N), and decimal —
@@ -38322,14 +38342,14 @@ qualifiers always have a digit suffix.
 | 290 | `${(q)arr}`/`${(qq)arr}` drops empty array elements and doesn't always-quote simple chars (round-trip broken) | **port-bug** | per-element loop applying `(qq)` |
 | 291 | `$(case word in pat) ... esac)` parse error — case-pattern `)` mis-tracked as cmdsub closer | **port-bug** | extract case into a named function |
 | 292 | `case "$x" in $pat)`/`$((expr)))`/`$(cmd)))` — case pattern doesn't expand var/arith/cmdsub | **port-bug** | pre-resolve to temp param |
-| 293 | `arr[(i)pat]=value` — subscript flag on LHS of assignment silently fails | **port-bug** | manual `idx=${arr[(i)pat]}; arr[$idx]=val` |
+| 293 | `arr[(i)pat]=value` — subscript flag on LHS of assignment silently fails | **fixed** 2026-06-02 | n/a |
 | 294 | Nested backtick `` `outer \`inner\` outer` `` parses wrong (backslash escape not honored) | **port-bug** | convert to `$()` form |
 | 295 | Array splice `a[N,M]=X` single-value doesn't shrink range — replaces only last index (#275 family) | **port-bug** | manual rebuild via slice concat |
 | 296 | `${s/\\./X}` pattern `\\X` interpretation diverges — zsh: literal `\\` + glob `.`, zshrs: escaped `.` | **port-bug** | use bracket class `[.]` instead |
 | 297 | Bare `typeset` (no args) display format missing attribute prefix (`array readonly tied NAME`) | **port-bug** | use `typeset -p` for reproducible form |
 | 298 | Bare var in slice subscript `${a[1,n]}` doesn't arith-deref `n` (zsh: evaluates as int) | **port-bug** | explicit `$` deref `${a[1,$n]}` |
 | 299 | Glob qualifier `(YN)` count-limit not applied — returns all matches | **fixed** 2026-06-02 | n/a |
-| 300 | `typeset -i n; n=0o10` (Python octal prefix) silently parses as `0` (zsh: errors loudly); security-relevant for masks | **port-bug** | use bare `022` or `8#22` |
+| 300 | `typeset -i n; n=0o10` (Python octal prefix) silently parses as `0` (zsh: errors loudly); security-relevant for masks | **fixed** 2026-06-02 | n/a |
 | 301 | `${(L/U/C)arr[N]}` case-change flag on subscripted array element errors "bad substitution" | **port-bug** | split: `e=arr[N]; ${(C)e}` |
 | 302 | `pushd +N` dirstack rotation rotates to wrong element (direction or indexing differs from zsh) | **port-bug** | absolute `pushd "${dirstack[N]}"` |
 | 303 | `trap '...' ERR` fires twice when failing cmd is inside a fn (zsh: once per logical error) | **port-bug** | `\|\| return 0` at fn end to suppress |
