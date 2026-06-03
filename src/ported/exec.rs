@@ -5606,9 +5606,15 @@ pub fn doshfunc(
     }
 
     // c:5904-5908 — `funcsave->zoptind = zoptind; ...` snapshot.
-    // zshrs's zoptind/optcind aren't ported as separate statics yet —
-    // they live in the getopts builtin's local state. Skip the
-    // snapshot until that port lands.
+    // C zsh saves zoptind (the canonical OPTIND counter) and
+    // zoptarg into the funcsave struct so OPTIND is implicitly
+    // function-local: a `getopts` loop inside the function gets
+    // its own counter that snaps back to the caller's on
+    // function return. zshrs stores OPTIND/OPTARG in paramtab
+    // as regular int/string params; snapshot them here and
+    // restore at scope end. Bug #513.
+    let funcsave_optind: Option<String> = crate::ported::params::getsparam("OPTIND");
+    let funcsave_optarg: Option<String> = crate::ported::params::getsparam("OPTARG");
 
     // c:5914 — `memcpy(funcsave->opts, opts, sizeof(opts));` — option
     // snapshot. Port wraps opts in OPTS_LIVE; capture the live state
@@ -5785,6 +5791,21 @@ pub fn doshfunc(
     if let Some(saved) = funcsave_argv0 {
         // c:6055
         crate::ported::utils::set_argzero(Some(saved)); // c:6057
+    }
+
+    // c:Src/exec.c:6060-6062 — `zoptind = funcsave->zoptind;
+    // zoptarg = funcsave->zoptarg;`. Restore OPTIND/OPTARG so
+    // an inner getopts loop's counter mutations don't leak to
+    // the caller. Bug #513.
+    if let Some(saved) = funcsave_optind {
+        if let Ok(n) = saved.parse::<i64>() {
+            crate::ported::params::setiparam("OPTIND", n);
+        } else {
+            crate::ported::params::setsparam("OPTIND", &saved);
+        }
+    }
+    if let Some(saved) = funcsave_optarg {
+        crate::ported::params::setsparam("OPTARG", &saved);
     }
 
     // c:6064 — `scriptname = funcsave->scriptname;`
