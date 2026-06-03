@@ -37351,7 +37351,48 @@ val=$((numstr))
 
 ## #512 — `${(t)EPOCHSECONDS}` and `${(t)EPOCHREALTIME}` empty — type-flag missing on zsh/datetime specials
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `zsh/datetime`'s `boot_`
+now registers EPOCHSECONDS / EPOCHREALTIME / epochtime in
+paramtab with the canonical PM_* flag set, and the
+module's per-name boot_ dispatch is wired in `module.rs`.
+
+**Root cause** — `src/ported/modules/datetime.rs::boot_`
+was a no-op return-0, and the simplified module framework
+in `src/ported/module.rs::do_boot_module` only dispatched
+zsh/watch's boot_. C `Src/Modules/datetime.c:25-30`
+registers three params via the `pd_list` feature
+descriptor with:
+- EPOCHSECONDS: PM_INTEGER|PM_READONLY|PM_HIDE|PM_HIDEVAL|PM_SPECIAL
+- EPOCHREALTIME: PM_FFLOAT|PM_READONLY|PM_HIDE|PM_HIDEVAL|PM_SPECIAL
+- epochtime: PM_ARRAY|PM_READONLY|PM_HIDE|PM_HIDEVAL|PM_SPECIAL
+
+zshrs's `${(t)EPOCHSECONDS}` resolved via
+`lookup_special_var`'s name-keyed fallback (which only
+yields the value) and `paramtab` had no entry, so the
+type-flag formatter defaulted to `scalar`.
+
+**Fix**:
+1. `src/ported/modules/datetime.rs::boot_` — for each
+   canonical entry, `createparam(name, flags)` when
+   absent. Direct PM_* citations from
+   `Src/Modules/datetime.c:25-30`.
+2. `src/ported/module.rs::do_boot_module` boot-dispatch
+   match — add `"zsh/datetime" =>
+   datetime::boot_(null())` arm beside the existing
+   `"zsh/watch"` arm.
+
+**Verify**:
+- `zmodload zsh/datetime; echo "${(t)EPOCHSECONDS}"` →
+  `integer-readonly-hide-hideval-special` (matches zsh).
+- `zmodload zsh/datetime; echo "${(t)EPOCHREALTIME}"` →
+  `float-readonly-hide-hideval-special` (matches zsh).
+- `echo $EPOCHSECONDS` → live epoch value (regression
+  preserved via the existing lookup_special_var getter).
+- `EPOCHSECONDS=0` → `read-only variable: EPOCHSECONDS`
+  (PM_READONLY now properly enforced).
+- zshrs_shell baseline 953/99 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zmodload zsh/datetime; echo "${(t)EPOCHSECONDS}"'
