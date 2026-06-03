@@ -2531,7 +2531,18 @@ impl ShellExecutor {
             return Vec::new();
         }
         let nomatch = opt_state_get("nomatch").unwrap_or(true);
-        if nomatch && Self::looks_like_glob(pattern) {
+        // Use canonical `haswilds` (port of Src/pattern.c:4306-4376)
+        // instead of the Rust-only `looks_like_glob`. C zsh's
+        // `Src/glob.c:1876` NOMATCH branch fires whenever the input
+        // tripped haswilds during the `zglob` entry check —
+        // including patterns whose internal `(` / `)` form a group
+        // or alternation but don't end with `)` (e.g. `abc(a)def`,
+        // `(abc`). The previous `looks_like_glob` only caught
+        // trailing-`(...)` qualifiers, leaving mid-word groups and
+        // unclosed parens to fall through to the literal-passthrough
+        // branch. #170 in docs/BUGS.md.
+        let is_glob = crate::ported::pattern::haswilds(pattern);
+        if nomatch && is_glob {
             // c:Src/glob.c:1876-1880 — `else if (isset(NOMATCH)) {`
             //   `zerr("no matches found: %s", ostr);`
             //   `zfree(matchbuf, 0);`

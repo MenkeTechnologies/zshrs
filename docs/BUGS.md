@@ -13572,6 +13572,65 @@ observed behavior.
 
 ## #170 — Unclosed `echo (abc` treated as literal arg (zsh: bad pattern error)
 
+**Status:** `fixed` 2026-06-03 — two-point fix routing `(`-bearing
+words through `zglob` so `patcompile` can reject malformed
+patterns.
+
+**Root cause** — two gaps:
+
+1. **`compile_zsh.rs::trigger_glob`** — the open-paren arm only
+   recognised the trailing-`(...)` qualifier shape
+   (`untoked.ends_with(')') && untoked.contains('(')`) and the
+   alternation shape (`(...|...)`). A bare leading `(abc` or
+   mid-word `abc(a)def` slipped through the pure-literal
+   `LoadConst` fast path and never reached the glob engine.
+   C `Src/pattern.c:4326 haswilds` returns true on ANY `Inpar`
+   / `(` (unless `SHGLOB` is set).
+2. **`vm_helper.rs::expand_glob`** — the NOMATCH branch was
+   gated on the Rust-only `looks_like_glob(pattern)` helper
+   which only recognised `*` / `?` / `[…]` / trailing-`(...)`.
+   Even when `zglob` ran on `abc(a)def`, the empty result fell
+   through the literal-passthrough branch instead of erroring,
+   because `looks_like_glob` returned false for mid-word
+   `(...)` groups.
+
+**Fix** — two surgical changes:
+
+1. `compile_zsh.rs::compile_word_str` `trigger_glob`: add
+   `unquoted(s, '(')` and `unquoted(s, '\u{88}')` (Inpar token)
+   arms so any unquoted `(` routes the word through
+   BUILTIN_EXPAND_TEXT → bridge → expand_glob. The lexer
+   META-encodes `(` as `\u{88}`; check both forms.
+2. `vm_helper.rs::expand_glob` NOMATCH gate: swap the Rust-only
+   `looks_like_glob` for the canonical
+   `crate::ported::pattern::haswilds`. Single source of truth
+   for "is this pattern globby" — mirrors what `zglob` itself
+   uses, and recognises mid-word `(...)` groups,
+   bare `^`-negation, `#`-quantifier under EXTENDEDGLOB, etc.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'echo (abc' 2>&1
+zsh:1: bad pattern: (abc
+$ ./target/debug/zshrs --zsh -c 'echo (abc' 2>&1
+zsh:1: bad pattern: (abc
+
+$ /opt/homebrew/bin/zsh -fc 'echo abc(a)def' 2>&1
+zsh:1: no matches found: abc(a)def
+$ ./target/debug/zshrs --zsh -c 'echo abc(a)def' 2>&1
+zsh:1: no matches found: abc(a)def
+```
+
+Regressions clean: legal `(a|b)` alternation still emits
+`no matches found`, `/tmp/*` expansion works, plain words
+(`echo hello`) bypass glob, and array assignment
+`h=(a 1 b 2)` is unaffected (parser handles `(` before
+compile_word_str sees it).
+
+zshrs_shell baseline preserved at 950/102.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
