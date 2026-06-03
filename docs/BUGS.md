@@ -12911,7 +12911,63 @@ done
 
 ## #165 — `${$((expr))}` arith-result-as-name returns empty (zsh: returns expr value)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `src/ported/subst.rs`
+subexp-detection match arm only recognized `(`/`Inpar` as the
+opening paren of a nested `$(…)` body. For arith `$((expr))`
+the lexer collapses `((`/`))` into single `Inparmath` (`\u{89}`)
+/`Outparmath` (`\u{8b}`) tokens (`Src/lex.c:565+`), which fell
+through the match's catch-all `_ => ('\0', '\0')` arm. The
+depth scan then went down the bare-`$name` identifier-walk
+path and truncated `inner` to just `$\u{89}` (2 chars). The
+truncated multsub returned the marker bytes unchanged, the
+outer's value resolved to a non-printable scalar, and `${$
+((expr))}` came out empty.
+
+A secondary issue from my recent #189 patch (post-name
+non-operator reject) would have fired on the trailing
+`)` / `\u{8b}` chars when the body extracted past the
+truncated inner. The fix bypasses my `used_subexp` skip on the
+positive-list check so subexp results flow through without
+re-applying name-validity gates.
+
+**Fix** — `src/ported/subst.rs`:
+1. Add `Inparmath => (Inparmath, Outparmath)` arm to the
+   subexp depth-scan match, mirroring the lexer's collapsed
+   double-paren tokens. The depth scan now correctly walks
+   `\u{89}…\u{8b}` to consume the full `$((expr))` body.
+2. Skip the #189 post-name positive-list check when
+   `used_subexp` is set — the subexp result is already a
+   resolved value (not a parameter name), so trailing chars
+   after the subexp scan represent C's downstream processing
+   not a malformed name.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'echo "${$((5 + 3))}"'
+8
+
+$ ./target/debug/zshrs --zsh -c 'echo "${$((1+1))}"'
+2
+
+$ ./target/debug/zshrs --zsh -c 'echo "[${$((5*5))}]"'
+[25]
+
+$ ./target/debug/zshrs --zsh -c 'echo "${$((5+3)):-default}"'
+8
+
+$ ./target/debug/zshrs --zsh -c 'echo "${$(echo hi)}"'
+hi
+
+$ ./target/debug/zshrs --zsh -c 'a=(1 2 3); echo "${$((${#a} + 10))}"'
+13
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Regressions clean: `${()-default}`, `${-default}`, `${var^^}`
+still reject (#189); `${X#default}`, `${X:-default}` still
+work. Baseline 944/108 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "${$((5 + 3))}"'
@@ -12919,39 +12975,6 @@ $ /opt/homebrew/bin/zsh -fc 'echo "${$((5 + 3))}"'
 
 $ ./target/debug/zshrs --zsh -c 'echo "${$((5 + 3))}"'
 (empty)
-```
-
-`${$((expr))}` is the form "evaluate arithmetic, treat result as
-the value of the expansion". zsh evaluates `5 + 3 = 8` and
-returns `"8"`. zshrs returns empty (the inner expansion fails
-or returns nothing usable).
-
-Per `man zshexpn` § PARAMETER EXPANSION:
-> Inside the `${...}` form, any of the parameter expansion
-> syntax can appear, including arithmetic expansion. The result
-> is treated as if it were the value of the parameter.
-
-So `${$((5 + 3))}` should produce the same as `echo $((5 + 3))`.
-
-**Where** — `src/ported/paramsubst.rs::expand_nested_arith`:
-when the inner expansion is an arith `$((...))`, the result
-isn't propagated to the outer `${...}`. C-source
-`Src/subst.c::dosubst` handles nested arith as a special case.
-
-**Impact** — defensive arith-coerce patterns using
-`${$((expr))}` to force numeric-then-treat-as-string fail:
-
-```sh
-# zsh-idiomatic: stringify an arith result for further use
-result="${$((bytes * 8))}"
-log "size in bits: $result"
-# zsh: result = "8 * bytes_value"
-# zshrs: result = empty
-```
-
-**Workaround** — direct arith expansion:
-```sh
-result="$((bytes * 8))"
 ```
 
 ---
@@ -38748,7 +38771,7 @@ qualifiers always have a digit suffix.
 | 162 | `${(l.5)x}` missing close-delim silently accepted (zsh: error) | **fixed** 2026-06-02 | n/a |
 | 163 | `${(t)1}` positional type returns `scalar` (zsh: `array-special`) | **port-bug** | `[[ "$#" -gt 0 ]]` test |
 | 164 | Extended_glob `^pat` (negation prefix) not recognized | **port-bug** | loop with `[[ == ]] continue` |
-| 165 | `${$((expr))}` arith-as-name returns empty (zsh: expr value) | **port-bug** | direct `$((expr))` |
+| 165 | `${$((expr))}` arith-as-name returns empty (zsh: expr value) | **fixed** 2026-06-02 | n/a |
 | 166 | `for x in $@` keeps empty elements (zsh: removes via IFS-split) | **port-bug** | `[[ -z $arg ]] continue` |
 | 167 | Unclosed `{ cmd` silently runs (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 168 | Extra `}` after command silently ignored (zsh: parse error) | **fixed** 2026-06-02 | n/a |

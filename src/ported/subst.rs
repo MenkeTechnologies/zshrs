@@ -3936,6 +3936,16 @@ pub fn paramsubst(
                     '(' => ('(', ')'),
                     Inbrace => (Inbrace, Outbrace),
                     Inpar => (Inpar, Outpar),
+                    // c:Src/subst.c:2655 — `$((expr))` arith form
+                    //   lexes as Inparmath … Outparmath (the double-
+                    //   paren `((`/`))` collapse into single
+                    //   tokens at lex.c:565+). Without these arms,
+                    //   the subexp scan fell through to the bare
+                    //   $name identifier-walk path and truncated the
+                    //   inner expansion to just `$\u{89}` (2 chars),
+                    //   so `${$((expr))}` returned empty. Bug #165
+                    //   in docs/BUGS.md.
+                    Inparmath => (Inparmath, Outparmath),
                     _ => ('\0', '\0'),
                 };
                 if open != '\0' {
@@ -7669,15 +7679,29 @@ pub fn paramsubst(
                 //     `-`/`!`/`?`/`#`/`*`/`@`/`$`/`0` which only
                 //     accept one char of name. Bug #189 in
                 //     docs/BUGS.md.
-                let first = r.chars().next().unwrap_or('\0');
-                let is_op_start = matches!(
-                    first,
-                    ':' | '-' | '+' | '=' | '?' | '#' | '%' | '/'
-                        | '\u{9b}' // Dash
-                        | '\u{84}' // Pound
-                        | '\u{86}' // Quest
-                );
-                !is_op_start
+                //
+                // Skip the check when the body started with a subexp
+                // (`${$((expr))}`, `${$(cmd)}`, `${${var}}`) — the
+                // subexp already produced the final value into
+                // raw_value/value via the subexp_value path; any
+                // trailing chars in `rest` are from C's downstream
+                // processing (e.g. closing brace token leftovers).
+                // C `Src/subst.c:2681` lets the subexp result flow
+                // through without re-applying name-validity gates.
+                // Bug #165 in docs/BUGS.md.
+                if used_subexp {
+                    false
+                } else {
+                    let first = r.chars().next().unwrap_or('\0');
+                    let is_op_start = matches!(
+                        first,
+                        ':' | '-' | '+' | '=' | '?' | '#' | '%' | '/'
+                            | '\u{9b}' // Dash
+                            | '\u{84}' // Pound
+                            | '\u{86}' // Quest
+                    );
+                    !is_op_start
+                }
             } {
                 zerr("bad substitution");
                 errflag.fetch_or(
