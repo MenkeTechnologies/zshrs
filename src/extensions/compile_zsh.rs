@@ -662,6 +662,16 @@ impl ZshCompiler {
             0,
         );
         self.builder.emit(Op::SetStatus, 0);
+        // c:Src/exec.c::execpline — after a pipeline finishes, C's
+        // post-command path checks errflag via zexit_or_continue()
+        // which sees the pipeline's last-stage non-zero status under
+        // `setopt errexit`. zshrs's compile_pipe path emitted
+        // SetStatus but never called emit_errexit_check, so
+        // `setopt errexit; true | false; echo never` ran "never"
+        // instead of aborting. Bug #286 in docs/BUGS.md. Mirror the
+        // existing simple-command and try-block emit_errexit_check
+        // pattern (lines 423 and 705).
+        self.emit_errexit_check();
     }
 
     fn compile_command(&mut self, cmd: &ZshCommand) {

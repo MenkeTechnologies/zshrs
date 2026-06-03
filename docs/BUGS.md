@@ -21328,54 +21328,31 @@ set -- "${argv[1]}" "Z" "${argv[3]}"   # rebuild positionals
 
 ## #282 — `$ZSH_VERSION` format diverges — `5.9.0.3-test` (4-part with suffix) vs zsh's `5.9` (2-part)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `ZSH_VERSION` already reports
+the clean release form `5.9`. Per
+`src/ported/patchlevel.rs:44`:
 
+```rust
+pub const ZSH_VERSION: &str = "5.9"; // clean release form (bug #73)
+```
+
+The full upstream snapshot tag stays tracked via
+`ZSH_PATCHLEVEL` (`zsh-5.9-465-g6b9704e`), and zshrs-specific
+identity is exposed via `ZSHRS_VERSION` so scripts that need
+to distinguish zshrs from upstream zsh have a clean detection
+point without clobbering the release-form `$ZSH_VERSION`.
+
+**Verify**
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "$ZSH_VERSION"'
-5.9
+5.9         # (or 5.9.1 on newer Homebrew builds)
 
 $ ./target/debug/zshrs --zsh -c 'echo "$ZSH_VERSION"'
-5.9.0.3-test
+5.9
 ```
 
-`$ZSH_VERSION` is widely used in `.zshrc` setups for
-feature-detection and version-gating. zsh 5.9 reports `5.9`
-(major.minor only). zshrs reports `5.9.0.3-test` — four-part
-with a suffix.
-
-Plugins do exact-match version checks:
-```sh
-[[ "$ZSH_VERSION" == 5.* ]] && enable_feature_X    # works in both
-[[ "$ZSH_VERSION" == 5.9 ]] && enable_feature_Y    # zsh: yes, zshrs: NO
-(( ${ZSH_VERSION%%.*} >= 5 ))                       # zsh: 5>=5 yes; zshrs: 5>=5 yes (same)
-```
-
-Less critical than execution bugs, but version-check based
-feature flags get unexpected results. Plugins that gate
-specific 5.9-only features may incorrectly skip them on
-zshrs.
-
-A more bash-compat-friendly approach would be to report a
-synthetic `5.9` (matching the zsh release being emulated)
-and expose the real zshrs version via a separate parameter
-like `$ZSHRS_VERSION`.
-
-**Where** — `src/ported/params/init.rs::register_ZSH_VERSION`:
-hardcoded to the zshrs build version. C-source
-`Src/init.c::setupshell` sets it from `ZSH_VERSION` constant
-in `Src/zsh.h`.
-
-**Impact** — `.zshrc` plugin guards that do exact `5.9`
-checks miss-detect zshrs.
-
-**Workaround** — fuzzy version-check patterns:
-```sh
-case "${ZSH_VERSION}" in
-    5.9*) enable_5_9_features ;;
-esac
-```
-
-(matches both `5.9` and `5.9.0.3-test`)
+No new code change required this turn; updating status to
+match observed behavior.
 
 ---
 
@@ -21719,18 +21696,52 @@ added.
 
 ## #286 — `setopt errexit; true | false` doesn't abort — pipeline-tail-status with errexit ignored
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `compile_pipe` now emits
+`emit_errexit_check()` after `BUILTIN_RUN_PIPELINE` + SetStatus.
 
-```sh
-$ /opt/homebrew/bin/zsh -fc 'setopt errexit; true | false; echo never'
-$ echo $?
-1
+**Root cause** — `src/extensions/compile_zsh.rs::compile_pipe`
+emitted the pipeline-runner + `SetStatus` but never invoked
+`emit_errexit_check()` — so under `setopt errexit`, a pipeline
+whose last stage exited non-zero ran through to the next
+statement instead of aborting. C `Src/exec.c::execpline`'s
+post-command path checks errflag via `zexit_or_continue()`
+which fires under errexit when the lastval is non-zero.
+Simple commands (`compile_simple` line 423) and try-blocks
+(line 705) already had the matching `emit_errexit_check()`
+call.
 
-$ ./target/debug/zshrs --zsh -c 'setopt errexit; true | false; echo never'
-never
-$ echo $?
-0
+**Fix** — added the call after the existing
+`Op::SetStatus`:
+
+```rust
+self.builder.emit(
+    Op::CallBuiltin(BUILTIN_RUN_PIPELINE, stages.len() as u8), 0,
+);
+self.builder.emit(Op::SetStatus, 0);
+self.emit_errexit_check();
 ```
+
+**Verify** (byte-matched against zsh)
+```sh
+$ zshrs --zsh -c 'setopt errexit; true | false; echo never'; echo "ec=$?"
+ec=1   # "never" not printed, script aborted
+
+$ zshrs --zsh -c 'setopt errexit; false; echo never'; echo "ec=$?"
+ec=1   # simple-command path (was already correct)
+
+$ zshrs --zsh -c 'setopt errexit; false | true; echo run'; echo "ec=$?"
+run
+ec=0   # last stage succeeded, no abort
+
+$ zshrs --zsh -c 'setopt errexit; true | true | false; echo never'; echo "ec=$?"
+ec=1   # 3-stage with failing tail aborts
+
+# No errexit, failing pipeline still continues:
+$ zshrs --zsh -c 'true | false; echo run'
+run
+```
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 `errexit` (`set -e`) should abort on any non-zero command
 exit. For a pipeline (without pipefail), the exit status is
@@ -38279,11 +38290,11 @@ qualifiers always have a digit suffix.
 | 279 | `$_` (last-arg-prev-cmd) empty inside function — zsh: contains fn name | **port-bug** | use `${history[1]}` or manual tracking |
 | 280 | `setopt typeset_to_unset` ignored — `typeset X` always creates parameter (set+empty) | **port-bug** | explicit `unset` after typeset |
 | 281 | `argv[N]=value`/`argv+=(x)`/`unset argv` don't sync with `$@` — argv is read-only mirror (data corruption on append) | **port-bug** | use `set -- ...` to rewrite positionals |
-| 282 | `$ZSH_VERSION` format diverges — `5.9.0.3-test` vs zsh's `5.9`; affects version-gate exact-match plugin guards | **port-bug** | fuzzy version-check patterns |
+| 282 | `$ZSH_VERSION` format diverges — `5.9.0.3-test` vs zsh's `5.9`; affects version-gate exact-match plugin guards | **fixed** 2026-06-02 | n/a |
 | 283 | `[[ "!" == "..." ]]` misparses bare `!` token as negation operator even when quoted/escaped | **port-bug** | use `[ ]` single-bracket for `!` literal |
 | 284 | `printf -- "%s\n" hi` doesn't recognize `--` end-of-options (extends #251 family) | **port-bug** | drop the `--` if format doesn't start with `-` |
 | 285 | `break`/`continue` outside loop silently succeed (zsh: errors "not in ... loop", ec=1) | **port-bug** | (none — runtime check missing) |
-| 286 | `setopt errexit; true \| false; ...` doesn't abort — pipeline-tail-status with errexit ignored | **port-bug** | `[[ ${pipestatus[-1]} -eq 0 ]] \|\| exit 1` |
+| 286 | `setopt errexit; true \| false; ...` doesn't abort — pipeline-tail-status with errexit ignored | **fixed** 2026-06-02 | n/a |
 | 287 | `${(@)assoc}` for-iteration produces single concatenated element (zsh: one element per value) | **port-bug** | use explicit `(@v)` flag |
 | 288 | `typeset -A h; h[]=value` empty-subscript silently accepted (zsh: errors) — permissive-parser family | **port-bug** | careful syntax |
 | 289 | `zmodload -L` output format wrong — bare module names vs `zmodload zsh/NAME` reproducible-script form | **port-bug** | manual format via `zmodload \| while read mod` |
