@@ -26881,7 +26881,35 @@ padded="${(l.30.)elem}"
 
 ## #329 — `setopt globsubst` doesn't enable variable-as-glob-pattern expansion
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — simple-command argv now
+routes each `$VAR`/`${VAR}`/`$(cmd)` word through
+`BUILTIN_GLOB_SUBST_EXPAND` (already implemented in
+`src/fusevm_bridge.rs:2377`); the runtime gate fires only
+when `isset(GLOBSUBST)`.
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_simple`
+pushed each arg via `compile_word_str` without emitting the
+`GLOB_SUBST_EXPAND` post-pass that the `for`-loop word arm
+at compile_zsh.rs:~4426 already had. The for-loop test
+covered the same scenario for iteration words and worked;
+the simple-command argv path was the missing parallel.
+
+**Fix** — in `compile_simple` argv push loop, after each
+`compile_word_str(word)`, if `has_unquoted_param_or_subst(word)`
+is true, emit `Op::CallBuiltin(BUILTIN_GLOB_SUBST_EXPAND, 1)`.
+The runtime handler checks `isset(GLOBSUBST)` and short-
+circuits to passthrough when the option is off — so the
+gate is a no-op for default-state callers.
+
+**Verify**:
+- `setopt globsubst; pat="zgst*"; echo $pat` → matched files
+  (matches zsh).
+- WITHOUT `setopt globsubst`: `pat="zgst*"; echo $pat` →
+  literal `zgst*` (regression preserved).
+- Plain `echo hello` → `hello` (regression preserved).
+- zshrs_shell baseline 952/100 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'cd /tmp; touch zgst_a zgst_b; setopt globsubst; pat="zgst*"; echo $pat; rm zgst_a zgst_b'
