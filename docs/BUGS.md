@@ -13755,28 +13755,49 @@ zsh's behavior:
 zshrs's `(S)` returns the same result as without it — flag is
 ignored.
 
-More tests confirm:
-```sh
-$ /opt/homebrew/bin/zsh -fc 's="abXcdXef"; echo "[${(S)s%X*}]"; echo "[${(S)s%%X*}]"'
-[abXcdef]      # S+% = remove shortest "X*" at any position
-[abXcd]         # S+%% = remove longest "X*" at any position
+**Status:** `fixed` 2026-06-02 — `#`/`##`/`%`/`%%` strip arms
+now honor SUB_SUBSTR.
 
-$ ./target/debug/zshrs --zsh -c 's="abXcdXef"; echo "[${(S)s%X*}]"; echo "[${(S)s%%X*}]"'
-[abXcd]         # S not honored
-[ab]            # S not honored
+**Root cause** — the (S) flag correctly set `sub_flags_bits |=
+SUB_SUBSTR` at subst.rs:3434, but the four strip-pattern arms
+(`#` shortest-prefix, `##` longest-prefix, `%` shortest-suffix,
+`%%` longest-suffix) never consulted the bit. Each arm walked
+the string with an anchored loop (prefix from start grows out
+for `#`/`##`; suffix from end grows out for `%`/`%%`), never
+performing the C `Src/glob.c:3106-3107` SUB_END+SUB_SUBSTR
+semantics.
+
+**Fix** — added `substr_mode = sub_flags_get() & SUB_SUBSTR !=
+0` gate in each of the four strip-arm closures. When set:
+
+  * `#` with SUB_SUBSTR — leftmost shortest substring match.
+  * `##` with SUB_SUBSTR — leftmost longest substring match.
+  * `%` with SUB_SUBSTR — rightmost shortest substring match.
+  * `%%` with SUB_SUBSTR — rightmost longest substring match.
+
+Each path scans all `(start, end)` ranges, picks the best per
+the rule above, and either returns the match (under SUB_MATCH)
+or splices it out of the value (default).
+
+**Verify** (byte-matched against zsh)
+```sh
+$ s="abXcdXef"
+$ zshrs --zsh -c 'echo "[${(S)s%X*}]"'    # [abXcdef]   (rightmost X, shortest = 1 char)
+$ zshrs --zsh -c 'echo "[${(S)s%%X*}]"'   # [abXcd]     (rightmost X, longest = Xef)
+$ zshrs --zsh -c 'echo "[${(S)s#X*}]"'    # [abcdXef]   (leftmost X, shortest = 1 char)
+$ zshrs --zsh -c 'echo "[${(S)s##X*}]"'   # [ab]        (leftmost X, longest = XcdXef)
+
+# Without (S) — pre-existing anchored semantics preserved:
+$ zshrs --zsh -c 'echo "[${s%X*}]"'       # [abXcd]
+$ zshrs --zsh -c 'echo "[${s%%X*}]"'      # [ab]
+$ zshrs --zsh -c 'echo "[${s#X*}]"'       # [abXcdXef]  (no match — X not at start)
+$ zshrs --zsh -c 'echo "[${s##X*}]"'      # [abXcdXef]  (same)
+
+# No-match → value unchanged:
+$ zshrs --zsh -c 's=abc; echo "[${(S)s%Z*}]"'  # [abc]
 ```
 
-**Where** — `src/ported/paramsubst.rs::apply_S_flag`: not
-implemented; falls through to default `%`/`%%` behavior.
-C-source `Src/subst.c::getmatch` checks `(S)` flag bit and
-inverts the anchor semantics.
-
-**Impact** — substring removal patterns that intentionally use
-`(S)` for "remove first match anywhere" produce wrong results
-(zsh-specific extension, not portable).
-
-**Workaround** — use explicit `${var/pat/}` substitution which
-has independent anchoring control via `#`/`%` prefixes.
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ---
 
@@ -38138,7 +38159,7 @@ qualifiers always have a digit suffix.
 | 176 | Bare `echo "\033"` doesn't interpret backslash escapes by default | **port-bug** | `print` or `printf '%b'` |
 | 177 | `vared -c X` no-tty silent (zsh: "can't access terminal") | **port-bug** | `[[ -t 0 ]]` tty pre-check |
 | 178 | `IFS` doesn't affect cmdsub field-splitting in `for`/array | **port-bug** | `${(@f)$(...)}` explicit |
-| 179 | `${(S)pat}` shortest-match flag treated as no-op | **port-bug** | use `${var/pat/}` explicit |
+| 179 | `${(S)pat}` shortest-match flag treated as no-op | **fixed** 2026-06-02 | n/a |
 | 180 | `${(C)-text}` no-colon default with flag silently accepted | **port-bug** | use `${(C):-text}` colon-form |
 | 181 | `typeset -p` doesn't quote array elements with spaces | **port-bug** | manual `${(qq)}` loop |
 | 182 | `${${(P)name}[N]}` after-deref indexing returns full array | **port-bug** | temp `deref=("${(@P)name}")` |
