@@ -1402,7 +1402,81 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                     s.pop();
                     s = s.trim_end().to_string();
                 }
-                s
+                // c:Src/text.c gettext2 — C zsh re-emits the function
+                // body from its parsed wordcode (`getpermtext`) with
+                // `\n\t` between sibling statements. zshrs stores raw
+                // source instead of wordcode (no Eprog for shfunc
+                // bodies), so we canonicalise the stored text here:
+                // walk char-by-char tracking quote state + brace depth
+                // and rewrite top-level `;` followed by whitespace as
+                // `\n\t`. Direct string `;` inside strings (e.g.
+                // `echo "a;b"`) or inside nested braces (e.g.
+                // `inner() { :; }`) is preserved. Bug #197 / #124 in
+                // docs/BUGS.md.
+                let chars: Vec<char> = s.chars().collect();
+                let mut out = String::with_capacity(s.len());
+                let mut in_sq = false;
+                let mut in_dq = false;
+                let mut brace_depth: i32 = 0;
+                let mut paren_depth: i32 = 0;
+                let mut i = 0;
+                while i < chars.len() {
+                    let c = chars[i];
+                    if !in_sq && !in_dq && c == '\\' && i + 1 < chars.len() {
+                        // c:Src/lex.c — backslash escapes one char in
+                        // unquoted/DQ context.
+                        out.push(c);
+                        out.push(chars[i + 1]);
+                        i += 2;
+                        continue;
+                    }
+                    if !in_dq && c == '\'' {
+                        in_sq = !in_sq;
+                        out.push(c);
+                        i += 1;
+                        continue;
+                    }
+                    if !in_sq && c == '"' {
+                        in_dq = !in_dq;
+                        out.push(c);
+                        i += 1;
+                        continue;
+                    }
+                    if !in_sq && !in_dq {
+                        match c {
+                            '{' => brace_depth += 1,
+                            '}' => brace_depth = (brace_depth - 1).max(0),
+                            '(' => paren_depth += 1,
+                            ')' => paren_depth = (paren_depth - 1).max(0),
+                            _ => {}
+                        }
+                    }
+                    // Top-level `;` (or `; `) becomes `\n\t`. Skip
+                    // trailing whitespace after `;` so we don't emit
+                    // `\n\t ` (extra space).
+                    if !in_sq
+                        && !in_dq
+                        && brace_depth == 0
+                        && paren_depth == 0
+                        && c == ';'
+                    {
+                        // Coalesce consecutive `;` and surrounding
+                        // spaces — `cmd1 ; cmd2` and `cmd1;cmd2` both
+                        // become `cmd1\n\tcmd2`.
+                        out.push('\n');
+                        out.push('\t');
+                        i += 1;
+                        while i < chars.len()
+                            && (chars[i] == ' ' || chars[i] == '\t' || chars[i] == ';')
+                        {
+                            i += 1;
+                        }
+                        continue;
+                    }
+                    out.push(c);
+                    i += 1;
+                }
+                out
             });
         }
         // c:955-958 — PM_TAGGED | PM_TAGGED_LOCAL → `# traced` marker.

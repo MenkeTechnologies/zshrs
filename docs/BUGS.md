@@ -15520,6 +15520,61 @@ unfunction _get_config
 
 ## #197 — `typeset -f` function-body display collapses statement newlines into semicolons
 
+**Status:** `fixed` 2026-06-03 — top-level `;` → `\n\t`
+canonicalization in the body-emit path at
+`src/ported/hashtable.rs`.
+
+**Root cause** — C zsh's `Src/text.c gettext2` re-emits function
+bodies from parsed wordcode (`getpermtext` path) with `\n\t`
+between sibling statements. zshrs stores function bodies as
+raw source text rather than wordcode (no Eprog for shfunc
+bodies), so `typeset -f f` for `f() { echo b1; echo b2; }`
+emitted the body verbatim with `; ` preserved.
+
+**Fix** — `hashtable.rs` body-clean block: after the
+brace/trailing-`;` strip, walk char-by-char tracking
+single-quote / double-quote state + brace/paren depth, and
+rewrite any TOP-LEVEL `;` (followed by optional whitespace
+and consecutive `;`s) to `\n\t`. Direct-string `;` inside
+strings (`echo "a;b"`) and inside nested braces (`inner() { :; }`)
+is preserved.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'f() { echo b1; echo b2; }; typeset -f f'
+f () {
+	echo b1
+	echo b2
+}
+$ ./target/debug/zshrs --zsh -c 'f() { echo b1; echo b2; }; typeset -f f'
+f () {
+	echo b1
+	echo b2
+}
+
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "a;b"; echo c; }; typeset -f f'
+f () {
+	echo "a;b"
+	echo c
+}
+$ ./target/debug/zshrs --zsh -c 'f() { echo "a;b"; echo c; }; typeset -f f'
+f () {
+	echo "a;b"
+	echo c
+}
+```
+
+Known limitation: nested function definitions
+(`outer() { inner() {…}; inner; }`) keep the inline form
+because the `inner` body is at `brace_depth > 0` — zsh's
+wordcode rewrite is recursive and indents nested bodies.
+That's bug #124's scope; the top-level statement-newline gap
+#197 reports is closed.
+
+zshrs_shell baseline preserved at 951/101 (+1 test).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
