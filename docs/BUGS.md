@@ -28230,7 +28230,49 @@ stderr=$(cat /tmp/err)
 
 ## #354 — `trap EXIT` set inside `$(...)` cmdsub doesn't fire when subshell ends
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `run_command_substitution`
+now fires the EXIT trap before restoring the parent's
+trap_table snapshot, gated on "was the body installed
+INSIDE this subshell" to avoid duplicate firing for
+inherited outer traps.
+
+**Root cause** — `src/vm_helper.rs::run_command_substitution`
+snapshotted/restored `traps_table` around the sub-VM but
+never dispatched EXIT between `vm.run()` and the restore.
+The trap body installed by `trap "..." EXIT` lived in
+traps_table during the sub-VM but got discarded by the
+snapshot restore — never fired.
+
+**Fix** — after `vm.run()` returns (and after the
+SUBSHELL_DEPTH decrement):
+1. Compare `traps_table["EXIT"]` to the pre-cmdsub snapshot
+   to detect "installed inside" (newly set, replaced, or
+   removed by the inner). If the body differs from the
+   snapshot, pop and execute it via
+   `exec_hooks::execute_script(&body)`. Popping first
+   prevents the body re-firing inside
+   `execute_script_zsh_pipeline`'s own EXIT-handler tail at
+   `vm_helper.rs:1490`.
+2. If the body is identical to the snapshot (inherited from
+   the parent), skip — the parent's own exit path will
+   fire it.
+
+**Verify**:
+- `x=$(trap "echo TRAP" EXIT; echo before)` → `[before\nTRAP]`
+  + no extra output (matches zsh).
+- `trap "echo OUTER" EXIT; x=$(echo before)` → `[before]` +
+  `OUTER` (cmdsub doesn't fire the inherited trap; outer
+  shell exit fires it once).
+- `trap "echo OUTER" EXIT; x=$(trap "echo INNER" EXIT;
+  echo before)` → `[before\nINNER]` + `OUTER` (cmdsub fires
+  its own replacement; outer fires its own at shell exit).
+- zshrs_shell baseline 952/100 preserved.
+
+The TRAPEXIT() function-form sibling is left deferred —
+needs sigtrapped snapshot/restore to detect "installed
+inside" without firing the inherited entry.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'x=$(trap "echo TRAP" EXIT; echo before); echo "[$x]"'
