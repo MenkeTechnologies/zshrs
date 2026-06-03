@@ -3177,10 +3177,27 @@ pub fn bin_kill(
                 Ok(pgid) => {
                     let r = unsafe { libc::killpg(pgid, sig) }; // c:3032
                     if r != 0 {
-                        zwarnnam(
-                            nam,
-                            &format!("kill {}: {}", arg, std::io::Error::last_os_error()),
-                        );
+                        // c:Src/jobs.c:2994/3022 — `zwarnnam("kill",
+                        // "kill %s failed: %e", *argv, errno)`. `%e`
+                        // is C's strerror-with-lowercased-first-char
+                        // formatter (Src/utils.c:362-368, except for
+                        // EIO). Mirror via the existing
+                        // compat::strerror port to avoid leaking
+                        // Rust's `(os error N)` suffix. Bug #491.
+                        let errno = std::io::Error::last_os_error()
+                            .raw_os_error()
+                            .unwrap_or(libc::EINVAL);
+                        let mut errmsg = crate::ported::compat::strerror(errno);
+                        if errno != libc::EIO {
+                            if let Some(c) = errmsg.chars().next() {
+                                errmsg = format!(
+                                    "{}{}",
+                                    c.to_ascii_lowercase(),
+                                    &errmsg[c.len_utf8()..]
+                                );
+                            }
+                        }
+                        zwarnnam(nam, &format!("kill {} failed: {}", arg, errmsg));
                         returnval = 1;
                     }
                 }
@@ -3237,10 +3254,27 @@ pub fn bin_kill(
                 Ok(pid) => {
                     let r = unsafe { libc::kill(pid, sig) }; // c:3025
                     if r != 0 {
-                        zwarnnam(
-                            nam,
-                            &format!("kill {}: {}", arg, std::io::Error::last_os_error()),
-                        ); // c:3027
+                        // c:Src/jobs.c:2994/3022 — `zwarnnam("kill",
+                        // "kill %s failed: %e", *argv, errno)`. `%e`
+                        // is C's strerror-with-lowercased-first-char
+                        // formatter (Src/utils.c:362-368, except for
+                        // EIO). Mirror via the existing
+                        // compat::strerror port to avoid leaking
+                        // Rust's `(os error N)` suffix. Bug #491.
+                        let errno = std::io::Error::last_os_error()
+                            .raw_os_error()
+                            .unwrap_or(libc::EINVAL);
+                        let mut errmsg = crate::ported::compat::strerror(errno);
+                        if errno != libc::EIO {
+                            if let Some(c) = errmsg.chars().next() {
+                                errmsg = format!(
+                                    "{}{}",
+                                    c.to_ascii_lowercase(),
+                                    &errmsg[c.len_utf8()..]
+                                );
+                            }
+                        }
+                        zwarnnam(nam, &format!("kill {} failed: {}", arg, errmsg)); // c:3027
                         returnval = 1;
                     }
                 }
