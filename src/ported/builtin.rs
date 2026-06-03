@@ -7735,6 +7735,35 @@ pub fn bin_print(
     let echo_mode = func == BIN_ECHO;
     let _ = (name, raw);
 
+    // c:Src/builtin.c:5095-5106 — `-x N` (and `-X N`) require the
+    // argument to be a positive integer (zstrtol parse with no
+    // trailing garbage AND value > 0). zsh emits
+    // `positive integer expected after -x: <arg>` and returns 1
+    // when either gate fails. The previous Rust port silently
+    // accepted any -x argument and proceeded to print the rest of
+    // argv. Bug #525.
+    if OPT_HASARG(ops, b'x') || OPT_HASARG(ops, b'X') {
+        let which = if OPT_HASARG(ops, b'X') { b'X' } else { b'x' };
+        let xarg = OPT_ARG(ops, which).unwrap_or("");
+        // c:Src/builtin.c:5101 — `expand = zstrtol(xarg, &eptr, 10);
+        //   if (*eptr || expand <= 0) zwarnnam(...positive integer
+        //   expected...); return 1;`. zstrtol parses optional
+        //   leading sign + digits and stops at the first non-digit.
+        //   Reject when eptr isn't end-of-string (trailing garbage)
+        //   OR the signed result is <= 0 (zero / negative).
+        let valid = xarg.parse::<i64>().map(|n| n > 0).unwrap_or(false);
+        if !valid {
+            zwarnnam(
+                name,
+                &format!(
+                    "positive integer expected after -{}: {}",
+                    which as char, xarg
+                ),
+            );
+            return 1;
+        }
+    }
+
     // c:4633-4685 — destination dispatch. -u FD writes to fd, -s pushes
     // to history, -z to ZLE buffer, -v VAR assigns to scalar.
     let dest_var: Option<String> = if OPT_HASARG(ops, b'v') {
