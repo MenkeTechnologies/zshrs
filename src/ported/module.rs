@@ -1226,6 +1226,13 @@ impl modulestab {
             "zsh/watch" => {
                 crate::ported::modules::watch::boot_(std::ptr::null());
             }
+            // c:Src/Modules/datetime.c:25-30 — registers EPOCHSECONDS
+            // (PM_INTEGER), EPOCHREALTIME (PM_FFLOAT), epochtime
+            // (PM_ARRAY), each with PM_READONLY|PM_HIDE|PM_HIDEVAL|
+            // PM_SPECIAL. Bug #512.
+            "zsh/datetime" => {
+                crate::ported::modules::datetime::boot_(std::ptr::null());
+            }
             _ => {}
         }
         unqueue_signals(); // c:2324

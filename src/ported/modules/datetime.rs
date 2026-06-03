@@ -379,9 +379,40 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {
     // c:292
-    // C body c:294-295 — `return 0`. Faithful empty-body port; the
-    //                    strftime builtin + EPOCHREALTIME param register
-    //                    via the bn_list/pd_list feature dispatch.
+    // C body c:294-295 — `return 0` because the param registration
+    // happens via the `pd_list` feature descriptor at
+    // `Src/Modules/datetime.c:25-30`:
+    //   { "EPOCHSECONDS",  PM_INTEGER|PM_READONLY|PM_HIDE|PM_HIDEVAL|PM_SPECIAL, ... },
+    //   { "EPOCHREALTIME", PM_FFLOAT|PM_READONLY|PM_HIDE|PM_HIDEVAL|PM_SPECIAL, ... },
+    //   { "epochtime",     PM_ARRAY|PM_READONLY|PM_HIDE|PM_HIDEVAL|PM_SPECIAL, ... }
+    // zshrs's simplified module framework doesn't drive that
+    // feature dispatch into paramtab, so `${(t)EPOCHSECONDS}`
+    // returned `scalar` (the default for an unregistered name
+    // that resolves via lookup_special_var). Register the entries
+    // here so the canonical introspection paths see the right
+    // PM_* flag set. Bug #512.
+    use crate::ported::params::{paramtab, createparam};
+    use crate::ported::zsh_h::{
+        PM_INTEGER, PM_FFLOAT, PM_ARRAY, PM_READONLY, PM_HIDE, PM_HIDEVAL, PM_SPECIAL,
+    };
+    let entries: &[(&str, u32)] = &[
+        ("EPOCHSECONDS",
+            PM_INTEGER | PM_READONLY | PM_HIDE | PM_HIDEVAL | PM_SPECIAL),
+        ("EPOCHREALTIME",
+            PM_FFLOAT  | PM_READONLY | PM_HIDE | PM_HIDEVAL | PM_SPECIAL),
+        ("epochtime",
+            PM_ARRAY   | PM_READONLY | PM_HIDE | PM_HIDEVAL | PM_SPECIAL),
+    ];
+    for (name, flags) in entries {
+        let exists = paramtab()
+            .read()
+            .ok()
+            .map(|t| t.contains_key(*name))
+            .unwrap_or(false);
+        if !exists {
+            let _ = createparam(name, *flags as i32);
+        }
+    }
     0
 }
 
