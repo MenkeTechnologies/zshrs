@@ -4240,6 +4240,67 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let v = vm.pop();
         run_cond_str_empty(v, "-n")
     });
+
+    // `exec N<<<"str"` — herestring redirect to explicit fd, applied
+    // permanently. Direct port of `Src/exec.c:4655 getherestr` +
+    // `addfd(forked, save, mfds, fn->fd1, fil, 0, ...)` at c:3766-
+    // 3780 for the nullexec=1 bare-exec-redir path. Bug #205 in
+    // docs/BUGS.md.
+    vm.register_builtin(BUILTIN_EXEC_HERESTR_FD, |vm, _argc| {
+        let fd = vm.pop().to_int() as i32;
+        let content = vm.pop().to_str();
+        // c:4671-4672 — append `\n` for "real" herestrings (not
+        // heredoc-derived). zshrs's bare-exec path only fires for
+        // the `<<<` syntax (REDIR_HERESTR), so always append.
+        let body = format!("{}\n", content);
+        // c:4673-4679 — gettempfile → write_loop → close → reopen
+        // read-only → unlink. Rust equivalent via tempfile crate or
+        // explicit O_TMPFILE; use mkstemp + unlink-immediately to
+        // mirror C exactly.
+        use std::ffi::CString;
+        let mut tmpl: Vec<u8> = b"/tmp/zshrs_hs_XXXXXX\0".to_vec();
+        let write_fd = unsafe { libc::mkstemp(tmpl.as_mut_ptr() as *mut libc::c_char) };
+        if write_fd < 0 {
+            crate::ported::utils::zwarn(&format!(
+                "can't create temp file for here document: {}",
+                std::io::Error::last_os_error()
+            ));
+            return Value::Status(1);
+        }
+        // c:4675 — write_loop(fd, t, len)
+        let bytes = body.as_bytes();
+        let mut off = 0;
+        while off < bytes.len() {
+            let n = unsafe {
+                libc::write(
+                    write_fd,
+                    bytes[off..].as_ptr() as *const libc::c_void,
+                    bytes.len() - off,
+                )
+            };
+            if n <= 0 {
+                unsafe { libc::close(write_fd) };
+                return Value::Status(1);
+            }
+            off += n as usize;
+        }
+        unsafe { libc::close(write_fd) }; // c:4676
+        // Path null-terminated by mkstemp; reopen for reading.
+        let read_fd = unsafe { libc::open(tmpl.as_ptr() as *const libc::c_char, libc::O_RDONLY) };
+        // c:4678 — unlink immediately so the file disappears on
+        // close, leaving only the fd reference.
+        unsafe { libc::unlink(tmpl.as_ptr() as *const libc::c_char) };
+        if read_fd < 0 {
+            return Value::Status(1);
+        }
+        // c:3779 addfd → dup2 to target fd, close intermediate.
+        let r = unsafe { libc::dup2(read_fd, fd) };
+        unsafe { libc::close(read_fd) };
+        if r < 0 {
+            return Value::Status(1);
+        }
+        Value::Status(0)
+    });
     // c:Src/exec.c — block-level redirect-failure gate. When a
     // compound command (`{ … } < file`, `( … ) > file`, etc.) has a
     // failing redirect (e.g. `< /nonexistent`), zsh skips the entire
@@ -5758,6 +5819,19 @@ pub const BUILTIN_COND_STR_EMPTY: u16 = 613;
 /// `[[ -n X ]]` operand-non-empty test (logical complement of
 /// BUILTIN_COND_STR_EMPTY).
 pub const BUILTIN_COND_STR_NONEMPTY: u16 = 614;
+
+/// `exec N<<<"str"` — herestring redirect to explicit fd, applied
+/// permanently to the shell (no scope restoration). Pops `[content,
+/// fd]` from the stack; creates a temp file, writes
+/// `content + "\n"`, reopens read-only, dup2's to `fd`, unlinks the
+/// temp path so it disappears on close. Mirrors C `Src/exec.c:4655
+/// getherestr` + `addfd(forked, save, mfds, fn->fd1, fil, 0, ...)`
+/// at c:3766-3780 for the bare-exec-redir code path (nullexec=1).
+/// Bug #205 in docs/BUGS.md.
+///
+/// Stack: pushes `Value::Status(0)` on success, `Status(1)` on
+/// failure. argc = 2.
+pub const BUILTIN_EXEC_HERESTR_FD: u16 = 615;
 
 /// GLOB_SUBST guard for `[[ x == $pat ]]` pattern RHS coming from
 /// parameter / command substitution. C-zsh's `[[ == ]]` semantics
