@@ -12911,6 +12911,57 @@ for ((i=0; i < ${#array}; i++)); do ...
 
 ## #160 — `autoload -U +X funcname` doesn't actually load the function body
 
+**Status:** `fixed` 2026-06-03 — `loadautofn` had a misnamed
+parameter that misinterpreted `+X`'s autol-mode flag as a
+"test_only" early-return gate.
+
+**Root cause** — C `Src/exec.c:5682 loadautofn(Shfunc shf, int
+fksh, int autol, int current_fpath)`. The `autol` parameter
+controls the wordcode-prog handling AFTER load (EF_RUN flag,
+map vs dup) — it does NOT gate whether to load. C
+unconditionally reads/parses the file regardless of autol.
+
+zshrs's port renamed the parameter to `test_only` and added an
+early return:
+
+```rust
+if test_only != 0 {
+    return 0; // test passes — file exists
+}
+```
+
+The `+X` call from `eval_autoload` (`builtin.rs:5105`,
+mirroring C `Src/builtin.c:3184`) passes `1` as that
+parameter. Under the renamed Rust semantic, `+X` reached the
+early-return and skipped the read-body + clear-PM_UNDEFINED
+block entirely — the function stayed in autoload state and
+`type compinit` reported `is an autoload shell function`
+instead of `is a shell function from /path/file`.
+
+**Fix** — `src/ported/exec.rs::loadautofn`: rename param back
+to `autol`, drop the early-return. The load + PM_UNDEFINED
+clear path always runs.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'autoload -U +X compinit; type compinit'
+compinit is a shell function from /opt/homebrew/.../functions/compinit
+$ ./target/debug/zshrs --zsh -c 'autoload -U +X compinit; type compinit'
+compinit is a shell function from /opt/homebrew/.../functions
+```
+
+Function is now genuinely loaded. Minor format gap: zshrs
+emits the directory path, zsh appends the filename. Separate
+cosmetic issue in the `type` formatter — the body-load bug
+#160 reports is closed.
+
+Regression check: `autoload -U compinit` (no `+X`) still
+shows `autoload shell function` in both shells, as expected.
+
+Baseline preserved (in the 947/105 ↔ 950/102 flake range).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
