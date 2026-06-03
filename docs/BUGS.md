@@ -13206,56 +13206,42 @@ echo "second"
 
 ## #171 — Empty pipeline/and-or operands (`a | | b`, `a && && b`) silently accepted
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — par_pline and par_sublist now
+reject empty operands between consecutive operators.
 
+**Root cause** — `src/ported/parse.rs::par_pline` and
+`par_sublist` consumed the operator (`|`/`|&` or `&&`/`||`),
+recursively called themselves, and relied on the inner call's
+`par_cmd()?` returning None to signal "no command". The
+recursive None silently propagated as `next = None` — the
+parser kept the FIRST command and dropped the operator,
+masking the syntax error. C `Src/parse.c::par_pline` /
+`par_sublist` instead fail explicitly with `parse error near
+\`<op>'` when the next token after an operator is another
+operator.
+
+**Fix** — after consuming `|`/`|&` in par_pline, check if the
+next token is also a pipe-operator; emit `parse error near
+\`<op>'` and return None. Same shape applied to par_sublist's
+DAMPER and DBAR arms (also rejecting cross-operator combos
+like `a && | b` — `&&` followed by `|` is invalid in C zsh).
+
+**Verify** (byte-matched against zsh)
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'echo a | | echo b' 2>&1
-zsh:1: parse error near `|'
+$ zshrs --zsh -c 'echo a | | echo b' 2>&1     # zsh:1: parse error near `|'
+$ zshrs --zsh -c 'echo a && && echo b' 2>&1   # zsh:1: parse error near `&&'
+$ zshrs --zsh -c 'echo a || || echo b' 2>&1   # zsh:1: parse error near `||'
+$ zshrs --zsh -c 'echo a && | echo b' 2>&1    # zsh:1: parse error near `|'
 
-$ ./target/debug/zshrs --zsh -c 'echo a | | echo b' 2>&1
-a
+# Legal pipelines and and-or chains preserved:
+$ zshrs --zsh -c 'echo a | cat'                 # a
+$ zshrs --zsh -c 'true && echo b'               # b
+$ zshrs --zsh -c 'echo a | cat | cat'           # a
+$ zshrs --zsh -c 'false && echo a || echo b'    # b
+$ zshrs --zsh -c $'echo a |\ncat'               # a (newline continuation)
 ```
 
-Doubled pipeline/conditional operators with empty operands
-should be parse errors. zsh errors. zshrs runs the first command
-(`echo a`) and silently drops the rest.
-
-Same for `&&` and `||`:
-```sh
-$ /opt/homebrew/bin/zsh -fc 'echo a && && echo b' 2>&1
-zsh:1: parse error near `&&'
-
-$ ./target/debug/zshrs --zsh -c 'echo a && && echo b' 2>&1
-a
-
-$ /opt/homebrew/bin/zsh -fc 'echo a || || echo b' 2>&1
-zsh:1: parse error near `||'
-
-$ ./target/debug/zshrs --zsh -c 'echo a || || echo b' 2>&1
-a
-```
-
-All three operators have the same permissive behavior in zshrs.
-
-**Where** — `src/ported/parse.rs::parse_pipeline` / `::parse_andor`:
-allows zero-token expression between consecutive operators.
-C-source `Src/parse.c::par_pline` requires at least one command
-between pipe-operators.
-
-**Impact** — typos with extra `|`/`&&`/`||` silently truncate
-script execution:
-
-```sh
-# user typo: extra | from copy-paste
-process_input | | filter_data | output
-# zsh: parse error (caught immediately)
-# zshrs: process_input runs, rest dropped — filter_data and
-#        output never execute
-```
-
-Cascading silent failures.
-
-**Workaround** — careful syntax review.
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ---
 
@@ -38146,7 +38132,7 @@ qualifiers always have a digit suffix.
 | 168 | Extra `}` after command silently ignored (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 169 | `{} always {} always {}` chained-always silently accepted | **port-bug** | careful review |
 | 170 | `echo (abc` unclosed paren treated as literal | **port-bug** | careful review |
-| 171 | `cmd \| \| cmd`/`&& &&`/`\|\| \|\|` empty operands silently accepted | **port-bug** | careful review |
+| 171 | `cmd \| \| cmd`/`&& &&`/`\|\| \|\|` empty operands silently accepted | **fixed** 2026-06-02 | n/a |
 | 172 | `${ }` whitespace-only param name silently empty (zsh: error) | **port-bug** | careful review |
 | 173 | `${(t)$(cmdsub)}` returns `scalar` (zsh: cmdsub output) | **port-bug** | drop `(t)` flag |
 | 174 | `type fn` for user-defined function shows "from zsh" suffix | **port-bug** | match `*shell function*` loosely |
