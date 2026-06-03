@@ -13614,7 +13614,31 @@ printf '%b' '\033[2K\r'
 
 ## #177 — `vared` (without -c flag) doesn't emit "can't access terminal" error
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — covered by the same patch as
+#305 (`vared` non-interactive tty-open check). `bin_vared`
+skipped C's c:1799-1814 tty-open block entirely and fell
+through to a stdin-read fallback. Adding the
+`SHTTY == -1 || OPT_ISSET('t')` block at
+`src/ported/zle/zle_main.rs::bin_vared` (open `/dev/tty` with
+`O_RDWR|O_NOCTTY`, error `can't access terminal` on open
+failure, `<path>: not a terminal` on isatty miss) now fires
+for `vared`, `vared -c X`, and `vared -t /bogus`. See #305
+for full root cause + fix details.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'vared -c X' 2>&1; echo $?
+zsh:vared:1: can't access terminal
+1
+
+$ ./target/debug/zshrs --zsh -c 'X=foo; vared X' 2>&1; echo $?
+zsh:vared:1: can't access terminal
+1
+```
+
+Both match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'vared -c X' 2>&1
@@ -13622,38 +13646,6 @@ zsh:vared:1: can't access terminal
 
 $ ./target/debug/zshrs --zsh -c 'vared -c X' 2>&1
 (empty - no error, returns)
-```
-
-The `vared` builtin is interactive — it requires a tty to edit
-the value. When run in a non-interactive context (no tty), zsh
-emits `can't access terminal` error and returns non-zero.
-
-zshrs silently returns with no error and no editing.
-
-**Where** — `src/ported/builtin_vared.rs::edit_param`: doesn't
-check `isatty(stdin)` and emit error when terminal isn't
-available. C-source `Src/Modules/zutil.c` errors on no-tty
-condition.
-
-**Impact** — scripts that `vared` for value editing inside
-non-interactive contexts (CI, pipes, `-c` mode) silently skip
-the edit step. User expects to see an error and a chance to
-fall back to default; instead the variable is unchanged
-silently.
-
-```sh
-echo "Please review the config:"
-vared -p "Edit > " config_var   # in CI: silent no-op in zshrs
-                                 # in zsh: errors, user sees it
-```
-
-**Workaround** — explicit tty check:
-```sh
-if [[ -t 0 ]]; then
-    vared -p "Edit > " config_var
-else
-    echo "No terminal — skipping editor"
-fi
 ```
 
 ---
@@ -13855,7 +13847,26 @@ Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ## #180 — `${(C)-text}` bash-style default with case-flag silently accepted
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — covered by same #189 patch.
+After the `(C)` flags are consumed, `var_name = "-"` (single-
+char special). Then `from-bash-style` (alphanumeric rest)
+appears where only an operator chars (`:`/`-`/`+`/`=`/`?`/`#`/
+`%`/`/`) are allowed. The post-name positive-list reject in
+`src/ported/subst.rs` now fires `bad substitution` matching
+C `Src/subst.c:2993-3003` flagerr. Both `${(C)-text}` and
+`${-text}` go through the same code path.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'echo "${(C)-from-bash-style}"' 2>&1; echo $?
+zsh:1: bad substitution
+1
+```
+
+Matches `/opt/homebrew/bin/zsh -fc '…'`. See #189 for the full
+fix details.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "${(C)-from-bash-style}"' 2>&1
@@ -13865,37 +13876,9 @@ $ ./target/debug/zshrs --zsh -c 'echo "${(C)-from-bash-style}"' 2>&1
 From-Bash-Style
 ```
 
-The `${(FLAG)-default}` form (without colon between FLAG and `-`)
-is a bash-extension form that zsh doesn't recognize as a default
-expression. zsh interprets `(C)-from-bash-style` as "apply (C)
-to the parameter named `-from-bash-style`" — and `$-` is the
-shell-flags special, returning `569x`.
-
-zshrs parses it as "apply (C) to the default `from-bash-style`"
-yielding `From-Bash-Style`.
-
-Per `man zshexpn`:
-> `${name:-default}` (with colon) — apply default if unset.
-> `${name-default}` (no colon) — apply default if unset, but
-> not if empty.
-
-The form `${(C)-text}` (with the FLAG and `-`) is non-standard;
-zsh treats `-text` as part of the parameter name.
-
-**Where** — `src/ported/paramsubst.rs::parse_flag_then_default`:
-treats `-text` after `)` as default-text. C-source
-`Src/subst.c::dosubst` requires colon-separator.
-
-**Impact** — bash-style `${(C)-default}` works in zshrs but
-not zsh. Cross-shell scripts that use this syntax (originally
-bash) silently produce different results. Falls in the
-permissive-parser family — zshrs accepts bash-isms that zsh
-rejects.
-
-**Workaround** — always use colon-form `${(FLAG):-default}`:
-```sh
-echo "${(C):-default}"   # both shells: "Default"
-```
+The report's claim that zsh returns `569x` may have been from
+the reporter's shell where `$-` includes the `x` flag (`set -x`
+set). On a clean shell zsh emits `bad substitution`.
 
 ---
 
@@ -14224,7 +14207,53 @@ fi
 
 ## #186 — `${(@)b:-default}` for single-empty array returns default (zsh: returns empty)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — the `:-` arm in
+`src/ported/subst.rs` used `!is_set || raw_value.is_empty()`
+as the vunset gate. For `b=("")` (array with one empty
+element) with `(@)` flag set, `is_set` is true (array exists)
+but `raw_value.is_empty()` is true too (the joined-scalar
+view of `("")` is empty string), so the default fired. C zsh
+`Src/subst.c:3193` checks the array-with-`(@)` form
+differently: existence with ANY elements (including one
+empty element) means "set, not null".
+
+**Root cause** — for `(@)`/nojoin==2 paths, the vunset proxy
+should be "array has ZERO elements", not "joined-scalar is
+empty". Single-empty-element array (`("")`) is set with
+content `[""]`, length 1 — `:-default` should NOT fire.
+
+**Fix** — `src/ported/subst.rs` `:-` arm: gate the vunset
+check on `nojoin == 2 && arrays_contains(var_name)`. When the
+`(@)` flag is set on an array variable, use `array.is_empty()`
+to decide vunset; otherwise keep the existing
+`raw_value.is_empty()` check (which is correct for scalars
+and non-`(@)` paths).
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'b=(""); echo "[${(@)b:-default}]"'
+[]
+
+$ ./target/debug/zshrs --zsh -c 'a=(); echo "[${(@)a:-default}]"'
+[default]
+
+$ ./target/debug/zshrs --zsh -c 'c=("x"); echo "[${(@)c:-default}]"'
+[x]
+
+$ ./target/debug/zshrs --zsh -c 'b=(""); echo "[${b:-default}]"'
+[default]
+
+$ ./target/debug/zshrs --zsh -c 'a=("" "" ""); echo "[${(@)a:-default}]"'
+[  ]
+
+$ ./target/debug/zshrs --zsh -c 's=""; echo "[${(@)s:-default}]"'
+[default]
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Baseline 948/104 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'b=(""); echo "[${(@)b:-default}]"'
@@ -38730,16 +38759,16 @@ qualifiers always have a digit suffix.
 | 174 | `type fn` for user-defined function shows "from zsh" suffix | **port-bug** | match `*shell function*` loosely |
 | 175 | `(( x = 0xFF ))` doesn't preserve integer base in display | **fixed** 2026-06-02 | n/a |
 | 176 | Bare `echo "\033"` doesn't interpret backslash escapes by default | **port-bug** | `print` or `printf '%b'` |
-| 177 | `vared -c X` no-tty silent (zsh: "can't access terminal") | **port-bug** | `[[ -t 0 ]]` tty pre-check |
+| 177 | `vared -c X` no-tty silent (zsh: "can't access terminal") | **fixed** 2026-06-02 | n/a |
 | 178 | `IFS` doesn't affect cmdsub field-splitting in `for`/array | **port-bug** | `${(@f)$(...)}` explicit |
 | 179 | `${(S)pat}` shortest-match flag treated as no-op | **fixed** 2026-06-02 | n/a |
-| 180 | `${(C)-text}` no-colon default with flag silently accepted | **port-bug** | use `${(C):-text}` colon-form |
+| 180 | `${(C)-text}` no-colon default with flag silently accepted | **fixed** 2026-06-02 | n/a |
 | 181 | `typeset -p` doesn't quote array elements with spaces | **port-bug** | manual `${(qq)}` loop |
 | 182 | `${${(P)name}[N]}` after-deref indexing returns full array | **port-bug** | temp `deref=("${(@P)name}")` |
 | 183 | `"${@:1:2}"` positional slice returns all instead of slicing | **port-bug** | manual loop |
 | 184 | `$((${a[@]} + 0))` arith with array spread silently uses first elem | **port-bug** | explicit loop summation |
 | 185 | `[[ -z "${arr[@]}" ]]` for single-empty arr returns false (zsh: true) | **port-bug** | `${arr[*]}` star form |
-| 186 | `${(@)b:-default}` for single-empty arr returns default (zsh: empty) | **port-bug** | `(( ${#arr} > 0 ))` check |
+| 186 | `${(@)b:-default}` for single-empty arr returns default (zsh: empty) | **fixed** 2026-06-02 | n/a |
 | 187 | `f() { :; } > /file` redirect on fn-def creates file at def time | **port-bug** | redirect at call site |
 | 188 | Empty-array slice `${a[@]:0:1}` iterates once with empty val | **port-bug** | `${#a} > 0` pre-check |
 | 189 | `${()-default}` empty-flag-paren silently returns `$-` | **fixed** 2026-06-02 | n/a |
