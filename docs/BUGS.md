@@ -11415,7 +11415,48 @@ zshrs: command not found: b
 
 ## #147 — `${(@)arr:mod}` modifier dropped when applied with `(@)` flag
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — the modifier dispatch in
+`src/ported/subst.rs` (around line 7509) had a
+`qt && arrays_contains(&var_name)` branch that sepjoined the
+array to a scalar then ran the modifier once on the joined
+form. This branch fired for `${(@)a:t}` even though `(@)` is
+the explicit "preserve array shape" signal — the modifier
+ran on the joined `"/a/b.txt /c/d.log"` and returned its tail
+`"d.log"`. zsh's C path at `Src/subst.c:3030` keeps `isarr=-1`
+under `(@)` so the modifier loops per-element.
+
+**Root cause** — the qt-sepjoin branch's gate didn't exclude
+`nojoin == 2` (the `(@)` flag). Adding the exclusion routes
+`(@)` through the fall-through `arrays_get(&var_name)` arm
+which correctly maps the modifier over each array element.
+
+**Fix** — `src/ported/subst.rs` modifier dispatch: extend the
+qt-sepjoin gate from `qt && arrays_contains` to
+`qt && arrays_contains && nojoin != 2`. When `(@)` is set,
+fall through to the per-element loop. Single-line gate change.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'a=(/a/b.txt /c/d.log); echo "${(@)a:t}"'
+b.txt d.log
+
+$ ./target/debug/zshrs --zsh -c 'a=(/a/b.txt /c/d.log); echo "${(@)a:h}"'
+/a /c
+
+$ ./target/debug/zshrs --zsh -c 'a=(/a/b.txt /c/d.log); echo "${(@)a:r}"'
+/a/b /c/d
+
+$ ./target/debug/zshrs --zsh -c 'a=(foo.bar baz.qux); echo "${(@)a:e}"'
+bar qux
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Regressions clean: `${a:t}` (no `(@)`) still returns the tail
+of joined (`d.log`); `${a[@]:t}` (subscript form) still works
+per-element; `${(@U)a}` / `${(@L)a}` case mods still apply
+per-element. Baseline 946/106 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(/a/b.txt /c/d.log); echo "${(@)a:t}"'
@@ -38908,7 +38949,7 @@ qualifiers always have a digit suffix.
 | 144 | `${(q)str}` with newline uses `\<newline>` not `$'\n'` form | **port-bug** | `(qq)` double-quote form |
 | 145 | `${(k)h[name]}` key-existence query errors "bad substitution" | **port-bug** | `(( ${+h[name]} ))` |
 | 146 | `{ cmd; } arg` trailing args silently accepted (zsh: parse error) | **fixed** 2026-06-02 | n/a |
-| 147 | `${(@)arr:mod}` modifier dropped after `(@)` flag | **port-bug** | `${arr[@]:mod}` subscript form |
+| 147 | `${(@)arr:mod}` modifier dropped after `(@)` flag | **fixed** 2026-06-02 | n/a |
 | 148 | `zsh/mathfunc` missing cbrt/asinh/erfc/gamma/j0/rand48/... | **port-bug** | external `bc`/`python` |
 | 149 | `${(q)str}` with tab/control chars uses `\X` not `$'\X'` form | **port-bug** | `(qq)` double-quote form |
 | 150 | `$OPTERR` initialized to `1` (zsh: empty/unset) | **port-bug** | `(( OPTIND > 1 ))` check |
