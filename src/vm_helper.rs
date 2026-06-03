@@ -826,6 +826,29 @@ impl ShellExecutor {
         {
             setsparam("SPROMPT", "zsh: correct '%R' to '%r' [nyae]? ");
         }
+        // c:Src/params.c:417-422 — `PROMPT*` aliases for `PS*`.
+        // C zsh's IPDEF7("PROMPT", &prompt), IPDEF7("PROMPT2",
+        // &prompt2), IPDEF7("PROMPT3", &prompt3), IPDEF7("PROMPT4",
+        // &prompt4) all point to the same C globals as the matching
+        // IPDEF7("PS{1..4}", ...) entries — they're aliases in C,
+        // sharing storage. zshrs's paramtab keeps them as separate
+        // entries; mirror the alias by mirroring the value here.
+        // Bug #274 in docs/BUGS.md (PROMPT3 was the visible report;
+        // PROMPT/PROMPT2/PROMPT4 had the same gap silently).
+        for (alias, source) in &[
+            ("PROMPT", "PS1"),
+            ("PROMPT2", "PS2"),
+            ("PROMPT3", "PS3"),
+            ("PROMPT4", "PS4"),
+        ] {
+            if crate::ported::params::getsparam(alias)
+                .map_or(true, |s| s.is_empty())
+            {
+                if let Some(v) = crate::ported::params::getsparam(source) {
+                    setsparam(alias, &v);
+                }
+            }
+        }
         // c:params.c:858-860 — standard non-special param defaults.
         setsparam("MAILCHECK", "60");
         // c:Src/params.c:859 — original `KEYTIMEOUT = 40` but
