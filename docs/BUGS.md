@@ -21845,7 +21845,39 @@ typeset -A config=(
 
 ## #272 — `typeset -axU` combined flags — `-U` dedup not applied when combined with `-x` (export)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — pre-stamp PM_UNIQUE on the
+pm BEFORE the array-init setarrvalue runs.
+
+**Root cause** — `src/ported/builtin.rs::bin_typeset`
+`is_paren_init` branch (the `name=(elems...)` path) called
+`set_array(n, elems)` first, then stamped PM_UNIQUE in the
+post-assign block. `set_array → setaparam → assignaparam`
+reads `pm.flags & PM_UNIQUE` at `params.rs:5571` to gate
+`simple_arrayuniq`. Since PM_UNIQUE wasn't on pm.flags yet,
+dedup didn't fire. C zsh's `Src/builtin.c:2476-2479` does the
+pre-stamp explicitly; the Rust port only did it inside the
+PM_LOCAL block, so top-level `typeset -axU` skipped it.
+
+(`typeset -aU u=(...)` without `-x` happened to work due to
+a side path, masking the gap — verified by `(t)u` showing
+`array-unique` in both orderings while only the no-`-x`
+form deduped.)
+
+**Fix** (`src/ported/builtin.rs`, is_paren_init branch
+before set_array) — when `is_array && (on & PM_UNIQUE) != 0`,
+ensure the pm exists in paramtab (createparam(n, PM_ARRAY)
+if missing) and stamp PM_UNIQUE on `pm.node.flags`. The
+subsequent set_array → assignaparam now sees PM_UNIQUE and
+runs `simple_arrayuniq`. Mirrors C's c:2476-2479 pre-stamp.
+
+**Verify**:
+- `typeset -aU u=(/bin /usr/bin /bin)` → `[/bin /usr/bin]` (was OK).
+- `typeset -axU u=(/bin /usr/bin /bin)` → `[/bin /usr/bin]` (NEW).
+- `typeset -aUx u=(/bin /usr/bin /bin)` → `[/bin /usr/bin]` (NEW).
+- All three preserve `(t)u == array-export-unique` (with `-x`)
+  or `array-unique` (without).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -axU u=(/bin /usr/bin /bin); echo "[${u[@]}]"'
