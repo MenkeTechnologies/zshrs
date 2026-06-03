@@ -1493,9 +1493,14 @@ fn par_case() -> Option<ZshCommand> {
             break;
         }
 
-        // Also break on EOF
+        // Also break on EOF. c:Src/parse.c:1209 par_case requires
+        // ESAC (or `}` in brace form) to close the block — reaching
+        // ENDINPUT without either is a parse error (`case ... esack`
+        // typo absorbs `esack` as part of the body and silently
+        // terminates rc=0 otherwise). Bug #400.
         if tok() == ENDINPUT || tok() == LEXERR {
             set_incasepat(0);
+            yyerror("unmatched `case'");
             break;
         }
 
