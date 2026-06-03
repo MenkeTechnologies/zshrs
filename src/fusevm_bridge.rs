@@ -4449,6 +4449,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
         Value::Status(status)
     });
+    // c:Src/exec.c:3342 — `zerr("redirection with no command")`.
+    // Bare prefix-keyword (`builtin`, `command`, `exec`, `noglob`,
+    // `nocorrect`) with a redirect but no command word. Emits the
+    // canonical diagnostic via zerr (which sets errflag) and
+    // returns Status(1). Bug #534.
+    vm.register_builtin(BUILTIN_REDIR_NO_CMD, |_vm, _argc| {
+        crate::ported::utils::zerr("redirection with no command");
+        Value::Status(1)
+    });
     vm.register_builtin(BUILTIN_DEBUG_TRAP, |vm, _argc| {
         // c:Src/signals.c:1245 dotrap(SIGDEBUG) — fires the DEBUG
         // trap body once per statement. The body sees the parent
@@ -5859,6 +5868,13 @@ pub const BUILTIN_COND_STR_NONEMPTY: u16 = 614;
 /// Stack: pushes `Value::Status(0)` on success, `Status(1)` on
 /// failure. argc = 2.
 pub const BUILTIN_EXEC_HERESTR_FD: u16 = 615;
+
+/// `redirection with no command` parse-time error for bare
+/// `builtin 2>&1` / `command < file` / `exec >&-` precmd-keyword
+/// shapes with a redirect but no following command. Direct port
+/// of `Src/exec.c:3342 zerr("redirection with no command")`.
+/// argc=0; pushes Value::Status(1).
+pub const BUILTIN_REDIR_NO_CMD: u16 = 616;
 
 /// GLOB_SUBST guard for `[[ x == $pat ]]` pattern RHS coming from
 /// parameter / command substitution. C-zsh's `[[ == ]]` semantics
