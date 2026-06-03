@@ -23125,6 +23125,27 @@ zsh's empty-subscript rejection.
 
 ## #289 — `zmodload -L` output format diverges — bare module names instead of `zmodload NAME` reproducible-script form
 
+**Status:** `fixed` 2026-06-03 — covered by the #76 fix at
+commit bcc2eda48f. `bin_zmodload_load`'s list arm now routes
+through `printmodulenode` with the `MOD_UNLOAD | MOD_ALIAS`
+exclude mask (per `Src/module.c:2983-2985 scanhashtable` semantic)
+plus the `MOD_INIT_B`-gated "loaded" check at c:218. With `-L`
+the call passes `PRINTMOD_LIST` which `printmodulenode` honors
+(`"zmodload "` prefix + flags + name).
+
+Verified parity:
+```
+$ /opt/homebrew/bin/zsh -fc 'zmodload -L'
+zmodload zsh/main
+$ ./target/debug/zshrs --zsh -c 'zmodload -L'
+zmodload zsh/main
+```
+
+Doc-only flip; no code change. See #76 in this file for the
+full diagnosis.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -23761,6 +23782,60 @@ clean="${path/[.][/]/}"          # works in both shells consistently
 ---
 
 ## #297 — Bare `typeset` (no args) display format diverges — missing attribute prefix and many entries
+
+**Status:** `fixed` 2026-06-03 — two-point fix in
+`printparamnode`'s attribute walk + `vm_helper`'s
+special-param `base` seeding.
+
+**Root cause** — two compounding gaps:
+
+1. **`readonly` prefix missing.** `params.rs:9304-9324`
+   attribute walk checks `(f & pmptr.binflag) != 0` for each
+   PmType row. For the readonly row, `binflag = PM_READONLY`.
+   zshrs's special params carry `PM_RO_BY_DESIGN` (not
+   PM_READONLY — see #97 in this file for the
+   "internal-write-friendly" rationale), so the check missed.
+2. **`integer 10` base missing.** PMTYPES's PM_INTEGER entry
+   has `PMTF_USE_BASE` set; the walk emits `hn.base` when
+   non-zero. C `Src/params.c:344 IPDEF4` literal sets `base
+   = 10` for every integer special. zshrs's vm_helper init
+   left `base = 0`, so the PMTF_USE_BASE branch never fired.
+
+**Fix:**
+1. `printparamnode` attribute walk: expand the readonly check
+   to also match PM_RO_BY_DESIGN. Mirrors the same expansion
+   `bin_typeset` listing filter already does (#97 fix at
+   `builtin.rs:3620`).
+2. `vm_helper.rs` special-param init: set `pm.base = 10` for
+   every `PM_INTEGER` entry (both for the
+   already-in-paramtab update arm and the placeholder-create
+   else arm).
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'a=(x y); typeset | head -5'
+integer 10 readonly !=0
+integer 10 readonly '#'=0
+integer 10 readonly '$'=11310
+array readonly '*'=(  )
+readonly -=569Xf
+$ ./target/debug/zshrs --zsh -c 'a=(x y); typeset | head -5'
+integer 10 readonly !=0
+integer 10 readonly '#'=0
+integer 10 readonly '$'=0
+array readonly '*'=(  )
+readonly -=''
+```
+
+Format now matches exactly. Remaining divergence is the
+`$$` / `$-` VALUES (zshrs's PID/option-letter getters
+aren't reached by the printparamnode emit path) — that's a
+separate value-population bug, NOT the format gap #297
+reports.
+
+zshrs_shell baseline preserved at 950/102.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
