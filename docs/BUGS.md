@@ -6419,7 +6419,49 @@ set -x
 
 ## #93 — Empty-string assoc key: `typeset -A h=( "" val )` swaps key/value; `h[""]` lookup fails
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — Sub-bug A (paren-init key/
+value misalignment) fixed via REJOIN_SEP-preserving synthetic
+arg rebuild in `par_simple`. Sub-bug B (`h[""]` subscript
+lookup) already fixed in a prior assoc-subscript patch.
+
+**Root cause (Sub-bug A)** — `src/ported/parse.rs::par_simple`
+rebuilt the assoc paren-init body as a synthetic word
+`h=(elem1 elem2 …)` using `Vec::join(" ")` to fold elements.
+Space-join collapsed empty elements indistinguishably: `("",
+"empty-val", "k2", "v2").join(" ")` produced `" empty-val k2
+v2"` (the leading space is from the join, not an empty
+element). bin_typeset's paren-init splitter then saw 3
+elements instead of 4, and the pair walk misaligned
+(`empty-val=k2`, `v2=""`).
+
+**Fix** — `src/ported/parse.rs::par_simple` ENVARRAY arm:
+rebuild the synthetic word using `\u{1f}` REJOIN_SEP
+between each element instead of space. The existing
+bin_typeset paren-init splitter at `builtin.rs:4358` already
+recognizes this sentinel (path used for multi-arg-form paren
+init), preserves empties, and trims only the leading/trailing
+empties created by the `=(`/`)` boundary fragments.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=( "" "empty-val" k2 v2 ); typeset -p h'
+typeset -A h=( []=empty-val [k2]=v2 )
+
+$ ./target/debug/zshrs --zsh -c 'typeset -a arr=( "" foo "" bar ); typeset -p arr'
+typeset -a arr=( '' foo '' bar )
+
+$ ./target/debug/zshrs --zsh -c 'arr=("" x ""); echo "n=${#arr} a=[${arr[1]}] b=[${arr[2]}] c=[${arr[3]}]"'
+n=3 a=[] b=[x] c=[]
+```
+
+Storage matches zsh byte-for-byte for actual contents (key=""
++ value="empty-val", index 1 and 3 both empty). Cosmetic
+diff remains in `typeset -p` display: zshrs emits bare `[]`
+while zsh wraps with quotes `['']`; that's a separate
+typeset-p quoting bug (the underlying assoc value is
+identical). Baseline 946/106 (up from 944/108).
+
+**Original report:**
 
 Two sub-bugs in zshrs's empty-assoc-key handling:
 
@@ -38812,7 +38854,7 @@ qualifiers always have a digit suffix.
 | 90 | `$ZSH_PATCHLEVEL` = literal `"unknown"` vs zsh's commit | **port-bug** | fallback to `$ZSH_VERSION` |
 | 91 | `:t` modifier dropped on `${(j:X:)arr:t}` joined-then-modifier | **port-bug** | split the two ops |
 | 92 | `$PS4` default is empty; zsh's is `%x\t%0N\t%I\t%_` colored | **port-bug** | explicit `export PS4=...` |
-| 93 | Empty assoc key broken: paren-init misaligns, subscript stores but no retrieve | **port-bug** | reserve `__EMPTY__` sentinel |
+| 93 | Empty assoc key broken: paren-init misaligns, subscript stores but no retrieve | **fixed** 2026-06-02 | n/a |
 | 94 | `(exec cmd); cmd2` parent shell terminates with subshell | **port-bug** | drop `exec` inside subshell |
 | 95 | Signal trap from `kill -X $$` in subshell fires immediately | **port-bug** | avoid signal-IPC across sub |
 | 96 | `%N/` `%N~` prompt escape doesn't truncate path | **port-bug** | manual `precmd` truncation |
