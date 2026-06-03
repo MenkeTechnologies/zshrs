@@ -4299,19 +4299,36 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
         Value::Status(status)
     });
-    vm.register_builtin(BUILTIN_DEBUG_TRAP, |_vm, _argc| {
+    vm.register_builtin(BUILTIN_DEBUG_TRAP, |vm, _argc| {
         // c:Src/signals.c:1245 dotrap(SIGDEBUG) — fires the DEBUG
         // trap body once per statement. The body sees the parent
         // shell's $? (LASTVAL). Guard against re-entry: commands
         // inside the DEBUG trap body would otherwise trigger
         // DEBUG_TRAP recursively → stack overflow. zsh guards via
         // its in_trap counter; we mirror with a thread-local Cell.
+        //
+        // c:Src/exec.c::trapcmd — before dotrap, the C source sets
+        // `ZSH_DEBUG_CMD` to the about-to-run command text via
+        // `dupstring(text)`. The trap body reads the parameter;
+        // C unsets it after the trap returns. compile_list emits
+        // the rendered statement text as the single arg here so the
+        // shell-visible parameter reflects the command. Bug #263 in
+        // docs/BUGS.md.
+        let cmd_text = vm.pop().to_str();
         DEBUG_TRAP_REENTRY.with(|c| {
             if c.get() {
                 return Value::Status(0);
             }
             c.set(true);
+            // c:Src/exec.c — set ZSH_DEBUG_CMD scalar (PM_READONLY
+            // is NOT set on ZSH_DEBUG_CMD, so the canonical
+            // setsparam path is fine here — no direct paramtab
+            // mutation needed).
+            crate::ported::params::setsparam("ZSH_DEBUG_CMD", &cmd_text);
             let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGDEBUG);
+            // c:Src/exec.c::trapcmd — `unsetparam("ZSH_DEBUG_CMD")`
+            // after the trap returns. Mirror that.
+            crate::ported::params::unsetparam("ZSH_DEBUG_CMD");
             c.set(false);
             Value::Status(0)
         })
