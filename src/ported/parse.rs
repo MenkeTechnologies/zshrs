@@ -2197,7 +2197,32 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     let synthetic = match &assign.value {
                         ZshAssignValue::Scalar(v) => format!("{}={}", assign.name, v),
                         ZshAssignValue::Array(elems) => {
-                            format!("{}=({})", assign.name, elems.join(" "))
+                            // c:Src/builtin.c — assoc paren-init `h=( "" v
+                            //   k2 v2 )` must preserve empty-string
+                            //   elements (zsh stores key="" + value="v").
+                            //   The bin_typeset paren-init splitter at
+                            //   `builtin.rs:4358` recognizes the
+                            //   REJOIN_SEP (`\u{1f}`) sentinel between
+                            //   array elements and skips the leading/
+                            //   trailing parens trim; using it here
+                            //   round-trips empties end-to-end through
+                            //   the synthetic-arg rebuild. Space-join
+                            //   collapses adjacent empties (`(` + `""` +
+                            //   `empty-val` becomes `( empty-val`) so
+                            //   bin_typeset never sees the empty key.
+                            //   Bug #93 in docs/BUGS.md.
+                            let mut buf = String::with_capacity(
+                                assign.name.len() + 4 + elems.iter().map(|e| e.len() + 1).sum::<usize>(),
+                            );
+                            buf.push_str(&assign.name);
+                            buf.push_str("=(");
+                            for elem in elems {
+                                buf.push('\u{1f}');
+                                buf.push_str(elem);
+                            }
+                            buf.push('\u{1f}');
+                            buf.push(')');
+                            buf
                         }
                     };
                     words.push(synthetic);
