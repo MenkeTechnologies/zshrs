@@ -5741,6 +5741,37 @@ impl ZshCompiler {
             self.emit_cmd_pop();
             return;
         }
+        // c:Src/math.c — pre-validate via matheval BEFORE handing
+        // to the ArithCompiler fast path. ArithCompiler silently
+        // truncates malformed expressions like `5 +` (trailing
+        // operator), `1+(2)` (paren mismatch), etc., leaving the
+        // `(( ))` math command exiting rc=0 instead of zsh's rc=2
+        // with "bad math expression: operand expected at end of
+        // string" diagnostic. Route through MathEval (which uses
+        // mathevall + zerr) whenever the compile-time pre-check
+        // reports an error. Bug #533.
+        let pre_check = crate::ported::math::mathevali(inner_arith);
+        if pre_check.is_err() {
+            // Clear errflag set by the pre-check zerr (we re-fire
+            // it at runtime via BUILTIN_ARITH_EVAL so the user
+            // sees the diagnostic at the right point).
+            crate::ported::utils::errflag.fetch_and(
+                !crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            let idx_const = self.builder.add_constant(Value::str(inner_arith));
+            self.builder.emit(Op::LoadConst(idx_const), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
+            self.builder.emit(Op::Pop, 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_CMD_FINISH, 0),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
+            self.emit_cmd_pop();
+            return;
+        }
         self.compile_arith_str(expr);
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::NumNe, 0);

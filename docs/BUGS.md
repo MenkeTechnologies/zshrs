@@ -38619,7 +38619,43 @@ fi
 
 ## #533 — `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `compile_arith` now
+pre-validates the expression via `mathevali` and routes
+through `BUILTIN_ARITH_EVAL` + `BUILTIN_ARITH_CMD_FINISH`
+when the pre-check errors. The MathEval path emits the
+canonical "operand expected at end of string" diagnostic
+via zerr and the finish hook overrides status to 2.
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_arith`
+had a `needs_eval` gate that routed problematic operators
+(/, %, |=, .**=, etc.) through MathEval but otherwise fell
+through to `ArithCompiler` for the fast path. ArithCompiler
+silently truncates malformed expressions like `5 +` instead
+of emitting the math-parse-error path, so the `(( ))` math
+command exited rc=0.
+
+**Fix** (`src/extensions/compile_zsh.rs::compile_arith`) —
+just before the ArithCompiler fast-path, run
+`crate::ported::math::mathevali(inner_arith)`. If it errors,
+clear the pre-check's errflag and emit:
+1. `LoadConst(inner_arith)`
+2. `CallBuiltin(BUILTIN_ARITH_EVAL, 1)` (re-runs matheval,
+   sets errflag + emits the diagnostic via zerr at the
+   right runtime point)
+3. `CallBuiltin(BUILTIN_ARITH_CMD_FINISH, 0)` (returns
+   Status(2) when errflag is set)
+
+**Verify**:
+- `(( 5 + ))` → `bad math expression: operand expected at
+  end of string` + rc=2 (matches zsh byte-for-byte).
+- `(( 5 + 5 ))` → rc=0 (regression preserved).
+- `(( 1 - 1 ))` → rc=1 (regression preserved; result==0 →
+  fail).
+- `(( a = 10 ))` → assignment works, rc=0 (regression).
+- `(( 5 > 3 )) && echo greater` → `greater` (regression).
+- zshrs_shell baseline 954/98 (within 947-957 flake range).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '(( 5 + )) 2>&1; echo rc=$?'
