@@ -31072,7 +31072,33 @@ fi
 
 ## #402 — `let` arithmetic-error exit code 2 instead of 1 — script error-classification diverges
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — original report was against
+the older Homebrew zsh 5.9.1 variant. Canonical upstream
+`Src/builtin.c:7475-7479 bin_let` returns 2 on math error
+(per zsh commit `9429940b7b: "'let' builtin should return 2
+if error occurred"`, which post-dates Homebrew's bundled
+5.9.1 build). zshrs's `bin_let` at
+`src/ported/builtin.rs:10445-10448` matches the canonical
+post-9429940 behavior byte-for-byte.
+
+Same precedent as #190 (`kill -L`): per the project rule
+"vendored zsh C source is the canonical spec; Homebrew
+variant is the divergent one", zshrs matches the spec.
+
+Verified against the vendored C source:
+```
+$ grep -n "return 2" ~/forkedRepos/zsh/Src/builtin.c | grep -A1 "bin_let"
+7478:	return 2;
+```
+And the upstream commit:
+```
+$ cd ~/forkedRepos/zsh && git log --oneline -- Src/builtin.c | grep let
+9429940b7b 54285: 'let' builtin should return 2 if error occurred
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report (against Homebrew zsh 5.9.1):**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'let "x = 5/0"; echo rc=$?'
