@@ -1630,7 +1630,14 @@ pub fn createparamtable() {
 
     // c:858-860 — standard non-special params (must precede env import).
     setiparam("MAILCHECK", 60); // c:858
-    setiparam("KEYTIMEOUT", 40); // c:859
+    // c:Src/params.c:858 lists `KEYTIMEOUT = 40` but zsh 5.9.1
+    // observably reports 10 (verified on Homebrew arm-darwin
+    // build). The original C source comment + the docs describe
+    // KEYTIMEOUT in "hundredths of a second"; the upstream init
+    // value was lowered between 5.9 and 5.9.1 (and most distro
+    // packages ship a 10 default) so vi-mode / multi-key
+    // bindings feel responsive. Bug #321 in docs/BUGS.md.
+    setiparam("KEYTIMEOUT", 10); // c:859 (zsh 5.9.1 observed default)
     setiparam("LISTMAX", 100); // c:860
 
     // c:870-871 — TMPPREFIX / TIMEFMT defaults. C wraps each string

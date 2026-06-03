@@ -804,7 +804,11 @@ impl ShellExecutor {
         }
         // c:params.c:858-860 — standard non-special param defaults.
         setsparam("MAILCHECK", "60");
-        setsparam("KEYTIMEOUT", "40");
+        // c:Src/params.c:859 — original `KEYTIMEOUT = 40` but
+        // zsh 5.9.1 observably reports 10 (Homebrew arm-darwin).
+        // Match the observed default so vi-mode / multi-key
+        // bindings feel responsive. Bug #321 in docs/BUGS.md.
+        setsparam("KEYTIMEOUT", "10");
         setsparam("LISTMAX", "100");
         // c:config.h:1004 — MAX_FUNCTION_DEPTH=500. Advisory cap;
         // dispatch_function_call enforces against this.
