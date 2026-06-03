@@ -1689,7 +1689,28 @@ impl ZshCompiler {
             return;
         }
         if matches!(redir.rtype, REDIR_HERESTR) {
-            // <<< str — push the target string as the content.
+            // `<<< str` with an EXPLICIT target fd > 0 (e.g.
+            // `exec 3<<<"line"`): the existing `Op::HereString` path
+            // stages the content as "pending stdin" for the NEXT
+            // simple-command read. That works for `cat <<<str`
+            // (consumed by cat) but not for bare `exec N<<<str`
+            // because no command follows — the herestring needs to
+            // open a real fd attached to fd N permanently. Mirror
+            // C `Src/exec.c:3766-3780 REDIR_HERESTR + addfd` via
+            // a new runtime helper that writes to a temp file and
+            // dup2's to the target fd. Bug #205 in docs/BUGS.md.
+            if redir.fd > 0 {
+                self.compile_word_str(&redir.name);
+                self.builder.emit(Op::LoadInt(fd as i64), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_HERESTR_FD, 2),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0); // discard Status
+                return;
+            }
+            // Default fd=0 (stdin) — original pending-stdin path
+            // works because the next simple command picks it up.
             self.compile_word_str(&redir.name);
             self.builder.emit(Op::HereString, 0);
             return;

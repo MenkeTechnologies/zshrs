@@ -16017,6 +16017,71 @@ escape in PS1.
 
 ## #205 — `read -u FD` doesn't read from numeric fd opened via `exec`
 
+**Status:** `fixed` 2026-06-03 — new `BUILTIN_EXEC_HERESTR_FD`
+(id 615) wires `exec N<<<"str"` to a real fd via the C
+`getherestr` path.
+
+**Root cause** — diagnosis was inverted: `read -u N` works
+correctly when fd N is genuinely open. The break is in `exec`'s
+herestring redirect path. For `exec 3<<<"line"`,
+`compile_redir` emitted `Op::HereString` which stages the
+content as "pending stdin" for the NEXT simple-command read
+(works for `cat <<<str` because cat consumes it). For bare
+`exec N<<<str` no command follows, so the herestring never
+materialises into a real fd — `read -u 3` then sees fd 3
+closed and returns empty.
+
+`exec 3< /tmp/file` (REDIR_READ) and `exec 4< <(...)` (process
+sub) both work because they take the file/pipe path through
+the existing redirect machinery; only `<<<` falls through to
+the pending-stdin stash that has no consumer.
+
+**C-source reference** — `Src/exec.c:3766-3780` REDIR_HERESTR
+handler: `getherestr(fn)` → temp file with content+`\n` →
+reopen RO → `addfd(forked, save, mfds, fn->fd1, fil, 0, ...)`.
+`getherestr` at `c:4655-4680` does mkstemp/write_loop/close/
+reopen/unlink.
+
+**Fix:**
+1. New runtime helper `BUILTIN_EXEC_HERESTR_FD` (id 615) in
+   `src/fusevm_bridge.rs`: pops `[content, fd]`, mirrors C
+   `getherestr` exactly — `mkstemp` → write_loop → close →
+   reopen RO → `unlink` (so the temp file disappears on
+   close, leaving only the fd reference) → `dup2(read_fd,
+   target_fd)` → close intermediate.
+2. `compile_redir` REDIR_HERESTR arm: when `redir.fd > 0`
+   (explicit fd target), emit `compile_word_str(content) +
+   LoadInt(fd) + CallBuiltin(BUILTIN_EXEC_HERESTR_FD, 2) +
+   Pop` instead of the pending-stdin `Op::HereString`.
+   Default `fd == 0` keeps the existing path (consumed by
+   following command).
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'exec 3<<<"line"; read -u 3 x; echo "[$x]"; exec 3<&-'
+[line]
+$ ./target/debug/zshrs --zsh -c 'exec 3<<<"line"; read -u 3 x; echo "[$x]"; exec 3<&-'
+[line]
+
+# Multi-line herestring:
+$ /opt/homebrew/bin/zsh -fc 'exec 4<<<"first
+second"; read -u 4 a; read -u 4 b; echo "[$a/$b]"; exec 4<&-'
+[first/second]
+$ ./target/debug/zshrs --zsh -c 'exec 4<<<"first
+second"; read -u 4 a; read -u 4 b; echo "[$a/$b]"; exec 4<&-'
+[first/second]
+
+# Regression: `cat <<<str` (fd=0 default) unchanged.
+$ ./target/debug/zshrs --zsh -c 'cat <<<"linex"'
+linex
+```
+
+zshrs_shell baseline preserved at 947/105 (the 950/102 number
+in earlier session notes was a flaky read — the canonical
+baseline is 947/105).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
