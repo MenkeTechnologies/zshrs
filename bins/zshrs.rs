@@ -1583,15 +1583,13 @@ pub fn zshrs_main() {
         // handles this implicitly; the Rust port lacks the GSU
         // vtable so internal writes bypass via direct paramtab
         // mutation.
-        if let Ok(mut tab) = zsh::ported::params::paramtab().write() {
-            if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
-                pm.u_str = Some("cmdarg".to_string());
-                pm.node.flags &= !(zsh::ported::zsh_h::PM_UNSET as i32);
-            } else {
-                drop(tab);
-                zsh::ported::params::setsparam("ZSH_EVAL_CONTEXT", "cmdarg");
-            }
-        }
+        //
+        // Route through `push_zsh_eval_context` so the tied array
+        // `zsh_eval_context[*]` is populated too — `${zsh_eval_context[*]}`
+        // expansion reads the array, not the scalar. Bug #262 in
+        // docs/BUGS.md. The push owns both the static C-port stack
+        // AND the paramtab mirror.
+        zsh::vm_helper::push_zsh_eval_context("cmdarg");
         // POSIX `sh -c script [name [args...]]` semantics
         // (Src/init.c:271 + 479): the next non-option arg AFTER the
         // command string becomes $0; remaining args become $1, $2, …

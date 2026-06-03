@@ -19812,17 +19812,59 @@ src="${functions_source[my_fn]%%:*}"
 
 ## #262 — `zsh_eval_context` array always empty (zsh: tracks outer→inner eval context)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — wired the existing static
+`zsh_eval_context` stack push/pop into the fusevm
+function-call path AND the binary's `-c` entry, with both
+sites now mirroring to the shell-visible paramtab array +
+tied scalar.
 
+**Root cause** — `src/ported/exec.rs:6986` declared the static
+`zsh_eval_context: Mutex<Vec<String>>` and `execode` (port of
+C `Src/exec.c:1245-1282`) already pushed/popped per call —
+but the fusevm path doesn't go through execode. The binary's
+`-c` setup at `bins/zshrs.rs:1586` wrote the scalar
+`ZSH_EVAL_CONTEXT` directly but never updated the tied array
+`zsh_eval_context`, and `doshfunc`'s body_runner invocation
+ran without a push. Result: `${zsh_eval_context[*]}` always
+expanded to empty.
+
+**Fix** — added a small push/pop helper trio to
+`src/vm_helper.rs` (kept out of `src/ported/` per the build
+script's no-new-functions rule):
+
+```rust
+pub fn push_zsh_eval_context(label: &str);
+pub fn pop_zsh_eval_context();
+fn sync_zsh_eval_context_to_param(stack: &[String]);
+```
+
+`sync_zsh_eval_context_to_param` writes BOTH the paramtab
+`zsh_eval_context` array entry AND the tied `ZSH_EVAL_CONTEXT`
+scalar (PM_READONLY bypass via direct `u_arr`/`u_str` mutation,
+same pattern the binary already used). Wired into:
+
+  * `bins/zshrs.rs` `-c` entry — pushes `"cmdarg"` instead of
+    writing the scalar directly.
+  * `src/ported/exec.rs::doshfunc` — pushes `"shfunc"` around
+    the body_runner call, with a Drop guard so the entry pops
+    on every return path (status, error, panic).
+
+**Verify** (byte-matched against zsh)
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "ctx=[${zsh_eval_context[*]}]"; f() { echo "in-fn=[${zsh_eval_context[*]}]"; }; f'
 ctx=[cmdarg]
 in-fn=[cmdarg shfunc]
+$ zshrs --zsh -c 'echo "ctx=[${zsh_eval_context[*]}]"; f() { echo "in-fn=[${zsh_eval_context[*]}]"; }; f'
+ctx=[cmdarg]
+in-fn=[cmdarg shfunc]
 
-$ ./target/debug/zshrs --zsh -c 'echo "ctx=[${zsh_eval_context[*]}]"; f() { echo "in-fn=[${zsh_eval_context[*]}]"; }; f'
-ctx=[]
-in-fn=[]
+# Tied scalar also reflects the stack:
+$ zshrs --zsh -c 'echo "ctx=[$ZSH_EVAL_CONTEXT]"; f() { echo "in-fn=[$ZSH_EVAL_CONTEXT]"; }; f'
+ctx=[cmdarg]
+in-fn=[cmdarg:shfunc]
 ```
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 `zsh_eval_context` is an array tracking the current
 evaluation context — each entry describes one level of the
@@ -38311,7 +38353,7 @@ qualifiers always have a digit suffix.
 | 259 | `${jobstates[N]}` and `${jobdirs[N]}` empty (companion to #257 — all 3 job-intro assocs broken) | **port-bug** | parse `jobs -l` output |
 | 260 | `${widgets[NAME]}` zle widget intro assoc empty (zsh: 386 builtin widgets) | **port-bug** | `zle -la NAME` for existence test |
 | 261 | `${functions_source[fn]}` format diverges — `zsh:0` instead of bare `zsh` for cmdline fn | **port-bug** | strip `:N` suffix before compare |
-| 262 | `zsh_eval_context` array always empty (zsh: `cmdarg`, `cmdarg shfunc`, etc. — eval context stack) | **port-bug** | manual `${funcstack[*]}` (also broken) |
+| 262 | `zsh_eval_context` array always empty (zsh: `cmdarg`, `cmdarg shfunc`, etc. — eval context stack) | **fixed** 2026-06-02 | n/a |
 | 263 | `$ZSH_DEBUG_CMD` empty when DEBUG trap fires (parameter never populated with cmd text) | **port-bug** | (none — step-debug not possible) |
 | 264 | `${widgets[fn]}` after `zle -N fn` returns literal `builtin` for all queries (no real lookup) | **port-bug** | parallel user-managed assoc |
 | 265 | `$MATCH` not populated by `(#m)` flag in `${var/pat/repl}` substitution (works in `=~`) | **port-bug** | use `=~` then manually substitute |
