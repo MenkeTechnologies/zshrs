@@ -9469,6 +9469,73 @@ Or use `${(j: :)hosts}` explicit-join form (works in heredoc).
 
 ## #124 — `typeset -f` returns source-as-typed; zsh pretty-prints with indentation
 
+**Status:** `fixed` 2026-06-03 — recursive nested-fn pretty-printer
+in the body-emit closure at `src/ported/hashtable.rs`.
+
+**Root cause** — extension of the same gap as #197. zshrs stores
+function bodies as raw source (no Eprog for shfunc bodies), so
+nested function definitions kept their inline form
+(`outer() { inner() { echo "in inner"; }; inner; }`). C zsh's
+`Src/text.c gettext2` recursively re-emits each nested
+function with `name () {\n` ... `\n\t}` shape and a fresh
+indent level.
+
+**Fix** — extend the `canonicalize_body` closure introduced by
+the #197 patch into a recursive `fmt_body(s, depth)`. At
+top-level it scans for `name() {` / `name () {` / `function
+name { …` patterns; when found, finds the matching `}`
+(quote-state + brace-depth aware), recurses on the inner
+body with `depth + 1`, and emits:
+
+```
+name () {
+<recursive body at depth+1>
+<depth tabs>}
+```
+
+Statements outside nested fns still follow the #197 rewrite
+(`;` → `\n` + depth tabs).
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'outer() { inner() { echo "in inner"; }; inner; }; typeset -f outer'
+outer () {
+	inner () {
+		echo "in inner"
+	}
+	inner
+}
+$ ./target/debug/zshrs --zsh -c 'outer() { inner() { echo "in inner"; }; inner; }; typeset -f outer'
+outer () {
+	inner () {
+		echo "in inner"
+	}
+	inner
+}
+
+# Triple-nested:
+$ ./target/debug/zshrs --zsh -c 'a() { b() { c() { echo deep; }; c; }; b; }; typeset -f a'
+a () {
+	b () {
+		c () {
+			echo deep
+		}
+		c
+	}
+	b
+}
+```
+
+Each nesting level adds one tab — matches zsh's wordcode
+re-emit exactly. Triple-nested case also matches `zsh -fc`
+output byte-for-byte.
+
+zshrs_shell `test_typeset_f_zsh_format_one_stmt_per_line`
+now passes; baseline preserved in flake range
+(948/104 ↔ 951/101).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh

@@ -1389,8 +1389,239 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
             // closing `}` because cmdpos vs. cmdpos confusion
             // makes the `}` lex as STRING_LEX, missing the
             // OUTBRACE_TOK arm at parse.rs:7113.
-            t = hn.body.clone().map(|s| {
-                let mut s = s.trim().to_string();
+            // c:Src/text.c gettext2 — C zsh re-emits function bodies
+            // from parsed wordcode (`getpermtext`) with `\n\t` between
+            // sibling statements AND recursive indenting of nested
+            // function definitions. zshrs stores raw source (no Eprog
+            // for shfunc bodies); the closure below applies the same
+            // canonicalization at print time.
+            // Bug #197 (top-level statements) + #124 (nested fns) in
+            // docs/BUGS.md.
+            //
+            // canonicalize: walk char-by-char tracking quote state +
+            // brace/paren depth. At brace_depth == 0:
+            //   - top-level `;` (or `; `) becomes `\n\t` * (depth+1)
+            //   - `name() {` or `name () {` opens a nested fn def;
+            //     emit `name () {\n` then recurse on the body until
+            //     the matching `}` with depth+1, then `\n\t` * depth
+            //     + `}`.
+            let canonicalize_body = |source: &str| -> String {
+                fn fmt_body(s: &str, depth: usize) -> String {
+                    let chars: Vec<char> = s.chars().collect();
+                    let mut out = String::with_capacity(s.len());
+                    let mut in_sq = false;
+                    let mut in_dq = false;
+                    let mut brace_depth: i32 = 0;
+                    let mut paren_depth: i32 = 0;
+                    let stmt_indent = "\t".repeat(depth);
+                    let mut i = 0;
+                    // NOTE: caller (the funcdef emit at hashtable.rs:1364)
+                    // already wrote one leading `\t` via zoutputtab. Don't
+                    // double-indent the first statement. For depth > 1
+                    // (recursive nested-fn body), we DO need the leading
+                    // indent because the caller writes `name () {\n` then
+                    // recurses without a prior tab.
+                    if depth > 1 && !chars.is_empty() {
+                        out.push_str(&stmt_indent);
+                    }
+                    while i < chars.len() {
+                        let c = chars[i];
+                        if !in_sq && !in_dq && c == '\\' && i + 1 < chars.len() {
+                            out.push(c);
+                            out.push(chars[i + 1]);
+                            i += 2;
+                            continue;
+                        }
+                        if !in_dq && c == '\'' {
+                            in_sq = !in_sq;
+                            out.push(c);
+                            i += 1;
+                            continue;
+                        }
+                        if !in_sq && c == '"' {
+                            in_dq = !in_dq;
+                            out.push(c);
+                            i += 1;
+                            continue;
+                        }
+                        // Detect nested fn-def pattern at depth 0:
+                        // `name() {...}` or `name () {...}` (and
+                        // optional `function `-keyword form). Only
+                        // when in_sq/in_dq == false and brace/paren
+                        // depth == 0.
+                        if !in_sq && !in_dq && brace_depth == 0 && paren_depth == 0 {
+                            // Try to match `<ident>\s*\(\s*\)\s*\{` at
+                            // current position, OR `function\s+<ident>...{`.
+                            let fn_start = try_match_fn_def(&chars, i);
+                            if let Some((header_end, name_str)) = fn_start {
+                                // Find matching `}` for the body.
+                                let body_open = header_end; // index just after `{`
+                                let body_close = find_matching_brace(&chars, body_open - 1);
+                                if let Some(close_idx) = body_close {
+                                    let body_src: String =
+                                        chars[body_open..close_idx].iter().collect();
+                                    let body_trim = body_src
+                                        .trim_start_matches(|c: char| c.is_whitespace())
+                                        .trim_end_matches(|c: char| {
+                                            c.is_whitespace() || c == ';'
+                                        })
+                                        .to_string();
+                                    out.push_str(&name_str);
+                                    out.push_str(" () {\n");
+                                    out.push_str(&fmt_body(&body_trim, depth + 1));
+                                    out.push('\n');
+                                    out.push_str(&stmt_indent);
+                                    out.push('}');
+                                    i = close_idx + 1;
+                                    // Consume trailing `;` and ws.
+                                    let saved = i;
+                                    while i < chars.len()
+                                        && (chars[i] == ' '
+                                            || chars[i] == '\t'
+                                            || chars[i] == ';')
+                                    {
+                                        i += 1;
+                                    }
+                                    if saved != i || i < chars.len() {
+                                        // More content follows — emit
+                                        // statement break.
+                                        if i < chars.len() {
+                                            out.push('\n');
+                                            out.push_str(&stmt_indent);
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        if !in_sq && !in_dq {
+                            match c {
+                                '{' => brace_depth += 1,
+                                '}' => brace_depth = (brace_depth - 1).max(0),
+                                '(' => paren_depth += 1,
+                                ')' => paren_depth = (paren_depth - 1).max(0),
+                                _ => {}
+                            }
+                        }
+                        if !in_sq
+                            && !in_dq
+                            && brace_depth == 0
+                            && paren_depth == 0
+                            && c == ';'
+                        {
+                            i += 1;
+                            while i < chars.len()
+                                && (chars[i] == ' '
+                                    || chars[i] == '\t'
+                                    || chars[i] == ';')
+                            {
+                                i += 1;
+                            }
+                            if i < chars.len() {
+                                out.push('\n');
+                                out.push_str(&stmt_indent);
+                            }
+                            continue;
+                        }
+                        out.push(c);
+                        i += 1;
+                    }
+                    out
+                }
+                fn is_ident_byte(b: u8) -> bool {
+                    b == b'_' || b.is_ascii_alphanumeric()
+                }
+                fn try_match_fn_def(
+                    chars: &[char],
+                    start: usize,
+                ) -> Option<(usize, String)> {
+                    // Skip leading `function ` keyword (optional).
+                    let mut i = start;
+                    let _function_prefix = {
+                        let rest: String = chars[i..].iter().collect();
+                        if rest.starts_with("function ")
+                            || rest.starts_with("function\t")
+                        {
+                            i += "function".len();
+                            while i < chars.len()
+                                && (chars[i] == ' ' || chars[i] == '\t')
+                            {
+                                i += 1;
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    // Match identifier.
+                    let name_start = i;
+                    while i < chars.len()
+                        && is_ident_byte(chars[i] as u8)
+                    {
+                        i += 1;
+                    }
+                    if i == name_start {
+                        return None;
+                    }
+                    let name: String = chars[name_start..i].iter().collect();
+                    // Skip optional whitespace.
+                    while i < chars.len() && (chars[i] == ' ' || chars[i] == '\t') {
+                        i += 1;
+                    }
+                    // Require `()` for the non-`function`-keyword form;
+                    // C zsh accepts `function name { ... }` without parens.
+                    if i < chars.len() && chars[i] == '(' {
+                        i += 1;
+                        while i < chars.len() && (chars[i] == ' ' || chars[i] == '\t')
+                        {
+                            i += 1;
+                        }
+                        if i >= chars.len() || chars[i] != ')' {
+                            return None;
+                        }
+                        i += 1;
+                    } else if !_function_prefix {
+                        return None;
+                    }
+                    // Skip ws + `{`.
+                    while i < chars.len() && (chars[i] == ' ' || chars[i] == '\t') {
+                        i += 1;
+                    }
+                    if i >= chars.len() || chars[i] != '{' {
+                        return None;
+                    }
+                    Some((i + 1, name))
+                }
+                fn find_matching_brace(chars: &[char], open: usize) -> Option<usize> {
+                    let mut depth = 1i32;
+                    let mut in_sq = false;
+                    let mut in_dq = false;
+                    let mut j = open + 1;
+                    while j < chars.len() {
+                        let c = chars[j];
+                        if !in_sq && !in_dq && c == '\\' && j + 1 < chars.len() {
+                            j += 2;
+                            continue;
+                        }
+                        if !in_dq && c == '\'' {
+                            in_sq = !in_sq;
+                        } else if !in_sq && c == '"' {
+                            in_dq = !in_dq;
+                        } else if !in_sq && !in_dq {
+                            if c == '{' {
+                                depth += 1;
+                            } else if c == '}' {
+                                depth -= 1;
+                                if depth == 0 {
+                                    return Some(j);
+                                }
+                            }
+                        }
+                        j += 1;
+                    }
+                    None
+                }
+                let mut s = source.trim().to_string();
                 if s.starts_with('{') {
                     s = s[1..].trim_start().to_string();
                 }
@@ -1402,82 +1633,9 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                     s.pop();
                     s = s.trim_end().to_string();
                 }
-                // c:Src/text.c gettext2 — C zsh re-emits the function
-                // body from its parsed wordcode (`getpermtext`) with
-                // `\n\t` between sibling statements. zshrs stores raw
-                // source instead of wordcode (no Eprog for shfunc
-                // bodies), so we canonicalise the stored text here:
-                // walk char-by-char tracking quote state + brace depth
-                // and rewrite top-level `;` followed by whitespace as
-                // `\n\t`. Direct string `;` inside strings (e.g.
-                // `echo "a;b"`) or inside nested braces (e.g.
-                // `inner() { :; }`) is preserved. Bug #197 / #124 in
-                // docs/BUGS.md.
-                let chars: Vec<char> = s.chars().collect();
-                let mut out = String::with_capacity(s.len());
-                let mut in_sq = false;
-                let mut in_dq = false;
-                let mut brace_depth: i32 = 0;
-                let mut paren_depth: i32 = 0;
-                let mut i = 0;
-                while i < chars.len() {
-                    let c = chars[i];
-                    if !in_sq && !in_dq && c == '\\' && i + 1 < chars.len() {
-                        // c:Src/lex.c — backslash escapes one char in
-                        // unquoted/DQ context.
-                        out.push(c);
-                        out.push(chars[i + 1]);
-                        i += 2;
-                        continue;
-                    }
-                    if !in_dq && c == '\'' {
-                        in_sq = !in_sq;
-                        out.push(c);
-                        i += 1;
-                        continue;
-                    }
-                    if !in_sq && c == '"' {
-                        in_dq = !in_dq;
-                        out.push(c);
-                        i += 1;
-                        continue;
-                    }
-                    if !in_sq && !in_dq {
-                        match c {
-                            '{' => brace_depth += 1,
-                            '}' => brace_depth = (brace_depth - 1).max(0),
-                            '(' => paren_depth += 1,
-                            ')' => paren_depth = (paren_depth - 1).max(0),
-                            _ => {}
-                        }
-                    }
-                    // Top-level `;` (or `; `) becomes `\n\t`. Skip
-                    // trailing whitespace after `;` so we don't emit
-                    // `\n\t ` (extra space).
-                    if !in_sq
-                        && !in_dq
-                        && brace_depth == 0
-                        && paren_depth == 0
-                        && c == ';'
-                    {
-                        // Coalesce consecutive `;` and surrounding
-                        // spaces — `cmd1 ; cmd2` and `cmd1;cmd2` both
-                        // become `cmd1\n\tcmd2`.
-                        out.push('\n');
-                        out.push('\t');
-                        i += 1;
-                        while i < chars.len()
-                            && (chars[i] == ' ' || chars[i] == '\t' || chars[i] == ';')
-                        {
-                            i += 1;
-                        }
-                        continue;
-                    }
-                    out.push(c);
-                    i += 1;
-                }
-                out
-            });
+                fmt_body(&s, 1)
+            };
+            t = hn.body.clone().map(|s| canonicalize_body(&s));
         }
         // c:955-958 — PM_TAGGED | PM_TAGGED_LOCAL → `# traced` marker.
         if (hn.node.flags & (PM_TAGGED | PM_TAGGED_LOCAL) as i32) != 0 {
