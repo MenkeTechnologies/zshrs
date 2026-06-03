@@ -6067,6 +6067,18 @@ impl fusevm::ShellHost for ZshrsHost {
                             .collect()
                     })
                     .unwrap_or_default(),
+                // c:Src/exec.c::entersubsh — same fork-copy
+                //   semantics for shfunctab. `(f() { ... })` defined
+                //   inside the subshell dies with the child; parent's
+                //   `type f` reports "not found". Bug #208 in
+                //   docs/BUGS.md.
+                shfuncs: crate::ported::hashtable::shfunctab_lock()
+                    .read()
+                    .ok()
+                    .map(|t| t.snapshot())
+                    .unwrap_or_default(),
+                functions_compiled: exec.functions_compiled.clone(),
+                function_source: exec.function_source.clone(),
             });
             // Subshell starts with EXIT trap cleared so the parent's
             // EXIT handler doesn't fire when the subshell ends. zsh:
@@ -6196,6 +6208,21 @@ impl fusevm::ShellHost for ZshrsHost {
                         });
                     }
                 }
+                // c:Src/exec.c::entersubsh — same fork-copy
+                //   semantics for shfunctab. Restore parent's function
+                //   table from snapshot so `(f() { ... })` definitions
+                //   inside the subshell don't leak to the parent.
+                //   Bug #208 in docs/BUGS.md.
+                if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+                    tab.restore(snap.shfuncs);
+                }
+                // Restore the runtime dispatch tables (compiled chunks
+                // + source). Without these, a subshell-defined
+                // override leaves its bytecode in place even after
+                // shfunctab is restored — `g` after the subshell would
+                // still run the override.
+                exec.functions_compiled = snap.functions_compiled;
+                exec.function_source = snap.function_source;
             }
         });
         // Decrement SUBSHELL_DEPTH. If a deferred subshell exit
