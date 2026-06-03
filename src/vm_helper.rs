@@ -1775,13 +1775,30 @@ impl ShellExecutor {
         // info so funcstack push gets a proper filename. funcdef/body
         // stay None because the wordcode body is irrelevant on this
         // path (body_runner runs the fusevm Chunk directly).
+        // c:Src/exec.c:5390-5410 — execfuncdef records the
+        // current `scriptfilename` on the shfunc at definition
+        // time so funcsourcetrace can show file:line of the
+        // function's source. The function_def_file map stores
+        // this; fall back to the live scriptfilename so dynamic
+        // / non-`compile_funcdef`-routed definitions still get a
+        // sensible filename. Without the fallback, the synth_shf
+        // saw None and the funcstack push at exec.rs:5719
+        // defaulted to an empty string, which the funcsourcetrace
+        // getfn rendered as `:N` (or worse, picked up the
+        // function name from a parallel field). Bug #515.
+        let synth_filename = self
+            .function_def_file
+            .get(name)
+            .cloned()
+            .flatten()
+            .or_else(|| self.scriptfilename.clone());
         let mut synth_shf = crate::ported::zsh_h::shfunc {
             node: crate::ported::zsh_h::hashnode {
                 next: None,
                 nam: display_name.clone(),
                 flags: 0,
             },
-            filename: self.function_def_file.get(name).cloned().flatten(),
+            filename: synth_filename,
             lineno: self.function_line_base.get(name).copied().unwrap_or(0) as i64,
             funcdef: None,
             redir: None,

@@ -11279,16 +11279,42 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
     }
     if name == "funcfiletrace" || name == "funcsourcetrace" || name == "functrace" {
         if let Ok(f) = crate::ported::modules::parameter::FUNCSTACK.lock() {
-            // Sibling arrays — also innermost-first.
+            // c:Src/Modules/parameter.c:679-710 funcsourcetracegetfn —
+            // emits `<f->filename>:<f->flineno>` per frame, where
+            // filename is the SOURCE file where the function was
+            // DEFINED and flineno is the definition line.
+            // c:Src/Modules/parameter.c:711-760 funcfiletracegetfn —
+            // similar but joins caller-relative lineno.
+            // c:Src/Modules/parameter.c:778+ functracegetfn — emits
+            // `<f->name>:<f->lineno>` (the call-site, NOT the def).
+            // The previous Rust port used `fs.name:fs.lineno` for
+            // BOTH `funcsourcetrace` AND `functrace`, so
+            // `funcsourcetrace[1]` reported the function name +
+            // caller-line instead of the source file + def-line —
+            // `${funcsourcetrace[1]}` showed `f:1` where zsh shows
+            // `zsh:1` in `-fc` mode. Bug #515.
             return Some(
                 f.iter()
                     .rev()
-                    .map(|fs| {
-                        if name == "funcfiletrace" {
-                            fs.filename.clone().unwrap_or_default()
-                        } else {
-                            format!("{}:{}", fs.name, fs.lineno)
-                        }
+                    .map(|fs| match name {
+                        // c:Src/Modules/parameter.c:711-760
+                        // funcfiletracegetfn — emits
+                        // `<filename>:<lineno>` (caller's source +
+                        // line).
+                        "funcfiletrace" => format!(
+                            "{}:{}",
+                            fs.filename.as_deref().unwrap_or(""),
+                            fs.lineno
+                        ),
+                        "funcsourcetrace" => format!(
+                            "{}:{}",
+                            fs.filename.as_deref().unwrap_or(""),
+                            fs.flineno
+                        ),
+                        // "functrace" — c:Src/Modules/parameter.c:778+
+                        // `<caller>:<lineno>` where caller is the
+                        // calling-frame's name.
+                        _ => format!("{}:{}", fs.name, fs.lineno),
                     })
                     .collect(),
             );

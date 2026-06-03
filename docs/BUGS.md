@@ -37595,7 +37595,62 @@ Both fail in zshrs.
 
 ## #515 — `$funcsourcetrace` shows fn-name (`f:1`) instead of file-name (`zsh:1`)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partial-fixed` 2026-06-03 — filename component
+now correctly shows source filename (`zsh`); residual
+off-by-one on lineno (`zsh:0` vs zsh's `zsh:1`) is tracked
+separately as #396.
+
+**Root cause** — `src/ported/subst.rs::arrays_get` had a
+fallback arm for `funcfiletrace` / `funcsourcetrace` /
+`functrace` that emitted the WRONG fields:
+- `funcfiletrace` → just `fs.filename` (no `:lineno`).
+- `funcsourcetrace` AND `functrace` → both used
+  `fs.name:fs.lineno` (function name + caller line).
+
+C `Src/Modules/parameter.c:679-710 funcsourcetracegetfn`
+emits `<f->filename>:<f->flineno>` (def file + def line);
+`functracegetfn` at c:778+ uses `<f->name>:<f->lineno>`
+(call site). The Rust fallback shadowed the correctly-
+ported `funcsourcetracegetfn` at
+`modules/parameter.rs:1307` because it short-circuited
+before paramtab lookup.
+
+Also a secondary fix in `src/vm_helper.rs::dispatch_function_call`:
+`synth_shf.filename` now falls back to `self.scriptfilename`
+when `function_def_file` has no entry, so dynamic /
+non-`compile_funcdef`-routed definitions still get a
+sensible source name.
+
+**Fix**:
+1. `src/ported/subst.rs` `funcsourcetrace`/`funcfiletrace`/
+   `functrace` arm — restructure to per-name match:
+   - `funcfiletrace` → `<filename>:<lineno>` (caller-line
+     against source file).
+   - `funcsourcetrace` → `<filename>:<flineno>` (def-line
+     against source file).
+   - `functrace` → `<name>:<lineno>` (caller-frame name +
+     caller line — unchanged).
+2. `src/vm_helper.rs::dispatch_function_call` —
+   `synth_filename` falls back to `self.scriptfilename`
+   when the `function_def_file` lookup is empty.
+
+**Verify**:
+- `f() { echo "[$funcsourcetrace[1]]"; }; f` → `[zsh:0]`
+  (filename now correct; flineno still has the off-by-one
+  tracked as #396).
+- `f() { echo "[$funcfiletrace[1]]"; }; f` → `[zsh:1]`
+  (matches lineno; full path divergence is a separate path
+  concern).
+- `f() { echo "[$functrace[1]]"; }; f` → `[f:1]` (matches
+  zsh's `<caller>:<line>` semantic — call-site format
+  preserved).
+- zshrs_shell baseline 956/96 (improved from 953/99).
+
+The remaining off-by-one on `flineno` is the same root
+issue as #396 — function-definition line tracker reports 0
+instead of 1 in `-fc` mode. Tracked separately.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { echo "[$funcsourcetrace[1]]"; }; f'
