@@ -12478,7 +12478,49 @@ compinit -i    # both shells: lazy-loads then runs
 
 ## #161 — `case x in) ... ;; esac` (empty pattern) silently accepted
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — par_case now rejects empty
+pattern arm before `)` per C source.
+
+**Root cause** — `src/ported/parse.rs::par_case` (line 1480
+inner pattern-read loop) exited cleanly when the first token
+after `in` was OUTPAR_TOK (the case-arm closing `)`). The
+outer arm-close check at line 1548 then consumed the `)`
+without verifying that any pattern STRING was actually read.
+
+C `Src/parse.c:1257-1258` enforces this strictly: `if (tok !=
+STRING) YYERRORV(oecused);` — the parser rejects the empty
+arm at the first read attempt.
+
+**Fix** — added a post-pattern-read check in par_case:
+
+```rust
+if patterns.is_empty() && !leading_inpar_consumed {
+    zerr("parse error near `)'");
+    return None;
+}
+```
+
+Gated on `!leading_inpar_consumed` so the `(pat)` paren-wrap
+form (which validates the pattern inside) is unaffected. The
+absorbed_outpar path (lexer-collapsed `(pat)` STRING) keeps
+its existing behavior — its pattern is non-empty by
+construction.
+
+**Verify**
+```sh
+$ zshrs --zsh -c 'case x in) echo b;; esac'                          # zsh:1: parse error near `)'
+$ zshrs --zsh -c 'case x in y) y;; ) e;; *) any;; esac'              # zsh:1: parse error near `)'
+
+# Legal forms still work:
+$ zshrs --zsh -c 'case x in y) echo y;; *) echo def;; esac'          # def
+$ zshrs --zsh -c 'case x in (y) echo y;; (*) echo def;; esac'        # def
+$ zshrs --zsh -c 'case x in a|b|x) echo match;; *) echo no;; esac'   # match
+$ zshrs --zsh -c 'case x { y) echo y;; *) echo def;; }'              # def
+```
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'case x in) echo b;; esac; echo "after"' 2>&1
@@ -12487,33 +12529,6 @@ zsh:1: parse error near `)'
 $ ./target/debug/zshrs --zsh -c 'case x in) echo b;; esac; echo "after"' 2>&1
 after
 ```
-
-The `case` construct requires a pattern between `in` and `)`.
-zsh rejects `in)` (empty pattern) at parse time. zshrs silently
-treats the empty arm as a no-op and continues to "after".
-
-Family with permissive-parser bugs:
-- #141 (`;;` outside case)
-- #146 (`{ cmd; } arg` trailing args)
-- #161 (this — empty case pattern)
-
-**Where** — `src/ported/parse.rs::parse_case_arm`: doesn't
-require at least one pattern token before `)`. C-source
-`Src/parse.c::par_case` errors on empty arm-pattern.
-
-**Impact** — typos with empty patterns silently match nothing:
-
-```sh
-# user typo: missing pattern between `in` and `)`
-case $cmd in)
-    echo "default"
-    ;;
-esac
-# zsh: parse error (caught immediately)
-# zshrs: falls through silently, default never prints
-```
-
-**Workaround** — careful syntax review before running.
 
 ---
 
@@ -38004,7 +38019,7 @@ qualifiers always have a digit suffix.
 | 158 | Function-def redirect `f() {} < file` not honored | **port-bug** | redirect at call site |
 | 159 | `while [[ $((i++)) -lt N ]]` only iterates once | **port-bug** | `while (( i++ < N ))` |
 | 160 | `autoload -U +X funcname` doesn't actually load function body | **port-bug** | drop `+X`, lazy load |
-| 161 | `case x in)` empty pattern silently accepted (zsh: parse error) | **port-bug** | careful syntax |
+| 161 | `case x in)` empty pattern silently accepted (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 162 | `${(l.5)x}` missing close-delim silently accepted (zsh: error) | **port-bug** | careful syntax |
 | 163 | `${(t)1}` positional type returns `scalar` (zsh: `array-special`) | **port-bug** | `[[ "$#" -gt 0 ]]` test |
 | 164 | Extended_glob `^pat` (negation prefix) not recognized | **port-bug** | loop with `[[ == ]] continue` |
