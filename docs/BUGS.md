@@ -4127,7 +4127,53 @@ Or use `find` with `-not`.
 
 ## #63 — `${(j:s:)${(s:t:)var}}` nested split-then-join returns first element only
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — nested `${(flag2)${(flag1)var}}`
+collapsed the inner array to a scalar via `singsub` instead of
+preserving the array shape for the outer flag to operate on.
+C `Src/subst.c:2681` (`multsub(&val, PREFORK_SUBEXP, (aspar
+? NULL : &aval), &isarr, NULL, &ms_flags);`) always calls
+multsub for nested subexp — the inner array flows into `aval`
+which the outer flag handlers see. zshrs's gate `if nojoin
+== 2` only invoked multsub when the outer carried `(@)`; for
+plain `(j:-:)` over `(s: :)` the inner array became a scalar
+and the outer `(j)` had nothing to join.
+
+**Root cause** — `src/ported/subst.rs:3976` gated the
+`multsub` + array-temp-bind path on `nojoin == 2`; the else
+arm called `singsub(&inner)` which collapses to a single
+scalar. Two-line fix.
+
+**Fix** — `src/ported/subst.rs`:
+1. Remove the `if (nojoin == 2)` gate around the multsub path;
+   always go through multsub for nested paramsubst.
+2. Use `PREFORK_SUBEXP` (matching C c:2681) instead of
+   `PREFORK_SPLIT`. The latter triggered IFS-aware word-
+   splitting that broke `${(s: :)a}` (where space is the
+   inner delimiter) with `closing brace missing`. SUBEXP is
+   the correct C-mode for nested expansion.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'a="A B C"; echo "${(j:-:)${(s: :)a}}"'
+A-B-C
+
+$ ./target/debug/zshrs --zsh -c 'csv="a,b,c"; echo "${(j:|:)${(s:,:)csv}}"'
+a|b|c
+
+$ ./target/debug/zshrs --zsh -c 'p="a.b.c"; echo "${(j:/:)${(s:.:)p}}"'
+a/b/c
+
+$ ./target/debug/zshrs --zsh -c 'a="c b a"; echo "${(j: :)${(o)${(s: :)a}}}"'
+c b a
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Regressions clean: `(@)` flag still produces array splat;
+`typeset -p`/`${(qq)${(@P)var}}` unchanged; single-scalar
+nested forms (`${(j:-:)${a}}`) collapse correctly. Baseline
+948/104 (up from 947/105).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a="A B C"; echo "${(j:-:)${(s: :)a}}"'
@@ -4135,36 +4181,6 @@ A-B-C
 
 $ zshrs --zsh -c 'a="A B C"; echo "${(j:-:)${(s: :)a}}"'
 A
-```
-
-The inner `${(s: :)a}` splits `"A B C"` on spaces → `(A B C)` array.
-The outer `${(j:-:)…}` joins that array on `-` → `A-B-C`.
-
-zshrs collapses the inner array to its first element before the
-outer flag sees it, returning just `A`.
-
-**Where** — `src/ported/paramsubst.rs`: nested parameter expansion
-doesn't propagate array-context flag (`PM_HASHED`/`PM_ARRAY`) from
-the inner expansion to the outer. C source uses the
-`Param->u.arr`/`scalarsplit` chain so the outer expansion sees the
-inner as an array.
-
-**Impact** — pipeline-style string transforms break:
-```sh
-# convert CSV to TSV by split-then-join
-out="${(j:\t:)${(s:,:)csv_line}}"   # zsh: tab-separated
-                                      # zshrs: first field only
-```
-
-Also breaks:
-- `${(j:/:)${(s:.:)path}}` — replace `.` with `/`
-- `${(@)${(s::)str}}` — convert string to char-array
-- Any `${(flag2)${(flag1)var}}` two-stage transform
-
-**Workaround** — intermediate array variable:
-```sh
-arr=( "${(s: :)a}" )
-echo "${(j:-:)arr}"
 ```
 
 ---
@@ -38570,7 +38586,7 @@ qualifiers always have a digit suffix.
 | 60 | `function {body}` (no name) parses + stray `}` echo | **fixed** 2026-06-02 | n/a |
 | 61 | `h["key"]=v` subscript quotes not embedded in key | **port-bug** | use `h=( k v )` paren init |
 | 62 | `extended_glob` `~` (and-not) operator not honored | **port-bug** | iterate + skip with `[[` |
-| 63 | `${(j:s:)${(s:t:)var}}` nested split-then-join → first element only | **port-bug** | intermediate `arr=(...)` |
+| 63 | `${(j:s:)${(s:t:)var}}` nested split-then-join → first element only | **fixed** 2026-06-02 | n/a |
 | 64 | `$PIPESTATUS` (bash-style upper) exists in zshrs but not zsh | **port-bug** | use lowercase `$pipestatus` |
 | 65 | `${+EPOCHSECONDS}` returns 0 after `zmodload zsh/datetime` | **port-bug** | guard by `zmodload` rc |
 | 66 | `time` builtin ignores `TIMEFMT`, omits `%J` cmd name | **port-bug** | `/usr/bin/time -f` instead |

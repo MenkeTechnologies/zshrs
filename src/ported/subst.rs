@@ -3973,9 +3973,19 @@ pub fn paramsubst(
                                                                        // splat path (line 3636 state.arrays.contains_key) sees it.
                                                                        // Direct port of subst.c's prefork SPLIT path that the (@)
                                                                        // flag triggers around line 2167.
-            let expanded = if (nojoin == 2) {
-                // c:2167+544
-                let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SPLIT);
+            // c:Src/subst.c:2681 — `multsub(&val, PREFORK_SUBEXP,
+            //   (aspar ? NULL : &aval), &isarr, NULL, &ms_flags);`. C
+            //   ALWAYS calls multsub (not singsub) for nested
+            //   `${(flags)${...}}` so the inner array shape propagates
+            //   to outer flag handling — `(j:-:)` joins the inner (s)
+            //   split, `(o)` sorts the inner array, etc. The previous
+            //   Rust gate `if nojoin == 2` only used multsub when the
+            //   outer carried `(@)`, so non-`(@)` nested forms like
+            //   `${(j:-:)${(s: :)a}}` collapsed the inner array to a
+            //   scalar via singsub and the outer `(j)` had nothing to
+            //   join. Bug #63 in docs/BUGS.md.
+            let expanded = {
+                let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SUBEXP);
                 if isarr && !arr_parts.is_empty() {
                     // Generate a stable per-call temp name. We use a
                     // process-local counter; cleanup happens at end of
@@ -3989,8 +3999,6 @@ pub fn paramsubst(
                 } else {
                     joined
                 }
-            } else {
-                singsub(&inner) // c:2681
             };
             idx = p; // c:2691
                      // If we peeled a leading `"`, also consume the matching
