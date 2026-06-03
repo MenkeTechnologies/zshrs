@@ -5710,6 +5710,26 @@ pub fn doshfunc(
     // zshrs delegates to the body_runner closure (typically a fusevm
     // sub-VM run from the bridge). The closure returns the body's
     // exit status which becomes lastval.
+    //
+    // c:Src/exec.c:1251-1266 — push "shfunc" onto zsh_eval_context
+    // so the body sees `${zsh_eval_context[*]}` containing the call
+    // chain context. The execode-based path (c:1245-1282 port at
+    // exec.rs:7092) already did this, but the fusevm body_runner
+    // path skipped doshfunc's body_runner invocation without the
+    // push. Bug #262 in docs/BUGS.md.
+    //
+    // Push BOTH the static `zsh_eval_context` (matches C's variable)
+    // AND the paramtab array entry (what `${zsh_eval_context[*]}`
+    // reads). Pop on every return path via the guard struct so
+    // panics / early returns don't leak the entry.
+    crate::vm_helper::push_zsh_eval_context("shfunc");
+    struct EvalContextGuard;
+    impl Drop for EvalContextGuard {
+        fn drop(&mut self) {
+            crate::vm_helper::pop_zsh_eval_context();
+        }
+    }
+    let _eval_ctx_guard = EvalContextGuard;
     let body_status = body_runner();
     LASTVAL.store(body_status, Ordering::Relaxed);
 
