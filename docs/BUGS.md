@@ -38165,7 +38165,37 @@ the appropriate field.
 
 ## #525 — `print -x notanint ARG` accepts non-integer `-x` arg — zsh: "positive integer expected"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `bin_print` now validates
+the `-x` / `-X` argument matches `Src/builtin.c:5101-5106`:
+`*eptr || expand <= 0 → zwarnnam("positive integer expected
+after -X: ARG"); return 1`.
+
+**Root cause** — `src/ported/builtin.rs::bin_print` did
+not handle the `-x N` / `-X N` indent flags at all; the
+arg was silently accepted and the rest of argv printed as
+normal content. C zsh emits a hard error when `zstrtol`
+either leaves trailing garbage in the arg OR the parsed
+value is `<= 0`.
+
+**Fix** (`src/ported/builtin.rs::bin_print`, early in the
+function before content emit) — when `OPT_HASARG(ops, b'x')
+|| OPT_HASARG(ops, b'X')`, route through
+`xarg.parse::<i64>()` (matches zstrtol's full-string + sign
+semantics) and check `n > 0`. Failure → zwarnnam +
+`return 1`.
+
+**Verify**:
+- `print -x notanint hi` → error + rc=1 (matches zsh).
+- `print -x 0 hi` → error + rc=1 (matches zsh; zero
+  rejected).
+- `print -x -5 hi` → error + rc=1 (matches zsh; negative
+  rejected).
+- `print -x 4 hi` → `hi` (regression preserved; valid
+  positive int).
+- `print hello` → `hello` (regression preserved).
+- zshrs_shell baseline 957/95 (improved from 956/96).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -x notanint hi 2>&1; echo rc=$?'
