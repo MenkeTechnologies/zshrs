@@ -23064,7 +23064,67 @@ ext="${(L)elem}"
 
 ## #302 — `pushd +N` directory-stack rotation rotates wrong direction
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `cd_get_dest` indexed `DIRSTACK`
+directly with `dd` for `+N`, but zsh's `dirstack` LinkList puts
+current PWD at firstnode so `+N` advances N nodes from current
+(0 = current, 1 = first non-current entry). zshrs's `DIRSTACK`
+omits PWD entirely (PWD lives in paramtab), so the index was
+off by one for `+N` and the `+0`/`-len` cases never resolved
+to PWD. On top of that, `bin_cd`'s post-cd dirstack maintenance
+unconditionally inserted pre_pwd at position 0, which is the
+correct shape for `pushd <path>` but wrong for `pushd +N` — C
+calls `rolllist(dirstack, dir)` then `remnode(dirstack, dir)`,
+which rotates the FULL stack so the target becomes firstnode
+and the entries before the target wrap to the tail. The Rust
+shortcut left the rotated target still in `DIRSTACK` at its
+old position.
+
+**Root cause** —
+1. `cd_get_dest` `+N`/`-N` resolver indexed `DIRSTACK` instead
+   of the virtual full stack `[PWD] ++ DIRSTACK`. `+1` returned
+   `DIRSTACK[1]` instead of `DIRSTACK[0]`; `+2` ran past the end.
+2. `bin_cd` post-cd path inserted `pre_pwd` at `DIRSTACK[0]` for
+   every PUSHD invocation, regardless of whether the arg was a
+   path (insert) or `+N`/`-N` (rotate).
+
+**Fix** — `src/ported/builtin.rs`:
+1. `cd_get_dest` `+N`/`-N` branch now builds the virtual full
+   stack of length `m+1` (PWD + DIRSTACK entries) and indexes
+   into it. `k == 0` returns current PWD; `k > 0` returns
+   `DIRSTACK[k-1]`. From-bottom (`-N`) computes `k = n-1-dd`
+   against the same full stack.
+2. `bin_cd` post-cd dirstack maintenance detects the `+N`/`-N`
+   shape on `argv[0]` and branches:
+   - PUSHD / CD-with-autopushd: rotate `[pre_pwd] ++ DIRSTACK_old`
+     so target becomes firstnode (matches C's `rolllist` + `remnode`).
+   - Plain CD with `+N`/`-N`: remove target from DIRSTACK only
+     (C's `remnode` without `rolllist`).
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'cd /tmp; pushd / >/dev/null; pushd /etc >/dev/null; pushd +1 >/dev/null; pwd; dirs'
+/
+/ /tmp /etc
+
+$ ./target/debug/zshrs --zsh -c 'cd /tmp; pushd / >/dev/null; pushd /etc >/dev/null; pushd +2 >/dev/null; pwd; dirs'
+/tmp
+/tmp /etc /
+
+$ ./target/debug/zshrs --zsh -c 'cd /tmp; pushd / >/dev/null; pushd /etc >/dev/null; pushd -1 >/dev/null; pwd; dirs'
+/
+/ /tmp /etc
+
+$ ./target/debug/zshrs --zsh -c 'cd /tmp; pushd / >/dev/null; pushd /etc >/dev/null; pushd -2 >/dev/null; pwd; dirs'
+/etc
+/etc / /tmp
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte. Out-of-
+range (`-3`, `+3` for this stack) emits `zsh:pushd:1: no such
+entry in dir stack` and exits 1, matching zsh. `pushd <path>`
+regression check unchanged.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'cd /tmp; pushd / >/dev/null; pushd /etc >/dev/null; pushd +1 >/dev/null; pwd'
@@ -23074,35 +23134,9 @@ $ ./target/debug/zshrs --zsh -c 'cd /tmp; pushd / >/dev/null; pushd /etc >/dev/n
 /tmp
 ```
 
-Sequence:
-1. `cd /tmp` — current dir = /tmp, stack = []
-2. `pushd /` — current = /, stack = [/tmp]
-3. `pushd /etc` — current = /etc, stack = [/, /tmp]
-4. `pushd +1` — rotate dirstack by 1 position
-
-zsh interprets `pushd +1` as "make element [+1] (skipping
-current) the new top" — `/` from position 1 becomes current.
-zshrs's rotation chooses a different element (`/tmp` —
-position 2).
-
-The exact semantics of `pushd +N` are documented in zsh's
-manual, but zshrs's implementation diverges.
-
-**Where** — `src/ported/builtins/pushd.rs::rotate_stack`:
-direction or indexing of the rotation differs from zsh. C-
-source `Src/builtin.c::bin_dirs` for `pushd +N` rotates
-dirstack so that entry N becomes current.
-
-**Impact** — dirstack-based navigation idioms in interactive
-zsh (common in user `.zshrc` for "jump to 3rd most-recent
-dir") jump to wrong destinations.
-
-**Workaround** — use absolute `pushd <path>` instead of
-relative `pushd +N`:
-```sh
-saved="${dirstack[2]}"   # or whichever index you actually want
-cd "$saved"
-```
+zsh interprets `pushd +1` as "make element [+1] (counting
+current as +0) the new top" — `/` from position 1 becomes
+current. zshrs's rotation chose `/tmp` (position 2).
 
 ---
 
@@ -38536,7 +38570,7 @@ qualifiers always have a digit suffix.
 | 299 | Glob qualifier `(YN)` count-limit not applied — returns all matches | **fixed** 2026-06-02 | n/a |
 | 300 | `typeset -i n; n=0o10` (Python octal prefix) silently parses as `0` (zsh: errors loudly); security-relevant for masks | **fixed** 2026-06-02 | n/a |
 | 301 | `${(L/U/C)arr[N]}` case-change flag on subscripted array element errors "bad substitution" | **port-bug** | split: `e=arr[N]; ${(C)e}` |
-| 302 | `pushd +N` dirstack rotation rotates to wrong element (direction or indexing differs from zsh) | **port-bug** | absolute `pushd "${dirstack[N]}"` |
+| 302 | `pushd +N` dirstack rotation rotates to wrong element (direction or indexing differs from zsh) | **fixed** 2026-06-02 | n/a |
 | 303 | `trap '...' ERR` fires twice when failing cmd is inside a fn (zsh: once per logical error) | **fixed** 2026-06-02 | n/a |
 | 304 | `compfiles`/`compgroups`/`compquote`/`comptags`/`comptry`/`compvalues`/`comparguments`/`compdescribe`/`compcall`/`compctl` builtins missing — compsys unusable | **port-bug** | (none — major daily-driver blocker) |
 | 305 | `vared -c VAR` non-interactive silent no-op (zsh: errors "can't access terminal") | **port-bug** | explicit `[[ -t 0 ]]` check |
