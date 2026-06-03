@@ -1620,9 +1620,15 @@ pub(crate) fn zzlex() -> i32 {
 
             '?' => {
                 if m_unary() {
-                    // $? = lastval
+                    // c:Src/math.c:772-776 — `case '?': if (unary) { yyval.u.l
+                    // = lastval; return NUM; } return QUEST;`. Read the live
+                    // `LASTVAL` atomic (zsh C's `lastval` global). The local
+                    // `m_lastval()` cache is unset by any matheval caller —
+                    // it would always be 0. Bug #367.
+                    let lv = crate::ported::builtin::LASTVAL
+                        .load(std::sync::atomic::Ordering::Relaxed);
                     m_yyval_set(mnumber {
-                        l: m_lastval() as i64,
+                        l: lv as i64,
                         d: 0.0,
                         type_: MN_INTEGER,
                     });
@@ -1807,7 +1813,15 @@ pub(crate) fn zzlex() -> i32 {
                     m_yylval_set(m_input_clone()[id_start..m_pos()].to_string());
                     return CID;
                 }
-                continue;
+                // c:Src/math.c:911-915 — bare `#` (followed by non-ident) is
+                // `$#` (positional-parameter count): `yyval.u.l =
+                // poundgetfn(NULL); return NUM;`. Bug #368.
+                m_yyval_set(mnumber {
+                    l: crate::ported::params::poundgetfn(),
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                });
+                return NUM;
             }
 
             _ => {
