@@ -377,6 +377,19 @@ impl shfunc_table {
             table: HashMap::new(),
         }
     }
+    /// `snapshot` — clone the internal `HashMap<String, Box<shfunc>>`
+    /// for subshell save/restore. Used by `subshell_begin` to capture
+    /// the parent's function set before the subshell body runs, so
+    /// `subshell_end` can restore it (matches C fork-copy semantics
+    /// at `Src/exec.c::entersubsh`).
+    pub fn snapshot(&self) -> HashMap<String, Box<shfunc>> {
+        self.table.clone()
+    }
+    /// `restore` — replace the internal table with a saved snapshot.
+    /// Called by `subshell_end` after the subshell body completes.
+    pub fn restore(&mut self, snap: HashMap<String, Box<shfunc>>) {
+        self.table = snap;
+    }
     /// `add` — see implementation.
     pub fn add(&mut self, func: shfunc) -> Option<shfunc> {
         self.table

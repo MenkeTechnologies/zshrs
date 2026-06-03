@@ -15599,7 +15599,64 @@ setopt ksh_arrays ksh_typeset bsd_echo
 
 ## #208 — Function defined inside `(...)` subshell leaks into parent shell
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `subshell_begin` / `subshell_end`
+snapshot/restore the parent's shell-function tables before
+running the `(...)` body, so a subshell `f() { ... }` definition
+(or override of an existing function) dies with the subshell
+and the parent's function set is restored on exit. Companion
+to the existing snapshot/restore for paramtab, aliases, traps,
+options, cwd, umask, env, and pparams.
+
+**Root cause** — `SubshellSnapshot` in `src/vm_helper.rs`
+covered every other piece of state that `Src/exec.c::entersubsh`
+isolates via fork-copy, but missed:
+1. The canonical `shfunctab` (`HashMap<String, Box<shfunc>>`)
+   that hashtable-API readers like `bin_functions` consult.
+2. The runtime dispatch tables
+   `ShellExecutor.functions_compiled` (compiled bytecode chunks
+   that `Op::CallFunction` reads through) and
+   `ShellExecutor.function_source` (introspection-text map for
+   `typeset -f` / `whence`).
+
+Without all three, a subshell-defined override left its
+bytecode chunk in `functions_compiled` even after shfunctab
+was restored — `g` after the subshell still ran the override.
+
+**Fix** —
+1. `src/ported/hashtable.rs`: add `snapshot()` / `restore()`
+   methods to `shfunc_table` that clone/replace the underlying
+   `HashMap<String, Box<shfunc>>`. `shfunc` already derives
+   Clone.
+2. `src/vm_helper.rs`: extend `SubshellSnapshot` with
+   `shfuncs`, `functions_compiled`, and `function_source`
+   fields.
+3. `src/fusevm_bridge.rs::subshell_begin`: capture all three
+   alongside the existing aliases/traps/etc. captures.
+4. `src/fusevm_bridge.rs::subshell_end`: restore all three
+   alongside the existing restores.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c '(f() { echo defined; }; f); type f 2>&1'
+defined
+f not found
+
+$ ./target/debug/zshrs --zsh -c 'g() { echo orig; }; (g() { echo override; }; g); g'
+override
+orig
+
+$ ./target/debug/zshrs --zsh -c '(f() { echo override; }); type f 2>&1'
+f not found
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte. The
+companion bug #209 (aliases) was previously fixed via the same
+pattern; this extends it to shell functions. Regressions
+clean: variable / cwd / umask / traps / opts / aliases
+subshell isolation tests all still pass. Baseline 944/108
+preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '(f() { echo defined; }; f); type f 2>&1'
@@ -15609,52 +15666,6 @@ f not found
 $ ./target/debug/zshrs --zsh -c '(f() { echo defined; }; f); type f 2>&1'
 defined
 f is a shell function from zsh
-```
-
-In zsh, `(...)` runs in a subshell — state changes inside
-(functions, variables, options, current directory, traps) do
-not affect the parent. zshrs honors this isolation for plain
-variables (control test passes: `(X=value); echo "$X"` → empty
-in both shells), but NOT for function definitions.
-
-A function defined inside `(...)` leaks back into the parent.
-This is the function analog of "the subshell is not really a
-subshell" — likely the subshell is implemented as a saved/
-restored state context that doesn't include the function
-table.
-
-**Where** — `src/ported/exec.rs::run_subshell`: state save/
-restore doesn't snapshot the global function table. C-source
-`Src/exec.c::entersubsh` forks (or in `nofork` paths still
-saves shfunctab). The Rust impl skips fn-table cloning.
-
-**Impact** — common zsh idioms break in two ways:
-
-1. Helper functions defined for one-time use leak globally:
-```sh
-process_dir() {
-    (
-        helper() { ... }  # intended to be scoped
-        for x in *; do helper $x; done
-    )
-}
-# zsh: helper gone after process_dir returns
-# zshrs: helper visible to all subsequent code
-```
-
-2. Subshell function overrides bleed back:
-```sh
-(
-    g() { echo overridden; }  # intended subshell-local override
-    g
-)
-g  # zsh: original; zshrs: still overridden version from subshell
-```
-
-**Workaround** — explicit cleanup after subshell:
-```sh
-(helper() { ...; }; do_stuff)
-unfunction helper 2>/dev/null
 ```
 
 ---
@@ -38846,7 +38857,7 @@ qualifiers always have a digit suffix.
 | 205 | `read -u N` doesn't read from numeric fd opened via `exec N<...` | **port-bug** | `read x <&N` redirect-form |
 | 206 | `setopt multios` only last target receives `cmd > a > b` (zsh: both) | **port-bug** | explicit `tee` pipe |
 | 207 | `emulate ksh` doesn't apply `KSH_ARRAYS`/`BSD_ECHO`/etc option bundle | **port-bug** | explicit `setopt ksh_arrays` after |
-| 208 | Function defined inside `(...)` subshell leaks into parent shell | **port-bug** | explicit `unfunction` after |
+| 208 | Function defined inside `(...)` subshell leaks into parent shell | **fixed** 2026-06-02 | n/a |
 | 209 | Alias defined inside `(...)` subshell leaks into parent shell | **port-bug** | explicit `unalias` after |
 | 210 | `(unfunction f)`/`(zmodload m)` in subshell mutate parent state (destructive) | **port-bug** | never use subshell for state-mutating builtins |
 | 211 | `$-` (option chars) missing `f`/other letters (option-to-char table incomplete) | **port-bug** | use `setopt \| grep ...` instead |

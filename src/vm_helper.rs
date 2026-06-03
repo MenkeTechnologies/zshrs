@@ -233,6 +233,30 @@ pub struct SubshellSnapshot {
     /// metadata we don't need to round-trip; only name + text are
     /// observable via `alias NAME` lookup.
     pub aliases: Vec<(String, String)>,
+    /// Parent's shell-function table at subshell entry. C zsh's
+    /// `entersubsh` (`Src/exec.c`) forks before running the
+    /// subshell body so `(f() { ... })` defining a function dies
+    /// with the child and never leaks to the parent. zshrs runs
+    /// subshells in-process, so we must clone `shfunctab` on entry
+    /// and restore on exit. Bug #208 in docs/BUGS.md. Stored as
+    /// the full `HashMap<String, Box<shfunc>>` clone — shfunc is
+    /// `Clone` and the table snapshot is bounded by the user's
+    /// declared function set.
+    pub shfuncs:
+        std::collections::HashMap<String, Box<crate::ported::zsh_h::shfunc>>,
+    /// Parent's compiled-function chunks at subshell entry. Companion
+    /// to `shfuncs` above — `ShellExecutor.functions_compiled` is the
+    /// runtime dispatch table that `Op::CallFunction` reads through;
+    /// without restoring it, a subshell `(g() { override; })` leaves
+    /// the override bytecode chunk in place so the parent's
+    /// `g` call still runs the override after `subshell_end`
+    /// restored shfunctab. Bug #208 in docs/BUGS.md.
+    pub functions_compiled: HashMap<String, fusevm::Chunk>,
+    /// Parent's function source map at subshell entry. Companion to
+    /// `functions_compiled` so `typeset -f` / `whence` show the
+    /// parent's source after subshell exit, not the subshell's
+    /// overridden body. Bug #208 in docs/BUGS.md.
+    pub function_source: HashMap<String, String>,
 }
 
 #[allow(unused_imports)]
