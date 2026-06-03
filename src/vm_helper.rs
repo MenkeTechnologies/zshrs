@@ -1038,10 +1038,7 @@ impl ShellExecutor {
                     // rejected by assignstrvalue's PM_READONLY guard.
                     // C zsh's PM_SPECIAL GSU setfn bypasses the guard;
                     // the Rust port lacks that vtable wiring, so keep
-                    // the entries writable. Consequence: `(t)LINENO`
-                    // etc. read `integer-special` instead of zsh's
-                    // `integer-readonly-special` — a parity gap on
-                    // introspection metadata; runtime behavior matches.
+                    // the entries writable.
                     //
                     // PM_UNSET is included: lookup_special_var arms for
                     // TRY_BLOCK_ERROR / TRY_BLOCK_INTERRUPT (and other
@@ -1056,16 +1053,14 @@ impl ShellExecutor {
                     // c:Src/params.c — IPDEF4/IPDEF1 set
                     // PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY |
                     // PM_RO_BY_DESIGN. zshrs masks PM_READONLY out
-                    // because assignstrvalue (params.rs:4055) would
-                    // reject internal-runtime writes (LINENO bumps,
-                    // `$!`/`$$` updates, etc.) — the GSU vtable that
-                    // bypasses PM_READONLY isn't wired here. Replace
-                    // the dropped PM_READONLY with PM_RO_BY_DESIGN so
-                    // `typeset -r` can recognise these entries as
-                    // logically-readonly without blocking writes. The
-                    // listing filter in `bin_typeset` expands its
-                    // PM_READONLY match to also pick up
-                    // PM_RO_BY_DESIGN. Bug #97 in docs/BUGS.md.
+                    // (see above) but the introspection bit can still
+                    // ride along. Replace dropped PM_READONLY with
+                    // PM_RO_BY_DESIGN so `typeset -r` recognises these
+                    // entries as logically-readonly without blocking
+                    // internal writes. The listing filter in
+                    // `bin_typeset` expands its PM_READONLY match to
+                    // also pick up PM_RO_BY_DESIGN. Bug #97 in
+                    // docs/BUGS.md.
                     if (entry.pm_flags & crate::ported::zsh_h::PM_READONLY) != 0 {
                         bits |= crate::ported::zsh_h::PM_RO_BY_DESIGN;
                     }
