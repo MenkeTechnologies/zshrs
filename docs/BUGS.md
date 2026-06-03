@@ -12386,7 +12386,70 @@ log_with_timestamp < /var/log/messages
 
 ## #159 — `while [[ $((i++)) -lt N ]]` only iterates once (post-increment in `[[ ]]` cond)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `compile_cond` now gates the
+trace-string-building block on the live xtrace opt-state at
+runtime, so operand expansion runs ONCE in the cond-eval path
+instead of twice (trace + cond).
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_cond`
+(at the `[[ ]]` lowering site) called `emit_cond_trace_runtime(c)`
+UNCONDITIONALLY before `compile_cond_expr(c)`. Both paths emit
+`compile_word_str` for each operand, and `compile_word_str` for
+`$((expr))` emits ops that call `BUILTIN_ARITH_EVAL` on the
+expression text. So `$((i++))` got evaluated TWICE per cond
+check — once for trace (even when xtrace was off), once for
+the comparison. Each pass incremented `i`, so the first
+iteration left `i=2` instead of `i=1`; the next check
+incremented twice more to `i=4` and compared `3 < 3 = false`
+→ exit after one iteration.
+
+**Fix** — added a new builtin `BUILTIN_XTRACE_IS_ON` that pushes
+the live xtrace opt-state (0/1) and gated the trace block with
+`JumpIfFalse`:
+
+```
+CallBuiltin(BUILTIN_XTRACE_IS_ON, 0)
+JumpIfFalse trace_done:
+... LoadConst "[[ " + emit_cond_trace_runtime(c) ...
+CallBuiltin(BUILTIN_XTRACE_LINE, 1)
+Pop
+trace_done:
+... compile_cond_expr(c) ...
+```
+
+When xtrace is OFF, `JumpIfFalse` skips the entire trace
+block — no operand expansion ops execute, no side-effectful
+`$((i++))` re-evaluation. When xtrace is ON, the trace block
+runs as before.
+
+Bonus catch during the fix: `BUILTIN_ARITH_CMD_FINISH` and
+the newly-added `BUILTIN_XTRACE_IS_ON` initially collided at
+opcode ID 527 — the second registration overwrote the first.
+Bumped `BUILTIN_XTRACE_IS_ON` to 611. Future ID-allocator pass
+should detect this; for now manual.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'i=0; while [[ $((i++)) -lt 3 ]]; do echo "iter: i=$i"; done'
+iter: i=1
+iter: i=2
+iter: i=3
+
+$ ./target/debug/zshrs --zsh -c 'i=0; while [[ $((i++)) -lt 3 ]]; do echo "iter: i=$i"; done'
+iter: i=1
+iter: i=2
+iter: i=3
+```
+
+Pre-increment (`$((++i)) -le 3`) and single-`[[ ]]` form
+(`[[ $((i++)) -lt 5 ]]`) also produce identical output to zsh.
+
+xtrace mode still emits the trace line correctly: both shells
+print `[[ 0 -lt 3 ]]` (the resolved operand value).
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'i=0; while [[ $((i++)) -lt 3 ]]; do echo "iter: i=$i"; done'
@@ -38055,7 +38118,7 @@ qualifiers always have a digit suffix.
 | 156 | `[[ -e /path/*.glob ]]` glob-expands in test (zsh: literal) | **port-bug** | external `ls` test |
 | 157 | `TRAP<SIG>()` function-named trap handlers not recognized | **port-bug** | explicit `trap` builtin |
 | 158 | Function-def redirect `f() {} < file` not honored | **port-bug** | redirect at call site |
-| 159 | `while [[ $((i++)) -lt N ]]` only iterates once | **port-bug** | `while (( i++ < N ))` |
+| 159 | `while [[ $((i++)) -lt N ]]` only iterates once | **fixed** 2026-06-02 | n/a |
 | 160 | `autoload -U +X funcname` doesn't actually load function body | **port-bug** | drop `+X`, lazy load |
 | 161 | `case x in)` empty pattern silently accepted (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 162 | `${(l.5)x}` missing close-delim silently accepted (zsh: error) | **fixed** 2026-06-02 | n/a |

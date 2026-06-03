@@ -3908,6 +3908,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // PS4 emission — the assignment + command end up on the SAME
     // line: `<PS4>a=1 echo hello\n`. XTRACE_ARGS / XTRACE_NEWLINE
     // reset the flag after emitting the trailing `\n`.
+    vm.register_builtin(BUILTIN_XTRACE_IS_ON, |_vm, _argc| {
+        // Push live xtrace state. Caller pairs this with JumpIfFalse
+        // to skip the trace-string-building block when xtrace is off,
+        // avoiding side-effectful operand re-evaluation. Bug #159 in
+        // docs/BUGS.md.
+        let on = with_executor(|_| opt_state_get("xtrace").unwrap_or(false));
+        Value::Int(if on { 1 } else { 0 })
+    });
+
     vm.register_builtin(BUILTIN_XTRACE_LINE, |vm, _argc| {
         let cmd_text = vm.pop().to_str();
         // Sync exec.last_status with the live vm.last_status BEFORE
@@ -5534,6 +5543,17 @@ pub const BUILTIN_XTRACE_ASSIGN: u16 = 525;
 ///
 /// Stack: untouched. argc = 0.
 pub const BUILTIN_XTRACE_NEWLINE: u16 = 526;
+
+/// Push the live `xtrace` opt-state as `Value::Int(1)` (on) or
+/// `Value::Int(0)` (off). Used by `compile_cond` to gate the
+/// trace-string-building block on xtrace state at runtime — without
+/// this the trace path's `compile_word_str` on each operand re-
+/// evaluates side-effectful expressions (`$((i++))`) once for the
+/// trace string and once for the actual condition, doubling the
+/// effective increment. Bug #159 in docs/BUGS.md.
+///
+/// Stack: pushes Int(0|1). argc = 0.
+pub const BUILTIN_XTRACE_IS_ON: u16 = 611;
 
 /// GLOB_SUBST guard for `[[ x == $pat ]]` pattern RHS coming from
 /// parameter / command substitution. C-zsh's `[[ == ]]` semantics
