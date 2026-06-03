@@ -9359,7 +9359,12 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
     if (printflags & PRINT_KV_PAIR) != 0 {
         // hashelem path: print key without name= leader.
     }
-    print!("{}", hn.node.nam);
+    // c:Src/params.c:6290 — `quotedzputs(p->node.nam, stdout)`. Names
+    // containing shell metacharacters get single-quoted so the
+    // output is re-parseable (`'#'=0`, `'$'=2609`, `'?'=0`). Plain
+    // identifiers pass through unchanged. Bug #97 in docs/BUGS.md:
+    // bare `print!("{}", nam)` produced unquoted `#=0` etc.
+    print!("{}", quotedzputs(&hn.node.nam));
     // c:6289 — `(printflags & PRINT_NAMEONLY) ||
     //   ((p->node.flags & PM_HIDEVAL) && !(printflags & PRINT_INCLUDEVALUE))`
     // PM_HIDEVAL (set by `typeset -H`, see TYPESET_OPTSTR position
