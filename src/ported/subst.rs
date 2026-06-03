@@ -8392,6 +8392,27 @@ pub fn paramsubst(
                 // c:3920-3928 — multiple parts: leave `value` alone so
                 // scalar-context reads preserve the original delimiter.
             }
+            // c:Src/subst.c sepsplit — `(s.X.)` split COLLAPSES runs
+            // of consecutive separators in array context (like awk
+            // FS) unless `(@)` is also set (nojoin=2 path at
+            // c:2165). For `aXXb` → 2 elements; `aXXXb` → 2; `X` → 2
+            // (leading+trailing empty preserved); `Xab` → 2 (leading
+            // empty preserved); `abX` → 2 (trailing empty preserved).
+            // Only the INTERIOR empties between two non-empty
+            // neighbours collapse — leading/trailing empties stay.
+            // Bug #542.
+            if nojoin != 2 && parts.len() >= 3 {
+                let mut collapsed: Vec<String> = Vec::with_capacity(parts.len());
+                let n = parts.len();
+                for (i, p) in parts.iter().enumerate() {
+                    let is_interior = i > 0 && i + 1 < n;
+                    if is_interior && p.is_empty() {
+                        continue;
+                    }
+                    collapsed.push(p.clone());
+                }
+                parts = collapsed;
+            }
             split_parts = Some(parts); // c:3950
                                        // c:3274 — `isarr = nojoin ? 1 : 2;`. The value 2 is
                                        // C's "array came from splitting a scalar" sentinel
