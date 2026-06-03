@@ -594,7 +594,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
 pub fn loadautofn(
     shf: *mut shfunc, // c:5682 (Src/exec.c)
     _ks: i32,
-    test_only: i32,
+    autol: i32,
     _ignore_loaddir: i32,
 ) -> i32 {
     if shf.is_null() {
@@ -633,10 +633,19 @@ pub fn loadautofn(
             return 1; // c:5719 NULL
         }
     };
-    if test_only != 0 {
-        // c:5096
-        return 0; // test passes — file exists
-    }
+    let _ = autol;
+    // Previously the Rust port treated this parameter as
+    // "test_only" and early-returned when set, so the `+X`
+    // call from `eval_autoload` (`loadautofn(shf, mode, 1, d)`)
+    // never actually loaded the file. C's parameter is `autol`
+    // (autoload mode), NOT a test-only flag — the C body
+    // unconditionally loads/parses regardless of autol. autol=1
+    // controls the EF_RUN / map-flag dance for the wordcode prog
+    // (c:5725-5749), but the loaded-body / PM_UNDEFINED-clear
+    // path runs in all cases. Removing the early-return so
+    // `autoload -U +X funcname` actually loads the body and
+    // `type funcname` reports `function from /path/file` instead
+    // of `autoload shell function`. Bug #160 in docs/BUGS.md.
     // c:5100-5140 — read the file. C uses zopen + read + parse_string +
     // execsave; Rust port stores raw text on the ShFunc and defers
     // parse-to-Eprog until the first call.
