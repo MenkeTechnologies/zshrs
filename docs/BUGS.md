@@ -15753,6 +15753,28 @@ clear from env then re-bind as non-exported parameter.
 
 ## #202 — `set -eo pipefail` doesn't abort on failed pipe component
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces. The
+pipefail logic at `src/fusevm_bridge.rs:1538-1548` consults
+`opt_state_get("pipefail")` and overrides the pipeline's
+last-stage status with `pipestatus.iter().rfind(|s| s != 0)`
+(rightmost non-zero — matches C `Src/jobs.c:431-433` where
+`pipefail = jpipestats[i]` overwrites with each non-zero,
+ending at the LAST non-zero in iteration order).
+
+Verified vs `/opt/homebrew/bin/zsh`:
+```
+$ setopt pipefail; false | true; echo $?              # ec=1 both
+$ setopt pipefail; false | true | true; echo $?       # ec=1 both
+$ set -eo pipefail; false | true; echo never; echo $? # (empty)/ec=1 both
+$ false | true; echo $?                               # ec=0 both (no pipefail)
+```
+
+Likely closed by earlier `BUILTIN_RUN_PIPELINE` wiring that
+added the explicit pipefail/PIPESTATUS handling block. Doc-only
+flip; no code change in this commit.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
