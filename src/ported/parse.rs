@@ -1009,11 +1009,39 @@ fn par_sublist() -> Option<ZshSublist> {
         DAMPER => {
             zshlex();
             skip_separators();
+            // c:Src/parse.c:par_sublist — and-or operators (`&&`,
+            // `||`) require a sublist on each side. After consuming
+            // `&&`/`||`, another and-or operator OR a pipe-operator
+            // immediately after is a parse error in C zsh. zshrs's
+            // recursion silently returned None and dropped the
+            // operator. Bug #171 in docs/BUGS.md.
+            if matches!(tok(), DAMPER | DBAR | BAR_TOK | BARAMP) {
+                let name = match tok() {
+                    DAMPER => "&&",
+                    DBAR => "||",
+                    BAR_TOK => "|",
+                    BARAMP => "|&",
+                    _ => "operator",
+                };
+                zerr(&format!("parse error near `{}'", name));
+                return None;
+            }
             par_sublist().map(|s| (SublistOp::And, Box::new(s)))
         }
         DBAR => {
             zshlex();
             skip_separators();
+            if matches!(tok(), DAMPER | DBAR | BAR_TOK | BARAMP) {
+                let name = match tok() {
+                    DAMPER => "&&",
+                    DBAR => "||",
+                    BAR_TOK => "|",
+                    BARAMP => "|&",
+                    _ => "operator",
+                };
+                zerr(&format!("parse error near `{}'", name));
+                return None;
+            }
             par_sublist().map(|s| (SublistOp::Or, Box::new(s)))
         }
         _ => None,
@@ -1061,6 +1089,20 @@ fn par_pline() -> Option<ZshPipe> {
             merge_stderr = tok() == BARAMP;
             zshlex();
             skip_separators();
+            // c:Src/parse.c:par_pline — pipe-operators require a
+            // command on each side. After consuming `|`/`|&`,
+            // C zsh's recursive par_pline call returns -1 (parse
+            // error) when the next token is another pipe-operator
+            // — `a | | b` errors with `parse error near `|''`.
+            // zshrs's `par_pline()?` silently returned None on
+            // missing command, dropping the rest of the input
+            // without diagnosing the empty-pipe-operand. Bug #171
+            // in docs/BUGS.md.
+            if matches!(tok(), BAR_TOK | BARAMP) {
+                let name = if tok() == BARAMP { "|&" } else { "|" };
+                zerr(&format!("parse error near `{}'", name));
+                return None;
+            }
             par_pline().map(Box::new)
         }
         _ => None,
