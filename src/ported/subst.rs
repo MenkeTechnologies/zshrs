@@ -11174,9 +11174,22 @@ fn vars_get(name: &str) -> Option<String> {
 /// callbacks at read time without a backing Param, so the is-set
 /// check has to consult the same callback path.
 fn vars_contains(name: &str) -> bool {
-    paramtab()
-        .read()
-        .map_or(false, |tab| tab.contains_key(name))
+    // c:Src/subst.c:3600 (`${+name}` chkset path) — C zsh's
+    // `vunset = (!v || ...)` check at c:3193 treats PM_UNSET as
+    // "not set" so `${+X}` returns 0. zshrs previously returned
+    // true for any paramtab key regardless of PM_UNSET; under
+    // `setopt typeset_to_unset`, bare `typeset X` creates the
+    // entry with `PM_DEFAULTED = PM_DECLARED | PM_UNSET` (per
+    // `Src/builtin.c:2544`), and `${+X}` should fire the unset
+    // branch. Add the PM_UNSET filter so the chkset path sees
+    // the declared-but-not-assigned state correctly. Bug #280
+    // in docs/BUGS.md.
+    let in_paramtab_and_set = paramtab().read().map_or(false, |tab| {
+        tab.get(name).is_some_and(|pm| {
+            (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0
+        })
+    });
+    in_paramtab_and_set
         || std::env::var(name).is_ok()
         || lookup_special_var(name).is_some()
 }

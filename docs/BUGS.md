@@ -22353,6 +22353,57 @@ zshrs.
 
 ## #280 — `setopt typeset_to_unset` opt ignored — `typeset X` always creates parameter
 
+**Status:** `fixed` 2026-06-03 — two-point fix mirroring C
+`Src/builtin.c:2544` `PM_DEFAULTED` stamp + `Src/subst.c:3600`
+`${+name}` chkset semantics.
+
+**Root cause** — bare `typeset NAME` at top scope ran through
+the auto-PM_LOCAL code path (`builtin.rs:3669-3672`'s
+`on |= PM_LOCAL` when not `-g`/`-x`/`-m`). That triggers the
+`createparam(arg_name, kind|PM_LOCAL)` at `builtin.rs:4222`,
+creating X with PM_SCALAR but no PM_UNSET. C zsh ORs in
+`PM_DEFAULTED = PM_DECLARED | PM_UNSET` after createparam when
+`isset(TYPESETTOUNSET)` (`Src/builtin.c:2544`). Without that
+flag, X read as "set with empty value" forever.
+
+The chkset `${+NAME}` path in `subst.rs::vars_contains` only
+checked paramtab.contains_key — it didn't filter out entries
+with PM_UNSET, so even after the C-port hung the flag on the
+param, `${+X}` would have ignored it.
+
+**Fix:**
+1. `src/ported/builtin.rs::bin_typeset` createparam path at
+   ~line 4250: after stamping pre-assign flags on the
+   freshly-created param, OR `PM_DEFAULTED` if
+   `isset(TYPESETTOUNSET)` AND the arg has no `=` (assignment
+   paths clear PM_UNSET as a side effect of the value write).
+2. `src/ported/subst.rs::vars_contains`: filter out entries
+   with PM_UNSET set so `${+X}` returns 0 for declared-
+   but-not-assigned params.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'setopt typeset_to_unset; typeset X; (( ${+X} )) && echo plus-set || echo plus-unset; [[ -v X ]] && echo v-set || echo v-unset'
+plus-unset
+v-unset
+$ ./target/debug/zshrs --zsh -c 'setopt typeset_to_unset; typeset X; (( ${+X} )) && echo plus-set || echo plus-unset; [[ -v X ]] && echo v-set || echo v-unset'
+plus-unset
+v-unset
+
+# Regression: explicit assignment clears the PM_UNSET sentinel.
+$ ./target/debug/zshrs --zsh -c 'setopt typeset_to_unset; typeset X; X=hello; (( ${+X} )) && echo set || echo unset; echo "[$X]"'
+set
+[hello]
+
+# Regression: without setopt, bare typeset still creates the param.
+$ ./target/debug/zshrs --zsh -c 'typeset Y; (( ${+Y} )) && echo set || echo unset'
+set
+```
+
+zshrs_shell baseline preserved (950/102, in flake range).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
