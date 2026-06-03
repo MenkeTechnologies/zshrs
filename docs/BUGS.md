@@ -38704,7 +38704,43 @@ set -e
 
 ## #534 — `builtin 2>&1` (bare redirect on reserved word) silently rc=0 — zsh: "redirection with no command"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `compile_simple`'s
+`is_empty_command` arm now detects "redirect present + no
+command word" and emits the canonical zsh diagnostic via a
+new `BUILTIN_REDIR_NO_CMD` runtime hook.
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_simple`
+had an `is_empty_command` branch (line ~1465) that fired for
+bare prefix-keywords (`builtin`, `command`, `exec`, `noglob`,
+`nocorrect`) after the precmd walk stripped everything. It
+unconditionally set status to 0 and returned, silently
+swallowing the case where a redirect was present.
+
+C `Src/exec.c:3342` emits `zerr("redirection with no
+command")` for exactly this shape.
+
+**Fix**:
+1. `src/extensions/compile_zsh.rs::compile_simple` — in the
+   `is_empty_command` arm, when `has_redirects`, emit
+   `Op::CallBuiltin(BUILTIN_REDIR_NO_CMD, 0)` + status=1.
+2. `src/fusevm_bridge.rs` — register new `BUILTIN_REDIR_NO_CMD`
+   (id 616) that calls `zerr("redirection with no command")`
+   and returns `Status(1)`.
+
+**Verify**:
+- `builtin 2>&1` → `zsh:1: redirection with no command` (matches
+  zsh byte-for-byte).
+- `builtin echo hi` → `hi` (regression preserved; precmd with
+  cmd word still works).
+- `echo hi > /tmp/_t534` → file written + cat shows `hi`
+  (regression preserved; normal redirects unchanged).
+- `exec 2>&1; echo rc=$?` → rc=0 in both shells (special case:
+  bare exec with redirect IS valid — applies to current shell;
+  not affected by this fix because it's handled by the
+  BUILTIN_EXEC arm before is_empty_command).
+- zshrs_shell baseline 957/95 (improved from 954/98).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'builtin 2>&1; echo "rc=$?"'
