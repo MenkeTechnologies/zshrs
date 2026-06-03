@@ -30939,7 +30939,36 @@ first_ten=( "${files[1,10]}" )
 
 ## #400 — `case ... esack` typo silently accepted — missing `esac` parse-error detection
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `par_case`'s EOF branch now
+emits ``yyerror("unmatched `case'")`` instead of silently
+returning.
+
+**Root cause** — `src/ported/parse.rs::par_case` loop checked
+for ESAC/OUTBRACE/ENDINPUT at the top of each arm. When the
+body absorbed the typo (`esack` parsed as a regular
+STRING-shaped command), the loop reached ENDINPUT
+naturally — but the previous Rust port just `break`ed without
+emitting an error. Result: the `case` block silently
+"succeeded" with rc=0 and any subsequent script lines were
+swallowed too.
+
+**Fix** (`src/ported/parse.rs::par_case`, ENDINPUT/LEXERR
+branch) — call `yyerror("unmatched \`case'")` before the
+break. Mirrors C `Src/parse.c:1209 par_case` which YYERRORs
+when the `tok != ESAC` check at the loop tail fires.
+
+**Verify**:
+- `case x in y) echo y; esack` → parse error + rc=1
+  (matches zsh).
+- `case x in y) echo y;; *) echo other;; esac` → `other`,
+  rc=0 (regression preserved).
+- `case x in x) echo found; esac` (last arm no `;;`) →
+  `found`, rc=0 (regression preserved).
+- `case x in esac` (empty case) → rc=0 in both (regression
+  preserved).
+- zshrs_shell baseline 952/100 (improved from 949/103).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'case x in y) echo y; esack'
