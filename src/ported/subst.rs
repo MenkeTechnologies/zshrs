@@ -3208,8 +3208,35 @@ pub fn paramsubst(
                                   // matched-delim check rejected later).
                                   // Bug #114 in docs/BUGS.md.
                         let n_start = idx;
-                        while idx < body_chars.len() && body_chars[idx] != close_del {
+                        while idx < body_chars.len()
+                            && body_chars[idx] != close_del
+                            && body_chars[idx] != ')'
+                            && body_chars[idx] != Outpar
+                        {
                             idx += 1;
+                        }
+                        // c:Src/subst.c:1366-1456 — get_strarg / get_intarg
+                        // return -1 when the closing delimiter is missing
+                        // before EOF, and the C `(l)`/`(r)` arm jumps to
+                        // `flagerr` on -1 — emitting "error in flags near
+                        // position …". zshrs's loop silently bailed when
+                        // it ran past the flag-block close `)` without
+                        // finding the matching delimiter, accepted the
+                        // partial input as a no-pad zero, and produced
+                        // empty output. Bug #162 in docs/BUGS.md.
+                        if idx >= body_chars.len()
+                            || body_chars[idx] != close_del
+                        {
+                            // Position in 1-based terms for error parity
+                            // with zsh's "near position N" diagnostic.
+                            let pos_1based = idx + 1;
+                            zerr(&format!(
+                                "error in flags near position {} in '${{{}}}'",
+                                pos_1based,
+                                body.as_str()
+                            ));
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
                         }
                         let raw_expr: String = body_chars[n_start..idx].iter().collect();
                         // singsub expands `$var` / backticks / arith; then
