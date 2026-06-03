@@ -15310,7 +15310,23 @@ cmd1 | cmd2
 
 ## #203 — `trap EXIT` set inside function runs at shell exit instead of function return
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+Likely fixed by an earlier function-scope trap patch.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'f() { trap "echo BYE" EXIT; echo "in-fn"; }; f; echo "after-call"; exit 0'
+in-fn
+BYE
+after-call
+```
+
+Matches `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte. Multi-
+call cleanup idiom verified — each `process_file()` invocation
+fires its own per-function EXIT trap before returning, not at
+shell exit.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { trap "echo BYE" EXIT; echo "in-fn"; }; f; echo "after-call"; exit 0'
@@ -15377,7 +15393,46 @@ process_file() {
 
 ## #204 — `setopt promptsubst` doesn't enable `$(...)` / `${var}` expansion in prompts
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `expand_prompt` in
+`src/ported/prompt.rs` skipped the C `Src/prompt.c:192-212`
+PROMPTSUBST pre-pass entirely; the `%`-escape parser never saw
+a substituted prompt body, so `$()` / `${var}` / `$((expr))`
+came through literally.
+
+**Root cause** — C `Src/prompt.c:192` runs
+`if (isset(PROMPTSUBST)) { parsestr(&s) || singsub(&s); ... }`
+on the prompt string BEFORE the `%`-escape `putpromptchar`
+loop. zshrs's port of that loop (`expand_prompt`) was a direct
+copy of the body but missed the pre-pass.
+
+**Fix** — `src/ported/prompt.rs::expand_prompt`: at function
+entry, if `isset(PROMPTSUBST)`, route the input through
+`subst::singsub` first, then feed the result to the existing
+`%`-escape expander. Stash/restore `errflag` + `LASTVAL`
+around the singsub call per C c:193-211 so substitution errors
+don't propagate into the script's exit status (the
+user-interrupt bit is preserved per c:210). Routes through
+`promptexpand` AND any direct callers of `expand_prompt`
+including `print -P` at `builtin.rs:7864`.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'setopt promptsubst; PS1="\$(echo hi)"; print -P "$PS1"'
+hi
+
+$ ./target/debug/zshrs --zsh -c 'setopt promptsubst; PS1='"'"'${MY_VAR}'"'"'; MY_VAR=now; print -P "$PS1"'
+now
+
+$ ./target/debug/zshrs --zsh -c 'setopt promptsubst; PS1='"'"'$((1+1))'"'"'; print -P "$PS1"'
+2
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Regressions clean: PROMPTSUBST OFF still leaves `$(echo hi)`
+literal; `%n@%m` still expands without PROMPTSUBST; literal
+prompts unchanged. Baseline 944/108 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt promptsubst; PS1="\$(echo hi)"; print -P "$PS1"'
@@ -15386,11 +15441,6 @@ hi
 $ ./target/debug/zshrs --zsh -c 'setopt promptsubst; PS1="\$(echo hi)"; print -P "$PS1"'
 $(echo hi)
 ```
-
-With `promptsubst` enabled, zsh applies parameter/command/arith
-substitution to the prompt string before prompt-escape
-expansion. zshrs ignores the option — prompt strings only get
-`%` escape expansion, never `$()`/`${}`/`$((... ))` expansion.
 
 The bug also affects variable expansion in prompts:
 ```sh
@@ -15759,7 +15809,14 @@ a function instead of an alias.
 
 ## #210 — `(unfunction f)` / `(zmodload module)` mutate parent shell state
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partial-fix` 2026-06-02 — `(unfunction f)` no
+longer leaks (fixed by the #208 subshell shfunc snapshot
+patch — same snapshot/restore machinery handles both
+add/define and remove/unfunction via the
+shfunctab+functions_compiled+function_source triple).
+`(zmodload module)` still leaks: modulestab snapshot would
+require module-clone plumbing that's deferred. See
+`Verify (post-fix)` below.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { echo body; }; (unfunction f); echo "after"; type f 2>&1'
@@ -15810,9 +15867,22 @@ check availability silently leave the module loaded in the
 parent, potentially affecting subsequent option/feature
 checks.
 
-**Workaround** — never use `(...)` subshell for state-
-mutating operations on zshrs; do explicit save/restore around
-the mutation in the parent shell.
+**Workaround** — never use `(...)` subshell for zmodload
+test-load patterns on zshrs; for function operations the
+`(unfunction f)` form now isolates correctly per the #208 fix.
+
+**Verify (unfunction fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'f() { echo body; }; (unfunction f); echo "after"; type f 2>&1'
+after
+f is a shell function from zsh
+```
+
+Matches `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+
+**Deferred (zmodload):** still leaks; `modulestab` snapshot
+needs `module` struct Clone plumbing (currently carries
+LinkList<String> + symbol-pointer state).
 
 ---
 
@@ -38852,14 +38922,14 @@ qualifiers always have a digit suffix.
 | 200 | `${(k)assoc[key]}` key-flag with subscript returns empty (zsh: key when exists) | **fixed** 2026-06-02 | n/a |
 | 201 | `typeset +x VAR` doesn't remove VAR from environment (security-relevant) | **port-bug** | `unset VAR; typeset VAR=$saved` re-bind |
 | 202 | `set -eo pipefail; false \| true` doesn't abort — pipefail ignored entirely | **port-bug** | `${pipestatus[1]}` explicit check |
-| 203 | `trap EXIT` in fn runs at shell exit instead of fn return (scope leak) | **port-bug** | wrap fn body in subshell `(...)` |
-| 204 | `setopt promptsubst` doesn't enable `$()`/`${}` substitution in prompts | **port-bug** | precompute prompt in `precmd` |
+| 203 | `trap EXIT` in fn runs at shell exit instead of fn return (scope leak) | **fixed** 2026-06-02 | n/a |
+| 204 | `setopt promptsubst` doesn't enable `$()`/`${}` substitution in prompts | **fixed** 2026-06-02 | n/a |
 | 205 | `read -u N` doesn't read from numeric fd opened via `exec N<...` | **port-bug** | `read x <&N` redirect-form |
 | 206 | `setopt multios` only last target receives `cmd > a > b` (zsh: both) | **port-bug** | explicit `tee` pipe |
 | 207 | `emulate ksh` doesn't apply `KSH_ARRAYS`/`BSD_ECHO`/etc option bundle | **port-bug** | explicit `setopt ksh_arrays` after |
 | 208 | Function defined inside `(...)` subshell leaks into parent shell | **fixed** 2026-06-02 | n/a |
 | 209 | Alias defined inside `(...)` subshell leaks into parent shell | **port-bug** | explicit `unalias` after |
-| 210 | `(unfunction f)`/`(zmodload m)` in subshell mutate parent state (destructive) | **port-bug** | never use subshell for state-mutating builtins |
+| 210 | `(unfunction f)`/`(zmodload m)` in subshell mutate parent state (destructive) | **partial-fix** 2026-06-02 (unfunction fixed via #208; zmodload deferred) | n/a (unfunction); avoid `(zmodload …)` |
 | 211 | `$-` (option chars) missing `f`/other letters (option-to-char table incomplete) | **port-bug** | use `setopt \| grep ...` instead |
 | 212 | `${(b)str}` over-escapes non-glob chars (tab, etc) — extra `\` inserted | **fixed** 2026-06-02 | n/a |
 | 213 | `${assoc[(R)value]}` reverse-search-by-value errors `bad substitution` | **port-bug** | manual `for k v in "${(@kv)h}"` loop |
