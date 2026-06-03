@@ -33055,7 +33055,34 @@ format.
 
 ## #434 — `read -e` echo-mode flag not recognized — input consumed silently
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `bin_read` single-var
+tail now mirrors `Src/builtin.c:7102-7109`: `-e` and `-E`
+both echo the read content via `println!`; `-e` SKIPS
+`setsparam` (echo-only), `-E` echoes AND assigns.
+
+**Root cause** — `src/ported/builtin.rs::bin_read`'s
+single-var assign path always called `setsparam(&reply,
+trimmed)` without checking the `-e` / `-E` opts. zsh
+emits the captured content to stdout on either flag, and
+only assigns when `-E` (not `-e`).
+
+**Fix** (`src/ported/builtin.rs::bin_read`, single-var arm) —
+after the IFS-trim, peek `OPT_ISSET(ops, b'e')` and
+`OPT_ISSET(ops, b'E')`; on either, `println!("{}", trimmed)`;
+on `!opt_e`, call the existing `setsparam`. C citation:
+`Src/builtin.c:7102-7109`.
+
+**Verify**:
+- `echo hello | read -e; echo done` → `hello / done`
+  (matches zsh; echo-only, no assign).
+- `echo hello | { read -E; echo "REPLY=[$REPLY]"; }` →
+  `hello / REPLY=[hello]` (matches zsh; echo AND assign).
+- `echo hello | { read line; echo "line=[$line]"; }` →
+  `line=[hello]` (regression preserved; bare read still
+  works).
+- zshrs_shell baseline 951/101.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo hello | read -e; echo done'
