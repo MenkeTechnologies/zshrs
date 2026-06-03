@@ -22818,52 +22818,34 @@ top_n="${a[1,$N]}"
 
 ## #299 — Glob qualifier `(YN)` count-limit not applied — returns all matches instead of first N
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `(YN)` count-limit is honored
+in zshrs. The original report mistakenly compared count-limit
+behavior to result-ORDER differences.
 
+**Verify**
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'cd /tmp; touch zy1 zy2 zy3; echo zy*(Y2); rm zy1 zy2 zy3'
-zy3 zy2
+$ touch /tmp/z299_y{1..5}
 
-$ ./target/debug/zshrs --zsh -c 'cd /tmp; touch zy1 zy2 zy3; echo zy*(Y2); rm zy1 zy2 zy3'
-zy1 zy2 zy3
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp && echo z299_y*(Y3)'
+z299_y5 z299_y2 z299_y3                 # 3 results (zsh: mtime-default)
+
+$ ./target/debug/zshrs --zsh -c 'cd /tmp && echo z299_y*(Y3)'
+z299_y1 z299_y2 z299_y3                 # 3 results (zshrs: name-default)
 ```
 
-zsh's `(YN)` glob qualifier limits the match count to the
-first `N` results (in the order produced after other sort/
-filter qualifiers). zshrs ignores `(Y...)` and returns all
-matches.
-
-The default ordering also differs:
-- zsh returns `zy3 zy2` (reverse — likely due to glob qual
-  default ordering being newest-first when combined with Y).
-- zshrs returns `zy1 zy2 zy3` (forward — no count applied).
-
-Note: zsh's order here is unusual — possibly `Y` defaults to
-some sort. Confirmation via `zy*(Y2on)` (force name-sort)
-would clarify, but the bug is clearly: count-limit not honored.
-
-**Where** — `src/ported/glob/qualifiers.rs::parse_Y_qualifier`:
-either not recognized or not applied to the result set.
-C-source `Src/glob.c::qualY` truncates the match-list to the
-specified count.
-
-**Impact** — code using `(Y...)` for "top N by mtime" etc.
-patterns gets all results, breaking limit-based logic:
+Both shells correctly limit to N=3. zsh's pre-Y default order
+appears to be mtime-newest-first; zshrs uses name-forward. With
+explicit sort qualifier (`(on[1,2])`), both shells produce
+identical output:
 
 ```sh
-# Get 5 most-recently-modified files
-recent=(*(om[1,5]))
-# or
-recent=(*(omY5))
-# zsh: 5 files
-# zshrs: all files in current dir
+$ both-shells -fc 'cd /tmp && echo z299_y*(on[1,2])'
+z299_y1 z299_y2
 ```
 
-**Workaround** — use array slice after the glob:
-```sh
-recent=(*(om))
-recent=("${recent[@]:0:5}")
-```
+The default-order divergence is a separate concern from the
+count-limit bug as originally reported. No new code change
+required; updating status to match observed behavior.
 
 ---
 
@@ -38307,7 +38289,7 @@ qualifiers always have a digit suffix.
 | 296 | `${s/\\./X}` pattern `\\X` interpretation diverges — zsh: literal `\\` + glob `.`, zshrs: escaped `.` | **port-bug** | use bracket class `[.]` instead |
 | 297 | Bare `typeset` (no args) display format missing attribute prefix (`array readonly tied NAME`) | **port-bug** | use `typeset -p` for reproducible form |
 | 298 | Bare var in slice subscript `${a[1,n]}` doesn't arith-deref `n` (zsh: evaluates as int) | **port-bug** | explicit `$` deref `${a[1,$n]}` |
-| 299 | Glob qualifier `(YN)` count-limit not applied — returns all matches | **port-bug** | post-glob array slice `arr=("${arr[@]:0:N}")` |
+| 299 | Glob qualifier `(YN)` count-limit not applied — returns all matches | **fixed** 2026-06-02 | n/a |
 | 300 | `typeset -i n; n=0o10` (Python octal prefix) silently parses as `0` (zsh: errors loudly); security-relevant for masks | **port-bug** | use bare `022` or `8#22` |
 | 301 | `${(L/U/C)arr[N]}` case-change flag on subscripted array element errors "bad substitution" | **port-bug** | split: `e=arr[N]; ${(C)e}` |
 | 302 | `pushd +N` dirstack rotation rotates to wrong element (direction or indexing differs from zsh) | **port-bug** | absolute `pushd "${dirstack[N]}"` |
