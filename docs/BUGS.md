@@ -13023,81 +13023,97 @@ done
 
 ## #167 — Unclosed `{ cmd` silently runs without error (zsh: parse error)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — parse_cursh now errors when the
+body parse returns without an OUTBRACE_TOK.
 
+**Root cause** — `src/ported/parse.rs::parse_cursh` (parse.c:1612
+port) had `if tok() == OUTBRACE_TOK { zshlex(); }` to consume
+the closing brace BUT no else-branch — so when the input was
+unclosed (`{ echo a`), the inner parse returned at EOF and
+parse_cursh silently constructed a `Cursh(prog)` without
+diagnosing the missing close.
+
+**Fix** — two parts:
+
+1. Route the inner body parse through `parse_program_until(
+   Some(&[OUTBRACE_TOK]))` instead of bare `parse_program()`.
+   The explicit end-token lets the inner loop stop cleanly at
+   `}` AND prevents the top-level stray-`}` arm (#168) from
+   misfiring on legitimate brace bodies.
+2. After the body parse, check `tok() != OUTBRACE_TOK` and emit
+   `parse error near \`<tok>'` via zerr, returning None so the
+   outer parser unwinds.
+
+The same `parse_program_until(Some(&[OUTBRACE_TOK]))` fix was
+applied to all four other body-parse sites that previously called
+bare `parse_program()` on a brace-delimited body:
+`parse_inline_funcdef`, `parse_anon_funcdef`, `par_funcdef` (function
+keyword form), the synthetic-funcdef `name() { body }` shortcut in
+parse_program_until, and the `always { ... }` clause in parse_cursh.
+Each was vulnerable to the same false-positive from #168 once the
+top-level stray-`}` arm landed.
+
+**Verify**
 ```sh
-$ /opt/homebrew/bin/zsh -fc '{ echo a' 2>&1
-zsh:1: parse error near `a'
+$ /opt/homebrew/bin/zsh -fc '{ echo a' 2>&1   # zsh:1: parse error near `a'
+$ zshrs --zsh -c '{ echo a' 2>&1               # zsh:1: parse error near `}'
 
-$ ./target/debug/zshrs --zsh -c '{ echo a' 2>&1
-a
+# Legal brace forms (all preserved):
+$ zshrs --zsh -c '{ echo a; }'                            # a
+$ zshrs --zsh -c '{ echo a; } && echo b'                  # a, b
+$ zshrs --zsh -c '{ echo a; }; echo b'                    # a, b
+$ zshrs --zsh -c 'f() { echo a }; f'                       # a
+$ zshrs --zsh -c '() { echo a; }'                          # a
+$ zshrs --zsh -c 'function foo { echo a }; foo'            # a
+$ zshrs --zsh -c '{ { echo a; }; }'                        # a
+$ zshrs --zsh -c 'case x { x) echo a;; }'                  # a
+$ zshrs --zsh -c '{ echo a } always { echo b }'            # a, b
 ```
 
-A `{` opens a compound-command grouping that requires a
-matching `}` close. Missing close should be parse error. zsh
-errors. zshrs silently treats it as if the `{` weren't there
-and runs the body.
+The diagnostic text differs slightly from zsh's — `near \`}'`
+vs `near \`a'` — because zshrs reports the EXPECTED-but-missing
+token, while zsh reports the LAST-seen body token. Both signal
+the failure with non-zero exit.
 
-Same permissive-parser family:
-- #141 (`;;` outside case)
-- #146 (`{ cmd; } arg` trailing args)
-- #161 (`case x in)` empty pattern)
-- #162 (`(l.5)` missing close delim)
-- #167 (this — unclosed `{`)
-
-**Where** — `src/ported/parse.rs::parse_brace_group`: doesn't
-require matching `}` at end-of-input. C-source
-`Src/parse.c::par_subsh` errors on unmatched bracket.
-
-**Impact** — common typo (forgetting `}` on a multi-line block)
-silently passes through and runs partial code:
-
-```sh
-# accidentally truncated function definition
-foo() {
-    cleanup
-# forgot closing brace
-# zsh: parse error (caught immediately)
-# zshrs: cleanup runs as top-level command, function never defined
-```
-
-**Workaround** — none — careful syntax review.
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ---
 
 ## #168 — Extra `}` after command silently ignored (zsh: parse error)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — parse_program_until's top-level
+arm now emits `parse error near \`}'` for orphan OUTBRACE_TOK.
 
-```sh
-$ /opt/homebrew/bin/zsh -fc 'echo a }' 2>&1
-zsh:1: parse error near `}'
+**Root cause** — `src/ported/parse.rs::parse_program_until`'s
+unguarded `OUTBRACE_TOK | DSEMI | … | ZEND => break` arm
+silently swallowed stray `}` at top level (`end_tokens.is_none()`),
+letting `echo a }` parse as `echo a` plus an unparsed leftover
+`}`. Same shape as #142/#141/#161.
 
-$ ./target/debug/zshrs --zsh -c 'echo a }' 2>&1
-a
+**Fix** — added a guarded arm matching the #142/#141 pattern:
+
+```rust
+OUTBRACE_TOK if end_tokens.is_none() => {
+    zerr("parse error near `}'");
+    break;
+}
 ```
 
-An orphan `}` (no matching `{`) should be a parse error. zsh
-errors. zshrs silently ignores the `}` and runs `echo a`.
+Required prerequisite: every brace-body parse site that previously
+called `parse_program()` (which forwards `None`) had to be
+upgraded to `parse_program_until(Some(&[OUTBRACE_TOK]))` so the
+legitimate `}` close at the end of those bodies doesn't fire my
+new top-level arm. See #167 for the full call-site list.
 
-Same permissive-parser family as #167 etc.
-
-**Where** — `src/ported/parse.rs::handle_close_brace`: ignores
-stray `}` tokens when not in brace-group context. Should error
-like orphan terminators (cf. #142). C-source `Src/parse.c::par_event`
-errors on `}` not closing a `{`.
-
-**Impact** — copy-paste mistakes that leave stray `}` chars
-silently pass:
-
+**Verify**
 ```sh
-# pasted code from another file, accidentally left trailing }
-echo "main work" }
-# zsh: parse error
-# zshrs: runs as "echo main work" + ignores }
+$ /opt/homebrew/bin/zsh -fc 'echo a }' 2>&1   # zsh:1: parse error near `}'
+$ zshrs --zsh -c 'echo a }' 2>&1              # zsh:1: parse error near `}'
 ```
 
-**Workaround** — careful review before running.
+Legal forms still pass (see #167 verify section).
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ---
 
@@ -38126,8 +38142,8 @@ qualifiers always have a digit suffix.
 | 164 | Extended_glob `^pat` (negation prefix) not recognized | **port-bug** | loop with `[[ == ]] continue` |
 | 165 | `${$((expr))}` arith-as-name returns empty (zsh: expr value) | **port-bug** | direct `$((expr))` |
 | 166 | `for x in $@` keeps empty elements (zsh: removes via IFS-split) | **port-bug** | `[[ -z $arg ]] continue` |
-| 167 | Unclosed `{ cmd` silently runs (zsh: parse error) | **port-bug** | careful review |
-| 168 | Extra `}` after command silently ignored (zsh: parse error) | **port-bug** | careful review |
+| 167 | Unclosed `{ cmd` silently runs (zsh: parse error) | **fixed** 2026-06-02 | n/a |
+| 168 | Extra `}` after command silently ignored (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 169 | `{} always {} always {}` chained-always silently accepted | **port-bug** | careful review |
 | 170 | `echo (abc` unclosed paren treated as literal | **port-bug** | careful review |
 | 171 | `cmd \| \| cmd`/`&& &&`/`\|\| \|\|` empty operands silently accepted | **port-bug** | careful review |

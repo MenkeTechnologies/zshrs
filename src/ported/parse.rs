@@ -1953,7 +1953,10 @@ fn par_funcdef() -> Option<ZshCommand> {
         // print `a; echo b` for `{ echo a; echo b }`.
         let body_start = pos();
         zshlex();
-        let body = parse_program();
+        // c:Src/parse.c — func body terminates at OUTBRACE_TOK.
+        // Explicit end-token keeps the inner parse from hitting the
+        // top-level stray-`}` arm (#168). Bug #167 family.
+        let body = parse_program_until(Some(&[OUTBRACE_TOK]));
         let body_end = if tok() == OUTBRACE_TOK {
             // Lexer has just consumed `}`; pos is past it. Body content
             // ends one byte before pos.
@@ -7270,6 +7273,15 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                 zerr(&format!("parse error near `{}'", name));
                 break;
             }
+            OUTBRACE_TOK if end_tokens.is_none() => {
+                // c:Src/parse.c:par_event — orphan `}` (no matching
+                // `{` opener) at top level is a parse error. zshrs's
+                // generic break swallowed it silently, leaving the
+                // `echo a` in `echo a }` running and ignoring the
+                // stray brace. Bug #168 in docs/BUGS.md.
+                zerr("parse error near `}'");
+                break;
+            }
             OUTBRACE_TOK | DSEMI | SEMIAMP | SEMIBAR | DONE | FI | ESAC | ZEND => break,
             _ => {}
         }
@@ -7357,7 +7369,10 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                         // echo b }`.
                         let body_start = pos();
                         zshlex();
-                        let body = parse_program();
+                        // c:Src/parse.c — synth funcdef body terminates
+                        // at OUTBRACE_TOK. Explicit end-token avoids
+                        // the top-level stray-`}` arm. Bug #167/#168.
+                        let body = parse_program_until(Some(&[OUTBRACE_TOK]));
                         let body_end = if tok() == OUTBRACE_TOK {
                             pos().saturating_sub(1)
                         } else {
@@ -7910,7 +7925,11 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
         })));
     }
     zshlex(); // skip {
-    let body = parse_program();
+    // c:Src/parse.c:par_subsh — anon `() { … }` body must terminate at
+    // OUTBRACE_TOK. Pass it as the explicit end-token so the inner
+    // parse stops cleanly at `}` rather than hitting the top-level
+    // stray-`}` arm (#168). Bug #167 family.
+    let body = parse_program_until(Some(&[OUTBRACE_TOK]));
     if tok() == OUTBRACE_TOK {
         zshlex();
     }
@@ -7946,8 +7965,28 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
 /// arm into a dedicated method.
 fn parse_cursh() -> Option<ZshCommand> {
     zshlex(); // skip {
-    let prog = parse_program();
+    // c:Src/parse.c:par_subsh — pass OUTBRACE_TOK as the explicit
+    // body terminator so the inner parse stops cleanly at `}` rather
+    // than falling through the top-level `OUTBRACE_TOK if
+    // end_tokens.is_none()` arm (which errors on stray `}` per bug
+    // #168). Bug #167 in docs/BUGS.md.
+    let prog = parse_program_until(Some(&[OUTBRACE_TOK]));
 
+    // c:Src/parse.c:par_subsh — `{ … }` requires a matching `}`.
+    // C errors via YYERRORV when the body parse returns without
+    // seeing OUTBRACE_TOK (parse.c:1623 inbrack check). zshrs's
+    // previous behavior silently returned `Cursh(prog)` and ran the
+    // body as if the braces were absent. Bug #167 in docs/BUGS.md.
+    if tok() != OUTBRACE_TOK {
+        // Reuse the "parse error near `<tok>'" shape from #142/#161.
+        // The offending token is whatever follows the unclosed brace
+        // body. For EOF (`{ echo a` at end of input) C zsh errors
+        // near the LAST consumed body token; we use the current
+        // tokstr() or fall back to a "}" hint.
+        let near = tokstr().unwrap_or_else(|| "}".to_string());
+        zerr(&format!("parse error near `{}'", near));
+        return None;
+    }
     // Check for { ... } always { ... }. Direct port of zsh's
     // par_subsh at parse.c:1612-1660 — note the two `incmdpos = 1`
     // forces (parse.c:1632, 1637): after consuming the closing
@@ -7957,7 +7996,7 @@ fn parse_cursh() -> Option<ZshCommand> {
     // rule (lex.rs:976-983) leaves the second `{` in word position,
     // turning `always { ... }` into a Simple `{` `echo` … and the
     // try/always pairing is silently lost.
-    if tok() == OUTBRACE_TOK {
+    {
         set_incmdpos(true); // parse.c:1632 incmdpos = !zsh_construct
         zshlex();
 
@@ -7971,7 +8010,9 @@ fn parse_cursh() -> Option<ZshCommand> {
 
                 if tok() == INBRACE_TOK {
                     zshlex();
-                    let always = parse_program();
+                    // c:Src/parse.c — always-clause body terminates at
+                    // OUTBRACE_TOK. Bug #167/#168 family.
+                    let always = parse_program_until(Some(&[OUTBRACE_TOK]));
                     if tok() == OUTBRACE_TOK {
                         zshlex();
                     }
@@ -8015,7 +8056,10 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
         // Same body_start-before-zshlex fix as par_funcdef.
         let body_start = pos();
         zshlex();
-        let body = parse_program();
+        // c:Src/parse.c — inline funcdef body terminates at OUTBRACE_TOK.
+        // Explicit end-token keeps the inner parse from hitting the
+        // top-level stray-`}` arm (#168). Bug #167 family.
+        let body = parse_program_until(Some(&[OUTBRACE_TOK]));
         let body_end = if tok() == OUTBRACE_TOK {
             pos().saturating_sub(1)
         } else {
