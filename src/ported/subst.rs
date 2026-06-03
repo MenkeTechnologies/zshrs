@@ -8254,12 +8254,28 @@ pub fn paramsubst(
             } else {
                 split_one(&value)
             };
-            // zsh: split result is space-joined for scalar context;
-            // multsub-aware caller handles full multi-node splat
-            // via split_parts (passed through to the auto_splat
-            // post-processing block below).
-            let join_with = sep.as_deref().unwrap_or(" "); // c:3950
-            value = parts.join(join_with);
+            // c:Src/subst.c:3920-3928 — `if (force_split && !isarr) {
+            //   aval = sepsplit(val, spsep, 0, 1); ... }` does NOT
+            //   reassign `val` when the split produces multiple
+            //   elements; only `aval` (split_parts) and `isarr` change.
+            //   The original scalar `val` survives so scalar-context
+            //   consumers (e.g. `r="${(s.X.)str}"` assignment) see the
+            //   original delimiter. Multi-node splat consumers read
+            //   split_parts. Previous Rust port unconditionally rejoined
+            //   on space which broke `r="${(s.:.)s}"` → "a b c" instead
+            //   of preserving "a:b:c". Bug #313 in docs/BUGS.md.
+            //   When an explicit (j:Y:) sep is also set, the join uses
+            //   it (force-rejoin path is separate).
+            if let Some(ref jsep) = sep {
+                value = parts.join(jsep.as_str()); // c:3906 sepjoin path
+            } else if parts.is_empty() {
+                value.clear(); // c:3923 — `val = dupstring("")`
+            } else if parts.len() == 1 {
+                value = parts[0].clone(); // c:3925 — `val = aval[0]`
+            } else {
+                // c:3920-3928 — multiple parts: leave `value` alone so
+                // scalar-context reads preserve the original delimiter.
+            }
             split_parts = Some(parts); // c:3950
                                        // c:3274 — `isarr = nojoin ? 1 : 2;`. The value 2 is
                                        // C's "array came from splitting a scalar" sentinel
@@ -8268,6 +8284,17 @@ pub fn paramsubst(
                                        // survives DQ and the splat block at c:4245 fires —
                                        // matching zsh's `"${(s. .)str}"` per-word output.
             isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274
+                                                     // c:Src/subst.c:4215 — `if (isarr && ssub)
+                                                     //   val = sepjoin(aval, NULL, 1); isarr = 0`.
+                                                     //   PREFORK_SINGLE callers (scalar
+                                                     //   assignment RHS, singsub) need a single
+                                                     //   scalar result; the spsep-derived array
+                                                     //   collapses back to the ORIGINAL `value`
+                                                     //   here (preserved at c:3920-3928 above).
+                                                     //   Bug #313 in docs/BUGS.md.
+            if (pf_flags & PREFORK_SINGLE) != 0 {
+                isarr = 0;
+            }
         } else if let Some(ref sp) = sep {
             // c:3906-3907 — `val = sepjoin(aval, sep, 1); isarr = 0;`
             // (j:STR:) / (F) — join an array with STR. Source priority:
