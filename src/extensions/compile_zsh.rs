@@ -1475,6 +1475,23 @@ impl ZshCompiler {
         let argc = (simple.words.len() - precmd_skip - 1) as u8;
         for word in &simple.words[precmd_skip + 1..] {
             self.compile_word_str(word);
+            // c:Src/options.c GLOB_SUBST + Src/subst.c — when an
+            // unquoted parameter / cmd-subst reference produced the
+            // word and `setopt globsubst` is active at runtime, the
+            // substituted content participates in filename
+            // generation (`pat="*.txt"; echo $pat` → matched files).
+            // The for-loop word arm at compile_zsh.rs:~4426 already
+            // gates this; mirror it here for simple-command argv.
+            // Bug #329.
+            if has_unquoted_param_or_subst(word) {
+                self.builder.emit(
+                    Op::CallBuiltin(
+                        crate::vm_helper::BUILTIN_GLOB_SUBST_EXPAND,
+                        1,
+                    ),
+                    0,
+                );
+            }
         }
 
         // c:Src/exec.c — addvars runs AFTER prefork. With inline-env
