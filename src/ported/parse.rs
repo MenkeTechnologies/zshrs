@@ -1550,6 +1550,19 @@ fn par_case() -> Option<ZshCommand> {
                 zerr("expected ')' in case pattern");
                 return None;
             }
+            // c:Src/parse.c:1257-1258 — `if (tok != STRING)
+            // YYERRORV(oecused);` C requires at least one pattern
+            // STRING before `)`. zshrs accepted empty `case x in)`
+            // and silently fell through to the next iteration with
+            // an empty pattern arm, swallowing the rest of the
+            // script. Reject the empty-pattern shape unless a
+            // leading INPAR was consumed (the `(pat)` form has
+            // already validated the pattern inside). Bug #161 in
+            // docs/BUGS.md.
+            if patterns.is_empty() && !leading_inpar_consumed {
+                zerr("parse error near `)'");
+                return None;
+            }
             set_incmdpos(true);
             zshlex();
             // When the lexer emitted a separate INPAR_TOK at the
