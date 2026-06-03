@@ -6192,6 +6192,83 @@ echo "total: $total"          # zshrs reports 0, never warns
 
 ## #89 — Extended glob `#` and `##` quantifiers not recognized
 
+**Status:** `fixed` 2026-06-03 — two-part fix routing `#`-bearing
+words through the glob runtime so the existing patcomppiece hash-
+quantifier dispatcher (`src/ported/pattern.rs:1703-1746`) actually
+fires.
+
+**Root cause** — the bug wasn't in `pattern.rs` (its `#`/`##`
+dispatch was already correct). The reach problem was upstream:
+`compile_word_str`'s pure-literal fast path at `src/extensions
+/compile_zsh.rs:2455` short-circuited any word that didn't trip
+the `trigger_glob` check — and `trigger_glob` had no `#` arm.
+For `/tmp/zh/a#`:
+  * `*`, `?`, `[` → not present
+  * `^pat` / `/^` / `(...|...|...)` / numeric range → not present
+  * `#` → no check
+So the literal LoadConst path fired, never routing through
+BUILTIN_EXPAND_TEXT or BUILTIN_GLOB_EXPAND. C zsh's
+`Src/pattern.c:4365 haswilds` gates `#` as wild whenever
+`isset(EXTENDEDGLOB)`; zshrs missed the gate entirely.
+
+The lexer META-encodes `#` as Pound (`\u{84}`) in the raw word
+form. Bare `unquoted(s, '#')` against the un-tokenized form
+already misses this — the trigger has to check both forms.
+
+The runtime side (`fusevm_bridge.rs::BUILTIN_EXPAND_TEXT` default
+arm) had a similar gap in its `extglob_meta` short-list: only
+`^`/`~`/`/^` triggered the runtime `expand_glob` call, so even
+words that DID reach the bridge still bypassed the glob engine.
+
+**Fix:**
+1. **`compile_zsh.rs::compile_word_str` `trigger_glob` block**:
+   add `unquoted(s, '#')` and `unquoted(s, '\u{84}')` (Pound)
+   arms. Trigger unconditionally — `setopt extended_glob` may
+   fire AFTER compile time, so we cannot consult the option
+   here. `zglob`'s own `haswilds` check at runtime
+   short-circuits when EXTENDEDGLOB is off, so routing
+   literal-`#` words through the bridge is a no-op in that case.
+2. **`compile_zsh.rs` segment-fast path** (multi-segment words
+   like `$var/a#`): add `#`/`^` to the `needs_glob` detection so
+   the post-CONCAT BUILTIN_GLOB_EXPAND fires when EXTENDEDGLOB
+   is set.
+3. **`fusevm_bridge.rs::BUILTIN_EXPAND_TEXT` default arm**:
+   extend `extglob_meta` to also fire on `s.contains('#')`
+   under `extendedglob`. Mirrors C `Src/pattern.c:4365` exactly.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ touch /tmp/zh/{a,aa,aaa}
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; print -l /tmp/zh/a#'
+/tmp/zh/a
+/tmp/zh/aa
+/tmp/zh/aaa
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; print -l /tmp/zh/a#'
+/tmp/zh/a
+/tmp/zh/aa
+/tmp/zh/aaa
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; print -l /tmp/zh/a##'
+/tmp/zh/a
+/tmp/zh/aa
+/tmp/zh/aaa
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; print -l /tmp/zhn/[0-9]##'
+/tmp/zhn/1
+/tmp/zhn/42
+
+# Regressions clean:
+$ ./target/debug/zshrs --zsh -c 'echo "hello#world"; echo "x=#"'
+hello#world
+x=#
+```
+
+zshrs_shell baseline improved 946/106 → 950/102.
+
+Also fixes #117 (`(group)#` / `(group)##` group quantifier) and
+the bracket+`##` case (`[0-9]##`) as a side effect — same root
+trigger path.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -8608,6 +8685,34 @@ unsetopt glob_subst
 ---
 
 ## #117 — Extended_glob `(group)#` / `(group)##` group quantifier not recognized
+
+**Status:** `fixed` 2026-06-03 — same root-cause / same fix as
+#89. The trigger_glob detector at `src/extensions/compile_zsh.rs
+::compile_word_str` had no `#` (or Pound `\u{84}`) arm, so any
+word ending in `(group)#` short-circuited through the
+pure-literal LoadConst fast path before reaching the glob
+engine. Adding the unconditional `#` trigger routes the word
+through BUILTIN_EXPAND_TEXT → expand_glob → patcomppiece, where
+the existing group-quantifier dispatch (`Src/pattern.c
+::patcomppiece` port at `src/ported/pattern.rs:1437`) handles
+the `(...)#` shape correctly.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ touch /tmp/zg/{ab,abab,ababab,xy}
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; print -l /tmp/zg/(ab)#'
+/tmp/zg/ab
+/tmp/zg/abab
+/tmp/zg/ababab
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; print -l /tmp/zg/(ab)#'
+/tmp/zg/ab
+/tmp/zg/abab
+/tmp/zg/ababab
+```
+
+See bug #89 for full diagnosis and fix details.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 

@@ -2366,6 +2366,20 @@ impl ZshCompiler {
             // component (after `/`) is a negation in extendedglob.
             || (untoked.starts_with('^') && untoked.len() > 1)
             || untoked.contains("/^")
+            // extendedglob `#` / `##` hash quantifier — c:Src/pattern.c
+            // :4365 haswilds gates `#` as wild whenever EXTENDEDGLOB is
+            // set. Trigger unconditionally at compile time: `setopt
+            // extended_glob` may fire BETWEEN the compile pass and the
+            // runtime word evaluation, so we cannot consult the option
+            // here (`setopt extended_glob; print -l /tmp/zh/a#`
+            // compiles `print` before `setopt` runs). The runtime
+            // `zglob` → `haswilds` check at glob.rs short-circuits
+            // when EXTENDEDGLOB is off, so routing literal-`#` words
+            // through the bridge is a no-op in the off case (#89/#117
+            // in docs/BUGS.md). The lexer META-encodes `#` as Pound
+            // (\u{84}); check both forms.
+            || unquoted(s, '#')
+            || unquoted(s, '\u{84}')
             // zsh glob qualifiers: `*(.)` / `path(mh-1)` etc. The `(...)`
             // suffix triggers globbing even when the body has no other
             // glob metachar — needed for `/etc/hosts(mh-100)` style.
@@ -3773,12 +3787,27 @@ impl ZshCompiler {
                 for seg in &segs {
                     if let WordSegment::Literal(lit) = seg {
                         let cleaned = crate::lex::untokenize(lit);
+                        // Detect glob metachars. `*`, `?`, `[`, and the
+                        // `(...|...)` alternation are always glob chars.
+                        // `#` and `^` are glob chars under EXTENDEDGLOB
+                        // (#/## quantifiers, ^ and-not) — c:Src/pattern.c
+                        // :4365 / :4370 haswilds gates them on
+                        // `isset(EXTENDEDGLOB)`. Mirror that here so
+                        // `print -l /tmp/zh/a#` with `setopt
+                        // extended_glob` routes through BUILTIN_GLOB_
+                        // EXPAND instead of staying literal (#89/#117
+                        // in docs/BUGS.md). When EXTENDEDGLOB is off
+                        // at runtime, `zglob`'s own haswilds check
+                        // short-circuits so the emit is harmless.
                         if cleaned.contains('*')
                             || cleaned.contains('?')
                             || cleaned.contains('[')
                             || (cleaned.contains('(')
                                 && cleaned.contains('|')
                                 && cleaned.contains(')'))
+                            || (crate::ported::zsh_h::isset(
+                                crate::ported::zsh_h::EXTENDEDGLOB,
+                            ) && (cleaned.contains('#') || cleaned.contains('^')))
                         {
                             needs_glob = true;
                         }

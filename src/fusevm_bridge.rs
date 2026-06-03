@@ -4909,13 +4909,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // `path(.)`, etc.
                         let has_qual_suffix =
                             s.ends_with(')') && s.contains('(') && !s.contains('|');
-                        // extendedglob `^pat` (negation) and `pat~excl`
-                        // (exclusion). Trigger expand_glob so the runtime
-                        // can apply the appropriate filter. Both require
+                        // extendedglob `^pat` (negation), `pat~excl`
+                        // (exclusion), `x#`/`x##` (hash quantifier).
+                        // Trigger expand_glob so the runtime can apply
+                        // the appropriate filter. All three require
                         // `setopt extendedglob` — runtime falls through
-                        // to literal if that's off.
+                        // to literal if that's off. Direct mirror of
+                        // C `Src/pattern.c:4365` (`#`) and `c:4370` (`^`)
+                        // in `haswilds`: both are gated on
+                        // `isset(EXTENDEDGLOB)`. Without `#`,
+                        // `print -l /tmp/zh/a#` stayed literal
+                        // (#89/#117 in docs/BUGS.md).
                         let extglob_meta = opt_state_get("extendedglob").unwrap_or(false)
-                            && (s.starts_with('^') || s.contains('~') || s.contains("/^"));
+                            && (s.starts_with('^')
+                                || s.contains('~')
+                                || s.contains("/^")
+                                || s.contains('#'));
                         let has_numeric_range = s.contains('<')
                             && s.contains('>')
                             && !extract_numeric_ranges(&s).is_empty();
