@@ -14563,6 +14563,76 @@ $ ./target/debug/zshrs --zsh -c 'a=(1 2 3); echo "$((${a[@]} + 0))"'
 
 ## #185 — `[[ -z "${arr[@]}" ]]` returns false for single-empty array (zsh: true)
 
+**Status:** `fixed` 2026-06-03 — new `BUILTIN_COND_STR_EMPTY` /
+`BUILTIN_COND_STR_NONEMPTY` runtime helpers respect zsh's
+cond-context Array-vs-Str semantics. `emit_file_test` now routes
+`-z`/`-n` through them instead of the inline `Op::StringLen`
+sequence.
+
+**Root cause** — `compile_zsh.rs::emit_file_test`'s `-z` /
+`-n` shortcut emitted `Op::StringLen → LoadInt(0) → NumEq/NumNe`.
+`Op::StringLen` (`fusevm/src/vm.rs:1098`) calls `Value::len`,
+and for `Value::Array` that returns the ARRAY LENGTH, not the
+joined string length, not the per-element empty test.
+
+For `b=("")`:
+- `compile_word_str("${b[@]}")` emits `BUILTIN_CONCAT_SPLICE`
+  (`is_splice_expansion` recognises the `[@]` shape).
+- Result on stack: `Value::Array([Value::Str("")])`.
+- `Op::StringLen` → `Value::Int(1)` (one element).
+- `NumEq 0` → `Bool(false)` → `[[ -z … ]]` returns false.
+
+C zsh's `Src/cond.c:347` (`case 'z'`) sees the SCALAR operand
+after `cond_str`'s `singsub`. The cond-context conversion is:
+- empty array (0 words) → empty → -z true
+- single-element array (1 word) → check that word's emptiness
+- multi-element array (2+ words) → non-empty (would actually be
+  "unknown condition: -z" since `[[ -z A B ]]` parse errors,
+  but observable result is "not empty" — false)
+- bare scalar → check its string length
+
+**Fix** — two new builtins in `src/fusevm_bridge.rs`:
+
+```rust
+pub const BUILTIN_COND_STR_EMPTY: u16 = 613;
+pub const BUILTIN_COND_STR_NONEMPTY: u16 = 614;
+```
+
+Each pops one `Value`, returns `Int(1)`/`Int(0)` per the case
+table above. `compile_zsh.rs::emit_file_test` `-z`/`-n` arms
+swap the inline `StringLen → LoadInt(0) → NumEq/NumNe` for a
+single `CallBuiltin(BUILTIN_COND_STR_*, 1)`.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'b=(""); [[ -z "${b[@]}" ]] && echo empty || echo not-empty'
+empty
+$ ./target/debug/zshrs --zsh -c 'b=(""); [[ -z "${b[@]}" ]] && echo empty || echo not-empty'
+empty
+
+$ /opt/homebrew/bin/zsh -fc 'b=(); [[ -z "${b[@]}" ]] && echo empty || echo not-empty'
+empty
+$ ./target/debug/zshrs --zsh -c 'b=(); [[ -z "${b[@]}" ]] && echo empty || echo not-empty'
+empty
+
+$ /opt/homebrew/bin/zsh -fc 'b=(a b); [[ -z "${b[@]}" ]] && echo empty || echo not-empty'
+not-empty
+$ ./target/debug/zshrs --zsh -c 'b=(a b); [[ -z "${b[@]}" ]] && echo empty || echo not-empty'
+not-empty
+
+# Regression checks: plain scalar -z / -n still work.
+$ /opt/homebrew/bin/zsh -fc '[[ -z "" ]] && echo empty; [[ -z "x" ]] && echo empty || echo not-empty'
+empty
+not-empty
+$ ./target/debug/zshrs --zsh -c '[[ -z "" ]] && echo empty; [[ -z "x" ]] && echo empty || echo not-empty'
+empty
+not-empty
+```
+
+zshrs_shell baseline preserved at 950/102.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
