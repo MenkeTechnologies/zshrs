@@ -6077,6 +6077,28 @@ pub fn resetparam(pm: &mut param, flags: i32) -> i32 {
 /// safe.
 pub fn unsetparam(name: &str) {
     // c:3819
+    // c:Src/params.c:3853-3935 — unsetparam_pm's tied-alt-name
+    // removal block. zsh's PATH/path, FPATH/fpath, MANPATH/manpath,
+    // CDPATH/cdpath, PSVAR/psvar pairs are tied (`pm->ename` points
+    // to the alt name) — unsetting one must clear the other or
+    // command lookup keeps finding binaries via the surviving `path`
+    // array even after `unset PATH`. The full ename machinery is
+    // deferred until the gsu vtable lands; until then, mirror the
+    // tie explicitly for the canonical pairs so `unset PATH` is
+    // actually a security boundary. Bug #416.
+    let tied_alt: Option<&str> = match name {
+        "PATH" => Some("path"),
+        "path" => Some("PATH"),
+        "FPATH" => Some("fpath"),
+        "fpath" => Some("FPATH"),
+        "MANPATH" => Some("manpath"),
+        "manpath" => Some("MANPATH"),
+        "CDPATH" => Some("cdpath"),
+        "cdpath" => Some("CDPATH"),
+        "PSVAR" => Some("psvar"),
+        "psvar" => Some("PSVAR"),
+        _ => None,
+    };
     queue_signals(); // c:3825
                      // c:3826-3831 — `if ((pm = ... getnode2 ...) && !(pm->node.flags
                      // & PM_NAMEREF)) unsetparam_pm(pm, 0, 1);`.
@@ -6133,6 +6155,29 @@ pub fn unsetparam(name: &str) {
         }
         // No pm.old + no rejection → drop entirely (matches the
         // C path at c:3935 where the node is removed from paramtab).
+    }
+    // c:Src/params.c:3905-3935 — tied-alt removal. Cascade the
+    // unset to the paired name (PATH↔path etc.). Also clear the OS
+    // env mirror since command lookup at the syscall level reads
+    // the inherited libc environ.
+    if let Some(alt) = tied_alt {
+        let alt_present = paramtab().read().map(|t| t.contains_key(alt)).unwrap_or(false);
+        if alt_present {
+            if let Some(mut alt_pm) = paramtab().write().ok().and_then(|mut t| t.remove(alt)) {
+                let _ = unsetparam_pm(&mut alt_pm, 1, 1);
+            }
+        }
+        env::remove_var(alt);
+        env::remove_var(name);
+        // c:Src/params.c:5291 — `if (t == path) cmdnamtab->emptytable
+        // (cmdnamtab)`. The hashed-cmdnam cache holds absolute paths
+        // resolved via the prior PATH search; without clearing,
+        // `unset PATH; ls` still hits the cached `/bin/ls` entry and
+        // exec succeeds — defeating the security boundary the unset
+        // is supposed to establish. Bug #416.
+        if matches!(name, "PATH" | "path") {
+            crate::ported::hashtable::emptycmdnamtable();
+        }
     }
     unqueue_signals(); // c:3832
 }

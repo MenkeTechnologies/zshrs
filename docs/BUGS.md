@@ -31845,7 +31845,36 @@ Ugly and error-prone for nested patterns.
 
 ## #416 — `unset PATH` ignored — command lookup still resolves binaries
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — three-part fix:
+1. `unsetparam(PATH)` now cascades to the tied `path` array
+   (and vice versa for PATH↔path, FPATH↔fpath, MANPATH↔manpath,
+   CDPATH↔cdpath, PSVAR↔psvar) — mirrors C
+   `Src/params.c:3905-3935` tied-alt removal block.
+2. The same unset clears the OS env mirror via `env::remove_var`
+   on both the canonical and tied names AND calls
+   `emptycmdnamtable()` so the hashed-cmdnam cache (which holds
+   absolute paths from prior PATH searches) is invalidated —
+   mirrors C `Src/params.c:5291 emptycmdnamtable`.
+3. `vm_helper.rs::execute_external_bg` (the `Command::new` site)
+   now refuses to spawn a bare-name (`no /`) command when
+   zshrs's PATH param is unset OR empty — emits
+   `<sn>:1: command not found: <cmd>` and returns 127 BEFORE
+   touching libc. Rust's `Command::new` delegates to
+   `execvp`, which on many platforms (including macOS) falls
+   back to a libc-default PATH when the env entry is missing
+   — defeating the security boundary `unset PATH` is supposed
+   to establish.
+
+**Verify**:
+- `unset PATH; ls / 2>&1; echo rc=$?` → `zsh:1: command not
+  found: ls; rc=127` (matches zsh).
+- `unset PATH; /bin/ls / | head -3` → still lists files
+  (absolute paths bypass the PATH check).
+- `ls / | head -3` (no unset) → still works (regression
+  preserved).
+- zshrs_shell baseline 949/103 (within 947-952 flake range).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'unset PATH; ls / 2>&1; echo rc=$?'
