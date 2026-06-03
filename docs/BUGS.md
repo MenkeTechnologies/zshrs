@@ -16218,53 +16218,54 @@ for v in "${(@k)parameters}"; do typeset "$v"; done > state.dump
 
 ## #219 — `typeset -i "h[k]"` integer-typeset on assoc element silently accepted (zsh: rejects)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `bin_typeset` now rejects
+type-flag on subscripted name when `on` has a non-scalar
+PM_TYPE bit.
 
+**Root cause** — `src/ported/builtin.rs::bin_typeset` handled
+subscripted names (`name[key]`) only for the PM_LOCAL guard;
+no rejection for the type-flag combos that C
+`Src/builtin.c:2500-2502` errors on. C's typeset_single dispatches
+on `PM_TYPE(on)`:
+
+  * `PM_SCALAR && !ASG_ARRAYP`: route through `assignsparam`
+    (plain `h[k]=val` works).
+  * `PM_ARRAY && ASG_ARRAYP`: route through `assignaparam`.
+  * Otherwise: `zerrnam("%s: inconsistent array element or
+    slice assignment", pname); return NULL;`.
+
+zshrs silently fell into the per-arg handler and applied the
+type flag to the element.
+
+**Fix** — added the missing check inside the
+`arg_name.find('[')` block. When subscript is present AND
+`on` carries any of `PM_INTEGER | PM_EFLOAT | PM_FFLOAT |
+PM_ARRAY | PM_HASHED`, emit
+`<arg>: inconsistent array element or slice assignment` via
+`zerrnam` and `continue` past this arg. Plain `h[k]=value`
+(no `-` flag → `on = PM_SCALAR`) stays valid.
+
+**Verify** (byte-matched against zsh)
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'typeset -A h; typeset -i "h[k]"; h[k]="100"; echo "[${h[k]}]"' 2>&1
+$ zshrs --zsh -c 'typeset -A h; typeset -i "h[k]"' 2>&1
 zsh:typeset:1: h[k]: inconsistent array element or slice assignment
 
-$ ./target/debug/zshrs --zsh -c 'typeset -A h; typeset -i "h[k]"; h[k]="100"; echo "[${h[k]}]"'
-[100]
+$ zshrs --zsh -c 'a=(1 2 3); typeset -a "a[1]"' 2>&1
+zsh:typeset:1: a[1]: inconsistent array element or slice assignment
+
+$ zshrs --zsh -c 'h=(); typeset -E "h[k]"' 2>&1
+zsh:typeset:1: h[k]: inconsistent array element or slice assignment
+
+# Plain `h[k]=val` still works:
+$ zshrs --zsh -c 'typeset -A h; h[k]=v; echo "[${h[k]}]"'
+[v]
+
+# typeset -i x (no subscript) still works:
+$ zshrs --zsh -c 'typeset -i x=42; echo "[$x]"'
+[42]
 ```
 
-zsh rejects per-element attribute setting on assoc arrays —
-attributes (`-i`, `-l`, `-u`, `-r`, etc.) apply to the whole
-array, not individual elements. The error message
-"inconsistent array element or slice assignment" indicates
-zsh's parser/type-checker explicitly disallows this form.
-
-zshrs silently accepts and applies the integer attribute to
-the element. Same family as the permissive-parser bugs
-(#141/#146/#161/#162/#167/#168/#169/#170/#171/#172/#189) —
-zshrs accepts invalid syntax that zsh rejects.
-
-**Where** — `src/ported/builtins/typeset.rs::apply_attrs`:
-when subscript is present on target name, doesn't reject the
-per-element-attribute form. C-source `Src/builtin.c::typeset_single`
-checks `param->node.flags & PM_HASHELEM` and errors via
-`zwarnnam("inconsistent array element or slice assignment")`.
-
-**Impact** — scripts that accidentally write
-`typeset -i "h[k]"` instead of `typeset -i h` (with intent
-to make the whole assoc integer-valued) succeed in zshrs but
-fail in zsh — producing divergent runtime behavior. Less
-critical than crashes but still a parity gap that affects
-script portability.
-
-```sh
-# Bug-prone code that "works" in zshrs but errors in zsh
-typeset -A scores
-typeset -i "scores[alice]"   # zshrs: ok; zsh: error
-scores[alice]=95
-```
-
-**Workaround** — apply attribute to the whole assoc at
-declaration:
-```sh
-typeset -iA scores
-scores[alice]=95
-```
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ---
 
@@ -38216,7 +38217,7 @@ qualifiers always have a digit suffix.
 | 216 | `${(t)var:-default}` after `unset var` returns empty instead of default | **fixed** 2026-06-02 | n/a |
 | 217 | `setopt cdable_vars` ignored — `cd VAR` doesn't deref VAR as path | **port-bug** | explicit `cd "$VAR"` deref |
 | 218 | `typeset NAME` for assoc array prints nothing (zsh: `h=( [k]=v ... )` form) | **port-bug** | `typeset -p h` explicit |
-| 219 | `typeset -i "h[k]"` integer-on-assoc-element silently accepted (zsh: rejects) | **port-bug** | apply attribute to whole assoc `typeset -iA` |
+| 219 | `typeset -i "h[k]"` integer-on-assoc-element silently accepted (zsh: rejects) | **fixed** 2026-06-02 | n/a |
 | 220 | `setopt err_return` doesn't abort function on failed command (fn-scoped strict mode dead) | **port-bug** | explicit `\|\| return $?` per command |
 | 221 | `disable -f FN` doesn't disable — `FN` still callable, `dis_functions[FN]` empty | **port-bug** | `unfunction FN` destructive |
 | 222 | `zmodload -a` lists 0 auto-loaded modules (zsh: 27 builtin→module bindings) | **port-bug** | try-and-catch with `zmodload -e` |
