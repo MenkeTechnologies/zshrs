@@ -24310,7 +24310,65 @@ elapsed=$(( EPOCHREALTIME - start ))
 
 ## #318 — PS4 prompt-escapes (`%x`/`%N`/`%I`/`%_`) not expanded in xtrace output
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — original report was somewhat
+misleading. Default `PS4` in both shells is `+%N:%i> ` (per
+`Src/init.c:1192`); the colored `\033[34m%x\t%N\t%I\t%_\033[0m\t`
+PS4 was the reporter's inherited shell env, not the zsh
+default. Most escapes (`%x`, `%I`, `%_`) already worked. Two
+real gaps surfaced under direct testing.
+
+**Root cause** —
+1. `%N` in `src/ported/prompt.rs:1210` read `ZSH_SCRIPT` /
+   `ZSH_NAME` only — never the canonical `scriptname` global
+   that C `Src/prompt.c:555` (`promptpath(scriptname ?
+   scriptname : argzero, arg, 0)`) reads. C zsh stashes/
+   restores `scriptname` around every function call
+   (`Src/exec.c:5903` + `:6064`), so `%N` updates to the
+   currently-executing function inside a fn body. zshrs has
+   the same `SCRIPTNAME` static at `utils::scriptname_get()`
+   updated at `exec.rs:5585`, but `%N` never consulted it —
+   inside a fn, PS4's `%N` stayed at the outer scope name.
+2. Script mode (`zshrs script.sh`) at `bins/zshrs.rs:1776+`
+   set `ZSH_SCRIPT` and `$0` but never called
+   `set_scriptname`, so `SCRIPTNAME` stayed `None` at top
+   level and `%N` fell back to `"zsh"` instead of the script
+   path. C `Src/init.c:1572` (`scriptname = ztrdup(runscript);`)
+   stamps it at script-entry.
+
+**Fix** —
+1. `src/ported/prompt.rs` `%N` arm: read
+   `utils::scriptname_get()` first, then fall back to
+   `ZSH_SCRIPT` / `ZSH_NAME` / literal `"zsh"`. Matches C's
+   `scriptname ? scriptname : argzero` dispatch.
+2. `bins/zshrs.rs` script-mode dispatch (after `$0` / pparams
+   / `ZSH_SCRIPT` writes): add
+   `zsh::ported::utils::set_scriptname(Some(args[1].clone()))`.
+   Mirrors c:1572.
+
+**Verify (post-fix):**
+```sh
+$ PS4='[%N]> ' ./target/debug/zshrs --zsh -c 'setopt xtrace; foo() { echo hi; }; foo' 2>&1 1>/dev/null
+[zsh]> foo
+[foo]> echo hi
+
+$ PS4='[%N]> ' ./target/debug/zshrs --zsh /tmp/script.sh 2>&1 1>/dev/null
+[/tmp/script.sh]> echo top
+[/tmp/script.sh]> foo
+[foo]> echo in_fn
+
+$ PS4='[%x]> ' ./target/debug/zshrs --zsh /tmp/script.sh 2>&1 1>/dev/null
+[/tmp/script.sh]> echo top
+[/tmp/script.sh]> foo
+[/tmp/script.sh]> echo in_fn
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` / `zsh -f script.sh`
+byte-for-byte. `%N` now reflects function-call scope (zsh
+top-level → script name → function name as scope enters);
+`%x` stays at the script name through function bodies. `-c`
+mode `%N` still resolves to `"zsh"`. Baseline 944/108.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt xtrace; echo cmd' 2>&1 1>/dev/null
@@ -24320,47 +24378,11 @@ $ ./target/debug/zshrs --zsh -c 'setopt xtrace; echo cmd' 2>&1 1>/dev/null
 [34m%x	%N	%I	%_[0m	echo cmd
 ```
 
-zsh's default `PS4` is `[34m%x\t%N\t%I\t%_[0m\t` (ANSI-blue
-file\tfunc\tline\tcaller-text-separator). When xtrace fires,
-zsh expands the `%`-escapes to actual values:
-- `%x` — current script filename
-- `%N` — current function name (or script)
-- `%I` — current line number
-- `%_` — calling-function-stack indicator
-
-zshrs has the default PS4 string but doesn't expand the
-escapes — emits literal `%x`, `%N`, `%I`, `%_` strings.
-
-Same family as #92 (PS4 default empty — earlier-stage issue)
-and #38 (prompt escapes missing in general).
-
-**Where** — `src/ported/exec.rs::emit_xtrace_prefix`: PS4 is
-written to stderr as a literal scalar. Should pass through
-`prompt_expand()` first. C-source `Src/exec.c::execpline2`
-calls `promptexpand(PS4, ...)` to evaluate `%`-escapes before
-emitting.
-
-**Impact** — every xtrace-debugged script has unusable trace
-output. `set -x` is the standard "what's happening" debug
-mechanism — zshrs's output shows literal `%x %N %I` instead
-of file/func/line, making the trace meaningless.
-
-```sh
-set -x
-problematic_function arg1 arg2
-# zsh: emits "/path/to/script.sh func_name 42 ... + problematic_function arg1 arg2"
-# zshrs: emits "%x %N %I %_ + problematic_function arg1 arg2"
-```
-
-Combined with #92 (PS4 default empty), zshrs's xtrace output
-is doubly broken if user hasn't explicitly set PS4: empty
-prefix THEN literal `%x` text.
-
-**Workaround** — set a simpler PS4 manually:
-```sh
-PS4='+ '
-set -x
-```
+The reporter's PS4 was inherited from their shell env (a
+custom colored multi-tab form), not zsh's actual default
+`+%N:%i> `. With the user PS4 propagated, both shells
+expanded `%x` / `%I` / `%_` correctly; only `%N` (function
+scope) and script-mode top-level `%N` were broken.
 
 ---
 
@@ -38767,7 +38789,7 @@ qualifiers always have a digit suffix.
 | 315 | `${(us.X.)str}` unique flag not applied after split — PATH-dedup idiom broken | **fixed** 2026-06-02 | n/a |
 | 316 | `zsh/system` module builtins `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` missing | **port-bug** | (none — needs builtin registration) |
 | 317 | `epochtime` array autovar from `zsh/datetime` not registered (zsh: 2-elem secs/nanosecs) | **port-bug** | use `$EPOCHREALTIME` float instead |
-| 318 | PS4 prompt-escapes (`%x`/`%N`/`%I`/`%_`) not expanded in xtrace output — trace shows literal text | **port-bug** | set simpler `PS4='+ '` manually |
+| 318 | PS4 prompt-escapes (`%x`/`%N`/`%I`/`%_`) not expanded in xtrace output — trace shows literal text | **fixed** 2026-06-02 | n/a |
 | 319 | `eval --` end-of-options separator not recognized (extends #251/#252/#284 `--` family) | **port-bug** | drop the `--` |
 | 320 | `${@/pat/repl}`/`${@#pre}`/`${@%suf}` apply only to first positional (zsh: per-element; `//` form works) | **port-bug** | copy to array, use `[@]` |
 | 321 | `KEYTIMEOUT` default is `40` instead of zsh's `10` — vi-mode/multi-key bindings feel sluggish | **fixed** 2026-06-02 | n/a |

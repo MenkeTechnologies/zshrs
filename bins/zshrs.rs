@@ -1784,6 +1784,14 @@ pub fn zshrs_main() {
         // own path. Mirrors the -c branch above which sets
         // ZSH_EXECUTION_STRING.
         zsh::ported::params::setsparam("ZSH_SCRIPT", &args[1]);
+        // c:Src/init.c:1572 — `scriptname = ztrdup(runscript);` updates
+        //   the C global `scriptname` to the script path; PS4's `%N`
+        //   reads this (Src/prompt.c:555 promptpath(scriptname, ...))
+        //   so xtrace prefixes show the script name at top level and
+        //   switch to function names inside fns (via exec.c:5903 stash/
+        //   restore). Bug #318 in docs/BUGS.md — script mode left
+        //   SCRIPTNAME=None so `%N` fell back to ZSH_NAME ("zsh").
+        zsh::ported::utils::set_scriptname(Some(args[1].clone()));
         // c:Src/init.c:965 — `setsparam("ZSH_ARGZERO", ztrdup(posixzero));`
         // posixzero is the script path under script mode (or the
         // shell binary path under -c/interactive). In zshrs's script

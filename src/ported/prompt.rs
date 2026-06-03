@@ -1199,17 +1199,25 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     let ln = crate::ported::input::lineno.with(|l| l.get());
                     stradd(bv, &format!("{}", ln));
                 }
-                // c:Src/prompt.c:554-555 — `%N` (name of script or
-                // function being executed; falls back to argzero/$0
-                // for top-level). For function calls C uses the
-                // funcname; we approximate by reading ZSH_SCRIPT for
-                // script files and falling back to ZSH_NAME ("zsh")
-                // for -c mode. Common synonym `%0N` is the same value
-                // without padding. Bug #44 in docs/BUGS.md — used
-                // heavily in the default colored PS4.
+                // c:Src/prompt.c:554-555 — `%N` reads C's `scriptname`
+                //   global (`promptpath(scriptname ? scriptname :
+                //   argzero, arg, 0)`). `scriptname` is updated when
+                //   entering a function to the function's name
+                //   (Src/exec.c:5903 `scriptname = dupstring(name);`)
+                //   and restored on return (c:6064), so `%N` reflects
+                //   the CURRENT executing scope — top-level → script
+                //   name; inside a function → function name. zshrs
+                //   has the same global at `utils::scriptname_get()`,
+                //   updated at exec.rs:5585. Bug #318 family in
+                //   docs/BUGS.md — earlier port read only ZSH_SCRIPT
+                //   so `%N` stayed at the outer scope inside fns.
                 b'N' => {
-                    let nam = crate::ported::params::getsparam("ZSH_SCRIPT")
-                        .filter(|s| !s.is_empty())
+                    let nam = crate::ported::utils::scriptname_get()
+                        .filter(|s: &String| !s.is_empty())
+                        .or_else(|| {
+                            crate::ported::params::getsparam("ZSH_SCRIPT")
+                                .filter(|s| !s.is_empty())
+                        })
                         .or_else(|| {
                             crate::ported::params::getsparam("ZSH_NAME")
                                 .filter(|s| !s.is_empty())
