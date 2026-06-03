@@ -85,7 +85,7 @@ use crate::ported::zsh_h::{
     HASHED, HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS, HIST_FOREIGN, INTERACTIVE, KSHARRAYS,
     LOGINSHELL, MAX_OPS, MFF_STR, MFF_USERFUNC, MONITOR, NULLBINCMD, OPT_ARG, OPT_HASARG,
     OPT_ISSET, OPT_MINUS, OPT_PLUS, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_ABSPATH_USED, PM_ARRAY,
-    PM_AUTOLOAD, PM_CUR_FPATH, PM_DECLARED, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE,
+    PM_AUTOLOAD, PM_CUR_FPATH, PM_DECLARED, PM_DEFAULTED, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE,
     PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER, PM_NAMEREF,
     PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN, PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TAGGED_LOCAL,
     PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNDEFINED, PM_UNIQUE, PM_UNSET, PM_UPPER, PM_WARNNESTED,
@@ -4248,6 +4248,19 @@ pub fn bin_typeset(
                         PM_UNIQUE | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z | PM_LOWER | PM_UPPER;
                     pm.node.flags |= (on as u32 & pre_assign_mask) as i32;
                     pm.node.flags &= !((off as u32 & pre_assign_mask) as i32);
+                    // c:Src/builtin.c:2544 — `if (isset(TYPESETTOUNSET))
+                    //     pm->node.flags |= PM_DEFAULTED;`. Under
+                    // `setopt typeset_to_unset`, bare `typeset NAME`
+                    // (no `=`) creates a "declared but not assigned"
+                    // entry. Only fires when the arg has no `=`
+                    // (assignment paths get PM_UNSET cleared as a side
+                    // effect of the value write). Bug #280 in
+                    // docs/BUGS.md.
+                    if !arg.contains('=')
+                        && isset(crate::ported::zsh_h::TYPESETTOUNSET)
+                    {
+                        pm.node.flags |= PM_DEFAULTED as i32;
+                    }
                 }
             }
         }
@@ -4814,9 +4827,26 @@ pub fn bin_typeset(
             // pre-conversion scalar value so the re-assignment after
             // type flip preserves it through the new setfn.
             let saved_val = getsparam(arg);
-            if getsparam(arg).is_none() {
+            let was_fresh = saved_val.is_none();
+            if was_fresh {
                 // c:3072 — `if (!getsparam(arg)) setsparam(arg, "")`.
                 setsparam(arg, ""); // c:3074
+                // c:Src/builtin.c:2544 — `if (isset(TYPESETTOUNSET))
+                //     pm->node.flags |= PM_DEFAULTED;`. Under
+                // `setopt typeset_to_unset`, bare `typeset NAME` (no
+                // `=`) creates a "declared but not assigned" entry:
+                // PM_DECLARED + PM_UNSET (= PM_DEFAULTED). `${+NAME}`
+                // and `[[ -v NAME ]]` then return false until an
+                // explicit assignment clears PM_UNSET. Bug #280 in
+                // docs/BUGS.md.
+                if isset(crate::ported::zsh_h::TYPESETTOUNSET) {
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(arg) {
+                            pm.node.flags |= PM_DEFAULTED as i32;
+                        }
+                    }
+                }
+                let _ = was_fresh;
             }
             // c:Src/builtin.c::typeset_single c:2374-2378 — the `+i`
             // / `+E` / `+F` / `+l` / `+u` / `+r` / `+n` paths
