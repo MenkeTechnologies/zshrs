@@ -1861,6 +1861,29 @@ impl ShellExecutor {
         background: bool,
     ) -> Result<i32, String> {
         tracing::trace!(cmd, bg = background, "exec external");
+        // c:Src/exec.c:824-876 — when arg0 has no `/`, C zsh requires
+        // a PATH search. With PATH unset, the search yields no hit
+        // and C emits `command not found: <cmd>`. Rust's
+        // `Command::new(name)` delegates to libc `execvp`, which on
+        // many platforms falls back to a built-in default PATH when
+        // the env entry is missing — so `unset PATH; ls` still finds
+        // `/bin/ls` and runs it, breaking the security boundary the
+        // unset is supposed to establish (#416). Gate explicitly:
+        // when cmd is a bare name (no `/`) and zshrs's own PATH
+        // param is unset OR empty, emit the canonical
+        // "command not found" diagnostic and return 127 BEFORE
+        // touching libc.
+        if !cmd.contains('/') {
+            let path_set_and_nonempty = crate::ported::params::getsparam("PATH")
+                .map(|p| !p.is_empty())
+                .unwrap_or(false);
+            if !path_set_and_nonempty {
+                let sn = crate::ported::utils::scriptname_get()
+                    .unwrap_or_else(|| "zshrs".to_string());
+                eprintln!("{}:1: command not found: {}", sn, cmd);
+                return Ok(127);
+            }
+        }
         let mut command = Command::new(cmd);
         command.args(args);
 
