@@ -21349,6 +21349,29 @@ typeset -i KEYTIMEOUT
 
 ## #269 — `$SPROMPT` autovar default empty (zsh: spell-check prompt template)
 
+**Status:** `fixed` 2026-06-03 — already wired by an earlier
+patch. `src/vm_helper.rs:822-828` mirrors C `Src/init.c:1194`:
+
+```rust
+if crate::ported::params::getsparam("SPROMPT")
+    .map_or(true, |s| s.is_empty())
+{
+    setsparam("SPROMPT", "zsh: correct '%R' to '%r' [nyae]? ");
+}
+```
+
+Verified parity:
+```
+$ /opt/homebrew/bin/zsh -fc 'echo "[${SPROMPT-NONE}]"'
+[zsh: correct '%R' to '%r' [nyae]? ]
+$ ./target/debug/zshrs --zsh -c 'echo "[${SPROMPT-NONE}]"'
+[zsh: correct '%R' to '%r' [nyae]? ]
+```
+
+Doc-only flip; no code change.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -21637,6 +21660,38 @@ in zshrs but should be unified.
 ---
 
 ## #274 — `$PROMPT3` autovar default empty (zsh: colored `-->>>>` select prompt)
+
+**Status:** `fixed` 2026-06-03 — `PROMPT3` (and the
+`PROMPT`/`PROMPT2`/`PROMPT4` siblings) now alias `PS3`/`PS1`/
+`PS2`/`PS4` per `Src/params.c:417-422` where C zsh's
+`IPDEF7("PROMPT3", &prompt3)` and `IPDEF7("PS3", &prompt3)`
+both point to the same `prompt3` global. zshrs's paramtab
+keeps them as separate entries; the alias is now mirrored
+at vm_helper init by copying each `PS{1..4}` value into the
+matching `PROMPT{,2,3,4}` slot when the slot is empty.
+
+Verified vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'echo "PS3=[${PS3-NONE}] PROMPT3=[${PROMPT3-NONE}]"'
+PS3=[[1;34m-->>>> [0m] PROMPT3=[[1;34m-->>>> [0m]
+$ ./target/debug/zshrs --zsh -c 'echo "PS3=[${PS3-NONE}] PROMPT3=[${PROMPT3-NONE}]"'
+PS3=[[1;34m-->>>> [0m] PROMPT3=[[1;34m-->>>> [0m]
+```
+
+The colored `-->>>>` value comes from Homebrew/Apple's
+`/etc/zshrc`-style setup that writes `PS3` early; both
+shells now read the same value through either name.
+
+The vm_helper alias is a runtime-side workaround for the
+missing param-table aliasing — the proper fix is wiring
+`PROMPT*` entries as true tied aliases of `PS*` via the GSU
+vtable (deferred until the GSU plumbing lands more broadly).
+Same caveat applies to `#269` (`SPROMPT`) which is a
+standalone non-aliased param.
+
+**Original report:**
+
+**Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
