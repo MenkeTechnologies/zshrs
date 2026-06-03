@@ -5887,7 +5887,23 @@ pub fn paramsubst(
                 } // c:3540
             } else if let Some(default) = r.strip_prefix(":-") {
                 // c:3193
-                if !is_set || raw_value.is_empty() {
+                // c:Src/subst.c:3193 vunset check — for arrays under
+                //   `(@)` (nojoin==2) the array's existence with ANY
+                //   elements (including a single empty element) means
+                //   "set, not null". `b=("")` with `${(@)b:-x}` should
+                //   return `[]` (the empty element) not `[x]`. Without
+                //   the gate, raw_value (which joins the array to a
+                //   scalar) was "" and `raw_value.is_empty()` fired
+                //   the default. Bug #186 in docs/BUGS.md.
+                let is_at_array = nojoin == 2 && arrays_contains(&var_name);
+                let array_is_empty = is_at_array
+                    && arrays_get(&var_name).map(|a| a.is_empty()).unwrap_or(true);
+                let vunset = if is_at_array {
+                    !is_set || array_is_empty
+                } else {
+                    !is_set || raw_value.is_empty()
+                };
+                if vunset {
                     value = singsub(default);
                     // Parity bug: for `${arr[@]:-default}` with an
                     // empty array, the operator computed the default
