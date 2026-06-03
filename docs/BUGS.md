@@ -15941,6 +15941,31 @@ run_build 2>&1 | tee build.log
 
 ## #207 — `emulate ksh` doesn't switch arrays to 0-indexed mode
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces. Likely
+closed by an earlier sweep landing the full `installemulation` /
+`setemulate` / `defset` chain from `Src/options.c:507-572`.
+`ksharrays`/`kshautoload`/`kshglob`/`kshoptionprint`/
+`kshtypeset`/`kshzerosubscript` all carry `OPT_EMULATE |
+OPT_BOURNE` flags (`src/ported/options.rs:1608-1613`); `defset`
+masks against `EMULATE_KSH` so each lands `true` for the
+ksh-emulation target, then `emulate()` walks `setemulate_opts`
+and writes them through `opt_state_set`. Confirmed via repro
+parity:
+
+```
+$ /opt/homebrew/bin/zsh -fc 'emulate ksh; arr=(a b c); echo "[${arr[0]}|${arr[1]}]"'
+[a|b]
+$ ./target/debug/zshrs --zsh -c 'emulate ksh; arr=(a b c); echo "[${arr[0]}|${arr[1]}]"'
+[a|b]
+```
+
+`emulate sh`, `emulate -L ksh` inside a function (locally
+0-indexed; restored to 1-indexed on function exit), and the
+unquoted-arg form all match `/opt/homebrew/bin/zsh` byte-for-
+byte. Doc-only flip; no code change in this commit.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
