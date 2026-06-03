@@ -1612,21 +1612,38 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             // literal-run break in this Rust port, see
             // `zsh_corpus_hash_s_e_anchors_match_bare_test` which
             // expects `/` to stay literal inside `(...)` alternation).
-            let (sp_tilde_lit, sp_seg_lit_set) = {
+            let (sp_tilde_lit, sp_seg_lit_set, sp_hat_lit, sp_hash_lit) = {
                 let sp = zpc_special.lock().unwrap();
                 let mut set = [false; 256];
                 for i in 0..(ZPC_SEG_COUNT as usize) {
                     set[sp[i] as usize] = true;
                 }
-                (sp[ZPC_TILDE as usize], set)
+                (
+                    sp[ZPC_TILDE as usize],
+                    set,
+                    sp[ZPC_HAT as usize],
+                    sp[ZPC_HASH as usize],
+                )
             };
             while local_off < p.len() {
                 let b = p.as_bytes()[local_off];
-                // Stop at metacharacters.
+                // c:Src/pattern.c:480-483 — `if (!isset(EXTENDEDGLOB))`
+                // masks ZPC_HAT and ZPC_HASH to Marker so the
+                // patcompiece dispatch treats `^` / `#` as literals
+                // (no negation / no zero-or-more closure).
+                // The literal-run break list hardcoded `b'^'` /
+                // `b'#'` though, which still terminated the literal
+                // accumulator and forced patcompiece's empty-buf
+                // -1 return → "bad pattern: ^.*" for the unset
+                // EXTENDEDGLOB case. Gate the break on the actual
+                // zpc_special slot so an EXTENDEDGLOB-off run treats
+                // `^` and `#` as ordinary chars. Bug #421.
                 if matches!(
                     b,
-                    b'?' | b'*' | b'[' | b'(' | b')' | b'|' | b'\\' | b'#' | b'^' | b'<'
-                ) {
+                    b'?' | b'*' | b'[' | b'(' | b')' | b'|' | b'\\' | b'<'
+                ) || (b == b'^' && sp_hat_lit == b'^')
+                    || (b == b'#' && sp_hash_lit == b'#')
+                {
                     break;
                 }
                 if b == sp_tilde_lit && sp_tilde_lit != 0 {
