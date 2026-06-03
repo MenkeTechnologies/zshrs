@@ -14425,7 +14425,33 @@ my_logger "msg" > /var/log/app.log
 
 ## #188 — Empty-array slice `${a[@]:0:1}` iterates once with empty value
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+Resolution likely landed via an earlier paramsubst slice /
+auto_splat patch (covered by the same family as #120).
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'a=(); count=0; for x in "${a[@]:0:1}"; do ((count++)); echo "iter[$x]"; done; echo "iterations: $count"'
+iterations: 0
+
+$ ./target/debug/zshrs --zsh -c 'a=(); echo "[${a[@]:0:1}]"'
+[]
+
+$ ./target/debug/zshrs --zsh -c 'a=(); echo "n=${#${(@)a[@]:0:1}}"'
+n=0
+
+$ ./target/debug/zshrs --zsh -c 'a=(x); echo "[${a[@]:0:1}]"'
+[x]
+
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); echo "[${a[@]:1:2}]"'
+[y z]
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte. Empty
+slice yields zero iterations / empty `[]`; non-empty slice
+works correctly.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(); count=0; for x in "${a[@]:0:1}"; do ((count++)); echo "iter[$x]"; done; echo "iterations: $count"'
@@ -14434,37 +14460,6 @@ iterations: 0
 $ ./target/debug/zshrs --zsh -c 'a=(); count=0; for x in "${a[@]:0:1}"; do ((count++)); echo "iter[$x]"; done; echo "iterations: $count"'
 iter[]
 iterations: 1
-```
-
-Slicing an empty array `${a[@]:0:1}` should yield no elements.
-zsh iterates 0 times. zshrs iterates ONCE with an empty value.
-
-Related to #120 (`a=("${a[@]:0:-1}")` on empty creates
-1-element array) — both stem from empty-array slice yielding
-spurious empty element.
-
-**Where** — `src/ported/paramsubst.rs::slice_array`: returns
-`[""]` for empty array slice instead of `[]`. C-source
-`Src/subst.c::arrslice` returns `NULL` (empty list) when start
-≥ end or array is empty.
-
-**Impact** — defensive iteration on possibly-empty arrays
-runs one phantom iteration with empty value:
-
-```sh
-configs=()
-for cfg in "${configs[@]:0:3}"; do
-    process_config "$cfg"
-done
-# zsh: skip entirely
-# zshrs: process_config called once with empty string
-```
-
-**Workaround** — explicit length check:
-```sh
-if (( ${#configs} > 0 )); then
-    for cfg in "${configs[@]:0:3}"; do ...
-fi
 ```
 
 ---
@@ -14999,7 +14994,43 @@ cross between zsh and zshrs.
 
 ## #199 — `${(qq)x}` with embedded newline emits mixed `'a'$'\n''b'` instead of literal newline
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `quotestring` QT_SINGLE arm
+in `src/ported/utils.rs` mis-emitted `'$'\n''` (split-quote
+with `$'\n'` escape between segments) for embedded newlines.
+C `Src/utils.c:6300-6395` QT_SINGLE only triggers special
+handling when the ispecial-gated outer condition matches a
+QT-specific subcondition; for QT_SINGLE the only subcondition
+is `*u == '\''`. Newlines do NOT match, so they fall through
+to the pass-through path at c:6394 and are emitted literally
+inside the surrounding `'…'` (single quotes in zsh preserve
+newlines).
+
+**Root cause** — the explicit `c == '\n'` arm in
+`utils.rs::quotestring` QT_SINGLE branch (mirroring an
+incorrect reading of the C source) emitted the split-quote
+form. Should have been pass-through.
+
+**Fix** — remove the newline-special arm from QT_SINGLE; only
+handle the apostrophe close-reopen sequence (`'\''`) per C
+c:6364-6379. Everything else (newline, ctrl chars, multibyte,
+ordinary chars) passes through literally inside the wrapping
+`'…'`.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c $'x=$\'a\\nb\'; echo "${(qq)x}"'
+'a
+b'
+```
+
+Matches `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte (literal
+newline inside `'…'`). Regressions clean: `(q)` (QT_BACKSLASH)
+still emits `a$'\n'b`; `(qqq)` (QT_DOUBLE) still emits
+`"a\nb"`; apostrophe-in-string still escapes as `'it'\''s'`;
+simple `(qq)` still wraps as `'hello'`. Baseline 945/107
+preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc $'x=$\'a\\nb\'; echo "${(qq)x}"'
@@ -15009,36 +15040,6 @@ b'
 $ ./target/debug/zshrs --zsh -c $'x=$\'a\\nb\'; echo "${(qq)x}"'
 'a'$'
 ''b'
-```
-
-zsh's `(qq)` flag produces single-quote-style quoting and
-embeds literal newline inside the single quotes (single quotes
-preserve newlines in zsh syntax). zshrs splits at the newline
-and inserts `$'\n'` between segments — that's `(q+)`-style
-behavior, not `(qq)`.
-
-Both forms re-parse to the same value, but tools that
-checksum/golden-test serialized output see a diff:
-
-```sh
-typeset -p multi_line_var | sha256sum
-# zsh and zshrs disagree even though the underlying data is identical
-```
-
-**Where** — `src/ported/paramflags.rs::quote_qq`: emits
-`$'\n'` escape for newline within `(qq)`. C-source
-`Src/utils.c::quotestring` with `QT_DOUBLE` keeps newlines
-literal inside single quotes.
-
-**Impact** — golden-file diff tests, config-migration scripts,
-and `typeset -p`-based serialization round-trips show
-unexpected drift between zsh and zshrs even when the
-underlying values are byte-equal.
-
-**Workaround** — use `(q+)` flag explicitly (which both shells
-implement consistently), or normalize via:
-```sh
-typeset -p var | tr -d $'\n' | ... # before checksumming
 ```
 
 ---
@@ -38770,7 +38771,7 @@ qualifiers always have a digit suffix.
 | 185 | `[[ -z "${arr[@]}" ]]` for single-empty arr returns false (zsh: true) | **port-bug** | `${arr[*]}` star form |
 | 186 | `${(@)b:-default}` for single-empty arr returns default (zsh: empty) | **fixed** 2026-06-02 | n/a |
 | 187 | `f() { :; } > /file` redirect on fn-def creates file at def time | **port-bug** | redirect at call site |
-| 188 | Empty-array slice `${a[@]:0:1}` iterates once with empty val | **port-bug** | `${#a} > 0` pre-check |
+| 188 | Empty-array slice `${a[@]:0:1}` iterates once with empty val | **fixed** 2026-06-02 | n/a |
 | 189 | `${()-default}` empty-flag-paren silently returns `$-` | **fixed** 2026-06-02 | n/a |
 | 190 | `kill -L` lists signals (zsh: errors "unknown signal: SIGL") | **port-bug** | always use `-l` lowercase |
 | 191 | `${(l.5..)s}` empty-fill silently accepted with garbage output | **fixed** 2026-06-02 | n/a |
@@ -38781,7 +38782,7 @@ qualifiers always have a digit suffix.
 | 196 | Anonymous fn output lost in `$(() { :; })` cmdsub or `(() { :; })` subshell | **port-bug** | named fn called inside subshell |
 | 197 | `typeset -f` function-body display collapses statement newlines into `; ` | **port-bug** | sed `'s/; /\n\t/g'` post-filter |
 | 198 | `bindkey -L` output uses individual entries instead of `-R` range-compressed | **port-bug** | round-trip via zshrs's own output |
-| 199 | `${(qq)x}` with embedded newline emits mixed `'a'$'\n''b'` instead of literal | **port-bug** | use `(q+)` flag explicitly |
+| 199 | `${(qq)x}` with embedded newline emits mixed `'a'$'\n''b'` instead of literal | **fixed** 2026-06-02 | n/a |
 | 200 | `${(k)assoc[key]}` key-flag with subscript returns empty (zsh: key when exists) | **fixed** 2026-06-02 | n/a |
 | 201 | `typeset +x VAR` doesn't remove VAR from environment (security-relevant) | **port-bug** | `unset VAR; typeset VAR=$saved` re-bind |
 | 202 | `set -eo pipefail; false \| true` doesn't abort — pipefail ignored entirely | **port-bug** | `${pipestatus[1]}` explicit check |

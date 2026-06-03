@@ -7079,15 +7079,24 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         }
         result
     } else if quote_type == QT_SINGLE {
-        // Single quote: 'string' (lines 6359-6382)
+        // c:Src/utils.c:6300-6395 QT_SINGLE — `(qq)` flag.
+        //   The outer ispecial-gated branch at c:6301-6313 only
+        //   triggers special handling when the QT-specific
+        //   subcondition matches; for QT_SINGLE that's `*u == '\''`.
+        //   Newlines do NOT match, so they fall through to the
+        //   pass-through path at c:6394 and are emitted LITERALLY
+        //   inside the surrounding `'…'`. Bug #199 in docs/BUGS.md:
+        //   previous port emitted `'$'\n''` (split-quote with
+        //   `$'\n'` escape between segments) for newline, diverging
+        //   from zsh's literal-newline-in-single-quotes output.
         let mut result = String::with_capacity(s.len() + 4);
         result.push('\'');
         for c in s.chars() {
             if c == '\'' {
+                // c:6364-6379 — apostrophe close-reopen sequence.
                 result.push_str("'\\''");
-            } else if c == '\n' {
-                result.push_str("'$'\\n''");
             } else {
+                // Newline + everything else: pass through literally.
                 result.push(c);
             }
         }
