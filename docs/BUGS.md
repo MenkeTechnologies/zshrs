@@ -16037,50 +16037,49 @@ else echo "type: none"; fi
 
 ## #217 — `setopt cdable_vars` doesn't allow `cd VAR` to use VAR's value as path
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `cd_do_chdir` now calls
+`cd_able_vars(dest)` before the failure warning.
 
+**Root cause** — `src/ported/builtin.rs::cd_do_chdir` (port of
+C `Src/builtin.c::cd_do_chdir`) walked $cdpath, tried POSIXCD
+fallback, then emitted the "no such file or directory"
+warning. The C source's `if ((ret = cd_able_vars(dest)))`
+arm at c:1067 (which looks up the bareword as a parameter
+when `CDABLEVARS` is set, prepends its value, and retries the
+chdir) was never wired into the Rust port. The helper itself
+(`cd_able_vars` at builtin.rs:1881) was correctly ported but
+only exercised by tests — never called from the real cd path.
+
+**Fix** — added the missing call before the failure warning:
+
+```rust
+if let Some(expanded) = cd_able_vars(dest) {
+    if let Some(ret) = cd_try_chdir("", &expanded, hard) {
+        return Some(ret);
+    }
+}
+```
+
+**Verify** (byte-matched against zsh)
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'setopt cdable_vars; mytmp=/tmp; cd /; cd mytmp; pwd'
+$ zshrs --zsh -c 'setopt cdable_vars; mytmp=/tmp; cd /; cd mytmp; pwd'
 /tmp
 
-$ ./target/debug/zshrs --zsh -c 'setopt cdable_vars; mytmp=/tmp; cd /; cd mytmp; pwd'
+# Without cdable_vars, still errors:
+$ zshrs --zsh -c 'mytmp=/tmp; cd /; cd mytmp; pwd' 2>&1
 zsh:cd:1: no such file or directory: mytmp
 /
+
+# With trailing path component:
+$ zshrs --zsh -c 'setopt cdable_vars; PROJ=/tmp/zcd_test_217; cd /; cd PROJ/sub; pwd'
+/tmp/zcd_test_217/sub
+
+# Direct path still works:
+$ zshrs --zsh -c 'cd /tmp; pwd'
+/tmp
 ```
 
-`cdable_vars` is a zsh option that makes `cd NAME` (where
-NAME is not a literal directory) first check whether NAME is
-a parameter holding a directory path — if so, cd to that
-path. Common idiom for "named directories" without using
-`~name` syntax.
-
-zshrs's `cd` builtin doesn't consult the parameter table for
-non-existent paths even with `cdable_vars` set.
-
-**Where** — `src/ported/builtins/cd.rs::resolve_target`: no
-`cdable_vars` opt check in the fallback path. C-source
-`Src/builtin.c::cd_get_dest` walks parameter table when
-target isn't a literal dir and `CDABLEVARS` opt is set.
-
-**Impact** — workflows that use parameter-as-directory-name
-patterns (common in dotfile setups: `proj=/Users/x/work; cd
-proj`) all break. Same with `~name` style "named directory"
-hash table integration via cdable_vars.
-
-```sh
-# Common .zshrc pattern
-typeset projects=$HOME/code
-typeset config=$HOME/.config
-setopt cdable_vars
-# Now:
-cd projects   # zsh: cd's to ~/code; zshrs: errors "no such file"
-cd config     # zsh: cd's to ~/.config; zshrs: errors
-```
-
-**Workaround** — explicit deref:
-```sh
-cd "$projects"
-```
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ---
 
@@ -38215,7 +38214,7 @@ qualifiers always have a digit suffix.
 | 214 | `chpwd`/`chpwd_functions` hook not fired on `cd` — breaks p10k/oh-my-zsh/zoxide/direnv | **port-bug** | wrap `cd` in function dispatching hooks |
 | 215 | `zshexit` hook function not fired on shell exit (also breaks combined with #203) | **port-bug** | `trap "..." EXIT` at top-level |
 | 216 | `${(t)var:-default}` after `unset var` returns empty instead of default | **fixed** 2026-06-02 | n/a |
-| 217 | `setopt cdable_vars` ignored — `cd VAR` doesn't deref VAR as path | **port-bug** | explicit `cd "$VAR"` deref |
+| 217 | `setopt cdable_vars` ignored — `cd VAR` doesn't deref VAR as path | **fixed** 2026-06-02 | n/a |
 | 218 | `typeset NAME` for assoc array prints nothing (zsh: `h=( [k]=v ... )` form) | **port-bug** | `typeset -p h` explicit |
 | 219 | `typeset -i "h[k]"` integer-on-assoc-element silently accepted (zsh: rejects) | **fixed** 2026-06-02 | n/a |
 | 220 | `setopt err_return` doesn't abort function on failed command (fn-scoped strict mode dead) | **port-bug** | explicit `\|\| return $?` per command |
