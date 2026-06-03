@@ -2249,22 +2249,33 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
     if arg0.len() > libc::PATH_MAX as usize {
         return None;
     }
-    // c:914-920 — `/`-bearing arg: accept only if absolute OR (relative
-    // + PATHDIRS set and not ./ ../).
+    // c:Src/exec.c:914-920 — `/`-bearing arg path resolution.
+    //   if ((s = strchr(arg0, '/'))) {
+    //       RET_IF_COM(arg0);   // ← unconditional accept on iscom hit
+    //       if (arg0 == s || unset(PATHDIRS) ||
+    //           !strncmp(arg0, "./", 2) ||
+    //           !strncmp(arg0, "../", 3))
+    //           return NULL;
+    //   }
+    // The Rust port had the iscom check gated on `starts_with('/')`,
+    // so `type ./target/debug/zshrs` returned None even when the
+    // file was executable. Bug #496 family.
     if arg0.contains('/') {
-        // c:915 — `RET_IF_COM(arg0)` — accept if it's an existing executable.
         if iscom(arg0) {
-            if arg0.starts_with('/') {
-                return Some(arg0.to_string()); // c:916
-            }
-            // c:917-919 — relative + PATHDIRS set → fall through to walk.
-            if arg0.starts_with("./") || arg0.starts_with("../") || !isset(PATHDIRS) {
-                return None;
-            }
-            // else fall through to PATH walk.
-        } else {
+            return Some(arg0.to_string()); // c:915 RET_IF_COM
+        }
+        // c:916-919 — absolute OR PATHDIRS-off OR `./` / `../` →
+        // give up here (no $PATH walk for these). Relative without
+        // those prefixes falls through to the $PATH scan below for
+        // the PATHDIRS=set case.
+        if arg0.starts_with('/')
+            || !isset(PATHDIRS)
+            || arg0.starts_with("./")
+            || arg0.starts_with("../")
+        {
             return None;
         }
+        // else fall through to PATH walk.
     }
     // c:943-951 — walk `path[]` (the shell `$path` array). Read $PATH
     // from paramtab so shell-private edits via `path=(...)` take

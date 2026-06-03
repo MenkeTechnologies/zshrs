@@ -36496,7 +36496,41 @@ print "${(C)n1}"
 
 ## #496 — `type ./path` (relative-path arg) PANICS with "attempt to subtract with overflow"
 
-**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `findcmd`'s `/`-bearing
+arm now matches C `Src/exec.c:914-920` byte-for-byte: an
+unconditional `RET_IF_COM` accept on iscom hit, then the
+None-return checks.
+
+**Root cause** — `src/ported/exec.rs::findcmd` had the
+iscom-hit accept gated on `arg0.starts_with('/')`, so
+`type ./target/debug/zshrs` returned None even though the
+file existed and was executable. The earlier-fixed
+overflow panic on `./` was a separate issue; this entry's
+remaining residue was "type returns `not found` for valid
+relative-path executables".
+
+**Fix** (`src/ported/exec.rs::findcmd`) — restructure the
+`/`-bearing arm to:
+1. `if iscom(arg0) { return Some(arg0.to_string()); }` —
+   unconditional accept matching C's `RET_IF_COM(arg0)` at
+   c:915.
+2. If iscom failed AND (absolute OR `!PATHDIRS` OR `./`
+   OR `../`) → return None.
+3. Else fall through to the $PATH walk (PATHDIRS=set
+   relative-path case).
+
+**Verify**:
+- `type ./target/debug/zshrs` → `./target/debug/zshrs is
+  ./target/debug/zshrs` (matches zsh).
+- `type ./nonexistent 2>&1; echo rc=$?` → `./nonexistent
+  not found / rc=1` (matches zsh).
+- `type ls` → `ls is /bin/ls` (regression preserved).
+- `type cd` → `cd is a shell builtin` (regression preserved).
+- `type /bin/ls` → `/bin/ls is /bin/ls` (regression
+  preserved).
+- zshrs_shell baseline 953/99 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'type ./target/debug/zshrs'
