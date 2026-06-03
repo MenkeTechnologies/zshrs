@@ -8286,6 +8286,17 @@ fn parse_cond_not() -> Option<ZshCond> {
     if tok() == INPAR_TOK {
         zshlex();
         skip_cond_separators();
+        // c:Src/parse.c:2534-2547 par_cond_2 INPAR branch — empty
+        // body `[[ ( ) ]]` makes the inner par_cond's recursive
+        // par_cond_2 see OUTPAR with no leading STRING/BANG/INPAR
+        // and YYERROR immediately. Mirror that here: if the very
+        // next token after `(` (post separator skip) is `)`, emit
+        // a parse error so the script aborts cleanly instead of
+        // silently swallowing every following command. Bug #538.
+        if tok() == OUTPAR_TOK {
+            yyerror("condition expected");
+            return None;
+        }
         let inner = parse_cond_expr()?;
         skip_cond_separators();
         if tok() == OUTPAR_TOK {

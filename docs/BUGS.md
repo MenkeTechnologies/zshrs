@@ -38236,7 +38236,36 @@ Both work in both shells.
 
 ## #538 — `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `parse_cond_not` INPAR branch
+now emits `yyerror("condition expected")` when followed
+immediately by `)`.
+
+**Root cause** — `src/ported/parse.rs::parse_cond_not` at the
+INPAR_TOK branch advanced past `(`, then called
+`parse_cond_expr()?`. For empty body the inner
+parse_cond_primary returned None (no STRING_LEX), which
+propagated up via `?` without emitting any error. The
+script silently aborted parsing — `echo before` printed but
+`echo "after rc=$?"` never ran.
+
+C zsh's `Src/parse.c:2534-2547 par_cond_2` INPAR branch
+calls `par_cond()` which recurses into `par_cond_2` again;
+that inner call sees OUTPAR with no leading STRING/BANG/INPAR
+and YYERRORs at c:2560.
+
+**Fix** (`src/ported/parse.rs::parse_cond_not`, INPAR branch) —
+after advancing past `(` and skipping separators, check
+if the next token is OUTPAR_TOK. If so, emit
+`yyerror("condition expected")` and return None. Mirrors
+C's YYERROR on empty paren-body.
+
+**Verify**:
+- `echo before; [[ ( ) ]]; echo after` → `zsh:zsh:1: parse
+  error: condition expected` (exit 1, script halts).
+- `[[ ( -n foo ) ]]` (non-empty parens) still works in
+  both shells (`rc=0`).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ ( ) ]] 2>&1; echo "rc=$?"'
