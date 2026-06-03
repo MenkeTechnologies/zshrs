@@ -18918,6 +18918,63 @@ type-string info.
 
 ## #244 — `${(Z+c+)cmd}` Z-flag word-split with `c` option doesn't split
 
+**Status:** `fixed` 2026-06-03 — one-line addition to
+`is_splice_expansion` flag-matcher at `src/extensions/compile_zsh
+.rs:6035`.
+
+**Root cause** — the splice-detector at `compile_zsh.rs` recognised
+`'@'`, `'z'`, `'s'`, `'f'`, `'0'`, `'w'` as splice-shape flags but
+NOT `'Z'` (the uppercase parser-aware split variant). The bare
+`(z)` form correctly fell through to `BUILTIN_CONCAT_SPLICE` so
+the array splat preserved word boundaries when DQ-wrapped. The
+`(Z+c+)` / `(Z+n+)` / `(Z+C+)` parameterised forms hit the same
+splitter inside `paramsubst` (`src/ported/subst.rs:3537`) and
+DID produce the correct word list — but `is_splice_expansion`
+returned `false` for them, so the outer expansion routed through
+scalar concat which IFS-joined the words back into a single arg.
+
+**C-source reference** — `Src/subst.c:2443-2473` `case 'Z'` is
+identical in word-shape semantics to `case 'z'` (c:2439); both
+set `LEXFLAGS_ACTIVE` and yield a multi-word array. The C side
+of paramsubst doesn't distinguish them — neither should the
+compile-time splice gate.
+
+**Fix** — `compile_zsh.rs::is_splice_expansion`: add `'Z'` to
+the `matches!(c, ...)` arm so `(Z+OPTS+)` follows the same
+splice path as `(z)`.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'cmd="echo a # comment"; arr=("${(Z+c+)cmd}"); print -l "${arr[@]}"'
+echo
+a
+# comment
+$ ./target/debug/zshrs --zsh -c 'cmd="echo a # comment"; arr=("${(Z+c+)cmd}"); print -l "${arr[@]}"'
+echo
+a
+# comment
+
+$ /opt/homebrew/bin/zsh -fc $'cmd="echo a\\nfoo b"; arr=("${(Z+n+)cmd}"); print -l "${arr[@]}"'
+echo
+a
+foo
+b
+$ ./target/debug/zshrs --zsh -c $'cmd="echo a\\nfoo b"; arr=("${(Z+n+)cmd}"); print -l "${arr[@]}"'
+echo
+a
+foo
+b
+```
+
+Unquoted forms (`arr=(${(Z+c+)cmd})`) already worked because
+without DQ wrapping the splitter's `split_parts` got
+auto-splatted directly. Only the DQ-wrapped case needed the
+splice gate.
+
+zshrs_shell baseline preserved at 950/102.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh

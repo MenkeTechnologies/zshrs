@@ -6032,7 +6032,14 @@ fn is_splice_expansion(s: &str) -> bool {
         if let Some(rest) = inner.strip_prefix('(') {
             if let Some(close) = rest.find(')') {
                 let flags = &rest[..close];
-                if flags.chars().any(|c| matches!(c, '@' | 'z' | 's' | 'f' | '0' | 'w')) {
+                // `Z` is the uppercase parser-aware split flag — `(Z+c+)`,
+                // `(Z+n+)`, `(Z+C+)` etc. Same splice shape as `(z)` (a
+                // scalar produces a word array; in DQ context with
+                // surrounding literals zsh first/last-sticks). Without
+                // matching `Z`, the DQ-wrapped form `"${(Z+c+)cmd}"` fell
+                // through to scalar concat and the split words got
+                // IFS-joined back into one arg. Bug #244 in docs/BUGS.md.
+                if flags.chars().any(|c| matches!(c, '@' | 'z' | 'Z' | 's' | 'f' | '0' | 'w')) {
                     return true;
                 }
             }
