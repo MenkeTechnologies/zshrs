@@ -4490,6 +4490,32 @@ pub fn bin_typeset(
                         elems.push(re);
                     }
                 }
+                // c:Src/builtin.c:2476-2479 + c:2691 + c:4087 arrsetfn —
+                // pre-stamp value-affecting flags on the pm BEFORE the
+                // array-init setarrvalue runs, so PM_UNIQUE drives dedup
+                // inside assignaparam (params.rs:5571 reads pm.flags &
+                // PM_UNIQUE to gate simple_arrayuniq). Without this,
+                // `typeset -aUx u=(/bin /usr/bin /bin)` stamped PM_UNIQUE
+                // only AFTER setarrvalue ran, so dedup never fired.
+                // `typeset -aU u=(...)` happened to work due to a side
+                // path; this makes both consistent. Bug #272.
+                if is_array {
+                    let pre_assign_mask: u32 = PM_UNIQUE;
+                    if (on as u32 & pre_assign_mask) != 0 {
+                        let exists = paramtab()
+                            .read()
+                            .map(|t| t.contains_key(n))
+                            .unwrap_or(false);
+                        if !exists {
+                            let _ = createparam(n, PM_ARRAY as i32);
+                        }
+                        if let Ok(mut tab) = paramtab().write() {
+                            if let Some(pm) = tab.get_mut(n) {
+                                pm.node.flags |= (on as u32 & pre_assign_mask) as i32;
+                            }
+                        }
+                    }
+                }
                 if is_hashed {
                     // c:2960-2975 — `setdataparam(..., PM_HASHED, …)`.
                     // Two assoc-init shapes accepted by zsh:
