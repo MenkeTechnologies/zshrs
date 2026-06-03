@@ -2388,6 +2388,19 @@ impl ZshCompiler {
             || (untoked.ends_with(')')
                 && untoked.contains('(')
                 && !untoked.contains('|'))
+            // Unclosed `(` (or `(` anywhere not already covered by the
+            // qualifier-suffix / alternation arms above). C zsh's
+            // `Src/pattern.c:4326-4335 haswilds` returns true on any
+            // `Inpar` / `(` unless `SHGLOB` is set. zshrs's compile-time
+            // gate was too conservative — `echo (abc` and `echo abc(a)def`
+            // fell through the LoadConst fast path and printed literally
+            // instead of routing through `patcompile` which rejects
+            // `(abc` as "bad pattern: (abc" (#170 in docs/BUGS.md).
+            // The runtime `zglob` short-circuits when SHGLOB is set, so
+            // the over-trigger is a no-op for cases C would also skip.
+            // The lexer META-encodes `(` as Inpar (\u{88}); check both.
+            || unquoted(s, '(')
+            || unquoted(s, '\u{88}')
             // Glob alternation `(a|b|c)` is a primary zsh feature
             // (no extendedglob required). Direct port of zsh's
             // pattern.c P_BRANCH `|` at the path level —
