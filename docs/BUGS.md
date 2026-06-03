@@ -37804,7 +37804,37 @@ instead of `-v`.
 
 ## #518 — `$PROMPT` / `$PS1` (and PROMPT2/PS2, PROMPT3/PS3, PROMPT4/PS4) NOT bidirectionally aliased
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — bidirectional alias cascade
+added to `assignsparam` in `src/ported/params.rs`.
+
+**Root cause** — C zsh's `Src/params.c` declares
+`{ "PROMPT", PM_SCALAR|PM_ALIAS, &ps1, ... }` and the
+matching `{ "PS1", PM_SCALAR, &ps1, ... }` share the same
+backing `ps1` C pointer; assigning to either name rewrites
+the same byte that the other reads. zshrs lacks PM_ALIAS
+and shared storage — PROMPT and PS1 were independent
+hashmap entries.
+
+**Fix** — `src/ported/params.rs::assignsparam` (alongside
+the existing PATH↔path cascade for #423/#424): when the
+assigned name is one of PROMPT/PS1, PROMPT2/PS2, PROMPT3/
+PS3, PROMPT4/PS4, mirror the scalar write into the alias
+entry in `paramtab()`. Bidirectional — covers each
+direction for each of the 4 pairs.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'PROMPT="custom"; PS1="custom2"; echo "[$PROMPT]"'
+[custom2]
+$ ./target/debug/zshrs --zsh -fc 'PS1="aaa"; PROMPT="bbb"; echo "[$PS1]"'
+[bbb]
+$ ./target/debug/zshrs --zsh -fc 'PROMPT2="x2"; PROMPT3="x3"; PROMPT4="x4"; echo "PS2=[$PS2] PS3=[$PS3] PS4=[$PS4]"'
+PS2=[x2] PS3=[x3] PS4=[x4]
+$ ./target/debug/zshrs --zsh -fc 'PS2="y2"; PS3="y3"; PS4="y4"; echo "PROMPT2=[$PROMPT2] PROMPT3=[$PROMPT3] PROMPT4=[$PROMPT4]"'
+PROMPT2=[y2] PROMPT3=[y3] PROMPT4=[y4]
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'PROMPT="custom"; PS1="custom2"; echo "[$PROMPT]"'

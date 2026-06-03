@@ -5412,6 +5412,54 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             crate::ported::hashtable::emptycmdnamtable();
         }
     }
+    // c:Src/params.c — `{ "PROMPT", PM_SCALAR|PM_ALIAS, &ps1, ... }` and the
+    // matching `{ "PS1", PM_SCALAR, &ps1, ... }` share the same backing
+    // pointer; assigning to PROMPT updates the byte that PS1 reads (and
+    // vice versa). Same for PROMPT2↔PS2, PROMPT3↔PS3, PROMPT4↔PS4.
+    // zshrs lacks PM_ALIAS — mirror the scalar write to the alias. Bug #518.
+    let alias_pair: Option<&str> = match name {
+        "PROMPT" => Some("PS1"),
+        "PS1" => Some("PROMPT"),
+        "PROMPT2" => Some("PS2"),
+        "PS2" => Some("PROMPT2"),
+        "PROMPT3" => Some("PS3"),
+        "PS3" => Some("PROMPT3"),
+        "PROMPT4" => Some("PS4"),
+        "PS4" => Some("PROMPT4"),
+        _ => None,
+    };
+    if let Some(other) = alias_pair {
+        if let Ok(mut tab) = paramtab().write() {
+            let entry = tab.entry(other.to_string()).or_insert_with(|| {
+                Box::new(param {
+                    node: hashnode {
+                        next: None,
+                        nam: other.to_string(),
+                        flags: PM_SCALAR as i32,
+                    },
+                    u_data: 0,
+                    u_arr: None,
+                    u_str: Some(String::new()),
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                })
+            });
+            entry.u_str = Some(val.to_string());
+            entry.u_arr = None;
+        }
+    }
     unqueue_signals(); // c:3344
     cloned // c:3345
 }
