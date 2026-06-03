@@ -5838,6 +5838,23 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                 } else {
                     val.l
                 };
+                // c:Src/params.c:2801 — `if (!v->pm->base && lastbase
+                // != -1) v->pm->base = lastbase;`. After setfn the C
+                // path falls through `setstrvalue(v, NULL)` which
+                // inherits the source numeric base from `lastbase`
+                // when the param doesn't yet have an explicit base.
+                // Mirror that here so `(( x = 0xFF ))` on an existing
+                // integer param updates pm.base to 16, displaying as
+                // `16#FF` instead of decimal `255`. Bug #175 in
+                // docs/BUGS.md. The create path already inherits at
+                // params.rs:5759-5768; this is the reassign-path
+                // equivalent.
+                if pm.base == 0 {
+                    let lb = crate::ported::math::lastbase();
+                    if lb > 0 {
+                        pm.base = lb;
+                    }
+                }
             } else if t == PM_EFLOAT || t == PM_FFLOAT {
                 // c:2878 — MN_INTEGER input promotes to f64.
                 pm.u_dval = if val.type_ == MN_FLOAT {

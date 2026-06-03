@@ -5553,7 +5553,22 @@ impl ZshCompiler {
             // which already treats `"`/`\u{9e}` (Dnull) as
             // whitespace at math.rs:1365. Bug #49 in docs/BUGS.md.
             || inner_arith.contains('"')
-            || inner_arith.contains('\u{9e}');
+            || inner_arith.contains('\u{9e}')
+            // c:Src/math.c lexconstant — base-tagged literals
+            // (`0xFF`, `0b1010`, `2#1010`, etc.) set `lastbase` so
+            // PM_INTEGER assignment can inherit it for display
+            // formatting. ArithCompiler evaluates literals at compile
+            // time and emits `LoadInt(N)` — the runtime SET_VAR sees
+            // a bare int with no base context, so the param.base
+            // stays 0 and `typeset -p x` shows decimal. Routing
+            // through MathEval keeps the literal lexing on the
+            // runtime path where `lastbase` is set right before the
+            // assignment fires. Bug #175 in docs/BUGS.md.
+            || inner_arith.contains("0x")
+            || inner_arith.contains("0X")
+            || inner_arith.contains("0b")
+            || inner_arith.contains("0B")
+            || inner_arith.contains('#');
         if needs_eval {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
