@@ -4353,6 +4353,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Op::Exec's flatten at vm.rs:1660-1665) so `${arr[@]}` /
         // splice expansions produce one argv slot per element.
         let args: Vec<String> = raw.into_iter().collect();
+        // c:Src/subst.c paramsubst — when `${var:?msg}` or
+        // `${var?msg}` set errflag, the expansion may produce empty
+        // argv[0] which would fall into the EACCES/permission-denied
+        // path below, masking the real paramsubst diagnostic with a
+        // spurious "permission denied:" line and rc=126. Honour
+        // errflag so the simple command ends with the paramsubst
+        // error as the sole diagnostic, rc=1. Bug #86.
+        if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0
+        {
+            return Value::Status(1);
+        }
         if args.is_empty() {
             // c:Src/exec.c — empty argv preserves prior \$?. The
             // cmd-subst inside the word already set last_status; just
@@ -6496,6 +6509,21 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn exec(&mut self, args: Vec<String>) -> i32 {
+        // c:Src/subst.c paramsubst — when `${var:?msg}` or `${var?msg}`
+        // triggered the "parameter null or not set" error, errflag
+        // is raised and zsh aborts the simple command without
+        // attempting exec. The expansion may have produced empty
+        // argv[0] which falls into the c:?/permission-denied path
+        // below, masking the real diagnostic with a spurious
+        // "permission denied:" line and rc=126 instead of rc=1.
+        // Honour errflag here so the script ends with the
+        // paramsubst error as the sole diagnostic. Bug #86.
+        if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0
+        {
+            return 1;
+        }
         // c:Src/exec.c — two distinct empty-command cases:
         //
         // 1. args=[""]  — an explicit empty-string command word

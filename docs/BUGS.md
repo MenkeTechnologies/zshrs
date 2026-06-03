@@ -6012,7 +6012,40 @@ for ip in "${(@s. .)ips}"; do ping -c 1 "$ip"; done
 
 ## #86 — `${1:?msg}` parameter-required error format has spurious `:1:` line number
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partial-fixed` 2026-06-03 — rc=126 + spurious
+`permission denied:` line eliminated; remaining cosmetic
+`:1:` line-number prefix in zwarning still differs.
+
+**Recent fix (rc=126 → rc=1)** — `src/fusevm_bridge.rs`
+BUILTIN_EXEC_DYNAMIC (and the static exec() shim) gained an
+`errflag & ERRFLAG_ERROR` short-circuit BEFORE the
+empty-argv0 "permission denied:" branch. When `${var:?msg}`
+fires, errflag is set in `subst.rs:6098`; the expansion
+collapses argv0 to "", which previously triggered the
+EACCES path emitting a second diagnostic and rc=126. Now
+the exec dispatch returns Status(1) immediately, leaving
+the paramsubst error as the sole diagnostic and matching
+zsh's rc=1.
+
+**Verify**:
+- `${1:?msg}` → `zsh:1: 1: msg` + rc=1 (matches zsh).
+- `f() { echo "${1:?required}"; }; f` → `f:1: 1: required` +
+  rc=1 (rc matches; the `:1:` cosmetic gap remains — zwarning
+  prefix format).
+- Regression: `""` → `zsh:1: permission denied: ` + rc=126
+  preserved (genuine empty-cmd-word case).
+- Regression: `$(echo)` → rc=0 preserved (empty-argv-list
+  no-op case).
+- zshrs_shell baseline 949/103 preserved.
+
+The remaining `:1:` cosmetic format gap is in `utils.rs`
+`zwarning` — when called from within a function with
+`locallevel != 0`, the lineno emit fires; C zsh's
+equivalent path apparently has lineno == 0 in the
+paramsubst context. Tracking as a separate cosmetic
+follow-up.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { echo "${1:?required}"; }; f'
