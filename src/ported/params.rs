@@ -9309,13 +9309,28 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                     // c:6207
                     continue;
                 }
+                // PM_RO_BY_DESIGN-expansion for the readonly attribute:
+                // zshrs's special params (e.g. `$!`, `$$`, `$?`, `LINENO`)
+                // carry PM_RO_BY_DESIGN instead of PM_READONLY so internal
+                // writes pass `assignstrvalue` (see vm_helper init at
+                // bug #97 in docs/BUGS.md). The C-side IPDEF4 entries
+                // declare PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY |
+                // PM_RO_BY_DESIGN, so both bits are set together. The
+                // attribute walk's readonly check has to expand its match
+                // to either bit; mirrors the `bin_typeset` listing filter
+                // at builtin.rs:3620. Bug #297 in docs/BUGS.md.
+                let effective_binflag = if pmptr.binflag == PM_READONLY {
+                    PM_READONLY | crate::ported::zsh_h::PM_RO_BY_DESIGN
+                } else {
+                    pmptr.binflag
+                };
                 let doprint = if (pmptr.flags & PMTF_TEST_LEVEL) != 0 {
                     // c:6209
                     hn.level != 0 // c:6211
                 } else if (pmptr.binflag != PM_EXPORTED
                     || hn.level != 0
                     || (f & (PM_LOCAL | PM_ARRAY | PM_HASHED)) != 0)
-                    && (f & pmptr.binflag) != 0
+                    && (f & effective_binflag) != 0
                 {
                     // c:6225-6227
                     true

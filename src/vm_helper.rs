@@ -1094,6 +1094,21 @@ impl ShellExecutor {
                     let _ = PM_DONTIMPORT;
                     if let Some(pm) = tab.get_mut(entry.name) {
                         pm.node.flags |= bits as i32;
+                        // c:Src/params.c:344 IPDEF4 / c:353 IPDEF5 — the
+                        // C struct literal initialises the `base` field
+                        // to 10 for every PM_INTEGER special. zshrs's
+                        // initial paramtab seeding doesn't carry that
+                        // through (the special_paramdef table has no
+                        // `base` field). Set the default here so
+                        // `printparamnode`'s PMTF_USE_BASE arm at
+                        // params.rs:9341 emits "10" between
+                        // `integer` and the name (`integer 10 readonly
+                        // !=0`). Bug #297 in docs/BUGS.md.
+                        if entry.pm_type == crate::ported::zsh_h::PM_INTEGER
+                            && pm.base == 0
+                        {
+                            pm.base = 10;
+                        }
                     } else {
                         // Param hasn't been created yet (e.g. PATH gets
                         // imported lazily via the env fallback in
@@ -1126,7 +1141,13 @@ impl ShellExecutor {
                             gsu_f: None,
                             gsu_a: None,
                             gsu_h: None,
-                            base: 0,
+                            // c:Src/params.c:344 IPDEF4 / c:353 IPDEF5 —
+                            // PM_INTEGER specials default base=10.
+                            base: if entry.pm_type == crate::ported::zsh_h::PM_INTEGER {
+                                10
+                            } else {
+                                0
+                            },
                             width: 0,
                             env: None,
                             ename: None,
