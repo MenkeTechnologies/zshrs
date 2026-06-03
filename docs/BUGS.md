@@ -37918,7 +37918,32 @@ Shell behavior is "shell dies" on runaway recursion.
 
 ## #520 — `HISTSIZE=N` assignment ignored — value reads back as default regardless
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `intsetfn` now dispatches
+HISTSIZE / SAVEHIST writes to `histsizesetfn` /
+`savehistsizesetfn` (which update the canonical `histsiz` /
+`savehistsiz` globals + clamp + `resizehistents`).
+
+**Root cause** — `src/ported/params.rs::intsetfn` had a
+name-based dispatch for SECONDS / RANDOM / UID / EUID /
+GID / EGID but no entry for HISTSIZE / SAVEHIST. C
+`Src/params.c:4974 histsizesetfn` (and c:4998 for
+SAVEHIST) updates the `histsiz` global and resizes the
+history buffer; the Rust port had both setfns implemented
+but unwired. So `HISTSIZE=100` wrote `100` into
+`pm.u_val` while `histsizegetfn` read the un-touched
+`histsiz` global (default cap `999999999`).
+
+**Fix** (`src/ported/params.rs::intsetfn`) — add
+`"HISTSIZE" => histsizesetfn(x); return;` and
+`"SAVEHIST" => savehistsizesetfn(x); return;` arms beside
+the existing SECONDS / RANDOM / UID dispatches.
+
+**Verify**:
+- `HISTSIZE=100; echo $HISTSIZE` → `100` (matches zsh).
+- `SAVEHIST=200; echo $SAVEHIST` → `200` (matches zsh).
+- zshrs_shell baseline 954/98.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'HISTSIZE=100; echo "[$HISTSIZE]"'
