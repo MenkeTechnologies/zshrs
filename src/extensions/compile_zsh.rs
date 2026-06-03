@@ -1463,11 +1463,26 @@ impl ZshCompiler {
         // when no $(cmd) ran) and returns without dispatching.
         // Surfaced by execcmd_compile_head via `is_empty_command`.
         if dispatch.is_empty_command {
+            // c:Src/exec.c:3342 — `if (redir) { zerr("redirection
+            // with no command"); ... return 1; }`. A bare prefix
+            // keyword (`builtin`, `command`, `exec`, `noglob`,
+            // `nocorrect`) followed only by a redirect with no
+            // command word is a parse error in zsh. The previous
+            // Rust port silently returned rc=0 via the empty-cmd
+            // path. Bug #534.
+            if has_redirects {
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_REDIR_NO_CMD, 0),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
+                self.builder.emit(Op::LoadInt(1), 0);
+                self.builder.emit(Op::SetStatus, 0);
+                self.builder.emit(Op::WithRedirectsEnd, 0);
+                return;
+            }
             self.builder.emit(Op::LoadInt(0), 0); // c:3399 lastval = cmdoutval
             self.builder.emit(Op::SetStatus, 0); // c:3399
-            if has_redirects {
-                self.builder.emit(Op::WithRedirectsEnd, 0);
-            }
             return; // c:3406
         }
 
