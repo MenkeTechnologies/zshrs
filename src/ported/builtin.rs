@@ -9879,7 +9879,18 @@ pub fn bin_read(
         let trimmed = buf
             .trim_start_matches(|c: char| is_ifs(c) && c.is_whitespace())
             .trim_end_matches(|c: char| is_ifs(c) && c.is_whitespace());
-        setsparam(&reply, trimmed);
+        // c:Src/builtin.c:7102-7109 — `-e` / `-E` flags. Both echo
+        // the read content to stdout (`zputs(buf, stdout); putchar
+        // ('\n')`); `-e` ALSO skips the setsparam (echo-only, no
+        // assign), while `-E` echoes AND assigns. Bug #434.
+        let opt_e = OPT_ISSET(ops, b'e');
+        let opt_big_e = OPT_ISSET(ops, b'E');
+        if opt_e || opt_big_e {
+            println!("{}", trimmed);
+        }
+        if !opt_e {
+            setsparam(&reply, trimmed);
+        }
     }
     // c:Src/builtin.c:6534 — partial-EOF post-assign exit.
     if partial_eof {
