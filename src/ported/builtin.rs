@@ -1569,8 +1569,55 @@ pub fn bin_cd(
     //     which case the CD behaves like a pushd.
     {
         let autopushd = isset(AUTOPUSHD);
+        // c:1187 cd_new_pwd — rolllist(dirstack, dir) for BIN_PUSHD then
+        // remnode(dirstack, dir). For `pushd +N`/`-N`, the rotation moves
+        // entries before the target to the END of dirstack rather than
+        // simply inserting pre_pwd at the front. Bug #302 in docs/BUGS.md:
+        // previous Rust port unconditionally inserted pre_pwd at position
+        // 0, which is correct for `pushd <path>` but wrong for `pushd +N`
+        // (left target entry still in DIRSTACK at its old position).
+        let is_stack_rotate = argv.len() == 1
+            && !isset(POSIXCD)
+            && argv[0].len() > 1
+            && (argv[0].starts_with('+') || argv[0].starts_with('-'))
+            && argv[0][1..].chars().all(|c| c.is_ascii_digit());
         if let Ok(mut d) = DIRSTACK.lock() {
-            if func == BIN_PUSHD || (func == BIN_CD && autopushd) {
+            if is_stack_rotate && (func == BIN_PUSHD || (func == BIN_CD && autopushd)) {
+                // c:1190 — rolllist(dirstack, dir) + remnode. Rotate the
+                // virtual full stack `[pre_pwd] ++ DIRSTACK_old` so the
+                // target entry becomes firstnode (= new PWD); remaining
+                // entries form new DIRSTACK in their rotated order.
+                let dd: usize = argv[0][1..].parse().unwrap_or(0);
+                let pushdminus = isset(PUSHDMINUS);
+                let from_top = (argv[0].starts_with('+')) ^ pushdminus;
+                let m = d.len();
+                let n = m + 1;
+                let k = if from_top { dd } else { n - 1 - dd };
+                if k < n {
+                    let mut full: Vec<String> = Vec::with_capacity(n);
+                    full.push(pre_pwd.clone());
+                    full.extend(d.iter().cloned());
+                    let rotated: Vec<String> = full[k..]
+                        .iter()
+                        .chain(full[..k].iter())
+                        .cloned()
+                        .collect();
+                    d.clear();
+                    d.extend(rotated.into_iter().skip(1));
+                }
+            } else if is_stack_rotate && func == BIN_CD {
+                // c:1192 — remnode(dirstack, dir) for non-PUSHD CD with
+                //          +N/-N: target removed from dirstack, no rolllist.
+                let dd: usize = argv[0][1..].parse().unwrap_or(0);
+                let pushdminus = isset(PUSHDMINUS);
+                let from_top = (argv[0].starts_with('+')) ^ pushdminus;
+                let m = d.len();
+                let n = m + 1;
+                let k = if from_top { dd } else { n - 1 - dd };
+                if k >= 1 && k - 1 < d.len() {
+                    d.remove(k - 1);
+                }
+            } else if func == BIN_PUSHD || (func == BIN_CD && autopushd) {
                 // c:849 — push pre-cd pwd.
                 // c:1210-1218 — PUSHDIGNOREDUPS: skip duplicate of
                 // the new (current) pwd.
@@ -1731,13 +1778,36 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
                                                                 // "no such entry in dir stack". Previous Rust port
                                                                 // returned None silently and bin_cd's caller exited 1
                                                                 // with no stderr, breaking parity.
+            // c:899-903 — index into the FULL dirstack: in zsh
+            //   `dirstack` is a LinkList with current PWD at firstnode,
+            //   so `+N` advances N nodes from firstnode (0 = current,
+            //   1 = first non-current entry) and `-N` walks back N nodes
+            //   from lastnode (0 = last non-current entry). zshrs's
+            //   DIRSTACK omits PWD entirely (PWD lives in paramtab), so
+            //   build the virtual full stack `[PWD] ++ DIRSTACK` to index
+            //   against. Bug #302 in docs/BUGS.md: previous Rust port
+            //   indexed DIRSTACK directly, so `+1` returned DIRSTACK[1]
+            //   instead of DIRSTACK[0], and `+0`/`-len` errored instead of
+            //   returning PWD.
+            let pwd_now = getsparam("PWD").unwrap_or_else(|| zgetcwd());
             let resolved = DIRSTACK.lock().ok().and_then(|d| {
-                if from_top {
-                    d.get(dd).cloned()
-                } else if d.len() > dd {
-                    d.get(d.len() - 1 - dd).cloned()
+                let m = d.len();
+                let n = m + 1; // full virtual stack length (incl current)
+                let k = if from_top {
+                    if dd >= n {
+                        return None;
+                    }
+                    dd
                 } else {
-                    None
+                    if dd >= n {
+                        return None;
+                    }
+                    n - 1 - dd
+                };
+                if k == 0 {
+                    Some(pwd_now.clone())
+                } else {
+                    d.get(k - 1).cloned()
                 }
             });
             if resolved.is_none() {
