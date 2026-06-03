@@ -38907,7 +38907,34 @@ echo "${((O))a}"
 
 ## #551 — `readonly X=hi; X=2 cmd` allows readonly override via env-prefix — security-relevant
 
-**Status:** `port-bug` — **CRITICAL** (security) — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — readonly check moved BEFORE
+the inline-env-prefix `env::set_var` call in BUILTIN_SET_VAR.
+
+**Root cause** — `src/fusevm_bridge.rs::BUILTIN_SET_VAR`'s
+inline_env_stack arm called `env::set_var(&name, &value)`
+unconditionally before the readonly check fired inside
+`setsparam`/`assignstrvalue`. fork() then inherited the
+polluted OS env, leaking the rejected override past the
+readonly guard — `env` in the child saw X=2 even though
+the zsh-side error was emitted.
+
+**Fix** (`src/fusevm_bridge.rs::BUILTIN_SET_VAR`) — added
+`is_readonly_param(&name)` gate at the top of the
+`with_executor` block. When the existing param has
+PM_READONLY: `zerr("read-only variable: NAME")` and return
+without mutating env or paramtab. Mirrors C
+`Src/params.c:3216 assignsparam` which checks readonly first.
+
+**Verify**:
+- `readonly X=hi; X=2 env | grep "^X="` → emits the
+  readonly error, no `X=2` in env output (matches zsh).
+- `X=hi; X=2 env | grep "^X="` → `X=2` (regression check;
+  the non-readonly path still propagates inline env).
+- `a=1; echo $a; a=2; echo $a` → `1 2` (regression check;
+  normal scalar assigns work).
+- zshrs_shell baseline: 951/101 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'readonly X=hi; X=2 env | grep "^X="'

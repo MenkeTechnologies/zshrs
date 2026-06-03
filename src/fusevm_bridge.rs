@@ -3006,6 +3006,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let int_assign = matches!(value_raw, Some(fusevm::Value::Int(_)));
         let float_assign = matches!(value_raw, Some(fusevm::Value::Float(_)));
         with_executor(|exec| {
+            // c:Src/params.c assignsparam — PM_READONLY rejection
+            // BEFORE any env mutation. The inline-env-prefix path
+            // (`X=2 env`) called env::set_var unconditionally before
+            // the readonly check fired in setsparam, so the OS env
+            // got X=2 even though the assignment errored. env then
+            // inherited the polluted env from fork, leaking the
+            // attempted override past the readonly guard. Mirror
+            // C's order: readonly check → zerr → bail; only mutate
+            // env when the assignment is admissible. Bug #551
+            // (security-relevant).
+            if exec.is_readonly_param(&name) {
+                crate::ported::utils::zerr(&format!("read-only variable: {}", name));
+                return;
+            }
             // Inline-assignment frame tracking (`X=foo cmd` reverts on
             // command return).
             if !exec.inline_env_stack.is_empty() {
