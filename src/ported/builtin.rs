@@ -4177,6 +4177,31 @@ pub fn bin_typeset(
                     continue; // c:2467
                 }
             }
+            // c:Src/builtin.c:2500-2502 — `else { zerrnam(cname,
+            //   "%s: inconsistent array element or slice assignment",
+            //   pname); return NULL; }`. C's typeset_single rejects
+            // type-flag attributes on subscripted names: when the
+            // name has a `[…]` subscript AND the requested `on` mask
+            // carries a non-scalar PM_TYPE bit (PM_INTEGER, PM_EFLOAT,
+            // PM_FFLOAT, PM_ARRAY, PM_HASHED), it's
+            // `typeset -i h[k]` / `-A h[k]` / etc. — attribute
+            // applies to whole array, not element. zshrs's
+            // typeset path silently accepted these and applied
+            // the attribute to the element. Bug #219 in
+            // docs/BUGS.md. Plain `h[k]=value` (no `-` flag) has
+            // PM_TYPE(on) == PM_SCALAR and stays valid.
+            let pm_type_bits = on as u32
+                & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_ARRAY | PM_HASHED);
+            if pm_type_bits != 0 {
+                zerrnam(
+                    name,
+                    &format!(
+                        "{}: inconsistent array element or slice assignment",
+                        arg_name
+                    ),
+                );
+                continue;
+            }
         }
 
         if let Some(eq) = arg.find('=') {
