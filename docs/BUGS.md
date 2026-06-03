@@ -38140,7 +38140,50 @@ special chars.
 
 ## #537 — escaped parens `\(abc\)` in glob output stripped — zsh: emits literal `(abc)`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — qualifier-suffix glob trigger
+in `compile_zsh.rs` now Bnull-gates the `(`/`)` requirement.
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_word_str`
+detects glob qualifiers (`*(.)`, `path(mh-1)`, etc.) via an arm
+on the un-tokenized form:
+
+```rust
+|| (untoked.ends_with(')') && untoked.contains('(') && !untoked.contains('|'))
+```
+
+`untoked` is `untokenize(s)` which strips the lexer's `\u{9f}`
+(Bnull) escape markers. For input `\(abc\)`, the lexer emits
+`\u{9f}(abc\u{9f})` and untokenize collapses to `(abc)`. The
+qualifier-suffix arm fired on this collapsed form even though
+both parens were backslash-escaped, routing the word into
+the glob-qualifier parser. The qualifier scanner then walked
+into `a`, hit `qgetnum` (which expects digits after qualifier
+chars), and bailed with "number expected" — dropping the
+entire word from the command line.
+
+**Fix** (`src/extensions/compile_zsh.rs`, qualifier-suffix arm) —
+add a Bnull-gate to require at least one un-escaped `(` and
+one un-escaped `)` in the raw `s` (which still carries the
+Bnull markers). The existing `unquoted(s, c)` helper already
+treats `\u{9f}c` as escaped; reused here:
+
+```rust
+|| (untoked.ends_with(')')
+    && untoked.contains('(')
+    && !untoked.contains('|')
+    && (unquoted(s, '(') || unquoted(s, '\u{88}'))
+    && (unquoted(s, ')') || unquoted(s, '\u{8a}')))
+```
+
+**Verify**:
+- `echo \(abc\)` → `(abc)` (matches zsh)
+- `echo /tmp/_zg/\(abc\)` → `/tmp/_zg/(abc)` (matches zsh)
+- `echo "/path/\(group\)/data.txt"` → `/path/\(group\)/data.txt`
+  in both shells (DQ context unchanged).
+- `echo /tmp/_zg2/*(.)` (legit glob qualifier) still expands
+  correctly.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/\(abc\)'
