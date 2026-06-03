@@ -17468,7 +17468,62 @@ explicitly marked for exclusion.
 
 ## #234 — `typeset +U arr` doesn't disable dedup AND `+=` corrupts the array
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `typeset +U` set `off |= PM_UNIQUE`
+but bin_typeset's flag-stamping blocks short-circuited on
+`post_assign_to_set == 0` (the case when `on=0` and only `off`
+has bits), so the PM_UNIQUE flag never cleared. arrsetfn
+(`params.rs:6278`) and assignaparam (`params.rs:5526`) both
+read the stale flag and applied dedup. The follow-on append
+then went through the same dedup path, leaving the array as
+just `(a)`.
+
+**Root cause** — three gaps in bin_typeset's flag-stamp path:
+1. Bare-name branch (`typeset +U u`): the post-assign block at
+   `builtin.rs:4854` gated on `post_assign_to_set != 0`, so
+   `off`-only invocations never cleared the flag.
+2. name=value branch (`typeset +U u=...`): same gate at
+   `builtin.rs:4731`, plus the pre-assign block at `builtin.rs
+   :4218-4237` only fired when `on & PM_LOCAL` (inside a
+   function scope), so top-level `typeset +U arr=(c d c)` left
+   the stale PM_UNIQUE in place. assignaparam:5526 then
+   snapshotted PM_UNIQUE before setting and applied dedup.
+3. Existing `+x` workaround at `builtin.rs:4876` only handled
+   PM_EXPORTED — the same shape needed for PM_UNIQUE and any
+   other value-affecting `+X` flag.
+
+**Fix** — `src/ported/builtin.rs`:
+1. After the bare-name `post_assign_to_set != 0` block, add an
+   `off_in_mask` clear that fires whenever any post_assign_mask
+   bit is set in `off` regardless of `on`. Mirrors C's
+   `pm->node.flags = ... & ~off` at c:2289.
+2. Same `off_in_mask` clear after the name=value post_assign
+   block.
+3. Add a pre-assign `off`-clear at the top of the name=value
+   branch (after `let n = &arg[..eq];`) covering
+   `pre_assign_off_mask = PM_UNIQUE | PM_LEFT | PM_RIGHT_B |
+   PM_RIGHT_Z | PM_LOWER | PM_UPPER`. Runs unconditionally
+   (not gated on PM_LOCAL) so top-level `typeset +U u=(...)`
+   clears PM_UNIQUE before assignaparam's snapshot.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'typeset -aU u=(a b); typeset +U u; u+=(a); echo "[${u[@]}] count=${#u}"'
+[a b a] count=3
+
+$ ./target/debug/zshrs --zsh -c 'typeset -aU u=(a b); typeset +U u; typeset -p u'
+typeset -a u=( a b )
+
+$ ./target/debug/zshrs --zsh -c 'typeset -aU u=(a b); typeset +U u=(c d c); echo "[${u[@]}]"'
+[c d c]
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Regressions clean: `typeset -aU u=(a b a)` still dedups to
+`[a b]`; `typeset -aU u=(a b); u+=(a)` still dedups to `[a b]`;
+`+r` still removes readonly; `+x` still strips PM_EXPORTED +
+removes from env. Baseline 947/105 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -aU u=(a b); typeset +U u; u+=(a); echo "[${u[@]}] count=${#u}"'
@@ -17478,54 +17533,12 @@ $ ./target/debug/zshrs --zsh -c 'typeset -aU u=(a b); typeset +U u; u+=(a); echo
 [a] count=1
 ```
 
-`typeset -U` sets the unique-only (dedup) flag on an array.
-`typeset +U` removes it. After `+U`, appending a duplicate
-should succeed (array grows with the dup).
-
-zshrs's `+U` not only fails to remove the flag (so dedup still
-kicks in on append) but ALSO somehow corrupts the array —
-reducing `(a b)` + dup `a` to just `(a)` instead of either
-`(a b)` (dedup kept) or `(a b a)` (dedup removed).
-
-Two distinct bugs in one repro:
-1. `+U` doesn't clear the dedup attribute.
-2. `+=` on a `-U` array with a duplicate destroys the rest of
-   the array instead of either keeping it (with dedup) or
-   appending (without dedup).
-
-Controls:
-```sh
-# Regular array append (no -U) — works:
-$ both-shells -fc 'u=(a b); u+=(a); echo "[${u[@]}]"'
-[a b a]
-
-# -U dedup-on append a dup — works (keeps dedup):
-$ both-shells -fc 'typeset -aU u=(a b); u+=(a); echo "[${u[@]}]"'
-[a b]
-```
-
-The bug is specifically the `+U`-then-append-dup path.
-
-**Where** — `src/ported/builtins/typeset.rs::clear_attr`:
-doesn't clear `PM_UNIQUE` when `+U` is applied. PLUS
-`src/ported/params/assign.rs::append_to_unique_array`:
-incorrect destructive replacement on dup-append. C-source
-`Src/params.c::setarrvalue` with `ASSPM_AUGMENT` correctly
-merges with dedup applied per the current PM_UNIQUE state.
-
-**Impact** — code that toggles dedup mid-script (set `-U` for
-initial dedup, then `+U` to allow duplicates during a later
-phase) doesn't work, and worse, silently destroys data. Less
-common pattern, but the destructive corruption surface is
-serious.
-
-**Workaround** — copy to a new non-unique array:
-```sh
-typeset -aU u=(a b)
-# ... initial dedup phase ...
-typeset -a u2=("${u[@]}")     # u2 has no -U flag
-u2+=(a)                       # works correctly
-```
+Two distinct bugs in one repro: (1) `+U` didn't clear the
+dedup attribute, (2) `+=` on the still-`-U` array with a
+duplicate destroyed the rest of the array. The second
+symptom was downstream of the first — once PM_UNIQUE actually
+clears, the append no longer routes through arrsetfn's dedup
+path.
 
 ---
 
@@ -38582,7 +38595,7 @@ qualifiers always have a digit suffix.
 | 231 | `${(t)tied_var}` returns `scalar` instead of `scalar-tied`/`array-tied` — tied pair concept missing | **port-bug** | manual sync via `(@s/:/)` |
 | 232 | `TRAPEXIT()` named-function form of EXIT trap not fired (3rd broken exit-handler form) | **port-bug** | explicit `trap "..." EXIT` at top-level |
 | 233 | `typeset -H VAR=val` then `typeset -p VAR` shows value (security-relevant credential leak) | **port-bug** | filter dump output explicitly |
-| 234 | `typeset +U arr` doesn't clear dedup AND `+=` of dup destroys array (corrupting) | **port-bug** | copy to fresh non-`-U` array |
+| 234 | `typeset +U arr` doesn't clear dedup AND `+=` of dup destroys array (corrupting) | **fixed** 2026-06-02 | n/a |
 | 235 | `typeset -m "glob"` errors "not valid in this context" instead of pattern-matching | **port-bug** | loop with `${(@k)parameters[(I)pat]}` |
 | 236 | `${(@)arr:#}` empty-pattern filter doesn't filter empty elements (sparse-arr cleanup broken) | **port-bug** | `:#(#e)` extended-glob anchor |
 | 237 | `${funcfiletrace}`/`${functrace}` format diverges — missing file path + line | **port-bug** | (no clean workaround) |

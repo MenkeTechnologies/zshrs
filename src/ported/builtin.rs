@@ -4291,6 +4291,23 @@ pub fn bin_typeset(
 
         if let Some(eq) = arg.find('=') {
             let n = &arg[..eq];
+            // c:Src/builtin.c:2289 — `pm->node.flags = ... & ~off` must
+            //   clear `off` bits in value-affecting flags BEFORE the
+            //   assignment runs (params.rs assignaparam:5526 snapshots
+            //   PM_UNIQUE and dedups in setfn). The PM_LOCAL pre_assign
+            //   block below only fires when on & PM_LOCAL; top-level
+            //   `typeset +U arr=(...)` has on=0 and would otherwise
+            //   leave the stale PM_UNIQUE in place. Bug #234.
+            let pre_assign_off_mask =
+                (PM_UNIQUE | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z | PM_LOWER | PM_UPPER) as i32;
+            let off_in_pre_mask = (off as i32) & pre_assign_off_mask;
+            if off_in_pre_mask != 0 {
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(n) {
+                        pm.node.flags &= !off_in_pre_mask;
+                    }
+                }
+            }
             let raw_v = &arg[eq + 1..];
             // c:2945-3050 — `=(elem elem ...)` array-init syntax.
             // The parser hands the whole `(...)` body in as one arg
@@ -4735,6 +4752,19 @@ pub fn bin_typeset(
                     }
                 }
             }
+            // c:Src/builtin.c:2289 — `pm->node.flags = ... & ~off`.
+            // `off` bits in post_assign_mask must clear regardless of
+            // `on` (e.g. `typeset +U arr=(...)` where on=0,
+            // off=PM_UNIQUE). The post_assign_to_set gate above
+            // short-circuits the on=0 case. Bug #234 in docs/BUGS.md.
+            let off_in_mask = (off as i32) & post_assign_mask;
+            if off_in_mask != 0 {
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(arg_name) {
+                        pm.node.flags &= !off_in_mask;
+                    }
+                }
+            }
         } else {
             // c:2355-2378 (typeset_single tc branch) — bare `typeset -i n`
             // / `-F n` / `-E n` / `-l n` / `-u n` / `-r n` / `export N`
@@ -4878,6 +4908,20 @@ pub fn bin_typeset(
                 if let Ok(mut tab) = paramtab().write() {
                     if let Some(pm) = tab.get_mut(arg) {
                         pm.node.flags &= !(PM_EXPORTED as i32);
+                    }
+                }
+            }
+            // c:Src/builtin.c:2289 — `pm->node.flags = ... & ~off`.
+            // `off` bits in post_assign_mask must clear regardless of
+            // `on` (e.g. `typeset +U arr` where on=0, off=PM_UNIQUE).
+            // The post_assign_to_set gate above short-circuits the
+            // on=0 case. Same family as `+x` block immediately above.
+            // Bug #234 in docs/BUGS.md.
+            let off_in_mask = (off as i32) & post_assign_mask;
+            if off_in_mask != 0 {
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(arg) {
+                        pm.node.flags &= !off_in_mask;
                     }
                 }
             }
