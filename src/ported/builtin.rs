@@ -1869,6 +1869,21 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
         }
     }
 
+    // c:1067-1075 — `cd_able_vars(dest)` — when CDABLEVARS is set,
+    // look up the leading bareword as a parameter and try chdir to
+    // its value (with any `/tail` appended). The helper at
+    // `cd_able_vars` (this file, line 1881) already guards on
+    // `isset(CDABLEVARS)` and returns None when the option is off
+    // OR the head isn't a paramtab entry. Without this call
+    // wired in, `setopt cdable_vars; mytmp=/tmp; cd mytmp` errored
+    // with "no such file or directory" instead of cd'ing to /tmp.
+    // Bug #217 in docs/BUGS.md.
+    if let Some(expanded) = cd_able_vars(dest) {
+        if let Some(ret) = cd_try_chdir("", &expanded, hard) {
+            return Some(ret);
+        }
+    }
+
     // c:1071 — failure warning.
     zwarnnam(cnam, &format!("no such file or directory: {}", dest));
     None
