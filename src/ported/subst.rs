@@ -8266,6 +8266,36 @@ pub fn paramsubst(
             //   of preserving "a:b:c". Bug #313 in docs/BUGS.md.
             //   When an explicit (j:Y:) sep is also set, the join uses
             //   it (force-rejoin path is separate).
+            // c:Src/subst.c:4245-4313 — sort/unique block runs AFTER
+            //   spsep split (C order: 3920+ split, then 4245 sort). The
+            //   zshrs sort block at subst.rs:8141 is ordered BEFORE
+            //   spsep handling here, so it sees isarr=0 from the
+            //   pre-split scalar and skips. Apply sort/unique to the
+            //   split parts inline here to preserve C's split-then-sort
+            //   composition. Bugs #314 (sort after split) and #315
+            //   (unique after split) in docs/BUGS.md.
+            let mut parts = parts;
+            if unique {
+                let mut seen = std::collections::HashSet::new(); // c:4253
+                parts.retain(|s| seen.insert(s.clone())); // c:4253
+            }
+            if sortit != SORTIT_ANYOLDHOW && indord == 0 {
+                if (sortit & SORTIT_NUMERICALLY) != 0 {
+                    let flags = sortit as u32; // c:Src/sort.c:191 zstrcmp
+                    parts.sort_by(|a, b| crate::ported::sort::zstrcmp(a, b, flags));
+                } else if (sortit & SORTIT_IGNORING_CASE) != 0 {
+                    parts.sort_by_key(|a| a.to_lowercase()); // c:4187
+                } else {
+                    parts.sort_by(|a, b| crate::ported::sort::zstrcmp(a, b, 0)); // c:4180
+                }
+                if (sortit & SORTIT_BACKWARDS) != 0 {
+                    parts.reverse(); // c:4191
+                }
+            } else if (sortit & SORTIT_BACKWARDS) != 0 && indord != 0 {
+                // c:4283-4292 — (a) flag (indord=1) + (O) reverses the
+                //   insertion-order list without applying the comparator.
+                parts.reverse();
+            }
             if let Some(ref jsep) = sep {
                 value = parts.join(jsep.as_str()); // c:3906 sepjoin path
             } else if parts.is_empty() {

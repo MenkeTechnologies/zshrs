@@ -24033,7 +24033,67 @@ words="${(j. .)${(@s. .)log_line}}"   # array-split then join
 
 ## #314 — `${(o[@]s.X.)str}` sort flag not applied after split
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — zshrs's `(o)`/`(O)`/`(u)`/`(i)`/`(n)`
+sort+unique block at `src/ported/subst.rs:8141` ordered BEFORE
+the `(s.X.)` spsep split block at `subst.rs:8228`, so when the
+input was a scalar (isarr=0 pre-split), the gate `isarr != 0`
+skipped sort entirely. C `Src/subst.c` applies the operations
+in the opposite order (c:3920+ split, then c:4245 sort), so
+the array shape is in place by the time sort runs.
+
+**Root cause** — port-ordering inversion. zshrs's sort block
+(c:4245 port) at subst.rs:8141 ran first; the spsep split
+(c:3920+ port) at subst.rs:8228 ran second. The sort gate
+`isarr != 0 && (sortit != ANYOLDHOW || unique)` rejected
+scalar inputs because the split hadn't created the array yet.
+Result: any `${(o…s.X.)str}` / `${(u…s.X.)str}` skipped sort/
+unique. Same shape covers #315.
+
+**Fix** — `src/ported/subst.rs` spsep branch: apply sort/
+unique to `parts` INLINE after the sepsplit, before the value/
+split_parts writeback. Mirrors C's "split, then sort"
+sequence:
+1. `(u)` (`unique`) → `HashSet`-backed retain (c:4253).
+2. `(o)`/`(O)`/`(i)`/`(n)` (`sortit`) → `zstrcmp` /
+   `to_lowercase` / numeric dispatch (c:4180-4191).
+3. `(a)` (`indord=1`) — preserve insertion order; `(Oa)`
+   reverses without comparator.
+4. `(O)` (`SORTIT_BACKWARDS`) — `.reverse()` after sort.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 's=c:a:b; print -l "${(@os.:.)s}"'
+a
+b
+c
+
+$ ./target/debug/zshrs --zsh -c 's=a:c:b; print -l "${(@Os.:.)s}"'
+c
+b
+a
+
+$ ./target/debug/zshrs --zsh -c 's=Charlie:alpha:Bravo; print -l "${(@ios.:.)s}"'
+alpha
+Bravo
+Charlie
+
+$ ./target/debug/zshrs --zsh -c 's=10:2:1; print -l "${(@nos.:.)s}"'
+1
+2
+10
+
+$ ./target/debug/zshrs --zsh -c 'PATH=/bin:/usr/bin:/bin:/sbin; print -l "${(@uos.:.)PATH}"'
+/bin
+/sbin
+/usr/bin
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Regressions clean: real-array `(o)` (no spsep) still routes
+through the original sort block at subst.rs:8141 and works.
+Companion bug #315 fixed by the same patch. Baseline 944/108.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's=c:a:b; print -l "${(@os.:.)s}"'
@@ -24047,45 +24107,39 @@ a
 b
 ```
 
-`(o)` flag sorts the array. After `(s.X.)` split produces the
-intermediate array, the `(o)` should sort. zsh applies sort;
-zshrs returns unsorted input order.
-
-Flag composition order shouldn't matter — `(@os.:.)`, `(os@.:.)`,
-`(s.:.@o)` should all sort. zshrs's flag dispatcher applies
-the split but skips the subsequent sort.
-
-**Where** — `src/ported/paramflags.rs::compose_split_and_sort`:
-sort flag applied before split (which is a no-op on the
-original scalar), not after. C-source `Src/subst.c::dosubst`
-applies flags in documented order: split first, then sort/
-unique/etc.
-
-**Impact** — sort-after-split idioms broken:
-
-```sh
-# Get unique sorted list of values from colon-separated env var
-sorted_unique=("${(@uos.:.)PATH}")
-print -l "${sorted_unique[@]}"
-# zsh: PATH split, deduped, sorted
-# zshrs: PATH split only, no dedup/sort applied
-```
-
-Combined with #315 (unique flag also not applied after split),
-zshrs's flag-composition has multiple gaps in the split-then-
-process pattern.
-
-**Workaround** — two-step:
-```sh
-split=("${(@s.:.)PATH}")
-sorted=("${(o)split[@]}")
-```
-
 ---
 
 ## #315 — `${(u[@]s.X.)str}` unique flag not applied after split
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — same patch as #314. The
+sort+unique block at `subst.rs:8141` ran before the spsep
+split at `subst.rs:8228`, so `(u)` on a scalar input found
+`isarr=0` and skipped. Fix is in the spsep branch: `unique`
++ `sortit` dispatch runs inline after sepsplit, before the
+value writeback.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 's=a:b:a:c; print -l "${(@us.:.)s}"'
+a
+b
+c
+
+$ ./target/debug/zshrs --zsh -c 's=c:a:b:a; print -l "${(@uos.:.)s}"'
+a
+b
+c
+
+$ ./target/debug/zshrs --zsh -c 'PATH=/bin:/usr/bin:/bin:/sbin; print -l "${(@us.:.)PATH}"'
+/bin
+/usr/bin
+/sbin
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte. See
+#314 for fix details — same patch covers both.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 's=a:b:a:c; print -l "${(@us.:.)s}"'
@@ -24098,36 +24152,6 @@ a
 b
 a
 c
-```
-
-`(u)` flag dedups the array. After `(s.X.)` split produces
-`(a b a c)`, the `(u)` should dedup to `(a b c)`. zshrs keeps
-duplicates.
-
-Companion bug to #314 — same flag-composition gap. Both
-`(o)` (sort) and `(u)` (unique) fail to apply after split.
-
-**Where** — same as #314 — `src/ported/paramflags.rs::compose_split_and_sort`
-applies dedup before split (on the original scalar — no-op)
-rather than after.
-
-**Impact** — PATH-deduplication and similar idioms broken:
-
-```sh
-# Dedupe colon-separated path
-path_unique=("${(@us.:.)PATH}")
-typeset -gx PATH="${(j.:.)path_unique}"
-# zsh: PATH compacted to unique entries
-# zshrs: PATH unchanged (duplicates retained)
-```
-
-Common in `.zshrc` setups that source multiple plugins each
-prepending to PATH and want to dedupe.
-
-**Workaround** — two-step:
-```sh
-split=("${(@s.:.)PATH}")
-deduped=("${(u)split[@]}")
 ```
 
 ---
@@ -38739,8 +38763,8 @@ qualifiers always have a digit suffix.
 | 311 | `${(@k)assoc:#pat}`/`${(@v)assoc:#pat}` filter on assoc keys/values not applied | **port-bug** | explicit `for k v in "${(@kv)h}"` loop |
 | 312 | `${(v)assoc:#pat}` scalar-context filter on assoc values not applied | **fixed** 2026-06-02 | n/a |
 | 313 | `${(s.X.)str}` scalar-context split returns multiple echo args instead of joined string | **fixed** 2026-06-02 | n/a |
-| 314 | `${(os.X.)str}` sort flag not applied after split — flag-composition gap | **port-bug** | two-step: split into array, then `(o)` |
-| 315 | `${(us.X.)str}` unique flag not applied after split — PATH-dedup idiom broken | **port-bug** | two-step: split into array, then `(u)` |
+| 314 | `${(os.X.)str}` sort flag not applied after split — flag-composition gap | **fixed** 2026-06-02 | n/a |
+| 315 | `${(us.X.)str}` unique flag not applied after split — PATH-dedup idiom broken | **fixed** 2026-06-02 | n/a |
 | 316 | `zsh/system` module builtins `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` missing | **port-bug** | (none — needs builtin registration) |
 | 317 | `epochtime` array autovar from `zsh/datetime` not registered (zsh: 2-elem secs/nanosecs) | **port-bug** | use `$EPOCHREALTIME` float instead |
 | 318 | PS4 prompt-escapes (`%x`/`%N`/`%I`/`%_`) not expanded in xtrace output — trace shows literal text | **port-bug** | set simpler `PS4='+ '` manually |
