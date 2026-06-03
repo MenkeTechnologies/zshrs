@@ -93,8 +93,16 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
         );
         return 0;
     }
-    // c:78 — regcomp(&re, rhre, rcflags).
-    let re = match regex::Regex::new(&pat_for_compile) {
+    // c:78 — regcomp(&re, rhre, rcflags). zsh's regex (system
+    // POSIX ERE or PCRE under `setopt rematchpcre`) treats `.`
+    // as matching newline by default. Rust's regex crate defaults
+    // `.` to NOT match newline; enable
+    // `dot_matches_new_line(true)` so multi-line `=~` behaves
+    // like zsh. Bug #557.
+    let re = match regex::RegexBuilder::new(&pat_for_compile)
+        .dot_matches_new_line(true)
+        .build()
+    {
         Ok(r) => r,
         Err(_) => {
             // c:79-81

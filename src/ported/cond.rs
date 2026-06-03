@@ -427,7 +427,19 @@ pub fn evalcond(
                             // so downstream `[[ str =~ pat ]] &&
                             // var=$match[1]` idioms work without a
                             // module dispatch.
-                            match regex::Regex::new(&right) {
+                            // c:Src/cond.c:113-119 + Src/Modules/regex.c —
+                            // zsh's regex (system POSIX regex or PCRE
+                            // when `setopt rematchpcre`) treats `.` as
+                            // matching newline by default. Rust's regex
+                            // crate defaults `.` to NOT match newline
+                            // (single-line `.`); enable
+                            // `dot_matches_new_line(true)` so
+                            // multi-line `=~` behaves like zsh on
+                            // `a\nb`-style inputs. Bug #557.
+                            match regex::RegexBuilder::new(&right)
+                                .dot_matches_new_line(true)
+                                .build()
+                            {
                                 Ok(re) => {
                                     if let Some(caps) = re.captures(&left) {
                                         // Whole-match: $MATCH.

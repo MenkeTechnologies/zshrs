@@ -39180,7 +39180,37 @@ descriptions["git log"]="View commit history"
 
 ## #557 — regex `.` doesn't match newline in zshrs — zsh: dot-matches-newline by default
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `dot_matches_new_line(true)`
+enabled on the `regex::RegexBuilder` in
+`src/ported/modules/regex.rs::zcond_regex_match` (the
+canonical `=~` dispatch) and in `src/ported/cond.rs`
+COND_REGEX arm (a parallel path for the AST evalcond
+flow).
+
+**Root cause** — both regex compile sites used
+`regex::Regex::new(pat)` which defaults `.` to NOT match
+`\n`. C zsh's `Src/Modules/regex.c` (POSIX ERE via system
+`regcomp(3)`) and PCRE under `setopt rematchpcre` both
+treat `.` as matching newline by default — so `[[ $'a\nb'
+=~ "a.b" ]]` succeeded in zsh but failed in zshrs.
+
+**Fix**:
+1. `src/ported/modules/regex.rs::zcond_regex_match` —
+   swap `Regex::new(&pat_for_compile)` for
+   `RegexBuilder::new(&pat_for_compile)
+   .dot_matches_new_line(true).build()`.
+2. `src/ported/cond.rs::evalcond` COND_REGEX arm — same
+   swap. (This path is the AST oracle used by zshrs's
+   own evalcond tests; the bridge path at #1 is what
+   `[[ ]]` actually goes through.)
+
+**Verify**:
+- `a=$'a\nb'; [[ "$a" =~ "a.b" ]]` → match in both shells.
+- `a=$'a\nb'; [[ "$a" =~ "a[[:space:]]b" ]]` → match
+  (existing char-class path unchanged).
+- zshrs_shell baseline: 951/101 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=$'\''a\nb'\''; [[ "$a" =~ "a.b" ]] && echo "match" || echo "no-match"'
