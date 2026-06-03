@@ -5828,11 +5828,28 @@ pub fn paramsubst(
                     split_parts = Some(kept); // c:3540
                 } else {
                     // c:3540
-                    let m = match_fn(&raw_value); // c:3540
-                    value = if invert {
+                    // c:Src/subst.c — scalar fallback path. When a
+                    // prior flag operator (e.g. `(v)` joining assoc
+                    // values into a scalar) populated `value`, test
+                    // against the post-flag scalar — NOT `raw_value`
+                    // (the raw assoc backing). For `${(v)h:#A*}` on
+                    // `h=(a ABC b XYZ)`, the (v) flag sets value to
+                    // "ABC XYZ"; the filter tests that joined string
+                    // against `A*` (matches → return empty). Without
+                    // the value-first preference, the test ran
+                    // against raw_value (often empty for assoc-name
+                    // bare reads) and silently passed through. Bug
+                    // #312 in docs/BUGS.md.
+                    let subject = if !value.is_empty() {
+                        value.clone()
+                    } else {
+                        raw_value.clone()
+                    };
+                    let m = match_fn(&subject); // c:3540
+                    let result = if invert {
                         // c:3540
                         if m {
-                            raw_value.clone()
+                            subject.clone()
                         } else {
                             String::new()
                         } // c:3540
@@ -5841,9 +5858,24 @@ pub fn paramsubst(
                         if m {
                             String::new()
                         } else {
-                            raw_value.clone()
+                            subject.clone()
                         } // c:3540
-                    }; // c:3540
+                    };
+                    value = result.clone();
+                    // c:Src/subst.c — when the scalar fallback filter
+                    // empties (or keeps) the scalar, the downstream
+                    // auto_splat block must see the post-filter shape.
+                    // The prior (v) flag seeded `split_parts` with
+                    // per-element values; if we don't override here,
+                    // the splat re-emits those instead of our
+                    // filtered scalar. Bug #312 in docs/BUGS.md.
+                    if split_parts.is_some() {
+                        split_parts = if result.is_empty() {
+                            Some(Vec::new())
+                        } else {
+                            Some(vec![result])
+                        };
+                    }
                 } // c:3540
             } else if let Some(default) = r.strip_prefix(":-") {
                 // c:3193
