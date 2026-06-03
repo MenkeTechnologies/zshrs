@@ -267,8 +267,18 @@ impl ZshCompiler {
         // `dotrap(SIGDEBUG)` which checks the traps_table for a
         // "DEBUG" entry and runs the body. Cheap no-op when no
         // DEBUG trap is set (one hashmap lookup).
+        //
+        // c:Src/exec.c — push the about-to-run statement's text so
+        // BUILTIN_DEBUG_TRAP can set `$ZSH_DEBUG_CMD` to it before
+        // firing the trap body (C `exec.c::trapcmd` does the
+        // equivalent via `dupstring(text)`). The trap body reads
+        // the parameter and the runtime unsets it on return. Bug
+        // #263 in docs/BUGS.md.
+        let cmd_text = render_list_for_debug(list);
+        let txt_const = self.builder.add_constant(Value::str(&cmd_text));
+        self.builder.emit(Op::LoadConst(txt_const), 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_DEBUG_TRAP, 0), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_DEBUG_TRAP, 1), 0);
         self.builder.emit(Op::Pop, 0);
         // c:Src/exec.c:1390 — `set -n` (noexec option): parse but
         // don't execute. The check runs at the start of each
@@ -5734,6 +5744,66 @@ impl ZshCompiler {
         }
 
         self.builder.emit(Op::GetSlot(result_slot), 0);
+    }
+}
+
+/// Render a ZshList to the readable text form that the C source's
+/// `dupstring(text)` arg in `Src/exec.c::trapcmd` carries via
+/// `$ZSH_DEBUG_CMD`. Only Simple commands get faithful reconstruction
+/// (word-joining with spaces, untokenized); compound commands get a
+/// short keyword tag. Bug #263 in docs/BUGS.md.
+fn render_list_for_debug(list: &crate::parse::ZshList) -> String {
+    render_sublist_for_debug(&list.sublist)
+}
+
+fn render_sublist_for_debug(sublist: &crate::parse::ZshSublist) -> String {
+    let head = render_pipe_for_debug(&sublist.pipe);
+    let mut out = if sublist.flags.not {
+        format!("! {}", head)
+    } else {
+        head
+    };
+    if let Some((op, next)) = &sublist.next {
+        let op_str = match op {
+            crate::parse::SublistOp::And => "&&",
+            crate::parse::SublistOp::Or => "||",
+        };
+        out.push(' ');
+        out.push_str(op_str);
+        out.push(' ');
+        out.push_str(&render_sublist_for_debug(next));
+    }
+    out
+}
+
+fn render_pipe_for_debug(pipe: &crate::parse::ZshPipe) -> String {
+    let mut out = render_cmd_for_debug(&pipe.cmd);
+    if let Some(next) = &pipe.next {
+        out.push_str(if pipe.merge_stderr { " |& " } else { " | " });
+        out.push_str(&render_pipe_for_debug(next));
+    }
+    out
+}
+
+fn render_cmd_for_debug(cmd: &crate::parse::ZshCommand) -> String {
+    use crate::parse::ZshCommand;
+    match cmd {
+        ZshCommand::Simple(s) => s
+            .words
+            .iter()
+            .map(|w| crate::lex::untokenize_preserve_quotes(w))
+            .collect::<Vec<_>>()
+            .join(" "),
+        ZshCommand::Subsh(_) => "( ... )".to_string(),
+        ZshCommand::Cursh(_) => "{ ... }".to_string(),
+        ZshCommand::For(_) => "for ...".to_string(),
+        ZshCommand::Case(_) => "case ...".to_string(),
+        ZshCommand::If(_) => "if ...".to_string(),
+        ZshCommand::While(_) => "while ...".to_string(),
+        ZshCommand::Until(_) => "until ...".to_string(),
+        ZshCommand::Repeat(_) => "repeat ...".to_string(),
+        ZshCommand::FuncDef(_) => "funcdef ...".to_string(),
+        _ => String::new(),
     }
 }
 

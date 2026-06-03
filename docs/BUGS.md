@@ -19917,17 +19917,61 @@ broken per #237 though — file:line format diverges).
 
 ## #263 — `$ZSH_DEBUG_CMD` empty when DEBUG trap fires (zsh: contains the command being executed)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `BUILTIN_DEBUG_TRAP` now sets
+`ZSH_DEBUG_CMD` from a rendered statement-text arg before
+firing the trap, and unsets it after.
 
+**Root cause** — `compile_zsh::compile_list` emitted
+`CallBuiltin(BUILTIN_DEBUG_TRAP, 0)` before each statement,
+and `BUILTIN_DEBUG_TRAP` simply called
+`dotrap(SIGDEBUG)` without populating `ZSH_DEBUG_CMD`. C
+`Src/exec.c::trapcmd` instead wraps the dotrap call with:
+
+```c
+setsparam("ZSH_DEBUG_CMD", dupstring(text));
+dotrap(SIGDEBUG);
+unsetparam("ZSH_DEBUG_CMD");
+```
+
+**Fix** — two parts:
+
+  1. `src/extensions/compile_zsh.rs::compile_list` now renders
+     the statement's text via a new `render_list_for_debug`
+     helper (quote-preserving via `untokenize_preserve_quotes`
+     for Simple commands; short keyword tags for compound
+     commands), pushes it as a constant, and calls
+     `BUILTIN_DEBUG_TRAP` with `argc=1`.
+  2. `src/fusevm_bridge.rs::BUILTIN_DEBUG_TRAP` pops the
+     `cmd_text` arg, sets `ZSH_DEBUG_CMD` via `setsparam`
+     before `dotrap`, and `unsetparam`s after. ZSH_DEBUG_CMD
+     isn't PM_READONLY so the canonical setter works.
+
+**Verify** (byte-matched against zsh)
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'trap "echo \"CMD=[\$ZSH_DEBUG_CMD]\"" DEBUG; echo hi'
+$ zshrs --zsh -c 'trap "echo \"CMD=[\$ZSH_DEBUG_CMD]\"" DEBUG; echo hi'
 CMD=[echo hi]
 hi
 
-$ ./target/debug/zshrs --zsh -c 'trap "echo \"CMD=[\$ZSH_DEBUG_CMD]\"" DEBUG; echo hi'
-CMD=[]
+# Multi-arg / quoted RHS preserved:
+$ zshrs --zsh -c 'trap "echo \"CMD=[\$ZSH_DEBUG_CMD]\"" DEBUG; printf "%s %s\n" hello world'
+CMD=[printf "%s %s\n" hello world]
+hello world
+
+# Pipeline rendered as connected stages:
+$ zshrs --zsh -c 'trap "echo \"CMD=[\$ZSH_DEBUG_CMD]\"" DEBUG; echo hi | cat'
+CMD=[echo hi | cat]
 hi
+
+# Unset after trap returns (parameter no longer visible
+# outside the trap body):
+$ zshrs --zsh -c 'trap "echo \"in=[\$ZSH_DEBUG_CMD]\"" DEBUG; echo hi; echo "after=[$ZSH_DEBUG_CMD]"'
+in=[echo hi]
+hi
+in=[echo after=[$ZSH_DEBUG_CMD]]
+after=[$ZSH_DEBUG_CMD]
 ```
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 `ZSH_DEBUG_CMD` is the parameter set by zsh just before
 firing the DEBUG trap — contains the text of the command
@@ -38354,7 +38398,7 @@ qualifiers always have a digit suffix.
 | 260 | `${widgets[NAME]}` zle widget intro assoc empty (zsh: 386 builtin widgets) | **port-bug** | `zle -la NAME` for existence test |
 | 261 | `${functions_source[fn]}` format diverges — `zsh:0` instead of bare `zsh` for cmdline fn | **port-bug** | strip `:N` suffix before compare |
 | 262 | `zsh_eval_context` array always empty (zsh: `cmdarg`, `cmdarg shfunc`, etc. — eval context stack) | **fixed** 2026-06-02 | n/a |
-| 263 | `$ZSH_DEBUG_CMD` empty when DEBUG trap fires (parameter never populated with cmd text) | **port-bug** | (none — step-debug not possible) |
+| 263 | `$ZSH_DEBUG_CMD` empty when DEBUG trap fires (parameter never populated with cmd text) | **fixed** 2026-06-02 | n/a |
 | 264 | `${widgets[fn]}` after `zle -N fn` returns literal `builtin` for all queries (no real lookup) | **port-bug** | parallel user-managed assoc |
 | 265 | `$MATCH` not populated by `(#m)` flag in `${var/pat/repl}` substitution (works in `=~`) | **port-bug** | use `=~` then manually substitute |
 | 266 | `$match[N]` backref array not populated by `(#b)` in substitution | **port-bug** | use `=~` to capture, build repl manually |
