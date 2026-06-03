@@ -5139,6 +5139,75 @@ fi
 
 ## #76 — `zmodload` (no args) reports 32 auto-loaded modules vs zsh's 1
 
+**Status:** `fixed` 2026-06-03 — two-layer fix in
+`src/ported/module.rs` aligning with C `Src/module.c::printmodulenode`
+(c:218) and `Src/init.c::init_bltinmods` (c:1708).
+
+**Root cause** — `register_builtin_modules` populated
+`modulestab` up front with every statically-compiled module, each
+flagged `MOD_LINKED`. `printmodulenode`'s "loaded" gate then read
+`(MOD_LINKED) != 0 && (MOD_UNLOAD) == 0`. C zsh's gate is
+`m->u.handle || (flags & PRINTMOD_AUTO)` — the union slot is
+populated only **after** `load_module` runs (c:2227/2230) and the
+companion flag `MOD_INIT_B` lands at c:2244. zshrs treated
+"registered" as "loaded", so all 32 builtins printed.
+
+Additionally `bin_zmodload_load`'s list arm bypassed
+`printmodulenode` entirely — it walked `table.modules.keys()` and
+printed every name, ignoring both the C exclude mask
+(`MOD_UNLOAD | MOD_ALIAS`) and the per-node load gate.
+
+`zsh/main` was never registered at all — C's `init_bltinmods`
+ends with `load_module("zsh/main", NULL, 0)` which puts the
+master module in `modulestab` with its union slot non-NULL.
+zshrs's listing therefore showed everything *except* `zsh/main`.
+
+**Fix:**
+
+1. **`printmodulenode` "loaded" gate** (`src/ported/module.rs`
+   c:218 port): swap `MOD_LINKED` for `MOD_INIT_B`. Now matches
+   C's "boot has completed and union slot exists" semantics.
+2. **`register_builtin_modules` epilogue**: register `zsh/main`
+   with `MOD_INIT_B` already set, mirroring the post-load state C
+   reaches via `init_bltinmods`.
+3. **`bin_zmodload_load` list arm** (c:2983-2985 port): replace
+   the raw key dump with the C-equivalent sorted scan —
+   `scanhashtable(modulestab, 1, 0, MOD_UNLOAD|MOD_ALIAS, ...)`
+   followed by `printmodulenode`. EXCLUDE mask drops aliases and
+   unloaded entries; per-node gate drops registered-but-not-yet-
+   loaded entries. `-L` flag routes through `PRINTMOD_LIST`
+   format, plain form gets `flags=0`.
+4. **Test refresh** — `test_printmodulenode` now sets `MOD_INIT_B`
+   on the fixture module (was relying on the bogus `MOD_LINKED`
+   gate); a paired assertion confirms a registered-but-not-loaded
+   module emits empty output (matches C `m->u.handle == NULL`).
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```
+$ /opt/homebrew/bin/zsh -fc 'zmodload'        →  zsh/main
+$ ./target/debug/zshrs --zsh -c 'zmodload'    →  zsh/main
+$ /opt/homebrew/bin/zsh -fc 'zmodload | wc -l'      →  1
+$ ./target/debug/zshrs --zsh -c 'zmodload | wc -l'  →  1
+$ /opt/homebrew/bin/zsh -fc 'zmodload -L'           →  zmodload zsh/main
+$ ./target/debug/zshrs --zsh -c 'zmodload -L'       →  zmodload zsh/main
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/parameter; zmodload'
+zsh/main
+zsh/parameter
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/parameter; zmodload'
+zsh/main
+zsh/parameter
+```
+
+zshrs_shell baseline preserved: 946 passed / 106 failed.
+
+The eager-loading concern raised in the original report (TCP,
+FTP, curses, GDBM loaded for `-c` scripts that need none) is
+unaffected — the static binary still links every module, so
+startup cost is unchanged. This fix is purely about the
+**observable listing** matching C semantics.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -23416,7 +23485,27 @@ typeset -i mask=8#22     # explicit base-8
 
 ## #301 — `${(L/U/C)arr[N]}` case-change flags on subscripted array element error "bad substitution"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — no longer reproduces as of 2026-06-02.
+Likely fixed via an earlier subscripted-flag dispatch patch.
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'a=(hello world); echo "[${(C)a[1]}]"'
+[Hello]
+
+$ ./target/debug/zshrs --zsh -c 'a=(hello WORLD); echo "[${(L)a[2]}]"'
+[world]
+
+$ ./target/debug/zshrs --zsh -c 'a=(hello world); echo "[${(U)a[1]}]"'
+[HELLO]
+
+$ ./target/debug/zshrs --zsh -c 'a=(HELLO WORLD); echo "[${(L)a}]"'
+[hello world]
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(hello world); echo "[${(C)a[1]}]"'
@@ -39165,7 +39254,7 @@ qualifiers always have a digit suffix.
 | 298 | Bare var in slice subscript `${a[1,n]}` doesn't arith-deref `n` (zsh: evaluates as int) | **port-bug** | explicit `$` deref `${a[1,$n]}` |
 | 299 | Glob qualifier `(YN)` count-limit not applied — returns all matches | **fixed** 2026-06-02 | n/a |
 | 300 | `typeset -i n; n=0o10` (Python octal prefix) silently parses as `0` (zsh: errors loudly); security-relevant for masks | **fixed** 2026-06-02 | n/a |
-| 301 | `${(L/U/C)arr[N]}` case-change flag on subscripted array element errors "bad substitution" | **port-bug** | split: `e=arr[N]; ${(C)e}` |
+| 301 | `${(L/U/C)arr[N]}` case-change flag on subscripted array element errors "bad substitution" | **fixed** 2026-06-02 | n/a |
 | 302 | `pushd +N` dirstack rotation rotates to wrong element (direction or indexing differs from zsh) | **fixed** 2026-06-02 | n/a |
 | 303 | `trap '...' ERR` fires twice when failing cmd is inside a fn (zsh: once per logical error) | **fixed** 2026-06-02 | n/a |
 | 304 | `compfiles`/`compgroups`/`compquote`/`comptags`/`comptry`/`compvalues`/`comparguments`/`compdescribe`/`compcall`/`compctl` builtins missing — compsys unusable | **port-bug** | (none — major daily-driver blocker) |

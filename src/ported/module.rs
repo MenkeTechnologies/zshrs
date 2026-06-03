@@ -138,7 +138,20 @@ pub fn printmodulenode(hn: &str, m: &module, flags: i32) -> String {
     }
 
     // c:218-241 — loaded module branch (linked or autoloaded).
-    let loaded = (m.node.flags & MOD_LINKED) != 0 && (m.node.flags & MOD_UNLOAD) == 0;
+    // C check: `m->u.handle || (flags & PRINTMOD_AUTO)` where `u`
+    // is a union so `u.handle` is non-NULL whenever EITHER `handle`
+    // (dlopen result) or `linked` (statically-linked record) is
+    // installed. The union slots are only populated AFTER
+    // `load_module` completes (c:2227/2230 set them, c:2244 sets
+    // `MOD_INIT_B`). So "boot ran" maps to `MOD_INIT_B` in zshrs.
+    // Previous gate `MOD_LINKED && !MOD_UNLOAD` was wrong:
+    // `register_builtin_modules` seeds `MOD_LINKED` for every
+    // statically-compiled module up front, so plain `zmodload`
+    // listed all 32 (#76 in docs/BUGS.md). C zsh shows only the
+    // single `zsh/main` entry that `init_bltinmods` actually loads
+    // via `load_module("zsh/main", NULL, 0)`.
+    let loaded = (m.node.flags & MOD_INIT_B) != 0 && (m.node.flags & MOD_UNLOAD) == 0;
+    let _ = MOD_LINKED; // c:Src/module.c:218 — union-based check; flag retained for unload path.
     let auto = flags & PRINTMOD_AUTO != 0;
     if loaded || auto {
         if flags & PRINTMOD_LIST != 0 {
@@ -1099,6 +1112,19 @@ impl modulestab {
             let module = module::new(name);
             self.modules.insert(name.to_string(), module);
         }
+
+        // c:Src/init.c:1708 — `init_bltinmods` ends with
+        // `load_module("zsh/main", NULL, 0)`. `zsh/main` is the
+        // always-loaded master module: every zsh process has it in
+        // `modulestab` from boot, with `m->u.handle` (or `u.linked`)
+        // non-NULL so `printmodulenode`'s "loaded" gate (c:218
+        // `m->u.handle`) fires. Register here with `MOD_INIT_B` set
+        // so `zmodload` (no args) lists `zsh/main` and ONLY `zsh/main`
+        // — matching `/opt/homebrew/bin/zsh -fc 'zmodload'` output
+        // exactly. Bug #76 in docs/BUGS.md.
+        let mut main = module::new("zsh/main");
+        main.node.flags |= crate::ported::zsh_h::MOD_INIT_B; // c:2244
+        self.modules.insert("zsh/main".to_string(), main);
     }
 
     // Returns 0 success, 1 complete failure, 2 partial-features-fail.     // c:2200-2201
@@ -3177,9 +3203,36 @@ pub fn bin_zmodload_load(table: &mut modulestab, nam: &str, args: &[String], ops
         return ret; // c:2980
     } else if args.is_empty() {
         // c:2981
-        // c:2983-2985 — list modules
-        for (name, _m) in &table.modules {
-            println!("{}", name);
+        // c:2983-2985 — list modules:
+        //   `scanhashtable(modulestab, 1, 0, MOD_UNLOAD|MOD_ALIAS,
+        //                  modulestab->printnode,
+        //                  OPT_ISSET(ops,'L') ? PRINTMOD_LIST : 0);`
+        // The 4th arg to scanhashtable is the EXCLUDE mask — entries
+        // with `MOD_UNLOAD` or `MOD_ALIAS` set are skipped. The
+        // surviving names are routed through `printmodulenode`,
+        // which itself gates the visible-line emission on
+        // `m->u.handle` (=> `MOD_INIT_B` in zshrs) so registered-
+        // but-unloaded modules drop out. Plain `zmodload` (no `-L`)
+        // passes `flags=0`; `zmodload -L` passes `PRINTMOD_LIST`.
+        // Previous Rust impl printed every key in `table.modules`
+        // unconditionally, which leaked the 32 statically-registered
+        // builtin entries (#76 in docs/BUGS.md).
+        let listflags = if OPT_ISSET(ops, b'L') {
+            PRINTMOD_LIST
+        } else {
+            0
+        };
+        let mut names: Vec<&String> = table.modules.keys().collect();
+        names.sort(); // c:scanhashtable sorted=1 arg
+        for name in names {
+            let m = &table.modules[name]; // c:154 printnode call
+            if (m.node.flags & (MOD_UNLOAD | MOD_ALIAS)) != 0 {
+                continue; // c:2983 EXCLUDE mask
+            }
+            let line = printmodulenode(name, m, listflags);
+            if !line.is_empty() {
+                println!("{}", line);
+            }
         }
         return 0; // c:2986
     } else {
@@ -4032,14 +4085,26 @@ mod tests {
     #[test]
     fn test_printmodulenode() {
         let _g = crate::test_util::global_state_lock();
-        let module = module::new("zsh/test");
-        // Loaded module (MOD_LINKED set by `module::new`), no flags →
-        // emit just the module name (c:240 nicezputs(modname)).
+        // C-source-true print gate: `m->u.handle || (flags &
+        // PRINTMOD_AUTO)` at Src/module.c:218 — only fires once
+        // `load_module` has wired up the union slot AND set
+        // MOD_INIT_B (c:2244). Fresh `module::new` returns a
+        // registered-but-not-loaded entry, so the gate misses.
+        // Mark MOD_INIT_B to simulate the post-boot state.
+        let mut module = module::new("zsh/test");
+        module.node.flags |= MOD_INIT_B;
+        // Loaded module, no flags → emit just the module name
+        // (c:240 nicezputs(modname)).
         let output = printmodulenode("zsh/test", &module, 0);
         assert_eq!(output, "zsh/test");
         // Under PRINTMOD_LIST the loaded branch emits `zmodload MOD`.
         let listed = printmodulenode("zsh/test", &module, PRINTMOD_LIST);
         assert_eq!(listed, "zmodload zsh/test");
+        // Registered-but-not-loaded: no MOD_INIT_B → empty output
+        // (matches C's `m->u.handle` being NULL).
+        let unloaded = module::new("zsh/unloaded");
+        let nope = printmodulenode("zsh/unloaded", &unloaded, 0);
+        assert_eq!(nope, "");
     }
 
     // ===== Tests for the `addmathfunc` / `removemathfunc` /
