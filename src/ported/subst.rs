@@ -2846,6 +2846,23 @@ pub fn paramsubst(
         }
         let body: String = chars[pos..end].iter().collect(); // c:1885
         let new_pos = if end < chars.len() { end + 1 } else { end };
+        // c:Src/subst.c:1885 paramsubst's first sanity check —
+        // itype_end(s, INAMESPC, 1) == s combined with the
+        // not-in-special-list check. When the body's first char is
+        // whitespace (and not a recognized special), the C path
+        // either turns it back into a literal `${ }` or errors via
+        // "bad substitution" downstream. zshrs's paramsubst silently
+        // accepted whitespace-only bodies and returned empty.
+        // Bug #172 in docs/BUGS.md.
+        //
+        // Truly empty `${}` keeps the pre-existing zsh-compat
+        // silent-empty behavior. Only non-empty all-whitespace bodies
+        // trigger the error.
+        if !body.is_empty() && body.chars().all(|c| c.is_ascii_whitespace()) {
+            zerr("bad substitution");
+            errflag_set_error();
+            return (String::new(), new_pos, vec![]);
+        }
         let body_chars: Vec<char> = body.chars().collect();
         let mut idx = 0_usize;
         // ${(flags)var…} — paren-flag block. Port of subst.c:2147+
