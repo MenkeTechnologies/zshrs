@@ -1993,6 +1993,35 @@ fn par_funcdef() -> Option<ZshCommand> {
         // past the first token (`echo`), making body_start land
         // mid-body and lose the first word — `typeset -f f` would
         // print `a; echo b` for `{ echo a; echo b }`.
+        // c:Src/parse.c:1690-1706 — par_funcdef requires a clean
+        //   body-opener brace when the anonymous form `function {body}`
+        //   is used (no names AND no `()`). zsh's lexer keeps the `{`
+        //   as its own STRING token via the lex.c:1141-1144 early-
+        //   return at command position, but the body brace must be
+        //   followed by whitespace for the inner par_list to find a
+        //   matching OUTBRACE — without a separator, the closing `}`
+        //   gets merged into the last word (`X}`) and par_list ends
+        //   without OUTBRACE, which C zsh reports as `parse error near
+        //   \`}'`. zshrs's lexer has the same `bct` semantics; reject
+        //   here at the parse step so the funcdef doesn't silently run
+        //   with the stray `}` attached. With names or `()` present,
+        //   the body brace is allowed even without a separator
+        //   (`function name {body}` and `function () {body}` both work
+        //   in zsh). Bug #60 in docs/BUGS.md.
+        if names.is_empty() && !saw_paren {
+            // Peek the next source byte after the current lexer position
+            // (`{` was just tokenized — `pos()` points just past it).
+            // A whitespace separator means proper `function { body }`
+            // form; anything else is the malformed `function {body}`
+            // shape zsh rejects.
+            let next_byte = input_slice(pos(), pos() + 1)
+                .and_then(|s| s.bytes().next())
+                .unwrap_or(b' ');
+            if !matches!(next_byte, b' ' | b'\t' | b'\n' | b';') {
+                zerr("parse error near `}'"); // c:Src/parse.c YYERRORV
+                return None;
+            }
+        }
         let body_start = pos();
         zshlex();
         // c:Src/parse.c — func body terminates at OUTBRACE_TOK.
