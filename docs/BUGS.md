@@ -10744,7 +10744,49 @@ exec /no/such/cmd
 
 ## #141 — `;;` outside case context not a parse error in zshrs
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — parse_program_until rejects
+`DSEMI`/`SEMIAMP`/`SEMIBAR` at top level.
+
+**Root cause** — `src/ported/parse.rs::parse_program_until` had
+`DSEMI | SEMIAMP | SEMIBAR | … => break` for the
+`end_tokens.is_none()` (top-level) case. The `break` silently
+returned the partial program, truncating the rest of the
+script. Same shape as the orphan-terminator bug #142 — the
+arm needed an explicit `zerr` per C `Src/parse.c::par_event`.
+
+**Fix** — added a guarded arm (matching the existing #142
+DONE/FI/ESAC pattern):
+```rust
+DSEMI | SEMIAMP | SEMIBAR if end_tokens.is_none() => {
+    let name = match tok() {
+        DSEMI => ";;",
+        SEMIAMP => ";&",
+        SEMIBAR => ";|",
+        _ => "case terminator",
+    };
+    zerr(&format!("parse error near `{}'", name));
+    break;
+}
+```
+
+The non-top-level (`end_tokens.is_some()`) path keeps the
+existing `break` semantics so the `case` arm body still
+unwinds correctly at `;;`/`;&`/`;|`.
+
+**Verify**
+```sh
+$ zshrs --zsh -c 'echo a;; echo b' 2>&1     # zsh:1: parse error near `;;'
+$ zshrs --zsh -c 'echo a;& echo b' 2>&1     # zsh:1: parse error near `;&'
+$ zshrs --zsh -c 'echo a;| echo b' 2>&1     # zsh:1: parse error near `;|'
+
+# Legal use inside case still works:
+$ zshrs --zsh -c 'case x in x) echo a;; esac; echo b'             # a, b
+$ zshrs --zsh -c 'case x in x) echo a;& y) echo b;; esac'         # a, b
+```
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo a;; echo b' 2>&1
@@ -10753,41 +10795,6 @@ zsh:1: parse error near `;;'
 $ ./target/debug/zshrs --zsh -c 'echo a;; echo b' 2>&1
 a
 ```
-
-`;;` is the case-pattern terminator inside `case ... esac`
-constructs. Outside of `case`, encountering `;;` should be a
-parse error. zsh errors with "parse error near `;;`". zshrs
-silently parses the first `echo a`, discards the rest, and
-returns success.
-
-```sh
-$ ./target/debug/zshrs --zsh -c 'echo a;; echo b; echo c' 2>&1
-a
-```
-
-Only `echo a` runs; `echo b` and `echo c` are silently dropped.
-
-**Where** — `src/ported/parse.rs::parse_command`: doesn't
-reject `;;` token outside of `case` context. C-source
-`Src/parse.c::par_cmd` errors on `DSEMI` outside `case`.
-
-**Impact** — typos that include accidental `;;` (e.g., from
-copy-paste of case-arm code into a regular block) silently
-truncate the script:
-
-```sh
-# user accidentally pasted `;; ` from case-arm
-process_input;;
-finalize
-# zsh: parse error (caught immediately)
-# zshrs: runs process_input, silently skips finalize
-```
-
-Real data-loss potential. zsh's strict parsing catches this;
-zshrs's permissive parsing hides the typo.
-
-**Workaround** — none portable; rely on careful review of
-scripts before running under zshrs.
 
 ---
 
@@ -37977,7 +37984,7 @@ qualifiers always have a digit suffix.
 | 138 | `%i` prompt escape returns `0` instead of current line | **port-bug** | `$LINENO` parameter |
 | 139 | Sourced-file errors report `zsh:1:` instead of `/file:N` | **port-bug** | none — debug manually |
 | 140 | `exec /no/such` uses generic "not found" + wrong `zshrs:` prefix | **port-bug** | pre-check `[[ -x cmd ]]` |
-| 141 | `;;` outside case context not a parse error (silent drop) | **port-bug** | careful review |
+| 141 | `;;` outside case context not a parse error (silent drop) | **fixed** 2026-06-02 | n/a |
 | 142 | Orphan-terminator parse error: "orphan terminator" + double-print | **fixed** 2026-06-02 | n/a |
 | 143 | `$TRY_BLOCK_ERROR` initial value is `0` in zshrs (zsh: `-1`) | **port-bug** | explicit state-flag |
 | 144 | `${(q)str}` with newline uses `\<newline>` not `$'\n'` form | **port-bug** | `(qq)` double-quote form |

@@ -7242,6 +7242,21 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                 zerr(&format!("parse error near `{}'", name));
                 break;
             }
+            DSEMI | SEMIAMP | SEMIBAR if end_tokens.is_none() => {
+                // c:Src/parse.c:par_event — case-arm terminators
+                // (`;;`, `;&`, `;|`) outside a case construct are a
+                // parse error. zshrs's `break` silently accepted them
+                // at top level, truncating the rest of the script.
+                // Bug #141 in docs/BUGS.md.
+                let name = match tok() {
+                    DSEMI => ";;",
+                    SEMIAMP => ";&",
+                    SEMIBAR => ";|",
+                    _ => "case terminator",
+                };
+                zerr(&format!("parse error near `{}'", name));
+                break;
+            }
             OUTBRACE_TOK | DSEMI | SEMIAMP | SEMIBAR | DONE | FI | ESAC | ZEND => break,
             _ => {}
         }
