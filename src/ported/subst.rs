@@ -7506,8 +7506,18 @@ pub fn paramsubst(
                         } else {
                             value = mod_one(&value);
                         }
-                    } else if qt && arrays_contains(&var_name) {
-                        // c:3030-3034 DQ sepjoin cleared isarr → scalar
+                    } else if qt && arrays_contains(&var_name) && nojoin != 2 {
+                        // c:3030-3034 DQ sepjoin cleared isarr → scalar.
+                        //   Skip when `(@)` flag is set (nojoin == 2):
+                        //   the C path at c:3030 KEEPS isarr=-1 under
+                        //   (@), so modify still loops per-element even
+                        //   in DQ. Bug #147 in docs/BUGS.md:
+                        //   `${(@)a:t}` joined to a scalar and ran :t
+                        //   once on the joined form, returning the
+                        //   tail of the last element instead of per-
+                        //   element tails. The fall-through arm at
+                        //   `arrays_get(&var_name)` below correctly
+                        //   loops per element.
                         let joined = sepjoined_for_qt();
                         value = mod_one(&joined);
                         // Seed split_parts with the single modified
