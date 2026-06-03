@@ -32228,7 +32228,41 @@ removing source/eval lines one at a time.
 
 ## #421 — `^` parsed as glob-negation even when `extended_glob` is off
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `patcomppiece`'s literal-run
+break list now consults `zpc_special[ZPC_HAT]` /
+`zpc_special[ZPC_HASH]` instead of hardcoding `b'^'` /
+`b'#'`.
+
+**Root cause** — `src/ported/pattern.rs::patcomppiece`'s
+default arm (the literal-run accumulator at line ~1623) had
+`matches!(b, ... | b'^' | b'#' | ...)` as the stop list.
+With EXTENDEDGLOB off, `Src/pattern.c:480-483` masks
+`zpc_special[ZPC_HAT]` and `ZPC_HASH` to Marker so the
+dispatch treats `^` / `#` as literals — but the hardcoded
+literal-run break list still terminated the accumulator on
+the raw byte. The accumulator buffer ended empty, the
+`return -1` at line ~1664 fired, parsecomplist returned
+None, and `matchpat` reported `bad pattern: ^.*`.
+
+**Fix** (`src/ported/pattern.rs::patcomppiece`, literal-run
+break) — capture `sp[ZPC_HAT]` and `sp[ZPC_HASH]` alongside
+the existing `sp_tilde_lit` / `sp_seg_lit_set` snapshot.
+Gate the `^` / `#` break on `sp_hat_lit == b'^'` /
+`sp_hash_lit == b'#'`. With EXTENDEDGLOB off these are
+Marker (`0xa2`), the equality fails, and `^` / `#` accumulate
+into the literal run.
+
+**Verify**:
+- `setopt no_extended_glob; echo /tmp/_zg/^.*` (default) →
+  `no matches found` (matches zsh).
+- `setopt extended_glob; echo /tmp/_zg/^.*` → expands to
+  non-dotfile entries (regression preserved).
+- `echo /tmp/_zg/*` (plain glob) → unchanged.
+- `echo /tmp/_zg/#v.*` (literal `#` with EXTENDEDGLOB off) →
+  no matches found (no longer "bad pattern").
+- zshrs_shell baseline 949/103 (flake range).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/{.h,v}; echo /tmp/_zg/^.* 2>&1'
