@@ -13247,43 +13247,46 @@ Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ## #172 — `${ }` (whitespace-only parameter name) silently empty
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — paramsubst now rejects
+whitespace-only brace bodies.
 
+**Root cause** — `src/ported/subst.rs::paramsubst` collected
+the brace body (`chars[pos..end]`) and dispatched into the
+flag-parse / name-parse path. A body of one-or-more whitespace
+chars fell through every dispatch arm and returned an empty
+string. C `Src/subst.c:1885` `itype_end` check rejects bodies
+that lack a name char AND don't start with one of the
+recognized special prefixes (`#`/`!`/`$`/`*`/`@`/`=`/`^`/`~`/
+`+`), producing "bad substitution" downstream.
+
+**Fix** — early-out at the body-collection site: if the body
+is non-empty AND all chars are whitespace, emit `bad
+substitution` via zerr and short-circuit with
+`errflag_set_error()` + non-zero exit.
+
+Truly empty `${}` keeps the pre-existing zsh-compat
+silent-empty behavior — only NON-empty whitespace-only bodies
+trigger the error.
+
+**Verify**
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'echo "[${ }]"' 2>&1
-(empty - error)
+$ /opt/homebrew/bin/zsh -fc 'echo "[${ }]"' 2>&1     # zsh:1: bad substitution (ec=1)
+$ zshrs --zsh -c 'echo "[${ }]"' 2>&1                 # zsh:1: bad substitution (ec=1)
 
-$ ./target/debug/zshrs --zsh -c 'echo "[${ }]"' 2>&1
-[]
+$ zshrs --zsh -c 'echo "[${	}]"' 2>&1                # tab-only — same error
+$ zshrs --zsh -c 'echo "[${    }]"' 2>&1              # multi-space — same error
+
+# Truly empty ${} still produces []  (both shells):
+$ zshrs --zsh -c 'echo "[${}]"'                        # []
+
+# Legal forms preserved:
+$ zshrs --zsh -c 'x=hi; echo "[${x}]"'                 # [hi]
+$ zshrs --zsh -c 'a=(1 2 3); echo "[${a[2]}]"'         # [2]
+$ zshrs --zsh -c 'x=hi; echo "[${(U)x}]"'              # [HI]
+$ zshrs --zsh -c 'unset x; echo "[${x:-def}]"'         # [def]
 ```
 
-A `${...}` parameter expansion requires a parameter name (or
-arithmetic/cmdsub). An empty or whitespace-only `${...}` is
-malformed. zsh rejects (with stderr error). zshrs silently
-treats it as empty expansion.
-
-Same with tab-only or other whitespace:
-```sh
-$ ./target/debug/zshrs --zsh -c 'echo "[${	}]"'
-[]
-```
-
-Permissive-parser family:
-- #141 (`;;`), #146 (`{} args`), #161 (case `in)`), #162 (pad
-  delim), #167 (unclosed `{`), #168 (extra `}`), #169 (chained
-  always), #170 (unclosed paren), #171 (empty pipe/and-or),
-  #172 (this — `${ }`).
-
-The list keeps growing — zshrs's parser is consistently more
-permissive than zsh's across multiple constructs.
-
-**Where** — `src/ported/paramsubst.rs::parse_param_name`: doesn't
-require a non-whitespace name token between `{` and `}`.
-C-source `Src/subst.c::parse_dollar_subst` errors on
-empty/whitespace name.
-
-**Impact** — typos that produce empty `${...}` silently return
-empty strings instead of catching the error.
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 **Workaround** — careful syntax review.
 
@@ -38133,7 +38136,7 @@ qualifiers always have a digit suffix.
 | 169 | `{} always {} always {}` chained-always silently accepted | **port-bug** | careful review |
 | 170 | `echo (abc` unclosed paren treated as literal | **port-bug** | careful review |
 | 171 | `cmd \| \| cmd`/`&& &&`/`\|\| \|\|` empty operands silently accepted | **fixed** 2026-06-02 | n/a |
-| 172 | `${ }` whitespace-only param name silently empty (zsh: error) | **port-bug** | careful review |
+| 172 | `${ }` whitespace-only param name silently empty (zsh: error) | **fixed** 2026-06-02 | n/a |
 | 173 | `${(t)$(cmdsub)}` returns `scalar` (zsh: cmdsub output) | **port-bug** | drop `(t)` flag |
 | 174 | `type fn` for user-defined function shows "from zsh" suffix | **port-bug** | match `*shell function*` loosely |
 | 175 | `(( x = 0xFF ))` doesn't preserve integer base in display | **port-bug** | `typeset -i 16 x` explicit |
