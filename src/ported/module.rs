@@ -1213,6 +1213,21 @@ impl modulestab {
         for nm in crate::vm_helper::module_gated_params_for(name) {
             crate::vm_helper::seed_partab_param(nm);
         }
+        // c:Src/module.c:1910 — C dispatches `(m->u.linked->boot)(m)`
+        // per-module. zshrs's module table doesn't carry function
+        // pointers, so a name-keyed dispatch lives here. Each arm is
+        // the canonical `boot_(m)` port from that module's C file.
+        // Add a new arm whenever a module's boot_ has paramtab /
+        // hook side effects that the simplified framework misses.
+        match name {
+            // c:Src/Modules/watch.c:734 — registers `watch` (PM_ARRAY |
+            // PM_SPECIAL) and `WATCH` (PM_SCALAR | PM_SPECIAL) plus
+            // the checksched preprompt hook. Bug #270.
+            "zsh/watch" => {
+                crate::ported::modules::watch::boot_(std::ptr::null());
+            }
+            _ => {}
+        }
         unqueue_signals(); // c:2324
         true // c:2325 return bootret (0)
     }

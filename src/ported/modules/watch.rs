@@ -748,6 +748,31 @@ pub fn boot_(m: *const module) -> i32 {
     if crate::ported::params::getsparam("LOGCHECK").is_none() {
         crate::ported::params::setsparam("LOGCHECK", "60"); // c:759
     }
+    // c:Src/Modules/watch.c:697-699 — register `watch` (PM_ARRAY |
+    // PM_SPECIAL) and `WATCH` (PM_SCALAR | PM_SPECIAL) in paramtab
+    // so introspection (`(t)watch` → `array-special`, `${(t)WATCH}`
+    // → `scalar-special`) sees them after `zmodload zsh/watch`.
+    // C zsh boots paramtab entries via `paramdef partab[]` which the
+    // module-load chain dispatches through `addparamdef`. zshrs's
+    // module shims don't run that path, so seed the entries here.
+    // Bug #270 in docs/BUGS.md.
+    use crate::ported::zsh_h::{PM_ARRAY, PM_SCALAR, PM_SPECIAL};
+    let watch_exists = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .map(|t| t.contains_key("watch"))
+        .unwrap_or(false);
+    if !watch_exists {
+        let _ = crate::ported::params::createparam("watch", (PM_ARRAY | PM_SPECIAL) as i32);
+    }
+    let watch_scalar_exists = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .map(|t| t.contains_key("WATCH"))
+        .unwrap_or(false);
+    if !watch_scalar_exists {
+        let _ = crate::ported::params::createparam("WATCH", (PM_SCALAR | PM_SPECIAL) as i32);
+    }
     // c:761 — `addprepromptfn(&checksched);`. Without this, the
     // watch module never gets driven on each prompt — `$watch`
     // is set but no login/logout notifications ever fire.
