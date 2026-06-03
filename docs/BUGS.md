@@ -23580,16 +23580,25 @@ saved="${(qq)_vals[@]}"
 
 ## #310 — `${(@)arr:#pat}` filter via `(@)` flag form not applied (works with `[@]` subscript form)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — repro no longer reproduces.
+Both `${(@)arr:#pat}` and `${arr[@]:#pat}` filter forms
+match zsh byte-for-byte. Likely fixed by prior `(@)` flag /
+filter-dispatch work.
 
+**Verify**
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(abc xyz); print -l "${(@)a:#a*}"'
 xyz
+$ zshrs --zsh -c 'a=(abc xyz); print -l "${(@)a:#a*}"'
+xyz
 
-$ ./target/debug/zshrs --zsh -c 'a=(abc xyz); print -l "${(@)a:#a*}"'
-abc
+# [@] subscript form unchanged:
+$ zshrs --zsh -c 'a=(abc xyz); print -l "${a[@]:#a*}"'
 xyz
 ```
+
+No new code change required this turn; updating status to match
+observed behavior.
 
 `${var:#pat}` filters OUT elements matching `pat`. zsh applies
 the filter regardless of whether the array context comes from
@@ -23736,15 +23745,64 @@ done
 
 ## #312 — `${(v)assoc:#pat}` scalar-context filter on assoc values not applied
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `:#` scalar fallback now
+tests against the post-flag `value` (with `raw_value`
+fallback) instead of always using `raw_value`, AND clears the
+prior `(v)`-seeded `split_parts` on filter hit.
 
+**Root cause** — `src/ported/subst.rs::paramsubst`'s `:#` arm
+scalar fallback (~line 5829) tested the filter pattern against
+`raw_value` (the raw assoc backing). For `${(v)h:#A*}`:
+  * `(v)` flag processing set `value = "ABC XYZ"` (joined
+    values) and seeded `split_parts` per-element.
+  * The `:#` scalar arm matched `A*` against `raw_value`
+    (empty for assoc-name bare reads) → no match → value
+    silently passed through.
+
+Even after fixing the subject, the downstream auto_splat block
+re-emitted from `split_parts` (the (v)-seeded element list),
+overriding the filter result.
+
+**Fix** — two changes to the `:#` scalar fallback:
+
+  1. Pick the subject as `value` first, falling back to
+     `raw_value` only when `value` is empty. So `(v)`-set value
+     "ABC XYZ" gets matched against `A*` correctly.
+  2. After the filter, if `split_parts` had been seeded
+     (e.g. by `(v)`), overwrite it with the post-filter shape
+     (empty Vec on match → drop; single-element Vec on
+     no-match → keep). Auto-splat then emits the filtered
+     result instead of the original per-element seed.
+
+**Verify** (byte-matched against zsh)
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[a]=ABC; h[b]=XYZ; echo "[${(v)h:#A*}]"'
+$ zshrs --zsh -c 'typeset -A h; h[a]=ABC; h[b]=XYZ; echo "[${(v)h:#A*}]"'
 []
 
-$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[a]=ABC; h[b]=XYZ; echo "[${(v)h:#A*}]"'
+# Non-matching pattern → joined value passes through:
+$ zshrs --zsh -c 'typeset -A h; h[a]=ABC; h[b]=XYZ; echo "[${(v)h:#Q*}]"'
 [ABC XYZ]
+
+# Regressions: scalar :#, array element :#, [@] form all unchanged:
+$ zshrs --zsh -c 's=hello; echo "[${s:#h*}]"; echo "[${s:#x*}]"'
+[]
+[hello]
+
+$ zshrs --zsh -c 'a=(abc xyz); echo "[${a[1]:#a*}]"; echo "[${a[2]:#a*}]"'
+[]
+[xyz]
+
+$ zshrs --zsh -c 'a=(abc xyz); echo "[${a[@]:#a*}]"'
+[xyz]
 ```
+
+The `(Mv)` chained form (M-flag inverts the filter on the
+(v)-joined value) still has a separate divergence —
+`${(Mv)h:#A*}` returns the first matching VALUE rather than
+the joined-string. Out-of-scope for this fix; tracked as a
+sub-issue.
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 `${(v)h}` (without `@`) joins values with IFS into a scalar.
 Then `:#pat` should test the joined scalar against `pat` —
@@ -38486,9 +38544,9 @@ qualifiers always have a digit suffix.
 | 307 | `[[ -5 -lt 0 ]]` errors "unknown condition: -5" — bare negative number misparsed as unary operator | **fixed** 2026-06-02 | n/a |
 | 308 | `${(t)arr[N]}` type-of-element errors "bad substitution" (zsh: returns "a") | **port-bug** | copy to temp scalar |
 | 309 | Chained `${(qq)${(@P)var}}` drops elements — only first preserved (#229/#195/#287 family) | **port-bug** | two-step via intermediate var |
-| 310 | `${(@)arr:#pat}` filter via `(@)` flag form not applied (works with `[@]` subscript) | **port-bug** | use `[@]` subscript form |
+| 310 | `${(@)arr:#pat}` filter via `(@)` flag form not applied (works with `[@]` subscript) | **fixed** 2026-06-02 | n/a |
 | 311 | `${(@k)assoc:#pat}`/`${(@v)assoc:#pat}` filter on assoc keys/values not applied | **port-bug** | explicit `for k v in "${(@kv)h}"` loop |
-| 312 | `${(v)assoc:#pat}` scalar-context filter on assoc values not applied | **port-bug** | per-element loop |
+| 312 | `${(v)assoc:#pat}` scalar-context filter on assoc values not applied | **fixed** 2026-06-02 | n/a |
 | 313 | `${(s.X.)str}` scalar-context split returns multiple echo args instead of joined string | **port-bug** | `${(j: :)${(@s.X.)str}}` rejoin |
 | 314 | `${(os.X.)str}` sort flag not applied after split — flag-composition gap | **port-bug** | two-step: split into array, then `(o)` |
 | 315 | `${(us.X.)str}` unique flag not applied after split — PATH-dedup idiom broken | **port-bug** | two-step: split into array, then `(u)` |
