@@ -262,6 +262,17 @@ impl ZshCompiler {
         self.builder
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
         self.builder.emit(Op::Pop, 0);
+        // c:Src/exec.c:1455 — reset DONETRAP=0 at every sublist start
+        // so the next sublist's ERREXIT_CHECK fires the ZERR trap
+        // on its first non-zero command. The "already fired" state
+        // persists across function-call returns within the same
+        // outer sublist — preventing the double-ZERR-fire on
+        // `f() { false; }; f`. Bug #303 in docs/BUGS.md.
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_DONETRAP_RESET, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
         // c:Src/exec.c:1357-1500 DEBUGBEFORECMD — fire the DEBUG
         // trap before each statement. Routes through canonical
         // `dotrap(SIGDEBUG)` which checks the traps_table for a
