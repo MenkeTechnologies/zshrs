@@ -2116,6 +2116,69 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // keys, so pre-resolve here.
         let resolved_key = with_executor(|exec| {
             let is_indexed = exec.array(&name).is_some();
+            // c:Src/params.c::getindex — `(i)pat` / `(I)pat` / `(R)pat`
+            // / `(r)pat` subscript flags on an indexed array LHS resolve
+            // to a numeric index (first / last match of pat). zshrs's
+            // read-form `${a[(i)pat]}` already implements this in
+            // subst.rs; the LHS assignment path silently stored the
+            // literal "(i)pat" as an assoc key (or worse, on indexed
+            // arrays, dropped the assignment entirely). Bug #293 in
+            // docs/BUGS.md. Detect the `(flags)pat` shape and resolve
+            // to a numeric index before assignsparam.
+            if is_indexed {
+                if let Some(rest) = key.strip_prefix('(') {
+                    if let Some(close) = rest.find(')') {
+                        let flags = &rest[..close];
+                        let pat = &rest[close + 1..];
+                        if !flags.is_empty()
+                            && flags
+                                .chars()
+                                .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'n' | 'e'))
+                        {
+                            // Resolve via the array's contents.
+                            if let Some(arr) = exec.array(&name) {
+                                let return_index = true; // LHS write — index needed
+                                let down = flags.contains('I') || flags.contains('R');
+                                let exact = flags.contains('e');
+                                let iter: Box<dyn Iterator<Item = (usize, &String)>> = if down {
+                                    Box::new(arr.iter().enumerate().rev())
+                                } else {
+                                    Box::new(arr.iter().enumerate())
+                                };
+                                let mut found: Option<usize> = None;
+                                for (idx, elem) in iter {
+                                    let matched = if exact {
+                                        elem == pat
+                                    } else {
+                                        crate::ported::pattern::patcompile(
+                                            pat,
+                                            crate::ported::zsh_h::PAT_HEAPDUP as i32,
+                                            None,
+                                        )
+                                        .map_or(false, |p| {
+                                            crate::ported::pattern::pattry(&p, elem)
+                                        })
+                                    };
+                                    if matched {
+                                        found = Some(idx);
+                                        break;
+                                    }
+                                }
+                                let _ = return_index;
+                                // (i)/(r) return 1-based index of match,
+                                // arr.len()+1 (or 1 for I/R) on miss
+                                // per zsh docs. We mirror the read-form
+                                // semantics from subst.rs.
+                                let idx_1based = match found {
+                                    Some(i) => (i + 1) as i64,
+                                    None => (arr.len() + 1) as i64,
+                                };
+                                return idx_1based.to_string();
+                            }
+                        }
+                    }
+                }
+            }
             if is_indexed && key.trim().parse::<i64>().is_err() {
                 crate::ported::math::mathevali(&crate::ported::subst::singsub(&key))
                     .map(|n| n.to_string())
