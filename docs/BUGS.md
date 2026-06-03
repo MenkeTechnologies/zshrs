@@ -29155,6 +29155,33 @@ translations[hello_jp]="こんにちは"
 
 ## #367 — `$?` (bare `?`) in `$((...))` arith context not resolved — treats as `0` instead of last exit status
 
+**Status:** `fixed` 2026-06-03 — wired the `?` unary-context
+lexer arm to read `LASTVAL` directly.
+
+**Root cause** — `src/ported/math.rs::zzlex`'s `?` arm did read
+`m_lastval()`, but that cache was set by an unused `with_lastval`
+helper — no `matheval`/`mathevali` callsite ever populated it,
+so it stayed 0 across the session. C `Src/math.c:772-776` reads
+the live `lastval` global directly.
+
+**Fix** — switch the `?` arm to load `crate::ported::builtin::
+LASTVAL` (the actual `$?` storage) via `Ordering::Relaxed`. The
+local `m_lastval()` cache is now dead code but kept for compat.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'false; echo $((? + 5))'
+6
+$ ./target/debug/zshrs --zsh -fc 'true; echo $((? + 5))'
+5
+$ ./target/debug/zshrs --zsh -fc 'echo $((1 ? 10 : 20))'
+10
+```
+Ternary regression check passes — non-unary `?` still routes
+to `QUEST`.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -29203,6 +29230,35 @@ or `(( ))` arith fail.
 ---
 
 ## #368 — `$#` (bare `#`) in `$((...))` arith context not resolved — treats as `0` instead of positional count
+
+**Status:** `fixed` 2026-06-03 — bare `#` (no trailing ident)
+in `zzlex` now emits NUM with `poundgetfn()` instead of falling
+through to `continue`.
+
+**Root cause** — `src/ported/math.rs::zzlex`'s `#` arm handled
+`#\X`, `##X`, and `#ident` (CID), but the final fall-through
+when no ident followed used `continue`, dropping the token. C
+`Src/math.c:911-915` returns `yyval.u.l = poundgetfn(NULL);
+return NUM;` for that case — the bare `$#` positional count.
+
+**Fix** — call `crate::ported::params::poundgetfn()` (already
+ported at `src/ported/params.rs:7011`, returns `pparams.len()`)
+and emit NUM. Same kind of fix as #367 but in the `#` arm.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'set -- a b c d e; echo $((# + 5))'
+10
+$ ./target/debug/zshrs --zsh -fc 'echo $((# + 5))'
+5
+$ ./target/debug/zshrs --zsh -fc 'echo $((#\\a))'
+97
+$ ./target/debug/zshrs --zsh -fc 'x=42; echo $((#x))'
+52
+```
+`#\X` char-code and `#ident` first-char regression checks pass.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
