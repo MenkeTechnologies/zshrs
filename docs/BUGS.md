@@ -14442,7 +14442,58 @@ fi
 
 ## #189 — `${()-default}` empty-flag-paren silently accepted
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — root cause was deeper than the
+report suggested. `${()...}` empty flag parens ARE accepted by C
+zsh too (loop walks until `)`, no flags parsed, no error). The
+actual reject happens in C's post-name `flagerr` path when
+`-default` follows a single-char special var: var_name = `-`,
+then `default` (alphanumeric) appears where only an operator
+(`:`/`-`/`+`/`=`/`?`/`#`/`%`/`/`) is allowed. C `Src/subst.c
+:2993-3003` errors `bad substitution`; zshrs fell through
+silently.
+
+**Root cause** — the post-name operator dispatch in `src/ported
+/subst.rs` had a partial reject at the chain tail covering only
+bash-specific `^`/`,`/`@` (case-conv / param-xfm operators
+zsh doesn't implement). Anything else with a non-operator first
+char fell through and returned the variable's bare value.
+`${-default}` ran as `$-`; `${()-default}` was the same path
+since empty flags reduce to no-flag, leaving var_name=`-`.
+
+**Fix** — `src/ported/subst.rs` post-name else-if-chain tail:
+replace the `r.starts_with('^') || ',' || '@'` reject with a
+positive-list check on operator-start chars
+(`: - + = ? # % /` plus tokenized `\u{9b}`/`\u{84}`/`\u{86}`).
+Any non-empty rest with a non-operator first char now emits
+`bad substitution`. Catches `${-default}`, `${-x}`,
+`${()-default}`, plus `${var^^}` / `${var@Q}` (previously
+covered by the partial check).
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'echo "[${()-default}]"' 2>&1; echo $?
+zsh:1: bad substitution
+1
+
+$ ./target/debug/zshrs --zsh -c 'echo "[${-default}]"' 2>&1; echo $?
+zsh:1: bad substitution
+1
+
+$ ./target/debug/zshrs --zsh -c 'echo "[${-x}]"' 2>&1; echo $?
+zsh:1: bad substitution
+1
+
+$ ./target/debug/zshrs --zsh -c 'echo "[${var^^}]"' 2>&1; echo $?
+zsh:1: bad substitution
+1
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Regressions clean: `${-}`/`${X-default}`/`${X:-default}`/
+`${X#default}`/`${X%foo}`/`${X:?required}`/`${(L)X}` all still
+work. Baseline 948/104 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[${()-default}]"' 2>&1
@@ -14452,30 +14503,9 @@ $ ./target/debug/zshrs --zsh -c 'echo "[${()-default}]"' 2>&1
 [569X]
 ```
 
-`${()-default}` — empty parameter-flag parentheses, then default
-`-default`. zsh rejects as bad substitution (empty `(...)` flag
-is malformed). zshrs treats it as if the parameter name were `$-`
-(shell flags), returning the value of `$-` (`569X`).
-
-Permissive-parser family. The `()` empty flag should be a
-syntax error.
-
-**Where** — `src/ported/paramsubst.rs::parse_flags`: doesn't
-require at least one flag character between `(` and `)`. Treats
-empty parens as no-flag, then `${-default}` parses as `$-`
-(shell flags) with `-default` consumed.
-
-**Impact** — typos with empty flag parens silently return shell
-flags instead of erroring:
-
-```sh
-# user typo: forgot to specify flag (e.g., L)
-echo "${()-fallback}"
-# zsh: errors immediately
-# zshrs: returns "$-" value, confusing
-```
-
-**Workaround** — careful syntax review.
+The report framed this as "empty flag parens accepted", but the
+empty `()` is fine in zsh too — the reject is on the
+`-default` after the single-char special var name `-`.
 
 ---
 
@@ -38712,7 +38742,7 @@ qualifiers always have a digit suffix.
 | 186 | `${(@)b:-default}` for single-empty arr returns default (zsh: empty) | **port-bug** | `(( ${#arr} > 0 ))` check |
 | 187 | `f() { :; } > /file` redirect on fn-def creates file at def time | **port-bug** | redirect at call site |
 | 188 | Empty-array slice `${a[@]:0:1}` iterates once with empty val | **port-bug** | `${#a} > 0` pre-check |
-| 189 | `${()-default}` empty-flag-paren silently returns `$-` | **port-bug** | careful syntax |
+| 189 | `${()-default}` empty-flag-paren silently returns `$-` | **fixed** 2026-06-02 | n/a |
 | 190 | `kill -L` lists signals (zsh: errors "unknown signal: SIGL") | **port-bug** | always use `-l` lowercase |
 | 191 | `${(l.5..)s}` empty-fill silently accepted with garbage output | **fixed** 2026-06-02 | n/a |
 | 192 | `${(P)name[N]:mod}` indirect-arr-elem with modifier works (zsh: errors) | **port-bug** | temp var split |
