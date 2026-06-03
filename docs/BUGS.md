@@ -35171,7 +35171,36 @@ sh-emulation list.
 
 ## #471 — `zmodload -u zsh/nonexistent` silently succeeds — should error "no such module"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — `unload_named_module` now
+emits the canonical `no such module NAME` diagnostic when
+the target isn't in the module table.
+
+**Root cause** — `src/ported/module.rs::unload_named_module`
+returned 1 on the "not found" branch without any diagnostic.
+C `Src/module.c:2959-2961` does
+`else if (!silent) zwarnnam(nam, "no such module %s",
+modname); ret = 1;`. The Rust port had no
+`zwarnnam` call; the `silent` param was even renamed to
+`_silent` (unused).
+
+**Fix** (`src/ported/module.rs::unload_named_module`) —
+restructure to a three-arm if/else:
+- module found and removed → return 0.
+- not found AND `silent == 0` → `zwarnnam(nam, "no such
+  module NAME")`, return 1.
+- not found AND `silent != 0` (`zmodload -i -u …`) → no
+  diagnostic, return 0 (idempotent unload).
+
+**Verify**:
+- `zmodload -u zsh/nonexistent` → `zsh:zmodload:1: no such
+  module zsh/nonexistent` + rc=1 (matches zsh byte-for-byte).
+- `zmodload -ui zsh/nonexistent` → no diagnostic + rc=0
+  (matches zsh; `-i` makes unload idempotent).
+- `zmodload zsh/regex; zmodload -u zsh/regex` → rc=0
+  (regression preserved — successful unload).
+- zshrs_shell baseline 951/101.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zmodload -u zsh/nonexistent; echo rc=$?'

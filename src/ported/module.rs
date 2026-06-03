@@ -3165,14 +3165,23 @@ pub fn bin_zmodload_auto(
 /// Port of `unload_named_module(char *modname, char *nam, int silent)` from Src/module.c:2924. zshrs links
 /// modules statically; this entry is a name-parity shim.
 /// WARNING: param names don't match C — Rust=(table, name, _nam, _silent) vs C=(modname, nam, silent)
-pub fn unload_named_module(table: &mut modulestab, name: &str, _nam: &str, _silent: i32) -> i32 {
+pub fn unload_named_module(table: &mut modulestab, name: &str, nam: &str, silent: i32) -> i32 {
     // c:2924-2965 — full body: find module, run cleanup, deregister.
     // Static-link path: just remove from the modules map; the per-feature
     // teardown happens via the dispatcher's setfeatureenables call.
     if table.modules.remove(name).is_some() {
         0
-    } else {
+    } else if silent == 0 {
+        // c:2959-2961 — `else if (!silent) zwarnnam(nam, "no such
+        // module %s", modname); ret = 1;`. When `-i` (silent) is
+        // set the missing module is not an error: no diagnostic
+        // AND ret stays 0. Without this gate `zmodload -u
+        // zsh/nonexistent` silently returned 1 with no diagnostic;
+        // with `-i`, it should return 0 silently. Bug #471.
+        crate::ported::utils::zwarnnam(nam, &format!("no such module {}", name));
         1
+    } else {
+        0
     }
 }
 
