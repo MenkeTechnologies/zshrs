@@ -23311,7 +23311,62 @@ blocked since `compctl` itself is missing.
 
 ## #305 — `vared -c VAR` non-interactive silently no-ops (zsh: errors "can't access terminal")
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `bin_vared` skipped the C
+`SHTTY == -1` tty-open check entirely and fell through to a
+stdin-read fallback, so non-interactive invocations silently
+no-opped instead of erroring. Two-part fix.
+
+**Root cause** —
+1. `bin_vared` was missing the C `c:1799-1814` tty-open block
+   that opens `/dev/tty` (or `-t <path>`) and errors `can't
+   access terminal` on failure / `<path>: not a terminal` if the
+   opened fd isn't a tty.
+2. The builtin's options spec read `"AaceghM:m:p:r:i:f:"` — no
+   `t:` — so `vared -t /bogus VAR` rejected the `-t` flag with
+   `bad option: -t` instead of erroring at the open. C's spec
+   is `"aAcef:ghi:M:m:p:r:t:"` (Src/Zle/zle_main.c:2210).
+
+**Fix** —
+1. `src/ported/zle/zle_main.rs::bin_vared`: after the
+   queue/unqueue_signals + param existence check, add the
+   c:1799-1814 block. `SHTTY == -1 || OPT_ISSET('t')` opens
+   `OPT_ARG_SAFE('t').unwrap_or("/dev/tty")` with
+   `O_RDWR|O_NOCTTY`; open failure → `zwarnnam(name, "can't
+   access terminal"); return 1`; opened-fd-not-a-tty →
+   `zwarnnam(name, "<path>: not a terminal"); close; return 1`.
+   The fd is closed immediately (zshrs's static-link path
+   doesn't drive interactive ZLE yet, so SHTTY/shout are not
+   wired through). The open + isatty check is what zsh runs.
+2. `src/ported/builtin.rs` BUILTIN spec for `vared`: align with
+   C exactly — `"aAcef:ghi:M:m:p:r:t:"` (was missing `t:`).
+
+**Verify (post-fix):**
+```sh
+$ ./target/debug/zshrs --zsh -c 'vared -c TEST'; echo "exit=$?"
+zsh:vared:1: can't access terminal
+exit=1
+
+$ ./target/debug/zshrs --zsh -c 'X=foo; vared X 2>&1'; echo "exit=$?"
+zsh:vared:1: can't access terminal
+exit=1
+
+$ ./target/debug/zshrs --zsh -c 'X=foo; vared -t /bogus X 2>&1'; echo "exit=$?"
+zsh:vared:1: can't access terminal
+exit=1
+
+$ ./target/debug/zshrs --zsh -c 'X=foo; vared -t /dev/null X 2>&1'; echo "exit=$?"
+zsh:vared:1: /dev/null: not a terminal
+exit=1
+
+$ ./target/debug/zshrs --zsh -c 'vared TEST 2>&1'; echo "exit=$?"
+zsh:vared:1: no such variable: TEST
+exit=1
+```
+
+All match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+Baseline 945/107 preserved.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'vared -c TEST'
@@ -23324,38 +23379,6 @@ $ ./target/debug/zshrs --zsh -c 'vared -c TEST'
 `vared` is the zle-backed "edit a variable's value" builtin.
 In non-interactive mode (no tty), zsh errors loudly. zshrs
 silently does nothing — neither errors nor edits.
-
-This is a defensive-runtime gap. Scripts that fall through to
-`vared` in non-interactive contexts (e.g., test harnesses
-that accidentally hit the vared path) get unexpected silent
-no-ops instead of a clear error.
-
-**Where** — `src/ported/builtins/vared.rs::handle_no_tty`:
-silently returns success when stdin isn't a tty. C-source
-`Src/Zle/zle_main.c::bin_vared` checks `isatty(0)` and
-returns 1 with an error message.
-
-**Impact** — defensive-runtime detection — non-interactive
-vared usage caught by zsh, ignored by zshrs:
-
-```sh
-edit_config() {
-    vared -c CONFIG_VAR
-    [[ -n "$CONFIG_VAR" ]] || return 1
-}
-# Script auto-test:
-echo "test" | edit_config
-# zsh: errors via vared, function returns 1
-# zshrs: vared is silent no-op, CONFIG_VAR unchanged, function may pass or fail randomly
-```
-
-**Workaround** — explicit `[[ -t 0 ]]` check before vared:
-```sh
-edit_config() {
-    [[ -t 0 ]] || { echo "vared requires tty" >&2; return 1; }
-    vared -c CONFIG_VAR
-}
-```
 
 ---
 
@@ -38573,7 +38596,7 @@ qualifiers always have a digit suffix.
 | 302 | `pushd +N` dirstack rotation rotates to wrong element (direction or indexing differs from zsh) | **fixed** 2026-06-02 | n/a |
 | 303 | `trap '...' ERR` fires twice when failing cmd is inside a fn (zsh: once per logical error) | **fixed** 2026-06-02 | n/a |
 | 304 | `compfiles`/`compgroups`/`compquote`/`comptags`/`comptry`/`compvalues`/`comparguments`/`compdescribe`/`compcall`/`compctl` builtins missing — compsys unusable | **port-bug** | (none — major daily-driver blocker) |
-| 305 | `vared -c VAR` non-interactive silent no-op (zsh: errors "can't access terminal") | **port-bug** | explicit `[[ -t 0 ]]` check |
+| 305 | `vared -c VAR` non-interactive silent no-op (zsh: errors "can't access terminal") | **fixed** 2026-06-02 | n/a |
 | 306 | `compdef` flag handling differs — `-N` rejected, always-available (zsh: autoloaded function not builtin) | **port-bug** | (none — needs flag table alignment) |
 | 307 | `[[ -5 -lt 0 ]]` errors "unknown condition: -5" — bare negative number misparsed as unary operator | **fixed** 2026-06-02 | n/a |
 | 308 | `${(t)arr[N]}` type-of-element errors "bad substitution" (zsh: returns "a") | **port-bug** | copy to temp scalar |
