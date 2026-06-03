@@ -6985,6 +6985,22 @@ pub fn execcmd_analyse(state: &mut estate, eparams: &mut crate::ported::zsh_h::e
 /// ..., "context")` pushes its label and pops on return.
 pub static zsh_eval_context: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
+/// Port of `static int donetrap;` from `Src/exec.c:1351`. Tracks
+/// whether the ZERR trap has already fired for the current sublist.
+/// C source resets to 0 at sublist start (c:1455) and sets to 1
+/// after `dotrap(SIGZERR)` (c:1602). The check
+/// `if (!this_noerrexit && !donetrap && !this_donetrap)` at c:1598
+/// suppresses re-firing within the same sublist AND, crucially,
+/// carries the "already fired" state across a function-call return
+/// boundary so the outer caller's post-command check doesn't fire
+/// ZERR a second time for the same logical error. Bug #303 in
+/// docs/BUGS.md.
+///
+/// Reset at each top-level statement boundary via
+/// `BUILTIN_DONETRAP_RESET` emitted by `compile_list`. Set after
+/// `dotrap(SIGZERR)` fires inside `BUILTIN_ERREXIT_CHECK`.
+pub static DONETRAP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
 /// Port of `save_params(Estate state, Wordcode pc, LinkList *restore_p,
 /// LinkList *remove_p)` from `Src/exec.c:4410-4458`. Walk WC_ASSIGN
 /// chain at `pc`, snapshot each existing param into `restore_p` (so

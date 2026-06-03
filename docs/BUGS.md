@@ -23108,18 +23108,59 @@ cd "$saved"
 
 ## #303 — `trap '...' ERR` fires twice when failing command is inside a function
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — added a `DONETRAP` process-
+global flag that suppresses ZERR re-fire on outer sublist's
+post-cmd check after an inner sublist (or function body) has
+already fired it.
 
+**Root cause** — C `Src/exec.c::execlist` uses a process-global
+`static int donetrap` (c:1351). It's reset to 0 at sublist
+start (c:1455), set to 1 after `dotrap(SIGZERR)` (c:1602), and
+checked at c:1598 (`if (!this_noerrexit && !donetrap && …)`).
+The reset-at-sublist-start + persist-across-fn-return semantics
+ensure that when `false` fires ZERR inside a function body, the
+outer sublist's post-command check sees `donetrap=1` and
+skips firing ZERR a second time for the same logical error.
+
+zshrs's `BUILTIN_ERREXIT_CHECK` had no donetrap gate — it
+called `dotrap(SIGZERR)` on EVERY non-zero status. So
+`f() { false; }; f` fired ZERR twice: once for `false` inside
+the body, once for `f` returning non-zero.
+
+**Fix** — three parts:
+
+  1. `src/ported/exec.rs` — added a process-global
+     `pub static DONETRAP: AtomicI32 = AtomicI32::new(0)`
+     matching C's static.
+  2. `src/fusevm_bridge.rs::BUILTIN_ERREXIT_CHECK` — wrapped
+     the `dotrap(SIGZERR)` call with a `DONETRAP` check; sets
+     the flag after firing.
+  3. New `BUILTIN_DONETRAP_RESET` (opcode 612) registered to
+     reset the flag to 0. `compile_zsh::compile_list` emits
+     it before every top-level statement so the next sublist
+     starts with `donetrap=0`.
+
+**Verify** (byte-matched against zsh)
 ```sh
-$ /opt/homebrew/bin/zsh -fc 'count=0; trap "((count++)); echo \"TRAP-\$count\"" ERR; f() { false; }; f; echo "total=$count"'
+$ zshrs --zsh -c 'count=0; trap "((count++)); echo \"TRAP-\$count\"" ERR; f() { false; }; f; echo "total=$count"'
 TRAP-1
 total=1
 
-$ ./target/debug/zshrs --zsh -c 'count=0; trap "((count++)); echo \"TRAP-\$count\"" ERR; f() { false; }; f; echo "total=$count"'
-TRAP-1
-TRAP-2
-total=2
+# Multiple sublists each fire ZERR separately (since DONETRAP
+# resets at each sublist start):
+$ zshrs --zsh -c 'count=0; trap "((count++))" ERR; false; false; echo "count=$count"'
+count=2
+
+# Inside fn, multiple errors → each separate sublist fires:
+$ zshrs --zsh -c 'count=0; trap "((count++))" ERR; f() { false; false; }; f; echo "count=$count"'
+count=2
+
+# Regressions: errexit + non-zero still aborts:
+$ zshrs --zsh -c 'setopt errexit; false; echo never'
+(no "never")
 ```
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 zsh's `ERR` trap fires once per "user-level" error event. A
 function that runs a failing command produces ONE error
@@ -38438,7 +38479,7 @@ qualifiers always have a digit suffix.
 | 300 | `typeset -i n; n=0o10` (Python octal prefix) silently parses as `0` (zsh: errors loudly); security-relevant for masks | **fixed** 2026-06-02 | n/a |
 | 301 | `${(L/U/C)arr[N]}` case-change flag on subscripted array element errors "bad substitution" | **port-bug** | split: `e=arr[N]; ${(C)e}` |
 | 302 | `pushd +N` dirstack rotation rotates to wrong element (direction or indexing differs from zsh) | **port-bug** | absolute `pushd "${dirstack[N]}"` |
-| 303 | `trap '...' ERR` fires twice when failing cmd is inside a fn (zsh: once per logical error) | **port-bug** | `\|\| return 0` at fn end to suppress |
+| 303 | `trap '...' ERR` fires twice when failing cmd is inside a fn (zsh: once per logical error) | **fixed** 2026-06-02 | n/a |
 | 304 | `compfiles`/`compgroups`/`compquote`/`comptags`/`comptry`/`compvalues`/`comparguments`/`compdescribe`/`compcall`/`compctl` builtins missing — compsys unusable | **port-bug** | (none — major daily-driver blocker) |
 | 305 | `vared -c VAR` non-interactive silent no-op (zsh: errors "can't access terminal") | **port-bug** | explicit `[[ -t 0 ]]` check |
 | 306 | `compdef` flag handling differs — `-N` rejected, always-available (zsh: autoloaded function not builtin) | **port-bug** | (none — needs flag table alignment) |

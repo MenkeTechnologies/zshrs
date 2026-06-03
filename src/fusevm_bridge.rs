@@ -4178,6 +4178,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Value::Int(0)
         }
     });
+    vm.register_builtin(BUILTIN_DONETRAP_RESET, |_vm, _argc| {
+        // c:Src/exec.c:1455 — `donetrap = 0;` at sublist start.
+        // Reset before each top-level statement so the next
+        // sublist's ERREXIT_CHECK fires the ZERR trap on its FIRST
+        // non-zero command. Carries the "already fired" state
+        // across function-call returns within the SAME outer
+        // sublist (per C semantics — donetrap is process-global).
+        // Bug #303 in docs/BUGS.md.
+        crate::ported::exec::DONETRAP.store(0, std::sync::atomic::Ordering::Relaxed);
+        Value::Status(0)
+    });
     // c:Src/exec.c — block-level redirect-failure gate. When a
     // compound command (`{ … } < file`, `( … ) > file`, etc.) has a
     // failing redirect (e.g. `< /nonexistent`), zsh skips the entire
@@ -4389,9 +4400,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if last == 0 {
             return Value::Int(0);
         }
-        // c:Src/signals.c:1245 dotrap(SIGZERR) — canonical ZERR trap
-        // dispatch. Fires whenever a command exits non-zero.
-        let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR);
+        // c:Src/exec.c:1598 `if (!this_noerrexit && !donetrap &&
+        // !this_donetrap)` — gate the ZERR trap fire on DONETRAP so
+        // an inner sublist (e.g. `false` inside a function) that
+        // already fired ZERR doesn't fire it AGAIN at the outer
+        // sublist's post-command check (after the function
+        // returned non-zero). Bug #303 in docs/BUGS.md. DONETRAP
+        // is reset at top-level statement boundaries via
+        // BUILTIN_DONETRAP_RESET (compile_list emit at
+        // compile_zsh.rs).
+        let already_done =
+            crate::ported::exec::DONETRAP.load(Ordering::Relaxed) != 0;
+        if !already_done {
+            // c:Src/signals.c:1245 dotrap(SIGZERR) — canonical ZERR
+            // trap dispatch. Fires whenever a command exits
+            // non-zero.
+            let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR);
+            // c:1602 — `donetrap = 1;` after firing.
+            crate::ported::exec::DONETRAP.store(1, Ordering::Relaxed);
+        }
         // c:Src/exec.c:1605-1610 — compute errreturn / errexit.
         //   errreturn = ERRRETURN && (INTERACTIVE || locallevel || sourcelevel)
         //               && !(noerrexit & NOERREXIT_RETURN)
@@ -5648,6 +5675,11 @@ pub const BUILTIN_XTRACE_NEWLINE: u16 = 526;
 ///
 /// Stack: pushes Int(0|1). argc = 0.
 pub const BUILTIN_XTRACE_IS_ON: u16 = 611;
+
+/// Reset the `DONETRAP` flag at the start of each top-level statement
+/// (sublist boundary). Mirrors C `Src/exec.c:1455` — `donetrap = 0`.
+/// Stack: untouched. argc = 0. Bug #303 in docs/BUGS.md.
+pub const BUILTIN_DONETRAP_RESET: u16 = 612;
 
 /// GLOB_SUBST guard for `[[ x == $pat ]]` pattern RHS coming from
 /// parameter / command substitution. C-zsh's `[[ == ]]` semantics
