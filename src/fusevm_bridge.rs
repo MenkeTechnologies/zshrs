@@ -4190,38 +4190,55 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
-    // `[[ -z X ]]` operand-empty test. Pops a `Value`, returns `1`
-    // (empty/true) per zsh's cond-context semantics — see
-    // `BUILTIN_COND_STR_EMPTY` docstring for the case table. Bug
-    // #185 in docs/BUGS.md.
+    // `[[ -z X ]]` / `[[ -n X ]]` — pop one Value, route through
+    // canonical `src/ported/cond.rs::evalcond` so the actual
+    // empty/non-empty test reuses the C-port at `cond.rs:270-271`
+    // (`'n' => !arg.is_empty()`, `'z' => arg.is_empty()`).
+    //
+    // The Array→args conversion lives at the bridge because cond.rs
+    // expects `&[&str]` (C `cond_str` signature equivalent). For
+    // `"${arr[@]}"` in DQ context the splice yields `Value::Array`
+    // — an empty array still expands to one implicit empty word
+    // (per zsh's "${arr[@]}" splat preserving at least one slot
+    // in cond context), so:
+    //   - Array(0)   → ["-z", ""]            → evalcond → 0 (true)
+    //   - Array(1)   → ["-z", word]          → evalcond → 0/1
+    //   - Array(2+)  → ["-z", w1, w2, ...]   → evalcond → 2 (parse
+    //                                          error: too many ops)
+    //                                          → coerced to false
+    //   - Str(s)     → ["-z", s]             → evalcond → 0/1
+    //
+    // Bug #185 in docs/BUGS.md.
+    fn run_cond_str_empty(v: Value, op: &str) -> Value {
+        let words: Vec<String> = match v {
+            Value::Array(arr) => arr.into_iter().map(|x| x.to_str()).collect(),
+            Value::Str(s) => vec![s.to_string()],
+            other => vec![other.to_str()],
+        };
+        let mut args: Vec<&str> = vec![op];
+        if words.is_empty() {
+            args.push("");
+        } else {
+            args.extend(words.iter().map(|s| s.as_str()));
+        }
+        let opts: std::collections::HashMap<String, bool> =
+            std::collections::HashMap::new();
+        let vars: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        // c:Src/cond.c:62-66 — `evalcond` returns 0=true, 1=false,
+        // 2=syntax-error. Coerce error to false (observable behavior
+        // in zsh: `[[ -z a b ]]` errors and the test as a whole
+        // returns non-zero).
+        let ret = crate::ported::cond::evalcond(&args, &opts, &vars, false);
+        Value::Int(if ret == 0 { 1 } else { 0 })
+    }
     vm.register_builtin(BUILTIN_COND_STR_EMPTY, |vm, _argc| {
         let v = vm.pop();
-        let empty = match v {
-            Value::Array(arr) => match arr.len() {
-                0 => true,
-                1 => arr[0].as_str_cow().is_empty(),
-                _ => false,
-            },
-            Value::Str(s) => s.is_empty(),
-            other => other.to_str().is_empty(),
-        };
-        Value::Int(if empty { 1 } else { 0 })
+        run_cond_str_empty(v, "-z")
     });
-
-    // `[[ -n X ]]` operand-non-empty test (complement of
-    // BUILTIN_COND_STR_EMPTY).
     vm.register_builtin(BUILTIN_COND_STR_NONEMPTY, |vm, _argc| {
         let v = vm.pop();
-        let empty = match v {
-            Value::Array(arr) => match arr.len() {
-                0 => true,
-                1 => arr[0].as_str_cow().is_empty(),
-                _ => false,
-            },
-            Value::Str(s) => s.is_empty(),
-            other => other.to_str().is_empty(),
-        };
-        Value::Int(if empty { 0 } else { 1 })
+        run_cond_str_empty(v, "-n")
     });
     // c:Src/exec.c — block-level redirect-failure gate. When a
     // compound command (`{ … } < file`, `( … ) > file`, etc.) has a
