@@ -9541,7 +9541,29 @@ echo "Selected: ${(C)sel}"
 
 ## #129 — `local -a a=("$@")` splits quoted args on whitespace (without `local -a` works)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — repro no longer reproduces.
+`local -a a=("$@")` correctly preserves each positional as a
+distinct element; `typeset -a a=("$@")` likewise. No new code
+change required this turn; updating status to match observed
+behavior. Likely fixed by a prior `"$@"` splat-preservation
+change.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { local -a a=("$@"); echo "len=${#a}"; for x in "${a[@]}"; do printf "[%s]\n" "$x"; done; }; f one "two three" four'
+len=3
+[one]
+[two three]
+[four]
+
+$ ./target/debug/zshrs --zsh -c 'f() { local -a a=("$@"); echo "len=${#a}"; for x in "${a[@]}"; do printf "[%s]\n" "$x"; done; }; f one "two three" four'
+len=3
+[one]
+[two three]
+[four]
+```
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { local -a a=("$@"); echo "len=${#a}"; for x in "${a[@]}"; do printf "[%s]\n" "$x"; done; }; f one "two three" four'
@@ -12534,7 +12556,59 @@ after
 
 ## #162 — `${(l.5)x}` (missing close-delimiter) silently padded; zsh errors
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-02 — `(l)`/`(r)` flag parser now
+rejects missing close-delimiter per C `get_intarg` -1 path.
+
+**Root cause** — `src/ported/subst.rs` (l/r flag arm at the
+flag-block parser) called a delimiter-scan loop:
+```rust
+while idx < body_chars.len() && body_chars[idx] != close_del {
+    idx += 1;
+}
+```
+This walked PAST the flag-block close `)` looking for the
+matching delimiter `.`, returned without finding one, then
+mathevali'd the resulting raw_expr (which contained `)x` and
+similar garbage) — silently producing a zero-pad no-op instead
+of erroring.
+
+C `Src/subst.c:1366-1456` get_strarg / get_intarg return -1
+when the closing delimiter is missing before EOF, and the
+`(l)`/`(r)` arm at c:2331 jumps to `flagerr` emitting `error in
+flags near position N in '${...}'` + non-zero exit.
+
+**Fix** — (a) the scan loop now also terminates at flag-block
+close (`)` / Outpar) so we don't walk past it; (b) after the
+loop, if `idx >= body_chars.len()` OR
+`body_chars[idx] != close_del`, emit
+`error in flags near position N in '${BODY}'` via zerr and
+short-circuit with `errflag_set_error()`.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'x=42; echo "[${(l.5)x}]"' 2>&1
+zsh:1: error in flags near position 5 in '${(l.5)x}]"'
+$ zshrs --zsh -c 'x=42; echo "[${(l.5)x}]"' 2>&1
+zsh:1: error in flags near position 5 in '${(l.5)x}'
+
+# (r) variant — same error path:
+$ zshrs --zsh -c 'x=42; echo "[${(r.5)x}]"' 2>&1
+zsh:1: error in flags near position 5 in '${(r.5)x}'
+
+# Legal closed forms still work:
+$ zshrs --zsh -c 'x=42; echo "[${(l.5.)x}]"'           # [   42]
+$ zshrs --zsh -c 'x=42; echo "[${(l.5..0.)x}]"'        # [00042]
+$ zshrs --zsh -c 'x=42; echo "[${(r.5..0.)x}]"'        # [42000]
+```
+
+The error message format `${BODY}` differs slightly from zsh's
+`${BODY}<trailing>` (zsh includes the rest of the input line),
+but both shells now emit a `position 5` diagnostic and exit
+non-zero.
+
+Baseline: 942/110 zshrs_shell — unchanged from before fix.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'x=42; echo "[${(l.5)x}]"' 2>&1
@@ -12543,42 +12617,6 @@ $ /opt/homebrew/bin/zsh -fc 'x=42; echo "[${(l.5)x}]"' 2>&1
 $ ./target/debug/zshrs --zsh -c 'x=42; echo "[${(l.5)x}]"' 2>&1
 [   42]
 ```
-
-The pad-flag syntax is `(l.<expr>.<str1>.<str2>.)` — delimiters
-must match on both sides AND closing delimiter must be present.
-
-`(l.5)` lacks the closing `.` — should be parse error. zsh
-rejects. zshrs accepts and applies pad with `5` as expression.
-
-Properly-closed forms work in both:
-```sh
-$ both-shells -fc 'x=42; echo "[${(l.5..0.)x}]"'
-[00042]
-```
-
-So the bug is the permissive parser accepting incomplete
-flag-arg syntax.
-
-**Where** — `src/ported/paramsubst.rs::parse_pad_flag_args`:
-doesn't enforce balanced delimiters on `(l...)`/`(r...)` flag
-contents. C-source `Src/subst.c::parsesubst` errors on missing
-close-delimiter.
-
-**Impact** — typos in pad-syntax silently produce different
-results:
-
-```sh
-# user typo: missing close-delimiter, intending zero-pad
-echo "${(l.10)num}"
-# zsh: error (caught immediately)
-# zshrs: applies space-pad (default), wrong format silently
-```
-
-Same family as #141, #146, #161 — permissive parser hides
-malformed input.
-
-**Workaround** — careful syntax review; always close the pad-flag
-delimiter.
 
 ---
 
@@ -37987,7 +38025,7 @@ qualifiers always have a digit suffix.
 | 126 | `${s:N:}` empty length silently returns empty (zsh errors) | **port-bug** | careful syntax |
 | 127 | `$'\xNN'` interpreted as Unicode codepoint + UTF-8 re-encode | **port-bug** | `printf '\xNN'` direct |
 | 128 | `${(C)arr[N]}` indexed-element case-flag errors "bad substitution" | **port-bug** | assign to scalar first |
-| 129 | `local -a a=("$@")` splits quoted args (without `-a` works) | **port-bug** | `local -a a; a=("$@")` |
+| 129 | `local -a a=("$@")` splits quoted args (without `-a` works) | **fixed** 2026-06-02 | n/a |
 | 130 | `${var@X}` bash parameter-transform accepted (zsh errors) | **port-bug** | `${(U)x}`/`${(L)x}`/`${(q)x}` |
 | 131 | `%(N~.A.B)` prompt conditional evaluates path-depth wrong | **port-bug** | manual `precmd` depth check |
 | 132 | `(( x = "5" + "3" ))` quoted numeric strings not coerced | **port-bug** | drop quotes for known-numeric |
@@ -38020,7 +38058,7 @@ qualifiers always have a digit suffix.
 | 159 | `while [[ $((i++)) -lt N ]]` only iterates once | **port-bug** | `while (( i++ < N ))` |
 | 160 | `autoload -U +X funcname` doesn't actually load function body | **port-bug** | drop `+X`, lazy load |
 | 161 | `case x in)` empty pattern silently accepted (zsh: parse error) | **fixed** 2026-06-02 | n/a |
-| 162 | `${(l.5)x}` missing close-delim silently accepted (zsh: error) | **port-bug** | careful syntax |
+| 162 | `${(l.5)x}` missing close-delim silently accepted (zsh: error) | **fixed** 2026-06-02 | n/a |
 | 163 | `${(t)1}` positional type returns `scalar` (zsh: `array-special`) | **port-bug** | `[[ "$#" -gt 0 ]]` test |
 | 164 | Extended_glob `^pat` (negation prefix) not recognized | **port-bug** | loop with `[[ == ]] continue` |
 | 165 | `${$((expr))}` arith-as-name returns empty (zsh: expr value) | **port-bug** | direct `$((expr))` |
