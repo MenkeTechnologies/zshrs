@@ -38469,7 +38469,38 @@ subsystem has cascading semantics gaps.
 
 ## #542 — `${(s.X.)str}` field-splitting keeps empty fields — zsh: removes them
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — interior-empty collapse when
+`nojoin != 2` (no `(@)` flag).
+
+**Root cause** — `src/ported/subst.rs` `(s.X.)` split path
+preserved every fragment from `str.split(sep)`. C zsh's
+`Src/subst.c sepsplit` treats consecutive separators like
+awk's FS: runs of separators between two non-empty neighbours
+collapse to a single boundary, dropping the interior empties.
+The `(@)` paramsubst flag raises nojoin to 2 (c:2165) and
+keeps the empties. The previous Rust port had neither
+behaviour, so `aXXb` yielded 3 elements where zsh yields 2.
+
+zsh's actual behaviour (verified across cases):
+- `aXXb` / `aXXXb` → `[a]` `[b]` (interior collapses)
+- `aXbXc` → `[a]` `[b]` `[c]` (no consecutive — unchanged)
+- `Xab` → `[]` `[ab]` (leading empty preserved)
+- `abX` → `[ab]` `[]` (trailing empty preserved)
+- `XX` / `X` → `[]` `[]` (consecutive collapse to one sep)
+- `""` → `[]` (1 element, empty input)
+- `(@s.X.)aXXb` → `[a]` `[]` `[b]` (nojoin=2 keeps empties)
+
+**Fix** (`src/ported/subst.rs` spsep arm) — after
+`split_one` populates `parts`, when `nojoin != 2`, walk the
+list and drop only the INTERIOR empties (index in `1..n-1`).
+Leading/trailing empties survive — matching zsh's
+sepsplit. `parts.len() >= 3` gate avoids the no-op case.
+
+**Verify**: all 9 edge cases above (4 interior-collapse, 4
+boundary, 1 @-flag preserve) match zsh exactly. zshrs_shell
+baseline 949/103 (improved 1 from 948/104 pre-fix).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a="aXXb"; for x in "${(s.X.)a}"; do echo "[$x]"; done | wc -l'
