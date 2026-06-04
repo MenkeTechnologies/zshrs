@@ -1982,10 +1982,18 @@ impl ZshCompiler {
                 // bare). Either form means "glob in value, must
                 // suppress" because zsh doesn't glob-expand assignment
                 // RHS by default.
+                // c:Src/zsh.h — token TOKEN constants:
+                //   Star = \u{87}, Quest = \u{97}, Inbrack = \u{91},
+                //   Inbrace = \u{8f}. The previous check used \u{86}
+                //   (Hat ^) where it meant Quest, so tokenized `?`
+                //   (\u{97}) in `a=he?l` was not detected and the
+                //   DQ-wrap path didn't fire → the runtime saw a
+                //   bare `?` glob and emitted "no matches found".
+                //   Bug #603.
                 let needs_dq_wrap = !s.starts_with('\u{9e}')
                     && !s.starts_with('\u{9d}')
                     && (s.contains('*') || s.contains('\u{87}')   // Star
-                        || s.contains('?') || s.contains('\u{86}') // Quest
+                        || s.contains('?') || s.contains('\u{97}') // Quest
                         || s.contains('[') || s.contains('\u{91}') // Inbrack
                         || s.contains('{') || s.contains('\u{8f}')); // Inbrace
                 self.assign_context_depth += 1;
