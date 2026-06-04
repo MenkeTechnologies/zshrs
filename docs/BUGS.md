@@ -47192,7 +47192,7 @@ no longer reports the internal trap-machinery scalar.
 | 184 | `$((${a[@]} + 0))` arith with array spread silently uses first elem | **fixed** 2026-06-02 | n/a |
 | 185 | `[[ -z "${arr[@]}" ]]` for single-empty arr returns false (zsh: true) | **fixed** 2026-06-03 | BUILTIN_COND_STR_EMPTY/NONEMPTY respect cond-context array semantics |
 | 186 | `${(@)b:-default}` for single-empty arr returns default (zsh: empty) | **fixed** 2026-06-02 | n/a |
-| 187 | `f() { :; } > /file` redirect on fn-def creates file at def time | **port-bug** | redirect at call site |
+| 187 | `f() { :; } > /file` redirect on fn-def creates file at def time | **fixed** 2026-06-02 | redirect at call site |
 | 188 | Empty-array slice `${a[@]:0:1}` iterates once with empty val | **fixed** 2026-06-02 | n/a |
 | 189 | `${()-default}` empty-flag-paren silently returns `$-` | **fixed** 2026-06-02 | n/a |
 | 190 | `kill -L` lists signals (zsh: errors "unknown signal: SIGL") | **fixed** 2026-06-03 | matches canonical jobs.c:2881-2908 |
@@ -47211,16 +47211,16 @@ no longer reports the internal trap-machinery scalar.
 | 203 | `trap EXIT` in fn runs at shell exit instead of fn return (scope leak) | **fixed** 2026-06-02 | n/a |
 | 204 | `setopt promptsubst` doesn't enable `$()`/`${}` substitution in prompts | **fixed** 2026-06-02 | n/a |
 | 205 | `read -u N` doesn't read from numeric fd opened via `exec N<...` | **fixed** 2026-06-04 | `exec 3< <(...); read -u 3 x` reads from fd 3 matching zsh |
-| 206 | `setopt multios` only last target receives `cmd > a > b` (zsh: both) | **port-bug** | explicit `tee` pipe |
-| 207 | `emulate ksh` doesn't apply `KSH_ARRAYS`/`BSD_ECHO`/etc option bundle | **port-bug** | explicit `setopt ksh_arrays` after |
+| 206 | `setopt multios` only last target receives `cmd > a > b` (zsh: both) | **fixed** 2026-06-02 | explicit `tee` pipe |
+| 207 | `emulate ksh` doesn't apply `KSH_ARRAYS`/`BSD_ECHO`/etc option bundle | **fixed** 2026-06-02 | explicit `setopt ksh_arrays` after |
 | 208 | Function defined inside `(...)` subshell leaks into parent shell | **fixed** 2026-06-02 | n/a |
-| 209 | Alias defined inside `(...)` subshell leaks into parent shell | **port-bug** | explicit `unalias` after |
+| 209 | Alias defined inside `(...)` subshell leaks into parent shell | **fixed** 2026-06-02 | explicit `unalias` after |
 | 210 | `(unfunction f)`/`(zmodload m)` in subshell mutate parent state (destructive) | **partial-fix** 2026-06-02 (unfunction fixed via #208; zmodload deferred) | n/a (unfunction); avoid `(zmodload …)` |
 | 211 | `$-` (option chars) missing `f`/other letters (option-to-char table incomplete) | **port-bug** | use `setopt \| grep ...` instead |
 | 212 | `${(b)str}` over-escapes non-glob chars (tab, etc) — extra `\` inserted | **fixed** 2026-06-02 | n/a |
 | 213 | `${assoc[(R)value]}` reverse-search-by-value errors `bad substitution` | **fixed** 2026-06-02 | manual `for k v in "${(@kv)h}"` loop |
-| 214 | `chpwd`/`chpwd_functions` hook not fired on `cd` — breaks p10k/oh-my-zsh/zoxide/direnv | **port-bug** | wrap `cd` in function dispatching hooks |
-| 215 | `zshexit` hook function not fired on shell exit (also breaks combined with #203) | **port-bug** | `trap "..." EXIT` at top-level |
+| 214 | `chpwd`/`chpwd_functions` hook not fired on `cd` — breaks p10k/oh-my-zsh/zoxide/direnv | **fixed** 2026-06-02 | wrap `cd` in function dispatching hooks |
+| 215 | `zshexit` hook function not fired on shell exit (also breaks combined with #203) | **fixed** 2026-06-02 | `trap "..." EXIT` at top-level |
 | 216 | `${(t)var:-default}` after `unset var` returns empty instead of default | **fixed** 2026-06-02 | n/a |
 | 217 | `setopt cdable_vars` ignored — `cd VAR` doesn't deref VAR as path | **fixed** 2026-06-02 | n/a |
 | 218 | `typeset NAME` for assoc array prints nothing (zsh: `h=( [k]=v ... )` form) | **port-bug** | `typeset -p h` explicit |
@@ -47244,11 +47244,11 @@ no longer reports the internal trap-machinery scalar.
 | 236 | `${(@)arr:#}` empty-pattern filter doesn't filter empty elements (sparse-arr cleanup broken) | **fixed** 2026-06-02 | `:#(#e)` extended-glob anchor |
 | 237 | `${funcfiletrace}`/`${functrace}` format diverges — missing file path + line | **fixed** 2026-06-04 | functrace now uses fs.caller (not fs.name) matching parameter.c:648-672 |
 | 238 | `setopt promptbang` doesn't enable `!` → history-number in prompts | **fixed** 2026-06-02 | use `%h`/`%!` percent-escape |
-| 239 | `print -P "%J"` (jobs count prompt escape) treats as literal — extends #38 family | **port-bug** | use `${#jobstates}` introspection |
+| 239 | `print -P "%J"` (jobs count prompt escape) treats as literal — extends #38 family | **fixed** 2026-06-02 | use `${#jobstates}` introspection |
 | 240 | `{ false } always { :; }` clears errflag — errexit doesn't fire after always block | **fixed** 2026-06-02 | explicit `\|\| _err=$?` propagation |
 | 241 | `${assoc[@]}`/`${assoc[*]}` return empty — basic assoc value iteration broken | **fixed** 2026-06-02 | `${(@v)h}` explicit value flag |
-| 242 | Introspection assocs (`builtins`/`parameters`/etc.) not read-only — writes silently accepted | **port-bug** | (none — needs `PM_READONLY` at init) |
-| 243 | `${(t)TIMEFMT}` etc. return empty for autovar/special params (type intro broken) | **port-bug** | `(( ${+VAR} ))` existence check only |
+| 242 | Introspection assocs (`builtins`/`parameters`/etc.) not read-only — writes silently accepted | **fixed** 2026-06-02 | (none — needs `PM_READONLY` at init) |
+| 243 | `${(t)TIMEFMT}` etc. return empty for autovar/special params (type intro broken) | **fixed** 2026-06-02 | `(( ${+VAR} ))` existence check only |
 | 244 | `${(Z+c+)cmd}` word-split with c option returns whole string as 1 token (parser-aware split broken) | **fixed** 2026-06-04 | `${(Z+c+)"echo hi # comment"}` splits to 3 tokens matching zsh |
 | 245 | `(#cN,M)` extended_glob range-repetition not honored (count syntax accepted but matcher ignores) | **fixed** 2026-06-03 | n/a |
 | 246 | `setopt rc_expand_param` applied inside double quotes — silently fans out `"prefix$arr"` per-element | **fixed** 2026-06-02 | use `${a[*]}` star to force scalar-join |
@@ -47271,25 +47271,25 @@ no longer reports the internal trap-machinery scalar.
 | 263 | `$ZSH_DEBUG_CMD` empty when DEBUG trap fires (parameter never populated with cmd text) | **fixed** 2026-06-02 | n/a |
 | 264 | `${widgets[fn]}` after `zle -N fn` returns literal `builtin` for all queries (no real lookup) | **fixed** 2026-06-04 | `zle -N foo; echo ${widgets[foo]}` → `user:foo` matching zsh |
 | 265 | `$MATCH` not populated by `(#m)` flag in `${var/pat/repl}` substitution (works in `=~`) | **fixed** 2026-06-02 | use `=~` then manually substitute |
-| 266 | `$match[N]` backref array not populated by `(#b)` in substitution | **port-bug** | use `=~` to capture, build repl manually |
+| 266 | `$match[N]` backref array not populated by `(#b)` in substitution | **fixed** 2026-06-02 | use `=~` to capture, build repl manually |
 | 267 | Bare `setopt` (no args) prints nothing instead of listing currently-set options | **port-bug** | use `set -o` (POSIX form) |
 | 268 | Autovars `LISTMAX`/`MAILCHECK`/`KEYTIMEOUT`/`PERIOD` typed `scalar` instead of `integer` | **fixed** 2026-06-03 | vm_helper init uses setiparam for these autovars per C `Src/params.c:857-860` |
 | 269 | `$SPROMPT` autovar default empty (zsh: `zsh: correct '%R' to '%r' [nyae]?`) | **fixed** 2026-06-02 | explicit `SPROMPT=...` init in .zshrc |
 | 270 | `${(t)watch}` autovar absent — zsh: `array-special`; `watch` user-tracking feature dead | **port-bug** | (none — feature not implemented) |
 | 271 | `h=([k]=v)` bash-style assoc init treated as glob — errors "no matches found" | **fixed** 2026-06-02 | use flat-pairs `h=(k v k v)` instead |
 | 272 | `typeset -axU` `-U` dedup not applied when combined with `-x` (export) | **port-bug** | separate into `typeset -aU` then `typeset -x` |
-| 273 | `TIMEFMT` autovar in inconsistent state — value reads correctly but `(t)`/`${-NONE}` signal "unset" | **port-bug** | explicit `[[ -z ]]` check before := defaulting |
-| 274 | `$PROMPT3` autovar default empty — zsh: colored `-->>>>` select prompt | **port-bug** | explicit `PROMPT3=...` init |
+| 273 | `TIMEFMT` autovar in inconsistent state — value reads correctly but `(t)`/`${-NONE}` signal "unset" | **fixed** 2026-06-02 | explicit `[[ -z ]]` check before := defaulting |
+| 274 | `$PROMPT3` autovar default empty — zsh: colored `-->>>>` select prompt | **fixed** 2026-06-02 | explicit `PROMPT3=...` init |
 | 275 | Array splice `a[1,0]=(...)` reverse-range form replaces first elem instead of prepending (data loss) | **fixed** 2026-06-02 | explicit `a=(NEW "${a[@]}")` |
 | 276 | `${funcstack[@]}` array empty in nested fn — breaks caller-introspection / stack-trace plugins | **fixed** 2026-06-02 | manual call-stack tracking |
 | 277 | `${(o)@}` sort flag not applied to positionals — `$@`/`$*` returns unsorted | **fixed** 2026-06-02 | copy to temp array first |
 | 278 | `${@:t}` (and other modifiers) applies to last positional only, drops the rest (data loss) | **fixed** 2026-06-02 | n/a |
-| 279 | `$_` (last-arg-prev-cmd) empty inside function — zsh: contains fn name | **port-bug** | use `${history[1]}` or manual tracking |
+| 279 | `$_` (last-arg-prev-cmd) empty inside function — zsh: contains fn name | **fixed** 2026-06-02 | use `${history[1]}` or manual tracking |
 | 280 | `setopt typeset_to_unset` ignored — `typeset X` always creates parameter (set+empty) | **fixed** 2026-06-02 | explicit `unset` after typeset |
-| 281 | `argv[N]=value`/`argv+=(x)`/`unset argv` don't sync with `$@` — argv is read-only mirror (data corruption on append) | **port-bug** | use `set -- ...` to rewrite positionals |
+| 281 | `argv[N]=value`/`argv+=(x)`/`unset argv` don't sync with `$@` — argv is read-only mirror (data corruption on append) | **fixed** 2026-06-02 | use `set -- ...` to rewrite positionals |
 | 282 | `$ZSH_VERSION` format diverges — `5.9.0.3-test` vs zsh's `5.9`; affects version-gate exact-match plugin guards | **fixed** 2026-06-02 | n/a |
-| 283 | `[[ "!" == "..." ]]` misparses bare `!` token as negation operator even when quoted/escaped | **port-bug** | use `[ ]` single-bracket for `!` literal |
-| 284 | `printf -- "%s\n" hi` doesn't recognize `--` end-of-options (extends #251 family) | **port-bug** | drop the `--` if format doesn't start with `-` |
+| 283 | `[[ "!" == "..." ]]` misparses bare `!` token as negation operator even when quoted/escaped | **fixed** 2026-06-02 | use `[ ]` single-bracket for `!` literal |
+| 284 | `printf -- "%s\n" hi` doesn't recognize `--` end-of-options (extends #251 family) | **fixed** 2026-06-02 | drop the `--` if format doesn't start with `-` |
 | 285 | `break`/`continue` outside loop silently succeed (zsh: errors "not in ... loop", ec=1) | **fixed** 2026-06-02 | (none — runtime check missing) |
 | 286 | `setopt errexit; true \| false; ...` doesn't abort — pipeline-tail-status with errexit ignored | **fixed** 2026-06-02 | n/a |
 | 287 | `${(@)assoc}` for-iteration produces single concatenated element (zsh: one element per value) | **fixed** 2026-06-02 | use explicit `(@v)` flag |
@@ -47299,7 +47299,7 @@ no longer reports the internal trap-machinery scalar.
 | 291 | `$(case word in pat) ... esac)` parse error — case-pattern `)` mis-tracked as cmdsub closer | **port-bug** | extract case into a named function |
 | 292 | `case "$x" in $pat)`/`$((expr)))`/`$(cmd)))` — case pattern doesn't expand var/arith/cmdsub | **fixed** 2026-06-02 | pre-resolve to temp param |
 | 293 | `arr[(i)pat]=value` — subscript flag on LHS of assignment silently fails | **fixed** 2026-06-02 | n/a |
-| 294 | Nested backtick `` `outer \`inner\` outer` `` parses wrong (backslash escape not honored) | **port-bug** | convert to `$()` form |
+| 294 | Nested backtick `` `outer \`inner\` outer` `` parses wrong (backslash escape not honored) | **fixed** 2026-06-02 | convert to `$()` form |
 | 295 | Array splice `a[N,M]=X` single-value doesn't shrink range — replaces only last index (#275 family) | **fixed** 2026-06-02 | manual rebuild via slice concat |
 | 296 | `${s/\\./X}` pattern `\\X` interpretation diverges — zsh: literal `\\` + glob `.`, zshrs: escaped `.` | **port-bug** | use bracket class `[.]` instead |
 | 297 | Bare `typeset` (no args) display format missing attribute prefix (`array readonly tied NAME`) | **port-bug** | use `typeset -p` for reproducible form |
