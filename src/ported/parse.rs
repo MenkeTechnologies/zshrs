@@ -2500,10 +2500,34 @@ fn par_cond() -> Option<ZshCommand> {
         set_incmdpos(true);
         zshlex();
     } else {
-        // Recover incond/incmdpos so subsequent parsing isn't stuck
-        // in cond-mode if the close bracket is missing.
+        // c:Src/parse.c:1818-1819 — `if (tok != DOUTBRACK)
+        // YYERRORV(oecused);`. par_dinbrack hard-requires DOUTBRACK
+        // after par_cond; anything else is a parse error and the
+        // outer parser's yyerror at c:2747 emits `parse error near
+        // \`%s'` using zshlextext. Bug #473: BAR (`|`) inside
+        // `[[ ab == a|b ]]` slipped past par_cond_or (which only
+        // checks DBAR), the cond returned cleanly, and then the
+        // top-level parser interpreted BAR as a pipe — running `b`
+        // as a command (security-relevant if pattern RHS is user
+        // input). Mirror C: emit parse error and abort.
+        let tok_text = match tok() {
+            BAR_TOK => "|".to_string(),
+            DBAR => "||".to_string(),
+            AMPER => "&".to_string(),
+            DAMPER => "&&".to_string(),
+            SEMI => ";".to_string(),
+            DSEMI => ";;".to_string(),
+            NEWLIN | SEPER => String::new(),
+            _ => tokstr().map(|s| crate::ported::lex::untokenize(&s)).unwrap_or_default(),
+        };
+        if tok_text.is_empty() {
+            zerr("parse error");
+        } else {
+            zerr(&format!("parse error near `{}'", tok_text));
+        }
         set_incond(0);
         set_incmdpos(true);
+        return None;
     }
 
     cond.map(ZshCommand::Cond)

@@ -37980,7 +37980,44 @@ typeset -p | sed 's/^typeset -[^ ]*H[^ ]* \([^=]*\)=.*$/typeset \1/'
 
 ## #473 — `[[ "ab" == a|b ]]` zshrs tries to run `b` as command — `|` in pattern not pipe-safe
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `par_cond` else branch now mirrors
+C's `par_dinbrack` (parse.c:1818): when post-cond tok != DOUTBRACK,
+emit `parse error near \`<tok>'` and abort. BAR (`|`) and DBAR (`||`)
+inside `[[ ]]` now hit the canonical diagnostic instead of slipping
+through to the outer pipeline parser.
+
+**Root cause** — `src/ported/parse.rs::par_cond` (line 2496-2509)
+had a silent recovery branch when `tok() != DOUTBRACK` after
+`parse_cond_expr` returned: it reset `incond`/`incmdpos` without
+erroring. C `Src/parse.c:1818-1819` is `if (tok != DOUTBRACK)
+YYERRORV(oecused);` — hard parse error. `parse_cond_or` only
+consumes DBAR; bare BAR exits the cond ladder cleanly with the
+LHS as the result, so `[[ ab == a|b ]]` produced a ZshCond
+for `[[ ab == a ]]`, then BAR became a pipe at the top level,
+running `b` as the second command (security-relevant when the
+RHS pattern is user-supplied input).
+
+**Fix** (`src/ported/parse.rs::par_cond`): when the closing
+token isn't DOUTBRACK, format the offending token via a small
+canonical-text table (BAR_TOK → `|`, DBAR → `||`, AMPER → `&`,
+DAMPER → `&&`, SEMI → `;`, DSEMI → `;;`, else
+`untokenize(tokstr)`) and emit `parse error near \`<text>'`
+matching `Src/parse.c:2747` yyerror format. Reset
+`incond`/`incmdpos` and return `None` so the parser aborts.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc '[[ "ab" == a|b ]]'; echo rc=$?
+zshrs:1: parse error near `|'
+rc=1
+$ ./target/debug/zshrs -fc '[[ "ab" == "ab" ]]'; echo rc=$?
+rc=0
+$ ./target/debug/zshrs -fc '[[ "x" == "x" || "y" == "z" ]]'; echo rc=$?
+rc=0
+```
+
+**Original report**:
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ "ab" == a|b ]] 2>&1; echo "[rc=$?]"'
@@ -44878,7 +44915,7 @@ qualifiers always have a digit suffix.
 | 470 | `emulate -L sh` shows `localoptions`/`localpatterns`/`localtraps` but doesn't apply sh-mode opts — same root as #464 | **port-bug** | manual setopt of sh list |
 | 471 | `zmodload -u zsh/nonexistent` silently rc=0 — should error "no such module" (zsh: rc=1) | **port-bug** | manual module-list check before unload |
 | 472 | `typeset -H` (hide value) doesn't suppress value in `typeset -p` output — leaks secrets in listings | **port-bug** | `sed` post-process to strip `=value` |
-| 473 | `[[ "ab" == a|b ]]` zshrs runs `b` as command — `\|` in pattern parsed as pipe (security-relevant) | **port-bug** | always parenthesize `(a\|b)` alternations |
+| 473 | `[[ "ab" == a|b ]]` zshrs runs `b` as command — `\|` in pattern parsed as pipe (security-relevant) | **fixed** 2026-06-04 | par_cond emits `parse error near <tok>` per parse.c:1818 |
 | 474 | `$PIPESTATUS` (uppercase) exposed as alias to `$pipestatus` — zsh has only lowercase; breaks bash-vs-zsh detection | **port-bug** | detect via `$ZSH_VERSION`/`$BASH_VERSION` strings |
 | 475 | bash-only builtins (`caller`/`help`/`complete`/`compopt`/`mapfile`) shipped in `--zsh` mode — extends bash-compat-contamination family | **port-bug** | detect zshrs via `$ZSH_VERSION` pattern |
 | 476 | `case "x" in) ...; esac` empty pattern silently accepted as no-op (zsh: parse error) — extends parser-strictness family | **fixed** 2026-06-04 | n/a |
