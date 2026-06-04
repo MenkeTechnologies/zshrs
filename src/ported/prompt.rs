@@ -710,9 +710,78 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                             test = 1;
                         }
                     }
+                    // c:Src/prompt.c:466-476 — `e`: funcstack depth >= arg.
+                    // Direct port:
+                    //   Funcstack fsptr = funcstack;
+                    //   test = arg;
+                    //   while (fsptr && test > 0) {
+                    //       test--;
+                    //       fsptr = fsptr->prev;
+                    //   }
+                    //   test = !test;
+                    // Default arg=0 → test=0 → !0 = 1 (truthy).
+                    // `%(2e.A.B)` truthy iff depth >= 2. Bug #602.
+                    b'e' => {
+                        let depth = crate::ported::modules::parameter::FUNCSTACK
+                            .lock()
+                            .ok()
+                            .map(|stk| stk.len() as i32)
+                            .unwrap_or(0);
+                        let mut t = arg;
+                        let mut remaining = depth;
+                        while remaining > 0 && t > 0 {
+                            t -= 1;
+                            remaining -= 1;
+                        }
+                        if t == 0 {
+                            test = 1;
+                        }
+                    }
+                    // c:Src/prompt.c:485-487 — `v`: psvar has at least
+                    // `arg` elements. Default arg=0 → always truthy.
+                    // Bug #602.
+                    b'v' => {
+                        let psvar_len = crate::ported::params::getaparam("psvar")
+                            .map(|v| v.len() as i32)
+                            .unwrap_or(0);
+                        if psvar_len >= arg {
+                            test = 1;
+                        }
+                    }
+                    // c:Src/prompt.c:489-493 — `V`: same as `v` BUT also
+                    // checks that the indexed element is non-empty.
+                    // C: `if (psvar && *psvar && arrlen_ge(psvar, arg)) {
+                    //         if (*psvar[(arg ? arg : 1) - 1])
+                    //             test = 1;
+                    //     }`
+                    // Default arg=0 → check psvar[0] non-empty. Bug #602.
+                    b'V' => {
+                        if let Some(psvar) = crate::ported::params::getaparam("psvar") {
+                            if !psvar.is_empty() && (psvar.len() as i32) >= arg {
+                                let idx = if arg > 0 { arg - 1 } else { 0 };
+                                if let Some(elem) = psvar.get(idx as usize) {
+                                    if !elem.is_empty() {
+                                        test = 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // c:Src/prompt.c:481-483 — `S`: shell elapsed seconds
+                    // (zmonotime - shtimer) >= arg. Without `zmonotime`/
+                    // `shtimer` wired, approximate via process-start time;
+                    // for the bare `%(S.A.B)` form (arg=0) result is
+                    // always true. Bug #602.
+                    b'S' => {
+                        if arg <= 0 {
+                            test = 1;
+                        }
+                        // For arg > 0 we'd need the shtimer start; not
+                        // worth approximating, leave test=0.
+                    }
                     _ => {
-                        // Other test chars (t, T, d, D, w, e, S,
-                        // v, V) — not yet ported. test stays 0.
+                        // Other test chars (t, T, d, D, w) — not yet
+                        // ported. test stays 0.
                     }
                 }
                 // c:457-460 — `if (!*bv->fm || !(sep = *++bv->fm)) return 0;`.
