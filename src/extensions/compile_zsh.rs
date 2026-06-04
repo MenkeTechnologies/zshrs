@@ -2586,8 +2586,24 @@ impl ZshCompiler {
         // GET_VAR so the result is Value::Array of positionals. The bridge
         // path below routes through expand_word_glob which collapses
         // DoubleQuoted into one joined string, breaking spread semantics.
-        if !has_bnull && (untoked == "$@" || untoked == "$*") {
-            let name = &untoked[1..];
+        // c:Src/subst.c — `${*}` / `${@}` braced shapes are
+        // semantically identical to `$*` / `$@` (subst.c:1885
+        // paramsubst entry just consumes the braces). Bug #588
+        // extends the fast path to recognize the braced forms so
+        // `"${*}"` honors IFS first-char joining matching `"$*"`.
+        let bare_target = if !has_bnull {
+            if untoked == "$@" || untoked == "$*" {
+                Some(&untoked[1..])
+            } else if untoked == "${@}" || untoked == "${*}" {
+                // Strip `${` + name + `}` — name is the single char.
+                Some(&untoked[2..untoked.len() - 1])
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(name) = bare_target {
             let idx = self.builder.add_constant(Value::str(name));
             // Detect DQ context two ways: (a) the raw input `s` is
             // DQ-wrapped (`\u{9e}$*\u{9e}`), or (b) we're inside a
@@ -2602,7 +2618,7 @@ impl ZshCompiler {
             self.builder.emit(Op::LoadConst(idx), 0);
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
-            if in_dq && untoked == "$*" {
+            if in_dq && name == "*" {
                 // Discard the GET_VAR result; JOIN_STAR re-fetches the
                 // array and joins by IFS first char. (We can't easily
                 // join an in-stack Array without a dedicated op.)
