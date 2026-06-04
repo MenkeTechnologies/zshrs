@@ -6841,11 +6841,19 @@ pub fn paramsubst(
                 // (`#%`/`%#`), anchor-prefix (pat starts with `#`),
                 // anchor-suffix (`%`), or unanchored. Returns the
                 // post-replacement string.
+                // c:Src/pattern.c GF_BACKREF — `(#b)pat` populates
+                // `$match`/`$mbegin`/`$mend` alongside the scalar
+                // MATCH/MBEGIN/MEND. The match-loop here previously
+                // used `patcompile + pattry` which only returns the
+                // success bit — `$match[N]` stayed untouched.
+                // `glob_match_static` (vm_helper.rs:2810) wraps
+                // `pattryrefs` which sets the backref arrays when the
+                // pattern carries GF_BACKREF. Mirror the // path
+                // (line 6529) which already routes through
+                // glob_match_static. Bug #590 in docs/BUGS.md.
                 let replace_one = |val: &str| -> String {
                     if let Some(whole_pat) = both_anchor_pat {
-                        if patcompile(whole_pat, PAT_HEAPDUP as i32, None)
-                            .map_or(false, |__p| pattry(&__p, val))
-                        {
+                        if crate::vm_helper::glob_match_static(val, whole_pat) {
                             let dyn_repl = resolve_repl(val, 0);
                             return dyn_repl;
                         }
@@ -6856,9 +6864,7 @@ pub fn paramsubst(
                         let nn = cv.len();
                         for end in (0..=nn).rev() {
                             let cand: String = cv[..end].iter().collect();
-                            if patcompile(anchor_pat, PAT_HEAPDUP as i32, None)
-                                .map_or(false, |__p| pattry(&__p, &cand))
-                            {
+                            if crate::vm_helper::glob_match_static(&cand, anchor_pat) {
                                 let dyn_repl = resolve_repl(&cand, 0);
                                 return format!(
                                     "{}{}",
@@ -6873,9 +6879,7 @@ pub fn paramsubst(
                         let nn = cv.len();
                         for start in 0..=nn {
                             let cand: String = cv[start..].iter().collect();
-                            if patcompile(anchor_pat, PAT_HEAPDUP as i32, None)
-                                .map_or(false, |__p| pattry(&__p, &cand))
-                            {
+                            if crate::vm_helper::glob_match_static(&cand, anchor_pat) {
                                 let span_byte: usize =
                                     cv[..start].iter().map(|c| c.len_utf8()).sum();
                                 let dyn_repl = resolve_repl(&cand, span_byte);
@@ -6893,9 +6897,7 @@ pub fn paramsubst(
                         for start in 0..nn {
                             for end in (start + 1..=nn).rev() {
                                 let cand: String = cv[start..end].iter().collect();
-                                if patcompile(&pat, PAT_HEAPDUP as i32, None)
-                                    .map_or(false, |__p| pattry(&__p, &cand))
-                                {
+                                if crate::vm_helper::glob_match_static(&cand, &pat) {
                                     let span_byte: usize =
                                         cv[..start].iter().map(|c| c.len_utf8()).sum();
                                     let dyn_repl = resolve_repl(&cand, span_byte);

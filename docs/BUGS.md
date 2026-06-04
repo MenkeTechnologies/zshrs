@@ -44645,6 +44645,58 @@ Test baseline 964/88 preserved.
 
 ---
 
+## #590 — `${a/(#b)(l)*/--$match[1]--}` single-replace empty $match[] — only `//` populated backrefs
+
+**Status:** `fixed` 2026-06-04 — single-replace `${var/pat/repl}`
+arm now routes through `glob_match_static` (which wraps
+`pattryrefs` and populates `$match[]`/`$mbegin[]`/`$mend[]`)
+instead of bare `patcompile + pattry` which only returns the
+success bit.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt EXTENDED_GLOB; a=hello; b=${a/(#b)(l)*/--$match[1]--}; echo $b'
+he--l--
+
+$ ./target/debug/zshrs --zsh -fc 'setopt EXTENDED_GLOB; a=hello; b=${a/(#b)(l)*/--$match[1]--}; echo $b'   # before
+he----
+```
+
+**Root cause** — `src/ported/subst.rs::paramsubst` single-replace
+helper `replace_one` (line ~6844) used `patcompile(pat) +
+pattry(&p, val)` for matching. `pattry` returns only the success
+bit; backref capture groups stay in internal state that never
+reaches `$match[]`. The global-replace (`//`) arm at line 6503
+already used `glob_match_static` which routes through
+`pattryrefs` + `setaparam("match", ...)` — that's why `//`
+populated `$match[]` but `/` didn't.
+
+C `Src/pattern.c GF_BACKREF` flow: pattern with `(#b)` sets the
+flag, then `pattryrefs` (vs plain `pattry`) extracts and stores
+the capture groups into the match arrays.
+
+**Fix** (`src/ported/subst.rs::paramsubst::replace_one`):
+replace all four `patcompile + pattry` call sites (both-anchored,
+`#`-prefix, `%`-suffix, unanchored sliding window) with
+`crate::vm_helper::glob_match_static(&cand, pat)`. Same single-
+function wrapper the `//` arm uses.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'setopt EXTENDED_GLOB; a=hello; b=${a/(#b)(l)*/--$match[1]--}; echo $b'
+he--l--
+$ ./target/debug/zshrs -fc 'setopt EXTENDED_GLOB; a=hello; b=${a//(#b)(l)(*)/--$match[1]--}; echo $b'  # // regression
+he--l--
+$ ./target/debug/zshrs -fc 'a=hello; r=${a/l/X}; echo $r'    # plain literal (regression)
+heXlo
+$ ./target/debug/zshrs -fc 'a=hello; r=${a/*l/X}; echo $r'   # glob (regression)
+Xo
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #589 — `a=hello; a[2]=X` produces ` X` instead of `hXllo` — scalar subscript-assign treated as array-store
 
 **Status:** `fixed` 2026-06-04 — assignsparam's subscripted-store
@@ -46030,6 +46082,7 @@ no longer reports the internal trap-machinery scalar.
 | 587 | `${a[(r)y]:-default}` fires default even when `(r)y` matches — flag-form subscripts not is_set | **fixed** 2026-06-04 | paramsubst is_set arm treats flag-form `(…)` subscripts as set when raw_value non-empty |
 | 588 | `"${*}"` (braced) ignores IFS — bare `$*` works | **fixed** 2026-06-04 | compile_zsh fast path recognizes braced `${*}`/`${@}` equivalent to bare forms |
 | 589 | `a=hello; a[2]=X` produces ` X` instead of `hXllo` — scalar subscript-assign treated as array-store | **fixed** 2026-06-04 | assignsparam + SET_SUBSCRIPT_RANGE detect PM_SCALAR and route through char-splice |
+| 590 | `${a/(#b)(l)*/--$match[1]--}` single-replace leaves $match[] empty — only `//` populated backrefs | **fixed** 2026-06-04 | replace_one routes through glob_match_static (pattryrefs) instead of bare pattry |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
