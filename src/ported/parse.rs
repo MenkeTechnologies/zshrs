@@ -2033,13 +2033,15 @@ fn par_funcdef() -> Option<ZshCommand> {
         // Explicit end-token keeps the inner parse from hitting the
         // top-level stray-`}` arm (#168). Bug #167 family.
         let body = parse_program_until(Some(&[OUTBRACE_TOK]));
-        let body_end = if tok() == OUTBRACE_TOK {
-            // Lexer has just consumed `}`; pos is past it. Body content
-            // ends one byte before pos.
-            pos().saturating_sub(1)
-        } else {
-            pos()
-        };
+        // c:Src/parse.c:1733-1737 — `if (tok != OUTBRACE) { cmdpop();
+        // ... YYERRORV(oecused); }`. Hard-error on missing close brace
+        // so `function f { echo hi` doesn't silently register a half-
+        // parsed body. Bug #405.
+        if tok() != OUTBRACE_TOK {
+            zerr("parse error: expected `}'");
+            return None;
+        }
+        let body_end = pos().saturating_sub(1);
         let body_source = input_slice(body_start, body_end)
             .map(|s| {
                 // Lexer's pos() may have advanced past `}` AND skipped
@@ -2058,9 +2060,7 @@ fn par_funcdef() -> Option<ZshCommand> {
                 t.to_string()
             })
             .filter(|s| !s.is_empty());
-        if tok() == OUTBRACE_TOK {
-            zshlex();
-        }
+        zshlex();
 
         // Anonymous form `function () { body } a b c` (with `()`) or
         // `function { body } a b c` (zsh-only shorthand, no `()`). No
@@ -8045,9 +8045,13 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
     // parse stops cleanly at `}` rather than hitting the top-level
     // stray-`}` arm (#168). Bug #167 family.
     let body = parse_program_until(Some(&[OUTBRACE_TOK]));
-    if tok() == OUTBRACE_TOK {
-        zshlex();
+    // c:Src/parse.c:1733-1737 — same `if (tok != OUTBRACE) YYERRORV`
+    // gate as the named-funcdef path. Bug #405 sibling.
+    if tok() != OUTBRACE_TOK {
+        zerr("parse error: expected `}'");
+        return None;
     }
+    zshlex();
     // Collect any trailing args until a separator. zsh's anon-fn form
     // `() { body } a b c` runs body with $1=a, $2=b, $3=c.
     let mut args = Vec::new();
@@ -8175,11 +8179,16 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
         // Explicit end-token keeps the inner parse from hitting the
         // top-level stray-`}` arm (#168). Bug #167 family.
         let body = parse_program_until(Some(&[OUTBRACE_TOK]));
-        let body_end = if tok() == OUTBRACE_TOK {
-            pos().saturating_sub(1)
-        } else {
-            pos()
-        };
+        // c:Src/parse.c:1733-1737 — `if (tok != OUTBRACE) { cmdpop();
+        // lineno += oldlineno; ecnpats = onp; ecssub = oecssub;
+        // YYERRORV(oecused); }`. Without this gate, `f() { echo hi`
+        // silently registered as a complete fn with body `echo hi`.
+        // Bug #405.
+        if tok() != OUTBRACE_TOK {
+            zerr("parse error: expected `}'");
+            return None;
+        }
+        let body_end = pos().saturating_sub(1);
         let body_source = input_slice(body_start, body_end)
             .map(|s| {
                 // Lexer's pos() may have advanced past `}` AND skipped
@@ -8198,9 +8207,7 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
                 t.to_string()
             })
             .filter(|s| !s.is_empty());
-        if tok() == OUTBRACE_TOK {
-            zshlex();
-        }
+        zshlex();
         Some(ZshCommand::FuncDef(ZshFuncDef {
             names: vec![name],
             body: Box::new(body),
