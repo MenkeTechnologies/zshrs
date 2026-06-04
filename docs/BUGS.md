@@ -33915,7 +33915,17 @@ zshrs's `-n` catches what its `-c` accepts.)
 
 ## #414 — `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — unknown prompt escapes now consume the
+`%` and flag character matching zsh's silent-skip behavior. Likely landed
+via earlier prompt-escape parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'print -P "%Zabc"'
+abc    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%Zabc"'
@@ -34968,7 +34978,17 @@ can't fire.
 
 ## #427 — `read` doesn't strip leading/trailing IFS chars from input
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — repro no longer reproduces. `read` now
+strips leading/trailing IFS chars matching zsh. Likely landed via earlier
+`bin_read` parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'printf "  hello   \n" | read x; printf "[%s]\n" "$x"'
+[hello]    # matches zsh byte-for-byte
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'printf "  hello   \n" | read x; printf "[%s]\n" "$x"'
@@ -35727,7 +35747,34 @@ equivalent to `%N` semantics but covers most cases.)
 
 ## #439 — `%>>...` and `%<<...` prompt truncation directives not recognized
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/prompt.rs](../src/ported/prompt.rs)).
+
+**Root cause** — two gaps in the prompt escape dispatcher:
+1. `putpromptchar` had no `b'<' | b'>'` match arm — those bytes fell
+   through to the unknown-escape default, consuming the first `<`/`>`
+   only and leaving the second as a literal char in output (`%>>` → `>`).
+2. `prompttrunc` ported only the `arg > 0` body of `Src/prompt.c:1276`,
+   missing the `arg <= 0` else branch at `c:1608-1617` that walks past
+   the truncation-string content to the matching close marker.
+
+**Fix** — (1) added `b'<' | b'>' => prompttrunc(bv, arg, xc as i32,
+doprint, endchar)` to the escape-dispatch match. (2) ported the missing
+else branch in `prompttrunc`: with no width prefix, advance past the
+truncchar marker and walk until the matching close (with backslash
+escape recognition).
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'print -P "%>>"'
+(empty newline only)    # matches zsh
+
+$ ./target/debug/zshrs --zsh -fc 'print -P "%5>...>helloworld%>>"'
+he...    # truncation works with width prefix
+```
+
+Baseline 960/92 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%>>"'
@@ -44019,7 +44066,7 @@ qualifiers always have a digit suffix.
 | 411 | `[ "abc" -eq 5 ]` silent rc=1 instead of "integer expression expected" + rc=2 — type-error coerced to 0 | **port-bug** | pre-validate operand with `=~ ^-?[0-9]+$` |
 | 412 | `$PROMPT3` default empty — `select` prompt missing (zsh: `\\033[1;34m-->>>> \\033[0m`) | **port-bug** | seed `PS3` in zshrc |
 | 413 | `do` standalone-keyword silently accepted as no-op (zsh: parse error near `do`) — reserved-word strict check missing | **port-bug** | `zsh -n script.zsh` pre-check |
-| 414 | `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape) — opposite of #398 printf direction | **port-bug** | explicit escape allowlist |
+| 414 | `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape) — opposite of #398 printf direction | **fixed** 2026-06-04 | n/a |
 | 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **port-bug** | manual save/restore via `${(@kv)config}` |
 | 416 | `unset PATH` ignored — command lookup still resolves (security bypass for sandboxing patterns) | **port-bug** | try `PATH=` empty assignment (needs verify) |
 | 417 | `unset RANDOM` ignored — special-param regenerator stays active (zsh: returns empty after unset) | **fixed** 2026-06-04 | n/a |
@@ -44032,7 +44079,7 @@ qualifiers always have a digit suffix.
 | 424 | **CRITICAL** scalar→array tie broken for MANPATH/FPATH/CDPATH — generalizes #423 to all tied params | **port-bug** | manual rebuild of `manpath`/`fpath`/`cdpath` after scalar assignment |
 | 425 | `(#cN)` glob exact-count flag not recognized — extends #409 family | **fixed** 2026-06-04 | n/a |
 | 426 | `command_not_found_handler` user-defined hook not invoked — entire ecosystem broken (apt/nix/asdf integration) | **fixed** 2026-06-04 | n/a |
-| 427 | `read` doesn't strip leading/trailing IFS chars (zsh: trims `[hello]` from `"  hello  "`) | **port-bug** | explicit `${var##[[:space:]]##}` trim |
+| 427 | `read` doesn't strip leading/trailing IFS chars (zsh: trims `[hello]` from `"  hello  "`) | **fixed** 2026-06-04 | n/a |
 | 428 | unquoted `${arr[*]}` joined with IFS but not re-word-split — half of join+split sequence missing | **port-bug** | use `${arr[@]}` form instead |
 | 429 | `%m` prompt escape (short hostname) not expanded — printed literally; likely also `%M`/`%y`/`%l`/`%j`/`%i` | **fixed** 2026-06-04 | n/a |
 | 430 | `%s`/`%u` prompt close-escapes emit `\\033[0m` (reset-all) instead of `\\033[27m`/`\\033[24m` (pair-specific) | **fixed** 2026-06-04 | n/a |
@@ -44044,7 +44091,7 @@ qualifiers always have a digit suffix.
 | 436 | `${(q)a[N]}` flag + subscript combination errors "bad substitution" — parser doesn't combine flags with subscripts | **fixed** 2026-06-04 | n/a |
 | 437 | regex-compile error diagnostic missing details — "failed to compile regex" with no specific reason (zsh: "brackets not balanced" etc.) | **fixed** 2026-06-04 | n/a |
 | 438 | `%N` prompt escape (script/fn name) not expanded — extends prompt-escape gap family | **fixed** 2026-06-04 | n/a |
-| 439 | `%>>...` / `%<<...` prompt truncation directives not recognized — printed literally | **port-bug** | manual `${PWD/#$HOME/~}` + precmd truncation |
+| 439 | `%>>...` / `%<<...` prompt truncation directives not recognized — printed literally | **fixed** 2026-06-04 | n/a |
 | 440 | `**` recursive glob breadth-first ordering instead of zsh's alphabetical depth-first — order-dependent scripts break | **port-bug** | pipe through `sort` |
 | 441 | `pwd` builtin returns spoofed `$PWD` blindly — security-relevant, zsh validates against `getcwd()` | **fixed** 2026-06-04 | n/a |
 | 442 | `$ZSH_VERSION` exposes zshrs internal version `5.9.0.3-test` instead of zsh-compat `5.9` — breaks feature-detect scripts | **fixed** 2026-06-04 | n/a |
