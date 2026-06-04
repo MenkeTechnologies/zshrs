@@ -7107,6 +7107,15 @@ pub fn paramsubst(
             } else if let Some(pat) = r.strip_prefix("##") {
                 // c:3540 (longest prefix strip)
                 let p = escape_bare_alt_pipes(&singsub(pat));
+                // c:Src/glob.c:2674-2677 — patcompile failure → "bad
+                // pattern" diagnostic. Bug #606 (sibling of #605).
+                if !p.is_empty()
+                    && patcompile(&p, PAT_HEAPDUP as i32, None).is_none()
+                {
+                    zerr(&format!("bad pattern: {}", p));
+                    errflag_set_error();
+                    return (String::new(), new_pos, vec![]);
+                }
                 // has_subscript guard — same as `/`/`//` arms.
                 // Per subst.c:2915 + 3422-3451, scalar subscript
                 // dispatches to getmatch on the single element.
@@ -7213,6 +7222,15 @@ pub fn paramsubst(
             } else if let Some(pat) = r.strip_prefix('#') {
                 // c:3540 (shortest prefix strip)
                 let p = escape_bare_alt_pipes(&singsub(pat));
+                // c:Src/glob.c:2674-2677 — patcompile failure → "bad
+                // pattern" diagnostic. Bug #606 (sibling of #605).
+                if !p.is_empty()
+                    && patcompile(&p, PAT_HEAPDUP as i32, None).is_none()
+                {
+                    zerr(&format!("bad pattern: {}", p));
+                    errflag_set_error();
+                    return (String::new(), new_pos, vec![]);
+                }
                 let has_scalar_sub = subscript
                     .as_deref()
                     .map(|s| {
@@ -7308,6 +7326,15 @@ pub fn paramsubst(
             } else if let Some(pat) = r.strip_prefix("%%") {
                 // c:3540 (longest suffix strip)
                 let p = escape_bare_alt_pipes(&singsub(pat));
+                // c:Src/glob.c:2674-2677 — patcompile failure → "bad
+                // pattern" diagnostic. Bug #606 (sibling of #605).
+                if !p.is_empty()
+                    && patcompile(&p, PAT_HEAPDUP as i32, None).is_none()
+                {
+                    zerr(&format!("bad pattern: {}", p));
+                    errflag_set_error();
+                    return (String::new(), new_pos, vec![]);
+                }
                 let has_scalar_sub = subscript
                     .as_deref()
                     .map(|s| {
@@ -7428,6 +7455,15 @@ pub fn paramsubst(
             } else if let Some(pat) = r.strip_prefix('%') {
                 // c:3540 (shortest suffix strip)
                 let p = escape_bare_alt_pipes(&singsub(pat));
+                // c:Src/glob.c:2674-2677 — patcompile failure → "bad
+                // pattern" diagnostic. Bug #606 (sibling of #605).
+                if !p.is_empty()
+                    && patcompile(&p, PAT_HEAPDUP as i32, None).is_none()
+                {
+                    zerr(&format!("bad pattern: {}", p));
+                    errflag_set_error();
+                    return (String::new(), new_pos, vec![]);
+                }
                 let has_scalar_sub = subscript
                     .as_deref()
                     .map(|s| {
