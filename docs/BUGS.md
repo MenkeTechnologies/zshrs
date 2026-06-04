@@ -40149,7 +40149,17 @@ eval "result=$b"
 
 ## #508 — `%E` (clear-to-end-of-line) prompt escape printed literally — zsh emits `\033[K`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `%E` now emits the CSI K (clear-to-EOL)
+escape matching zsh byte-for-byte. Likely landed via earlier prompt-
+escape parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'print -P "%E"' | od -c
+0000000  033   [   K  \n    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%E"' | od -c | head -1
@@ -40186,7 +40196,18 @@ PS1=$'%n@%m \e[K> '
 
 ## #509 — `%G`/`%e` prompt escapes (zero-width marker / parser-indent) printed literally
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `%G` (zero-width marker) and `%e`
+(parser-indent) now expand correctly (both produce empty for
+non-interactive `-fc` mode matching zsh). Likely landed via earlier
+prompt-escape parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'print -P "%G"' | od -c
+0000000   \n    # matches zsh — empty + newline
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%G"' | od -c | head -1
@@ -40230,7 +40251,17 @@ zshrs.
 
 ## #510 — `${(q)empty_array}` returns empty instead of `''` — empty-array-quoting semantics
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `(q)` flag on empty array now returns
+`''` (empty-quoted string) matching zsh. Likely landed via earlier
+quotestring parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a=(); echo "[${(q)a}]"'
+['']    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(); echo "[${(q)a}]"'
@@ -40521,7 +40552,18 @@ parse_args() {
 
 ## #514 — `(#e)` end-anchor glob flag not recognized — extends #483 family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `(#e)` end-anchor flag now recognized;
+`foo(#e)bar` correctly fails to match anything (foo must be at end AND
+have bar after — impossible). Same landing as #409/#483.
+
+**Verify**
+```sh
+$ touch /tmp/_zg/foo
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; echo /tmp/_zg/foo(#e)bar'
+zsh:1: no matches found: /tmp/_zg/foo(#e)bar    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/foo; echo /tmp/_zg/foo(#e)bar'
@@ -44656,13 +44698,13 @@ qualifiers always have a digit suffix.
 | 505 | `integer x="STRING"` silently coerces to 0 — zsh errors "bad math expression" (extends #411/#494 coercion family) | **fixed** 2026-06-04 | n/a |
 | 506 | `float f="3.14abc"` silently coerces to 0.0 — zsh errors "bad math expression" (extends #505) | **fixed** 2026-06-04 | n/a |
 | 507 | `${(Q)var}` unquote-flag with `\"` in value drops the `"` instead of keeping it — round-trips via `(q)`+`(Q)` incorrect | **port-bug** | external `eval` round-trip |
-| 508 | `%E` (clear-to-EOL) prompt escape printed literally — zsh emits `\\033[K` | **port-bug** | embed literal `\\e[K` |
-| 509 | `%G`/`%e` prompt escapes (zero-width marker / parser-indent) printed literally — extends prompt-escape gap family | **port-bug** | avoid these escapes |
-| 510 | `${(q)empty_array}` returns empty instead of `''` — empty-array-quoting semantics lost; breaks `(q)`+`eval` round-trips | **port-bug** | explicit `''` insertion |
+| 508 | `%E` (clear-to-EOL) prompt escape printed literally — zsh emits `\\033[K` | **fixed** 2026-06-04 | n/a |
+| 509 | `%G`/`%e` prompt escapes (zero-width marker / parser-indent) printed literally — extends prompt-escape gap family | **fixed** 2026-06-04 | n/a |
+| 510 | `${(q)empty_array}` returns empty instead of `''` — empty-array-quoting semantics lost; breaks `(q)`+`eval` round-trips | **fixed** 2026-06-04 | n/a |
 | 511 | integer overflow in `$((...))` silently returns 0 — zsh: "number truncated after 18 digits" warning + truncated value | **port-bug** | pre-validate literal length |
 | 512 | `${(t)EPOCHSECONDS}` / `${(t)EPOCHREALTIME}` empty — type-flag missing on GSU-backed datetime specials | **port-bug** | hardcode known specials |
 | 513 | `OPTIND=N` inside function LEAKS to parent — zsh: implicitly function-local | **port-bug** | manual save/restore around `getopts` |
-| 514 | `(#e)` end-anchor glob flag not recognized — extends #483 `(#X)` family | **port-bug** | POSIX-anchored `*.txt` patterns |
+| 514 | `(#e)` end-anchor glob flag not recognized — extends #483 `(#X)` family | **fixed** 2026-06-04 | n/a |
 | 515 | `$funcsourcetrace` shows fn-name (`f:1`) instead of file-name (`zsh:1`) — wrong source-location tracking | **port-bug** | none — array is incorrect |
 | 516 | `typeset` no-args dump omits type-flag prefix — `!=0` instead of `integer 10 readonly !=0` | **port-bug** | use `${(t)NAME}` (also limited per #512) |
 | 517 | `LC_NUMERIC`/`LC_TIME`/`LC_COLLATE`/`LC_CTYPE` initialized to empty string instead of unset — bash-init contamination (extends #479/#497) | **port-bug** | use `[[ -n $LC_TIME ]]` non-empty check |
