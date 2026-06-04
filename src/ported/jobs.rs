@@ -2455,7 +2455,11 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
         }
         if !prog.is_empty() && !posixbuiltins {
             // c:2129
-            zwarnnam(prog, &format!("job not found: {}", s)); // c:2130
+            // c:Src/jobs.c:2130 — `zwarnnam(prog, "job not found: %s", s)`.
+            // After the s++ at c:2073, `s` is past the leading `%`. The
+            // Rust idx-based port must use &s[idx..] not the original s.
+            // Bug #393.
+            zwarnnam(prog, &format!("job not found: {}", &s[idx..])); // c:2130
         }
         return -1; // c:2131-2132
     }
@@ -2470,7 +2474,9 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
     // if we get here, it is because none of the above succeeded             // c:2141
     if !posixbuiltins && !prog.is_empty() {
         // c:2143
-        zwarnnam(prog, &format!("job not found: {}", s)); // c:2144
+        // c:Src/jobs.c:2144 — same `s++` strip — emit the post-`%` name.
+        // Bug #393.
+        zwarnnam(prog, &format!("job not found: {}", rest)); // c:2144
     }
     -1 // c:2145-2147
 }
@@ -2886,11 +2892,14 @@ pub fn bin_fg(
             }
         } else {
             zwarnnam(name, &format!("{}: no such job", arg));
-            returnval = 1;
+            returnval = 127; // c:Src/jobs.c:2589-2590 — `return 127;`
             continue;
         };
         if p < 0 {
-            returnval = 1;
+            // c:Src/jobs.c:2580-2582 — `if (job == -1) { retval = 127; break; }`.
+            // getjob already emitted the diagnostic; just propagate 127.
+            // Bug #393.
+            returnval = 127;
             continue;
         }
         if func == BIN_FG || func == BIN_BG {

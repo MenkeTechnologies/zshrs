@@ -8808,10 +8808,10 @@ fn test_test_4args_unary_flag_too_many() {
 
 #[test]
 fn test_jobs_unknown_id_errors() {
-    // zsh: `jobs %1` (no jobs) -> `jobs:1: %1: no such job` exit 1.
-    // zshrs's filter-by-id loop silently produced no output.
+    // zsh: `jobs %1` (no jobs) -> `jobs:1: %1: no such job` exit 127
+    // (c:Src/jobs.c:2589-2590 `return 127`). Bug #393.
     let (status, _, stderr) = run_zshrs("jobs %1");
-    assert_eq!(status, 1);
+    assert_eq!(status, 127);
     assert!(stderr.contains("%1: no such job"), "got: {stderr}");
 }
 
@@ -9160,9 +9160,9 @@ fn test_assoc_odd_kv_pairs_errors() {
 #[test]
 fn test_disown_unknown_jobspec_errors() {
     // zsh: `disown %999` for non-existent id -> `disown:1: %999: no
-    // such job` exit 1. zshrs silently dropped non-matching ids.
+    // such job` exit 127 (c:Src/jobs.c:2589-2590 `return 127`). Bug #393.
     let (status, _, stderr) = run_zshrs("disown %999");
-    assert_eq!(status, 1);
+    assert_eq!(status, 127);
     assert!(stderr.contains("%999: no such job"), "got: {stderr}");
 }
 
