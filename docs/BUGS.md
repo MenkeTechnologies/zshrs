@@ -25355,7 +25355,84 @@ checks, etc.
 
 ## #308 — `${(t)arr[N]}` type-of-array-element errors "bad substitution" (zsh: returns type letter)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — the `(t)NAME[KEY]` form is now
+routed through a colon-substring composition that mirrors zsh's
+"type-string first, char-subscript second" semantics.
+
+**Root cause** — three-layer dispatch interaction:
+
+1. `compile_zsh.rs:3268+` recognises `${(flags)NAME[KEY]}` as a
+   subscripted-flag form and routes through
+   `BUILTIN_ARRAY_INDEX(name, key)` → element value, then
+   `BUILTIN_PARAM_FLAG(value="\u{08}element", flags="t")`.
+2. `subst.rs::paramsubst` at c:8158 sees `wantt && used_subexp`
+   (the `\u{08}` prefiltered sentinel sets `used_subexp=true`
+   per c:4420) and intentionally NO-OPs the type-tag emit per
+   bug #173 (`${(t)$(cmdsub)}` semantics: the pre-resolved
+   scalar passes through unchanged).
+3. So `(t)a[1]` returned the element value (`x`) — the type-
+   of-parameter intent was lost when the subscript was applied
+   first.
+
+zsh's canonical semantics (verified vs `/opt/homebrew/bin/zsh
+5.9.1`): `(t)` evaluates the PARAMETER's type string first
+(e.g. `array`, `scalar`, `integer`, `association`); the
+trailing `[KEY]` then char-indexes (1-based) into that scalar
+type string. So `${(t)a[1]}` = "array"[1] = "a";
+`${(t)i[1]}` = "scalar"[1] = "s";
+`${(t)m[1]}` = "association"[1] = "a".
+
+**Fix** — `src/extensions/compile_zsh.rs::compile_word_str` at
+the `parse_zsh_flag_subscript` dispatch: when `flags.contains
+('t')`, compose the body
+`${(t)NAME}:$((KEY-1)):1` and route via
+`BUILTIN_BRIDGE_BRACE_ARRAY`. The runtime resolves the inner
+`${(t)NAME}` to the type-string scalar, then paramsubst's
+colon-substring path (c:Src/subst.c — `${var:OFFSET:LEN}`,
+zsh-1-indexed via `OFFSET=KEY-1, LEN=1`) returns the N-th
+character. KEY is preserved as a sub-arith so non-literal
+subscripts (`a[$n]`, `a[1+1]`, `m[$idx]`) still work.
+
+The `${${(t)NAME}[KEY]}` nested form was also tried but ran
+into the subexp+subscript heuristic at `subst.rs:4426-4464`
+which whitespace-splits the inner scalar (returning the whole
+"array" for `[1]` and empty for higher indices). The colon-
+substring path bypasses that heuristic.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); for i in 1 2 3 4 5; do echo -n "[${(t)a[$i]}] "; done; echo'
+[a] [r] [r] [a] [y]
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); for i in 1 2 3 4 5; do echo -n "[${(t)a[$i]}] "; done; echo'
+[a] [r] [r] [a] [y]
+
+$ /opt/homebrew/bin/zsh -fc 'i=42; echo "[${(t)i[1]}][${(t)i[2]}][${(t)i[3]}]"'
+[s][c][a]
+$ ./target/debug/zshrs --zsh -c 'i=42; echo "[${(t)i[1]}][${(t)i[2]}][${(t)i[3]}]"'
+[s][c][a]
+
+$ /opt/homebrew/bin/zsh -fc 'typeset -A m=(k v); echo "[${(t)m[1]}][${(t)m[2]}]"'
+[a][s]
+$ ./target/debug/zshrs --zsh -c 'typeset -A m=(k v); echo "[${(t)m[1]}][${(t)m[2]}]"'
+[a][s]
+
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); n=2; echo "[${(t)a[$n]}]"'
+[r]
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); n=2; echo "[${(t)a[$n]}]"'
+[r]
+```
+
+Regressions clean:
+- bare `${(t)a}` still returns `array` (no change to non-
+  subscripted path).
+- `${(C)a[N]}` / `${(U)a[N]}` / `${(L)a[N]}` still operate on
+  the element value (other case-mod flags don't match the
+  `t`-gated arm).
+
+zshrs_shell baseline preserved at 967/85.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "type=[${(t)a[1]}]"'
@@ -25363,53 +25440,6 @@ type=[a]
 
 $ ./target/debug/zshrs --zsh -c 'a=(x y z); echo "type=[${(t)a[1]}]"'
 zsh:1: bad substitution
-```
-
-`${(t)varname}` returns the type string of `varname`. For an
-array element (`a[1]`), zsh returns `a` — meaning "this is
-an array element". zshrs rejects the form as "bad
-substitution".
-
-Same family as #301 (case-flag `${(C)a[N]}` rejected) —
-zshrs's flag dispatcher doesn't handle subscripted-array
-targets for several flags.
-
-Type-flag on whole array works in both:
-```sh
-$ both-shells -fc 'a=(x y z); echo "${(t)a}"'
-array
-```
-
-The bug is the subscripted form specifically.
-
-**Where** — `src/ported/paramsubst.rs::dispatch_t_subscripted`:
-no path for `(t)` on subscripted array element. Same area as
-#301. C-source `Src/subst.c::paramtypestr` evaluates the
-subscript first and then returns the per-element type string.
-
-**Impact** — type-introspection-driven code that inspects
-individual array elements breaks. Less common than scalar
-type-checking, but defensive code uses this:
-
-```sh
-arr=(10 20.5 "text")
-for i in {1..${#arr}}; do
-    case "${(t)arr[$i]}" in
-        integer*) handle_int "${arr[$i]}" ;;
-        float*)   handle_float "${arr[$i]}" ;;
-        scalar*)  handle_str "${arr[$i]}" ;;
-    esac
-done
-# zsh: per-element type dispatch works
-# zshrs: bad substitution on the first iteration, script aborts
-```
-
-**Workaround** — copy to temp scalar:
-```sh
-local _elem="${arr[$i]}"
-case "${(t)_elem}" in
-    ...
-esac
 ```
 
 ---
@@ -47106,7 +47136,7 @@ no longer reports the internal trap-machinery scalar.
 | 305 | `vared -c VAR` non-interactive silent no-op (zsh: errors "can't access terminal") | **fixed** 2026-06-02 | n/a |
 | 306 | `compdef` flag handling differs — `-N` rejected, always-available (zsh: autoloaded function not builtin) | **port-bug** | (none — needs flag table alignment) |
 | 307 | `[[ -5 -lt 0 ]]` errors "unknown condition: -5" — bare negative number misparsed as unary operator | **fixed** 2026-06-02 | n/a |
-| 308 | `${(t)arr[N]}` type-of-element errors "bad substitution" (zsh: returns "a") | **port-bug** | copy to temp scalar |
+| 308 | `${(t)arr[N]}` type-of-element errors "bad substitution" (zsh: returns "a") | **fixed** 2026-06-04 | type-string colon-substring route at compile dispatch |
 | 309 | Chained `${(qq)${(@P)var}}` drops elements — only first preserved (#229/#195/#287 family) | **port-bug** | two-step via intermediate var |
 | 310 | `${(@)arr:#pat}` filter via `(@)` flag form not applied (works with `[@]` subscript) | **fixed** 2026-06-02 | n/a |
 | 311 | `${(@k)assoc:#pat}`/`${(@v)assoc:#pat}` filter on assoc keys/values not applied | **port-bug** | explicit `for k v in "${(@kv)h}"` loop |
