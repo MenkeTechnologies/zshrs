@@ -44645,6 +44645,67 @@ Test baseline 964/88 preserved.
 
 ---
 
+## #587 — `${a[(r)y]:-default}` fires default even when `(r)y` matches — flag-form subscripts not is_set
+
+**Status:** `fixed` 2026-06-04 — paramsubst's `is_set` check now
+treats flag-form subscripts (`(r)`/`(R)`/`(i)`/`(I)`/etc.) as set
+when raw_value is non-empty.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "${a[(r)y]:-default}"'
+y
+
+$ ./target/debug/zshrs --zsh -fc 'a=(x y z); echo "${a[(r)y]:-default}"'   # before
+default
+```
+
+**Root cause** — `src/ported/subst.rs::paramsubst` (line ~5288)
+computes `is_set` from subscript shape. For flag-form subscripts
+like `(r)y` / `(R)y` / `(i)y` / `(I)y` (pattern-search variants
+that return the matched value or empty), the integer-parse
+fallback bailed since `(r)y` isn't a number. `assoc_get(&var_name).contains_key("(r)y")`
+also returned false. So `is_set = false` and the `:-default`
+operator fired even though raw_value already held the matched
+element `y`.
+
+**Fix** (`src/ported/subst.rs::paramsubst` is_set arm): detect
+the flag-form subscript (`(...)` prefix) and treat is_set as
+true when raw_value is non-empty:
+
+```rust
+let is_flag_form = sub.trim_start().starts_with('(');
+used_subexp
+    || (is_flag_form && !raw_value.is_empty())
+    || ...
+```
+
+This mirrors C `Src/params.c::getarg`'s flag-search arms which
+set the Value's vunset bit based on whether the lookup
+returned a match (not on integer subscript validity).
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'a=(x y z); echo "${a[(r)y]:-default}"'   # hit
+y
+$ ./target/debug/zshrs -fc 'a=(x y z); echo "${a[(r)q]:-default}"'   # miss
+default
+$ ./target/debug/zshrs -fc 'a=(x y z); echo "${a[(I)y]:-default}"'   # index
+2
+$ ./target/debug/zshrs -fc 'a=(x y z); echo "${a[(R)y]:-default}"'   # last
+y
+$ ./target/debug/zshrs -fc 'h=(k v); echo "${h[(i)k]:-default}"'      # assoc
+1
+$ ./target/debug/zshrs -fc 'a=(); echo "${a[(r)y]:-default}"'         # empty arr
+default
+$ ./target/debug/zshrs -fc 'a=(x y z); echo "${a[2]:-default}"'       # numeric (regression)
+y
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #586 — `${(z)"$(cmd)"}` and `${(z)"$var"}` error "bad substitution" — DQ with expansion treated as pure literal
 
 **Status:** `fixed` 2026-06-04 — `parse_zsh_flag_literal` now
@@ -45841,6 +45902,7 @@ no longer reports the internal trap-machinery scalar.
 | 583 | `*(z)` unknown glob qualifier silently accepted — zsh: "unknown file attribute: z" | **fixed** 2026-06-04 | parse_qualifiers `_=>{}` replaced with strict-error arm matching glob.c:1758 |
 | 584 | `$$:MOD` / `$?:MOD` modifier ignored — completes #582 | **fixed** 2026-06-04 | paramsubst `?`/`$` arms accept tokenized forms + apply modifier walker; compile_zsh gate removed |
 | 586 | `${(z)"$(cmd)"}` errors "bad substitution" — DQ-with-expansion misclassified as literal-operand | **fixed** 2026-06-04 | parse_zsh_flag_literal rejects DQ operands containing `$`/`` ` ``/Stringg/Qstring/Tick/Qtick |
+| 587 | `${a[(r)y]:-default}` fires default even when `(r)y` matches — flag-form subscripts not is_set | **fixed** 2026-06-04 | paramsubst is_set arm treats flag-form `(…)` subscripts as set when raw_value non-empty |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
