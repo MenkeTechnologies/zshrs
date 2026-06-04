@@ -10078,110 +10078,11 @@ pub fn paramsubst(
         }; // c:1625
 
         // c:Src/subst.c:1820 — bare `$NAME:MOD` and `$NAME[SUB]:MOD`
-        // shorthand for `${NAME:MOD}`. zsh routes the modifier
-        // through the same `modify()` dispatch as the braced form;
-        // zshrs's bare-form arm ignored `:MOD` entirely so
-        // `$a:u` printed `hi:u` instead of `HI`. Walk `:MOD` (and
-        // `:MOD:MOD2…` chains) here and feed through `modify`.
-        // Bugs #579, #580.
-        //
-        // Supported modifiers:
-        //   - simple letters: h/t/r/e/l/u/q/Q/a/A/P
-        //     (+ optional digit count for :hN / :tN)
-        //   - substitution: :s/PAT/REPL/ and :gs/PAT/REPL/
-        //     (delimiter is char after s/gs; pattern, replacement
-        //     terminated by same delim; backslash escapes)
-        let mut value = value;
-        if chars.get(pos).copied() == Some(':') {
-            let mut mod_buf = String::new();
-            let mut probe = pos;
-            while probe < chars.len() && chars[probe] == ':' {
-                let saw_g = chars.get(probe + 1).copied() == Some('g');
-                let s_idx = if saw_g { probe + 2 } else { probe + 1 };
-                if saw_g {
-                    if chars.get(s_idx).copied() != Some('s') {
-                        break;
-                    }
-                }
-                let after = chars.get(s_idx).copied();
-                if saw_g || after == Some('s') {
-                    // :s/PAT/REPL/  or  :gs/PAT/REPL/
-                    let s_pos = if saw_g { probe + 2 } else { probe + 1 };
-                    if chars.get(s_pos).copied() != Some('s') {
-                        break;
-                    }
-                    let delim_pos = s_pos + 1;
-                    let delim = match chars.get(delim_pos).copied() {
-                        Some(d) => d,
-                        None => break,
-                    };
-                    let mut q = delim_pos + 1;
-                    let mut pat_end = None;
-                    while q < chars.len() {
-                        if chars[q] == '\\' && q + 1 < chars.len() {
-                            q += 2;
-                            continue;
-                        }
-                        if chars[q] == delim {
-                            pat_end = Some(q);
-                            break;
-                        }
-                        q += 1;
-                    }
-                    let pat_end = match pat_end {
-                        Some(p) => p,
-                        None => break,
-                    };
-                    q = pat_end + 1;
-                    let mut repl_end = None;
-                    while q < chars.len() {
-                        if chars[q] == '\\' && q + 1 < chars.len() {
-                            q += 2;
-                            continue;
-                        }
-                        if chars[q] == delim {
-                            repl_end = Some(q);
-                            break;
-                        }
-                        q += 1;
-                    }
-                    let span_end = match repl_end {
-                        Some(p) => p + 1,
-                        None => chars.len(),
-                    };
-                    // Pass the entire :s.../ span (including delim and
-                    // optional leading g) through to modify so the
-                    // canonical history-modifier code at subst.rs:10676
-                    // does the substitution. modify already handles
-                    // backslash escapes and the closing-delim optional.
-                    mod_buf.push(':');
-                    for c in &chars[probe + 1..span_end] {
-                        mod_buf.push(*c);
-                    }
-                    probe = span_end;
-                    continue;
-                }
-                let is_simple_mod = matches!(
-                    after,
-                    Some('h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'a' | 'A' | 'P')
-                );
-                if !is_simple_mod {
-                    break;
-                }
-                mod_buf.push(':');
-                mod_buf.push(after.unwrap());
-                probe += 2;
-                // Optional digit count for :hN / :tN.
-                while probe < chars.len() && chars[probe].is_ascii_digit() {
-                    mod_buf.push(chars[probe]);
-                    probe += 1;
-                }
-            }
-            if !mod_buf.is_empty() {
-                value = modify(&value, &mod_buf);
-                pos = probe;
-            }
-        }
+        // history-style modifier chain. Bugs #579, #580, #581.
+        let (new_value, new_pos) = apply_bare_modifier_chain(&value, &chars, pos);
+        let mut value = new_value;
+        pos = new_pos;
+        let _ = value;
 
         // Handle word splitting
         if pf_flags & PREFORK_SHWORDSPLIT != 0 && !qt {
@@ -10535,7 +10436,7 @@ pub fn paramsubst(
                 nx += 1; // c:1625
             } // c:1625
             let digit: usize = digit_str.parse().unwrap_or(0); // c:1625
-            let value = if digit == 0 {
+            let mut value = if digit == 0 {
                 // c:1625
                 vars_get("0").unwrap_or_default() // c:1625
             } else {
@@ -10544,6 +10445,16 @@ pub fn paramsubst(
                     .and_then(|a| a.get(digit.saturating_sub(1)).cloned()) // c:1625
                     .unwrap_or_default() // c:1625
             }; // c:1625
+            // c:Src/subst.c:1820 — `$N:MOD` history-style modifier
+            // chain on bare positional. Bug #581 — same shape as the
+            // `$NAME:MOD` walker at subst.rs:10080 but rooted at the
+            // digit-positional arm.
+            if chars.get(nx).copied() == Some(':') {
+                let (new_value, new_pos) =
+                    apply_bare_modifier_chain(&value, &chars, nx);
+                value = new_value;
+                nx = new_pos;
+            }
             let prefix: String = chars[..start_pos].iter().collect(); // c:1625
             let suffix: String = chars[nx..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
@@ -10717,6 +10628,109 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
 // Src/hist.c::casemodify's CASMOD_* flag set). Local definition was
 // drift — variants (None/Lower/Upper/Caps) duplicated hist.rs's
 // (Lower/Upper/Caps) with an extra unused `None` variant.
+
+/// c:Src/subst.c:1820 — bare `$NAME:MOD` / `$N:MOD` modifier walker.
+/// Probes for a chain of history-style modifiers starting at
+/// `chars[start]` and, on success, returns the value after applying
+/// them and the new cursor position past the consumed chain.
+///
+/// Supported:
+///   - simple letters: h/t/r/e/l/u/q/Q/a/A/P (+ optional digit count
+///     for :hN / :tN)
+///   - substitution: :s/PAT/REPL/ and :gs/PAT/REPL/ (delimiter is
+///     char after s/gs; pattern, replacement terminated by same
+///     delim; backslash escapes)
+///
+/// Anchored on `:` followed by a known modifier letter (or `g` then
+/// `s`) so `$a:$b` stays two expansions. Bugs #579/#580/#581.
+pub fn apply_bare_modifier_chain(
+    value: &str,
+    chars: &[char],
+    start: usize,
+) -> (String, usize) {
+    if chars.get(start).copied() != Some(':') {
+        return (value.to_string(), start);
+    }
+    let mut mod_buf = String::new();
+    let mut probe = start;
+    while probe < chars.len() && chars[probe] == ':' {
+        let saw_g = chars.get(probe + 1).copied() == Some('g');
+        let s_pos = if saw_g { probe + 2 } else { probe + 1 };
+        if saw_g && chars.get(s_pos).copied() != Some('s') {
+            break;
+        }
+        let after = chars.get(s_pos).copied();
+        if saw_g || after == Some('s') {
+            if chars.get(s_pos).copied() != Some('s') {
+                break;
+            }
+            let delim_pos = s_pos + 1;
+            let delim = match chars.get(delim_pos).copied() {
+                Some(d) => d,
+                None => break,
+            };
+            let mut q = delim_pos + 1;
+            let mut pat_end = None;
+            while q < chars.len() {
+                if chars[q] == '\\' && q + 1 < chars.len() {
+                    q += 2;
+                    continue;
+                }
+                if chars[q] == delim {
+                    pat_end = Some(q);
+                    break;
+                }
+                q += 1;
+            }
+            let pat_end = match pat_end {
+                Some(p) => p,
+                None => break,
+            };
+            q = pat_end + 1;
+            let mut repl_end = None;
+            while q < chars.len() {
+                if chars[q] == '\\' && q + 1 < chars.len() {
+                    q += 2;
+                    continue;
+                }
+                if chars[q] == delim {
+                    repl_end = Some(q);
+                    break;
+                }
+                q += 1;
+            }
+            let span_end = match repl_end {
+                Some(p) => p + 1,
+                None => chars.len(),
+            };
+            mod_buf.push(':');
+            for c in &chars[probe + 1..span_end] {
+                mod_buf.push(*c);
+            }
+            probe = span_end;
+            continue;
+        }
+        let is_simple_mod = matches!(
+            after,
+            Some('h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'a' | 'A' | 'P')
+        );
+        if !is_simple_mod {
+            break;
+        }
+        mod_buf.push(':');
+        mod_buf.push(after.unwrap());
+        probe += 2;
+        while probe < chars.len() && chars[probe].is_ascii_digit() {
+            mod_buf.push(chars[probe]);
+            probe += 1;
+        }
+    }
+    if mod_buf.is_empty() {
+        (value.to_string(), start)
+    } else {
+        (modify(value, &mod_buf), probe)
+    }
+}
 
 /// History-style colon modifiers
 /// Apply a `:` modifier chain (`:t:r:s/x/y/`...).

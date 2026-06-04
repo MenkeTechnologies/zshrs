@@ -1697,3 +1697,12 @@ unset_specials
 mark_unset_special
 clear_unset_special
 is_unset_special
+
+# c:Src/subst.c:1820 — bare $NAME:MOD / $N:MOD modifier walker.
+# Rust-only helper that probes for the colon-anchored history-style
+# modifier chain on bare expansions (no braces). C does this walking
+# inline inside paramsubst's bare-form path at c:1820; the Rust port
+# factors it out because two unrelated arms (alphabetic identifier
+# at subst.rs:10080 and digit positional at subst.rs:10520) share
+# the same walker. Bugs #579/#580/#581.
+apply_bare_modifier_chain

@@ -6375,6 +6375,85 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
 /// Given chars[i] is META-$ / Qstring / backtick, return the index just
 /// past the end of the expansion. Handles `${...}`, `$(...)`,
 /// `$((...))`, `$NAME`, `$N`, `$@` etc., and `` `cmd` ``.
+/// c:Src/subst.c:1820 — walk bare `$NAME:MOD` history-style modifier
+/// chain in place. Bumps `j` past every consumed modifier so the
+/// caller emits the whole `$NAME:MOD…` as one expansion segment.
+///
+/// Supported:
+///   - simple letters: h/t/r/e/l/u/q/Q/a/A/P (+ optional digit count
+///     for :hN / :tN)
+///   - substitution: :s/PAT/REPL/ and :gs/PAT/REPL/ (delimiter char
+///     follows s; pattern, replacement terminated by same delim;
+///     backslash escapes)
+///
+/// Anchored on `:` followed by a known modifier letter (or `g` then
+/// `s`) so `$a:$b` stays two expansions. Bugs #579/#580/#581.
+fn walk_bare_modifier_chain(chars: &[char], j: &mut usize) {
+    while *j + 1 < chars.len() && chars[*j] == ':' {
+        let mut probe = *j + 1;
+        // Optional `g` prefix (global modifier for :s).
+        let saw_g = chars[probe] == 'g';
+        if saw_g {
+            probe += 1;
+            if probe >= chars.len() {
+                break;
+            }
+        }
+        let after = chars[probe];
+        if saw_g || after == 's' {
+            if (saw_g && after != 's') || (!saw_g && after != 's') {
+                break;
+            }
+            // Position now: at `s`.
+            probe += 1;
+            if probe >= chars.len() {
+                break;
+            }
+            let delim = chars[probe];
+            probe += 1;
+            let mut found_pat_end = false;
+            while probe < chars.len() {
+                if chars[probe] == '\\' && probe + 1 < chars.len() {
+                    probe += 2;
+                    continue;
+                }
+                if chars[probe] == delim {
+                    probe += 1;
+                    found_pat_end = true;
+                    break;
+                }
+                probe += 1;
+            }
+            if !found_pat_end {
+                break;
+            }
+            while probe < chars.len() {
+                if chars[probe] == '\\' && probe + 1 < chars.len() {
+                    probe += 2;
+                    continue;
+                }
+                if chars[probe] == delim {
+                    probe += 1;
+                    break;
+                }
+                probe += 1;
+            }
+            *j = probe;
+            continue;
+        }
+        if !matches!(
+            after,
+            'h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'a' | 'A' | 'P'
+        ) {
+            break;
+        }
+        *j = probe + 1;
+        while *j < chars.len() && chars[*j].is_ascii_digit() {
+            *j += 1;
+        }
+    }
+}
+
 fn find_expansion_end(chars: &[char], i: usize) -> usize {
     let c = chars[i];
     if c == '`' || c == '\u{93}' || c == '\u{99}' {
@@ -6596,6 +6675,11 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             while j < chars.len() && chars[j].is_ascii_digit() {
                 j += 1;
             }
+            // c:Src/subst.c:1820 — bare `$0:MOD` etc. also accept the
+            // modifier chain (same as `$NAME:MOD`). Bug #581 extends
+            // #579/#580 to positional + special-char single-glyph
+            // names.
+            walk_bare_modifier_chain(chars, &mut j);
             j
         }
         // Identifier: $NAME (optionally followed by [subscript])
@@ -6625,119 +6709,8 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
                 j = k;
             }
             // c:Src/subst.c:1820 — bare `$NAME:MOD` history-style
-            // modifier chain. Pull `:MOD` (and `:MOD:MOD2…` chains)
-            // into the same expansion so paramsubst's bare-form
-            // modifier dispatch at subst.rs:10080 sees them.
-            // Supported:
-            //   - simple letters: h/t/r/e/l/u/q/Q/a/A/P
-            //     (+ optional digit count for :hN / :tN)
-            //   - substitution: :s/PAT/REPL/[FLAG] and :gs/PAT/REPL/
-            //     (delimiter char follows s; pattern, replacement
-            //     terminated by same delim; backslash escapes)
-            // Anchored on `:` followed by a known modifier letter
-            // (or `g` then `s`) so `$a:$b` stays two expansions.
-            // Bug #579/#580.
-            while j + 1 < chars.len() && chars[j] == ':' {
-                let mut probe = j + 1;
-                // Optional `g` prefix (global modifier for :s).
-                let saw_g = chars[probe] == 'g';
-                if saw_g {
-                    probe += 1;
-                    if probe >= chars.len() {
-                        break;
-                    }
-                }
-                let after = chars[probe];
-                if saw_g {
-                    if after != 's' {
-                        break;
-                    }
-                    // `:gs/PAT/REPL/`
-                    probe += 1;
-                    if probe >= chars.len() {
-                        break;
-                    }
-                    let delim = chars[probe];
-                    probe += 1;
-                    let mut found_pat_end = false;
-                    while probe < chars.len() {
-                        if chars[probe] == '\\' && probe + 1 < chars.len() {
-                            probe += 2;
-                            continue;
-                        }
-                        if chars[probe] == delim {
-                            probe += 1;
-                            found_pat_end = true;
-                            break;
-                        }
-                        probe += 1;
-                    }
-                    if !found_pat_end {
-                        break;
-                    }
-                    while probe < chars.len() {
-                        if chars[probe] == '\\' && probe + 1 < chars.len() {
-                            probe += 2;
-                            continue;
-                        }
-                        if chars[probe] == delim {
-                            probe += 1;
-                            break;
-                        }
-                        probe += 1;
-                    }
-                    j = probe;
-                    continue;
-                }
-                if after == 's' {
-                    // `:s/PAT/REPL/`
-                    probe += 1;
-                    if probe >= chars.len() {
-                        break;
-                    }
-                    let delim = chars[probe];
-                    probe += 1;
-                    let mut found_pat_end = false;
-                    while probe < chars.len() {
-                        if chars[probe] == '\\' && probe + 1 < chars.len() {
-                            probe += 2;
-                            continue;
-                        }
-                        if chars[probe] == delim {
-                            probe += 1;
-                            found_pat_end = true;
-                            break;
-                        }
-                        probe += 1;
-                    }
-                    if !found_pat_end {
-                        break;
-                    }
-                    while probe < chars.len() {
-                        if chars[probe] == '\\' && probe + 1 < chars.len() {
-                            probe += 2;
-                            continue;
-                        }
-                        if chars[probe] == delim {
-                            probe += 1;
-                            break;
-                        }
-                        probe += 1;
-                    }
-                    j = probe;
-                    continue;
-                }
-                if !matches!(
-                    after,
-                    'h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'a' | 'A' | 'P'
-                ) {
-                    break;
-                }
-                j = probe + 1;
-                while j < chars.len() && chars[j].is_ascii_digit() {
-                    j += 1;
-                }
-            }
+            // modifier chain. Bugs #579/#580/#581.
+            walk_bare_modifier_chain(chars, &mut j);
             j
         }
         _ => i + 1,

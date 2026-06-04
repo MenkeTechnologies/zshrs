@@ -44464,6 +44464,69 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #581 — bare `$N:MOD` and `$0:MOD` positional-modifier ignored — extends #579/#580 to digit positionals
+
+**Status:** `fixed` 2026-06-04 — modifier walker factored into
+`apply_bare_modifier_chain` and called from both the alphabetic-
+identifier and digit-positional arms.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- /a/b/c.txt; echo $1:t'
+c.txt
+
+$ ./target/debug/zshrs --zsh -fc 'set -- /a/b/c.txt; echo $1:t'   # before
+/a/b/c.txt:t
+```
+
+**Root cause** — #579/#580 added the bare-form modifier walker
+to paramsubst's alphabetic-`$NAME` arm at subst.rs:10080 but
+the digit-positional arm at subst.rs:10520 (`'0'..='9'`) ran
+its own value-fetch + format path without consulting the
+walker. compile_zsh's `find_expansion_end` digit arm also only
+walked digits, not `:MOD` suffixes.
+
+**Fix** — three changes:
+
+1. **`src/ported/subst.rs::apply_bare_modifier_chain`** — new
+   pub helper factoring the modifier-walking logic that was
+   previously inline in #579/#580's alphabetic arm. Walks
+   `:MOD` chains (simple letters + `:s/PAT/REPL/` +
+   `:gs/PAT/REPL/`) and returns `(modified_value, new_pos)`.
+   Allowlisted in `tests/data/fake_fn_allowlist.txt` as a
+   Rust-only shared helper between two paramsubst arms that
+   C handles inline.
+2. **`src/ported/subst.rs` digit-positional arm** at line 10520:
+   after computing the positional's value, call
+   `apply_bare_modifier_chain(&value, &chars, nx)` so `$N:MOD`
+   feeds through `modify()`.
+3. **`src/extensions/compile_zsh.rs::find_expansion_end`** —
+   extract `walk_bare_modifier_chain` helper and call it from
+   both the alphabetic-name arm AND the digit-positional arm
+   so the expansion span covers the modifier suffix.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'echo $0:t'                                # zshrs
+zshrs
+$ ./target/debug/zshrs -fc 'set -- /a/b/c.txt; echo $1:t'             # tail
+c.txt
+$ ./target/debug/zshrs -fc 'set -- foo.txt; echo $1:r'                # root
+foo
+$ ./target/debug/zshrs -fc 'set -- hello; echo $1:u'                  # case
+HELLO
+$ ./target/debug/zshrs -fc 'set -- hello; echo $1:s/l/L/'             # subst
+heLlo
+$ ./target/debug/zshrs -fc 'a=hi; echo $a:u'                          # #579 regression
+HI
+$ ./target/debug/zshrs -fc 'a=hello; echo $a:s/l/L/'                  # #580 regression
+heLlo
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #580 — bare `$NAME:s/PAT/REPL/` substitution modifier ignored — extends #579 to :s and :gs
 
 **Status:** `fixed` 2026-06-04 — bare-form modifier walker now
@@ -45537,6 +45600,7 @@ no longer reports the internal trap-machinery scalar.
 | 578 | `${a%x*}` etc. leak `¡` Nularg + leading empty in unquoted operator splat | **fixed** 2026-06-04 | auto_splat gates Nularg on qt and drops empty nodes when !qt |
 | 579 | bare `$NAME:MOD` modifier ignored (printed `:u` literally) | **fixed** 2026-06-04 | compile_zsh extends expansion span; paramsubst bare-arm runs modify() |
 | 580 | bare `$NAME:s/PAT/REPL/` substitution modifier ignored — extends #579 | **fixed** 2026-06-04 | walker absorbs :s and :gs delimiter-bounded substitution forms |
+| 581 | bare `$N:MOD` / `$0:MOD` positional modifier ignored — extends #579/#580 | **fixed** 2026-06-04 | walker factored into apply_bare_modifier_chain, called from both arms |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
