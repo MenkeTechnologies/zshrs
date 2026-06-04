@@ -34814,7 +34814,17 @@ assignment with explicit array rebuild.
 
 ## #425 — `(#cN)` glob exact-count flag not recognized — extends #409 to count form
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — landed via #245's POSTFIX `(#cN,M)`
+wrap in `patcompbranch`. `a(#c3)` now correctly matches exact-count
+repetition of the preceding piece.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; [[ "aaa" == a(#c3) ]] && echo m'
+m    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; [[ "aaa" == (a)(#c3) ]] && echo m'
@@ -34867,7 +34877,36 @@ Both fail under zshrs.
 
 ## #426 — `command_not_found_handler` user-defined hook not invoked
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/vm_helper.rs](../src/vm_helper.rs)).
+
+**Root cause** — `execute_external_bg`'s NotFound branch emitted the
+default `command not found:` diagnostic + rc=127 without first checking
+for the user-defined `command_not_found_handler` function. C zsh
+(`Src/exec.c::execcmd_exec`) calls `getshfunc("command_not_found_handler")`
+when the PATH search fails and invokes it with `argv[0]` + original args.
+
+**Fix** — before the diagnostic emit, try `self.dispatch_function_call(
+"command_not_found_handler", &[cmd, ...args])`. If the function exists,
+return its rc instead. Only fires for bare names (PATH search failed);
+absolute paths skip the hook and emit the OS-error path — matches zsh.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'command_not_found_handler() { echo "GOT: $1"; return 0; }; nonexistent-cmd-xyz'
+GOT: nonexistent-cmd-xyz    # rc=0, matches zsh
+
+# rc propagation
+$ ./target/debug/zshrs --zsh -fc 'command_not_found_handler() { echo "GOT: $*"; return 42; }; nonexistent-cmd-xyz arg1 arg2'
+GOT: nonexistent-cmd-xyz arg1 arg2    # rc=42
+
+# regression: no handler → default error
+$ ./target/debug/zshrs --zsh -fc 'nonexistent-cmd-xyz'
+zsh:1: command not found: nonexistent-cmd-xyz    # rc=127
+```
+
+Baseline 960/92 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'command_not_found_handler() { echo "GOT: $1"; return 0; }; nonexistent-cmd-xyz; echo rc=$?'
@@ -43928,8 +43967,8 @@ qualifiers always have a digit suffix.
 | 422 | sourced-file errors prefixed `zsh:` instead of `/path/to/file:` — extends #420, breaks .zshrc plugin-bisect debugging | **fixed** 2026-06-04 | n/a |
 | 423 | **CRITICAL** `PATH=str` doesn't update tied `path` array — one-way tie broken (path=arr→PATH works) | **port-bug** | always also `path=("${(@s/:/)PATH}")` after PATH= |
 | 424 | **CRITICAL** scalar→array tie broken for MANPATH/FPATH/CDPATH — generalizes #423 to all tied params | **port-bug** | manual rebuild of `manpath`/`fpath`/`cdpath` after scalar assignment |
-| 425 | `(#cN)` glob exact-count flag not recognized — extends #409 family | **port-bug** | regex form `=~ "^a{3}$"` |
-| 426 | `command_not_found_handler` user-defined hook not invoked — entire ecosystem broken (apt/nix/asdf integration) | **port-bug** | none — without hook integration can't fire |
+| 425 | `(#cN)` glob exact-count flag not recognized — extends #409 family | **fixed** 2026-06-04 | n/a |
+| 426 | `command_not_found_handler` user-defined hook not invoked — entire ecosystem broken (apt/nix/asdf integration) | **fixed** 2026-06-04 | n/a |
 | 427 | `read` doesn't strip leading/trailing IFS chars (zsh: trims `[hello]` from `"  hello  "`) | **port-bug** | explicit `${var##[[:space:]]##}` trim |
 | 428 | unquoted `${arr[*]}` joined with IFS but not re-word-split — half of join+split sequence missing | **port-bug** | use `${arr[@]}` form instead |
 | 429 | `%m` prompt escape (short hostname) not expanded — printed literally; likely also `%M`/`%y`/`%l`/`%j`/`%i` | **port-bug** | use `$HOST` parameter expansion |

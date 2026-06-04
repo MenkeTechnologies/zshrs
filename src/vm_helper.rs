@@ -1965,6 +1965,28 @@ impl ShellExecutor {
                     let sn = crate::ported::utils::scriptname_get()
                         .unwrap_or_else(|| "zshrs".to_string());
                     if e.kind() == io::ErrorKind::NotFound {
+                        // c:Src/exec.c — `command_not_found_handler` user
+                        // hook: when a command lookup fails AND a function
+                        // by that name is defined, call it with the cmd
+                        // name + original args and return its rc instead
+                        // of the default 127 + "command not found" error.
+                        // Documented in zshmisc(1) under "Special
+                        // Functions". Bug #426.
+                        //
+                        // The hook only fires for bare names (PATH search
+                        // failed); absolute paths skip it and emit the
+                        // OS-error path below — matches zsh behavior.
+                        if !cmd.starts_with('/') {
+                            let mut hook_args = Vec::with_capacity(args.len() + 1);
+                            hook_args.push(cmd.to_string());
+                            hook_args.extend_from_slice(args);
+                            if let Some(rc) = self.dispatch_function_call(
+                                "command_not_found_handler",
+                                &hook_args,
+                            ) {
+                                return Ok(rc);
+                            }
+                        }
                         // zsh: absolute paths emit "no such file or
                         // directory" (the OS error, since the path was
                         // tried directly), not "command not found"
