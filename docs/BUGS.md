@@ -32459,6 +32459,60 @@ PS3=$'%F{blue}-->>>> %f'
 
 ## #413 — `do` standalone-keyword silently accepted as no-op (zsh: parse error)
 
+**Status:** `fixed` 2026-06-03 — `DOLOOP` added to the
+top-level orphan-terminator match in
+`src/ported/parse.rs::parse_program_until`, mirroring the
+existing `DONE`/`FI`/`ESAC` arm.
+
+**Root cause** — `parse_program_until`'s orphan check
+already handled `DONE`/`FI`/`ESAC` at top level (when
+`end_tokens.is_none()`), emitting "parse error near
+`<tok>`" — but `DOLOOP` (the `do` keyword) was missing.
+A bare `do echo hi` silently fell through and the rest
+of the line was consumed by par_list as an unrelated
+command list, leaving the script exiting rc=0 with no
+output.
+
+**Fix** — extend the match arm:
+```rust
+DONE | FI | ESAC | DOLOOP if end_tokens.is_none() => {
+    let name = match tok() {
+        DONE => "done", FI => "fi", ESAC => "esac",
+        DOLOOP => "do",
+        ...
+    };
+    zerr(&format!("parse error near `{}'", name));
+    break;
+}
+```
+Inside loop bodies the DOLOOP arm is still consumed by
+`parse_loop_body` (which calls `parse_program_until` with
+`end_tokens = Some(&[DONE])` so the orphan check is
+gated off). Only top-level (`end_tokens.is_none()`) fires
+the parse error.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'do echo hi' 2>&1; echo rc=$?
+zsh:1: parse error near `do'
+rc=1
+$ ./target/debug/zshrs --zsh -fc 'do echo hi' 2>&1; echo rc=$?
+zsh:1: parse error near `do'
+rc=1
+
+# Regression: real loops still work
+$ ./target/debug/zshrs --zsh -fc 'for i in a b; do echo $i; done'
+a
+b
+$ ./target/debug/zshrs --zsh -fc 'x=0; while (( x < 2 )); do (( x++ )); echo $x; done'
+1
+2
+```
+
+Test baseline preserved at 958/94.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
