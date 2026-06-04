@@ -44645,6 +44645,54 @@ Test baseline 964/88 preserved.
 
 ---
 
+## #588 — `"${*}"` ignores IFS — braced `${*}`/`${@}` skip the fast path that handles IFS sepjoin
+
+**Status:** `fixed` 2026-06-04 — compile_zsh fast path now
+recognizes braced `${*}` / `${@}` shapes equivalent to `$*` /
+`$@` so DQ `"${*}"` joins via IFS first char.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'foo() { local IFS=:; print -r -- "${*}"; }; foo a b c'
+a:b:c
+
+$ ./target/debug/zshrs --zsh -fc 'foo() { local IFS=:; print -r -- "${*}"; }; foo a b c'   # before
+a b c
+```
+
+**Root cause** — `src/extensions/compile_zsh.rs:2589` fast path
+detected `$@`/`$*` (bare forms) and emitted BUILTIN_GET_VAR (+
+BUILTIN_ARRAY_JOIN_STAR in DQ context for `*`). Braced
+`${@}`/`${*}` fell to the bridge path which routes through
+paramsubst/expand. fusevm's `Value::Array → Str` coercion at
+value.rs:141 hardcodes space join, so the braced DQ form lost
+IFS semantics.
+
+**Fix** (`src/extensions/compile_zsh.rs::compile_word_str`):
+extend the bare-form fast path to also recognize `${@}` /
+`${*}` (strip `${` and `}`). Same downstream emit:
+`BUILTIN_GET_VAR("@")` or `BUILTIN_GET_VAR("*")`; for `"${*}"`
+in DQ, follow with `BUILTIN_ARRAY_JOIN_STAR("*")` to honor IFS
+first char.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'foo() { local IFS=:; print -r -- "${*}"; }; foo a b c'
+a:b:c
+$ ./target/debug/zshrs -fc 'foo() { local IFS=:; print -r -- "$*"; }; foo a b c'    # regression
+a:b:c
+$ ./target/debug/zshrs -fc 'foo() { print -l -- "${@}"; }; foo a "b c" d'           # splat
+a
+b c
+d
+$ ./target/debug/zshrs -fc 'echo "${*}"'                                            # empty positionals
+(empty)
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #587 — `${a[(r)y]:-default}` fires default even when `(r)y` matches — flag-form subscripts not is_set
 
 **Status:** `fixed` 2026-06-04 — paramsubst's `is_set` check now
@@ -45903,6 +45951,7 @@ no longer reports the internal trap-machinery scalar.
 | 584 | `$$:MOD` / `$?:MOD` modifier ignored — completes #582 | **fixed** 2026-06-04 | paramsubst `?`/`$` arms accept tokenized forms + apply modifier walker; compile_zsh gate removed |
 | 586 | `${(z)"$(cmd)"}` errors "bad substitution" — DQ-with-expansion misclassified as literal-operand | **fixed** 2026-06-04 | parse_zsh_flag_literal rejects DQ operands containing `$`/`` ` ``/Stringg/Qstring/Tick/Qtick |
 | 587 | `${a[(r)y]:-default}` fires default even when `(r)y` matches — flag-form subscripts not is_set | **fixed** 2026-06-04 | paramsubst is_set arm treats flag-form `(…)` subscripts as set when raw_value non-empty |
+| 588 | `"${*}"` (braced) ignores IFS — bare `$*` works | **fixed** 2026-06-04 | compile_zsh fast path recognizes braced `${*}`/`${@}` equivalent to bare forms |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
