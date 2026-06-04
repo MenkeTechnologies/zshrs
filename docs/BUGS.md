@@ -41604,7 +41604,38 @@ post-split.
 
 ## #546 — `${(!)var}` invalid flag silently accepted — zsh: "error in flags"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 ([src/ported/subst.rs](../src/ported/subst.rs)).
+
+**Root cause** — two issues. (1) The paramsubst flag-parse loop had a `'!'`
+arm that set `hkeys = SCANPM_NONAMEREF` and returned silently, but zsh 5.9.1
+(the user's installed binary) does not support `typeset -n` / namerefs, so the
+upstream `!` arm has no runtime effect there — and 5.9.1 rejects `(!)` at flag
+parse time with `error in flags near position N`. (2) The default unknown-flag
+arm emitted `bad substitution` instead of zsh's `error in flags near position
+%z in '$%s'` format from `Src/subst.c:2527`.
+
+**Fix** — drop the `!` arm so it falls through to the default (zshrs has no
+nameref support anyway; restore when porting `typeset -n`). Rewrite the
+default arm to emit `error in flags near position N in '${BODY}'` mirroring
+`Src/subst.c:2505-2528`. The position is `idx + 1 + 2` to account for the
+`${` prefix that the C `*str` pointer includes but zshrs's `body` does not.
+
+**Verify**
+```sh
+$ for c in '!' '?' '+' '/'; do ./target/debug/zshrs --zsh -fc "a=hi; echo \"\${(${c})a}\""; done
+zsh:1: error in flags near position 4 in '${(!)a}'    # matches zsh
+zsh:1: error in flags near position 4 in '${(?)a}'
+zsh:1: error in flags near position 4 in '${(+)a}'
+zsh:1: error in flags near position 4 in '${(/)a}'
+
+# regression sweep — valid flags still pass through:
+$ ./target/debug/zshrs --zsh -fc 'a=hi; echo "${(L)a} ${(U)a} ${(C)a}"'
+hi HI Hi
+```
+
+Baseline: `cargo test --test zshrs_shell` 961/91 → 964/88 (+3 pass, no regressions).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a="hi"; echo "${(!)a}" 2>&1; echo rc=$?'
@@ -43611,7 +43642,7 @@ qualifiers always have a digit suffix.
 | 543 | `print -l "${(s.X.)str}"` emits visible blank lines from empty fields — same root as #542 | **port-bug** | filter empty fields before print |
 | 544 | `a[0]="x"` zero-index array assignment silently accepted — zsh: "invalid subscript range" (zsh is 1-indexed) | **port-bug** | strict 1-index validation |
 | 545 | `${(s.X.)XXX}` all-separator string gives 4 empty fields — zsh: 2 (extends #542) | **port-bug** | filter via `(parts[@]:#)` |
-| 546 | `${(!)var}` invalid paramexp flag silently accepted — zsh: "error in flags near position N" | **port-bug** | visual audit / CI grep |
+| 546 | `${(!)var}` invalid paramexp flag silently accepted — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 547 | `echo "$~"` emits literal `$~` — zsh: drops invalid `$X` to empty | **port-bug** | (acceptable in user code) |
 | 548 | `${(   )a}` whitespace-only flag-paren error: "bad substitution" — zsh: "error in flags near position N" | **port-bug** | match on rc only |
 | 549 | `?(a)` extglob in zsh-mode: zshrs uses bash-style "zero-or-one" — zsh: rejects as broken glob-qualifier | **fixed** 2026-06-03 | n/a |
