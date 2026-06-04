@@ -28613,6 +28613,76 @@ machinery being wired up.)
 
 ## #358 — `cd ~-N` dirstack-tilde-expansion fails — `~-0`/`~-1` treated as literal path
 
+**Status:** `fixed` 2026-06-03 — three-point fix in
+`src/ported/subst.rs` covering Dash-TOKEN sign parsing,
+spurious val negation, and the empty-stack/NOMATCH path
+in `dstackent`.
+
+**Root cause** — three compounding gaps:
+
+1. **Dash TOKEN not normalized in sign test.** `filesubstr`'s
+   `~+N`/`~-N` arm normalized the discriminator byte
+   (`nx`) from Dash (`\u{9b}`) to ASCII `-` for the entry
+   check, but the per-char sign predicate inside the digit
+   walker (`chars[p] == '-'`) still compared against raw
+   ASCII. `~-0`'s second char was Dash TOKEN so `neg`
+   stayed false, `p` never advanced past the sign, the
+   digit loop didn't fire, and the whole `~-N` arm fell
+   through to the `~user` libc::getpwnam fallback.
+2. **val negation flipped sign past dstackent.** Even when
+   sign parsing worked, the Rust port did
+   `let val = if neg { -val } else { val };` before
+   calling `dstackent`, so `~-1` reached the C-shaped
+   dstackent with `val = -1`. C `Src/subst.c:771-773`
+   does `if (val < 0) val = -val;` — the sign was already
+   encoded in `ch` (str[1]); val carries magnitude only.
+3. **dstackent missing the empty-stack pwd path.** C
+   `Src/subst.c:4914-4919` has:
+   `if (n == end) { if (backwards && !val) return pwd; if
+   (isset(NOMATCH)) zerr(...); return NULL; }`. The Rust
+   port indexed `dirstack[n - val]` and returned `None`
+   when out of bounds — `~-0` on empty dirstack returned
+   None instead of pwd, and the diagnostic was never
+   emitted.
+
+**Fix** — `src/ported/subst.rs`:
+1. Add `ch_at(i)` helper that normalizes chars[i] from
+   Dash → '-' for the sign test (mirrors the existing
+   `nx` normalization).
+2. Drop the spurious `if neg { -val }` flip — the sign
+   is already routed through the `ch` argument.
+3. Rewrite `dstackent` to walk the dirstack with a
+   cursor + `at_end` flag mirroring C's linked-list
+   walk byte-for-byte. When `at_end && backwards &&
+   val == 0`, return pwd; when `at_end` otherwise, emit
+   `zerr("not enough directory stack entries.")` under
+   NOMATCH and return None.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /; cd /tmp; cd ~-0; pwd'
+/tmp
+$ ./target/debug/zshrs --zsh -fc 'cd /; cd /tmp; cd ~-0; pwd'
+/tmp
+
+$ /opt/homebrew/bin/zsh -fc 'cd /; pushd /tmp; pushd /usr; echo "~-0=$(printf %s ~-0) ~-1=$(printf %s ~-1) ~+0=$(printf %s ~+0) ~+1=$(printf %s ~+1)"'
+~-0=/ ~-1=/tmp ~+0=/usr ~+1=/tmp
+$ ./target/debug/zshrs --zsh -fc 'cd /; pushd /tmp; pushd /usr; echo "~-0=$(printf %s ~-0) ~-1=$(printf %s ~-1) ~+0=$(printf %s ~+0) ~+1=$(printf %s ~+1)"'
+~-0=/ ~-1=/tmp ~+0=/usr ~+1=/tmp
+
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp; cd ~-5; pwd'
+zsh:1: not enough directory stack entries.
+$ ./target/debug/zshrs --zsh -fc 'cd /tmp; cd ~-5; pwd'
+zsh:1: not enough directory stack entries.
+```
+
+All four `~-N`/`~+N` arms now match zsh byte-for-byte
+including the NOMATCH diagnostic.
+
+Test baseline preserved at 958/94.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
