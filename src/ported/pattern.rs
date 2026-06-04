@@ -948,30 +948,24 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
                         prev_chain_tail = -1;
                         continue;
                     }
-                    // No preceding piece — legacy PREFIX behavior
-                    // (real zsh would reject; preserved for existing
-                    // direct-API callers).
-                    let count_off = patnode(P_COUNT);
-                    let mut buf = patout.lock().unwrap();
-                    buf.extend_from_slice(&min.to_le_bytes());
-                    buf.extend_from_slice(&max.to_le_bytes());
-                    drop(buf);
-                    let mut piece_flags: i32 = 0;
-                    let mut piece_tail: usize = 0;
-                    let piece = patcomppiece(&mut piece_flags, paren, &mut piece_tail);
-                    if piece < 0 {
-                        return -1;
-                    }
-                    set_next(piece_tail, 0);
-                    if chain_start < 0 {
-                        chain_start = count_off as i64;
-                    } else {
-                        set_next(last_tail, count_off);
-                    }
-                    last_tail = count_off;
-                    last_piece_off = -1;
-                    prev_chain_tail = -1;
-                    continue;
+                    // No preceding piece — `(#cN,M)` is a POSTFIX
+                    // modifier in real zsh and requires a piece to
+                    // attach to. Without one C `Src/pattern.c:1606+`
+                    // rejects the pattern. Bug #521: zshrs previously
+                    // took a legacy PREFIX path (compile next piece as
+                    // operand) which silently matched empty for `0,0`
+                    // and similar degenerate ranges. Match zsh by
+                    // returning the canonical "bad pattern" failure.
+                    crate::ported::utils::zerr(&format!(
+                        "bad pattern: (#c{},{})",
+                        min,
+                        if max == i64::MAX {
+                            String::new()
+                        } else {
+                            max.to_string()
+                        }
+                    ));
+                    return -1;
                 }
             }
             // Malformed `(#c...)` — fall through to generic flag handler.

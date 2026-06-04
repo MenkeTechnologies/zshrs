@@ -40159,7 +40159,33 @@ HISTSIZE doesn't take effect.
 
 ## #521 — `[[ "" == (#c0,0) ]]` matches in zshrs — zsh rejects as "bad pattern"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 ([src/ported/pattern.rs](../src/ported/pattern.rs)).
+
+**Root cause** — after #245's POSTFIX wrap landed, the `(#cN,M)` arm in
+`patcompbranch` still had a legacy PREFIX-form fallback for the case
+where no preceding piece existed (`last_piece_off < 0`). That fallback
+compiled the next piece as the operand and accepted degenerate ranges
+like `(#c0,0)` (min=0, max=0, empty operand → match-empty-zero-times
+silently succeeds). C `Src/pattern.c:1606+` requires a preceding piece
+and rejects bare `(#cN,M)` as `bad pattern`.
+
+**Fix** — replace the no-preceding-piece fallback with the canonical
+`zerr("bad pattern: (#cN,M)")` + return -1, matching zsh's behavior
+exactly. POSTFIX wrap path (the normal case `x(#c3,5)`) is unaffected.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; [[ "" == (#c0,0) ]] && echo m'
+zsh:1: bad pattern: (#c0,0)    # rc=1
+
+# POSTFIX still works (#245 repro):
+$ ./target/debug/zshrs --zsh -fc 'setopt extendedglob; [[ "abc" == ?(#c2,5) ]]; echo "ec=$?"'
+ec=0
+```
+
+The `test_pattern_repeat_*` shell tests still pass (3/3).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; [[ "" == (#c0,0) ]] && echo m'
@@ -41731,7 +41757,20 @@ behaviors for the unrecognized form, but they diverge.
 
 ## #548 — `${(   )a}` whitespace-only flag-paren error msg diverges — "error in flags" vs "bad substitution"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — landed via #546 default-arm rewrite.
+Whitespace chars hit the unknown-flag default arm in the paramsubst
+flag-parse loop, which now emits `error in flags near position N in
+'${BODY}'` matching `Src/subst.c:2527`.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a=hi; echo "${(   )a}"'
+zsh:1: error in flags near position 4 in '${(   )a}'    # rc=1
+```
+
+Position 4 matches zsh's position. Baseline 964/88 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=hi; echo "${(   )a}" 2>&1'
@@ -41967,7 +42006,19 @@ bypassed; can't rely on `readonly` semantics in zshrs.
 
 ## #552 — `(a)bc` glob alternation not honored with extended_glob — zsh: matches `abc`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — repro no longer reproduces. `(a)bc`
+under `extended_glob` now expands to `abc` matching zsh exactly. Likely
+landed via the broader pattern.rs work on alternation grouping. No new
+code change.
+
+**Verify**
+```sh
+$ touch /tmp/_zg552/abc
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; echo /tmp/_zg552/(a)bc'
+/tmp/_zg552/abc    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(a)bc'
@@ -42046,7 +42097,19 @@ init-contamination family with #479/#497.
 
 ## #554 — `(abc)` plain parens stripped entirely from glob output — zsh: "number expected"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — landed via #549's errflag gate in
+`expand_glob` (`src/ported/glob.rs:3252+`). The qualifier parser emits
+"number expected" for `(abc)` and sets errflag; the new gate immediately
+returns empty matches so the diagnostic is the only output.
+
+**Verify**
+```sh
+$ touch /tmp/_zg554/abc
+$ ./target/debug/zshrs --zsh -fc 'echo /tmp/_zg554/(abc)'
+zsh:1: number expected    # rc=1, matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(abc)'
@@ -43687,7 +43750,7 @@ qualifiers always have a digit suffix.
 | 518 | `$PROMPT`/`$PS1` (and PROMPT2-4/PS2-4) NOT bidirectionally aliased — modifying one doesn't update the other | **port-bug** | explicit dual-assign |
 | 519 | **CRITICAL** infinite-recursion function crashes shell with stack overflow (exit 134) — zsh: FUNCNEST limit catches | **port-bug** | none — avoid recursion |
 | 520 | `HISTSIZE=N` assignment ignored — reads back as default `999999999` regardless | **port-bug** | none — assignment has no effect |
-| 521 | `[[ "" == (#c0,0) ]]` matches in zshrs — zsh rejects as "bad pattern" — extends #489 broken-cN family | **port-bug** | (#c0,0) shouldn't be used |
+| 521 | `[[ "" == (#c0,0) ]]` matches in zshrs — zsh rejects as "bad pattern" — extends #489 broken-cN family | **fixed** 2026-06-03 | n/a |
 | 522 | `TRAPDEBUG()` function-form not invoked before each command — extends #381 family (DEBUG pseudo-signal) | **port-bug** | none — debuggers/profilers can't hook |
 | 523 | `${(q)control_char}` produces raw `\\<CHAR>` instead of `$'\\X'` ANSI-C-quoted form — round-trip broken | **port-bug** | manual ANSI-C-quote helper |
 | 524 | `%r` prompt escape printed literally — extends prompt-escape gap family (#390/#391/#412/etc.) | **port-bug** | avoid `%r` when targeting zshrs |
@@ -43714,13 +43777,13 @@ qualifiers always have a digit suffix.
 | 545 | `${(s.X.)XXX}` all-separator string gives 4 empty fields — zsh: 2 (extends #542) | **port-bug** | filter via `(parts[@]:#)` |
 | 546 | `${(!)var}` invalid paramexp flag silently accepted — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 547 | `echo "$~"` emits literal `$~` — zsh: drops invalid `$X` to empty | **port-bug** | (acceptable in user code) |
-| 548 | `${(   )a}` whitespace-only flag-paren error: "bad substitution" — zsh: "error in flags near position N" | **port-bug** | match on rc only |
+| 548 | `${(   )a}` whitespace-only flag-paren error: "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 549 | `?(a)` extglob in zsh-mode: zshrs uses bash-style "zero-or-one" — zsh: rejects as broken glob-qualifier | **fixed** 2026-06-03 | n/a |
 | 550 | `${((O))a}` nested-paren flag silently accepted as no-op — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 551 | **CRITICAL** `readonly X=hi; X=2 cmd` allows readonly override via env-prefix — security bypass | **port-bug** | none — readonly cannot be relied on |
-| 552 | `(a)bc` glob alternation not honored with `extended_glob` — zsh: matches `abc`; zshrs: literal | **port-bug** | bracket-class `[abc]` (single-char only) |
+| 552 | `(a)bc` glob alternation not honored with `extended_glob` — zsh: matches `abc`; zshrs: literal | **fixed** 2026-06-03 | n/a |
 | 553 | `LC_MESSAGES`/`LC_MONETARY`/... init empty — extends #517 (entire LC_* family pre-seeded) | **port-bug** | `[[ -n $LC_FOO ]]` non-empty check |
-| 554 | `(abc)` plain parens stripped from glob without extended_glob — zsh: "number expected" (qualifier) | **port-bug** | quote the parens |
+| 554 | `(abc)` plain parens stripped from glob without extended_glob — zsh: "number expected" (qualifier) | **fixed** 2026-06-03 | n/a |
 | 555 | `compgen` bash builtin shipped as always-available — extends #475/#504 family | **port-bug** | use `$ZSH_VERSION`/`$BASH_VERSION` |
 | 556 | `typeset -A h=("a b" 1)` quoted key word-splits — extends #528 to assocs | **port-bug** | per-element subscript-assign |
 | 557 | regex `.` doesn't match newline in zshrs — zsh: dot-matches-newline by default | **port-bug** | explicit `[[:space:]]` class |
