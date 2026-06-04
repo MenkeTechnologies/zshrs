@@ -44645,6 +44645,83 @@ Test baseline 964/88 preserved.
 
 ---
 
+## #589 — `a=hello; a[2]=X` produces ` X` instead of `hXllo` — scalar subscript-assign treated as array-store
+
+**Status:** `fixed` 2026-06-04 — assignsparam's subscripted-store
+path now detects PM_SCALAR and dispatches to char-splice instead
+of array-element store. Range form `a[N,M]=val` also fixed in
+BUILTIN_SET_SUBSCRIPT_RANGE.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=hello; a[2]=X; echo $a'
+hXllo
+
+$ ./target/debug/zshrs --zsh -fc 'a=hello; a[2]=X; echo $a'   # before
+ X
+```
+
+**Root cause** — two-site bug:
+
+1. **`src/ported/params.rs::assignsparam`** (line ~5123) — the
+   `else if let Ok(idx) = key.parse::<i64>()` arm always treated
+   numeric subscript as PM_ARRAY element-store: created `u_arr`,
+   wrote `val` at index, AND cleared `u_str = None`. For PM_SCALAR
+   `a="hello"`, this left u_str=None and u_arr=["", "X"]; reading
+   `$a` joined the array as `" X"`.
+
+2. **`src/fusevm_bridge.rs::BUILTIN_SET_SUBSCRIPT_RANGE`** — the
+   slice form `a[N,M]=val` always called `setarrvalue` which
+   errors `"attempt to assign array value to non-array"` when
+   pm is PM_SCALAR.
+
+C `Src/params.c:2748+` (assignstrvalue PM_SCALAR arm) splices
+the value into the scalar's char string. Both the single-
+subscript (`a[N]=X`) and slice (`a[N,M]=val`) forms route
+through the same scalar-splice path in C.
+
+**Fix** — two changes:
+
+1. **`assignsparam`** numeric-subscript arm: check
+   `PM_TYPE(pm.node.flags) == PM_SCALAR` first; if scalar, do
+   char-replace at index (1-based with KSHARRAYS/KSHZEROSUBSCRIPT
+   handling). Else preserve existing PM_ARRAY path.
+2. **`BUILTIN_SET_SUBSCRIPT_RANGE`**: detect PM_SCALAR via the
+   taken paramtab entry and route through `assignstrvalue` (which
+   dispatches by PM_TYPE) instead of `setarrvalue`. Adjust
+   `v.start -= 1` to convert 1-based slice start to 0-based.
+   Also: for scalars (no array), the `len` used in negative-index
+   translation now reads from the scalar's char count instead of
+   defaulting to 0.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'a=hello; a[2]=X; echo $a'           # single
+hXllo
+$ ./target/debug/zshrs -fc 'a=hello; a[1]=H; echo $a'           # first char
+Hello
+$ ./target/debug/zshrs -fc 'a=hello; a[5]=O; echo $a'           # last char
+hellO
+$ ./target/debug/zshrs -fc 'a=hi; a[5]=X; echo $a'              # past end → append
+hiX
+$ ./target/debug/zshrs -fc 'a=hello; a[-1]=O; echo $a'          # negative
+hellO
+$ ./target/debug/zshrs -fc 'a=hello; a[2,3]=XYZ; echo $a'       # slice
+hXYZlo
+$ ./target/debug/zshrs -fc 'a=hello; a[2,-1]=XY; echo $a'       # neg-end slice
+hXY
+$ ./target/debug/zshrs -fc 'a=hello; a[-3,-1]=XYZ; echo $a'     # neg-both
+heXYZ
+$ ./target/debug/zshrs -fc 'a=(1 2 3); a[2]=X; echo "${a[@]}"'  # array regression
+1 X 3
+$ ./target/debug/zshrs -fc 'a=(1 2 3 4 5); a[2,3]=(X Y Z); echo "${a[@]}"'  # array slice
+1 X Y Z 4 5
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #588 — `"${*}"` ignores IFS — braced `${*}`/`${@}` skip the fast path that handles IFS sepjoin
 
 **Status:** `fixed` 2026-06-04 — compile_zsh fast path now
@@ -45952,6 +46029,7 @@ no longer reports the internal trap-machinery scalar.
 | 586 | `${(z)"$(cmd)"}` errors "bad substitution" — DQ-with-expansion misclassified as literal-operand | **fixed** 2026-06-04 | parse_zsh_flag_literal rejects DQ operands containing `$`/`` ` ``/Stringg/Qstring/Tick/Qtick |
 | 587 | `${a[(r)y]:-default}` fires default even when `(r)y` matches — flag-form subscripts not is_set | **fixed** 2026-06-04 | paramsubst is_set arm treats flag-form `(…)` subscripts as set when raw_value non-empty |
 | 588 | `"${*}"` (braced) ignores IFS — bare `$*` works | **fixed** 2026-06-04 | compile_zsh fast path recognizes braced `${*}`/`${@}` equivalent to bare forms |
+| 589 | `a=hello; a[2]=X` produces ` X` instead of `hXllo` — scalar subscript-assign treated as array-store | **fixed** 2026-06-04 | assignsparam + SET_SUBSCRIPT_RANGE detect PM_SCALAR and route through char-splice |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
