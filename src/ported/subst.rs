@@ -7746,7 +7746,15 @@ pub fn paramsubst(
                             .map(|a| a.join(sep_str))
                             .unwrap_or_else(|| value.clone());
                         value = mod_one(&joined);
-                        split_parts = None;
+                        // Bug #576: the later (j:X:) re-join block at
+                        // subst.rs:8629 falls back to
+                        // `arrays_get(&var_name).map(|a| a.join(sp))`
+                        // when split_parts is None — re-joining the
+                        // ORIGINAL unmodified array and clobbering the
+                        // modifier's output. Seed split_parts with the
+                        // modified scalar so the re-join arm picks up
+                        // our value instead.
+                        split_parts = Some(vec![value.clone()]);
                     } else if let Some(parts) = split_parts.clone() {
                         let new_parts: Vec<String> = parts.iter().map(|s| mod_one(s)).collect();
                         value = new_parts.join(" ");

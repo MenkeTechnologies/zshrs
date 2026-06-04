@@ -44464,6 +44464,68 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #576 — `${(j:X:)arr:u}` (and `:l`) — modifier silently ignored, output unmodified after join
+
+**Status:** `fixed` 2026-06-04 — `(j:X:)` modifier-dispatch arm
+now seeds `split_parts` with the post-modifier scalar so the
+later sepjoin block at `subst.rs:8629` doesn't clobber the
+modified value with a re-join of the original array.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(abc DEF); echo ${(j:.:)a:u}'
+ABC.DEF
+
+$ ./target/debug/zshrs --zsh -fc 'a=(abc DEF); echo ${(j:.:)a:u}'   # before
+abc.DEF
+```
+
+**Root cause** — `src/ported/subst.rs` has two `(j:X:)` paths
+that both want to run:
+
+1. **Modifier dispatch** at `subst.rs:7734` joins the array with
+   `sep`, runs the modifier (`:u`/`:l`/`:t`/etc.), sets `value`
+   to the result, and cleared `split_parts = None`.
+2. **Late sepjoin block** at `subst.rs:8629` then fires (sep is
+   still Some); the `split_parts.clone()` branch returns None so
+   it falls to `arrays_get(&var_name).map(|a| a.join(sp))` —
+   re-joining the ORIGINAL unmodified array and overwriting
+   `value`.
+
+For `${(j:.:)a:u}` with `a=(abc DEF)`:
+- Step 1: `value = "ABC.DEF"`, `split_parts = None`.
+- Step 2: re-join from `arrays_get` → `value = "abc.DEF"`.
+
+Bug #91 (`${(j: :)paths:t}`) was fixed earlier for the path-
+modifier `:t` case but only because `paths` was an array of
+distinct strings whose joined-then-:t-d result happened to
+equal the per-element-then-rejoined result — masking the
+underlying split_parts None issue for case-changing modifiers
+that produce semantically different per-element vs scalar
+outputs.
+
+**Fix** (`src/ported/subst.rs::modifier_dispatch`): set
+`split_parts = Some(vec![value.clone()])` after the modifier
+runs, so the late sepjoin block's `parts.join(sp)` arm picks
+up our single-element modified scalar (joining a one-element
+vec is a no-op) instead of falling through to `arrays_get`.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'a=(abc DEF); echo ${(j:.:)a:u}'
+ABC.DEF
+$ ./target/debug/zshrs -fc 'a=(abc DEF); echo ${(j:.:)a:l}'
+abc.def
+$ ./target/debug/zshrs -fc 'a=(abc DEF); echo ${(j..)a:u}'
+ABCDEF
+$ ./target/debug/zshrs -fc 'paths=(/a/b/c.txt /d/e/f.log); echo "${(j: :)paths:t}"'  # #91 regression
+f.log
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #575 — `{a-c}{1..3}` only expands when first brace group is expandable — literal-first groups block later ranges
 
 **Status:** `fixed` 2026-06-04 — `xpandbraces` outer loop now retries
@@ -45151,6 +45213,7 @@ no longer reports the internal trap-machinery scalar.
 | 573 | `*(Lr)` malformed size-qualifier: zshrs "no matches found" — zsh: "number expected" | **port-bug** | visual audit `L/k/m` need digit |
 | 574 | `setopt warn_create_global` spurious `ZSH_DEBUG_CMD created globally` at every fn call | **fixed** 2026-06-04 | BUILTIN_DEBUG_TRAP now gated on sigtrapped[SIGDEBUG] OR traps_table["DEBUG"] |
 | 575 | `{a-c}{1..3}` literal first brace blocks later range brace from expanding | **fixed** 2026-06-04 | xpandbraces retries from past each non-expandable `{...}` |
+| 576 | `${(j:X:)arr:u}` / `:l` case modifier ignored — late sepjoin clobbers post-modifier scalar | **fixed** 2026-06-04 | modifier seeds split_parts with modified scalar |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
