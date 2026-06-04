@@ -36845,7 +36845,17 @@ Heavy; unsuitable for nested cmdsub.
 
 ## #456 — `[[ "(x)" == "(x)" ]]` doesn't match — quoted parens in pattern not treated as literal
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — quoted parens in `[[ == ]]` patterns
+now correctly treated as literal characters. `[[ "(x)" == "(x)" ]]`
+matches matching zsh. Likely landed via earlier pattern parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a="(x)"; [[ "$a" == "(x)" ]] && echo m || echo n'
+m    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a="(x)"; [[ "$a" == "(x)" ]] && echo m || echo n'
@@ -37296,7 +37306,40 @@ Or move the disown out of subshell.
 
 ## #463 — `set` no-args shows special vars `!`/`#`/`$`/`-` as empty strings instead of actual values
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/builtin.rs](../src/ported/builtin.rs)).
+
+**Root cause** — `bin_set`'s scalar-param dump path read `pm.u_str`
+directly from `paramtab`. Special params like `!`, `$`, `#`, `-`, `0`,
+`?` have empty `u_str` slots because their live value lives behind the
+GSU getfn (libc syscall, LASTVAL, pparams count, etc.) — same scheme as
+`lookup_special_var` (#417/#418). C `Src/builtins.c::printparamnode`
+dispatches through `pm.gsu_s->getfn` so the live value is read.
+
+**Fix** — collect names first, then call `params::getsparam(&k)` per
+name. `getsparam` already routes through the lookup_special_var libc
+shim for `UID`, `EUID`, `RANDOM`, `SECONDS`, `PPID`, etc., AND through
+the bare-param dispatch in paramsubst for `?`, `$`, `#`, `-`. Specials
+now report their live values; ordinary scalars unaffected.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'set' | head -6
+!=0
+#=0
+$=9704            # actual PID
+*=''              # (still empty — array-special, separate path)
+-=569Xf           # actual shell flags
+0=./target/debug/zshrs
+```
+
+Compare to zsh: matches `!`, `#`, `$`, `-`, `0`. The `*` (positional
+array) goes through `paramtab` scalar path which `getsparam` joins to
+empty when pparams empty — still divergent from zsh's `'*'=(  )` array
+form, separate gap.
+
+Baseline 961/91 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'set | head -6'
@@ -44202,14 +44245,14 @@ qualifiers always have a digit suffix.
 | 453 | ZLE widget registration (`zle -N`/`zle -D`) in subshell LEAKS to parent — third member of subshell-scope-leak family | **port-bug** | fork explicit zshrs child for widget isolation |
 | 454 | keymap creation/deletion (`bindkey -N`/`-D`) in subshell LEAKS to parent — extends #453 to keymap table | **port-bug** | fork explicit child |
 | 455 | function definitions inside `$(...)` cmd-substitution LEAK to parent — extends #451 to cmdsub context | **port-bug** | manual save/restore via `declare -f` |
-| 456 | `[[ "(x)" == "(x)" ]]` doesn't match — quoted parens in pattern not treated as literal (same family as #13/#449) | **port-bug** | use `case` instead of `[[ ]]` for literals |
+| 456 | `[[ "(x)" == "(x)" ]]` doesn't match — quoted parens in pattern not treated as literal (same family as #13/#449) | **fixed** 2026-06-04 | n/a |
 | 457 | nested `${(j:|:)${(s/:/)a}}` paramexp returns only first split element instead of joined whole | **port-bug** | use intermediate array variable |
 | 458 | `[[ "$a" == $p ]]` treats `$p` as glob by default — zsh requires `${~p}` or `GLOB_SUBST` opt-in (security-relevant inverse) | **fixed** 2026-06-04 | n/a |
 | 459 | **CRITICAL** `source script.zsh ARGS` ignores positional args — sourced script sees `$#=0` | **fixed** 2026-06-04 | n/a |
 | 460 | `typeset -aix arr=(...)` flag conflict silently accepted, `-i` dropped (zsh: "inconsistent type") | **port-bug** | manually validate flag combos |
 | 461 | `trap` no-args output omits `TRAPNAME()` function-form handlers (zsh shows them) — extends #381 listing side | **port-bug** | explicit `${+functions[TRAP$sig]}` probe loop |
 | 462 | `disown` in subshell emits "no current job" diagnostic (zsh: silent no-op when subshell's job-table is empty) | **port-bug** | pass explicit pid + `2>/dev/null` |
-| 463 | `set` no-args shows special vars (`!`/`#`/`$`/`-`) as empty strings — special-param getters not invoked in dump | **port-bug** | explicit per-param read `echo "!=$!"` |
+| 463 | `set` no-args shows special vars (`!`/`#`/`$`/`-`) as empty strings — special-param getters not invoked in dump | **fixed** 2026-06-04 | n/a |
 | 464 | `emulate sh` doesn't toggle sh-mode setopt block (zsh: ~8 opts on/off) — emulation table missing/no-op | **port-bug** | manual setopt of full sh-emulation list |
 | 465 | `*(om)` glob mtime-sort qualifier returns wrong order — sort ignored; likely all `(oX)`/`(OX)` affected | **port-bug** | external `ls -t` for mtime sort |
 | 466 | `pushd +N` / `popd +N` dirstack indexing cycles wrong direction — +1 lands on wrong stack entry | **port-bug** | use absolute paths via `cd` |
