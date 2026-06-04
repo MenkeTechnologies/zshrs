@@ -47563,17 +47563,17 @@ no longer reports the internal trap-machinery scalar.
 | 555 | `compgen` bash builtin shipped as always-available — extends #475/#504 family | **fixed** 2026-06-04 | `compgen` now `command not found` rc=127 in `--zsh` mode |
 | 556 | `typeset -A h=("a b" 1)` quoted key word-splits — extends #528 to assocs | **fixed** 2026-06-04 | closed by #528 quoted-token preservation work |
 | 557 | regex `.` doesn't match newline in zshrs — zsh: dot-matches-newline by default | **fixed** 2026-06-02 | explicit `[[:space:]]` class |
-| 558 | regex `[a-z\\n]` char-class matches multiline aggressively — extends #557 (different regex engine) | **port-bug** | anchor with `^`/`$` |
+| 558 | regex `[a-z\\n]` char-class matches multiline aggressively — extends #557 (different regex engine) | **fixed** 2026-06-02 | anchor with `^`/`$` |
 | 559 | `print -P "%(X.t.f)"` prompt-conditional always picks FALSE branch — `%(c..yes)`/`%(l..no-login)` diverge | **fixed** 2026-06-03 | n/a |
-| 560 | `print -- "a\\0b"` strips embedded NUL byte from output — zsh: preserves | **port-bug** | use `printf` (needs verification) |
+| 560 | `print -- "a\\0b"` strips embedded NUL byte from output — zsh: preserves | **fixed** 2026-06-02 | use `printf` (needs verification) |
 | 561 | `${(L99)a}` flag-with-trailing-digits error msg: "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
-| 562 | `${a:U}` / `${a:C}` / `${a:W}` invalid uppercase modifier suffixes silently accepted — zsh: "unrecognized modifier" | **port-bug** | visual audit modifier-letter case |
-| 563 | `zformat -F` (no args) error msg: "missing arguments to -f/-F" — zsh: "not enough arguments" | **port-bug** | match on rc only |
-| 564 | `\[pat\]` backslash-escaped brackets in `[[ == pat ]]` don't match literal `[`/`]` — zsh matches | **port-bug** | single-quote the pattern RHS |
+| 562 | `${a:U}` / `${a:C}` / `${a:W}` invalid uppercase modifier suffixes silently accepted — zsh: "unrecognized modifier" | **fixed** 2026-06-02 | visual audit modifier-letter case |
+| 563 | `zformat -F` (no args) error msg: "missing arguments to -f/-F" — zsh: "not enough arguments" | **fixed** 2026-06-02 | match on rc only |
+| 564 | `\[pat\]` backslash-escaped brackets in `[[ == pat ]]` don't match literal `[`/`]` — zsh matches | **fixed** 2026-06-02 | single-quote the pattern RHS |
 | 565 | `echo -e "\\0NNN"` octal escape passed through literally despite `-e` — zsh decodes | **fixed** 2026-06-02 | use `printf '\\NNN'` or `$'\\NNN'` |
-| 566 | `echo -e "\\uNNNN"` / `echo -e "\\UNNNNNNNN"` Unicode escapes passed through literally — zsh decodes | **port-bug** | embed UTF-8 char literal |
+| 566 | `echo -e "\\uNNNN"` / `echo -e "\\UNNNNNNNN"` Unicode escapes passed through literally — zsh decodes | **fixed** 2026-06-02 | embed UTF-8 char literal |
 | 567 | `$'\\UNNNNNNNN'` ANSI-C 8-hex Unicode escape passed through literally — zsh decodes (extends #364) | **port-bug** | embed UTF-8 char literal |
-| 568 | `read -A a </dev/null` on empty input creates 0-elem array — zsh: 1-elem empty array | **port-bug** | use `$?` from `read` not `${#a}` |
+| 568 | `read -A a </dev/null` on empty input creates 0-elem array — zsh: 1-elem empty array | **fixed** 2026-06-02 | use `$?` from `read` not `${#a}` |
 | 569 | `bindkey` no-args listing omits range-compaction `"^A"-"^C" self-insert` — emits each key (117 lines vs zsh 31) | **port-bug** | query specific keys with `bindkey '^X'` |
 | 570 | `${(n)a[1,-1]}` paramsubst flag + array-slice errors "bad substitution" — extends #436 to slice form | **fixed** 2026-06-04 | (@) + sort + slice now routes through BRIDGE_BRACE_ARRAY |
 | 571 | `${(Z)a}` flag without required arg errors "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
