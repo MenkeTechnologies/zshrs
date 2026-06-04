@@ -11435,6 +11435,14 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
     if name == "epochtime" {
         return Some(crate::ported::modules::datetime::getcurrenttime());
     }
+    // c:Src/Zle/zleparameter.c:132 — `keymaps` PM_ARRAY|PM_READONLY
+    // backed by keymapsgetfn (walks keymapnamtab). Without an arm
+    // here, `${keymaps[N]}` and `${keymaps[@]}` returned empty
+    // because the stub paramtab entry has no u_arr. Route through
+    // the PARTAB_ARRAY getfn so subscripted reads work. Bug #383.
+    if name == "keymaps" {
+        return crate::vm_helper::partab_array_get(name);
+    }
     if name == "funcfiletrace" || name == "funcsourcetrace" || name == "functrace" {
         if let Ok(f) = crate::ported::modules::parameter::FUNCSTACK.lock() {
             // c:Src/Modules/parameter.c:679-710 funcsourcetracegetfn —
@@ -11510,6 +11518,12 @@ fn arrays_contains(name: &str) -> bool {
         name,
         "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace" | "epochtime"
     ) {
+        return true;
+    }
+    // c:Src/Zle/zleparameter.c:132 — `keymaps` PM_ARRAY backed by
+    // keymapsgetfn. Mirror in the "exists" check so `${keymaps[@]}`
+    // / `${(@)keymaps}` / `${#keymaps}` see the array shape. Bug #383.
+    if name == "keymaps" {
         return true;
     }
     // c:Src/params.c:425-434 — tied-array IPDEF9 lowercase partners
