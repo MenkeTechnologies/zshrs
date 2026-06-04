@@ -44466,6 +44466,46 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #610 — `setopt KSH_ARRAYS; a=hello; echo $a[0]` returns empty — scalar subscript not 0-based under KSH_ARRAYS
+
+**Status:** `fixed` 2026-06-04 — added KSHARRAYS branch to scalar
+single-index subscript dispatch.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt KSH_ARRAYS; a=hello; echo "[${a[0]}][${a[1]}][${a[-1]}]"'
+[h][e][o]
+
+# Before fix:
+$ zshrs --zsh -c 'setopt KSH_ARRAYS; a=hello; echo "[${a[0]}][${a[1]}][${a[-1]}]"'
+[][h][o]                  # 1-based ignored KSH_ARRAYS
+
+# After fix:
+$ zshrs --zsh -c 'setopt KSH_ARRAYS; a=hello; echo "[${a[0]}][${a[1]}][${a[-1]}]"'
+[h][e][o]
+
+# Default (no KSH_ARRAYS) still 1-based:
+$ zshrs --zsh -c 'a=hello; echo "[${a[0]}][${a[1]}][${a[5]}]"'
+[][h][o]
+```
+
+**Root cause** — `src/ported/subst.rs` scalar single-index path
+mapped index → char position with hardcoded `idx - 1` (1-based)
+and consulted only `KSHZEROSUBSCRIPT` (the "treat `[0]` as `[1]`"
+toggle), missing the broader `KSH_ARRAYS` option that flips
+EVERY positive index to 0-based.
+
+C source (`Src/params.c`) gates on `isset(KSHARRAYS)` for the
+0-based path. zshrs's array-side already honored it (line 4800)
+but the scalar-side path did not.
+
+**Fix** — add `isset(KSHARRAYS)` branch before the existing
+`idx_n == 0` check. When KSHARRAYS is set: positive `idx_n`
+becomes the position directly, negative still counts from end.
+Default path (1-based) preserved verbatim.
+
+---
+
 ## #609 — `${a/PAT/\n}` strips backslash from replacement — should keep `\n` literal
 
 **Status:** `fixed` 2026-06-04 — removed `\X` → `X` strip pass in
@@ -46973,6 +47013,7 @@ no longer reports the internal trap-machinery scalar.
 | 607 | `${a:#(foo\|bar}` silently returns input — `:#` filter arm sibling of #605/#606 | **fixed** 2026-06-04 | same patcompile precheck applied to `:#` arm at subst.rs:6018 |
 | 608 | `typeset -p n` for integer with base displays as `BASE#VAL` instead of decimal | **fixed** 2026-06-04 | printparamvalue PM_INTEGER arm emits raw decimal via gsu_i.getfn / intgetfn; getsparam fallback strips BASE# prefix |
 | 609 | `${a/PAT/\n}` strips backslash from replacement — should keep `\n`/`\t`/`\&` literal | **fixed** 2026-06-04 | removed `\X → X` strip pass in `/`, `//`, and `(#m)/(#b)` rebuild arms; match C `singsub + untokenize` exactly |
+| 610 | `setopt KSH_ARRAYS; a=hello; echo $a[0]` returns empty — scalar subscript not 0-based under KSH_ARRAYS | **fixed** 2026-06-04 | added isset(KSHARRAYS) branch to scalar single-index dispatch |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to

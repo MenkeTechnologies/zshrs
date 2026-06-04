@@ -5120,7 +5120,22 @@ pub fn paramsubst(
                     let len = s_chars.len() as i64;
                     // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
                     // non-strict mode: `s[0]` → first char.
-                    let i = if idx_n == 0 {
+                    //
+                    // c:Src/params.c — KSH_ARRAYS option flips scalar
+                    // subscripts to 0-based: `a[0]` = first char, `a[1]`
+                    // = second char. Default zsh (KSH_ARRAYS off) is
+                    // 1-based: `a[1]` = first char. Without this check
+                    // `setopt KSH_ARRAYS; a=hello; echo $a[0]` returned
+                    // empty (treated as the always-empty `[0]` slot)
+                    // while zsh returns 'h'. Bug #610.
+                    let ksh_arrays = isset(crate::ported::zsh_h::KSHARRAYS);
+                    let i = if ksh_arrays {
+                        if idx_n < 0 {
+                            len + idx_n
+                        } else {
+                            idx_n
+                        }
+                    } else if idx_n == 0 {
                         if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
                             0 // c:2140
                         } else {
