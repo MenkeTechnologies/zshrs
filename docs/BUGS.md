@@ -28453,6 +28453,20 @@ fi
 
 ## #351 — `typeset -p arr` doesn't quote space-containing array elements — boundary loss in output
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=("x" 1 "a b"); typeset -p a'
+typeset -a a=( x 1 'a b' )
+$ ./target/debug/zshrs --zsh -fc 'a=("x" 1 "a b"); typeset -p a'
+typeset -a a=( x 1 'a b' )
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
