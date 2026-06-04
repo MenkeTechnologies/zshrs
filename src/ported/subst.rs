@@ -3576,8 +3576,18 @@ pub fn paramsubst(
                                   // matching delim found; the C path then takes
                                   // the else branch. In Rust: if next char is the
                                   // flag-block close `)` (or end of body), flagerr.
+                        //
+                        // c:Src/subst.c:2527 flagerr message — emit the
+                        // canonical "error in flags near position N in
+                        // '${BODY}'" diagnostic instead of generic "bad
+                        // substitution". Bug #571.
                         if idx >= body_chars.len() || body_chars[idx] == ')' {
-                            zerr("bad substitution"); // c:2473 flagerr
+                            let pos_1based = idx + 1 + 2;
+                            zerr(&format!(
+                                "error in flags near position {} in '${{{}}}'",
+                                pos_1based,
+                                body.as_str()
+                            ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
                         }
@@ -3597,7 +3607,12 @@ pub fn paramsubst(
                                 shsplit |= LEXFLAGS_NEWLINE; // c:2462
                             } else {
                                 // c:2465-2467 default: flagerr.
-                                zerr("bad substitution");
+                                let pos_1based = idx + 1 + 2;
+                                zerr(&format!(
+                                    "error in flags near position {} in '${{{}}}'",
+                                    pos_1based,
+                                    body.as_str()
+                                ));
                                 errflag_set_error();
                                 return (String::new(), new_pos, vec![]);
                             }
@@ -3608,7 +3623,12 @@ pub fn paramsubst(
                             idx += 1; // c:2444 past close delim
                         }
                         if !found_close {
-                            zerr("bad substitution"); // c:2473 flagerr
+                            let pos_1based = idx + 1 + 2;
+                            zerr(&format!(
+                                "error in flags near position {} in '${{{}}}'",
+                                pos_1based,
+                                body.as_str()
+                            ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
                         }

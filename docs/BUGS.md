@@ -42464,7 +42464,24 @@ verification).
 
 ## #561 — `${(L99)a}` flag-with-trailing-digits error message format diverges
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — landed alongside #546. The default
+unknown-flag arm in `src/ported/subst.rs` paramsubst flag-parse loop
+now emits `error in flags near position N in '${BODY}'` matching
+`Src/subst.c:2527` exactly. Trailing digits after a valid flag like
+`L` are seen as unknown chars and trigger the same error.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a=hello; echo "${(L99)a}"'
+zsh:1: error in flags near position 5 in '${(L99)a}'    # rc=1
+```
+
+Position 5 matches zsh's reported position. The only residual diff is
+zsh's body string includes whatever text came after `}` (e.g.
+trailing `"`) because C's `str_copy_for_output` walks past the closing
+brace; zshrs cuts at `}`. Same diagnostic, same rc.
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${(L99)a}" 2>&1'
@@ -42979,7 +42996,31 @@ local tmp=("${a[1,-1]}"); print "${(n)tmp}"
 
 ## #571 — `${(Z)a}` paramsubst flag without required argument errors "bad substitution"; zsh: "error in flags near position N"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 ([src/ported/subst.rs](../src/ported/subst.rs)).
+
+**Root cause** — the `Z` arm in paramsubst's flag-parse loop emitted
+generic `zerr("bad substitution")` for three failure modes (bare `(Z)`
+with no `:arg:` suffix, unknown sub-flag, missing closing delimiter).
+C `Src/subst.c:2527` emits `error in flags near position %z in '$%s'`
+on flagerr for ALL flag-parse failures.
+
+**Fix** — replace all three "bad substitution" sites in the Z arm
+with the canonical flagerr format used by #546's default arm. Position
+is `idx + 1 + 2` (1-based, accounting for `${` prefix).
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a="  hi  "; echo "[${(Z)a}]"'
+zsh:1: error in flags near position 5 in '${(Z)a}'    # rc=1
+
+# valid (Z+n+) form still works:
+$ ./target/debug/zshrs --zsh -fc 'a="echo hi"; echo "${(Z+n+)a}"'
+echo hi
+```
+
+Baseline 964/88 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a="  hi  "; echo "[${(Z)a}]"'
@@ -43686,7 +43727,7 @@ qualifiers always have a digit suffix.
 | 558 | regex `[a-z\\n]` char-class matches multiline aggressively — extends #557 (different regex engine) | **port-bug** | anchor with `^`/`$` |
 | 559 | `print -P "%(X.t.f)"` prompt-conditional always picks FALSE branch — `%(c..yes)`/`%(l..no-login)` diverge | **fixed** 2026-06-03 | n/a |
 | 560 | `print -- "a\\0b"` strips embedded NUL byte from output — zsh: preserves | **port-bug** | use `printf` (needs verification) |
-| 561 | `${(L99)a}` flag-with-trailing-digits error msg: "bad substitution" — zsh: "error in flags near position N" | **port-bug** | match on rc only |
+| 561 | `${(L99)a}` flag-with-trailing-digits error msg: "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 562 | `${a:U}` / `${a:C}` / `${a:W}` invalid uppercase modifier suffixes silently accepted — zsh: "unrecognized modifier" | **port-bug** | visual audit modifier-letter case |
 | 563 | `zformat -F` (no args) error msg: "missing arguments to -f/-F" — zsh: "not enough arguments" | **port-bug** | match on rc only |
 | 564 | `\[pat\]` backslash-escaped brackets in `[[ == pat ]]` don't match literal `[`/`]` — zsh matches | **port-bug** | single-quote the pattern RHS |
@@ -43696,7 +43737,7 @@ qualifiers always have a digit suffix.
 | 568 | `read -A a </dev/null` on empty input creates 0-elem array — zsh: 1-elem empty array | **port-bug** | use `$?` from `read` not `${#a}` |
 | 569 | `bindkey` no-args listing omits range-compaction `"^A"-"^C" self-insert` — emits each key (117 lines vs zsh 31) | **port-bug** | query specific keys with `bindkey '^X'` |
 | 570 | `${(n)a[1,-1]}` paramsubst flag + array-slice errors "bad substitution" — extends #436 to slice form | **port-bug** | fetch slice into temp then apply flag |
-| 571 | `${(Z)a}` flag without required arg errors "bad substitution" — zsh: "error in flags near position N" | **port-bug** | match on rc only |
+| 571 | `${(Z)a}` flag without required arg errors "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 572 | `print -S arg` history-save flag emits arg to stdout (and doesn't save) — zsh: silent save | **port-bug** | use `fc -p`/`fc -P` |
 | 573 | `*(Lr)` malformed size-qualifier: zshrs "no matches found" — zsh: "number expected" | **port-bug** | visual audit `L/k/m` need digit |
 
