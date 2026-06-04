@@ -27061,7 +27061,33 @@ n="$saved"
 
 ## #327 — `${(l.N.)arr[N]}` pad flags on subscripted array element return empty (extends #301 family)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `(l.N.)`/`(r.N.)` pad flags
+on subscripted-array-element targets now work. Closed by
+cumulative `(flag)NAME[KEY]` dispatcher parity work (same
+family that fixed `#308` for `(t)`).
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "[${(l.3.)a[1]}]"'
+[  x]
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); echo "[${(l.3.)a[1]}]"'
+[  x]
+
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "[${(r.5.)a[2]}]"'
+[y    ]
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); echo "[${(r.5.)a[2]}]"'
+[y    ]
+
+$ /opt/homebrew/bin/zsh -fc 'a=(hello world); echo "[${(l.10.)a[1]}]"'
+[     hello]
+$ ./target/debug/zshrs --zsh -c 'a=(hello world); echo "[${(l.10.)a[1]}]"'
+[     hello]
+```
+
+Doc-only flip; no code change in this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "[${(l.3.)a[1]}]"'
@@ -27069,44 +27095,6 @@ $ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "[${(l.3.)a[1]}]"'
 
 $ ./target/debug/zshrs --zsh -c 'a=(x y z); echo "[${(l.3.)a[1]}]"'
 []
-```
-
-zsh's `(l.N.)` left-pad flag works on array-element targets.
-zshrs returns empty.
-
-Same family as #301 (`(L/U/C)arr[N]` case-flags rejected),
-#308 (`(t)arr[N]` type-flag rejected). The flag-on-subscripted-
-array dispatcher is broadly broken across multiple flag
-categories:
-- `(L)` / `(U)` / `(C)` — case (#301)
-- `(t)` — type (#308)
-- `(l)` / `(r)` — pad (this bug)
-- `(j)` — join (also fails per my tests)
-
-All return empty when target is `arr[N]`, work correctly when
-target is scalar.
-
-**Where** — `src/ported/paramflags.rs::dispatch_flag_to_subscripted`:
-unified flag-dispatch doesn't handle array-element subscript
-target. C-source `Src/subst.c::dosubst` resolves the
-subscript first to get a scalar, then applies the flag.
-
-**Impact** — common pad-formatting idiom for tabular output
-broken:
-
-```sh
-files=(report.txt big.log)
-for f in "${files[@]}"; do
-    printf "%s\n" "${(l.30.)f} | $(stat -f %z "$f")"
-done
-# zsh: pad each filename to 30 chars
-# zshrs: padded form empty, output unaligned
-```
-
-**Workaround** — copy to temp scalar:
-```sh
-local _f="${files[1]}"
-padded="${(l.30.)_f}"
 ```
 
 ---
@@ -47370,7 +47358,7 @@ no longer reports the internal trap-machinery scalar.
 | 324 | `strftime -r FORMAT STRING` reverse-parse errors "format not matched" — string→epoch broken | **port-bug** | external `date -j -f` |
 | 325 | `$'\xNN\xNN'` C-string hex escapes treat UTF-8 sequence as 2 bytes (zsh: combines into multibyte char via locale) | **port-bug** | use `\uNNNN` Unicode form (unverified) |
 | 326 | `typeset +i n` clears value AND removes attribute (zsh: preserves value as scalar) | **port-bug** | save/restore around toggle |
-| 327 | `${(l.N.)arr[N]}` pad flags on array-element return empty — extends #301 family | **port-bug** | copy to temp scalar |
+| 327 | `${(l.N.)arr[N]}` pad flags on array-element return empty — extends #301 family | **fixed** 2026-06-04 | `(l.N.)`/`(r.N.)` on `arr[N]` now pad correctly via `(flag)NAME[KEY]` dispatcher |
 | 328 | ALL `${(FLAG)arr[N]}` flags broken on subscripted-array-element (20+ flags: case/type/pad/quote/sort/unique/join/eval/P/split/visible/D) | **port-bug** | universal: `elem="${arr[N]}"` then `(FLAG)elem` |
 | 329 | `setopt globsubst` doesn't enable variable-as-glob-pattern expansion (`${~var}` still works) | **port-bug** | use `${~var}` per-expansion |
 | 330 | `${~$(cmdsub)}` forced-glob marker on cmdsub doesn't trigger glob — returns empty | **fixed** 2026-06-04 | flag-loop accepts Tilde TOKEN (\u{98}) per `Src/subst.c:2596` |
