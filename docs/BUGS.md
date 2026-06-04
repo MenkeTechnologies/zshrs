@@ -37501,7 +37501,34 @@ echo "-=$-"
 
 ## #464 — `emulate sh` doesn't toggle sh-mode setopt block (zsh: enables ~8 opts; zshrs: none)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `emulate sh; setopt` now
+produces byte-for-byte identical output to zsh under `-fc`.
+Closed by the #470 fix combo: `default_on_options` reads
+the live `EMULATION` atomic, and the `optns_flags` table
+was audited (25 entries) against `Src/options.c:79-268`
+to correct spurious/missing OPT_EMULATE bits.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ diff <(/opt/homebrew/bin/zsh -fc 'emulate sh; setopt') \
+       <(./target/debug/zshrs --zsh -fc 'emulate sh; setopt')
+# (no diff)
+
+$ /opt/homebrew/bin/zsh -fc 'emulate sh; setopt'
+banghist
+nohashdirs
+nointeractivecomments
+notify
+promptpercent
+nopromptsubst
+norcs
+normstarsilent
+```
+
+Doc-only flip; the actual code change landed under #470.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'emulate sh; setopt'
@@ -37517,47 +37544,6 @@ normstarsilent
 $ ./target/debug/zshrs --zsh -c 'emulate sh; setopt'
 (empty)
 ```
-
-`emulate sh` is supposed to enter "Bourne shell
-compatibility mode" by toggling about 20-30 setopts to
-their sh-emulation defaults. The visible `setopt` output
-should change dramatically — `banghist`, `notify`,
-`promptpercent`, etc. all toggled on/off compared to
-default zsh.
-
-zshrs's `emulate sh` does nothing visible to setopt
-state. Either:
-1. `emulate` parses but doesn't apply any opts
-2. setopt listing is broken (separately documented as
-   #394 — empty under `-f`)
-3. Both
-
-**Where** — `src/ported/builtins/emulate.rs::apply`:
-must have a table mapping emulation names (`sh`, `ksh`,
-`csh`, `zsh`) to their opt-toggle sets, and apply those
-toggles. C-source `Src/builtins.c::emulate` walks the
-emulation table.
-
-**Impact** — `emulate sh -c 'cmd'` patterns (common
-in zsh-completion plugin invocations of POSIX scripts)
-don't actually enter sh emulation. zsh-specific
-behaviors (extended globbing, brace expansion, etc.)
-remain active when they should be disabled for
-POSIX-compat operation.
-
-Real-world breakage: oh-my-zsh's `omz reload` and
-similar scripts that switch emulation per-section.
-
-**Workaround** — manually setopt the sh-emulation set:
-```sh
-emulate_sh() {
-    setopt banghist nohashdirs nointeractivecomments notify
-    setopt promptpercent nopromptsubst norcs normstarsilent
-    # ... etc, full table from zsh source ...
-}
-```
-
-Tedious; needs full opt-list from zsh.
 
 ---
 
@@ -47433,7 +47419,7 @@ no longer reports the internal trap-machinery scalar.
 | 461 | `trap` no-args output omits `TRAPNAME()` function-form handlers (zsh shows them) — extends #381 listing side | **fixed** 2026-06-04 | bin_trap no-args walks shfunctab for TRAP* per `Src/builtin.c:7360-7365` |
 | 462 | `disown` in subshell emits "no current job" diagnostic (zsh: silent no-op when subshell's job-table is empty) | **port-bug** | pass explicit pid + `2>/dev/null` |
 | 463 | `set` no-args shows special vars (`!`/`#`/`$`/`-`) as empty strings — special-param getters not invoked in dump | **fixed** 2026-06-04 | n/a |
-| 464 | `emulate sh` doesn't toggle sh-mode setopt block (zsh: ~8 opts on/off) — emulation table missing/no-op | **port-bug** | manual setopt of full sh-emulation list |
+| 464 | `emulate sh` doesn't toggle sh-mode setopt block (zsh: ~8 opts on/off) — emulation table missing/no-op | **fixed** 2026-06-04 | closed by #470 fix combo (default_on_options + optns_flags audit) |
 | 465 | `*(om)` glob mtime-sort qualifier returns wrong order — sort ignored; likely all `(oX)`/`(OX)` affected | **fixed** 2026-06-04 | n/a |
 | 466 | `pushd +N` / `popd +N` dirstack indexing cycles wrong direction — +1 lands on wrong stack entry | **port-bug** | use absolute paths via `cd` |
 | 467 | `$-` shell-flags parameter missing `f` flag when shell launched with `-f` — likely `c`/`i`/`s`/`l` also missing | **fixed** 2026-06-04 | n/a |
