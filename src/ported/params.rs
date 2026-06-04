@@ -9284,19 +9284,57 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
         }
         print!("{}", quotedzputs(&s)); // c:6053
     } else if t == PM_INTEGER {
-        // c:Src/params.c::printparamvalue PM_INTEGER arm — C calls
-        // `pm->gsu.i->getfn(pm)` which dispatches through the special-
-        // integer GSU table (PPID/EUID/SECONDS/etc.). zshrs's `intgetfn`
-        // reads `pm.u_val` directly without that dispatch, so special
-        // integers like `$` (PID), `-` (shell flags via dashgetfn) read
-        // 0/empty. Route through `getsparam` first which already chains
-        // to `lookup_special_var` for the libc-shim values; fall back
-        // to `intgetfn` for ordinary ints. Bug #516.
-        let v = crate::ported::params::getsparam(&p.node.nam);
-        match v {
-            Some(s) if !s.is_empty() => print!("{}", s),
-            _ => print!("{}", intgetfn(p)),
+        // c:Src/params.c:6051-6057 PM_INTEGER arm — C calls
+        // `printf("%ld", p->gsu.i->getfn(p))` (or output64 on 64-bit
+        // builds). Always emits DECIMAL — `typeset -i 16 n=255` prints
+        // `n=255`, NOT `n=16#FF`. The base formatting only applies to
+        // `$n` expansion + `print -- $n`, not `typeset -p n`.
+        //
+        // The previous Rust port routed through `getsparam` first,
+        // which calls `convbase` and formats as `16#FF`. That polluted
+        // typeset -p output. Bug #608.
+        //
+        // Use the custom gsu_i.getfn when present (special integers
+        // like PPID/EUID/SECONDS dispatch through their own getfn);
+        // fall back to intgetfn (which reads pm.u_val). For lookup-
+        // special-var integers without a wired gsu_i, fall through to
+        // getsparam ONLY when u_val is 0 (the "no stored value"
+        // sentinel) so live PPID etc. still surface.
+        let getfn_ptr = p.gsu_i.as_ref().map(|g| g.getfn);
+        let raw = if let Some(getfn) = getfn_ptr {
+            getfn(p)
+        } else {
+            intgetfn(p)
+        };
+        if raw == 0 {
+            if let Some(s) = crate::ported::params::getsparam(&p.node.nam) {
+                if !s.is_empty() {
+                    // Strip any base#prefix added by convbase so the
+                    // typeset -p output stays decimal-only per C source.
+                    let dec = if let Some(idx) = s.find('#') {
+                        // Try parsing the part after # in the base.
+                        let (base_str, rest) = s.split_at(idx);
+                        let rest = &rest[1..];
+                        if let Ok(b) = base_str.parse::<u32>() {
+                            if (2..=36).contains(&b) {
+                                i64::from_str_radix(rest, b)
+                                    .map(|n| n.to_string())
+                                    .unwrap_or(s.clone())
+                            } else {
+                                s.clone()
+                            }
+                        } else {
+                            s.clone()
+                        }
+                    } else {
+                        s.clone()
+                    };
+                    print!("{}", dec);
+                    return;
+                }
+            }
         }
+        print!("{}", raw);
     } else if t == PM_EFLOAT || t == PM_FFLOAT {
         // c:6063 — `convfloat(p->gsu.f->getfn(p), p->base, p->node.flags,
         //          stdout)`. Honors pm.base for precision and
