@@ -2891,7 +2891,13 @@ pub fn bin_fg(
                 -1
             }
         } else {
-            zwarnnam(name, &format!("{}: no such job", arg));
+            // c:Src/jobs.c:2144 — for non-jobspec args (no leading
+            // `%`, not numeric), getjob's findjobnam path fails and
+            // emits `job not found: %s` (not the `%s: no such job`
+            // form which is for the in-use-job check at c:2588). zshrs
+            // shortcuts past getjob for non-`%` args, so the wrong
+            // format leaks. Bug #500.
+            zwarnnam(name, &format!("job not found: {}", arg));
             returnval = 127; // c:Src/jobs.c:2589-2590 — `return 127;`
             continue;
         };
