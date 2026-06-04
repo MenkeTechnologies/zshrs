@@ -1767,11 +1767,26 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
     // (`a..b`) / comma (`a,b`) / ccl (`[abc]`-style char-class), and
     // dispatches to the matching expander. Returns Some(parts) on
     // expansion, None if no brace group or unmatched.
-    let try_expand_one = |s: &str| -> Option<Vec<String>> {
+    // c:Src/glob.c:2276 xpandbraces — advances `lbr` through every
+    // candidate `{` and tries each. Bug #575: zshrs only tried the
+    // FIRST `{` and returned None for the whole string when that
+    // group was not expandable, so `{a-c}{1..3}` left the `{1..3}`
+    // unexpanded. Mirror C by carrying a `from` offset and walking
+    // to the next `{` on failure.
+    //
+    // Returns (Some(parts), _) on successful expansion. Returns
+    // (None, Some(next_from)) when the current `{...}` was found but
+    // didn't expand — outer loop should retry from next_from to scan
+    // for a later expandable group. Returns (None, None) when no
+    // `{...}` remains.
+    let try_expand_from = |s: &str, from: usize| -> (Option<Vec<String>>, Option<usize>) {
         let chars: Vec<char> = s.chars().collect();
         let len = chars.len();
         // c:Src/glob.c:xpandbraces — Inbrace TOKEN strict.
-        let start = chars.iter().position(|&c| c == '\u{8f}')?;
+        let start = match chars[from..].iter().position(|&c| c == '\u{8f}') {
+            Some(p) => from + p,
+            None => return (None, None),
+        };
         let mut depth = 1;
         let mut comma_positions = Vec::new();
         let mut dotdot_pos = None;
@@ -1781,13 +1796,14 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
                 '\u{90}' => {
                     depth -= 1;
                     if depth == 0 {
+                        let next_from = i + 1;
                         let prefix: String = chars[..start].iter().collect();
                         let suffix: String = chars[i + 1..].iter().collect();
                         let content: String = chars[start + 1..i].iter().collect();
                         if let Some(dp) = dotdot_pos {
                             if comma_positions.is_empty() {
                                 if let Some(parts) = expand_range(&prefix, &content, dp, &suffix) {
-                                    return Some(parts);
+                                    return (Some(parts), None);
                                 }
                                 // c:Src/glob.c:2476-2506 — when range
                                 // parsing fails INSIDE C's xpandbraces
@@ -1821,20 +1837,22 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
                                     || strip_end.chars().any(|c| c.is_ascii_digit());
                                 if has_digit {
                                     // c:2495-2498 — strip braces.
-                                    return Some(vec![format!("{}{}{}", prefix, content, suffix)]);
+                                    return (Some(vec![format!("{}{}{}", prefix, content, suffix)]), None);
                                 }
                                 // Non-digit `..` content (e.g.
                                 // `{hello..world}`) — C wouldn't have
                                 // entered xpandbraces. Preserve the
-                                // literal pattern intact.
-                                return None;
+                                // literal pattern intact. Allow outer
+                                // loop to retry from next_from in case
+                                // a later brace group is expandable.
+                                return (None, Some(next_from));
                             }
                         }
                         if !comma_positions.is_empty() {
-                            return expand_comma(&prefix, &content, &comma_positions, &suffix);
+                            return (expand_comma(&prefix, &content, &comma_positions, &suffix), None);
                         }
                         if brace_ccl && !content.is_empty() {
-                            return expand_ccl(&prefix, &content, &suffix);
+                            return (expand_ccl(&prefix, &content, &suffix), None);
                         }
                         // Outer brace has no comma/dotdot at depth 1,
                         // but content may contain nested braces (e.g.
@@ -1846,9 +1864,11 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
                             for piece in inner_expanded {
                                 out.push(format!("{}{{{}}}{}", prefix, piece, suffix));
                             }
-                            return Some(out);
+                            return (Some(out), None);
                         }
-                        return None;
+                        // Literal-only group: allow outer to retry
+                        // from next_from for a later expandable group.
+                        return (None, Some(next_from));
                     }
                 }
                 '\u{9a}' if depth == 1 => comma_positions.push(i - start - 1),
@@ -1858,7 +1878,23 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
                 _ => {}
             }
         }
-        None
+        (None, None)
+    };
+
+    // Outer loop: try expanding starting from each `{` in turn.
+    // Returns first successful expansion; None if none found.
+    let try_expand_one = |s: &str| -> Option<Vec<String>> {
+        let mut from = 0;
+        loop {
+            let (result, next) = try_expand_from(s, from);
+            if let Some(parts) = result {
+                return Some(parts);
+            }
+            match next {
+                Some(nf) if nf > from => from = nf,
+                _ => return None,
+            }
+        }
     };
 
     let mut results = vec![s.to_string()];

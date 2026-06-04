@@ -44464,6 +44464,64 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #575 — `{a-c}{1..3}` only expands when first brace group is expandable — literal-first groups block later ranges
+
+**Status:** `fixed` 2026-06-04 — `xpandbraces` outer loop now retries
+from the position past each non-expandable `{...}` so a literal
+first group doesn't shadow a later range/comma group.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo {a-c}{1..3}'
+{a-c}1 {a-c}2 {a-c}3
+
+$ ./target/debug/zshrs --zsh -fc 'echo {a-c}{1..3}'   # before
+{a-c}{1..3}
+```
+
+**Root cause** — `src/ported/glob.rs::xpandbraces::try_expand_one`
+scanned for the FIRST `\u{8f}` (Inbrace) only and returned `None`
+for the whole string when that group was literal (no `,` / `..` /
+ccl). The outer `while changed` loop then saw no expansion and
+exited, leaving the literal `{1..3}` un-expanded.
+
+C `Src/glob.c:2276 xpandbraces` advances `lbr` (left-brace ptr)
+through every candidate `{`; on a non-expandable group it tries
+the next one until either an expansion succeeds or the string is
+exhausted.
+
+**Fix** (`src/ported/glob.rs::xpandbraces`): split the inner
+closure into `try_expand_from(s, from)` that returns
+`(Option<Vec<String>>, Option<usize>)` — the second element being
+the position past the closing `}` of a tried-but-not-expandable
+group. Wrapping `try_expand_one` loops, walking `from` past each
+literal `{...}` until one expands or none remain.
+
+Three call sites changed: the dotdot non-digit fallthrough, the
+empty-of-classifier final arm, and the new outer loop. Range,
+comma, ccl, and nested-brace paths return `(Some(...), None)`
+unchanged.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'echo {a-c}{1..3}'
+{a-c}1 {a-c}2 {a-c}3
+$ ./target/debug/zshrs -fc 'echo X{a-c}Y{1..3}Z'
+X{a-c}Y1Z X{a-c}Y2Z X{a-c}Y3Z
+$ ./target/debug/zshrs -fc 'echo {1..3}{a-c}'         # regression
+1{a-c} 2{a-c} 3{a-c}
+$ ./target/debug/zshrs -fc 'echo {a..c}{1..3}'        # cross-product
+a1 a2 a3 b1 b2 b3 c1 c2 c3
+$ ./target/debug/zshrs -fc 'echo {a,b}{c,d}'          # comma form
+ac ad bc bd
+$ ./target/debug/zshrs -fc 'echo {literal}'           # full literal
+{literal}
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #574 — `setopt warn_create_global` emits spurious `ZSH_DEBUG_CMD created globally` at every function call
 
 **Status:** `fixed` 2026-06-04 — surfaced + fixed same turn.
@@ -44989,7 +45047,7 @@ no longer reports the internal trap-machinery scalar.
 | 469 | `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier" | **port-bug** | manual filter loop after glob |
 | 470 | `emulate -L sh` shows `localoptions`/`localpatterns`/`localtraps` but doesn't apply sh-mode opts — same root as #464 | **port-bug** | manual setopt of sh list |
 | 471 | `zmodload -u zsh/nonexistent` silently rc=0 — should error "no such module" (zsh: rc=1) | **port-bug** | manual module-list check before unload |
-| 472 | `typeset -H` (hide value) doesn't suppress value in `typeset -p` output — leaks secrets in listings | **port-bug** | `sed` post-process to strip `=value` |
+| 472 | `typeset -H` (hide value) doesn't suppress value in `typeset -p` output — leaks secrets in listings | **fixed** 2026-06-04 | `local -H a=secret; typeset -p a` → `typeset a` matching zsh |
 | 473 | `[[ "ab" == a|b ]]` zshrs runs `b` as command — `\|` in pattern parsed as pipe (security-relevant) | **fixed** 2026-06-04 | par_cond emits `parse error near <tok>` per parse.c:1818 |
 | 474 | `$PIPESTATUS` (uppercase) exposed as alias to `$pipestatus` — zsh has only lowercase; breaks bash-vs-zsh detection | **port-bug** | detect via `$ZSH_VERSION`/`$BASH_VERSION` strings |
 | 475 | bash-only builtins (`caller`/`help`/`complete`/`compopt`/`mapfile`) shipped in `--zsh` mode — extends bash-compat-contamination family | **port-bug** | detect zshrs via `$ZSH_VERSION` pattern |
@@ -45092,6 +45150,7 @@ no longer reports the internal trap-machinery scalar.
 | 572 | `print -S arg` history-save flag emits arg to stdout (and doesn't save) — zsh: silent save | **port-bug** | use `fc -p`/`fc -P` |
 | 573 | `*(Lr)` malformed size-qualifier: zshrs "no matches found" — zsh: "number expected" | **port-bug** | visual audit `L/k/m` need digit |
 | 574 | `setopt warn_create_global` spurious `ZSH_DEBUG_CMD created globally` at every fn call | **fixed** 2026-06-04 | BUILTIN_DEBUG_TRAP now gated on sigtrapped[SIGDEBUG] OR traps_table["DEBUG"] |
+| 575 | `{a-c}{1..3}` literal first brace blocks later range brace from expanding | **fixed** 2026-06-04 | xpandbraces retries from past each non-expandable `{...}` |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
