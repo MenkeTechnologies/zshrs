@@ -10348,6 +10348,13 @@ pub fn bin_trap(
     // c:7357-7380 — no args: list current traps.
     if argv.is_empty() {
         // c:7357
+        // Local enum for the merged function-form / string-form
+        // listing walker below. RUST-ONLY scoping helper for the
+        // c:Src/builtin.c:7359-7375 if/else-if structure.
+        enum TrapEntry {
+            Func(String),
+            Str(String, String),
+        }
         queue_signals(); // c:7358
         let traps = traps_table().lock().map(|t| t.clone()).unwrap_or_default();
         // c:Src/builtin.c:7359-7375 — C walks `sigtrapped[]` by signal
@@ -10357,18 +10364,64 @@ pub fn bin_trap(
         // — bug #68 in docs/BUGS.md: `trap` output came out in random
         // order vs zsh's stable signum-sorted view. Sort by getsigidx
         // before printing so the iteration matches C's array walk.
-        let mut sorted: Vec<(String, String)> =
-            traps.into_iter().map(|(k, v)| (k, v)).collect();
-        sorted.sort_by_key(|(sig, _)| {
+        //
+        // c:Src/builtin.c:7360-7365 — `if (sigtrapped[sig] & ZSIG_FUNC)
+        // { hn = gettrapnode(sig, 0); shfunctab->printnode(hn, 0); }`.
+        // Walk shfunctab for `TRAP<signame>` functions and emit their
+        // full definition alongside the string-form traps so the
+        // listing matches zsh. Bug #461 in docs/BUGS.md.
+        let trap_funcs: Vec<(String, i32, String)> = {
+            let mut acc: Vec<(String, i32, String)> = Vec::new();
+            if let Ok(tab) = crate::ported::hashtable::shfunctab_lock().read() {
+                for (fname, _) in tab.iter() {
+                    if let Some(sig_name) = fname.strip_prefix("TRAP") {
+                        let idx = getsigidx(sig_name);
+                        if idx != -1 {
+                            acc.push((fname.clone(), idx, sig_name.to_string()));
+                        }
+                    }
+                }
+            }
+            acc
+        };
+        // Merge function-form + string-form, sort by sig idx
+        // (function-form FIRST per zsh ordering — c:Src/builtin.c:7359
+        // walks each signal once; ZSIG_FUNC takes precedence within a
+        // single signum slot since the C code uses `else if` between
+        // the two arms).
+        let mut combined: Vec<(i32, TrapEntry)> = Vec::new();
+        for (fname, idx, _sig) in &trap_funcs {
+            combined.push((*idx, TrapEntry::Func(fname.clone())));
+        }
+        for (sig, body) in traps.iter() {
             let idx = getsigidx(sig);
-            if idx == -1 { i32::MAX } else { idx }
-        });
-        for (sig, body) in &sorted {
-            // c:7359
-            // c:7370-7375 — `printf("trap -- "); quotedzputs(...); printf(" %s\n", name);`
-            print!("trap -- "); // c:7372
-            print!("{}", quotedzputs(body)); // c:7373
-            println!(" {}", sig); // c:7374
+            // Skip if a function-form already exists for this sig
+            // (C's `else if` semantics — function-form wins).
+            if trap_funcs.iter().any(|(_, i, _)| *i == idx) {
+                continue;
+            }
+            combined.push((
+                if idx == -1 { i32::MAX } else { idx },
+                TrapEntry::Str(sig.clone(), body.clone()),
+            ));
+        }
+        combined.sort_by_key(|(idx, _)| *idx);
+        for (_idx, entry) in &combined {
+            match entry {
+                TrapEntry::Func(fname) => {
+                    if let Ok(tab) = crate::ported::hashtable::shfunctab_lock().read() {
+                        if let Some(shf) = tab.get(fname) {
+                            crate::ported::hashtable::printshfuncnode(shf, 0);
+                        }
+                    }
+                }
+                TrapEntry::Str(sig, body) => {
+                    // c:7370-7375 — `printf("trap -- "); quotedzputs(...); printf(" %s\n", name);`
+                    print!("trap -- "); // c:7372
+                    print!("{}", quotedzputs(body)); // c:7373
+                    println!(" {}", sig); // c:7374
+                }
+            }
         }
         unqueue_signals(); // c:7378
         return 0; // c:7379

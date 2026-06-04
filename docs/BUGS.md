@@ -37277,7 +37277,61 @@ code, or split into separate `typeset` calls.
 
 ## #461 — `trap` no-args output omits `TRAPNAME()` function-form handlers (zsh shows them)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `bin_trap`'s no-args
+listing now walks shfunctab for `TRAP<signame>` functions
+matching `Src/builtin.c:7360-7365` and emits each via
+`printshfuncnode` interleaved with the string-form traps,
+sorted by signal index.
+
+**Root cause** — `src/ported/builtin.rs::bin_trap` no-args
+path only walked `traps_table()` (the string-form trap
+HashMap). C `Src/builtin.c:7359-7375` walks `sigtrapped[]`
+per signal and dispatches by trap-kind: `if (sigtrapped[sig]
+& ZSIG_FUNC)` calls `shfunctab->printnode` on the
+`TRAP<signame>` shfunc; else if `sigtrapped[sig]` is the
+string-form, prints `trap -- 'body' SIG`. zshrs's listing
+missed the entire ZSIG_FUNC arm.
+
+**Fix** — `bin_trap`'s no-args block: scan `shfunctab` for
+`TRAP*` names whose suffix matches a known signal via
+`getsigidx`, build a merged `Vec<(sig_idx, TrapEntry)>`,
+sort by signal index, then emit. Function-form takes
+precedence over string-form for the same signal (matches
+C's `else if` semantics).
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPUSR1() { :; }; trap "echo X" USR2; trap'
+TRAPUSR1 () {
+	:
+}
+trap -- 'echo X' USR2
+$ ./target/debug/zshrs --zsh -c 'TRAPUSR1() { :; }; trap "echo X" USR2; trap'
+TRAPUSR1 () {
+	:
+}
+trap -- 'echo X' USR2
+
+$ /opt/homebrew/bin/zsh -fc 'TRAPHUP() { echo hangup; }; trap'
+TRAPHUP () {
+	echo hangup
+}
+$ ./target/debug/zshrs --zsh -c 'TRAPHUP() { echo hangup; }; trap'
+TRAPHUP () {
+	echo hangup
+}
+
+$ /opt/homebrew/bin/zsh -fc 'trap "echo Y" INT; trap'
+trap -- 'echo Y' INT
+$ ./target/debug/zshrs --zsh -c 'trap "echo Y" INT; trap'
+trap -- 'echo Y' INT
+```
+
+All three cases match byte-for-byte. zshrs_shell baseline
+preserved at 967/85.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'TRAPUSR1() { :; }; trap "echo X" USR2; trap'
@@ -37288,43 +37342,6 @@ trap -- 'echo X' USR2
 
 $ ./target/debug/zshrs --zsh -c 'TRAPUSR1() { :; }; trap "echo X" USR2; trap'
 trap -- 'echo X' USR2
-```
-
-zsh's `trap` no-args lists **all** registered trap
-handlers — both the string-form `trap CMD SIG` and the
-function-form `TRAPNAME()`.
-
-zshrs's `trap` listing only shows the string-form
-handlers. Function-form `TRAPNAME()` are not enumerated
-even when the function exists.
-
-Same root cause as #381/#382/#384/#389/#461 — the
-function-form trap handlers aren't being registered into
-the same dispatch/listing infrastructure as string-form
-traps.
-
-**Where** — `src/ported/builtins/trap.rs::list_all`:
-must walk the function table for names starting with
-`TRAP` matching signal names. C-source
-`Src/signals.c::list_traps` shows both `traplist` and
-`getshfunc("TRAP$SIGNAME")` for each signal.
-
-**Impact** — debugging traps becomes harder. The
-canonical "what signals does this script handle?" query
-`trap` misses half the handlers under zshrs:
-
-```sh
-# .zshrc has TRAPINT, TRAPHUP, TRAPEXIT all as functions
-$ trap
-# zsh: shows all 3 functions + string traps
-# zshrs: shows nothing (assuming no string-form traps set)
-```
-
-**Workaround** — explicit probe:
-```sh
-for sig in INT HUP USR1 USR2 EXIT ZERR; do
-    (( ${+functions[TRAP$sig]} )) && echo "TRAP$sig active"
-done
 ```
 
 ---
@@ -47413,7 +47430,7 @@ no longer reports the internal trap-machinery scalar.
 | 458 | `[[ "$a" == $p ]]` treats `$p` as glob by default — zsh requires `${~p}` or `GLOB_SUBST` opt-in (security-relevant inverse) | **fixed** 2026-06-04 | n/a |
 | 459 | **CRITICAL** `source script.zsh ARGS` ignores positional args — sourced script sees `$#=0` | **fixed** 2026-06-04 | n/a |
 | 460 | `typeset -aix arr=(...)` flag conflict silently accepted, `-i` dropped (zsh: "inconsistent type") | **fixed** 2026-06-04 | `typeset -aix arr=(1 2 3)` rejects with `inconsistent type for assignment` matching zsh |
-| 461 | `trap` no-args output omits `TRAPNAME()` function-form handlers (zsh shows them) — extends #381 listing side | **port-bug** | explicit `${+functions[TRAP$sig]}` probe loop |
+| 461 | `trap` no-args output omits `TRAPNAME()` function-form handlers (zsh shows them) — extends #381 listing side | **fixed** 2026-06-04 | bin_trap no-args walks shfunctab for TRAP* per `Src/builtin.c:7360-7365` |
 | 462 | `disown` in subshell emits "no current job" diagnostic (zsh: silent no-op when subshell's job-table is empty) | **port-bug** | pass explicit pid + `2>/dev/null` |
 | 463 | `set` no-args shows special vars (`!`/`#`/`$`/`-`) as empty strings — special-param getters not invoked in dump | **fixed** 2026-06-04 | n/a |
 | 464 | `emulate sh` doesn't toggle sh-mode setopt block (zsh: ~8 opts on/off) — emulation table missing/no-op | **port-bug** | manual setopt of full sh-emulation list |
