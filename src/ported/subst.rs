@@ -4195,7 +4195,31 @@ pub fn paramsubst(
             if idx > sub_start {
                 let raw_sub: String = body_chars[sub_start..idx].iter().collect();
                 // Subscript expressions can contain $vars — singsub them.
-                subscript = Some(singsub(&raw_sub)); // c:2899
+                let expanded = singsub(&raw_sub); // c:2899
+                // c:Src/params.c:2102-2106 — `if (*s == ',') zerr("invalid
+                // subscript")` — the subscript grammar is `start[,end]`,
+                // exactly two comma-separated args. A third comma is a
+                // syntax error. C's getindex catches this via `if (s !=
+                // tbrack) s = *pptr` + reject at the caller; zsh's
+                // paramsubst surfaces it as "bad substitution". Bug #408.
+                {
+                    let mut depth = 0i32;
+                    let mut commas = 0usize;
+                    for ch in expanded.chars() {
+                        match ch {
+                            '(' | '[' | '{' => depth += 1,
+                            ')' | ']' | '}' => depth -= 1,
+                            ',' if depth == 0 => commas += 1,
+                            _ => {}
+                        }
+                    }
+                    if commas > 1 {
+                        zerr("bad substitution");
+                        errflag_set_error();
+                        return (String::new(), idx + 1, vec![]);
+                    }
+                }
+                subscript = Some(expanded);
             }
             if idx < body_chars.len() {
                 idx += 1;
@@ -4229,7 +4253,28 @@ pub fn paramsubst(
             }
             if idx > sub2_start {
                 let raw2: String = body_chars[sub2_start..idx].iter().collect();
-                second_subscript = Some(singsub(&raw2));
+                let expanded2 = singsub(&raw2);
+                // Same 3-comma reject as the first subscript above —
+                // c:Src/params.c:2102-2106 / bug #408. Applies to the
+                // recursive `${a[N][M]}` subscript too.
+                {
+                    let mut depth = 0i32;
+                    let mut commas = 0usize;
+                    for ch in expanded2.chars() {
+                        match ch {
+                            '(' | '[' | '{' => depth += 1,
+                            ')' | ']' | '}' => depth -= 1,
+                            ',' if depth == 0 => commas += 1,
+                            _ => {}
+                        }
+                    }
+                    if commas > 1 {
+                        zerr("bad substitution");
+                        errflag_set_error();
+                        return (String::new(), idx + 1, vec![]);
+                    }
+                }
+                second_subscript = Some(expanded2);
             }
             if idx < body_chars.len() {
                 idx += 1;
