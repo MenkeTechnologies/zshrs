@@ -44466,6 +44466,50 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #614 — `setopt KSH_ARRAYS; echo $\{(@)a[1,2]\}` returns `b c` instead of `c d` — splat path not 0-based
+
+**Status:** `fixed` 2026-06-04 — KSH_ARRAYS branch added to TWO
+splat paths in `paramsubst` (auto-splat with range subscript and
+the c:3950 splat-range slice path).
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt KSH_ARRAYS; a=(b c d); print -l "${(@)a[1,2]}"'
+c
+d
+
+# Before fix:
+$ zshrs --zsh -c 'setopt KSH_ARRAYS; a=(b c d); print -l "${(@)a[1,2]}"'
+b
+c                       # 1-based indices applied — KSH_ARRAYS ignored
+
+# After fix:
+$ zshrs --zsh -c 'setopt KSH_ARRAYS; a=(b c d); print -l "${(@)a[1,2]}"'
+c
+d
+```
+
+**Root cause** — the regular slice arm at subst.rs:4869+ was
+already KSH_ARRAYS-aware (after #612), but TWO additional splat
+paths re-fetched the array slice with the ORIGINAL 1-based-assumed
+lo/hi parsed straight from the subscript text:
+
+1. `subst.rs:9836-9842` — auto-splat block for range subscript
+   (calls `getarrvalue(arr, lo, hi)` from raw subscript).
+2. `subst.rs:10391-10402` — c:3950 splat-range path (same shape,
+   different gate).
+
+The `(@)` flag routes through `BUILTIN_ARRAY_INDEX` → paramsubst,
+where the slice computation arm honored KSH_ARRAYS but the
+DOWNSTREAM splat re-fetcher built the splat from the original
+unshifted bounds and overwrote the correct result.
+
+**Fix** — apply the same `+1` shift to both splat paths under
+`isset(KSHARRAYS)`. Negative bounds left alone. Three slice-fetch
+sites in paramsubst now all consistent.
+
+---
+
 ## #613 — `setopt KSH_ARRAYS; a=(b c d); a[0,1]=(X Y Z)` overwrites only position 0 — slice assign not 0-based
 
 **Status:** `fixed` 2026-06-04 — KSH_ARRAYS branch added to
@@ -47118,6 +47162,7 @@ no longer reports the internal trap-machinery scalar.
 | 611 | `setopt KSH_ARRAYS; a=hello; echo $a[0,2]` returns `he` not `hel` — slice not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to scalar slice arm: shift positive lo/hi by +1 before getarrvalue |
 | 612 | `setopt KSH_ARRAYS; a=(b c d); echo $a[0,1]` returns `b` not `b c` — array slice not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to array slice arm: shift positive start/end by +1 |
 | 613 | `setopt KSH_ARRAYS; a=(b c d); a[0,1]=(X Y Z)` overwrites only position 0 — slice assign not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to BUILTIN_SET_SUBSCRIPT_RANGE bridge: shift positive raw bounds by +1 before translate |
+| 614 | `setopt KSH_ARRAYS; echo $\{(@)a[1,2]\}` returns `b c` not `c d` — `(@)` splat path not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to BOTH paramsubst splat-range paths (auto-splat + c:3950 splat); three slice-fetch sites now consistent |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to

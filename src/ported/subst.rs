@@ -9836,6 +9836,17 @@ pub fn paramsubst(
                 if let Some((lo, hi)) = sub.split_once(',') {
                     let lo: i64 = lo.trim().parse().unwrap_or(1); // c:3950
                     let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
+                    // c:Src/params.c — KSH_ARRAYS shifts positive
+                    // 0-based slice bounds to 1-based for getarrvalue.
+                    // Sibling of #610-#613 in the splat path. Bug #614.
+                    let ksh_arrays = isset(crate::ported::zsh_h::KSHARRAYS);
+                    let (lo, hi) = if ksh_arrays {
+                        let new_lo = if lo >= 0 { lo + 1 } else { lo };
+                        let new_hi = if hi >= 0 { hi + 1 } else { hi };
+                        (new_lo, new_hi)
+                    } else {
+                        (lo, hi)
+                    };
                     arrays_get(&var_name)
                         .as_ref() // c:3950
                         .map(|arr| getarrvalue(arr, lo, hi))
@@ -10391,6 +10402,17 @@ pub fn paramsubst(
                         // c:3950
                         let lo: i64 = lo.trim().parse().unwrap_or(1); // c:3950
                         let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
+                        // c:Src/params.c — KSH_ARRAYS shifts positive
+                        // 0-based slice bounds to 1-based for getarrvalue.
+                        // Sibling of #610-#613. Bug #614.
+                        let ksh_arrays = isset(crate::ported::zsh_h::KSHARRAYS);
+                        let (lo, hi) = if ksh_arrays {
+                            let new_lo = if lo >= 0 { lo + 1 } else { lo };
+                            let new_hi = if hi >= 0 { hi + 1 } else { hi };
+                            (new_lo, new_hi)
+                        } else {
+                            (lo, hi)
+                        };
                         arrays_get(&var_name)
                             .as_ref()
                             .map(|arr| getarrvalue(arr, lo, hi))
