@@ -28566,6 +28566,54 @@ esac
 
 ## #356 — `${(S)s//pat/repl}` shortest-match flag not applied in replace-all (greedy match instead)
 
+**Status:** `fixed` 2026-06-03 — `replace_global`'s sliding
+window now branches on `SUB_SUBSTR` (the `(S)` flag's
+`igetmatch` opcode bit) and walks the match-length axis
+ascending for shortest mode, descending for greedy.
+
+**Root cause** — `src/ported/subst.rs::replace_global`'s
+global-replace loop unconditionally walked match lengths
+`(q + 1..=nn).rev()` — descending — so the first hit was
+always the longest possible substring. The `(S)` flag's
+SUB_SUBSTR bit was read elsewhere but never reached this
+loop. C `Src/glob.c::igetmatch` (called from
+`Src/subst.c::getmatch`) honors `SUB_SUBSTR ^ SUB_LONG`
+together: shortest match at each position.
+
+**Fix** — split into two arms:
+```rust
+let substr_short = (sub_flags_get() & SUB_SUBSTR) != 0;
+if substr_short {
+    for e in q + 1..=nn { /* ascending */ ... }
+} else {
+    for e in (q + 1..=nn).rev() { /* descending */ ... }
+}
+```
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 's="aaa"; echo "${(S)s//a*/X}"'
+XXX
+$ ./target/debug/zshrs --zsh -fc 's="aaa"; echo "${(S)s//a*/X}"'
+XXX
+
+# Regression: greedy form still consumes everything
+$ /opt/homebrew/bin/zsh -fc 's="aaa"; echo "${s//a*/X}"'
+X
+$ ./target/debug/zshrs --zsh -fc 's="aaa"; echo "${s//a*/X}"'
+X
+
+# Mixed: (S) at "aabbaa" with `a*b` matches shortest "aab"
+$ /opt/homebrew/bin/zsh -fc 's="aabbaa"; echo "${(S)s//a*b/X}"'
+Xbaa
+$ ./target/debug/zshrs --zsh -fc 's="aabbaa"; echo "${(S)s//a*b/X}"'
+Xbaa
+```
+
+Test baseline preserved at 960/92.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
