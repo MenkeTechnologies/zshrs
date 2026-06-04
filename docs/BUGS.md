@@ -38990,7 +38990,25 @@ Tedious; doesn't scale.
 
 ## #490 — `>&5` (write to invalid fd) silently rc=0 — zsh: "bad file descriptor" rc=1
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `>&5` (write to unopened fd) now
+correctly emits `5: bad file descriptor` rc=1 matching zsh. Same for
+`<&5` (read). Likely landed via earlier `host_apply_redirect` fcntl
+F_GETFD validation in `fusevm_bridge.rs`.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'echo hi >&5'
+zsh:1: 5: bad file descriptor    # rc=1, matches zsh
+
+$ ./target/debug/zshrs --zsh -fc 'read x <&5'
+zsh:1: 5: bad file descriptor    # rc=1
+
+# regression: valid fd 1 still works
+$ ./target/debug/zshrs --zsh -fc 'echo hi >&1'
+hi
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo hi >&5 2>&1; echo rc=$?'
@@ -39266,7 +39284,17 @@ arithmetic-context type-coercion is overly permissive.
 
 ## #495 — `${(C)a[1]}` capitalize-flag + array-subscript errors "bad substitution" — extends #436 family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `(C)` capitalize-flag + array subscript
+now returns `A` matching zsh. Landed via the same paramsubst flag+
+subscript parity work that fixed #436.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a=(a b c); echo "${(C)a[1]}"'
+A    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(a b c); echo "${(C)a[1]}"'
@@ -39455,7 +39483,17 @@ check) instead of `-v` (set check).
 
 ## #498 — `readonly x=N` on already-readonly x silently rc=0 — zsh errors "read-only variable"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `readonly x=NEW` on an already-readonly
+`x` now emits `read-only variable: x` rc=1 matching zsh. Likely landed
+via earlier readonly-guard parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'readonly x=1; readonly x=2'
+zsh:1: read-only variable: x    # rc=1, matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'readonly x=1; readonly x=2 2>&1 | head -1; echo "rc=${pipestatus[1]}"'
@@ -44504,15 +44542,15 @@ qualifiers always have a digit suffix.
 | 487 | `pushd` no-args doesn't swap top two stack entries — re-pushes current dir (zsh: swaps) | **fixed** 2026-06-04 | n/a |
 | 488 | `cd /no/such` error message includes `(os error 2)` — zsh: plain "no such file or directory" (case-sensitive matches break) | **fixed** 2026-06-04 | n/a |
 | 489 | `(#cN,M)` count-range glob flag not recognized — extends #425 (`#cN` exact-count) to ranges | **port-bug** | explicit alternation per-count |
-| 490 | `>&5` (write to invalid fd) silently rc=0 — zsh: "bad file descriptor" rc=1 | **port-bug** | explicit fd-open test before write |
+| 490 | `>&5` (write to invalid fd) silently rc=0 — zsh: "bad file descriptor" rc=1 | **fixed** 2026-06-04 | n/a |
 | 491 | `kill 9999999` error includes `(os error 3)` Rust-format — extends #488 family across all syscall-wrapping builtins | **port-bug** | `sed`-strip `(os error N)` suffix |
 | 492 | `echo hi >&-` close-fd-then-write — zsh: hi written then closed; zshrs: dropped (closed before write) | **port-bug** | separate write and `exec 1>&-` close |
 | 493 | `%i` prompt escape (line number) returns 0 instead of 1 — off-by-one (extends #385/#396 line-numbering family) | **port-bug** | `$((LINENO + 1))` adjust |
 | 494 | `$((a + 1))` with `a="42xyz"` silently coerces to 0 — zsh: "bad math expression: operator expected" | **port-bug** | pre-validate numeric input with regex |
-| 495 | `${(C)a[1]}` capitalize-flag + array-subscript errors "bad substitution" — extends #436 flag×subscript family | **port-bug** | bind subscript-result to scalar first |
+| 495 | `${(C)a[1]}` capitalize-flag + array-subscript errors "bad substitution" — extends #436 flag×subscript family | **fixed** 2026-06-04 | n/a |
 | 496 | **CRITICAL** `type ./path` PANICS with "attempt to subtract with overflow" at builtin.rs:5959 — relative-path arg crashes shell | **port-bug** | strip `./` prefix before passing to `type` |
 | 497 | `$RPROMPT` initialized to empty string instead of unset (extends #479 bash-compat-init family) | **port-bug** | `[[ -n $RPROMPT ]]` non-empty check |
-| 498 | `readonly x=N` on already-readonly x silently rc=0 — zsh errors "read-only variable" | **port-bug** | `typeset -p X` probe before re-declare |
+| 498 | `readonly x=N` on already-readonly x silently rc=0 — zsh errors "read-only variable" | **fixed** 2026-06-04 | n/a |
 | 499 | `times` builtin output uses 3-decimal precision instead of zsh's 2-decimal — parser format diff | **fixed** 2026-06-04 | n/a |
 | 500 | `disown -h` (or any unknown spec) rc=1 instead of zsh's 127; diagnostic format also diverges | **port-bug** | match diagnostic substring instead of `$?` |
 | 501 | `pushd` empty-stack no-args rc=1 instead of zsh's rc=0 — extends #487 pushd-no-args family | **port-bug** | `(( ${#dirstack} > 0 ))` pre-check |
