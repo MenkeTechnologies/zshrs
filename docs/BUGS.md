@@ -34305,7 +34305,35 @@ hides the issue.
 
 ## #420 — `eval` error prefix uses `zsh:` instead of `(eval):` — source-context lost in diagnostics
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/fusevm_bridge.rs](../src/fusevm_bridge.rs)).
+
+**Root cause** — `BUILTIN_EVAL` (the fusevm fast-path handler at
+`fusevm_bridge.rs:592`) bypassed the canonical `bin_eval`/`eval` free-fn
+in `src/ported/builtin.rs:9237` which manages `scriptname` per
+`Src/builtin.c:6164-6165` (`if (!ineval) scriptname = "(eval)";`). The
+fast-path called `execute_script` directly without setting scriptname,
+so diagnostics emitted while the eval body ran (command-not-found, parse
+errors) read the outer "zsh" prefix from `scriptname_get()` instead of
+"(eval)".
+
+**Fix** — at the BUILTIN_EVAL handler, save the current scriptname,
+set it to `"(eval)"` for the duration of `execute_script`, and restore
+on return. Mirrors C's stack-allocated `oscriptname` save/restore around
+the in-eval execution.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'eval "foo_no_such_cmd"'
+(eval):1: command not found: foo_no_such_cmd    # rc=127, matches zsh
+
+# regression: outside eval, prefix stays "zsh"
+$ ./target/debug/zshrs --zsh -fc 'foo_no_such_cmd'
+zsh:1: command not found: foo_no_such_cmd    # rc=127
+```
+
+Baseline 960/92 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'eval "foo_no_such_cmd"'
@@ -43743,7 +43771,7 @@ qualifiers always have a digit suffix.
 | 417 | `unset RANDOM` ignored — special-param regenerator stays active (zsh: returns empty after unset) | **port-bug** | no workaround for clean-state requirement |
 | 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **port-bug** | `SECONDS=0` reassign instead of unset |
 | 419 | `unset LINENO` silently accepted — no "read-only variable" diagnostic (zsh: emits warning) | **port-bug** | none — manual `typeset -p LINENO` probe |
-| 420 | `eval` errors prefixed `zsh:` instead of `(eval):` — source-context lost (also affects funcname/sourced-file prefixes) | **port-bug** | manual bisect by removing source/eval lines |
+| 420 | `eval` errors prefixed `zsh:` instead of `(eval):` — source-context lost (also affects funcname/sourced-file prefixes) | **fixed** 2026-06-04 | n/a |
 | 421 | `^` parsed as glob-negation even when `extended_glob` is off — gating missing on `^`/`~`/`#` extended-glob operators | **port-bug** | escape with backslash `\\^` |
 | 422 | sourced-file errors prefixed `zsh:` instead of `/path/to/file:` — extends #420, breaks .zshrc plugin-bisect debugging | **port-bug** | bisect by commenting out source lines |
 | 423 | **CRITICAL** `PATH=str` doesn't update tied `path` array — one-way tie broken (path=arr→PATH works) | **port-bug** | always also `path=("${(@s/:/)PATH}")` after PATH= |
