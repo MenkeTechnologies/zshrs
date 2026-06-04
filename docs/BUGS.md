@@ -45586,7 +45586,7 @@ no longer reports the internal trap-machinery scalar.
 | 504 | bash-only `mapfile`/`readarray` shipped as builtins in `--zsh` mode — extends #475 bash-compat-contamination | **port-bug** | use `$ZSH_VERSION`/`$BASH_VERSION` for detection |
 | 505 | `integer x="STRING"` silently coerces to 0 — zsh errors "bad math expression" (extends #411/#494 coercion family) | **fixed** 2026-06-04 | n/a |
 | 506 | `float f="3.14abc"` silently coerces to 0.0 — zsh errors "bad math expression" (extends #505) | **fixed** 2026-06-04 | n/a |
-| 507 | `${(Q)var}` unquote-flag with `\"` in value drops the `"` instead of keeping it — round-trips via `(q)`+`(Q)` incorrect | **port-bug** | external `eval` round-trip |
+| 507 | `${(Q)var}` unquote-flag with `\"` in value drops the `"` instead of keeping it — round-trips via `(q)`+`(Q)` incorrect | **fixed** 2026-06-04 | unquote_one only strips `'`/`"` when balanced; orphan quotes survive as literals |
 | 508 | `%E` (clear-to-EOL) prompt escape printed literally — zsh emits `\\033[K` | **fixed** 2026-06-04 | n/a |
 | 509 | `%G`/`%e` prompt escapes (zero-width marker / parser-indent) printed literally — extends prompt-escape gap family | **fixed** 2026-06-04 | n/a |
 | 510 | `${(q)empty_array}` returns empty instead of `''` — empty-array-quoting semantics lost; breaks `(q)`+`eval` round-trips | **fixed** 2026-06-04 | n/a |
@@ -45594,17 +45594,17 @@ no longer reports the internal trap-machinery scalar.
 | 512 | `${(t)EPOCHSECONDS}` / `${(t)EPOCHREALTIME}` empty — type-flag missing on GSU-backed datetime specials | **port-bug** | hardcode known specials |
 | 513 | `OPTIND=N` inside function LEAKS to parent — zsh: implicitly function-local | **port-bug** | manual save/restore around `getopts` |
 | 514 | `(#e)` end-anchor glob flag not recognized — extends #483 `(#X)` family | **fixed** 2026-06-04 | n/a |
-| 515 | `$funcsourcetrace` shows fn-name (`f:1`) instead of file-name (`zsh:1`) — wrong source-location tracking | **port-bug** | none — array is incorrect |
+| 515 | `$funcsourcetrace` shows fn-name (`f:1`) instead of file-name (`zsh:1`) — wrong source-location tracking | **fixed** 2026-06-04 | `funcsourcetrace[1]` shows `zshrs:1` matching zsh's `zsh:1` shell-name shape |
 | 516 | `typeset` no-args dump omits type-flag prefix — `!=0` instead of `integer 10 readonly !=0` | **fixed** 2026-06-04 | n/a |
 | 517 | `LC_NUMERIC`/`LC_TIME`/`LC_COLLATE`/`LC_CTYPE` initialized to empty string instead of unset — bash-init contamination (extends #479/#497) | **fixed** 2026-06-04 | n/a |
-| 518 | `$PROMPT`/`$PS1` (and PROMPT2-4/PS2-4) NOT bidirectionally aliased — modifying one doesn't update the other | **port-bug** | explicit dual-assign |
+| 518 | `$PROMPT`/`$PS1` (and PROMPT2-4/PS2-4) NOT bidirectionally aliased — modifying one doesn't update the other | **fixed** 2026-06-04 | `PROMPT=bar; echo $PS1` → `bar` matches zsh |
 | 519 | **CRITICAL** infinite-recursion function crashes shell with stack overflow (exit 134) — zsh: FUNCNEST limit catches | **fixed** 2026-06-04 | n/a |
-| 520 | `HISTSIZE=N` assignment ignored — reads back as default `999999999` regardless | **port-bug** | none — assignment has no effect |
+| 520 | `HISTSIZE=N` assignment ignored — reads back as default `999999999` regardless | **fixed** 2026-06-04 | `HISTSIZE=100; echo $HISTSIZE` → `100` matches zsh |
 | 521 | `[[ "" == (#c0,0) ]]` matches in zshrs — zsh rejects as "bad pattern" — extends #489 broken-cN family | **fixed** 2026-06-03 | n/a |
 | 522 | `TRAPDEBUG()` function-form not invoked before each command — extends #381 family (DEBUG pseudo-signal) | **port-bug** | none — debuggers/profilers can't hook |
 | 523 | `${(q)control_char}` produces raw `\\<CHAR>` instead of `$'\\X'` ANSI-C-quoted form — round-trip broken | **fixed** 2026-06-03 | n/a |
 | 524 | `%r` prompt escape printed literally — extends prompt-escape gap family (#390/#391/#412/etc.) | **fixed** 2026-06-04 | n/a |
-| 525 | `print -x notanint ARG` silently rc=0 — zsh: "positive integer expected after -x" | **port-bug** | pre-validate N arg with regex |
+| 525 | `print -x notanint ARG` silently rc=0 — zsh: "positive integer expected after -x" | **fixed** 2026-06-04 | `print -x foo bar` errors `positive integer expected after -x: foo` matching zsh |
 | 526 | `[[ N -lt M -a ... ]]` `-a`/`-o` parsed as command (rc=127) — zsh: "condition expected" parse error | **fixed** 2026-06-04 | collateral fix of #473 par_cond DOUTBRACK gate |
 | 527 | `(( () ))` empty math silently rc=1 — zsh: "bad math expression: operand expected" rc=2 | **fixed** 2026-06-03 | n/a |
 | 528 | `typeset -a a=("hello world")` splits QUOTED string into multiple elements — worse than #502 | **fixed** 2026-06-04 | n/a |
