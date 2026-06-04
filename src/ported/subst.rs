@@ -6024,6 +6024,15 @@ pub fn paramsubst(
                 // non-matching). Direct port of subst.c:3540
                 // SUB_FILTER + getmatch SUB_MATCH branch.
                 let p = singsub(pat); // c:3540
+                // c:Src/glob.c:2674-2677 — patcompile failure → "bad
+                // pattern" diagnostic. Sibling of #605/#606. Bug #607.
+                if !p.is_empty()
+                    && patcompile(&p, PAT_HEAPDUP as i32, None).is_none()
+                {
+                    zerr(&format!("bad pattern: {}", p));
+                    errflag_set_error();
+                    return (String::new(), new_pos, vec![]);
+                }
                 let cur_sub_flags = sub_flags_get(); // c:2171
                 let invert = (cur_sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
                 sub_flags_set(0); // c:2169 (consume)
