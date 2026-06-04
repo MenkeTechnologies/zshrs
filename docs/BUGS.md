@@ -44466,6 +44466,43 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #615 — `$(< file 2>/dev/null)` treats `file 2>/dev/null` as the filename — `$(<file)` shortcut over-applied
+
+**Status:** `fixed` 2026-06-04 — gate the `$(<file)` shortcut on
+single-word filename (no whitespace/redirects/quotes/etc.); fall
+through to full parse otherwise.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=$(< /tmp/missing 2>/dev/null); echo "rc=$?"'
+rc=1                  # silent (stderr suppressed), rc=1
+
+# Before fix:
+$ zshrs --zsh -c 'a=$(< /tmp/missing 2>/dev/null); echo "rc=$?"'
+zshrs:1: no such file or directory: /tmp/missing 2>/dev/null
+rc=0                  # treated whole tail as filename, no redirect applied
+
+# After fix:
+$ zshrs --zsh -c 'a=$(< /tmp/missing 2>/dev/null); echo "rc=$?"'
+rc=1
+```
+
+**Root cause** — `src/vm_helper.rs::run_command_substitution` had
+an early-return shortcut: `if cmd_str.trim().starts_with('<') {
+read whole rest as filename; }`. The check accepted ANY body
+after `<`, including ones with shell metas like `2>/dev/null` /
+`>file` / `; next` / `|cmd`. zsh's `$(<file)` only applies when
+the body is exactly `<` + ONE word; anything else is a regular
+command list with the `<file` redirection.
+
+**Fix** — add a single-word check on `filename`: reject when it
+contains whitespace, `;`, `&`, `|`, `<`, `>`, `(`, `)`, `` ` ``,
+`"`, or `'`. Multi-word bodies fall through to the full parse
+path which handles the `< file` redirection naturally via
+`exec.run_command_substitution`'s parser.
+
+---
+
 ## #614 — `setopt KSH_ARRAYS; echo $\{(@)a[1,2]\}` returns `b c` instead of `c d` — splat path not 0-based
 
 **Status:** `fixed` 2026-06-04 — KSH_ARRAYS branch added to TWO
@@ -47163,6 +47200,7 @@ no longer reports the internal trap-machinery scalar.
 | 612 | `setopt KSH_ARRAYS; a=(b c d); echo $a[0,1]` returns `b` not `b c` — array slice not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to array slice arm: shift positive start/end by +1 |
 | 613 | `setopt KSH_ARRAYS; a=(b c d); a[0,1]=(X Y Z)` overwrites only position 0 — slice assign not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to BUILTIN_SET_SUBSCRIPT_RANGE bridge: shift positive raw bounds by +1 before translate |
 | 614 | `setopt KSH_ARRAYS; echo $\{(@)a[1,2]\}` returns `b c` not `c d` — `(@)` splat path not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to BOTH paramsubst splat-range paths (auto-splat + c:3950 splat); three slice-fetch sites now consistent |
+| 615 | `$(< file 2>/dev/null)` treats `file 2>/dev/null` as the filename — `$(<file)` shortcut over-applied | **fixed** 2026-06-04 | gate shortcut on single-word filename (no ws/redirects/quotes); fall through to full parse otherwise |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to

@@ -2078,23 +2078,41 @@ impl ShellExecutor {
         // parse path, not the read-file shortcut.
         if let Some(rest) = trimmed.strip_prefix('<').filter(|s| !s.starts_with('<')) {
             let filename = rest.trim();
-            // Expand any leading $ / tilde in the filename so
-            // `$(< $f)` and `$(< ~/x)` work.
-            let resolved = if filename.contains('$') || filename.starts_with('~') {
-                singsub(filename)
-            } else {
-                filename.to_string()
-            };
-            let resolved = resolved.to_string();
-            match fs::read_to_string(&resolved) {
-                Ok(contents) => {
-                    return contents.trim_end_matches('\n').to_string();
-                }
-                Err(_) => {
-                    eprintln!("zshrs:1: no such file or directory: {}", resolved);
-                    return String::new();
+            // c:Src/lex.c — the `$(<file)` shortcut ONLY applies when
+            // the body is exactly `<` + ONE word. Anything else (extra
+            // args, redirects, semicolons, pipes) is a regular command
+            // list and must go through the full parse path so `2>/dev/null`
+            // / `>file` / `|cmd` / `; next` etc. work. Without this
+            // gate, `$(< file 2>/dev/null)` treated `file 2>/dev/null`
+            // as the literal filename and errored on the missing file.
+            // Bug #615.
+            let is_single_word = !filename.is_empty()
+                && !filename.chars().any(|c| {
+                    matches!(c,
+                        ' ' | '\t' | '\n' | ';' | '&' | '|' |
+                        '<' | '>' | '(' | ')' | '`' | '"' | '\''
+                    )
+                });
+            if is_single_word {
+                // Expand any leading $ / tilde in the filename so
+                // `$(< $f)` and `$(< ~/x)` work.
+                let resolved = if filename.contains('$') || filename.starts_with('~') {
+                    singsub(filename)
+                } else {
+                    filename.to_string()
+                };
+                let resolved = resolved.to_string();
+                match fs::read_to_string(&resolved) {
+                    Ok(contents) => {
+                        return contents.trim_end_matches('\n').to_string();
+                    }
+                    Err(_) => {
+                        eprintln!("zshrs:1: no such file or directory: {}", resolved);
+                        return String::new();
+                    }
                 }
             }
+            // Multi-word / has-redirects → fall through to full parse.
         }
 
         // Port of getoutput(char *cmd, int qt) from Src/exec.c. Parse and compile via
