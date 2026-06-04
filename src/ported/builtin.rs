@@ -10647,6 +10647,19 @@ pub fn bin_trap(
         if let Ok(mut t) = traps_table().lock() {
             t.insert(canonical.clone(), arg.clone()); // c:7448 (effective)
         }
+        // c:Src/signals.c::settrap — when a string-form trap
+        // replaces an existing trap, settrap calls unsettrap which
+        // clears the C `sigfuncs[sig]` shfunc slot. The zshrs port
+        // dispatches function-form TRAPxxx through shfunctab
+        // independently of sigfuncs, so a pre-existing TRAPxxx
+        // function survives the string-form install and BOTH fire
+        // on signal delivery. Remove any matching TRAPxxx shfunc
+        // here so dotrap dispatches the just-installed string body
+        // only. Bug #541 in docs/BUGS.md.
+        let trap_fn_name = format!("TRAP{}", canonical);
+        if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+            tab.remove(&trap_fn_name);
+        }
     }
     trap_install_error
 }
