@@ -44466,6 +44466,45 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #596 — `${a/|/-}` and `${a//|/-}` mis-treat bare `|` as alternation — should be literal in patterns
+
+**Status:** `fixed` 2026-06-04 — `escape_bare_alt_pipes` (existing
+helper for `##`/`%%` prefix/suffix strip patterns) is now applied
+in the `/` (single replace) and `//` (global replace) arms too.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="he|llo"; echo "${a/|/-}"'
+he-llo
+
+# Before fix:
+$ zshrs --zsh -c 'a="he|llo"; echo "${a/|/-}"'
+he|llo            # mis-treated `|` as alternation (matched empty)
+
+# After fix:
+$ zshrs --zsh -c 'a="he|llo"; echo "${a/|/-}"'
+he-llo
+
+# Parenthesized alternation still works:
+$ zshrs --zsh -c 'a="hello"; echo "${a/(h|w)/X}"'
+Xello
+```
+
+**Root cause** — `src/ported/subst.rs` `/` and `//` arms passed
+`singsub(&raw_pat)` directly to `patcompile` without the bare-`|`
+escape. zshrs's `patcompile` reads raw ASCII `|` as a tokenized
+alternation terminator regardless of paren depth; C zsh's lexer
+pre-tokenizes `|` to `Bar` (0x8e) only INSIDE `(...)` groups so
+the pattern engine sees a depth-0 raw `|` as literal.
+
+**Fix** — wrap `singsub(...)` in `escape_bare_alt_pipes(...)` at
+both arms. The helper walks the pattern, tracks paren depth, and
+prepends `\` to depth-0 `|` only (paren-grouped `|` is left
+alone). Same pattern as the existing `##`/`#`/`%%`/`%` arms at
+lines 7072 / 7178 / 7273 / 7393.
+
+---
+
 ## #595 — `${a:s/PAT}` (missing closing delim) and bare `${a:s}` silently no-op instead of "bad substitution"
 
 **Status:** `fixed` 2026-06-04 — ported `Src/subst.c::modify()`
@@ -46363,6 +46402,7 @@ no longer reports the internal trap-machinery scalar.
 | 593 | `repeat N CMD ARG; CMD2` parse error near second command — short-loop body consumed trailing `;` | **fixed** 2026-06-04 | parse_loop_body short form uses par_list1 (single sublist, leaves separator) instead of par_list |
 | 594 | `${a:s/PAT/REPL/X}` silently ignores trailing garbage after modifier delim — should emit "unrecognized modifier" | **fixed** 2026-06-04 | modify() post-loop check for leftover chars; emit `:X` form if leftover is `:X`, bare form otherwise (matches C subst.c:3786-3790) |
 | 595 | `${a:s/PAT}` (missing closing delim) and bare `${a:s}` silently no-op — should emit "bad substitution" | **fixed** 2026-06-04 | modify() `:s` arm: track pat_closed flag, error on missing closing delim or bare `:s` (matches C subst.c modify() :s arm) |
+| 596 | `${a/\|/-}` and `${a//\|/-}` mis-treat bare `\|` as alternation — should be literal in `/`/`//` patterns | **fixed** 2026-06-04 | escape_bare_alt_pipes applied to single + global replace pat (was already applied to ##/##/%/%% arms) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to

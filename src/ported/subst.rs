@@ -6499,7 +6499,16 @@ pub fn paramsubst(
                 } else {
                     ('\0', raw_pat.clone())
                 };
-                let pat = singsub(&pat_after_anchor);
+                // c:Src/pattern.c:248 — bare top-level `|` is literal
+                // in `${var/PAT/REPL}` patterns; only `(a|b)` group
+                // syntax makes `|` an alternation operator. zshrs's
+                // patcompile treats raw ASCII `|` as a tokenized
+                // alternation terminator regardless of depth, so
+                // `${a/h|w/X}` mis-matched empty at the bare `|`
+                // boundary. The `escape_bare_alt_pipes` closure
+                // (declared at line 2790) escapes depth-0 `|` to
+                // `\|` for the patcompile pass. Bug #596.
+                let pat = escape_bare_alt_pipes(&singsub(&pat_after_anchor));
                 // Replacement: per C subst.c around line 3354,
                 // `prefork(replstr, ...)` runs with SUB_FLAG|SKIP_FILESUB
                 // — tilde / file expansion is suppressed in the
@@ -6815,7 +6824,11 @@ pub fn paramsubst(
                 // drops Bnull but pat still carries `\X` from the
                 // split-walk above for the "match this literal X"
                 // form).
-                let pat = singsub(&raw_pat);
+                // c:Src/pattern.c:248 — bare `|` outside `(...)` groups
+                // is literal; escape it to `\|` so patcompile doesn't
+                // read it as alternation. Same fix as the `//` arm
+                // above. Bug #596.
+                let pat = escape_bare_alt_pipes(&singsub(&raw_pat));
                 if std::env::var("ZSHRS_TRACE_REPL2").is_ok() {
                     eprintln!(
                         "[TRACE_REPL2] rep={:?} raw_pat={:?} pat={:?} raw_repl={:?}",
