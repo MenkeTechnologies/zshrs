@@ -10224,9 +10224,32 @@ pub fn paramsubst(
                 let name_start = pos + 1;
                 let mut name_end = name_start + 1;
                 // Single-char specials stop after one char; identifiers
-                // walk to the end of [A-Za-z0-9_].
+                // walk to the end of [A-Za-z0-9_]. Bug #577: lexer
+                // tokenizes `-`/`?`/`!`/`*`/`#` as Dash/Quest/Bang/Star/
+                // Pound and `$` as Stringg in unquoted contexts. Both
+                // forms must terminate the name at one char so the
+                // recursive `${#NAME}` paramsubst sees just the special
+                // glyph and can dispatch through getsparam("-")/etc.
+                // Without the token-form check, the walk fell through
+                // to the ascii_alphanumeric loop which stopped on the
+                // token glyph too — so name_end always stayed at
+                // name_start+1 anyway, but the subsequent rewrite
+                // emitted the raw token char inside `${#…}` which
+                // paramsubst's name-lookup didn't recognize as the
+                // ASCII special.
                 let first = chars[name_start];
-                let is_single_special = matches!(first, '@' | '*' | '?' | '!' | '-' | '0' | '$');
+                let token_to_ascii = match first {
+                    Dash => Some('-'),
+                    Quest => Some('?'),
+                    Bang => Some('!'),
+                    Star => Some('*'),
+                    Pound => Some('#'),
+                    Stringg => Some('$'),
+                    _ => None,
+                };
+                let is_single_special =
+                    matches!(first, '@' | '*' | '?' | '!' | '-' | '0' | '$')
+                        || token_to_ascii.is_some();
                 if !is_single_special {
                     while name_end < chars.len()
                         && (chars[name_end].is_ascii_alphanumeric() || chars[name_end] == '_')
@@ -10234,7 +10257,13 @@ pub fn paramsubst(
                         name_end += 1;
                     }
                 }
-                let name: String = chars[name_start..name_end].iter().collect();
+                // Emit ASCII form into the rewrite so the recursive
+                // paramsubst's name-lookup matches the canonical name.
+                let name: String = if let Some(a) = token_to_ascii {
+                    a.to_string()
+                } else {
+                    chars[name_start..name_end].iter().collect()
+                };
                 let prefix: String = chars[..start_pos].iter().collect();
                 let suffix: String = chars[name_end..].iter().collect();
                 let rewritten = format!("{}${{#{}}}{}", prefix, name, suffix);
