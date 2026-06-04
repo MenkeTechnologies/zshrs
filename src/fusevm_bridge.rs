@@ -5208,7 +5208,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // ${(k)functions} / functions builtin see user defs.
                 // C: exec.c:funcdef → shfunctab->addnode(ztrdup(name),shf).
                 if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
-                    let shf = crate::ported::hashtable::shfunc_with_body(&name, &body_source);
+                    let mut shf = crate::ported::hashtable::shfunc_with_body(&name, &body_source);
+                    // c:Src/exec.c:5409 — `shf->lineno = lineno;`. Use
+                    // the same max(1, line_base) clamp as the synth_shf
+                    // in vm_helper::dispatch_function_call. Bug #396.
+                    shf.lineno = std::cmp::max(1, line_base);
                     tab.add(shf);
                 }
                 // c:Src/exec.c:5460-5475 — `TRAP<SIG>() { ... }` is the
