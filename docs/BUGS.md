@@ -44466,6 +44466,39 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #611 — `setopt KSH_ARRAYS; a=hello; echo $a[0,2]` returns `he` instead of `hel` — slice not 0-based
+
+**Status:** `fixed` 2026-06-04 — KSH_ARRAYS branch added to scalar
+slice arm (sibling of #610).
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt KSH_ARRAYS; a=hello; echo "[${a[0,2]}]"'
+[hel]
+
+# Before fix:
+$ zshrs --zsh -c 'setopt KSH_ARRAYS; a=hello; echo "[${a[0,2]}]"'
+[he]                     # got 2 chars instead of 3
+
+# After fix:
+$ zshrs --zsh -c 'setopt KSH_ARRAYS; a=hello; echo "[${a[0,2]}][${a[0,-1]}]"'
+[hel][hello]
+```
+
+**Root cause** — `src/ported/subst.rs` scalar slice arm passed
+`lo` / `hi` directly to `getarrvalue` (which is 1-based,
+inclusive). Under KSH_ARRAYS the caller passes 0-based bounds,
+so the result was off by one.
+
+#610 fixed the single-index path; this is the same fix in the
+range arm.
+
+**Fix** — under KSH_ARRAYS, shift positive `lo`/`hi` by +1 before
+calling `getarrvalue`. Negative bounds left alone (they count
+from end and are already correct in both modes).
+
+---
+
 ## #610 — `setopt KSH_ARRAYS; a=hello; echo $a[0]` returns empty — scalar subscript not 0-based under KSH_ARRAYS
 
 **Status:** `fixed` 2026-06-04 — added KSHARRAYS branch to scalar
@@ -47014,6 +47047,7 @@ no longer reports the internal trap-machinery scalar.
 | 608 | `typeset -p n` for integer with base displays as `BASE#VAL` instead of decimal | **fixed** 2026-06-04 | printparamvalue PM_INTEGER arm emits raw decimal via gsu_i.getfn / intgetfn; getsparam fallback strips BASE# prefix |
 | 609 | `${a/PAT/\n}` strips backslash from replacement — should keep `\n`/`\t`/`\&` literal | **fixed** 2026-06-04 | removed `\X → X` strip pass in `/`, `//`, and `(#m)/(#b)` rebuild arms; match C `singsub + untokenize` exactly |
 | 610 | `setopt KSH_ARRAYS; a=hello; echo $a[0]` returns empty — scalar subscript not 0-based under KSH_ARRAYS | **fixed** 2026-06-04 | added isset(KSHARRAYS) branch to scalar single-index dispatch |
+| 611 | `setopt KSH_ARRAYS; a=hello; echo $a[0,2]` returns `he` not `hel` — slice not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to scalar slice arm: shift positive lo/hi by +1 before getarrvalue |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
