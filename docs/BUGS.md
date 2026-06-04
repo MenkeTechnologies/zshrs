@@ -47124,7 +47124,7 @@ no longer reports the internal trap-machinery scalar.
 | 116 | `GLOB_SUBST` defaults ON in zshrs (zsh: off) | **fixed** 2026-06-02 | `unsetopt glob_subst` explicit |
 | 117 | Extended_glob `(group)#` quantifier not recognized | **fixed** 2026-06-04 | `[[ "abab" == (ab)# ]]` matches |
 | 118 | `(( y = x ))` doesn't coerce non-numeric string to 0 | **fixed** 2026-06-02 | `integer y; y=$x` |
-| 119 | `glob_subst` doesn't trigger filename expansion in for-loop | **port-bug** | `eval "echo ..."` force-expand |
+| 119 | `glob_subst` doesn't trigger filename expansion in for-loop | **fixed** 2026-06-02 | `eval "echo ..."` force-expand |
 | 120 | `a=("${a[@]:0:-1}")` on empty arr produces 1-element arr | **port-bug** | length-gated branch |
 | 121 | `[[ -N -op -M ]]` negative-number operands error "unknown condition" | **fixed** 2026-06-02 | use `(( ))` arith |
 | 122 | Exit status of `$()` inside `${x:-$()}` not propagated | **fixed** 2026-06-02 | pre-eval cmdsub |
@@ -47374,25 +47374,25 @@ no longer reports the internal trap-machinery scalar.
 | 366 | `h[multibyte_key]=v` assoc with UTF-8 key PANICS with "not a char boundary" — **CRITICAL CRASH** | **port-bug** | use ASCII-only keys |
 | 367 | `$?` bare `?` in `$((...))` arith not resolved — treats as `0` instead of last exit status | **fixed** 2026-06-02 | explicit `$?` |
 | 368 | `$#` bare `#` in `$((...))` arith not resolved — treats as `0` instead of positional count | **fixed** 2026-06-02 | explicit `$#` |
-| 369 | `wait %1` job-spec resolution fails "no such job" — zsh: succeeds (ec=0) | **port-bug** | capture `$!` and wait by PID |
-| 370 | `${(t)1}` positional-param type returns `scalar` instead of `array-special` | **port-bug** | manual detection of positional context |
+| 369 | `wait %1` job-spec resolution fails "no such job" — zsh: succeeds (ec=0) | **fixed** 2026-06-02 | capture `$!` and wait by PID |
+| 370 | `${(t)1}` positional-param type returns `scalar` instead of `array-special` | **fixed** 2026-06-02 | manual detection of positional context |
 | 371 | `typeset -A` with no args lists random assocs instead of being no-op (zsh: silent success) | **fixed** 2026-06-02 | n/a |
 | 372 | `print -P "%F{invalid}"` drops entire format instead of emitting default-color escape | **fixed** 2026-06-02 | use ANSI escapes directly |
-| 373 | `pipestatus=(...)` user-overwrite accepted — pipestatus not readonly (zsh: silently rejects) | **port-bug** | defensive copy before user-code |
+| 373 | `pipestatus=(...)` user-overwrite accepted — pipestatus not readonly (zsh: silently rejects) | **fixed** 2026-06-02 | defensive copy before user-code |
 | 374 | `reswords=...` user-overwrite accepted — reswords not readonly (zsh: "read-only variable") | **fixed** 2026-06-02 | defensive copy |
 | 375 | `commands[name]=path` slice-write accepted — security-relevant cmd-cache poisoning (zsh: "attempt to set slice") | **port-bug** | use `whence -p` / `command -v` for path resolution |
 | 376 | `zmodload zsh/nonexistent` silent failure — missing dlopen error message (zsh: "failed to load module: dlopen…") | **port-bug** | probe module file existence manually |
 | 377 | `zmodload` no-args lists *available* modules instead of *loaded* modules (zsh: just `zsh/main`) | **fixed** 2026-06-02 | track loaded modules manually in user assoc |
 | 378 | `${#var}` ignores locale — always char count even in C/POSIX (zsh: byte count when LC_CTYPE not UTF-8) | **fixed** 2026-06-02 | `wc -c` for byte count |
 | 379 | `zle -la` returns empty — builtin widget registry not exposed (zsh: 386 widgets incl `.accept-line`) | **fixed** 2026-06-02 | hardcode widget list / probe `${+widgets[N]}` |
-| 380 | `bindkey` default-keymap output divergence — 31 vs 117 entries (zsh: canonical emacs set) | **port-bug** | use specific-key probe instead of full diff |
+| 380 | `bindkey` default-keymap output divergence — 31 vs 117 entries (zsh: canonical emacs set) | **fixed** 2026-06-02 | use specific-key probe instead of full diff |
 | 381 | `TRAPINT()` function-style signal handler not invoked — only string-form `trap '…' INT` works | **fixed** 2026-06-02 | use `trap '…' SIG` instead of `TRAP$SIG()` |
-| 382 | `TRAPEXIT()` function-form not invoked at script-exit — universal cleanup gap (oh-my-zsh, p10k, zinit) | **port-bug** | use string-form `trap '…' EXIT` |
+| 382 | `TRAPEXIT()` function-form not invoked at script-exit — universal cleanup gap (oh-my-zsh, p10k, zinit) | **fixed** 2026-06-02 | use string-form `trap '…' EXIT` |
 | 383 | `keymaps` assoc empty — viins/vicmd/emacs/main/.safe/etc all missing (zsh: 9 keymaps registered) | **port-bug** | assume zsh-default keymap names exist |
 | 384 | function-local `trap '…' EXIT` fires at script-exit not function-return — RAII cleanup broken | **fixed** 2026-06-02 | explicit cleanup at each return point |
 | 385 | `$LINENO` inside function returns 1 instead of 0 — base-index off-by-one | **fixed** 2026-06-02 | `$((LINENO - 1))` |
-| 386 | `readonly` no-args dumps nothing instead of listing readonly variables (zsh: full dump) | **port-bug** | parse `typeset -p VAR` for `-r` flag |
-| 387 | `read -p "prompt"` parsing — `-p` not recognized as coprocess flag, treats arg as identifier | **port-bug** | `print -n` to stderr + bare `read` |
+| 386 | `readonly` no-args dumps nothing instead of listing readonly variables (zsh: full dump) | **fixed** 2026-06-02 | parse `typeset -p VAR` for `-r` flag |
+| 387 | `read -p "prompt"` parsing — `-p` not recognized as coprocess flag, treats arg as identifier | **fixed** 2026-06-02 | `print -n` to stderr + bare `read` |
 | 388 | `coproc CMD` doesn't open coprocess — `print -p`/`read -p`/`<&p` all broken, entire feature missing | **port-bug** | named pipes (mkfifo) for two-way IPC |
 | 389 | `TRAPZERR()` function-form not invoked on non-zero exit — error-tracing frameworks broken | **fixed** 2026-06-02 | `setopt err_exit` + explicit `\|\|` checks |
 | 390 | `$PS4` default value empty — `set -x` produces no source/function/line/depth context | **port-bug** | seed `PS4=$'%F{blue}%x\\t%0N\\t%I\\t%_%f\\t'` in zshrc |
@@ -47400,8 +47400,8 @@ no longer reports the internal trap-machinery scalar.
 | 392 | `${(qq)arr[@]}` only quotes whitespace-containing elements (zsh: force-quotes all) | **fixed** 2026-06-02 | `printf "'%s' " "${a[@]}"` instead |
 | 393 | `jobs %X` rc=1 on unknown-job instead of 127 + `%` not stripped in error msg (zsh: rc=127, msg `not found: NAME`) | **fixed** 2026-06-02 | match on diagnostic text instead of `$?` |
 | 394 | `setopt` no-args dump empty under `-f` — should list `nohashdirs`/`norcs` (zsh: shows divergent-from-default) | **port-bug** | probe specific opts with `[[ -o NAME ]]` |
-| 395 | `compdef` shipped as permanent builtin — zsh: not defined until `compinit`; breaks `${+functions[compdef]}` guard | **port-bug** | probe `_comp_setup` instead |
-| 396 | `$funcsourcetrace` records `:0` instead of `:1` for function-definition line (parallel to #385 LINENO base) | **port-bug** | `$(( line + 1 ))` adjust when emitting |
+| 395 | `compdef` shipped as permanent builtin — zsh: not defined until `compinit`; breaks `${+functions[compdef]}` guard | **fixed** 2026-06-02 | probe `_comp_setup` instead |
+| 396 | `$funcsourcetrace` records `:0` instead of `:1` for function-definition line (parallel to #385 LINENO base) | **fixed** 2026-06-02 | `$(( line + 1 ))` adjust when emitting |
 | 397 | **CRITICAL** `printf "X" > FILE` writes to BOTH stdout AND file — builtin bypasses shell redirection (echo/print work) | **fixed** 2026-06-02 | use `print -r --` instead, or wrap printf in subshell |
 | 398 | `printf` unknown directives (`%Z`/`%K`/`%A`/`%a`/`%T`/`%(…)T`) printed literally instead of erroring (zsh: "invalid directive") | **fixed** 2026-06-02 | manually validate format strings; check stderr for "invalid directive" |
 | 399 | `*(YN)` glob qualifier limit-to-N-matches ignored — returns all matches (zsh: caps at N) | **port-bug** | `( *(om) )` then array-slice `[1,N]` |
