@@ -47009,7 +47009,7 @@ no longer reports the internal trap-machinery scalar.
 | 1 | `(j:: :)` joiner | demo-error | 63 reworded |
 | 2 | quoted `(o)` | demo-error | 65 uses bare form |
 | 3 | `(i)` case-folding | demo-error | 71 exact-case |
-| 4 | anon fn in cmd-sub silent | **port-bug** | 80 uses named fn |
+| 4 | anon fn in cmd-sub silent | **fixed** 2026-06-01 | 80 uses named fn |
 | 5 | prompt `%j %T %D{}` | **fixed** 2026-05-29 | 74 (escape set kept) |
 | 6 | `:gs|X|Y|` + `print -l` | demo-error | 83 chained `:t:r:s` |
 | 7 | `local arr=( $=s )` | **fixed** 2026-05-29 | uses `${(s/:/)var}` |
@@ -47024,7 +47024,7 @@ no longer reports the internal trap-machinery scalar.
 | 16 | `arr=("${arr[@]:0:-1}")` no-shrink in fn | **port-bug** | 311 uses `arr[${#arr}]=()` |
 | 17 | `var=${arr[-1]}` unquoted in fn while | **port-bug** | 311 quotes the RHS |
 | 18 | `arr[a + 1]=val` with space parsed as cmd | **port-bug** | 332 pre-computes `idx=$((..))` |
-| 19 | quoted special/keyword case pat (non-first branch) | **port-bug** | 363/365 reorder branches or if/elif |
+| 19 | quoted special/keyword case pat (non-first branch) | **fixed** 2026-06-01 | 363/365 reorder branches or if/elif |
 | 20 | recursive parsers very slow vs C-zsh | **perf-issue** | 362 trimmed test inputs |
 | 21 | nested `$(( a + $((b)) ))` garbles outer expansion | **port-bug** | extract inner to var first |
 | 22 | heredoc `\$VAR` escape not honored | **port-bug** | use `<<'END'` quoted form |
