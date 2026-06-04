@@ -42746,25 +42746,23 @@ parts=("${parts[@]:#}")   # remove empty
 
 ---
 
-## #543 — `setopt nullglob` + array of glob-zero-matches yields different sizes
+## #543a — `setopt nullglob` + array of glob-zero-matches yields different sizes
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `not-a-bug` — both shells return 0 for
+`a=(zero-match-glob*)` under nullglob. Verified
+re-reproduction at survey-time matches. Entry retained as a
+placeholder so the canonical `#543` (print/empty-field
+issue) below isn't number-collision-renamed.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt nullglob; a=( /tmp/zzz_xyz_no_match*); echo "${#a}"'
 0
-
 $ ./target/debug/zshrs --zsh -fc 'setopt nullglob; a=( /tmp/zzz_xyz_no_match*); echo "${#a}"'
 0
 ```
 
-Wait — both zero. Let me retest with another case.
-
-Actually after re-verification, this case matches. Not a
-bug here. The third bug entry is reserved for a fresh
-hunt to be added in the next iteration; for this
-commit, only #541 and #542 are confirmed gaps. Removing
-#543 as a candidate from this batch.
+(The canonical `#543` entry — `print -- "${(s.X.)a}"`
+empty-field preservation — appears below this stub.)
 
 ---
 
