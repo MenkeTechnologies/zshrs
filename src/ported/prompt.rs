@@ -796,11 +796,40 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     stradd(bv, &s);
                 }
                 // c:515-518 — `%d` / `%/` (pwd, no tilde, optional N
-                // trailing components).
+                // trailing components). Direct port of
+                // `Src/prompt.c::promptpath(p, npath, 0)`:
+                //   npath > 0: keep last npath components
+                //   npath < 0: drop first |npath| components (keep
+                //              the leading slash + remainder)
+                //   npath == 0: full path
+                // Bug #340 — the negative arm wasn't ported, so
+                // `%-1d` returned the full path.
                 b'd' | b'/' => {
                     let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
                     let s = if arg > 0 {
                         trunc_to_last(&pwd, arg as usize)
+                    } else if arg < 0 {
+                        // c:Src/prompt.c:144-154 — walk from modp+1
+                        // forward, increment npath on each `/`; when
+                        // npath reaches 0, truncate there. For
+                        // "/usr/local" + npath=-1: walk past "u s r",
+                        // hit '/' → npath=0, stop. Truncate at that
+                        // '/' → result "/usr".
+                        let mut npath = arg;
+                        let bytes = pwd.as_bytes();
+                        let mut end = bytes.len();
+                        let mut i = 1usize; // skip leading '/'
+                        while i < bytes.len() {
+                            if bytes[i] == b'/' {
+                                npath += 1;
+                                if npath == 0 {
+                                    end = i;
+                                    break;
+                                }
+                            }
+                            i += 1;
+                        }
+                        pwd[..end].to_string()
                     } else {
                         pwd
                     };

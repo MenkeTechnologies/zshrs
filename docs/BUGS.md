@@ -27511,6 +27511,57 @@ config[$key_safe]="value"
 
 ## #340 — `print -P "%Nd"` numeric path-truncate prompt-escape not implemented
 
+**Status:** `fixed` 2026-06-03 — `%d` prompt-escape now
+honors both positive AND negative arg, matching C
+`Src/prompt.c::promptpath`.
+
+**Root cause** — `src/ported/prompt.rs`'s `%d` arm only
+handled the positive case (`%2d` = keep last 2 components).
+The negative case (`%-1d` = drop first 1 component, keep
+the leading prefix) fell through to the `arg <= 0` branch
+which returned the full path.
+
+**Fix** — port C `promptpath`'s `npath < 0` walk:
+```rust
+} else if arg < 0 {
+    let mut npath = arg;
+    let bytes = pwd.as_bytes();
+    let mut end = bytes.len();
+    let mut i = 1usize; // skip leading '/'
+    while i < bytes.len() {
+        if bytes[i] == b'/' {
+            npath += 1;
+            if npath == 0 { end = i; break; }
+        }
+        i += 1;
+    }
+    pwd[..end].to_string()
+}
+```
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /usr/local 2>/dev/null; print -P "%-1d"'
+/usr
+$ ./target/debug/zshrs --zsh -fc 'cd /usr/local 2>/dev/null; print -P "%-1d"'
+/usr
+
+$ /opt/homebrew/bin/zsh -fc 'cd /usr/local/bin 2>/dev/null; print -P "%-2d"'
+/usr
+$ ./target/debug/zshrs --zsh -fc 'cd /usr/local/bin 2>/dev/null; print -P "%-2d"'
+/usr
+
+# Regression: positive form still works
+$ /opt/homebrew/bin/zsh -fc 'cd /usr/local/bin 2>/dev/null; print -P "%2d"'
+local/bin
+$ ./target/debug/zshrs --zsh -fc 'cd /usr/local/bin 2>/dev/null; print -P "%2d"'
+local/bin
+```
+
+Test baseline preserved at 960/92.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
