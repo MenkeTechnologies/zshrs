@@ -34134,7 +34134,43 @@ workaround exists short of patching command resolver.
 
 ## #417 — `unset RANDOM` ignored — special parameter regenerates on next access
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/params.rs](../src/ported/params.rs)).
+
+**Root cause** — C `Src/params.c:3853` (`unsetparam_pm`) sets the `PM_UNSET`
+flag on the paramtab pm node for regenerator-style specials like RANDOM, and
+the param's getfn callback checks the flag before regenerating. zshrs's
+`lookup_special_var` (`src/ported/params.rs:10371`) dispatches to libc/getfn
+shims directly without a paramtab pm node, so there was no PM_UNSET state to
+check — `unset RANDOM` cleared the (nonexistent) paramtab entry but left the
+shim alive, returning a fresh number on every read.
+
+**Fix** — added a side-set `unset_specials` registry (Rust-only, per build-gate
+allowlist — `lookup_special_var` has no pm node to track state on). `unsetparam`
+marks RANDOM/SECONDS/EPOCH*/TTYIDLE/ERRNO as unset; `lookup_special_var` checks
+the set first and returns `None` for marked names so the caller sees empty.
+Re-assignment via `assignsparam` clears the flag so the regenerator becomes
+active again.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'unset RANDOM; echo "[$RANDOM]"'
+[]    # matches zsh
+
+# regression: RANDOM still works when not unset
+$ ./target/debug/zshrs --zsh -fc 'echo "[$RANDOM]"'
+[<some number>]
+
+# regression: re-assignment reactivates the regenerator
+$ ./target/debug/zshrs --zsh -fc 'unset RANDOM; echo "[$RANDOM]"; RANDOM=5; echo "[$RANDOM]"'
+[]
+[<some number>]
+```
+
+Same fix also applies to #418 (SECONDS/EPOCHSECONDS unset).
+
+Baseline 960/92 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'unset RANDOM; echo "[$RANDOM]"'
@@ -34481,7 +34517,19 @@ in zsh don't work in zshrs.
 
 ## #422 — sourced-file errors prefixed `zsh:` instead of file-path — extends #420 to source contexts
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — repro no longer reproduces. Sourced-file
+errors now use the file path as the diagnostic prefix matching zsh.
+Likely landed via earlier `bin_dot`/`bin_source` scriptname handling
+in `src/ported/builtin.rs` (#103 lineage).
+
+**Verify**
+```sh
+$ echo "nonexistent_xyz" > /tmp/_src.zsh
+$ ./target/debug/zshrs --zsh -fc 'source /tmp/_src.zsh'
+/tmp/_src.zsh:1: command not found: nonexistent_xyz    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ echo "nonexistent_xyz" > /tmp/_src.zsh
@@ -35356,7 +35404,17 @@ typeset -p +H | grep "^typeset -A"
 
 ## #436 — `${(q)a[N]}` flag + subscript combination errors "bad substitution"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — repro no longer reproduces. `(q)`
+flag + array-element subscript now returns the quoted element matching
+zsh. Likely landed via earlier flag+subscript parity work in subst.rs.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a=("hello world" "foo bar"); print -l -- "${(q)a[1]}"'
+hello world    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=("hello world" "foo bar"); print -l -- "${(q)a[1]}"'
@@ -35760,7 +35818,17 @@ plugin runs.
 
 ## #443 — `EUID=0`/`UID=0`/`PPID=99` silently accepted — special-var setters missing
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — repro no longer reproduces. `EUID=0`
+now correctly emits `failed to change effective user ID: operation not
+permitted` matching zsh. Likely landed via earlier `euidsetfn` parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'EUID=0'
+zsh:1: failed to change effective user ID: operation not permitted    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'EUID=0; echo "[$EUID]"'
@@ -43768,12 +43836,12 @@ qualifiers always have a digit suffix.
 | 414 | `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape) — opposite of #398 printf direction | **port-bug** | explicit escape allowlist |
 | 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **port-bug** | manual save/restore via `${(@kv)config}` |
 | 416 | `unset PATH` ignored — command lookup still resolves (security bypass for sandboxing patterns) | **port-bug** | try `PATH=` empty assignment (needs verify) |
-| 417 | `unset RANDOM` ignored — special-param regenerator stays active (zsh: returns empty after unset) | **port-bug** | no workaround for clean-state requirement |
-| 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **port-bug** | `SECONDS=0` reassign instead of unset |
+| 417 | `unset RANDOM` ignored — special-param regenerator stays active (zsh: returns empty after unset) | **fixed** 2026-06-04 | n/a |
+| 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **fixed** 2026-06-04 | n/a |
 | 419 | `unset LINENO` silently accepted — no "read-only variable" diagnostic (zsh: emits warning) | **port-bug** | none — manual `typeset -p LINENO` probe |
 | 420 | `eval` errors prefixed `zsh:` instead of `(eval):` — source-context lost (also affects funcname/sourced-file prefixes) | **fixed** 2026-06-04 | n/a |
 | 421 | `^` parsed as glob-negation even when `extended_glob` is off — gating missing on `^`/`~`/`#` extended-glob operators | **port-bug** | escape with backslash `\\^` |
-| 422 | sourced-file errors prefixed `zsh:` instead of `/path/to/file:` — extends #420, breaks .zshrc plugin-bisect debugging | **port-bug** | bisect by commenting out source lines |
+| 422 | sourced-file errors prefixed `zsh:` instead of `/path/to/file:` — extends #420, breaks .zshrc plugin-bisect debugging | **fixed** 2026-06-04 | n/a |
 | 423 | **CRITICAL** `PATH=str` doesn't update tied `path` array — one-way tie broken (path=arr→PATH works) | **port-bug** | always also `path=("${(@s/:/)PATH}")` after PATH= |
 | 424 | **CRITICAL** scalar→array tie broken for MANPATH/FPATH/CDPATH — generalizes #423 to all tied params | **port-bug** | manual rebuild of `manpath`/`fpath`/`cdpath` after scalar assignment |
 | 425 | `(#cN)` glob exact-count flag not recognized — extends #409 family | **port-bug** | regex form `=~ "^a{3}$"` |
@@ -43787,14 +43855,14 @@ qualifiers always have a digit suffix.
 | 433 | `time` builtin ignores `$TIMEFMT` parameter — hardcoded format always used | **port-bug** | `awk` reformat the hardcoded output |
 | 434 | `read -e` echo-mode flag not recognized — input consumed silently instead of echoed to stdout | **port-bug** | `tee /dev/stderr` or explicit `echo "$REPLY"` |
 | 435 | `typeset -A` no-args lists internal introspection assocs (aliases/builtins/commands) instead of user-defined | **port-bug** | `typeset -p +H \| grep "typeset -A"` |
-| 436 | `${(q)a[N]}` flag + subscript combination errors "bad substitution" — parser doesn't combine flags with subscripts | **port-bug** | bind to intermediate variable |
+| 436 | `${(q)a[N]}` flag + subscript combination errors "bad substitution" — parser doesn't combine flags with subscripts | **fixed** 2026-06-04 | n/a |
 | 437 | regex-compile error diagnostic missing details — "failed to compile regex" with no specific reason (zsh: "brackets not balanced" etc.) | **port-bug** | external grep -E test |
 | 438 | `%N` prompt escape (script/fn name) not expanded — extends prompt-escape gap family | **port-bug** | use `$0` in prompt function |
 | 439 | `%>>...` / `%<<...` prompt truncation directives not recognized — printed literally | **port-bug** | manual `${PWD/#$HOME/~}` + precmd truncation |
 | 440 | `**` recursive glob breadth-first ordering instead of zsh's alphabetical depth-first — order-dependent scripts break | **port-bug** | pipe through `sort` |
 | 441 | `pwd` builtin returns spoofed `$PWD` blindly — security-relevant, zsh validates against `getcwd()` | **port-bug** | `command pwd -P` for trusted checks |
 | 442 | `$ZSH_VERSION` exposes zshrs internal version `5.9.0.3-test` instead of zsh-compat `5.9` — breaks feature-detect scripts | **fixed** 2026-06-04 | n/a |
-| 443 | `EUID=0`/`UID=0`/`PPID=99` assignment silently accepted — special-var syscall setters missing (security-relevant) | **port-bug** | use `sudo -u` / external tools |
+| 443 | `EUID=0`/`UID=0`/`PPID=99` assignment silently accepted — special-var syscall setters missing (security-relevant) | **fixed** 2026-06-04 | n/a |
 | 444 | `$ZSH_PATCHLEVEL` returns literal `unknown` — git-derived build identifier missing | **port-bug** | hardcode from build process |
 | 445 | `exec N<<<str` here-string-to-fd doesn't persist — fd unusable after exec (file form works) | **port-bug** | use temp file + `exec N<file` |
 | 446 | `noglob` standalone accepted as no-op (zsh: parse error) — extends #413 parser strictness gap | **port-bug** | CI lint for prefix-keyword-no-command |
