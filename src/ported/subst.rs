@@ -4461,9 +4461,21 @@ pub fn paramsubst(
                     // hash-with-(i)/(I) — observable zsh returns empty.
                     // Don't accept i/I here; let direct-subscript take
                     // them (which also returns empty).
-                    if flags
-                        .chars()
-                        .all(|c| matches!(c, 'R' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b'))
+                    //
+                    // c:Src/params.c:1419 — `(e)` ALONE is a quote_arg
+                    // modifier (treat subscript literally, no pattern);
+                    // for assoc without `(k)/(r)` it means "exact key
+                    // lookup". Require at least one search letter for
+                    // this dispatch; bare `(e)KEY` falls through to the
+                    // exact-key map.get below. Bug #407.
+                    let has_search = flags.contains('R')
+                        || flags.contains('r')
+                        || flags.contains('k')
+                        || flags.contains('K');
+                    if has_search
+                        && flags
+                            .chars()
+                            .all(|c| matches!(c, 'R' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b'))
                     {
                         Some((flags, pat))
                     } else {
@@ -4513,6 +4525,15 @@ pub fn paramsubst(
                         }
                     }
                     out.join(" ")
+                } else if let Some(key) = sub
+                    .trim_start()
+                    .strip_prefix("(e)")
+                    .or_else(|| sub.trim_start().strip_prefix("(E)"))
+                {
+                    // c:Src/params.c:1419 — bare `(e)KEY` exact-key
+                    // lookup on assoc (no pattern interpretation).
+                    // Bug #407.
+                    map.get(key).cloned().unwrap_or_default()
                 } else {
                     map.get(sub).cloned().unwrap_or_default()
                 }
@@ -4538,9 +4559,21 @@ pub fn paramsubst(
                     let close = rest.find(')')?;
                     let flags = rest[..close].to_string();
                     let pat = rest[close + 1..].to_string();
-                    if flags
-                        .chars()
-                        .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'n' | 'e'))
+                    // c:Src/params.c:1419 — `(e)` ALONE doesn't trigger
+                    // the search arm; it's a `quote_arg` modifier on
+                    // (r)/(R)/(i)/(I). Require at least one search
+                    // letter for this dispatch to claim the subscript;
+                    // a bare `(e)pat` falls through to the numeric-
+                    // index parse below (so `${arr[(e)one]}` parses
+                    // "one" as a numeric index → 0 → empty). Bug #407.
+                    let has_search = flags.contains('I')
+                        || flags.contains('R')
+                        || flags.contains('i')
+                        || flags.contains('r');
+                    if has_search
+                        && flags
+                            .chars()
+                            .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'n' | 'e'))
                     {
                         Some((flags, pat))
                     } else {
