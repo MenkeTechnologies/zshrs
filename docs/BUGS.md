@@ -47085,23 +47085,23 @@ no longer reports the internal trap-machinery scalar.
 | 77 | `${h[(k)-key]}` flag-lookup of dash key returns empty | **port-bug** | direct `${h[$opt]+set}` |
 | 78 | `echoti` output emitted AFTER next stdout (buf flush) | **port-bug** | direct `printf '\e[...'` |
 | 79 | Job control table empty: `jobs`/`wait %N`/`kill %N`/`disown` fail | **port-bug** | use `$!` PID instead |
-| 80 | `trap EXIT` in fn fires at script exit, lost in nested fns | **port-bug** | explicit cleanup at fn epilogue |
+| 80 | `trap EXIT` in fn fires at script exit, lost in nested fns | **fixed** 2026-06-02 | explicit cleanup at fn epilogue |
 | 81 | `extended_glob *~b` returns duplicates + matches dir | **port-bug** | loop with `[[ == ... ]] continue` |
-| 82 | `"PREFIX${(s.X.)var}"` repeats prefix per element | **port-bug** | `arr=("${(s.X.)v}"); "P:${arr[*]}"` |
-| 83 | `${a[(s.,.)N,M]}` slice with flag returns full array | **port-bug** | drop subscript flag |
+| 82 | `"PREFIX${(s.X.)var}"` repeats prefix per element | **fixed** 2026-06-02 | `arr=("${(s.X.)v}"); "P:${arr[*]}"` |
+| 83 | `${a[(s.,.)N,M]}` slice with flag returns full array | **fixed** 2026-06-02 | drop subscript flag |
 | 84 | `bindkey -L` 117 entries vs zsh's 31 (default keymap differs) | **port-bug** | normalize via post-process |
-| 85 | `"${(s.X.)s[@]}"` on scalar with `[@]` returns empty | **port-bug** | `(@s.X.)s` flag-first form |
+| 85 | `"${(s.X.)s[@]}"` on scalar with `[@]` returns empty | **fixed** 2026-06-02 | `(@s.X.)s` flag-first form |
 | 86 | `${1:?msg}` error format has spurious `:1:` line | **port-bug** | sed-strip the line number |
 | 87 | `setopt` (no args) empty under `-fc`; zsh shows `nohashdirs/norcs` | **port-bug** | `$options[rcs]` direct query |
-| 88 | `setopt nounset` doesn't fire on unset var in arith `$((x+1))` | **port-bug** | `[[ -v var ]]` guard |
+| 88 | `setopt nounset` doesn't fire on unset var in arith `$((x+1))` | **fixed** 2026-06-02 | `[[ -v var ]]` guard |
 | 89 | `extended_glob #`/`##` quantifiers not recognized (literal) | **fixed** 2026-06-04 | `[[ "aaaa" == a# ]]` matches |
-| 90 | `$ZSH_PATCHLEVEL` = literal `"unknown"` vs zsh's commit | **port-bug** | fallback to `$ZSH_VERSION` |
-| 91 | `:t` modifier dropped on `${(j:X:)arr:t}` joined-then-modifier | **port-bug** | split the two ops |
+| 90 | `$ZSH_PATCHLEVEL` = literal `"unknown"` vs zsh's commit | **fixed** 2026-06-02 | fallback to `$ZSH_VERSION` |
+| 91 | `:t` modifier dropped on `${(j:X:)arr:t}` joined-then-modifier | **fixed** 2026-06-02 | split the two ops |
 | 92 | `$PS4` default is empty; zsh's is `%x\t%0N\t%I\t%_` colored | **port-bug** | explicit `export PS4=...` |
 | 93 | Empty assoc key broken: paren-init misaligns, subscript stores but no retrieve | **fixed** 2026-06-02 | n/a |
-| 94 | `(exec cmd); cmd2` parent shell terminates with subshell | **port-bug** | drop `exec` inside subshell |
+| 94 | `(exec cmd); cmd2` parent shell terminates with subshell | **fixed** 2026-06-02 | drop `exec` inside subshell |
 | 95 | Signal trap from `kill -X $$` in subshell fires immediately | **port-bug** | avoid signal-IPC across sub |
-| 96 | `%N/` `%N~` prompt escape doesn't truncate path | **port-bug** | manual `precmd` truncation |
+| 96 | `%N/` `%N~` prompt escape doesn't truncate path | **fixed** 2026-06-02 | manual `precmd` truncation |
 | 97 | `typeset -r` listing omits shell-internal readonly params (`!=0` etc.) | **fixed** 2026-06-03 | PM_RO_BY_DESIGN flag surfaces internal readonly specials |
 | 98 | `[ "a" \< "b" ]` lex-compare bash ext accepted (zsh errors) | **fixed** 2026-06-02 | `[[ < ]]` double-bracket |
 | 99 | `(#cN,M)` count quantifier + other `(#x)` flags not recognized | **fixed** 2026-06-04 | `[[ "aaa" == a(#c2,3) ]]` matches; bounds enforced |
