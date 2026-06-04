@@ -31353,6 +31353,30 @@ calling. No good in-script workaround.
 
 ## #399 — `*(YN)` glob qualifier — limit-to-N-matches ignored, returns all matches
 
+**Status:** `fixed` 2026-06-03 — Y count is now applied;
+the result is capped at N entries.
+
+**Verify**
+```sh
+$ rm -rf /tmp/_zg && mkdir -p /tmp/_zg && touch /tmp/_zg/a /tmp/_zg/b /tmp/_zg/c
+$ /opt/homebrew/bin/zsh -fc 'print -l /tmp/_zg/*(Y2)'
+/tmp/_zg/a
+/tmp/_zg/c
+$ ./target/debug/zshrs --zsh -fc 'print -l /tmp/_zg/*(Y2)'
+/tmp/_zg/a
+/tmp/_zg/b
+```
+
+Both shells emit 2 entries (count limit applied). The entry-
+selection ordering still diverges (`a, c` vs `a, b`); with
+`*(oNY2)` (explicit no-sort) zshrs matches `a, c` cleanly.
+The remaining diff is a default-sort quirk in zshrs's glob
+ordering, separate from the count-limit bug #399 reports.
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -32237,6 +32261,75 @@ Heavier, but works.
 ---
 
 ## #410 — `typeset -p PATH` doesn't expose the tied scalar/array pair (zsh: `export -T PATH path=(...)`)
+
+**Status:** `fixed` 2026-06-03 — `printparamnode` now emits
+the PM_TIED partner name (and on the scalar side swaps to
+the array peer's value), matching C `Src/params.c:6256-
+6285`. Two call sites in `bin_typeset` were also refactored
+to drop the paramtab write-lock before calling
+printparamnode so the new peer-lookup inside doesn't
+deadlock.
+
+**Root cause** — three compounding gaps:
+
+1. **`ename` field unwired.** `special_paramdef` carried
+   `tied_name: Option<&'static str>` (e.g. PATH →
+   Some("path")) but `vm_helper::init_partab_params` left
+   each fresh `pm.ename = None`. The PM_TIED partner
+   couldn't be looked up.
+2. **`printparamnode` skipped PM_TIED.** The Rust port had
+   no equivalent of C's PM_TIED block at
+   `Src/params.c:6256-6285` that prints the peer name and
+   (for scalar+typeset -p) swaps p to use the array peer's
+   value. Output was `export -T PATH='colons'` instead of
+   `export -T PATH path=( values )`.
+3. **Caller held paramtab write lock around the print.**
+   `bin_typeset` at builtin.rs:3641 and :4120 both held
+   `paramtab().write()` around `printparamnode(pm, ...)`.
+   The new PM_TIED block tries to `paramtab().read()` to
+   fetch the peer — same-thread reader on writer
+   deadlocks under `std::sync::RwLock`.
+
+**Fix** — three-point:
+
+1. `src/vm_helper.rs::init_partab_params`: populate
+   `pm.ename = entry.tied_name.map(String::from)` for
+   both the get-or-create paths.
+2. `src/ported/params.rs::printparamnode`: add PM_TIED
+   block after the attribute walk, mirroring
+   `Src/params.c:6256-6285`. Read peer from paramtab. On
+   typeset-p+scalar side, print own name + space, then
+   swap hn's nam/u_arr/u_str/gsu_s and flip PM_TYPE bits
+   so the downstream value emit uses the array path.
+   Non-swap path just prints the peer name + space.
+3. `src/ported/builtin.rs`: refactor both
+   `bin_typeset`-`-m`-pattern (line ~3641) and
+   `typeset -p NAME` (line ~4120) call sites to pre-clone
+   the pm under `paramtab().read()` and call
+   `printparamnode` on the clone (no lock held).
+   Matches C's "throwaway-side" semantics — the mutation
+   inside printparamnode never propagates back.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'PATH=/x:/y; typeset -p PATH'
+export -T PATH path=( /x /y )
+$ ./target/debug/zshrs --zsh -fc 'PATH=/x:/y; typeset -p PATH'
+export -T PATH path=( /x /y )
+
+$ /opt/homebrew/bin/zsh -fc 'PATH=/x:/y; typeset -p path'
+typeset -aT PATH path=( /x /y )
+$ ./target/debug/zshrs --zsh -fc 'PATH=/x:/y; typeset -p path'
+typeset -aT PATH path=( /x /y )
+```
+
+Both PATH and path emissions match zsh byte-for-byte
+including the `export -T` vs `typeset -T` prefix
+distinction and the array-peer value format.
+
+Test baseline 958/94 → 960/92.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 

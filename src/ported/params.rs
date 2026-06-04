@@ -9578,6 +9578,71 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 print!(" ");
             }
         }
+
+        // c:Src/params.c:6256-6285 — PM_TIED partner emission. For
+        // tied scalar/array pairs (PATH↔path, FPATH↔fpath, etc.) the
+        // partner name is printed before the entry's own name, and
+        // for `typeset -p` on the SCALAR side the value is swapped to
+        // the ARRAY peer's contents (so the output is re-parseable
+        // and doesn't collapse `(a b c)` vs `('a b c')` to the same
+        // colon-string). Bug #410.
+        if (f & PM_TIED) != 0 {
+            if let Some(ename) = hn.ename.clone() {
+                // c:Src/params.c:6275 `paramtab->getnode(paramtab,
+                // p->ename)`. The bin_typeset caller pre-clones the
+                // pm before calling printparamnode (see builtin.rs)
+                // so no paramtab lock is held here. Read the peer
+                // directly. Bug #410.
+                let peer_info: Option<(String, Vec<String>)> =
+                    paramtab().read().ok().and_then(|t| {
+                        t.get(&ename).map(|peer_pm| {
+                            (
+                                peer_pm.node.nam.clone(),
+                                peer_pm.u_arr.clone().unwrap_or_default(),
+                            )
+                        })
+                    });
+                if let Some((peer_name, peer_arr)) = peer_info {
+                    let typeset_mode = (printflags & PRINT_TYPESET) != 0;
+                    let we_are_scalar = (f & PM_ARRAY) == 0;
+                    if typeset_mode && we_are_scalar {
+                        // c:6280-6284 — swap p with the array peer so
+                        // value emission uses the array form. Print
+                        // OUR name first (the scalar side), then
+                        // swap.
+                        print!("{} ", quotedzputs(&hn.node.nam));
+                        hn.node.nam = peer_name;
+                        hn.u_arr = Some(peer_arr);
+                        hn.u_str = None;
+                        // Flip the PM_TYPE bits to PM_ARRAY so
+                        // printparamvalue dispatches the array arm.
+                        // PM_TYPE is a const fn that masks the
+                        // type-bits union (PM_SCALAR | PM_INTEGER |
+                        // PM_EFLOAT | PM_FFLOAT | PM_ARRAY | PM_HASHED
+                        // | PM_NAMEREF). Clear them all, then set
+                        // PM_ARRAY.
+                        let type_mask = crate::ported::zsh_h::PM_SCALAR
+                            | crate::ported::zsh_h::PM_INTEGER
+                            | crate::ported::zsh_h::PM_EFLOAT
+                            | crate::ported::zsh_h::PM_FFLOAT
+                            | crate::ported::zsh_h::PM_ARRAY
+                            | crate::ported::zsh_h::PM_HASHED
+                            | crate::ported::zsh_h::PM_NAMEREF;
+                        hn.node.flags = (hn.node.flags & !(type_mask as i32))
+                            | (PM_ARRAY as i32);
+                        // Drop the scalar getfn so printparamvalue
+                        // doesn't pull from the scalar gsu (which
+                        // would resolve PATH-the-colon-string).
+                        hn.gsu_s = None;
+                    } else {
+                        // c:6286 — non-swap path: just print peer's
+                        // name + space. The downstream name+value
+                        // emission still uses hn (our own data).
+                        print!("{} ", quotedzputs(&peer_name));
+                    }
+                }
+            }
+        }
     }
     if (printflags & PRINT_KV_PAIR) != 0 {
         // hashelem path: print key without name= leader.

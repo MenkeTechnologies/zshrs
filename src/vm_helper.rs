@@ -1116,6 +1116,13 @@ impl ShellExecutor {
                         {
                             pm.base = 10;
                         }
+                        // c:Src/zsh.h IPDEF8/IPDEF9 — the third macro
+                        // arg is the tied partner name; mapped into
+                        // `pm->ename` so `typeset -p` can find the
+                        // peer for the PM_TIED swap. Bug #410.
+                        if let Some(peer) = entry.tied_name {
+                            pm.ename = Some(peer.to_string());
+                        }
                     } else {
                         // Param hasn't been created yet (e.g. PATH gets
                         // imported lazily via the env fallback in
@@ -1157,7 +1164,9 @@ impl ShellExecutor {
                             },
                             width: 0,
                             env: None,
-                            ename: None,
+                            // c:Src/zsh.h IPDEF8/IPDEF9 — tied partner
+                            // name. Bug #410.
+                            ename: entry.tied_name.map(|s| s.to_string()),
                             old: None,
                             level: 0,
                         });
