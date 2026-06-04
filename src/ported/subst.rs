@@ -1892,10 +1892,23 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // isend(*ptr) && (!idigit(str[1]) || (ptr - str < 4)))`.
         // Walk digit suffix; ptr ends at first non-digit.
         if (nx == '+' || nx == '-' || nx.is_ascii_digit()) && !nx.is_whitespace() {
-            // Parse signed integer from chars[1..]
+            // Parse signed integer from chars[1..]. Normalize Dash TOKEN
+            // (\u{9b}) to ASCII `-` for the sign check — the lexer emits
+            // Dash for `-` and the existing `nx` predicate already maps
+            // it, but the per-char sign test below must do the same or
+            // `~-N` walks past the sign as if `N` was just a digit.
+            // Bug #358.
+            let ch_at = |i: usize| -> char {
+                let c = chars[i];
+                if c == '\u{9b}' {
+                    '-'
+                } else {
+                    c
+                }
+            };
             let mut p = 1_usize;
-            let neg = chars[p] == '-';
-            if chars[p] == '+' || chars[p] == '-' {
+            let neg = ch_at(p) == '-';
+            if ch_at(p) == '+' || ch_at(p) == '-' {
                 p += 1;
             }
             let dstart = p;
@@ -1914,7 +1927,12 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
                     .collect::<String>()
                     .parse()
                     .unwrap_or(0);
-                let val = if neg { -val } else { val };
+                // c:Src/subst.c:771-773 — `if (val < 0) val = -val;` —
+                // the sign was encoded in `str[1]` (the `+`/`-` token);
+                // dstackent receives the magnitude. Previous Rust port
+                // negated val when neg was set, sending -1 to dstackent
+                // which made the loop walk zero steps. Bug #358.
+                let _ = neg; // sign already carried in ch below
                 let pwd = getsparam("PWD").unwrap_or_default();
                 // Direct port of subst.c filesub'namptr tilde-+/- arm:
                 // dstackent(ch, val) → pwd or stack entry.
@@ -11041,27 +11059,54 @@ pub fn dstackent(
     } // c:4907 (post-decrement)
 
     // C lines 4909-4912: walk dirstack.
-    // backwards: from lastnode, val steps back.
-    // forwards: from firstnode, val steps forward.
-    let n = dirstack.len() as i32; // c:4910
-    let idx = if backwards {
-        // c:4910
-        // last element is index n-1; val steps back from there.
-        let i = n - val; // c:4910
-        if i < 0 {
-            return None;
-        } // c:4913 (n == end)
-        i as usize // c:4910
+    // backwards: `for (n=lastnode(dirstack); n != end && val; val--,
+    //             n=prevnode(n));`
+    // forwards: `for (end=NULL, n=firstnode(dirstack); n && val;
+    //            val--, n=nextnode(n));`
+    //
+    // Track position as a signed cursor + at_end flag. C uses
+    // `n=lastnode` which IS the sentinel when dirstack is empty —
+    // the loop body never runs.
+    let n_len = dirstack.len() as i32;
+    let mut pos: i32;
+    let mut at_end: bool;
+    if backwards {
+        pos = n_len - 1; // lastnode
+        at_end = pos < 0; // empty dirstack → at end
+        while !at_end && val > 0 {
+            val -= 1;
+            pos -= 1;
+            if pos < 0 {
+                at_end = true;
+            }
+        }
     } else {
-        // c:4912
-        if val < 0 || val >= n {
-            return None;
-        } // c:4913 (n == end)
-        val as usize // c:4912
-    };
+        pos = 0; // firstnode
+        at_end = pos >= n_len;
+        while !at_end && val > 0 {
+            val -= 1;
+            pos += 1;
+            if pos >= n_len {
+                at_end = true;
+            }
+        }
+    }
+
+    // c:4913-4919 — `if (n == end) { if (backwards && !val) return pwd;
+    //                if (isset(NOMATCH)) zerr(...); return NULL; }`
+    if at_end {
+        if backwards && val == 0 {
+            // Empty dirstack with `~-0` returns pwd. Bug #358.
+            return Some(pwd.to_string());
+        }
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::NOMATCH) {
+            crate::ported::utils::zerr("not enough directory stack entries.");
+        }
+        return None;
+    }
 
     // C: `return (char *)getdata(n);`
-    dirstack.get(idx).cloned() // c:4920
+    dirstack.get(pos as usize).cloned() // c:4920
 } // c:4922
 
 // Canonical LinkList — port of `struct linklist` (`Src/zsh.h:563`)
