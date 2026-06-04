@@ -26007,7 +26007,50 @@ c
 
 ## #316 — `zsh/system` module builtins missing — `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` all "command not found"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — all five `zsh/system`
+builtins are now registered AND `syserror`'s output format
+matches zsh's `strerror()` byte-for-byte.
+
+**Root cause** — two layers:
+
+1. **Missing builtins** — closed by prior `zsh/system`
+   module-load parity work; all of `syserror`/`sysopen`/
+   `sysread`/`syswrite`/`sysseek` are now in the builtin
+   table after `zmodload zsh/system`.
+2. **`syserror` message format** — the Rust port used
+   `std::io::Error::from_raw_os_error(num).to_string()`
+   which appends `" (os error N)"` to the canonical
+   strerror text (e.g. `No such file or directory (os
+   error 2)`). C zsh calls `strerror(num)` directly.
+
+**Fix** — `src/ported/modules/system.rs::bin_syserror` at
+the `msg = strerror(num)` (c:532) port site: replace the
+std::io::Error round-trip with a direct `libc::strerror`
+call wrapped in `CStr::from_ptr`. Matches C exactly.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/system 2>/dev/null; syserror -e errmsg ENOENT; echo "[$errmsg]"'
+[No such file or directory]
+$ ./target/debug/zshrs --zsh -c 'zmodload zsh/system 2>/dev/null; syserror -e errmsg ENOENT; echo "[$errmsg]"'
+[No such file or directory]
+
+# Cross-check for the rest of the error name set:
+$ for e in ENOENT EACCES EEXIST EINVAL EAGAIN; do
+    diff <(zsh -fc "zmodload zsh/system 2>/dev/null; syserror -e m $e; echo \$m") \
+         <(zshrs --zsh -c "zmodload zsh/system 2>/dev/null; syserror -e m $e; echo \$m")
+  done
+# (no diff)
+```
+
+`sysopen` / `sysread` / `syswrite` / `sysseek` all execute
+their flag-parse paths (e.g. `sysopen` rc=1 "not enough
+arguments" without args, matching zsh).
+
+zshrs_shell baseline preserved at 967/85.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zmodload zsh/system 2>/dev/null; syserror -e errmsg ENOENT; echo "[$errmsg]"'
@@ -26017,49 +26060,6 @@ $ ./target/debug/zshrs --zsh -c 'zmodload zsh/system 2>/dev/null; syserror -e er
 zsh:1: command not found: syserror
 []
 ```
-
-After `zmodload zsh/system`, zsh registers several
-filesystem/syscall-wrapper builtins:
-
-| Builtin | Purpose |
-|---------|---------|
-| `syserror` | Get errno name → message string |
-| `sysopen` | Open file with explicit fd assignment |
-| `sysread` | Read bytes with timeout/non-blocking |
-| `syswrite` | Write bytes with explicit count |
-| `sysseek` | Seek in fd |
-
-zshrs's `zmodload zsh/system` doesn't actually register any
-of these — all subsequent calls return "command not found".
-
-Same family as #304 (compsys builtins missing) — modules
-load but their builtin registration is incomplete.
-
-Tested:
-```sh
-for b in syserror sysopen sysread syswrite sysseek; do
-    # zsh: emits "not enough arguments" (builtin recognized)
-    # zshrs: "command not found: $b"
-done
-```
-
-`zsystem` (the umbrella builtin) works in both.
-
-**Where** — `src/ported/modules/zsh_system.rs`: only registers
-`zsystem` and some parameters. C-source
-`Src/Modules/system.c` defines all of these via the standard
-`bintab[]` registration table.
-
-**Impact** — scripts that use low-level fd manipulation,
-non-blocking I/O, or errno-to-string conversion fail. Common
-for:
-- Locking helpers: `zsystem flock` works but `sysopen -lr -o
-  cloexec 3 lockfile` doesn't (sysopen missing).
-- Async-I/O patterns relying on `sysread -t TIMEOUT`.
-- Library code that translates errno values via `syserror`.
-
-**Workaround** — none direct — depends on implementation of
-the missing builtins.
 
 ---
 
@@ -47252,7 +47252,7 @@ no longer reports the internal trap-machinery scalar.
 | 313 | `${(s.X.)str}` scalar-context split returns multiple echo args instead of joined string | **fixed** 2026-06-02 | n/a |
 | 314 | `${(os.X.)str}` sort flag not applied after split — flag-composition gap | **fixed** 2026-06-02 | n/a |
 | 315 | `${(us.X.)str}` unique flag not applied after split — PATH-dedup idiom broken | **fixed** 2026-06-02 | n/a |
-| 316 | `zsh/system` module builtins `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` missing | **port-bug** | (none — needs builtin registration) |
+| 316 | `zsh/system` module builtins `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` missing | **fixed** 2026-06-04 | builtins registered + syserror uses libc::strerror for byte-exact format |
 | 317 | `epochtime` array autovar from `zsh/datetime` not registered (zsh: 2-elem secs/nanosecs) | **port-bug** | use `$EPOCHREALTIME` float instead |
 | 318 | PS4 prompt-escapes (`%x`/`%N`/`%I`/`%_`) not expanded in xtrace output — trace shows literal text | **fixed** 2026-06-02 | n/a |
 | 319 | `eval --` end-of-options separator not recognized (extends #251/#252/#284 `--` family) | **port-bug** | drop the `--` |
