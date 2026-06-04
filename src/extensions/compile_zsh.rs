@@ -6667,6 +6667,23 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
                 }
                 j = k;
             }
+            // c:Src/subst.c:1820 — single-char-special `$?:MOD`,
+            // `$$:MOD`, `$!:MOD`, `$-:MOD` etc. accept the modifier
+            // chain (Bug #582). Skip when the special is `?` or `*`
+            // (literal or META): those chars are glob metachars and
+            // extending the expansion span makes downstream glob-
+            // matching include the trailing `:MOD` in the pattern,
+            // erroring "no matches found". Defer the `:MOD` walk
+            // for `?`/`*` until runtime can pre-strip the suffix
+            // before glob.
+            let special = chars[i + 1];
+            let is_glob_special = matches!(
+                special,
+                '?' | '*' | '\u{87}' | '\u{97}'
+            );
+            if !is_glob_special {
+                walk_bare_modifier_chain(chars, &mut j);
+            }
             j
         }
         // All-digit positional: $0..$N
