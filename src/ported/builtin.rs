@@ -1198,20 +1198,31 @@ pub fn bin_set(
             // entries are emitted.
             //
             // Same family of bug as the prior bin_unset -m fix.
-            let mut entries: Vec<(String, String)> = {
+            //
+            // c:Src/builtins.c::printparamnode — dispatches the value
+            // read through the param's gsu_s.getfn rather than reading
+            // `pm.u_str` directly. Special params like `!`, `$`, `#`,
+            // `-`, `0`, `?` have empty `u_str` slots because their live
+            // value lives behind getfn (libc syscall, LASTVAL, pparams
+            // count, etc.). Bug #463: zshrs read u_str directly so the
+            // dump showed `!=''`, `$=''` etc. instead of the actual
+            // values. Route through `getsparam` so the canonical
+            // special-param dispatch (lookup_special_var → getfn shim)
+            // fires.
+            let names: Vec<String> = {
                 let tab = paramtab().read().unwrap();
                 tab.iter()
-                    .filter(|(_, pm)| {
-                        // c:scanhashtable filter: skip PM_UNSET. C also
-                        // skips entries with flags2=0 (none extra filtered).
-                        (pm.node.flags as u32 & PM_UNSET) == 0
-                    })
-                    .map(|(k, pm)| {
-                        let v = pm.u_str.clone().unwrap_or_default();
-                        (k.clone(), v)
-                    })
+                    .filter(|(_, pm)| (pm.node.flags as u32 & PM_UNSET) == 0)
+                    .map(|(k, _)| k.clone())
                     .collect()
             };
+            let mut entries: Vec<(String, String)> = names
+                .into_iter()
+                .map(|k| {
+                    let v = crate::ported::params::getsparam(&k).unwrap_or_default();
+                    (k, v)
+                })
+                .collect();
             // c:680 sorted=1 → meta-aware sort via hnamcmp (already fixed
             // to use ztrcmp earlier in the series).
             entries.sort_by(|a, b| hnamcmp(&a.0, &b.0));
