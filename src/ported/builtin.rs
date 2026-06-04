@@ -10281,10 +10281,18 @@ pub fn bin_times(
         return 1; // c:7336
     }
     let pttime = |t: libc::clock_t| {
-        // C `pttime` formats clock ticks as Mm S.SSSs; static-link path
-        // prints seconds with three decimals matching the expected shape.
-        let secs = t as f64 / clktck;
-        print!("{}m{:.3}s", (secs / 60.0) as i64, secs % 60.0);
+        // c:Src/builtin.c:7315-7318 — `printf("%ldm%ld.%02lds", X/(60*clktck),
+        //   X/clktck%clktck, X*100/clktck%100)`. Integer-arithmetic
+        // breakdown: minutes (no zero-pad), seconds (no zero-pad), and
+        // centiseconds (2-digit zero-pad). Bug #499 — previous Rust
+        // port used floating-point `%.3f` with 3-decimal precision,
+        // diverging from zsh's `0m0.00s`.
+        let x = t as i64;
+        let clktck_i = clktck as i64;
+        let mins = x / (60 * clktck_i);
+        let secs = (x / clktck_i) % clktck_i;
+        let csec = (x * 100 / clktck_i) % 100;
+        print!("{}m{}.{:02}s", mins, secs, csec);
     };
     pttime(buf.tms_utime); // c:7332
     print!(" "); // c:7333
