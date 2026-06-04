@@ -3327,11 +3327,20 @@ impl ZshCompiler {
                 // Without this, the scalar-Concat fallback joined the
                 // matching keys with space and lost array shape (zinit
                 // hook ordering pattern `${(@on)m[(I)pat]}`).
+                //
+                // Also fires for slice form `[N,M]` (Bug #570 in
+                // docs/BUGS.md): `${(@n)a[1,-1]}` etc. need the same
+                // paramsubst routing so the sort applies to the
+                // slice's elements rather than being skipped at the
+                // BUILTIN_ARRAY_INDEX scalar-collapse stage.
+                let key_is_slice_or_idx_flag =
+                    key.starts_with("(I)") || key.starts_with("(R)") || key.starts_with("(K)")
+                        || (key.contains(',') && !key.starts_with('('));
                 if flags.contains('@')
                     && flags
                         .chars()
                         .any(|c| matches!(c, 'o' | 'O' | 'n' | 'i' | 'u'))
-                    && (key.starts_with("(I)") || key.starts_with("(R)") || key.starts_with("(K)"))
+                    && key_is_slice_or_idx_flag
                 {
                     if let Some(inner) =
                         untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
