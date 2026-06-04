@@ -44431,7 +44431,58 @@ collapsed range. Also: shell-startup that pipes
 
 ## #570 — `${(n)a[1,-1]}` paramsubst flag + array-slice errors "bad substitution"; extends #436 to slice form
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — original report's "bad
+substitution" was already addressed by earlier
+parser-relaxation work; the remaining gap was sort-flag
+application on slices: `${(@n)a[1,-1]}` returned the
+unsorted slice in zshrs.
+
+**Root cause** — `src/extensions/compile_zsh.rs` had an
+arm for `(@)` + sort-flag + `(I)`/`(R)`/`(K)` subscripts
+that routes through `BUILTIN_BRIDGE_BRACE_ARRAY` (so
+paramsubst applies the sort to the resolved keys list).
+The same routing was needed for `(@)` + sort-flag + slice
+`[N,M]` form, but the arm's `key_is_idx_flag` check only
+matched the `(I)`/`(R)`/`(K)` prefixes. For
+`${(@n)a[1,-1]}`, the slice fell through to
+`BUILTIN_ARRAY_INDEX` which returned the slice elements as
+array but bypassed the sort-flag pass.
+
+**Fix** — extend the gating predicate from
+`(I)`/`(R)`/`(K)` only to also include any subscript
+containing `,` (the slice shape), so `(@)` + sort + slice
+routes through `BUILTIN_BRIDGE_BRACE_ARRAY` and paramsubst
+applies the sort to the slice elements.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(3 1 2); echo "${(@n)a[1,-1]}"'
+1 2 3
+$ ./target/debug/zshrs --zsh -fc 'a=(3 1 2); echo "${(@n)a[1,-1]}"'
+1 2 3
+
+$ /opt/homebrew/bin/zsh -fc 'a=(c a b); echo "${(@o)a[1,-1]}"'
+a b c
+$ ./target/debug/zshrs --zsh -fc 'a=(c a b); echo "${(@o)a[1,-1]}"'
+a b c
+
+# Regressions clean:
+$ /opt/homebrew/bin/zsh -fc 'a=(3 1 2); echo "${(n)a[1,-1]}"'
+3 1 2
+$ ./target/debug/zshrs --zsh -fc 'a=(3 1 2); echo "${(n)a[1,-1]}"'
+3 1 2
+
+$ /opt/homebrew/bin/zsh -fc 'a=(3 1 2); echo "${(@n)a}"'
+1 2 3
+$ ./target/debug/zshrs --zsh -fc 'a=(3 1 2); echo "${(@n)a}"'
+1 2 3
+```
+
+All match byte-for-byte. zshrs_shell baseline preserved at
+970/82.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(3 1 2); echo "${(n)a[1,-1]}"'
@@ -44447,44 +44498,9 @@ $ ./target/debug/zshrs --zsh -fc 'a=(3 1 2); echo "${(@n)a[1,-1]}"'
 zsh:1: bad substitution
 ```
 
-`${(flag)name[N,M]}` — paramsubst flag + 2-arg array
-slice. zsh's parser admits both: flag-tokens parsed
-first, then subscript or slice, then value-fetch.
-
-zshrs rejects the combination at parse time with
-"bad substitution", regardless of which flag (`(n)`,
-`(@n)`, `(o)`, etc.). Confirmed: numeric sort and
-keep-array flags both error.
-
-Extends #436 (`${(q)a[N]}` flag + single-subscript) —
-same parser gap also rejects 2-arg slice. Companion to
-#408 (3-arg slice silently accepted) — the slice surface
-of paramsubst is broken multiple ways.
-
-**Where** — `src/ported/paramsubst/parse.rs`: after
-matching closing flag-paren, must continue into
-subscript/slice parsing before binding the value-source.
-C-source `Src/subst.c::paramsubst` parses
-flags → subscript-or-slice → value-fetch as a single
-unit.
-
-**Impact** — common pattern broken — apply
-quoting/sort/case flag to a slice:
-
-```sh
-# Sort last 3 elements numerically:
-last_three="${(n)a[-3,-1]}"  # zsh: works; zshrs: bad substitution
-```
-
-User must split into temp-var + flag, doubling allocation
-and obscuring intent.
-
-**Workaround** — fetch the slice first, then apply the
-flag to the temp:
-
-```sh
-local tmp=("${a[1,-1]}"); print "${(n)tmp}"
-```
+(The original "bad substitution" no longer reproduces —
+that part was closed by earlier parser work; remaining
+sort-application gap closed in this commit.)
 
 ---
 
@@ -47536,7 +47552,7 @@ no longer reports the internal trap-machinery scalar.
 | 567 | `$'\\UNNNNNNNN'` ANSI-C 8-hex Unicode escape passed through literally — zsh decodes (extends #364) | **port-bug** | embed UTF-8 char literal |
 | 568 | `read -A a </dev/null` on empty input creates 0-elem array — zsh: 1-elem empty array | **port-bug** | use `$?` from `read` not `${#a}` |
 | 569 | `bindkey` no-args listing omits range-compaction `"^A"-"^C" self-insert` — emits each key (117 lines vs zsh 31) | **port-bug** | query specific keys with `bindkey '^X'` |
-| 570 | `${(n)a[1,-1]}` paramsubst flag + array-slice errors "bad substitution" — extends #436 to slice form | **port-bug** | fetch slice into temp then apply flag |
+| 570 | `${(n)a[1,-1]}` paramsubst flag + array-slice errors "bad substitution" — extends #436 to slice form | **fixed** 2026-06-04 | (@) + sort + slice now routes through BRIDGE_BRACE_ARRAY |
 | 571 | `${(Z)a}` flag without required arg errors "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 572 | `print -S arg` history-save flag emits arg to stdout (and doesn't save) — zsh: silent save | **fixed** 2026-06-04 | `print -S hello` exits silently with rc=0 matching zsh |
 | 573 | `*(Lr)` malformed size-qualifier: zshrs "no matches found" — zsh: "number expected" | **fixed** 2026-06-04 | `*(Lr)` errors "number expected" matching zsh |
