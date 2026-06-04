@@ -44466,6 +44466,46 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #598 — `print -P "%L"` emits empty instead of `$SHLVL`
+
+**Status:** `fixed` 2026-06-04 — ported `Src/prompt.c:889` `%L`
+case to `putpromptchar`.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%L"'
+4
+
+# Before fix:
+$ zshrs --zsh -c 'print -P "%L"'
+                      # empty
+# After fix:
+$ zshrs --zsh -c 'print -P "%L"'
+4
+```
+
+**Root cause** — `src/ported/prompt.rs::putpromptchar` switch had
+no `b'L'` arm. The C source at `Src/prompt.c:889`:
+```c
+case 'L':
+    addbufspc(DIGBUFSIZE);
+    sprintf(bv->bp, "%ld", (long)shlvl);
+    bv->bp += strlen(bv->bp);
+    break;
+```
+emits the shell-level (SHLVL) digit. zshrs had the `%(L...)`
+test-form arm at line 650 (used by `%(Ln.then.else)`) but not
+the bare `%L` emission arm, so the placeholder rendered as
+empty. There was an explicitly-ignored unit test
+`putpromptchar_L_emits_shlvl` documenting the gap.
+
+**Fix** — add `b'L'` arm to the main switch after `b'i'`
+(LINENO emitter) reading SHLVL from paramtab with env fallback,
+matching the existing `expand_prompt` boot path at line 95.
+Unignored the regression test.
+
+---
+
 ## #597 — `"${a[@]:^b}"` / `"${a[@]:^^b}"` collapse to scalar instead of preserving array shape
 
 **Status:** `fixed` 2026-06-04 — `[@]`/`[*]` subscript on the zip
@@ -46451,6 +46491,7 @@ no longer reports the internal trap-machinery scalar.
 | 595 | `${a:s/PAT}` (missing closing delim) and bare `${a:s}` silently no-op — should emit "bad substitution" | **fixed** 2026-06-04 | modify() `:s` arm: track pat_closed flag, error on missing closing delim or bare `:s` (matches C subst.c modify() :s arm) |
 | 596 | `${a/\|/-}` and `${a//\|/-}` mis-treat bare `\|` as alternation — should be literal in `/`/`//` patterns | **fixed** 2026-06-04 | escape_bare_alt_pipes applied to single + global replace pat (was already applied to ##/##/%/%% arms) |
 | 597 | `"${a[@]:^b}"` / `"${a[@]:^^b}"` collapse to scalar instead of preserving array shape | **fixed** 2026-06-04 | :^ and :^^ arms gate qt-collapse on `!is_at_subscript` so explicit `[@]` walks per-element zip |
+| 598 | `print -P "%L"` emits empty instead of `$SHLVL` | **fixed** 2026-06-04 | added `b'L'` arm to putpromptchar switch (port of Src/prompt.c:889) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
