@@ -4386,7 +4386,44 @@ pub fn paramsubst(
             // (casmod / quoting / etc.) runs on this value below.
             pv
         } else if let Some(sv) = subexp_value {
-            sv // c:2681 (subexp result)
+            // c:Src/subst.c — when a sub-expression produced the
+            // value AND an OUTER subscript follows (`${${(P)name}[N]}`),
+            // apply the subscript to the result's array shape.
+            // Bug #182.
+            //
+            // Gate on `casmod == CASMOD_NONE` and `quotemod == 0`
+            // (i.e. outer has NO mode-altering flag) so the
+            // `${(U)${(s. .)s}[1]}` path stays in the existing
+            // split_parts pipeline that handles outer-flag + subscript
+            // composition correctly.
+            if let Some(sub) = subscript.as_deref() {
+                if casmod == CASMOD_NONE && quotemod == 0 && !length_op {
+                    let parts: Vec<String> =
+                        sv.split_whitespace().map(String::from).collect();
+                    if sub == "@" || sub == "*" {
+                        parts.join(" ")
+                    } else if let Some((lo_s, hi_s)) = sub.split_once(',') {
+                        let lo: i64 = lo_s.trim().parse().unwrap_or(1);
+                        let hi: i64 =
+                            hi_s.trim().parse().unwrap_or(parts.len() as i64);
+                        getarrvalue(&parts, lo, hi).join(" ")
+                    } else if let Ok(n) = sub.trim().parse::<i64>() {
+                        let nl = parts.len() as i64;
+                        let idx = if n < 0 { nl + n } else { n - 1 };
+                        if idx >= 0 && (idx as usize) < parts.len() {
+                            parts[idx as usize].clone()
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        sv
+                    }
+                } else {
+                    sv
+                }
+            } else {
+                sv // c:2681 (subexp result)
+            }
         } else if let Some(sub) = subscript.as_deref() {
             // Subscripted lookup: assoc-key, array-index, or slice.
             if let Some(map) = assoc_get(&var_name) {

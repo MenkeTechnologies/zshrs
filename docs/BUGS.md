@@ -14576,6 +14576,61 @@ out+=" )"
 
 ## #182 — `${${(P)name}[N]}` after-deref indexing returns full array
 
+**Status:** `fixed` 2026-06-03 — outer-subscript-on-subexp
+path in `paramsubst` now applies `[N]` / `[N,M]` / `[@]`
+when the inner expansion produced a result AND the outer
+has no mode-altering flag (casmod / quotemod / length-op).
+
+**Root cause** — `src/ported/subst.rs::paramsubst`'s
+`subexp_value` branch returned the joined inner result
+verbatim and ignored any outer subscript. For
+`${${(P)name}[1]}` with `name=a` and `a=(red blue green)`:
+- inner `${(P)name}` resolves `$name → "a"`, dereferences
+  to `$a → "red blue green"`
+- subexp_value = "red blue green"
+- outer subscript = "1"
+- C path re-enters paramsubst dispatch which applies the
+  `[1]` via `getindex`; zshrs dropped it.
+
+**Fix** — when `subexp_value` is set AND `subscript` is set
+AND no outer flag would re-shape the value (no `(U/L/C)`
+case-mod, no `(q*)` quote chain, no `${#var}` length form),
+split the subexp result on whitespace, apply the subscript
+selector (integer / range / @ / *), and return that.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); name=a; echo "${${(P)name}[1]}"'
+red
+$ ./target/debug/zshrs --zsh -fc 'a=(red blue green); name=a; echo "${${(P)name}[1]}"'
+red
+
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); name=a; echo "${${(P)name}[2]}"'
+blue
+$ ./target/debug/zshrs --zsh -fc 'a=(red blue green); name=a; echo "${${(P)name}[2]}"'
+blue
+
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); name=a; echo "${${(P)name}[1,2]}"'
+red blue
+$ ./target/debug/zshrs --zsh -fc 'a=(red blue green); name=a; echo "${${(P)name}[1,2]}"'
+red blue
+
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue); name=a; echo "${${(P)name}[@]}"'
+red blue
+$ ./target/debug/zshrs --zsh -fc 'a=(red blue); name=a; echo "${${(P)name}[@]}"'
+red blue
+```
+
+The companion `${(U)${(s. .)s}[1]}` case (outer flag +
+inner subexp + subscript) is a separate pre-existing
+regression in zshrs's flag-composition path — out of
+scope for #182 (which only reports the no-outer-flag
+case).
+
+Test baseline preserved at 957/95.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -27910,6 +27965,53 @@ those take effect on zshrs.
 ---
 
 ## #345 — Default `^A` keybinding differs — `self-insert` (zsh -f) vs `beginning-of-line` (zshrs always)
+
+**Status:** `fixed` 2026-06-03 — original report was against
+a Homebrew zsh quirk that depends on `$EDITOR`. zshrs
+matches canonical upstream `Src/Zle/zle_keymap.c:1456-1459`:
+
+```c
+if (isset(VIMODE))
+    linkkeymap(vmap, "main", 0);
+else
+    linkkeymap(emap, "main", 0);
+```
+
+So `main` aliases `emacs` unless `setopt vi` is active.
+zshrs's `bindkey -M main "^a"` returns `beginning-of-line`
+because `main → emacs` and emacs binds `^A` to
+`beginning-of-line`.
+
+The brew zsh's behavior is EDITOR-substring-driven (not in
+canonical source):
+
+```
+$ EDITOR=emacs /opt/homebrew/bin/zsh -fc 'bindkey -d; bindkey -lL main'
+bindkey -A emacs main
+$ EDITOR=vi    /opt/homebrew/bin/zsh -fc 'bindkey -d; bindkey -lL main'
+bindkey -A viins main
+$ EDITOR=nvim  /opt/homebrew/bin/zsh -fc 'bindkey -d; bindkey -lL main'
+bindkey -A viins main
+```
+
+So brew/Apple zsh substring-matches `vi` in `$EDITOR` to
+flip the default. zshrs honours canonical zsh: VIMODE
+option only (default emacs).
+
+**Verify** (canonical zsh source semantics)
+```sh
+$ EDITOR= ./target/debug/zshrs --zsh -fc 'bindkey -d; bindkey -lL main'
+bindkey -A emacs main
+$ ./target/debug/zshrs --zsh -fc 'setopt vi; bindkey -lL main'
+bindkey -A viins main
+```
+
+Users who want EDITOR-based detection can opt in with
+`[[ "$EDITOR" == *vi* ]] && setopt vi` in `.zshrc`.
+
+Doc-only flip; no code change in this commit.
+
+**Original report (against Homebrew zsh 5.9.1 patched variant):**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
