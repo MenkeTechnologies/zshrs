@@ -6539,29 +6539,20 @@ pub fn paramsubst(
                 // `$HOME`). Same `\X` → `X` strip emulates C's
                 // untokenize on the Bnull→`\` form the bridge upstream
                 // produces.
+                // c:Src/glob.c:2687-2688 — `singsub(replstrp);
+                // untokenize(*replstrp);`. C's untokenize drops Bnull
+                // markers only, NOT literal backslashes; the bridge
+                // already converted Bnull → `\` upstream so untokenize
+                // here is the final pass. The `\X` → `X` strip in the
+                // previous port over-applied — it stripped `\n`/`\t`/
+                // `\&` backslashes that zsh keeps verbatim. Bug #609
+                // (same fix as the single-`/` arm at line 6881+).
                 let repl = {
                     let saved_skip = SKIP_FILESUB.with(|c| c.get());
                     SKIP_FILESUB.with(|c| c.set(true));
                     let s = untokenize(&singsub(&raw_repl));
                     SKIP_FILESUB.with(|c| c.set(saved_skip));
-                    let mut out = String::with_capacity(s.len());
-                    let mut it = s.chars().peekable();
-                    while let Some(c) = it.next() {
-                        if c == '\\' {
-                            if let Some(&nx) = it.peek() {
-                                if nx == '\\' {
-                                    out.push('\\');
-                                    it.next();
-                                    continue;
-                                }
-                                out.push(nx);
-                                it.next();
-                                continue;
-                            }
-                        }
-                        out.push(c);
-                    }
-                    out
+                    s
                 };
                 // c:Src/subst.c around line 3354 / glob.c:2687 —
                 // when the pattern carries `(#m)` (GF_MATCHREF), the
@@ -6596,26 +6587,10 @@ pub fn paramsubst(
                     SKIP_FILESUB.with(|c| c.set(true));
                     let s = untokenize(&singsub(&raw_repl));
                     SKIP_FILESUB.with(|c| c.set(saved_skip));
-                    // Same `\X` → `X` strip as the precomputed
-                    // path above so the two stay in sync.
-                    let mut out = String::with_capacity(s.len());
-                    let mut it = s.chars().peekable();
-                    while let Some(c) = it.next() {
-                        if c == '\\' {
-                            if let Some(&nx) = it.peek() {
-                                if nx == '\\' {
-                                    out.push('\\');
-                                    it.next();
-                                    continue;
-                                }
-                                out.push(nx);
-                                it.next();
-                                continue;
-                            }
-                        }
-                        out.push(c);
-                    }
-                    out
+                    // c:Src/glob.c:2687-2688 — see Bug #609 comment on
+                    // the precomputed path above; literal backslashes
+                    // (`\n`/`\t`/`\&` etc.) are kept verbatim.
+                    s
                 };
                 // Per-element replace for arrays — zsh treats each
                 // element as a separate match target, preserving the
@@ -6872,12 +6847,13 @@ pub fn paramsubst(
                 // C runs `singsub(replstrp); untokenize(*replstrp);`.
                 // The C untokenize drops Bnull markers (the lexer's
                 // form for `\X` escapes). zshrs's bridge upstream
-                // already untokenized Bnull → literal `\`, so the
-                // `\X` arrives here as raw chars. Strip a literal
-                // backslash before each non-`\` char to mirror the C
-                // Bnull-drop semantics (kept as a separate strip pass
-                // so the existing untokenize call still handles any
-                // surviving meta-tokens).
+                // already untokenized Bnull → literal `\`, but the
+                // post-untokenize STRIP `\X → X` over-applied — it
+                // stripped backslashes from `\n`/`\t`/`\&` literals
+                // that zsh keeps verbatim in the replacement.
+                // C's untokenize ONLY drops Bnull markers, NOT literal
+                // backslashes; the bridge already converted Bnull to
+                // `\` so we keep them. Bug #609.
                 let repl = {
                     // c:Src/subst.c around line 3354 — `prefork(replstr,
                     // SUB_FLAG|SKIP_FILESUB)`. The replacement string
@@ -6890,27 +6866,7 @@ pub fn paramsubst(
                     SKIP_FILESUB.with(|c| c.set(true));
                     let s_singsub = singsub(&raw_repl);
                     SKIP_FILESUB.with(|c| c.set(saved_skip));
-                    let s = untokenize(&s_singsub);
-                    let mut out = String::with_capacity(s.len());
-                    let mut it = s.chars().peekable();
-                    while let Some(c) = it.next() {
-                        if c == '\\' {
-                            if let Some(&nx) = it.peek() {
-                                if nx == '\\' {
-                                    // `\\` → `\` (preserve one backslash)
-                                    out.push('\\');
-                                    it.next();
-                                    continue;
-                                }
-                                // `\X` → `X` for any other X.
-                                out.push(nx);
-                                it.next();
-                                continue;
-                            }
-                        }
-                        out.push(c);
-                    }
-                    out
+                    untokenize(&s_singsub)
                 };
                 // c:Src/glob.c::getmatch — `(#m)` flag in the pattern
                 // populates `$MATCH` / `$MBEGIN` / `$MEND` with the

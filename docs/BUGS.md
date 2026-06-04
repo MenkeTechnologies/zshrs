@@ -44466,6 +44466,63 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #609 — `${a/PAT/\n}` strips backslash from replacement — should keep `\n` literal
+
+**Status:** `fixed` 2026-06-04 — removed `\X` → `X` strip pass in
+the `/`, `//`, and `(#m)/(#b)`-rebuild replacement paths.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=hello; print -r -- "${a/ll/\n}"'
+he\no
+
+# Before fix:
+$ zshrs --zsh -c 'a=hello; print -r -- "${a/ll/\n}"'
+heno                # backslash stripped → print sees `n` not `\n`
+
+# After fix:
+$ zshrs --zsh -c 'a=hello; print -r -- "${a/ll/\n}"'
+he\no
+
+# And `print -- "${a/ll/X\nY}"` now correctly processes `\n` to newline:
+$ zshrs --zsh -c 'a=hello; print -- "${a/ll/X\nY}"'
+heX
+Yo
+```
+
+**Root cause** — the `/` (single), `//` (global), and `(#m)/(#b)`
+per-match-rebuild replacement paths in `src/ported/subst.rs` all
+ran a manual strip pass after `untokenize`:
+```rust
+while let Some(c) = it.next() {
+    if c == '\\' {
+        if let Some(&nx) = it.peek() {
+            if nx == '\\' { out.push('\\'); }
+            else { out.push(nx); }  // ← STRIPS \X → X
+            it.next();
+            continue;
+        }
+    }
+    out.push(c);
+}
+```
+This was supposedly mimicking C's `untokenize`-drops-Bnull
+semantics, but `untokenize` only drops Bnull markers — NOT literal
+backslashes. zshrs's bridge had already converted Bnull → `\`
+upstream, so `untokenize` here is just the final pass; the
+additional strip stripped legitimate `\n`/`\t`/`\&` backslashes
+that zsh keeps verbatim.
+
+C's path at `Src/glob.c:2687-2688`: `singsub(replstrp);
+untokenize(*replstrp);` — that's it.
+
+**Fix** — remove the strip pass entirely from all three sites.
+The `repl` is now just `untokenize(singsub(raw_repl))`, matching
+C exactly. Verified: `${a/ll/\n}` keeps `\n`, `${a//ll/\n}` keeps
+`\n`, and `(#m)`-rebuild path keeps `\n` per-match.
+
+---
+
 ## #608 — `typeset -p n` for integer with base displays as `BASE#VAL` instead of decimal
 
 **Status:** `fixed` 2026-06-04 — `printparamvalue` PM_INTEGER arm
@@ -46915,6 +46972,7 @@ no longer reports the internal trap-machinery scalar.
 | 606 | `${a##(foo\|bar}` / `${a#(foo\|bar}` / `${a%%(foo\|bar}` / `${a%(foo\|bar}` silently return input — sibling of #605 | **fixed** 2026-06-04 | same patcompile precheck applied to ##/#/%%/% arms via replace_all |
 | 607 | `${a:#(foo\|bar}` silently returns input — `:#` filter arm sibling of #605/#606 | **fixed** 2026-06-04 | same patcompile precheck applied to `:#` arm at subst.rs:6018 |
 | 608 | `typeset -p n` for integer with base displays as `BASE#VAL` instead of decimal | **fixed** 2026-06-04 | printparamvalue PM_INTEGER arm emits raw decimal via gsu_i.getfn / intgetfn; getsparam fallback strips BASE# prefix |
+| 609 | `${a/PAT/\n}` strips backslash from replacement — should keep `\n`/`\t`/`\&` literal | **fixed** 2026-06-04 | removed `\X → X` strip pass in `/`, `//`, and `(#m)/(#b)` rebuild arms; match C `singsub + untokenize` exactly |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
