@@ -1251,6 +1251,26 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     let ln = crate::ported::input::lineno.with(|l| l.get());
                     stradd(bv, &format!("{}", ln));
                 }
+                // c:Src/prompt.c:889 — `%L` emits the current `$SHLVL`
+                // value (shell-nesting depth). Direct port:
+                // ```c
+                // case 'L':
+                //     addbufspc(DIGBUFSIZE);
+                //     sprintf(bv->bp, "%ld", (long)shlvl);
+                //     bv->bp += strlen(bv->bp);
+                //     break;
+                // ```
+                // Read `$SHLVL` from paramtab (kept in sync with the
+                // executor on shell startup) rather than the env var
+                // since paramtab is the authoritative source after
+                // assignments. Bug #598.
+                b'L' => {
+                    let shlvl = crate::ported::params::getsparam("SHLVL")
+                        .and_then(|s| s.parse::<i32>().ok())
+                        .or_else(|| std::env::var("SHLVL").ok().and_then(|s| s.parse().ok()))
+                        .unwrap_or(1);
+                    stradd(bv, &shlvl.to_string());
+                }
                 // c:Src/prompt.c:554-555 — `%N` reads C's `scriptname`
                 //   global (`promptpath(scriptname ? scriptname :
                 //   argzero, arg, 0)`). `scriptname` is updated when
@@ -4748,9 +4768,7 @@ mod tests {
     }
 
     /// `%L` emits $SHLVL. C c:889.
-    /// CURRENT BUG: not in switch.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %L (shlvl) not in switch (c:889)"]
     fn putpromptchar_L_emits_shlvl() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%L");
