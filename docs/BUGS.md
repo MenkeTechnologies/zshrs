@@ -44466,6 +44466,38 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #606 — `${a##(foo|bar}` / `${a#(foo|bar}` / `${a%%(foo|bar}` / `${a%(foo|bar}` silently return input — sibling of #605
+
+**Status:** `fixed` 2026-06-04 — ported same `patcompile` precheck
+to `##`/`#`/`%%`/`%` (prefix/suffix strip) arms.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=foo; print "${a##(foo|bar}"'
+zsh:1: bad pattern: (foo|bar
+
+# Before fix:
+$ zshrs --zsh -c 'a=foo; print "${a##(foo|bar}"'
+foo                       # silently returned input
+
+# After fix:
+$ zshrs --zsh -c 'a=foo; print "${a##(foo|bar}"'
+zshrs:1: bad pattern: (foo|bar
+```
+
+**Root cause** — same as #605 (the `/` and `//` arms), but for the
+four prefix/suffix strip arms (`##` / `#` / `%%` / `%`). Each
+called `let p = escape_bare_alt_pipes(&singsub(pat));` and used
+`p` inside the strip loop without checking compile success. C's
+`Src/glob.c:2674-2677` emits `zerr("bad pattern: %s", pat)` on
+patcompile failure.
+
+**Fix** — `replace_all` of the four identical
+`escape_bare_alt_pipes(&singsub(pat));` lines, each followed by
+the same patcompile precheck used in #605.
+
+---
+
 ## #605 — `${a/(foo|bar/X}` and `${a//(foo|bar/X}` silently return input — no "bad pattern" error on unbalanced paren
 
 **Status:** `fixed` 2026-06-04 — ported `Src/glob.c:2674-2677`
@@ -46814,6 +46846,7 @@ no longer reports the internal trap-machinery scalar.
 | 603 | `a=he?l` errors "no matches found" — bare `?` in scalar assignment RHS not DQ-wrapped | **fixed** 2026-06-04 | compile_assign glob-meta check used wrong Quest token (`\u{86}` Hat instead of `\u{97}` Quest) |
 | 604 | `a=foo[bar; echo done` consumes `;` into ENVSTRING — unmatched `[` makes `;` non-terminator | **fixed** 2026-06-04 | LX2_BREAK arm: removed extra `pct == 0 && brct == 0` guards; match C `if (!in_brace_param && !sub) goto brk` |
 | 605 | `${a/(foo\|bar/X}` / `${a//(foo\|bar/X}` silently return input — no "bad pattern" error on unbalanced paren | **fixed** 2026-06-04 | pre-check patcompile in `/` and `//` arms; emit "bad pattern: PAT" matching Src/glob.c:2674-2677 |
+| 606 | `${a##(foo\|bar}` / `${a#(foo\|bar}` / `${a%%(foo\|bar}` / `${a%(foo\|bar}` silently return input — sibling of #605 | **fixed** 2026-06-04 | same patcompile precheck applied to ##/#/%%/% arms via replace_all |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
