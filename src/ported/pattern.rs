@@ -1385,6 +1385,30 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             h as i64
         }
         b'[' => {
+            // c:Src/pattern.c:1438 `case Inbrack` — the C dispatch fires
+            // ONLY on the Inbrack token (lexer-tokenized `[`), not on
+            // raw `[`. An escaped `\[` reaches patcompile as raw `[`
+            // (the lexer dropped the `\`) and must be treated as a
+            // literal char. Probe forward for a matching `]`; if none,
+            // fall through to the literal-byte path below so the `[`
+            // emits an exact-match. Bug #564.
+            let probe_off = off + 1;
+            let parse_check = patparse.lock().unwrap();
+            let check_bytes = parse_check.as_bytes();
+            let has_close = check_bytes[probe_off..].contains(&b']');
+            drop(parse_check);
+            if !has_close {
+                // Treat `[` as literal — fall through to the default
+                // (exact-match emit) arm via the explicit literal path.
+                patparse_off.fetch_add(1, Ordering::Relaxed);
+                let h = patnode(P_EXACTLY);
+                let mut buf = patout.lock().unwrap();
+                let len: u32 = 1;
+                buf.extend_from_slice(&len.to_le_bytes());
+                buf.push(b'[');
+                *tail_out = h;
+                return h as i64;
+            }
             patparse_off.fetch_add(1, Ordering::Relaxed);
             *flagp |= P_SIMPLE;
             *flagp &= !P_PURESTR;
