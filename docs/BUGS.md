@@ -28661,6 +28661,24 @@ similarly may have gaps.)
 
 ## #359 — Bare `pushd` (no args) doesn't `cd` to `$HOME` when dirstack is empty
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+`pushd` (no args) with empty dirstack now falls through to
+`cd $HOME`, matching `Src/builtin.c::bin_dirs`'s empty-stack
+default.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cd /; pushd; pwd'
+/Users/wizard
+$ ./target/debug/zshrs --zsh -fc 'cd /; pushd; pwd'
+/Users/wizard
+```
+
+Doc-only flip; no code change in this commit (closed by
+earlier `pushd`-cwd-empty-stack work).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -28755,6 +28773,27 @@ result=$(myadd 2 3; echo $REPLY)
 
 ## #361 — `typeset -R N` width-flag doesn't truncate when value is longer than N
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -R 3 s=hello; echo "[$s]"'
+[llo]
+$ ./target/debug/zshrs --zsh -fc 'typeset -R 3 s=hello; echo "[$s]"'
+[llo]
+
+# Sibling -L (left-justify, truncate from right)
+$ /opt/homebrew/bin/zsh -fc 'typeset -L 3 s=hello; echo "[$s]"'
+[hel]
+$ ./target/debug/zshrs --zsh -fc 'typeset -L 3 s=hello; echo "[$s]"'
+[hel]
+```
+
+Doc-only flip; no code change in this commit (closed by
+earlier `PM_RIGHT_B`/`PM_LEFT` truncation work).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -28800,6 +28839,28 @@ themes with fixed-width fields.
 ---
 
 ## #362 — `typeset -Z N` zero-pad flag doesn't truncate when value is wider than N
+
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+Closed by the same `PM_RIGHT_B`-family truncation work as
+#361.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -Z 3 n=12345; echo "[$n]"'
+[345]
+$ ./target/debug/zshrs --zsh -fc 'typeset -Z 3 n=12345; echo "[$n]"'
+[345]
+
+# Sibling: zero-pad when value shorter than N
+$ /opt/homebrew/bin/zsh -fc 'typeset -Z 5 n=42; echo "[$n]"'
+[00042]
+$ ./target/debug/zshrs --zsh -fc 'typeset -Z 5 n=42; echo "[$n]"'
+[00042]
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
@@ -30379,6 +30440,62 @@ typeset -p HOME | grep -q "^typeset -[^ ]*r" && echo "locked"
 ---
 
 ## #387 — `read -p "prompt"` parsing — flag arg consumed as identifier instead of coprocess flag
+
+**Status:** `fixed` 2026-06-03 — added the canonical
+"-p: no coprocess" gate at the top of `bin_read`, mirroring
+`Src/builtin.c:6510-6515`.
+
+**Root cause** — zshrs's `bin_read` did parse `-p` as a
+no-arg flag (the BUILTIN spec `"cd:ek:%lnpqrst:%zu:AE"`
+correctly omits the `:` suffix), and OPT_ISSET(p) returned
+true at the various downstream check sites. But the
+coproc-fd readiness check was missing — bin_read fell
+through to the reply-name validation, and the visible
+error became "not an identifier: prompt>" instead of the
+canonical "-p: no coprocess".
+
+C bin_read evaluates the `-p` branch first:
+```c
+} else if (OPT_ISSET(ops,'p')) {
+    readfd = coprocin;
+    if (readfd < 0) { zwarnnam(name, "-p: no coprocess"); return 1; }
+    izle = 0;
+}
+```
+which fires BEFORE any identifier validation.
+
+**Fix** — `src/ported/builtin.rs::bin_read`: after the
+`-k`/`-q` tty gate, check both `OPT_ISSET(ops, b'p')` and
+the `-u p` alias path (c:6494) — when either is set and
+`coprocin < 0` (read from `crate::ported::modules::clone::
+coprocin`), emit `zwarnnam(name, "-p: no coprocess")` and
+return 1.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo y | read -p "prompt> " ans' 2>&1; echo rc=$?
+zsh:read:1: -p: no coprocess
+rc=1
+$ ./target/debug/zshrs --zsh -fc 'echo y | read -p "prompt> " ans' 2>&1; echo rc=$?
+zsh:read:1: -p: no coprocess
+rc=1
+
+# `-u p` alias path also routes to "-p: no coprocess"
+$ /opt/homebrew/bin/zsh -fc 'read -up ans' 2>&1; echo rc=$?
+zsh:read:1: -p: no coprocess
+rc=1
+$ ./target/debug/zshrs --zsh -fc 'read -up ans' 2>&1; echo rc=$?
+zsh:read:1: -p: no coprocess
+rc=1
+
+# Regression: regular read still works
+$ echo y | ./target/debug/zshrs --zsh -fc 'read ans; echo "[$ans]"'
+[y]
+```
+
+Test baseline 957/95 → 958/94.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
