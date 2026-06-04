@@ -47518,7 +47518,7 @@ no longer reports the internal trap-machinery scalar.
 | 510 | `${(q)empty_array}` returns empty instead of `''` — empty-array-quoting semantics lost; breaks `(q)`+`eval` round-trips | **fixed** 2026-06-04 | n/a |
 | 511 | integer overflow in `$((...))` silently returns 0 — zsh: "number truncated after 18 digits" warning + truncated value | **fixed** 2026-06-04 | n/a |
 | 512 | `${(t)EPOCHSECONDS}` / `${(t)EPOCHREALTIME}` empty — type-flag missing on GSU-backed datetime specials | **port-bug** | hardcode known specials |
-| 513 | `OPTIND=N` inside function LEAKS to parent — zsh: implicitly function-local | **port-bug** | manual save/restore around `getopts` |
+| 513 | `OPTIND=N` inside function LEAKS to parent — zsh: implicitly function-local | **fixed** 2026-06-02 | manual save/restore around `getopts` |
 | 514 | `(#e)` end-anchor glob flag not recognized — extends #483 `(#X)` family | **fixed** 2026-06-04 | n/a |
 | 515 | `$funcsourcetrace` shows fn-name (`f:1`) instead of file-name (`zsh:1`) — wrong source-location tracking | **fixed** 2026-06-04 | `funcsourcetrace[1]` shows `zshrs:1` matching zsh's `zsh:1` shell-name shape |
 | 516 | `typeset` no-args dump omits type-flag prefix — `!=0` instead of `integer 10 readonly !=0` | **fixed** 2026-06-04 | n/a |
@@ -47539,10 +47539,10 @@ no longer reports the internal trap-machinery scalar.
 | 531 | `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 trap-function family | **port-bug** | string-form `trap`/`CHLD` |
 | 532 | zsh modules `zsh/stat`/`zsh/zselect`/`zsh/zpty`/`zsh/zftp` auto-loaded — extends #530 (zmodload-required-but-pre-loaded) | **partial-fix** 2026-06-04 | introspection now unset; `type X` builtintab gate deferred |
 | 533 | `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2 (worst-case rc=0 set-e bypass) | **port-bug** | visual audit |
-| 534 | `builtin 2>&1` (bare redirect on reserved word) silently rc=0 — extends parser-strictness family | **port-bug** | CI lint for prefix-keyword-no-command |
+| 534 | `builtin 2>&1` (bare redirect on reserved word) silently rc=0 — extends parser-strictness family | **fixed** 2026-06-02 | CI lint for prefix-keyword-no-command |
 | 535 | `zsh/system` module auto-loaded — extends #530/#532 (6-module contamination census now) | **partial-fix** 2026-06-04 | introspection now unset; `type zsystem` builtintab gate deferred |
 | 536 | `function with[bracket] { ... }` accepts bracket char in fn name (zsh: "no matches found" via glob) | **fixed** | par_funcdef glob-probes name under NOMATCH; emits canonical diagnostic |
-| 537 | `echo /tmp/_zg/\\(abc\\)` strips escaped-paren content entirely — zsh: emits literal `(abc)` | **port-bug** | quote-instead-of-escape |
+| 537 | `echo /tmp/_zg/\\(abc\\)` strips escaped-paren content entirely — zsh: emits literal `(abc)` | **fixed** 2026-06-02 | quote-instead-of-escape |
 | 538 | `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error — extends parser-strictness family | **port-bug** | CI lint for empty paren-groups |
 | 539 | `suspend` non-interactive hangs shell — zsh: rc=0 silent no-op | **port-bug** | guard with `[[ -o interactive ]]` |
 | 540 | `zformat` no-args error msg: "invalid argument: " (with trailing space) vs zsh's "not enough arguments" | **fixed** 2026-06-04 | resolved by prior `bin_zformat` argv-count parity work |
