@@ -25446,7 +25446,46 @@ zsh:1: bad substitution
 
 ## #309 — Chained flag composition `${(qq)${(@P)var}}` drops elements (only first preserved)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — no longer reproduces. The
+nested-flag-composition boundary now threads the full inner
+result through to the outer flag application; verified across
+`(q)`, `(qq)`, `(qqq)` quote flavors and multi-word elements.
+
+Closed by prior cumulative fixes to the
+`subexp_value` + flag-chain path in
+`src/ported/subst.rs::paramsubst` (the family of patches that
+shipped #182/#229/#287/#592/#595) — the inner `(@P)n`
+result reaches the outer `(qq)` arm intact rather than being
+collapsed to its first element.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); n=a; echo "[${(qq)${(@P)n}}]"'
+['x y z']
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); n=a; echo "[${(qq)${(@P)n}}]"'
+['x y z']
+
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); n=a; echo "[${(qqq)${(@P)n}}]"'
+["x y z"]
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); n=a; echo "[${(qqq)${(@P)n}}]"'
+["x y z"]
+
+$ /opt/homebrew/bin/zsh -fc 'a=(hello world); n=a; echo "[${(q)${(@P)n}}]"'
+[hello\ world]
+$ ./target/debug/zshrs --zsh -c 'a=(hello world); n=a; echo "[${(q)${(@P)n}}]"'
+[hello\ world]
+
+$ /opt/homebrew/bin/zsh -fc 'a=(x "y z" w); n=a; echo "[${(qq)${(@P)n}}]"'
+['x y z w']
+$ ./target/debug/zshrs --zsh -c 'a=(x "y z" w); n=a; echo "[${(qq)${(@P)n}}]"'
+['x y z w']
+```
+
+All match byte-for-byte. Doc-only flip; no code change in this
+turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(x y z); n=a; echo "[${(qq)${(@P)n}}]"'
@@ -25454,46 +25493,6 @@ $ /opt/homebrew/bin/zsh -fc 'a=(x y z); n=a; echo "[${(qq)${(@P)n}}]"'
 
 $ ./target/debug/zshrs --zsh -c 'a=(x y z); n=a; echo "[${(qq)${(@P)n}}]"'
 ['x']
-```
-
-Outer `(qq)` quotes its operand. Inner `(@P)n` produces the
-array `a` (via indirect deref) — `(x y z)`. zsh quotes the
-joined result: `'x y z'`. zshrs only sees the first element
-of the inner result, producing `'x'`.
-
-Same family as #229 (`${(j: :)${(@kv)h}}` drops values) —
-nested flag composition loses information at the boundary
-between inner and outer expansions.
-
-Variants tested:
-- `${(qq)${(@P)n}}` — drops y, z (this bug)
-- `${(j: :)${(@kv)h}}` — drops values (#229)
-- `${(C)${(P)name}[N]}` — outer subscript ignored (#195)
-- `${(j: :)${(@v)h}}` — would also drop probably
-
-**Where** — `src/ported/paramsubst.rs::compose_outer_inner_flags`:
-the boundary between outer expansion and inner result loses
-the array structure — only the first element threads through.
-C-source `Src/subst.c::dosubst` recursively expands inner,
-keeping the full result available to outer flag application.
-
-**Impact** — multi-stage serialization patterns produce
-truncated output:
-
-```sh
-saved="${(qq)${(@P)backup_array_name}}"
-# zsh: full array quoted as space-separated string
-# zshrs: only first element quoted, rest dropped — data loss
-```
-
-Combined with #229, #195, #287, the nested-expansion family
-has many gaps. Workaround everywhere is "use intermediate
-variable".
-
-**Workaround** — split into two assignments:
-```sh
-local _vals=("${(@P)backup_array_name}")
-saved="${(qq)_vals[@]}"
 ```
 
 ---
@@ -47137,7 +47136,7 @@ no longer reports the internal trap-machinery scalar.
 | 306 | `compdef` flag handling differs — `-N` rejected, always-available (zsh: autoloaded function not builtin) | **port-bug** | (none — needs flag table alignment) |
 | 307 | `[[ -5 -lt 0 ]]` errors "unknown condition: -5" — bare negative number misparsed as unary operator | **fixed** 2026-06-02 | n/a |
 | 308 | `${(t)arr[N]}` type-of-element errors "bad substitution" (zsh: returns "a") | **fixed** 2026-06-04 | type-string colon-substring route at compile dispatch |
-| 309 | Chained `${(qq)${(@P)var}}` drops elements — only first preserved (#229/#195/#287 family) | **port-bug** | two-step via intermediate var |
+| 309 | Chained `${(qq)${(@P)var}}` drops elements — only first preserved (#229/#195/#287 family) | **fixed** 2026-06-04 | resolved by cumulative subexp+flag-chain patches |
 | 310 | `${(@)arr:#pat}` filter via `(@)` flag form not applied (works with `[@]` subscript) | **fixed** 2026-06-02 | n/a |
 | 311 | `${(@k)assoc:#pat}`/`${(@v)assoc:#pat}` filter on assoc keys/values not applied | **port-bug** | explicit `for k v in "${(@kv)h}"` loop |
 | 312 | `${(v)assoc:#pat}` scalar-context filter on assoc values not applied | **fixed** 2026-06-02 | n/a |
