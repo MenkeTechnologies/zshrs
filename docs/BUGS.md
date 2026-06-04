@@ -39674,7 +39674,33 @@ times | awk '{ printf "%s ", $1; for (i=2; i<=NF; i++) printf "%s ", $i }' | sed
 
 ## #500 — `disown -h` error rc=1 instead of zsh's rc=127; diagnostic format also diverges
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/jobs.rs](../src/ported/jobs.rs)).
+
+**Root cause** — `bin_fg`'s non-jobspec arm (the path that handles
+arguments that don't start with `%` and don't parse as int) emitted
+`"<arg>: no such job"`. C zsh's `getjob` path at `Src/jobs.c:2144`
+emits `"job not found: <arg>"` when `findjobnam` fails — zshrs
+shortcut past `getjob` for non-`%` args and used the wrong format
+(`"%s: no such job"` is the in-use-job check at c:2588, not the
+no-such-job path).
+
+**Fix** — change the non-jobspec arm to emit
+`"job not found: <arg>"` matching C's findjobnam-failure format.
+rc=127 was already correct.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'disown -h'
+zsh:disown:1: job not found: -h    # rc=127, matches zsh
+
+# regression: % jobspec still emits "no such job"
+$ ./target/debug/zshrs --zsh -fc 'disown %1'
+zsh:disown:1: %1: no such job
+```
+
+Baseline 961/91 → 963/89 (+2 pass, 0 regressions).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'disown -h 2>&1; echo rc=$?'
@@ -39721,7 +39747,17 @@ disown "$spec" 2>&1 | grep -q "not found\|no such" && {
 
 ## #501 — `$KEYTIMEOUT` default value `40` instead of zsh's `10`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `$KEYTIMEOUT` now defaults to `10`
+matching the user's installed Homebrew zsh 5.9.1. Likely landed via
+earlier ZLE init parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'echo "[$KEYTIMEOUT]"'
+[10]    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[$KEYTIMEOUT]"'
@@ -39757,7 +39793,17 @@ zsh environment. Replacing with a different finding.
 
 ## #501 — `disown -h` and pushd-empty-stack rc divergence — small dirstack/jobs builtin family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `pushd` with empty dirstack now
+returns rc=0 (silent no-op) matching zsh. Likely landed via earlier
+`bin_pushd` parity (same family as #487's fix).
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'pushd'
+# rc=0, matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'pushd 2>&1; echo rc=$?'
@@ -39797,7 +39843,17 @@ pushd 2>/dev/null && echo "swapped"
 
 ## #502 — `typeset -a b=($var)` word-splits unquoted `$var` — plain `b=($var)` doesn't
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `typeset -a b=($var)` no longer
+word-splits the unquoted RHS — produces 1 element matching zsh.
+Likely landed via earlier typeset-array-parsing parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a="x y z"; typeset -a b=($a); echo "${#b}=${b[@]}"'
+1=x y z    # matches zsh — single 3-word element
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a="x y z"; typeset -a b=($a); echo "${#b}=${b[@]}"'
@@ -39862,7 +39918,17 @@ local -a b=( ${=a} )
 
 ## #503 — `${(@k)empty_assoc}` produces one empty-string iteration — zero in zsh
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — empty assoc now produces zero
+iterations via `${(@k)h}` matching zsh. Likely landed via earlier
+paramsubst empty-array-handling parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'typeset -A h; for k in "${(@k)h}"; do echo "[$k]"; done; echo done'
+done    # zero iterations, matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h; for k in "${(@k)h}"; do echo "[$k]"; done; echo done'
@@ -44726,10 +44792,10 @@ qualifiers always have a digit suffix.
 | 497 | `$RPROMPT` initialized to empty string instead of unset (extends #479 bash-compat-init family) | **port-bug** | `[[ -n $RPROMPT ]]` non-empty check |
 | 498 | `readonly x=N` on already-readonly x silently rc=0 — zsh errors "read-only variable" | **fixed** 2026-06-04 | n/a |
 | 499 | `times` builtin output uses 3-decimal precision instead of zsh's 2-decimal — parser format diff | **fixed** 2026-06-04 | n/a |
-| 500 | `disown -h` (or any unknown spec) rc=1 instead of zsh's 127; diagnostic format also diverges | **port-bug** | match diagnostic substring instead of `$?` |
-| 501 | `pushd` empty-stack no-args rc=1 instead of zsh's rc=0 — extends #487 pushd-no-args family | **port-bug** | `(( ${#dirstack} > 0 ))` pre-check |
-| 502 | `typeset -a b=($var)` word-splits unquoted `$var` (plain `b=($var)` works) — typeset/local/readonly arg-parse path splits incorrectly | **port-bug** | explicit `${=var}` to force-split in both |
-| 503 | `${(@k)empty_assoc}` produces one empty-string iteration — should be zero (zsh: skip loop entirely) | **port-bug** | guard with `(( ${#assoc} > 0 ))` |
+| 500 | `disown -h` (or any unknown spec) rc=1 instead of zsh's 127; diagnostic format also diverges | **fixed** 2026-06-04 | n/a |
+| 501 | `pushd` empty-stack no-args rc=1 instead of zsh's rc=0 — extends #487 pushd-no-args family | **fixed** 2026-06-04 | n/a |
+| 502 | `typeset -a b=($var)` word-splits unquoted `$var` (plain `b=($var)` works) — typeset/local/readonly arg-parse path splits incorrectly | **fixed** 2026-06-04 | n/a |
+| 503 | `${(@k)empty_assoc}` produces one empty-string iteration — should be zero (zsh: skip loop entirely) | **fixed** 2026-06-04 | n/a |
 | 504 | bash-only `mapfile`/`readarray` shipped as builtins in `--zsh` mode — extends #475 bash-compat-contamination | **port-bug** | use `$ZSH_VERSION`/`$BASH_VERSION` for detection |
 | 505 | `integer x="STRING"` silently coerces to 0 — zsh errors "bad math expression" (extends #411/#494 coercion family) | **fixed** 2026-06-04 | n/a |
 | 506 | `float f="3.14abc"` silently coerces to 0.0 — zsh errors "bad math expression" (extends #505) | **fixed** 2026-06-04 | n/a |
