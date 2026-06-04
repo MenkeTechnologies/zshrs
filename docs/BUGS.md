@@ -47045,7 +47045,7 @@ no longer reports the internal trap-machinery scalar.
 | 37 | `"${(z)str}"` quoted form splits fields | **port-bug** | `${(j: :)${(z)str}}` rejoin |
 | 38 | prompt escapes `%m`/`%C`/`%i`/`%l`/`%y`/`%E`/`%v`/`%b`/`%u`/`%s`/`%f`/`%k` missing | **port-bug** | use `$HOST`/`$PWD` etc |
 | 39 | `${arr:#"literal"}` quoted pat still globbed | **fixed** 2026-06-02 | n/a |
-| 40 | `print -aC N` ignores `-a` (column-major instead of row) | **port-bug** | sort input in advance |
+| 40 | `print -aC N` ignores `-a` (column-major instead of row) | **fixed** 2026-06-02 | sort input in advance |
 | 41 | Glob qualifier `Yn` (limit) returns all matches | **port-bug** | `head -n` or array slice |
 | 42 | Bare `typeset` prints `name=val` only, no attrs | **port-bug** | use `typeset -p` |
 | 43 | `${#var:mod}` / `${#var/pat/rep}` / `${#arr[i,j]}` ignores transform | **port-bug** | assign to temp first |
@@ -47054,7 +47054,7 @@ no longer reports the internal trap-machinery scalar.
 | 46 | nested `` `\`...\`` `` backquotes mishandled | **fixed** 2026-06-02 | use `$(...)` instead |
 | 47 | `${(b)str}` escapes space/semi (C-zsh doesn't) | **port-bug** | drop `(b)` flag |
 | 48 | `typeset -m PAT` rejects pattern arg | **port-bug** | iterate `${(k)parameters}` |
-| 49 | `(( "abc" == "abc" ))` quoted strings → false | **port-bug** | drop quotes |
+| 49 | `(( "abc" == "abc" ))` quoted strings → false | **fixed** 2026-06-02 | drop quotes |
 | 50 | Trap inherited from outer doesn't fire in fn | **fixed** 2026-06-03 | n/a |
 | 51 | `${#*}` access corrupts `$@`/`$*` for rest of fn | **fixed** 2026-06-02 | n/a |
 | 52 | `${(q)arr}` per-element quote, doesn't quote join-sep | **port-bug** | `${(j: :)${(@q)a}}` explicit |
@@ -47062,8 +47062,8 @@ no longer reports the internal trap-machinery scalar.
 | 54 | `warn_create_global` / `warn_nested_var` warnings silent | **port-bug** | strict `local` discipline |
 | 55 | `setopt err_return` doesn't fire on command failure | **port-bug** | explicit `\|\| return $?` |
 | 56 | Signal trap output captured into `$(...)` result | **port-bug** | guard cmd-sub output |
-| 57 | `setopt octal_zeroes` ignored by arith parser | **port-bug** | `8#NNN` explicit base |
-| 58 | `[[ "x*" == "x*" ]]` quoted-RHS-star still globbed | **port-bug** | escape `\*` on RHS |
+| 57 | `setopt octal_zeroes` ignored by arith parser | **fixed** 2026-06-02 | `8#NNN` explicit base |
+| 58 | `[[ "x*" == "x*" ]]` quoted-RHS-star still globbed | **fixed** 2026-06-02 | escape `\*` on RHS |
 | 59 | `setopt no_clobber` allows `>>` to create new file | **port-bug** | pre-`touch` the file |
 | 60 | `function {body}` (no name) parses + stray `}` echo | **fixed** 2026-06-02 | n/a |
 | 61 | `h["key"]=v` subscript quotes not embedded in key | **fixed** 2026-06-02 | use `h=( k v )` paren init |
