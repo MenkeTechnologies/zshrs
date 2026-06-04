@@ -47426,9 +47426,9 @@ no longer reports the internal trap-machinery scalar.
 | 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **fixed** 2026-06-04 | n/a |
 | 419 | `unset LINENO` silently accepted — no "read-only variable" diagnostic (zsh: emits warning) | **fixed** 2026-06-04 | n/a |
 | 420 | `eval` errors prefixed `zsh:` instead of `(eval):` — source-context lost (also affects funcname/sourced-file prefixes) | **fixed** 2026-06-04 | n/a |
-| 421 | `^` parsed as glob-negation even when `extended_glob` is off — gating missing on `^`/`~`/`#` extended-glob operators | **port-bug** | escape with backslash `\\^` |
+| 421 | `^` parsed as glob-negation even when `extended_glob` is off — gating missing on `^`/`~`/`#` extended-glob operators | **fixed** 2026-06-02 | escape with backslash `\\^` |
 | 422 | sourced-file errors prefixed `zsh:` instead of `/path/to/file:` — extends #420, breaks .zshrc plugin-bisect debugging | **fixed** 2026-06-04 | n/a |
-| 423 | **CRITICAL** `PATH=str` doesn't update tied `path` array — one-way tie broken (path=arr→PATH works) | **port-bug** | always also `path=("${(@s/:/)PATH}")` after PATH= |
+| 423 | **CRITICAL** `PATH=str` doesn't update tied `path` array — one-way tie broken (path=arr→PATH works) | **fixed** 2026-06-02 | always also `path=("${(@s/:/)PATH}")` after PATH= |
 | 424 | **CRITICAL** scalar→array tie broken for MANPATH/FPATH/CDPATH — generalizes #423 to all tied params | **port-bug** | manual rebuild of `manpath`/`fpath`/`cdpath` after scalar assignment |
 | 425 | `(#cN)` glob exact-count flag not recognized — extends #409 family | **fixed** 2026-06-04 | n/a |
 | 426 | `command_not_found_handler` user-defined hook not invoked — entire ecosystem broken (apt/nix/asdf integration) | **fixed** 2026-06-04 | n/a |
@@ -47437,9 +47437,9 @@ no longer reports the internal trap-machinery scalar.
 | 429 | `%m` prompt escape (short hostname) not expanded — printed literally; likely also `%M`/`%y`/`%l`/`%j`/`%i` | **fixed** 2026-06-04 | n/a |
 | 430 | `%s`/`%u` prompt close-escapes emit `\\033[0m` (reset-all) instead of `\\033[27m`/`\\033[24m` (pair-specific) | **fixed** 2026-06-04 | n/a |
 | 431 | `%y`/`%l` prompt escapes (tty name) printed literally — extends #429 prompt-escape gap family | **fixed** 2026-06-04 | n/a |
-| 432 | `time` builtin output omits command-label prefix — pipeline timing reads as anonymous | **port-bug** | wrap with `echo "--- $cmd ---"` |
-| 433 | `time` builtin ignores `$TIMEFMT` parameter — hardcoded format always used | **port-bug** | `awk` reformat the hardcoded output |
-| 434 | `read -e` echo-mode flag not recognized — input consumed silently instead of echoed to stdout | **port-bug** | `tee /dev/stderr` or explicit `echo "$REPLY"` |
+| 432 | `time` builtin output omits command-label prefix — pipeline timing reads as anonymous | **fixed** 2026-06-02 | wrap with `echo "--- $cmd ---"` |
+| 433 | `time` builtin ignores `$TIMEFMT` parameter — hardcoded format always used | **fixed** 2026-06-02 | `awk` reformat the hardcoded output |
+| 434 | `read -e` echo-mode flag not recognized — input consumed silently instead of echoed to stdout | **fixed** 2026-06-02 | `tee /dev/stderr` or explicit `echo "$REPLY"` |
 | 435 | `typeset -A` no-args lists internal introspection assocs (aliases/builtins/commands) instead of user-defined | **fixed** 2026-06-04 | `typeset -p +H \| grep "typeset -A"` |
 | 436 | `${(q)a[N]}` flag + subscript combination errors "bad substitution" — parser doesn't combine flags with subscripts | **fixed** 2026-06-04 | n/a |
 | 437 | regex-compile error diagnostic missing details — "failed to compile regex" with no specific reason (zsh: "brackets not balanced" etc.) | **fixed** 2026-06-04 | n/a |
@@ -47452,9 +47452,9 @@ no longer reports the internal trap-machinery scalar.
 | 444 | `$ZSH_PATCHLEVEL` returns literal `unknown` — git-derived build identifier missing | **fixed** 2026-06-04 | n/a |
 | 445 | `exec N<<<str` here-string-to-fd doesn't persist — fd unusable after exec (file form works) | **fixed** 2026-06-04 | n/a |
 | 446 | `noglob` standalone accepted as no-op (zsh: parse error) — extends #413 parser strictness gap | **fixed** 2026-06-04 | n/a |
-| 447 | `${(flag)scalar[@]}` returns empty for ALL flags (R/U/L/Q/V) — flag-on-scalar-with-@ broken | **port-bug** | bind scalar to typed array first |
-| 448 | `print -s "text"` doesn't add to history — `fc -l` shows nothing (zsh: line appears) | **port-bug** | manual history-file append |
-| 449 | `[[ "x" == pat\\* ]]` backslash-escape in pattern not honored — `\\*` treated as glob wildcard | **port-bug** | quoted-string pattern form `"pat*"` |
+| 447 | `${(flag)scalar[@]}` returns empty for ALL flags (R/U/L/Q/V) — flag-on-scalar-with-@ broken | **fixed** 2026-06-02 | bind scalar to typed array first |
+| 448 | `print -s "text"` doesn't add to history — `fc -l` shows nothing (zsh: line appears) | **fixed** 2026-06-02 | manual history-file append |
+| 449 | `[[ "x" == pat\\* ]]` backslash-escape in pattern not honored — `\\*` treated as glob wildcard | **fixed** 2026-06-02 | quoted-string pattern form `"pat*"` |
 | 450 | **CRITICAL** subshell `trap` leaks to parent — outer trap replaced after `(...)` exits | **port-bug** | explicit `eval "$(trap)"` save/restore around subshell |
 | 451 | **CRITICAL** function definition/`unfunction` in subshell LEAKS to parent — parallel to #450 trap leak | **port-bug** | save with `declare -f`, restore via `eval` |
 | 452 | alias definition/`unalias` in subshell LEAKS to parent — same family as #451 | **port-bug** | save alias dump, restore around subshell |
@@ -47467,14 +47467,14 @@ no longer reports the internal trap-machinery scalar.
 | 459 | **CRITICAL** `source script.zsh ARGS` ignores positional args — sourced script sees `$#=0` | **fixed** 2026-06-04 | n/a |
 | 460 | `typeset -aix arr=(...)` flag conflict silently accepted, `-i` dropped (zsh: "inconsistent type") | **fixed** 2026-06-04 | `typeset -aix arr=(1 2 3)` rejects with `inconsistent type for assignment` matching zsh |
 | 461 | `trap` no-args output omits `TRAPNAME()` function-form handlers (zsh shows them) — extends #381 listing side | **fixed** 2026-06-04 | bin_trap no-args walks shfunctab for TRAP* per `Src/builtin.c:7360-7365` |
-| 462 | `disown` in subshell emits "no current job" diagnostic (zsh: silent no-op when subshell's job-table is empty) | **port-bug** | pass explicit pid + `2>/dev/null` |
+| 462 | `disown` in subshell emits "no current job" diagnostic (zsh: silent no-op when subshell's job-table is empty) | **fixed** 2026-06-02 | pass explicit pid + `2>/dev/null` |
 | 463 | `set` no-args shows special vars (`!`/`#`/`$`/`-`) as empty strings — special-param getters not invoked in dump | **fixed** 2026-06-04 | n/a |
 | 464 | `emulate sh` doesn't toggle sh-mode setopt block (zsh: ~8 opts on/off) — emulation table missing/no-op | **fixed** 2026-06-04 | closed by #470 fix combo (default_on_options + optns_flags audit) |
 | 465 | `*(om)` glob mtime-sort qualifier returns wrong order — sort ignored; likely all `(oX)`/`(OX)` affected | **fixed** 2026-06-04 | n/a |
 | 466 | `pushd +N` / `popd +N` dirstack indexing cycles wrong direction — +1 lands on wrong stack entry | **fixed** 2026-06-04 | `popd +N` arm added to bin_cd post-cd dirstack maintenance per `Src/builtin.c:872-936` |
 | 467 | `$-` shell-flags parameter missing `f` flag when shell launched with `-f` — likely `c`/`i`/`s`/`l` also missing | **fixed** 2026-06-04 | n/a |
 | 468 | `functions -t` (list traced) emits full function body instead of name list (zsh: empty or names only) | **fixed** 2026-06-04 | n/a |
-| 469 | `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier" | **port-bug** | manual filter loop after glob |
+| 469 | `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier" | **fixed** 2026-06-02 | manual filter loop after glob |
 | 470 | `emulate -L sh` shows `localoptions`/`localpatterns`/`localtraps` but doesn't apply sh-mode opts — same root as #464 | **fixed** 2026-06-04 | default_on_options reads live EMULATION + optns_flags table corrected (25 entries) |
 | 471 | `zmodload -u zsh/nonexistent` silently rc=0 — should error "no such module" (zsh: rc=1) | **port-bug** | manual module-list check before unload |
 | 472 | `typeset -H` (hide value) doesn't suppress value in `typeset -p` output — leaks secrets in listings | **fixed** 2026-06-04 | `local -H a=secret; typeset -p a` → `typeset a` matching zsh |
