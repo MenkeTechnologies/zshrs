@@ -10461,6 +10461,27 @@ pub fn paramsubst(
             result_nodes.push(result.clone()); // c:1625
             (result, prefix.len() + value.len(), result_nodes) // c:1625
         } // c:1625
+        // c:Src/subst.c — `$-:MOD`, `$!:MOD`. Routes through
+        // exec_getsparam which dispatches to lookup_special_var
+        // (params.rs:10727). Bug #582 — handle both ASCII and tokenized
+        // (Dash \u{9b}, Bang \u{9c}) forms.
+        c if c == '-' || c == Dash || c == '!' || c == Bang => {
+            let name = if c == Dash {
+                "-".to_string()
+            } else if c == Bang {
+                "!".to_string()
+            } else {
+                c.to_string()
+            };
+            let value = exec_getsparam(&name).unwrap_or_default();
+            let (value, after_pos) =
+                apply_bare_modifier_chain(&value, &chars, pos + 1);
+            let prefix: String = chars[..start_pos].iter().collect();
+            let suffix: String = chars[after_pos..].iter().collect();
+            let result = format!("{}{}{}", prefix, value, suffix);
+            result_nodes.push(result.clone());
+            (result, prefix.len() + value.len(), result_nodes)
+        }
         _ => {
             // c:1625
             // Just a literal $ — if the dispatch char (which lives
