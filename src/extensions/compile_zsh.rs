@@ -6624,6 +6624,28 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
                 }
                 j = k;
             }
+            // c:Src/subst.c:1820 — bare `$NAME:MOD` history-style
+            // modifier chain. Pull `:MOD` (and `:MOD:MOD2…` chains)
+            // into the same expansion so paramsubst's bare-form
+            // modifier dispatch at subst.rs:10080 sees them.
+            // Simple letter modifiers + optional digit count for
+            // `:hN`/`:tN`. Anchored on `:` followed by a known
+            // modifier letter to avoid swallowing unrelated `:` chars
+            // (e.g. `$a:$b` parameter-then-colon-then-parameter
+            // remains two expansions). Bug #579.
+            while j + 1 < chars.len() && chars[j] == ':' {
+                let after = chars[j + 1];
+                if !matches!(
+                    after,
+                    'h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'a' | 'A' | 'P'
+                ) {
+                    break;
+                }
+                j += 2;
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    j += 1;
+                }
+            }
             j
         }
         _ => i + 1,
