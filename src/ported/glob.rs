@@ -3252,6 +3252,21 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     let (pat, quals) = parse_qualifiers(pattern);
     state.qualifiers = quals;
 
+    // c:Src/glob.c:1843-1854 — `if (!q || errflag) { ... return; }`. When
+    // the qualifier parser already emitted a diagnostic (e.g. "number
+    // expected" from qgetnum at c:832) and set errflag, abort glob
+    // expansion entirely rather than continuing to scan with a partial
+    // qualifier set. Without this gate, `?(a)` (where `(a)` is an
+    // invalid qualifier) error-prints "number expected" then continues
+    // to expand `?` against the dir, emitting matches alongside the
+    // error — bug #549.
+    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst)
+        & crate::ported::zsh_h::ERRFLAG_ERROR
+        != 0
+    {
+        return Vec::new();
+    }
+
     // Now check wildcards on the qualifier-stripped pattern. A pure
     // literal with a qualifier (`name(.)`) still needs to enter the
     // scanner so the qualifier filter can run against the literal name.
