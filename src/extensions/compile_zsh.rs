@@ -857,9 +857,21 @@ impl ZshCompiler {
                     }
                     let chunk = sub.builder.build();
                     let sub_idx = self.builder.add_sub_chunk(chunk);
+                    // c:Src/jobs.c:1028-1029 — `printtime(..., pn->text)`
+                    // emits `%J` as the per-process command text. For
+                    // `time CMD` (simple-cmd form), zsh's printjob → dumptime
+                    // reads `p->text` populated at fork time by getjobtext.
+                    // zshrs's BUILTIN_TIME_SUBLIST handler doesn't go
+                    // through addproc, so we pre-render the sublist's
+                    // source text here and push it as the desc operand
+                    // for the handler to forward to printtime as job_name.
+                    // Bug #66 in docs/BUGS.md.
+                    let desc = render_sublist_for_debug(sublist);
+                    let desc_const = self.builder.add_constant(Value::str(&desc));
+                    self.builder.emit(Op::LoadConst(desc_const), 0);
                     self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
                     self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_TIME_SUBLIST, 1),
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_TIME_SUBLIST, 2),
                         0,
                     );
                     self.builder.emit(Op::SetStatus, 0);

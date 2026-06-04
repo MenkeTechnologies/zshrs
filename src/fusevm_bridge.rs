@@ -3209,8 +3209,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // getrusage on the *child*; we approximate via wall-time only since
     // the sub-chunk runs in-process (no fork). Output format matches
     // `time simple-cmd` (already implemented elsewhere via exectime).
-    vm.register_builtin(BUILTIN_TIME_SUBLIST, |vm, _argc| {
+    vm.register_builtin(BUILTIN_TIME_SUBLIST, |vm, argc| {
         let sub_idx = vm.pop().to_int() as usize;
+        // c:Src/jobs.c:1028-1029 — `pn->text` arg to printtime. argc==2
+        // means the compiler also pushed a desc string (bug #66 fix);
+        // older callers with argc==1 push only sub_idx and we synthesize
+        // an empty desc for backward compat with cached bytecode that
+        // predates the desc-threading patch.
+        let desc = if argc >= 2 {
+            vm.pop().to_str().to_string()
+        } else {
+            String::new()
+        };
         let chunk_opt = vm.chunk.sub_chunks.get(sub_idx).cloned();
         let Some(chunk) = chunk_opt else {
             return Value::Status(0);
@@ -3261,11 +3271,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             .unwrap_or_else(|| crate::ported::zsh_system_h::DEFAULT_TIMEFMT.to_string());
         // c:Src/jobs.c:768 `desc` arg — for the `time { sublist }` /
         // `time simple-cmd` keyword path, zsh passes the sublist's
-        // source text (used by %J). zshrs's compiler doesn't yet
-        // thread the source text through to this handler, so %J
-        // expands to the empty string — separate gap, but lets the
-        // rest of TIMEFMT work correctly.
-        let line = crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, "");
+        // source text (used by %J via printtime). The compiler now
+        // threads the rendered source text through as the desc operand
+        // (compile_zsh.rs Time arm, argc==2 form). Bug #66.
+        let line = crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, &desc);
         eprintln!("{}", line);
         Value::Status(status)
     });
