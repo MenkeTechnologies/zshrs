@@ -44466,6 +44466,56 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #603 — `a=he?l` errors "no matches found" — bare `?` in scalar assignment RHS not detected for DQ-wrap
+
+**Status:** `fixed` 2026-06-04 — wrong token constant in
+`compile_assign`'s glob-meta check (used Hat `\u{86}` where Quest
+`\u{97}` was meant).
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=he?l; echo "$a"'
+he?l
+
+# Before fix:
+$ zshrs --zsh -c 'a=he?l; echo "$a"'
+zshrs:1: no matches found: he?l
+
+# After fix:
+$ zshrs --zsh -c 'a=he?l; echo "$a"'
+he?l
+```
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_assign`
+detects glob metas in the RHS so it can DQ-wrap and suppress glob
+expansion (assignment RHS doesn't glob in zsh). The check at line
+1985-1990:
+```rust
+let needs_dq_wrap = !s.starts_with('\u{9e}')
+    && (s.contains('*') || s.contains('\u{87}')   // Star
+        || s.contains('?') || s.contains('\u{86}') // Quest  ← WRONG
+        || s.contains('[') || s.contains('\u{91}') // Inbrack
+        || s.contains('{') || s.contains('\u{8f}')); // Inbrace
+```
+`\u{86}` is `Hat` (^), NOT `Quest`. Per `Src/zsh.h` (zshrs's
+`src/ported/zsh_h.rs:181`), `Quest = \u{97}`. So the lexer's
+tokenized form of `?` (\u{97}) bypassed the check, the value
+went through compile_word_str without DQ wrap, and the runtime
+glob-expanded `he?l` → "no matches found".
+
+Bare ASCII `?` (without lexer tokenization) did get caught by
+`s.contains('?')`, but the lexer tokenizes `?` to `\u{97}` in
+most assignment contexts so the literal-char check almost never
+fires.
+
+`*` (Star = `\u{87}`), `[` (Inbrack = `\u{91}`), `{` (Inbrace =
+`\u{8f}`) used the correct constants — only `?`/Quest was wrong.
+
+**Fix** — change `s.contains('\u{86}')` to `s.contains('\u{97}')`
+on the Quest line.
+
+---
+
 ## #602 — `print -P "%(e.A.B)"` / `%(v.A.B)` / `%(V.A.B)` / `%(S.A.B)` always emit false-text — test arms not in dispatch switch
 
 **Status:** `fixed` 2026-06-04 — ported `Src/prompt.c:466-487` `e`,
@@ -46666,6 +46716,7 @@ no longer reports the internal trap-machinery scalar.
 | 600 | `fpath=(/tmp)` hangs — RWLock deadlock between assignaparam's write lock and arrsetfn's arrfixenv reacquire | **fixed** 2026-06-04 | inline arrsetfn writes under held lock, capture ename + drop tab, then call arrfixenv outside the lock |
 | 601 | `print -P "%(j.A.B)"` always emits false-text — `j` test arm not in dispatch switch | **fixed** 2026-06-04 | added `b'j'` arm to putpromptchar ternary switch (port of Src/prompt.c:451-457) |
 | 602 | `print -P "%(e.A.B)"` / `%(v.A.B)` / `%(V.A.B)` / `%(S.A.B)` always emit false-text | **fixed** 2026-06-04 | added `b'e'`/`b'v'`/`b'V'`/`b'S'` arms to putpromptchar ternary switch (port of Src/prompt.c:466-487) |
+| 603 | `a=he?l` errors "no matches found" — bare `?` in scalar assignment RHS not DQ-wrapped | **fixed** 2026-06-04 | compile_assign glob-meta check used wrong Quest token (`\u{86}` Hat instead of `\u{97}` Quest) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
