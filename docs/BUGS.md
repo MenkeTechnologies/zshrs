@@ -37228,7 +37228,22 @@ own side effects.
 
 ## #460 — `typeset -aix arr=(...)` flag conflict silently accepted, `-i` dropped — zsh: "inconsistent type for assignment"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `-a` + `-i` flag conflict
+now errors `inconsistent type for assignment` matching zsh.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -aix arr=(1 2 3)' 2>&1
+zsh:typeset:1: arr: inconsistent type for assignment
+$ ./target/debug/zshrs --zsh -c 'typeset -aix arr=(1 2 3)' 2>&1
+zsh:typeset:1: arr: inconsistent type for assignment
+```
+
+Both shells emit the canonical diagnostic and rc=1. Doc-
+only flip; no code change in this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -aix arr=(1 2 3) 2>&1; echo rc=$?; typeset -p arr'
@@ -37239,39 +37254,6 @@ $ ./target/debug/zshrs --zsh -c 'typeset -aix arr=(1 2 3) 2>&1; echo rc=$?; type
 rc=0
 typeset -ax arr=( 1 2 3 )
 ```
-
-The flags `-a` (array) and `-i` (integer) are
-**mutually exclusive** — a parameter can't be both array
-and integer. zsh detects the conflict and errors
-"inconsistent type for assignment".
-
-zshrs silently accepts the conflicting flags by **dropping
-the `-i`** — the resulting parameter is `-ax` only. No
-diagnostic emitted.
-
-**Where** — `src/ported/builtins/typeset.rs::parse_flags`:
-must check for flag-pair conflicts (`-a`+`-i`, `-a`+`-F`,
-`-a`+`-E`, `-A`+`-i`, etc.) and emit
-"inconsistent type for assignment" + return error.
-C-source `Src/builtins.c::bin_typeset` validates the
-flag combinations before any modification.
-
-**Impact** — silent loss of intent. User code that
-explicitly requested integer-array behavior silently gets
-a plain string array:
-
-```sh
-typeset -aix counts=(0 0 0)
-counts[1]="not-a-number"   # zsh: integer-coerced to 0
-                           # zshrs: silently stores as string
-echo "${counts[1]}"
-```
-
-Less common pattern but the silent flag-drop is a sign of
-broader laxness in typeset's option validation.
-
-**Workaround** — manually validate flag combos in user
-code, or split into separate `typeset` calls.
 
 ---
 
