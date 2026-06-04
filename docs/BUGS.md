@@ -47023,7 +47023,7 @@ no longer reports the internal trap-machinery scalar.
 | 15 | `set -- ${=x}` mis-iterates in fn | **fixed** 2026-06-02 | 298 uses parallel arrays |
 | 16 | `arr=("${arr[@]:0:-1}")` no-shrink in fn | **fixed** 2026-06-02 | 311 uses `arr[${#arr}]=()` |
 | 17 | `var=${arr[-1]}` unquoted in fn while | **fixed** 2026-06-02 | 311 quotes the RHS |
-| 18 | `arr[a + 1]=val` with space parsed as cmd | **port-bug** | 332 pre-computes `idx=$((..))` |
+| 18 | `arr[a + 1]=val` with space parsed as cmd | **demo-error** 2026-06-01 | 332 pre-computes `idx=$((..))` |
 | 19 | quoted special/keyword case pat (non-first branch) | **fixed** 2026-06-01 | 363/365 reorder branches or if/elif |
 | 20 | recursive parsers very slow vs C-zsh | **perf-issue** | 362 trimmed test inputs |
 | 21 | nested `$(( a + $((b)) ))` garbles outer expansion | **fixed** 2026-06-02 | extract inner to var first |
@@ -47049,7 +47049,7 @@ no longer reports the internal trap-machinery scalar.
 | 41 | Glob qualifier `Yn` (limit) returns all matches | **port-bug** | `head -n` or array slice |
 | 42 | Bare `typeset` prints `name=val` only, no attrs | **port-bug** | use `typeset -p` |
 | 43 | `${#var:mod}` / `${#var/pat/rep}` / `${#arr[i,j]}` ignores transform | **fixed** 2026-06-02 | assign to temp first |
-| 44 | `set -x` PS4 doesn't expand `%x %N %I %_` | **port-bug** | `PS4="+ "` simple |
+| 44 | `set -x` PS4 doesn't expand `%x %N %I %_` | **fixed** 2026-06-03 | `PS4="+ "` simple |
 | 45 | `${#$}` returns 0 (length of PID) | **fixed** 2026-06-02 | `pid=$$; ${#pid}` |
 | 46 | nested `` `\`...\`` `` backquotes mishandled | **fixed** 2026-06-02 | use `$(...)` instead |
 | 47 | `${(b)str}` escapes space/semi (C-zsh doesn't) | **fixed** 2026-06-02 | drop `(b)` flag |
@@ -47097,7 +47097,7 @@ no longer reports the internal trap-machinery scalar.
 | 89 | `extended_glob #`/`##` quantifiers not recognized (literal) | **fixed** 2026-06-04 | `[[ "aaaa" == a# ]]` matches |
 | 90 | `$ZSH_PATCHLEVEL` = literal `"unknown"` vs zsh's commit | **fixed** 2026-06-02 | fallback to `$ZSH_VERSION` |
 | 91 | `:t` modifier dropped on `${(j:X:)arr:t}` joined-then-modifier | **fixed** 2026-06-02 | split the two ops |
-| 92 | `$PS4` default is empty; zsh's is `%x\t%0N\t%I\t%_` colored | **port-bug** | explicit `export PS4=...` |
+| 92 | `$PS4` default is empty; zsh's is `%x\t%0N\t%I\t%_` colored | **fixed** 2026-06-03 | explicit `export PS4=...` |
 | 93 | Empty assoc key broken: paren-init misaligns, subscript stores but no retrieve | **fixed** 2026-06-02 | n/a |
 | 94 | `(exec cmd); cmd2` parent shell terminates with subshell | **fixed** 2026-06-02 | drop `exec` inside subshell |
 | 95 | Signal trap from `kill -X $$` in subshell fires immediately | **fixed** 2026-06-02 | avoid signal-IPC across sub |
@@ -47395,8 +47395,8 @@ no longer reports the internal trap-machinery scalar.
 | 387 | `read -p "prompt"` parsing — `-p` not recognized as coprocess flag, treats arg as identifier | **fixed** 2026-06-02 | `print -n` to stderr + bare `read` |
 | 388 | `coproc CMD` doesn't open coprocess — `print -p`/`read -p`/`<&p` all broken, entire feature missing | **port-bug** | named pipes (mkfifo) for two-way IPC |
 | 389 | `TRAPZERR()` function-form not invoked on non-zero exit — error-tracing frameworks broken | **fixed** 2026-06-02 | `setopt err_exit` + explicit `\|\|` checks |
-| 390 | `$PS4` default value empty — `set -x` produces no source/function/line/depth context | **port-bug** | seed `PS4=$'%F{blue}%x\\t%0N\\t%I\\t%_%f\\t'` in zshrc |
-| 391 | PS4 escape expansion broken — `%x`/`%N`/`%I`/`%_` printed literally during `set -x` (zsh: expanded) | **port-bug** | abandon `set -x`; use manual `echo` debugging |
+| 390 | `$PS4` default value empty — `set -x` produces no source/function/line/depth context | **fixed** 2026-06-03 | seed `PS4=$'%F{blue}%x\\t%0N\\t%I\\t%_%f\\t'` in zshrc |
+| 391 | PS4 escape expansion broken — `%x`/`%N`/`%I`/`%_` printed literally during `set -x` (zsh: expanded) | **fixed** 2026-06-03 | abandon `set -x`; use manual `echo` debugging |
 | 392 | `${(qq)arr[@]}` only quotes whitespace-containing elements (zsh: force-quotes all) | **fixed** 2026-06-02 | `printf "'%s' " "${a[@]}"` instead |
 | 393 | `jobs %X` rc=1 on unknown-job instead of 127 + `%` not stripped in error msg (zsh: rc=127, msg `not found: NAME`) | **fixed** 2026-06-02 | match on diagnostic text instead of `$?` |
 | 394 | `setopt` no-args dump empty under `-f` — should list `nohashdirs`/`norcs` (zsh: shows divergent-from-default) | **port-bug** | probe specific opts with `[[ -o NAME ]]` |
