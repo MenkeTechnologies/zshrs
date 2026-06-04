@@ -47186,7 +47186,7 @@ no longer reports the internal trap-machinery scalar.
 | 178 | `IFS` doesn't affect cmdsub field-splitting in `for`/array | **fixed** 2026-06-02 | `${(@f)$(...)}` explicit |
 | 179 | `${(S)pat}` shortest-match flag treated as no-op | **fixed** 2026-06-02 | n/a |
 | 180 | `${(C)-text}` no-colon default with flag silently accepted | **fixed** 2026-06-02 | n/a |
-| 181 | `typeset -p` doesn't quote array elements with spaces | **port-bug** | manual `${(qq)}` loop |
+| 181 | `typeset -p` doesn't quote array elements with spaces | **fixed** 2026-06-02 | manual `${(qq)}` loop |
 | 182 | `${${(P)name}[N]}` after-deref indexing returns full array | **fixed** 2026-06-04 | post-deref subscripting now indexes correctly |
 | 183 | `"${@:1:2}"` positional slice returns all instead of slicing | **fixed** 2026-06-02 | n/a |
 | 184 | `$((${a[@]} + 0))` arith with array spread silently uses first elem | **fixed** 2026-06-02 | n/a |
@@ -47197,9 +47197,9 @@ no longer reports the internal trap-machinery scalar.
 | 189 | `${()-default}` empty-flag-paren silently returns `$-` | **fixed** 2026-06-02 | n/a |
 | 190 | `kill -L` lists signals (zsh: errors "unknown signal: SIGL") | **fixed** 2026-06-03 | matches canonical jobs.c:2881-2908 |
 | 191 | `${(l.5..)s}` empty-fill silently accepted with garbage output | **fixed** 2026-06-02 | n/a |
-| 192 | `${(P)name[N]:mod}` indirect-arr-elem with modifier works (zsh: errors) | **port-bug** | temp var split |
+| 192 | `${(P)name[N]:mod}` indirect-arr-elem with modifier works (zsh: errors) | **fixed** 2026-06-02 | temp var split |
 | 193 | `(( y = ${x:?msg} ))` continues after required-param error | **fixed** 2026-06-02 | n/a |
-| 194 | `function f { :; } > /file` keyword-form fn-def redirect at def time | **port-bug** | redirect at call site |
+| 194 | `function f { :; } > /file` keyword-form fn-def redirect at def time | **fixed** 2026-06-02 | redirect at call site |
 | 195 | `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored | **port-bug** | temp `deref=("${(@P)name}")` |
 | 196 | Anonymous fn output lost in `$(() { :; })` cmdsub or `(() { :; })` subshell | **fixed** 2026-06-03 | cmd_or_math fallback no longer calls skipcomm (lex.c:519-520) |
 | 197 | `typeset -f` function-body display collapses statement newlines into `; ` | **fixed** 2026-06-04 | newlines preserved with tab indent matching zsh |
