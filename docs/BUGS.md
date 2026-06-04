@@ -42983,7 +42983,78 @@ flags against the documented list (S/I/V/q/Q/C/U/L/...).
 
 ## #547 — `echo "$~"` emits literal `$~` — zsh: empty (drops invalid `$X`)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partial-fix` 2026-06-04 — the bug report's framing
+("drops invalid `$X`") was incomplete. The C source at
+`Src/subst.c:2596-2602` actually treats `$~` as the
+`GLOB_SUBST` (forced-on) flag prefix, and `$~~` as the
+doubled-off form. Both consume the `~` chars; when no
+parameter name follows, the expansion is empty. Now matches
+zsh for the unquoted form and the DQ-only form.
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_word_str`
+had a fast path for `$~NAME` (compile-time emit GET_VAR with
+glob-expand) that required `untoked.len() >= 3` so the
+no-NAME shapes `$~` (len=2) and `$~~` (len=3 but name_part
+empty) fell through to the literal-text emit.
+
+**Fix (partial)** — `compile_word_str`'s `$~NAME` fast path:
+drop the `len >= 3` gate and add an empty-name-part arm that
+emits an empty `Value::Str("")` after the globsubst toggle.
+Direct port of C's `$~` consumed-with-no-following-name path.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+# Unquoted forms — all match:
+$ /opt/homebrew/bin/zsh -fc 'echo $~' | od -c | head -1
+0000000   \n
+$ ./target/debug/zshrs --zsh -fc 'echo $~' | od -c | head -1
+0000000   \n
+
+$ /opt/homebrew/bin/zsh -fc 'echo $~~' | od -c | head -1
+0000000   \n
+$ ./target/debug/zshrs --zsh -fc 'echo $~~' | od -c | head -1
+0000000   \n
+
+# DQ-alone forms — match:
+$ /opt/homebrew/bin/zsh -fc 'echo "$~"' | od -c | head -1
+0000000   \n
+$ ./target/debug/zshrs --zsh -fc 'echo "$~"' | od -c | head -1
+0000000   \n
+
+# $~NAME with valid identifier — works in both:
+$ /opt/homebrew/bin/zsh -fc 'x=hi; echo "$~x"'
+hi
+$ ./target/debug/zshrs --zsh -fc 'x=hi; echo "$~x"'
+hi
+```
+
+**Remaining gap** — DQ strings with literal text surrounding
+the `$~` still emit the literal `$~`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$~]"'
+[]
+$ ./target/debug/zshrs --zsh -fc 'echo "[$~]"'
+[$~]
+```
+
+The DQ-string-with-surrounding-text path lexes `$~` as a
+separate sub-form within the surrounding DQ word; the
+compile-time fast path doesn't match (the untokenized word
+doesn't `starts_with("$~")` — it starts with the literal
+text). The runtime `paramsubst` `~`/`Tilde` arm at
+`subst.rs` would catch it, but the DQ word splitter routes
+the `$` Qstring through a separate fast path that emits the
+literal `$~` before reaching paramsubst. Fixing this needs
+DQ-segment routing work; deferred.
+
+**Workaround** — same as before — but most call sites use
+the unquoted or `"$~"`-alone form which now matches zsh.
+
+zshrs_shell baseline preserved at 967/85.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "$~"' | od -c | head -1
@@ -42992,38 +43063,6 @@ $ /opt/homebrew/bin/zsh -fc 'echo "$~"' | od -c | head -1
 $ ./target/debug/zshrs --zsh -fc 'echo "$~"' | od -c | head -1
 0000000    $   ~  \n
 ```
-
-`$X` where X is not a valid variable-name character or
-special parameter:
-- zsh: drops the `$X` (replaces with empty)
-- zshrs: keeps `$X` as literal text
-
-`~` after `$` is not a parameter name char (zsh's
-parameter names use `[a-zA-Z_][a-zA-Z0-9_]*`).
-
-Likely also affected: `$%`, `$&`, `$+x` (when `+x` isn't
-the +X test form), other punctuation chars.
-
-**Where** — `src/ported/paramsubst/parse.rs::parse_dollar`:
-unparseable `$X` should produce empty output, not
-literal text. C-source `Src/subst.c::paramsubst` returns
-NULL for unparseable, which gets translated to empty.
-
-**Impact** — string content with `$X` typos appears
-differently:
-
-```sh
-text="Cost: $X dollars"   # typo: should be $x
-echo "$text"
-# zsh: "Cost:  dollars" (empty replaced)
-# zshrs: "Cost: $X dollars" (literal X kept)
-```
-
-Minor — usually the typo's eventual surfaces but
-output-string contents differ.
-
-**Workaround** — none — both are technically incorrect
-behaviors for the unrecognized form, but they diverge.
 
 ---
 
@@ -47374,7 +47413,7 @@ no longer reports the internal trap-machinery scalar.
 | 544 | `a[0]="x"` zero-index array assignment silently accepted — zsh: "invalid subscript range" (zsh is 1-indexed) | **fixed** 2026-06-03 | n/a |
 | 545 | `${(s.X.)XXX}` all-separator string gives 4 empty fields — zsh: 2 (extends #542) | **fixed** 2026-06-03 | n/a |
 | 546 | `${(!)var}` invalid paramexp flag silently accepted — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
-| 547 | `echo "$~"` emits literal `$~` — zsh: drops invalid `$X` to empty | **port-bug** | (acceptable in user code) |
+| 547 | `echo "$~"` emits literal `$~` — zsh: drops invalid `$X` to empty | **partial-fix** 2026-06-04 | unquoted + DQ-alone forms now match; surrounding-text DQ deferred |
 | 548 | `${(   )a}` whitespace-only flag-paren error: "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 549 | `?(a)` extglob in zsh-mode: zshrs uses bash-style "zero-or-one" — zsh: rejects as broken glob-qualifier | **fixed** 2026-06-03 | n/a |
 | 550 | `${((O))a}` nested-paren flag silently accepted as no-op — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
