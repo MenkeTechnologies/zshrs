@@ -3928,6 +3928,26 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                     qs.short_circuit = Some(n);
                 }
             }
+            // c:Src/glob.c:1758-1762 — `default: zerr("unknown file
+            // attribute: %c", *s); restore_globstate(saved); return;`.
+            // Bug #583: zshrs's `_ => {}` arm silently accepted any
+            // unknown qualifier letter, so `*(z)` returned all files
+            // rc=0 instead of erroring "unknown file attribute: z".
+            // Mirror C's strict behavior — but skip ASCII whitespace
+            // / `\0` (parser leftovers) and chars below 0x21 since
+            // C's qualifier loop stops on those naturally via its
+            // `case ')'` arm before reaching default.
+            ch if !ch.is_whitespace() && ch != '\0' && ch != ')' => {
+                crate::ported::utils::zerr(&format!(
+                    "unknown file attribute: {}",
+                    ch
+                ));
+                crate::ported::utils::errflag.fetch_or(
+                    crate::ported::utils::ERRFLAG_ERROR,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                return qs;
+            }
             _ => {}
         }
     }
