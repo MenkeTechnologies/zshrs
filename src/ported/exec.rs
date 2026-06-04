@@ -6304,6 +6304,19 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
                     }
                     // c:5474 — `removetrapnode(signum);`
                     removetrapnode(signum);
+                    // c:Src/signals.c::settrap → unsettrap →
+                    // removetrap also clears sigfuncs[sig] (the C
+                    // string-form trap slot). zshrs's port stores
+                    // string-form bodies in a separate
+                    // `traps_table` HashMap not touched by
+                    // removetrap. Drop the string-form entry here
+                    // so dotrap's fallback doesn't double-dispatch
+                    // when a TRAPxxx function REPLACES an
+                    // existing `trap '...' SIG` registration. Bug
+                    // #541 in docs/BUGS.md.
+                    if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                        t.remove(&nm[4..]);
+                    }
                 }
             }
             // c:5477-5482 — re-define-self trace flag propagate.

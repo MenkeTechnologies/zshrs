@@ -1536,6 +1536,15 @@ pub fn dotrap(sig: i32) -> i32 {
     }
 
     // c:1251 — `if (sigtrapped[sig] & ZSIG_FUNC)` → run TRAPxxx shfunc.
+    // c:Src/signals.c:1251-1259 — the C source dispatches ONE of
+    // the two arms based on sigtrapped flags: ZSIG_FUNC → call
+    // shfunc, else → run siglists eprog. The C settrap → unsettrap
+    // chain ensures only one form is active at a time. zshrs's
+    // port stores string-form bodies separately in `traps_table`
+    // (not touched by removetrap), so both can coexist. Track
+    // whether the function-form fired so the string-form fallback
+    // below doesn't double-dispatch. Bug #541 in docs/BUGS.md.
+    let mut fn_dispatched = false;
     if trapped & ZSIG_FUNC != 0 {
         let signame = getsigname(sig);
         let trap_fn = format!("TRAP{}", signame);
@@ -1548,6 +1557,23 @@ pub fn dotrap(sig: i32) -> i32 {
             //              handles the arg+env+local-scope wrap.
             let args = vec![sig.to_string()];
             let _ = crate::ported::exec_hooks::dispatch_function_call(&trap_fn, &args);
+            fn_dispatched = true;
+        }
+    }
+    // Additional function-form check: even when ZSIG_FUNC isn't
+    // set on sigtrapped (the function was defined after the
+    // string-form trap, and zshrs's exec.rs:6292 didn't update
+    // sigtrapped via the doshfunc path), look in shfunctab
+    // directly. zsh's last-defined-wins semantics treat the
+    // function as the active handler — the older string-form
+    // entry in traps_table must not also fire.
+    if !fn_dispatched {
+        let signame = getsigname(sig);
+        let trap_fn = format!("TRAP{}", signame);
+        if getshfunc(&trap_fn).is_some() {
+            let args = vec![sig.to_string()];
+            let _ = crate::ported::exec_hooks::dispatch_function_call(&trap_fn, &args);
+            fn_dispatched = true;
         }
     }
     // c:1268 — non-FUNC `siglists[sig]` eprog branch. The canonical
@@ -1557,7 +1583,10 @@ pub fn dotrap(sig: i32) -> i32 {
     // fn-ptr installed by fusevm_bridge — no direct ShellExecutor
     // reach-in from src/ported/ (see memory
     // feedback_no_exec_script_from_ported).
-    if let Some(body) = table_body {
+    // Skip the string-form fallback when a function-form already
+    // fired — zsh semantics are last-defined-replaces, not
+    // both-fire. Bug #541 in docs/BUGS.md.
+    if let Some(body) = table_body.filter(|_| !fn_dispatched) {
         let _ = crate::ported::exec_hooks::execute_script(&body);
     }
 

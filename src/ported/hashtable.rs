@@ -1270,6 +1270,19 @@ pub fn enableshfuncnode(hn: &str) {
             // function body resolves through shfunctab at dispatch
             // (`gettrapnode`), not via the trap arrays directly.
             let _ = settrap(sig, None, ZSIG_FUNC);
+            // c:Src/signals.c::settrap → unsettrap → removetrap also
+            // clears any previously-registered string-form trap for
+            // the same signal (single-slot sigtrapped[] array). The
+            // zshrs port stores string-form bodies in a separate
+            // `traps_table` HashMap that `removetrap` doesn't touch,
+            // so the string body survives the function-form
+            // registration and BOTH fire on the next signal. Drop
+            // the string-form entry here so dotrap's
+            // `traps_table` fallback doesn't double-dispatch. Bug
+            // #541 in docs/BUGS.md.
+            if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                t.remove(sig_part);
+            }
         }
     }
 }
