@@ -6628,20 +6628,112 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             // modifier chain. Pull `:MOD` (and `:MOD:MOD2…` chains)
             // into the same expansion so paramsubst's bare-form
             // modifier dispatch at subst.rs:10080 sees them.
-            // Simple letter modifiers + optional digit count for
-            // `:hN`/`:tN`. Anchored on `:` followed by a known
-            // modifier letter to avoid swallowing unrelated `:` chars
-            // (e.g. `$a:$b` parameter-then-colon-then-parameter
-            // remains two expansions). Bug #579.
+            // Supported:
+            //   - simple letters: h/t/r/e/l/u/q/Q/a/A/P
+            //     (+ optional digit count for :hN / :tN)
+            //   - substitution: :s/PAT/REPL/[FLAG] and :gs/PAT/REPL/
+            //     (delimiter char follows s; pattern, replacement
+            //     terminated by same delim; backslash escapes)
+            // Anchored on `:` followed by a known modifier letter
+            // (or `g` then `s`) so `$a:$b` stays two expansions.
+            // Bug #579/#580.
             while j + 1 < chars.len() && chars[j] == ':' {
-                let after = chars[j + 1];
+                let mut probe = j + 1;
+                // Optional `g` prefix (global modifier for :s).
+                let saw_g = chars[probe] == 'g';
+                if saw_g {
+                    probe += 1;
+                    if probe >= chars.len() {
+                        break;
+                    }
+                }
+                let after = chars[probe];
+                if saw_g {
+                    if after != 's' {
+                        break;
+                    }
+                    // `:gs/PAT/REPL/`
+                    probe += 1;
+                    if probe >= chars.len() {
+                        break;
+                    }
+                    let delim = chars[probe];
+                    probe += 1;
+                    let mut found_pat_end = false;
+                    while probe < chars.len() {
+                        if chars[probe] == '\\' && probe + 1 < chars.len() {
+                            probe += 2;
+                            continue;
+                        }
+                        if chars[probe] == delim {
+                            probe += 1;
+                            found_pat_end = true;
+                            break;
+                        }
+                        probe += 1;
+                    }
+                    if !found_pat_end {
+                        break;
+                    }
+                    while probe < chars.len() {
+                        if chars[probe] == '\\' && probe + 1 < chars.len() {
+                            probe += 2;
+                            continue;
+                        }
+                        if chars[probe] == delim {
+                            probe += 1;
+                            break;
+                        }
+                        probe += 1;
+                    }
+                    j = probe;
+                    continue;
+                }
+                if after == 's' {
+                    // `:s/PAT/REPL/`
+                    probe += 1;
+                    if probe >= chars.len() {
+                        break;
+                    }
+                    let delim = chars[probe];
+                    probe += 1;
+                    let mut found_pat_end = false;
+                    while probe < chars.len() {
+                        if chars[probe] == '\\' && probe + 1 < chars.len() {
+                            probe += 2;
+                            continue;
+                        }
+                        if chars[probe] == delim {
+                            probe += 1;
+                            found_pat_end = true;
+                            break;
+                        }
+                        probe += 1;
+                    }
+                    if !found_pat_end {
+                        break;
+                    }
+                    while probe < chars.len() {
+                        if chars[probe] == '\\' && probe + 1 < chars.len() {
+                            probe += 2;
+                            continue;
+                        }
+                        if chars[probe] == delim {
+                            probe += 1;
+                            break;
+                        }
+                        probe += 1;
+                    }
+                    j = probe;
+                    continue;
+                }
                 if !matches!(
                     after,
                     'h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'a' | 'A' | 'P'
                 ) {
                     break;
                 }
-                j += 2;
+                j = probe + 1;
                 while j < chars.len() && chars[j].is_ascii_digit() {
                     j += 1;
                 }
