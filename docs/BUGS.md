@@ -44643,6 +44643,65 @@ Test baseline 964/88 preserved.
 
 ---
 
+## #583 — unknown glob qualifier letters silently accepted — `*(z)` returns files rc=0; zsh: "unknown file attribute: z" rc=1
+
+**Status:** `fixed` 2026-06-04 — glob qualifier parser's `_ =>
+{}` catch-all replaced with a strict-error arm matching C
+`Src/glob.c:1758-1762`.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo *(z)'
+zsh:1: unknown file attribute: z
+rc=1
+
+$ ./target/debug/zshrs --zsh -fc 'echo *(z)'   # before
+bench bins build.rs ...    # all files returned silently
+rc=0
+```
+
+**Root cause** — `src/ported/glob.rs::parse_qualifiers` (the
+match dispatch around line 3678+) used `_ => {}` to silently
+skip unknown letters. C's qualifier loop at `Src/glob.c:1758`
+has `default: zerr("unknown file attribute: %c", *s);
+restore_globstate(saved); return;` — strict error + bail.
+
+**Fix** — replace the bare `_ => {}` with a guarded arm that
+errors on non-whitespace, non-NULL, non-`)` chars:
+
+```rust
+ch if !ch.is_whitespace() && ch != '\0' && ch != ')' => {
+    zerr(&format!("unknown file attribute: {}", ch));
+    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+    return qs;
+}
+_ => {}
+```
+
+The whitespace / NUL / `)` guard preserves parser-leftover
+tolerance (C's `case ')'` arm handles the close-paren naturally
+before reaching default).
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'echo *(z)'
+zshrs:1: unknown file attribute: z
+rc=1
+$ ./target/debug/zshrs -fc 'echo *(yz)'      # errors on first unknown
+zshrs:1: unknown file attribute: y
+rc=1
+$ ./target/debug/zshrs -fc 'echo *(.)'        # regular file: still works
+build.rs Cargo.lock ...
+$ ./target/debug/zshrs -fc 'echo *(/)'        # directory: still works
+bench bins completions ...
+$ ./target/debug/zshrs -fc 'echo *(N)'        # null-glob flag: still works
+bench bins build.rs ...
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #579 — bare `$NAME:MOD` modifier ignored — printed literally as `:MOD` suffix
 
 **Status:** `fixed` 2026-06-04 — two-point fix: compile_zsh
@@ -45651,8 +45710,8 @@ no longer reports the internal trap-machinery scalar.
 | 569 | `bindkey` no-args listing omits range-compaction `"^A"-"^C" self-insert` — emits each key (117 lines vs zsh 31) | **port-bug** | query specific keys with `bindkey '^X'` |
 | 570 | `${(n)a[1,-1]}` paramsubst flag + array-slice errors "bad substitution" — extends #436 to slice form | **port-bug** | fetch slice into temp then apply flag |
 | 571 | `${(Z)a}` flag without required arg errors "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
-| 572 | `print -S arg` history-save flag emits arg to stdout (and doesn't save) — zsh: silent save | **port-bug** | use `fc -p`/`fc -P` |
-| 573 | `*(Lr)` malformed size-qualifier: zshrs "no matches found" — zsh: "number expected" | **port-bug** | visual audit `L/k/m` need digit |
+| 572 | `print -S arg` history-save flag emits arg to stdout (and doesn't save) — zsh: silent save | **fixed** 2026-06-04 | `print -S hello` exits silently with rc=0 matching zsh |
+| 573 | `*(Lr)` malformed size-qualifier: zshrs "no matches found" — zsh: "number expected" | **fixed** 2026-06-04 | `*(Lr)` errors "number expected" matching zsh |
 | 574 | `setopt warn_create_global` spurious `ZSH_DEBUG_CMD created globally` at every fn call | **fixed** 2026-06-04 | BUILTIN_DEBUG_TRAP now gated on sigtrapped[SIGDEBUG] OR traps_table["DEBUG"] |
 | 575 | `{a-c}{1..3}` literal first brace blocks later range brace from expanding | **fixed** 2026-06-04 | xpandbraces retries from past each non-expandable `{...}` |
 | 576 | `${(j:X:)arr:MOD}` modifier ignored or scalar-applied vs zsh's qt-conditional per-element | **fixed** 2026-06-04 | qt-split: scalar mod in qt, per-element + sepjoin unquoted |
@@ -45662,6 +45721,7 @@ no longer reports the internal trap-machinery scalar.
 | 580 | bare `$NAME:s/PAT/REPL/` substitution modifier ignored — extends #579 | **fixed** 2026-06-04 | walker absorbs :s and :gs delimiter-bounded substitution forms |
 | 581 | bare `$N:MOD` / `$0:MOD` positional modifier ignored — extends #579/#580 | **fixed** 2026-06-04 | walker factored into apply_bare_modifier_chain, called from both arms |
 | 582 | bare `$-:MOD` / `$!:MOD` single-char-special modifier ignored — extends #581 | **fixed-partial** 2026-06-04 | walker for `-`/`!`; `?` and `$$` deferred (glob conflict / different emit) |
+| 583 | `*(z)` unknown glob qualifier silently accepted — zsh: "unknown file attribute: z" | **fixed** 2026-06-04 | parse_qualifiers `_=>{}` replaced with strict-error arm matching glob.c:1758 |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
