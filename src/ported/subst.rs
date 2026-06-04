@@ -7732,29 +7732,44 @@ pub fn paramsubst(
                         split_parts = Some(vec![value.clone()]);
                         isarr = 0;
                     } else if sep.is_some() && arrays_contains(&var_name) {
-                        // c:Src/subst.c:3906-3907 — `(j:X:)` flag joins
-                        // the array with X then clears isarr; the
-                        // modifier then runs on the joined SCALAR, not
-                        // per-element. Bug #91 in docs/BUGS.md:
-                        // `${(j: :)paths:t}` applied :t per-element
-                        // (yielding `c.txt f.log`) instead of running
-                        // :t on the joined "/a/b/c.txt /d/e/f.log"
-                        // (yielding `f.log` — the basename of the
-                        // joined-as-path).
-                        let sep_str = sep.as_deref().unwrap_or(" ");
-                        let joined = arrays_get(&var_name)
-                            .map(|a| a.join(sep_str))
-                            .unwrap_or_else(|| value.clone());
-                        value = mod_one(&joined);
-                        // Bug #576: the later (j:X:) re-join block at
-                        // subst.rs:8629 falls back to
-                        // `arrays_get(&var_name).map(|a| a.join(sp))`
-                        // when split_parts is None — re-joining the
-                        // ORIGINAL unmodified array and clobbering the
-                        // modifier's output. Seed split_parts with the
-                        // modified scalar so the re-join arm picks up
-                        // our value instead.
-                        split_parts = Some(vec![value.clone()]);
+                        // c:Src/subst.c:3906-3907 — `(j:X:)` flag.
+                        // Dispatch differs by qt context:
+                        //
+                        // - qt=true (quoted): sepjoin clears isarr=0
+                        //   BEFORE the modifier runs (c:3030-3034), so
+                        //   the modifier runs ONCE on the joined scalar.
+                        //   Example: `"${(j: :)paths:t}"` → tail of the
+                        //   joined "/a/b/c.txt /d/e/f.log" = "f.log".
+                        //   Bug #91 in docs/BUGS.md.
+                        //
+                        // - qt=false (unquoted): isarr stays set, the
+                        //   modifier loops PER ELEMENT (c:4533), THEN
+                        //   the late sepjoin block at subst.rs:8629
+                        //   joins the modified array with sep.
+                        //   Example: `${(j:.:)a:h}` with a=(/a/b /c/d)
+                        //   → (/a, /c) → joined "." = "/a./c".
+                        //   Bug #576 in docs/BUGS.md.
+                        //
+                        // qt is checked first as a fast guard; the
+                        // qt-arm above (line 7710) handles qt+array
+                        // when nojoin != 2, so this branch sees only
+                        // !qt OR nojoin == 2.
+                        if qt {
+                            let sep_str = sep.as_deref().unwrap_or(" ");
+                            let joined = arrays_get(&var_name)
+                                .map(|a| a.join(sep_str))
+                                .unwrap_or_else(|| value.clone());
+                            value = mod_one(&joined);
+                            split_parts = Some(vec![value.clone()]);
+                        } else if let Some(arr) = arrays_get(&var_name) {
+                            let new_arr: Vec<String> =
+                                arr.iter().map(|s| mod_one(s)).collect();
+                            value = new_arr.join(" ");
+                            split_parts = Some(new_arr);
+                        } else {
+                            value = mod_one(&value);
+                            split_parts = Some(vec![value.clone()]);
+                        }
                     } else if let Some(parts) = split_parts.clone() {
                         let new_parts: Vec<String> = parts.iter().map(|s| mod_one(s)).collect();
                         value = new_parts.join(" ");
