@@ -44466,6 +44466,50 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #602 — `print -P "%(e.A.B)"` / `%(v.A.B)` / `%(V.A.B)` / `%(S.A.B)` always emit false-text — test arms not in dispatch switch
+
+**Status:** `fixed` 2026-06-04 — ported `Src/prompt.c:466-487` `e`,
+`v`, `V`, `S` test-arms to `putpromptchar`'s ternary switch.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%(e.t.f)"'
+t
+
+# Before fix:
+$ zshrs --zsh -c 'print -P "%(e.t.f)"'
+f
+
+# After fix:
+$ zshrs --zsh -c 'print -P "%(e.t.f)"'
+t
+
+# %V honors per-element non-empty check:
+$ zshrs --zsh -c 'psvar=(foo bar); print -P "%(1V.X.Y)%(3V.X.Y)"'
+XY
+```
+
+**Root cause** — `src/ported/prompt.rs::putpromptchar` ternary switch
+had no `b'e'`/`b'v'`/`b'V'`/`b'S'` arms — they fell through to
+`_ => {}` which leaves `test = 0` (false-text fires). Same family
+of gap as the `b'j'` fix in #601.
+
+C ports:
+- `e` (c:466-476): funcstack depth >= arg. Default arg=0 → always
+  truthy. Reads `FUNCSTACK.lock().len()`.
+- `v` (c:485-487): `arrlen_ge(psvar, arg)`. Reads `getaparam("psvar")`.
+- `V` (c:489-493): same as `v` but ALSO checks `*psvar[arg-1]` is
+  non-empty. Distinguishes "psvar has entry" from "psvar has
+  non-empty entry".
+- `S` (c:481-483): elapsed shell time >= arg. Approximated: arg≤0
+  → truthy (covers the bare `%(S...)` form); arg>0 left at 0
+  pending `shtimer`/`zmonotime` wireup.
+
+**Fix** — add the four `b'X'` arms to the ternary switch following
+the same pattern as the `b'j'` port in #601.
+
+---
+
 ## #601 — `print -P "%(j.A.B)"` always emits false-text — `j` test arm not in dispatch switch
 
 **Status:** `fixed` 2026-06-04 — ported `Src/prompt.c:451-457` `j`
@@ -46621,6 +46665,7 @@ no longer reports the internal trap-machinery scalar.
 | 599 | `print -P "%w"` emits "DAY  D" (double space) instead of "DAY D" — uses `%e` not `%f` | **fixed** 2026-06-04 | switch `%w` format from `"%a %e"` to `"%a %f"` (C source uses zsh-extension `%f` = mday no leading space) |
 | 600 | `fpath=(/tmp)` hangs — RWLock deadlock between assignaparam's write lock and arrsetfn's arrfixenv reacquire | **fixed** 2026-06-04 | inline arrsetfn writes under held lock, capture ename + drop tab, then call arrfixenv outside the lock |
 | 601 | `print -P "%(j.A.B)"` always emits false-text — `j` test arm not in dispatch switch | **fixed** 2026-06-04 | added `b'j'` arm to putpromptchar ternary switch (port of Src/prompt.c:451-457) |
+| 602 | `print -P "%(e.A.B)"` / `%(v.A.B)` / `%(V.A.B)` / `%(S.A.B)` always emit false-text | **fixed** 2026-06-04 | added `b'e'`/`b'v'`/`b'V'`/`b'S'` arms to putpromptchar ternary switch (port of Src/prompt.c:466-487) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
