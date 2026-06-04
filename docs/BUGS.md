@@ -44466,6 +44466,49 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #616 — `foo() { break; echo after; }; foo` continues past break — used `zwarnnam` instead of `zerrnam`
+
+**Status:** `fixed` 2026-06-04 — switched `bin_break` BIN_CONTINUE
+and BIN_BREAK "not in loop" diagnostics from `zwarnnam` to
+`zerrnam` (matches `Src/builtin.c:5828` / `:5834`).
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'foo() { echo 1; break; echo 2; }; foo'
+1
+foo:break: not in while, until, select, or repeat loop          # exits at break
+# (rc=1)
+
+# Before fix:
+$ zshrs --zsh -c 'foo() { echo 1; break; echo 2; }; foo'
+1
+foo:break:1: not in while, until, select, or repeat loop
+2                                                                # continued past break!
+# (rc=0)
+
+# After fix:
+$ zshrs --zsh -c 'foo() { echo 1; break; echo 2; }; foo'
+1
+foo:break:1: not in while, until, select, or repeat loop
+# (rc=1, exits at break)
+```
+
+**Root cause** — `src/ported/builtin.rs::bin_break` BIN_CONTINUE
+(c:5828) and BIN_BREAK (c:5834) arms used `zwarnnam` to emit
+"not in while, until, select, or repeat loop". `zwarnnam` only
+prints; `zerrnam` ALSO sets `errflag` which causes the calling
+function/script to abort after the current command. zsh uses
+`zerrnam` here so `break` outside a loop terminates the
+enclosing function.
+
+In-loop `break`/`continue` still worked because the loop guard
+path skipped the error.
+
+**Fix** — change both calls from `zwarnnam` to `zerrnam`. Verified
+in-loop break/continue still terminate / restart correctly.
+
+---
+
 ## #615 — `$(< file 2>/dev/null)` treats `file 2>/dev/null` as the filename — `$(<file)` shortcut over-applied
 
 **Status:** `fixed` 2026-06-04 — gate the `$(<file)` shortcut on
@@ -47201,6 +47244,7 @@ no longer reports the internal trap-machinery scalar.
 | 613 | `setopt KSH_ARRAYS; a=(b c d); a[0,1]=(X Y Z)` overwrites only position 0 — slice assign not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to BUILTIN_SET_SUBSCRIPT_RANGE bridge: shift positive raw bounds by +1 before translate |
 | 614 | `setopt KSH_ARRAYS; echo $\{(@)a[1,2]\}` returns `b c` not `c d` — `(@)` splat path not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to BOTH paramsubst splat-range paths (auto-splat + c:3950 splat); three slice-fetch sites now consistent |
 | 615 | `$(< file 2>/dev/null)` treats `file 2>/dev/null` as the filename — `$(<file)` shortcut over-applied | **fixed** 2026-06-04 | gate shortcut on single-word filename (no ws/redirects/quotes); fall through to full parse otherwise |
+| 616 | `foo() { break; echo after; }; foo` continues past break — used `zwarnnam` not `zerrnam` | **fixed** 2026-06-04 | bin_break BIN_CONTINUE/BIN_BREAK "not in loop" arms now call zerrnam (sets errflag → function aborts) per Src/builtin.c:5828/:5834 |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
