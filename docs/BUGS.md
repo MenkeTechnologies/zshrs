@@ -44466,6 +44466,55 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #604 — `a=foo[bar; echo done` consumes `;` into ENVSTRING — unmatched `[` makes `;` non-terminator
+
+**Status:** `fixed` 2026-06-04 — removed extra `brct == 0` / `pct == 0`
+guards from `LX2_BREAK` arm.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=foo[bar; echo "[$a]"'
+[foo[bar]
+
+# Before fix:
+$ zshrs --zsh -c 'a=foo[bar; echo "[$a]"'
+[]                  # `;` was consumed into ENVSTRING `a=foo[bar;`,
+                    # `a` was assigned empty, `echo "[$a]"` saw $a empty.
+
+# After fix:
+$ zshrs --zsh -c 'a=foo[bar; echo "[$a]"'
+[foo[bar]
+```
+
+**Root cause** — `src/ported/lex.rs::gettokstr` (`LX2_BREAK` arm at
+line 2299) had extra guards `&& pct == 0 && brct == 0`:
+```rust
+LX2_BREAK if in_brace_param == 0 && pct == 0 && brct == 0 => {
+    break;
+}
+LX2_BREAK => add(c);
+```
+C source `Src/lex.c:967-969` only checks `in_brace_param` (and
+`sub` for substitution context):
+```c
+case LX2_BREAK:
+    if (!in_brace_param && !sub)
+        goto brk;
+    break;
+```
+The Rust port added the extra `brct == 0` (bracket-count) check
+because of the `${a[1]}` subscript case — but `[` inside `${}` is
+already gated by `in_brace_param > 0`. A bare top-level `[` (as
+in `a=foo[bar`) increments `brct` to 1 and trapped `;` as part of
+the token, swallowing the next command.
+
+**Fix** — match the C check exactly: `LX2_BREAK if in_brace_param
+== 0 => break`. Verified that `${(s.;.)a}` split-flag and
+`${a[1]}` subscript still work (both handled by `in_brace_param`
+gating).
+
+---
+
 ## #603 — `a=he?l` errors "no matches found" — bare `?` in scalar assignment RHS not detected for DQ-wrap
 
 **Status:** `fixed` 2026-06-04 — wrong token constant in
@@ -46717,6 +46766,7 @@ no longer reports the internal trap-machinery scalar.
 | 601 | `print -P "%(j.A.B)"` always emits false-text — `j` test arm not in dispatch switch | **fixed** 2026-06-04 | added `b'j'` arm to putpromptchar ternary switch (port of Src/prompt.c:451-457) |
 | 602 | `print -P "%(e.A.B)"` / `%(v.A.B)` / `%(V.A.B)` / `%(S.A.B)` always emit false-text | **fixed** 2026-06-04 | added `b'e'`/`b'v'`/`b'V'`/`b'S'` arms to putpromptchar ternary switch (port of Src/prompt.c:466-487) |
 | 603 | `a=he?l` errors "no matches found" — bare `?` in scalar assignment RHS not DQ-wrapped | **fixed** 2026-06-04 | compile_assign glob-meta check used wrong Quest token (`\u{86}` Hat instead of `\u{97}` Quest) |
+| 604 | `a=foo[bar; echo done` consumes `;` into ENVSTRING — unmatched `[` makes `;` non-terminator | **fixed** 2026-06-04 | LX2_BREAK arm: removed extra `pct == 0 && brct == 0` guards; match C `if (!in_brace_param && !sub) goto brk` |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
