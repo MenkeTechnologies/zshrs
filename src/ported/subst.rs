@@ -8023,6 +8023,36 @@ pub fn paramsubst(
                         );
                         return (String::new(), 0, Vec::new());
                     }
+                    // c:Src/subst.c:1571 + c:3633-3645 + c:3786-3791 —
+                    // `check_colon_subscript` rejects an alphabetic-
+                    // starting operand (treats it as a modifier letter
+                    // not a math expression). When the LENGTH portion
+                    // of `${var:OFFSET:LENGTH}` starts with an ASCII
+                    // alphabetic char (no `$` / `(` / digit prefix),
+                    // check_colon_subscript returns NULL, length stays
+                    // unset, and the trailing `:LEN}` falls through to
+                    // the "unrecognized modifier `c'" error at
+                    // subst.c:3787. bash treats bare `n` as an arith
+                    // identifier; zsh requires explicit `$n` or
+                    // `$((n))`. Bug #477 in docs/BUGS.md.
+                    if has_length_sep {
+                        let len_trimmed = parts[1].trim_start();
+                        if len_trimmed
+                            .chars()
+                            .next()
+                            .map_or(false, |c| c.is_ascii_alphabetic())
+                        {
+                            zerr(&format!(
+                                "unrecognized modifier `{}'",
+                                len_trimmed.chars().next().unwrap()
+                            ));
+                            errflag.fetch_or(
+                                crate::ported::zsh_h::ERRFLAG_ERROR,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            return (String::new(), 0, Vec::new());
+                        }
+                    }
                     let off = crate::ported::math::mathevali(&singsub(parts[0])).unwrap_or(0);
                     // Array context: ${arr:offset:length} slices the
                     // ARRAY (1-based, like Bash's offset), not the joined
