@@ -365,9 +365,23 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
         m_prec_set(saved.prec);
         m_c_precedences_set(saved.c_precedences);
         let result = mathevall();
+        // c:Src/math.c::matheval — when the recursive eval errors
+        // (e.g. raw is "42xyz" with trailing junk), preserve the error
+        // message so it propagates to the outer arith caller instead
+        // of being clobbered by restore_state. zsh: `a="42xyz";
+        // $((a+1))` → "bad math expression: operator expected at
+        // `xyz'" rc=1. zshrs previously swallowed the error and
+        // returned 0 (then +1 = 1) silently. Bug #494.
+        let err_to_propagate = match &result {
+            Err(msg) => Some(msg.clone()),
+            Ok(_) => None,
+        };
         restore_state(saved);
         if let Ok(r) = result {
             return r;
+        }
+        if let Some(msg) = err_to_propagate {
+            m_error_set(msg);
         }
         // Non-numeric and non-evaluable string: fall through.
     }
