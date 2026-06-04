@@ -40878,7 +40878,18 @@ specials per #512).
 
 ## #517 — `LC_NUMERIC`/`LC_TIME`/`LC_COLLATE`/`LC_CTYPE` initialized to empty string instead of unset
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `LC_*` locale variables no longer
+auto-initialized to empty in `--zsh` mode. `${LC_TIME-unset}` now
+returns `unset` matching zsh. Likely landed via earlier
+parameter-init parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'echo "[${LC_TIME-unset}]"'
+[unset]    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[${LC_TIME-unset}]"'
@@ -41003,7 +41014,38 @@ PS1="$my_prompt"
 
 ## #519 — **CRITICAL** infinite-recursion function crashes shell with stack overflow — zsh: FUNCNEST limit catches
 
-**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/vm_helper.rs](../src/vm_helper.rs)).
+
+**Root cause** — `dispatch_function_call` had a FUNCNEST check, but
+read the user-visible `$FUNCNEST` value (default 500) which is too high
+for zshrs's per-call Rust stack usage. Empirically the Rust stack
+overflows around depth 120, well before the FUNCNEST=500 limit fires.
+C zsh's per-call stack is smaller; 500 fits comfortably in the default
+8MB thread stack.
+
+**Fix** — cap the effective check at a safe Rust ceiling (80) via
+`min(funcnest_user, 80)`. User-set `$FUNCNEST` values above 80 are
+silently clamped. The user-visible `maximum nested function level
+reached; increase FUNCNEST?` diagnostic now fires before the SIGABRT
+crash.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a() { a; }; a'
+a: maximum nested function level reached; increase FUNCNEST?    # rc=1
+
+# subshell variant — also caught (no isolation)
+$ ./target/debug/zshrs --zsh -fc 'a() { a; }; (a)'
+a: maximum nested function level reached; increase FUNCNEST?    # rc=1
+
+# regression: shallow recursion still works
+$ ./target/debug/zshrs --zsh -fc 'fact() { if (( $1 <= 1 )); then echo 1; else local n=$(($1-1)); local prev=$(fact $n); echo $(($1 * prev)); fi }; fact 5'
+120
+```
+
+Baseline 963/89 → 964/88 (+1 pass, 0 regressions).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a() { a; }; (a) 2>&1; echo rc=$?'
@@ -44809,9 +44851,9 @@ qualifiers always have a digit suffix.
 | 514 | `(#e)` end-anchor glob flag not recognized — extends #483 `(#X)` family | **fixed** 2026-06-04 | n/a |
 | 515 | `$funcsourcetrace` shows fn-name (`f:1`) instead of file-name (`zsh:1`) — wrong source-location tracking | **port-bug** | none — array is incorrect |
 | 516 | `typeset` no-args dump omits type-flag prefix — `!=0` instead of `integer 10 readonly !=0` | **fixed** 2026-06-04 | n/a |
-| 517 | `LC_NUMERIC`/`LC_TIME`/`LC_COLLATE`/`LC_CTYPE` initialized to empty string instead of unset — bash-init contamination (extends #479/#497) | **port-bug** | use `[[ -n $LC_TIME ]]` non-empty check |
+| 517 | `LC_NUMERIC`/`LC_TIME`/`LC_COLLATE`/`LC_CTYPE` initialized to empty string instead of unset — bash-init contamination (extends #479/#497) | **fixed** 2026-06-04 | n/a |
 | 518 | `$PROMPT`/`$PS1` (and PROMPT2-4/PS2-4) NOT bidirectionally aliased — modifying one doesn't update the other | **port-bug** | explicit dual-assign |
-| 519 | **CRITICAL** infinite-recursion function crashes shell with stack overflow (exit 134) — zsh: FUNCNEST limit catches | **port-bug** | none — avoid recursion |
+| 519 | **CRITICAL** infinite-recursion function crashes shell with stack overflow (exit 134) — zsh: FUNCNEST limit catches | **fixed** 2026-06-04 | n/a |
 | 520 | `HISTSIZE=N` assignment ignored — reads back as default `999999999` regardless | **port-bug** | none — assignment has no effect |
 | 521 | `[[ "" == (#c0,0) ]]` matches in zshrs — zsh rejects as "bad pattern" — extends #489 broken-cN family | **fixed** 2026-06-03 | n/a |
 | 522 | `TRAPDEBUG()` function-form not invoked before each command — extends #381 family (DEBUG pseudo-signal) | **port-bug** | none — debuggers/profilers can't hook |
