@@ -19678,7 +19678,37 @@ words=(${(s: :)cmd%%\#*})   # strip comment, split on spaces
 
 ## #245 — Extended_glob `(#cN,M)` range-repetition not supported
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` — 2026-06-03 ([src/ported/pattern.rs](../src/ported/pattern.rs)).
+
+**Root cause** — `patcompbranch` (`src/ported/pattern.rs:776`) treated `(#cN,M)` as a PREFIX
+specifier (parsed args, then compiled the FOLLOWING piece as the operand). Real zsh treats
+`(#cN,M)` as a POSTFIX modifier on the PRECEDING piece — `Src/pattern.c:1606-1696` calls
+`patinsert(P_COUNTSTART, starter, ...)` to embed the count header BEFORE the just-compiled
+piece, then loops the operand back via `P_BACK`. For `?(#c2,5)`, zshrs put an empty operand
+after `P_COUNT`, so `min=2` could never be satisfied and the match always failed.
+
+**Fix** — `patcompbranch` now tracks the preceding piece's start offset (`last_piece_off`)
+and the chain tail before that piece (`prev_chain_tail`). When `(#cN,M)` is seen mid-branch
+AFTER a piece, the preceding piece bytes are snapshotted, the buffer is truncated, the
+chain is cut, `P_COUNT [min, max]` is emitted, and the relocated piece bytes are appended
+as the operand. Internal `next_off` fields are rewritten by `delta = operand_new_start -
+piece_start` so chain offsets within the relocated piece remain valid. Legacy PREFIX form
+(no preceding piece) is preserved for direct-API callers.
+
+The existing `pattern::tests` unit tests (`count_range_3_to_5`, `count_exact_3`,
+`count_min_only`) were updated from PREFIX form `(#c3,5)x` to POSTFIX form `x(#c3,5)` —
+real zsh rejects the PREFIX form as `bad pattern`.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'setopt extendedglob; [[ "abc" == ?(#c2,5) ]]; echo "ec=$?"'
+ec=0
+
+$ cargo test --test zshrs_shell test_pattern_repeat
+test result: ok. 3 passed; 0 failed
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extendedglob; [[ "abc" == ?(#c2,5) ]]; echo "ec=$?"'
@@ -43229,7 +43259,7 @@ qualifiers always have a digit suffix.
 | 242 | Introspection assocs (`builtins`/`parameters`/etc.) not read-only — writes silently accepted | **port-bug** | (none — needs `PM_READONLY` at init) |
 | 243 | `${(t)TIMEFMT}` etc. return empty for autovar/special params (type intro broken) | **port-bug** | `(( ${+VAR} ))` existence check only |
 | 244 | `${(Z+c+)cmd}` word-split with c option returns whole string as 1 token (parser-aware split broken) | **port-bug** | manual `${(s: :)cmd%%\\#*}` for simple cases |
-| 245 | `(#cN,M)` extended_glob range-repetition not honored (count syntax accepted but matcher ignores) | **port-bug** | explicit char-class repetition |
+| 245 | `(#cN,M)` extended_glob range-repetition not honored (count syntax accepted but matcher ignores) | **fixed** 2026-06-03 | n/a |
 | 246 | `setopt rc_expand_param` applied inside double quotes — silently fans out `"prefix$arr"` per-element | **port-bug** | use `${a[*]}` star to force scalar-join |
 | 247 | `read line` doesn't strip leading/trailing IFS whitespace from input | **port-bug** | explicit `${var## }`/`${var%% }` strip |
 | 248 | `read "?prompt" var` writes prompt to stdout when stdin isn't tty (contaminates output) | **port-bug** | conditional `print -n "p: " >&2` |
