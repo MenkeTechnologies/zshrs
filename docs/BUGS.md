@@ -31478,6 +31478,44 @@ greps for unbalanced `case`/`esac` pairs.
 
 ## #401 — `select x in; do ... done` with empty option list — zshrs prompts and reads stdin instead of skipping
 
+**Status:** `fixed` 2026-06-03 — `BUILTIN_RUN_SELECT` now
+returns Status(0) before entering the prompt loop when the
+flattened word list is empty.
+
+**Root cause** — `src/fusevm_bridge.rs::BUILTIN_RUN_SELECT`
+proceeded to fopen stdin and run the menu/prompt loop
+regardless of `words` length. C `Src/loop.c:248-252`
+short-circuits:
+```c
+if (!args || empty(args)) {
+    state->pc = end;
+    simple_pline = old_simple_pline;
+    return 0;
+}
+```
+
+**Fix** — after the args→words flatten in the bridge
+handler, check `words.is_empty()` and `return
+Value::Status(0)` before the prompt loop.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'select x in; do echo body; break; done; echo after'
+after
+$ ./target/debug/zshrs --zsh -fc 'select x in; do echo body; break; done; echo after'
+after
+
+# Empty-array form also short-circuits
+$ /opt/homebrew/bin/zsh -fc 'arr=(); select x in "${arr[@]}"; do echo body; break; done; echo after'
+after
+$ ./target/debug/zshrs --zsh -fc 'arr=(); select x in "${arr[@]}"; do echo body; break; done; echo after'
+after
+```
+
+Test baseline preserved at 958/94.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
