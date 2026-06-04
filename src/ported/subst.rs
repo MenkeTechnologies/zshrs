@@ -3860,8 +3860,18 @@ pub fn paramsubst(
                     continue;
                 }
             }
-            if c == '~' {
-                if body_chars.get(idx + 1).copied() == Some('~') {
+            if c == '~' || c == Tilde {
+                // c:Src/subst.c:2596-2602 — accept both ASCII `~` AND
+                // the Tilde TOKEN (\u{98}) the lexer emits for
+                // unquoted forms (`${~$(...)}`). Without the TOKEN
+                // arm, `${~$(echo pat)}` parsed `\u{98}` as an
+                // unrecognized flag → "bad substitution". Bug #330
+                // in docs/BUGS.md.
+                let doubled = body_chars
+                    .get(idx + 1)
+                    .copied()
+                    .map_or(false, |n| n == '~' || n == Tilde);
+                if doubled {
                     if !qt {
                         opt_state_set("globsubst", false);
                     }
