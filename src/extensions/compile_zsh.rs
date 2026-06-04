@@ -3266,6 +3266,41 @@ impl ZshCompiler {
         // the `${(f)mapfile[/path]}` and `${(s:,:)assoc[k]}` shapes.
         if !has_bnull {
             if let Some((flags, base, key)) = parse_zsh_flag_subscript(&untoked) {
+                // `(t)NAME[KEY]` — type-flag form. zsh's `(t)`
+                // evaluates the PARAMETER's type-string first (e.g.
+                // "array", "scalar", "integer", "association"), THEN
+                // applies the subscript char-by-char to that scalar.
+                // Bug #308 in docs/BUGS.md: the BUILTIN_ARRAY_INDEX-
+                // first dispatch below resolves `a[1]` to the element
+                // value ("x"), then `(t)` runs on that pre-resolved
+                // value — which hits the `(t)` on used_subexp arm at
+                // `subst.rs:8158` that intentionally no-ops for
+                // `${(t)$(cmdsub)}` per bug #173, so the type-of-
+                // parameter intent is lost entirely. Compose the
+                // nested form `${${(t)NAME}[KEY]}` so the inner
+                // expansion produces the type string and the outer
+                // applies the subscript to it.
+                if flags.contains('t') {
+                    // Use `:OFFSET:LEN` colon-substring on the type
+                    // string rather than `[KEY]` so the runtime hits
+                    // paramsubst's scalar-substring path (which
+                    // already does 1-indexed char selection) instead
+                    // of the nested-subexp + outer-subscript heuristic
+                    // (subst.rs:4426-4464) which whitespace-splits
+                    // and word-indexes — wrong shape for the scalar
+                    // type tag. KEY is preserved as a sub-arith
+                    // expression `$((KEY-1))` so non-literal subscripts
+                    // (`a[$n]`, `a[1+1]`) still work.
+                    let body =
+                        format!("${{(t){}}}:$(({}-1)):1", base, key);
+                    let body_const = self.builder.add_constant(Value::str(body));
+                    self.builder.emit(Op::LoadConst(body_const), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                        0,
+                    );
+                    return;
+                }
                 // `(@)` plus sort/uniq/order flags (`o`/`O`/`n`/`i`/`u`)
                 // on a `[(I)…]` / `[(R)…]` / `[(K)…]` subscript — must
                 // return array shape AFTER applying the order flags
