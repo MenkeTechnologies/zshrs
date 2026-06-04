@@ -47048,7 +47048,7 @@ no longer reports the internal trap-machinery scalar.
 | 40 | `print -aC N` ignores `-a` (column-major instead of row) | **fixed** 2026-06-02 | sort input in advance |
 | 41 | Glob qualifier `Yn` (limit) returns all matches | **port-bug** | `head -n` or array slice |
 | 42 | Bare `typeset` prints `name=val` only, no attrs | **port-bug** | use `typeset -p` |
-| 43 | `${#var:mod}` / `${#var/pat/rep}` / `${#arr[i,j]}` ignores transform | **port-bug** | assign to temp first |
+| 43 | `${#var:mod}` / `${#var/pat/rep}` / `${#arr[i,j]}` ignores transform | **fixed** 2026-06-02 | assign to temp first |
 | 44 | `set -x` PS4 doesn't expand `%x %N %I %_` | **port-bug** | `PS4="+ "` simple |
 | 45 | `${#$}` returns 0 (length of PID) | **fixed** 2026-06-02 | `pid=$$; ${#pid}` |
 | 46 | nested `` `\`...\`` `` backquotes mishandled | **fixed** 2026-06-02 | use `$(...)` instead |
@@ -47069,21 +47069,21 @@ no longer reports the internal trap-machinery scalar.
 | 61 | `h["key"]=v` subscript quotes not embedded in key | **fixed** 2026-06-02 | use `h=( k v )` paren init |
 | 62 | `extended_glob` `~` (and-not) operator not honored | **fixed** 2026-06-02 | iterate + skip with `[[` |
 | 63 | `${(j:s:)${(s:t:)var}}` nested split-then-join → first element only | **fixed** 2026-06-02 | n/a |
-| 64 | `$PIPESTATUS` (bash-style upper) exists in zshrs but not zsh | **port-bug** | use lowercase `$pipestatus` |
-| 65 | `${+EPOCHSECONDS}` returns 0 after `zmodload zsh/datetime` | **port-bug** | guard by `zmodload` rc |
+| 64 | `$PIPESTATUS` (bash-style upper) exists in zshrs but not zsh | **fixed** 2026-06-02 | use lowercase `$pipestatus` |
+| 65 | `${+EPOCHSECONDS}` returns 0 after `zmodload zsh/datetime` | **fixed** 2026-06-02 | guard by `zmodload` rc |
 | 66 | `time` builtin ignores `TIMEFMT`, omits `%J` cmd name | **port-bug** | `/usr/bin/time -f` instead |
 | 67 | `pushd` no-args doesn't swap top of dir stack | **fixed** 2026-06-02 | explicit `pushd $OLDPWD` |
 | 68 | `trap` listing in insertion order, not signal-number | **fixed** 2026-06-02 | pipe through `sort` |
 | 69 | `$sysparams` auto-loaded w/o `zmodload zsh/system` | **port-bug** | call `zmodload` regardless |
-| 70 | FS watcher leaks newly-created paths to stderr | **port-bug** | none — must fix in zshrs |
+| 70 | FS watcher leaks newly-created paths to stderr | **fixed** 2026-06-02 | none — must fix in zshrs |
 | 71 | `${var:N:M}` accepts non-digit offset (bashism) | **fixed** 2026-06-02 | wrap offset in `$(( ))` |
 | 72 | `log` builtin registered but dispatch → `/usr/bin/log` | **fixed** 2026-06-02 | `print -- $watch` instead |
-| 73 | `$ZSH_VERSION` includes `.0.3-test` suffix vs `5.9` | **port-bug** | parse `${ZSH_VERSION%%.0*}` |
+| 73 | `$ZSH_VERSION` includes `.0.3-test` suffix vs `5.9` | **fixed** 2026-06-02 | parse `${ZSH_VERSION%%.0*}` |
 | 74 | `local -r` violation in fn doesn't abort script | **port-bug** | check fn exit status |
-| 75 | `typeset -i x; x="bad math"` silently coerces to 0 | **port-bug** | regex-validate input first |
+| 75 | `typeset -i x; x="bad math"` silently coerces to 0 | **fixed** 2026-06-02 | regex-validate input first |
 | 76 | `zmodload` lists 32 auto-loaded modules vs zsh's 1 | **fixed** 2026-06-04 | now reports 1 (zsh/main) matching zsh |
 | 77 | `${h[(k)-key]}` flag-lookup of dash key returns empty | **port-bug** | direct `${h[$opt]+set}` |
-| 78 | `echoti` output emitted AFTER next stdout (buf flush) | **port-bug** | direct `printf '\e[...'` |
+| 78 | `echoti` output emitted AFTER next stdout (buf flush) | **fixed** 2026-06-02 | direct `printf '\e[...'` |
 | 79 | Job control table empty: `jobs`/`wait %N`/`kill %N`/`disown` fail | **port-bug** | use `$!` PID instead |
 | 80 | `trap EXIT` in fn fires at script exit, lost in nested fns | **fixed** 2026-06-02 | explicit cleanup at fn epilogue |
 | 81 | `extended_glob *~b` returns duplicates + matches dir | **fixed** 2026-06-02 | loop with `[[ == ... ]] continue` |
@@ -47100,7 +47100,7 @@ no longer reports the internal trap-machinery scalar.
 | 92 | `$PS4` default is empty; zsh's is `%x\t%0N\t%I\t%_` colored | **port-bug** | explicit `export PS4=...` |
 | 93 | Empty assoc key broken: paren-init misaligns, subscript stores but no retrieve | **fixed** 2026-06-02 | n/a |
 | 94 | `(exec cmd); cmd2` parent shell terminates with subshell | **fixed** 2026-06-02 | drop `exec` inside subshell |
-| 95 | Signal trap from `kill -X $$` in subshell fires immediately | **port-bug** | avoid signal-IPC across sub |
+| 95 | Signal trap from `kill -X $$` in subshell fires immediately | **fixed** 2026-06-02 | avoid signal-IPC across sub |
 | 96 | `%N/` `%N~` prompt escape doesn't truncate path | **fixed** 2026-06-02 | manual `precmd` truncation |
 | 97 | `typeset -r` listing omits shell-internal readonly params (`!=0` etc.) | **fixed** 2026-06-03 | PM_RO_BY_DESIGN flag surfaces internal readonly specials |
 | 98 | `[ "a" \< "b" ]` lex-compare bash ext accepted (zsh errors) | **fixed** 2026-06-02 | `[[ < ]]` double-bracket |
