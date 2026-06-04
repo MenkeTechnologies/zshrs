@@ -47047,7 +47047,7 @@ no longer reports the internal trap-machinery scalar.
 | 28 | `mkdir`/`rm`/`mv`/etc. shadowed as shell builtins | **port-bug** | `command rm` to bypass — partial overlap with #530 (require zmodload zsh/files) |
 | 29 | `"argv[N]=..."` literal stripped inside double quotes | **fixed** 2026-06-02 | escape `\[` `\]` |
 | 30 | `setopt no_clobber` rejects `> /dev/null` | **fixed** 2026-06-02 | `>\|` force-clobber |
-| 31 | `${EPOCHSECONDS:-x}` always uses default | **port-bug** | direct `$EPOCHSECONDS` access |
+| 31 | `${EPOCHSECONDS:-x}` always uses default | **fixed** 2026-06-04 | direct `$EPOCHSECONDS` access |
 | 32 | `hash -d name=~` doesn't expand `~` in value | **fixed** 2026-06-02 | use `$HOME` literal |
 | 33 | `set -e` doesn't fire on `(( false_cond ))` | **fixed** 2026-06-02 | `\|\| exit 1` explicit |
 | 34 | case `(a*\|b*))` paren-alt doesn't match w/ extended_glob | **fixed** 2026-06-02 | drop outer parens or double them |
