@@ -44466,6 +44466,35 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #612 — `setopt KSH_ARRAYS; a=(b c d); echo $a[0,1]` returns `b` instead of `b c` — array slice not 0-based
+
+**Status:** `fixed` 2026-06-04 — KSH_ARRAYS branch added to array
+slice arm (sibling of #610/#611).
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt KSH_ARRAYS; a=(b c d); echo "[${a[0,1]}]"'
+[b c]
+
+# Before fix:
+$ zshrs --zsh -c 'setopt KSH_ARRAYS; a=(b c d); echo "[${a[0,1]}]"'
+[b]                       # got 1 element instead of 2
+
+# After fix:
+$ zshrs --zsh -c 'setopt KSH_ARRAYS; a=(b c d); echo "[${a[0,1]}][${a[0,-1]}]"'
+[b c][b c d]
+```
+
+**Root cause** — `src/ported/subst.rs` array slice arm (line 4869+)
+applied the 1-based-to-0-based conversion (`start - 1`) without
+checking KSH_ARRAYS. Same off-by-one as #611 in the array branch.
+
+**Fix** — same shift as #611: under KSH_ARRAYS, add 1 to positive
+`start`/`end` before the existing range resolve. Negative bounds
+unchanged.
+
+---
+
 ## #611 — `setopt KSH_ARRAYS; a=hello; echo $a[0,2]` returns `he` instead of `hel` — slice not 0-based
 
 **Status:** `fixed` 2026-06-04 — KSH_ARRAYS branch added to scalar
@@ -47048,6 +47077,7 @@ no longer reports the internal trap-machinery scalar.
 | 609 | `${a/PAT/\n}` strips backslash from replacement — should keep `\n`/`\t`/`\&` literal | **fixed** 2026-06-04 | removed `\X → X` strip pass in `/`, `//`, and `(#m)/(#b)` rebuild arms; match C `singsub + untokenize` exactly |
 | 610 | `setopt KSH_ARRAYS; a=hello; echo $a[0]` returns empty — scalar subscript not 0-based under KSH_ARRAYS | **fixed** 2026-06-04 | added isset(KSHARRAYS) branch to scalar single-index dispatch |
 | 611 | `setopt KSH_ARRAYS; a=hello; echo $a[0,2]` returns `he` not `hel` — slice not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to scalar slice arm: shift positive lo/hi by +1 before getarrvalue |
+| 612 | `setopt KSH_ARRAYS; a=(b c d); echo $a[0,1]` returns `b` not `b c` — array slice not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to array slice arm: shift positive start/end by +1 |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to

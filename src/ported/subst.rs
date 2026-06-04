@@ -4868,6 +4868,19 @@ pub fn paramsubst(
                     };
                     let start: i64 = eval_idx(&start_str, 1);
                     let end: i64 = eval_idx(&end_str, len);
+                    // c:Src/params.c — KSH_ARRAYS flips array slice
+                    // bounds from 1-based to 0-based inclusive. `a[0,1]`
+                    // under KSH_ARRAYS = elements at positions 0 and 1.
+                    // Sibling of #610/#611 in the array-slice arm.
+                    // Bug #612.
+                    let ksh_arrays = isset(crate::ported::zsh_h::KSHARRAYS);
+                    let (start, end) = if ksh_arrays {
+                        let new_start = if start >= 0 { start + 1 } else { start };
+                        let new_end = if end >= 0 { end + 1 } else { end };
+                        (new_start, new_end)
+                    } else {
+                        (start, end)
+                    };
                     // c:Src/params.c:2567-2570 — negative-index resolve.
                     // For negative `start`, raw position = len + start
                     // (0-based). For negative `end`, raw = len + end +
