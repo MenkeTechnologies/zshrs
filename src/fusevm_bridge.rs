@@ -3594,12 +3594,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     raw.max(0) as i32
                 }
             };
+            // c:Src/params.c — KSH_ARRAYS option flips array subscripts
+            // from 1-based to 0-based. setarrvalue expects 1-based
+            // inclusive bounds, so under KSH_ARRAYS we shift positive
+            // inputs by +1 before translation. Negative bounds left
+            // alone (count from end). Sibling of #610/#611/#612.
+            // Bug #613.
+            let ksh_arrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
+            let ksh_shift = |raw: i64| -> i64 {
+                if ksh_arrays && raw >= 0 { raw + 1 } else { raw }
+            };
             let (start, end) = if let Some((s_str, e_str)) = key.split_once(',') {
-                let s = s_str.trim().parse::<i64>().unwrap_or(0);
-                let e = e_str.trim().parse::<i64>().unwrap_or(0);
+                let s = ksh_shift(s_str.trim().parse::<i64>().unwrap_or(0));
+                let e = ksh_shift(e_str.trim().parse::<i64>().unwrap_or(0));
                 (start_translate(s), end_translate(e))
             } else {
-                let i = key.trim().parse::<i64>().unwrap_or(0);
+                let i = ksh_shift(key.trim().parse::<i64>().unwrap_or(0));
                 if i == 0 {
                     return;
                 }
