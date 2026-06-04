@@ -6237,6 +6237,20 @@ pub fn unsetparam(name: &str) {
     ) {
         mark_unset_special(name);
     }
+    // c:Src/params.c:3850 — `if (pm->node.flags & PM_READONLY) { zerr;
+    // return 1; }`. Read-only specials (LINENO, HISTCMD, PPID, etc.)
+    // have PM_READONLY in their special_paramdef entry but no paramtab
+    // pm node by default, so the standard PM_READONLY check inside
+    // unsetparam_pm never fires for them. Walk the special_params
+    // table directly to catch these. Bug #419.
+    let is_readonly_special = special_params
+        .iter()
+        .any(|ip| ip.name == name && (ip.pm_flags & PM_READONLY) != 0);
+    if is_readonly_special {
+        zerr(&format!("read-only variable: {}", name));
+        unqueue_signals();
+        return;
+    }
     let (found, is_nameref) = {
         let tab = paramtab().read().unwrap();
         match tab.get(name) {

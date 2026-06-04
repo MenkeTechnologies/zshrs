@@ -34286,7 +34286,40 @@ assignment.)
 
 ## #419 — `unset LINENO` silently accepted — no "read-only variable" diagnostic
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/params.rs](../src/ported/params.rs)).
+
+**Root cause** — C `Src/params.c:3850` checks `pm->node.flags &
+PM_READONLY` inside `unsetparam_pm` and emits `read-only variable: NAME`
+before clearing. zshrs's read-only specials (LINENO, HISTCMD, PPID, etc.)
+carry PM_READONLY in their `special_paramdef` table entry but have NO
+paramtab pm node by default — so `unsetparam` found nothing, never
+called `unsetparam_pm`, and the readonly check was bypassed.
+
+**Fix** — added an explicit walk of the `special_params` table in
+`unsetparam` BEFORE the paramtab lookup. If the name matches a special
+with `PM_READONLY` set, emit the diagnostic and return without further
+processing.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'unset LINENO'
+zsh:1: read-only variable: LINENO    # rc=1, matches zsh
+
+$ ./target/debug/zshrs --zsh -fc 'unset PPID'
+zsh:1: read-only variable: PPID
+
+# regression: normal var unset still works
+$ ./target/debug/zshrs --zsh -fc 'x=hi; unset x; echo "[$x]"'
+[]
+
+# regression: #417 (unset RANDOM → empty) unaffected
+$ ./target/debug/zshrs --zsh -fc 'unset RANDOM; echo "[$RANDOM]"'
+[]
+```
+
+Baseline 960/92 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'unset LINENO; echo rc=$?'
@@ -43838,7 +43871,7 @@ qualifiers always have a digit suffix.
 | 416 | `unset PATH` ignored — command lookup still resolves (security bypass for sandboxing patterns) | **port-bug** | try `PATH=` empty assignment (needs verify) |
 | 417 | `unset RANDOM` ignored — special-param regenerator stays active (zsh: returns empty after unset) | **fixed** 2026-06-04 | n/a |
 | 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **fixed** 2026-06-04 | n/a |
-| 419 | `unset LINENO` silently accepted — no "read-only variable" diagnostic (zsh: emits warning) | **port-bug** | none — manual `typeset -p LINENO` probe |
+| 419 | `unset LINENO` silently accepted — no "read-only variable" diagnostic (zsh: emits warning) | **fixed** 2026-06-04 | n/a |
 | 420 | `eval` errors prefixed `zsh:` instead of `(eval):` — source-context lost (also affects funcname/sourced-file prefixes) | **fixed** 2026-06-04 | n/a |
 | 421 | `^` parsed as glob-negation even when `extended_glob` is off — gating missing on `^`/`~`/`#` extended-glob operators | **port-bug** | escape with backslash `\\^` |
 | 422 | sourced-file errors prefixed `zsh:` instead of `/path/to/file:` — extends #420, breaks .zshrc plugin-bisect debugging | **fixed** 2026-06-04 | n/a |
