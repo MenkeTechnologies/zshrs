@@ -8072,8 +8072,22 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
             zerr("parse error: short loop form requires SHORTLOOPS option");
             return None;
         }
-        // c:1192-1193 — short form: single command body.
-        par_list().map(|list| ZshProgram { lists: vec![list] })
+        // c:Src/parse.c:1604 / :1474 / :1551 — short form calls
+        // par_save_list1 → par_list1 → par_sublist, which parses
+        // ONE sublist and leaves the trailing SEPER untouched for
+        // the outer par_list to consume. zshrs previously routed
+        // through par_list() which consumes the trailing `;`/`\n`
+        // separator — that swallowed the separator between the
+        // loop's body command and the next outer command, so
+        // `repeat 2 print x; print y` parsed as repeat-then-eof
+        // and par_cmd's post-compound STRING_LEX guard at parse.rs
+        // line 1170 fired "parse error near `print'". Bug #593.
+        par_list1().map(|sublist| ZshProgram {
+            lists: vec![ZshList {
+                sublist,
+                flags: ListFlags::default(),
+            }],
+        })
     }
 }
 
