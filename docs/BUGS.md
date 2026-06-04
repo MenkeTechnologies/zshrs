@@ -18968,11 +18968,13 @@ arr=("${new[@]}")
 
 ## #237 — `${funcfiletrace}` and `${functrace}` format diverges from zsh (missing file path + line)
 
-**Status:** `fixed` — no longer reproduces as of 2026-06-02 in
-the structural sense (both emit `<path>:<line>`); the path
-itself is the binary name (`zsh` vs `zshrs` or the binary's full
-path), which is a process-identity difference rather than a
-format bug.
+**Status:** `fixed` — `functrace` was using `fs.name` (function
+name) instead of `fs.caller` (calling-frame file/function),
+so `${functrace[1]}` reported `f:1` where zsh shows `zsh:1`.
+Mirror `Src/Modules/parameter.c:648-672 functracegetfn` exactly:
+emit `<f->caller>:<f->lineno>`. (Earlier 2026-06-02 partial fix
+covered `funcfiletrace`/`funcsourcetrace` formatting; this
+extension lands the `functrace` case.)
 
 **Verify:**
 ```sh
@@ -45440,7 +45442,7 @@ no longer reports the internal trap-machinery scalar.
 | 234 | `typeset +U arr` doesn't clear dedup AND `+=` of dup destroys array (corrupting) | **fixed** 2026-06-02 | n/a |
 | 235 | `typeset -m "glob"` errors "not valid in this context" instead of pattern-matching | **port-bug** | loop with `${(@k)parameters[(I)pat]}` |
 | 236 | `${(@)arr:#}` empty-pattern filter doesn't filter empty elements (sparse-arr cleanup broken) | **port-bug** | `:#(#e)` extended-glob anchor |
-| 237 | `${funcfiletrace}`/`${functrace}` format diverges — missing file path + line | **port-bug** | (no clean workaround) |
+| 237 | `${funcfiletrace}`/`${functrace}` format diverges — missing file path + line | **fixed** 2026-06-04 | functrace now uses fs.caller (not fs.name) matching parameter.c:648-672 |
 | 238 | `setopt promptbang` doesn't enable `!` → history-number in prompts | **port-bug** | use `%h`/`%!` percent-escape |
 | 239 | `print -P "%J"` (jobs count prompt escape) treats as literal — extends #38 family | **port-bug** | use `${#jobstates}` introspection |
 | 240 | `{ false } always { :; }` clears errflag — errexit doesn't fire after always block | **port-bug** | explicit `\|\| _err=$?` propagation |
