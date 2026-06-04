@@ -1704,14 +1704,19 @@ fn optns_flags(name: &str) -> u16 {
 }
 
 /// !!! RUST-ONLY HELPER — see WARNING block above.
-/// Returns options that are on by default for zsh emulation.
+/// Returns options that are on by default for the CURRENT
+/// emulation (reads the live `EMULATION` atomic, c:33). Bug
+/// #470 in docs/BUGS.md: previously hardcoded `EMULATE_ZSH`,
+/// so `emulate -L sh; setopt` printed against the zsh-default
+/// baseline rather than the sh-default baseline — diverged
+/// from `Src/options.c:462 defset(on, emulation)` which reads
+/// the file-static `emulation` global.
 pub(crate) fn default_on_options() -> HashSet<&'static str> {
-    // Default-on options have OPT_ZSH bit set in their flags
-    let zsh_emu = EMULATE_ZSH as u16;
+    let emu = EMULATION.load(std::sync::atomic::Ordering::Relaxed) as u16;
     let mut set = HashSet::new();
     for name in ZSH_OPTIONS_SET.iter() {
         let flags = optns_flags(name);
-        if (flags & zsh_emu) != 0 && (flags & OPT_SPECIAL) == 0 {
+        if (flags & emu) != 0 && (flags & OPT_SPECIAL) == 0 {
             set.insert(*name);
         }
     }
