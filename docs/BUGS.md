@@ -47398,27 +47398,27 @@ no longer reports the internal trap-machinery scalar.
 | 390 | `$PS4` default value empty — `set -x` produces no source/function/line/depth context | **port-bug** | seed `PS4=$'%F{blue}%x\\t%0N\\t%I\\t%_%f\\t'` in zshrc |
 | 391 | PS4 escape expansion broken — `%x`/`%N`/`%I`/`%_` printed literally during `set -x` (zsh: expanded) | **port-bug** | abandon `set -x`; use manual `echo` debugging |
 | 392 | `${(qq)arr[@]}` only quotes whitespace-containing elements (zsh: force-quotes all) | **fixed** 2026-06-02 | `printf "'%s' " "${a[@]}"` instead |
-| 393 | `jobs %X` rc=1 on unknown-job instead of 127 + `%` not stripped in error msg (zsh: rc=127, msg `not found: NAME`) | **port-bug** | match on diagnostic text instead of `$?` |
+| 393 | `jobs %X` rc=1 on unknown-job instead of 127 + `%` not stripped in error msg (zsh: rc=127, msg `not found: NAME`) | **fixed** 2026-06-02 | match on diagnostic text instead of `$?` |
 | 394 | `setopt` no-args dump empty under `-f` — should list `nohashdirs`/`norcs` (zsh: shows divergent-from-default) | **port-bug** | probe specific opts with `[[ -o NAME ]]` |
 | 395 | `compdef` shipped as permanent builtin — zsh: not defined until `compinit`; breaks `${+functions[compdef]}` guard | **port-bug** | probe `_comp_setup` instead |
 | 396 | `$funcsourcetrace` records `:0` instead of `:1` for function-definition line (parallel to #385 LINENO base) | **port-bug** | `$(( line + 1 ))` adjust when emitting |
-| 397 | **CRITICAL** `printf "X" > FILE` writes to BOTH stdout AND file — builtin bypasses shell redirection (echo/print work) | **port-bug** | use `print -r --` instead, or wrap printf in subshell |
-| 398 | `printf` unknown directives (`%Z`/`%K`/`%A`/`%a`/`%T`/`%(…)T`) printed literally instead of erroring (zsh: "invalid directive") | **port-bug** | manually validate format strings; check stderr for "invalid directive" |
+| 397 | **CRITICAL** `printf "X" > FILE` writes to BOTH stdout AND file — builtin bypasses shell redirection (echo/print work) | **fixed** 2026-06-02 | use `print -r --` instead, or wrap printf in subshell |
+| 398 | `printf` unknown directives (`%Z`/`%K`/`%A`/`%a`/`%T`/`%(…)T`) printed literally instead of erroring (zsh: "invalid directive") | **fixed** 2026-06-02 | manually validate format strings; check stderr for "invalid directive" |
 | 399 | `*(YN)` glob qualifier limit-to-N-matches ignored — returns all matches (zsh: caps at N) | **port-bug** | `( *(om) )` then array-slice `[1,N]` |
 | 400 | `case ... esack` typo silently accepted — missing `esac` close-token strict check (zsh: parse error) | **port-bug** | CI lint for unbalanced case/esac |
-| 401 | `select x in;` empty option list prompts/reads stdin instead of skipping body (zsh: skips, no prompt) | **port-bug** | guard `(( ${#opts} > 0 ))` before select |
+| 401 | `select x in;` empty option list prompts/reads stdin instead of skipping body (zsh: skips, no prompt) | **fixed** 2026-06-02 | guard `(( ${#opts} > 0 ))` before select |
 | 402 | `let "x=5/0"` arith-error rc=2 instead of 1 — script error-classification diverges | **port-bug** | collapse `\|\|` instead of branching on `$?` |
-| 403 | `for ... don` typo silently treated as separator + command (zsh: parse error) — body runs + `don` runs per iteration | **port-bug** | CI lint for unbalanced do/done |
+| 403 | `for ... don` typo silently treated as separator + command (zsh: parse error) — body runs + `don` runs per iteration | **fixed** 2026-06-02 | CI lint for unbalanced do/done |
 | 404 | `while false ... don` typo silently accepted, no diagnostic, rc=0 — invisible until condition changes | **port-bug** | CI lint for unbalanced do/done |
 | 405 | function definition missing close-brace silently accepted — body registered with broken structure | **port-bug** | strict `zsh -n script.zsh` pre-check |
-| 406 | `${funcstack[@]}` returns empty despite `${#funcstack}` reporting correct length — `[@]`/`[*]` broken, individual subscripts work | **port-bug** | manual `for (( i=1; i<=${#funcstack}; i++ ))` |
-| 407 | `${a[(e)key]}` subscript flag treated as `(r)` find-by-value (zsh: literal-as-numeric) — security-relevant fallback | **port-bug** | explicit numeric coercion `${a[$((key))]}` |
-| 408 | `${a[1,5,2]}` 3-arg array slice silently accepted (zsh: bad substitution) — third arg ignored | **port-bug** | explicit step loop |
+| 406 | `${funcstack[@]}` returns empty despite `${#funcstack}` reporting correct length — `[@]`/`[*]` broken, individual subscripts work | **fixed** 2026-06-02 | manual `for (( i=1; i<=${#funcstack}; i++ ))` |
+| 407 | `${a[(e)key]}` subscript flag treated as `(r)` find-by-value (zsh: literal-as-numeric) — security-relevant fallback | **fixed** 2026-06-02 | explicit numeric coercion `${a[$((key))]}` |
+| 408 | `${a[1,5,2]}` 3-arg array slice silently accepted (zsh: bad substitution) — third arg ignored | **fixed** 2026-06-02 | explicit step loop |
 | 409 | `(#i)PATTERN` glob case-folding flag not recognized — treated as literal filename component | **fixed** 2026-06-04 | n/a |
-| 410 | `typeset -p PATH` doesn't expose tied scalar/array pair (zsh: `export -T PATH path=(...)`) — state-snapshot lossy | **port-bug** | manually pair-emit `path` array |
+| 410 | `typeset -p PATH` doesn't expose tied scalar/array pair (zsh: `export -T PATH path=(...)`) — state-snapshot lossy | **fixed** 2026-06-02 | manually pair-emit `path` array |
 | 411 | `[ "abc" -eq 5 ]` silent rc=1 instead of "integer expression expected" + rc=2 — type-error coerced to 0 | **port-bug** | pre-validate operand with `=~ ^-?[0-9]+$` |
 | 412 | `$PROMPT3` default empty — `select` prompt missing (zsh: `\\033[1;34m-->>>> \\033[0m`) | **port-bug** | seed `PS3` in zshrc |
-| 413 | `do` standalone-keyword silently accepted as no-op (zsh: parse error near `do`) — reserved-word strict check missing | **port-bug** | `zsh -n script.zsh` pre-check |
+| 413 | `do` standalone-keyword silently accepted as no-op (zsh: parse error near `do`) — reserved-word strict check missing | **fixed** 2026-06-02 | `zsh -n script.zsh` pre-check |
 | 414 | `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape) — opposite of #398 printf direction | **fixed** 2026-06-04 | n/a |
 | 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **port-bug** | manual save/restore via `${(@kv)config}` |
 | 416 | `unset PATH` ignored — command lookup still resolves (security bypass for sandboxing patterns) | **port-bug** | try `PATH=` empty assignment (needs verify) |
