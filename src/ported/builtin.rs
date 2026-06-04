@@ -3637,12 +3637,23 @@ pub fn bin_typeset(
             names.sort_by(|a, b| hnamcmp(a, b));
             names
         };
+        // c:Src/params.c:6275 PM_TIED partner lookup — printparamnode
+        // reads `paramtab` to fetch the tied peer (e.g. PATH→path).
+        // Pre-clone the pm so the print runs WITHOUT holding any
+        // paramtab lock; otherwise the partner-lookup inside
+        // printparamnode would deadlock on the same write lock.
+        // printparamnode mutates hn for the PM_TIED swap path (Bug
+        // #410) — the mutation lands on the local clone only,
+        // matching C's "throwaway-print-side" semantics.
         for k in names {
-            if let Ok(mut tab) = paramtab().write() {
-                if let Some(pm) = tab.get_mut(&k) {
-                    printparamnode(pm, printflags_final); // c:2792
-                }
-            }
+            let mut pm_clone = match paramtab().read() {
+                Ok(tab) => match tab.get(&k) {
+                    Some(pm) => pm.clone(),
+                    None => continue,
+                },
+                Err(_) => continue,
+            };
+            printparamnode(&mut pm_clone, printflags_final); // c:2792
         }
         unqueue_signals();
         return 0; // c:2794
@@ -4106,12 +4117,18 @@ pub fn bin_typeset(
                 .map(|t| t.contains_key(arg_name))
                 .unwrap_or(false);
             if existed {
-                if let Ok(mut tab) = paramtab().write() {
-                    if let Some(pm) = tab.get_mut(arg_name) {
-                        // c:2243 — `paramtab->printnode(&pm->node,
-                        //   PRINT_TYPESET|with_ns);`
-                        printparamnode(pm, PRINT_TYPESET | with_ns);
-                    }
+                // c:Src/params.c:6275 — printparamnode looks up the
+                // PM_TIED peer via paramtab; we must NOT hold the lock
+                // when calling. Bug #410 — pre-clone pattern (mirrors
+                // the bin_typeset `-m PAT` arm refactor).
+                let mut pm_clone = match paramtab().read() {
+                    Ok(tab) => tab.get(arg_name).cloned(),
+                    Err(_) => None,
+                };
+                if let Some(ref mut pm) = pm_clone {
+                    // c:2243 — `paramtab->printnode(&pm->node,
+                    //   PRINT_TYPESET|with_ns);`
+                    printparamnode(pm, PRINT_TYPESET | with_ns);
                 }
             } else {
                 // c:Src/builtin.c:3110-3113 — when `typeset -p NAME`
