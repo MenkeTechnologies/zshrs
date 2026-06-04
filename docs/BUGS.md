@@ -41373,7 +41373,37 @@ behave inconsistently between zsh and zshrs.
 
 ## #522 — `TRAPDEBUG()` function-form not invoked before each command — extends #381 family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `TRAPDEBUG` function-form
+now fires before each command. The `$ZSH_DEBUG_CMD`
+parameter is also populated with the command text, so
+debuggers / profilers can inspect what's about to run.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPDEBUG() { echo "DEBUG"; }; true; true'
+DEBUG
+DEBUG
+$ ./target/debug/zshrs --zsh -fc 'TRAPDEBUG() { echo "DEBUG"; }; true; true'
+DEBUG
+DEBUG
+
+# With $ZSH_DEBUG_CMD inspection:
+$ /opt/homebrew/bin/zsh -fc 'TRAPDEBUG() { echo "debug: $ZSH_DEBUG_CMD"; }; echo hello; echo world'
+debug: echo hello
+hello
+debug: echo world
+world
+$ ./target/debug/zshrs --zsh -fc 'TRAPDEBUG() { echo "debug: $ZSH_DEBUG_CMD"; }; echo hello; echo world'
+debug: echo hello
+hello
+debug: echo world
+world
+```
+
+Doc-only flip; no code change in this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'TRAPDEBUG() { echo "DEBUG"; }; true; true'
@@ -41383,46 +41413,6 @@ DEBUG
 $ ./target/debug/zshrs --zsh -fc 'TRAPDEBUG() { echo "DEBUG"; }; true; true'
 (empty)
 ```
-
-`TRAPDEBUG` is zsh's documented pseudo-signal that fires
-**before each command execution** — distinct from regular
-TRAP* handlers that fire on POSIX signals. Used by:
-- Shell debuggers (zsh-debug)
-- Profilers measuring per-command timings
-- Audit tools recording command execution
-- `set -x`-like custom trace emitters
-
-zshrs doesn't invoke `TRAPDEBUG` — same root cause as
-#381 (TRAPINT not invoked), #382 (TRAPEXIT), #389
-(TRAPZERR) — function-form TRAP* handlers not
-dispatched.
-
-The DEBUG pseudo-signal is structurally different from
-real signals: it must fire from the command-execution
-loop, not the signal handler. So fixing it might need
-a separate dispatch point from the other TRAP* fixes.
-
-**Where** — `src/ported/exec/exec.rs::execcmd` (command-
-exec entry): must check for `TRAPDEBUG` function and
-invoke it before each command. C-source
-`Src/exec.c::execcmd` calls `dotrapargs(SIGDEBUG, ...)`
-which routes through both function-trap and string-trap
-tables.
-
-**Impact** — debuggers / profilers that use TRAPDEBUG
-get zero call-points. Specifically:
-- zsh-debug (the debugger): completely non-functional
-- p10k transient-prompt timing: incorrect (relies on
-  TRAPDEBUG for "command-start" marker)
-- Custom command-counter scripts: never increment
-
-**Workaround** — string-form trap:
-```sh
-trap 'echo "DEBUG"' DEBUG
-```
-
-(Untested — likely also broken since same dispatch
-gap.)
 
 ---
 
@@ -47441,7 +47431,7 @@ no longer reports the internal trap-machinery scalar.
 | 519 | **CRITICAL** infinite-recursion function crashes shell with stack overflow (exit 134) — zsh: FUNCNEST limit catches | **fixed** 2026-06-04 | n/a |
 | 520 | `HISTSIZE=N` assignment ignored — reads back as default `999999999` regardless | **fixed** 2026-06-04 | `HISTSIZE=100; echo $HISTSIZE` → `100` matches zsh |
 | 521 | `[[ "" == (#c0,0) ]]` matches in zshrs — zsh rejects as "bad pattern" — extends #489 broken-cN family | **fixed** 2026-06-03 | n/a |
-| 522 | `TRAPDEBUG()` function-form not invoked before each command — extends #381 family (DEBUG pseudo-signal) | **port-bug** | none — debuggers/profilers can't hook |
+| 522 | `TRAPDEBUG()` function-form not invoked before each command — extends #381 family (DEBUG pseudo-signal) | **fixed** 2026-06-04 | TRAPDEBUG fires per-command + $ZSH_DEBUG_CMD populated |
 | 523 | `${(q)control_char}` produces raw `\\<CHAR>` instead of `$'\\X'` ANSI-C-quoted form — round-trip broken | **fixed** 2026-06-03 | n/a |
 | 524 | `%r` prompt escape printed literally — extends prompt-escape gap family (#390/#391/#412/etc.) | **fixed** 2026-06-04 | n/a |
 | 525 | `print -x notanint ARG` silently rc=0 — zsh: "positive integer expected after -x" | **fixed** 2026-06-04 | `print -x foo bar` errors `positive integer expected after -x: foo` matching zsh |
