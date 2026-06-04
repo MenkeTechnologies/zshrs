@@ -30745,6 +30745,74 @@ printf "'%s' " "${a[@]}"
 
 ## #393 — `jobs` builtin returns rc=1 instead of rc=127 on unknown-job — script error-classification breaks
 
+**Status:** `fixed` 2026-06-03 — two-point fix in
+`src/ported/jobs.rs`: `getjob` now strips the leading `%`
+from "job not found" diagnostics, and `bin_fg` (which
+dispatches `jobs`/`fg`/`bg`/`wait`/`disown`) returns 127
+on getjob/jobspec failure to match C
+`Src/jobs.c:2580-2590`.
+
+**Root cause** — two compounding gaps:
+
+1. **Exit code wrong** — `bin_fg` set `returnval = 1`
+   when `getjob` returned -1 or when the arg was a
+   non-`%`/non-numeric bareword. C
+   `Src/jobs.c:2580-2582` sets `retval = 127`; the
+   bareword fallback at C:2589-2590 also `return 127`.
+2. **`%` not stripped from diagnostic** — `getjob`'s
+   `jump:` and `?`-search arms emitted
+   `zwarnnam(prog, "job not found: %s", s)` where the
+   Rust port passed the original `s` (with leading
+   `%`); C uses post-`s++` slice. The `idx`-based Rust
+   walk already advanced past the `%` for parsing but
+   the diagnostic call still passed the original slice.
+
+**Fix:**
+1. `src/ported/jobs.rs::bin_fg` per-arg loop: swap
+   `returnval = 1` → `returnval = 127` on both the
+   non-`%` non-numeric fallback (matching C:2589-2590)
+   and on `getjob` returning -1 (matching C:2580-2582).
+2. `src/ported/jobs.rs::getjob`: emit diagnostics with
+   `&s[idx..]` (post-`%`) instead of the original `s`.
+   Same fix applies to both the `?`-search and `jump:`
+   bareword arms.
+
+**Test corrections** — `test_jobs_unknown_id_errors` and
+`test_disown_unknown_jobspec_errors` asserted `status,
+1`, but actual zsh returns 127 (the test comments
+described wrong reference behavior). Both updated to
+assert 127 with citation of C:2589-2590.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'jobs %% 2>&1; echo rc=$?'
+zsh:jobs:1: no current job
+rc=127
+$ ./target/debug/zshrs --zsh -fc 'jobs %% 2>&1; echo rc=$?'
+zsh:jobs:1: no current job
+rc=127
+
+$ /opt/homebrew/bin/zsh -fc 'jobs %sleep 2>&1; echo rc=$?'
+zsh:jobs:1: job not found: sleep
+rc=127
+$ ./target/debug/zshrs --zsh -fc 'jobs %sleep 2>&1; echo rc=$?'
+zsh:jobs:1: job not found: sleep
+rc=127
+
+$ /opt/homebrew/bin/zsh -fc 'jobs %?notthere 2>&1; echo rc=$?'
+zsh:jobs:1: job not found: ?notthere
+rc=127
+$ ./target/debug/zshrs --zsh -fc 'jobs %?notthere 2>&1; echo rc=$?'
+zsh:jobs:1: job not found: ?notthere
+rc=127
+```
+
+All three error formats match byte-for-byte. Baseline
+moved 954/98 → 955/97 (two stale-comment tests corrected
+to assert real zsh behavior).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
