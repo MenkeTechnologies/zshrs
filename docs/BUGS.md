@@ -41883,7 +41883,30 @@ expressions.
 
 ## #530 — zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) shipped as always-available — zsh: require `zmodload zsh/files`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partial-fix` 2026-06-04 — `${modules[zsh/files]}`
+introspection now returns unset by default and flips to
+loaded after `zmodload zsh/files`. The `type mkdir` /
+`command -v mkdir` lookup still finds the zshrs-side
+shell builtin because builtintab registration is
+independent of modulestab. Same remaining-gap class as
+#532/#535. Closed via the `#532` fix combo.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${modules[zsh/files]-unset}]"'
+[unset]
+$ ./target/debug/zshrs --zsh -fc 'echo "[${modules[zsh/files]-unset}]"'
+[unset]
+
+$ ./target/debug/zshrs --zsh -fc 'zmodload zsh/files; echo "[${modules[zsh/files]}]"'
+[loaded]
+```
+
+See `#532` for the full fix rationale and the
+`type X` builtintab-gating gap that remains.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'type mkdir'
@@ -41891,50 +41914,6 @@ mkdir is /bin/mkdir
 
 $ ./target/debug/zshrs --zsh -fc 'type mkdir'
 mkdir is a shell builtin
-```
-
-Verified across the entire zsh/files command set:
-| Command | zsh                | zshrs                  |
-|---------|--------------------|------------------------|
-| mkdir   | `/bin/mkdir`       | shell builtin          |
-| rmdir   | `/bin/rmdir`       | shell builtin          |
-| mv      | `/bin/mv`          | shell builtin          |
-| rm      | `/bin/rm`          | shell builtin          |
-| ln      | `/bin/ln`          | shell builtin          |
-| chmod   | `/bin/chmod`       | shell builtin          |
-| chown   | `/usr/sbin/chown`  | shell builtin          |
-
-zsh provides these via the `zsh/files` module — but only
-after explicit `zmodload zsh/files`. The user opts in.
-zshrs ships them as **always-available builtins** in
-`--zsh` mode.
-
-Extends bash-compat-contamination family (#475/#504 with
-caller/help/complete/compopt/mapfile/readarray) AND
-zsh-module-auto-load contamination — multiple opt-in
-features are pre-loaded in zshrs.
-
-The visible symptom: error message format diverges.
-Builtin `mkdir` emits Rust-format errors (`(os error
-17)`) where external `/bin/mkdir` emits OS-native
-errors. Scripts that grep stderr for specific error
-patterns get different results.
-
-**Where** — `src/ported/builtins/registry.rs` (or the
-module loader): zsh/files commands should be in the
-`zsh/files` module — registered only when the module
-loads. C-source `Src/Modules/files.c` is a module gated
-behind `zmodload`.
-
-**Impact** — error-message format differences,
-PATH-resolution differences, and detection-via-`type`
-differences. Plugins that probe `type cmd` to decide
-between builtin and external get wrong answers.
-
-**Workaround** — `command mkdir` to force external
-binary even when builtin exists:
-```sh
-command mkdir -p ...   # always external
 ```
 
 ---
@@ -47566,7 +47545,7 @@ no longer reports the internal trap-machinery scalar.
 | 527 | `(( () ))` empty math silently rc=1 — zsh: "bad math expression: operand expected" rc=2 | **fixed** 2026-06-03 | n/a |
 | 528 | `typeset -a a=("hello world")` splits QUOTED string into multiple elements — worse than #502 | **fixed** 2026-06-04 | n/a |
 | 529 | `$((1+(2))` paren-mismatch math silently rc=0 (no output) — zsh: parse error | **port-bug** | visual audit |
-| 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **port-bug** | `command mkdir` to force external |
+| 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **partial-fix** 2026-06-04 | `${modules[zsh/files]}` unset by default; `type mkdir` builtintab gate deferred |
 | 531 | `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 trap-function family | **port-bug** | string-form `trap`/`CHLD` |
 | 532 | zsh modules `zsh/stat`/`zsh/zselect`/`zsh/zpty`/`zsh/zftp` auto-loaded — extends #530 (zmodload-required-but-pre-loaded) | **partial-fix** 2026-06-04 | introspection now unset; `type X` builtintab gate deferred |
 | 533 | `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2 (worst-case rc=0 set-e bypass) | **port-bug** | visual audit |
