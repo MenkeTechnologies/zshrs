@@ -37459,7 +37459,18 @@ Tedious; needs full opt-list from zsh.
 
 ## #465 — `*(om)` glob mtime-sort qualifier returns wrong order — sort ignored
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `(om)` mtime-sort qualifier now
+correctly returns files newest-first matching zsh. Likely landed via
+earlier glob qualifier parity work.
+
+**Verify**
+```sh
+$ touch /tmp/_zg/a; sleep 0.1; touch /tmp/_zg/b; sleep 0.1; touch /tmp/_zg/c
+$ ./target/debug/zshrs --zsh -fc 'echo /tmp/_zg/*(om)'
+/tmp/_zg/c /tmp/_zg/b /tmp/_zg/a    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ mkdir -p /tmp/_zg
@@ -37582,7 +37593,18 @@ done
 
 ## #467 — `$-` shell-flags parameter missing `f` flag when shell launched with `-f`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `$-` now includes `f` when shell
+launched with `-f` matching zsh. Likely landed via earlier `dashgetfn`
+parity work or via #102's clarification of the `--zsh -c` vs `-fc`
+mode distinction.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'echo "[$-]"'
+[569Xf]    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[$-]"'
@@ -37637,7 +37659,35 @@ checking specifically for that opt.
 
 ## #468 — `functions -t` (list traced) output shows function body instead of name list
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/builtin.rs](../src/ported/builtin.rs)).
+
+**Root cause** — C `Src/builtins.c::bin_functions` calls
+`scanshfunc(1, on|off, DISABLED, ...)` where `on|off` is the filter
+mask: only entries where `(flags & flags1) == flags1` are emitted.
+zshrs's `scanshfunc` doesn't accept the filter, and the bin_functions
+no-args path didn't apply it inside the closure either — so
+`functions -t` walked every function and printed its full body.
+
+**Fix** — apply the `on | off` filter inside the scanshfunc closure
+in `bin_functions`'s no-args path. When the mask is non-zero and an
+entry's flags don't match, skip it. For `-t` (PM_TAGGED in `on`),
+only traced fns pass the filter; in the test, no fn has PM_TAGGED set
+at the time of dump, so output is empty matching zsh.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'f() { :; }; functions -T f; functions -t'
+(empty)    # matches zsh
+
+# regression: bare `functions` (no opts) still lists all
+$ ./target/debug/zshrs --zsh -fc 'f() { :; }; g() { :; }; functions' | head
+f () { ... }
+g () { ... }
+```
+
+Baseline 961/91 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { :; }; functions -T f; functions -t'
@@ -44254,10 +44304,10 @@ qualifiers always have a digit suffix.
 | 462 | `disown` in subshell emits "no current job" diagnostic (zsh: silent no-op when subshell's job-table is empty) | **port-bug** | pass explicit pid + `2>/dev/null` |
 | 463 | `set` no-args shows special vars (`!`/`#`/`$`/`-`) as empty strings — special-param getters not invoked in dump | **fixed** 2026-06-04 | n/a |
 | 464 | `emulate sh` doesn't toggle sh-mode setopt block (zsh: ~8 opts on/off) — emulation table missing/no-op | **port-bug** | manual setopt of full sh-emulation list |
-| 465 | `*(om)` glob mtime-sort qualifier returns wrong order — sort ignored; likely all `(oX)`/`(OX)` affected | **port-bug** | external `ls -t` for mtime sort |
+| 465 | `*(om)` glob mtime-sort qualifier returns wrong order — sort ignored; likely all `(oX)`/`(OX)` affected | **fixed** 2026-06-04 | n/a |
 | 466 | `pushd +N` / `popd +N` dirstack indexing cycles wrong direction — +1 lands on wrong stack entry | **port-bug** | use absolute paths via `cd` |
-| 467 | `$-` shell-flags parameter missing `f` flag when shell launched with `-f` — likely `c`/`i`/`s`/`l` also missing | **port-bug** | `[[ -o rcs ]]` for specific opt |
-| 468 | `functions -t` (list traced) emits full function body instead of name list (zsh: empty or names only) | **port-bug** | `grep`-extract names from full output |
+| 467 | `$-` shell-flags parameter missing `f` flag when shell launched with `-f` — likely `c`/`i`/`s`/`l` also missing | **fixed** 2026-06-04 | n/a |
+| 468 | `functions -t` (list traced) emits full function body instead of name list (zsh: empty or names only) | **fixed** 2026-06-04 | n/a |
 | 469 | `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier" | **port-bug** | manual filter loop after glob |
 | 470 | `emulate -L sh` shows `localoptions`/`localpatterns`/`localtraps` but doesn't apply sh-mode opts — same root as #464 | **port-bug** | manual setopt of sh list |
 | 471 | `zmodload -u zsh/nonexistent` silently rc=0 — should error "no such module" (zsh: rc=1) | **port-bug** | manual module-list check before unload |

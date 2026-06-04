@@ -5964,11 +5964,19 @@ pub fn bin_functions(
             on &= !PM_UNDEFINED; // c:3665
         }
         // c:3666 — `scanshfunc(1, on|off, DISABLED, shfunctab->printnode,
-        //              pflags, expand);` — walk every (non-DISABLED) shfunc
-        // and emit printnode in the format chosen by `pflags`. PRINT_NAMEONLY
-        // → just the name; otherwise full `name () { … }` shape with autoload
-        // stubs printed as `name () { # undefined; builtin autoload -XU }`.
+        //              pflags, expand);` — C's scanhashtable takes a
+        // `flags1` filter mask: only entries where `(flags & flags1) ==
+        // flags1` are emitted. Rust's `scanshfunc` doesn't accept the
+        // filter, so apply it inside the closure. Without this gate
+        // `functions -t` (no args) walked every function and printed
+        // its body — should be empty / name-only restricted to
+        // PM_TAGGED entries. Bug #468.
+        let filter_mask = on | off;
         scanshfunc(|_nm, entry| {
+            let f = entry.node.flags as u32;
+            if filter_mask != 0 && (f & filter_mask) != filter_mask {
+                return;
+            }
             printshfuncexpand(entry, pflags, expand);
         });
         unqueue_signals(); // c:3668
