@@ -2871,7 +2871,13 @@ impl ZshCompiler {
         // form. Direct port of subst.c:2596 `case '~'` reached via
         // the unbraced-shorthand path. Without this, `$~name` was
         // emitted as literal text.
-        if !has_bnull && untoked.len() >= 3 && untoked.starts_with("$~") {
+        //
+        // Also handle the no-NAME shapes `$~` and `$~~` (bug #547):
+        // C `Src/subst.c:2596-2602` consumes the `~`/`~~` and then
+        // continues parsing the parameter name. When NO name follows,
+        // the result is empty (no parameter resolved). Emit an empty
+        // string in that case so the literal `$~` doesn't leak through.
+        if !has_bnull && untoked.starts_with("$~") {
             let rest = &untoked[2..];
             // `$~~NAME` toggles globsubst OFF — emit bare GET_VAR.
             let (do_glob, name_part) = if let Some(after) = rest.strip_prefix('~') {
@@ -2879,6 +2885,16 @@ impl ZshCompiler {
             } else {
                 (true, rest)
             };
+            if name_part.is_empty() {
+                // c:Src/subst.c:2596-2602 — `$~` / `$~~` with no name
+                // following. C consumes the `~`/`~~` and finds no
+                // parameter name; the result of the expansion is
+                // empty (the literal `$~` does NOT survive). Bug #547.
+                let _ = do_glob; // globsubst toggle was applied
+                let idx = self.builder.add_constant(Value::str(""));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                return;
+            }
             let valid = !name_part.is_empty()
                 && name_part
                     .chars()
