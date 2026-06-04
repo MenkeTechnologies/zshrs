@@ -44502,7 +44502,7 @@ qualifiers always have a digit suffix.
 | 94 | `(exec cmd); cmd2` parent shell terminates with subshell | **port-bug** | drop `exec` inside subshell |
 | 95 | Signal trap from `kill -X $$` in subshell fires immediately | **port-bug** | avoid signal-IPC across sub |
 | 96 | `%N/` `%N~` prompt escape doesn't truncate path | **port-bug** | manual `precmd` truncation |
-| 97 | `typeset -r` listing omits shell-internal readonly params (`!=0` etc.) | **port-bug** | n/a — semantic still readonly |
+| 97 | `typeset -r` listing omits shell-internal readonly params (`!=0` etc.) | **fixed** 2026-06-03 | PM_RO_BY_DESIGN flag surfaces internal readonly specials |
 | 98 | `[ "a" \< "b" ]` lex-compare bash ext accepted (zsh errors) | **port-bug** | `[[ < ]]` double-bracket |
 | 99 | `(#cN,M)` count quantifier + other `(#x)` flags not recognized | **port-bug** | `=~ {N,M}` regex form |
 | 100 | `typeset -R N x="hello"` doesn't right-truncate (full string kept) | **port-bug** | `printf "%Ns"` instead |
@@ -44575,7 +44575,7 @@ qualifiers always have a digit suffix.
 | 167 | Unclosed `{ cmd` silently runs (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 168 | Extra `}` after command silently ignored (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 169 | `{} always {} always {}` chained-always silently accepted | **fixed** 2026-06-02 | n/a |
-| 170 | `echo (abc` unclosed paren treated as literal | **port-bug** | careful review |
+| 170 | `echo (abc` unclosed paren treated as literal | **fixed** 2026-06-03 | compile_zsh trigger_glob covers bare `(`; haswilds gates NOMATCH |
 | 171 | `cmd \| \| cmd`/`&& &&`/`\|\| \|\|` empty operands silently accepted | **fixed** 2026-06-02 | n/a |
 | 172 | `${ }` whitespace-only param name silently empty (zsh: error) | **fixed** 2026-06-02 | n/a |
 | 173 | `${(t)$(cmdsub)}` returns `scalar` (zsh: cmdsub output) | **port-bug** | drop `(t)` flag |
@@ -44595,7 +44595,7 @@ qualifiers always have a digit suffix.
 | 187 | `f() { :; } > /file` redirect on fn-def creates file at def time | **port-bug** | redirect at call site |
 | 188 | Empty-array slice `${a[@]:0:1}` iterates once with empty val | **fixed** 2026-06-02 | n/a |
 | 189 | `${()-default}` empty-flag-paren silently returns `$-` | **fixed** 2026-06-02 | n/a |
-| 190 | `kill -L` lists signals (zsh: errors "unknown signal: SIGL") | **port-bug** | always use `-l` lowercase |
+| 190 | `kill -L` lists signals (zsh: errors "unknown signal: SIGL") | **fixed** 2026-06-03 | matches canonical jobs.c:2881-2908 |
 | 191 | `${(l.5..)s}` empty-fill silently accepted with garbage output | **fixed** 2026-06-02 | n/a |
 | 192 | `${(P)name[N]:mod}` indirect-arr-elem with modifier works (zsh: errors) | **port-bug** | temp var split |
 | 193 | `(( y = ${x:?msg} ))` continues after required-param error | **fixed** 2026-06-02 | n/a |
