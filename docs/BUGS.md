@@ -47035,11 +47035,11 @@ no longer reports the internal trap-machinery scalar.
 | 27 | `caller`/`help` extra builtins shadow user fns | **port-bug** | `disable caller help` |
 | 28 | `mkdir`/`rm`/`mv`/etc. shadowed as shell builtins | **port-bug** | `command rm` to bypass — partial overlap with #530 (require zmodload zsh/files) |
 | 29 | `"argv[N]=..."` literal stripped inside double quotes | **port-bug** | escape `\[` `\]` |
-| 30 | `setopt no_clobber` rejects `> /dev/null` | **port-bug** | `>\|` force-clobber |
+| 30 | `setopt no_clobber` rejects `> /dev/null` | **fixed** 2026-06-02 | `>\|` force-clobber |
 | 31 | `${EPOCHSECONDS:-x}` always uses default | **port-bug** | direct `$EPOCHSECONDS` access |
 | 32 | `hash -d name=~` doesn't expand `~` in value | **fixed** 2026-06-02 | use `$HOME` literal |
 | 33 | `set -e` doesn't fire on `(( false_cond ))` | **fixed** 2026-06-02 | `\|\| exit 1` explicit |
-| 34 | case `(a*\|b*))` paren-alt doesn't match w/ extended_glob | **port-bug** | drop outer parens or double them |
+| 34 | case `(a*\|b*))` paren-alt doesn't match w/ extended_glob | **fixed** 2026-06-02 | drop outer parens or double them |
 | 35 | `${(v)h[key]}` errors with bad substitution | **fixed** 2026-06-02 | drop the `(v)` for single subscript |
 | 36 | MULTIOS not implemented (multiple `>` / `<` redirects) | **port-bug** | explicit `tee`/`cat` |
 | 37 | `"${(z)str}"` quoted form splits fields | **port-bug** | `${(j: :)${(z)str}}` rejoin |
@@ -47339,36 +47339,36 @@ no longer reports the internal trap-machinery scalar.
 | 331 | ALL `${(FLAG)assoc[k]}` flags broken on subscripted-assoc-element (mirrors #328 for assoc) | **partial-fix** 2026-06-04 | case/quote families now match; `(t)h[k]` over-applies type-substring transform |
 | 332 | `${(u)@}` unique flag on positionals not applied — extends #277 sort family | **fixed** 2026-06-02 | copy to array, dedup via `[@]` |
 | 333 | `${(qL)*}` chained quote+lower on `$*` only applies lowercase, drops quote | **fixed** 2026-06-02 | apply flags sequentially via temp array |
-| 334 | `zsh -f` doesn't disable `rcs` option — `[[ -o rcs ]]` returns "on" instead of "off" | **port-bug** | (none — needs init.rs to toggle flag) |
-| 335 | `hashdirs` option default differs — zsh: off (default), zshrs: on | **port-bug** | explicit `unsetopt hashdirs` in .zshrc |
+| 334 | `zsh -f` doesn't disable `rcs` option — `[[ -o rcs ]]` returns "on" instead of "off" | **fixed** 2026-06-02 | (none — needs init.rs to toggle flag) |
+| 335 | `hashdirs` option default differs — zsh: off (default), zshrs: on | **fixed** 2026-06-02 | explicit `unsetopt hashdirs` in .zshrc |
 | 336 | `${(O)@}`/`${(n)@}`/`${(oi)@}` sort variants on positionals all silently no-op (extends #277/#332) | **fixed** 2026-06-02 | copy to array, sort via `[@]` |
 | 337 | `(( n += "5" ))` quoted-string operands in `(( ))` arith treated as `0` (zsh: parses as int) | **fixed** 2026-06-02 | use `$((...))` form |
 | 338 | `h["key'with'special"]=v` assoc keys with embedded quotes/specials lost silently | **port-bug** | sanitize keys to alphanumeric |
 | 339 | `h["a\\nb"]=v` assoc keys with backslash escapes round-trip differently — `(@k)` output not quoted | **port-bug** | base64-encode keys |
-| 340 | `print -P "%Nd"`/`%-Nd` numeric path-truncate prompt-escape not implemented (e.g., `%2d` last-2-comps) | **port-bug** | manual `${PWD##*/}` |
+| 340 | `print -P "%Nd"`/`%-Nd` numeric path-truncate prompt-escape not implemented (e.g., `%2d` last-2-comps) | **fixed** 2026-06-02 | manual `${PWD##*/}` |
 | 341 | `$((arr[(i)pat]))` subscript-flag inside arith subscript returns 0 (zsh: returns match index) | **fixed** 2026-06-02 | extract index first via temp var |
 | 342 | `options[opt]=on/off` assignment doesn't toggle option — assoc-write→state binding missing | **port-bug** | direct `setopt`/`unsetopt` |
-| 343 | `bindkey "key" widget` define-binding silent no-op — every `.zshrc` keybinding ignored (daily-driver blocker) | **port-bug** | (none — keymap insert broken) |
+| 343 | `bindkey "key" widget` define-binding silent no-op — every `.zshrc` keybinding ignored (daily-driver blocker) | **fixed** 2026-06-02 | (none — keymap insert broken) |
 | 344 | `bindkey -r "key"` doesn't remove binding — companion to #343, key remains bound | **port-bug** | (none — keymap delete broken) |
 | 345 | Default `^A` binding differs — `self-insert` (zsh -f) vs `beginning-of-line` (zshrs always) | **port-bug** | (none — -f doesn't strip keymap) |
-| 346 | `read -E` flag (echo input back to stdout) not implemented — tee-like read pipelines silently lose output | **port-bug** | use explicit `tee /dev/stderr` |
-| 347 | `read -z` flag (read from command buffer) returns empty — buffer-roundtrip broken | **port-bug** | (none — buffer not connected) |
-| 348 | `read -p VAR` flag semantics differ — zsh: read-from-coproc (errors when none), zshrs: parse-error/silent | **port-bug** | use `read <&p` (may also be broken per #205) |
+| 346 | `read -E` flag (echo input back to stdout) not implemented — tee-like read pipelines silently lose output | **fixed** 2026-06-02 | use explicit `tee /dev/stderr` |
+| 347 | `read -z` flag (read from command buffer) returns empty — buffer-roundtrip broken | **fixed** 2026-06-02 | (none — buffer not connected) |
+| 348 | `read -p VAR` flag semantics differ — zsh: read-from-coproc (errors when none), zshrs: parse-error/silent | **fixed** 2026-06-02 | use `read <&p` (may also be broken per #205) |
 | 349 | `export ASSOC_VAR` for assoc adds malformed `NAME=` empty entry to env (zsh: refuses) | **fixed** 2026-06-02 | serialize via `typeset -p` before export |
 | 350 | Integer arithmetic at INT64 boundary returns `0` silently — overflow indistinguishable from intended zero | **fixed** 2026-06-02 | range-validate inputs before arith |
 | 351 | `typeset -p arr` doesn't quote space-containing elements — round-trip via eval splits "a b" into 2 elems | **fixed** 2026-06-02 | manual `(qq)`-quote (also gappy per #290) |
 | 352 | `print -P "%u"`/`%s` reset codes use generic `ESC[0m` instead of attribute-specific `ESC[24m`/`ESC[27m` | **port-bug** | manual ANSI escape codes |
 | 353 | `exec FD>&1` inside `$(...)` cmdsub doesn't capture FD-write content — stderr-capture idiom broken | **port-bug** | use temp file for stderr capture |
-| 354 | `trap EXIT` inside `$(...)` cmdsub doesn't fire — extends exit-handler family (#203/#215/#232/#240) | **port-bug** | cleanup outside cmdsub |
-| 355 | `${s/#%pat/repl}` both-anchor substitution pattern unsupported — returns unchanged | **port-bug** | use `case` for exact-match dispatch |
+| 354 | `trap EXIT` inside `$(...)` cmdsub doesn't fire — extends exit-handler family (#203/#215/#232/#240) | **fixed** 2026-06-02 | cleanup outside cmdsub |
+| 355 | `${s/#%pat/repl}` both-anchor substitution pattern unsupported — returns unchanged | **fixed** 2026-06-02 | use `case` for exact-match dispatch |
 | 356 | `${(S)s//pat/repl}` shortest-match flag not applied in replace-all — greedy match instead | **fixed** 2026-06-02 | manual while-loop replace |
 | 357 | `setopt warn_nested_var` warning not emitted (extends #223 warn_create_global; #220 err_return strict-mode family) | **port-bug** | (none — diagnostic check not wired) |
 | 358 | `cd ~-N` dirstack-tilde-expansion fails — `~-0`/`~-1` treated as literal "~-N" path | **fixed** 2026-06-02 | `cd "${dirstack[N+1]}"` indexed |
-| 359 | Bare `pushd` (no args) doesn't `cd` to `$HOME` when dirstack empty — stays at current dir | **port-bug** | explicit `cd ~` |
+| 359 | Bare `pushd` (no args) doesn't `cd` to `$HOME` when dirstack empty — stays at current dir | **fixed** 2026-06-02 | explicit `cd ~` |
 | 360 | `functions -M name N M handler` math-function registration not implemented — DSL/sci-arith patterns broken | **fixed** 2026-06-02 | call shell fn directly with `$REPLY` capture |
-| 361 | `typeset -R N` width-flag doesn't truncate values longer than N — overflow ruins fixed-width column alignment | **port-bug** | manual `[[ ${#s} -gt N ]] && s="${s: -N}"` |
-| 362 | `typeset -Z N` zero-pad doesn't truncate values wider than N — extra digits leak through | **port-bug** | manual truncate before assign |
-| 363 | `${(z)cmd}` tokenize-flag drops comment tokens AND doesn't preserve `$VAR` literals — completion/parsing tools break | **port-bug** | strip `#*` before tokenizing (partial fix) |
+| 361 | `typeset -R N` width-flag doesn't truncate values longer than N — overflow ruins fixed-width column alignment | **fixed** 2026-06-02 | manual `[[ ${#s} -gt N ]] && s="${s: -N}"` |
+| 362 | `typeset -Z N` zero-pad doesn't truncate values wider than N — extra digits leak through | **fixed** 2026-06-02 | manual truncate before assign |
+| 363 | `${(z)cmd}` tokenize-flag drops comment tokens AND doesn't preserve `$VAR` literals — completion/parsing tools break | **fixed** 2026-06-02 | strip `#*` before tokenizing (partial fix) |
 | 364 | `$'\uNNNN'` Unicode-codepoint escape in C-string not interpreted — emits literal `uNNNN` | **fixed** 2026-06-02 | embed Unicode chars literally in source |
 | 365 | `${s/multibyte_char/repl}` substitution PANICS with "not a char boundary" — **CRITICAL CRASH** | **port-bug** | use sed/external for multibyte substitution |
 | 366 | `h[multibyte_key]=v` assoc with UTF-8 key PANICS with "not a char boundary" — **CRITICAL CRASH** | **port-bug** | use ASCII-only keys |
