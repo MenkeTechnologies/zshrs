@@ -6452,14 +6452,35 @@ pub fn paramsubst(
                         }
                         return o;
                     }
+                    // c:Src/glob.c igetmatch SUB_SUBSTR + SUB_LONG —
+                    // the `(S)` flag picks shortest match at each
+                    // position; default is greedy (longest first).
+                    // For `${(S)s//a*/X}` on "aaa", shortest at q=0 is
+                    // "a" (length 1), so each `a` is replaced
+                    // individually → "XXX". Without (S) the longest
+                    // match consumes all "aaa" → single "X". Bug #356.
+                    let substr_short = (sub_flags_get() & SUB_SUBSTR) != 0;
                     let mut q = 0_usize;
                     while q < nn {
                         let mut m: Option<usize> = None;
-                        for e in (q + 1..=nn).rev() {
-                            let c: String = cv[q..e].iter().collect();
-                            if crate::vm_helper::glob_match_static(&c, &pat) {
-                                m = Some(e);
-                                break;
+                        if substr_short {
+                            // Shortest: e walks q+1..=nn ascending.
+                            for e in q + 1..=nn {
+                                let c: String = cv[q..e].iter().collect();
+                                if crate::vm_helper::glob_match_static(&c, &pat) {
+                                    m = Some(e);
+                                    break;
+                                }
+                            }
+                        } else {
+                            // Greedy (default): e walks q+1..=nn
+                            // descending.
+                            for e in (q + 1..=nn).rev() {
+                                let c: String = cv[q..e].iter().collect();
+                                if crate::vm_helper::glob_match_static(&c, &pat) {
+                                    m = Some(e);
+                                    break;
+                                }
                             }
                         }
                         if let Some(e) = m {
