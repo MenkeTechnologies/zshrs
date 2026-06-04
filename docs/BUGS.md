@@ -44464,6 +44464,62 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #580 — bare `$NAME:s/PAT/REPL/` substitution modifier ignored — extends #579 to :s and :gs
+
+**Status:** `fixed` 2026-06-04 — bare-form modifier walker now
+absorbs `:s/PAT/REPL/` and `:gs/PAT/REPL/` substitution forms in
+addition to the simple letter modifiers handled by #579.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo $a:s/l/L/'
+heLlo
+
+$ ./target/debug/zshrs --zsh -fc 'a=hello; echo $a:s/l/L/'   # before
+hello:s/l/L/
+```
+
+**Root cause** — #579's bare-form walker was scoped to letter
+modifiers only (`h/t/r/e/l/u/q/Q/a/A/P`) plus optional digit
+counts. `:s/x/y/` and `:gs/x/y/` substitution forms need a
+delimiter-aware body walk (the char after `s` or `gs` opens the
+pattern, terminator is the same char). The original deferral
+comment noted this; this iteration lands it.
+
+**Fix** — both `compile_zsh.rs::find_expansion_end` (bare-name
+arm) and `subst.rs::paramsubst` (bare-form modifier walker)
+extended with a `:s/.../` parser:
+
+1. Probe optional `g` prefix (for `:gs/...`).
+2. Require `s` after the optional `g`.
+3. Read delimiter char (next char after `s`).
+4. Walk pattern body honoring backslash escapes; stop at delim.
+5. Walk replacement body same way; stop at delim or EOI.
+6. Pass the entire `:s.../` (or `:gs.../`) span to `modify()`
+   which routes through subst.rs:10676 — the canonical
+   history-modifier code that already handles the
+   substitution.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'a=hello; echo $a:s/l/L/'         # single
+heLlo
+$ ./target/debug/zshrs -fc 'a=hello; echo $a:gs/l/L/'        # global
+heLLo
+$ ./target/debug/zshrs -fc 'a=hello; echo $a:s/l/L/:u'       # chain
+HELLO
+$ ./target/debug/zshrs -fc 'a=hello; echo "$a:s/l/L/"'       # DQ
+heLlo
+$ ./target/debug/zshrs -fc 'a=hi; echo $a:u'                 # #579 regression
+HI
+$ ./target/debug/zshrs -fc 'a=hi; b=there; echo $a:$b'       # no false positive
+hi:there
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #579 — bare `$NAME:MOD` modifier ignored — printed literally as `:MOD` suffix
 
 **Status:** `fixed` 2026-06-04 — two-point fix: compile_zsh
@@ -45480,6 +45536,7 @@ no longer reports the internal trap-machinery scalar.
 | 577 | bare `$#-`/`$#?` return 0 — tokenized single-char specials not handled in brace-free `$#X` rewrite | **fixed** 2026-06-04 | token-to-ascii map before recursing into `${#X}` |
 | 578 | `${a%x*}` etc. leak `¡` Nularg + leading empty in unquoted operator splat | **fixed** 2026-06-04 | auto_splat gates Nularg on qt and drops empty nodes when !qt |
 | 579 | bare `$NAME:MOD` modifier ignored (printed `:u` literally) | **fixed** 2026-06-04 | compile_zsh extends expansion span; paramsubst bare-arm runs modify() |
+| 580 | bare `$NAME:s/PAT/REPL/` substitution modifier ignored — extends #579 | **fixed** 2026-06-04 | walker absorbs :s and :gs delimiter-bounded substitution forms |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
