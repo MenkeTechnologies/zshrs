@@ -307,7 +307,7 @@ pub fn bin_rmdir(
                 &format!(
                     "cannot remove directory `{}': {}",
                     arg,
-                    std::io::Error::last_os_error()
+                    crate::ported::compat::last_errstr()
                 ),
             );
             err = 1; // c:162
@@ -535,7 +535,12 @@ pub fn domove(nam: &str, movefn: MoveFunc, p: &str, q: &str, flags: i32) -> i32 
         } else {
             p
         };
-        zwarnnam(nam, &format!("`{}': {}", errfile, osek)); // c:357
+        // Bug #112 — use C strerror via last_errstr to avoid the
+        // " (os error N)" Rust suffix that Display appends.
+        zwarnnam(
+            nam,
+            &format!("`{}': {}", errfile, crate::ported::compat::last_errstr()),
+        ); // c:357
         return 1; // c:358
     }
     0 // c:362
@@ -718,7 +723,7 @@ pub fn rm_leaf(
         // c:594
         zwarnnam(
             rmm.nam, // c:594
-            &format!("{}: {}", arg, std::io::Error::last_os_error()),
+            &format!("{}: {}", arg, crate::ported::compat::last_errstr()),
         );
         return 1; // c:594
     }
@@ -742,7 +747,7 @@ pub fn rm_dirpost(
         // c:608
         zwarnnam(
             rmm.nam, // c:616
-            &format!("{}: {}", arg, std::io::Error::last_os_error()),
+            &format!("{}: {}", arg, crate::ported::compat::last_errstr()),
         );
         return 1; // c:616
     }
@@ -830,7 +835,7 @@ pub fn chmod_dochmod(
         // c:646
         zwarnnam(
             chm.nam, // c:655
-            &format!("{}: {}", arg, std::io::Error::last_os_error()),
+            &format!("{}: {}", arg, crate::ported::compat::last_errstr()),
         );
         return 1; // c:655
     }
@@ -913,7 +918,7 @@ pub fn chown_dochown(
         // c:695
         zwarnnam(
             chm.nam, // c:695
-            &format!("{}: {}", arg, std::io::Error::last_os_error()),
+            &format!("{}: {}", arg, crate::ported::compat::last_errstr()),
         );
         return 1; // c:695
     }
@@ -947,7 +952,7 @@ pub fn chown_dolchown(
         // c:708
         zwarnnam(
             chm.nam, // c:708
-            &format!("{}: {}", arg, std::io::Error::last_os_error()),
+            &format!("{}: {}", arg, crate::ported::compat::last_errstr()),
         );
         return 1; // c:708
     }

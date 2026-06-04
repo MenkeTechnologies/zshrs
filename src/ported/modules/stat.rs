@@ -556,7 +556,11 @@ pub fn bin_stat(
         let meta = match meta {
             Ok(m) => m,
             Err(e) => {
-                zwarnnam(nam, &format!("{}: {}", path, e));
+                // Bug #112 — strip Rust's " (os error N)" suffix by
+                // routing the errno through the canonical strerror
+                // port (Src/compat.c:194).
+                let msg = crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0));
+                zwarnnam(nam, &format!("{}: {}", path, msg));
                 continue;
             }
         };

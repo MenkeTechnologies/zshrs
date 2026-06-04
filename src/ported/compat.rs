@@ -160,6 +160,18 @@ pub fn strerror(errnum: i32) -> String {
     }
 }
 
+/// Last-errno strerror helper — returns the C `strerror(errno)`
+/// string for the current OS error. Use this instead of
+/// `std::io::Error::last_os_error()` whenever the result is going
+/// into a user-visible diagnostic, because Rust's `Error::Display`
+/// appends " (os error N)" while C's `strerror` does not. Bug #112
+/// in docs/BUGS.md — every `zwarnnam(nam, &format!("...: {}",
+/// std::io::Error::last_os_error()))` site leaked the Rust suffix.
+pub fn last_errstr() -> String {
+    let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    strerror(e)
+}
+
 // Neither of these should happen, but resort to OPEN_MAX rather            // c:291
 // than return 0 or -1 just in case.                                        // c:292
 //                                                                          // c:293

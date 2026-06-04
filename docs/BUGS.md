@@ -47119,7 +47119,7 @@ no longer reports the internal trap-machinery scalar.
 | 100 | `typeset -R N x="hello"` doesn't right-truncate (full string kept) | **fixed** 2026-06-02 | `printf "%Ns"` instead |
 | 101 | `exec funcname` errors "not found" instead of running shell fn | **fixed** 2026-06-02 | drop `exec`, call fn directly |
 | 102 | `$-` doesn't include `f` from `-f` startup flag | **fixed** 2026-06-02 | n/a |
-| 103 | `$0` inside sourced script returns shell binary, not sourced file | **port-bug** | `${(%):-%x}` prompt-expansion |
+| 103 | `$0` inside sourced script returns shell binary, not sourced file | **fixed** 2026-06-02 | `${(%):-%x}` prompt-expansion |
 | 104 | Signal `kill -X $$` from inside fn is lost (trap never fires) | **fixed** 2026-06-02 | direct invocation post-fn |
 | 105 | `(f<NNN>)` permission glob qualifier ignored | **fixed** 2026-06-02 | `stat`-based loop |
 | 106 | `disable BUILTIN` doesn't actually disable (echo/cd still work) | **fixed** 2026-06-02 | `command BUILTIN` prefix |

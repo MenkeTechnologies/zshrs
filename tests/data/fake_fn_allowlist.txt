@@ -1714,3 +1714,14 @@ apply_bare_modifier_chain
 # C source validates syntax via direct parser inspection; Rust port
 # reuses matheval pipeline gated by noeval. Bug #617.
 mathevali_noeval
+
+# compat.rs last_errstr — Rust-only thin wrapper around std::io::Error::
+# last_os_error() + the existing strerror port. The whole purpose is to
+# avoid Rust's Error::Display ` (os error N)` suffix that leaks into
+# user-visible diagnostics at every files.rs zwarnnam site. The C source
+# has no equivalent because C code calls strerror(errno) directly at each
+# site; in Rust the equivalent two-line dance (last_os_error +
+# raw_os_error + strerror) appears verbatim 80+ times across files.rs,
+# stat.rs, system.rs etc. This helper centralises the dance so future
+# sites don't drift back to last_os_error().to_string(). Bug #112.
+last_errstr
