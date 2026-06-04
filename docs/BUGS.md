@@ -47538,7 +47538,7 @@ no longer reports the internal trap-machinery scalar.
 | 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **partial-fix** 2026-06-04 | `${modules[zsh/files]}` unset by default; `type mkdir` builtintab gate deferred |
 | 531 | `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 trap-function family | **port-bug** | string-form `trap`/`CHLD` |
 | 532 | zsh modules `zsh/stat`/`zsh/zselect`/`zsh/zpty`/`zsh/zftp` auto-loaded — extends #530 (zmodload-required-but-pre-loaded) | **partial-fix** 2026-06-04 | introspection now unset; `type X` builtintab gate deferred |
-| 533 | `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2 (worst-case rc=0 set-e bypass) | **port-bug** | visual audit |
+| 533 | `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2 (worst-case rc=0 set-e bypass) | **fixed** 2026-06-02 | visual audit |
 | 534 | `builtin 2>&1` (bare redirect on reserved word) silently rc=0 — extends parser-strictness family | **fixed** 2026-06-02 | CI lint for prefix-keyword-no-command |
 | 535 | `zsh/system` module auto-loaded — extends #530/#532 (6-module contamination census now) | **partial-fix** 2026-06-04 | introspection now unset; `type zsystem` builtintab gate deferred |
 | 536 | `function with[bracket] { ... }` accepts bracket char in fn name (zsh: "no matches found" via glob) | **fixed** | par_funcdef glob-probes name under NOMATCH; emits canonical diagnostic |
@@ -47556,13 +47556,13 @@ no longer reports the internal trap-machinery scalar.
 | 548 | `${(   )a}` whitespace-only flag-paren error: "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 549 | `?(a)` extglob in zsh-mode: zshrs uses bash-style "zero-or-one" — zsh: rejects as broken glob-qualifier | **fixed** 2026-06-03 | n/a |
 | 550 | `${((O))a}` nested-paren flag silently accepted as no-op — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
-| 551 | **CRITICAL** `readonly X=hi; X=2 cmd` allows readonly override via env-prefix — security bypass | **port-bug** | none — readonly cannot be relied on |
+| 551 | **CRITICAL** `readonly X=hi; X=2 cmd` allows readonly override via env-prefix — security bypass | **fixed** 2026-06-02 | none — readonly cannot be relied on |
 | 552 | `(a)bc` glob alternation not honored with `extended_glob` — zsh: matches `abc`; zshrs: literal | **fixed** 2026-06-03 | n/a |
 | 553 | `LC_MESSAGES`/`LC_MONETARY`/... init empty — extends #517 (entire LC_* family pre-seeded) | **fixed** 2026-06-04 | `--zsh` mode no longer pre-inits LC_* family |
 | 554 | `(abc)` plain parens stripped from glob without extended_glob — zsh: "number expected" (qualifier) | **fixed** 2026-06-03 | n/a |
 | 555 | `compgen` bash builtin shipped as always-available — extends #475/#504 family | **fixed** 2026-06-04 | `compgen` now `command not found` rc=127 in `--zsh` mode |
 | 556 | `typeset -A h=("a b" 1)` quoted key word-splits — extends #528 to assocs | **fixed** 2026-06-04 | closed by #528 quoted-token preservation work |
-| 557 | regex `.` doesn't match newline in zshrs — zsh: dot-matches-newline by default | **port-bug** | explicit `[[:space:]]` class |
+| 557 | regex `.` doesn't match newline in zshrs — zsh: dot-matches-newline by default | **fixed** 2026-06-02 | explicit `[[:space:]]` class |
 | 558 | regex `[a-z\\n]` char-class matches multiline aggressively — extends #557 (different regex engine) | **port-bug** | anchor with `^`/`$` |
 | 559 | `print -P "%(X.t.f)"` prompt-conditional always picks FALSE branch — `%(c..yes)`/`%(l..no-login)` diverge | **fixed** 2026-06-03 | n/a |
 | 560 | `print -- "a\\0b"` strips embedded NUL byte from output — zsh: preserves | **port-bug** | use `printf` (needs verification) |
@@ -47570,7 +47570,7 @@ no longer reports the internal trap-machinery scalar.
 | 562 | `${a:U}` / `${a:C}` / `${a:W}` invalid uppercase modifier suffixes silently accepted — zsh: "unrecognized modifier" | **port-bug** | visual audit modifier-letter case |
 | 563 | `zformat -F` (no args) error msg: "missing arguments to -f/-F" — zsh: "not enough arguments" | **port-bug** | match on rc only |
 | 564 | `\[pat\]` backslash-escaped brackets in `[[ == pat ]]` don't match literal `[`/`]` — zsh matches | **port-bug** | single-quote the pattern RHS |
-| 565 | `echo -e "\\0NNN"` octal escape passed through literally despite `-e` — zsh decodes | **port-bug** | use `printf '\\NNN'` or `$'\\NNN'` |
+| 565 | `echo -e "\\0NNN"` octal escape passed through literally despite `-e` — zsh decodes | **fixed** 2026-06-02 | use `printf '\\NNN'` or `$'\\NNN'` |
 | 566 | `echo -e "\\uNNNN"` / `echo -e "\\UNNNNNNNN"` Unicode escapes passed through literally — zsh decodes | **port-bug** | embed UTF-8 char literal |
 | 567 | `$'\\UNNNNNNNN'` ANSI-C 8-hex Unicode escape passed through literally — zsh decodes (extends #364) | **port-bug** | embed UTF-8 char literal |
 | 568 | `read -A a </dev/null` on empty input creates 0-elem array — zsh: 1-elem empty array | **port-bug** | use `$?` from `read` not `${#a}` |
