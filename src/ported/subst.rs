@@ -5183,6 +5183,18 @@ pub fn paramsubst(
                     };
                     let lo: i64 = eval_idx(lo, 1);
                     let hi: i64 = eval_idx(hi, s_chars.len() as i64);
+                    // c:Src/params.c — KSH_ARRAYS shifts scalar slice
+                    // bounds from 1-based to 0-based inclusive. `a[0,2]`
+                    // under KSH_ARRAYS = chars at positions 0,1,2.
+                    // Sibling of #610. Bug #611.
+                    let ksh_arrays = isset(crate::ported::zsh_h::KSHARRAYS);
+                    let (lo, hi) = if ksh_arrays {
+                        let new_lo = if lo >= 0 { lo + 1 } else { lo };
+                        let new_hi = if hi >= 0 { hi + 1 } else { hi };
+                        (new_lo, new_hi)
+                    } else {
+                        (lo, hi)
+                    };
                     let chars_arr: Vec<String> = s_chars.iter().map(|c| c.to_string()).collect();
                     getarrvalue(&chars_arr, lo, hi).concat()
                 } else {
