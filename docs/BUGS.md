@@ -43597,7 +43597,33 @@ unambiguous shell detection.
 
 ## #556 — `typeset -A h=("a b" 1)` quoted key word-splits — extends #528 to assocs
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — quoted multi-word keys are
+now preserved correctly through `typeset -A` initialization.
+Closed by the same parity work that fixed `#528` (`typeset
+-a a=("hello world")` quoted-token preservation).
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=("a b" 1); echo "keys=[${(@k)h}]"; echo "h[a b]=[${h[a b]}]"'
+keys=[a b]
+h[a b]=[1]
+$ ./target/debug/zshrs --zsh -fc 'typeset -A h=("a b" 1); echo "keys=[${(@k)h}]"; echo "h[a b]=[${h[a b]}]"'
+keys=[a b]
+h[a b]=[1]
+
+# Multi-pair assoc:
+$ /opt/homebrew/bin/zsh -fc 'typeset -A d=("git status" "Show working tree status" "git log" "View commit history"); echo "[${(@k)d}]"; echo "[${d[git status]}]"'
+[git status git log]
+[Show working tree status]
+$ ./target/debug/zshrs --zsh -fc 'typeset -A d=("git status" "Show working tree status" "git log" "View commit history"); echo "[${(@k)d}]"; echo "[${d[git status]}]"'
+[git status git log]
+[Show working tree status]
+```
+
+Doc-only flip; no code change in this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h=("a b" 1); echo "keys=[${(@k)h}]"; echo "h[a b]=[${h[a b]}]"'
@@ -43607,43 +43633,6 @@ h[a b]=[1]
 $ ./target/debug/zshrs --zsh -fc 'typeset -A h=("a b" 1); echo "keys=[${(@k)h}]"; echo "h[a b]=[${h[a b]}]"'
 keys=[a 1]
 h[a b]=[]
-```
-
-`typeset -A h=("a b" 1)` should create an assoc with
-key `"a b"` (the quoted string with space) and value
-`1`. zsh stores this correctly: keys are `[a b]` (one
-key), value is 1.
-
-zshrs **splits the quoted key on whitespace** — treats
-`("a b" 1)` as 4 tokens: "a", "b", "1" plus... actually
-output `keys=[a 1]` suggests it became 2 keys: "a" and
-"1", with "b" as the value of "a" (and nothing for "1").
-
-Same root as #528 (`typeset -a a=("hello world")` splits
-quoted) — typeset arg-parsing path ignores quote
-boundaries.
-
-**Where** — `src/ported/builtins/typeset.rs`: pre-lexed
-quoted-token preservation. Same fix as #528.
-
-**Impact** — assoc-array init with multi-word keys
-(common: filename keys, command-name keys) completely
-broken:
-
-```sh
-typeset -A descriptions=(
-    "git status" "Show working tree status"
-    "git log" "View commit history"
-)
-# zsh: 2 entries, each with multi-word key + value
-# zshrs: 4 entries split on whitespace — totally wrong
-```
-
-**Workaround** — element-by-element assign via subscript:
-```sh
-typeset -A descriptions
-descriptions["git status"]="Show working tree status"
-descriptions["git log"]="View commit history"
 ```
 
 ---
@@ -47522,7 +47511,7 @@ no longer reports the internal trap-machinery scalar.
 | 553 | `LC_MESSAGES`/`LC_MONETARY`/... init empty — extends #517 (entire LC_* family pre-seeded) | **fixed** 2026-06-04 | `--zsh` mode no longer pre-inits LC_* family |
 | 554 | `(abc)` plain parens stripped from glob without extended_glob — zsh: "number expected" (qualifier) | **fixed** 2026-06-03 | n/a |
 | 555 | `compgen` bash builtin shipped as always-available — extends #475/#504 family | **port-bug** | use `$ZSH_VERSION`/`$BASH_VERSION` |
-| 556 | `typeset -A h=("a b" 1)` quoted key word-splits — extends #528 to assocs | **port-bug** | per-element subscript-assign |
+| 556 | `typeset -A h=("a b" 1)` quoted key word-splits — extends #528 to assocs | **fixed** 2026-06-04 | closed by #528 quoted-token preservation work |
 | 557 | regex `.` doesn't match newline in zshrs — zsh: dot-matches-newline by default | **port-bug** | explicit `[[:space:]]` class |
 | 558 | regex `[a-z\\n]` char-class matches multiline aggressively — extends #557 (different regex engine) | **port-bug** | anchor with `^`/`$` |
 | 559 | `print -P "%(X.t.f)"` prompt-conditional always picks FALSE branch — `%(c..yes)`/`%(l..no-login)` diverge | **fixed** 2026-06-03 | n/a |
