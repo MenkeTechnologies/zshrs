@@ -47266,33 +47266,33 @@ no longer reports the internal trap-machinery scalar.
 | 258 | `printf "%d" $hugenum` silently overflows to 0 (zsh: errors "number truncated") | **port-bug** | pre-validate range before printf |
 | 259 | `${jobstates[N]}` and `${jobdirs[N]}` empty (companion to #257 — all 3 job-intro assocs broken) | **fixed** 2026-06-02 | parse `jobs -l` output |
 | 260 | `${widgets[NAME]}` zle widget intro assoc empty (zsh: 386 builtin widgets) | **fixed** 2026-06-02 | `zle -la NAME` for existence test |
-| 261 | `${functions_source[fn]}` format diverges — `zsh:0` instead of bare `zsh` for cmdline fn | **port-bug** | strip `:N` suffix before compare |
+| 261 | `${functions_source[fn]}` format diverges — `zsh:0` instead of bare `zsh` for cmdline fn | **fixed** 2026-06-02 | strip `:N` suffix before compare |
 | 262 | `zsh_eval_context` array always empty (zsh: `cmdarg`, `cmdarg shfunc`, etc. — eval context stack) | **fixed** 2026-06-02 | n/a |
 | 263 | `$ZSH_DEBUG_CMD` empty when DEBUG trap fires (parameter never populated with cmd text) | **fixed** 2026-06-02 | n/a |
 | 264 | `${widgets[fn]}` after `zle -N fn` returns literal `builtin` for all queries (no real lookup) | **fixed** 2026-06-04 | `zle -N foo; echo ${widgets[foo]}` → `user:foo` matching zsh |
-| 265 | `$MATCH` not populated by `(#m)` flag in `${var/pat/repl}` substitution (works in `=~`) | **port-bug** | use `=~` then manually substitute |
+| 265 | `$MATCH` not populated by `(#m)` flag in `${var/pat/repl}` substitution (works in `=~`) | **fixed** 2026-06-02 | use `=~` then manually substitute |
 | 266 | `$match[N]` backref array not populated by `(#b)` in substitution | **port-bug** | use `=~` to capture, build repl manually |
 | 267 | Bare `setopt` (no args) prints nothing instead of listing currently-set options | **port-bug** | use `set -o` (POSIX form) |
 | 268 | Autovars `LISTMAX`/`MAILCHECK`/`KEYTIMEOUT`/`PERIOD` typed `scalar` instead of `integer` | **fixed** 2026-06-03 | vm_helper init uses setiparam for these autovars per C `Src/params.c:857-860` |
-| 269 | `$SPROMPT` autovar default empty (zsh: `zsh: correct '%R' to '%r' [nyae]?`) | **port-bug** | explicit `SPROMPT=...` init in .zshrc |
+| 269 | `$SPROMPT` autovar default empty (zsh: `zsh: correct '%R' to '%r' [nyae]?`) | **fixed** 2026-06-02 | explicit `SPROMPT=...` init in .zshrc |
 | 270 | `${(t)watch}` autovar absent — zsh: `array-special`; `watch` user-tracking feature dead | **port-bug** | (none — feature not implemented) |
-| 271 | `h=([k]=v)` bash-style assoc init treated as glob — errors "no matches found" | **port-bug** | use flat-pairs `h=(k v k v)` instead |
+| 271 | `h=([k]=v)` bash-style assoc init treated as glob — errors "no matches found" | **fixed** 2026-06-02 | use flat-pairs `h=(k v k v)` instead |
 | 272 | `typeset -axU` `-U` dedup not applied when combined with `-x` (export) | **port-bug** | separate into `typeset -aU` then `typeset -x` |
 | 273 | `TIMEFMT` autovar in inconsistent state — value reads correctly but `(t)`/`${-NONE}` signal "unset" | **port-bug** | explicit `[[ -z ]]` check before := defaulting |
 | 274 | `$PROMPT3` autovar default empty — zsh: colored `-->>>>` select prompt | **port-bug** | explicit `PROMPT3=...` init |
-| 275 | Array splice `a[1,0]=(...)` reverse-range form replaces first elem instead of prepending (data loss) | **port-bug** | explicit `a=(NEW "${a[@]}")` |
-| 276 | `${funcstack[@]}` array empty in nested fn — breaks caller-introspection / stack-trace plugins | **port-bug** | manual call-stack tracking |
-| 277 | `${(o)@}` sort flag not applied to positionals — `$@`/`$*` returns unsorted | **port-bug** | copy to temp array first |
+| 275 | Array splice `a[1,0]=(...)` reverse-range form replaces first elem instead of prepending (data loss) | **fixed** 2026-06-02 | explicit `a=(NEW "${a[@]}")` |
+| 276 | `${funcstack[@]}` array empty in nested fn — breaks caller-introspection / stack-trace plugins | **fixed** 2026-06-02 | manual call-stack tracking |
+| 277 | `${(o)@}` sort flag not applied to positionals — `$@`/`$*` returns unsorted | **fixed** 2026-06-02 | copy to temp array first |
 | 278 | `${@:t}` (and other modifiers) applies to last positional only, drops the rest (data loss) | **fixed** 2026-06-02 | n/a |
 | 279 | `$_` (last-arg-prev-cmd) empty inside function — zsh: contains fn name | **port-bug** | use `${history[1]}` or manual tracking |
-| 280 | `setopt typeset_to_unset` ignored — `typeset X` always creates parameter (set+empty) | **port-bug** | explicit `unset` after typeset |
+| 280 | `setopt typeset_to_unset` ignored — `typeset X` always creates parameter (set+empty) | **fixed** 2026-06-02 | explicit `unset` after typeset |
 | 281 | `argv[N]=value`/`argv+=(x)`/`unset argv` don't sync with `$@` — argv is read-only mirror (data corruption on append) | **port-bug** | use `set -- ...` to rewrite positionals |
 | 282 | `$ZSH_VERSION` format diverges — `5.9.0.3-test` vs zsh's `5.9`; affects version-gate exact-match plugin guards | **fixed** 2026-06-02 | n/a |
 | 283 | `[[ "!" == "..." ]]` misparses bare `!` token as negation operator even when quoted/escaped | **port-bug** | use `[ ]` single-bracket for `!` literal |
 | 284 | `printf -- "%s\n" hi` doesn't recognize `--` end-of-options (extends #251 family) | **port-bug** | drop the `--` if format doesn't start with `-` |
-| 285 | `break`/`continue` outside loop silently succeed (zsh: errors "not in ... loop", ec=1) | **port-bug** | (none — runtime check missing) |
+| 285 | `break`/`continue` outside loop silently succeed (zsh: errors "not in ... loop", ec=1) | **fixed** 2026-06-02 | (none — runtime check missing) |
 | 286 | `setopt errexit; true \| false; ...` doesn't abort — pipeline-tail-status with errexit ignored | **fixed** 2026-06-02 | n/a |
-| 287 | `${(@)assoc}` for-iteration produces single concatenated element (zsh: one element per value) | **port-bug** | use explicit `(@v)` flag |
+| 287 | `${(@)assoc}` for-iteration produces single concatenated element (zsh: one element per value) | **fixed** 2026-06-02 | use explicit `(@v)` flag |
 | 288 | `typeset -A h; h[]=value` empty-subscript silently accepted (zsh: errors) — permissive-parser family | **port-bug** | careful syntax |
 | 289 | `zmodload -L` output format wrong — bare module names vs `zmodload zsh/NAME` reproducible-script form | **fixed** 2026-06-04 | `zmodload -L` emits `zmodload zsh/main` matching zsh |
 | 290 | `${(q)arr}`/`${(qq)arr}` drops empty array elements and doesn't always-quote simple chars (round-trip broken) | **port-bug** | per-element loop applying `(qq)` |
