@@ -27257,7 +27257,59 @@ done
 
 ## #330 — `${~$(cmdsub)}` forced-glob marker on cmdsub doesn't trigger glob expansion
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — actual report was "bad
+substitution" (not silent empty). Root cause was the flag-
+parse loop only accepting ASCII `~` instead of the
+`Tilde` TOKEN (\u{98}) the lexer emits for unquoted
+`${~...}` forms.
+
+**Root cause** — `src/ported/subst.rs::paramsubst` flag-loop
+arm at line 3863 checked `if c == '~'` — ASCII only. In the
+braced unquoted form `${~$(echo ztcs*)}`, the lexer
+tokenizes the entire body so `~` arrives as `Tilde` TOKEN
+(\u{98} per `Src/zsh.h:189`). The flag loop fell through to
+the unknown-flag default which emits `bad substitution`.
+
+The DQ-wrapped form `"${~$(echo ztcs*)}"` already worked
+because the DQ lexer path keeps `~` as raw ASCII.
+
+**Fix** — extend the flag-arm condition to accept both
+ASCII `~` and the `Tilde` TOKEN, matching `Src/subst.c:2596`
+(`if (c == '~' || c == Tilde)`). Same logic for the doubled
+`~~` (globsubst-off) form. Direct port of C c:2596-2602.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ mkdir -p /tmp/ztcs && touch /tmp/ztcs/ztcs_a /tmp/ztcs/ztcs_b
+
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp/ztcs; echo ${~$(echo "ztcs*")}'
+ztcs_a ztcs_b
+$ ./target/debug/zshrs --zsh -c 'cd /tmp/ztcs; echo ${~$(echo "ztcs*")}'
+ztcs_a ztcs_b
+
+$ /opt/homebrew/bin/zsh -fc 'cd /tmp/ztcs; echo ${~$(echo ztcs*)}'
+ztcs_a ztcs_b
+$ ./target/debug/zshrs --zsh -c 'cd /tmp/ztcs; echo ${~$(echo ztcs*)}'
+ztcs_a ztcs_b
+
+# Regression: simple ${~var} still works:
+$ /opt/homebrew/bin/zsh -fc 'pat=ztcs_a; cd /tmp/ztcs; echo ${~pat}'
+ztcs_a
+$ ./target/debug/zshrs --zsh -c 'pat=ztcs_a; cd /tmp/ztcs; echo ${~pat}'
+ztcs_a
+
+# Regression: ${$(cmdsub)} (no ~) still works:
+$ /opt/homebrew/bin/zsh -fc 'echo ${$(echo hi)}'
+hi
+$ ./target/debug/zshrs --zsh -c 'echo ${$(echo hi)}'
+hi
+```
+
+All match byte-for-byte. zshrs_shell baseline preserved at
+967/85.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'cd /tmp; touch ztcs_a ztcs_b; echo ${~$(echo "ztcs*")}; rm ztcs_a ztcs_b'
@@ -27267,43 +27319,8 @@ $ ./target/debug/zshrs --zsh -c 'cd /tmp; touch ztcs_a ztcs_b; echo ${~$(echo "z
 (empty)
 ```
 
-`${~EXPR}` is zsh's force-glob marker — applies glob
-expansion to the expansion result regardless of `GLOBSUBST`
-option state. zshrs handles `${~var}` correctly (verified)
-but `${~$(cmdsub)}` (forced glob on command-substitution
-result) silently produces no output.
-
-The combination of `${~...}` + `$(...)` cmdsub doesn't
-trigger glob expansion in zshrs; instead the result is empty
-(seemingly losing both the cmdsub output AND any glob
-expansion).
-
-Companion to #329 — both are forced-glob-related gaps.
-
-**Where** — `src/ported/paramsubst.rs::handle_tilde_marker`:
-the inner `$(cmdsub)` runs but its output isn't fed into the
-glob-expansion path. C-source `Src/subst.c::dosubst` with
-`SUB_DOFORCEDGLOB` flag pipes the inner expansion result
-through `glob()` regardless of `GLOBSUBST`.
-
-**Impact** — dynamic-pattern-from-cmd-output idioms broken:
-
-```sh
-# Match files based on a list-generating command
-for f in ${~$(cat patterns.txt)}; do
-    process "$f"
-done
-# zsh: globs each pattern from patterns.txt
-# zshrs: empty — both pattern read and glob fail silently
-```
-
-**Workaround** — assign to temp variable:
-```sh
-local _pat="$(cat patterns.txt)"
-for f in ${~_pat}; do
-    ...
-done
-```
+(Original report said "empty" — actual reproduction emits
+`zsh:1: bad substitution` rc=1.)
 
 ---
 
@@ -47249,7 +47266,7 @@ no longer reports the internal trap-machinery scalar.
 | 327 | `${(l.N.)arr[N]}` pad flags on array-element return empty — extends #301 family | **port-bug** | copy to temp scalar |
 | 328 | ALL `${(FLAG)arr[N]}` flags broken on subscripted-array-element (20+ flags: case/type/pad/quote/sort/unique/join/eval/P/split/visible/D) | **port-bug** | universal: `elem="${arr[N]}"` then `(FLAG)elem` |
 | 329 | `setopt globsubst` doesn't enable variable-as-glob-pattern expansion (`${~var}` still works) | **port-bug** | use `${~var}` per-expansion |
-| 330 | `${~$(cmdsub)}` forced-glob marker on cmdsub doesn't trigger glob — returns empty | **port-bug** | temp var: `_pat="$(...)"; ${~_pat}` |
+| 330 | `${~$(cmdsub)}` forced-glob marker on cmdsub doesn't trigger glob — returns empty | **fixed** 2026-06-04 | flag-loop accepts Tilde TOKEN (\u{98}) per `Src/subst.c:2596` |
 | 331 | ALL `${(FLAG)assoc[k]}` flags broken on subscripted-assoc-element (mirrors #328 for assoc) | **port-bug** | universal: `elem="${h[k]}"` then `(FLAG)elem` |
 | 332 | `${(u)@}` unique flag on positionals not applied — extends #277 sort family | **port-bug** | copy to array, dedup via `[@]` |
 | 333 | `${(qL)*}` chained quote+lower on `$*` only applies lowercase, drops quote | **port-bug** | apply flags sequentially via temp array |
