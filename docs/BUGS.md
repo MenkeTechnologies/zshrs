@@ -39132,7 +39132,21 @@ output=$(kill 9 2>&1 | sed 's/ (os error [0-9]*)//')
 
 ## #492 — `echo hi >&-` close-fd-then-write behavior — zsh writes anyway, zshrs drops output
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — zsh 5.9.1 and zshrs now both emit only
+`done` (the `>&-` close fires before the echo write, suppressing `hi`
+in both shells). The original report's `hi`+`done` zsh output was
+likely from an older zsh; the current Homebrew binary matches zshrs's
+behavior.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo hi >&-; echo done'
+done
+$ ./target/debug/zshrs --zsh -fc 'echo hi >&-; echo done'
+done    # both match
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo hi >&-; echo done'
@@ -39180,7 +39194,17 @@ exec 1>&-
 
 ## #493 — `%i` prompt escape (line number) returns 0 instead of 1 — off-by-one (extends #385/#396)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `%i` prompt escape now emits `1` at
+the top-level matching zsh. Likely landed via earlier LINENO/prompt-line
+parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'print -P "%i"'
+1    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%i"'
@@ -39226,7 +39250,38 @@ the values may align).
 
 ## #494 — `$(("42xyz" + 1))` silently coerces to 0+1=1 — zsh errors "operator expected"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/math.rs](../src/ported/math.rs)).
+
+**Root cause** — `getmathparam`'s string-recursive-eval branch called
+`mathevall()` on the raw scalar value (so `a="0xff"` etc. could be parsed
+as int), then `restore_state(saved)` restored `M_ERROR` to its pre-recursion
+value — silently clobbering any error the inner `mathevall` had set.
+For `a="42xyz"` the inner eval produced "operator expected at `xyz'", but
+the error was lost and the outer arith fell through to returning 0 (so
+`0 + 1 = 1` silently).
+
+**Fix** — capture the inner mathevall's error message BEFORE
+`restore_state` runs, then re-publish it via `m_error_set(msg)` AFTER
+restore if the inner eval returned `Err`. Error now propagates to the
+outer arith caller matching zsh's behavior.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a="42xyz"; echo $((a + 1))'
+zsh:1: bad math expression: operator expected at `xyz'    # rc=1, matches zsh
+
+# regression: valid recursive-string-arith still works
+$ ./target/debug/zshrs --zsh -fc 'a="0xff"; echo $((a + 1))'
+256
+$ ./target/debug/zshrs --zsh -fc 'a="3+2"; echo $((a))'
+5
+$ ./target/debug/zshrs --zsh -fc 'a=42; echo $((a + 1))'
+43
+```
+
+Baseline 961/91 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a="42xyz"; echo $((a + 1)) 2>&1; echo rc=$?'
@@ -44544,9 +44599,9 @@ qualifiers always have a digit suffix.
 | 489 | `(#cN,M)` count-range glob flag not recognized — extends #425 (`#cN` exact-count) to ranges | **port-bug** | explicit alternation per-count |
 | 490 | `>&5` (write to invalid fd) silently rc=0 — zsh: "bad file descriptor" rc=1 | **fixed** 2026-06-04 | n/a |
 | 491 | `kill 9999999` error includes `(os error 3)` Rust-format — extends #488 family across all syscall-wrapping builtins | **port-bug** | `sed`-strip `(os error N)` suffix |
-| 492 | `echo hi >&-` close-fd-then-write — zsh: hi written then closed; zshrs: dropped (closed before write) | **port-bug** | separate write and `exec 1>&-` close |
-| 493 | `%i` prompt escape (line number) returns 0 instead of 1 — off-by-one (extends #385/#396 line-numbering family) | **port-bug** | `$((LINENO + 1))` adjust |
-| 494 | `$((a + 1))` with `a="42xyz"` silently coerces to 0 — zsh: "bad math expression: operator expected" | **port-bug** | pre-validate numeric input with regex |
+| 492 | `echo hi >&-` close-fd-then-write — zsh: hi written then closed; zshrs: dropped (closed before write) | **fixed** 2026-06-04 | n/a |
+| 493 | `%i` prompt escape (line number) returns 0 instead of 1 — off-by-one (extends #385/#396 line-numbering family) | **fixed** 2026-06-04 | n/a |
+| 494 | `$((a + 1))` with `a="42xyz"` silently coerces to 0 — zsh: "bad math expression: operator expected" | **fixed** 2026-06-04 | n/a |
 | 495 | `${(C)a[1]}` capitalize-flag + array-subscript errors "bad substitution" — extends #436 flag×subscript family | **fixed** 2026-06-04 | n/a |
 | 496 | **CRITICAL** `type ./path` PANICS with "attempt to subtract with overflow" at builtin.rs:5959 — relative-path arg crashes shell | **port-bug** | strip `./` prefix before passing to `type` |
 | 497 | `$RPROMPT` initialized to empty string instead of unset (extends #479 bash-compat-init family) | **port-bug** | `[[ -n $RPROMPT ]]` non-empty check |
