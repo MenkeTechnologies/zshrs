@@ -40482,7 +40482,21 @@ zsh error — making the bug harder to find.
 
 ## #527 — `(( () ))` empty math expression silently rc=1 — zsh: "bad math expression: operand expected" rc=2
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — repro no longer reproduces. zshrs's math
+parser now emits the canonical `bad math expression: operand expected at
+\`)'` diagnostic with rc=2. Likely landed via earlier math.rs parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc '(( () ))'
+zsh:1: bad math expression: operand expected at `)'    # rc=2
+```
+
+The only residual diff vs zsh is the trailing space inside the
+backtick-quoted token (zsh: `\`) '`, zshrs: `\`)'`). Same rc, same root
+diagnostic.
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '(( () )) 2>&1; echo rc=$?'
@@ -43756,7 +43770,7 @@ qualifiers always have a digit suffix.
 | 524 | `%r` prompt escape printed literally — extends prompt-escape gap family (#390/#391/#412/etc.) | **port-bug** | avoid `%r` when targeting zshrs |
 | 525 | `print -x notanint ARG` silently rc=0 — zsh: "positive integer expected after -x" | **port-bug** | pre-validate N arg with regex |
 | 526 | `[[ N -lt M -a ... ]]` `-a`/`-o` parsed as command (rc=127) — zsh: "condition expected" parse error | **port-bug** | use `&&`/`\|\|` instead |
-| 527 | `(( () ))` empty math silently rc=1 — zsh: "bad math expression: operand expected" rc=2 | **port-bug** | collapse rc 1/2 → non-zero check |
+| 527 | `(( () ))` empty math silently rc=1 — zsh: "bad math expression: operand expected" rc=2 | **fixed** 2026-06-03 | n/a |
 | 528 | `typeset -a a=("hello world")` splits QUOTED string into multiple elements — worse than #502 | **port-bug** | element-by-element `+=` build |
 | 529 | `$((1+(2))` paren-mismatch math silently rc=0 (no output) — zsh: parse error | **port-bug** | visual audit |
 | 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **port-bug** | `command mkdir` to force external |
