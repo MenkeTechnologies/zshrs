@@ -44466,6 +44466,52 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #601 — `print -P "%(j.A.B)"` always emits false-text — `j` test arm not in dispatch switch
+
+**Status:** `fixed` 2026-06-04 — ported `Src/prompt.c:451-457` `j`
+test-arm to `putpromptchar`'s ternary switch.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%(j.has.no) jobs"'
+has jobs
+
+# Before fix:
+$ zshrs --zsh -c 'print -P "%(j.has.no) jobs"'
+no jobs
+
+# After fix:
+$ zshrs --zsh -c 'print -P "%(j.has.no) jobs"'
+has jobs
+
+# Numbered form still works correctly:
+$ zshrs --zsh -c 'print -P "%(2j.has.no) jobs"'
+no jobs                 # numjobs=0 not >= 2
+```
+
+**Root cause** — `src/ported/prompt.rs::putpromptchar` ternary
+switch had no `b'j'` arm — it fell through to the `_ => {}` default
+which leaves `test = 0` (the "false-text" branch fires). The C
+source at `Src/prompt.c:451-457`:
+```c
+case 'j':
+    for (numjobs = 0, j = 1; j <= maxjob; j++)
+        if (jobtab[j].stat && jobtab[j].procs &&
+            !(jobtab[j].stat & STAT_NOPRINT)) numjobs++;
+    if (numjobs >= arg) test = 1;
+    break;
+```
+counts active jobs and tests `numjobs >= arg`. Default `arg = 0`
+makes the bare `%(j.A.B)` form always truthy (numjobs >= 0 is
+always true), so the true-text fires even with 0 jobs running —
+verified vs `/opt/homebrew/bin/zsh` interactive prompt expansion.
+
+**Fix** — add `b'j'` arm to the ternary switch that mirrors the
+existing `%j` emitter's job-count walk at line 1143, then sets
+`test = 1` when `numjobs >= arg`.
+
+---
+
 ## #600 — `fpath=(/tmp)` hangs — RWLock deadlock between assignaparam's write lock and arrsetfn's arrfixenv read+write
 
 **Status:** `fixed` 2026-06-04 — defer `arrfixenv` env-sync until
@@ -46574,6 +46620,7 @@ no longer reports the internal trap-machinery scalar.
 | 598 | `print -P "%L"` emits empty instead of `$SHLVL` | **fixed** 2026-06-04 | added `b'L'` arm to putpromptchar switch (port of Src/prompt.c:889) |
 | 599 | `print -P "%w"` emits "DAY  D" (double space) instead of "DAY D" — uses `%e` not `%f` | **fixed** 2026-06-04 | switch `%w` format from `"%a %e"` to `"%a %f"` (C source uses zsh-extension `%f` = mday no leading space) |
 | 600 | `fpath=(/tmp)` hangs — RWLock deadlock between assignaparam's write lock and arrsetfn's arrfixenv reacquire | **fixed** 2026-06-04 | inline arrsetfn writes under held lock, capture ename + drop tab, then call arrfixenv outside the lock |
+| 601 | `print -P "%(j.A.B)"` always emits false-text — `j` test arm not in dispatch switch | **fixed** 2026-06-04 | added `b'j'` arm to putpromptchar ternary switch (port of Src/prompt.c:451-457) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
