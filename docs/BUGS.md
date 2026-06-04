@@ -44466,6 +44466,41 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #619 — `print -P "%T"` and `%*` emit leading-zero hour — uses `%H` not `%K`
+
+**Status:** `fixed` 2026-06-04 — changed `%T` / `%*` time-dispatch
+arms to use `%K` (zsh extension) instead of `%H` (standard
+strftime) per `Src/prompt.c:715` / `:718`.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%T %*"'
+9:07 9:07:14
+
+# Before fix:
+$ zshrs --zsh -c 'print -P "%T %*"'
+09:07 09:07:14          # leading-zero hour
+
+# After fix:
+$ zshrs --zsh -c 'print -P "%T %*"'
+9:07 9:07:14
+```
+
+**Root cause** — `src/ported/prompt.rs` `%T` / `%*` arms used
+`%H:%M` / `%H:%M:%S` (standard strftime, hour with leading zero).
+C source `Src/prompt.c:715` / `:718` uses `%K:%M` / `%K:%M:%S`.
+`%K` is zsh's custom strftime extension (24-hr clock, no leading
+space for single-digit hour) — already handled by zshrs's
+`utils::ztrftime` preprocessor at `utils.rs:4279-4283`.
+
+Sibling of #599 which fixed the same `%H`/`%K` family bug for
+`%w` (used `%e` instead of `%f`).
+
+**Fix** — `b'T' => tmfmt = "%K:%M"` and `b'*' => tmfmt = "%K:%M:%S"`.
+Tests: 966/86 → 967/85.
+
+---
+
 ## #618 — `print -P "%i"` and `%I` stuck at function entry / off by funcstack offset
 
 **Status:** `fixed` 2026-06-04 — both arms now read `$LINENO`
@@ -47358,6 +47393,7 @@ no longer reports the internal trap-machinery scalar.
 | 616 | `foo() { break; echo after; }; foo` continues past break — used `zwarnnam` not `zerrnam` | **fixed** 2026-06-04 | bin_break BIN_CONTINUE/BIN_BREAK "not in loop" arms now call zerrnam (sets errflag → function aborts) per Src/builtin.c:5828/:5834 |
 | 617 | `(( b = a ))` with `a=1.5` creates `b` as PM_INTEGER 1 instead of PM_FFLOAT 1.5 — compile-time pre-check mutates paramtab | **fixed-partial** 2026-06-04 | added mathevali_noeval (Rust-only, allowlisted) routing through matheval with noeval=1 so setmathvar's c:1002-1003 noeval-bail prevents paramtab mutation; operator forms still truncate (separate gap) |
 | 618 | `print -P "%i"` stuck at 1 inside fn; `%I` off by funcstack offset | **fixed** 2026-06-04 | both arms read `$LINENO` (executor maintains correctly); `%I` adds funcstack.flineno offset per Src/prompt.c:901-920 |
+| 619 | `print -P "%T"` / `%*` emit leading-zero hour — uses `%H` not `%K` | **fixed** 2026-06-04 | switch `%T` from `%H:%M` to `%K:%M` and `%*` to `%K:%M:%S` per Src/prompt.c:715/:718 (zsh ext, no leading zero) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
