@@ -44466,6 +44466,45 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #613 — `setopt KSH_ARRAYS; a=(b c d); a[0,1]=(X Y Z)` overwrites only position 0 — slice assign not 0-based
+
+**Status:** `fixed` 2026-06-04 — KSH_ARRAYS branch added to
+`BUILTIN_SET_SUBSCRIPT_RANGE` bridge (sibling of #610-#612).
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt KSH_ARRAYS; a=(b c d e); a[0,1]=(X Y Z); print "${a[@]}"'
+X Y Z d e
+
+# Before fix:
+$ zshrs --zsh -c 'setopt KSH_ARRAYS; a=(b c d e); a[0,1]=(X Y Z); print "${a[@]}"'
+X Y Z c d e            # `c` survived — only position 0 overwritten
+
+# After fix:
+$ zshrs --zsh -c 'setopt KSH_ARRAYS; a=(b c d e); a[0,1]=(X Y Z); print "${a[@]}"'
+X Y Z d e
+
+# Single index also works:
+$ zshrs --zsh -c 'setopt KSH_ARRAYS; a=(b c d); a[0]=X; print "${a[@]}"'
+X c d
+```
+
+**Root cause** — `src/fusevm_bridge.rs::BUILTIN_SET_SUBSCRIPT_RANGE`
+parses the subscript key into start/end (or single i), runs them
+through `start_translate`/`end_translate`, and calls
+`setarrvalue` (which expects 1-based bounds). Without a KSH_ARRAYS
+branch, the 0-based input from the user was mapped 1:1 to
+1-based setarrvalue input — `a[0,1]` ended up as
+`setarrvalue(start=1, end=1)` (replace position 1 only) instead
+of `setarrvalue(start=1, end=2)` (replace positions 1-2).
+
+**Fix** — under KSH_ARRAYS, shift positive raw bounds by +1
+before `start_translate`/`end_translate`. Negative bounds left
+alone (count from end). Applied to both the comma-slice form
+(`a[lo,hi]=...`) and the single-index form (`a[i]=...`).
+
+---
+
 ## #612 — `setopt KSH_ARRAYS; a=(b c d); echo $a[0,1]` returns `b` instead of `b c` — array slice not 0-based
 
 **Status:** `fixed` 2026-06-04 — KSH_ARRAYS branch added to array
@@ -47078,6 +47117,7 @@ no longer reports the internal trap-machinery scalar.
 | 610 | `setopt KSH_ARRAYS; a=hello; echo $a[0]` returns empty — scalar subscript not 0-based under KSH_ARRAYS | **fixed** 2026-06-04 | added isset(KSHARRAYS) branch to scalar single-index dispatch |
 | 611 | `setopt KSH_ARRAYS; a=hello; echo $a[0,2]` returns `he` not `hel` — slice not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to scalar slice arm: shift positive lo/hi by +1 before getarrvalue |
 | 612 | `setopt KSH_ARRAYS; a=(b c d); echo $a[0,1]` returns `b` not `b c` — array slice not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to array slice arm: shift positive start/end by +1 |
+| 613 | `setopt KSH_ARRAYS; a=(b c d); a[0,1]=(X Y Z)` overwrites only position 0 — slice assign not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to BUILTIN_SET_SUBSCRIPT_RANGE bridge: shift positive raw bounds by +1 before translate |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
