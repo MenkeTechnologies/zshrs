@@ -1338,19 +1338,34 @@ pub fn bin_pwd(
         println!("{}", zgetcwd()); // c:732
     } else {
         // c:734 — `zputs(pwd, stdout); putchar('\n');`. C reads the
-        // shell-internal `pwd` global (Src/params.c:108). The
-        // canonical Rust accessor is `getsparam("PWD")` which reads
-        // from the paramtab (the source-of-truth backing for PWD).
+        // shell-internal `pwd` global (Src/params.c:108), NOT the
+        // exported $PWD env var. The internal global is only mutated
+        // by `cd`. zshrs lacks a separate internal pwd, so `$PWD`
+        // doubles as both — and user code can spoof it (`PWD=/foo`).
         //
-        // Previously this used `std::env::var("PWD")` which reads
-        // the OS environment — divergent. The OS env var is only
-        // sync'd to the paramtab on export; the paramtab can hold
-        // a more recent value, and `unset PWD; cd /foo; pwd` would
-        // print the wrong thing under the env-var path (env was
-        // already unset, so the read fell through to zgetcwd
-        // bypassing the just-set paramtab PWD).
-        let pwd = getsparam("PWD").unwrap_or_else(|| zgetcwd());
-        println!("{}", pwd); // c:734
+        // C-equivalent behavior in zshrs: trust `$PWD` ONLY when its
+        // stat matches `getcwd()` (same dev+ino → same directory,
+        // logical name preserved through symlinks). On mismatch the
+        // user spoofed it; fall back to `zgetcwd()` so `pwd` reports
+        // the actual current directory. Bug #441 — security-relevant:
+        // defensive-coding patterns checking `pwd` output get fooled
+        // by a `PWD=` assignment without this validation.
+        let pwd_param = getsparam("PWD");
+        let logical_pwd = pwd_param.as_deref().filter(|pwd| {
+            // stat-compare $PWD against getcwd() — same inode means
+            // $PWD is just a symlink-preserving alias for the real
+            // cwd, safe to use.
+            use std::os::unix::fs::MetadataExt;
+            let cwd = zgetcwd();
+            match (std::fs::metadata(pwd), std::fs::metadata(&cwd)) {
+                (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+                _ => false,
+            }
+        });
+        println!(
+            "{}",
+            logical_pwd.map(String::from).unwrap_or_else(zgetcwd)
+        ); // c:734
     }
     0 // c:737
 }
