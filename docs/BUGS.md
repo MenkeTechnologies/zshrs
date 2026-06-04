@@ -38429,7 +38429,28 @@ read ans
 
 ## #479 — `$OPTERR` initialized to 1 — zsh leaves unset (bash-compat addition extends #474/#475)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `--zsh` mode no longer
+pre-initializes the bash-compat `$OPTERR` parameter.
+`${OPTERR-unset}` and `[[ -v OPTERR ]]` shell-detection
+both now report the zsh-canonical "unset" state.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${OPTERR-unset}]"'
+[unset]
+$ ./target/debug/zshrs --zsh -c 'echo "[${OPTERR-unset}]"'
+[unset]
+
+$ /opt/homebrew/bin/zsh -fc '[[ -v OPTERR ]] && echo bash-like || echo zsh'
+zsh
+$ ./target/debug/zshrs --zsh -c '[[ -v OPTERR ]] && echo bash-like || echo zsh'
+zsh
+```
+
+Doc-only flip; no code change in this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[${OPTERR-unset}]"'
@@ -38438,42 +38459,6 @@ $ /opt/homebrew/bin/zsh -fc 'echo "[${OPTERR-unset}]"'
 $ ./target/debug/zshrs --zsh -c 'echo "[${OPTERR-unset}]"'
 [1]
 ```
-
-`$OPTERR` is bash's getopts error-message control
-parameter — bash initializes it to `1` by default; zsh
-doesn't have OPTERR at all.
-
-zshrs initializes OPTERR=1 in `--zsh` mode — another
-bash-compat parameter contaminating the zsh namespace.
-
-Same family as #474 (PIPESTATUS uppercase), #475 (bash
-builtins), #477 (bash-style substring).
-
-**Where** — `src/ported/params/init.rs` (or special-param
-table initializer): in `--zsh` mode, OPTERR should not
-be initialized.
-
-**Impact** — `[[ -v OPTERR ]]` returns true in zshrs,
-false in zsh — breaks shell-detection via parameter
-presence:
-
-```sh
-if [[ -v OPTERR ]]; then
-    echo "bash-like"
-else
-    echo "zsh"
-fi
-# zsh: zsh
-# zshrs: bash-like (wrong)
-```
-
-Combined with #474/#475/#395/#477, zshrs's `--zsh` mode
-has many bash-compat leaks. The cumulative effect:
-fingerprint-based shell detection is broken in multiple
-places.
-
-**Workaround** — use `$ZSH_VERSION` for unambiguous
-detection.
 
 ---
 
@@ -47365,7 +47350,7 @@ no longer reports the internal trap-machinery scalar.
 | 476 | `case "x" in) ...; esac` empty pattern silently accepted as no-op (zsh: parse error) — extends parser-strictness family | **fixed** 2026-06-04 | n/a |
 | 477 | `${a:0:n}` substring with bare-name length accepted (zsh: "unrecognized modifier") — bash-compat permissiveness | **fixed** 2026-06-04 | alpha-LENGTH gate at substring arm matches C `check_colon_subscript` |
 | 478 | `read "?prompt"` emits prompt to stdout instead of stderr — corrupts cmdsub-captured output | **fixed** 2026-06-04 | n/a |
-| 479 | `$OPTERR` initialized to 1 — bash-compat addition, zsh leaves unset | **port-bug** | use `$ZSH_VERSION` for shell-detect |
+| 479 | `$OPTERR` initialized to 1 — bash-compat addition, zsh leaves unset | **fixed** 2026-06-04 | `--zsh` mode no longer pre-inits bash-compat OPTERR |
 | 480 | `[[ -z ]]` (no operand) silently rc=0 — zsh errors "unknown condition" — extends parser-strictness family | **fixed** 2026-06-04 | n/a |
 | 481 | `[[ -n/-r/-d/-f/... ]]` ALL unary ops no-operand silently rc=0 (zsh: parse error each) — generalizes #480 | **fixed** 2026-06-04 | n/a |
 | 482 | `[[ 5 -eq ]]` binary op missing RHS silently rc=1 (zsh: parse error) — completes test parse-strictness gap | **fixed** 2026-06-04 | n/a |
