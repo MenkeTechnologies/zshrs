@@ -1547,6 +1547,21 @@ pub fn zshrs_main() {
             zsh::ported::options::opt_state_set("rcs", false);
             zsh::ported::options::opt_state_set("hashdirs", false);
         }
+        // c:Src/init.c:312-315 — `if (opts[MONITOR] == 2)
+        //   opts[MONITOR] = opts[INTERACTIVE]; if (opts[HASHDIRS]
+        //   == 2) opts[HASHDIRS] = opts[INTERACTIVE];`. Both
+        // MONITOR and HASHDIRS auto-derive from INTERACTIVE state.
+        // Under `-c` mode, stdin is parsed from the cmd arg (not
+        // tty) so INTERACTIVE=false, which means HASHDIRS=false.
+        // Without this derivation, `setopt` no-args under `-c`
+        // emitted nothing because hashdirs stayed at its emulate-
+        // ZSH default ON, matching the no-divergence filter at
+        // Src/options.c:462. Bug #87 in docs/BUGS.md.
+        let stdin_isatty = unsafe { libc::isatty(0) != 0 };
+        if !stdin_isatty {
+            zsh::ported::options::opt_state_set("monitor", false);
+            zsh::ported::options::opt_state_set("hashdirs", false);
+        }
         // Apply CLI `-o NAME` / `+o NAME` option settings.
         for (raw, set_val) in opts {
             let canonical = raw.to_lowercase().replace(['_', '-'], "");
