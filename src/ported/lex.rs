@@ -2291,12 +2291,20 @@ fn gettokstr(c: char, sub: bool) -> lextok {
 
             // c:967 — `case LX2_BREAK:` — `;` and `&`.
             //
-            // Top-level terminator only when not inside `${...}`,
-            // `(...)`, or `[...]`. Inside those, `;` is a delimiter
-            // (e.g. field separator in `(@s.;.)`), not a statement
-            // terminator. C zsh handles this via the same
-            // bct/pct/brct accounting; we mirror it.
-            LX2_BREAK if in_brace_param == 0 && pct == 0 && brct == 0 => {
+            // Direct port of C: `if (!in_brace_param && !sub) goto brk;`.
+            // C does NOT consult `brct` here — bare `[` in an assignment
+            // RHS like `a=foo[bar; echo` does NOT prevent `;` from
+            // terminating the word. zsh keeps `foo[bar` as the literal
+            // value (the `[` is unmatched and globbing reports
+            // "no matches" only when expanded, not at lex time).
+            // The previous Rust port added `&& brct == 0` which made
+            // `;` part of the token whenever an unmatched `[` was
+            // seen — `a=foo[bar; echo done` produced `a=foo[bar;`
+            // as the single ENVSTRING, swallowing the next command.
+            // Bug #604. `pct == 0` is also dropped — `(...)` grouping
+            // is handled by the outer parser's command structure, not
+            // by `;` being mid-token here.
+            LX2_BREAK if in_brace_param == 0 => {
                 break;
             }
             LX2_BREAK => {
