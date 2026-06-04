@@ -40277,7 +40277,19 @@ gap.)
 
 ## #523 — `${(q)control_char}` produces raw `\<CHAR>` instead of `$'\X'` ANSI-C-quoted form
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — repro no longer reproduces. `${(q)a}`
+for a newline-containing scalar now emits `$'\n'` (ANSI-C-quoted form)
+byte-for-byte matching zsh. Likely landed via earlier `quotestring`
+parity work. No new code change.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc $'a=$\'\\n\'; echo "${(q)a}"' | od -c
+0000000    $   '  \n   '  \n
+# matches /opt/homebrew/bin/zsh byte-for-byte
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc "a=\$'\\n'; echo \"\${(q)a}\"" | od -c | head -1
@@ -41505,7 +41517,19 @@ commit, only #541 and #542 are confirmed gaps. Removing
 
 ## #543 — `print -- "${(s.X.)a}"` in pipe-rhs preserves the empty-field count diff
 
-**Status:** `port-bug` — companion to #542.
+**Status:** `fixed` 2026-06-03 — repro no longer reproduces. Empty middle
+fields are now dropped matching zsh. Landed via the same paramsubst `(s)`
+parity work that fixed #545.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a="aXXb"; print -l -- "${(s.X.)a}"'
+a
+b
+# matches zsh — no empty middle line
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a="aXXb"; print -l -- "${(s.X.)a}"'
@@ -41545,7 +41569,18 @@ print -l "${parts[@]:#}"
 
 ## #544 — `a[0]="x"` zero-index array assignment silently accepted — zsh: "assignment to invalid subscript range"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — repro no longer reproduces. `a[0]=...`
+in zsh-mode now rejects with `a: assignment to invalid subscript range`
+rc=1 matching zsh exactly. Likely landed via earlier `setarrlim`-equivalent
+parity work in params/array assignment.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a=(); a[0]="zero"'
+zsh:1: a: assignment to invalid subscript range    # rc=1
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(); a[0]="zero" 2>&1; echo "[${a[@]}]"'
@@ -41598,7 +41633,18 @@ implementation).
 
 ## #545 — `${(s.X.)XXX}` all-separator string yields 4 empty fields — zsh: 2 (extends #542 family)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — repro no longer reproduces. `(s.X.)`
+splitting on an all-separator input now yields 2 empty boundary fields
+matching zsh exactly. Likely landed via earlier paramsubst `(s)` flag
+parity. No new code change.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a="XXX"; for x in "${(s.X.)a}"; do echo "[$x]"; done | wc -l'
+       2    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a="XXX"; for x in "${(s.X.)a}"; do echo "[$x]"; done | wc -l'
@@ -42701,7 +42747,27 @@ won't catch zshrs's error.
 
 ## #564 — `\[pat\]` backslash-escaped brackets in `[[ == pat ]]` pattern don't match literal `[`/`]`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partial fix` 2026-06-03 ([src/ported/pattern.rs](../src/ported/pattern.rs)) — single-`\[` cases without a closing `\]` now treat the `[` as literal. Paired `\[hi\]` still fails because the lexer strips both backslashes and patcompile can't distinguish from a real `[hi]` bracket-class.
+
+**Partial root cause** — `patcomppiece` (`src/ported/pattern.rs:1311`) dispatched on raw `b'['` as bracket-class start. C `Src/pattern.c:1438` only enters the bracket case on the `Inbrack` token (lexer-tokenized `[`), not raw `[`. An escaped `\[` reaches patcompile as raw `[` (the lexer dropped the `\`), and zshrs treated it as a bracket-class — emitting `P_ANYOF` with the bytes between `[` and `]`.
+
+**Partial fix** — before entering the bracket-class scanner, probe forward for a matching `]`. If none exists in the rest of the pattern, treat the `[` as a literal byte (emit `P_EXACTLY` with `[` content) matching C's behavior at `pattern.c:4311`.
+
+**Verify (partial)**
+```sh
+$ ./target/debug/zshrs --zsh -fc '[[ "[" == \[ ]] && echo m'
+m    # FIXED
+$ ./target/debug/zshrs --zsh -fc '[[ "[h" == \[h ]] && echo m'
+m    # FIXED
+$ ./target/debug/zshrs --zsh -fc '[[ "[hi]" == \[hi\] ]] && echo m'
+(no output)    # STILL FAILS — needs lexer-level Bnull preservation
+```
+
+**Remaining work** — the full fix requires the lexer to preserve `Bnull` markers around escaped `[`/`]` so patcompile can distinguish `\[hi\]` (literal) from `[hi]` (bracket-class). Deferred.
+
+Baseline 961/91 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ "[hi]" == \[hi\] ]] && echo m'
@@ -43766,7 +43832,7 @@ qualifiers always have a digit suffix.
 | 520 | `HISTSIZE=N` assignment ignored — reads back as default `999999999` regardless | **port-bug** | none — assignment has no effect |
 | 521 | `[[ "" == (#c0,0) ]]` matches in zshrs — zsh rejects as "bad pattern" — extends #489 broken-cN family | **fixed** 2026-06-03 | n/a |
 | 522 | `TRAPDEBUG()` function-form not invoked before each command — extends #381 family (DEBUG pseudo-signal) | **port-bug** | none — debuggers/profilers can't hook |
-| 523 | `${(q)control_char}` produces raw `\\<CHAR>` instead of `$'\\X'` ANSI-C-quoted form — round-trip broken | **port-bug** | manual ANSI-C-quote helper |
+| 523 | `${(q)control_char}` produces raw `\\<CHAR>` instead of `$'\\X'` ANSI-C-quoted form — round-trip broken | **fixed** 2026-06-03 | n/a |
 | 524 | `%r` prompt escape printed literally — extends prompt-escape gap family (#390/#391/#412/etc.) | **port-bug** | avoid `%r` when targeting zshrs |
 | 525 | `print -x notanint ARG` silently rc=0 — zsh: "positive integer expected after -x" | **port-bug** | pre-validate N arg with regex |
 | 526 | `[[ N -lt M -a ... ]]` `-a`/`-o` parsed as command (rc=127) — zsh: "condition expected" parse error | **port-bug** | use `&&`/`\|\|` instead |
@@ -43786,9 +43852,9 @@ qualifiers always have a digit suffix.
 | 540 | `zformat` no-args error msg: "invalid argument: " (with trailing space) vs zsh's "not enough arguments" | **port-bug** | match on rc only |
 | 541 | `TRAPSIG()` function + `trap '...' SIG` string BOTH fire — zsh: last-defined replaces (one form only) | **port-bug** | explicit `unset -f`/`trap -` before re-register |
 | 542 | `${(s.X.)str}` field-splitting keeps empty fields between separators — zsh: drops them | **port-bug** | `(parts[@]:#)` filter empty |
-| 543 | `print -l "${(s.X.)str}"` emits visible blank lines from empty fields — same root as #542 | **port-bug** | filter empty fields before print |
-| 544 | `a[0]="x"` zero-index array assignment silently accepted — zsh: "invalid subscript range" (zsh is 1-indexed) | **port-bug** | strict 1-index validation |
-| 545 | `${(s.X.)XXX}` all-separator string gives 4 empty fields — zsh: 2 (extends #542) | **port-bug** | filter via `(parts[@]:#)` |
+| 543 | `print -l "${(s.X.)str}"` emits visible blank lines from empty fields — same root as #542 | **fixed** 2026-06-03 | n/a |
+| 544 | `a[0]="x"` zero-index array assignment silently accepted — zsh: "invalid subscript range" (zsh is 1-indexed) | **fixed** 2026-06-03 | n/a |
+| 545 | `${(s.X.)XXX}` all-separator string gives 4 empty fields — zsh: 2 (extends #542) | **fixed** 2026-06-03 | n/a |
 | 546 | `${(!)var}` invalid paramexp flag silently accepted — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 547 | `echo "$~"` emits literal `$~` — zsh: drops invalid `$X` to empty | **port-bug** | (acceptable in user code) |
 | 548 | `${(   )a}` whitespace-only flag-paren error: "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
