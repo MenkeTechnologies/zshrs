@@ -39095,7 +39095,68 @@ Affects every `cd`-error consumer that's case-sensitive.
 
 ## #489 — `(#cN,M)` count-range glob flag not recognized — extends #425 from exact-count to range
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `(#cN,M)` and all related
+count shapes now match zsh. The original report's repro
+`a(#c2,4)` was actually already working under earlier
+`(#cN,M)` parity work; the gap closed in this commit is
+the no-min shape `(#c,M)` (max-only) which the parser
+silently failed to parse because the close-paren check
+was gated behind "min digits required".
+
+**Root cause** — `src/ported/pattern.rs` `(#cN,M)`
+parser. After reading digits as `min`, the close-paren
+check was inside the `if j > min_start` gate. For
+`(#c,M)` (no min digits), the gate was false → parser
+fell out without setting `patparse_off` → the `(#c,M)`
+shape was treated as a literal pattern.
+
+**Fix** — split the gate: enter the inner block when
+EITHER min digits were read OR the next char is `,` (so
+the no-min form `(#c,M)` and the empty form `(#c,)` both
+reach the `,`/`)` parsing arms). Direct port of zsh's
+parser which accepts all of:
+- `(#cN)` — exact
+- `(#cN,)` — min only
+- `(#cN,M)` — range
+- `(#c,M)` — max only (was missing)
+- `(#c,)` — no count (equivalent to no cap)
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; [[ "aa" == a(#c,3) ]] && echo m || echo no'
+m
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; [[ "aa" == a(#c,3) ]] && echo m || echo no'
+m
+
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; [[ "aaaa" == a(#c,3) ]] && echo m || echo no'
+no
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; [[ "aaaa" == a(#c,3) ]] && echo m || echo no'
+no
+
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; [[ "aaaa" == a(#c,) ]] && echo m || echo no'
+m
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; [[ "aaaa" == a(#c,) ]] && echo m || echo no'
+m
+
+# Regressions:
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; [[ "aaa" == a(#c3) ]]'      ; echo $?
+0
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; [[ "aaa" == a(#c3) ]]' ; echo $?
+0
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; [[ "aaa" == a(#c2,4) ]]'    ; echo $?
+0
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; [[ "aaa" == a(#c2,4) ]]'; echo $?
+0
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; [[ "aaa" == a(#c2,) ]]'     ; echo $?
+0
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; [[ "aaa" == a(#c2,) ]]'; echo $?
+0
+```
+
+All cases match. zshrs_shell baseline preserved at 967/85.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; [[ "aaa" == a(#c2,4) ]] && echo m'
@@ -39105,37 +39166,7 @@ $ ./target/debug/zshrs --zsh -c 'setopt extended_glob; [[ "aaa" == a(#c2,4) ]] &
 (no output, rc=1)
 ```
 
-`(#cN,M)` is the **count-range** form — match between N
-and M repetitions of the preceding pattern. With
-`(#c2,4)`, "aaa" matches because it has 3 `a`'s (within
-2-4 range).
-
-zsh implements both `(#cN)` (exact — #425) and
-`(#cN,M)` (range — this entry). zshrs handles neither.
-
-Likely also unsupported variants: `(#c,M)` (max only),
-`(#cN,)` (min only).
-
-**Where** — same as #425: `src/ported/glob/pattern.rs`
-glob-flag parser needs `c` followed by digits with
-optional comma+digits parsing.
-
-**Impact** — bounded-repetition patterns broken:
-
-```sh
-# Version-string match: 2-4 numeric components
-[[ "$version" == [0-9](#c2,4) ]] && valid
-# zsh: matches "12", "123", "1234", "12345" if pattern
-#      had been "[0-9]+" without trailing length
-# zsh actual: matches strings of 2-4 digits
-# zshrs: doesn't match anything (literal flag)
-```
-
-Extends the `(#X)` glob-flag gap census: #409 (#i),
-#421 (^/~/#), #425 (#cN), #483 (#s), #484 (#l), #485
-(#a), #489 (#cN,M).
-
-**Workaround** — explicit alternation:
+**Workaround (legacy)** — explicit alternation:
 ```sh
 [[ "$version" == [0-9][0-9] || "$version" == [0-9][0-9][0-9] || ... ]]
 ```
@@ -47439,7 +47470,7 @@ no longer reports the internal trap-machinery scalar.
 | 486 | `~-N` (negative dirstack index) not expanded — `~-` alone works; numeric suffix fails | **fixed** 2026-06-04 | n/a |
 | 487 | `pushd` no-args doesn't swap top two stack entries — re-pushes current dir (zsh: swaps) | **fixed** 2026-06-04 | n/a |
 | 488 | `cd /no/such` error message includes `(os error 2)` — zsh: plain "no such file or directory" (case-sensitive matches break) | **fixed** 2026-06-04 | n/a |
-| 489 | `(#cN,M)` count-range glob flag not recognized — extends #425 (`#cN` exact-count) to ranges | **port-bug** | explicit alternation per-count |
+| 489 | `(#cN,M)` count-range glob flag not recognized — extends #425 (`#cN` exact-count) to ranges | **fixed** 2026-06-04 | `(#c,M)` no-min and `(#c,)` shapes now parse + match per zsh |
 | 490 | `>&5` (write to invalid fd) silently rc=0 — zsh: "bad file descriptor" rc=1 | **fixed** 2026-06-04 | n/a |
 | 491 | `kill 9999999` error includes `(os error 3)` Rust-format — extends #488 family across all syscall-wrapping builtins | **port-bug** | `sed`-strip `(os error N)` suffix |
 | 492 | `echo hi >&-` close-fd-then-write — zsh: hi written then closed; zshrs: dropped (closed before write) | **fixed** 2026-06-04 | n/a |
