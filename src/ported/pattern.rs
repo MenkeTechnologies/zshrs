@@ -777,6 +777,12 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
     // c:942
     let mut chain_start: i64 = -1;
     let mut last_tail: usize = 0;
+    // Track preceding piece for POSTFIX `(#cN,M)` wrap. C does
+    // `patinsert(P_COUNTSTART, starter, ...)` to embed COUNTSTART
+    // BEFORE the just-compiled piece (c:pattern.c:1686). We snapshot
+    // the piece bytes, truncate, emit P_COUNT, then re-append.
+    let mut last_piece_off: i64 = -1; // start offset of preceding piece
+    let mut prev_chain_tail: i64 = -1; // tail of chain BEFORE preceding piece (-1 if piece was first)
     *flagp = P_PURESTR;
 
     // c:951-952 — snapshot the segment-special set so we can do
@@ -863,21 +869,99 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
                 if j < bytes.len() && bytes[j] == b')' {
                     j += 1;
                     patparse_off.store(j, Ordering::Relaxed);
-                    // Emit P_COUNT header.
+                    // POSTFIX semantics — c:pattern.c:1686.
+                    // C does `patinsert(P_COUNTSTART, starter, ...)`
+                    // then `pattail(opnd, patnode(P_BACK))` to loop the
+                    // operand back. zshrs uses a simpler encoding where
+                    // P_COUNT carries [min, max] then operand bytes
+                    // inline; matcher iterates outside. So we relocate
+                    // the preceding piece into the operand slot.
+                    if last_piece_off >= 0 {
+                        let piece_start = last_piece_off as usize;
+                        // Snapshot preceding piece (everything emitted
+                        // by the prior patcomppiece call).
+                        let piece_bytes: Vec<u8> = {
+                            let buf = patout.lock().unwrap();
+                            buf[piece_start..].to_vec()
+                        };
+                        // Truncate to remove the piece.
+                        {
+                            let mut buf = patout.lock().unwrap();
+                            buf.truncate(piece_start);
+                        }
+                        // Cut chain at prev_chain_tail (was pointing
+                        // into the piece via set_next or as
+                        // chain_start).
+                        if prev_chain_tail >= 0 {
+                            set_next(prev_chain_tail as usize, 0);
+                        } else {
+                            chain_start = -1;
+                        }
+                        // Emit P_COUNT at current end.
+                        let count_off = patnode(P_COUNT);
+                        let operand_new_start: usize;
+                        {
+                            let mut buf = patout.lock().unwrap();
+                            buf.extend_from_slice(&min.to_le_bytes());
+                            buf.extend_from_slice(&max.to_le_bytes());
+                            operand_new_start = buf.len();
+                        }
+                        // Relocate piece bytes: rewrite internal next
+                        // links (absolute offsets >= piece_start) by
+                        // delta = operand_new_start - piece_start.
+                        let delta: i64 = operand_new_start as i64 - piece_start as i64;
+                        let mut relocated = piece_bytes.clone();
+                        let mut i = 0;
+                        while i + I_BODY <= relocated.len() {
+                            let op = relocated[i + I_OP];
+                            if op == 0 {
+                                i += 1;
+                                continue;
+                            }
+                            let nxt = u32::from_le_bytes(
+                                relocated[i + I_NEXT..i + I_NEXT + 4].try_into().unwrap(),
+                            );
+                            if nxt != 0 {
+                                let new_nxt = (nxt as i64 + delta) as u32;
+                                relocated[i + I_NEXT..i + I_NEXT + 4]
+                                    .copy_from_slice(&new_nxt.to_le_bytes());
+                            }
+                            let next_i = advance_past_instr(&relocated, i);
+                            if next_i == 0 || next_i <= i {
+                                break;
+                            }
+                            i = next_i;
+                        }
+                        {
+                            let mut buf = patout.lock().unwrap();
+                            buf.extend_from_slice(&relocated);
+                        }
+                        // Hook P_COUNT into chain.
+                        if chain_start < 0 {
+                            chain_start = count_off as i64;
+                        } else {
+                            set_next(prev_chain_tail as usize, count_off);
+                        }
+                        last_tail = count_off;
+                        // Consumed — clear tracking.
+                        last_piece_off = -1;
+                        prev_chain_tail = -1;
+                        continue;
+                    }
+                    // No preceding piece — legacy PREFIX behavior
+                    // (real zsh would reject; preserved for existing
+                    // direct-API callers).
                     let count_off = patnode(P_COUNT);
                     let mut buf = patout.lock().unwrap();
                     buf.extend_from_slice(&min.to_le_bytes());
                     buf.extend_from_slice(&max.to_le_bytes());
                     drop(buf);
-                    // Compile the operand inline immediately after.
                     let mut piece_flags: i32 = 0;
                     let mut piece_tail: usize = 0;
                     let piece = patcomppiece(&mut piece_flags, paren, &mut piece_tail);
                     if piece < 0 {
                         return -1;
                     }
-                    // Terminate operand chain with 0 so matcher
-                    // knows to stop iterating the body each pass.
                     set_next(piece_tail, 0);
                     if chain_start < 0 {
                         chain_start = count_off as i64;
@@ -885,6 +969,8 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
                         set_next(last_tail, count_off);
                     }
                     last_tail = count_off;
+                    last_piece_off = -1;
+                    prev_chain_tail = -1;
                     continue;
                 }
             }
@@ -978,6 +1064,9 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         drop(snapshot); // hint: explicit release
         let mut piece_flags: i32 = 0;
         let mut piece_tail: usize = 0;
+        // Snapshot the chain tail BEFORE patcomppiece — used by a
+        // following POSTFIX (#cN,M) to detach this piece from the chain.
+        let prev_tail_before_piece: i64 = if chain_start < 0 { -1 } else { last_tail as i64 };
         let piece = patcomppiece(&mut piece_flags, paren, &mut piece_tail);
         if piece < 0 {
             return -1;
@@ -989,6 +1078,8 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
             set_next(last_tail, piece as usize);
         }
         last_tail = piece_tail;
+        last_piece_off = piece;
+        prev_chain_tail = prev_tail_before_piece;
         *flagp &= piece_flags;
     }
 
@@ -5085,11 +5176,12 @@ mod tests {
         crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
-    /// `(#c3,5)x` — counted repetition: match `x` 3 to 5 times.
+    /// `x(#c3,5)` — counted repetition: match `x` 3 to 5 times.
+    /// c:pattern.c:1606-1696 — POSTFIX `(#cN,M)` modifier on preceding piece.
     #[test]
     fn count_range_3_to_5() {
         let _g = crate::test_util::global_state_lock();
-        let prog = compile("(#c3,5)x");
+        let prog = compile("x(#c3,5)");
         assert!(!pattry(&prog, "xx"));
         assert!(pattry(&prog, "xxx"));
         assert!(pattry(&prog, "xxxx"));
@@ -5097,11 +5189,11 @@ mod tests {
         assert!(!pattry(&prog, "xxxxxx"));
     }
 
-    /// `(#c3)x` — exact count: `xxx` only.
+    /// `x(#c3)` — exact count: `xxx` only.
     #[test]
     fn count_exact_3() {
         let _g = crate::test_util::global_state_lock();
-        let prog = compile("(#c3)x");
+        let prog = compile("x(#c3)");
         assert!(!pattry(&prog, "xx"));
         assert!(pattry(&prog, "xxx"));
         assert!(!pattry(&prog, "xxxx"));
@@ -5121,11 +5213,11 @@ mod tests {
         assert!(pattry(&prog, "b"));
     }
 
-    /// `(#c2,)x` — at least 2.
+    /// `x(#c2,)` — at least 2.
     #[test]
     fn count_min_only() {
         let _g = crate::test_util::global_state_lock();
-        let prog = compile("(#c2,)x");
+        let prog = compile("x(#c2,)");
         assert!(!pattry(&prog, "x"));
         assert!(pattry(&prog, "xx"));
         assert!(pattry(&prog, "xxxxxxxx"));
