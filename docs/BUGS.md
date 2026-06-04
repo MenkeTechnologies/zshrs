@@ -35091,7 +35091,24 @@ so this introduces visual noise for FQDNs.
 
 ## #430 — `%s`/`%u` prompt close-escapes emit `\033[0m` (reset-all) instead of pair-specific closes
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `%s` now correctly emits `\033[27m`
+(standout off) and `%u` emits `\033[24m` (underline off) instead of
+the SGR-full-reset `\033[0m`. Likely landed via earlier prompt-escape
+parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'print -P "%Sx%s%Uy%u"' | od -c
+0000000  033   [   7   m   x 033   [   2   7   m 033   [   4   m   y 033
+# `%s` = 27m (standout off), `%u` = 24m (underline off) — pair-specific
+```
+
+Note: open-codes diverge between zsh (`\033[3m` italic) and zshrs
+(`\033[7m` reverse) for `%S`; both are legitimate terminfo-driven
+"standout" sequences depending on `smso` and the active terminal —
+distinct from the original "reset-all" bug.
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%Sx%s%Uy%u" | od -c | head -1'
@@ -35718,7 +35735,41 @@ print -l /tmp/_zg/**/* | sort
 
 ## #441 — `pwd` builtin returns `$PWD` blindly when disagreement with `getcwd()` — zsh validates
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/builtin.rs](../src/ported/builtin.rs)).
+
+**Root cause** — C `Src/builtin.c:734` reads the shell-INTERNAL `pwd` global
+(`Src/params.c:108`), which is only mutated by `cd` and the shell's cwd
+tracker. Assignment to `$PWD` updates the env-var-side but NOT the internal
+global, so `pwd` keeps reporting the real current directory. zshrs has no
+separate internal pwd — `$PWD` doubles as both, so `PWD=/spoof` silently
+overrode the `pwd` output (security-relevant).
+
+**Fix** — added stat-comparison gate in `bin_pwd`'s logical-mode branch:
+trust `$PWD` only when `stat($PWD).dev/ino == stat(getcwd()).dev/ino`
+(same inode → `$PWD` is a symlink-preserving alias for the real cwd, safe
+to use). On mismatch, fall back to `zgetcwd()` so the spoof is ignored.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'cd /; PWD=/tmp; pwd'
+/    # matches zsh (was /tmp before)
+
+# regression: logical-mode preserves symlink form when valid
+$ ./target/debug/zshrs --zsh -fc 'cd /tmp; pwd'
+/tmp    # symlink-preserving (not /private/tmp)
+
+# regression: -P still physical
+$ ./target/debug/zshrs --zsh -fc 'cd /tmp; pwd -P'
+/private/tmp
+
+# bogus spoof falls back to getcwd
+$ ./target/debug/zshrs --zsh -fc 'cd /; PWD=/nonexistent; pwd'
+/
+```
+
+Baseline 960/92 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'cd /; PWD=/tmp; pwd; echo "[$PWD]"'
@@ -43882,7 +43933,7 @@ qualifiers always have a digit suffix.
 | 427 | `read` doesn't strip leading/trailing IFS chars (zsh: trims `[hello]` from `"  hello  "`) | **port-bug** | explicit `${var##[[:space:]]##}` trim |
 | 428 | unquoted `${arr[*]}` joined with IFS but not re-word-split — half of join+split sequence missing | **port-bug** | use `${arr[@]}` form instead |
 | 429 | `%m` prompt escape (short hostname) not expanded — printed literally; likely also `%M`/`%y`/`%l`/`%j`/`%i` | **port-bug** | use `$HOST` parameter expansion |
-| 430 | `%s`/`%u` prompt close-escapes emit `\\033[0m` (reset-all) instead of `\\033[27m`/`\\033[24m` (pair-specific) | **port-bug** | use explicit ANSI close codes inline |
+| 430 | `%s`/`%u` prompt close-escapes emit `\\033[0m` (reset-all) instead of `\\033[27m`/`\\033[24m` (pair-specific) | **fixed** 2026-06-04 | n/a |
 | 431 | `%y`/`%l` prompt escapes (tty name) printed literally — extends #429 prompt-escape gap family | **port-bug** | `$TTY` / `${TTY##*/}` parameter |
 | 432 | `time` builtin output omits command-label prefix — pipeline timing reads as anonymous | **port-bug** | wrap with `echo "--- $cmd ---"` |
 | 433 | `time` builtin ignores `$TIMEFMT` parameter — hardcoded format always used | **port-bug** | `awk` reformat the hardcoded output |
@@ -43893,7 +43944,7 @@ qualifiers always have a digit suffix.
 | 438 | `%N` prompt escape (script/fn name) not expanded — extends prompt-escape gap family | **port-bug** | use `$0` in prompt function |
 | 439 | `%>>...` / `%<<...` prompt truncation directives not recognized — printed literally | **port-bug** | manual `${PWD/#$HOME/~}` + precmd truncation |
 | 440 | `**` recursive glob breadth-first ordering instead of zsh's alphabetical depth-first — order-dependent scripts break | **port-bug** | pipe through `sort` |
-| 441 | `pwd` builtin returns spoofed `$PWD` blindly — security-relevant, zsh validates against `getcwd()` | **port-bug** | `command pwd -P` for trusted checks |
+| 441 | `pwd` builtin returns spoofed `$PWD` blindly — security-relevant, zsh validates against `getcwd()` | **fixed** 2026-06-04 | n/a |
 | 442 | `$ZSH_VERSION` exposes zshrs internal version `5.9.0.3-test` instead of zsh-compat `5.9` — breaks feature-detect scripts | **fixed** 2026-06-04 | n/a |
 | 443 | `EUID=0`/`UID=0`/`PPID=99` assignment silently accepted — special-var syscall setters missing (security-relevant) | **fixed** 2026-06-04 | n/a |
 | 444 | `$ZSH_PATCHLEVEL` returns literal `unknown` — git-derived build identifier missing | **port-bug** | hardcode from build process |
