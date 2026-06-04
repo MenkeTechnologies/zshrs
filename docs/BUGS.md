@@ -47421,7 +47421,7 @@ no longer reports the internal trap-machinery scalar.
 | 413 | `do` standalone-keyword silently accepted as no-op (zsh: parse error near `do`) — reserved-word strict check missing | **fixed** 2026-06-02 | `zsh -n script.zsh` pre-check |
 | 414 | `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape) — opposite of #398 printf direction | **fixed** 2026-06-04 | n/a |
 | 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **port-bug** | manual save/restore via `${(@kv)config}` |
-| 416 | `unset PATH` ignored — command lookup still resolves (security bypass for sandboxing patterns) | **port-bug** | try `PATH=` empty assignment (needs verify) |
+| 416 | `unset PATH` ignored — command lookup still resolves (security bypass for sandboxing patterns) | **fixed** 2026-06-04 | try `PATH=` empty assignment (needs verify) |
 | 417 | `unset RANDOM` ignored — special-param regenerator stays active (zsh: returns empty after unset) | **fixed** 2026-06-04 | n/a |
 | 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **fixed** 2026-06-04 | n/a |
 | 419 | `unset LINENO` silently accepted — no "read-only variable" diagnostic (zsh: emits warning) | **fixed** 2026-06-04 | n/a |
@@ -47440,12 +47440,12 @@ no longer reports the internal trap-machinery scalar.
 | 432 | `time` builtin output omits command-label prefix — pipeline timing reads as anonymous | **port-bug** | wrap with `echo "--- $cmd ---"` |
 | 433 | `time` builtin ignores `$TIMEFMT` parameter — hardcoded format always used | **port-bug** | `awk` reformat the hardcoded output |
 | 434 | `read -e` echo-mode flag not recognized — input consumed silently instead of echoed to stdout | **port-bug** | `tee /dev/stderr` or explicit `echo "$REPLY"` |
-| 435 | `typeset -A` no-args lists internal introspection assocs (aliases/builtins/commands) instead of user-defined | **port-bug** | `typeset -p +H \| grep "typeset -A"` |
+| 435 | `typeset -A` no-args lists internal introspection assocs (aliases/builtins/commands) instead of user-defined | **fixed** 2026-06-04 | `typeset -p +H \| grep "typeset -A"` |
 | 436 | `${(q)a[N]}` flag + subscript combination errors "bad substitution" — parser doesn't combine flags with subscripts | **fixed** 2026-06-04 | n/a |
 | 437 | regex-compile error diagnostic missing details — "failed to compile regex" with no specific reason (zsh: "brackets not balanced" etc.) | **fixed** 2026-06-04 | n/a |
 | 438 | `%N` prompt escape (script/fn name) not expanded — extends prompt-escape gap family | **fixed** 2026-06-04 | n/a |
 | 439 | `%>>...` / `%<<...` prompt truncation directives not recognized — printed literally | **fixed** 2026-06-04 | n/a |
-| 440 | `**` recursive glob breadth-first ordering instead of zsh's alphabetical depth-first — order-dependent scripts break | **port-bug** | pipe through `sort` |
+| 440 | `**` recursive glob breadth-first ordering instead of zsh's alphabetical depth-first — order-dependent scripts break | **fixed** 2026-06-04 | pipe through `sort` |
 | 441 | `pwd` builtin returns spoofed `$PWD` blindly — security-relevant, zsh validates against `getcwd()` | **fixed** 2026-06-04 | n/a |
 | 442 | `$ZSH_VERSION` exposes zshrs internal version `5.9.0.3-test` instead of zsh-compat `5.9` — breaks feature-detect scripts | **fixed** 2026-06-04 | n/a |
 | 443 | `EUID=0`/`UID=0`/`PPID=99` assignment silently accepted — special-var syscall setters missing (security-relevant) | **fixed** 2026-06-04 | n/a |
