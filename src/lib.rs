@@ -42,6 +42,20 @@
 // should still aim for clippy-clean, but at file/function scope, not
 // crate-wide.
 #![allow(clippy::all)]
+
+/// Runtime shell-mode flag set by the binary entrypoint (`bins/zshrs.rs`)
+/// at startup. The library can't directly read `bins/zshrs.rs::shell_mode()`
+/// (it lives in the binary crate), so the binary writes this atomic when
+/// parsing `--zsh` / `--bash` / `--posix` and the library reads it from
+/// bridge / dispatch sites that need to gate bash-compat-vs-zsh behavior.
+/// Defaults to `false` (zshrs-native mode) when not explicitly set.
+///
+/// Bugs #475 / #504 / #555 in docs/BUGS.md — bash-only builtins
+/// (`caller`/`help`/`mapfile`/`readarray`/`compgen`/etc.) should
+/// dispatch as "command not found" when this is true.
+pub static IS_ZSH_MODE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// `compsys` submodule.
 pub mod compsys;
 /// `exec_jobs` submodule.
