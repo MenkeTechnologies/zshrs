@@ -190,6 +190,21 @@ fn shname() -> String {
 }
 
 pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
+    // c:Bugs #475/#504/#555 — bash-only builtins (`mapfile`,
+    // `readarray`, `compopt`) should emit "command not found" in
+    // `--zsh` mode matching zsh's external-command-lookup miss.
+    // The per-opcode closures for caller/help/complete/compgen
+    // already gate via IS_ZSH_MODE at their registration sites;
+    // names without dedicated opcodes (compopt/mapfile/readarray)
+    // route through this generic builtintab lookup and need the
+    // gate here.
+    if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+        && matches!(name, "compopt" | "mapfile" | "readarray")
+    {
+        eprintln!("zsh:1: command not found: {}", name);
+        let _ = args;
+        return 127;
+    }
     // c:Src/exec.c:3050-3068 — builtin lookup hits `builtintab` (the
     // merged table containing module-provided builtins). The previous
     // port walked only the core `BUILTINS` slice, so per-module
@@ -1129,12 +1144,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Completion
     vm.register_builtin(BUILTIN_COMPGEN, |vm, argc| {
         let args = pop_args(vm, argc);
+        // c:Bug #475/#555 — `compgen` is a bash-only builtin. In
+        // `--zsh` mode emit "command not found" matching zsh's
+        // external-command lookup miss.
+        if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("zsh:1: command not found: compgen");
+            let _ = args;
+            return Value::Status(127);
+        }
         let status = with_executor(|exec| exec.builtin_compgen(&args));
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_COMPLETE, |vm, argc| {
         let args = pop_args(vm, argc);
+        // c:Bug #475 — `complete` is a bash-only builtin. Same gate
+        // as BUILTIN_COMPGEN above.
+        if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("zsh:1: command not found: complete");
+            let _ = args;
+            return Value::Status(127);
+        }
         let status = with_executor(|exec| exec.builtin_complete(&args));
         Value::Status(status)
     });
@@ -1179,11 +1209,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_CALLER, |vm, argc| {
         let args = pop_args(vm, argc);
+        // c:Bug #475 — `caller` is a bash-only builtin. In `--zsh`
+        // mode emit the canonical "command not found" diagnostic
+        // and rc=127 matching zsh's external-command-lookup miss.
+        if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("zsh:1: command not found: caller");
+            let _ = args;
+            return Value::Status(127);
+        }
         Value::Status(with_executor(|exec| exec.builtin_caller(&args)))
     });
 
     vm.register_builtin(BUILTIN_HELP, |vm, argc| {
         let args = pop_args(vm, argc);
+        // c:Bug #475 — `help` is a bash-only builtin. Same gate as
+        // BUILTIN_CALLER above.
+        if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("zsh:1: command not found: help");
+            let _ = args;
+            return Value::Status(127);
+        }
         Value::Status(with_executor(|exec| exec.builtin_help(&args)))
     });
 
