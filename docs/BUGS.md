@@ -38314,7 +38314,76 @@ pattern clauses.
 
 ## #477 — `${a:0:n}` bash-style substring with bare-name length accepted (zsh: errors)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — direct port of C's
+`check_colon_subscript` alphabetic-rejection gate at
+`Src/subst.c:1571 + c:3633-3645 + c:3786-3791`. Bare alpha-
+starting LENGTH operand in `${var:OFFSET:LENGTH}` now errors
+matching zsh.
+
+**Root cause** — `src/ported/subst.rs` substring path at
+`paramsubst` parsed the LENGTH operand via
+`mathevali(&singsub(parts[1]))` which silently resolved a
+bare identifier `n` as a variable lookup (bash semantics).
+C zsh's `check_colon_subscript` (c:1571) returns NULL for
+any alpha-starting operand because the alphabetic prefix
+is a modifier letter — at c:3786 the leftover `:n}` then
+triggers the canonical `unrecognized modifier \`n'` error.
+
+**Fix** — `subst.rs::paramsubst` substring arm: after the
+existing empty-operand guards, check whether the LENGTH
+portion (post-trim) starts with an ASCII alphabetic char.
+If yes, emit `unrecognized modifier \`X'` via `zerr` (matches
+C zsh's exact format with the offending letter), set
+ERRFLAG_ERROR, and return empty. The valid `${a:0:$n}` /
+`${a:0:$((n))}` / `${a:0:(N)}` / `${a:0:-5}` / `${a:0:5}`
+forms remain untouched because `$` / `(` / digit / `-`
+prefixes don't trip the alphabetic check.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+# Bare alpha length — errors in both (bug):
+$ /opt/homebrew/bin/zsh -fc 'a=helloworld; n=5; echo "${a:0:n}"'
+zsh:1: unrecognized modifier `n'
+$ ./target/debug/zshrs --zsh -fc 'a=helloworld; n=5; echo "${a:0:n}"'
+zsh:1: unrecognized modifier `n'
+
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:0:x}"' 2>&1
+zsh:1: unrecognized modifier `x'
+$ ./target/debug/zshrs --zsh -fc 'a=hello; echo "${a:0:x}"' 2>&1
+zsh:1: unrecognized modifier `x'
+
+# Valid forms preserved in both shells:
+$ /opt/homebrew/bin/zsh -fc 'a=helloworld; n=5; echo "${a:0:$n}"'
+hello
+$ ./target/debug/zshrs --zsh -fc 'a=helloworld; n=5; echo "${a:0:$n}"'
+hello
+
+$ /opt/homebrew/bin/zsh -fc 'a=helloworld; n=5; echo "${a:0:$((n))}"'
+hello
+$ ./target/debug/zshrs --zsh -fc 'a=helloworld; n=5; echo "${a:0:$((n))}"'
+hello
+
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:0:-1}"'
+hell
+$ ./target/debug/zshrs --zsh -fc 'a=hello; echo "${a:0:-1}"'
+hell
+
+$ /opt/homebrew/bin/zsh -fc 'a=hello; n=2; echo "${a:0:$((n+1))}"'
+hel
+$ ./target/debug/zshrs --zsh -fc 'a=hello; n=2; echo "${a:0:$((n+1))}"'
+hel
+
+$ /opt/homebrew/bin/zsh -fc 'a=helloworld; echo "${a:0:(5)}"'
+hello
+$ ./target/debug/zshrs --zsh -fc 'a=helloworld; echo "${a:0:(5)}"'
+hello
+```
+
+All match byte-for-byte. zshrs_shell baseline preserved at
+967/85.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=helloworld; n=5; echo "${a:0:n}"'
@@ -38322,36 +38391,6 @@ zsh:1: unrecognized modifier `n'
 
 $ ./target/debug/zshrs --zsh -c 'a=helloworld; n=5; echo "${a:0:n}"'
 hello
-```
-
-`${var:offset:length}` substring syntax:
-- bash: accepts bare-name `n` as length, evaluates it
-  arithmetically → 5 chars
-- zsh: requires explicit dollar sign `${a:0:$n}` or
-  parens `${a:0:$((n))}`. Bare `n` is treated as a
-  modifier, fails.
-
-zshrs accepts bash's bare-name form. Another bash-compat
-addition in --zsh mode (extends #474, #475 family).
-
-**Where** — `src/ported/paramsubst/substring.rs::parse_length`:
-should require explicit `$VAR` or `$((EXPR))` for the
-length, matching zsh. C-source `Src/subst.c::strsub`
-treats unprefixed identifier as modifier suffix.
-
-**Impact** — code that worked under zshrs may fail under
-real zsh (silent migration breakage). User writes
-`${a:0:n}` expecting it to work everywhere; production
-zsh emits "unrecognized modifier" error.
-
-This is the OPPOSITE direction of most port-bugs (zshrs
-accepts more than zsh) — typically zshrs-tested code is
-permissive, then breaks on real zsh.
-
-**Workaround** — always use explicit form:
-```sh
-echo "${a:0:$n}"     # works in both
-echo "${a:0:$((n))}" # works in both
 ```
 
 ---
@@ -47349,7 +47388,7 @@ no longer reports the internal trap-machinery scalar.
 | 474 | `$PIPESTATUS` (uppercase) exposed as alias to `$pipestatus` — zsh has only lowercase; breaks bash-vs-zsh detection | **port-bug** | detect via `$ZSH_VERSION`/`$BASH_VERSION` strings |
 | 475 | bash-only builtins (`caller`/`help`/`complete`/`compopt`/`mapfile`) shipped in `--zsh` mode — extends bash-compat-contamination family | **port-bug** | detect zshrs via `$ZSH_VERSION` pattern |
 | 476 | `case "x" in) ...; esac` empty pattern silently accepted as no-op (zsh: parse error) — extends parser-strictness family | **fixed** 2026-06-04 | n/a |
-| 477 | `${a:0:n}` substring with bare-name length accepted (zsh: "unrecognized modifier") — bash-compat permissiveness | **port-bug** | always use `$n` or `$((n))` form |
+| 477 | `${a:0:n}` substring with bare-name length accepted (zsh: "unrecognized modifier") — bash-compat permissiveness | **fixed** 2026-06-04 | alpha-LENGTH gate at substring arm matches C `check_colon_subscript` |
 | 478 | `read "?prompt"` emits prompt to stdout instead of stderr — corrupts cmdsub-captured output | **fixed** 2026-06-04 | n/a |
 | 479 | `$OPTERR` initialized to 1 — bash-compat addition, zsh leaves unset | **port-bug** | use `$ZSH_VERSION` for shell-detect |
 | 480 | `[[ -z ]]` (no operand) silently rc=0 — zsh errors "unknown condition" — extends parser-strictness family | **fixed** 2026-06-04 | n/a |
