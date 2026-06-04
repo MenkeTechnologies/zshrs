@@ -10660,11 +10660,24 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // and many other prompts rely on this without an explicit
         // zmodload (zsh ships datetime preloaded in most configs).
         "EPOCHSECONDS" => {
-            // c:Src/Modules/datetime.c:206 `getcurrentsecs`.
+            // c:Src/Modules/datetime.c:206 `getcurrentsecs`. zsh requires
+            // explicit `zmodload zsh/datetime` before EPOCHSECONDS is
+            // bound (Src/Modules/datetime.c:25 `p:EPOCHSECONDS` feature
+            // descriptor). Without the load, the name is unset and
+            // ${EPOCHSECONDS:-x} falls through to "x". Match by gating
+            // the getter on the module's loaded state. Bug #31 in
+            // docs/BUGS.md.
+            if !crate::ported::module::MODULESTAB.lock().unwrap().is_loaded("zsh/datetime") {
+                return None;
+            }
             Some(crate::ported::modules::datetime::getcurrentsecs().to_string())
         }
         "EPOCHREALTIME" => {
-            // c:Src/Modules/datetime.c:212 `getcurrentrealtime`.
+            // c:Src/Modules/datetime.c:212 `getcurrentrealtime`. Same
+            // zsh/datetime gate as EPOCHSECONDS above. Bug #31.
+            if !crate::ported::module::MODULESTAB.lock().unwrap().is_loaded("zsh/datetime") {
+                return None;
+            }
             let v = crate::ported::modules::datetime::getcurrentrealtime();
             Some(format!("{:.10}", v))
         }
@@ -10673,7 +10686,10 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             // [tv_sec, tv_nsec]. Bare `$epochtime` joins the two with
             // ` ` (the default IFS separator), matching the C path
             // `getstrvalue` → sepjoin on PM_ARRAY. Bug #317 in
-            // docs/BUGS.md.
+            // docs/BUGS.md. Gate on zsh/datetime load per #31.
+            if !crate::ported::module::MODULESTAB.lock().unwrap().is_loaded("zsh/datetime") {
+                return None;
+            }
             let arr = crate::ported::modules::datetime::getcurrenttime();
             Some(arr.join(" "))
         }
