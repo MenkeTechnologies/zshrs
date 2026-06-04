@@ -38162,7 +38162,17 @@ fi
 
 ## #476 — `case "x" in) ...; esac` empty pattern silently accepted as no-op (zsh: parse error)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `case ... in)` (empty pattern) now
+errors `parse error near \`)'` matching zsh. Likely landed via earlier
+case-parser strictness work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'case "x" in) echo unreachable;; *) echo m;; esac'
+zsh:1: parse error near `)'    # rc=1, matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'case "x" in) echo unreachable;; *) echo m;; esac'
@@ -38257,7 +38267,18 @@ echo "${a:0:$((n))}" # works in both
 
 ## #478 — `read "?prompt"` emits prompt to stdout instead of stderr
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `read "?PROMPT" var` now emits the
+prompt to stderr (or to the tty) matching zsh. Captured stdout no
+longer includes the prompt text. Likely landed via earlier `bin_read`
+parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'echo y | read "?prompt> " ans; echo done'
+done    # matches zsh — prompt went to stderr, not contaminating stdout
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo y | read "?prompt> " ans; echo done'
@@ -38579,7 +38600,18 @@ fi
 
 ## #483 — `(#s)PATTERN` start-anchor glob flag not recognized — extends #409 family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `(#s)` start-anchor flag now recognized
+and applied. Likely landed via earlier `patgetglobflags` parity (same
+landing as #409).
+
+**Verify**
+```sh
+$ touch /tmp/_zg/abc
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; echo /tmp/_zg/(#s)abc'
+/tmp/_zg/abc    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(#s)abc'
@@ -38633,7 +38665,17 @@ of `(#s)foo*`.
 
 ## #484 — `(#l)PATTERN` case-insensitive-lowercase glob flag not recognized — extends #409/#483 family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `(#l)` lowercase-case-insensitive flag
+now matches `ABC` etc. Same landing as #409/#483.
+
+**Verify**
+```sh
+$ touch /tmp/_zg/ABC
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; echo /tmp/_zg/(#l)abc'
+/tmp/_zg/ABC    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/ABC; echo /tmp/_zg/(#l)abc'
@@ -38704,7 +38746,17 @@ similar for approximate matching.
 
 ## #486 — `~-N` tilde dirstack reference (negative index) not expanded — `~-` alone works, with N fails
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `~-N` (negative dirstack index) now
+expands matching zsh. Likely landed via earlier tilde-expansion parity
+work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'pushd /tmp >/dev/null; pushd / >/dev/null; echo ~-1'
+/tmp    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'pushd /tmp >/dev/null; pushd / >/dev/null; echo ~-1'
@@ -38752,7 +38804,17 @@ cd "$oldest"
 
 ## #487 — `pushd` no-args doesn't swap top two stack entries — re-pushes current dir instead
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `pushd` (no args) now swaps the top two
+dirstack entries matching zsh. Likely landed via earlier `bin_pushd`
+no-args parity.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'cd /tmp; pushd /; pushd; dirs'
+/tmp /    # matches zsh — swap completed
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'cd /tmp; pushd /; pushd; pwd; dirs'
@@ -38814,6 +38876,16 @@ pushd ~+1
 ---
 
 ## #488 — `cd /no/such` error message includes `(os error 2)` — zsh: plain "no such file or directory"
+
+**Status:** `fixed` 2026-06-04 — `cd /no/such` now emits `no such file
+or directory: PATH` (lowercase, no `(os error N)` suffix) matching zsh.
+Likely landed via earlier `bin_cd` error-message parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'cd /tmp/zzz_nosuch'
+zsh:cd:1: no such file or directory: /tmp/zzz_nosuch    # rc=1
+```
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
@@ -44396,19 +44468,19 @@ qualifiers always have a digit suffix.
 | 473 | `[[ "ab" == a|b ]]` zshrs runs `b` as command — `\|` in pattern parsed as pipe (security-relevant) | **port-bug** | always parenthesize `(a\|b)` alternations |
 | 474 | `$PIPESTATUS` (uppercase) exposed as alias to `$pipestatus` — zsh has only lowercase; breaks bash-vs-zsh detection | **port-bug** | detect via `$ZSH_VERSION`/`$BASH_VERSION` strings |
 | 475 | bash-only builtins (`caller`/`help`/`complete`/`compopt`/`mapfile`) shipped in `--zsh` mode — extends bash-compat-contamination family | **port-bug** | detect zshrs via `$ZSH_VERSION` pattern |
-| 476 | `case "x" in) ...; esac` empty pattern silently accepted as no-op (zsh: parse error) — extends parser-strictness family | **port-bug** | CI lint for empty pattern clauses |
+| 476 | `case "x" in) ...; esac` empty pattern silently accepted as no-op (zsh: parse error) — extends parser-strictness family | **fixed** 2026-06-04 | n/a |
 | 477 | `${a:0:n}` substring with bare-name length accepted (zsh: "unrecognized modifier") — bash-compat permissiveness | **port-bug** | always use `$n` or `$((n))` form |
-| 478 | `read "?prompt"` emits prompt to stdout instead of stderr — corrupts cmdsub-captured output | **port-bug** | `print -n PROMPT >&2; read` form |
+| 478 | `read "?prompt"` emits prompt to stdout instead of stderr — corrupts cmdsub-captured output | **fixed** 2026-06-04 | n/a |
 | 479 | `$OPTERR` initialized to 1 — bash-compat addition, zsh leaves unset | **port-bug** | use `$ZSH_VERSION` for shell-detect |
 | 480 | `[[ -z ]]` (no operand) silently rc=0 — zsh errors "unknown condition" — extends parser-strictness family | **fixed** 2026-06-04 | n/a |
 | 481 | `[[ -n/-r/-d/-f/... ]]` ALL unary ops no-operand silently rc=0 (zsh: parse error each) — generalizes #480 | **fixed** 2026-06-04 | n/a |
 | 482 | `[[ 5 -eq ]]` binary op missing RHS silently rc=1 (zsh: parse error) — completes test parse-strictness gap | **fixed** 2026-06-04 | n/a |
-| 483 | `(#s)PATTERN` start-anchor glob flag not recognized — extends #409 `(#X)` family ((#e)/(#b)/(#a)/(#l)/(#m) likely too) | **port-bug** | explicit prefix-pattern form |
-| 484 | `(#l)PATTERN` case-insensitive-lowercase glob flag not recognized — extends #483 family | **port-bug** | explicit `[Aa][Bb][Cc]` case alternation |
+| 483 | `(#s)PATTERN` start-anchor glob flag not recognized — extends #409 `(#X)` family ((#e)/(#b)/(#a)/(#l)/(#m) likely too) | **fixed** 2026-06-04 | n/a |
+| 484 | `(#l)PATTERN` case-insensitive-lowercase glob flag not recognized — extends #483 family | **fixed** 2026-06-04 | n/a |
 | 485 | `(#aN)PATTERN` approximate-match (typo-tolerant) glob flag not recognized — extends #483 family | **port-bug** | external `agrep` for fuzzy match |
-| 486 | `~-N` (negative dirstack index) not expanded — `~-` alone works; numeric suffix fails | **port-bug** | `dirs -l \| awk` + explicit cd |
-| 487 | `pushd` no-args doesn't swap top two stack entries — re-pushes current dir (zsh: swaps) | **port-bug** | explicit `pushd ~+1` (also affected by #466) |
-| 488 | `cd /no/such` error message includes `(os error 2)` — zsh: plain "no such file or directory" (case-sensitive matches break) | **port-bug** | `${output:l}` case-insensitive matching |
+| 486 | `~-N` (negative dirstack index) not expanded — `~-` alone works; numeric suffix fails | **fixed** 2026-06-04 | n/a |
+| 487 | `pushd` no-args doesn't swap top two stack entries — re-pushes current dir (zsh: swaps) | **fixed** 2026-06-04 | n/a |
+| 488 | `cd /no/such` error message includes `(os error 2)` — zsh: plain "no such file or directory" (case-sensitive matches break) | **fixed** 2026-06-04 | n/a |
 | 489 | `(#cN,M)` count-range glob flag not recognized — extends #425 (`#cN` exact-count) to ranges | **port-bug** | explicit alternation per-count |
 | 490 | `>&5` (write to invalid fd) silently rc=0 — zsh: "bad file descriptor" rc=1 | **port-bug** | explicit fd-open test before write |
 | 491 | `kill 9999999` error includes `(os error 3)` Rust-format — extends #488 family across all syscall-wrapping builtins | **port-bug** | `sed`-strip `(os error N)` suffix |
