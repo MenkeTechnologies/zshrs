@@ -1196,7 +1196,14 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     match xc {
                         b'T' => tmfmt = "%H:%M".to_string(),    // c:715
                         b'*' => tmfmt = "%H:%M:%S".to_string(), // c:718
-                        b'w' => tmfmt = "%a %e".to_string(),    // c:721
+                        // c:721 — exact C source: `tmfmt = "%a %f";`.
+                        // The `%f` extension is handled by zshrs's
+                        // ztrftime preprocessor at utils.rs:4293 →
+                        // `tm_mday` with no leading space (vs `%e`
+                        // which pads single-digit days with a space).
+                        // zsh's `%w` renders as `Thu 4` not `Thu  4`.
+                        // Bug #599.
+                        b'w' => tmfmt = "%a %f".to_string(),    // c:721
                         b'W' => tmfmt = "%m/%d/%y".to_string(), // c:724
                         b'D' => {
                             // c:727-746 — `%D{...}` format from braces;
