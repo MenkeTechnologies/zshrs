@@ -9646,9 +9646,22 @@ pub fn paramsubst(
             // with leading empty in DQ context lost the leading
             // element. Parity bug.
             let nul_str = "\u{a1}";
+            // c:Src/subst.c:36 — `nulstring[] = {Nularg, '\0'}`. Empty
+            // array elements get the Nularg sentinel ONLY in qt (DQ)
+            // context where prefork's `else if (!keep) uremnode` at
+            // c:184-187 must NOT delete them. In unquoted context zsh
+            // word-splits and DROPS empty elements (e.g. `a=(x y z);
+            // echo ${a%x*}` → `y z`, not ` y z`). Bug #578: zshrs
+            // emitted Nularg unconditionally, so unquoted splats with
+            // empty elements leaked `\u{a1}` into argv. Mirror C by
+            // gating on qt.
             let emit_part = |s: &str| -> String {
                 if s.is_empty() {
-                    nul_str.to_string()
+                    if qt {
+                        nul_str.to_string()
+                    } else {
+                        String::new()
+                    }
                 } else {
                     s.to_string()
                 }
@@ -9694,6 +9707,20 @@ pub fn paramsubst(
                     emit_part(part)
                 };
                 nodes.push(s);
+            }
+            // c:Src/subst.c:184-187 — `else if (!keep) uremnode` — in
+            // unquoted (qt=false) context the C source's prefork drops
+            // empty list nodes BEFORE word-splitting reaches argv.
+            // zshrs's prefork has the drop arm but stringsubst's
+            // multi-node splat outruns it for the array-splat path
+            // (the third-pass loop doesn't revisit the freshly
+            // inserted middle/last nodes when prefork's stringsubst
+            // returns a new_idx past them). Drop empties here so
+            // `a=(x y z); echo ${a%x*}` doesn't leak a leading-empty
+            // arg ` y z` instead of zsh's `y z`. Bug #578. Skip the
+            // drop in qt (DQ keeps empties — `"${(@s./.)X}"` shape).
+            if !qt && nodes.len() > 1 {
+                nodes.retain(|n| !n.is_empty());
             }
             let first = nodes.first().cloned().unwrap_or_default();
             let new_pos_in_full = prefix.chars().count()
