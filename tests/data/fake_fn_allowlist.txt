@@ -1686,3 +1686,14 @@ getkey_truncated_take
 zattr_fg_palette
 set_lastbase
 parse_int_arg
+
+# Side-set for tracking which regenerator-style special params
+# (RANDOM / SECONDS / EPOCH* / TTYIDLE / ERRNO) have been `unset` so
+# `lookup_special_var` skips the libc getfn shim and returns None.
+# C zsh sets `PM_UNSET` on the paramtab pm node; zshrs's special-var
+# dispatch reads from libc directly without a pm node, so the
+# unset-state lives in this side-set instead. Bug #417/#418.
+unset_specials
+mark_unset_special
+clear_unset_special
+is_unset_special

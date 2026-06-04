@@ -4732,6 +4732,16 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         );
         return None; // c:3207
     }
+    // c:Src/params.c randomsetfn / secondssetfn — re-assigning a
+    // regenerator-style special clears the PM_UNSET flag so the
+    // getfn becomes live again. zshrs's lookup_special_var uses a
+    // side-set for this (no real pm node), so clear it here. Bug #417.
+    if matches!(
+        s,
+        "RANDOM" | "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME" | "TTYIDLE" | "ERRNO"
+    ) {
+        clear_unset_special(s);
+    }
     queue_signals(); // c:3209
 
     // c:3210 — `strchr(s, '[')`. Split the leading name from the
@@ -6216,6 +6226,17 @@ pub fn unsetparam(name: &str) {
                      //      stdunsetfn dispatch at c:3870, or the `pm->old` scope
                      //      restore. `typeset -r x=foo; unset x` would silently succeed
                      //      in Rust where C rejects with `read-only variable: x`.
+    // c:Src/params.c:3853 — flag regenerator-style specials as unset
+    // so subsequent reads via lookup_special_var skip the getfn.
+    // RANDOM/SECONDS/EPOCH*/TTYIDLE/ERRNO have no paramtab pm node in
+    // zshrs (they're lookup_special_var libc shims), so the standard
+    // unsetparam_pm path below doesn't catch them. Bug #417/#418.
+    if matches!(
+        name,
+        "RANDOM" | "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME" | "TTYIDLE" | "ERRNO"
+    ) {
+        mark_unset_special(name);
+    }
     let (found, is_nameref) = {
         let tab = paramtab().read().unwrap();
         match tab.get(name) {
@@ -10358,6 +10379,44 @@ fn dontimport(flags: i32) -> i32 {
 // check this before falling back to `variables.get(name)`.
 // ===========================================================
 
+/// Registry of special-parameter names that have been `unset` and
+/// should bypass the getfn regenerator.
+///
+/// c:Src/params.c:3853 — `unsetparam_pm` sets `PM_UNSET` on the pm
+/// node which getfn callbacks check. zshrs's `lookup_special_var`
+/// dispatches to libc/getfn directly without a paramtab pm node, so
+/// PM_UNSET tracking happens in this side-set instead. Bug #417/#418.
+fn unset_specials() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static SET: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    SET.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// Mark a special-parameter NAME as unset. Future
+/// `lookup_special_var(name)` calls return `None` instead of dispatching
+/// to the getfn regenerator. Re-assigning the name (e.g. `RANDOM=42`)
+/// should clear this flag via `clear_unset_special`.
+pub fn mark_unset_special(name: &str) {
+    if let Ok(mut s) = unset_specials().lock() {
+        s.insert(name.to_string());
+    }
+}
+
+/// Clear the unset flag for a special-parameter NAME — called when the
+/// name is re-assigned so the getfn regenerator becomes active again.
+pub fn clear_unset_special(name: &str) {
+    if let Ok(mut s) = unset_specials().lock() {
+        s.remove(name);
+    }
+}
+
+fn is_unset_special(name: &str) -> bool {
+    unset_specials()
+        .lock()
+        .map(|s| s.contains(name))
+        .unwrap_or(false)
+}
+
 /// Look up a special-parameter NAME and dispatch to its GSU getfn.
 ///
 /// Returns `Some(value_string)` if `name` is one of zshrs's
@@ -10369,6 +10428,17 @@ fn dontimport(flags: i32) -> i32 {
 /// path. Mirrors the `Param.gsu->getfn` dispatch C zsh does
 /// inside `getsparam` / `getstrvalue` (Src/params.c:3076 / 2335).
 pub fn lookup_special_var(name: &str) -> Option<String> {
+    // c:Src/params.c:3853 — PM_UNSET-flagged specials skip getfn.
+    // Only applies to regenerator-style specials (RANDOM, SECONDS,
+    // EPOCHSECONDS, TTYIDLE, ERRNO) — identity specials like UID, GID,
+    // PPID stay live since they're not user-clearable in zsh either.
+    if matches!(
+        name,
+        "RANDOM" | "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME" | "TTYIDLE" | "ERRNO"
+    ) && is_unset_special(name)
+    {
+        return None;
+    }
     // All-digit positional: $1..$N from canonical PPARAMS.
     // C zsh dispatches positional params through pparams (Src/init.c).
     if !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()) {
