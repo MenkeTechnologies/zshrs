@@ -519,11 +519,14 @@ fn cmd_or_math() -> i32 {
         }
         hungetc('(');
         LEX_LEXSTOP.set(false);
-        return if skipcomm().is_err() {
-            CMD_OR_MATH_ERR
-        } else {
-            CMD_OR_MATH_CMD
-        };
+        // c:Src/lex.c:519-520 — `hungetc('('); return errflag ?
+        // CMD_OR_MATH_ERR : CMD_OR_MATH_CMD;`. The C path does NOT
+        // call skipcomm here — the caller (LX1_INPAR arm) returns
+        // INPAR_TOK and the parser walks the remaining content as
+        // ordinary tokens. Calling skipcomm() consumed the entire
+        // subshell body, so `(() { echo X; })` lost the inner anon-fn
+        // tokens. Bug #196.
+        return CMD_OR_MATH_CMD;
     }
 
     // Check for closing ) — matches C lex.c:511-512: success-with-`)`
@@ -551,11 +554,9 @@ fn cmd_or_math() -> i32 {
     }
     hungetc('(');
 
-    if skipcomm().is_err() {
-        CMD_OR_MATH_ERR
-    } else {
-        CMD_OR_MATH_CMD
-    }
+    // c:Src/lex.c:519-520 — same as above: return CMD_OR_MATH_CMD
+    // without skipcomm. Bug #196.
+    CMD_OR_MATH_CMD
 }
 
 /// Parse `$(...)` or `$((...))` after the `$` has been consumed.
