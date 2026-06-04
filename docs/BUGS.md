@@ -39582,7 +39582,34 @@ type "${path#./}"
 
 ## #497 — `$RPROMPT` initialized to empty string instead of unset — extends #479 bash-compat-init family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `RPROMPT` and `RPS1` are no
+longer pre-initialized in `--zsh` mode. Default state matches
+zsh: `${RPROMPT-unset}` reports `[unset]` and
+`[[ -v RPROMPT ]]` returns false. Plugin idioms that gate on
+"user has set RPROMPT?" now take the correct branch.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${RPROMPT-unset}]"'
+[unset]
+$ ./target/debug/zshrs --zsh -c 'echo "[${RPROMPT-unset}]"'
+[unset]
+
+$ /opt/homebrew/bin/zsh -fc 'echo "[${RPS1-unset}]"'
+[unset]
+$ ./target/debug/zshrs --zsh -c 'echo "[${RPS1-unset}]"'
+[unset]
+
+$ /opt/homebrew/bin/zsh -fc '[[ -v RPROMPT ]] && echo set || echo unset'
+unset
+$ ./target/debug/zshrs --zsh -c '[[ -v RPROMPT ]] && echo set || echo unset'
+unset
+```
+
+Doc-only flip; no code change in this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[${RPROMPT-unset}]"'
@@ -39591,38 +39618,6 @@ $ /opt/homebrew/bin/zsh -fc 'echo "[${RPROMPT-unset}]"'
 $ ./target/debug/zshrs --zsh -c 'echo "[${RPROMPT-unset}]"'
 []
 ```
-
-`RPROMPT` (right-side prompt) is **unset** by default
-in zsh — users opt-in. zshrs initializes it to empty
-string, so `${RPROMPT-unset}` returns `[]` (defined-as-
-empty) instead of `[unset]`.
-
-Same pattern as #479 (`$OPTERR=1` in zshrs but unset in
-zsh) — pre-initialized parameters where zsh leaves them
-unset.
-
-Likely also affected: `RPS1` (alias), `RPS2`,
-`SPROMPT`, `LISTMAX`, others.
-
-**Where** — `src/ported/params/init.rs`: RPROMPT/RPS1
-should not be auto-initialized.
-
-**Impact** — `[[ -v RPROMPT ]]` probes mis-report:
-
-```sh
-# Plugin: leave user's prompt alone
-if [[ -v RPROMPT ]]; then
-    echo "user has set RPROMPT"
-else
-    RPROMPT="%T"
-fi
-# zsh: not set, plugin sets default
-# zshrs: looks set (empty) — plugin skips setup; right-
-#        prompt stays empty
-```
-
-**Workaround** — use `[[ -n $RPROMPT ]]` (non-empty
-check) instead of `-v` (set check).
 
 ---
 
@@ -47368,7 +47363,7 @@ no longer reports the internal trap-machinery scalar.
 | 494 | `$((a + 1))` with `a="42xyz"` silently coerces to 0 — zsh: "bad math expression: operator expected" | **fixed** 2026-06-04 | n/a |
 | 495 | `${(C)a[1]}` capitalize-flag + array-subscript errors "bad substitution" — extends #436 flag×subscript family | **fixed** 2026-06-04 | n/a |
 | 496 | **CRITICAL** `type ./path` PANICS with "attempt to subtract with overflow" at builtin.rs:5959 — relative-path arg crashes shell | **port-bug** | strip `./` prefix before passing to `type` |
-| 497 | `$RPROMPT` initialized to empty string instead of unset (extends #479 bash-compat-init family) | **port-bug** | `[[ -n $RPROMPT ]]` non-empty check |
+| 497 | `$RPROMPT` initialized to empty string instead of unset (extends #479 bash-compat-init family) | **fixed** 2026-06-04 | `--zsh` mode no longer pre-inits RPROMPT/RPS1 |
 | 498 | `readonly x=N` on already-readonly x silently rc=0 — zsh errors "read-only variable" | **fixed** 2026-06-04 | n/a |
 | 499 | `times` builtin output uses 3-decimal precision instead of zsh's 2-decimal — parser format diff | **fixed** 2026-06-04 | n/a |
 | 500 | `disown -h` (or any unknown spec) rc=1 instead of zsh's 127; diagnostic format also diverges | **fixed** 2026-06-04 | n/a |
