@@ -749,17 +749,25 @@ pub fn bin_zle(
 /// }
 /// ```
 /// `zle -l` — list widget bindings (or check existence per arg).
-pub fn bin_zle_list(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
+pub fn bin_zle_list(_name: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // c:393
     // c:393-413 — `if (!*args) scan all` else look up each in turn.
     // Returns 0 if all found and listable; 1 if any missing.
-    // Simplified: ignore the OPT_ISSET dispatch (-a / -L) for now.
+    // c:Src/Zle/zle_thingy.c:396-397 — list mode is
+    //   `OPT_ISSET(ops,'a') ? -1 : OPT_ISSET(ops,'L')`.
+    //   -a (`-la`) → -1: emit raw name, INCLUDE internal widgets.
+    //   -L (`-lL`) → 1:  `zle -N name [fn]` reproducible form.
+    //   default (`-l`) → 0: abbreviated `name (fn)` form, hide internals.
+    let list_mode: i32 = if OPT_ISSET(ops, b'a') {
+        -1
+    } else if OPT_ISSET(ops, b'L') {
+        1
+    } else {
+        0
+    };
     if args.is_empty() {
         // c:396-397 — walk thingytab, call scanlistwidgets per node.
-        // C dispatches with `list = OPT_ISSET(ops, 'L') ? 0 : 1`. The
-        // Rust port ignores the OPT_ISSET dispatch and uses
-        // abbreviated-listing mode (`list=1`) per the doc comment.
-        let _ = scanlistwidgets(1);
+        let _ = scanlistwidgets(list_mode);
         return 0;
     }
     let mut ret = 0;
@@ -941,6 +949,20 @@ pub fn scanlistwidgets(list: i32) -> i32 {
     // c:505
     use std::io::Write;
     let tab = thingytab().lock().unwrap();
+    // c:509-512 — `if (list < 0) { printf("%s\n", hn->nam); return; }`
+    // The `-la` path emits raw name, includes INTERNAL widgets, and
+    // does not filter or annotate. Bug #379.
+    if list < 0 {
+        let mut names: Vec<String> = tab.keys().cloned().collect();
+        drop(tab);
+        names.sort();
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        for n in &names {
+            let _ = writeln!(handle, "{}", n);
+        }
+        return 0;
+    }
     let mut entries: Vec<(String, String)> = Vec::new();
     for (name, t) in tab.iter() {
         let w = match t.widget.as_ref() {

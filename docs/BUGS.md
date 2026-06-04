@@ -27158,6 +27158,27 @@ saved="${(q)_lowered[@]}"
 
 ## #334 — `zsh -f` (no-rcs flag) doesn't disable `rcs` option — `[[ -o rcs ]]` returns "on"
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces. The
+`-f` parseargs path now `unsetopt RCS`s correctly (likely
+closed by earlier `parseargs` work).
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ -o rcs ]] && echo on || echo off'
+off
+$ ./target/debug/zshrs --zsh -fc '[[ -o rcs ]] && echo on || echo off'
+off
+$ /opt/homebrew/bin/zsh -c '[[ -o rcs ]] && echo on || echo off'
+on
+$ ./target/debug/zshrs --zsh -c '[[ -o rcs ]] && echo on || echo off'
+on
+```
+Both directions agree: `-f` flips rcs off, no-`-f` keeps it on.
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -27204,6 +27225,26 @@ properly toggled.
 ---
 
 ## #335 — `hashdirs` option default differs — zsh: off (default), zshrs: on
+
+**Status:** `fixed` 2026-06-03 — no longer reproduces. Both
+shells now report `off` under `-fc`.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ -o hashdirs ]] && echo on || echo off'
+off
+$ ./target/debug/zshrs --zsh -fc '[[ -o hashdirs ]] && echo on || echo off'
+off
+```
+
+C `Src/options.c:151` carries `OPT_ALL` for HASHDIRS, but `-f`
+(NO_RCS path) disables it via `dosetopt(...)` chains, mirroring
+zsh's parseargs behavior for noninteractive shells. The bit was
+already wired correctly through earlier `-f` handling work.
+
+Doc-only flip; no code change.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
@@ -29835,6 +29876,55 @@ size=$(printf %s "$data" | wc -c)
 
 ## #379 — `zle -la` returns empty — builtin widget registry not exposed
 
+**Status:** `fixed` 2026-06-03 — `bin_zle_list` now parses
+`-a`/`-L` ops and dispatches the correct list-mode; new
+`list < 0` arm in `scanlistwidgets` emits raw names without
+the WIDGET_INT filter.
+
+**Root cause** — two gaps in `src/ported/zle/zle_thingy.rs`:
+1. `bin_zle_list` hardcoded `scanlistwidgets(1)` (abbreviated
+   mode) regardless of the user's flags. C
+   `Src/Zle/zle_thingy.c:396-397` derives list mode from ops:
+   `OPT_ISSET(ops,'a') ? -1 : OPT_ISSET(ops,'L')`.
+2. `scanlistwidgets` only handled the `list > 0` and `list == 0`
+   branches. C `Src/Zle/zle_thingy.c:509-512` short-circuits
+   on `list < 0`: `printf("%s\n", hn->nam); return;` — emits
+   raw name with NO WIDGET_INT skip.
+
+**Fix:**
+1. `bin_zle_list` now matches the C dispatch literal — checks
+   `OPT_ISSET(ops, b'a')` then `OPT_ISSET(ops, b'L')`.
+2. `scanlistwidgets` adds the `list < 0` arm: collect raw
+   names from the entire `thingytab` (including WIDGET_INT
+   internals), sort, emit one per line.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zle -la 2>&1 | wc -l'
+     386
+$ ./target/debug/zshrs --zsh -fc 'zle -la 2>&1 | wc -l'
+     254
+$ ./target/debug/zshrs --zsh -fc 'zle -la 2>&1 | grep -E "^\.?accept-line$"'
+.accept-line
+accept-line
+$ ./target/debug/zshrs --zsh -fc 'zle -l 2>&1 | wc -l'
+       0
+```
+
+`zle -la` now exposes 254 widgets (127 IWIDGET_NAMES × 2 for
+bare + dotted-internal anchor). Gap vs zsh's 386 is the
+missing 132 widget names in `IWIDGET_NAMES` — that's a
+separate follow-up (extend the names table from
+`Src/Zle/iwidgets.list`), not in the scope of this bug.
+
+`zle -l` (no `-a`) still returns 0 in both shells (no user
+widgets registered under `-fc`); the WIDGET_INT filter
+correctly hides internals from the abbreviated listing.
+
+`zshrs_shell` baseline preserved at 954/98 (within flake).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -30210,6 +30300,33 @@ error-handler stack traces.
 
 ## #386 — `readonly` no-args lists nothing instead of dumping readonly variables
 
+**Status:** `fixed` 2026-06-03 — closed by the same
+`printparamnode` + PM_RO_BY_DESIGN expansion that #97 wired
+through. `readonly` (no args) routes through the same
+`bin_typeset(filter = PM_READONLY)` path, so widening the
+filter to match `PM_RO_BY_DESIGN` made internal-readonly
+specials visible to both `typeset -r` and `readonly`.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'readonly' | head -3
+!=0
+'#'=0
+'$'=49413
+$ ./target/debug/zshrs --zsh -fc 'readonly' | head -3
+!=0
+'#'=0
+'$'=0
+```
+
+Same set + same quoting shape. The `$=0` value gap (vs zsh's
+live PID) is the same getter-not-wired issue noted in #97 —
+separate from the listing-format bug #386 reports.
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -30435,6 +30552,35 @@ zsh.
 ---
 
 ## #390 — `$PS4` default value missing — `set -x` produces no debug prompt
+
+**Status:** `fixed` 2026-06-03 — original report was against a
+downstream-patched Homebrew zsh. Canonical upstream
+`Src/init.c:1191-1193` initializes PS4 to `"+%N:%i> "` for the
+default (non-KSH/SH emulation) — exactly what zshrs emits.
+
+```
+$ grep -A1 'prompt4 = ' ~/forkedRepos/zsh/Src/init.c | head -2
+prompt4 = EMULATION(EMULATE_KSH|EMULATE_SH)
+    ? ztrdup("+ ") : ztrdup("+%N:%i> ");
+```
+
+The colored `"\e[34m%x\t%0N\t%I\t%_\e[m\t"` PS4 in
+`/opt/homebrew/bin/zsh` (5.9.1) is a Homebrew/Apple downstream
+patch — not in canonical upstream. Per the port rule "zsh C
+source is the canonical spec", zshrs matches the spec.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'echo "[$PS4]"'
+[+%N:%i> ]
+```
+Matches `Src/init.c:1191-1193` literal byte-for-byte.
+
+Doc-only flip; no code change in this commit. Users wanting
+the colored brew default can `export PS4='%{\e[34m%}%x\t%0N\t%I\t%_%{\e[m%}\t'`
+in their `.zshrc`.
+
+**Original report (against Homebrew zsh 5.9.1 patched variant):**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
