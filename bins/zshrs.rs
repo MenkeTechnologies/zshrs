@@ -1198,6 +1198,15 @@ pub fn zshrs_main() {
         unsafe {
             SHELL_MODE = mode;
         }
+        // Mirror the binary-side ShellMode into the library-side
+        // IS_ZSH_MODE atomic so bridge / dispatch sites in lib that
+        // need to gate bash-compat-vs-zsh behavior can read it
+        // without a binary-to-library reach-in. Bugs
+        // #475/#504/#555 in docs/BUGS.md.
+        zsh::IS_ZSH_MODE.store(
+            matches!(mode, ShellMode::Zsh),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         true
     } else {
         false

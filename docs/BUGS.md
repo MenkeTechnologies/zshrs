@@ -38217,6 +38217,47 @@ pipestatus=[0 1 0] PIPESTATUS=[0 1 0]
 
 ## #475 — bash-only builtins shipped in `--zsh` mode (`caller`/`help`/`complete`/`compopt`/`mapfile`)
 
+**Status:** `partial-fix` 2026-06-04 — 4 of 7 bash-only
+builtins (caller/help/complete/compgen) now correctly emit
+`command not found` rc=127 in `--zsh` mode. Remaining
+(compopt/mapfile/readarray) route through a different
+dispatch path not yet identified; deferred. Closed via:
+1. New library-side `crate::IS_ZSH_MODE` atomic set by
+   `bins/zshrs.rs` parse-args when `--zsh` is selected.
+2. Bridge closures for `BUILTIN_CALLER`, `BUILTIN_HELP`,
+   `BUILTIN_COMPLETE`, `BUILTIN_COMPGEN` gate on
+   `IS_ZSH_MODE.load()` and emit `command not found` +
+   rc=127 before invoking the bash-compat handler.
+3. `dispatch_builtin_raw` gate for compopt/mapfile/
+   readarray (didn't take effect — these names don't
+   route through the generic builtintab path; gate kept
+   as defensive code).
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ for cmd in caller help complete compgen; do
+    z=$(/opt/homebrew/bin/zsh -fc "$cmd 2>&1; echo rc=\$?" | tail -1)
+    r=$(./target/debug/zshrs --zsh -fc "$cmd 2>&1; echo rc=\$?" | tail -1)
+    echo "$cmd: zsh=$z zshrs=$r"
+  done
+caller: zsh=rc=127 zshrs=rc=127
+help: zsh=rc=127 zshrs=rc=127
+complete: zsh=rc=127 zshrs=rc=127
+compgen: zsh=rc=127 zshrs=rc=127
+
+# type X / command -v X also reports not-found:
+$ ./target/debug/zshrs --zsh -fc 'type caller'
+caller not found
+```
+
+Remaining gap: `compopt`, `mapfile`, `readarray` still
+silently return rc=0 because their dispatch path isn't
+through the bridge closures or generic builtintab lookup
+gated above. Tracked for a separate fix.
+
+zshrs_shell baseline preserved at 970/82.
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47490,7 +47531,7 @@ no longer reports the internal trap-machinery scalar.
 | 472 | `typeset -H` (hide value) doesn't suppress value in `typeset -p` output — leaks secrets in listings | **fixed** 2026-06-04 | `local -H a=secret; typeset -p a` → `typeset a` matching zsh |
 | 473 | `[[ "ab" == a|b ]]` zshrs runs `b` as command — `\|` in pattern parsed as pipe (security-relevant) | **fixed** 2026-06-04 | par_cond emits `parse error near <tok>` per parse.c:1818 |
 | 474 | `$PIPESTATUS` (uppercase) exposed as alias to `$pipestatus` — zsh has only lowercase; breaks bash-vs-zsh detection | **fixed** 2026-06-04 | uppercase alias gated out of `--zsh` mode |
-| 475 | bash-only builtins (`caller`/`help`/`complete`/`compopt`/`mapfile`) shipped in `--zsh` mode — extends bash-compat-contamination family | **port-bug** | detect zshrs via `$ZSH_VERSION` pattern |
+| 475 | bash-only builtins (`caller`/`help`/`complete`/`compopt`/`mapfile`) shipped in `--zsh` mode — extends bash-compat-contamination family | **partial-fix** 2026-06-04 | caller/help/complete/compgen now `command not found`; compopt/mapfile/readarray deferred |
 | 476 | `case "x" in) ...; esac` empty pattern silently accepted as no-op (zsh: parse error) — extends parser-strictness family | **fixed** 2026-06-04 | n/a |
 | 477 | `${a:0:n}` substring with bare-name length accepted (zsh: "unrecognized modifier") — bash-compat permissiveness | **fixed** 2026-06-04 | alpha-LENGTH gate at substring arm matches C `check_colon_subscript` |
 | 478 | `read "?prompt"` emits prompt to stdout instead of stderr — corrupts cmdsub-captured output | **fixed** 2026-06-04 | n/a |
@@ -47570,7 +47611,7 @@ no longer reports the internal trap-machinery scalar.
 | 552 | `(a)bc` glob alternation not honored with `extended_glob` — zsh: matches `abc`; zshrs: literal | **fixed** 2026-06-03 | n/a |
 | 553 | `LC_MESSAGES`/`LC_MONETARY`/... init empty — extends #517 (entire LC_* family pre-seeded) | **fixed** 2026-06-04 | `--zsh` mode no longer pre-inits LC_* family |
 | 554 | `(abc)` plain parens stripped from glob without extended_glob — zsh: "number expected" (qualifier) | **fixed** 2026-06-03 | n/a |
-| 555 | `compgen` bash builtin shipped as always-available — extends #475/#504 family | **port-bug** | use `$ZSH_VERSION`/`$BASH_VERSION` |
+| 555 | `compgen` bash builtin shipped as always-available — extends #475/#504 family | **fixed** 2026-06-04 | `compgen` now `command not found` rc=127 in `--zsh` mode |
 | 556 | `typeset -A h=("a b" 1)` quoted key word-splits — extends #528 to assocs | **fixed** 2026-06-04 | closed by #528 quoted-token preservation work |
 | 557 | regex `.` doesn't match newline in zshrs — zsh: dot-matches-newline by default | **port-bug** | explicit `[[:space:]]` class |
 | 558 | regex `[a-z\\n]` char-class matches multiline aggressively — extends #557 (different regex engine) | **port-bug** | anchor with `^`/`$` |
