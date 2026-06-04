@@ -47086,7 +47086,7 @@ no longer reports the internal trap-machinery scalar.
 | 78 | `echoti` output emitted AFTER next stdout (buf flush) | **port-bug** | direct `printf '\e[...'` |
 | 79 | Job control table empty: `jobs`/`wait %N`/`kill %N`/`disown` fail | **port-bug** | use `$!` PID instead |
 | 80 | `trap EXIT` in fn fires at script exit, lost in nested fns | **fixed** 2026-06-02 | explicit cleanup at fn epilogue |
-| 81 | `extended_glob *~b` returns duplicates + matches dir | **port-bug** | loop with `[[ == ... ]] continue` |
+| 81 | `extended_glob *~b` returns duplicates + matches dir | **fixed** 2026-06-02 | loop with `[[ == ... ]] continue` |
 | 82 | `"PREFIX${(s.X.)var}"` repeats prefix per element | **fixed** 2026-06-02 | `arr=("${(s.X.)v}"); "P:${arr[*]}"` |
 | 83 | `${a[(s.,.)N,M]}` slice with flag returns full array | **fixed** 2026-06-02 | drop subscript flag |
 | 84 | `bindkey -L` 117 entries vs zsh's 31 (default keymap differs) | **port-bug** | normalize via post-process |
@@ -47126,16 +47126,16 @@ no longer reports the internal trap-machinery scalar.
 | 118 | `(( y = x ))` doesn't coerce non-numeric string to 0 | **fixed** 2026-06-02 | `integer y; y=$x` |
 | 119 | `glob_subst` doesn't trigger filename expansion in for-loop | **port-bug** | `eval "echo ..."` force-expand |
 | 120 | `a=("${a[@]:0:-1}")` on empty arr produces 1-element arr | **port-bug** | length-gated branch |
-| 121 | `[[ -N -op -M ]]` negative-number operands error "unknown condition" | **port-bug** | use `(( ))` arith |
-| 122 | Exit status of `$()` inside `${x:-$()}` not propagated | **port-bug** | pre-eval cmdsub |
-| 123 | `${arr[@]}` inside heredoc returns only first element | **port-bug** | `${(j: :)arr}` or pre-join |
+| 121 | `[[ -N -op -M ]]` negative-number operands error "unknown condition" | **fixed** 2026-06-02 | use `(( ))` arith |
+| 122 | Exit status of `$()` inside `${x:-$()}` not propagated | **fixed** 2026-06-02 | pre-eval cmdsub |
+| 123 | `${arr[@]}` inside heredoc returns only first element | **fixed** 2026-06-02 | `${(j: :)arr}` or pre-join |
 | 124 | `typeset -f` source-as-typed vs zsh pretty-printed | **port-bug** | normalize whitespace |
-| 125 | `var=${a[-1]}` assignment returns empty (echo works) | **port-bug** | `var=${a[${#a}]}` positive idx |
+| 125 | `var=${a[-1]}` assignment returns empty (echo works) | **fixed** 2026-06-02 | `var=${a[${#a}]}` positive idx |
 | 126 | `${s:N:}` empty length silently returns empty (zsh errors) | **fixed** 2026-06-02 | careful syntax |
 | 127 | `$'\xNN'` interpreted as Unicode codepoint + UTF-8 re-encode | **port-bug** | `printf '\xNN'` direct |
-| 128 | `${(C)arr[N]}` indexed-element case-flag errors "bad substitution" | **port-bug** | assign to scalar first |
+| 128 | `${(C)arr[N]}` indexed-element case-flag errors "bad substitution" | **fixed** 2026-06-02 | assign to scalar first |
 | 129 | `local -a a=("$@")` splits quoted args (without `-a` works) | **fixed** 2026-06-02 | n/a |
-| 130 | `${var@X}` bash parameter-transform accepted (zsh errors) | **port-bug** | `${(U)x}`/`${(L)x}`/`${(q)x}` |
+| 130 | `${var@X}` bash parameter-transform accepted (zsh errors) | **fixed** 2026-06-02 | `${(U)x}`/`${(L)x}`/`${(q)x}` |
 | 131 | `%(N~.A.B)` prompt conditional evaluates path-depth wrong | **port-bug** | manual `precmd` depth check |
 | 132 | `(( x = "5" + "3" ))` quoted numeric strings not coerced | **port-bug** | drop quotes for known-numeric |
 | 133 | `zstat -F "fmt"` format flag ignored | **port-bug** | external `stat -f`/`stat --format` |
