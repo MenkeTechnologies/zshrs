@@ -27156,6 +27156,22 @@ processed="${(qL)elem}"
 
 ## #332 — `${(u)@}` unique flag on positionals not applied (extends #277 sort family)
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- a b a c b; echo "[${(u)@}]"'
+[a b c]
+$ ./target/debug/zshrs --zsh -fc 'set -- a b a c b; echo "[${(u)@}]"'
+[a b c]
+```
+
+Doc-only flip; no code change in this commit (closed by the
+same `${(O)@}`/`${(n)@}`/`${(oi)@}` positional-flag pipeline
+that fixed #336 and the #277 family).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -27207,6 +27223,25 @@ set -- "${(u)_args[@]}"
 ---
 
 ## #333 — `${(qL)*}` chained quote+lower on positional `$*` only applies lowercase, drops quote
+
+**Status:** `fixed` 2026-06-03 — no longer reproduces. Both
+`(q)` and `(L)` apply in the documented order.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- HELLO WORLD; echo "[${(qL)*}]"'
+[hello\ world]
+$ ./target/debug/zshrs --zsh -fc 'set -- HELLO WORLD; echo "[${(qL)*}]"'
+[hello\ world]
+$ /opt/homebrew/bin/zsh -fc 'set -- "Hi There" "Hello World"; echo "[${(qL)*}]"'
+[hi\ there\ hello\ world]
+$ ./target/debug/zshrs --zsh -fc 'set -- "Hi There" "Hello World"; echo "[${(qL)*}]"'
+[hi\ there\ hello\ world]
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
@@ -27391,6 +27426,26 @@ zshrs is eagerly hashing directories the user doesn't need.
 ---
 
 ## #336 — `${(O)@}`/`${(n)@}`/`${(oi)@}` sort variants on positionals all silently no-op (extends #277 family)
+
+**Status:** `fixed` 2026-06-03 — no longer reproduces. All
+three sort variants (`(O)` reverse, `(n)` numeric, `(oi)`
+case-insensitive) now apply to positional parameters.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- c a b; echo "O=[${(O)@}]"; echo "n=[${(n)@}]"; echo "oi=[${(oi)@}]"'
+O=[c b a]
+n=[a b c]
+oi=[a b c]
+$ ./target/debug/zshrs --zsh -fc 'set -- c a b; echo "O=[${(O)@}]"; echo "n=[${(n)@}]"; echo "oi=[${(oi)@}]"'
+O=[c b a]
+n=[a b c]
+oi=[a b c]
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
@@ -27742,6 +27797,57 @@ PS1="$short_pwd %% "
 ---
 
 ## #341 — `$((arr[(i)pat]))` subscript-flag inside arith subscript returns 0 (zsh: index of match)
+
+**Status:** `fixed` 2026-06-03 — `getmathparam` now handles
+`(i)pat` / `(I)pat` subscript-flag forms inside arith
+subscripts, mirroring C `Src/params.c::getarg`'s search
+arms.
+
+**Root cause** — `src/ported/math.rs::getmathparam`'s
+bracket-subscript arm ran `matheval(idx_str)` on the raw
+subscript content. For `(i)blue`, matheval tried to parse
+it as arith — `(i)` looks like a grouped identifier and
+`)blue` errors out, so the result was `0` (unwrap_or).
+
+C's `getarg` (called from `getindex`) detects the
+`(flag)pat` shape at the head of the subscript and runs
+the appropriate search rather than arith eval.
+
+**Fix** — at the top of the bracket-subscript arm in
+`getmathparam`, sniff for `(i)`/`(I)` prefix; when present,
+walk the array searching for an exact match and return
+the 1-based index (or `len+1` for `(i)` miss / `0` for
+`(I)` miss). The other flag arms (`r`/`R` for value
+return, `n`/`b`/`e`/`w`/`s` for cursor variants) yield
+non-numeric values and don't apply to arith context.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); echo $((a[(i)blue]))'
+2
+$ ./target/debug/zshrs --zsh -fc 'a=(red blue green); echo $((a[(i)blue]))'
+2
+
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue red); echo $((a[(I)red]))'
+3
+$ ./target/debug/zshrs --zsh -fc 'a=(red blue red); echo $((a[(I)red]))'
+3
+
+# Miss: (i) → len+1, (I) → 0
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); echo $((a[(i)yellow]))'
+4
+$ ./target/debug/zshrs --zsh -fc 'a=(red blue green); echo $((a[(i)yellow]))'
+4
+
+$ /opt/homebrew/bin/zsh -fc 'a=(red blue green); echo $((a[(I)yellow]))'
+0
+$ ./target/debug/zshrs --zsh -fc 'a=(red blue green); echo $((a[(I)yellow]))'
+0
+```
+
+Test baseline preserved at 957/95.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
