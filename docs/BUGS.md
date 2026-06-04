@@ -21352,6 +21352,61 @@ just-typed lines but that's only interactive.
 
 ## #264 — `${widgets[fn]}` returns `builtin` for ALL queries (registration ignored)
 
+**Status:** `fixed` 2026-06-03 — `getpmwidgets` now classifies
+by the widget's `WIDGET_INT`/`WIDGET_NCOMP` flags (matching
+C `Src/Zle/zleparameter.c:37-56 widgetstr`) and triggers
+`init_thingies` on first read so the standard widget table
+is populated.
+
+**Root cause** — two compounding gaps:
+
+1. **Empty thingytab for direct param reads.** Same lazy-
+   init pattern as #383: `init_thingies()` was only
+   triggered by `zle` builtin calls (compcore.rs:683), so
+   `${widgets[accept-line]}` returned empty.
+2. **Wrong classifier.** `getpmwidgets` compared
+   `target == name` to discriminate builtin vs user widget,
+   but C `widgetstr` discriminates by FLAGS:
+   - `WIDGET_INT` → `"builtin"`
+   - `WIDGET_NCOMP` → `"completion:wid:func"`
+   - else → `"user:fnnam"`
+   For `zle -N my-fn` (function name equals widget name),
+   the name-equality check fired the "builtin" branch
+   instead of the "user:my-fn" output.
+
+**Fix:**
+1. `getpmwidgets` + `scanpmwidgets` trigger `init_thingies`
+   via `Once::call_once` on first read.
+2. `getpmwidgets` matches by flag:
+   ```rust
+   if (w.flags & WIDGET_INT) != 0 { "builtin" }
+   else if (w.flags & WIDGET_NCOMP) != 0 { format!("completion:{}:{}", wid, func) }
+   else { format!("user:{}", fnnam) }
+   ```
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${widgets[accept-line]}]"'
+[builtin]
+$ ./target/debug/zshrs --zsh -fc 'echo "[${widgets[accept-line]}]"'
+[builtin]
+
+$ /opt/homebrew/bin/zsh -fc 'my-fn() { :; }; zle -N my-fn; echo "[${widgets[my-fn]}]"'
+[user:my-fn]
+$ ./target/debug/zshrs --zsh -fc 'my-fn() { :; }; zle -N my-fn; echo "[${widgets[my-fn]}]"'
+[user:my-fn]
+
+# zle -N WIDGET FUNCNAME (different names)
+$ /opt/homebrew/bin/zsh -fc 'my_handler() { :; }; zle -N my-widget my_handler; echo "[${widgets[my-widget]}]"'
+[user:my_handler]
+$ ./target/debug/zshrs --zsh -fc 'my_handler() { :; }; zle -N my-widget my_handler; echo "[${widgets[my-widget]}]"'
+[user:my_handler]
+```
+
+Test baseline preserved at 962/90.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
