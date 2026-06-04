@@ -8376,7 +8376,27 @@ fn parse_cond_primary() -> Option<ZshCond> {
                 zshlex();
                 s
             }
-            _ => return Some(ZshCond::Unary("-n".to_string(), s1)),
+            _ => {
+                // c:Src/parse.c par_cond_2 — when the leading `-X`
+                // is a 2-char dash form, zsh ALWAYS treats it as a
+                // unary test op (the operand-missing case errors
+                // immediately with `unknown condition: -X`). Don't
+                // fall back to `Unary("-n", "-X")` — that path
+                // silently let `[[ -z ]]` evaluate as
+                // `[[ -n "-z" ]]` → true. Bug #480/#481.
+                //
+                // Convert Dash (\u{9b}) back to ASCII `-` for the
+                // user-visible diagnostic so it reads "unknown
+                // condition: -z" not "unknown condition: <Dash>z".
+                let display: String = s1.chars().map(|c| {
+                    if IS_DASH(c) { '-' } else { c }
+                }).collect();
+                crate::ported::utils::zerr(&format!(
+                    "unknown condition: {}",
+                    display
+                ));
+                return None;
+            }
         };
         return Some(ZshCond::Unary(s1, s2));
     }

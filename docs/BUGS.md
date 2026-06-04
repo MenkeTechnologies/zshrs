@@ -38353,7 +38353,41 @@ detection.
 
 ## #480 — `[[ -z ]]` (no argument) silently rc=0 — zsh errors "unknown condition"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/parse.rs](../src/ported/parse.rs)).
+
+**Root cause** — `parse_cond_primary` had a fallback at the
+operand-missing arm of the 2-char dash-prefix branch: when no STRING_LEX
+token followed `-X`, it returned `Some(ZshCond::Unary("-n", s1))`,
+treating `[[ -z ]]` as `[[ -n "-z" ]]` (non-empty string → true rc=0).
+zsh ALWAYS treats `-X` (2-char dash) as a unary test op, erroring
+`unknown condition: -X` when the operand is missing.
+
+**Fix** — replace the recursion fallback with `zerr("unknown condition:
+-X")` + `return None` so the cond expression fails to parse and rc
+propagates. Also convert the `Dash` (`\u{9b}`) token byte back to ASCII
+`-` for the user-visible diagnostic so it reads `unknown condition: -z`
+not `unknown condition: <Dash>z`. Covers #481 (other unary ops) too —
+the gate applies to ALL 2-char dash-prefix forms.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc '[[ -z ]]'
+zsh:1: unknown condition: -z    # rc=1, matches zsh's text
+$ ./target/debug/zshrs --zsh -fc '[[ -n ]]'
+zsh:1: unknown condition: -n
+$ ./target/debug/zshrs --zsh -fc '[[ -q ]]'
+zsh:1: unknown condition: -q    # any 2-char dash-form errors
+
+# regression: valid unary forms with operand still work
+$ ./target/debug/zshrs --zsh -fc '[[ -z "" ]] && echo m'
+m
+$ ./target/debug/zshrs --zsh -fc 'a=hi; [[ -n "$a" ]] && echo m'
+m
+```
+
+Baseline 961/91 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ -z ]] 2>&1; echo rc=$?'
@@ -38403,7 +38437,23 @@ patterns.
 
 ## #481 — `[[ -n ]]`/`[[ -r ]]`/`[[ -d ]]`/`[[ -f ]]` and ALL unary ops silently rc=0 — generalizes #480
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — landed alongside #480's fix in
+`parse_cond_primary`. The gate covers ALL 2-char `-X` forms (not just
+`-z`), so every unary op without an operand now errors `unknown
+condition: -X` rc=1.
+
+**Verify**
+```sh
+$ for op in -n -r -d -f -w -x -e -O -G -h -S -s -u -g -k; do
+    ./target/debug/zshrs --zsh -fc "[[ $op ]]" 2>&1 | head -1
+  done
+zsh:1: unknown condition: -n
+zsh:1: unknown condition: -r
+zsh:1: unknown condition: -d
+...    # all error matching zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ -n ]] 2>&1; echo rc=$?'
@@ -44319,8 +44369,8 @@ qualifiers always have a digit suffix.
 | 477 | `${a:0:n}` substring with bare-name length accepted (zsh: "unrecognized modifier") — bash-compat permissiveness | **port-bug** | always use `$n` or `$((n))` form |
 | 478 | `read "?prompt"` emits prompt to stdout instead of stderr — corrupts cmdsub-captured output | **port-bug** | `print -n PROMPT >&2; read` form |
 | 479 | `$OPTERR` initialized to 1 — bash-compat addition, zsh leaves unset | **port-bug** | use `$ZSH_VERSION` for shell-detect |
-| 480 | `[[ -z ]]` (no operand) silently rc=0 — zsh errors "unknown condition" — extends parser-strictness family | **port-bug** | CI lint for unary-op-no-operand |
-| 481 | `[[ -n/-r/-d/-f/... ]]` ALL unary ops no-operand silently rc=0 (zsh: parse error each) — generalizes #480 | **port-bug** | CI lint each operator |
+| 480 | `[[ -z ]]` (no operand) silently rc=0 — zsh errors "unknown condition" — extends parser-strictness family | **fixed** 2026-06-04 | n/a |
+| 481 | `[[ -n/-r/-d/-f/... ]]` ALL unary ops no-operand silently rc=0 (zsh: parse error each) — generalizes #480 | **fixed** 2026-06-04 | n/a |
 | 482 | `[[ 5 -eq ]]` binary op missing RHS silently rc=1 (zsh: parse error) — completes test parse-strictness gap | **port-bug** | CI lint for binary-op-no-rhs |
 | 483 | `(#s)PATTERN` start-anchor glob flag not recognized — extends #409 `(#X)` family ((#e)/(#b)/(#a)/(#l)/(#m) likely too) | **port-bug** | explicit prefix-pattern form |
 | 484 | `(#l)PATTERN` case-insensitive-lowercase glob flag not recognized — extends #483 family | **port-bug** | explicit `[Aa][Bb][Cc]` case alternation |
