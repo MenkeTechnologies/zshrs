@@ -47206,7 +47206,7 @@ no longer reports the internal trap-machinery scalar.
 | 198 | `bindkey -L` output uses individual entries instead of `-R` range-compressed | **port-bug** | round-trip via zshrs's own output |
 | 199 | `${(qq)x}` with embedded newline emits mixed `'a'$'\n''b'` instead of literal | **fixed** 2026-06-02 | n/a |
 | 200 | `${(k)assoc[key]}` key-flag with subscript returns empty (zsh: key when exists) | **fixed** 2026-06-02 | n/a |
-| 201 | `typeset +x VAR` doesn't remove VAR from environment (security-relevant) | **port-bug** | `unset VAR; typeset VAR=$saved` re-bind |
+| 201 | `typeset +x VAR` doesn't remove VAR from environment (security-relevant) | **fixed** 2026-06-02 | `unset VAR; typeset VAR=$saved` re-bind |
 | 202 | `set -eo pipefail; false \| true` doesn't abort — pipefail ignored entirely | **fixed** 2026-06-04 | `set -eo pipefail; false \| true` exits rc=1 |
 | 203 | `trap EXIT` in fn runs at shell exit instead of fn return (scope leak) | **fixed** 2026-06-02 | n/a |
 | 204 | `setopt promptsubst` doesn't enable `$()`/`${}` substitution in prompts | **fixed** 2026-06-02 | n/a |
@@ -47218,15 +47218,15 @@ no longer reports the internal trap-machinery scalar.
 | 210 | `(unfunction f)`/`(zmodload m)` in subshell mutate parent state (destructive) | **partial-fix** 2026-06-02 (unfunction fixed via #208; zmodload deferred) | n/a (unfunction); avoid `(zmodload …)` |
 | 211 | `$-` (option chars) missing `f`/other letters (option-to-char table incomplete) | **port-bug** | use `setopt \| grep ...` instead |
 | 212 | `${(b)str}` over-escapes non-glob chars (tab, etc) — extra `\` inserted | **fixed** 2026-06-02 | n/a |
-| 213 | `${assoc[(R)value]}` reverse-search-by-value errors `bad substitution` | **port-bug** | manual `for k v in "${(@kv)h}"` loop |
+| 213 | `${assoc[(R)value]}` reverse-search-by-value errors `bad substitution` | **fixed** 2026-06-02 | manual `for k v in "${(@kv)h}"` loop |
 | 214 | `chpwd`/`chpwd_functions` hook not fired on `cd` — breaks p10k/oh-my-zsh/zoxide/direnv | **port-bug** | wrap `cd` in function dispatching hooks |
 | 215 | `zshexit` hook function not fired on shell exit (also breaks combined with #203) | **port-bug** | `trap "..." EXIT` at top-level |
 | 216 | `${(t)var:-default}` after `unset var` returns empty instead of default | **fixed** 2026-06-02 | n/a |
 | 217 | `setopt cdable_vars` ignored — `cd VAR` doesn't deref VAR as path | **fixed** 2026-06-02 | n/a |
 | 218 | `typeset NAME` for assoc array prints nothing (zsh: `h=( [k]=v ... )` form) | **port-bug** | `typeset -p h` explicit |
 | 219 | `typeset -i "h[k]"` integer-on-assoc-element silently accepted (zsh: rejects) | **fixed** 2026-06-02 | n/a |
-| 220 | `setopt err_return` doesn't abort function on failed command (fn-scoped strict mode dead) | **port-bug** | explicit `\|\| return $?` per command |
-| 221 | `disable -f FN` doesn't disable — `FN` still callable, `dis_functions[FN]` empty | **port-bug** | `unfunction FN` destructive |
+| 220 | `setopt err_return` doesn't abort function on failed command (fn-scoped strict mode dead) | **fixed** 2026-06-02 | explicit `\|\| return $?` per command |
+| 221 | `disable -f FN` doesn't disable — `FN` still callable, `dis_functions[FN]` empty | **fixed** 2026-06-02 | `unfunction FN` destructive |
 | 222 | `zmodload -a` lists 0 auto-loaded modules (zsh: 27 builtin→module bindings) | **port-bug** | try-and-catch with `zmodload -e` |
 | 223 | `setopt warn_create_global` no warning on implicit global creation in fn | **port-bug** | manual audit / explicit `local` always |
 | 224 | `unsetopt typeset_silent` + `typeset X` doesn't print existing value | **port-bug** | explicit `echo "X=$X"` for debug |
@@ -47234,14 +47234,14 @@ no longer reports the internal trap-machinery scalar.
 | 226 | `alias -s SUFFIX=cmd` doesn't populate `saliases` introspection assoc | **port-bug** | parse `alias -s` output instead |
 | 227 | `disable -a NAME` neither populates `dis_aliases` nor removes from active `aliases` table | **port-bug** | `unalias NAME` destructive |
 | 228 | `hash -d NAME=path` doesn't populate `nameddirs` introspection assoc | **port-bug** | parse `hash -d` output instead |
-| 229 | `${(j: :)${(@kv)h}}` join-on-kv drops values (only keys joined) | **port-bug** | manual `for k v in "${(@kv)h}"` loop |
-| 230 | `echo "a\0b"` doesn't interpret `\0` octal NUL escape (other escapes work) | **port-bug** | use `print "..."` instead |
+| 229 | `${(j: :)${(@kv)h}}` join-on-kv drops values (only keys joined) | **fixed** 2026-06-02 | manual `for k v in "${(@kv)h}"` loop |
+| 230 | `echo "a\0b"` doesn't interpret `\0` octal NUL escape (other escapes work) | **fixed** 2026-06-02 | use `print "..."` instead |
 | 231 | `${(t)tied_var}` returns `scalar` instead of `scalar-tied`/`array-tied` — tied pair concept missing | **port-bug** | manual sync via `(@s/:/)` |
 | 232 | `TRAPEXIT()` named-function form of EXIT trap not fired (3rd broken exit-handler form) | **port-bug** | explicit `trap "..." EXIT` at top-level |
 | 233 | `typeset -H VAR=val` then `typeset -p VAR` shows value (security-relevant credential leak) | **port-bug** | filter dump output explicitly |
 | 234 | `typeset +U arr` doesn't clear dedup AND `+=` of dup destroys array (corrupting) | **fixed** 2026-06-02 | n/a |
 | 235 | `typeset -m "glob"` errors "not valid in this context" instead of pattern-matching | **port-bug** | loop with `${(@k)parameters[(I)pat]}` |
-| 236 | `${(@)arr:#}` empty-pattern filter doesn't filter empty elements (sparse-arr cleanup broken) | **port-bug** | `:#(#e)` extended-glob anchor |
+| 236 | `${(@)arr:#}` empty-pattern filter doesn't filter empty elements (sparse-arr cleanup broken) | **fixed** 2026-06-02 | `:#(#e)` extended-glob anchor |
 | 237 | `${funcfiletrace}`/`${functrace}` format diverges — missing file path + line | **fixed** 2026-06-04 | functrace now uses fs.caller (not fs.name) matching parameter.c:648-672 |
 | 238 | `setopt promptbang` doesn't enable `!` → history-number in prompts | **port-bug** | use `%h`/`%!` percent-escape |
 | 239 | `print -P "%J"` (jobs count prompt escape) treats as literal — extends #38 family | **port-bug** | use `${#jobstates}` introspection |
@@ -47252,15 +47252,15 @@ no longer reports the internal trap-machinery scalar.
 | 244 | `${(Z+c+)cmd}` word-split with c option returns whole string as 1 token (parser-aware split broken) | **fixed** 2026-06-04 | `${(Z+c+)"echo hi # comment"}` splits to 3 tokens matching zsh |
 | 245 | `(#cN,M)` extended_glob range-repetition not honored (count syntax accepted but matcher ignores) | **fixed** 2026-06-03 | n/a |
 | 246 | `setopt rc_expand_param` applied inside double quotes — silently fans out `"prefix$arr"` per-element | **port-bug** | use `${a[*]}` star to force scalar-join |
-| 247 | `read line` doesn't strip leading/trailing IFS whitespace from input | **port-bug** | explicit `${var## }`/`${var%% }` strip |
+| 247 | `read line` doesn't strip leading/trailing IFS whitespace from input | **fixed** 2026-06-02 | explicit `${var## }`/`${var%% }` strip |
 | 248 | `read "?prompt" var` writes prompt to stdout when stdin isn't tty (contaminates output) | **port-bug** | conditional `print -n "p: " >&2` |
 | 249 | `${arr//pat/repl}` bare-array form applies replacement per-element (zsh: joins to scalar first) | **port-bug** | use `${${arr[*]}//pat/repl}` |
 | 250 | `typeset -ia`/`typeset -Fa` accepted (zsh: errors "inconsistent type for assignment") | **port-bug** | split into `-a` then per-elem arith |
-| 251 | `command -- echo hi` doesn't recognize `--` end-of-options separator | **port-bug** | drop the `--` |
-| 252 | `exec -` (dash, no command) errors "exec: -: not found" instead of no-op | **port-bug** | drop the `exec -` |
+| 251 | `command -- echo hi` doesn't recognize `--` end-of-options separator | **fixed** 2026-06-02 | drop the `--` |
+| 252 | `exec -` (dash, no command) errors "exec: -: not found" instead of no-op | **fixed** 2026-06-02 | drop the `exec -` |
 | 253 | `$0` inside sourced file (top-level) isn't updated — breaks `${0:A:h}` plugin-dir pattern | **port-bug** | pass file path as parameter explicitly |
 | 254 | `UID=N`/`EUID=N` writes silently accepted (zsh: attempts setuid syscall) — privilege-drop silent no-op | **port-bug** | use external setuid wrapper |
-| 255 | `local -h NAME` doesn't hide parent scope's value — `-h` flag ignored | **port-bug** | explicit `local NAME=""` before set |
+| 255 | `local -h NAME` doesn't hide parent scope's value — `-h` flag ignored | **fixed** 2026-06-02 | explicit `local NAME=""` before set |
 | 256 | `zstyle -e CONTEXT STYLE CODE` dynamic-eval not honored — completion-system breakage | **port-bug** | use static `zstyle` form |
 | 257 | `jobtexts[N]` introspection assoc not populated for bg jobs (introspection-mirror family) | **port-bug** | parse `jobs -l` output instead |
 | 258 | `printf "%d" $hugenum` silently overflows to 0 (zsh: errors "number truncated") | **port-bug** | pre-validate range before printf |
