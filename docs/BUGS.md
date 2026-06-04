@@ -32035,6 +32035,53 @@ done
 
 ## #397 — `printf` builtin redirection broken — writes to BOTH stdout AND file
 
+**Status:** `fixed` 2026-06-03 — `bin_print`'s printf-mode
+output path now routes through `stdout().lock().write_all
++ flush` instead of the line-buffered `print!` macro.
+
+**Root cause** — `src/ported/builtin.rs::bin_print` printf
+mode emitted output via `print!("{}", out)`. Rust's
+`print!` uses a line-buffered `io::stdout()` handle; when
+the format string has no trailing `\n` (e.g. `printf
+"abcde"`), the bytes stay in the userspace buffer past
+the surrounding `> file` redirect restore. The dup'd fd
+1 closes before the buffer flushes — so the bytes land
+on the ORIGINAL stdout (terminal) instead of the file.
+
+C's printf goes through libc `fwrite` to stdout which is
+unbuffered when the builtin runs under a redirect (fd 1
+is the file).
+
+**Fix** — both the printf format-emission path (`-f` /
+BIN_PRINTF) and the plain-print stdout fallback now do:
+```rust
+let stdout = io::stdout();
+let mut lk = stdout.lock();
+let _ = lk.write_all(out.as_bytes());
+let _ = lk.flush();
+```
+
+The plain-print path already used `write_all`; adding
+`.flush()` makes the no-newline case correct too.
+
+**Verify**
+```sh
+$ rm -f /tmp/_x && /opt/homebrew/bin/zsh -fc 'printf "abcde" > /tmp/_x; echo done; cat /tmp/_x'
+done
+abcde
+$ rm -f /tmp/_x && ./target/debug/zshrs --zsh -fc 'printf "abcde" > /tmp/_x; echo done; cat /tmp/_x'
+done
+abcde
+
+# With newline (already worked)
+$ rm -f /tmp/_x && ./target/debug/zshrs --zsh -fc 'printf "hello\n" > /tmp/_x; cat /tmp/_x'
+hello
+```
+
+Test baseline 960/92 → 961/91.
+
+**Original report:**
+
 **Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
 
 ```sh
