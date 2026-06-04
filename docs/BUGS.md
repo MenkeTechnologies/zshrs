@@ -47253,19 +47253,19 @@ no longer reports the internal trap-machinery scalar.
 | 245 | `(#cN,M)` extended_glob range-repetition not honored (count syntax accepted but matcher ignores) | **fixed** 2026-06-03 | n/a |
 | 246 | `setopt rc_expand_param` applied inside double quotes — silently fans out `"prefix$arr"` per-element | **fixed** 2026-06-02 | use `${a[*]}` star to force scalar-join |
 | 247 | `read line` doesn't strip leading/trailing IFS whitespace from input | **fixed** 2026-06-02 | explicit `${var## }`/`${var%% }` strip |
-| 248 | `read "?prompt" var` writes prompt to stdout when stdin isn't tty (contaminates output) | **port-bug** | conditional `print -n "p: " >&2` |
-| 249 | `${arr//pat/repl}` bare-array form applies replacement per-element (zsh: joins to scalar first) | **port-bug** | use `${${arr[*]}//pat/repl}` |
-| 250 | `typeset -ia`/`typeset -Fa` accepted (zsh: errors "inconsistent type for assignment") | **port-bug** | split into `-a` then per-elem arith |
+| 248 | `read "?prompt" var` writes prompt to stdout when stdin isn't tty (contaminates output) | **fixed** 2026-06-02 | conditional `print -n "p: " >&2` |
+| 249 | `${arr//pat/repl}` bare-array form applies replacement per-element (zsh: joins to scalar first) | **fixed** 2026-06-02 | use `${${arr[*]}//pat/repl}` |
+| 250 | `typeset -ia`/`typeset -Fa` accepted (zsh: errors "inconsistent type for assignment") | **fixed** 2026-06-02 | split into `-a` then per-elem arith |
 | 251 | `command -- echo hi` doesn't recognize `--` end-of-options separator | **fixed** 2026-06-02 | drop the `--` |
 | 252 | `exec -` (dash, no command) errors "exec: -: not found" instead of no-op | **fixed** 2026-06-02 | drop the `exec -` |
 | 253 | `$0` inside sourced file (top-level) isn't updated — breaks `${0:A:h}` plugin-dir pattern | **port-bug** | pass file path as parameter explicitly |
-| 254 | `UID=N`/`EUID=N` writes silently accepted (zsh: attempts setuid syscall) — privilege-drop silent no-op | **port-bug** | use external setuid wrapper |
+| 254 | `UID=N`/`EUID=N` writes silently accepted (zsh: attempts setuid syscall) — privilege-drop silent no-op | **fixed** 2026-06-02 | use external setuid wrapper |
 | 255 | `local -h NAME` doesn't hide parent scope's value — `-h` flag ignored | **fixed** 2026-06-02 | explicit `local NAME=""` before set |
-| 256 | `zstyle -e CONTEXT STYLE CODE` dynamic-eval not honored — completion-system breakage | **port-bug** | use static `zstyle` form |
-| 257 | `jobtexts[N]` introspection assoc not populated for bg jobs (introspection-mirror family) | **port-bug** | parse `jobs -l` output instead |
+| 256 | `zstyle -e CONTEXT STYLE CODE` dynamic-eval not honored — completion-system breakage | **fixed** 2026-06-02 | use static `zstyle` form |
+| 257 | `jobtexts[N]` introspection assoc not populated for bg jobs (introspection-mirror family) | **fixed** 2026-06-02 | parse `jobs -l` output instead |
 | 258 | `printf "%d" $hugenum` silently overflows to 0 (zsh: errors "number truncated") | **port-bug** | pre-validate range before printf |
-| 259 | `${jobstates[N]}` and `${jobdirs[N]}` empty (companion to #257 — all 3 job-intro assocs broken) | **port-bug** | parse `jobs -l` output |
-| 260 | `${widgets[NAME]}` zle widget intro assoc empty (zsh: 386 builtin widgets) | **port-bug** | `zle -la NAME` for existence test |
+| 259 | `${jobstates[N]}` and `${jobdirs[N]}` empty (companion to #257 — all 3 job-intro assocs broken) | **fixed** 2026-06-02 | parse `jobs -l` output |
+| 260 | `${widgets[NAME]}` zle widget intro assoc empty (zsh: 386 builtin widgets) | **fixed** 2026-06-02 | `zle -la NAME` for existence test |
 | 261 | `${functions_source[fn]}` format diverges — `zsh:0` instead of bare `zsh` for cmdline fn | **port-bug** | strip `:N` suffix before compare |
 | 262 | `zsh_eval_context` array always empty (zsh: `cmdarg`, `cmdarg shfunc`, etc. — eval context stack) | **fixed** 2026-06-02 | n/a |
 | 263 | `$ZSH_DEBUG_CMD` empty when DEBUG trap fires (parameter never populated with cmd text) | **fixed** 2026-06-02 | n/a |
