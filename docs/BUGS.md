@@ -47076,7 +47076,7 @@ no longer reports the internal trap-machinery scalar.
 | 68 | `trap` listing in insertion order, not signal-number | **port-bug** | pipe through `sort` |
 | 69 | `$sysparams` auto-loaded w/o `zmodload zsh/system` | **port-bug** | call `zmodload` regardless |
 | 70 | FS watcher leaks newly-created paths to stderr | **port-bug** | none — must fix in zshrs |
-| 71 | `${var:N:M}` accepts non-digit offset (bashism) | **port-bug** | wrap offset in `$(( ))` |
+| 71 | `${var:N:M}` accepts non-digit offset (bashism) | **fixed** 2026-06-02 | wrap offset in `$(( ))` |
 | 72 | `log` builtin registered but dispatch → `/usr/bin/log` | **port-bug** | `print -- $watch` instead |
 | 73 | `$ZSH_VERSION` includes `.0.3-test` suffix vs `5.9` | **port-bug** | parse `${ZSH_VERSION%%.0*}` |
 | 74 | `local -r` violation in fn doesn't abort script | **port-bug** | check fn exit status |
@@ -47103,9 +47103,9 @@ no longer reports the internal trap-machinery scalar.
 | 95 | Signal trap from `kill -X $$` in subshell fires immediately | **port-bug** | avoid signal-IPC across sub |
 | 96 | `%N/` `%N~` prompt escape doesn't truncate path | **port-bug** | manual `precmd` truncation |
 | 97 | `typeset -r` listing omits shell-internal readonly params (`!=0` etc.) | **fixed** 2026-06-03 | PM_RO_BY_DESIGN flag surfaces internal readonly specials |
-| 98 | `[ "a" \< "b" ]` lex-compare bash ext accepted (zsh errors) | **port-bug** | `[[ < ]]` double-bracket |
+| 98 | `[ "a" \< "b" ]` lex-compare bash ext accepted (zsh errors) | **fixed** 2026-06-02 | `[[ < ]]` double-bracket |
 | 99 | `(#cN,M)` count quantifier + other `(#x)` flags not recognized | **fixed** 2026-06-04 | `[[ "aaa" == a(#c2,3) ]]` matches; bounds enforced |
-| 100 | `typeset -R N x="hello"` doesn't right-truncate (full string kept) | **port-bug** | `printf "%Ns"` instead |
+| 100 | `typeset -R N x="hello"` doesn't right-truncate (full string kept) | **fixed** 2026-06-02 | `printf "%Ns"` instead |
 | 101 | `exec funcname` errors "not found" instead of running shell fn | **port-bug** | drop `exec`, call fn directly |
 | 102 | `$-` doesn't include `f` from `-f` startup flag | **fixed** 2026-06-02 | n/a |
 | 103 | `$0` inside sourced script returns shell binary, not sourced file | **port-bug** | `${(%):-%x}` prompt-expansion |
@@ -47131,7 +47131,7 @@ no longer reports the internal trap-machinery scalar.
 | 123 | `${arr[@]}` inside heredoc returns only first element | **port-bug** | `${(j: :)arr}` or pre-join |
 | 124 | `typeset -f` source-as-typed vs zsh pretty-printed | **port-bug** | normalize whitespace |
 | 125 | `var=${a[-1]}` assignment returns empty (echo works) | **port-bug** | `var=${a[${#a}]}` positive idx |
-| 126 | `${s:N:}` empty length silently returns empty (zsh errors) | **port-bug** | careful syntax |
+| 126 | `${s:N:}` empty length silently returns empty (zsh errors) | **fixed** 2026-06-02 | careful syntax |
 | 127 | `$'\xNN'` interpreted as Unicode codepoint + UTF-8 re-encode | **port-bug** | `printf '\xNN'` direct |
 | 128 | `${(C)arr[N]}` indexed-element case-flag errors "bad substitution" | **port-bug** | assign to scalar first |
 | 129 | `local -a a=("$@")` splits quoted args (without `-a` works) | **fixed** 2026-06-02 | n/a |
