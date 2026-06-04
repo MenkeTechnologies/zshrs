@@ -217,6 +217,51 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
         let close = name.rfind(']').unwrap_or(name.len());
         let arr_name = &name[..bracket];
         let idx_str = &name[bracket + 1..close];
+
+        // c:Src/params.c::getarg — subscript-flag form `(i)pat` /
+        // `(I)pat` inside an arith subscript: search the array for
+        // `pat` and return the 1-based index (or len+1 / 0 for
+        // miss). Bug #341. The other flag arms (`r`/`R` returning
+        // strings, `n`/`b`/`e`/`w`/`s` etc.) don't yield arith
+        // values, so we only handle `i`/`I` here.
+        if idx_str.starts_with("(i)") || idx_str.starts_with("(I)") {
+            let reverse = idx_str.starts_with("(I)");
+            let pat = &idx_str[3..];
+            if let Ok(tab) = crate::ported::params::paramtab().read() {
+                if let Some(pm) = tab.get(arr_name) {
+                    if let Some(arr) = &pm.u_arr {
+                        let len = arr.len() as i64;
+                        let mut found: i64 = if reverse { 0 } else { len + 1 };
+                        if reverse {
+                            for (i, e) in arr.iter().enumerate().rev() {
+                                if e == pat {
+                                    found = (i + 1) as i64;
+                                    break;
+                                }
+                            }
+                        } else {
+                            for (i, e) in arr.iter().enumerate() {
+                                if e == pat {
+                                    found = (i + 1) as i64;
+                                    break;
+                                }
+                            }
+                        }
+                        return mnumber {
+                            l: found,
+                            d: 0.0,
+                            type_: MN_INTEGER,
+                        };
+                    }
+                }
+            }
+            return mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
+            };
+        }
+
         // Recursively eval the index (so a[i+1], h[$k], etc work).
         // CRITICAL: save/restore evaluator state around the recursive
         // matheval — without this, the inner call's `push(idx_value)`
