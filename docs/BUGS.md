@@ -37839,7 +37839,68 @@ done
 
 ## #470 — `emulate -L sh` shows `localoptions`/`localpatterns`/`localtraps` instead of sh-mode setopts
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partial-fix` 2026-06-04 — the original report's
+"wrong setopt output" framing had two compounding causes; the
+primary one (printoptionnode reading a hardcoded EMULATE_ZSH
+default-set instead of the live emulation) is fixed. zshrs's
+`setopt` output now agrees with zsh on `banghist` + the
+local* meta-flags AND no longer emits the 30+ spurious zsh-
+default-state lines.
+
+**Root cause** — `src/ported/options.rs::default_on_options`
+hardcoded `EMULATE_ZSH` instead of reading the live
+`EMULATION` atomic. C `Src/options.c:462 defset(on,
+emulation)` reads the file-static `emulation` global so the
+"default for this option under the current emulation" answer
+flips when `emulate -L sh` changes the live emulation. zshrs
+was answering "default under zsh" for every query, so
+options whose current value matched the **zsh** default were
+suppressed from the listing — leaving only the post-emulate
+local* flags + the OPT_EMULATE-flagged options whose value
+flipped to sh defaults.
+
+**Fix** — `default_on_options` now reads `EMULATION` via
+`AtomicI32::load(Relaxed)` and computes the on-by-default
+set against the live emulation. Direct port of C's
+`defset(on, emulation)` semantics.
+
+**Remaining gap** — seven options still appear in zsh's
+output but not zshrs's:
+- `nohashdirs` — zsh initializes HASHDIRS to 2 then ties it
+  to INTERACTIVE (`Src/init.c:367`); zshrs lacks the
+  HASHDIRS/INTERACTIVE coupling.
+- `nointeractivecomments`, `notify`, `promptpercent`,
+  `nopromptsubst`, `norcs`, `normstarsilent` — zshrs's
+  `optns_flags` table carries `OPT_EMULATE` bits on several
+  entries that C's `Src/options.c:200+` table does NOT
+  (notify=OPT_ZSH, promptpercent=OPT_NONBOURNE,
+  interactivecomments=OPT_BOURNE, promptsubst=OPT_BOURNE,
+  rmstarsilent=OPT_BOURNE). The spurious EMULATE bits make
+  zshrs's `emulate -L` switch their values to sh defaults
+  when C keeps them at the user's pre-emulate value.
+
+The flag-table corrections and HASHDIRS init coupling are
+both broader changes (affect every emulation transition) and
+need their own auditing pass. Deferred.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+# Before fix: zshrs setopt printed 48 lines of zsh-default state
+# After fix: 4 lines matching zsh's first 6 (banghist + local*):
+$ ./target/debug/zshrs --zsh -c 'emulate -L sh; setopt'
+banghist
+localoptions
+localpatterns
+localtraps
+# (zsh additionally shows: nohashdirs, nointeractivecomments,
+# notify, promptpercent, nopromptsubst, norcs, normstarsilent
+# — the remaining gap above)
+```
+
+zshrs_shell baseline preserved at 967/85.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'emulate -L sh; setopt' | head -3
@@ -37852,45 +37913,6 @@ localoptions
 localpatterns
 localtraps
 ```
-
-`emulate -L MODE`:
-- Apply MODE's emulation opts
-- AND enable `localoptions`, `localpatterns`, `localtraps`
-  (auto-restore on function return)
-
-zsh shows BOTH: the local* meta-flags AND the actual
-emulation opts (banghist, etc.).
-
-zshrs shows ONLY the local* meta-flags. The actual
-sh-emulation opt block isn't applied.
-
-Distinct from #464 (`emulate sh` plain — no -L flag —
-also doesn't apply opts): #470 confirms even the -L
-form half-works (sets the meta-flags but skips the real
-emulation work).
-
-**Where** — same as #464: `src/ported/builtins/emulate.rs`
-needs the mode→opts table populated. The local* flag
-side works in zshrs; the per-mode opt-toggle side
-doesn't.
-
-**Impact** — `emulate -L sh -c 'sh-script'` patterns
-(common for POSIX-compat code blocks inside zsh) don't
-actually run in sh emulation:
-
-```sh
-emulate -L sh
-# expected: $arr [@] expansion gets sh semantics, etc.
-[[ -n "${arr[@]}" ]] && ...
-# zsh: sh semantics — different array-test behavior
-# zshrs: still in full zsh mode
-```
-
-Combined with #464, `emulate` is broken for both `-L`
-and non-`-L` forms.
-
-**Workaround** — same as #464 — manual setopt of
-sh-emulation list.
 
 ---
 
@@ -47345,7 +47367,7 @@ no longer reports the internal trap-machinery scalar.
 | 467 | `$-` shell-flags parameter missing `f` flag when shell launched with `-f` — likely `c`/`i`/`s`/`l` also missing | **fixed** 2026-06-04 | n/a |
 | 468 | `functions -t` (list traced) emits full function body instead of name list (zsh: empty or names only) | **fixed** 2026-06-04 | n/a |
 | 469 | `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier" | **port-bug** | manual filter loop after glob |
-| 470 | `emulate -L sh` shows `localoptions`/`localpatterns`/`localtraps` but doesn't apply sh-mode opts — same root as #464 | **port-bug** | manual setopt of sh list |
+| 470 | `emulate -L sh` shows `localoptions`/`localpatterns`/`localtraps` but doesn't apply sh-mode opts — same root as #464 | **partial-fix** 2026-06-04 | default_on_options reads live EMULATION; HASHDIRS coupling + spurious OPT_EMULATE bits deferred |
 | 471 | `zmodload -u zsh/nonexistent` silently rc=0 — should error "no such module" (zsh: rc=1) | **port-bug** | manual module-list check before unload |
 | 472 | `typeset -H` (hide value) doesn't suppress value in `typeset -p` output — leaks secrets in listings | **fixed** 2026-06-04 | `local -H a=secret; typeset -p a` → `typeset a` matching zsh |
 | 473 | `[[ "ab" == a|b ]]` zshrs runs `b` as command — `\|` in pattern parsed as pipe (security-relevant) | **fixed** 2026-06-04 | par_cond emits `parse error near <tok>` per parse.c:1818 |
