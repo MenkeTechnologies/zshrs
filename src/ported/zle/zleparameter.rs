@@ -50,6 +50,17 @@ pub fn getpmwidgets(
 ) -> Option<crate::ported::zsh_h::Param> {
     // c:33
     use crate::ported::zsh_h::{hashnode, param, Param, PM_READONLY, PM_SCALAR, PM_UNSET};
+    // c:Src/Zle/zle_thingy.c:1022 init_thingies — populates thingytab
+    // with the 254 internal widget entries. zshrs's non-interactive
+    // script mode skips the zsh/zle module load that triggers this,
+    // so `$widgets[accept-line]` returned empty until something
+    // (bindkey, zle -l, etc.) forced lazy init. Trigger here so
+    // direct `widgets` reads work. Idempotent — init_thingies'
+    // per-name `contains_key` guard makes re-entry safe. Bug #264.
+    static WIDGETS_PARAM_INIT: std::sync::Once = std::sync::Once::new();
+    WIDGETS_PARAM_INIT.call_once(|| {
+        crate::ported::zle::zle_thingy::init_thingies();
+    });
     let mk = |u_str: String, extra: i32| -> Param {
         Box::new(param {
             node: hashnode {
@@ -76,10 +87,50 @@ pub fn getpmwidgets(
             level: 0,
         })
     };
-    // c:60-78 — look up name in thingytab, format widget type label.
-    match crate::ported::zle::zle_thingy::getwidgettarget(name) {
-        Some(target) if target == name => Some(mk("builtin".to_string(), 0)),
-        Some(target) => Some(mk(format!("user:{}", target), 0)),
+    // c:Src/Zle/zleparameter.c:37-56 widgetstr — discriminate by
+    // widget FLAGS, not name-vs-target comparison:
+    //   - undefined widget        → "undefined"
+    //   - WIDGET_INT flag         → "builtin"
+    //   - WIDGET_NCOMP flag       → "completion:wid:func"
+    //   - else (user function)    → "user:fnnam"
+    // Bug #264 — the previous Rust port compared `target == name`
+    // which made user widgets registered as `zle -N my-fn` (where
+    // the function name equals the widget name) report as `builtin`.
+    let label_opt = {
+        let tab = crate::ported::zle::zle_thingy::thingytab().lock().ok();
+        tab.and_then(|t| {
+            t.get(name).cloned().map(|th| {
+                let w_opt = th.widget;
+                match w_opt {
+                    None => "undefined".to_string(),
+                    Some(w) => {
+                        use crate::ported::zle::zle_h::{
+                            WidgetImpl, WIDGET_INT, WIDGET_NCOMP,
+                        };
+                        if (w.flags & WIDGET_INT) != 0 {
+                            "builtin".to_string()
+                        } else if (w.flags & WIDGET_NCOMP) != 0 {
+                            if let WidgetImpl::Comp { wid, func, .. } = &w.u {
+                                format!("completion:{}:{}", wid, func)
+                            } else {
+                                "builtin".to_string()
+                            }
+                        } else {
+                            match &w.u {
+                                WidgetImpl::Internal(_) => "builtin".to_string(),
+                                WidgetImpl::UserFunc(fnnam) => format!("user:{}", fnnam),
+                                WidgetImpl::Comp { wid, func, .. } => {
+                                    format!("completion:{}:{}", wid, func)
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+        })
+    };
+    match label_opt {
+        Some(label) => Some(mk(label, 0)),
         None => Some(mk(String::new(), PM_UNSET as i32)),
     }
 }
@@ -95,6 +146,12 @@ pub fn scanpmwidgets(
 ) {
     // c:81
     use crate::ported::zsh_h::{hashnode, param, PM_READONLY, PM_SCALAR};
+    // Same lazy init as getpmwidgets — scanpmwidgets walks
+    // thingytab too. Bug #264.
+    static WIDGETS_SCAN_INIT: std::sync::Once = std::sync::Once::new();
+    WIDGETS_SCAN_INIT.call_once(|| {
+        crate::ported::zle::zle_thingy::init_thingies();
+    });
     let f = match func {
         Some(f) => f,
         None => return,
