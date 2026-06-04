@@ -47041,7 +47041,7 @@ no longer reports the internal trap-machinery scalar.
 | 33 | `set -e` doesn't fire on `(( false_cond ))` | **fixed** 2026-06-02 | `\|\| exit 1` explicit |
 | 34 | case `(a*\|b*))` paren-alt doesn't match w/ extended_glob | **fixed** 2026-06-02 | drop outer parens or double them |
 | 35 | `${(v)h[key]}` errors with bad substitution | **fixed** 2026-06-02 | drop the `(v)` for single subscript |
-| 36 | MULTIOS not implemented (multiple `>` / `<` redirects) | **port-bug** | explicit `tee`/`cat` |
+| 36 | MULTIOS not implemented (multiple `>` / `<` redirects) | **fixed** 2026-06-02 | explicit `tee`/`cat` |
 | 37 | `"${(z)str}"` quoted form splits fields | **port-bug** | `${(j: :)${(z)str}}` rejoin |
 | 38 | prompt escapes `%m`/`%C`/`%i`/`%l`/`%y`/`%E`/`%v`/`%b`/`%u`/`%s`/`%f`/`%k` missing | **port-bug** | use `$HOST`/`$PWD` etc |
 | 39 | `${arr:#"literal"}` quoted pat still globbed | **fixed** 2026-06-02 | n/a |
@@ -47084,7 +47084,7 @@ no longer reports the internal trap-machinery scalar.
 | 76 | `zmodload` lists 32 auto-loaded modules vs zsh's 1 | **fixed** 2026-06-04 | now reports 1 (zsh/main) matching zsh |
 | 77 | `${h[(k)-key]}` flag-lookup of dash key returns empty | **port-bug** | direct `${h[$opt]+set}` |
 | 78 | `echoti` output emitted AFTER next stdout (buf flush) | **fixed** 2026-06-02 | direct `printf '\e[...'` |
-| 79 | Job control table empty: `jobs`/`wait %N`/`kill %N`/`disown` fail | **port-bug** | use `$!` PID instead |
+| 79 | Job control table empty: `jobs`/`wait %N`/`kill %N`/`disown` fail | **fixed** 2026-06-02 | use `$!` PID instead |
 | 80 | `trap EXIT` in fn fires at script exit, lost in nested fns | **fixed** 2026-06-02 | explicit cleanup at fn epilogue |
 | 81 | `extended_glob *~b` returns duplicates + matches dir | **fixed** 2026-06-02 | loop with `[[ == ... ]] continue` |
 | 82 | `"PREFIX${(s.X.)var}"` repeats prefix per element | **fixed** 2026-06-02 | `arr=("${(s.X.)v}"); "P:${arr[*]}"` |
@@ -47547,7 +47547,7 @@ no longer reports the internal trap-machinery scalar.
 | 539 | `suspend` non-interactive hangs shell — zsh: rc=0 silent no-op | **port-bug** | guard with `[[ -o interactive ]]` |
 | 540 | `zformat` no-args error msg: "invalid argument: " (with trailing space) vs zsh's "not enough arguments" | **fixed** 2026-06-04 | resolved by prior `bin_zformat` argv-count parity work |
 | 541 | `TRAPSIG()` function + `trap '...' SIG` string BOTH fire — zsh: last-defined replaces (one form only) | **fixed** 2026-06-04 | dotrap skips string-form when function-form fires; cross-clear on registration |
-| 542 | `${(s.X.)str}` field-splitting keeps empty fields between separators — zsh: drops them | **port-bug** | `(parts[@]:#)` filter empty |
+| 542 | `${(s.X.)str}` field-splitting keeps empty fields between separators — zsh: drops them | **fixed** 2026-06-02 | `(parts[@]:#)` filter empty |
 | 543 | `print -l "${(s.X.)str}"` emits visible blank lines from empty fields — same root as #542 | **fixed** 2026-06-03 | n/a |
 | 544 | `a[0]="x"` zero-index array assignment silently accepted — zsh: "invalid subscript range" (zsh is 1-indexed) | **fixed** 2026-06-03 | n/a |
 | 545 | `${(s.X.)XXX}` all-separator string gives 4 empty fields — zsh: 2 (extends #542) | **fixed** 2026-06-03 | n/a |
