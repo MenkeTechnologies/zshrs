@@ -31423,6 +31423,62 @@ let "x=$expr" || echo "let failed: $?"   # any non-zero
 
 ## #403 — `for ... don` close-token typo silently treated as separator + command
 
+**Status:** `fixed` 2026-06-03 — shared `parse_loop_body`
+helper now errors on missing `done`/`}`/`end`, matching C
+`Src/parse.c:1182-1183 / 1535-1536 / 1597-1598` (`if (tok
+!= DONE) YYERRORV(oecused)` and its INBRACE/ZEND siblings).
+
+**Root cause** — `src/ported/parse.rs::parse_loop_body`
+called `parse_program_until(Some(&[DONE]))` to consume the
+body, but the post-walk gate was `if tok() == DONE
+zshlex()` (advance) with no else branch. EOF after the
+body silently fell through as success, so `for i in a; do
+echo hi; don` left `don` as the last command in the body
+(parses as `command don`) and the parser returned the
+malformed for-list without diagnostic.
+
+**Fix** — `src/ported/parse.rs::parse_loop_body`: all three
+close-token branches (DOLOOP → DONE, INBRACE_TOK →
+OUTBRACE_TOK, foreach/csh → ZEND) now hard-error with
+`zerr("parse error: expected `done'")` (or the matching
+close-token) and `return None`. Bug #403, #404.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'for i in a b; do echo hi; don' 2>&1
+zsh:1: parse error near `don'
+$ ./target/debug/zshrs --zsh -fc 'for i in a b; do echo hi; don' 2>&1
+zsh:1: parse error: expected `done'
+
+$ /opt/homebrew/bin/zsh -fc 'x=0; while (( x < 2 )); do (( x++ )); echo $x; don' 2>&1
+zsh:1: parse error near `don'
+$ ./target/debug/zshrs --zsh -fc 'x=0; while (( x < 2 )); do (( x++ )); echo $x; don' 2>&1
+zsh:1: parse error: expected `done'
+
+$ ./target/debug/zshrs --zsh -fc 'for i in a; { echo $i; ' 2>&1
+zsh:1: parse error: expected `}'
+
+# Regression checks
+$ ./target/debug/zshrs --zsh -fc 'for i in a b; do echo hi; done' 2>&1
+hi
+hi
+$ ./target/debug/zshrs --zsh -fc 'for i in a; { echo $i; }' 2>&1
+a
+$ ./target/debug/zshrs --zsh -fc 'for i in a b; echo $i' 2>&1
+a
+b
+```
+
+The diagnostic wording diverges slightly from zsh's
+`parse error near 'don'` (which names the offending token)
+vs zshrs's `expected 'done'` (which names the missing
+terminator). Both communicate the same root cause; the
+exact wording is a stretch goal for later.
+
+Test baseline preserved at 957/95.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -31478,6 +31534,22 @@ runs — producing wrong-looking success output.
 ---
 
 ## #404 — `while ... don` close-token typo silently accepted with no diagnostic
+
+**Status:** `fixed` 2026-06-03 — closed by the same
+`parse_loop_body` strict-DONE check as #403. `while` /
+`until` / `repeat` share the same body-builder in zshrs.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'while false; do echo body; don' 2>&1
+zsh:1: parse error: expected `done'
+$ ./target/debug/zshrs --zsh -fc 'until true; do echo body; don' 2>&1
+zsh:1: parse error: expected `done'
+```
+
+Doc-only flip; code lives in the #403 commit.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
