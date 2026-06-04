@@ -9125,14 +9125,22 @@ pub fn paramsubst(
         // (Q) unquote per-element on arrays. Direct port of
         // subst.c:2261 quotemod-- which iterates aval per-element.
         let unquote_one = |s: &str| -> String {
-            // c:2261
+            // c:Src/subst.c:4863-4874 — `parse_subst_string + remnulargs
+            // + untokenize`. The C path runs the input through the
+            // shell parser (noerrs=1 tolerating malformed input), so
+            // unbalanced quote chars survive as literals. Bug #507:
+            // zshrs's previous walker dropped EVERY `'`/`"` it saw,
+            // so `a=x"y` (single embedded `"`) became `xy` instead of
+            // staying `x"y`. Mirror C's balanced-span behavior: strip
+            // `'…'` / `"…"` only when a closing partner exists; an
+            // orphan quote stays literal.
             let chars_v: Vec<char> = s.chars().collect();
             let mut out = String::with_capacity(s.len());
             let mut i = 0_usize;
             while i < chars_v.len() {
                 let c = chars_v[i];
                 if c == '$' && i + 1 < chars_v.len() && chars_v[i + 1] == '\'' {
-                    // c:2261
+                    // c:2261 — `$'…'` ANSI-C decoder.
                     let body_start = i + 2;
                     let mut j = body_start;
                     while j < chars_v.len() && chars_v[j] != '\'' {
@@ -9145,7 +9153,7 @@ pub fn paramsubst(
                     let body: String = chars_v[body_start..j].iter().collect();
                     let (decoded, _) = getkeystring(&body); // c:2261
                     out.push_str(&decoded);
-                    i = j + 1;
+                    i = if j < chars_v.len() { j + 1 } else { j };
                     continue;
                 }
                 if c == '\\' {
@@ -9154,7 +9162,42 @@ pub fn paramsubst(
                         i += 2;
                         continue;
                     }
-                } else if c == '\'' || c == '"' {
+                }
+                if c == '\'' || c == '"' {
+                    // Probe for a closing partner. Inside `'…'`, no
+                    // escapes — accept first matching `'`. Inside
+                    // `"…"`, backslash escapes the next char.
+                    let mut j = i + 1;
+                    let mut found = None;
+                    while j < chars_v.len() {
+                        if c == '"' && chars_v[j] == '\\' && j + 1 < chars_v.len() {
+                            j += 2;
+                            continue;
+                        }
+                        if chars_v[j] == c {
+                            found = Some(j);
+                            break;
+                        }
+                        j += 1;
+                    }
+                    if let Some(close) = found {
+                        // Strip opener + emit interior (backslash-
+                        // unescape for `"…"`; literal for `'…'`).
+                        let mut k = i + 1;
+                        while k < close {
+                            if c == '"' && chars_v[k] == '\\' && k + 1 < close {
+                                out.push(chars_v[k + 1]);
+                                k += 2;
+                                continue;
+                            }
+                            out.push(chars_v[k]);
+                            k += 1;
+                        }
+                        i = close + 1;
+                        continue;
+                    }
+                    // Orphan quote: keep literal.
+                    out.push(c);
                     i += 1;
                     continue;
                 }
