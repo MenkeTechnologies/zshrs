@@ -9178,7 +9178,17 @@ pub fn paramsubst(
             // — `print -l ${(q)arr}` shows each element on its own
             // line with per-element quoting. Join-first only applies
             // in DQ context where the result is forced to a scalar.
-            let want_per_element = nojoin == 2 || !qt;
+            //
+            // `"${(qq)arr[@]}"` — DQ with `[@]` subscript — also
+            // wants per-element quoting (the `[@]` is the
+            // splat-preserving subscript that keeps array shape in
+            // DQ, matching C `Src/subst.c::paramsubst` SCANPM_ISVAR_AT
+            // semantics). Without this, qt=true forces the join-first
+            // path and produces `'a b c d e'` instead of `'a b' 'c'
+            // 'd e'`. Bug #392.
+            let is_at_subscript_splat =
+                matches!(subscript.as_deref(), Some("@") | Some("*"));
+            let want_per_element = nojoin == 2 || !qt || is_at_subscript_splat;
             // c:2237
             if let Some(parts) = split_parts.clone() {
                 if want_per_element {
