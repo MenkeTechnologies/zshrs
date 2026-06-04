@@ -44464,6 +44464,66 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #582 — bare `$-:MOD` / `$!:MOD` single-char-special positional modifier ignored — extends #581
+
+**Status:** `fixed-partial` 2026-06-04 — handles `$-` and `$!`;
+`$?` and `$$` deferred (`?` triggers glob, `$$` handled outside
+paramsubst's match).
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo $-:u'
+569XF
+
+$ ./target/debug/zshrs --zsh -fc 'echo $-:u'   # before
+569Xf:u
+```
+
+**Root cause** — #581's walker handled `$N` (digit positionals)
+but paramsubst's match arm for `c if c == '#'` etc. didn't cover
+the single-char special names `-`/`!`/`?`/`$`/etc. plus their
+tokenized counterparts (`Dash`/`Bang`/`Quest`/`Stringg`). The
+catch-all `_ =>` arm returned the raw `$-:u` text untouched.
+
+**Fix** — two changes:
+
+1. **`src/extensions/compile_zsh.rs::find_expansion_end`** —
+   the single-char-special arm (already detected `$?`, `$!`,
+   `$-` and their META forms) now also walks the
+   `walk_bare_modifier_chain` AFTER the special. Skip when the
+   special is `?`/`*` (glob metachars) because extending the
+   span makes downstream glob match include the trailing
+   `:MOD` in the pattern, erroring "no matches found".
+2. **`src/ported/subst.rs::paramsubst`** — new arm
+   `c if c == '-' || c == Dash || c == '!' || c == Bang`
+   that routes through `exec_getsparam` (→
+   `lookup_special_var`/`dashgetfn` per params.rs:10727)
+   and applies the modifier chain.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'echo $-:u'                    # case
+569XF
+$ ./target/debug/zshrs -fc 'echo $!:r'                    # ext-strip
+0
+$ ./target/debug/zshrs -fc 'echo $-'                      # plain (regression)
+569Xf
+$ ./target/debug/zshrs -fc 'echo $0:t'                    # #581 regression
+zshrs
+$ ./target/debug/zshrs -fc 'a=hello; echo $a:u'           # #579 regression
+HELLO
+```
+
+**Deferred** —
+- `$?:MOD` — `?` is a glob metachar; runtime needs to strip
+  `:MOD` from the segment before glob-matching the pattern.
+- `$$:MOD` — `$$` (PID) dispatches outside paramsubst's match
+  via a separate compile_zsh emit; needs investigation.
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #581 — bare `$N:MOD` and `$0:MOD` positional-modifier ignored — extends #579/#580 to digit positionals
 
 **Status:** `fixed` 2026-06-04 — modifier walker factored into
@@ -45601,6 +45661,7 @@ no longer reports the internal trap-machinery scalar.
 | 579 | bare `$NAME:MOD` modifier ignored (printed `:u` literally) | **fixed** 2026-06-04 | compile_zsh extends expansion span; paramsubst bare-arm runs modify() |
 | 580 | bare `$NAME:s/PAT/REPL/` substitution modifier ignored — extends #579 | **fixed** 2026-06-04 | walker absorbs :s and :gs delimiter-bounded substitution forms |
 | 581 | bare `$N:MOD` / `$0:MOD` positional modifier ignored — extends #579/#580 | **fixed** 2026-06-04 | walker factored into apply_bare_modifier_chain, called from both arms |
+| 582 | bare `$-:MOD` / `$!:MOD` single-char-special modifier ignored — extends #581 | **fixed-partial** 2026-06-04 | walker for `-`/`!`; `?` and `$$` deferred (glob conflict / different emit) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
