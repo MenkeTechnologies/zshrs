@@ -39509,7 +39509,29 @@ readonly X=newval
 
 ## #499 — `times` builtin output uses 3-decimal precision (zsh: 2-decimal)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/builtin.rs](../src/ported/builtin.rs)).
+
+**Root cause** — `bin_times`' `pttime` closure used `print!("{}m{:.3}s",
+mins_f, sec_f)` — floating-point seconds with 3-decimal precision. C
+`Src/builtin.c:7315-7318` uses integer arithmetic via the `pttime`
+macro: `printf("%ldm%ld.%02lds", X/(60*clktck), X/clktck%clktck,
+X*100/clktck%100)` — minutes, seconds (no zero-pad), centiseconds
+(2-digit zero-padded).
+
+**Fix** — port the C integer-arithmetic breakdown exactly: minutes
+via `X/(60*clktck)`, seconds via `X/clktck % clktck`, centiseconds via
+`X*100/clktck % 100`. Emit as `{m}m{s}.{02cs}s`.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'times'
+0m0.00s 0m0.00s
+0m0.00s 0m0.00s    # matches zsh byte-for-byte
+```
+
+Baseline 961/91 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'times'
@@ -44491,7 +44513,7 @@ qualifiers always have a digit suffix.
 | 496 | **CRITICAL** `type ./path` PANICS with "attempt to subtract with overflow" at builtin.rs:5959 — relative-path arg crashes shell | **port-bug** | strip `./` prefix before passing to `type` |
 | 497 | `$RPROMPT` initialized to empty string instead of unset (extends #479 bash-compat-init family) | **port-bug** | `[[ -n $RPROMPT ]]` non-empty check |
 | 498 | `readonly x=N` on already-readonly x silently rc=0 — zsh errors "read-only variable" | **port-bug** | `typeset -p X` probe before re-declare |
-| 499 | `times` builtin output uses 3-decimal precision instead of zsh's 2-decimal — parser format diff | **port-bug** | `printf` reformat to 2-decimal |
+| 499 | `times` builtin output uses 3-decimal precision instead of zsh's 2-decimal — parser format diff | **fixed** 2026-06-04 | n/a |
 | 500 | `disown -h` (or any unknown spec) rc=1 instead of zsh's 127; diagnostic format also diverges | **port-bug** | match diagnostic substring instead of `$?` |
 | 501 | `pushd` empty-stack no-args rc=1 instead of zsh's rc=0 — extends #487 pushd-no-args family | **port-bug** | `(( ${#dirstack} > 0 ))` pre-check |
 | 502 | `typeset -a b=($var)` word-splits unquoted `$var` (plain `b=($var)` works) — typeset/local/readonly arg-parse path splits incorrectly | **port-bug** | explicit `${=var}` to force-split in both |
