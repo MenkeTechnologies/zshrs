@@ -30870,6 +30870,76 @@ trap '[[ -n $tmpdir ]] && rm -rf -- "$tmpdir"' EXIT
 
 ## #383 — `keymaps` assoc array empty — viins/vicmd/emacs/main not registered
 
+**Status:** `fixed` 2026-06-03 — three-point wiring fix
+populates the `keymaps` array reads.
+
+**Root cause** — three gaps:
+1. `keymapsgetfn` (`src/ported/zle/zleparameter.rs`) reads
+   from `keymapnamtab`, but the table is only populated by
+   `default_bindings` — which zshrs's non-interactive
+   script mode never invokes (the C boot path via `zsh/zle`
+   module load is skipped). The lazy `KEYMAPS_INIT`
+   `Once::call_once` in `bin_bindkey` covers `bindkey`
+   calls but not direct `$keymaps` reads.
+2. `src/ported/subst.rs::arrays_get` had explicit arms for
+   `dirstack`, `signals`, `funcstack`, `epochtime`,
+   `funcfiletrace`/`funcsourcetrace`/`functrace` — but not
+   `keymaps`. Subscripted reads (`${keymaps[1]}`,
+   `${keymaps[@]}`) bypassed the PARTAB getfn.
+3. `src/ported/subst.rs::arrays_contains` mirror was
+   missing the `keymaps` arm too, so the `${keymaps[@]}`
+   splice gate at line 5765 didn't recognise it as
+   array-shaped.
+
+**Fix:**
+1. `keymapsgetfn`: add a `KEYMAPS_PARAM_INIT` `Once` that
+   triggers `default_bindings` so the first param read
+   populates the table. Idempotent — `default_bindings`
+   no-ops when entries already exist.
+2. `arrays_get`: add `if name == "keymaps" { return
+   partab_array_get(name); }`.
+3. `arrays_contains`: add `keymaps` to the explicit
+   PM_ARRAY-name list.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "${(k)keymaps}" | tr " " "\n" | sort -u'
+.safe
+command
+emacs
+isearch
+main
+vicmd
+viins
+viopp
+visual
+$ ./target/debug/zshrs --zsh -fc 'echo ${(k)keymaps}' | tr " " "\n" | sort -u
+.safe
+command
+emacs
+isearch
+main
+vicmd
+viins
+viopp
+visual
+
+# Subscripted reads
+$ ./target/debug/zshrs --zsh -fc 'echo "[${keymaps[1]}]"'
+[.safe]
+$ ./target/debug/zshrs --zsh -fc 'echo "[${(@k)keymaps}]"'
+[.safe command emacs isearch main vicmd viins viopp visual]
+$ ./target/debug/zshrs --zsh -fc 'echo "n=${#keymaps}"'
+n=9
+```
+
+The DQ-wrapped `"${(k)keymaps}"` shape (with both DQ AND
+`(k)` flag AND no `@`) still diverges — separate from the
+core array-emptiness this bug reports. Test baseline
+preserved at 961/91.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -32155,6 +32225,25 @@ process.)
 ---
 
 ## #398 — `printf` unknown format directives printed literally instead of rejected
+
+**Status:** `fixed` 2026-06-03 — no longer reproduces. All
+unknown directives (`%Z`, `%K`, `%A`, `%a`, `%T`, `%Q`)
+emit the canonical `zsh:printf:N: %X: invalid directive`
+error and exit 1.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'printf "%Z" 100'; echo "rc=$?"
+zsh:printf:1: %Z: invalid directive
+rc=1
+$ ./target/debug/zshrs --zsh -fc 'printf "%Z" 100'; echo "rc=$?"
+zsh:printf:1: %Z: invalid directive
+rc=1
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
