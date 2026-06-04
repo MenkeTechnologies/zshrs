@@ -2025,12 +2025,33 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
         let mut idx = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // c:Src/subst.c — `\u{07}` (outer `(k)` flag) signals that the
+        // BUILTIN_ARRAY_INDEX caller stripped a redundant `(k)` outer
+        // flag but the assoc subscript MATCH path must still return
+        // KEYS instead of VALUES (e.g. `${(k)h[(R)pat]}`). When paired
+        // with `\u{05}` (outer `@`), the result must keep ARRAY shape
+        // so `print -l` splits per-key. Re-inject `(@k)` or `(k)` into
+        // the paramsubst body. Bug #592.
+        let mut outer_k = false;
+        let mut outer_at = false;
         for sentinel in ['\u{02}', '\u{05}', '\u{06}', '\u{07}'] {
             if let Some(rest) = idx.strip_prefix(sentinel) {
+                if sentinel == '\u{07}' {
+                    outer_k = true;
+                }
+                if sentinel == '\u{05}' {
+                    outer_at = true;
+                }
                 idx = rest.to_string();
             }
         }
-        let body = format!("${{{}[{}]}}", name, idx);
+        let body = if outer_k && outer_at {
+            format!("${{(@k){}[{}]}}", name, idx)
+        } else if outer_k {
+            format!("${{(k){}[{}]}}", name, idx)
+        } else {
+            format!("${{{}[{}]}}", name, idx)
+        };
         paramsubst_to_value(&body)
     });
     // BUILTIN_ASSOC_HAS_KEY — `${(k)assoc[name]}` key-existence query.
