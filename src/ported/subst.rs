@@ -11823,10 +11823,19 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
                             fs.filename.as_deref().unwrap_or(""),
                             fs.flineno
                         ),
-                        // "functrace" — c:Src/Modules/parameter.c:778+
-                        // `<caller>:<lineno>` where caller is the
-                        // calling-frame's name.
-                        _ => format!("{}:{}", fs.name, fs.lineno),
+                        // c:Src/Modules/parameter.c:648-672
+                        // functracegetfn — emits `<f->caller>:<lineno>`
+                        // where `caller` is the file/function that
+                        // invoked this frame (NOT `f->name` which is
+                        // this frame's own function name). Bug #585
+                        // extends #515 to functrace: zshrs was using
+                        // `fs.name` so `functrace[1]` reported the
+                        // function-name instead of the caller-file.
+                        _ => format!(
+                            "{}:{}",
+                            fs.caller.as_deref().unwrap_or(""),
+                            fs.lineno
+                        ),
                     })
                     .collect(),
             );
