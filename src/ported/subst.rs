@@ -7544,7 +7544,11 @@ pub fn paramsubst(
                 let other = arrays_get(other_name)
                     .or_else(|| vars_get(other_name).map(|s| vec![s]))
                     .unwrap_or_default();
-                let zipped: Vec<String> = if qt && !other.is_empty() && !arr.is_empty() {
+                // c:Src/subst.c — `[@]`/`[*]` subscript keeps array
+                // shape across DQ for the same SCANPM_ISVAR_AT reason
+                // documented in the `:^` arm below. Bug #597.
+                let is_at_subscript_zip = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                let zipped: Vec<String> = if qt && !is_at_subscript_zip && !other.is_empty() && !arr.is_empty() {
                     let ifs0 = vars_get("IFS")
                         .unwrap_or_else(|| " \t\n\0".to_string())
                         .chars()
@@ -7614,13 +7618,22 @@ pub fn paramsubst(
                 let other_unset = other_opt.is_none();
                 let arr = arr_opt.unwrap_or_default();
                 let other = other_opt.unwrap_or_default();
+                // c:Src/subst.c — explicit `[@]`/`[*]` subscript on
+                // the LHS array bypasses the DQ scalar-collapse: zsh's
+                // SCANPM_ISVAR_AT (set for `[@]`/`[*]` per params.c:2027-2029)
+                // keeps isarr=-1 through the qt transition so the zip
+                // walks per-element instead of sepjoin'ing the LHS.
+                // Without this gate, `"${a[@]:^b}"` truncated to
+                // `[sepjoin(a), b[0]]` — 2 elements instead of the
+                // interleaved 2*min(|a|,|b|). Bug #597.
+                let is_at_subscript_zip = matches!(subscript.as_deref(), Some("@") | Some("*"));
                 let zipped: Vec<String> = if other_unset && !arr_unset {
                     // b unset → return a verbatim.
                     arr.clone()
                 } else if arr_unset && !other_unset {
                     // a unset → return b verbatim.
                     other.clone()
-                } else if qt {
+                } else if qt && !is_at_subscript_zip {
                     let ifs0 = vars_get("IFS")
                         .unwrap_or_else(|| " \t\n\0".to_string())
                         .chars()
