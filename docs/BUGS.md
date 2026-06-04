@@ -31602,6 +31602,65 @@ surfaces in test runs that don't enable cleanup.
 
 ## #405 — function definition missing close-brace silently accepted
 
+**Status:** `fixed` 2026-06-03 — strict OUTBRACE_TOK gate added
+to all three funcdef body-parse arms in `src/ported/parse.rs`.
+
+**Root cause** — `parse_inline_funcdef` (`name() {…}`),
+`par_funcdef` (`function name {…}`), and `parse_anon_funcdef`
+(`() {…}`) all followed `parse_program_until(Some(&[OUTBRACE_
+TOK]))` with a permissive `if tok() == OUTBRACE_TOK { zshlex();
+}` — so EOF after an unterminated body silently fell through
+and registered the function with whatever body had been parsed.
+C `Src/parse.c:1733-1737` (par_funcdef) and the par_simple
+INOUTPAR arm at c:2095-2101 both hard-error via `YYERROR` when
+`tok != OUTBRACE`.
+
+**Fix** — all three Rust paths now match the C semantic:
+```rust
+if tok() != OUTBRACE_TOK {
+    zerr("parse error: expected `}'");
+    return None;
+}
+zshlex();
+```
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo hi' 2>&1; echo "rc=$?"
+zsh:1: parse error near `hi'
+rc=1
+$ ./target/debug/zshrs --zsh -fc 'f() { echo hi' 2>&1; echo "rc=$?"
+zsh:1: parse error: expected `}'
+rc=1
+
+$ ./target/debug/zshrs --zsh -fc 'function h { echo h' 2>&1; echo "rc=$?"
+zsh:1: parse error: expected `}'
+rc=1
+
+$ ./target/debug/zshrs --zsh -fc '() { echo anon' 2>&1; echo "rc=$?"
+zsh:1: parse error: expected `}'
+rc=1
+
+# Regression: well-formed funcdefs still work
+$ ./target/debug/zshrs --zsh -fc 'f() { echo hi; }; f'
+hi
+$ ./target/debug/zshrs --zsh -fc 'function h { echo h; }; h'
+h
+$ ./target/debug/zshrs --zsh -fc '() { echo anon }'
+anon
+$ ./target/debug/zshrs --zsh -fc 'a() { b() { echo nested; }; b; }; a'
+nested
+```
+
+Diagnostic wording diverges from zsh's `parse error near 'hi'`
+(names the last consumed token) vs zshrs's `expected '}'`
+(names the missing terminator); both communicate the same root
+cause.
+
+Test baseline preserved at 957/95.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
