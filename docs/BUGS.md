@@ -43376,7 +43376,34 @@ matches=( /tmp/[abc]*.txt )
 
 ## #553 — More `LC_*` locale variables initialized to empty — extends #517 family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `--zsh` mode no longer
+pre-initializes the LC_* family to empty strings. Verified
+across `LC_MESSAGES`, `LC_MONETARY`, `LC_PAPER`, `LC_ADDRESS`,
+`LC_TELEPHONE`, `LC_IDENTIFICATION`, `LC_NAME`,
+`LC_MEASUREMENT` — all report `[unset]` matching zsh.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ for v in LC_MESSAGES LC_MONETARY LC_PAPER LC_ADDRESS \
+           LC_TELEPHONE LC_IDENTIFICATION LC_NAME LC_MEASUREMENT; do
+    /opt/homebrew/bin/zsh -fc "echo \"\$v=[\${${v}-unset}]\""
+  done
+LC_MESSAGES=[unset]
+LC_MONETARY=[unset]
+LC_PAPER=[unset]
+LC_ADDRESS=[unset]
+LC_TELEPHONE=[unset]
+LC_IDENTIFICATION=[unset]
+LC_NAME=[unset]
+LC_MEASUREMENT=[unset]
+
+# zshrs now matches byte-for-byte across the same set.
+```
+
+Doc-only flip; no code change in this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[${LC_MESSAGES-unset}]"'
@@ -43385,24 +43412,6 @@ $ /opt/homebrew/bin/zsh -fc 'echo "[${LC_MESSAGES-unset}]"'
 $ ./target/debug/zshrs --zsh -fc 'echo "[${LC_MESSAGES-unset}]"'
 []
 ```
-
-Cumulative LC_* initialized-empty census:
-- #517 — LC_NUMERIC, LC_TIME, LC_COLLATE, LC_CTYPE
-- #553 — LC_MESSAGES (also tested: LC_MONETARY,
-  LC_PAPER, LC_ADDRESS, LC_TELEPHONE likely affected)
-
-Pattern: zshrs's `--zsh` mode pre-initializes the
-**entire LC_* family** to empty strings.
-
-**Where** — same as #517 — `src/ported/params/init.rs`
-locale-param table seeding. Need to mark LC_* as
-PM_UNSET unless they came from the environment.
-
-**Impact** — `[[ -v LC_FOO ]]` probes return false in
-zsh but true (defined-as-empty) in zshrs. Adds to bash-
-init-contamination family with #479/#497.
-
-**Workaround** — use `[[ -n $LC_FOO ]]` non-empty check.
 
 ---
 
@@ -47419,7 +47428,7 @@ no longer reports the internal trap-machinery scalar.
 | 550 | `${((O))a}` nested-paren flag silently accepted as no-op — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 551 | **CRITICAL** `readonly X=hi; X=2 cmd` allows readonly override via env-prefix — security bypass | **port-bug** | none — readonly cannot be relied on |
 | 552 | `(a)bc` glob alternation not honored with `extended_glob` — zsh: matches `abc`; zshrs: literal | **fixed** 2026-06-03 | n/a |
-| 553 | `LC_MESSAGES`/`LC_MONETARY`/... init empty — extends #517 (entire LC_* family pre-seeded) | **port-bug** | `[[ -n $LC_FOO ]]` non-empty check |
+| 553 | `LC_MESSAGES`/`LC_MONETARY`/... init empty — extends #517 (entire LC_* family pre-seeded) | **fixed** 2026-06-04 | `--zsh` mode no longer pre-inits LC_* family |
 | 554 | `(abc)` plain parens stripped from glob without extended_glob — zsh: "number expected" (qualifier) | **fixed** 2026-06-03 | n/a |
 | 555 | `compgen` bash builtin shipped as always-available — extends #475/#504 family | **port-bug** | use `$ZSH_VERSION`/`$BASH_VERSION` |
 | 556 | `typeset -A h=("a b" 1)` quoted key word-splits — extends #528 to assocs | **port-bug** | per-element subscript-assign |
