@@ -6509,6 +6509,20 @@ pub fn paramsubst(
                 // (declared at line 2790) escapes depth-0 `|` to
                 // `\|` for the patcompile pass. Bug #596.
                 let pat = escape_bare_alt_pipes(&singsub(&pat_after_anchor));
+                // c:Src/glob.c:2674-2677 — `p = patcompile(pat,
+                // patflags, NULL); if (!p) { zerr("bad pattern: %s",
+                // pat); return NULL; }`. The replace path silently
+                // ignored compile failures (e.g. unbalanced `(foo|bar`)
+                // and returned the input unchanged; zsh rejects with
+                // "bad pattern: ...". Pre-check here so the diagnostic
+                // surfaces. Bug #605.
+                if !pat.is_empty()
+                    && patcompile(&pat, PAT_HEAPDUP as i32, None).is_none()
+                {
+                    zerr(&format!("bad pattern: {}", pat));
+                    errflag_set_error();
+                    return (String::new(), new_pos, vec![]);
+                }
                 // Replacement: per C subst.c around line 3354,
                 // `prefork(replstr, ...)` runs with SUB_FLAG|SKIP_FILESUB
                 // — tilde / file expansion is suppressed in the
@@ -6829,6 +6843,16 @@ pub fn paramsubst(
                 // read it as alternation. Same fix as the `//` arm
                 // above. Bug #596.
                 let pat = escape_bare_alt_pipes(&singsub(&raw_pat));
+                // c:Src/glob.c:2674-2677 — `patcompile` failure → "bad
+                // pattern" diagnostic. Single replace arm same as `//`
+                // arm above. Bug #605.
+                if !pat.is_empty()
+                    && patcompile(&pat, PAT_HEAPDUP as i32, None).is_none()
+                {
+                    zerr(&format!("bad pattern: {}", pat));
+                    errflag_set_error();
+                    return (String::new(), new_pos, vec![]);
+                }
                 if std::env::var("ZSHRS_TRACE_REPL2").is_ok() {
                     eprintln!(
                         "[TRACE_REPL2] rep={:?} raw_pat={:?} pat={:?} raw_repl={:?}",

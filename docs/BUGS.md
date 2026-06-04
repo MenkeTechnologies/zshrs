@@ -44466,6 +44466,52 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #605 — `${a/(foo|bar/X}` and `${a//(foo|bar/X}` silently return input — no "bad pattern" error on unbalanced paren
+
+**Status:** `fixed` 2026-06-04 — ported `Src/glob.c:2674-2677`
+patcompile-failure check to the `/` and `//` replace arms.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=foo; echo "${a/(foo|bar/X}"'
+zsh:1: bad pattern: (foo|bar
+
+# Before fix:
+$ zshrs --zsh -c 'a=foo; echo "${a/(foo|bar/X}"'
+foo                       # silently returned input, rc=0
+
+# After fix:
+$ zshrs --zsh -c 'a=foo; echo "${a/(foo|bar/X}"'
+zshrs:1: bad pattern: (foo|bar
+```
+
+**Root cause** — `src/ported/subst.rs` `/` (single replace) and
+`//` (global replace) arms ran `singsub(&raw_pat)` → handed the
+result to `glob_match_static` / `patcompile` inside the per-element
+match loop. When `patcompile` failed (unbalanced parens, syntax
+error), it returned `None`. The callers' `.map_or(false, ...)` /
+`is_match` paths treated `None` as "no match" and returned the
+input unchanged with `rc=0`. C's `compgetmatch` at `Src/glob.c:2674-2677`
+emits `zerr("bad pattern: %s", pat)` and bails:
+```c
+p = patcompile(pat, patflags, NULL);
+if (!p) {
+    zerr("bad pattern: %s", pat);
+    return NULL;
+}
+```
+
+**Fix** — after computing `pat = escape_bare_alt_pipes(&singsub(...))`,
+pre-check `patcompile(&pat, PAT_HEAPDUP, None)`. If `None` (and
+the pattern was non-empty), emit `bad pattern: <pat>`, set
+errflag, return empty. Applied to both arms with the same
+single-line check.
+
+Valid patterns (`(foo|bar)`, `h*`, `(#i)L`, etc.) still compile
+and run through the regular replace loop.
+
+---
+
 ## #604 — `a=foo[bar; echo done` consumes `;` into ENVSTRING — unmatched `[` makes `;` non-terminator
 
 **Status:** `fixed` 2026-06-04 — removed extra `brct == 0` / `pct == 0`
@@ -46767,6 +46813,7 @@ no longer reports the internal trap-machinery scalar.
 | 602 | `print -P "%(e.A.B)"` / `%(v.A.B)` / `%(V.A.B)` / `%(S.A.B)` always emit false-text | **fixed** 2026-06-04 | added `b'e'`/`b'v'`/`b'V'`/`b'S'` arms to putpromptchar ternary switch (port of Src/prompt.c:466-487) |
 | 603 | `a=he?l` errors "no matches found" — bare `?` in scalar assignment RHS not DQ-wrapped | **fixed** 2026-06-04 | compile_assign glob-meta check used wrong Quest token (`\u{86}` Hat instead of `\u{97}` Quest) |
 | 604 | `a=foo[bar; echo done` consumes `;` into ENVSTRING — unmatched `[` makes `;` non-terminator | **fixed** 2026-06-04 | LX2_BREAK arm: removed extra `pct == 0 && brct == 0` guards; match C `if (!in_brace_param && !sub) goto brk` |
+| 605 | `${a/(foo\|bar/X}` / `${a//(foo\|bar/X}` silently return input — no "bad pattern" error on unbalanced paren | **fixed** 2026-06-04 | pre-check patcompile in `/` and `//` arms; emit "bad pattern: PAT" matching Src/glob.c:2674-2677 |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
