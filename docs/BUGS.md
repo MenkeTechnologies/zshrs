@@ -3142,7 +3142,31 @@ directions — no actual regression).
 
 ## #50 — Trap set in outer scope doesn't fire on signal received inside function
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — repro no longer reproduces. USR1 trap
+installed at top level now fires correctly when the signal arrives
+during a function call. Likely fixed by an earlier `dotrap` frame-walk
+landing (see [signals.rs](../src/ported/signals.rs)) — no new code
+change required this turn.
+
+**Verify**
+```sh
+$ cat > /tmp/t.zsh <<'EOF'
+trap "echo OUTER" USR1
+fn() { kill -USR1 $$; sleep 0.1; }
+fn
+echo done
+EOF
+
+$ ./target/debug/zshrs --zsh /tmp/t.zsh
+OUTER
+done
+```
+
+Caveat: certain default-terminating signals (e.g. SIGTERM) still
+kill the shell silently inside the fn rather than dispatching the
+trap. Tracked separately.
+
+**Original report**
 
 ```sh
 $ cat > /tmp/t.zsh <<'EOF'
@@ -43064,7 +43088,7 @@ qualifiers always have a digit suffix.
 | 47 | `${(b)str}` escapes space/semi (C-zsh doesn't) | **port-bug** | drop `(b)` flag |
 | 48 | `typeset -m PAT` rejects pattern arg | **port-bug** | iterate `${(k)parameters}` |
 | 49 | `(( "abc" == "abc" ))` quoted strings → false | **port-bug** | drop quotes |
-| 50 | Trap inherited from outer doesn't fire in fn | **port-bug** | re-install trap in fn |
+| 50 | Trap inherited from outer doesn't fire in fn | **fixed** 2026-06-03 | n/a |
 | 51 | `${#*}` access corrupts `$@`/`$*` for rest of fn | **fixed** 2026-06-02 | n/a |
 | 52 | `${(q)arr}` per-element quote, doesn't quote join-sep | **port-bug** | `${(j: :)${(@q)a}}` explicit |
 | 53 | `${(P)$ref}` doesn't resolve `name[idx]` indirect | **port-bug** | `eval "val=\\${$ref}"` |
