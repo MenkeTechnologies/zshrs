@@ -44466,6 +44466,38 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #599 — `print -P "%w"` emits "DAY  D" (double space) instead of "DAY D" — uses `%e` not `%f`
+
+**Status:** `fixed` 2026-06-04 — changed `%w` format from `"%a %e"`
+to `"%a %f"` per C source `Src/prompt.c:721`.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "[%w]"'
+[Thu 4]
+
+# Before fix:
+$ zshrs --zsh -c 'print -P "[%w]"'
+[Thu  4]            # double space before single-digit day
+
+# After fix:
+$ zshrs --zsh -c 'print -P "[%w]"'
+[Thu 4]
+```
+
+**Root cause** — `src/ported/prompt.rs:1199` used `"%a %e"` for
+the `%w` time-dispatch arm. `%e` is the standard strftime
+specifier "day of month, space-padded to 2 chars" (so `4`
+renders as ` 4`). zsh's C source uses `%f` which is zsh's
+custom extension — `tm_mday` with NO leading space (so `4`
+stays `4`). zshrs's `utils::ztrftime` already implements the
+`%f` preprocessor pass at `utils.rs:4293` so the fix is just
+the format-string switch.
+
+**Fix** — `b'w' => tmfmt = "%a %f"` (was `"%a %e"`).
+
+---
+
 ## #598 — `print -P "%L"` emits empty instead of `$SHLVL`
 
 **Status:** `fixed` 2026-06-04 — ported `Src/prompt.c:889` `%L`
@@ -46492,6 +46524,7 @@ no longer reports the internal trap-machinery scalar.
 | 596 | `${a/\|/-}` and `${a//\|/-}` mis-treat bare `\|` as alternation — should be literal in `/`/`//` patterns | **fixed** 2026-06-04 | escape_bare_alt_pipes applied to single + global replace pat (was already applied to ##/##/%/%% arms) |
 | 597 | `"${a[@]:^b}"` / `"${a[@]:^^b}"` collapse to scalar instead of preserving array shape | **fixed** 2026-06-04 | :^ and :^^ arms gate qt-collapse on `!is_at_subscript` so explicit `[@]` walks per-element zip |
 | 598 | `print -P "%L"` emits empty instead of `$SHLVL` | **fixed** 2026-06-04 | added `b'L'` arm to putpromptchar switch (port of Src/prompt.c:889) |
+| 599 | `print -P "%w"` emits "DAY  D" (double space) instead of "DAY D" — uses `%e` not `%f` | **fixed** 2026-06-04 | switch `%w` format from `"%a %e"` to `"%a %f"` (C source uses zsh-extension `%f` = mday no leading space) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
