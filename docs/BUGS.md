@@ -41520,7 +41520,32 @@ print -x $n "$content"
 
 ## #526 — `-a`/`-o` POSIX operators inside `[[ ]]` parsed as commands — zsh: "condition expected"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — landed as a collateral fix of #473.
+`par_cond`'s new "non-DOUTBRACK = parse error" gate now emits
+`parse error near \`-a'` (rc=1) instead of running `-a` as a
+command (rc=127). Message text diverges from zsh's exact
+"condition expected: <LHS>" (which comes from C's `par_cond_multi`
+n-ary-form gathering at `Src/parse.c:2716`); zshrs's
+`parse_cond_primary` doesn't enter the multi-arg loop because
+the binary form `[[ 1 -lt 2 ]]` resolves on the first triple,
+leaving `-a` as a stray STRING that hits the par_cond/DOUTBRACK
+gate.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc '[[ 1 -lt 2 -a 3 -lt 4 ]]'; echo rc=$?
+zshrs:1: parse error near `-a'
+rc=1
+```
+
+Behavioral parity (rc != 0, no command-not-found) achieved.
+Exact message match deferred — would require absorbing the
+parse_cond_primary AST path into the par_cond_2 wordcode-based
+multi-arg gatherer at parse.rs:2680-2718 (which already exists
+but is unreachable from the AST entry point).
+
+**Original report**:
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ 1 -lt 2 -a 3 -lt 4 ]] 2>&1; echo rc=$?'
@@ -44518,7 +44543,7 @@ qualifiers always have a digit suffix.
 | 73 | `$ZSH_VERSION` includes `.0.3-test` suffix vs `5.9` | **port-bug** | parse `${ZSH_VERSION%%.0*}` |
 | 74 | `local -r` violation in fn doesn't abort script | **port-bug** | check fn exit status |
 | 75 | `typeset -i x; x="bad math"` silently coerces to 0 | **port-bug** | regex-validate input first |
-| 76 | `zmodload` lists 32 auto-loaded modules vs zsh's 1 | **port-bug** | none — startup-time bloat |
+| 76 | `zmodload` lists 32 auto-loaded modules vs zsh's 1 | **fixed** 2026-06-04 | now reports 1 (zsh/main) matching zsh |
 | 77 | `${h[(k)-key]}` flag-lookup of dash key returns empty | **port-bug** | direct `${h[$opt]+set}` |
 | 78 | `echoti` output emitted AFTER next stdout (buf flush) | **port-bug** | direct `printf '\e[...'` |
 | 79 | Job control table empty: `jobs`/`wait %N`/`kill %N`/`disown` fail | **port-bug** | use `$!` PID instead |
@@ -44624,10 +44649,10 @@ qualifiers always have a digit suffix.
 | 179 | `${(S)pat}` shortest-match flag treated as no-op | **fixed** 2026-06-02 | n/a |
 | 180 | `${(C)-text}` no-colon default with flag silently accepted | **fixed** 2026-06-02 | n/a |
 | 181 | `typeset -p` doesn't quote array elements with spaces | **port-bug** | manual `${(qq)}` loop |
-| 182 | `${${(P)name}[N]}` after-deref indexing returns full array | **port-bug** | temp `deref=("${(@P)name}")` |
+| 182 | `${${(P)name}[N]}` after-deref indexing returns full array | **fixed** 2026-06-04 | post-deref subscripting now indexes correctly |
 | 183 | `"${@:1:2}"` positional slice returns all instead of slicing | **fixed** 2026-06-02 | n/a |
 | 184 | `$((${a[@]} + 0))` arith with array spread silently uses first elem | **fixed** 2026-06-02 | n/a |
-| 185 | `[[ -z "${arr[@]}" ]]` for single-empty arr returns false (zsh: true) | **port-bug** | `${arr[*]}` star form |
+| 185 | `[[ -z "${arr[@]}" ]]` for single-empty arr returns false (zsh: true) | **fixed** 2026-06-03 | BUILTIN_COND_STR_EMPTY/NONEMPTY respect cond-context array semantics |
 | 186 | `${(@)b:-default}` for single-empty arr returns default (zsh: empty) | **fixed** 2026-06-02 | n/a |
 | 187 | `f() { :; } > /file` redirect on fn-def creates file at def time | **port-bug** | redirect at call site |
 | 188 | Empty-array slice `${a[@]:0:1}` iterates once with empty val | **fixed** 2026-06-02 | n/a |
@@ -44638,7 +44663,7 @@ qualifiers always have a digit suffix.
 | 193 | `(( y = ${x:?msg} ))` continues after required-param error | **fixed** 2026-06-02 | n/a |
 | 194 | `function f { :; } > /file` keyword-form fn-def redirect at def time | **port-bug** | redirect at call site |
 | 195 | `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored | **port-bug** | temp `deref=("${(@P)name}")` |
-| 196 | Anonymous fn output lost in `$(() { :; })` cmdsub or `(() { :; })` subshell | **port-bug** | named fn called inside subshell |
+| 196 | Anonymous fn output lost in `$(() { :; })` cmdsub or `(() { :; })` subshell | **fixed** 2026-06-03 | cmd_or_math fallback no longer calls skipcomm (lex.c:519-520) |
 | 197 | `typeset -f` function-body display collapses statement newlines into `; ` | **port-bug** | sed `'s/; /\n\t/g'` post-filter |
 | 198 | `bindkey -L` output uses individual entries instead of `-R` range-compressed | **port-bug** | round-trip via zshrs's own output |
 | 199 | `${(qq)x}` with embedded newline emits mixed `'a'$'\n''b'` instead of literal | **fixed** 2026-06-02 | n/a |
@@ -44968,7 +44993,7 @@ qualifiers always have a digit suffix.
 | 523 | `${(q)control_char}` produces raw `\\<CHAR>` instead of `$'\\X'` ANSI-C-quoted form — round-trip broken | **fixed** 2026-06-03 | n/a |
 | 524 | `%r` prompt escape printed literally — extends prompt-escape gap family (#390/#391/#412/etc.) | **fixed** 2026-06-04 | n/a |
 | 525 | `print -x notanint ARG` silently rc=0 — zsh: "positive integer expected after -x" | **port-bug** | pre-validate N arg with regex |
-| 526 | `[[ N -lt M -a ... ]]` `-a`/`-o` parsed as command (rc=127) — zsh: "condition expected" parse error | **port-bug** | use `&&`/`\|\|` instead |
+| 526 | `[[ N -lt M -a ... ]]` `-a`/`-o` parsed as command (rc=127) — zsh: "condition expected" parse error | **fixed** 2026-06-04 | collateral fix of #473 par_cond DOUTBRACK gate |
 | 527 | `(( () ))` empty math silently rc=1 — zsh: "bad math expression: operand expected" rc=2 | **fixed** 2026-06-03 | n/a |
 | 528 | `typeset -a a=("hello world")` splits QUOTED string into multiple elements — worse than #502 | **fixed** 2026-06-04 | n/a |
 | 529 | `$((1+(2))` paren-mismatch math silently rc=0 (no output) — zsh: parse error | **port-bug** | visual audit |
