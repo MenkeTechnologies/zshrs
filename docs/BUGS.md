@@ -47293,17 +47293,17 @@ no longer reports the internal trap-machinery scalar.
 | 285 | `break`/`continue` outside loop silently succeed (zsh: errors "not in ... loop", ec=1) | **fixed** 2026-06-02 | (none — runtime check missing) |
 | 286 | `setopt errexit; true \| false; ...` doesn't abort — pipeline-tail-status with errexit ignored | **fixed** 2026-06-02 | n/a |
 | 287 | `${(@)assoc}` for-iteration produces single concatenated element (zsh: one element per value) | **fixed** 2026-06-02 | use explicit `(@v)` flag |
-| 288 | `typeset -A h; h[]=value` empty-subscript silently accepted (zsh: errors) — permissive-parser family | **port-bug** | careful syntax |
+| 288 | `typeset -A h; h[]=value` empty-subscript silently accepted (zsh: errors) — permissive-parser family | **fixed** 2026-06-02 | careful syntax |
 | 289 | `zmodload -L` output format wrong — bare module names vs `zmodload zsh/NAME` reproducible-script form | **fixed** 2026-06-04 | `zmodload -L` emits `zmodload zsh/main` matching zsh |
-| 290 | `${(q)arr}`/`${(qq)arr}` drops empty array elements and doesn't always-quote simple chars (round-trip broken) | **port-bug** | per-element loop applying `(qq)` |
+| 290 | `${(q)arr}`/`${(qq)arr}` drops empty array elements and doesn't always-quote simple chars (round-trip broken) | **fixed** 2026-06-02 | per-element loop applying `(qq)` |
 | 291 | `$(case word in pat) ... esac)` parse error — case-pattern `)` mis-tracked as cmdsub closer | **port-bug** | extract case into a named function |
-| 292 | `case "$x" in $pat)`/`$((expr)))`/`$(cmd)))` — case pattern doesn't expand var/arith/cmdsub | **port-bug** | pre-resolve to temp param |
+| 292 | `case "$x" in $pat)`/`$((expr)))`/`$(cmd)))` — case pattern doesn't expand var/arith/cmdsub | **fixed** 2026-06-02 | pre-resolve to temp param |
 | 293 | `arr[(i)pat]=value` — subscript flag on LHS of assignment silently fails | **fixed** 2026-06-02 | n/a |
 | 294 | Nested backtick `` `outer \`inner\` outer` `` parses wrong (backslash escape not honored) | **port-bug** | convert to `$()` form |
-| 295 | Array splice `a[N,M]=X` single-value doesn't shrink range — replaces only last index (#275 family) | **port-bug** | manual rebuild via slice concat |
+| 295 | Array splice `a[N,M]=X` single-value doesn't shrink range — replaces only last index (#275 family) | **fixed** 2026-06-02 | manual rebuild via slice concat |
 | 296 | `${s/\\./X}` pattern `\\X` interpretation diverges — zsh: literal `\\` + glob `.`, zshrs: escaped `.` | **port-bug** | use bracket class `[.]` instead |
 | 297 | Bare `typeset` (no args) display format missing attribute prefix (`array readonly tied NAME`) | **port-bug** | use `typeset -p` for reproducible form |
-| 298 | Bare var in slice subscript `${a[1,n]}` doesn't arith-deref `n` (zsh: evaluates as int) | **port-bug** | explicit `$` deref `${a[1,$n]}` |
+| 298 | Bare var in slice subscript `${a[1,n]}` doesn't arith-deref `n` (zsh: evaluates as int) | **fixed** 2026-06-02 | explicit `$` deref `${a[1,$n]}` |
 | 299 | Glob qualifier `(YN)` count-limit not applied — returns all matches | **fixed** 2026-06-02 | n/a |
 | 300 | `typeset -i n; n=0o10` (Python octal prefix) silently parses as `0` (zsh: errors loudly); security-relevant for masks | **fixed** 2026-06-02 | n/a |
 | 301 | `${(L/U/C)arr[N]}` case-change flag on subscripted array element errors "bad substitution" | **fixed** 2026-06-02 | n/a |
