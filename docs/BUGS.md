@@ -47187,7 +47187,7 @@ no longer reports the internal trap-machinery scalar.
 | 265 | `$MATCH` not populated by `(#m)` flag in `${var/pat/repl}` substitution (works in `=~`) | **port-bug** | use `=~` then manually substitute |
 | 266 | `$match[N]` backref array not populated by `(#b)` in substitution | **port-bug** | use `=~` to capture, build repl manually |
 | 267 | Bare `setopt` (no args) prints nothing instead of listing currently-set options | **port-bug** | use `set -o` (POSIX form) |
-| 268 | Autovars `LISTMAX`/`MAILCHECK`/`KEYTIMEOUT`/`PERIOD` typed `scalar` instead of `integer` | **port-bug** | explicit `typeset -i NAME` after init |
+| 268 | Autovars `LISTMAX`/`MAILCHECK`/`KEYTIMEOUT`/`PERIOD` typed `scalar` instead of `integer` | **fixed** 2026-06-03 | vm_helper init uses setiparam for these autovars per C `Src/params.c:857-860` |
 | 269 | `$SPROMPT` autovar default empty (zsh: `zsh: correct '%R' to '%r' [nyae]?`) | **port-bug** | explicit `SPROMPT=...` init in .zshrc |
 | 270 | `${(t)watch}` autovar absent — zsh: `array-special`; `watch` user-tracking feature dead | **port-bug** | (none — feature not implemented) |
 | 271 | `h=([k]=v)` bash-style assoc init treated as glob — errors "no matches found" | **port-bug** | use flat-pairs `h=(k v k v)` instead |
