@@ -4371,22 +4371,13 @@ fi
 
 ## #66 — `time` builtin ignores `TIMEFMT` and omits `%J` (command name)
 
-**Status:** `fixed` (TIMEFMT) 2026-06-02 — `BUILTIN_TIME_SUBLIST` in
-`src/fusevm_bridge.rs:2640` used a hardcoded format string and
-wall-time-only fudge factors (`elapsed*0.7` for user, `elapsed*0.1`
-for system, computed `cpu%` from those bogus values). Replaced
-with a faithful port of the C runner at `Src/jobs.c:1964-1968`:
-- snapshot `getrusage(RUSAGE_CHILDREN)` before AND after the timed
-  sublist; subtract to get accurate user/sys CPU for forked
-  externals (sleep, perl, …);
-- read `$TIMEFMT` via `getsparam`, fall back to `DEFAULT_TIMEFMT`;
-- call the already-ported `crate::ported::jobs::printtime`
-  (params.rs:906, full port of `Src/jobs.c:768-1015`) which handles
-  `%U`/`%S`/`%E`/`%P`/`%J`/`%mE`/`%uE`/`%nE`/`%*E`/`%M`/`%F`/...
-
-`%J` (command-name) still expands to empty because zshrs's compiler
-doesn't thread the sublist's source text into `BUILTIN_TIME_SUBLIST`
-yet — separate gap noted in the handler. Rest of TIMEFMT now works.
+**Status:** `fixed` 2026-06-04 — `%J` (command name) threading
+landed via compile_zsh.rs Time arm rendering the sublist via
+`render_sublist_for_debug` and pushing it as a desc operand
+(argc==2 form). `BUILTIN_TIME_SUBLIST` handler pops both desc and
+sub_idx, forwarding desc to `printtime` as `job_name` per
+`Src/jobs.c:768`. The earlier TIMEFMT-numeric fix 2026-06-02 is
+retained.
 
 Verified vs `/opt/homebrew/bin/zsh`:
 - `time sleep 0.01` — both `0.00s user 0.00s system 0% cpu 0.017
@@ -47050,7 +47041,7 @@ no longer reports the internal trap-machinery scalar.
 | 22 | heredoc `\$VAR` escape not honored | **fixed** 2026-06-02 | use `<<'END'` quoted form |
 | 23 | worker-pool shutdown INFO leaks to stdout | **port-bug** | close duped fd before exit |
 | 24 | `typeset -T` tied colon-array no-sync | **fixed** 2026-06-02 | manual `${(j.:.)arr}` rejoin |
-| 25 | `$ZSH_SCRIPT` unset, `$ZSH_ARGZERO` wrong | **port-bug** | fall back to `$0` |
+| 25 | `$ZSH_SCRIPT` unset, `$ZSH_ARGZERO` wrong | **fixed** 2026-06-02 | fall back to `$0` |
 | 26 | `emulate -L sh` missing KSH_ARRAYS | **fixed** 2026-06-02 | `setopt ksh_arrays` explicit |
 | 27 | `caller`/`help` extra builtins shadow user fns | **fixed** 2026-06-02 | `disable caller help` |
 | 28 | `mkdir`/`rm`/`mv`/etc. shadowed as shell builtins | **port-bug** | `command rm` to bypass — partial overlap with #530 (require zmodload zsh/files) |
@@ -47066,7 +47057,7 @@ no longer reports the internal trap-machinery scalar.
 | 38 | prompt escapes `%m`/`%C`/`%i`/`%l`/`%y`/`%E`/`%v`/`%b`/`%u`/`%s`/`%f`/`%k` missing | **fixed** 2026-06-04 | use `$HOST`/`$PWD` etc |
 | 39 | `${arr:#"literal"}` quoted pat still globbed | **fixed** 2026-06-02 | n/a |
 | 40 | `print -aC N` ignores `-a` (column-major instead of row) | **fixed** 2026-06-02 | sort input in advance |
-| 41 | Glob qualifier `Yn` (limit) returns all matches | **port-bug** | `head -n` or array slice |
+| 41 | Glob qualifier `Yn` (limit) returns all matches | **fixed** 2026-06-02 | `head -n` or array slice |
 | 42 | Bare `typeset` prints `name=val` only, no attrs | **port-bug** | use `typeset -p` |
 | 43 | `${#var:mod}` / `${#var/pat/rep}` / `${#arr[i,j]}` ignores transform | **fixed** 2026-06-02 | assign to temp first |
 | 44 | `set -x` PS4 doesn't expand `%x %N %I %_` | **fixed** 2026-06-03 | `PS4="+ "` simple |
@@ -47091,7 +47082,7 @@ no longer reports the internal trap-machinery scalar.
 | 63 | `${(j:s:)${(s:t:)var}}` nested split-then-join → first element only | **fixed** 2026-06-02 | n/a |
 | 64 | `$PIPESTATUS` (bash-style upper) exists in zshrs but not zsh | **fixed** 2026-06-02 | use lowercase `$pipestatus` |
 | 65 | `${+EPOCHSECONDS}` returns 0 after `zmodload zsh/datetime` | **fixed** 2026-06-02 | guard by `zmodload` rc |
-| 66 | `time` builtin ignores `TIMEFMT`, omits `%J` cmd name | **port-bug** | `/usr/bin/time -f` instead |
+| 66 | `time` builtin ignores `TIMEFMT`, omits `%J` cmd name | **fixed** 2026-06-04 | `/usr/bin/time -f` instead |
 | 67 | `pushd` no-args doesn't swap top of dir stack | **fixed** 2026-06-02 | explicit `pushd $OLDPWD` |
 | 68 | `trap` listing in insertion order, not signal-number | **fixed** 2026-06-02 | pipe through `sort` |
 | 69 | `$sysparams` auto-loaded w/o `zmodload zsh/system` | **port-bug** | call `zmodload` regardless |
@@ -47137,10 +47128,10 @@ no longer reports the internal trap-machinery scalar.
 | 109 | `${assoc[@]}` returns empty (no value enumeration) | **fixed** 2026-06-02 | use `${(v)h[@]}` explicit |
 | 110 | `a[0]=val` silently accepted (zsh 1-indexed, errors) | **fixed** 2026-06-02 | use 1-indexed throughout |
 | 111 | `%y` (and `%l`) prompt escape for tty not expanded | **fixed** 2026-06-02 | `${TTY##*/}` substitution |
-| 112 | Builtin error format leaks Rust's `(os error N)` suffix | **port-bug** | grep loosely for portability |
+| 112 | Builtin error format leaks Rust's `(os error N)` suffix | **fixed** 2026-06-02 | grep loosely for portability |
 | 113 | `$'\C-X'` ANSI-C ctrl-char escape not honored (literal) | **fixed** 2026-06-02 | `$'\xNN'` hex escape |
 | 114 | `${(l.W.)s}` width must be literal; variable errors | **fixed** 2026-06-02 | `printf "%${w}s"` instead |
-| 115 | Prompt `%s`/`%b`/`%u` use full reset `\e[0m` not selective | **port-bug** | re-apply attrs after `%x` |
+| 115 | Prompt `%s`/`%b`/`%u` use full reset `\e[0m` not selective | **fixed** 2026-06-02 | re-apply attrs after `%x` |
 | 116 | `GLOB_SUBST` defaults ON in zshrs (zsh: off) | **fixed** 2026-06-02 | `unsetopt glob_subst` explicit |
 | 117 | Extended_glob `(group)#` quantifier not recognized | **fixed** 2026-06-04 | `[[ "abab" == (ab)# ]]` matches |
 | 118 | `(( y = x ))` doesn't coerce non-numeric string to 0 | **fixed** 2026-06-02 | `integer y; y=$x` |
