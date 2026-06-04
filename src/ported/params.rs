@@ -5121,47 +5121,86 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 .or_default()
                 .insert(key.to_string(), val.to_string());
         } else if let Ok(idx) = key.parse::<i64>() {
-            // PM_ARRAY + numeric subscript (c:3357 `assignaparam`).
-            // c:Src/params.c:2125-2150 + c:2911 — `a[0]=val` under
-            // default zsh semantics (no KSHARRAYS, no KSHZEROSUBSCRIPT)
-            // produces VALFLAG_EMPTY in getarg, which setarrvalue
-            // then rejects with "assignment to invalid subscript
-            // range". zsh arrays are 1-based; index 0 is "before
-            // the first element" — invalid for write. Under
-            // KSHARRAYS, indexing is 0-based (so `a[0]` is valid =
-            // first element); under KSHZEROSUBSCRIPT, index 0 is
-            // an alias for index 1 (also valid).
-            //
-            // Previous Rust port computed `real_idx = -1` for idx=0
-            // (the `idx - 1` arithmetic), then `.max(0) = 0`, then
-            // silently wrote to arr[0]. Bug #110 in docs/BUGS.md.
-            let kshzero = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT);
-            if idx == 0 && !isset(KSHARRAYS) && !kshzero {
-                zerr(&format!(
-                    "{}: assignment to invalid subscript range",
-                    name
-                )); // c:2911 (effective)
-                drop(tab);
-                unqueue_signals();
-                return None;
-            }
-            let arr = pm.u_arr.get_or_insert_with(Vec::new);
-            let len = arr.len() as i64;
-            // 1-based forward, negative-from-end. Under KSHARRAYS,
-            // skip the 1-based shift (idx == 0 IS the first element).
-            let real_idx = if idx < 0 {
-                len + idx
-            } else if isset(KSHARRAYS) {
-                idx
+            // c:Src/params.c:2748-2789 — PM_SCALAR + numeric subscript
+            // SPLICES the value into the scalar's char string
+            // (`a=hello; a[2]=X` → `hXllo`). Only PM_ARRAY does
+            // element-store at this subscript. Bug #589 in
+            // docs/BUGS.md: zshrs's subscript store always treated
+            // numeric subscript as array-store, so `a[2]=X` on a
+            // scalar cleared `u_str` and put "X" at array slot 1,
+            // leaving `$a` displaying as `" X"` (empty + space + X)
+            // when joined.
+            let pm_type = PM_TYPE(pm.node.flags as u32);
+            if pm_type == PM_SCALAR {
+                // c:2748+ scalar splice — replace chars at index.
+                let s = pm.u_str.clone().unwrap_or_default();
+                let chars: Vec<char> = s.chars().collect();
+                let len = chars.len() as i64;
+                let kshzero = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT);
+                if idx == 0 && !isset(KSHARRAYS) && !kshzero {
+                    zerr(&format!(
+                        "{}: assignment to invalid subscript range",
+                        name
+                    ));
+                    drop(tab);
+                    unqueue_signals();
+                    return None;
+                }
+                // 1-based forward, negative-from-end. KSHARRAYS = 0-based.
+                let real_idx = if idx < 0 {
+                    (len + idx).max(0)
+                } else if isset(KSHARRAYS) {
+                    idx
+                } else {
+                    idx - 1
+                };
+                let real_idx = real_idx.max(0) as usize;
+                let real_idx = real_idx.min(chars.len());
+                // Replace one char at real_idx with val. If real_idx
+                // is past the end, append (extending with empty
+                // wouldn't make sense for a scalar — C's
+                // assignstrvalue at params.c:3724-3789 clamps end to
+                // zlen and concats).
+                let mut out = String::with_capacity(s.len() + val.len());
+                out.extend(chars[..real_idx].iter());
+                out.push_str(val);
+                if real_idx < chars.len() {
+                    out.extend(chars[real_idx + 1..].iter());
+                }
+                pm.u_str = Some(out);
             } else {
-                idx - 1
-            };
-            let real_idx = real_idx.max(0) as usize;
-            while arr.len() <= real_idx {
-                arr.push(String::new());
+                // PM_ARRAY + numeric subscript (c:3357 `assignaparam`).
+                // c:Src/params.c:2125-2150 + c:2911 — `a[0]=val` under
+                // default zsh semantics (no KSHARRAYS, no KSHZEROSUBSCRIPT)
+                // produces VALFLAG_EMPTY in getarg, which setarrvalue
+                // then rejects with "assignment to invalid subscript
+                // range".
+                let kshzero = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT);
+                if idx == 0 && !isset(KSHARRAYS) && !kshzero {
+                    zerr(&format!(
+                        "{}: assignment to invalid subscript range",
+                        name
+                    )); // c:2911 (effective)
+                    drop(tab);
+                    unqueue_signals();
+                    return None;
+                }
+                let arr = pm.u_arr.get_or_insert_with(Vec::new);
+                let len = arr.len() as i64;
+                let real_idx = if idx < 0 {
+                    len + idx
+                } else if isset(KSHARRAYS) {
+                    idx
+                } else {
+                    idx - 1
+                };
+                let real_idx = real_idx.max(0) as usize;
+                while arr.len() <= real_idx {
+                    arr.push(String::new());
+                }
+                arr[real_idx] = val.to_string();
+                pm.u_str = None;
             }
-            arr[real_idx] = val.to_string();
-            pm.u_str = None;
         } else {
             // String subscript on a non-hashed name → auto-vivify
             // as PM_HASHED (mirrors C `createparam(s, PM_HASHED)`

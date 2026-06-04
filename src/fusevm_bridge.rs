@@ -3534,7 +3534,31 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // translators — start_translate clamps to 1 (1-based);
             // end_translate keeps 0 intact so the splice in
             // setarrvalue (start_idx=0..end_idx=0) inserts at the front.
-            let len = exec.array(&name).map(|a| a.len() as i64).unwrap_or(0);
+            // Bug #589: for scalars (no array), use the scalar's char
+            // count as `len` so negative-index translation (`a[2,-1]`)
+            // computes against the actual string length, not 0.
+            let len = exec
+                .array(&name)
+                .map(|a| a.len() as i64)
+                .or_else(|| {
+                    crate::ported::params::paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|t| {
+                            t.get(&name).and_then(|pm| {
+                                if crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32)
+                                    == crate::ported::zsh_h::PM_SCALAR
+                                {
+                                    pm.u_str
+                                        .as_ref()
+                                        .map(|s| s.chars().count() as i64)
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                })
+                .unwrap_or(0);
             let start_translate = |raw: i64| -> i32 {
                 if raw < 0 {
                     (len + raw + 1).max(1) as i32
@@ -3568,6 +3592,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 Ok(mut tab) => tab.remove(&name),
                 Err(_) => None,
             };
+            // c:Src/params.c:2748+ — PM_SCALAR with subscript range
+            // SPLICES the value into the scalar's char string. Bug
+            // #589: zshrs's slice handler always called setarrvalue,
+            // erroring "attempt to assign array value to non-array"
+            // for `a=hello; a[2,3]=XYZ`. Detect PM_SCALAR and route
+            // through assignstrvalue (which does scalar splice via
+            // the PM_SCALAR arm at params.rs:3709-3789).
+            let is_scalar = taken.as_ref().map_or(false, |pm| {
+                crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32)
+                    == crate::ported::zsh_h::PM_SCALAR
+            });
             let mut v = crate::ported::zsh_h::value {
                 pm: taken,
                 arr: Vec::new(),
@@ -3576,7 +3611,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 start,
                 end,
             };
-            crate::ported::params::setarrvalue(&mut v, values);
+            if is_scalar {
+                // Scalar splice — concat values, route through
+                // assignstrvalue which dispatches by PM_TYPE.
+                // start_translate returns 1-based positions; assignstrvalue's
+                // PM_SCALAR arm at params.rs:3735+ expects 0-based start
+                // (chars before start are kept) and 0-based end-exclusive
+                // (chars from end are kept). Convert: start-=1.
+                if v.start > 0 {
+                    v.start -= 1;
+                }
+                let val: String = values.join("");
+                crate::ported::params::assignstrvalue(Some(&mut v), Some(val), 0);
+            } else {
+                crate::ported::params::setarrvalue(&mut v, values);
+            }
             // Write the mutated Param back to paramtab — setarrvalue
             // mutated v.pm in-place; the prior `tab.remove(&name)` at
             // the top of this handler took ownership, so we re-insert
