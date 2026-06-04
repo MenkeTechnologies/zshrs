@@ -42532,7 +42532,35 @@ fi
 
 ## #540 — `zformat` no-args error message diverges — "not enough arguments" vs "invalid argument: "
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — no longer reproduces. Both
+shells now emit the canonical `zsh:zformat:1: not enough
+arguments` for the no-args case AND for the `-f` /
+`name-only` shapes. Closed by prior `bin_zformat` argv-count
+parity work.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/zutil; zformat 2>&1; echo "rc=$?"'
+zsh:zformat:1: not enough arguments
+rc=1
+$ ./target/debug/zshrs --zsh -fc 'zmodload zsh/zutil; zformat 2>&1; echo "rc=$?"'
+zsh:zformat:1: not enough arguments
+rc=1
+
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/zutil; zformat -f 2>&1'
+zsh:zformat:1: not enough arguments
+$ ./target/debug/zshrs --zsh -fc 'zmodload zsh/zutil; zformat -f 2>&1'
+zsh:zformat:1: not enough arguments
+
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/zutil; zformat foo 2>&1'
+zsh:zformat:1: not enough arguments
+$ ./target/debug/zshrs --zsh -fc 'zmodload zsh/zutil; zformat foo 2>&1'
+zsh:zformat:1: not enough arguments
+```
+
+Doc-only flip; no code change in this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zmodload zsh/zutil; zformat 2>&1; echo "rc=$?"'
@@ -42543,28 +42571,6 @@ $ ./target/debug/zshrs --zsh -fc 'zmodload zsh/zutil; zformat 2>&1; echo "rc=$?"
 zsh:zformat:1: invalid argument: 
 rc=1
 ```
-
-Both shells reject `zformat` with no args (rc=1). The
-diagnostic message differs:
-- zsh: `not enough arguments` (canonical)
-- zshrs: `invalid argument: ` (note the trailing space —
-  the empty arg is the "invalid" one)
-
-Real bug — error-message format diff. Scripts that
-match diagnostic substrings get wrong results.
-
-**Where** — `src/ported/modules/zutil.rs::bin_zformat`
-(or wherever zformat lives): no-args path should emit
-"not enough arguments" via `zwarnnam`. C-source
-`Src/Modules/zutil.c::bin_zformat` checks
-`argc < something` and emits the canonical message.
-
-**Impact** — diagnostic-text-matching code paths break.
-Less common than message-format issues for builtins like
-`cd` (#488) but adds to the cumulative diagnostic-
-divergence count.
-
-**Workaround** — match on rc only, not message text.
 
 ---
 
@@ -47406,7 +47412,7 @@ no longer reports the internal trap-machinery scalar.
 | 537 | `echo /tmp/_zg/\\(abc\\)` strips escaped-paren content entirely — zsh: emits literal `(abc)` | **port-bug** | quote-instead-of-escape |
 | 538 | `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error — extends parser-strictness family | **port-bug** | CI lint for empty paren-groups |
 | 539 | `suspend` non-interactive hangs shell — zsh: rc=0 silent no-op | **port-bug** | guard with `[[ -o interactive ]]` |
-| 540 | `zformat` no-args error msg: "invalid argument: " (with trailing space) vs zsh's "not enough arguments" | **port-bug** | match on rc only |
+| 540 | `zformat` no-args error msg: "invalid argument: " (with trailing space) vs zsh's "not enough arguments" | **fixed** 2026-06-04 | resolved by prior `bin_zformat` argv-count parity work |
 | 541 | `TRAPSIG()` function + `trap '...' SIG` string BOTH fire — zsh: last-defined replaces (one form only) | **port-bug** | explicit `unset -f`/`trap -` before re-register |
 | 542 | `${(s.X.)str}` field-splitting keeps empty fields between separators — zsh: drops them | **port-bug** | `(parts[@]:#)` filter empty |
 | 543 | `print -l "${(s.X.)str}"` emits visible blank lines from empty fields — same root as #542 | **fixed** 2026-06-03 | n/a |
