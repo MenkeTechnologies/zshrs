@@ -47013,28 +47013,28 @@ no longer reports the internal trap-machinery scalar.
 | 5 | prompt `%j %T %D{}` | **fixed** 2026-05-29 | 74 (escape set kept) |
 | 6 | `:gs|X|Y|` + `print -l` | demo-error | 83 chained `:t:r:s` |
 | 7 | `local arr=( $=s )` | **fixed** 2026-05-29 | uses `${(s/:/)var}` |
-| 8 | `local IFS=` leaks | **port-bug** | n/a — workaround in 7's fix |
-| 9 | `v=${arr[(expr)*N+M]}` unquoted | **port-bug** | 239 uses `idx=$(…)` step |
-| 10 | nested-for + cmd-sub in fn | **port-bug** | 240 uses inline subscript |
-| 11 | `printf "%d" "' "` returns 0 | **port-bug** | 279/280 use `$((#c))` |
-| 12 | `${var%\|*}` `\|` treated as alt | **port-bug** | 279 uses `~` separator |
-| 13 | `[[ "$x" == "?" ]]` ignores quotes | **port-bug** | 301 uses `'?'` single-quotes |
-| 14 | `[[ $ch == "{" ]]` parse error | **port-bug** | 301 uses `$close_char` var |
-| 15 | `set -- ${=x}` mis-iterates in fn | **port-bug** | 298 uses parallel arrays |
-| 16 | `arr=("${arr[@]:0:-1}")` no-shrink in fn | **port-bug** | 311 uses `arr[${#arr}]=()` |
-| 17 | `var=${arr[-1]}` unquoted in fn while | **port-bug** | 311 quotes the RHS |
+| 8 | `local IFS=` leaks | **fixed** 2026-06-02 | n/a — workaround in 7's fix |
+| 9 | `v=${arr[(expr)*N+M]}` unquoted | **fixed** 2026-06-02 | 239 uses `idx=$(…)` step |
+| 10 | nested-for + cmd-sub in fn | **fixed** 2026-06-02 | 240 uses inline subscript |
+| 11 | `printf "%d" "' "` returns 0 | **fixed** 2026-06-02 | 279/280 use `$((#c))` |
+| 12 | `${var%\|*}` `\|` treated as alt | **fixed** 2026-06-02 | 279 uses `~` separator |
+| 13 | `[[ "$x" == "?" ]]` ignores quotes | **fixed** 2026-06-02 | 301 uses `'?'` single-quotes |
+| 14 | `[[ $ch == "{" ]]` parse error | **fixed** 2026-06-02 | 301 uses `$close_char` var |
+| 15 | `set -- ${=x}` mis-iterates in fn | **fixed** 2026-06-02 | 298 uses parallel arrays |
+| 16 | `arr=("${arr[@]:0:-1}")` no-shrink in fn | **fixed** 2026-06-02 | 311 uses `arr[${#arr}]=()` |
+| 17 | `var=${arr[-1]}` unquoted in fn while | **fixed** 2026-06-02 | 311 quotes the RHS |
 | 18 | `arr[a + 1]=val` with space parsed as cmd | **port-bug** | 332 pre-computes `idx=$((..))` |
 | 19 | quoted special/keyword case pat (non-first branch) | **fixed** 2026-06-01 | 363/365 reorder branches or if/elif |
 | 20 | recursive parsers very slow vs C-zsh | **perf-issue** | 362 trimmed test inputs |
-| 21 | nested `$(( a + $((b)) ))` garbles outer expansion | **port-bug** | extract inner to var first |
-| 22 | heredoc `\$VAR` escape not honored | **port-bug** | use `<<'END'` quoted form |
+| 21 | nested `$(( a + $((b)) ))` garbles outer expansion | **fixed** 2026-06-02 | extract inner to var first |
+| 22 | heredoc `\$VAR` escape not honored | **fixed** 2026-06-02 | use `<<'END'` quoted form |
 | 23 | worker-pool shutdown INFO leaks to stdout | **port-bug** | close duped fd before exit |
-| 24 | `typeset -T` tied colon-array no-sync | **port-bug** | manual `${(j.:.)arr}` rejoin |
+| 24 | `typeset -T` tied colon-array no-sync | **fixed** 2026-06-02 | manual `${(j.:.)arr}` rejoin |
 | 25 | `$ZSH_SCRIPT` unset, `$ZSH_ARGZERO` wrong | **port-bug** | fall back to `$0` |
-| 26 | `emulate -L sh` missing KSH_ARRAYS | **port-bug** | `setopt ksh_arrays` explicit |
-| 27 | `caller`/`help` extra builtins shadow user fns | **port-bug** | `disable caller help` |
+| 26 | `emulate -L sh` missing KSH_ARRAYS | **fixed** 2026-06-02 | `setopt ksh_arrays` explicit |
+| 27 | `caller`/`help` extra builtins shadow user fns | **fixed** 2026-06-02 | `disable caller help` |
 | 28 | `mkdir`/`rm`/`mv`/etc. shadowed as shell builtins | **port-bug** | `command rm` to bypass — partial overlap with #530 (require zmodload zsh/files) |
-| 29 | `"argv[N]=..."` literal stripped inside double quotes | **port-bug** | escape `\[` `\]` |
+| 29 | `"argv[N]=..."` literal stripped inside double quotes | **fixed** 2026-06-02 | escape `\[` `\]` |
 | 30 | `setopt no_clobber` rejects `> /dev/null` | **fixed** 2026-06-02 | `>\|` force-clobber |
 | 31 | `${EPOCHSECONDS:-x}` always uses default | **port-bug** | direct `$EPOCHSECONDS` access |
 | 32 | `hash -d name=~` doesn't expand `~` in value | **fixed** 2026-06-02 | use `$HOME` literal |
