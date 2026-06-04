@@ -31474,6 +31474,20 @@ But this must be done by every user who relies on `-x`.
 
 ## #391 — PS4 escape expansion broken — `%x`/`%N`/`%I`/`%_` printed literally during `set -x`
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'PS4="%x %N %I %_+ "; set -x; true'
+zsh zsh 1 + true
+$ ./target/debug/zshrs --zsh -fc 'PS4="%x %N %I %_+ "; set -x; true'
+zsh zsh 1 + true
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -31770,6 +31784,22 @@ fi
 
 ## #394 — `setopt` no-args dump empty under `-f` — should list activated "no" options
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt'
+nohashdirs
+norcs
+$ ./target/debug/zshrs --zsh -fc 'setopt'
+nohashdirs
+norcs
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -31821,6 +31851,20 @@ audits.
 ---
 
 ## #395 — `compdef` builtin always-present in zshrs — pre-compinit probe pattern broken
+
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'type compdef'
+compdef not found
+$ ./target/debug/zshrs --zsh -fc 'type compdef'
+compdef not found
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
@@ -31874,6 +31918,69 @@ when zsh's would go *false* — wrong-direction breakage.
 ---
 
 ## #396 — `$funcsourcetrace` returns line:0 instead of line:1 — off-by-one parallel to #385
+
+**Status:** `fixed` 2026-06-03 — `synth_shf.lineno` and
+`shfunc_with_body`'s `lineno` both now clamp to `max(1,
+line_base)`, mirroring zsh's 1-based def-line tracking.
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_funcdef`
+emits `line_base = first_body_line - 1` for use as the
+`$LINENO` offset inside the function body (so the first
+body command reads `$LINENO == 1`). For inline `f() { body
+}`, def and body share a line so `first_body_line = 1` and
+`line_base = 0`. zsh's `funcsourcetrace` reports the def
+line as the 1-based line number, so `line_base = 0`
+underflowed.
+
+`shfunc.lineno` is read by `doshfunc` at
+`Src/exec.c:6018-6019` and pushed onto FUNCSTACK as
+`flineno`. The funcsourcetrace getter formats
+`<filename>:<flineno>` per frame.
+
+Two separate shfunc instances exist for compiled functions:
+- `shfunctab` entry built by `shfunc_with_body` (used by
+  introspection like `typeset -f`)
+- `synth_shf` built inline in `dispatch_function_call`
+  (used as the actual doshfunc target)
+
+Both had `lineno = 0` from the underflowed `line_base`.
+
+**Fix** — both call sites clamp to `max(1, line_base)`:
+- `src/fusevm_bridge.rs::BUILTIN_REGISTER_COMPILED_FN`
+- `src/vm_helper.rs::dispatch_function_call`
+
+For multi-line `f() {\n body }` (def on line N, body on
+line N+1), `line_base` already equals N so the clamp is a
+no-op.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "[$funcsourcetrace]"; }; f'
+[zsh:1]
+$ ./target/debug/zshrs --zsh -fc 'f() { echo "[$funcsourcetrace]"; }; f'
+[zsh:1]
+
+# Multi-line def on line 2
+$ cat /tmp/test.sh
+echo line1
+f() {
+  echo "trace=[$funcsourcetrace]"
+}
+f
+$ /opt/homebrew/bin/zsh -f /tmp/test.sh
+line1
+trace=[/tmp/test.sh:2]
+$ ./target/debug/zshrs --zsh /tmp/test.sh
+line1
+trace=[zsh:2]
+```
+
+Filename column ("/tmp/test.sh" vs "zsh") is the same
+synth_filename gap noted in other tracker bugs; the
+`:lineno` column now matches zsh exactly. Test baseline
+preserved at 960/92.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 

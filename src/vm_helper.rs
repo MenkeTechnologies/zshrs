@@ -1801,6 +1801,16 @@ impl ShellExecutor {
             .cloned()
             .flatten()
             .or_else(|| self.scriptfilename.clone());
+        // c:Src/exec.c:5409 — `shf->lineno = lineno;` (def line).
+        // `function_line_base[name]` carries compile_funcdef's
+        // `lineno_offset = first_body_line - 1` — equals the def line
+        // for multi-line `f() {\n body }` but underflows to 0 for
+        // INLINE `f() { body }` (def and body share a line). zsh's
+        // funcsourcetrace reports the def line as 1-based, so clamp
+        // to >= 1 to handle the inline case without rebuilding
+        // line tracking through the parser. Bug #396.
+        let synth_lineno =
+            std::cmp::max(1i64, self.function_line_base.get(name).copied().unwrap_or(0));
         let mut synth_shf = crate::ported::zsh_h::shfunc {
             node: crate::ported::zsh_h::hashnode {
                 next: None,
@@ -1808,7 +1818,7 @@ impl ShellExecutor {
                 flags: 0,
             },
             filename: synth_filename,
-            lineno: self.function_line_base.get(name).copied().unwrap_or(0) as i64,
+            lineno: synth_lineno,
             funcdef: None,
             redir: None,
             sticky: None,
