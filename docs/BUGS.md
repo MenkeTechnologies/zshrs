@@ -47037,10 +47037,10 @@ no longer reports the internal trap-machinery scalar.
 | 29 | `"argv[N]=..."` literal stripped inside double quotes | **port-bug** | escape `\[` `\]` |
 | 30 | `setopt no_clobber` rejects `> /dev/null` | **port-bug** | `>\|` force-clobber |
 | 31 | `${EPOCHSECONDS:-x}` always uses default | **port-bug** | direct `$EPOCHSECONDS` access |
-| 32 | `hash -d name=~` doesn't expand `~` in value | **port-bug** | use `$HOME` literal |
-| 33 | `set -e` doesn't fire on `(( false_cond ))` | **port-bug** | `\|\| exit 1` explicit |
+| 32 | `hash -d name=~` doesn't expand `~` in value | **fixed** 2026-06-02 | use `$HOME` literal |
+| 33 | `set -e` doesn't fire on `(( false_cond ))` | **fixed** 2026-06-02 | `\|\| exit 1` explicit |
 | 34 | case `(a*\|b*))` paren-alt doesn't match w/ extended_glob | **port-bug** | drop outer parens or double them |
-| 35 | `${(v)h[key]}` errors with bad substitution | **port-bug** | drop the `(v)` for single subscript |
+| 35 | `${(v)h[key]}` errors with bad substitution | **fixed** 2026-06-02 | drop the `(v)` for single subscript |
 | 36 | MULTIOS not implemented (multiple `>` / `<` redirects) | **port-bug** | explicit `tee`/`cat` |
 | 37 | `"${(z)str}"` quoted form splits fields | **port-bug** | `${(j: :)${(z)str}}` rejoin |
 | 38 | prompt escapes `%m`/`%C`/`%i`/`%l`/`%y`/`%E`/`%v`/`%b`/`%u`/`%s`/`%f`/`%k` missing | **port-bug** | use `$HOST`/`$PWD` etc |
@@ -47052,19 +47052,19 @@ no longer reports the internal trap-machinery scalar.
 | 44 | `set -x` PS4 doesn't expand `%x %N %I %_` | **port-bug** | `PS4="+ "` simple |
 | 45 | `${#$}` returns 0 (length of PID) | **fixed** 2026-06-02 | `pid=$$; ${#pid}` |
 | 46 | nested `` `\`...\`` `` backquotes mishandled | **fixed** 2026-06-02 | use `$(...)` instead |
-| 47 | `${(b)str}` escapes space/semi (C-zsh doesn't) | **port-bug** | drop `(b)` flag |
+| 47 | `${(b)str}` escapes space/semi (C-zsh doesn't) | **fixed** 2026-06-02 | drop `(b)` flag |
 | 48 | `typeset -m PAT` rejects pattern arg | **port-bug** | iterate `${(k)parameters}` |
 | 49 | `(( "abc" == "abc" ))` quoted strings → false | **fixed** 2026-06-02 | drop quotes |
 | 50 | Trap inherited from outer doesn't fire in fn | **fixed** 2026-06-03 | n/a |
 | 51 | `${#*}` access corrupts `$@`/`$*` for rest of fn | **fixed** 2026-06-02 | n/a |
-| 52 | `${(q)arr}` per-element quote, doesn't quote join-sep | **port-bug** | `${(j: :)${(@q)a}}` explicit |
-| 53 | `${(P)$ref}` doesn't resolve `name[idx]` indirect | **port-bug** | `eval "val=\\${$ref}"` |
+| 52 | `${(q)arr}` per-element quote, doesn't quote join-sep | **fixed** 2026-06-02 | `${(j: :)${(@q)a}}` explicit |
+| 53 | `${(P)$ref}` doesn't resolve `name[idx]` indirect | **fixed** 2026-06-02 | `eval "val=\\${$ref}"` |
 | 54 | `warn_create_global` / `warn_nested_var` warnings silent | **port-bug** | strict `local` discipline |
-| 55 | `setopt err_return` doesn't fire on command failure | **port-bug** | explicit `\|\| return $?` |
+| 55 | `setopt err_return` doesn't fire on command failure | **fixed** 2026-06-02 | explicit `\|\| return $?` |
 | 56 | Signal trap output captured into `$(...)` result | **port-bug** | guard cmd-sub output |
 | 57 | `setopt octal_zeroes` ignored by arith parser | **fixed** 2026-06-02 | `8#NNN` explicit base |
 | 58 | `[[ "x*" == "x*" ]]` quoted-RHS-star still globbed | **fixed** 2026-06-02 | escape `\*` on RHS |
-| 59 | `setopt no_clobber` allows `>>` to create new file | **port-bug** | pre-`touch` the file |
+| 59 | `setopt no_clobber` allows `>>` to create new file | **fixed** 2026-06-02 | pre-`touch` the file |
 | 60 | `function {body}` (no name) parses + stray `}` echo | **fixed** 2026-06-02 | n/a |
 | 61 | `h["key"]=v` subscript quotes not embedded in key | **fixed** 2026-06-02 | use `h=( k v )` paren init |
 | 62 | `extended_glob` `~` (and-not) operator not honored | **fixed** 2026-06-02 | iterate + skip with `[[` |
@@ -47073,11 +47073,11 @@ no longer reports the internal trap-machinery scalar.
 | 65 | `${+EPOCHSECONDS}` returns 0 after `zmodload zsh/datetime` | **port-bug** | guard by `zmodload` rc |
 | 66 | `time` builtin ignores `TIMEFMT`, omits `%J` cmd name | **port-bug** | `/usr/bin/time -f` instead |
 | 67 | `pushd` no-args doesn't swap top of dir stack | **fixed** 2026-06-02 | explicit `pushd $OLDPWD` |
-| 68 | `trap` listing in insertion order, not signal-number | **port-bug** | pipe through `sort` |
+| 68 | `trap` listing in insertion order, not signal-number | **fixed** 2026-06-02 | pipe through `sort` |
 | 69 | `$sysparams` auto-loaded w/o `zmodload zsh/system` | **port-bug** | call `zmodload` regardless |
 | 70 | FS watcher leaks newly-created paths to stderr | **port-bug** | none — must fix in zshrs |
 | 71 | `${var:N:M}` accepts non-digit offset (bashism) | **fixed** 2026-06-02 | wrap offset in `$(( ))` |
-| 72 | `log` builtin registered but dispatch → `/usr/bin/log` | **port-bug** | `print -- $watch` instead |
+| 72 | `log` builtin registered but dispatch → `/usr/bin/log` | **fixed** 2026-06-02 | `print -- $watch` instead |
 | 73 | `$ZSH_VERSION` includes `.0.3-test` suffix vs `5.9` | **port-bug** | parse `${ZSH_VERSION%%.0*}` |
 | 74 | `local -r` violation in fn doesn't abort script | **port-bug** | check fn exit status |
 | 75 | `typeset -i x; x="bad math"` silently coerces to 0 | **port-bug** | regex-validate input first |
