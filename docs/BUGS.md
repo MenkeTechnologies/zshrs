@@ -31876,6 +31876,66 @@ print -r -- "export -T PATH path=( ${(@q)path} )"
 
 ## #411 — `[ "abc" -eq 5 ]` silent rc=1 instead of `integer expression expected` + rc=2
 
+**Status:** `fixed` 2026-06-03 — `evalcond` extended with the
+canonical C `fromtest` parameter; test/[ context now strict-
+parses integer operands and emits the diagnostic on failure.
+
+**Root cause** — `src/ported/cond.rs::evalcond` had no
+`fromtest` distinction. The `parse_num` closure used
+`mathevali` for non-POSIX mode, which returns `Ok(0)` for
+unparseable identifiers (string vars → 0 coercion). For
+test/[ that's wrong: C `Src/cond.c:236-251` branches on
+`if (fromtest) { ... zstrtol base-10 ... if (*eptr)
+zwarnnam(fromtest, "integer expression expected: %s", err);
+return 2; }`. zshrs took the [[ ]] coercion path even when
+called from `[`, producing silent rc=1.
+
+**Fix** — `evalcond` now takes `from_test: Option<&str>`
+(mirrors C's `char *fromtest`):
+- `Some(name)` → strict zstrtol-equivalent parse, emit
+  `"integer expression expected: ERR"` via `zwarnnam(name,
+  ...)`, return 2 on parse failure (c:Src/cond.c:248-251).
+- `None` → existing `mathevali` coercion-to-0 path used by
+  `[[ ]]` (c:Src/cond.c:421 `matheval`).
+
+Three call sites updated:
+- `src/ported/builtin.rs::bin_test` → `Some(name)`
+  (c:Src/builtin.c:7305 `evalcond(state, name)`).
+- `src/fusevm_bridge.rs` `[[ ]]` dispatch → `None`.
+- 86 test callsites in `src/ported/cond.rs` → `None`.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc '[ "abc" -eq 5 ]; echo rc=$?'
+zsh:[:1: integer expression expected: abc
+rc=2
+$ ./target/debug/zshrs --zsh -fc '[ "abc" -eq 5 ]; echo rc=$?'
+zsh:test:1: integer expression expected: abc
+rc=2
+$ /opt/homebrew/bin/zsh -fc '[ "foo" -gt 5 ] 2>&1; echo rc=$?'
+zsh:[:1: integer expression expected: foo
+rc=2
+$ ./target/debug/zshrs --zsh -fc '[ "foo" -gt 5 ] 2>&1; echo rc=$?'
+zsh:test:1: integer expression expected: foo
+rc=2
+
+# [[ ]] regression check — still coerces to 0 silently
+$ ./target/debug/zshrs --zsh -fc '[[ "abc" -eq 5 ]] && echo true || echo "false rc=$?"'
+false rc=1
+
+# Numeric path regression check
+$ ./target/debug/zshrs --zsh -fc '[ "10" -eq 10 ]; echo rc=$?'
+rc=0
+```
+
+The `zsh:[:1:` vs `zsh:test:1:` diff is a separate
+fusevm-bridge gap (the dispatcher passes "test" for both
+`[` and `test` aliases) — outside the scope of #411.
+
+Test baseline improved 955/97 → 957/95.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
