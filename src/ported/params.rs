@@ -5751,15 +5751,28 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     // assignment. Fall back to direct u_arr write when no gsu_a is
     // wired (regular non-special arrays).
     let setfn_ptr = pm.gsu_a.as_ref().map(|g| g.setfn);
-    if let Some(setfn) = setfn_ptr {
-        setfn(pm, val_final.clone()); // c:3434
+    // c:Src/params.c:3434 — `setarrvalue(v, val)` calls `gsu.a->setfn(pm, val)`.
+    // The canonical arrsetfn (params.rs:6584) writes `pm->u_arr` then,
+    // if `pm->ename` is set, calls `arrfixenv` which re-acquires the
+    // paramtab lock. We're holding the WRITE lock here — that would
+    // deadlock the RWLock. Inline the storage write under the held
+    // lock and defer arrfixenv to AFTER drop(tab). Bug #600.
+    pm.u_arr = Some(val_final.clone());
+    pm.u_str = None;
+    pm.u_hash = None;
+    let ename_for_envsync: Option<String> = if setfn_ptr.is_some() {
+        pm.ename.clone()
     } else {
-        pm.u_arr = Some(val_final.clone());
-        pm.u_str = None;
-        pm.u_hash = None;
-    }
+        None
+    };
     let cloned = pm.clone();
     drop(tab);
+    // c:Src/params.c:5285 arrfixenv — deferred from inside the lock
+    // (see Bug #600 above). Acquires its own paramtab read+write
+    // locks; safe to call now that we've dropped the write lock.
+    if let Some(ename) = ename_for_envsync {
+        arrfixenv(&ename, Some(&val_final));
+    }
     // c:Src/params.c:3262 IPDEF9 — \`argv\`/\`@\`/\`*\` are aliases for
     // the C global \`pparams\` (the positional parameter vector).
     // assignaparam("argv", [...]) in C writes through the array's
