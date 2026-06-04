@@ -11527,6 +11527,33 @@ pub fn modify(s: &str, modifiers: &str) -> String {
         }
     } // c:4531
 
+    // c:Src/subst.c:3786-3790 — after modify() consumes all valid
+    // `:X` modifiers, if unconsumed text remains the caller emits:
+    //   `:X` followed by a non-meta byte → "unrecognized modifier `X'"
+    //   anything else (including bare letter, digit, etc.)        → "unrecognized modifier"
+    // Without this check the outer `while chars.peek() == Some(&':')`
+    // loop silently exits on any trailing non-`:` byte —
+    // `${a:s/l/X/g}` and `${a:s/l/X/2}` accepted the bogus `g` / `2`
+    // and returned the substitution result unchanged from the
+    // legitimate trailing-delim case. Bug #594.
+    if let Some(&leftover) = chars.peek() {
+        // c:3787 — emit the named-modifier form only when the
+        // leftover is `:X` (C: `*s == ':' && !imeta(s[1])`); the
+        // trailing-after-delim case (`:s/.../.../X`) returns bare.
+        if leftover == ':' {
+            let _consume = chars.next();
+            if let Some(&next) = chars.peek() {
+                zerr(&format!("unrecognized modifier `{}'", next)); // c:3788
+            } else {
+                zerr("unrecognized modifier"); // c:3790
+            }
+        } else {
+            zerr("unrecognized modifier"); // c:3790
+        }
+        errflag_set_error();
+        return String::new();
+    }
+
     result // c:4531
 } // c:4531
 

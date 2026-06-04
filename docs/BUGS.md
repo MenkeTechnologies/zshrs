@@ -44466,6 +44466,48 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #594 — `${a:s/PAT/REPL/X}` silently ignores trailing garbage after modifier delimiter
+
+**Status:** `fixed` 2026-06-04 — ported `Src/subst.c:3786-3790`
+post-modify "unrecognized modifier" diagnostic.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:s/l/X/2}"'
+zsh:1: unrecognized modifier
+
+# Before fix:
+$ zshrs --zsh -c 'a=hello; echo "${a:s/l/X/2}"'
+heXlo       # silently accepted bogus trailing `2`
+
+# After fix:
+$ zshrs --zsh -c 'a=hello; echo "${a:s/l/X/2}"'
+zshrs:1: unrecognized modifier
+```
+
+Same fix catches `${a:s/l/X/g}` (trailing `g` is not a valid
+modifier flag), `${a:s/l/X/k}`, etc. — all forms where a
+non-`:` byte follows the third `:s` delimiter.
+
+**Root cause** — `src/ported/subst.rs::modify()` outer loop is
+`while chars.peek() == Some(&':')`. After consuming the third
+`:s` delimiter, if the next char is non-`:`, the loop exits and
+the function returns the substituted value as if the chain ended
+cleanly. The C source's caller (`Src/subst.c::paramsubst` at
+c:3786) checks `inbrace && *s` after `modify()` returns; if
+there's any unconsumed text, it emits "unrecognized modifier"
+(or "unrecognized modifier `X'" if the leftover starts with
+`:X` and X is a printable byte).
+
+**Fix** — `src/ported/subst.rs::modify()`: after the outer loop
+exits, check `chars.peek()`. If anything remains:
+  - leftover `:X` where X is printable → "unrecognized modifier `X'"
+  - leftover starts with a non-`:` byte (including `g`/`2`/etc.) → bare "unrecognized modifier"
+Sets `errflag` and returns empty so the paramsubst flow surfaces
+the error to stderr.
+
+---
+
 ## #593 — `repeat N CMD ARG; CMD2` parses error near second command — short-loop body consumed trailing `;`
 
 **Status:** `fixed` 2026-06-04 — `parse_loop_body` short-form path now
@@ -46271,6 +46313,7 @@ no longer reports the internal trap-machinery scalar.
 | 591 | `${(qq)*[N]:-foo}` returns `''` instead of `'foo'` — :- default doesn't survive (qq) on positional-special | **fixed** 2026-06-04 | :- seed split_parts when var_name is *,@,argv (positional-special) |
 | 592 | `${(k)h[(R)pat]}` returns matched values instead of keys — outer `(k)` flag not honored by assoc subscript MATCH path | **fixed** 2026-06-04 | bridge re-injects `(k)`/`(@k)` outer flag; assoc subscript MATCH path pushes KEY when WANTKEYS; `nojoin==2` arm honors raw_value when non-splat subscript present |
 | 593 | `repeat N CMD ARG; CMD2` parse error near second command — short-loop body consumed trailing `;` | **fixed** 2026-06-04 | parse_loop_body short form uses par_list1 (single sublist, leaves separator) instead of par_list |
+| 594 | `${a:s/PAT/REPL/X}` silently ignores trailing garbage after modifier delim — should emit "unrecognized modifier" | **fixed** 2026-06-04 | modify() post-loop check for leftover chars; emit `:X` form if leftover is `:X`, bare form otherwise (matches C subst.c:3786-3790) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
