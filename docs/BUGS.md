@@ -42601,7 +42601,75 @@ rc=1
 
 ## #541 — `TRAPSIG()` function + `trap '...' SIG` string handlers BOTH fire — zsh: last-defined replaces
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — both forms registered for the
+same signal now follow zsh's last-defined-wins semantics.
+Function-form takes precedence over string-form when both
+exist (matching C's settrap → unsettrap chain that clears
+the string-form slot when the function-form is registered).
+String-form takes precedence when registered later
+(matching C's unsettrap that clears the function-form
+slot).
+
+**Root cause** — `src/ported/signals.rs::dotrap` dispatched
+BOTH the function-form (ZSIG_FUNC arm) AND the string-form
+(traps_table fallback) when both were registered for the
+same signal. C `Src/signals.c::settrap` calls `unsettrap`
+which clears the previously-registered handler at C `sigfuncs[sig]`
+/ `siglists[sig]` so only ONE form survives. zshrs's port
+stores string-form bodies in a separate `traps_table`
+HashMap that `removetrap` doesn't touch, AND function-form
+TRAPxxx in `shfunctab` independently, so both can coexist.
+
+**Fix** — three parts:
+
+1. `src/ported/signals.rs::dotrap` — track whether the
+   function-form arm dispatched via a `fn_dispatched`
+   flag. Skip the string-form fallback at line 1590 when
+   the flag is set. Also extended the function-form arm
+   to check shfunctab directly even when `sigtrapped &
+   ZSIG_FUNC == 0` — zshrs's exec path for `TRAPxxx() {…}`
+   doesn't always set ZSIG_FUNC on sigtrapped (the path
+   goes through par_funcdef without the
+   `installtrapfn` step C uses), so a function defined
+   after the string-form must still take precedence.
+2. `src/ported/exec.rs:6296` — when execfuncdef registers
+   `TRAPxxx`, also remove the string-form entry from
+   `traps_table` (defensive — matches C's settrap →
+   unsettrap clearing the string-form slot).
+3. `src/ported/builtin.rs::bin_trap` — when bin_trap
+   installs a string-form trap, remove any matching
+   `TRAPxxx` shfunc from shfunctab (matches C's settrap
+   → unsettrap clearing the function-form slot).
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPUSR1() { echo fn; }; trap "echo str" USR1; kill -USR1 $$; sleep 0.05'
+str
+$ ./target/debug/zshrs --zsh -fc 'TRAPUSR1() { echo fn; }; trap "echo str" USR1; kill -USR1 $$; sleep 0.05'
+str
+
+$ /opt/homebrew/bin/zsh -fc 'trap "echo str" USR1; TRAPUSR1() { echo fn; }; kill -USR1 $$; sleep 0.05'
+fn
+$ ./target/debug/zshrs --zsh -fc 'trap "echo str" USR1; TRAPUSR1() { echo fn; }; kill -USR1 $$; sleep 0.05'
+fn
+
+# Regressions:
+$ /opt/homebrew/bin/zsh -fc 'TRAPUSR1() { echo fn; }; kill -USR1 $$; sleep 0.05'
+fn
+$ ./target/debug/zshrs --zsh -fc 'TRAPUSR1() { echo fn; }; kill -USR1 $$; sleep 0.05'
+fn
+
+$ /opt/homebrew/bin/zsh -fc 'trap "echo str" USR1; kill -USR1 $$; sleep 0.05'
+str
+$ ./target/debug/zshrs --zsh -fc 'trap "echo str" USR1; kill -USR1 $$; sleep 0.05'
+str
+```
+
+All four cases match. zshrs_shell baseline preserved at
+967/85.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'TRAPUSR1() { echo "fn-form"; }; trap "echo string-form" USR1; kill -USR1 $$; sleep 0.05'
@@ -42611,42 +42679,6 @@ $ ./target/debug/zshrs --zsh -fc 'TRAPUSR1() { echo "fn-form"; }; trap "echo str
 fn-form
 string-form
 ```
-
-When BOTH function-form (`TRAPUSR1()`) AND string-form
-(`trap '...' USR1`) handlers are registered for the same
-signal, zsh's semantics is **last-defined replaces** —
-only one handler runs.
-
-zshrs runs BOTH — function-form first, then string-form.
-Even when one form was registered later (intending to
-replace), the earlier form survives and still fires.
-
-**Where** — `src/ported/signals/trap.rs::register`:
-must remove any pre-existing handler (function or
-string) when registering a new one for the same signal.
-C-source `Src/signals.c::settrap` clears `traplocallevel`/
-`sigtrapped[sig]` for both before installing the new.
-
-**Impact** — double-firing semantics. Scripts that
-redefine traps mid-execution (common in cleanup
-wrappers) run obsolete handlers AND the new ones:
-
-```sh
-TRAPINT() { echo "default-int"; }
-# ... later, override for specific operation:
-trap 'cleanup_special; exit 1' INT
-risky_operation
-# zsh: only cleanup_special runs on Ctrl-C
-# zshrs: BOTH default-int and cleanup_special run —
-#        double-cleanup, possible state corruption
-```
-
-Combined with #381/#382/#389/#522/#531 (function-form
-TRAPs not dispatched on dispatch-side), the entire trap
-subsystem has cascading semantics gaps.
-
-**Workaround** — explicit `unset -f TRAPNAME` or
-`trap - SIG` before installing a new handler.
 
 ---
 
@@ -47450,7 +47482,7 @@ no longer reports the internal trap-machinery scalar.
 | 538 | `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error — extends parser-strictness family | **port-bug** | CI lint for empty paren-groups |
 | 539 | `suspend` non-interactive hangs shell — zsh: rc=0 silent no-op | **port-bug** | guard with `[[ -o interactive ]]` |
 | 540 | `zformat` no-args error msg: "invalid argument: " (with trailing space) vs zsh's "not enough arguments" | **fixed** 2026-06-04 | resolved by prior `bin_zformat` argv-count parity work |
-| 541 | `TRAPSIG()` function + `trap '...' SIG` string BOTH fire — zsh: last-defined replaces (one form only) | **port-bug** | explicit `unset -f`/`trap -` before re-register |
+| 541 | `TRAPSIG()` function + `trap '...' SIG` string BOTH fire — zsh: last-defined replaces (one form only) | **fixed** 2026-06-04 | dotrap skips string-form when function-form fires; cross-clear on registration |
 | 542 | `${(s.X.)str}` field-splitting keeps empty fields between separators — zsh: drops them | **port-bug** | `(parts[@]:#)` filter empty |
 | 543 | `print -l "${(s.X.)str}"` emits visible blank lines from empty fields — same root as #542 | **fixed** 2026-06-03 | n/a |
 | 544 | `a[0]="x"` zero-index array assignment silently accepted — zsh: "invalid subscript range" (zsh is 1-indexed) | **fixed** 2026-06-03 | n/a |
