@@ -1361,8 +1361,18 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 // already handled at the `'I'` arm. Bug #138 in
                 // docs/BUGS.md.
                 b'i' => {
-                    let ln = crate::ported::input::lineno.with(|l| l.get());
-                    stradd(bv, &format!("{}", ln));
+                    // zshrs's `crate::ported::input::lineno` is stuck
+                    // at function entry and doesn't track per-statement
+                    // execution — read `$LINENO` instead which the
+                    // executor maintains correctly through each
+                    // statement. C zsh uses the same lineno global
+                    // that backs $LINENO. Bug #618.
+                    let ln = crate::ported::params::getsparam("LINENO")
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .unwrap_or_else(|| {
+                            crate::ported::input::lineno.with(|l| l.get()) as i64
+                        });
+                    stradd(bv, &ln.to_string());
                 }
                 // c:Src/prompt.c:889 — `%L` emits the current `$SHLVL`
                 // value (shell-nesting depth). Direct port:
@@ -1424,17 +1434,31 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         .unwrap_or_else(|| "zsh".to_string());
                     stradd(bv, &nam);
                 }
-                // c:Src/prompt.c — `%I` (line number in source file).
-                // Distinct from `%i` (interactive line); for -c mode
-                // and scripts, %I is the line number where the
-                // current command appears. zshrs doesn't track
-                // per-statement source linenos through xtrace yet,
-                // so fall back to LINENO if available, else "1".
+                // c:Src/prompt.c:901-920 — `%I` (absolute source-file
+                // line). When inside a function (not FS_SOURCE / FS_EVAL),
+                // emit `lineno + funcstack->flineno` — `lineno` is the
+                // line offset within the function body (1-based) and
+                // `flineno` is the script-line offset where the function
+                // body starts. When NOT in a function, FALLTHROUGH to
+                // `%i` (just emit `lineno`). Bug #618.
+                //
+                // zshrs's `crate::ported::input::lineno` is stuck at
+                // function entry and doesn't track per-statement
+                // execution — read `$LINENO` (the param) instead which
+                // is incremented correctly by the executor.
                 b'I' => {
-                    let ln = crate::ported::params::getsparam("LINENO")
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or_else(|| "1".to_string());
-                    stradd(bv, &ln);
+                    let cur_lineno: i64 = crate::ported::params::getsparam("LINENO")
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .unwrap_or(1);
+                    let in_fn_offset: Option<i64> = crate::ported::modules::parameter::FUNCSTACK
+                        .lock()
+                        .ok()
+                        .and_then(|stk| stk.last().map(|fs| fs.flineno));
+                    let abs = match in_fn_offset {
+                        Some(off) => cur_lineno + off,
+                        None => cur_lineno,
+                    };
+                    stradd(bv, &abs.to_string());
                 }
                 // c:Src/prompt.c — `%_` (parser context: the stack
                 // of `cmdpush` tokens like `for`, `while`, `case`,
