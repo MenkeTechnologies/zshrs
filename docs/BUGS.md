@@ -47106,24 +47106,24 @@ no longer reports the internal trap-machinery scalar.
 | 98 | `[ "a" \< "b" ]` lex-compare bash ext accepted (zsh errors) | **fixed** 2026-06-02 | `[[ < ]]` double-bracket |
 | 99 | `(#cN,M)` count quantifier + other `(#x)` flags not recognized | **fixed** 2026-06-04 | `[[ "aaa" == a(#c2,3) ]]` matches; bounds enforced |
 | 100 | `typeset -R N x="hello"` doesn't right-truncate (full string kept) | **fixed** 2026-06-02 | `printf "%Ns"` instead |
-| 101 | `exec funcname` errors "not found" instead of running shell fn | **port-bug** | drop `exec`, call fn directly |
+| 101 | `exec funcname` errors "not found" instead of running shell fn | **fixed** 2026-06-02 | drop `exec`, call fn directly |
 | 102 | `$-` doesn't include `f` from `-f` startup flag | **fixed** 2026-06-02 | n/a |
 | 103 | `$0` inside sourced script returns shell binary, not sourced file | **port-bug** | `${(%):-%x}` prompt-expansion |
 | 104 | Signal `kill -X $$` from inside fn is lost (trap never fires) | **port-bug** | direct invocation post-fn |
-| 105 | `(f<NNN>)` permission glob qualifier ignored | **port-bug** | `stat`-based loop |
-| 106 | `disable BUILTIN` doesn't actually disable (echo/cd still work) | **port-bug** | `command BUILTIN` prefix |
-| 107 | `autoload -U +X funcname` doesn't validate fpath existence | **port-bug** | manual `[[ -f $fpath/fn ]]` check |
-| 108 | `${array/pat/X}` per-element (zsh treats as scalar-joined) | **port-bug** | `${arr[*]}` explicit join |
-| 109 | `${assoc[@]}` returns empty (no value enumeration) | **port-bug** | use `${(v)h[@]}` explicit |
-| 110 | `a[0]=val` silently accepted (zsh 1-indexed, errors) | **port-bug** | use 1-indexed throughout |
+| 105 | `(f<NNN>)` permission glob qualifier ignored | **fixed** 2026-06-02 | `stat`-based loop |
+| 106 | `disable BUILTIN` doesn't actually disable (echo/cd still work) | **fixed** 2026-06-02 | `command BUILTIN` prefix |
+| 107 | `autoload -U +X funcname` doesn't validate fpath existence | **fixed** 2026-06-02 | manual `[[ -f $fpath/fn ]]` check |
+| 108 | `${array/pat/X}` per-element (zsh treats as scalar-joined) | **fixed** 2026-06-02 | `${arr[*]}` explicit join |
+| 109 | `${assoc[@]}` returns empty (no value enumeration) | **fixed** 2026-06-02 | use `${(v)h[@]}` explicit |
+| 110 | `a[0]=val` silently accepted (zsh 1-indexed, errors) | **fixed** 2026-06-02 | use 1-indexed throughout |
 | 111 | `%y` (and `%l`) prompt escape for tty not expanded | **port-bug** | `${TTY##*/}` substitution |
 | 112 | Builtin error format leaks Rust's `(os error N)` suffix | **port-bug** | grep loosely for portability |
-| 113 | `$'\C-X'` ANSI-C ctrl-char escape not honored (literal) | **port-bug** | `$'\xNN'` hex escape |
-| 114 | `${(l.W.)s}` width must be literal; variable errors | **port-bug** | `printf "%${w}s"` instead |
+| 113 | `$'\C-X'` ANSI-C ctrl-char escape not honored (literal) | **fixed** 2026-06-02 | `$'\xNN'` hex escape |
+| 114 | `${(l.W.)s}` width must be literal; variable errors | **fixed** 2026-06-02 | `printf "%${w}s"` instead |
 | 115 | Prompt `%s`/`%b`/`%u` use full reset `\e[0m` not selective | **port-bug** | re-apply attrs after `%x` |
-| 116 | `GLOB_SUBST` defaults ON in zshrs (zsh: off) | **port-bug** | `unsetopt glob_subst` explicit |
+| 116 | `GLOB_SUBST` defaults ON in zshrs (zsh: off) | **fixed** 2026-06-02 | `unsetopt glob_subst` explicit |
 | 117 | Extended_glob `(group)#` quantifier not recognized | **fixed** 2026-06-04 | `[[ "abab" == (ab)# ]]` matches |
-| 118 | `(( y = x ))` doesn't coerce non-numeric string to 0 | **port-bug** | `integer y; y=$x` |
+| 118 | `(( y = x ))` doesn't coerce non-numeric string to 0 | **fixed** 2026-06-02 | `integer y; y=$x` |
 | 119 | `glob_subst` doesn't trigger filename expansion in for-loop | **port-bug** | `eval "echo ..."` force-expand |
 | 120 | `a=("${a[@]:0:-1}")` on empty arr produces 1-element arr | **port-bug** | length-gated branch |
 | 121 | `[[ -N -op -M ]]` negative-number operands error "unknown condition" | **port-bug** | use `(( ))` arith |
