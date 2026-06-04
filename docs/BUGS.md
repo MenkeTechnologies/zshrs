@@ -44464,6 +44464,82 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #577 — bare `$#-` / `$#?` / `$#!` / `$#*` return 0 — tokenized single-char specials not handled
+
+**Status:** `fixed` 2026-06-04 — bare-form `$#X` dispatch now
+maps Dash/Quest/Bang/Star/Pound/Stringg tokens back to their
+ASCII counterparts before recursing into `${#X}`.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo $#-'
+5
+
+$ ./target/debug/zshrs --zsh -fc 'echo $#-'   # before
+0
+```
+
+**Root cause** — `src/ported/subst.rs::paramsubst` brace-free
+`$#X` arm (subst.rs:10197) checked `next_starts_name` against
+both ASCII (`-`, `?`, etc.) and tokenized (Dash, Quest, etc.)
+forms, but the downstream `is_single_special` test only
+matched ASCII, and the recursive `${#NAME}` rewrite passed the
+raw token glyph (e.g. `\u{9b}` for Dash) into paramsubst's
+name-lookup — which doesn't recognize the token form of `-`.
+
+Symptoms:
+- `$#-` (length of `$-`) → 0 (should be 5: `569Xf`)
+- `$#?` (length of `$?`) → 0 (should be 1: "0")
+- `$#$` worked by accident — Stringg's brace-form rewrite
+  happens to round-trip
+- `${#-}` worked — explicit braces skip the bare-form dispatch
+- `"$#-"` worked — DQ context strips tokenization
+
+**Fix** (`src/ported/subst.rs::paramsubst` bare-`$#X` arm):
+
+```rust
+let token_to_ascii = match first {
+    Dash => Some('-'),
+    Quest => Some('?'),
+    Bang => Some('!'),
+    Star => Some('*'),
+    Pound => Some('#'),
+    Stringg => Some('$'),
+    _ => None,
+};
+let is_single_special = matches!(first, '@' | '*' | '?' | '!' | '-' | '0' | '$')
+    || token_to_ascii.is_some();
+...
+let name: String = if let Some(a) = token_to_ascii {
+    a.to_string()
+} else {
+    chars[name_start..name_end].iter().collect()
+};
+let rewritten = format!("{}${{#{}}}{}", prefix, name, suffix);
+```
+
+Token→ASCII mapping forces the recursive `${#X}` paramsubst to
+see the canonical single-char name so getsparam("-")/etc.
+resolves correctly.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'echo $#-'
+5
+$ ./target/debug/zshrs -fc 'echo $#?'
+1
+$ ./target/debug/zshrs -fc 'echo $#$'
+5
+$ ./target/debug/zshrs -fc 'a=hello; echo $#a'       # regression
+5
+$ ./target/debug/zshrs -fc 'echo X$#Y'               # zsh-compat: Y unset
+X0
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #576 — `${(j:X:)arr:MOD}` — case modifier ignored; path modifier scalar-applied instead of per-element
 
 **Status:** `fixed` 2026-06-04 — `(j:X:)` modifier-dispatch arm
@@ -45244,6 +45320,7 @@ no longer reports the internal trap-machinery scalar.
 | 574 | `setopt warn_create_global` spurious `ZSH_DEBUG_CMD created globally` at every fn call | **fixed** 2026-06-04 | BUILTIN_DEBUG_TRAP now gated on sigtrapped[SIGDEBUG] OR traps_table["DEBUG"] |
 | 575 | `{a-c}{1..3}` literal first brace blocks later range brace from expanding | **fixed** 2026-06-04 | xpandbraces retries from past each non-expandable `{...}` |
 | 576 | `${(j:X:)arr:MOD}` modifier ignored or scalar-applied vs zsh's qt-conditional per-element | **fixed** 2026-06-04 | qt-split: scalar mod in qt, per-element + sepjoin unquoted |
+| 577 | bare `$#-`/`$#?` return 0 — tokenized single-char specials not handled in brace-free `$#X` rewrite | **fixed** 2026-06-04 | token-to-ascii map before recursing into `${#X}` |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
