@@ -35662,7 +35662,21 @@ honors that.)
 
 ## #442 — `$ZSH_VERSION` exposes zshrs internal version (5.9.0.3-test) instead of zsh-compat (5.9)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/patchlevel.rs](../src/ported/patchlevel.rs)) — `ZSH_VERSION` const bumped from "5.9" to "5.9.1" to match the user's installed Homebrew zsh binary. Feature-detect scripts that compare against the local zsh install (`[[ $ZSH_VERSION = 5.9.* ]]`, MAJOR.MINOR.PATCH parsing) now match.
+
+**Original report (outdated)** — the bug report quoted zsh outputting `5.9`, but the installed Homebrew zsh 5.9.1 actually outputs `5.9.1`. zshrs's earlier "5.9" was correct vs the bug report but stale vs the installed binary. Bump to match.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$ZSH_VERSION]"'
+[5.9.1]
+$ ./target/debug/zshrs --zsh -fc 'echo "[$ZSH_VERSION]"'
+[5.9.1]
+```
+
+Baseline 960/92 (unchanged — flaky tests fluctuate in same window).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[$ZSH_VERSION]"'
@@ -43751,7 +43765,7 @@ qualifiers always have a digit suffix.
 | 439 | `%>>...` / `%<<...` prompt truncation directives not recognized — printed literally | **port-bug** | manual `${PWD/#$HOME/~}` + precmd truncation |
 | 440 | `**` recursive glob breadth-first ordering instead of zsh's alphabetical depth-first — order-dependent scripts break | **port-bug** | pipe through `sort` |
 | 441 | `pwd` builtin returns spoofed `$PWD` blindly — security-relevant, zsh validates against `getcwd()` | **port-bug** | `command pwd -P` for trusted checks |
-| 442 | `$ZSH_VERSION` exposes zshrs internal version `5.9.0.3-test` instead of zsh-compat `5.9` — breaks feature-detect scripts | **port-bug** | `ZSH_VERSION="${ZSH_VERSION%%[!.0-9]*}"` mutation |
+| 442 | `$ZSH_VERSION` exposes zshrs internal version `5.9.0.3-test` instead of zsh-compat `5.9` — breaks feature-detect scripts | **fixed** 2026-06-04 | n/a |
 | 443 | `EUID=0`/`UID=0`/`PPID=99` assignment silently accepted — special-var syscall setters missing (security-relevant) | **port-bug** | use `sudo -u` / external tools |
 | 444 | `$ZSH_PATCHLEVEL` returns literal `unknown` — git-derived build identifier missing | **port-bug** | hardcode from build process |
 | 445 | `exec N<<<str` here-string-to-fd doesn't persist — fd unusable after exec (file form works) | **port-bug** | use temp file + `exec N<file` |

@@ -29,19 +29,22 @@ pub const ZSH_PATCHLEVEL: &str = "zsh-5.9-465-g6b9704e"; // c:1
 ///
 /// Upstream `Config/version.mk` ships `VERSION=5.9.0.3-test` (the
 /// in-development snapshot tag), but every shipped zsh binary
-/// (Homebrew, distro packages, etc.) reports `5.9` — release builds
-/// strip the `.0.3-test` development suffix before tagging. Scripts
-/// in the wild gate on the release form (`[[ $ZSH_VERSION = 5.9 ]]`,
-/// `IFS=. read -r maj min pat <<< $ZSH_VERSION` expecting two parts,
-/// `${ZSH_VERSION%%.*-*}` etc.) — bug #73 in docs/BUGS.md.
+/// (Homebrew, distro packages, etc.) reports the cleaned MAJOR.MINOR
+/// or MAJOR.MINOR.PATCH form — the user's Homebrew install reports
+/// `5.9.1`. Scripts in the wild gate on the release form
+/// (`[[ $ZSH_VERSION = 5.9.* ]]`, `IFS=. read -r maj min pat <<<
+/// $ZSH_VERSION` expecting three parts, `${ZSH_VERSION%%.*-*}` etc.)
+/// — bug #442 in docs/BUGS.md.
 ///
-/// Report the clean release form here. zshrs-specific identity lives
-/// in `ZSHRS_VERSION` below; the full upstream snapshot tag is
-/// still tracked via `ZSH_PATCHLEVEL` above.
+/// Report the same `5.9.1` clean form as the installed Homebrew
+/// binary so feature-detect scripts that compare against the local
+/// zsh install match. zshrs-specific identity lives in `ZSHRS_VERSION`
+/// below; the full upstream snapshot tag stays in `ZSH_PATCHLEVEL`
+/// above.
 ///
 /// Read by `params.rs::createparamtable` (c:966 — `setsparam("ZSH_VERSION", ZSH_VERSION)`)
 /// and by the `--version` startup banner.
-pub const ZSH_VERSION: &str = "5.9"; // clean release form (bug #73)
+pub const ZSH_VERSION: &str = "5.9.1"; // matches Homebrew zsh (bug #442)
 
 /// zshrs-specific identity. C zsh has no equivalent. Surfaced as the
 /// `$ZSHRS_VERSION` parameter and the `--version` banner so scripts
@@ -78,7 +81,7 @@ mod tests {
     #[test]
     fn zsh_version_matches_upstream_config_version() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(ZSH_VERSION, "5.9");
+        assert_eq!(ZSH_VERSION, "5.9.1");
         assert_eq!(ZSHRS_VERSION, "5.9.0.3-test");
         // Shape: MAJOR.MINOR[.PATCH[.SUB][-tag]]
         let major = ZSH_VERSION.split('.').next().unwrap_or("");
@@ -312,7 +315,7 @@ mod tests {
     fn version_constants_are_stable() {
         for _ in 0..100 {
             assert_eq!(ZSH_PATCHLEVEL, "zsh-5.9-465-g6b9704e");
-            assert_eq!(ZSH_VERSION, "5.9.0.3-test");
+            assert_eq!(ZSH_VERSION, "5.9.1");
         }
     }
 
