@@ -44495,7 +44495,7 @@ qualifiers always have a digit suffix.
 | 25 | `$ZSH_SCRIPT` unset, `$ZSH_ARGZERO` wrong | **port-bug** | fall back to `$0` |
 | 26 | `emulate -L sh` missing KSH_ARRAYS | **port-bug** | `setopt ksh_arrays` explicit |
 | 27 | `caller`/`help` extra builtins shadow user fns | **port-bug** | `disable caller help` |
-| 28 | `mkdir`/`rm`/`mv`/etc. shadowed as shell builtins | **port-bug** | `command rm` to bypass |
+| 28 | `mkdir`/`rm`/`mv`/etc. shadowed as shell builtins | **port-bug** | `command rm` to bypass — partial overlap with #530 (require zmodload zsh/files) |
 | 29 | `"argv[N]=..."` literal stripped inside double quotes | **port-bug** | escape `\[` `\]` |
 | 30 | `setopt no_clobber` rejects `> /dev/null` | **port-bug** | `>\|` force-clobber |
 | 31 | `${EPOCHSECONDS:-x}` always uses default | **port-bug** | direct `$EPOCHSECONDS` access |
@@ -44556,7 +44556,7 @@ qualifiers always have a digit suffix.
 | 86 | `${1:?msg}` error format has spurious `:1:` line | **port-bug** | sed-strip the line number |
 | 87 | `setopt` (no args) empty under `-fc`; zsh shows `nohashdirs/norcs` | **port-bug** | `$options[rcs]` direct query |
 | 88 | `setopt nounset` doesn't fire on unset var in arith `$((x+1))` | **port-bug** | `[[ -v var ]]` guard |
-| 89 | `extended_glob #`/`##` quantifiers not recognized (literal) | **port-bug** | use `*` + char class |
+| 89 | `extended_glob #`/`##` quantifiers not recognized (literal) | **fixed** 2026-06-04 | `[[ "aaaa" == a# ]]` matches |
 | 90 | `$ZSH_PATCHLEVEL` = literal `"unknown"` vs zsh's commit | **port-bug** | fallback to `$ZSH_VERSION` |
 | 91 | `:t` modifier dropped on `${(j:X:)arr:t}` joined-then-modifier | **port-bug** | split the two ops |
 | 92 | `$PS4` default is empty; zsh's is `%x\t%0N\t%I\t%_` colored | **port-bug** | explicit `export PS4=...` |
@@ -44566,7 +44566,7 @@ qualifiers always have a digit suffix.
 | 96 | `%N/` `%N~` prompt escape doesn't truncate path | **port-bug** | manual `precmd` truncation |
 | 97 | `typeset -r` listing omits shell-internal readonly params (`!=0` etc.) | **fixed** 2026-06-03 | PM_RO_BY_DESIGN flag surfaces internal readonly specials |
 | 98 | `[ "a" \< "b" ]` lex-compare bash ext accepted (zsh errors) | **port-bug** | `[[ < ]]` double-bracket |
-| 99 | `(#cN,M)` count quantifier + other `(#x)` flags not recognized | **port-bug** | `=~ {N,M}` regex form |
+| 99 | `(#cN,M)` count quantifier + other `(#x)` flags not recognized | **fixed** 2026-06-04 | `[[ "aaa" == a(#c2,3) ]]` matches; bounds enforced |
 | 100 | `typeset -R N x="hello"` doesn't right-truncate (full string kept) | **port-bug** | `printf "%Ns"` instead |
 | 101 | `exec funcname` errors "not found" instead of running shell fn | **port-bug** | drop `exec`, call fn directly |
 | 102 | `$-` doesn't include `f` from `-f` startup flag | **fixed** 2026-06-02 | n/a |
@@ -44584,7 +44584,7 @@ qualifiers always have a digit suffix.
 | 114 | `${(l.W.)s}` width must be literal; variable errors | **port-bug** | `printf "%${w}s"` instead |
 | 115 | Prompt `%s`/`%b`/`%u` use full reset `\e[0m` not selective | **port-bug** | re-apply attrs after `%x` |
 | 116 | `GLOB_SUBST` defaults ON in zshrs (zsh: off) | **port-bug** | `unsetopt glob_subst` explicit |
-| 117 | Extended_glob `(group)#` quantifier not recognized | **port-bug** | `**/` recursive glob |
+| 117 | Extended_glob `(group)#` quantifier not recognized | **fixed** 2026-06-04 | `[[ "abab" == (ab)# ]]` matches |
 | 118 | `(( y = x ))` doesn't coerce non-numeric string to 0 | **port-bug** | `integer y; y=$x` |
 | 119 | `glob_subst` doesn't trigger filename expansion in for-loop | **port-bug** | `eval "echo ..."` force-expand |
 | 120 | `a=("${a[@]:0:-1}")` on empty arr produces 1-element arr | **port-bug** | length-gated branch |
@@ -44664,15 +44664,15 @@ qualifiers always have a digit suffix.
 | 194 | `function f { :; } > /file` keyword-form fn-def redirect at def time | **port-bug** | redirect at call site |
 | 195 | `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored | **port-bug** | temp `deref=("${(@P)name}")` |
 | 196 | Anonymous fn output lost in `$(() { :; })` cmdsub or `(() { :; })` subshell | **fixed** 2026-06-03 | cmd_or_math fallback no longer calls skipcomm (lex.c:519-520) |
-| 197 | `typeset -f` function-body display collapses statement newlines into `; ` | **port-bug** | sed `'s/; /\n\t/g'` post-filter |
+| 197 | `typeset -f` function-body display collapses statement newlines into `; ` | **fixed** 2026-06-04 | newlines preserved with tab indent matching zsh |
 | 198 | `bindkey -L` output uses individual entries instead of `-R` range-compressed | **port-bug** | round-trip via zshrs's own output |
 | 199 | `${(qq)x}` with embedded newline emits mixed `'a'$'\n''b'` instead of literal | **fixed** 2026-06-02 | n/a |
 | 200 | `${(k)assoc[key]}` key-flag with subscript returns empty (zsh: key when exists) | **fixed** 2026-06-02 | n/a |
 | 201 | `typeset +x VAR` doesn't remove VAR from environment (security-relevant) | **port-bug** | `unset VAR; typeset VAR=$saved` re-bind |
-| 202 | `set -eo pipefail; false \| true` doesn't abort — pipefail ignored entirely | **port-bug** | `${pipestatus[1]}` explicit check |
+| 202 | `set -eo pipefail; false \| true` doesn't abort — pipefail ignored entirely | **fixed** 2026-06-04 | `set -eo pipefail; false \| true` exits rc=1 |
 | 203 | `trap EXIT` in fn runs at shell exit instead of fn return (scope leak) | **fixed** 2026-06-02 | n/a |
 | 204 | `setopt promptsubst` doesn't enable `$()`/`${}` substitution in prompts | **fixed** 2026-06-02 | n/a |
-| 205 | `read -u N` doesn't read from numeric fd opened via `exec N<...` | **port-bug** | `read x <&N` redirect-form |
+| 205 | `read -u N` doesn't read from numeric fd opened via `exec N<...` | **fixed** 2026-06-04 | `exec 3< <(...); read -u 3 x` reads from fd 3 matching zsh |
 | 206 | `setopt multios` only last target receives `cmd > a > b` (zsh: both) | **port-bug** | explicit `tee` pipe |
 | 207 | `emulate ksh` doesn't apply `KSH_ARRAYS`/`BSD_ECHO`/etc option bundle | **port-bug** | explicit `setopt ksh_arrays` after |
 | 208 | Function defined inside `(...)` subshell leaks into parent shell | **fixed** 2026-06-02 | n/a |
@@ -44711,7 +44711,7 @@ qualifiers always have a digit suffix.
 | 241 | `${assoc[@]}`/`${assoc[*]}` return empty — basic assoc value iteration broken | **port-bug** | `${(@v)h}` explicit value flag |
 | 242 | Introspection assocs (`builtins`/`parameters`/etc.) not read-only — writes silently accepted | **port-bug** | (none — needs `PM_READONLY` at init) |
 | 243 | `${(t)TIMEFMT}` etc. return empty for autovar/special params (type intro broken) | **port-bug** | `(( ${+VAR} ))` existence check only |
-| 244 | `${(Z+c+)cmd}` word-split with c option returns whole string as 1 token (parser-aware split broken) | **port-bug** | manual `${(s: :)cmd%%\\#*}` for simple cases |
+| 244 | `${(Z+c+)cmd}` word-split with c option returns whole string as 1 token (parser-aware split broken) | **fixed** 2026-06-04 | `${(Z+c+)"echo hi # comment"}` splits to 3 tokens matching zsh |
 | 245 | `(#cN,M)` extended_glob range-repetition not honored (count syntax accepted but matcher ignores) | **fixed** 2026-06-03 | n/a |
 | 246 | `setopt rc_expand_param` applied inside double quotes — silently fans out `"prefix$arr"` per-element | **port-bug** | use `${a[*]}` star to force scalar-join |
 | 247 | `read line` doesn't strip leading/trailing IFS whitespace from input | **port-bug** | explicit `${var## }`/`${var%% }` strip |
@@ -44731,7 +44731,7 @@ qualifiers always have a digit suffix.
 | 261 | `${functions_source[fn]}` format diverges — `zsh:0` instead of bare `zsh` for cmdline fn | **port-bug** | strip `:N` suffix before compare |
 | 262 | `zsh_eval_context` array always empty (zsh: `cmdarg`, `cmdarg shfunc`, etc. — eval context stack) | **fixed** 2026-06-02 | n/a |
 | 263 | `$ZSH_DEBUG_CMD` empty when DEBUG trap fires (parameter never populated with cmd text) | **fixed** 2026-06-02 | n/a |
-| 264 | `${widgets[fn]}` after `zle -N fn` returns literal `builtin` for all queries (no real lookup) | **port-bug** | parallel user-managed assoc |
+| 264 | `${widgets[fn]}` after `zle -N fn` returns literal `builtin` for all queries (no real lookup) | **fixed** 2026-06-04 | `zle -N foo; echo ${widgets[foo]}` → `user:foo` matching zsh |
 | 265 | `$MATCH` not populated by `(#m)` flag in `${var/pat/repl}` substitution (works in `=~`) | **port-bug** | use `=~` then manually substitute |
 | 266 | `$match[N]` backref array not populated by `(#b)` in substitution | **port-bug** | use `=~` to capture, build repl manually |
 | 267 | Bare `setopt` (no args) prints nothing instead of listing currently-set options | **port-bug** | use `set -o` (POSIX form) |
@@ -44756,7 +44756,7 @@ qualifiers always have a digit suffix.
 | 286 | `setopt errexit; true \| false; ...` doesn't abort — pipeline-tail-status with errexit ignored | **fixed** 2026-06-02 | n/a |
 | 287 | `${(@)assoc}` for-iteration produces single concatenated element (zsh: one element per value) | **port-bug** | use explicit `(@v)` flag |
 | 288 | `typeset -A h; h[]=value` empty-subscript silently accepted (zsh: errors) — permissive-parser family | **port-bug** | careful syntax |
-| 289 | `zmodload -L` output format wrong — bare module names vs `zmodload zsh/NAME` reproducible-script form | **port-bug** | manual format via `zmodload \| while read mod` |
+| 289 | `zmodload -L` output format wrong — bare module names vs `zmodload zsh/NAME` reproducible-script form | **fixed** 2026-06-04 | `zmodload -L` emits `zmodload zsh/main` matching zsh |
 | 290 | `${(q)arr}`/`${(qq)arr}` drops empty array elements and doesn't always-quote simple chars (round-trip broken) | **port-bug** | per-element loop applying `(qq)` |
 | 291 | `$(case word in pat) ... esac)` parse error — case-pattern `)` mis-tracked as cmdsub closer | **port-bug** | extract case into a named function |
 | 292 | `case "$x" in $pat)`/`$((expr)))`/`$(cmd)))` — case pattern doesn't expand var/arith/cmdsub | **port-bug** | pre-resolve to temp param |
