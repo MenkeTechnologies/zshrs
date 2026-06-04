@@ -30996,6 +30996,24 @@ safe but works in practice for the canonical 9.
 
 ## #384 — function-local `trap '...' EXIT` fires at script-exit instead of function-return
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { trap "echo fn-exit" EXIT; echo in-fn; }; f; echo "after f"'
+in-fn
+fn-exit
+after f
+$ ./target/debug/zshrs --zsh -fc 'f() { trap "echo fn-exit" EXIT; echo in-fn; }; f; echo "after f"'
+in-fn
+fn-exit
+after f
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -31060,6 +31078,61 @@ safe_cd() {
 ---
 
 ## #385 — `$LINENO` inside function returns 1 instead of 0 — base-index off-by-one
+
+**Status:** `fixed` 2026-06-03 — `ZshCompiler` carries an
+`is_function_body` flag; the SET_LINENO emit subtracts
+`max(1, lineno_offset)` for function bodies so inline
+`f() { body }` reads `$LINENO=0` matching zsh's def-line
+subtraction.
+
+**Root cause** — `compile_funcdef` sets
+`lineno_offset = first_body_line - 1` for `$LINENO`
+shifting. For inline `f() { body }` (def and body share
+a line), `first_body_line = 1` so `lineno_offset = 0`;
+the SET_LINENO formula `raw - lineno_offset` then yielded
+`1 - 0 = 1`. zsh's `Src/init.c:1588` `lineno = 1` on
+function entry produces `0` for inline because the body
+line equals the def line — the offset is effectively
+`def_line` (= 1 for both), so `1 - 1 = 0`.
+
+**Fix:**
+1. New `ZshCompiler::is_function_body: bool` field set by
+   `compile_funcdef`.
+2. The SET_LINENO emit path uses `max(1, lineno_offset)`
+   when `is_function_body` so inline subtracts 1 instead
+   of 0:
+   - inline: raw=1, offset=max(1,0)=1, LINENO=0 ✓
+   - multi-line: raw=2, offset=max(1,1)=1, LINENO=1 ✓
+   Outer-script context keeps the original formula.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "lineno=$LINENO"; }; f'
+lineno=0
+$ ./target/debug/zshrs --zsh -fc 'f() { echo "lineno=$LINENO"; }; f'
+lineno=0
+
+# Multi-line still works
+$ cat /tmp/test.sh
+echo "outer: $LINENO"
+f() {
+  echo "fn line 1: $LINENO"
+  echo "fn line 2: $LINENO"
+}
+f
+$ /opt/homebrew/bin/zsh -f /tmp/test.sh
+outer: 1
+fn line 1: 1
+fn line 2: 2
+$ ./target/debug/zshrs --zsh /tmp/test.sh
+outer: 1
+fn line 1: 1
+fn line 2: 2
+```
+
+Test baseline preserved at 961/91.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 

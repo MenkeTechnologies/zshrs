@@ -129,6 +129,12 @@ pub struct ZshCompiler {
     /// names (caller, help — not in C zsh's bintab). Bug #27 in
     /// docs/BUGS.md.
     pub defined_functions: std::collections::HashSet<String>,
+    /// True when this compiler instance is compiling a function
+    /// body (set by `compile_funcdef`). Used by SET_LINENO emit to
+    /// pick the correct `max(1, lineno_offset)` formula so inline
+    /// `f() { body }` reads `$LINENO=0` matching zsh's def-line
+    /// subtraction. Bug #385.
+    pub is_function_body: bool,
 }
 
 impl Default for ZshCompiler {
@@ -157,6 +163,7 @@ impl ZshCompiler {
             try_block_depth: 0,
             last_assign_had_cmd_subst: false,
             defined_functions: std::collections::HashSet::new(),
+            is_function_body: false,
         }
     }
 
@@ -256,8 +263,42 @@ impl ZshCompiler {
         // function-body sub-chunks so they read 1, 2, 3 relative
         // to the body (matches zsh's `lineno = 1` reset on
         // function entry at Src/init.c:1588).
+        //
+        // c:Src/init.c:1588 — zsh's `lineno` resets to the def
+        // line on function entry, so body-relative LINENO is
+        // `raw - def_line`. For inline `f() { body }` (def and
+        // body share a line), the body's first command is at
+        // raw_line=1 and zsh's LINENO is 0. For multi-line
+        // (def on N, body on N+1), raw_line=2 and LINENO=1.
+        // compile_funcdef sets `lineno_offset = first_body_line -
+        // 1` which gives offset=0 for inline (LINENO=1, WRONG —
+        // zsh says 0) and offset=1 for multi-line (LINENO=1, ok).
+        // Use `max(1, lineno_offset)` so inline subtracts 1
+        // instead of 0, matching zsh's def-line subtraction.
+        // Bug #385.
         let raw_line = list.sublist.pipe.lineno;
-        let rel_line = raw_line.saturating_sub(self.lineno_offset).max(1) + self.lineno_addend;
+        let effective_offset = if self.lineno_offset == 0 {
+            // Outer-script context (no function wrapping): no
+            // adjustment. The 0 offset is the script's natural
+            // 1-based numbering.
+            0
+        } else {
+            self.lineno_offset
+        };
+        // Compile_funcdef sets lineno_offset = first_body_line - 1
+        // explicitly for function bodies. For inline def
+        // (first_body_line = 1), that's 0, which we'd misread as
+        // "outer script". Distinguish via a fn-body marker.
+        let _ = effective_offset;
+        let rel_line = if self.is_function_body {
+            // Function body: offset = max(1, lineno_offset) so
+            // inline `f() { body }` (lineno_offset=0) maps body
+            // line 1 → 0 (zsh's def-line subtraction).
+            let off = self.lineno_offset.max(1);
+            raw_line.saturating_sub(off) + self.lineno_addend
+        } else {
+            raw_line.saturating_sub(self.lineno_offset).max(1) + self.lineno_addend
+        };
         self.builder.emit(Op::LoadInt(rel_line as i64), 0);
         self.builder
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
@@ -4907,6 +4948,7 @@ impl ZshCompiler {
             .map(|l| l.sublist.pipe.lineno)
             .unwrap_or(1);
         body_compiler.lineno_offset = first_body_line.saturating_sub(1);
+        body_compiler.is_function_body = true;
         let lineno_off = body_compiler.lineno_offset;
         let body_chunk = body_compiler.compile(&f.body);
         let body_bytes = bincode::serialize(&body_chunk).unwrap_or_default();
