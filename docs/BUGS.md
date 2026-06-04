@@ -35218,7 +35218,17 @@ Loses the abstraction but works correctly.
 
 ## #431 — `%y`/`%l` prompt escapes (tty name) printed literally — extends #429
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `%y`/`%l` now expand to the empty-tty
+form `()` matching zsh under `-fc` (no controlling tty). Likely landed
+via earlier prompt-escape parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'print -P "[%y][%l]"'
+[()][()]    # matches zsh byte-for-byte
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "[%y][%l]"'
@@ -35565,7 +35575,40 @@ done
 
 ## #437 — regex-compile error diagnostic missing details — `failed to compile regex` without specific reason
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/modules/regex.rs](../src/ported/modules/regex.rs)).
+
+**Root cause** — `zcond_regex_match`'s compile-error branch passed a generic
+`"failed to compile regex"` string to `zregex_regerrwarn` which wrapped via
+`zwarnnam("-regex-match", ...)`. The `"-regex-match"` cmd-name leaked into
+the prefix as `zsh:-regex-match:1:`, and the message dropped the specific
+regex-engine reason. C `Src/Modules/regex.c:79` passes the `regerror`
+output to `zregex_regerrwarn` which emits via `zwarn` (no cmd prefix).
+
+**Fix** — capture the `regex::Error` Display, extract the trailing `error:
+<reason>` line for a one-line summary, and emit via plain `zwarn(
+"failed to compile regex: <detail>")`. Prefix becomes `zsh:N:` matching
+zsh; the detail line names the actual error (unclosed character class,
+unclosed group, etc.).
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc '[[ "x" =~ "[" ]]'
+zsh:1: failed to compile regex: unclosed character class    # rc=1
+
+$ ./target/debug/zshrs --zsh -fc '[[ "x" =~ "*" ]]'
+zsh:1: failed to compile regex: repetition operator missing expression
+
+$ ./target/debug/zshrs --zsh -fc '[[ "x" =~ "(" ]]'
+zsh:1: failed to compile regex: unclosed group
+```
+
+Wording differs from zsh (Rust's `regex` crate uses different POSIX-vs-
+PCRE-style terminology than macOS's libc) but the prefix and structure
+match exactly.
+
+Baseline 960/92 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ "x" =~ "[" ]]'
@@ -35613,7 +35656,17 @@ clearer error message.
 
 ## #438 — `%N` prompt escape (script/function name) not expanded — extends prompt-escape gap family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `%N` now expands to the script/shell
+name (`zsh` at top level under `-fc`) matching zsh. Likely landed via
+earlier prompt-escape parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'print -P "[%N]"'
+[zsh]    # matches zsh byte-for-byte
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "[%N]"'
@@ -43983,14 +44036,14 @@ qualifiers always have a digit suffix.
 | 428 | unquoted `${arr[*]}` joined with IFS but not re-word-split — half of join+split sequence missing | **port-bug** | use `${arr[@]}` form instead |
 | 429 | `%m` prompt escape (short hostname) not expanded — printed literally; likely also `%M`/`%y`/`%l`/`%j`/`%i` | **fixed** 2026-06-04 | n/a |
 | 430 | `%s`/`%u` prompt close-escapes emit `\\033[0m` (reset-all) instead of `\\033[27m`/`\\033[24m` (pair-specific) | **fixed** 2026-06-04 | n/a |
-| 431 | `%y`/`%l` prompt escapes (tty name) printed literally — extends #429 prompt-escape gap family | **port-bug** | `$TTY` / `${TTY##*/}` parameter |
+| 431 | `%y`/`%l` prompt escapes (tty name) printed literally — extends #429 prompt-escape gap family | **fixed** 2026-06-04 | n/a |
 | 432 | `time` builtin output omits command-label prefix — pipeline timing reads as anonymous | **port-bug** | wrap with `echo "--- $cmd ---"` |
 | 433 | `time` builtin ignores `$TIMEFMT` parameter — hardcoded format always used | **port-bug** | `awk` reformat the hardcoded output |
 | 434 | `read -e` echo-mode flag not recognized — input consumed silently instead of echoed to stdout | **port-bug** | `tee /dev/stderr` or explicit `echo "$REPLY"` |
 | 435 | `typeset -A` no-args lists internal introspection assocs (aliases/builtins/commands) instead of user-defined | **port-bug** | `typeset -p +H \| grep "typeset -A"` |
 | 436 | `${(q)a[N]}` flag + subscript combination errors "bad substitution" — parser doesn't combine flags with subscripts | **fixed** 2026-06-04 | n/a |
-| 437 | regex-compile error diagnostic missing details — "failed to compile regex" with no specific reason (zsh: "brackets not balanced" etc.) | **port-bug** | external grep -E test |
-| 438 | `%N` prompt escape (script/fn name) not expanded — extends prompt-escape gap family | **port-bug** | use `$0` in prompt function |
+| 437 | regex-compile error diagnostic missing details — "failed to compile regex" with no specific reason (zsh: "brackets not balanced" etc.) | **fixed** 2026-06-04 | n/a |
+| 438 | `%N` prompt escape (script/fn name) not expanded — extends prompt-escape gap family | **fixed** 2026-06-04 | n/a |
 | 439 | `%>>...` / `%<<...` prompt truncation directives not recognized — printed literally | **port-bug** | manual `${PWD/#$HOME/~}` + precmd truncation |
 | 440 | `**` recursive glob breadth-first ordering instead of zsh's alphabetical depth-first — order-dependent scripts break | **port-bug** | pipe through `sort` |
 | 441 | `pwd` builtin returns spoofed `$PWD` blindly — security-relevant, zsh validates against `getcwd()` | **fixed** 2026-06-04 | n/a |

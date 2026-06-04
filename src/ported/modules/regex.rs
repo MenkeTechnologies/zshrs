@@ -104,9 +104,33 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
         .build()
     {
         Ok(r) => r,
-        Err(_) => {
-            // c:79-81
-            crate::regex_module::zregex_regerrwarn("-regex-match", "failed to compile regex");
+        Err(e) => {
+            // c:79-81 zregex_regerrwarn — C zsh emits
+            // `failed to compile regex: <regerror_msg>` via zwarn (no
+            // cmd-name prefix; the `zsh:1:` prefix comes from zwarn's
+            // default path). zshrs's previous emit used zwarnnam with
+            // an internal "-regex-match" cmd-name that leaked into the
+            // diagnostic as `zsh:-regex-match:1:`. Switch to zwarn so
+            // the prefix matches zsh exactly, and append the specific
+            // regex-engine error (matches zsh's "brackets ([ ]) not
+            // balanced" / "trailing backslash" etc. detail). Bug #437.
+            //
+            // The Rust `regex` crate's error has a multi-line Display
+            // including pattern echo + caret. Extract the last
+            // `error: <reason>` line for a compact one-line message,
+            // falling back to the full Display if the structure
+            // changes.
+            let raw = e.to_string();
+            let detail = raw
+                .lines()
+                .rev()
+                .find_map(|l| l.trim().strip_prefix("error: "))
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| raw.replace('\n', " "));
+            crate::ported::utils::zwarn(&format!(
+                "failed to compile regex: {}",
+                detail
+            ));
             return 0; // c:81 break;
         }
     };
