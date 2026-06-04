@@ -1104,12 +1104,52 @@ impl modulestab {
             ("zsh/param/private", &["private"][..]),
         ];
 
+        // c:Src/init.c::init_bltinmods — C zsh's bltinmods.list is
+        // generated at build time from Config/installmodules + the
+        // active Modules/*.mdd files. Homebrew's stock zsh 5.9.1
+        // binary ships these 14 modules in modulestab from the
+        // start (verified via `${(@k)modules}` under `zsh -fc`):
+        //   zsh/compctl zsh/complete zsh/computil zsh/main
+        //   zsh/param/private zsh/parameter zsh/rlimits zsh/sched
+        //   zsh/termcap zsh/terminfo zsh/watch zsh/zle
+        //   zsh/zleparameter zsh/zutil
+        // The rest (zsh/system, zsh/stat, zsh/zftp, zsh/zpty,
+        // zsh/zselect, zsh/files, zsh/mapfile, etc.) require
+        // explicit `zmodload NAME` before `${modules[NAME]}`
+        // returns "loaded". All entries are registered into
+        // modulestab so `zmodload NAME` can resolve them, but
+        // entries OUTSIDE the default-loaded set carry `MOD_UNLOAD`
+        // at init so `getpmmodule`'s is_loaded() check
+        // (MOD_LINKED && !MOD_UNLOAD per zsh_h::is_loaded c:962)
+        // returns false until `zmodload` clears the MOD_UNLOAD bit.
+        // Bugs #530/#532/#535 in docs/BUGS.md.
+        let zsh_default_loaded: &[&str] = &[
+            "zsh/compctl",
+            "zsh/complete",
+            "zsh/computil",
+            "zsh/main",
+            "zsh/param/private",
+            "zsh/parameter",
+            "zsh/rlimits",
+            "zsh/sched",
+            "zsh/termcap",
+            "zsh/terminfo",
+            "zsh/watch",
+            "zsh/zle",
+            "zsh/zleparameter",
+            "zsh/zutil",
+        ];
         for (name, _builtins) in &builtin_modules {
             // C zsh tracks builtin→module mapping in `builtintab` (the
             // canonical hashtable), not on a per-module ledger. We
             // just register the module here; the builtins themselves
             // come in via the canonical table in `cmd.rs`.
-            let module = module::new(name);
+            let mut module = module::new(name);
+            if !zsh_default_loaded.contains(name) {
+                // Mark as registered-but-not-loaded so
+                // ${modules[NAME]} reads as unset until zmodload.
+                module.node.flags |= crate::ported::zsh_h::MOD_UNLOAD;
+            }
             self.modules.insert(name.to_string(), module);
         }
 

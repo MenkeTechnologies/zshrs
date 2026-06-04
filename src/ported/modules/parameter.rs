@@ -1828,7 +1828,16 @@ pub fn getpmmodule(_ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1040
     // c:1052 — `m = (Module)modulestab->getnode2(modulestab, name)`.
     let modtab = MODULESTAB.lock().unwrap();
-    let module_present = modtab.modules.contains_key(name);
+    // Check is_loaded() rather than just presence in modulestab —
+    // zshrs pre-registers all linked modules so zmodload can find
+    // them, but only modules without the MOD_UNLOAD bit count as
+    // "loaded" for the user-visible ${modules[NAME]} probe. Bug
+    // #532/#535 in docs/BUGS.md.
+    let module_present = modtab
+        .modules
+        .get(name)
+        .map(|m| m.is_loaded())
+        .unwrap_or(false);
     let autoload_present = modtab.autoload_builtins.values().any(|v| v == name)
         || modtab.autoload_conditions.values().any(|v| v == name)
         || modtab.autoload_params.values().any(|v| v == name)
