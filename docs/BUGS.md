@@ -47377,27 +47377,27 @@ no longer reports the internal trap-machinery scalar.
 | 369 | `wait %1` job-spec resolution fails "no such job" — zsh: succeeds (ec=0) | **port-bug** | capture `$!` and wait by PID |
 | 370 | `${(t)1}` positional-param type returns `scalar` instead of `array-special` | **port-bug** | manual detection of positional context |
 | 371 | `typeset -A` with no args lists random assocs instead of being no-op (zsh: silent success) | **fixed** 2026-06-02 | n/a |
-| 372 | `print -P "%F{invalid}"` drops entire format instead of emitting default-color escape | **port-bug** | use ANSI escapes directly |
+| 372 | `print -P "%F{invalid}"` drops entire format instead of emitting default-color escape | **fixed** 2026-06-02 | use ANSI escapes directly |
 | 373 | `pipestatus=(...)` user-overwrite accepted — pipestatus not readonly (zsh: silently rejects) | **port-bug** | defensive copy before user-code |
-| 374 | `reswords=...` user-overwrite accepted — reswords not readonly (zsh: "read-only variable") | **port-bug** | defensive copy |
+| 374 | `reswords=...` user-overwrite accepted — reswords not readonly (zsh: "read-only variable") | **fixed** 2026-06-02 | defensive copy |
 | 375 | `commands[name]=path` slice-write accepted — security-relevant cmd-cache poisoning (zsh: "attempt to set slice") | **port-bug** | use `whence -p` / `command -v` for path resolution |
 | 376 | `zmodload zsh/nonexistent` silent failure — missing dlopen error message (zsh: "failed to load module: dlopen…") | **port-bug** | probe module file existence manually |
-| 377 | `zmodload` no-args lists *available* modules instead of *loaded* modules (zsh: just `zsh/main`) | **port-bug** | track loaded modules manually in user assoc |
-| 378 | `${#var}` ignores locale — always char count even in C/POSIX (zsh: byte count when LC_CTYPE not UTF-8) | **port-bug** | `wc -c` for byte count |
-| 379 | `zle -la` returns empty — builtin widget registry not exposed (zsh: 386 widgets incl `.accept-line`) | **port-bug** | hardcode widget list / probe `${+widgets[N]}` |
+| 377 | `zmodload` no-args lists *available* modules instead of *loaded* modules (zsh: just `zsh/main`) | **fixed** 2026-06-02 | track loaded modules manually in user assoc |
+| 378 | `${#var}` ignores locale — always char count even in C/POSIX (zsh: byte count when LC_CTYPE not UTF-8) | **fixed** 2026-06-02 | `wc -c` for byte count |
+| 379 | `zle -la` returns empty — builtin widget registry not exposed (zsh: 386 widgets incl `.accept-line`) | **fixed** 2026-06-02 | hardcode widget list / probe `${+widgets[N]}` |
 | 380 | `bindkey` default-keymap output divergence — 31 vs 117 entries (zsh: canonical emacs set) | **port-bug** | use specific-key probe instead of full diff |
-| 381 | `TRAPINT()` function-style signal handler not invoked — only string-form `trap '…' INT` works | **port-bug** | use `trap '…' SIG` instead of `TRAP$SIG()` |
+| 381 | `TRAPINT()` function-style signal handler not invoked — only string-form `trap '…' INT` works | **fixed** 2026-06-02 | use `trap '…' SIG` instead of `TRAP$SIG()` |
 | 382 | `TRAPEXIT()` function-form not invoked at script-exit — universal cleanup gap (oh-my-zsh, p10k, zinit) | **port-bug** | use string-form `trap '…' EXIT` |
 | 383 | `keymaps` assoc empty — viins/vicmd/emacs/main/.safe/etc all missing (zsh: 9 keymaps registered) | **port-bug** | assume zsh-default keymap names exist |
-| 384 | function-local `trap '…' EXIT` fires at script-exit not function-return — RAII cleanup broken | **port-bug** | explicit cleanup at each return point |
-| 385 | `$LINENO` inside function returns 1 instead of 0 — base-index off-by-one | **port-bug** | `$((LINENO - 1))` |
+| 384 | function-local `trap '…' EXIT` fires at script-exit not function-return — RAII cleanup broken | **fixed** 2026-06-02 | explicit cleanup at each return point |
+| 385 | `$LINENO` inside function returns 1 instead of 0 — base-index off-by-one | **fixed** 2026-06-02 | `$((LINENO - 1))` |
 | 386 | `readonly` no-args dumps nothing instead of listing readonly variables (zsh: full dump) | **port-bug** | parse `typeset -p VAR` for `-r` flag |
 | 387 | `read -p "prompt"` parsing — `-p` not recognized as coprocess flag, treats arg as identifier | **port-bug** | `print -n` to stderr + bare `read` |
 | 388 | `coproc CMD` doesn't open coprocess — `print -p`/`read -p`/`<&p` all broken, entire feature missing | **port-bug** | named pipes (mkfifo) for two-way IPC |
-| 389 | `TRAPZERR()` function-form not invoked on non-zero exit — error-tracing frameworks broken | **port-bug** | `setopt err_exit` + explicit `\|\|` checks |
+| 389 | `TRAPZERR()` function-form not invoked on non-zero exit — error-tracing frameworks broken | **fixed** 2026-06-02 | `setopt err_exit` + explicit `\|\|` checks |
 | 390 | `$PS4` default value empty — `set -x` produces no source/function/line/depth context | **port-bug** | seed `PS4=$'%F{blue}%x\\t%0N\\t%I\\t%_%f\\t'` in zshrc |
 | 391 | PS4 escape expansion broken — `%x`/`%N`/`%I`/`%_` printed literally during `set -x` (zsh: expanded) | **port-bug** | abandon `set -x`; use manual `echo` debugging |
-| 392 | `${(qq)arr[@]}` only quotes whitespace-containing elements (zsh: force-quotes all) | **port-bug** | `printf "'%s' " "${a[@]}"` instead |
+| 392 | `${(qq)arr[@]}` only quotes whitespace-containing elements (zsh: force-quotes all) | **fixed** 2026-06-02 | `printf "'%s' " "${a[@]}"` instead |
 | 393 | `jobs %X` rc=1 on unknown-job instead of 127 + `%` not stripped in error msg (zsh: rc=127, msg `not found: NAME`) | **port-bug** | match on diagnostic text instead of `$?` |
 | 394 | `setopt` no-args dump empty under `-f` — should list `nohashdirs`/`norcs` (zsh: shows divergent-from-default) | **port-bug** | probe specific opts with `[[ -o NAME ]]` |
 | 395 | `compdef` shipped as permanent builtin — zsh: not defined until `compinit`; breaks `${+functions[compdef]}` guard | **port-bug** | probe `_comp_setup` instead |
