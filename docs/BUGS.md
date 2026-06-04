@@ -27831,6 +27831,26 @@ issues mean users can't override either way.
 
 ## #346 — `read -E` flag (echo input back to stdout) not implemented
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "hello" | read -E line; echo "[$line]"'
+hello
+[hello]
+$ ./target/debug/zshrs --zsh -fc 'echo "hello" | read -E line; echo "[$line]"'
+hello
+[hello]
+```
+
+`-E` correctly tees stdin to stdout while assigning, matching
+`Src/builtin.c::bin_read`'s `OPT_E` path.
+
+Doc-only flip; no code change in this commit (closed by
+earlier `read -E`/`-e` wiring at #434).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -29104,6 +29124,34 @@ words=("${(z)cmd%%\#*}")   # crude comment-strip
 ---
 
 ## #364 — `$'\uNNNN'` Unicode-codepoint escape in C-string not interpreted — emits literal `uNNNN`
+
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+`\uNNNN`, `\uNN`, and `\UNNNNNNNN` (uppercase, 8-digit) all
+decode to UTF-8 correctly.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc $'print "\\u3042"'
+あ
+$ ./target/debug/zshrs --zsh -fc $'print "\\u3042"'
+あ
+$ /opt/homebrew/bin/zsh -fc $'print "\\u00e9"'
+é
+$ ./target/debug/zshrs --zsh -fc $'print "\\u00e9"'
+é
+$ /opt/homebrew/bin/zsh -fc $'print "\\u41"'
+A
+$ ./target/debug/zshrs --zsh -fc $'print "\\u41"'
+A
+$ /opt/homebrew/bin/zsh -fc $'print "\\U0001F600"'
+😀
+$ ./target/debug/zshrs --zsh -fc $'print "\\U0001F600"'
+😀
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
@@ -30878,6 +30926,60 @@ Users must abandon trace mode and revert to manual
 
 ## #392 — `${(qq)arr[@]}` quotes only whitespace-containing elements — should always-quote
 
+**Status:** `fixed` 2026-06-03 — per-element quoting now
+fires for the `"${(qq)arr[@]}"` shape (DQ-wrapped + `[@]`
+subscript).
+
+**Root cause** — `src/ported/subst.rs`'s quote dispatch
+gated per-element quoting on `nojoin == 2 || !qt`. For
+`"${(qq)arr[@]}"`:
+- qt = true (DQ context)
+- nojoin = 0 (no `(@)` flag in the flag block; the `[@]` is
+  a subscript, set elsewhere)
+
+So `want_per_element = false` and the path took the
+"join then quote scalar" branch, producing `'a b c d e'`
+instead of `'a b' 'c' 'd e'`.
+
+C `Src/subst.c::paramsubst` carries this via
+`SCANPM_ISVAR_AT` (set by `getindex` on `[@]`/`[*]`), which
+keeps `isarr` non-zero in DQ — the splat is preserved and
+the quote flag applies per element.
+
+**Fix** — extend the predicate to also match a `[@]`/`[*]`
+subscript:
+```rust
+let is_at_subscript_splat =
+    matches!(subscript.as_deref(), Some("@") | Some("*"));
+let want_per_element = nojoin == 2 || !qt || is_at_subscript_splat;
+```
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=("a b" "c" "d e"); echo "${(qq)a[@]}"'
+'a b' 'c' 'd e'
+$ ./target/debug/zshrs --zsh -fc 'a=("a b" "c" "d e"); echo "${(qq)a[@]}"'
+'a b' 'c' 'd e'
+
+$ /opt/homebrew/bin/zsh -fc 'a=(simple hello world); echo "${(qq)a[@]}"'
+'simple' 'hello' 'world'
+$ ./target/debug/zshrs --zsh -fc 'a=(simple hello world); echo "${(qq)a[@]}"'
+'simple' 'hello' 'world'
+
+$ /opt/homebrew/bin/zsh -fc 'a=("a b" "c"); echo "${(q)a[@]}"'
+a\ b c
+$ ./target/debug/zshrs --zsh -fc 'a=("a b" "c"); echo "${(q)a[@]}"'
+a\ b c
+
+# Unquoted regression check
+$ ./target/debug/zshrs --zsh -fc 'a=("a b" "c"); echo ${(qq)a[@]}'
+'a b' 'c'
+```
+
+Test baseline preserved at 960/92.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -32502,6 +32604,27 @@ fi
 ---
 
 ## #412 — `$PROMPT3` (PS3) default empty — `select` prompt missing
+
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$PROMPT3]"'
+[[1;34m-->>>> [0m]
+$ ./target/debug/zshrs --zsh -fc 'echo "[$PROMPT3]"'
+[[1;34m-->>>> [0m]
+$ /opt/homebrew/bin/zsh -fc 'echo "[$PS3]"'
+[[1;34m-->>>> [0m]
+$ ./target/debug/zshrs --zsh -fc 'echo "[$PS3]"'
+[[1;34m-->>>> [0m]
+```
+
+PROMPT3 and PS3 both carry the colored `-->>>> ` default;
+the PROMPT/PS alias cascade (#518) keeps them in sync.
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
