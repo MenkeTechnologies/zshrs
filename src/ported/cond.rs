@@ -66,11 +66,19 @@ use std::os::unix::io::FromRawFd;
 /// Returns C's convention (cond.c:62-66): 0=true, 1=false, 2=syntax
 /// error, 3=option-tested-with-`-o`-not-found.
 pub fn evalcond(
-    // c:70
+    // c:70 — C signature is `int evalcond(Estate state, char *fromtest)`.
+    // The Rust port adds posix_mode + an explicit args slice (Estate
+    // walks wordcode in C; we walk argv tokens). `from_test` mirrors C's
+    // `fromtest` parameter byte-for-byte: when `Some(name)`, the
+    // integer-comparison arms route through strict zstrtol parsing that
+    // emits `zwarnnam(name, "integer expression expected: %s", err)` +
+    // rc=2 on parse failure (c:Src/cond.c:248-251). When `None`, the
+    // `[[ ]]`-style mathevali coercion-to-0 path is used.
     args: &[&str],
     options: &HashMap<String, bool>,
     variables: &HashMap<String, String>,
     posix_mode: bool,
+    from_test: Option<&str>,
 ) -> i32 {
     if args.is_empty() {
         return 1;
@@ -95,6 +103,7 @@ pub fn evalcond(
         opts: &HashMap<String, bool>,
         vars: &HashMap<String, String>,
         posix: bool,
+        from_test: Option<&str>,
         prec: u8,
     ) -> i32 {
         let b2i = |b: bool| -> i32 {
@@ -109,10 +118,10 @@ pub fn evalcond(
         match prec {
             // OR — c:96 COND_OR.
             0 => {
-                let mut left = walk(toks, pos, opts, vars, posix, 1);
+                let mut left = walk(toks, pos, opts, vars, posix, from_test, 1);
                 while peek(*pos) == Some("||") || peek(*pos) == Some("-o") {
                     *pos += 1;
-                    let right = walk(toks, pos, opts, vars, posix, 1);
+                    let right = walk(toks, pos, opts, vars, posix, from_test, 1);
                     left = if left == 0 {
                         0
                     } else if left >= 2 {
@@ -125,10 +134,10 @@ pub fn evalcond(
             }
             // AND — c:88 COND_AND.
             1 => {
-                let mut left = walk(toks, pos, opts, vars, posix, 2);
+                let mut left = walk(toks, pos, opts, vars, posix, from_test, 2);
                 while peek(*pos) == Some("&&") || peek(*pos) == Some("-a") {
                     *pos += 1;
-                    let right = walk(toks, pos, opts, vars, posix, 2);
+                    let right = walk(toks, pos, opts, vars, posix, from_test, 2);
                     left = if left != 0 { left } else { right };
                 }
                 left
@@ -137,7 +146,7 @@ pub fn evalcond(
             2 => {
                 if peek(*pos) == Some("!") {
                     *pos += 1;
-                    let r = walk(toks, pos, opts, vars, posix, 2);
+                    let r = walk(toks, pos, opts, vars, posix, from_test, 2);
                     if r < 2 {
                         if r == 0 {
                             1
@@ -148,7 +157,7 @@ pub fn evalcond(
                         r
                     }
                 } else {
-                    walk(toks, pos, opts, vars, posix, 3)
+                    walk(toks, pos, opts, vars, posix, from_test, 3)
                 }
             }
             // Primary — c:179+ default arm. Parenthesised group,
@@ -156,7 +165,7 @@ pub fn evalcond(
             _ => {
                 if peek(*pos) == Some("(") {
                     *pos += 1;
-                    let r = walk(toks, pos, opts, vars, posix, 0);
+                    let r = walk(toks, pos, opts, vars, posix, from_test, 0);
                     if peek(*pos) != Some(")") {
                         return 2;
                     }
@@ -344,8 +353,11 @@ pub fn evalcond(
                     // branches.
                     let parse_num = |s: &str| -> Option<f64> {
                         let t = s.trim();
-                        if posix {
-                            // POSIX: plain integer only.
+                        if posix || from_test.is_some() {
+                            // c:Src/cond.c:236-249 — `if (fromtest) { ...
+                            // zstrtol base-10 ... }`. test/[ context
+                            // demands plain integers; no math eval.
+                            // Same shape under POSIXBUILTINS.
                             t.parse::<i64>().ok().map(|i| i as f64)
                         } else {
                             // c:415 — route through `mathevali`.
@@ -361,7 +373,26 @@ pub fn evalcond(
                     let num_cmp = |l: &str, r: &str, f: fn(f64, f64) -> bool| -> i32 {
                         match (parse_num(l), parse_num(r)) {
                             (Some(a), Some(b)) => b2i(f(a, b)),
-                            _ => 2,
+                            _ => {
+                                // c:Src/cond.c:248-251 — when fromtest is
+                                // set and the operand isn't a base-10
+                                // integer, emit the canonical diagnostic
+                                // and return 2. C reports the FIRST bad
+                                // operand: left if left failed, else
+                                // right. Bug #411.
+                                if let Some(name) = from_test {
+                                    let err = if parse_num(l).is_none() {
+                                        l
+                                    } else {
+                                        r
+                                    };
+                                    crate::ported::utils::zwarnnam(
+                                        name,
+                                        &format!("integer expression expected: {}", err),
+                                    );
+                                }
+                                2
+                            }
                         }
                     };
                     let mtime_cmp = |l: &str, r: &str, f: fn(i64, i64) -> bool| -> i32 {
@@ -491,7 +522,7 @@ pub fn evalcond(
     }
 
     let mut pos = 0usize;
-    let r = walk(&toks, &mut pos, options, variables, posix_mode, 0);
+    let r = walk(&toks, &mut pos, options, variables, posix_mode, from_test, 0);
     if pos != toks.len() {
         2
     } else {
@@ -813,7 +844,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let opts = HashMap::new();
         let vars = HashMap::new();
-        let r = evalcond(&["abc123", "=~", "[a-z]+[0-9]+"], &opts, &vars, false);
+        let r = evalcond(&["abc123", "=~", "[a-z]+[0-9]+"], &opts, &vars, false, None);
         assert_eq!(r, 0, "match succeeded");
         assert_eq!(
             getsparam("MATCH").as_deref(),
@@ -878,7 +909,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let opts = HashMap::new();
         let vars = HashMap::new();
-        let r = evalcond(&["xyz", "=~", "[0-9]+"], &opts, &vars, false);
+        let r = evalcond(&["xyz", "=~", "[0-9]+"], &opts, &vars, false, None);
         assert_eq!(r, 1, "no digits in 'xyz' → false");
     }
 
@@ -886,32 +917,32 @@ mod tests {
     fn test_string_empty() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["-z", ""], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-z", "hello"], &opts, &vars, true), 1);
-        assert_eq!(evalcond(&["-n", "hello"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-n", ""], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["-z", ""], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["-z", "hello"], &opts, &vars, true, None), 1);
+        assert_eq!(evalcond(&["-n", "hello"], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["-n", ""], &opts, &vars, true, None), 1);
     }
 
     #[test]
     fn test_string_compare() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["hello", "=", "hello"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["hello", "!=", "world"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["abc", "<", "def"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["xyz", ">", "abc"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["hello", "=", "hello"], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["hello", "!=", "world"], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["abc", "<", "def"], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["xyz", ">", "abc"], &opts, &vars, true, None), 0);
     }
 
     #[test]
     fn test_numeric_compare() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["5", "-eq", "5"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["5", "-ne", "3"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["3", "-lt", "5"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["5", "-gt", "3"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["5", "-le", "5"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["5", "-ge", "5"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["5", "-eq", "5"], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["5", "-ne", "3"], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["3", "-lt", "5"], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["5", "-gt", "3"], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["5", "-le", "5"], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["5", "-ge", "5"], &opts, &vars, true, None), 0);
     }
 
     #[test]
@@ -922,9 +953,9 @@ mod tests {
         File::create(&file_path).unwrap();
         let (opts, vars) = empty_maps();
         let path_str = file_path.to_str().unwrap();
-        assert_eq!(evalcond(&["-e", path_str], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-f", path_str], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-d", path_str], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["-e", path_str], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["-f", path_str], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["-d", path_str], &opts, &vars, true, None), 1);
     }
 
     #[test]
@@ -933,16 +964,16 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let (opts, vars) = empty_maps();
         let path_str = dir.path().to_str().unwrap();
-        assert_eq!(evalcond(&["-d", path_str], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-f", path_str], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["-d", path_str], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["-f", path_str], &opts, &vars, true, None), 1);
     }
 
     #[test]
     fn test_logical_not() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["!", "-z", "hello"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["!", "-n", ""], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["!", "-z", "hello"], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["!", "-n", ""], &opts, &vars, true, None), 0);
     }
 
     #[test]
@@ -950,11 +981,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(
-            evalcond(&["-n", "a", "-a", "-n", "b"], &opts, &vars, true),
+            evalcond(&["-n", "a", "-a", "-n", "b"], &opts, &vars, true, None),
             0
         );
         assert_eq!(
-            evalcond(&["-n", "a", "-a", "-z", "b"], &opts, &vars, true),
+            evalcond(&["-n", "a", "-a", "-z", "b"], &opts, &vars, true, None),
             1
         );
     }
@@ -964,11 +995,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(
-            evalcond(&["-z", "a", "-o", "-n", "b"], &opts, &vars, true),
+            evalcond(&["-z", "a", "-o", "-n", "b"], &opts, &vars, true, None),
             0
         );
         assert_eq!(
-            evalcond(&["-z", "a", "-o", "-z", "b"], &opts, &vars, true),
+            evalcond(&["-z", "a", "-o", "-z", "b"], &opts, &vars, true, None),
             1
         );
     }
@@ -979,8 +1010,8 @@ mod tests {
         let opts = HashMap::new();
         let mut vars = HashMap::new();
         vars.insert("MYVAR".to_string(), "value".to_string());
-        assert_eq!(evalcond(&["-v", "MYVAR"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-v", "NOTEXIST"], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["-v", "MYVAR"], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["-v", "NOTEXIST"], &opts, &vars, true, None), 1);
     }
 
     /// `Src/cond.c:179-180` — `[[ -s file ]]` is true iff stat succeeds
@@ -1033,18 +1064,18 @@ mod tests {
 
         let link_s = link.to_str().unwrap();
         assert_eq!(
-            evalcond(&["-h", link_s], &opts, &vars, true),
+            evalcond(&["-h", link_s], &opts, &vars, true, None),
             0,
             "c:488 — `-h` uses lstat; detects symlink even with missing target"
         );
         assert_eq!(
-            evalcond(&["-L", link_s], &opts, &vars, true),
+            evalcond(&["-L", link_s], &opts, &vars, true, None),
             0,
             "c:488 — `-L` is same as `-h`"
         );
         // -f / -d follow the link → false because target doesn't exist.
-        assert_eq!(evalcond(&["-f", link_s], &opts, &vars, true), 1);
-        assert_eq!(evalcond(&["-d", link_s], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["-f", link_s], &opts, &vars, true, None), 1);
+        assert_eq!(evalcond(&["-d", link_s], &opts, &vars, true, None), 1);
     }
 
     /// `Src/cond.c:179-180` — `[[ -ef ]]` returns true iff two paths
@@ -1068,12 +1099,12 @@ mod tests {
         let bs_ = b.to_str().unwrap();
         let cs_ = c.to_str().unwrap();
         assert_eq!(
-            evalcond(&[as_, "-ef", bs_], &opts, &vars, true),
+            evalcond(&[as_, "-ef", bs_], &opts, &vars, true, None),
             0,
             "c:179 — hardlinks share st_ino + st_dev → -ef true"
         );
         assert_eq!(
-            evalcond(&[as_, "-ef", cs_], &opts, &vars, true),
+            evalcond(&[as_, "-ef", cs_], &opts, &vars, true, None),
             1,
             "c:179 — distinct files → -ef false"
         );
@@ -1099,17 +1130,17 @@ mod tests {
         let o = older.to_str().unwrap();
         let n = newer.to_str().unwrap();
         assert_eq!(
-            evalcond(&[n, "-nt", o], &opts, &vars, true),
+            evalcond(&[n, "-nt", o], &opts, &vars, true, None),
             0,
             "c:179 — newer -nt older → true"
         );
         assert_eq!(
-            evalcond(&[o, "-nt", n], &opts, &vars, true),
+            evalcond(&[o, "-nt", n], &opts, &vars, true, None),
             1,
             "c:179 — older -nt newer → false"
         );
         assert_eq!(
-            evalcond(&[o, "-ot", n], &opts, &vars, true),
+            evalcond(&[o, "-ot", n], &opts, &vars, true, None),
             0,
             "c:179 — older -ot newer → true"
         );
@@ -1129,12 +1160,12 @@ mod tests {
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
         let p = file.to_str().unwrap();
         assert_eq!(
-            evalcond(&["-r", p], &opts, &vars, true),
+            evalcond(&["-r", p], &opts, &vars, true, None),
             0,
             "c:438 — mode 0600 → readable"
         );
         assert_eq!(
-            evalcond(&["-w", p], &opts, &vars, true),
+            evalcond(&["-w", p], &opts, &vars, true, None),
             0,
             "c:438 — mode 0600 → writable"
         );
@@ -1143,12 +1174,12 @@ mod tests {
         if unsafe { libc::geteuid() } != 0 {
             std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
             assert_eq!(
-                evalcond(&["-r", p], &opts, &vars, true),
+                evalcond(&["-r", p], &opts, &vars, true, None),
                 1,
                 "c:438 — mode 0000 → not readable (non-root)"
             );
             assert_eq!(
-                evalcond(&["-w", p], &opts, &vars, true),
+                evalcond(&["-w", p], &opts, &vars, true, None),
                 1,
                 "c:438 — mode 0000 → not writable (non-root)"
             );
@@ -1161,8 +1192,8 @@ mod tests {
     fn test_double_negation_cancels() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["!", "!", "-n", "x"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["!", "!", "-z", "x"], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["!", "!", "-n", "x"], &opts, &vars, true, None), 0);
+        assert_eq!(evalcond(&["!", "!", "-z", "x"], &opts, &vars, true, None), 1);
     }
 
     /// `Src/cond.c:81-185` — Implicit `-n` for a bare arg. `[[ foo ]]`
@@ -1172,12 +1203,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(
-            evalcond(&["foo"], &opts, &vars, true),
+            evalcond(&["foo"], &opts, &vars, true, None),
             0,
             "non-empty bare arg → true (implicit -n)"
         );
         assert_eq!(
-            evalcond(&[""], &opts, &vars, true),
+            evalcond(&[""], &opts, &vars, true, None),
             1,
             "empty bare arg → false (implicit -n)"
         );
@@ -1224,9 +1255,9 @@ mod tests {
         File::create(&file).unwrap();
         let p = file.to_str().unwrap();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["-e", p], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-e", p], &opts, &vars, true, None), 0);
         assert_eq!(
-            evalcond(&["-a", p], &opts, &vars, true),
+            evalcond(&["-a", p], &opts, &vars, true, None),
             0,
             "c:179 — -a is alias for -e in zsh test/[[ context"
         );
@@ -1241,7 +1272,7 @@ mod tests {
         // Both posix and non-posix modes route through parse_num; if
         // either side fails to parse → return 2 (cond error).
         assert_eq!(
-            evalcond(&["abc", "-eq", "5"], &opts, &vars, true),
+            evalcond(&["abc", "-eq", "5"], &opts, &vars, true, None),
             2,
             "non-numeric LHS in -eq must return 2 (error)"
         );
@@ -1257,7 +1288,7 @@ mod tests {
         assert_eq!(evalcond(&["!", "(", "-z", "", ")"], &opts, &vars, true), 1);
         // Missing close paren: error
         assert_eq!(
-            evalcond(&["(", "-z", ""], &opts, &vars, true),
+            evalcond(&["(", "-z", ""], &opts, &vars, true, None),
             2,
             "missing closing `)` must return 2 (cond error)"
         );
@@ -1450,14 +1481,14 @@ mod tests {
         // c:330 — `[[ -t 1+0 ]]`. Should evaluate to 0 or 1 (tty
         // check), NOT 2 (syntax error). The previous Rust port
         // would return 2 because `.parse::<i32>("1+0")` fails.
-        let result = evalcond(&["-t", "1+0"], &opts, &vars, true);
+        let result = evalcond(&["-t", "1+0"], &opts, &vars, true, None);
         assert!(
             result == 0 || result == 1,
             "c:330 — `-t 1+0` must mathevali to fd 1 (not parse fail), got {}",
             result
         );
         // c:330 — `[[ -t 0 ]]` plain digit also works.
-        let result = evalcond(&["-t", "0"], &opts, &vars, true);
+        let result = evalcond(&["-t", "0"], &opts, &vars, true, None);
         assert!(
             result == 0 || result == 1,
             "c:330 — `-t 0` plain digit still works, got {}",
@@ -1477,13 +1508,13 @@ mod tests {
         // c:415 — `[[ 1+2 -eq 3 ]]` evaluates LHS via mathevali.
         // Should return 0 (true).
         assert_eq!(
-            evalcond(&["1+2", "-eq", "3"], &opts, &vars, false),
+            evalcond(&["1+2", "-eq", "3"], &opts, &vars, false, None),
             0,
             "c:415 — `1+2 -eq 3` must mathevali LHS to 3, return 0"
         );
         // c:415 — `[[ 4 -gt 1+2 ]]` evaluates RHS via mathevali.
         assert_eq!(
-            evalcond(&["4", "-gt", "1+2"], &opts, &vars, false),
+            evalcond(&["4", "-gt", "1+2"], &opts, &vars, false, None),
             0,
             "c:415 — `4 -gt 1+2` must mathevali RHS to 3, return 0"
         );
@@ -1491,13 +1522,13 @@ mod tests {
         // arithmetic eval. `[[ 1+2 -eq 3 ]]` under POSIX should
         // fail to parse the LHS (return 2 = syntax error).
         assert_eq!(
-            evalcond(&["1+2", "-eq", "3"], &opts, &vars, true),
+            evalcond(&["1+2", "-eq", "3"], &opts, &vars, true, None),
             2,
             "POSIX — no mathevali; non-numeric LHS = error"
         );
         // Plain integers still work in POSIX mode.
         assert_eq!(
-            evalcond(&["5", "-eq", "5"], &opts, &vars, true),
+            evalcond(&["5", "-eq", "5"], &opts, &vars, true, None),
             0,
             "POSIX — plain integers compare normally"
         );
@@ -1512,22 +1543,22 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(
-            evalcond(&["", "=", ""], &opts, &vars, false),
+            evalcond(&["", "=", ""], &opts, &vars, false, None),
             0,
             "= empty=empty"
         );
         assert_eq!(
-            evalcond(&["a", "==", "a"], &opts, &vars, false),
+            evalcond(&["a", "==", "a"], &opts, &vars, false, None),
             0,
             "== equal"
         );
         assert_eq!(
-            evalcond(&["x", "!=", "y"], &opts, &vars, false),
+            evalcond(&["x", "!=", "y"], &opts, &vars, false, None),
             0,
             "!= unequal"
         );
         assert_eq!(
-            evalcond(&["x", "==", "y"], &opts, &vars, false),
+            evalcond(&["x", "==", "y"], &opts, &vars, false, None),
             1,
             "== unequal false"
         );
@@ -1540,17 +1571,17 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(
-            evalcond(&["bar", "<", "foo"], &opts, &vars, false),
+            evalcond(&["bar", "<", "foo"], &opts, &vars, false, None),
             0,
             "bar < foo"
         );
         assert_eq!(
-            evalcond(&["foo", ">", "bar"], &opts, &vars, false),
+            evalcond(&["foo", ">", "bar"], &opts, &vars, false, None),
             0,
             "foo > bar"
         );
         assert_eq!(
-            evalcond(&["foo", "<", "bar"], &opts, &vars, false),
+            evalcond(&["foo", "<", "bar"], &opts, &vars, false, None),
             1,
             "foo < bar false"
         );
@@ -1563,17 +1594,17 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(
-            evalcond(&["7", "-eq", "0x07"], &opts, &vars, false),
+            evalcond(&["7", "-eq", "0x07"], &opts, &vars, false, None),
             0,
             "7 -eq 0x07"
         );
         assert_eq!(
-            evalcond(&["10", "-ne", "0x10"], &opts, &vars, false),
+            evalcond(&["10", "-ne", "0x10"], &opts, &vars, false, None),
             0,
             "10 -ne 0x10 (16)"
         );
         assert_eq!(
-            evalcond(&["16", "-eq", "0x10"], &opts, &vars, false),
+            evalcond(&["16", "-eq", "0x10"], &opts, &vars, false, None),
             0,
             "16 -eq 0x10"
         );
@@ -1586,12 +1617,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(
-            evalcond(&["3", "-lt", "04"], &opts, &vars, false),
+            evalcond(&["3", "-lt", "04"], &opts, &vars, false, None),
             0,
             "3 -lt 4"
         );
         assert_eq!(
-            evalcond(&["05", "-gt", "2"], &opts, &vars, false),
+            evalcond(&["05", "-gt", "2"], &opts, &vars, false, None),
             0,
             "5 -gt 2"
         );
@@ -1604,12 +1635,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(
-            evalcond(&["3", "-le", "3"], &opts, &vars, false),
+            evalcond(&["3", "-le", "3"], &opts, &vars, false, None),
             0,
             "3 -le 3"
         );
         assert_eq!(
-            evalcond(&["4", "-le", "3"], &opts, &vars, false),
+            evalcond(&["4", "-le", "3"], &opts, &vars, false, None),
             1,
             "4 -le 3 false"
         );
@@ -1621,12 +1652,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         assert_eq!(
-            evalcond(&["3", "-ge", "3"], &opts, &vars, false),
+            evalcond(&["3", "-ge", "3"], &opts, &vars, false, None),
             0,
             "3 -ge 3"
         );
         assert_eq!(
-            evalcond(&["3", "-ge", "4"], &opts, &vars, false),
+            evalcond(&["3", "-ge", "4"], &opts, &vars, false, None),
             1,
             "3 -ge 4 false"
         );

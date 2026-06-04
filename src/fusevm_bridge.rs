@@ -4243,7 +4243,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // 2=syntax-error. Coerce error to false (observable behavior
         // in zsh: `[[ -z a b ]]` errors and the test as a whole
         // returns non-zero).
-        let ret = crate::ported::cond::evalcond(&args, &opts, &vars, false);
+        // `[[ ]]` dispatch — C's `evalcond(state, NULL)` calling convention.
+        // `None` for from_test → mathevali integer-compare coercion path.
+        let ret = crate::ported::cond::evalcond(&args, &opts, &vars, false, None);
         Value::Int(if ret == 0 { 1 } else { 0 })
     }
     vm.register_builtin(BUILTIN_COND_STR_EMPTY, |vm, _argc| {
