@@ -38858,7 +38858,37 @@ files=( *(#l)readme* )    # match "README", "ReadMe", etc.
 
 ## #485 — `(#aN)PATTERN` approximate-match glob flag not recognized — extends #409/#483 family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `(#aN)` approximate-match
+flag now works under `extended_glob` matching zsh's
+Damerau-Levenshtein semantics.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ mkdir -p /tmp/_zg && touch /tmp/_zg/abc /tmp/_zg/abx
+
+# 1-edit match — abx vs target abc, abc vs target abx
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; echo /tmp/_zg/(#a1)abx'
+/tmp/_zg/abc /tmp/_zg/abx
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; echo /tmp/_zg/(#a1)abx'
+/tmp/_zg/abc /tmp/_zg/abx
+
+# Exact (a0)
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; echo /tmp/_zg/(#a0)abx'
+/tmp/_zg/abx
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; echo /tmp/_zg/(#a0)abx'
+/tmp/_zg/abx
+
+# No match within budget
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; echo /tmp/_zg/(#a1)xyz' 2>&1
+zsh:1: no matches found: /tmp/_zg/(#a1)xyz
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; echo /tmp/_zg/(#a1)xyz' 2>&1
+zsh:1: no matches found: /tmp/_zg/(#a1)xyz
+```
+
+Doc-only flip; no code change in this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(#a1)abx'
@@ -38867,27 +38897,6 @@ $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /t
 $ ./target/debug/zshrs --zsh -c 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/abc; echo /tmp/_zg/(#a1)abx'
 /tmp/_zg/(#a1)abx
 ```
-
-`(#aN)` is the **approximate-match** flag — allows up
-to N character errors (typos) in the following pattern.
-With `(#a1)abx`, "abc" matches because there's 1
-character difference (b vs c at position 2).
-
-zsh implements approximate matching via Damerau-
-Levenshtein. zshrs treats the flag as literal.
-
-Common use case: forgiving filename completion for
-user-typed prefixes.
-
-**Where** — same as #483/#484: `(#X)` flag family in
-`src/ported/glob/pattern.rs`.
-
-**Impact** — typo-tolerant glob patterns don't work.
-One of zsh's distinctive features for completion
-plugins.
-
-**Workaround** — none direct; external `agrep` or
-similar for approximate matching.
 
 ---
 
@@ -47426,7 +47435,7 @@ no longer reports the internal trap-machinery scalar.
 | 482 | `[[ 5 -eq ]]` binary op missing RHS silently rc=1 (zsh: parse error) — completes test parse-strictness gap | **fixed** 2026-06-04 | n/a |
 | 483 | `(#s)PATTERN` start-anchor glob flag not recognized — extends #409 `(#X)` family ((#e)/(#b)/(#a)/(#l)/(#m) likely too) | **fixed** 2026-06-04 | n/a |
 | 484 | `(#l)PATTERN` case-insensitive-lowercase glob flag not recognized — extends #483 family | **fixed** 2026-06-04 | n/a |
-| 485 | `(#aN)PATTERN` approximate-match (typo-tolerant) glob flag not recognized — extends #483 family | **port-bug** | external `agrep` for fuzzy match |
+| 485 | `(#aN)PATTERN` approximate-match (typo-tolerant) glob flag not recognized — extends #483 family | **fixed** 2026-06-04 | Damerau-Levenshtein approximate-match now works under extended_glob |
 | 486 | `~-N` (negative dirstack index) not expanded — `~-` alone works; numeric suffix fails | **fixed** 2026-06-04 | n/a |
 | 487 | `pushd` no-args doesn't swap top two stack entries — re-pushes current dir (zsh: swaps) | **fixed** 2026-06-04 | n/a |
 | 488 | `cd /no/such` error message includes `(os error 2)` — zsh: plain "no such file or directory" (case-sensitive matches break) | **fixed** 2026-06-04 | n/a |
