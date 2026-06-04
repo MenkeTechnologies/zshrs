@@ -3430,6 +3430,17 @@ pub fn getsigidx(s: &str) -> Option<i32> {
 /// Get the signal name for signal-based job output (from jobs.c getsigname)
 /// Port of `getsigname(int sig)` from `Src/jobs.c:3087`.
 pub fn getsigname(sig: i32) -> String {
+    // c:Src/signames.c — virtual signal names. SIGZERR/SIGDEBUG sit
+    // PAST the libc kernel-signal range (SIGCOUNT+1/+2) and have no
+    // libc constant; match them explicitly so the dotrap dispatcher
+    // can build `TRAPZERR` / `TRAPDEBUG` instead of `TRAPSIG32`/`SIG33`.
+    // Bug #389.
+    if sig == crate::ported::signals_h::SIGZERR {
+        return "ZERR".to_string();
+    }
+    if sig == crate::ported::signals_h::SIGDEBUG {
+        return "DEBUG".to_string();
+    }
     match sig {
         0 => "EXIT".to_string(),
         libc::SIGHUP => "HUP".to_string(),

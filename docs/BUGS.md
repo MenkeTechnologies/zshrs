@@ -30341,6 +30341,31 @@ specials is broadly missing.
 
 ## #375 — `commands[name]=value` user-overwrite accepted — commands (cmd-to-path map) not slice-protected
 
+**Status:** `fixed` 2026-06-03 — `assignsparam`'s
+readonly-magic-assoc list (added for #242) covers
+`commands`, so subscript writes are rejected with the
+canonical `read-only variable: commands` error.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'commands[ls]=/fake/path'
+zsh:1: read-only variable: commands
+rc=1
+```
+
+Current `/opt/homebrew/bin/zsh` (5.9.1) actually accepts
+`commands[ls]=fake` silently (rc=0) — the upstream
+"attempt to set slice" error from the bug report was
+against an older zsh. zshrs's behaviour is now STRICTER
+than current brew zsh and matches documented assoc-
+read-only semantics, blocking the security-relevant
+`commands[sudo]=/fake/sudo` rewrite pattern.
+
+Doc-only flip; closed by the #242 magic-assoc readonly
+intercept at `src/ported/params.rs::assignsparam`.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -30697,6 +30722,22 @@ handle correctly per spot checks).
 
 ## #381 — `TRAPINT()` function-style signal handler not invoked on SIGINT
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPINT() { echo intercept; exit 1; }; kill -INT $$; echo "after"'
+intercept
+rc=1
+$ ./target/debug/zshrs --zsh -fc 'TRAPINT() { echo intercept; exit 1; }; kill -INT $$; echo "after"'
+intercept
+rc=1
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -30757,6 +30798,22 @@ zshrs.
 ---
 
 ## #382 — `TRAPEXIT()` function-style not invoked at script exit
+
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPEXIT() { echo "in-exit-fn"; }; echo main'
+main
+in-exit-fn
+$ ./target/debug/zshrs --zsh -fc 'TRAPEXIT() { echo "in-exit-fn"; }; echo main'
+main
+in-exit-fn
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
@@ -31238,6 +31295,50 @@ Heavier, but functional.
 ---
 
 ## #389 — `TRAPZERR()` function-form not invoked on non-zero exit
+
+**Status:** `fixed` 2026-06-03 — `getsigname` now handles
+the pseudo-signals (SIGZERR → `"ZERR"`, SIGDEBUG → `"DEBUG"`)
+explicitly, matching `Src/signames.c`'s virtual-signal table.
+
+**Root cause** — `src/ported/jobs.rs::getsigname` had
+explicit arms for `0 → "EXIT"` and every libc kernel
+signal, but the zsh-internal pseudo-signals `SIGZERR`
+(= SIGCOUNT+1) and `SIGDEBUG` (= SIGCOUNT+2) fell through
+to the catch-all `format!("SIG{}", sig)` arm. `dotrap`'s
+function-trap dispatch built `format!("TRAP{}", signame)`
+to look up the user's `TRAP<NAME>` shfunc — so for SIGZERR
+it tried `TRAPSIG32` (on macOS) and failed.
+
+The string-form trap `trap "..." ZERR; false` worked
+because it went through the `table_body` lookup that
+queries `traps_table` by the lowercase alias name (which
+was correctly indexed).
+
+**Fix** — gate `SIGZERR`/`SIGDEBUG` at the top of
+`getsigname` and return their canonical pseudo-signal
+names before the libc-match falls through. SIGEXIT is
+already handled by the `0 → "EXIT"` arm.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'TRAPZERR() { echo zerr; }; false; echo done'
+zerr
+done
+$ ./target/debug/zshrs --zsh -fc 'TRAPZERR() { echo zerr; }; false; echo done'
+zerr
+done
+
+# Regressions: TRAPEXIT, TRAPINT still work
+$ ./target/debug/zshrs --zsh -fc 'TRAPEXIT() { echo bye; }; echo main'
+main
+bye
+$ ./target/debug/zshrs --zsh -fc 'TRAPINT() { echo intercept; exit 1; }; kill -INT $$; echo "after"'
+intercept
+```
+
+Test baseline preserved at 960/92.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
