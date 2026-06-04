@@ -44466,6 +44466,64 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #618 — `print -P "%i"` and `%I` stuck at function entry / off by funcstack offset
+
+**Status:** `fixed` 2026-06-04 — both arms now read `$LINENO`
+(which the executor maintains correctly per-statement); `%I`
+additionally adds the current funcstack frame's `flineno` to
+produce the absolute script line.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'foo() {
+  print -P "i=%i I=%I"
+  print -P "i=%i I=%I"
+  print -P "i=%i I=%I"
+}; foo'
+i=1 I=2
+i=2 I=3
+i=3 I=4
+
+# Before fix:
+$ zshrs --zsh -c 'foo() {
+  print -P "i=%i I=%I"
+  print -P "i=%i I=%I"
+  print -P "i=%i I=%I"
+}; foo'
+i=1 I=0
+i=1 I=0
+i=1 I=0                  # both stuck
+
+# After fix:
+$ zshrs --zsh -c 'foo() {
+  print -P "i=%i I=%I"
+  print -P "i=%i I=%I"
+  print -P "i=%i I=%I"
+}; foo'
+i=1 I=2
+i=2 I=3
+i=3 I=4
+```
+
+**Root cause** — `src/ported/prompt.rs::putpromptchar`:
+1. `b'i'` arm read `crate::ported::input::lineno` (a thread-local
+   `Cell<usize>` set at function entry but NOT incremented per
+   statement). `$LINENO` (the param) IS incremented correctly by
+   the executor.
+2. `b'I'` arm read `$LINENO` but didn't add the funcstack's
+   `flineno` offset, so the absolute script line came out
+   relative-to-function-body.
+
+C source `Src/prompt.c:901-920`: `%I = lineno + funcstack->flineno`
+when in a function (FALLTHROUGH to `%i` = just `lineno` otherwise).
+
+**Fix** —
+- `b'i'`: read `getsparam("LINENO")` with `input::lineno` fallback.
+- `b'I'`: read `getsparam("LINENO")`; if FUNCSTACK has a frame,
+  add its `flineno`; else emit `LINENO` directly.
+
+---
+
 ## #617 — `(( b = a ))` with `a=1.5` creates `b` as PM_INTEGER 1 instead of PM_FFLOAT 1.5 — compile-time pre-check mutates paramtab
 
 **Status:** `fixed-partial` 2026-06-04 — single-var assign (`b = a`)
@@ -47299,6 +47357,7 @@ no longer reports the internal trap-machinery scalar.
 | 615 | `$(< file 2>/dev/null)` treats `file 2>/dev/null` as the filename — `$(<file)` shortcut over-applied | **fixed** 2026-06-04 | gate shortcut on single-word filename (no ws/redirects/quotes); fall through to full parse otherwise |
 | 616 | `foo() { break; echo after; }; foo` continues past break — used `zwarnnam` not `zerrnam` | **fixed** 2026-06-04 | bin_break BIN_CONTINUE/BIN_BREAK "not in loop" arms now call zerrnam (sets errflag → function aborts) per Src/builtin.c:5828/:5834 |
 | 617 | `(( b = a ))` with `a=1.5` creates `b` as PM_INTEGER 1 instead of PM_FFLOAT 1.5 — compile-time pre-check mutates paramtab | **fixed-partial** 2026-06-04 | added mathevali_noeval (Rust-only, allowlisted) routing through matheval with noeval=1 so setmathvar's c:1002-1003 noeval-bail prevents paramtab mutation; operator forms still truncate (separate gap) |
+| 618 | `print -P "%i"` stuck at 1 inside fn; `%I` off by funcstack offset | **fixed** 2026-06-04 | both arms read `$LINENO` (executor maintains correctly); `%I` adds funcstack.flineno offset per Src/prompt.c:901-920 |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
