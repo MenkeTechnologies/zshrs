@@ -44466,6 +44466,79 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #592 — `${(k)h[(R)pat]}` returns matched values instead of matched keys — outer `(k)` flag not honored by assoc subscript
+
+**Status:** `fixed` 2026-06-04 — ported from `Src/params.c::scanparamvals`
++ `getarg`. `${(k)assoc[(R)pat]}` now returns the keys whose
+values match the pattern; `${(@k)assoc[(R)pat]}` preserves array
+shape so the matched keys splat across an assignment context.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2 c 1); echo "${(k)h[(R)1]}"'
+a c
+
+# Before fix:
+$ zshrs --zsh -c 'typeset -A h=(a 1 b 2 c 1); echo "${(k)h[(R)1]}"'
+1 1
+
+# After fix:
+$ zshrs --zsh -c 'typeset -A h=(a 1 b 2 c 1); echo "${(k)h[(R)1]}"'
+a c
+```
+
+Documented `(@k)` array-shape use case from #213 now also works:
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A m; m=(api1 ok api2 fail api3 ok api4 fail);
+                              failed=("${(@k)m[(R)fail]}");
+                              print -l "${failed[@]}" | sort'
+api2
+api4
+
+# zshrs after fix: same output, two separate elements in `failed`.
+```
+
+**Root cause** — three independent gaps:
+1. compile_zsh routed `${(k)NAME[(R)pat]}` through BUILTIN_ARRAY_INDEX
+   with a `\u{07}` sentinel meant to signal "want keys for (R) hits",
+   but the bridge stripped the sentinel and reconstructed `${NAME[(R)pat]}`
+   without the outer `(k)`. paramsubst then never saw WANTKEYS.
+2. The assoc-subscript flag dispatch at `src/ported/subst.rs:4538`
+   always pushed VALUES on (R)/(r) match — never KEYS. C's
+   `scanparamvals` (params.c:665-681) gates on SCANPM_WANTKEYS.
+3. The `nojoin == 2` arm at subst.rs:5829 overrode raw_value with
+   all-assoc-values when (@) was set, clobbering the matched-keys
+   result.
+
+**Fix**
+- `src/fusevm_bridge.rs::BUILTIN_ARRAY_INDEX` — when `\u{07}`
+  sentinel present, reconstruct as `${(k)NAME[idx]}` so the
+  re-entered paramsubst processes the outer flag. When both
+  `\u{05}` (outer `@`) and `\u{07}` (outer `k`) are present, use
+  `${(@k)NAME[idx]}`.
+- `src/extensions/compile_zsh.rs::find_expansion_end` (`(k)` /
+  `(@k)` subscript dispatch) — added `only_at_k_flag` branch that
+  injects `\u{05}\u{07}` sentinels for `${(@k)NAME[(R)pat]}` and
+  `${(k@)NAME[(R)pat]}` forms.
+- `src/ported/subst.rs::paramsubst`:
+  - assoc subscript MATCH path: when outer `(k)` is set
+    (SCANPM_WANTKEYS) AND match is value-pattern (R)/(r), push
+    KEY instead of VALUE — direct port of scanparamvals's
+    WANTKEYS gate.
+  - `(k)/(v)/(kv)` value-init at c:2247: guarded with
+    `has_subscript_for_kvflag = subscript.is_some() && !splat`.
+    Splat `[@]`/`[*]` still hits the enum (existing behavior);
+    `(R)pat`/`(I)pat`/`key`/`[lo,hi]` falls through to honor
+    raw_value.
+  - `nojoin == 2` arm: same `has_subscript_for_kvflag` guard so
+    the (@) splat doesn't override the matched-keys raw_value.
+  - split_parts seed: when `(@k)` + `(R)pat`/`(r)pat` returned a
+    non-empty raw_value, split on space and seed split_parts so
+    the splat block emits each matched key as its own word —
+    `failed_services=("${(@k)map[(R)fail]}")` gets array shape.
+
+---
+
 ## #582 — bare `$-:MOD` / `$!:MOD` single-char-special positional modifier ignored — extends #581
 
 **Status:** `fixed-partial` 2026-06-04 — handles `$-` and `$!`;
@@ -46147,6 +46220,7 @@ no longer reports the internal trap-machinery scalar.
 | 589 | `a=hello; a[2]=X` produces ` X` instead of `hXllo` — scalar subscript-assign treated as array-store | **fixed** 2026-06-04 | assignsparam + SET_SUBSCRIPT_RANGE detect PM_SCALAR and route through char-splice |
 | 590 | `${a/(#b)(l)*/--$match[1]--}` single-replace leaves $match[] empty — only `//` populated backrefs | **fixed** 2026-06-04 | replace_one routes through glob_match_static (pattryrefs) instead of bare pattry |
 | 591 | `${(qq)*[N]:-foo}` returns `''` instead of `'foo'` — :- default doesn't survive (qq) on positional-special | **fixed** 2026-06-04 | :- seed split_parts when var_name is *,@,argv (positional-special) |
+| 592 | `${(k)h[(R)pat]}` returns matched values instead of keys — outer `(k)` flag not honored by assoc subscript MATCH path | **fixed** 2026-06-04 | bridge re-injects `(k)`/`(@k)` outer flag; assoc subscript MATCH path pushes KEY when WANTKEYS; `nojoin==2` arm honors raw_value when non-splat subscript present |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to

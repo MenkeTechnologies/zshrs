@@ -3425,6 +3425,28 @@ impl ZshCompiler {
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
                     return;
                 }
+                // `(@k)NAME[(R)pat]` / `(k@)NAME[(R)pat]` — combo of `@`
+                // (force array shape) and `k` (want keys). Inject BOTH
+                // sentinels (`\u{05}` for @, `\u{07}` for k) and route
+                // through BUILTIN_ARRAY_INDEX which honors both. Bug
+                // #592: without this branch the chain fell through to
+                // BUILTIN_PARAM_FLAG with `(@k)` applied AFTER the
+                // subscript, which clobbered the matched-values result
+                // with key-enumeration of nothing.
+                let only_at_k_flag = !flags.is_empty()
+                    && flags.chars().all(|c| c == 'k' || c == '@')
+                    && flags.contains('k')
+                    && flags.contains('@');
+                if only_at_k_flag && key_starts_with_value_flag {
+                    let key_with_sentinel = format!("\u{05}\u{07}{}", key);
+                    let name_const = self.builder.add_constant(Value::str(base));
+                    let key_const = self.builder.add_constant(Value::str(key_with_sentinel));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    self.builder.emit(Op::LoadConst(key_const), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
+                    return;
+                }
                 // Sentinel `\u{05}` on the key signals BUILTIN_ARRAY_INDEX
                 // that the surrounding flag chain has explicit `@` —
                 // override the DQ-join behavior so a slice like `[1,3]`
