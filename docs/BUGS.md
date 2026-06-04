@@ -30251,6 +30251,52 @@ local check_ps=("${saved_ps[@]}")
 
 ## #374 — `reswords=...` user-overwrite accepted — reswords (reserved-words array) not readonly
 
+**Status:** `fixed` 2026-06-03 — `init_partab_params` no
+longer blanket-strips PM_READONLY from all PARTAB_ARRAY
+stubs. User-protected specials (`reswords`, `dis_reswords`,
+`patchars`, `dis_patchars`, `historywords`, `errnos`,
+`keymaps`) now keep the bit so `setaparam` rejects user
+writes with the canonical `read-only variable: NAME` error.
+
+**Root cause** — `src/vm_helper.rs::init_partab_params`'s
+`mk_pm` stub-builder OR'd `(flags & !PM_READONLY)` for every
+PARTAB_ARRAY entry. The comment justified the strip as
+"INTERNAL writes from runtime function-call paths go
+through setaparam," but for the read-only-computed specials
+(reswords/etc.) there is no legitimate internal-write path —
+their data is produced by the PARTAB getfn callback, not
+stored in `u_arr`. Stripping the bit meant nothing rejected
+the user's `reswords=corrupt` write.
+
+**Fix** — extend `mk_pm` with a `user_protected` allowlist
+of names that should keep PM_READONLY. Other PARTAB_ARRAY
+entries (anything with legitimate internal-write paths)
+keep the existing strip behaviour.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'reswords=corrupt'
+zsh:1: read-only variable: reswords
+$ ./target/debug/zshrs --zsh -fc 'reswords=corrupt'
+zsh:1: read-only variable: reswords
+
+# Array assignment also blocked
+$ /opt/homebrew/bin/zsh -fc 'reswords=(a b)'
+zsh:1: read-only variable: reswords
+$ ./target/debug/zshrs --zsh -fc 'reswords=(a b)'
+zsh:1: read-only variable: reswords
+```
+
+The `${reswords[1,3]}` read still returns empty in zshrs
+(pre-existing gap — read path doesn't dispatch through
+the PARTAB getfn callback), but that's a separate
+read-side issue distinct from the user-write-protection
+gap #374 reports.
+
+Test baseline 957/95 → 960/92.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
