@@ -9220,9 +9220,31 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
                 s = v;
             }
         }
+        // c:Src/params.c::printparamvalue — for scalar specials like
+        // `-` (shell flags via dashgetfn) that have no gsu_s wired but
+        // do have a live getter routed through lookup_special_var,
+        // fall back to getsparam if both gsu_s/strgetfn returned empty.
+        // Mirrors the same dispatch the PM_INTEGER arm uses. Bug #516.
+        if s.is_empty() {
+            if let Some(v) = crate::ported::params::getsparam(&p.node.nam) {
+                s = v;
+            }
+        }
         print!("{}", quotedzputs(&s)); // c:6053
     } else if t == PM_INTEGER {
-        print!("{}", intgetfn(p));
+        // c:Src/params.c::printparamvalue PM_INTEGER arm — C calls
+        // `pm->gsu.i->getfn(pm)` which dispatches through the special-
+        // integer GSU table (PPID/EUID/SECONDS/etc.). zshrs's `intgetfn`
+        // reads `pm.u_val` directly without that dispatch, so special
+        // integers like `$` (PID), `-` (shell flags via dashgetfn) read
+        // 0/empty. Route through `getsparam` first which already chains
+        // to `lookup_special_var` for the libc-shim values; fall back
+        // to `intgetfn` for ordinary ints. Bug #516.
+        let v = crate::ported::params::getsparam(&p.node.nam);
+        match v {
+            Some(s) if !s.is_empty() => print!("{}", s),
+            _ => print!("{}", intgetfn(p)),
+        }
     } else if t == PM_EFLOAT || t == PM_FFLOAT {
         // c:6063 — `convfloat(p->gsu.f->getfn(p), p->base, p->node.flags,
         //          stdout)`. Honors pm.base for precision and
