@@ -47417,10 +47417,10 @@ no longer reports the internal trap-machinery scalar.
 | 409 | `(#i)PATTERN` glob case-folding flag not recognized — treated as literal filename component | **fixed** 2026-06-04 | n/a |
 | 410 | `typeset -p PATH` doesn't expose tied scalar/array pair (zsh: `export -T PATH path=(...)`) — state-snapshot lossy | **fixed** 2026-06-02 | manually pair-emit `path` array |
 | 411 | `[ "abc" -eq 5 ]` silent rc=1 instead of "integer expression expected" + rc=2 — type-error coerced to 0 | **port-bug** | pre-validate operand with `=~ ^-?[0-9]+$` |
-| 412 | `$PROMPT3` default empty — `select` prompt missing (zsh: `\\033[1;34m-->>>> \\033[0m`) | **port-bug** | seed `PS3` in zshrc |
+| 412 | `$PROMPT3` default empty — `select` prompt missing (zsh: `\\033[1;34m-->>>> \\033[0m`) | **fixed** 2026-06-02 | seed `PS3` in zshrc |
 | 413 | `do` standalone-keyword silently accepted as no-op (zsh: parse error near `do`) — reserved-word strict check missing | **fixed** 2026-06-02 | `zsh -n script.zsh` pre-check |
 | 414 | `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape) — opposite of #398 printf direction | **fixed** 2026-06-04 | n/a |
-| 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **port-bug** | manual save/restore via `${(@kv)config}` |
+| 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **fixed** 2026-06-02 | manual save/restore via `${(@kv)config}` |
 | 416 | `unset PATH` ignored — command lookup still resolves (security bypass for sandboxing patterns) | **fixed** 2026-06-04 | try `PATH=` empty assignment (needs verify) |
 | 417 | `unset RANDOM` ignored — special-param regenerator stays active (zsh: returns empty after unset) | **fixed** 2026-06-04 | n/a |
 | 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **fixed** 2026-06-04 | n/a |
@@ -47456,11 +47456,11 @@ no longer reports the internal trap-machinery scalar.
 | 448 | `print -s "text"` doesn't add to history — `fc -l` shows nothing (zsh: line appears) | **fixed** 2026-06-02 | manual history-file append |
 | 449 | `[[ "x" == pat\\* ]]` backslash-escape in pattern not honored — `\\*` treated as glob wildcard | **fixed** 2026-06-02 | quoted-string pattern form `"pat*"` |
 | 450 | **CRITICAL** subshell `trap` leaks to parent — outer trap replaced after `(...)` exits | **port-bug** | explicit `eval "$(trap)"` save/restore around subshell |
-| 451 | **CRITICAL** function definition/`unfunction` in subshell LEAKS to parent — parallel to #450 trap leak | **port-bug** | save with `declare -f`, restore via `eval` |
-| 452 | alias definition/`unalias` in subshell LEAKS to parent — same family as #451 | **port-bug** | save alias dump, restore around subshell |
-| 453 | ZLE widget registration (`zle -N`/`zle -D`) in subshell LEAKS to parent — third member of subshell-scope-leak family | **port-bug** | fork explicit zshrs child for widget isolation |
-| 454 | keymap creation/deletion (`bindkey -N`/`-D`) in subshell LEAKS to parent — extends #453 to keymap table | **port-bug** | fork explicit child |
-| 455 | function definitions inside `$(...)` cmd-substitution LEAK to parent — extends #451 to cmdsub context | **port-bug** | manual save/restore via `declare -f` |
+| 451 | **CRITICAL** function definition/`unfunction` in subshell LEAKS to parent — parallel to #450 trap leak | **fixed** 2026-06-02 | save with `declare -f`, restore via `eval` |
+| 452 | alias definition/`unalias` in subshell LEAKS to parent — same family as #451 | **fixed** 2026-06-02 | save alias dump, restore around subshell |
+| 453 | ZLE widget registration (`zle -N`/`zle -D`) in subshell LEAKS to parent — third member of subshell-scope-leak family | **fixed** 2026-06-02 | fork explicit zshrs child for widget isolation |
+| 454 | keymap creation/deletion (`bindkey -N`/`-D`) in subshell LEAKS to parent — extends #453 to keymap table | **fixed** 2026-06-02 | fork explicit child |
+| 455 | function definitions inside `$(...)` cmd-substitution LEAK to parent — extends #451 to cmdsub context | **fixed** 2026-06-02 | manual save/restore via `declare -f` |
 | 456 | `[[ "(x)" == "(x)" ]]` doesn't match — quoted parens in pattern not treated as literal (same family as #13/#449) | **fixed** 2026-06-04 | n/a |
 | 457 | nested `${(j:|:)${(s/:/)a}}` paramexp returns only first split element instead of joined whole | **fixed** 2026-06-04 | nested (j)/(F) outer-flag-on-inner-split now joins all elements |
 | 458 | `[[ "$a" == $p ]]` treats `$p` as glob by default — zsh requires `${~p}` or `GLOB_SUBST` opt-in (security-relevant inverse) | **fixed** 2026-06-04 | n/a |
