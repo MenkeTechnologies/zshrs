@@ -611,10 +611,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(0); // c:6160
         }
         let src = args.join(" "); // c:6166
+        // c:Src/builtin.c:6164-6165 — `if (!ineval) scriptname =
+        // "(eval)";`. Diagnostics emitted while the eval body runs
+        // (command-not-found, parse errors, etc.) use scriptname as
+        // the source-context prefix. Without setting it here the
+        // BUILTIN_EVAL fast-path leaked the outer "zsh" prefix
+        // through, breaking the `(eval):N:` convention zsh uses
+        // for in-eval errors. Bug #420.
+        let oscriptname = crate::ported::utils::scriptname_get();
+        crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
         let status = with_executor(|exec| {
             // c:6175 execode
             exec.execute_script(&src).unwrap_or(1)
         });
+        crate::ported::utils::set_scriptname(oscriptname);
         Value::Status(status)
     });
 
