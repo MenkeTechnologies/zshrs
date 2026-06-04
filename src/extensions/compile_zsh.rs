@@ -5853,7 +5853,15 @@ impl ZshCompiler {
         // string" diagnostic. Route through MathEval (which uses
         // mathevall + zerr) whenever the compile-time pre-check
         // reports an error. Bug #533.
-        let pre_check = crate::ported::math::mathevali(inner_arith);
+        // c:Src/math.c — pre-check runs the math parser only for syntax
+        // validation; it must NOT mutate paramtab. mathevali_noeval
+        // routes through the math eval pipeline with noeval=1, so
+        // setmathvar's c:1002-1003 early-bail fires before any
+        // paramtab write. Without this, `(( b = a ))` ran the
+        // assignment at COMPILE TIME with a=undefined, creating b
+        // as PM_INTEGER(0); the runtime arith then saw b already
+        // PM_INTEGER and truncated Float(1.5) → 1. Bug #617.
+        let pre_check = crate::ported::math::mathevali_noeval(inner_arith);
         if pre_check.is_err() {
             // Clear errflag set by the pre-check zerr (we re-fire
             // it at runtime via BUILTIN_ARITH_EVAL so the user

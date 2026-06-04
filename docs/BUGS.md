@@ -44466,6 +44466,59 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #617 — `(( b = a ))` with `a=1.5` creates `b` as PM_INTEGER 1 instead of PM_FFLOAT 1.5 — compile-time pre-check mutates paramtab
+
+**Status:** `fixed-partial` 2026-06-04 — single-var assign (`b = a`)
+now correctly creates `b` as PM_FFLOAT; expressions with operators
+(`b = a * 2`) still truncate (separate arith_compiler type-promotion
+gap).
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=1.5; (( b = a )); typeset -p b'
+typeset -F b=1.5000000000
+
+# Before fix:
+$ zshrs --zsh -c 'a=1.5; (( b = a )); typeset -p b'
+typeset -i b=1                  # truncated to integer 1!
+
+# After fix:
+$ zshrs --zsh -c 'a=1.5; (( b = a )); typeset -p b'
+typeset -F b=1.5000000000
+
+# Still broken (separate issue):
+$ zshrs --zsh -c 'a=1.5; (( b = a * 2 )); typeset -p b'
+typeset -i b=3                  # should be `typeset -F b=3.0…`
+```
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_wc_arith`
+ran `mathevali(inner_arith)` AT COMPILE TIME as a syntax pre-check
+(Bug #533). For an assignment like `b = a`, this executed the
+assignment with `a=undefined` (compile-time empty), creating `b`
+as PM_INTEGER(0) in paramtab.
+
+At runtime when SET_VAR ran with Float(1.5), `assignnparam` took
+the REASSIGN path (b already exists as PM_INTEGER) and the value
+got truncated to integer 1 instead of converting the param to
+PM_FFLOAT.
+
+**Fix** — added `src/ported/math.rs::mathevali_noeval` (Rust-only
+helper, allowlisted) that replicates `matheval`'s setup but bumps
+`m_noeval=1` AFTER `new()` resets it to 0. With noeval set,
+`setmathvar`'s c:1002-1003 `if (noeval) return v;` early-bail
+prevents the paramtab write.
+
+`compile_zsh.rs` now calls `mathevali_noeval` for the pre-check —
+syntax errors still surface (parser walks the expression), but
+no paramtab side effects.
+
+**Remaining gap** — `(( b = a * 2 ))` and other operator
+expressions still truncate. arith_compiler's `Op::Mul` / `Op::Add`
+etc. type-promotion needs to consult both operands' types and
+produce Float when either is Float. Tracked separately.
+
+---
+
 ## #616 — `foo() { break; echo after; }; foo` continues past break — used `zwarnnam` instead of `zerrnam`
 
 **Status:** `fixed` 2026-06-04 — switched `bin_break` BIN_CONTINUE
@@ -47245,6 +47298,7 @@ no longer reports the internal trap-machinery scalar.
 | 614 | `setopt KSH_ARRAYS; echo $\{(@)a[1,2]\}` returns `b c` not `c d` — `(@)` splat path not 0-based | **fixed** 2026-06-04 | KSH_ARRAYS branch added to BOTH paramsubst splat-range paths (auto-splat + c:3950 splat); three slice-fetch sites now consistent |
 | 615 | `$(< file 2>/dev/null)` treats `file 2>/dev/null` as the filename — `$(<file)` shortcut over-applied | **fixed** 2026-06-04 | gate shortcut on single-word filename (no ws/redirects/quotes); fall through to full parse otherwise |
 | 616 | `foo() { break; echo after; }; foo` continues past break — used `zwarnnam` not `zerrnam` | **fixed** 2026-06-04 | bin_break BIN_CONTINUE/BIN_BREAK "not in loop" arms now call zerrnam (sets errflag → function aborts) per Src/builtin.c:5828/:5834 |
+| 617 | `(( b = a ))` with `a=1.5` creates `b` as PM_INTEGER 1 instead of PM_FFLOAT 1.5 — compile-time pre-check mutates paramtab | **fixed-partial** 2026-06-04 | added mathevali_noeval (Rust-only, allowlisted) routing through matheval with noeval=1 so setmathvar's c:1002-1003 noeval-bail prevents paramtab mutation; operator forms still truncate (separate gap) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to

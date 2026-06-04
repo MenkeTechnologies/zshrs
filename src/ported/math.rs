@@ -3255,6 +3255,37 @@ pub fn mathevali(s: &str) -> Result<i64, String> {
         if (n.type_ & MN_FLOAT) != 0 { n.d as i64 } else { n.l }) // c:1508
 }
 
+/// Variant of `mathevali` that runs in NOEVAL mode — parses and
+/// type-checks but does NOT execute side effects (assignments to
+/// paramtab via setmathvar's c:1002-1003 noeval gate). Used by the
+/// compile-time pre-check at compile_zsh.rs to validate `(( expr ))`
+/// without polluting the param table. Bug #617.
+pub fn mathevali_noeval(s: &str) -> Result<i64, String> {
+    // new() inside matheval resets noeval to 0; we work around that
+    // by intercepting at matheval's entry. Run matheval, but bump
+    // noeval AFTER new() has reset it — by hooking via the mathevall
+    // path with noeval pre-set wouldn't work because new() also resets.
+    //
+    // Solution: replicate matheval's setup but set noeval manually
+    // before mathevall. mathevall itself respects noeval inside the
+    // op() dispatch — setmathvar checks at c:1002.
+    let xmtok = M_MTOK.with(|c| c.get());
+    let s_skip = if let Some(rest) = s.strip_prefix(Nularg) {
+        rest
+    } else {
+        s
+    };
+    if s_skip.is_empty() {
+        return Ok(0);
+    }
+    new(s_skip);
+    m_noeval_set(1); // bump AFTER new() reset
+    let result = mathevall();
+    m_noeval_set(0);
+    M_MTOK.with(|c| c.set(xmtok));
+    result.map(|n| if (n.type_ & MN_FLOAT) != 0 { n.d as i64 } else { n.l })
+}
+
 /// Port of `zlong mathevalarg(char *s, char **ss)` from `Src/math.c:1514-1539`.
 ///
 /// C body (c:1517-1538):
