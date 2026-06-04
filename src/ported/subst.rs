@@ -10077,6 +10077,48 @@ pub fn paramsubst(
                 .unwrap_or_default() // c:1625
         }; // c:1625
 
+        // c:Src/subst.c:1820 — bare `$NAME:MOD` and `$NAME[SUB]:MOD`
+        // shorthand for `${NAME:MOD}`. zsh routes the modifier
+        // through the same `modify()` dispatch as the braced form;
+        // zshrs's bare-form arm ignored `:MOD` entirely so
+        // `$a:u` printed `hi:u` instead of `HI`. Walk `:MOD` (and
+        // `:MOD:MOD2…` chains) here and feed through `modify`.
+        // Bug #579.
+        //
+        // Limited to single-letter modifiers (h/t/r/e/l/u/q/Q/a/A/P)
+        // and optional `:hN`/`:tN` digit-suffix; `:s/x/y/` and
+        // `:&` substitution forms are deferred to the braced form
+        // because their delimiter parsing needs body-walking that
+        // doesn't compose cleanly with the bare expansion's
+        // pos-advance ownership.
+        let mut value = value;
+        if chars.get(pos).copied() == Some(':') {
+            let mut mod_buf = String::new();
+            let mut probe = pos;
+            while probe < chars.len() && chars[probe] == ':' {
+                let after = chars.get(probe + 1).copied();
+                let is_simple_mod = matches!(
+                    after,
+                    Some('h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'a' | 'A' | 'P')
+                );
+                if !is_simple_mod {
+                    break;
+                }
+                mod_buf.push(':');
+                mod_buf.push(after.unwrap());
+                probe += 2;
+                // Optional digit count for :hN / :tN.
+                while probe < chars.len() && chars[probe].is_ascii_digit() {
+                    mod_buf.push(chars[probe]);
+                    probe += 1;
+                }
+            }
+            if !mod_buf.is_empty() {
+                value = modify(&value, &mod_buf);
+                pos = probe;
+            }
+        }
+
         // Handle word splitting
         if pf_flags & PREFORK_SHWORDSPLIT != 0 && !qt {
             // c:1625

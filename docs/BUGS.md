@@ -44464,6 +44464,77 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #579 — bare `$NAME:MOD` modifier ignored — printed literally as `:MOD` suffix
+
+**Status:** `fixed` 2026-06-04 — two-point fix: compile_zsh
+`find_expansion_end` now walks `:MOD` chains as part of the
+`$NAME` expansion, and paramsubst's bare-form arm consumes the
+modifier and routes through `modify()`.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=hi; echo $a:u'
+HI
+
+$ ./target/debug/zshrs --zsh -fc 'a=hi; echo $a:u'   # before
+hi:u
+```
+
+**Root cause** — two gaps:
+
+1. **`src/extensions/compile_zsh.rs::find_expansion_end`**
+   stopped after `$NAME` (and optional `[subscript]`) — the
+   `:u` got emitted as a separate literal segment, never
+   reaching paramsubst.
+2. **`src/ported/subst.rs::paramsubst` bare-form arm** (the
+   `$NAME` path at subst.rs:9806+) didn't probe for trailing
+   `:MOD` modifiers either, so even when the segment was
+   handed to paramsubst whole, the modifier walked through
+   the post-getsparam path untouched.
+
+C `Src/subst.c:1820` routes both brace-form `${NAME:MOD}` and
+bare-form `$NAME:MOD` through the same `modify()` dispatch.
+
+**Fix** — two surgical changes:
+
+1. `compile_zsh.rs::find_expansion_end` bare-name arm: after
+   the name + optional subscript walk, loop `while j+1 <
+   chars.len() && chars[j] == ':' && letter is h/t/r/e/l/u/q/Q/a/A/P`
+   and pull the modifier chain (plus optional digit-count for
+   `:hN`/`:tN`) into the expansion span.
+2. `subst.rs::paramsubst` bare-form arm at line 10080: after
+   value computation, walk `:MOD` chains using the same
+   letter+digit rule and feed through `modify(&value,
+   &mod_buf)`. Limited to simple letter modifiers; `:s/x/y/`
+   and `:&` substitution forms deferred to the braced
+   form because their delimiter parsing needs body-walking
+   that doesn't compose with the bare expansion's pos-advance
+   ownership.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'a=hi; echo $a:u'                       # case
+HI
+$ ./target/debug/zshrs -fc 'a=/usr/bin/zsh; echo $a:h'             # head
+/usr/bin
+$ ./target/debug/zshrs -fc 'a=/foo/bar; echo $a:t'                 # tail
+bar
+$ ./target/debug/zshrs -fc 'a=foo.txt; echo $a:r'                  # root
+foo
+$ ./target/debug/zshrs -fc 'a=hello; echo $a:u:l'                  # chain
+hello
+$ ./target/debug/zshrs -fc 'a=hi; b=there; echo $a:$b'             # no false positive
+hi:there
+$ ./target/debug/zshrs -fc 'a=hi; echo "$a:u"'                     # DQ still works
+HI
+$ ./target/debug/zshrs -fc 'setopt EXTENDED_GLOB; a=hello; echo ${a/(#m)l/[$MATCH:u]}'
+he[L]lo
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #578 — `a=(x y z); echo ${a%x*}` leaks Nularg `¡` then leading empty — operator-result splat keeps zsh-deleted empties
 
 **Status:** `fixed` 2026-06-04 — auto_splat block now gates the
@@ -45289,7 +45360,7 @@ no longer reports the internal trap-machinery scalar.
 | 457 | nested `${(j:|:)${(s/:/)a}}` paramexp returns only first split element instead of joined whole | **port-bug** | use intermediate array variable |
 | 458 | `[[ "$a" == $p ]]` treats `$p` as glob by default — zsh requires `${~p}` or `GLOB_SUBST` opt-in (security-relevant inverse) | **fixed** 2026-06-04 | n/a |
 | 459 | **CRITICAL** `source script.zsh ARGS` ignores positional args — sourced script sees `$#=0` | **fixed** 2026-06-04 | n/a |
-| 460 | `typeset -aix arr=(...)` flag conflict silently accepted, `-i` dropped (zsh: "inconsistent type") | **port-bug** | manually validate flag combos |
+| 460 | `typeset -aix arr=(...)` flag conflict silently accepted, `-i` dropped (zsh: "inconsistent type") | **fixed** 2026-06-04 | `typeset -aix arr=(1 2 3)` rejects with `inconsistent type for assignment` matching zsh |
 | 461 | `trap` no-args output omits `TRAPNAME()` function-form handlers (zsh shows them) — extends #381 listing side | **port-bug** | explicit `${+functions[TRAP$sig]}` probe loop |
 | 462 | `disown` in subshell emits "no current job" diagnostic (zsh: silent no-op when subshell's job-table is empty) | **port-bug** | pass explicit pid + `2>/dev/null` |
 | 463 | `set` no-args shows special vars (`!`/`#`/`$`/`-`) as empty strings — special-param getters not invoked in dump | **fixed** 2026-06-04 | n/a |
@@ -45408,6 +45479,7 @@ no longer reports the internal trap-machinery scalar.
 | 576 | `${(j:X:)arr:MOD}` modifier ignored or scalar-applied vs zsh's qt-conditional per-element | **fixed** 2026-06-04 | qt-split: scalar mod in qt, per-element + sepjoin unquoted |
 | 577 | bare `$#-`/`$#?` return 0 — tokenized single-char specials not handled in brace-free `$#X` rewrite | **fixed** 2026-06-04 | token-to-ascii map before recursing into `${#X}` |
 | 578 | `${a%x*}` etc. leak `¡` Nularg + leading empty in unquoted operator splat | **fixed** 2026-06-04 | auto_splat gates Nularg on qt and drops empty nodes when !qt |
+| 579 | bare `$NAME:MOD` modifier ignored (printed `:u` literally) | **fixed** 2026-06-04 | compile_zsh extends expansion span; paramsubst bare-arm runs modify() |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
