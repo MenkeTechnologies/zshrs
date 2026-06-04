@@ -44645,6 +44645,69 @@ Test baseline 964/88 preserved.
 
 ---
 
+## #591 — `${(qq)*[N]:-foo}` returns `''` instead of `'foo'` — `:-` default doesn't survive (qq) on positional-special
+
+**Status:** `fixed` 2026-06-04 — `:-` seed condition extended to
+also fire when var_name is positional-special (`*`/`@`/`argv`),
+so the downstream (q)/(qq)/(qqq)/(qqqq) flag picks up the
+default instead of re-fetching empty PPARAMS.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${(qq)*[1]:-foo}]"'
+['foo']
+
+$ ./target/debug/zshrs --zsh -fc 'echo "[${(qq)*[1]:-foo}]"'   # before
+['']
+```
+
+**Root cause** — `src/ported/subst.rs::paramsubst` `:-` arm
+(line ~6110) sets `value = singsub(default)` when vunset, then
+seeds `split_parts = Some(vec![value])` ONLY when `isarr != 0`.
+For `${*[N]:-foo}` / `${@[N]:-foo}`, the isarr setup at line
+~5839 gates on `subscript.is_none() || is_at_subscript`. With
+a numeric subscript (`[1]`), neither holds, so isarr stays 0,
+the seed doesn't fire, and downstream (qq) calls
+`arrays_get("*")` which returns empty PPARAMS — overwriting
+`value` back to empty before quote_one runs.
+
+C `Src/subst.c:3193` case '-' writes back into both `val` AND
+`aval`, covering the positional-array subscripted-read case.
+
+**Fix** (`src/ported/subst.rs::paramsubst` `:-` arm): extend the
+seed condition to also fire when `var_name` is `*`/`@`/`argv`,
+regardless of isarr. The downstream qq path then finds
+split_parts populated with the default and skips the
+arrays_get fallback.
+
+```rust
+let is_positional_special = matches!(var_name.as_str(), "*" | "@" | "argv");
+if !value.is_empty()
+    && split_parts.is_none()
+    && (isarr != 0 || is_positional_special)
+{
+    split_parts = Some(vec![value.clone()]);
+}
+```
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'echo "[${(qq)*[1]:-foo}]"'             # *[1] empty
+['foo']
+$ ./target/debug/zshrs -fc 'echo "[${(qq)@[1]:-foo}]"'             # @[1] empty
+['foo']
+$ ./target/debug/zshrs -fc 'set -- a; echo "[${(qq)*[1]:-foo}]"'   # *[1] set
+['a']
+$ ./target/debug/zshrs -fc 'echo "${1:-foo}"'                       # $1 no qq (regression)
+foo
+$ ./target/debug/zshrs -fc 'a=; echo "${(qq)a:-foo}"'              # regular var (regression)
+'foo'
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #590 — `${a/(#b)(l)*/--$match[1]--}` single-replace empty $match[] — only `//` populated backrefs
 
 **Status:** `fixed` 2026-06-04 — single-replace `${var/pat/repl}`
@@ -46083,6 +46146,7 @@ no longer reports the internal trap-machinery scalar.
 | 588 | `"${*}"` (braced) ignores IFS — bare `$*` works | **fixed** 2026-06-04 | compile_zsh fast path recognizes braced `${*}`/`${@}` equivalent to bare forms |
 | 589 | `a=hello; a[2]=X` produces ` X` instead of `hXllo` — scalar subscript-assign treated as array-store | **fixed** 2026-06-04 | assignsparam + SET_SUBSCRIPT_RANGE detect PM_SCALAR and route through char-splice |
 | 590 | `${a/(#b)(l)*/--$match[1]--}` single-replace leaves $match[] empty — only `//` populated backrefs | **fixed** 2026-06-04 | replace_one routes through glob_match_static (pattryrefs) instead of bare pattry |
+| 591 | `${(qq)*[N]:-foo}` returns `''` instead of `'foo'` — :- default doesn't survive (qq) on positional-special | **fixed** 2026-06-04 | :- seed split_parts when var_name is *,@,argv (positional-special) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to

@@ -6120,7 +6120,21 @@ pub fn paramsubst(
                     // see the substituted shape. Skip the seed when
                     // value is empty so the Nularg sentinel `¡`
                     // doesn't leak out of `${a:-}` on empty arrays.
-                    if isarr != 0 && split_parts.is_none() && !value.is_empty() {
+                    //
+                    // c:Src/subst.c:3193 — the val/aval write also
+                    // covers subscripted reads on positional-arrays
+                    // (`${*[N]:-x}` / `${@[N]:-x}` with no positionals).
+                    // Downstream (q)/(qq)/(qqq)/(qqqq) flag fetches
+                    // `arrays_get(var_name)` for `*`/`@` and returns
+                    // the empty PPARAMS, overwriting `value`. Bug #591:
+                    // seed split_parts when the var is positional-
+                    // special so the qq path picks up the default.
+                    let is_positional_special =
+                        matches!(var_name.as_str(), "*" | "@" | "argv");
+                    if !value.is_empty()
+                        && split_parts.is_none()
+                        && (isarr != 0 || is_positional_special)
+                    {
                         split_parts = Some(vec![value.clone()]);
                     }
                 }
