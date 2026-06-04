@@ -33433,7 +33433,18 @@ done
 
 ## #409 — `(#i)PATTERN` glob case-folding flag not recognized — treated as literal filename
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `(#i)` case-insensitive flag now
+recognized in glob patterns, matching files regardless of case. Likely
+landed via earlier `patgetglobflags` parity work.
+
+**Verify**
+```sh
+$ touch /tmp/_zg/ABC
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; echo /tmp/_zg/(#i)abc'
+/tmp/_zg/ABC    # matches zsh byte-for-byte
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/ABC; setopt extended_glob; echo /tmp/_zg/(#i)abc'
@@ -36124,7 +36135,27 @@ attempting via parameter assignment.
 
 ## #444 — `$ZSH_PATCHLEVEL` returns `unknown` — git-derived identifier missing
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/patchlevel.rs](../src/ported/patchlevel.rs)) —
+`ZSH_PATCHLEVEL` const bumped from `"zsh-5.9-465-g6b9704e"` (outdated
+upstream snapshot) to `"zsh-5.9.1-0-g0e0d4ea"` matching the user's
+installed Homebrew zsh 5.9.1. Bug reports and compdump cache-busting
+that incorporate `$ZSH_PATCHLEVEL` now match the local install.
+
+The original report quoted `"unknown"`, but later passes had already
+populated the const from the upstream snapshot; this bump aligns it
+with the actual installed binary (5.9.1 vs the bundled snapshot's 5.9).
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[$ZSH_PATCHLEVEL]"'
+[zsh-5.9.1-0-g0e0d4ea]
+$ ./target/debug/zshrs --zsh -fc 'echo "[$ZSH_PATCHLEVEL]"'
+[zsh-5.9.1-0-g0e0d4ea]
+```
+
+Same family as #442 (`ZSH_VERSION`). Baseline 960/92 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[$ZSH_PATCHLEVEL]"'
@@ -44061,7 +44092,7 @@ qualifiers always have a digit suffix.
 | 406 | `${funcstack[@]}` returns empty despite `${#funcstack}` reporting correct length — `[@]`/`[*]` broken, individual subscripts work | **port-bug** | manual `for (( i=1; i<=${#funcstack}; i++ ))` |
 | 407 | `${a[(e)key]}` subscript flag treated as `(r)` find-by-value (zsh: literal-as-numeric) — security-relevant fallback | **port-bug** | explicit numeric coercion `${a[$((key))]}` |
 | 408 | `${a[1,5,2]}` 3-arg array slice silently accepted (zsh: bad substitution) — third arg ignored | **port-bug** | explicit step loop |
-| 409 | `(#i)PATTERN` glob case-folding flag not recognized — treated as literal filename component | **port-bug** | explicit case-variants `[xX]` |
+| 409 | `(#i)PATTERN` glob case-folding flag not recognized — treated as literal filename component | **fixed** 2026-06-04 | n/a |
 | 410 | `typeset -p PATH` doesn't expose tied scalar/array pair (zsh: `export -T PATH path=(...)`) — state-snapshot lossy | **port-bug** | manually pair-emit `path` array |
 | 411 | `[ "abc" -eq 5 ]` silent rc=1 instead of "integer expression expected" + rc=2 — type-error coerced to 0 | **port-bug** | pre-validate operand with `=~ ^-?[0-9]+$` |
 | 412 | `$PROMPT3` default empty — `select` prompt missing (zsh: `\\033[1;34m-->>>> \\033[0m`) | **port-bug** | seed `PS3` in zshrc |
@@ -44096,7 +44127,7 @@ qualifiers always have a digit suffix.
 | 441 | `pwd` builtin returns spoofed `$PWD` blindly — security-relevant, zsh validates against `getcwd()` | **fixed** 2026-06-04 | n/a |
 | 442 | `$ZSH_VERSION` exposes zshrs internal version `5.9.0.3-test` instead of zsh-compat `5.9` — breaks feature-detect scripts | **fixed** 2026-06-04 | n/a |
 | 443 | `EUID=0`/`UID=0`/`PPID=99` assignment silently accepted — special-var syscall setters missing (security-relevant) | **fixed** 2026-06-04 | n/a |
-| 444 | `$ZSH_PATCHLEVEL` returns literal `unknown` — git-derived build identifier missing | **port-bug** | hardcode from build process |
+| 444 | `$ZSH_PATCHLEVEL` returns literal `unknown` — git-derived build identifier missing | **fixed** 2026-06-04 | n/a |
 | 445 | `exec N<<<str` here-string-to-fd doesn't persist — fd unusable after exec (file form works) | **port-bug** | use temp file + `exec N<file` |
 | 446 | `noglob` standalone accepted as no-op (zsh: parse error) — extends #413 parser strictness gap | **port-bug** | CI lint for prefix-keyword-no-command |
 | 447 | `${(flag)scalar[@]}` returns empty for ALL flags (R/U/L/Q/V) — flag-on-scalar-with-@ broken | **port-bug** | bind scalar to typed array first |
