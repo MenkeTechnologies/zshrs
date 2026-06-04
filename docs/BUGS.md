@@ -47229,29 +47229,29 @@ no longer reports the internal trap-machinery scalar.
 | 221 | `disable -f FN` doesn't disable — `FN` still callable, `dis_functions[FN]` empty | **fixed** 2026-06-02 | `unfunction FN` destructive |
 | 222 | `zmodload -a` lists 0 auto-loaded modules (zsh: 27 builtin→module bindings) | **port-bug** | try-and-catch with `zmodload -e` |
 | 223 | `setopt warn_create_global` no warning on implicit global creation in fn | **port-bug** | manual audit / explicit `local` always |
-| 224 | `unsetopt typeset_silent` + `typeset X` doesn't print existing value | **port-bug** | explicit `echo "X=$X"` for debug |
-| 225 | `printf "%(%Y)T"` silently treats as literal (zsh: errors "invalid directive") | **port-bug** | use `zsh/datetime` `strftime` builtin |
-| 226 | `alias -s SUFFIX=cmd` doesn't populate `saliases` introspection assoc | **port-bug** | parse `alias -s` output instead |
-| 227 | `disable -a NAME` neither populates `dis_aliases` nor removes from active `aliases` table | **port-bug** | `unalias NAME` destructive |
-| 228 | `hash -d NAME=path` doesn't populate `nameddirs` introspection assoc | **port-bug** | parse `hash -d` output instead |
+| 224 | `unsetopt typeset_silent` + `typeset X` doesn't print existing value | **fixed** 2026-06-02 | explicit `echo "X=$X"` for debug |
+| 225 | `printf "%(%Y)T"` silently treats as literal (zsh: errors "invalid directive") | **fixed** 2026-06-02 | use `zsh/datetime` `strftime` builtin |
+| 226 | `alias -s SUFFIX=cmd` doesn't populate `saliases` introspection assoc | **fixed** 2026-06-02 | parse `alias -s` output instead |
+| 227 | `disable -a NAME` neither populates `dis_aliases` nor removes from active `aliases` table | **fixed** 2026-06-02 | `unalias NAME` destructive |
+| 228 | `hash -d NAME=path` doesn't populate `nameddirs` introspection assoc | **fixed** 2026-06-02 | parse `hash -d` output instead |
 | 229 | `${(j: :)${(@kv)h}}` join-on-kv drops values (only keys joined) | **fixed** 2026-06-02 | manual `for k v in "${(@kv)h}"` loop |
 | 230 | `echo "a\0b"` doesn't interpret `\0` octal NUL escape (other escapes work) | **fixed** 2026-06-02 | use `print "..."` instead |
-| 231 | `${(t)tied_var}` returns `scalar` instead of `scalar-tied`/`array-tied` — tied pair concept missing | **port-bug** | manual sync via `(@s/:/)` |
-| 232 | `TRAPEXIT()` named-function form of EXIT trap not fired (3rd broken exit-handler form) | **port-bug** | explicit `trap "..." EXIT` at top-level |
-| 233 | `typeset -H VAR=val` then `typeset -p VAR` shows value (security-relevant credential leak) | **port-bug** | filter dump output explicitly |
+| 231 | `${(t)tied_var}` returns `scalar` instead of `scalar-tied`/`array-tied` — tied pair concept missing | **fixed** 2026-06-02 | manual sync via `(@s/:/)` |
+| 232 | `TRAPEXIT()` named-function form of EXIT trap not fired (3rd broken exit-handler form) | **fixed** 2026-06-02 | explicit `trap "..." EXIT` at top-level |
+| 233 | `typeset -H VAR=val` then `typeset -p VAR` shows value (security-relevant credential leak) | **fixed** 2026-06-02 | filter dump output explicitly |
 | 234 | `typeset +U arr` doesn't clear dedup AND `+=` of dup destroys array (corrupting) | **fixed** 2026-06-02 | n/a |
-| 235 | `typeset -m "glob"` errors "not valid in this context" instead of pattern-matching | **port-bug** | loop with `${(@k)parameters[(I)pat]}` |
+| 235 | `typeset -m "glob"` errors "not valid in this context" instead of pattern-matching | **fixed** 2026-06-02 | loop with `${(@k)parameters[(I)pat]}` |
 | 236 | `${(@)arr:#}` empty-pattern filter doesn't filter empty elements (sparse-arr cleanup broken) | **fixed** 2026-06-02 | `:#(#e)` extended-glob anchor |
 | 237 | `${funcfiletrace}`/`${functrace}` format diverges — missing file path + line | **fixed** 2026-06-04 | functrace now uses fs.caller (not fs.name) matching parameter.c:648-672 |
-| 238 | `setopt promptbang` doesn't enable `!` → history-number in prompts | **port-bug** | use `%h`/`%!` percent-escape |
+| 238 | `setopt promptbang` doesn't enable `!` → history-number in prompts | **fixed** 2026-06-02 | use `%h`/`%!` percent-escape |
 | 239 | `print -P "%J"` (jobs count prompt escape) treats as literal — extends #38 family | **port-bug** | use `${#jobstates}` introspection |
-| 240 | `{ false } always { :; }` clears errflag — errexit doesn't fire after always block | **port-bug** | explicit `\|\| _err=$?` propagation |
-| 241 | `${assoc[@]}`/`${assoc[*]}` return empty — basic assoc value iteration broken | **port-bug** | `${(@v)h}` explicit value flag |
+| 240 | `{ false } always { :; }` clears errflag — errexit doesn't fire after always block | **fixed** 2026-06-02 | explicit `\|\| _err=$?` propagation |
+| 241 | `${assoc[@]}`/`${assoc[*]}` return empty — basic assoc value iteration broken | **fixed** 2026-06-02 | `${(@v)h}` explicit value flag |
 | 242 | Introspection assocs (`builtins`/`parameters`/etc.) not read-only — writes silently accepted | **port-bug** | (none — needs `PM_READONLY` at init) |
 | 243 | `${(t)TIMEFMT}` etc. return empty for autovar/special params (type intro broken) | **port-bug** | `(( ${+VAR} ))` existence check only |
 | 244 | `${(Z+c+)cmd}` word-split with c option returns whole string as 1 token (parser-aware split broken) | **fixed** 2026-06-04 | `${(Z+c+)"echo hi # comment"}` splits to 3 tokens matching zsh |
 | 245 | `(#cN,M)` extended_glob range-repetition not honored (count syntax accepted but matcher ignores) | **fixed** 2026-06-03 | n/a |
-| 246 | `setopt rc_expand_param` applied inside double quotes — silently fans out `"prefix$arr"` per-element | **port-bug** | use `${a[*]}` star to force scalar-join |
+| 246 | `setopt rc_expand_param` applied inside double quotes — silently fans out `"prefix$arr"` per-element | **fixed** 2026-06-02 | use `${a[*]}` star to force scalar-join |
 | 247 | `read line` doesn't strip leading/trailing IFS whitespace from input | **fixed** 2026-06-02 | explicit `${var## }`/`${var%% }` strip |
 | 248 | `read "?prompt" var` writes prompt to stdout when stdin isn't tty (contaminates output) | **port-bug** | conditional `print -n "p: " >&2` |
 | 249 | `${arr//pat/repl}` bare-array form applies replacement per-element (zsh: joins to scalar first) | **port-bug** | use `${${arr[*]}//pat/repl}` |
