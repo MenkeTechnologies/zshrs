@@ -862,6 +862,16 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {
     if let Ok(mut tab) = shfunctab_lock().write() {
         tab.add(shf);
     }
+    // Invalidate the executor's compiled-function cache so the next
+    // call recompiles from the new body. Without this, re-defining
+    // an existing function via `functions[name]=...` updates
+    // shfunctab but the executor keeps dispatching to the cached
+    // Eprog from the original definition (resulting in old-body
+    // behavior). Bug #323 in docs/BUGS.md.
+    let cache_name = name.to_string();
+    crate::fusevm_bridge::with_executor(|exec| {
+        exec.functions_compiled.remove(&cache_name);
+    });
     // c:315 — zsfree(val); — Rust drops on scope exit.
 }
 
