@@ -10466,6 +10466,66 @@ pub fn paramsubst(
         return (result, prefix.len() + value.len(), result_nodes); // c:1625
     } // c:1625
 
+    // c:Src/subst.c:2596-2602 — `$~` / `$~~` GLOB_SUBST flag prefix
+    // on bare-form parameter expansion. `~` consumes itself and
+    // turns GLOB_SUBST on for the following name lookup (or off,
+    // for the doubled `~~` form). When NO valid parameter name
+    // follows, the expansion produces empty output (matches zsh's
+    // "drops the `$~` literal entirely" behavior). Bug #547 in
+    // docs/BUGS.md.
+    //
+    // C reference:
+    //   } else if (c == '~' || c == Tilde) {
+    //       /* GLOB_SUBST (forced) on or off (doubled) */
+    //       if ((c = *++s) == '~' || c == Tilde) {
+    //           globsubst = 0;
+    //           s++;
+    //       } else
+    //           globsubst = 2;
+    //   }
+    if c == '~' || c == Tilde {
+        let consumed = if chars
+            .get(pos + 1)
+            .copied()
+            .map_or(false, |n| n == '~' || n == Tilde)
+        {
+            if !qt {
+                opt_state_set("globsubst", false);
+            }
+            2
+        } else {
+            if !qt {
+                opt_state_set("globsubst", true);
+            }
+            1
+        };
+        let new_pos = pos + consumed;
+        // No more body OR next char isn't a valid parameter name
+        // starter — `$~` / `$~~` with nothing usable following.
+        // Emit empty for the expansion slot and let the surrounding
+        // text in the source string remain unchanged.
+        let next_starts_name = chars
+            .get(new_pos)
+            .copied()
+            .map_or(false, |n| n == '_' || n.is_ascii_alphanumeric()
+                || matches!(n, '@' | '*' | '#' | '?' | '!' | '$' | '-' | '0'));
+        if !next_starts_name {
+            let prefix: String = chars[..start_pos].iter().collect();
+            let suffix: String = chars[new_pos..].iter().collect();
+            let result = format!("{}{}", prefix, suffix);
+            result_nodes.push(result.clone());
+            return (result, prefix.len(), result_nodes);
+        }
+        // Re-enter paramsubst at the new position by SLICING out
+        // the consumed `~` chars (so the dispatch sees `$X` at the
+        // original start_pos). Direct port of C's `s++` / `s += 2`
+        // advance after the flag arm.
+        let mut sliced = String::with_capacity(s.len() - consumed);
+        sliced.push_str(&chars[..pos].iter().collect::<String>());
+        sliced.push_str(&chars[new_pos..].iter().collect::<String>());
+        return paramsubst(&sliced, start_pos, qt, pf_flags, ret_flags);
+    }
+
     // Special parameters: $?, $$, $#, $*, $@, $0-$9
     match c {
         // c:1625
