@@ -38121,7 +38121,32 @@ RHS in `[[ ]]`.
 
 ## #474 — `$PIPESTATUS` (uppercase) added as bash-compat alias to `$pipestatus` — breaks shell-detection
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `--zsh` mode no longer
+populates the bash-compat uppercase `$PIPESTATUS` alias.
+Shell-detection idiom `[[ -v PIPESTATUS ]]` now correctly
+identifies the running shell as zsh.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'true | false | true; echo "pipestatus=[$pipestatus] PIPESTATUS=[${PIPESTATUS[@]}]"'
+pipestatus=[0 1 0] PIPESTATUS=[]
+$ ./target/debug/zshrs --zsh -c 'true | false | true; echo "pipestatus=[$pipestatus] PIPESTATUS=[${PIPESTATUS[@]}]"'
+pipestatus=[0 1 0] PIPESTATUS=[]
+
+$ /opt/homebrew/bin/zsh -fc 'true|false; [[ -v PIPESTATUS ]] && echo bash || echo zsh'
+zsh
+$ ./target/debug/zshrs --zsh -c 'true|false; [[ -v PIPESTATUS ]] && echo bash || echo zsh'
+zsh
+```
+
+Lowercase `$pipestatus` (the zsh canonical form) remains
+populated; uppercase `$PIPESTATUS` is correctly absent in
+`--zsh` mode.
+
+Doc-only flip; no code change in this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'true | false | true; echo "pipestatus=[$pipestatus] PIPESTATUS=[${PIPESTATUS[@]}]"'
@@ -38130,52 +38155,6 @@ pipestatus=[0 1 0] PIPESTATUS=[]
 $ ./target/debug/zshrs --zsh -c 'true | false | true; echo "pipestatus=[$pipestatus] PIPESTATUS=[${PIPESTATUS[@]}]"'
 pipestatus=[0 1 0] PIPESTATUS=[0 1 0]
 ```
-
-zsh exposes only **lowercase** `$pipestatus` (zsh
-convention). Uppercase `$PIPESTATUS` is bash-only —
-unset in zsh.
-
-zshrs exposes BOTH `$pipestatus` (lowercase) AND
-`$PIPESTATUS` (uppercase) — likely as a bash-compat
-addition. The uppercase form mirrors the lowercase one.
-
-**Bash-vs-zsh detection broken**:
-```sh
-# Common: detect if running in bash or zsh
-if [[ -v PIPESTATUS ]]; then
-    echo "bash (or compat)"
-else
-    echo "zsh"
-fi
-# zsh: prints "zsh"
-# zshrs: prints "bash (or compat)" — WRONG, this IS zsh
-```
-
-This may be intentional (compat helper) but is incorrect
-zsh-emulation behavior. In `--zsh` mode, the shell
-should match zsh's parameter table exactly.
-
-**Where** — `src/ported/params/pipestatus.rs::register`:
-in `--zsh` mode, expose only `pipestatus`. The
-`PIPESTATUS` alias should be conditional on running
-without `--zsh` (i.e., zshrs's native mode).
-
-**Impact** — shell-fingerprinting code paths take wrong
-branch. Most affected: cross-shell scripts that
-fall back to different behavior based on which shell
-they detect themselves running in.
-
-**Workaround** — detect zshrs more explicitly:
-```sh
-if [[ -n $ZSH_VERSION ]]; then
-    echo "zsh-like (could be zsh or zshrs)"
-elif [[ -n $BASH_VERSION ]]; then
-    echo "bash"
-fi
-```
-
-(Uses VERSION strings which are uniquely populated per
-shell.)
 
 ---
 
@@ -47381,7 +47360,7 @@ no longer reports the internal trap-machinery scalar.
 | 471 | `zmodload -u zsh/nonexistent` silently rc=0 — should error "no such module" (zsh: rc=1) | **port-bug** | manual module-list check before unload |
 | 472 | `typeset -H` (hide value) doesn't suppress value in `typeset -p` output — leaks secrets in listings | **fixed** 2026-06-04 | `local -H a=secret; typeset -p a` → `typeset a` matching zsh |
 | 473 | `[[ "ab" == a|b ]]` zshrs runs `b` as command — `\|` in pattern parsed as pipe (security-relevant) | **fixed** 2026-06-04 | par_cond emits `parse error near <tok>` per parse.c:1818 |
-| 474 | `$PIPESTATUS` (uppercase) exposed as alias to `$pipestatus` — zsh has only lowercase; breaks bash-vs-zsh detection | **port-bug** | detect via `$ZSH_VERSION`/`$BASH_VERSION` strings |
+| 474 | `$PIPESTATUS` (uppercase) exposed as alias to `$pipestatus` — zsh has only lowercase; breaks bash-vs-zsh detection | **fixed** 2026-06-04 | uppercase alias gated out of `--zsh` mode |
 | 475 | bash-only builtins (`caller`/`help`/`complete`/`compopt`/`mapfile`) shipped in `--zsh` mode — extends bash-compat-contamination family | **port-bug** | detect zshrs via `$ZSH_VERSION` pattern |
 | 476 | `case "x" in) ...; esac` empty pattern silently accepted as no-op (zsh: parse error) — extends parser-strictness family | **fixed** 2026-06-04 | n/a |
 | 477 | `${a:0:n}` substring with bare-name length accepted (zsh: "unrecognized modifier") — bash-compat permissiveness | **fixed** 2026-06-04 | alpha-LENGTH gate at substring arm matches C `check_colon_subscript` |
