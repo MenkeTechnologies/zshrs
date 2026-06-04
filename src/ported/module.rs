@@ -1113,6 +1113,48 @@ impl modulestab {
             self.modules.insert(name.to_string(), module);
         }
 
+        // c:Src/init.c:1708 init_bltinmods + Config/installmodules —
+        // canonical auto-load builtin→module bindings reported by
+        // `zmodload -a` (no args). The 27 entries match
+        // `/opt/homebrew/bin/zsh -fc 'zmodload -a'` exactly. NOT the
+        // same as the full module→builtin index above: `zsh/files`
+        // builtins (mkdir, rm, etc.) are statically linked but NOT
+        // in the auto-load registry (zsh requires explicit
+        // `zmodload zsh/files` to get them). Bug #222.
+        let autoload_pairs: &[(&str, &str)] = &[
+            ("bindkey", "zsh/zle"),
+            ("compadd", "zsh/complete"),
+            ("comparguments", "zsh/computil"),
+            ("compcall", "zsh/compctl"),
+            ("compctl", "zsh/compctl"),
+            ("compdescribe", "zsh/computil"),
+            ("compfiles", "zsh/computil"),
+            ("compgroups", "zsh/computil"),
+            ("compquote", "zsh/computil"),
+            ("compset", "zsh/complete"),
+            ("comptags", "zsh/computil"),
+            ("comptry", "zsh/computil"),
+            ("compvalues", "zsh/computil"),
+            ("echotc", "zsh/termcap"),
+            ("echoti", "zsh/terminfo"),
+            ("limit", "zsh/rlimits"),
+            ("log", "zsh/watch"),
+            ("private", "zsh/param/private"),
+            ("sched", "zsh/sched"),
+            ("ulimit", "zsh/rlimits"),
+            ("unlimit", "zsh/rlimits"),
+            ("vared", "zsh/zle"),
+            ("zformat", "zsh/zutil"),
+            ("zle", "zsh/zle"),
+            ("zparseopts", "zsh/zutil"),
+            ("zregexparse", "zsh/zutil"),
+            ("zstyle", "zsh/zutil"),
+        ];
+        for (b, m) in autoload_pairs {
+            self.autoload_builtins
+                .insert((*b).to_string(), (*m).to_string());
+        }
+
         // c:Src/init.c:1708 — `init_bltinmods` ends with
         // `load_module("zsh/main", NULL, 0)`. `zsh/main` is the
         // always-loaded master module: every zsh process has it in

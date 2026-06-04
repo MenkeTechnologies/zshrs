@@ -17590,6 +17590,40 @@ the definition later to "re-enable".
 
 ## #222 — `zmodload -a` lists no auto-loaded modules (zsh: lists ~27 builtin→module bindings)
 
+**Status:** `fixed` 2026-06-03 — `modulestab::new()` now seeds
+the canonical 27-entry auto-load builtin→module table at
+startup, matching `Src/init.c:1708 init_bltinmods` +
+`Config/installmodules`.
+
+**Root cause** — `src/ported/module.rs::register_builtin_modules`
+inserted module *names* into `self.modules` but never populated
+`self.autoload_builtins`. `bin_zmodload_auto` iterates that
+empty map for `zmodload -a` no-args → 0 lines printed.
+
+**Fix** — after the modules-registration loop, seed
+`self.autoload_builtins` with the explicit 27-pair table
+(`bindkey` → `zsh/zle`, `compadd` → `zsh/complete`, etc.).
+The pairs match upstream zsh's auto-load registry exactly.
+Note this differs from the broader module→builtin index:
+`zsh/files` (mkdir/rm/etc.) is statically linked but NOT in
+the auto-load registry — zsh requires explicit `zmodload
+zsh/files` to expose those builtins.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'zmodload -a | wc -l'
+      27
+$ ./target/debug/zshrs --zsh -fc 'zmodload -a | wc -l'
+      27
+$ diff <(/opt/homebrew/bin/zsh -fc 'zmodload -a' | sort) \
+       <(./target/debug/zshrs --zsh -fc 'zmodload -a' | sort)
+# (no diff)
+```
+
+Test baseline preserved at 959/93 (within flake range).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
