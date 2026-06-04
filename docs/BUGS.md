@@ -37977,7 +37977,46 @@ so this workaround is also unreliable.
 
 ## #472 — `typeset -H` (hide value) doesn't suppress value in `typeset -p` output
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — no longer reproduces. The
+`PM_HIDEVAL` flag is now honored at the `typeset -p`
+listing path matching `Src/builtins.c::printparamnode`. The
+value is omitted across scalar/integer/array `-H` shapes.
+Closed by prior `printparamnode` flag-walk parity work.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -rH a=hi; typeset -p a'
+typeset -r a
+$ ./target/debug/zshrs --zsh -c 'typeset -rH a=hi; typeset -p a'
+typeset -r a
+
+$ /opt/homebrew/bin/zsh -fc 'typeset -H password=secret; typeset -p password'
+typeset password
+$ ./target/debug/zshrs --zsh -c 'typeset -H password=secret; typeset -p password'
+typeset password
+
+$ /opt/homebrew/bin/zsh -fc 'typeset -iH n=42; typeset -p n'
+typeset -i n
+$ ./target/debug/zshrs --zsh -c 'typeset -iH n=42; typeset -p n'
+typeset -i n
+
+$ /opt/homebrew/bin/zsh -fc 'typeset -aH arr=(x y); typeset -p arr'
+typeset -a arr
+$ ./target/debug/zshrs --zsh -c 'typeset -aH arr=(x y); typeset -p arr'
+typeset -a arr
+
+# Value access still works in both shells:
+$ /opt/homebrew/bin/zsh -fc 'typeset -H s=hello; echo "[$s]"'
+[hello]
+$ ./target/debug/zshrs --zsh -c 'typeset -H s=hello; echo "[$s]"'
+[hello]
+```
+
+All match byte-for-byte. Doc-only flip; no code change in
+this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -rH a=hi; typeset -p a'
@@ -37986,49 +38025,6 @@ typeset -r a
 $ ./target/debug/zshrs --zsh -c 'typeset -rH a=hi; typeset -p a'
 typeset -r a=hi
 ```
-
-`typeset -H` is the **"hide value"** flag — the variable
-is set but its value is NOT shown in `typeset`/`set`
-listings. Used by zsh internally for sensitive values
-(passwords, keys) and by user scripts that want a
-variable's existence visible but value private.
-
-zsh: omits the `=value` part in `typeset -p` output.
-zshrs: shows the value anyway.
-
-The variable is still accessible via `$a` — both shells
-return `hi`. The `-H` flag affects only the listing
-output.
-
-**Where** — `src/ported/builtins/typeset.rs::print_param`:
-must check `PM_HIDEVAL` flag and emit name only (no
-`=value`) when set. C-source
-`Src/builtins.c::printparamnode` checks `PM_HIDEVAL` and
-emits `key` without value.
-
-**Impact** — sensitive-value listings expose values.
-Scripts using `-H` for "set this but don't echo it back
-in diagnostics" leak the value:
-
-```sh
-typeset -H password=$(read_secret)
-typeset -p password
-# zsh: "typeset password"
-# zshrs: "typeset -H password=plaintext-secret-leaked"
-```
-
-Combined with #410 (tied-param display broken), #386
-(readonly listing empty), #444 (patchlevel unknown),
-typeset's introspection-output has multiple flag-honoring
-gaps.
-
-**Workaround** — pipe `typeset -p` through `sed` to
-strip values for `-H` vars:
-```sh
-typeset -p | sed 's/^typeset -[^ ]*H[^ ]* \([^=]*\)=.*$/typeset \1/'
-```
-
-(Brittle; depends on `-H` appearing in the flag part.)
 
 ---
 
