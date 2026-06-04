@@ -3179,15 +3179,15 @@ pub fn paramsubst(
                     't' => {
                         wantt = true;
                     } // c:2807
-                    '!' => {
-                        // c:2385-2388
-                        if ((hkeys | hvals) & !SCANPM_NONAMEREF) != 0 {
-                            zerr("bad substitution");
-                            errflag_set_error();
-                            return (String::new(), new_pos, vec![]);
-                        }
-                        hkeys = SCANPM_NONAMEREF;
-                    }
+                    // `!` SCANPM_NONAMEREF support is gated on `typeset
+                    // -n` (nameref) which zsh 5.9.1 (the user's installed
+                    // version) does not ship. To match 5.9.1's lex-time
+                    // rejection of `${(!)var}` as `error in flags near
+                    // position N in '${...}'`, `!` falls through to the
+                    // default flag-error arm below — same outcome as
+                    // upstream zsh emits when `!` is dropped from the
+                    // flag dispatch table. Re-enable this arm only if
+                    // zshrs ports nameref support.
                     'k' => {
                         // c:2390-2393
                         if (hkeys & !SCANPM_WANTKEYS) != 0 {
@@ -3732,7 +3732,20 @@ pub fn paramsubst(
                     }
                     _ => {
                         // c:2504-2528 default: flagerr
-                        zerr("bad substitution");
+                        // c:Src/subst.c:2527 — `zerr("error in flags near
+                        // position %z in '$%s'", offset, str_copy)`. The
+                        // offset is 1-based from the `$` (c:2524 `s -
+                        // *str + 1` where *str points at the leading
+                        // `$`). zshrs's `body` here is the inside of
+                        // `${...}` (i.e. starting at `(`), so add 2 to
+                        // account for the `${` prefix that re-wraps in
+                        // the printed message. Bug #546.
+                        let pos_1based = idx + 1 + 2;
+                        zerr(&format!(
+                            "error in flags near position {} in '${{{}}}'",
+                            pos_1based,
+                            body.as_str()
+                        ));
                         errflag_set_error();
                         return (String::new(), new_pos, vec![]);
                     }
