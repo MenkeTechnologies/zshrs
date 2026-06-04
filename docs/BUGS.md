@@ -32986,6 +32986,22 @@ zsh -n script.zsh || echo "parse error in script"
 
 ## #406 — `${funcstack[@]}` returns empty despite `${#funcstack}` reporting correct length
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a() { b; }; b() { print -l -- "${funcstack[@]}"; }; a'
+b
+a
+$ ./target/debug/zshrs --zsh -fc 'a() { b; }; b() { print -l -- "${funcstack[@]}"; }; a'
+b
+a
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -33054,6 +33070,58 @@ the `${#funcstack}` length value.)
 ---
 
 ## #407 — subscript flag `(e)` treated as `(r)` — exact-key lookup falls back to find-by-value
+
+**Status:** `fixed` 2026-06-03 — `(e)`/`(E)` ALONE no
+longer claims the subscript-search dispatch; assoc gets
+an explicit `(e)KEY` exact-key map.get fallback.
+
+**Root cause** — `src/ported/subst.rs`'s array and assoc
+subscript-flag predicates accepted any combination of the
+allowed letters (incl. just `e`), so bare `(e)pat`
+landed in the search arm:
+- Array `${a[(e)one]}`: iterated values with exact compare
+  and returned the matching value — should fall through to
+  the numeric-index parse (`"one"` → 0 → empty).
+- Assoc `${h[(e)a]}`: iterated values (no `k` flag) with
+  exact compare and returned empty — should do exact-key
+  lookup (`h["a"]` → "1").
+
+C `Src/params.c:1419` treats `e` as `quote_arg`, a MODIFIER
+on `r`/`R`/`i`/`I`/`k`/`K`. Without a search letter, the
+subscript falls through to the type-specific exact path
+(numeric for arrays, key for assocs).
+
+**Fix** — two changes:
+1. Both array and assoc flag predicates now require at
+   least one search letter (`r`/`R`/`i`/`I` for arrays,
+   `r`/`R`/`k`/`K` for assocs) before claiming the
+   subscript. Bare `(e)pat` falls through.
+2. Assoc fallthrough adds an explicit `(e)KEY` arm before
+   the generic `map.get(sub)` so `${h[(e)KEY]}` does
+   exact-key lookup.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(one two); echo "[${a[(e)one]}]"'
+[]
+$ ./target/debug/zshrs --zsh -fc 'a=(one two); echo "[${a[(e)one]}]"'
+[]
+
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2); echo "[${h[(e)a]}]"'
+[1]
+$ ./target/debug/zshrs --zsh -fc 'typeset -A h=(a 1 b 2); echo "[${h[(e)a]}]"'
+[1]
+
+# Regression: (r) and (re) still work
+$ ./target/debug/zshrs --zsh -fc 'a=(one two); echo "[${a[(r)one]}]"'
+[one]
+$ ./target/debug/zshrs --zsh -fc 'a=(one two); echo "[${a[(re)one]}]"'
+[one]
+```
+
+Test baseline 961/91 → 962/90.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
