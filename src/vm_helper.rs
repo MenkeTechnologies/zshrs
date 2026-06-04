@@ -2880,22 +2880,37 @@ pub fn init_partab_params() {
         Ok(t) => t,
         Err(_) => return,
     };
-    // Strip PM_READONLY when seeding stubs: read-only Params block
-    // INTERNAL writes from the runtime's own function-call /
-    // funcstack-push paths that go through setaparam. Real reads
-    // route via PARTAB getfn callbacks, not these stub Params, so
-    // the readonly flag's purpose (block userspace assignment) is
-    // moot for the stub anyway.
-    //
     // c:Src/zsh.h SPECIALPMDEF macro: `flags | PM_SPECIAL | PM_HIDE |
     // PM_HIDEVAL`. All magic-assoc/array params get HIDE+HIDEVAL added
     // by the macro itself.
+    //
+    // PM_READONLY is preserved on the stub for params that legitimately
+    // need user-write protection (reswords, dis_reswords, patchars,
+    // dis_patchars — all compute via getfn and have no legitimate
+    // internal-write path). Other specials that DO have internal-write
+    // paths (e.g. funcstack from function-call tracking) get the bit
+    // stripped so the runtime can mutate their u_arr. Bug #374.
+    let user_protected: &[&str] = &[
+        "reswords",
+        "dis_reswords",
+        "patchars",
+        "dis_patchars",
+        "historywords",
+        "errnos",
+        "keymaps",
+    ];
     let mk_pm = |name: &str, flags: i32| -> Param {
+        let keep_readonly = user_protected.contains(&name);
+        let pre_readonly_mask = if keep_readonly {
+            !0i32
+        } else {
+            !(PM_READONLY as i32)
+        };
         Box::new(param {
             node: hashnode {
                 next: None,
                 nam: name.to_string(),
-                flags: (flags & !(PM_READONLY as i32))
+                flags: (flags & pre_readonly_mask)
                     | PM_SPECIAL as i32
                     | PM_HIDE as i32
                     | PM_HIDEVAL as i32,
