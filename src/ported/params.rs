@@ -3846,11 +3846,24 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                         type_: MN_FLOAT,
                     }
                 } else {
-                    matheval(s).unwrap_or(mnumber {
-                        l: 0,
-                        d: 0.0,
-                        type_: MN_FLOAT,
-                    })
+                    // c:Src/params.c — float assignment runs the RHS
+                    // through matheval; on parse failure, zsh emits the
+                    // engine's diagnostic ("bad math expression: operator
+                    // expected at `abc'") via zerr. Mirror the integer
+                    // arm above which already calls zerr on Err. Bug
+                    // #506 — zshrs previously swallowed the error and
+                    // stored 0.0 silently for `float f="3.14abc"`.
+                    match matheval(s) {
+                        Ok(v) => v,
+                        Err(msg) => {
+                            zerr(&msg);
+                            mnumber {
+                                l: 0,
+                                d: 0.0,
+                                type_: MN_FLOAT,
+                            }
+                        }
+                    }
                 };
                 let d = if (mn.type_ & MN_FLOAT) != 0 {
                     mn.d

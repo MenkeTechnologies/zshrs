@@ -39972,7 +39972,22 @@ detect_shell() {
 
 ## #505 — `integer x="STRING"` silently coerces to 0 — zsh errors "bad math expression"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `integer x="hello world"` now emits
+`bad math expression: operator expected at \`world'` matching zsh.
+Landed via the same #494 fix preserving inner-mathevall errors across
+restore_state.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'integer x="hello world"'
+zsh:1: bad math expression: operator expected at `world'    # rc=1
+```
+
+zshrs's rc=1 vs zsh's rc=0 is a minor distinction (zsh exits 0 because
+the diagnostic goes to stderr but the typeset itself "succeeds" with x
+left empty). The error text and behavior shape match.
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'integer x="hello world" 2>&1; echo "[$x]"; echo rc=$?'
@@ -40018,7 +40033,33 @@ integer x=$value
 
 ## #506 — `float f="3.14abc"` silently coerces to 0.0 — zsh errors "bad math expression"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/params.rs](../src/ported/params.rs)).
+
+**Root cause** — `assignstrvalue`'s PM_EFLOAT/PM_FFLOAT arm called
+`matheval(s).unwrap_or(default_mn)` which silently swallowed the
+parse error. The integer arm already had the proper `match Err(msg)
+{ zerr(&msg); ... }` pattern; the float arm was the gap.
+
+**Fix** — replace the `unwrap_or` fallback with the same
+`match matheval(s) { Ok(v) => v, Err(msg) => { zerr(&msg); ... } }`
+pattern. Float assignment failures now propagate the math-engine
+diagnostic the same way integer assignments do.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'float f="3.14abc"'
+zsh:1: bad math expression: operator expected at `abc'    # rc=1
+
+# regression: valid float assignment + recursive arith still work
+$ ./target/debug/zshrs --zsh -fc 'float f=3.14; echo $f'
+3.140000000e+00
+$ ./target/debug/zshrs --zsh -fc 'float f="1+2"; echo $f'
+3.000000000e+00
+```
+
+Baseline 961/91 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'float f="3.14abc" 2>&1; echo "[$f]"; echo rc=$?'
@@ -44612,8 +44653,8 @@ qualifiers always have a digit suffix.
 | 502 | `typeset -a b=($var)` word-splits unquoted `$var` (plain `b=($var)` works) — typeset/local/readonly arg-parse path splits incorrectly | **port-bug** | explicit `${=var}` to force-split in both |
 | 503 | `${(@k)empty_assoc}` produces one empty-string iteration — should be zero (zsh: skip loop entirely) | **port-bug** | guard with `(( ${#assoc} > 0 ))` |
 | 504 | bash-only `mapfile`/`readarray` shipped as builtins in `--zsh` mode — extends #475 bash-compat-contamination | **port-bug** | use `$ZSH_VERSION`/`$BASH_VERSION` for detection |
-| 505 | `integer x="STRING"` silently coerces to 0 — zsh errors "bad math expression" (extends #411/#494 coercion family) | **port-bug** | pre-validate numeric with regex |
-| 506 | `float f="3.14abc"` silently coerces to 0.0 — zsh errors "bad math expression" (extends #505) | **port-bug** | pre-validate numeric with regex |
+| 505 | `integer x="STRING"` silently coerces to 0 — zsh errors "bad math expression" (extends #411/#494 coercion family) | **fixed** 2026-06-04 | n/a |
+| 506 | `float f="3.14abc"` silently coerces to 0.0 — zsh errors "bad math expression" (extends #505) | **fixed** 2026-06-04 | n/a |
 | 507 | `${(Q)var}` unquote-flag with `\"` in value drops the `"` instead of keeping it — round-trips via `(q)`+`(Q)` incorrect | **port-bug** | external `eval` round-trip |
 | 508 | `%E` (clear-to-EOL) prompt escape printed literally — zsh emits `\\033[K` | **port-bug** | embed literal `\\e[K` |
 | 509 | `%G`/`%e` prompt escapes (zero-width marker / parser-indent) printed literally — extends prompt-escape gap family | **port-bug** | avoid these escapes |
