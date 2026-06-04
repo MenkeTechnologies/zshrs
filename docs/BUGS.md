@@ -44464,12 +44464,12 @@ qualifiers always have a digit suffix.
 
 ---
 
-## #576 — `${(j:X:)arr:u}` (and `:l`) — modifier silently ignored, output unmodified after join
+## #576 — `${(j:X:)arr:MOD}` — case modifier ignored; path modifier scalar-applied instead of per-element
 
 **Status:** `fixed` 2026-06-04 — `(j:X:)` modifier-dispatch arm
-now seeds `split_parts` with the post-modifier scalar so the
-later sepjoin block at `subst.rs:8629` doesn't clobber the
-modified value with a re-join of the original array.
+now splits by qt context: quoted applies MOD to the joined
+scalar (#91 path); unquoted applies MOD per-element and lets the
+late sepjoin block join the modified array.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(abc DEF); echo ${(j:.:)a:u}'
@@ -44479,46 +44479,76 @@ $ ./target/debug/zshrs --zsh -fc 'a=(abc DEF); echo ${(j:.:)a:u}'   # before
 abc.DEF
 ```
 
-**Root cause** — `src/ported/subst.rs` has two `(j:X:)` paths
-that both want to run:
+**Root cause** — `src/ported/subst.rs` had a single `(j:X:)`
+modifier path at `subst.rs:7734` that always joined first then
+ran the modifier on the scalar, and then the late sepjoin
+block at `subst.rs:8629` re-fetched the original array and
+overwrote the result.
 
-1. **Modifier dispatch** at `subst.rs:7734` joins the array with
-   `sep`, runs the modifier (`:u`/`:l`/`:t`/etc.), sets `value`
-   to the result, and cleared `split_parts = None`.
-2. **Late sepjoin block** at `subst.rs:8629` then fires (sep is
-   still Some); the `split_parts.clone()` branch returns None so
-   it falls to `arrays_get(&var_name).map(|a| a.join(sp))` —
-   re-joining the ORIGINAL unmodified array and overwriting
-   `value`.
+C zsh's behavior depends on qt:
+- **qt=true (quoted)**: c:3030-3034 sepjoin clears `isarr=0`
+  BEFORE the modifier runs at c:4531. Modifier runs ONCE on the
+  joined scalar. `"${(j: :)paths:t}"` → tail of joined string =
+  `f.log`.
+- **qt=false (unquoted)**: isarr stays set, modifier loops PER
+  ELEMENT at c:4533, THEN late sepjoin joins the modified
+  array. `${(j:.:)a:h}` with `a=(/a/b /c/d)` → (`/a`, `/c`) →
+  joined `.` = `/a./c`.
 
-For `${(j:.:)a:u}` with `a=(abc DEF)`:
-- Step 1: `value = "ABC.DEF"`, `split_parts = None`.
-- Step 2: re-join from `arrays_get` → `value = "abc.DEF"`.
+The single zshrs branch always did the qt=true path. Symptoms:
+- `${(j:.:)a:u}` with `a=(abc DEF)`: scalar `:u` on `"abc.DEF"`
+  → `ABC.DEF` (commutative — happened to look right post-#576
+  fix, but only by coincidence).
+- `${(j:.:)a:h}` with `a=(/a/b /c/d)`: scalar `:h` on
+  `"/a/b./c/d"` → `/a/b./c` (per-element should give `/a./c`).
+- `${(j: :)paths:t}` with paths: zshrs was missing
+  `split_parts` seeding so the late sepjoin re-fetched and
+  clobbered to `abc.DEF` (the original #576 symptom).
 
-Bug #91 (`${(j: :)paths:t}`) was fixed earlier for the path-
-modifier `:t` case but only because `paths` was an array of
-distinct strings whose joined-then-:t-d result happened to
-equal the per-element-then-rejoined result — masking the
-underlying split_parts None issue for case-changing modifiers
-that produce semantically different per-element vs scalar
-outputs.
+Bug #91 (`${(j: :)paths:t}` → f.log) had been fixed for the
+quoted form via the qt-arm at line 7710; the unquoted form
+landed at line 7734 and got the wrong (scalar-modifier)
+treatment.
 
-**Fix** (`src/ported/subst.rs::modifier_dispatch`): set
-`split_parts = Some(vec![value.clone()])` after the modifier
-runs, so the late sepjoin block's `parts.join(sp)` arm picks
-up our single-element modified scalar (joining a one-element
-vec is a no-op) instead of falling through to `arrays_get`.
+**Fix** (`src/ported/subst.rs::modifier_dispatch`): split the
+`sep.is_some() && arrays_contains` branch on qt:
 
-**Verify**:
+```rust
+if qt {
+    // scalar-modifier path (kept from previous behavior)
+    let joined = arrays_get(&var_name).map(|a| a.join(sep_str))...;
+    value = mod_one(&joined);
+    split_parts = Some(vec![value.clone()]);
+} else if let Some(arr) = arrays_get(&var_name) {
+    // per-element path
+    let new_arr: Vec<String> = arr.iter().map(|s| mod_one(s)).collect();
+    value = new_arr.join(" ");
+    split_parts = Some(new_arr);
+}
+```
+
+The late sepjoin at `subst.rs:8629` then takes split_parts and
+joins with sep — which is a no-op for the qt scalar (one
+element) and the proper sepjoin for the unquoted modified
+array.
+
+**Verify** — all six matrix cells (qt × {case, path-trailing,
+path-leading} modifier) now match `/opt/homebrew/bin/zsh 5.9.1`:
 
 ```sh
+# unquoted
 $ ./target/debug/zshrs -fc 'a=(abc DEF); echo ${(j:.:)a:u}'
 ABC.DEF
-$ ./target/debug/zshrs -fc 'a=(abc DEF); echo ${(j:.:)a:l}'
-abc.def
-$ ./target/debug/zshrs -fc 'a=(abc DEF); echo ${(j..)a:u}'
-ABCDEF
-$ ./target/debug/zshrs -fc 'paths=(/a/b/c.txt /d/e/f.log); echo "${(j: :)paths:t}"'  # #91 regression
+$ ./target/debug/zshrs -fc 'a=(/a/b /c/d); echo ${(j:.:)a:h}'
+/a./c
+$ ./target/debug/zshrs -fc 'a=(/a/b /c/d); echo ${(j: :)a:h}'
+/a /c
+# quoted
+$ ./target/debug/zshrs -fc 'a=(abc DEF); echo "${(j:.:)a:u}"'
+ABC.DEF
+$ ./target/debug/zshrs -fc 'a=(/a/b /c/d); echo "${(j:.:)a:h}"'
+/a/b./c
+$ ./target/debug/zshrs -fc 'paths=(/a/b/c.txt /d/e/f.log); echo "${(j: :)paths:t}"'
 f.log
 ```
 
@@ -45213,7 +45243,7 @@ no longer reports the internal trap-machinery scalar.
 | 573 | `*(Lr)` malformed size-qualifier: zshrs "no matches found" — zsh: "number expected" | **port-bug** | visual audit `L/k/m` need digit |
 | 574 | `setopt warn_create_global` spurious `ZSH_DEBUG_CMD created globally` at every fn call | **fixed** 2026-06-04 | BUILTIN_DEBUG_TRAP now gated on sigtrapped[SIGDEBUG] OR traps_table["DEBUG"] |
 | 575 | `{a-c}{1..3}` literal first brace blocks later range brace from expanding | **fixed** 2026-06-04 | xpandbraces retries from past each non-expandable `{...}` |
-| 576 | `${(j:X:)arr:u}` / `:l` case modifier ignored — late sepjoin clobbers post-modifier scalar | **fixed** 2026-06-04 | modifier seeds split_parts with modified scalar |
+| 576 | `${(j:X:)arr:MOD}` modifier ignored or scalar-applied vs zsh's qt-conditional per-element | **fixed** 2026-06-04 | qt-split: scalar mod in qt, per-element + sepjoin unquoted |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
