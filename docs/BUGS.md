@@ -47161,29 +47161,29 @@ no longer reports the internal trap-machinery scalar.
 | 153 | `${#${(z)s}}` returns 5 vs 4 (off-by-one count) | **fixed** 2026-06-02 | n/a |
 | 154 | Readonly var modifiable via `(( ))` / `let` arith | **port-bug** | post-assignment check |
 | 155 | `${str[N,M+1]}` slice subscript ignores var/arith | **fixed** 2026-06-02 | pre-compute index |
-| 156 | `[[ -e /path/*.glob ]]` glob-expands in test (zsh: literal) | **port-bug** | external `ls` test |
+| 156 | `[[ -e /path/*.glob ]]` glob-expands in test (zsh: literal) | **fixed** 2026-06-02 | external `ls` test |
 | 157 | `TRAP<SIG>()` function-named trap handlers not recognized | **port-bug** | explicit `trap` builtin |
 | 158 | Function-def redirect `f() {} < file` not honored | **port-bug** | redirect at call site |
 | 159 | `while [[ $((i++)) -lt N ]]` only iterates once | **fixed** 2026-06-02 | n/a |
 | 160 | `autoload -U +X funcname` doesn't actually load function body | **port-bug** | drop `+X`, lazy load |
 | 161 | `case x in)` empty pattern silently accepted (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 162 | `${(l.5)x}` missing close-delim silently accepted (zsh: error) | **fixed** 2026-06-02 | n/a |
-| 163 | `${(t)1}` positional type returns `scalar` (zsh: `array-special`) | **port-bug** | `[[ "$#" -gt 0 ]]` test |
+| 163 | `${(t)1}` positional type returns `scalar` (zsh: `array-special`) | **fixed** 2026-06-02 | `[[ "$#" -gt 0 ]]` test |
 | 164 | Extended_glob `^pat` (negation prefix) not recognized | **port-bug** | loop with `[[ == ]] continue` |
 | 165 | `${$((expr))}` arith-as-name returns empty (zsh: expr value) | **fixed** 2026-06-02 | n/a |
-| 166 | `for x in $@` keeps empty elements (zsh: removes via IFS-split) | **port-bug** | `[[ -z $arg ]] continue` |
+| 166 | `for x in $@` keeps empty elements (zsh: removes via IFS-split) | **fixed** 2026-06-02 | `[[ -z $arg ]] continue` |
 | 167 | Unclosed `{ cmd` silently runs (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 168 | Extra `}` after command silently ignored (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 169 | `{} always {} always {}` chained-always silently accepted | **fixed** 2026-06-02 | n/a |
 | 170 | `echo (abc` unclosed paren treated as literal | **fixed** 2026-06-03 | compile_zsh trigger_glob covers bare `(`; haswilds gates NOMATCH |
 | 171 | `cmd \| \| cmd`/`&& &&`/`\|\| \|\|` empty operands silently accepted | **fixed** 2026-06-02 | n/a |
 | 172 | `${ }` whitespace-only param name silently empty (zsh: error) | **fixed** 2026-06-02 | n/a |
-| 173 | `${(t)$(cmdsub)}` returns `scalar` (zsh: cmdsub output) | **port-bug** | drop `(t)` flag |
-| 174 | `type fn` for user-defined function shows "from zsh" suffix | **port-bug** | match `*shell function*` loosely |
+| 173 | `${(t)$(cmdsub)}` returns `scalar` (zsh: cmdsub output) | **fixed** 2026-06-02 | drop `(t)` flag |
+| 174 | `type fn` for user-defined function shows "from zsh" suffix | **fixed** 2026-06-02 | match `*shell function*` loosely |
 | 175 | `(( x = 0xFF ))` doesn't preserve integer base in display | **fixed** 2026-06-02 | n/a |
-| 176 | Bare `echo "\033"` doesn't interpret backslash escapes by default | **port-bug** | `print` or `printf '%b'` |
+| 176 | Bare `echo "\033"` doesn't interpret backslash escapes by default | **fixed** 2026-06-02 | `print` or `printf '%b'` |
 | 177 | `vared -c X` no-tty silent (zsh: "can't access terminal") | **fixed** 2026-06-02 | n/a |
-| 178 | `IFS` doesn't affect cmdsub field-splitting in `for`/array | **port-bug** | `${(@f)$(...)}` explicit |
+| 178 | `IFS` doesn't affect cmdsub field-splitting in `for`/array | **fixed** 2026-06-02 | `${(@f)$(...)}` explicit |
 | 179 | `${(S)pat}` shortest-match flag treated as no-op | **fixed** 2026-06-02 | n/a |
 | 180 | `${(C)-text}` no-colon default with flag silently accepted | **fixed** 2026-06-02 | n/a |
 | 181 | `typeset -p` doesn't quote array elements with spaces | **port-bug** | manual `${(qq)}` loop |
