@@ -3097,9 +3097,14 @@ pub fn paramsubst(
                 let fc = body_chars[idx]; // c:2153
                 match fc {
                     // c:2153
-                    c if c == '(' || c == Inpar => {
-                        d += 1;
-                    } // c:2147
+                    // c:Src/subst.c:2147+ — the C flag-parse switch
+                    // has NO `case Inpar` / `case '('` arm. Nested `(`
+                    // inside the flag block falls through to the
+                    // default `flagerr` (c:2505). Bug #550: zshrs
+                    // tracked depth and silently accepted `((O))` as
+                    // `(O)`. The `(` arm is intentionally absent; the
+                    // outer `while d > 0` loop terminates on the FIRST
+                    // `)` (matches C's `for (...; c != ')'; ...)`).
                     c if c == ')' || c == Outpar => {
                         d -= 1;
                         if d == 0 {
