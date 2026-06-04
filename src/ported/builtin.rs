@@ -8668,7 +8668,13 @@ pub fn bin_break(
             // c:5831
             if loops == 0 {
                 // c:5832
-                zwarnnam(name, "not in while, until, select, or repeat loop"); // c:5833
+                // c:Src/builtin.c:5828 — `zerrnam`, NOT `zwarnnam`.
+                // `zerrnam` sets `errflag` which causes the calling
+                // shell function (or script) to terminate after the
+                // current command — `zwarnnam` just prints. Without
+                // this, `foo() { break; echo "after"; }; foo` printed
+                // "after" instead of aborting at the break. Bug #616.
+                zerrnam(name, "not in while, until, select, or repeat loop"); // c:5828
                 return 1; // c:5834
             }
             CONTFLAG.store(1, Relaxed); // c:5836 FALLTHROUGH
@@ -8687,7 +8693,9 @@ pub fn bin_break(
             // c:5832
             if loops == 0 {
                 // c:5833
-                zwarnnam(name, "not in while, until, select, or repeat loop"); // c:5834
+                // c:Src/builtin.c:5834 — `zerrnam` sets errflag.
+                // Same fix as the BIN_CONTINUE arm above. Bug #616.
+                zerrnam(name, "not in while, until, select, or repeat loop"); // c:5834
                 return 1; // c:5835
             }
             BREAKS.store(
