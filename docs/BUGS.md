@@ -47455,7 +47455,7 @@ no longer reports the internal trap-machinery scalar.
 | 447 | `${(flag)scalar[@]}` returns empty for ALL flags (R/U/L/Q/V) — flag-on-scalar-with-@ broken | **fixed** 2026-06-02 | bind scalar to typed array first |
 | 448 | `print -s "text"` doesn't add to history — `fc -l` shows nothing (zsh: line appears) | **fixed** 2026-06-02 | manual history-file append |
 | 449 | `[[ "x" == pat\\* ]]` backslash-escape in pattern not honored — `\\*` treated as glob wildcard | **fixed** 2026-06-02 | quoted-string pattern form `"pat*"` |
-| 450 | **CRITICAL** subshell `trap` leaks to parent — outer trap replaced after `(...)` exits | **port-bug** | explicit `eval "$(trap)"` save/restore around subshell |
+| 450 | **CRITICAL** subshell `trap` leaks to parent — outer trap replaced after `(...)` exits | **fixed** 2026-06-02 | explicit `eval "$(trap)"` save/restore around subshell |
 | 451 | **CRITICAL** function definition/`unfunction` in subshell LEAKS to parent — parallel to #450 trap leak | **fixed** 2026-06-02 | save with `declare -f`, restore via `eval` |
 | 452 | alias definition/`unalias` in subshell LEAKS to parent — same family as #451 | **fixed** 2026-06-02 | save alias dump, restore around subshell |
 | 453 | ZLE widget registration (`zle -N`/`zle -D`) in subshell LEAKS to parent — third member of subshell-scope-leak family | **fixed** 2026-06-02 | fork explicit zshrs child for widget isolation |
