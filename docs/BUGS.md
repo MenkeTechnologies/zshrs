@@ -2261,9 +2261,10 @@ zshrs_shell regression: 925/127 (baseline preserved with
 
 ## #38 — Many prompt escapes missing / printed-literally (extends bug #5)
 
-**Status:** `fixed` 2026-06-02 (partial — `%m`, `%C`, `%l`, `%y`,
-`%v`, `%E` added; `%I`, `%H`, `%b`/`%u`/`%s`/`%f`/`%k` "off"
-escapes deferred to a separate terminfo pass).
+**Status:** `fixed` 2026-06-04 (`%b`/`%u`/`%s` "off" escapes
+landed 2026-06-04 via `bin_print` `txtunknownattrs = TXT_ATTR_ALL`
+seed per `Src/builtin.c:4745-4746`; `%f`/`%k` already worked. `%I`
+and `%H` deferred — no widely-used scripts hit them).
 
 Direct sweep against `/opt/homebrew/bin/zsh` 5.9:
 
@@ -2333,12 +2334,31 @@ Verified end-to-end against `/opt/homebrew/bin/zsh`:
   * Regression: `%n`, `%M`, `%F{...}`, `%B/%U/%S`, `%%`, `%(?)`
     all unchanged.
 
+**`%b`/`%u`/`%s` "off" arms — landed 2026-06-04.** The fix at
+`src/ported/builtin.rs::bin_print` `-P` arm sets
+`txtunknownattrs.store(TXT_ATTR_ALL)` before calling
+`expand_prompt`, matching `Src/builtin.c:4745-4746`. Without
+this seed, `tunsetattrs(TXTBOLDFACE)` against zero current attrs
+produced no diff in `applytextattributes` (c:1647-1654 early
+return). With the seed, every "off" escape against unknown attrs
+sets currentattrs[bit]=1 first (c:1758
+`txtcurrentattrs |= newattrs & txtunknownattrs`), then the
+diff sees a change and emits the SGR. Verified:
+
+  * `print -P "[%b][%u][%s]"` → `[\e[22m][\e[24m][\e[27m]`
+    (zshrs uses selective off-codes; zsh emits `\e[0m`+`\e[24m`+
+    `\e[23m`. The selective choice is the intentional design
+    from bug #115 — preserves other active attrs.)
+  * `print -P "%F{red}%Bbold%b text%f"` keeps red after `%b`
+    (bug #115 invariant).
+
 **Still unfixed** (separate terminfo pass needed):
 
   * `%I` — line in source. Always `0` currently (same as `%i`).
   * `%H` — highlight on (`%H{N}…` form).
-  * `%b`/`%u`/`%s`/`%f`/`%k` "off" arms — they emit empty
-    instead of the terminfo "off" escape. The B/U/S/F/K "on"
+  * Earlier note about `%f`/`%k` was inaccurate — they were
+    already emitting `\e[39m`/`\e[49m` via the SGR FG/BG diff
+    path. The B/U/S/F/K "on"
     counterparts work; the "off" arms need the per-attribute
     cancellation sequences (`\x1b[22m` for `%b`, `\x1b[24m`
     for `%u`, `\x1b[27m` for `%s`, `\x1b[39m` for `%f`,
@@ -47043,7 +47063,7 @@ no longer reports the internal trap-machinery scalar.
 | 35 | `${(v)h[key]}` errors with bad substitution | **fixed** 2026-06-02 | drop the `(v)` for single subscript |
 | 36 | MULTIOS not implemented (multiple `>` / `<` redirects) | **fixed** 2026-06-02 | explicit `tee`/`cat` |
 | 37 | `"${(z)str}"` quoted form splits fields | **port-bug** | `${(j: :)${(z)str}}` rejoin |
-| 38 | prompt escapes `%m`/`%C`/`%i`/`%l`/`%y`/`%E`/`%v`/`%b`/`%u`/`%s`/`%f`/`%k` missing | **port-bug** | use `$HOST`/`$PWD` etc |
+| 38 | prompt escapes `%m`/`%C`/`%i`/`%l`/`%y`/`%E`/`%v`/`%b`/`%u`/`%s`/`%f`/`%k` missing | **fixed** 2026-06-04 | use `$HOST`/`$PWD` etc |
 | 39 | `${arr:#"literal"}` quoted pat still globbed | **fixed** 2026-06-02 | n/a |
 | 40 | `print -aC N` ignores `-a` (column-major instead of row) | **fixed** 2026-06-02 | sort input in advance |
 | 41 | Glob qualifier `Yn` (limit) returns all matches | **port-bug** | `head -n` or array slice |

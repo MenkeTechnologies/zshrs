@@ -8078,6 +8078,19 @@ pub fn bin_print(
     // `%?`, `%h`, `%%`, etc.). Routes through `expand_prompt`
     // (canonical port of `Src/prompt.c:182 promptexpand`).
     if OPT_ISSET(ops, b'P') {
+        // c:Src/builtin.c:4745-4746 — `if (OPT_ISSET(ops, 'P'))
+        //   txtunknownattrs = TXT_ATTR_ALL;`. Marks every attribute
+        // as initially "unknown" so the first `%b`/`%u`/`%s`/`%f`/`%k`
+        // off-escape in this print invocation emits its terminfo cap
+        // (via tunsetattrs at prompt.c:1758 — `txtcurrentattrs |=
+        // newattrs & txtunknownattrs`). Without this seed, applying
+        // an off-escape against zero current attrs produced no diff
+        // and zshrs emitted nothing — `%b` / `%u` / `%s` looked like
+        // no-ops in fresh prompts. Bug #38 in docs/BUGS.md.
+        crate::ported::prompt::txtunknownattrs.store(
+            crate::ported::zsh_h::TXT_ATTR_ALL,
+            std::sync::atomic::Ordering::SeqCst,
+        );
         // c:4598-4600 — `-P` prompt-style percent expansion.
         for a in processed_args.iter_mut() {
             *a = crate::ported::prompt::expand_prompt(a); // c:Src/prompt.c:182
