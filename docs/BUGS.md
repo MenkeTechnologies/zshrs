@@ -41366,7 +41366,17 @@ Brittle; covers only the common chars.
 
 ## #524 — `%r` prompt escape printed literally — extends prompt-escape gap family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `%r` prompt escape now expands to
+empty under non-interactive `-fc` matching zsh. Likely landed via
+earlier prompt-escape parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'print -P "[%r]"'
+[]    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "[%r]"'
@@ -41586,7 +41596,17 @@ esac
 
 ## #528 — `typeset -a a=("hello world")` splits QUOTED string into multiple elements — extends #502
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `typeset -a a=("hello world")` now
+correctly produces a 1-element array matching zsh. Same landing as
+#502.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'typeset -a a=("hello world"); echo "[${#a}][${a[1]}]"'
+[1][hello world]    # matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -a a=("hello world"); echo "[${#a}][${a[1]}]"'
@@ -42087,7 +42107,58 @@ detection / `command` to force external.
 
 ## #536 — `function with[bracket] { ... }` accepts bracket char in fn name — zsh: "no matches found"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `par_funcdef` STRING_LEX arm probes
+name token for glob metachars (`[ ] * ?` literal + Inbrack/Outbrack/Star/Quest
+tokens), runs `glob::glob(untokenize(name))` under `NOMATCH`,
+emits canonical `no matches found: NAME` + `errflag |=
+ERRFLAG_ERROR` + abort parse.
+
+**Root cause** — C zsh's `function NAME { body }` runs `NAME`
+through `execcmd_args` which glob-expands each argv token; on
+NOMATCH (default) with no file match, the standard
+"no matches found" diagnostic from `glob.c:1876-1880` fires.
+zshrs's `par_funcdef` at `src/ported/parse.rs:1924` collected
+name tokens via `names.push(s.to_string())` with no glob
+probe — bracket-containing names landed silently in the
+function table.
+
+**Fix** (`src/ported/parse.rs::par_funcdef`):
+
+```rust
+let has_glob_chars = s.chars().any(|c| {
+    matches!(c, '[' | ']' | '*' | '?'
+        | crate::ported::zsh_h::Inbrack | crate::ported::zsh_h::Outbrack
+        | crate::ported::zsh_h::Star    | crate::ported::zsh_h::Quest)
+});
+if has_glob_chars && crate::ported::zsh_h::isset(crate::ported::zsh_h::NOMATCH) {
+    let untok = crate::ported::lex::untokenize(s);
+    let glob_result = crate::ported::glob::glob(&untok);
+    if glob_result.is_empty() {
+        crate::ported::utils::zerr(&format!("no matches found: {}", untok));
+        crate::ported::utils::errflag.fetch_or(
+            crate::ported::utils::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        return None;
+    }
+}
+```
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'function with[bracket] { echo hi }'; echo rc=$?
+zshrs:1: no matches found: with[bracket]
+rc=1
+$ ./target/debug/zshrs -fc 'function realname { echo ok }; realname'; echo rc=$?
+ok
+rc=0
+$ ./target/debug/zshrs -fc 'foo() { echo bar }; foo'; echo rc=$?
+bar
+rc=0
+```
+
+**Original report**:
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'function with[bracket] { :; } 2>&1; echo rc=$?'
@@ -44858,11 +44929,11 @@ qualifiers always have a digit suffix.
 | 521 | `[[ "" == (#c0,0) ]]` matches in zshrs — zsh rejects as "bad pattern" — extends #489 broken-cN family | **fixed** 2026-06-03 | n/a |
 | 522 | `TRAPDEBUG()` function-form not invoked before each command — extends #381 family (DEBUG pseudo-signal) | **port-bug** | none — debuggers/profilers can't hook |
 | 523 | `${(q)control_char}` produces raw `\\<CHAR>` instead of `$'\\X'` ANSI-C-quoted form — round-trip broken | **fixed** 2026-06-03 | n/a |
-| 524 | `%r` prompt escape printed literally — extends prompt-escape gap family (#390/#391/#412/etc.) | **port-bug** | avoid `%r` when targeting zshrs |
+| 524 | `%r` prompt escape printed literally — extends prompt-escape gap family (#390/#391/#412/etc.) | **fixed** 2026-06-04 | n/a |
 | 525 | `print -x notanint ARG` silently rc=0 — zsh: "positive integer expected after -x" | **port-bug** | pre-validate N arg with regex |
 | 526 | `[[ N -lt M -a ... ]]` `-a`/`-o` parsed as command (rc=127) — zsh: "condition expected" parse error | **port-bug** | use `&&`/`\|\|` instead |
 | 527 | `(( () ))` empty math silently rc=1 — zsh: "bad math expression: operand expected" rc=2 | **fixed** 2026-06-03 | n/a |
-| 528 | `typeset -a a=("hello world")` splits QUOTED string into multiple elements — worse than #502 | **port-bug** | element-by-element `+=` build |
+| 528 | `typeset -a a=("hello world")` splits QUOTED string into multiple elements — worse than #502 | **fixed** 2026-06-04 | n/a |
 | 529 | `$((1+(2))` paren-mismatch math silently rc=0 (no output) — zsh: parse error | **port-bug** | visual audit |
 | 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **port-bug** | `command mkdir` to force external |
 | 531 | `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 trap-function family | **port-bug** | string-form `trap`/`CHLD` |
@@ -44870,7 +44941,7 @@ qualifiers always have a digit suffix.
 | 533 | `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2 (worst-case rc=0 set-e bypass) | **port-bug** | visual audit |
 | 534 | `builtin 2>&1` (bare redirect on reserved word) silently rc=0 — extends parser-strictness family | **port-bug** | CI lint for prefix-keyword-no-command |
 | 535 | `zsh/system` module auto-loaded — extends #530/#532 (6-module contamination census now) | **port-bug** | explicit module-detection |
-| 536 | `function with[bracket] { ... }` accepts bracket char in fn name (zsh: "no matches found" via glob) | **port-bug** | strict CI lint for fn-name chars |
+| 536 | `function with[bracket] { ... }` accepts bracket char in fn name (zsh: "no matches found" via glob) | **fixed** | par_funcdef glob-probes name under NOMATCH; emits canonical diagnostic |
 | 537 | `echo /tmp/_zg/\\(abc\\)` strips escaped-paren content entirely — zsh: emits literal `(abc)` | **port-bug** | quote-instead-of-escape |
 | 538 | `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error — extends parser-strictness family | **port-bug** | CI lint for empty paren-groups |
 | 539 | `suspend` non-interactive hangs shell — zsh: rc=0 silent no-op | **port-bug** | guard with `[[ -o interactive ]]` |
