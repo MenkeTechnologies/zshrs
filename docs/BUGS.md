@@ -47109,14 +47109,14 @@ no longer reports the internal trap-machinery scalar.
 | 101 | `exec funcname` errors "not found" instead of running shell fn | **fixed** 2026-06-02 | drop `exec`, call fn directly |
 | 102 | `$-` doesn't include `f` from `-f` startup flag | **fixed** 2026-06-02 | n/a |
 | 103 | `$0` inside sourced script returns shell binary, not sourced file | **port-bug** | `${(%):-%x}` prompt-expansion |
-| 104 | Signal `kill -X $$` from inside fn is lost (trap never fires) | **port-bug** | direct invocation post-fn |
+| 104 | Signal `kill -X $$` from inside fn is lost (trap never fires) | **fixed** 2026-06-02 | direct invocation post-fn |
 | 105 | `(f<NNN>)` permission glob qualifier ignored | **fixed** 2026-06-02 | `stat`-based loop |
 | 106 | `disable BUILTIN` doesn't actually disable (echo/cd still work) | **fixed** 2026-06-02 | `command BUILTIN` prefix |
 | 107 | `autoload -U +X funcname` doesn't validate fpath existence | **fixed** 2026-06-02 | manual `[[ -f $fpath/fn ]]` check |
 | 108 | `${array/pat/X}` per-element (zsh treats as scalar-joined) | **fixed** 2026-06-02 | `${arr[*]}` explicit join |
 | 109 | `${assoc[@]}` returns empty (no value enumeration) | **fixed** 2026-06-02 | use `${(v)h[@]}` explicit |
 | 110 | `a[0]=val` silently accepted (zsh 1-indexed, errors) | **fixed** 2026-06-02 | use 1-indexed throughout |
-| 111 | `%y` (and `%l`) prompt escape for tty not expanded | **port-bug** | `${TTY##*/}` substitution |
+| 111 | `%y` (and `%l`) prompt escape for tty not expanded | **fixed** 2026-06-02 | `${TTY##*/}` substitution |
 | 112 | Builtin error format leaks Rust's `(os error N)` suffix | **port-bug** | grep loosely for portability |
 | 113 | `$'\C-X'` ANSI-C ctrl-char escape not honored (literal) | **fixed** 2026-06-02 | `$'\xNN'` hex escape |
 | 114 | `${(l.W.)s}` width must be literal; variable errors | **fixed** 2026-06-02 | `printf "%${w}s"` instead |
@@ -47129,32 +47129,32 @@ no longer reports the internal trap-machinery scalar.
 | 121 | `[[ -N -op -M ]]` negative-number operands error "unknown condition" | **fixed** 2026-06-02 | use `(( ))` arith |
 | 122 | Exit status of `$()` inside `${x:-$()}` not propagated | **fixed** 2026-06-02 | pre-eval cmdsub |
 | 123 | `${arr[@]}` inside heredoc returns only first element | **fixed** 2026-06-02 | `${(j: :)arr}` or pre-join |
-| 124 | `typeset -f` source-as-typed vs zsh pretty-printed | **port-bug** | normalize whitespace |
+| 124 | `typeset -f` source-as-typed vs zsh pretty-printed | **fixed** 2026-06-02 | normalize whitespace |
 | 125 | `var=${a[-1]}` assignment returns empty (echo works) | **fixed** 2026-06-02 | `var=${a[${#a}]}` positive idx |
 | 126 | `${s:N:}` empty length silently returns empty (zsh errors) | **fixed** 2026-06-02 | careful syntax |
 | 127 | `$'\xNN'` interpreted as Unicode codepoint + UTF-8 re-encode | **port-bug** | `printf '\xNN'` direct |
 | 128 | `${(C)arr[N]}` indexed-element case-flag errors "bad substitution" | **fixed** 2026-06-02 | assign to scalar first |
 | 129 | `local -a a=("$@")` splits quoted args (without `-a` works) | **fixed** 2026-06-02 | n/a |
 | 130 | `${var@X}` bash parameter-transform accepted (zsh errors) | **fixed** 2026-06-02 | `${(U)x}`/`${(L)x}`/`${(q)x}` |
-| 131 | `%(N~.A.B)` prompt conditional evaluates path-depth wrong | **port-bug** | manual `precmd` depth check |
+| 131 | `%(N~.A.B)` prompt conditional evaluates path-depth wrong | **fixed** 2026-06-02 | manual `precmd` depth check |
 | 132 | `(( x = "5" + "3" ))` quoted numeric strings not coerced | **fixed** 2026-06-02 | drop quotes for known-numeric |
 | 133 | `zstat -F "fmt"` format flag ignored | **port-bug** | external `stat -f`/`stat --format` |
 | 134 | `${"":h}` empty-string head modifier returns `/` (zsh: `.`) | **fixed** 2026-06-02 | explicit empty-check |
-| 135 | `*(om)` glob qualifier mtime ordering broken | **port-bug** | external `ls -t` |
-| 136 | `%E` prompt escape (clear-EOL) not expanded; literal `%E` | **port-bug** | manual `$'\e[K'` |
+| 135 | `*(om)` glob qualifier mtime ordering broken | **fixed** 2026-06-02 | external `ls -t` |
+| 136 | `%E` prompt escape (clear-EOL) not expanded; literal `%E` | **fixed** 2026-06-02 | manual `$'\e[K'` |
 | 137 | `(( "str" == "str" ))` returns false (no string coerce) | **fixed** 2026-06-02 | use `[[ == ]]` for strings |
-| 138 | `%i` prompt escape returns `0` instead of current line | **port-bug** | `$LINENO` parameter |
-| 139 | Sourced-file errors report `zsh:1:` instead of `/file:N` | **port-bug** | none — debug manually |
-| 140 | `exec /no/such` uses generic "not found" + wrong `zshrs:` prefix | **port-bug** | pre-check `[[ -x cmd ]]` |
+| 138 | `%i` prompt escape returns `0` instead of current line | **fixed** 2026-06-02 | `$LINENO` parameter |
+| 139 | Sourced-file errors report `zsh:1:` instead of `/file:N` | **fixed** 2026-06-02 | none — debug manually |
+| 140 | `exec /no/such` uses generic "not found" + wrong `zshrs:` prefix | **fixed** 2026-06-02 | pre-check `[[ -x cmd ]]` |
 | 141 | `;;` outside case context not a parse error (silent drop) | **fixed** 2026-06-02 | n/a |
 | 142 | Orphan-terminator parse error: "orphan terminator" + double-print | **fixed** 2026-06-02 | n/a |
 | 143 | `$TRY_BLOCK_ERROR` initial value is `0` in zshrs (zsh: `-1`) | **fixed** 2026-06-02 | explicit state-flag |
-| 144 | `${(q)str}` with newline uses `\<newline>` not `$'\n'` form | **port-bug** | `(qq)` double-quote form |
+| 144 | `${(q)str}` with newline uses `\<newline>` not `$'\n'` form | **fixed** 2026-06-02 | `(qq)` double-quote form |
 | 145 | `${(k)h[name]}` key-existence query errors "bad substitution" | **fixed** 2026-06-02 | `(( ${+h[name]} ))` |
 | 146 | `{ cmd; } arg` trailing args silently accepted (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 147 | `${(@)arr:mod}` modifier dropped after `(@)` flag | **fixed** 2026-06-02 | n/a |
-| 148 | `zsh/mathfunc` missing cbrt/asinh/erfc/gamma/j0/rand48/... | **port-bug** | external `bc`/`python` |
-| 149 | `${(q)str}` with tab/control chars uses `\X` not `$'\X'` form | **port-bug** | `(qq)` double-quote form |
+| 148 | `zsh/mathfunc` missing cbrt/asinh/erfc/gamma/j0/rand48/... | **fixed** 2026-06-02 | external `bc`/`python` |
+| 149 | `${(q)str}` with tab/control chars uses `\X` not `$'\X'` form | **fixed** 2026-06-02 | `(qq)` double-quote form |
 | 150 | `$OPTERR` initialized to `1` (zsh: empty/unset) | **fixed** 2026-06-02 | `(( OPTIND > 1 ))` check |
 | 151 | `${(@qq)arr}` only quotes first element (rest unquoted) | **fixed** 2026-06-02 | explicit per-element loop |
 | 152 | `${(qq)arr}` per-element when zsh joins-then-quotes | **fixed** 2026-06-02 | `${(qq)${(j: :)arr}}` |
@@ -47162,10 +47162,10 @@ no longer reports the internal trap-machinery scalar.
 | 154 | Readonly var modifiable via `(( ))` / `let` arith | **port-bug** | post-assignment check |
 | 155 | `${str[N,M+1]}` slice subscript ignores var/arith | **fixed** 2026-06-02 | pre-compute index |
 | 156 | `[[ -e /path/*.glob ]]` glob-expands in test (zsh: literal) | **fixed** 2026-06-02 | external `ls` test |
-| 157 | `TRAP<SIG>()` function-named trap handlers not recognized | **port-bug** | explicit `trap` builtin |
+| 157 | `TRAP<SIG>()` function-named trap handlers not recognized | **fixed** 2026-06-02 | explicit `trap` builtin |
 | 158 | Function-def redirect `f() {} < file` not honored | **port-bug** | redirect at call site |
 | 159 | `while [[ $((i++)) -lt N ]]` only iterates once | **fixed** 2026-06-02 | n/a |
-| 160 | `autoload -U +X funcname` doesn't actually load function body | **port-bug** | drop `+X`, lazy load |
+| 160 | `autoload -U +X funcname` doesn't actually load function body | **fixed** 2026-06-02 | drop `+X`, lazy load |
 | 161 | `case x in)` empty pattern silently accepted (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 162 | `${(l.5)x}` missing close-delim silently accepted (zsh: error) | **fixed** 2026-06-02 | n/a |
 | 163 | `${(t)1}` positional type returns `scalar` (zsh: `array-special`) | **fixed** 2026-06-02 | `[[ "$#" -gt 0 ]]` test |
