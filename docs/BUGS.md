@@ -47316,25 +47316,25 @@ no longer reports the internal trap-machinery scalar.
 | 308 | `${(t)arr[N]}` type-of-element errors "bad substitution" (zsh: returns "a") | **fixed** 2026-06-04 | type-string colon-substring route at compile dispatch |
 | 309 | Chained `${(qq)${(@P)var}}` drops elements — only first preserved (#229/#195/#287 family) | **fixed** 2026-06-04 | resolved by cumulative subexp+flag-chain patches |
 | 310 | `${(@)arr:#pat}` filter via `(@)` flag form not applied (works with `[@]` subscript) | **fixed** 2026-06-02 | n/a |
-| 311 | `${(@k)assoc:#pat}`/`${(@v)assoc:#pat}` filter on assoc keys/values not applied | **port-bug** | explicit `for k v in "${(@kv)h}"` loop |
+| 311 | `${(@k)assoc:#pat}`/`${(@v)assoc:#pat}` filter on assoc keys/values not applied | **fixed** 2026-06-02 | explicit `for k v in "${(@kv)h}"` loop |
 | 312 | `${(v)assoc:#pat}` scalar-context filter on assoc values not applied | **fixed** 2026-06-02 | n/a |
 | 313 | `${(s.X.)str}` scalar-context split returns multiple echo args instead of joined string | **fixed** 2026-06-02 | n/a |
 | 314 | `${(os.X.)str}` sort flag not applied after split — flag-composition gap | **fixed** 2026-06-02 | n/a |
 | 315 | `${(us.X.)str}` unique flag not applied after split — PATH-dedup idiom broken | **fixed** 2026-06-02 | n/a |
 | 316 | `zsh/system` module builtins `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` missing | **fixed** 2026-06-04 | builtins registered + syserror uses libc::strerror for byte-exact format |
-| 317 | `epochtime` array autovar from `zsh/datetime` not registered (zsh: 2-elem secs/nanosecs) | **port-bug** | use `$EPOCHREALTIME` float instead |
+| 317 | `epochtime` array autovar from `zsh/datetime` not registered (zsh: 2-elem secs/nanosecs) | **fixed** 2026-06-02 | use `$EPOCHREALTIME` float instead |
 | 318 | PS4 prompt-escapes (`%x`/`%N`/`%I`/`%_`) not expanded in xtrace output — trace shows literal text | **fixed** 2026-06-02 | n/a |
-| 319 | `eval --` end-of-options separator not recognized (extends #251/#252/#284 `--` family) | **port-bug** | drop the `--` |
-| 320 | `${@/pat/repl}`/`${@#pre}`/`${@%suf}` apply only to first positional (zsh: per-element; `//` form works) | **port-bug** | copy to array, use `[@]` |
+| 319 | `eval --` end-of-options separator not recognized (extends #251/#252/#284 `--` family) | **fixed** 2026-06-02 | drop the `--` |
+| 320 | `${@/pat/repl}`/`${@#pre}`/`${@%suf}` apply only to first positional (zsh: per-element; `//` form works) | **fixed** 2026-06-02 | copy to array, use `[@]` |
 | 321 | `KEYTIMEOUT` default is `40` instead of zsh's `10` — vi-mode/multi-key bindings feel sluggish | **fixed** 2026-06-02 | n/a |
 | 322 | `${arr[*]/pat/repl}`/`[*]#`/`[*]%` applies per-element instead of scalar-context (zsh: joins to scalar first) | **fixed** 2026-06-02 | n/a |
 | 323 | `functions[f]+="..."` append-to-fn-body no-op (zsh: appends raw text) | **fixed** 2026-06-04 | setfunction invalidates functions_compiled cache so dispatch picks up new body |
 | 324 | `strftime -r FORMAT STRING` reverse-parse errors "format not matched" — string→epoch broken | **port-bug** | external `date -j -f` |
 | 325 | `$'\xNN\xNN'` C-string hex escapes treat UTF-8 sequence as 2 bytes (zsh: combines into multibyte char via locale) | **port-bug** | use `\uNNNN` Unicode form (unverified) |
-| 326 | `typeset +i n` clears value AND removes attribute (zsh: preserves value as scalar) | **port-bug** | save/restore around toggle |
+| 326 | `typeset +i n` clears value AND removes attribute (zsh: preserves value as scalar) | **fixed** 2026-06-02 | save/restore around toggle |
 | 327 | `${(l.N.)arr[N]}` pad flags on array-element return empty — extends #301 family | **fixed** 2026-06-04 | `(l.N.)`/`(r.N.)` on `arr[N]` now pad correctly via `(flag)NAME[KEY]` dispatcher |
 | 328 | ALL `${(FLAG)arr[N]}` flags broken on subscripted-array-element (20+ flags: case/type/pad/quote/sort/unique/join/eval/P/split/visible/D) | **partial-fix** 2026-06-04 | case/type/pad/quote families (`C`/`L`/`U`/`q`/`qq`/`Q`/`t`/`l`/`r`) now match; `(j::)` on slice deferred |
-| 329 | `setopt globsubst` doesn't enable variable-as-glob-pattern expansion (`${~var}` still works) | **port-bug** | use `${~var}` per-expansion |
+| 329 | `setopt globsubst` doesn't enable variable-as-glob-pattern expansion (`${~var}` still works) | **fixed** 2026-06-02 | use `${~var}` per-expansion |
 | 330 | `${~$(cmdsub)}` forced-glob marker on cmdsub doesn't trigger glob — returns empty | **fixed** 2026-06-04 | flag-loop accepts Tilde TOKEN (\u{98}) per `Src/subst.c:2596` |
 | 331 | ALL `${(FLAG)assoc[k]}` flags broken on subscripted-assoc-element (mirrors #328 for assoc) | **partial-fix** 2026-06-04 | case/quote families now match; `(t)h[k]` over-applies type-substring transform |
 | 332 | `${(u)@}` unique flag on positionals not applied — extends #277 sort family | **port-bug** | copy to array, dedup via `[@]` |
