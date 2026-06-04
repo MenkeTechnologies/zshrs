@@ -42003,7 +42003,70 @@ status.)
 
 ## #532 — Multiple zsh modules (`zsh/stat`, `zsh/zselect`, `zsh/zpty`, `zsh/zftp`) auto-loaded in `--zsh` mode — extends #530
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partial-fix` 2026-06-04 — `${modules[X]}`
+introspection no longer reports the four bug-named modules
+as loaded by default; they correctly return unset until
+`zmodload NAME`. The `type X` / `command -v X` lookup still
+finds the builtins because the zsh/stat / zsh/zftp builtins
+are also registered in the canonical builtintab; gating the
+builtintab entries on module-loaded state is a separate
+substrate fix (deferred).
+
+**Root cause** — `src/ported/module.rs::modulestab::register_bltinmods`
+pre-registered every linked module into `modules` HashMap
+without distinguishing "statically linked, ready to use on
+demand" from "already loaded into the introspection table."
+zsh-5.9.1 stock binary only lists 14 modules in modulestab
+by default (verified via `zsh -fc 'echo ${(@k)modules}'`):
+zsh/compctl, zsh/complete, zsh/computil, zsh/main,
+zsh/param/private, zsh/parameter, zsh/rlimits, zsh/sched,
+zsh/termcap, zsh/terminfo, zsh/watch, zsh/zle,
+zsh/zleparameter, zsh/zutil. Modules outside this set are
+dlopen'd on demand via `zmodload`.
+
+**Fix (partial)** — `register_bltinmods` now applies
+`MOD_UNLOAD` to every module outside the default-loaded set
+at init. `getpmmodule` checks `is_loaded()` (which already
+gates on `MOD_LINKED && !MOD_UNLOAD` per
+`zsh_h::module::is_loaded` c:962) so out-of-set modules
+report unset. `bin_zmodload::load_module` clears
+`MOD_UNLOAD` (c:2259 port at `module.rs:1255`) so explicit
+`zmodload zsh/system` etc. flips the entry to loaded.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ for m in zsh/stat zsh/zselect zsh/zpty zsh/zftp; do
+    z=$(/opt/homebrew/bin/zsh -fc "echo \"[\${modules[$m]-unset}]\"")
+    r=$(./target/debug/zshrs --zsh -fc "echo \"[\${modules[$m]-unset}]\"")
+    echo "$m: zsh=$z zshrs=$r"
+  done
+zsh/stat: zsh=[unset] zshrs=[unset]
+zsh/zselect: zsh=[unset] zshrs=[unset]
+zsh/zpty: zsh=[unset] zshrs=[unset]
+zsh/zftp: zsh=[unset] zshrs=[unset]
+
+# Default-loaded stays loaded:
+$ /opt/homebrew/bin/zsh -fc 'echo "[${modules[zsh/parameter]}]"'
+[loaded]
+$ ./target/debug/zshrs --zsh -fc 'echo "[${modules[zsh/parameter]}]"'
+[loaded]
+
+# zmodload flips on demand:
+$ ./target/debug/zshrs --zsh -fc 'zmodload zsh/system; echo "[${modules[zsh/system]}]"'
+[loaded]
+```
+
+**Remaining gap** — `type zstat` / `type zftp` still
+report them as shell builtins because the builtintab
+registration is independent of modulestab. Closing this
+gap needs a wider refactor where builtintab entries gate
+on the owning module's `is_loaded()`. Tracked separately.
+
+zshrs_shell baseline improved 967/85 → 970/82 (three
+introspection tests unblocked).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'type zstat'
@@ -42243,7 +42306,30 @@ echo "still running"
 
 ## #535 — `zsh/system` module auto-loaded — extends #530/#532 to a 6-module contamination
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partial-fix` 2026-06-04 — `${modules[zsh/system]}`
+now returns unset by default and `zmodload zsh/system`
+flips to loaded; closed via the #532 fix combo. The
+`type zsystem` lookup still reports `zsystem` as a shell
+builtin because the builtintab registration is independent
+of modulestab. Same remaining-gap class as #532.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo "[${modules[zsh/system]-unset}]"'
+[unset]
+$ ./target/debug/zshrs --zsh -fc 'echo "[${modules[zsh/system]-unset}]"'
+[unset]
+
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/system; echo "[${modules[zsh/system]}]"'
+[loaded]
+$ ./target/debug/zshrs --zsh -fc 'zmodload zsh/system; echo "[${modules[zsh/system]}]"'
+[loaded]
+```
+
+See `#532` for the full fix rationale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'type zsystem'
@@ -42252,37 +42338,6 @@ zsystem not found
 $ ./target/debug/zshrs --zsh -fc 'type zsystem'
 zsystem is a shell builtin
 ```
-
-`zsh/system` (provides `zsystem`, `errnos`, `sysread`,
-`syswrite`, `sysopen`, etc.) is another opt-in zsh
-module — requires `zmodload zsh/system`. zshrs ships
-it always-loaded.
-
-Cumulative auto-loaded module census now confirmed:
-- `zsh/files` (#530) — file ops
-- `zsh/stat` (#532) — `stat`/`zstat`
-- `zsh/zselect` (#532)
-- `zsh/zpty` (#532)
-- `zsh/zftp` (#532)
-- `zsh/system` (#535 — this entry)
-
-6 modules and counting. Pattern: zshrs's `--zsh` mode
-loads all modules at startup; zsh requires explicit
-opt-in.
-
-**Where** — `src/ported/init.rs::module_init` (or
-wherever module loading happens at startup): module
-auto-load should respect zmodload-required semantics in
-`--zsh` parity mode. Skip auto-loading in --zsh mode;
-require explicit `zmodload`.
-
-**Impact** — same as #530/#532 — feature-detect probes
-break, error-message formats diverge (when error path
-involves the builtin's own diagnostic), `command -V`
-output differs.
-
-**Workaround** — same as #530/#532 — explicit module
-detection / `command` to force external.
 
 ---
 
@@ -47513,10 +47568,10 @@ no longer reports the internal trap-machinery scalar.
 | 529 | `$((1+(2))` paren-mismatch math silently rc=0 (no output) — zsh: parse error | **port-bug** | visual audit |
 | 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **port-bug** | `command mkdir` to force external |
 | 531 | `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 trap-function family | **port-bug** | string-form `trap`/`CHLD` |
-| 532 | zsh modules `zsh/stat`/`zsh/zselect`/`zsh/zpty`/`zsh/zftp` auto-loaded — extends #530 (zmodload-required-but-pre-loaded) | **port-bug** | `zmodload -e` explicit-detect probe |
+| 532 | zsh modules `zsh/stat`/`zsh/zselect`/`zsh/zpty`/`zsh/zftp` auto-loaded — extends #530 (zmodload-required-but-pre-loaded) | **partial-fix** 2026-06-04 | introspection now unset; `type X` builtintab gate deferred |
 | 533 | `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2 (worst-case rc=0 set-e bypass) | **port-bug** | visual audit |
 | 534 | `builtin 2>&1` (bare redirect on reserved word) silently rc=0 — extends parser-strictness family | **port-bug** | CI lint for prefix-keyword-no-command |
-| 535 | `zsh/system` module auto-loaded — extends #530/#532 (6-module contamination census now) | **port-bug** | explicit module-detection |
+| 535 | `zsh/system` module auto-loaded — extends #530/#532 (6-module contamination census now) | **partial-fix** 2026-06-04 | introspection now unset; `type zsystem` builtintab gate deferred |
 | 536 | `function with[bracket] { ... }` accepts bracket char in fn name (zsh: "no matches found" via glob) | **fixed** | par_funcdef glob-probes name under NOMATCH; emits canonical diagnostic |
 | 537 | `echo /tmp/_zg/\\(abc\\)` strips escaped-paren content entirely — zsh: emits literal `(abc)` | **port-bug** | quote-instead-of-escape |
 | 538 | `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error — extends parser-strictness family | **port-bug** | CI lint for empty paren-groups |
