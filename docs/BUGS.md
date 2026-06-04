@@ -44466,6 +44466,54 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #600 — `fpath=(/tmp)` hangs — RWLock deadlock between assignaparam's write lock and arrsetfn's arrfixenv read+write
+
+**Status:** `fixed` 2026-06-04 — defer `arrfixenv` env-sync until
+after the paramtab write lock is dropped.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'fpath=(/tmp); echo "$fpath"'
+/tmp
+
+# Before fix:
+$ zshrs --zsh -c 'fpath=(/tmp); echo "$fpath"'
+                                     # hangs forever, killed by timeout
+
+# After fix:
+$ zshrs --zsh -c 'fpath=(/tmp); echo "$fpath"'
+/tmp
+```
+
+**Root cause** — `src/ported/params.rs::assignaparam` acquires the
+paramtab WRITE lock at line 5740, then calls `setfn(pm, val)` which
+for tied colon-arrays is `arrsetfn` (params.rs:6584). `arrsetfn`
+writes `pm->u_arr` then unconditionally calls `arrfixenv` when
+`pm.ename` is set; `arrfixenv` (params.rs:8413) acquires its OWN
+paramtab READ lock + WRITE lock to walk PM_EXPORTED, set
+`PM_DEFAULTED`, etc.
+
+Rust's `RwLock` is not reentrant — the inner `paramtab().read()`
+inside `arrfixenv` blocks indefinitely waiting for the outer write
+lock that `assignaparam` is still holding. The hang only fires for
+tied array params with `pm.ename` set (the colon-array specials:
+`fpath`, `path`, `manpath`, `cdpath`, `module_path`). Plain arrays
+have `ename = None` so the deadlock path doesn't fire.
+
+`unset fpath; fpath=(/tmp)` worked because the `unset` cleared
+`pm.ename`. `fpath=/tmp` (scalar) worked because it went through
+`assignsparam`, not `assignaparam`.
+
+**Fix** — inline the `pm.u_arr = Some(val); pm.u_str = None;
+pm.u_hash = None;` writes from `arrsetfn` directly inside the
+held lock, capture `pm.ename.clone()` into a local, drop the write
+lock, THEN call `arrfixenv(&ename, Some(&val_final))` on the
+released lock. Mirrors C's single-threaded cooperative model
+where `arrsetfn → arrfixenv` is a straight call chain with no
+locking; we simulate the same effect by sequencing.
+
+---
+
 ## #599 — `print -P "%w"` emits "DAY  D" (double space) instead of "DAY D" — uses `%e` not `%f`
 
 **Status:** `fixed` 2026-06-04 — changed `%w` format from `"%a %e"`
@@ -46525,6 +46573,7 @@ no longer reports the internal trap-machinery scalar.
 | 597 | `"${a[@]:^b}"` / `"${a[@]:^^b}"` collapse to scalar instead of preserving array shape | **fixed** 2026-06-04 | :^ and :^^ arms gate qt-collapse on `!is_at_subscript` so explicit `[@]` walks per-element zip |
 | 598 | `print -P "%L"` emits empty instead of `$SHLVL` | **fixed** 2026-06-04 | added `b'L'` arm to putpromptchar switch (port of Src/prompt.c:889) |
 | 599 | `print -P "%w"` emits "DAY  D" (double space) instead of "DAY D" — uses `%e` not `%f` | **fixed** 2026-06-04 | switch `%w` format from `"%a %e"` to `"%a %f"` (C source uses zsh-extension `%f` = mday no leading space) |
+| 600 | `fpath=(/tmp)` hangs — RWLock deadlock between assignaparam's write lock and arrsetfn's arrfixenv reacquire | **fixed** 2026-06-04 | inline arrsetfn writes under held lock, capture ename + drop tab, then call arrfixenv outside the lock |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
