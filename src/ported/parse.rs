@@ -8466,7 +8466,30 @@ fn parse_cond_primary() -> Option<ZshCond> {
             zshlex();
             s
         }
-        _ => return Some(ZshCond::Binary(s1, op, String::new())),
+        _ => {
+            // c:Src/parse.c par_cond_2 — when a binary op is
+            // recognized but the RHS operand is missing, zsh emits
+            // `parse error: condition expected: <LHS>` at par_cond_2's
+            // missing-rhs branch. zshrs's previous fallback returned
+            // `Binary(s1, op, "")` which silently evaluated as if the
+            // RHS were empty string → rc=1. Bug #482.
+            //
+            // Convert Dash (\u{9b}) back to ASCII `-` in the LHS
+            // display so the diagnostic reads cleanly.
+            let display: String = s1.chars().map(|c| {
+                if IS_DASH(c) { '-' } else { c }
+            }).collect();
+            crate::ported::utils::zerr(&format!(
+                "parse error: condition expected: {}",
+                display
+            ));
+            crate::ported::utils::errflag.fetch_or(
+                crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            set_tok(LEXERR);
+            return None;
+        }
     };
 
     if op == "=~" {

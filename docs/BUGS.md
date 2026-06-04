@@ -38503,7 +38503,38 @@ test ops.
 
 ## #482 — `[[ 5 -eq ]]` binary op missing RHS silently rc=1 — zsh: parse error
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/parse.rs](../src/ported/parse.rs)).
+
+**Root cause** — `parse_cond_primary` had a fallback at the RHS-missing
+arm of the binary-op branch: when no STRING_LEX token followed the
+binary operator, it returned `Some(ZshCond::Binary(s1, op, ""))` —
+silently treating the missing RHS as the empty string and evaluating
+to rc=1. C `Src/parse.c::par_cond_2` errors `parse error: condition
+expected: <LHS>` when the RHS token is absent.
+
+**Fix** — replace the empty-RHS fallback with `zerr("parse error:
+condition expected: <LHS>")` + `return None`. Convert `Dash` token byte
+back to ASCII `-` in the LHS for the user-visible diagnostic. Same
+shape as the #480/#481 unary-op fix.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc '[[ 5 -eq ]]'
+zsh:1: parse error: condition expected: 5    # rc=1, matches zsh
+
+$ ./target/debug/zshrs --zsh -fc '[[ "hi" == ]]'
+zsh:1: parse error: condition expected: hi
+
+# regression: valid binary forms still work
+$ ./target/debug/zshrs --zsh -fc '[[ 5 -eq 5 ]] && echo m'
+m
+$ ./target/debug/zshrs --zsh -fc '[[ 5 -lt 10 ]] && echo m'
+m
+```
+
+Baseline 961/91 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ 5 -eq ]] 2>&1; echo rc=$?'
@@ -44371,7 +44402,7 @@ qualifiers always have a digit suffix.
 | 479 | `$OPTERR` initialized to 1 — bash-compat addition, zsh leaves unset | **port-bug** | use `$ZSH_VERSION` for shell-detect |
 | 480 | `[[ -z ]]` (no operand) silently rc=0 — zsh errors "unknown condition" — extends parser-strictness family | **fixed** 2026-06-04 | n/a |
 | 481 | `[[ -n/-r/-d/-f/... ]]` ALL unary ops no-operand silently rc=0 (zsh: parse error each) — generalizes #480 | **fixed** 2026-06-04 | n/a |
-| 482 | `[[ 5 -eq ]]` binary op missing RHS silently rc=1 (zsh: parse error) — completes test parse-strictness gap | **port-bug** | CI lint for binary-op-no-rhs |
+| 482 | `[[ 5 -eq ]]` binary op missing RHS silently rc=1 (zsh: parse error) — completes test parse-strictness gap | **fixed** 2026-06-04 | n/a |
 | 483 | `(#s)PATTERN` start-anchor glob flag not recognized — extends #409 `(#X)` family ((#e)/(#b)/(#a)/(#l)/(#m) likely too) | **port-bug** | explicit prefix-pattern form |
 | 484 | `(#l)PATTERN` case-insensitive-lowercase glob flag not recognized — extends #483 family | **port-bug** | explicit `[Aa][Bb][Cc]` case alternation |
 | 485 | `(#aN)PATTERN` approximate-match (typo-tolerant) glob flag not recognized — extends #483 family | **port-bug** | external `agrep` for fuzzy match |
