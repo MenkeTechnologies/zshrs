@@ -9588,6 +9588,25 @@ pub fn bin_read(
         }
     }
 
+    // c:Src/builtin.c:6510-6515 — `else if (OPT_ISSET(ops,'p')) {
+    // readfd = coprocin; if (readfd < 0) { zwarnnam(name, "-p: no
+    // coprocess"); return 1; } izle = 0; }`. C emits this BEFORE
+    // identifier validation of the reply name, so a bare
+    // `read -p "var name" REPLY` (no coproc started) errors with
+    // "-p: no coprocess" rather than "not an identifier". Bug #387.
+    // The `-u`-with-arg path falls through and shares this same gate
+    // when its arg is "p" (c:6494) — also handled.
+    if OPT_ISSET(ops, b'p')
+        || (OPT_HASARG(ops, b'u') && OPT_ARG(ops, b'u').as_deref() == Some("p"))
+    {
+        let coprocin = crate::ported::modules::clone::coprocin
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if coprocin < 0 {
+            zwarnnam(name, "-p: no coprocess");
+            return 1;
+        }
+    }
+
     // c:6453-6455 — `return compctlreadptr(name, args, ops, reply)`.
     // The compctlreadptr function pointer is set by the zsh/compctl
     // module's load hook; Rust dispatches to the static
