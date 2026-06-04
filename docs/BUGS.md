@@ -41733,7 +41733,31 @@ error-message-format-divergence count.
 
 ## #549 — `?(a)` extglob — zsh: "number expected" (glob qualifier); zshrs: matches as zero-or-one (ksh-style)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 ([src/ported/glob.rs](../src/ported/glob.rs)).
+
+**Root cause** — `parse_qualifiers` correctly emits `"number expected"` and sets
+`errflag` (`src/ported/glob.rs:4023`) when `(a)` is encountered as a non-numeric glob
+qualifier, but the caller in `expand_glob` (`src/ported/glob.rs:3252`) didn't gate on
+errflag — it kept going into `parse_pattern` + `scanner`, accumulated matches, and
+emitted them alongside the diagnostic. C `Src/glob.c:1843-1854` aborts with
+`if (errflag) ... return;` immediately after the qualifier parse.
+
+**Fix** — added the missing `errflag & ERRFLAG_ERROR` check immediately after the
+`parse_qualifiers` call, returning an empty match list so the diagnostic is the
+only output. The pre-existing errflag gate at `glob.rs:1561-1563` only ran on the
+no-matches branch; this one fires before any scanning so partial matches can't
+leak.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; echo /tmp/_zg/?(a)'
+zsh:1: number expected     # ec=1
+# (matches /opt/homebrew/bin/zsh byte-for-byte)
+```
+
+Baseline `cargo test --test zshrs_shell`: 961/91 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; mkdir -p /tmp/_zg && touch /tmp/_zg/a /tmp/_zg/ab; echo /tmp/_zg/?(a)'
@@ -41761,24 +41785,6 @@ match.
 the `?(...)` form should be treated as `?` (any char)
 followed by `(...)` qualifier in zsh-compat mode, not
 bash's zero-or-one extglob.
-
-**Impact** — patterns written for zsh's extended_glob
-get different (and incorrect for zsh) results in zshrs:
-
-```sh
-# zsh-style: match a or aa (one or two a's)
-[[ "aa" == a(a|) ]] && echo m
-# zsh: m
-# zshrs: depends on extglob interp
-
-# zshrs's ?(a) matches files that are "a or empty +
-# something" — that's bash semantics
-```
-
-**Workaround** — use explicit alternation:
-```sh
-echo /tmp/_zg/(a|)   # zsh-style optional a
-```
 
 ---
 
@@ -43587,7 +43593,7 @@ qualifiers always have a digit suffix.
 | 546 | `${(!)var}` invalid paramexp flag silently accepted — zsh: "error in flags near position N" | **port-bug** | visual audit / CI grep |
 | 547 | `echo "$~"` emits literal `$~` — zsh: drops invalid `$X` to empty | **port-bug** | (acceptable in user code) |
 | 548 | `${(   )a}` whitespace-only flag-paren error: "bad substitution" — zsh: "error in flags near position N" | **port-bug** | match on rc only |
-| 549 | `?(a)` extglob in zsh-mode: zshrs uses bash-style "zero-or-one" — zsh: rejects as broken glob-qualifier | **port-bug** | use `(a|)` explicit alternation |
+| 549 | `?(a)` extglob in zsh-mode: zshrs uses bash-style "zero-or-one" — zsh: rejects as broken glob-qualifier | **fixed** 2026-06-03 | n/a |
 | 550 | `${((O))a}` nested-paren flag silently accepted as no-op — zsh: "error in flags near position N" | **port-bug** | visual audit |
 | 551 | **CRITICAL** `readonly X=hi; X=2 cmd` allows readonly override via env-prefix — security bypass | **port-bug** | none — readonly cannot be relied on |
 | 552 | `(a)bc` glob alternation not honored with `extended_glob` — zsh: matches `abc`; zshrs: literal | **port-bug** | bracket-class `[abc]` (single-char only) |
