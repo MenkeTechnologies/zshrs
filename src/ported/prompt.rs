@@ -673,8 +673,45 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                             test = 1;
                         }
                     }
+                    // c:Src/prompt.c:451-457 — `j`: TRUTH(numjobs >= arg).
+                    // Direct port:
+                    //   case 'j':
+                    //     for (numjobs = 0, j = 1; j <= maxjob; j++)
+                    //         if (jobtab[j].stat && jobtab[j].procs &&
+                    //             !(jobtab[j].stat & STAT_NOPRINT)) numjobs++;
+                    //     if (numjobs >= arg) test = 1;
+                    //     break;
+                    // Default arg = 0 → `%(j.A.B)` (no num) matches when
+                    // numjobs >= 0 which is always true, so the true-text
+                    // fires unconditionally — verified vs /opt/homebrew/bin/zsh
+                    // (returns "has jobs" even with 0 jobs running). Bug #601.
+                    b'j' => {
+                        let mut numjobs = 0i32;
+                        if let Some(tab_lock) = crate::ported::jobs::JOBTAB.get() {
+                            if let Ok(tab) = tab_lock.lock() {
+                                let max = crate::ported::jobs::MAXJOB
+                                    .get()
+                                    .and_then(|m| m.lock().ok().map(|g| *g))
+                                    .unwrap_or(0);
+                                let mut j = 1usize;
+                                while j <= max && j < tab.len() {
+                                    let jb = &tab[j];
+                                    if jb.stat != 0
+                                        && !jb.procs.is_empty()
+                                        && (jb.stat & crate::ported::zsh_h::STAT_NOPRINT) == 0
+                                    {
+                                        numjobs += 1;
+                                    }
+                                    j += 1;
+                                }
+                            }
+                        }
+                        if numjobs >= arg {
+                            test = 1;
+                        }
+                    }
                     _ => {
-                        // Other test chars (t, T, d, D, w, j, e, S,
+                        // Other test chars (t, T, d, D, w, e, S,
                         // v, V) — not yet ported. test stays 0.
                     }
                 }
