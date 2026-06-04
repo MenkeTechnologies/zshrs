@@ -7541,6 +7541,28 @@ fn parse_zsh_flag_literal(raw: &str) -> Option<(String, String)> {
         return None;
     }
     let literal: String = operand[1..operand.len() - 1].iter().collect();
+    // c:Src/subst.c:1942 — `${(flags)"literal"}` is a parse error in
+    // zsh ONLY when the operand is a true literal (no expansion).
+    // For DQ operands containing `$VAR`, `$(cmd)`, `$((expr))`, `` `cmd` ``,
+    // zsh expands first and applies the flag to the result. zshrs's
+    // fast-path was tagging ALL DQ-wrapped operands as literal, so
+    // `${(z)"$(echo hi)"}` errored "bad substitution" instead of
+    // joining the cmd-sub output. Skip the fast-path when the DQ
+    // operand contains expansion-triggering chars; let paramsubst
+    // handle it via the normal sub-expression path. SQ (single-quote)
+    // operands stay literal — `${(z)'$x'}` is `${(z)'$x'}` regardless.
+    // Bug #586.
+    if open == '"'
+        && (literal.contains('$')
+            || literal.contains('`')
+            || literal.contains('\u{85}') // Stringg ($-token)
+            || literal.contains('\u{8c}') // Qstring (DQ-$)
+            || literal.contains('\u{93}') // Tick (backtick)
+            || literal.contains('\u{99}'))
+    // Qtick (DQ-backtick)
+    {
+        return None;
+    }
     Some((flags, literal))
 }
 

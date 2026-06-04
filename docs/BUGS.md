@@ -44645,6 +44645,56 @@ Test baseline 964/88 preserved.
 
 ---
 
+## #586 — `${(z)"$(cmd)"}` and `${(z)"$var"}` error "bad substitution" — DQ with expansion treated as pure literal
+
+**Status:** `fixed` 2026-06-04 — `parse_zsh_flag_literal` now
+rejects DQ-wrapped operands containing expansion-triggering chars
+so paramsubst's sub-expression path handles them instead of the
+literal-operand fast-path.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo ${(z)"$(echo hi)"}'
+hi
+
+$ ./target/debug/zshrs --zsh -fc 'echo ${(z)"$(echo hi)"}'   # before
+zshrs:1: bad substitution
+```
+
+**Root cause** — `src/extensions/compile_zsh.rs::parse_zsh_flag_literal`
+detected `${(flags)"…"}` and tagged the operand with `\u{01}` so
+paramsubst emitted the canonical "bad substitution" diagnostic
+(matching C `Src/subst.c:1942` rejection of pure-literal
+operands). But the detection treated ANY DQ-wrapped operand as
+literal, including ones with `$VAR` / `$(cmd)` / `$((expr))` /
+`` `cmd` `` that zsh expands BEFORE applying the flag.
+
+**Fix** (`src/extensions/compile_zsh.rs::parse_zsh_flag_literal`):
+when the operand is DQ-wrapped (`"…"`), reject the fast-path if
+the literal text contains any of:
+- ASCII `$`, `` ` `` (source forms)
+- Stringg `\u{85}`, Qstring `\u{8c}` (tokenized `$`)
+- Tick `\u{93}`, Qtick `\u{99}` (tokenized backticks)
+
+SQ-wrapped operands (`'…'`) still hit the fast-path — `${(z)'$x'}`
+stays literal regardless of `$x` content per shell quoting rules.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'echo ${(z)"$(echo hi)"}'      # cmd-sub
+hi
+$ ./target/debug/zshrs -fc 'a=hi; echo ${(z)"$a"}'         # var
+hi
+$ ./target/debug/zshrs -fc "echo \${(z)'literal'}"         # SQ literal → error
+zshrs:1: bad substitution
+$ ./target/debug/zshrs -fc 'echo ${(z)"hello world"}'      # DQ no-expansion literal → error
+zshrs:1: bad substitution
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #584 — `$$:MOD` and `$?:MOD` modifier ignored — completes #582 (deferred `?` and `$$` arms)
 
 **Status:** `fixed` 2026-06-04 — paramsubst's `?` and `$` arms
@@ -45790,6 +45840,7 @@ no longer reports the internal trap-machinery scalar.
 | 582 | bare `$-:MOD` / `$!:MOD` single-char-special modifier ignored — extends #581 | **fixed-partial** 2026-06-04 | walker for `-`/`!`; `?` and `$$` deferred (glob conflict / different emit) |
 | 583 | `*(z)` unknown glob qualifier silently accepted — zsh: "unknown file attribute: z" | **fixed** 2026-06-04 | parse_qualifiers `_=>{}` replaced with strict-error arm matching glob.c:1758 |
 | 584 | `$$:MOD` / `$?:MOD` modifier ignored — completes #582 | **fixed** 2026-06-04 | paramsubst `?`/`$` arms accept tokenized forms + apply modifier walker; compile_zsh gate removed |
+| 586 | `${(z)"$(cmd)"}` errors "bad substitution" — DQ-with-expansion misclassified as literal-operand | **fixed** 2026-06-04 | parse_zsh_flag_literal rejects DQ operands containing `$`/`` ` ``/Stringg/Qstring/Tick/Qtick |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
