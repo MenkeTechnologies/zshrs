@@ -37615,7 +37615,64 @@ recent=( $(ls -t | head -5) )
 
 ## #466 — `pushd +N` / `popd +N` directory-stack indexing cycles wrong direction
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `popd +N` now removes the
+target entry from dirstack without changing PWD, matching
+zsh. `pushd +N` was already correct (rotates the stack via
+the pre-existing `is_stack_rotate` arm).
+
+**Root cause** — `bin_cd`'s post-`cd_do_chdir` dirstack
+maintenance block (`src/ported/builtin.rs:1601-1700`) had
+arms for `BIN_PUSHD` + `+N`/`-N` (rotate) and `BIN_CD` +
+`+N`/`-N` (remove). It lacked the `BIN_POPD` + `+N`/`-N`
+arm. So `popd +1` fell through to the generic BIN_POPD path
+which removes dirstack[0] (top) AND `cd_do_chdir` had
+already changed the process cwd to the resolved `+1`
+target — wrong on both counts. C `Src/builtin.c:872-936`
+treats `popd +N` (N != 0) as a stack-only remove: target
+dropped from dirstack, no PWD change.
+
+**Fix** — `bin_cd` at the post-cd dirstack maintenance
+block:
+1. Add a `BIN_POPD + is_stack_rotate` arm that removes
+   `dirstack[k-1]` (the resolved +N target) and sets a
+   `skip_popd_n_cd` flag.
+2. Before the OLDPWD/PWD writes, when `skip_popd_n_cd` is
+   set, restore process cwd to `pre_pwd` via
+   `env::set_current_dir`, then run `cd_new_pwd` for the
+   dirstack-print and return without touching OLDPWD/PWD.
+
+Direct port of C c:872-936 + c:1197-1199 — target-not-top
+path returns the resolved node without the cd_do_chdir
+side-effect.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ diff <(zsh -fc 'cd /; pushd /tmp; pushd /usr; popd +1; pwd; dirs') \
+       <(zshrs --zsh -c 'cd /; pushd /tmp; pushd /usr; popd +1; pwd; dirs')
+# (no diff)
+
+$ zsh -fc 'cd /; pushd /tmp; pushd /usr; popd +1; pwd; dirs'
+/tmp /
+/usr /
+/usr
+/usr /
+
+# Regression: pushd +N still rotates correctly:
+$ diff <(zsh -fc 'cd /; pushd /tmp; pushd /usr; pushd +1; pwd; dirs') \
+       <(zshrs --zsh -c 'cd /; pushd /tmp; pushd /usr; pushd +1; pwd; dirs')
+# (no diff)
+
+# Regression: bare popd still pops top:
+$ diff <(zsh -fc 'cd /; pushd /tmp; pushd /usr; popd; pwd; dirs') \
+       <(zshrs --zsh -c 'cd /; pushd /tmp; pushd /usr; popd; pwd; dirs')
+# (no diff)
+```
+
+zshrs_shell baseline improved 967/85 → 970/82 (three
+additional pushd/popd tests now pass).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'cd /; pushd /tmp; pushd /usr; pushd +1; pwd'
@@ -37629,55 +37686,9 @@ $ ./target/debug/zshrs --zsh -c 'cd /; pushd /tmp; pushd /usr; pushd +1; pwd'
 /
 ```
 
-`pushd +N` cycles the directory stack so that the entry
-at position N (counted from top, 0-indexed) becomes the
-current. With stack `(/usr /tmp /)`:
-- Position 0 = `/usr` (current)
-- Position 1 = `/tmp`
-- Position 2 = `/`
-
-zsh: `pushd +1` → cycles to position 1 = `/tmp`.
-zshrs: `pushd +1` → cycles to position 2 = `/`.
-
-Similar issue with `popd +N`:
-- zsh: `popd +1` removes index 1; current = whatever was
-  at index 0 (`/usr`)
-- zshrs: `popd +1` removes a different index; current ends
-  up at `/`
-
-The +N indexing direction or starting position is
-inverted/off-by-one in zshrs.
-
-**Where** — `src/ported/builtins/pushd.rs::cycle_to_n`
-and `src/ported/builtins/popd.rs::remove_n`: must use
-zsh's documented "from top, 0-indexed" convention.
-C-source `Src/builtins.c::bin_dirs` accepts `+N` and `-N`
-with `+` = count from top, `-` = count from bottom.
-
-**Impact** — dirstack navigation scripts produce wrong
-cwd after pushd/popd cycle:
-
-```sh
-# Rotate through workspace dirs
-pushd ~/proj/web; pushd ~/proj/api; pushd ~/proj/lib
-for i in 0 1 2; do
-    pushd +$i  # visit each workspace
-    run_tests
-done
-# zsh: cycles web → api → lib
-# zshrs: wrong order, may visit same dir twice or skip
-```
-
-Affects everyone who scripts dirstack iteration.
-
-**Workaround** — use absolute paths via `cd`:
-```sh
-local stack=( ~/proj/web ~/proj/api ~/proj/lib )
-for dir in "${stack[@]}"; do
-    cd "$dir"
-    run_tests
-done
-```
+(The original report's `pushd +1` test had already been
+fixed by prior `is_stack_rotate` work; the open gap was
+the `popd +N` companion, now closed.)
 
 ---
 
@@ -47421,7 +47432,7 @@ no longer reports the internal trap-machinery scalar.
 | 463 | `set` no-args shows special vars (`!`/`#`/`$`/`-`) as empty strings — special-param getters not invoked in dump | **fixed** 2026-06-04 | n/a |
 | 464 | `emulate sh` doesn't toggle sh-mode setopt block (zsh: ~8 opts on/off) — emulation table missing/no-op | **fixed** 2026-06-04 | closed by #470 fix combo (default_on_options + optns_flags audit) |
 | 465 | `*(om)` glob mtime-sort qualifier returns wrong order — sort ignored; likely all `(oX)`/`(OX)` affected | **fixed** 2026-06-04 | n/a |
-| 466 | `pushd +N` / `popd +N` dirstack indexing cycles wrong direction — +1 lands on wrong stack entry | **port-bug** | use absolute paths via `cd` |
+| 466 | `pushd +N` / `popd +N` dirstack indexing cycles wrong direction — +1 lands on wrong stack entry | **fixed** 2026-06-04 | `popd +N` arm added to bin_cd post-cd dirstack maintenance per `Src/builtin.c:872-936` |
 | 467 | `$-` shell-flags parameter missing `f` flag when shell launched with `-f` — likely `c`/`i`/`s`/`l` also missing | **fixed** 2026-06-04 | n/a |
 | 468 | `functions -t` (list traced) emits full function body instead of name list (zsh: empty or names only) | **fixed** 2026-06-04 | n/a |
 | 469 | `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier" | **port-bug** | manual filter loop after glob |
