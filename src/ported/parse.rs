@@ -7968,23 +7968,37 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
         // parse_program_until top-level orphan-DONE guard doesn't
         // mis-fire on the legitimate loop terminator.
         let body = parse_program_until(Some(&[DONE]));
-        if tok() == DONE {
-            zshlex();
+        // c:Src/parse.c:1182-1183 / :1535-1536 / :1597-1598 —
+        // `if (tok != DONE) YYERRORV(oecused);`. zshrs previously
+        // silently accepted EOF as a substitute for `done`, so
+        // `for i in a; do echo hi; don` ran the loop with `don` as
+        // a command (which then failed "command not found") instead
+        // of erroring at parse time. Bug #403, #404.
+        if tok() != DONE {
+            zerr("parse error: expected `done'");
+            return None;
         }
+        zshlex();
         Some(body)
     } else if tok() == INBRACE_TOK {
         zshlex();
         let body = parse_program_until(Some(&[OUTBRACE_TOK]));
-        if tok() == OUTBRACE_TOK {
-            zshlex();
+        // c:Src/parse.c:1186 / :1539 — `if (tok != OUTBRACE) YYERRORV`.
+        if tok() != OUTBRACE_TOK {
+            zerr("parse error: expected `}'");
+            return None;
         }
+        zshlex();
         Some(body)
     } else if foreach_style || isset(CSHJUNKIELOOPS) {
         // c:1184 / 1546 / 1595 — `else if (csh || isset(CSHJUNKIELOOPS))`.
         let body = parse_program_until(Some(&[ZEND]));
-        if tok() == ZEND {
-            zshlex();
+        // c:1190 / 1548 — `if (tok != ZEND) YYERRORV`.
+        if tok() != ZEND {
+            zerr("parse error: expected `end'");
+            return None;
         }
+        zshlex();
         Some(body)
     } else {
         // c:1190 / 1474 / 1551 / 1600 — short-form gate. C bails
