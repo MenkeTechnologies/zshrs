@@ -15548,6 +15548,51 @@ echo "Primary: ${(C)deref[1]}"
 
 ## #196 — Anonymous function output not captured by `$(...)` or `(...)` subshell
 
+**Status:** `fixed` 2026-06-03 — `cmd_or_math` no longer
+calls `skipcomm` on the not-math fallback, matching C
+`Src/lex.c:519-520`.
+
+**Root cause** — `src/ported/lex.rs::cmd_or_math` (called
+from the LX1_INPAR `((` arm) had two divergent tails that
+both called `skipcomm()` before returning
+`CMD_OR_MATH_CMD`. C's `cmd_or_math` at `Src/lex.c:519-520`
+just pushes `(` back and returns the verdict — the caller
+then returns `INPAR` and the parser walks the remaining
+content as ordinary tokens. zshrs's `skipcomm()` consumed
+the ENTIRE subshell body, so `(() { echo X; })` lost
+every token after the leading `(`.
+
+The other two repros (`$(() { echo hi })` cmd-sub and the
+array form) already worked because the `cmd_or_math_sub`
+entry walks a different path. Only the bare-parens
+`(()` case was affected.
+
+**Fix** — drop both `skipcomm()` calls in the fallback
+tail; mirror C exactly.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc '(() { echo inner; })'
+inner
+$ ./target/debug/zshrs --zsh -fc '(() { echo inner; })'
+inner
+
+# Regressions
+$ ./target/debug/zshrs --zsh -fc '(( x = 5 )); echo $x'
+5
+$ ./target/debug/zshrs --zsh -fc '( echo a; echo b )'
+a
+b
+$ ./target/debug/zshrs --zsh -fc 'x=$(() { echo hi }); echo "[$x]"'
+[hi]
+$ ./target/debug/zshrs --zsh -fc 'arr=($(() { echo "a b c" })); echo "${#arr}"'
+3
+```
+
+Test baseline preserved at 960/92.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -27349,6 +27394,30 @@ done
 ---
 
 ## #337 — `(( var = "5" ))` and `(( n += "5" ))` quoted-string operands in `(( ))` treated as `0`
+
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -i n=10; (( n += "5" )); echo "n=$n"'
+n=15
+$ ./target/debug/zshrs --zsh -fc 'typeset -i n=10; (( n += "5" )); echo "n=$n"'
+n=15
+
+$ /opt/homebrew/bin/zsh -fc '(( n = "5" )); echo "n=$n"'
+n=5
+$ ./target/debug/zshrs --zsh -fc '(( n = "5" )); echo "n=$n"'
+n=5
+
+$ /opt/homebrew/bin/zsh -fc 'n=10; echo $((n + "5"))'
+15
+$ ./target/debug/zshrs --zsh -fc 'n=10; echo $((n + "5"))'
+15
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
