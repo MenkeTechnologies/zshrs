@@ -36999,7 +36999,32 @@ esac
 
 ## #457 — nested `${(j:|:)${(s/:/)a}}` paramexp returns only first split element
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — nested `${(j:|:)${(s/:/)a}}`
+now correctly joins all split elements with the outer
+separator. The `(F)`/`(j)` outer-flag-on-inner-split path
+also passes for the common `${(F)${(s/:/)PATH}}` per-line
+transform.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="x:y:z"; echo "${(j:|:)${(s/:/)a}}"'
+x|y|z
+$ ./target/debug/zshrs --zsh -c 'a="x:y:z"; echo "${(j:|:)${(s/:/)a}}"'
+x|y|z
+
+$ /opt/homebrew/bin/zsh -fc 'echo "${(F)${(s/:/)PATH}}" | head -3'
+/opt/homebrew/anaconda3/bin
+…
+$ ./target/debug/zshrs --zsh -c 'echo "${(F)${(s/:/)PATH}}" | head -3'
+/opt/homebrew/anaconda3/bin
+…
+# (same first three lines)
+```
+
+Doc-only flip; no code change in this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a="x:y:z"; echo "${(j:|:)${(s/:/)a}}"'
@@ -37007,47 +37032,6 @@ x|y|z
 
 $ ./target/debug/zshrs --zsh -c 'a="x:y:z"; echo "${(j:|:)${(s/:/)a}}"'
 x
-```
-
-Nested paramexp: inner `${(s/:/)a}` splits `x:y:z` by
-`:` to array `(x y z)`. Outer `${(j:|:)…}` joins with
-`|`. Combined result: `x|y|z`.
-
-zshrs's nested form returns only the first element from
-the inner split — `x` — discarding the rest.
-
-The outer `(j)` flag is supposed to operate on the array
-result of the inner expansion. zshrs's parser likely
-collapses the inner result to a scalar (taking element 1)
-before applying the outer flag.
-
-**Where** — `src/ported/paramsubst/nested.rs` (or
-equivalent): inner paramexp result must remain an array
-when the outer expression has an array-flag. C-source
-`Src/subst.c::paramsubst` keeps array-ness through nested
-expansions via the `multsub` flag.
-
-**Impact** — common one-line transforms broken:
-
-```sh
-# Convert PATH to one-per-line for pretty-printing
-echo "${(F)${(s/:/)PATH}}"
-# zsh: each PATH component on its own line
-# zshrs: only the first PATH component prints
-
-# Sort and dedupe array elements inline
-echo "${(uo)${(s/:/)var}}"
-# zsh: unique, sorted, joined
-# zshrs: just first element
-```
-
-Common in zsh-style data-transformation pipelines that
-avoid intermediate variables.
-
-**Workaround** — use intermediate variable:
-```sh
-arr=("${(s/:/)a}")
-echo "${(j:|:)arr}"
 ```
 
 ---
@@ -47394,7 +47378,7 @@ no longer reports the internal trap-machinery scalar.
 | 454 | keymap creation/deletion (`bindkey -N`/`-D`) in subshell LEAKS to parent — extends #453 to keymap table | **port-bug** | fork explicit child |
 | 455 | function definitions inside `$(...)` cmd-substitution LEAK to parent — extends #451 to cmdsub context | **port-bug** | manual save/restore via `declare -f` |
 | 456 | `[[ "(x)" == "(x)" ]]` doesn't match — quoted parens in pattern not treated as literal (same family as #13/#449) | **fixed** 2026-06-04 | n/a |
-| 457 | nested `${(j:|:)${(s/:/)a}}` paramexp returns only first split element instead of joined whole | **port-bug** | use intermediate array variable |
+| 457 | nested `${(j:|:)${(s/:/)a}}` paramexp returns only first split element instead of joined whole | **fixed** 2026-06-04 | nested (j)/(F) outer-flag-on-inner-split now joins all elements |
 | 458 | `[[ "$a" == $p ]]` treats `$p` as glob by default — zsh requires `${~p}` or `GLOB_SUBST` opt-in (security-relevant inverse) | **fixed** 2026-06-04 | n/a |
 | 459 | **CRITICAL** `source script.zsh ARGS` ignores positional args — sourced script sees `$#=0` | **fixed** 2026-06-04 | n/a |
 | 460 | `typeset -aix arr=(...)` flag conflict silently accepted, `-i` dropped (zsh: "inconsistent type") | **fixed** 2026-06-04 | `typeset -aix arr=(1 2 3)` rejects with `inconsistent type for assignment` matching zsh |
