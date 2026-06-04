@@ -41821,7 +41821,36 @@ bash's zero-or-one extglob.
 
 ## #550 — `${((O))a}` nested-paren flag silently accepted as no-op — zsh: "error in flags"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 ([src/ported/subst.rs](../src/ported/subst.rs)).
+
+**Root cause** — the paramsubst flag-parse loop tracked paren depth
+(`d += 1` on `(`) and accepted nested `(` silently as long as the matching `)`
+counts balanced. C `Src/subst.c:2147+` has NO `case Inpar` arm in the flag
+switch — the outer `for (s++; (c = *s) != ')'; s++, …)` exits at the FIRST
+`)` and any nested `(` falls through to the default `flagerr` (c:2505). For
+`${((O))a}`, the inner `(` should trigger `error in flags near position N`.
+
+**Fix** — delete the `(` arm so `(` inside the flag block falls through to
+the default unknown-flag arm (which was fixed in #546 to emit the
+zsh-matching `error in flags near position N in '${BODY}'`). The `)` arm
+still decrements `d` and breaks at zero, preserving correct flag-block
+termination.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'a=(x y z); echo "${((O))a}"'
+zsh:1: error in flags near position 4 in '${((O))a}'    # matches zsh
+$ echo $?
+1
+
+# valid single-paren flags still pass through:
+$ ./target/debug/zshrs --zsh -fc 'a=hi; echo "${(L)a}"'
+hi
+```
+
+Baseline 964/88 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo "${((O))a}" 2>&1'
@@ -43646,7 +43675,7 @@ qualifiers always have a digit suffix.
 | 547 | `echo "$~"` emits literal `$~` — zsh: drops invalid `$X` to empty | **port-bug** | (acceptable in user code) |
 | 548 | `${(   )a}` whitespace-only flag-paren error: "bad substitution" — zsh: "error in flags near position N" | **port-bug** | match on rc only |
 | 549 | `?(a)` extglob in zsh-mode: zshrs uses bash-style "zero-or-one" — zsh: rejects as broken glob-qualifier | **fixed** 2026-06-03 | n/a |
-| 550 | `${((O))a}` nested-paren flag silently accepted as no-op — zsh: "error in flags near position N" | **port-bug** | visual audit |
+| 550 | `${((O))a}` nested-paren flag silently accepted as no-op — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 551 | **CRITICAL** `readonly X=hi; X=2 cmd` allows readonly override via env-prefix — security bypass | **port-bug** | none — readonly cannot be relied on |
 | 552 | `(a)bc` glob alternation not honored with `extended_glob` — zsh: matches `abc`; zshrs: literal | **port-bug** | bracket-class `[abc]` (single-char only) |
 | 553 | `LC_MESSAGES`/`LC_MONETARY`/... init empty — extends #517 (entire LC_* family pre-seeded) | **port-bug** | `[[ -n $LC_FOO ]]` non-empty check |
