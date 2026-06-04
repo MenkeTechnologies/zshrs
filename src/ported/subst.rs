@@ -10252,21 +10252,33 @@ pub fn paramsubst(
     // Special parameters: $?, $$, $#, $*, $@, $0-$9
     match c {
         // c:1625
-        '?' => {
+        c if c == '?' || c == Quest => {
             // c:1625
             let value = vars_get("?") // c:1625
                 .unwrap_or_else(|| "0".to_string()); // c:1625
+            // c:Src/subst.c:1820 — `$?:MOD` modifier chain. Bug #582
+            // extends the bare-form modifier walker to `?` and `$`.
+            // Accept Quest token (`\u{97}`) alongside ASCII `?` for
+            // unquoted contexts where the lexer tokenizes `?`.
+            let (value, after_pos) =
+                apply_bare_modifier_chain(&value, &chars, pos + 1);
             let prefix: String = chars[..start_pos].iter().collect(); // c:1625
-            let suffix: String = chars[pos + 1..].iter().collect(); // c:1625
+            let suffix: String = chars[after_pos..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
             (result, prefix.len() + value.len(), result_nodes) // c:1625
         } // c:1625
-        '$' => {
+        c if c == '$' || c == Stringg => {
             // c:1625
             let value = std::process::id().to_string(); // c:1625
+            // c:Src/subst.c:1820 — `$$:MOD` modifier chain. Accept
+            // Stringg token (`\u{85}`) alongside ASCII `$` since the
+            // lexer tokenizes the second `$` of `$$` as Stringg in
+            // unquoted contexts.
+            let (value, after_pos) =
+                apply_bare_modifier_chain(&value, &chars, pos + 1);
             let prefix: String = chars[..start_pos].iter().collect(); // c:1625
-            let suffix: String = chars[pos + 1..].iter().collect(); // c:1625
+            let suffix: String = chars[after_pos..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
             (result, prefix.len() + value.len(), result_nodes) // c:1625

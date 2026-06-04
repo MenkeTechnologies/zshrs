@@ -44643,6 +44643,71 @@ Test baseline 964/88 preserved.
 
 ---
 
+## #584 — `$$:MOD` and `$?:MOD` modifier ignored — completes #582 (deferred `?` and `$$` arms)
+
+**Status:** `fixed` 2026-06-04 — paramsubst's `?` and `$` arms
+now accept tokenized forms (`Quest \u{97}` / `Stringg \u{85}`)
+and apply the bare-form modifier chain. compile_zsh's modifier-
+walker gate that previously skipped `?`/`*` removed — the
+extension turned out not to break glob matching once the runtime
+properly handled the modifier.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo $$:t'
+55421
+
+$ ./target/debug/zshrs --zsh -fc 'echo $$:t'   # before
+$$:t
+```
+
+**Root cause** — two gaps:
+
+1. **`src/ported/subst.rs::paramsubst`** — the `'$' =>` arm and
+   `'?' =>` arm matched only ASCII `$`/`?`. For unquoted `$$:t`,
+   the lexer tokenizes the second `$` as Stringg (`\u{85}`), so
+   the match dispatched on Stringg fell through to the catch-all
+   `_ =>` arm that returned literal text. Same for `$?` where
+   `?` arrives as Quest (`\u{97}`).
+2. **`src/extensions/compile_zsh.rs::find_expansion_end`** —
+   #582 gated the modifier-walker call on `is_glob_special`
+   (excluded `?`/`*`) out of caution that extending the span
+   would break downstream glob matching. With the runtime now
+   applying the modifier correctly, the gate is unnecessary.
+   Removing it lets `$?:r`, `$$:t`, `$-:u`, `$!:r` all work in
+   both DQ and unquoted contexts.
+
+**Fix** — two changes:
+
+1. `paramsubst` `?` and `$` arms accept tokenized forms via
+   `c if c == '?' || c == Quest` and `c if c == '$' || c == Stringg`,
+   AND apply `apply_bare_modifier_chain` to the trailing
+   `chars[pos+1..]`.
+2. `compile_zsh` removes the `is_glob_special` gate; the walker
+   fires unconditionally for the single-char-special arm.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'echo $$:t'
+93297
+$ ./target/debug/zshrs -fc 'echo $?:r'
+0
+$ ./target/debug/zshrs -fc 'echo $-:u'                   # #582 regression
+569XF
+$ ./target/debug/zshrs -fc 'echo $$'                     # plain (regression)
+93297
+$ ./target/debug/zshrs -fc 'echo $? hello'               # no false positive
+0 hello
+$ ./target/debug/zshrs -fc 'echo *.md' | head -c 50      # glob still works
+CREATORS.md MAINTAINERS.md README.md TODO.md
+$ ./target/debug/zshrs -fc 'echo *.nomatch'              # NOMATCH still errors
+zshrs:1: no matches found: *.nomatch
+```
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #583 — unknown glob qualifier letters silently accepted — `*(z)` returns files rc=0; zsh: "unknown file attribute: z" rc=1
 
 **Status:** `fixed` 2026-06-04 — glob qualifier parser's `_ =>
@@ -45722,6 +45787,7 @@ no longer reports the internal trap-machinery scalar.
 | 581 | bare `$N:MOD` / `$0:MOD` positional modifier ignored — extends #579/#580 | **fixed** 2026-06-04 | walker factored into apply_bare_modifier_chain, called from both arms |
 | 582 | bare `$-:MOD` / `$!:MOD` single-char-special modifier ignored — extends #581 | **fixed-partial** 2026-06-04 | walker for `-`/`!`; `?` and `$$` deferred (glob conflict / different emit) |
 | 583 | `*(z)` unknown glob qualifier silently accepted — zsh: "unknown file attribute: z" | **fixed** 2026-06-04 | parse_qualifiers `_=>{}` replaced with strict-error arm matching glob.c:1758 |
+| 584 | `$$:MOD` / `$?:MOD` modifier ignored — completes #582 | **fixed** 2026-06-04 | paramsubst `?`/`$` arms accept tokenized forms + apply modifier walker; compile_zsh gate removed |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
