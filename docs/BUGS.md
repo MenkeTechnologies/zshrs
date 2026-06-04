@@ -44466,6 +44466,28 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #607 — `${a:#(foo|bar}` silently returns input — `:#` filter arm sibling of #605/#606
+
+**Status:** `fixed` 2026-06-04 — same `patcompile` precheck applied
+to `:#` filter arm.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=foo; echo "${a:#(foo|bar}"'
+zsh:1: bad pattern: (foo|bar
+
+# After fix:
+$ zshrs --zsh -c 'a=foo; echo "${a:#(foo|bar}"'
+zshrs:1: bad pattern: (foo|bar
+```
+
+**Fix** — same pre-check pattern as #605/#606 applied to the `:#`
+arm at `subst.rs:6018`. Empty pattern path still bypasses
+patcompile via the `p.is_empty()` short-circuit (zsh-compatible
+"empty pattern matches empty subject" semantics).
+
+---
+
 ## #606 — `${a##(foo|bar}` / `${a#(foo|bar}` / `${a%%(foo|bar}` / `${a%(foo|bar}` silently return input — sibling of #605
 
 **Status:** `fixed` 2026-06-04 — ported same `patcompile` precheck
@@ -46847,6 +46869,7 @@ no longer reports the internal trap-machinery scalar.
 | 604 | `a=foo[bar; echo done` consumes `;` into ENVSTRING — unmatched `[` makes `;` non-terminator | **fixed** 2026-06-04 | LX2_BREAK arm: removed extra `pct == 0 && brct == 0` guards; match C `if (!in_brace_param && !sub) goto brk` |
 | 605 | `${a/(foo\|bar/X}` / `${a//(foo\|bar/X}` silently return input — no "bad pattern" error on unbalanced paren | **fixed** 2026-06-04 | pre-check patcompile in `/` and `//` arms; emit "bad pattern: PAT" matching Src/glob.c:2674-2677 |
 | 606 | `${a##(foo\|bar}` / `${a#(foo\|bar}` / `${a%%(foo\|bar}` / `${a%(foo\|bar}` silently return input — sibling of #605 | **fixed** 2026-06-04 | same patcompile precheck applied to ##/#/%%/% arms via replace_all |
+| 607 | `${a:#(foo\|bar}` silently returns input — `:#` filter arm sibling of #605/#606 | **fixed** 2026-06-04 | same patcompile precheck applied to `:#` arm at subst.rs:6018 |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
