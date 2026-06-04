@@ -10132,7 +10132,17 @@ pub fn bin_test(
         variables.entry(k).or_insert(v);
     }
     let posix = isset(POSIXBUILTINS);
-    let mut ret = crate::ported::cond::evalcond(&args_refs, &options, &variables, posix); // c:7305
+    // c:Src/builtin.c:7305 — `stat = evalcond(state, name);`. The
+    // `name` argument is C's `fromtest` signal — non-NULL means "called
+    // from test/[", which enables the strict integer-expression error
+    // path (c:Src/cond.c:236-251). Bug #411.
+    let mut ret = crate::ported::cond::evalcond(
+        &args_refs,
+        &options,
+        &variables,
+        posix,
+        Some(name),
+    ); // c:7305
 
     // c:7307-7308 — `if (ret < 2 && sense) ret = !ret;`
     if ret < 2 && sense != 0 {
