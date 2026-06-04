@@ -44466,6 +44466,54 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #595 — `${a:s/PAT}` (missing closing delim) and bare `${a:s}` silently no-op instead of "bad substitution"
+
+**Status:** `fixed` 2026-06-04 — ported `Src/subst.c::modify()`
+`:s` arm's `if (!*ptr2) zerr("bad substitution")` gate.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:s/l}"'
+zsh:1: bad substitution
+
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "${a:s}"'
+zsh:1: bad substitution
+
+# Before fix:
+$ zshrs --zsh -c 'a=hello; echo "${a:s/l}"'
+helo                              # treated `l` as pat and empty as repl
+
+$ zshrs --zsh -c 'a=hello; echo "${a:s}"'
+hello                             # bare `:s` silently ignored
+
+# After fix:
+$ zshrs --zsh -c 'a=hello; echo "${a:s/l}"'
+zshrs:1: bad substitution
+
+$ zshrs --zsh -c 'a=hello; echo "${a:s}"'
+zshrs:1: bad substitution
+```
+
+**Root cause** — `src/ported/subst.rs::modify()` `:s`/`:S` arm:
+1. `chars.next()` for delim had `None => break`, silently ending
+   the modifier chain on bare `:s`.
+2. Pattern-reading loop exited cleanly on end-of-input without
+   tracking whether the closing delimiter was actually consumed,
+   so `:s/l` accepted `l` as the pattern and ran with empty repl.
+
+**Fix** — `src/ported/subst.rs::modify()` `:s`/`:S` arm:
+- `None` delim → `zerr("bad substitution")` and return.
+- Track `pat_closed: bool` in the pattern-reading loop; set to
+  true when the second delimiter is consumed. Post-loop check:
+  `if !pat_closed { zerr("bad substitution"); return; }`. Direct
+  port of C's `if (!*ptr2) zerr("bad substitution"); return;`.
+
+`:s/PAT/REPL` (no third closing delim) remains accepted —
+zsh treats the trailing delim as optional for the replacement,
+only the pattern delim is required.
+
+---
+
 ## #594 — `${a:s/PAT/REPL/X}` silently ignores trailing garbage after modifier delimiter
 
 **Status:** `fixed` 2026-06-04 — ported `Src/subst.c:3786-3790`
@@ -46314,6 +46362,7 @@ no longer reports the internal trap-machinery scalar.
 | 592 | `${(k)h[(R)pat]}` returns matched values instead of keys — outer `(k)` flag not honored by assoc subscript MATCH path | **fixed** 2026-06-04 | bridge re-injects `(k)`/`(@k)` outer flag; assoc subscript MATCH path pushes KEY when WANTKEYS; `nojoin==2` arm honors raw_value when non-splat subscript present |
 | 593 | `repeat N CMD ARG; CMD2` parse error near second command — short-loop body consumed trailing `;` | **fixed** 2026-06-04 | parse_loop_body short form uses par_list1 (single sublist, leaves separator) instead of par_list |
 | 594 | `${a:s/PAT/REPL/X}` silently ignores trailing garbage after modifier delim — should emit "unrecognized modifier" | **fixed** 2026-06-04 | modify() post-loop check for leftover chars; emit `:X` form if leftover is `:X`, bare form otherwise (matches C subst.c:3786-3790) |
+| 595 | `${a:s/PAT}` (missing closing delim) and bare `${a:s}` silently no-op — should emit "bad substitution" | **fixed** 2026-06-04 | modify() `:s` arm: track pat_closed flag, error on missing closing delim or bare `:s` (matches C subst.c modify() :s arm) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
