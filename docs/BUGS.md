@@ -44464,6 +44464,92 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #578 — `a=(x y z); echo ${a%x*}` leaks Nularg `¡` then leading empty — operator-result splat keeps zsh-deleted empties
+
+**Status:** `fixed` 2026-06-04 — auto_splat block now gates the
+Nularg sentinel on qt context (DQ preserves empties via Nularg;
+unquoted emits true empty) AND drops empty nodes from the
+output vector when not qt, mirroring C `Src/subst.c:184-187`
+`else if (!keep) uremnode` semantics for the array-splat path.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); echo ${a%x*}'
+y z
+
+$ ./target/debug/zshrs --zsh -fc 'a=(x y z); echo ${a%x*}'   # before
+¡ y z
+```
+
+**Root cause** — `src/ported/subst.rs::paramsubst` auto_splat
+block (subst.rs:9648) unconditionally emitted the Nularg
+sentinel `\u{a1}` for empty array elements, citing C's
+`nulstring[] = {Nularg, '\0'}` (Src/subst.c:36) used to keep
+empties alive through prefork's empty-node-delete pass at
+c:184-187. C only emits Nularg in qt (DQ) context; in
+unquoted context empty elements are deleted by prefork before
+reaching argv. zshrs emitted Nularg unconditionally so the
+sentinel leaked into argv when paramsubst returned its
+already-spliced nodes for unquoted operator results.
+
+`a=(x y z); echo ${a%x*}`:
+- strip_one on `x` returns `""` (matched `x*` consumes
+  whole element); arr becomes `["", "y", "z"]`.
+- auto_splat emitted parts `["\u{a1}", "y", "z"]`.
+- Stringsubst inserted as nodes; nodes_to_value's
+  remnulargs ran on each individually but emitted nodes
+  reached argv via a path that didn't strip — `echo` got
+  three args including the raw `\u{a1}`.
+
+**Fix** (`src/ported/subst.rs::paramsubst` auto_splat):
+
+```rust
+let emit_part = |s: &str| -> String {
+    if s.is_empty() {
+        if qt { nul_str.to_string() } else { String::new() }
+    } else {
+        s.to_string()
+    }
+};
+// ... after building nodes ...
+if !qt && nodes.len() > 1 {
+    nodes.retain(|n| !n.is_empty());
+}
+```
+
+Two changes: gate Nularg emission on qt, AND retain only
+non-empty nodes in unquoted multi-element splats (mirrors
+prefork's `else if (!keep) uremnode` for the post-paramsubst
+splice path the third-pass loop doesn't revisit).
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'a=(x y z); echo ${a%x*}'        # leak gone
+y z
+$ ./target/debug/zshrs -fc 'a=(x y z); echo "${a%x*}"'      # DQ scalar
+(empty)
+$ ./target/debug/zshrs -fc 'a=(x y z); print -l ${a%x*}'    # splat
+y
+z
+$ ./target/debug/zshrs -fc 'a=(x y z); for x in ${a%x*}; do echo "[$x]"; done'
+[y]
+[z]
+$ ./target/debug/zshrs -fc 'a=("" b ""); echo "${(@s./.)a}"' # DQ preserves
+ b
+$ ./target/debug/zshrs -fc 'x="//"; echo "${(@s./.)x}"' | xxd
+   .                                  # 3 empty fields, " " separators
+```
+
+**Note** — plain `${a}` (no operator) unquoted on
+`a=("" b "")` still leaks leading-empty; that path goes
+through a different splat site than auto_splat at line 9685.
+Deferred — a unified empty-drop for all unquoted-splat paths
+is a wider refactor.
+
+Test baseline 964/88 preserved.
+
+---
+
 ## #577 — bare `$#-` / `$#?` / `$#!` / `$#*` return 0 — tokenized single-char specials not handled
 
 **Status:** `fixed` 2026-06-04 — bare-form `$#X` dispatch now
@@ -45321,6 +45407,7 @@ no longer reports the internal trap-machinery scalar.
 | 575 | `{a-c}{1..3}` literal first brace blocks later range brace from expanding | **fixed** 2026-06-04 | xpandbraces retries from past each non-expandable `{...}` |
 | 576 | `${(j:X:)arr:MOD}` modifier ignored or scalar-applied vs zsh's qt-conditional per-element | **fixed** 2026-06-04 | qt-split: scalar mod in qt, per-element + sepjoin unquoted |
 | 577 | bare `$#-`/`$#?` return 0 — tokenized single-char specials not handled in brace-free `$#X` rewrite | **fixed** 2026-06-04 | token-to-ascii map before recursing into `${#X}` |
+| 578 | `${a%x*}` etc. leak `¡` Nularg + leading empty in unquoted operator splat | **fixed** 2026-06-04 | auto_splat gates Nularg on qt and drops empty nodes when !qt |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
