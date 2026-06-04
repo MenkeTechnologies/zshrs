@@ -692,8 +692,19 @@ pub fn bin_syserror(
         }
     }
 
-    // c:532 — `msg = strerror(num);`
-    let msg = std::io::Error::from_raw_os_error(num).to_string();
+    // c:532 — `msg = strerror(num);`. Use libc::strerror so the
+    // output matches C zsh byte-for-byte (e.g. "No such file or
+    // directory"). std::io::Error::from_raw_os_error(n).to_string()
+    // would append " (os error N)" — wrong format for the
+    // `${(t)errvar}` consumer. Bug #316 in docs/BUGS.md.
+    let msg = unsafe {
+        let p = libc::strerror(num);
+        if p.is_null() {
+            String::new()
+        } else {
+            std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+        }
+    };
     // c:533-539 — write back to errvar or stderr.
     if let Some(ev) = errvar {
         let str_out = format!("{}{}", pfx, msg); // c:534-535
