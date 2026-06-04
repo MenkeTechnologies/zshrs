@@ -47050,8 +47050,8 @@ no longer reports the internal trap-machinery scalar.
 | 42 | Bare `typeset` prints `name=val` only, no attrs | **port-bug** | use `typeset -p` |
 | 43 | `${#var:mod}` / `${#var/pat/rep}` / `${#arr[i,j]}` ignores transform | **port-bug** | assign to temp first |
 | 44 | `set -x` PS4 doesn't expand `%x %N %I %_` | **port-bug** | `PS4="+ "` simple |
-| 45 | `${#$}` returns 0 (length of PID) | **port-bug** | `pid=$$; ${#pid}` |
-| 46 | nested `` `\`...\`` `` backquotes mishandled | **port-bug** | use `$(...)` instead |
+| 45 | `${#$}` returns 0 (length of PID) | **fixed** 2026-06-02 | `pid=$$; ${#pid}` |
+| 46 | nested `` `\`...\`` `` backquotes mishandled | **fixed** 2026-06-02 | use `$(...)` instead |
 | 47 | `${(b)str}` escapes space/semi (C-zsh doesn't) | **port-bug** | drop `(b)` flag |
 | 48 | `typeset -m PAT` rejects pattern arg | **port-bug** | iterate `${(k)parameters}` |
 | 49 | `(( "abc" == "abc" ))` quoted strings → false | **port-bug** | drop quotes |
@@ -47066,13 +47066,13 @@ no longer reports the internal trap-machinery scalar.
 | 58 | `[[ "x*" == "x*" ]]` quoted-RHS-star still globbed | **port-bug** | escape `\*` on RHS |
 | 59 | `setopt no_clobber` allows `>>` to create new file | **port-bug** | pre-`touch` the file |
 | 60 | `function {body}` (no name) parses + stray `}` echo | **fixed** 2026-06-02 | n/a |
-| 61 | `h["key"]=v` subscript quotes not embedded in key | **port-bug** | use `h=( k v )` paren init |
-| 62 | `extended_glob` `~` (and-not) operator not honored | **port-bug** | iterate + skip with `[[` |
+| 61 | `h["key"]=v` subscript quotes not embedded in key | **fixed** 2026-06-02 | use `h=( k v )` paren init |
+| 62 | `extended_glob` `~` (and-not) operator not honored | **fixed** 2026-06-02 | iterate + skip with `[[` |
 | 63 | `${(j:s:)${(s:t:)var}}` nested split-then-join → first element only | **fixed** 2026-06-02 | n/a |
 | 64 | `$PIPESTATUS` (bash-style upper) exists in zshrs but not zsh | **port-bug** | use lowercase `$pipestatus` |
 | 65 | `${+EPOCHSECONDS}` returns 0 after `zmodload zsh/datetime` | **port-bug** | guard by `zmodload` rc |
 | 66 | `time` builtin ignores `TIMEFMT`, omits `%J` cmd name | **port-bug** | `/usr/bin/time -f` instead |
-| 67 | `pushd` no-args doesn't swap top of dir stack | **port-bug** | explicit `pushd $OLDPWD` |
+| 67 | `pushd` no-args doesn't swap top of dir stack | **fixed** 2026-06-02 | explicit `pushd $OLDPWD` |
 | 68 | `trap` listing in insertion order, not signal-number | **port-bug** | pipe through `sort` |
 | 69 | `$sysparams` auto-loaded w/o `zmodload zsh/system` | **port-bug** | call `zmodload` regardless |
 | 70 | FS watcher leaks newly-created paths to stderr | **port-bug** | none — must fix in zshrs |
