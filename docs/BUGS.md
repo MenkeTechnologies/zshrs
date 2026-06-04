@@ -44464,6 +44464,56 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #574 — `setopt warn_create_global` emits spurious `ZSH_DEBUG_CMD created globally` at every function call
+
+**Status:** `fixed` 2026-06-04 — surfaced + fixed same turn.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt warn_create_global; foo() { x=5; }; foo'
+foo: scalar parameter x created globally in function foo
+
+$ ./target/debug/zshrs --zsh -fc 'setopt warn_create_global; foo() { x=5; }; foo'
+foo:1: scalar parameter ZSH_DEBUG_CMD created globally in function foo
+foo:1: scalar parameter x created globally in function foo
+```
+
+**Root cause** — `fusevm_bridge.rs::BUILTIN_DEBUG_TRAP` closure
+ran `setsparam("ZSH_DEBUG_CMD", cmd_text)` at every sublist
+boundary (the per-statement emit at `compile_zsh.rs:332`).
+C `Src/exec.c:1423-1433` gates the assignment behind
+`if (sigtrapped[SIGDEBUG] && isset(DEBUGBEFORECMD) && !intrap)`.
+zshrs's closure had no gate; with `WARN_CREATE_GLOBAL`, the
+per-statement `setsparam` triggered the canonical
+`scalar parameter X created globally` warning inside every
+function scope.
+
+**Fix** (`src/fusevm_bridge.rs::BUILTIN_DEBUG_TRAP`): skip the
+entire trap-body block (setsparam + dotrap + unsetparam) when
+BOTH trap registries report no DEBUG handler:
+`sigtrapped[SIGDEBUG] == 0 && !traps_table.contains_key("DEBUG")`.
+The dual-registry check mirrors `signals.rs::dotrap` at
+`signals.rs:1481-1511` which distinguishes the settrap path
+(sets sigtrapped bits) from the bin_trap path (populates
+traps_table without touching sigtrapped).
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'setopt warn_create_global; foo() { x=5; }; foo'
+foo:1: scalar parameter x created globally in function foo
+$ ./target/debug/zshrs -fc 'trap "echo dbg" DEBUG; echo hi'
+dbg
+hi
+$ ./target/debug/zshrs -fc 'TRAPDEBUG() { echo dbg }; echo hi'
+dbg
+hi
+```
+
+Both DEBUG-trap dispatch paths preserved; warn_create_global
+no longer reports the internal trap-machinery scalar.
+
+---
+
 ## Aggregate triage
 
 | # | bug | status | covered by demo |
@@ -45041,6 +45091,7 @@ qualifiers always have a digit suffix.
 | 571 | `${(Z)a}` flag without required arg errors "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 572 | `print -S arg` history-save flag emits arg to stdout (and doesn't save) — zsh: silent save | **port-bug** | use `fc -p`/`fc -P` |
 | 573 | `*(Lr)` malformed size-qualifier: zshrs "no matches found" — zsh: "number expected" | **port-bug** | visual audit `L/k/m` need digit |
+| 574 | `setopt warn_create_global` spurious `ZSH_DEBUG_CMD created globally` at every fn call | **fixed** 2026-06-04 | BUILTIN_DEBUG_TRAP now gated on sigtrapped[SIGDEBUG] OR traps_table["DEBUG"] |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to

@@ -4500,6 +4500,32 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if c.get() {
                 return Value::Status(0);
             }
+            // c:Src/exec.c:1423 — `if (sigtrapped[SIGDEBUG] &&
+            // isset(DEBUGBEFORECMD) && !intrap)`. Bug #573: without
+            // this gate, every sublist boundary called
+            // setsparam("ZSH_DEBUG_CMD", ...) even when no DEBUG trap
+            // was set, polluting the param table and (under
+            // WARN_CREATE_GLOBAL) emitting a spurious
+            // `scalar parameter ZSH_DEBUG_CMD created globally`
+            // warning at every function call.
+            //
+            // Two trap registries exist (per signals.rs:1481-1511 dotrap):
+            //   - settrap path → sigtrapped[SIGDEBUG] bits set
+            //   - bin_trap path → traps_table["DEBUG"] populated, sigtrapped untouched
+            // Mirror the dotrap dispatch decision: skip only when BOTH
+            // are absent.
+            let sig_debug = crate::ported::signals_h::SIGDEBUG as usize;
+            let debug_trapped = crate::ported::signals::sigtrapped
+                .lock()
+                .map(|v| v.get(sig_debug).copied().unwrap_or(0))
+                .unwrap_or(0);
+            let debug_in_table = crate::ported::builtin::traps_table()
+                .lock()
+                .map(|t| t.contains_key("DEBUG"))
+                .unwrap_or(false);
+            if debug_trapped == 0 && !debug_in_table {
+                return Value::Status(0);
+            }
             c.set(true);
             // c:Src/exec.c — set ZSH_DEBUG_CMD scalar (PM_READONLY
             // is NOT set on ZSH_DEBUG_CMD, so the canonical
