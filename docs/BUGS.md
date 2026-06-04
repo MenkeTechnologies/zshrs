@@ -42260,7 +42260,28 @@ explicit byte ranges.
 
 ## #559 — `print -P "%(X.true.false)"` always selects false branch — conditional logic broken
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-03 — original repro no longer reproduces; the `%(X.t.f)`
+prompt-conditional dispatcher in [src/ported/prompt.rs](../src/ported/prompt.rs) now
+selects the correct branch for `c`, `l`, `?` (last-exit), `d` (depth), etc. Likely
+landed via the prompt-escape parity work tracked in `#5`/`#38`. No new code change
+this turn — status updated to match observed behavior.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%(c..yes)"'      # empty (T branch)
+$ ./target/debug/zshrs --zsh -fc 'print -P "%(c..yes)"' # empty — matches
+
+$ /opt/homebrew/bin/zsh -fc 'print -P "%(?.YES.NO)"'             # YES
+$ ./target/debug/zshrs --zsh -fc 'print -P "%(?.YES.NO)"'        # YES
+
+$ /opt/homebrew/bin/zsh -fc 'false; print -P "%(?.YES.NO)"'        # NO
+$ ./target/debug/zshrs --zsh -fc 'false; print -P "%(?.YES.NO)"'   # NO
+```
+
+Residual: `%(j.T.F)` (jobs count) and `%(h.T.F)` (history count) still
+diverge from zsh — tracked separately under the prompt-escape gap family.
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%(c..yes)"'
@@ -43603,7 +43624,7 @@ qualifiers always have a digit suffix.
 | 556 | `typeset -A h=("a b" 1)` quoted key word-splits — extends #528 to assocs | **port-bug** | per-element subscript-assign |
 | 557 | regex `.` doesn't match newline in zshrs — zsh: dot-matches-newline by default | **port-bug** | explicit `[[:space:]]` class |
 | 558 | regex `[a-z\\n]` char-class matches multiline aggressively — extends #557 (different regex engine) | **port-bug** | anchor with `^`/`$` |
-| 559 | `print -P "%(X.t.f)"` prompt-conditional always picks FALSE branch — `%(c..yes)`/`%(l..no-login)` diverge | **port-bug** | string-form test outside prompt |
+| 559 | `print -P "%(X.t.f)"` prompt-conditional always picks FALSE branch — `%(c..yes)`/`%(l..no-login)` diverge | **fixed** 2026-06-03 | n/a |
 | 560 | `print -- "a\\0b"` strips embedded NUL byte from output — zsh: preserves | **port-bug** | use `printf` (needs verification) |
 | 561 | `${(L99)a}` flag-with-trailing-digits error msg: "bad substitution" — zsh: "error in flags near position N" | **port-bug** | match on rc only |
 | 562 | `${a:U}` / `${a:C}` / `${a:W}` invalid uppercase modifier suffixes silently accepted — zsh: "unrecognized modifier" | **port-bug** | visual audit modifier-letter case |
