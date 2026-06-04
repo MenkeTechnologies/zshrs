@@ -11057,13 +11057,28 @@ pub fn modify(s: &str, modifiers: &str) -> String {
             let delim = match chars.next() {
                 // c:4585
                 Some(c) => c,  // c:4585
-                None => break, // c:4585
+                None => {
+                    // c:Src/subst.c modify() — bare `:s` with no
+                    // delimiter byte → "bad substitution". Without
+                    // this the `None => break` silently returned
+                    // the unchanged value. Bug #595.
+                    zerr("bad substitution");
+                    errflag_set_error();
+                    return String::new();
+                }
             };
             // Read pattern with backslash-escape support.
             let mut pat = String::new(); // c:4595
+            // c:Src/subst.c modify() — track whether the closing
+            // pattern delimiter was actually consumed. C emits
+            // `if (!*ptr2) zerr("bad substitution")` when no
+            // closing delim is found before end of modifier string.
+            // Bug #595.
+            let mut pat_closed = false;
             while let Some(&c) = chars.peek() {
                 if c == delim {
                     chars.next();
+                    pat_closed = true;
                     break;
                 }
                 if c == '\\' {
@@ -11079,6 +11094,14 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     pat.push(c);
                     chars.next();
                 }
+            }
+            if !pat_closed {
+                // c:Src/subst.c modify() — `if (!*ptr2) zerr("bad
+                // substitution")` — the pattern body must end with
+                // the chosen delimiter. `${a:s/l}` is rejected.
+                zerr("bad substitution");
+                errflag_set_error();
+                return String::new();
             }
             // Read replacement with `&` and `\X` handling.
             let mut repl = String::new(); // c:4625
