@@ -5293,7 +5293,17 @@ pub fn paramsubst(
             // the integer-parse path bailed on the non-numeric `@`.
             let is_at_or_star = matches!(sub, "@" | "*");
             let is_slice = sub.contains(',');
+            // c:Src/params.c getarg — `(r)pat`/`(R)pat`/`(i)pat`/`(I)pat`
+            // subscript flags do a pattern-search returning the match
+            // (or empty when no match). Bug #587: the integer-parse
+            // fallback returned false for flag-form subscripts, so
+            // `${a[(r)y]:-default}` for `a=(x y z)` fired the default
+            // even though `y` IS in the array and raw_value already
+            // holds it. Detect flag-form subscript (`(...)` prefix)
+            // and treat is_set as true when raw_value is non-empty.
+            let is_flag_form = sub.trim_start().starts_with('(');
             used_subexp
+                || (is_flag_form && !raw_value.is_empty())
                 || assoc_get(&var_name)
                     .map(|m| m.contains_key(sub))
                     .unwrap_or(false)
