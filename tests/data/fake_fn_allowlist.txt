@@ -1706,3 +1706,11 @@ is_unset_special
 # at subst.rs:10080 and digit positional at subst.rs:10520) share
 # the same walker. Bugs #579/#580/#581.
 apply_bare_modifier_chain
+
+# mathevali_noeval — NOT in C. Rust-only side-effect-free variant
+# of mathevali for the compile-time pre-check at
+# compile_zsh.rs WC_ARITH — runs the math evaluator with noeval=1
+# so setmathvar's c:1002-1003 noeval-bail prevents paramtab mutation.
+# C source validates syntax via direct parser inspection; Rust port
+# reuses matheval pipeline gated by noeval. Bug #617.
+mathevali_noeval
