@@ -4539,6 +4539,21 @@ pub fn paramsubst(
                     let return_all =
                         flags.contains('R') || flags.contains('K');
                     let exact = flags.contains('e'); // c:1419 e flag — literal compare
+                    // c:Src/params.c:665-681 scanparamvals — when the outer
+                    // `(k)` paramflag is set (SCANPM_WANTKEYS bit), the hash
+                    // scan returns matched KEYS instead of matched VALUES
+                    // for `(r)/(R)` value-pattern subscripts. For `(k)/(K)`
+                    // key-pattern subscripts (match_against_key) the key
+                    // path doesn't fold into WANTKEYS — those keep returning
+                    // the value. Verified via:
+                    //   /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2 c 1);
+                    //     echo "${(k)h[(R)1]}"'  → 'a c'
+                    //   /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2 c 1);
+                    //     echo "${(k)h[(k)a]}"'  → '1'  (key-match still
+                    //     returns value).
+                    let return_key = (hkeys & SCANPM_WANTKEYS) != 0
+                        && !match_against_key
+                        && (hvals & SCANPM_WANTVALS) == 0;
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if match_against_key {
@@ -4555,8 +4570,14 @@ pub fn paramsubst(
                                 .map_or(false, |__p| pattry(&__p, hay))
                         };
                         if matched {
-                            // (k)/(K)/(r)/(R) all return VALUE.
-                            out.push(v.clone());
+                            // c:scanparamvals — push KEY when WANTKEYS &
+                            // !WANTVALS bits are live on the outer flag
+                            // block; otherwise push VALUE.
+                            if return_key {
+                                out.push(k.clone());
+                            } else {
+                                out.push(v.clone());
+                            }
                             if !return_all {
                                 break;
                             }
@@ -5632,7 +5653,22 @@ pub fn paramsubst(
                                // emits multiple result_nodes. Without this, `a=( ${(k)builtins}
                                // )` got 1 element instead of zsh's 103.
         let mut magic_assoc_array: Option<Vec<String>> = None;
-        if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) != 0 {
+        // c:Src/subst.c — the (k)/(v)/(kv) outer-flag value-init at
+        // c:2247-2270 is the "no subscript" path. When a NON-SPLAT
+        // subscript is present (`(R)pat`/`(I)pat`/`key`/`[lo,hi]`),
+        // the subscript dispatch in the if-let-Some(sub) arm above
+        // (assoc/array/scalar) already produced the correct raw_value
+        // (e.g. `${(k)h[(R)pat]}` returns matched KEYS via the
+        // SCANPM_WANTKEYS+MATCHVAL composition handled inline at line
+        // 4538). Override would clobber that with all-keys enumeration.
+        // `[@]`/`[*]` splat subscripts MUST still hit this branch — the
+        // splat is the trigger for (k)/(v)/(kv) enumeration in zsh
+        // (`${(k)h[@]}` = keys, NOT raw splat-of-values). Bug #592.
+        let is_at_splat_sub = matches!(subscript.as_deref(), Some("@") | Some("*"));
+        let has_subscript_for_kvflag = subscript.is_some() && !is_at_splat_sub;
+        if !has_subscript_for_kvflag
+            && (hkeys & SCANPM_WANTKEYS) != 0
+            && (hvals & SCANPM_WANTVALS) != 0 {
             // c:2247 (kv) — interleaved key/value pairs. Walk assoc
             // first, then the magic-assoc fallback (aliases/functions/
             // commands/parameters/builtins/options/...) interleaving
@@ -5668,7 +5704,7 @@ pub fn paramsubst(
                 .as_ref()
                 .map(|v| v.join(" "))
                 .unwrap_or_default(); // c:2247
-        } else if (hkeys & SCANPM_WANTKEYS) != 0 {
+        } else if !has_subscript_for_kvflag && (hkeys & SCANPM_WANTKEYS) != 0 {
             // c:2247
             // Capture the keys-as-Vec for split_parts splat (see
             // magic_assoc_array declaration above). Walk every source
@@ -5758,7 +5794,7 @@ pub fn paramsubst(
                     } // c:2247
                 }) // c:2247
                 .unwrap_or_default();
-        } else if (hvals & SCANPM_WANTVALS) != 0 {
+        } else if !has_subscript_for_kvflag && (hvals & SCANPM_WANTVALS) != 0 {
             // c:2256 — (v) flag: values as array, with magic-assoc
             // fallback chain matching the (k) arm above so
             // \`\${(v)options}\` etc. splat.
@@ -5800,14 +5836,25 @@ pub fn paramsubst(
             // VALUES (parameter.c hashparam splat). Without this assoc
             // fallback the values stayed empty and the splat block
             // had nothing to emit. Bug #287 in docs/BUGS.md.
-            value = arrays_get(&var_name)
-                .as_ref()
-                .map(|a| a.join(" "))
-                .or_else(|| {
-                    assoc_get(&var_name)
-                        .map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
-                })
-                .unwrap_or_else(|| raw_value.clone());
+            //
+            // When a NON-SPLAT subscript is present (`(R)pat`, `(I)pat`,
+            // `[lo,hi]`, single key), the subscript dispatch already
+            // produced the matched-result raw_value. The `(@)` enum
+            // would clobber that with all-values. Honor raw_value in
+            // that case so `${(@k)h[(R)V]}` returns matched keys.
+            // Bug #592.
+            if has_subscript_for_kvflag {
+                value = raw_value.clone();
+            } else {
+                value = arrays_get(&var_name)
+                    .as_ref()
+                    .map(|a| a.join(" "))
+                    .or_else(|| {
+                        assoc_get(&var_name)
+                            .map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
+                    })
+                    .unwrap_or_else(|| raw_value.clone());
+            }
             // c:2922 — getarrvalue sets isarr=1; nojoin=2 keeps it.
             if arrays_contains(&var_name) || assoc_contains(&var_name) {
                 isarr = 1;
@@ -5933,6 +5980,37 @@ pub fn paramsubst(
                     split_parts = Some(values);
                     isarr = 1;
                 }
+            }
+        }
+        // c:Src/subst.c — `${(@k)assoc[(R)pat]}` / `${(@k)assoc[(r)pat]}`
+        // preserves ARRAY shape across the assoc subscript MATCH path
+        // so consumers like `failed=("${(@k)map[(R)pat]}")` get one
+        // element per matched key. raw_value carries the joined keys
+        // ("k1 k2") from the assoc (R) dispatch at line 4538; split
+        // back to Vec for splat. Gated on nojoin == 2 (the `(@)` outer
+        // flag), assoc-backed name, a (R)/(r) subscript, and a
+        // non-empty raw_value (skip when the match returned nothing).
+        // Bug #592.
+        if nojoin == 2
+            && magic_assoc_array.is_none()
+            && split_parts.is_none()
+            && !raw_value.is_empty()
+            && (hkeys & SCANPM_WANTKEYS) != 0
+            && assoc_contains(&var_name)
+            && subscript
+                .as_deref()
+                .map_or(false, |s| {
+                    s.trim_start().starts_with("(R)") || s.trim_start().starts_with("(r)")
+                })
+        {
+            let parts: Vec<String> = raw_value
+                .split(' ')
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+            if !parts.is_empty() {
+                split_parts = Some(parts);
+                isarr = 1;
             }
         }
         if !rest.is_empty() {
