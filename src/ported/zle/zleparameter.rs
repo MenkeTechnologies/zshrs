@@ -141,6 +141,18 @@ pub fn scanpmwidgets(
 /// every keymap name as a sorted `Vec<String>`.
 pub fn keymapsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> {
     // c:105
+    // c:Src/Zle/zle_keymap.c:1224-1230 init_keymaps + default_bindings
+    // populate keymapnamtab on zsh/zle module load. zshrs's
+    // non-interactive script mode never autoloads zsh/zle, so
+    // keymapnamtab stays empty until something triggers it (e.g. a
+    // `bindkey` call). Trigger the same lazy init here so a bare
+    // `${keymaps}` / `${(@k)keymaps}` read populates the standard
+    // 9 keymaps. Idempotent — default_bindings is a no-op when
+    // keymapnamtab already has entries. Bug #383.
+    static KEYMAPS_PARAM_INIT: std::sync::Once = std::sync::Once::new();
+    KEYMAPS_PARAM_INIT.call_once(|| {
+        crate::ported::zle::zle_keymap::default_bindings();
+    });
     let mut names: Vec<String> = crate::ported::zle::zle_keymap::keymapnamtab()
         .lock()
         .map(|t| t.keys().cloned().collect())
