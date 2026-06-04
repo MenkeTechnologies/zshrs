@@ -1821,6 +1821,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
         let sub_idx = sub_idx_val.to_int() as usize;
         let name = name_val.to_str();
+
+        // c:Src/loop.c:248-252 — `if (!args || empty(args)) {
+        // state->pc = end; ... return 0; }`. An empty option list
+        // skips the body entirely; without this gate the prompt loop
+        // runs indefinitely (or twice on the EOF stdin case before
+        // exiting). Bug #401.
+        if words.is_empty() {
+            return Value::Status(0);
+        }
+
         let chunk = match vm.chunk.sub_chunks.get(sub_idx).cloned() {
             Some(c) => c,
             None => return Value::Status(1),
