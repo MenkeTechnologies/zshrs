@@ -850,9 +850,19 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
                 j += 1;
             }
             let mut max: i64 = i64::MAX;
-            if j > min_start {
-                if j < bytes.len() && bytes[j] == b',' {
-                    j += 1;
+            // Three valid shapes (per zsh extended-glob (#cN,M)):
+            //   (#cN)      — exact count N  (min=N, max=N)
+            //   (#cN,)     — min N, no max  (min=N, max=∞)
+            //   (#cN,M)    — N..M range     (min=N, max=M)
+            //   (#c,M)     — max M, no min  (min=0, max=M)  ← bug #489 missing case
+            //   (#c,)      — equivalent to no count (min=0, max=∞)
+            // The original `if j > min_start` gate skipped the `)`
+            // check for the no-min shapes, leaving them unparsed.
+            let has_min_digits = j > min_start;
+            let has_comma = j < bytes.len() && bytes[j] == b',';
+            if has_min_digits || has_comma {
+                if has_comma {
+                    j += 1; // skip ,
                     let max_start = j;
                     let mut mx: i64 = 0;
                     while j < bytes.len() && bytes[j].is_ascii_digit() {
