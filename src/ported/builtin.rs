@@ -1593,6 +1593,7 @@ pub fn bin_cd(
     //     which cd_get_dest read from the stack to compute dest).
     //   * BIN_CD: dirstack unchanged unless AUTO_PUSHD is set, in
     //     which case the CD behaves like a pushd.
+    let mut skip_popd_n_cd = false;
     {
         let autopushd = isset(AUTOPUSHD);
         // c:1187 cd_new_pwd — rolllist(dirstack, dir) for BIN_PUSHD then
@@ -1643,6 +1644,44 @@ pub fn bin_cd(
                 if k >= 1 && k - 1 < d.len() {
                     d.remove(k - 1);
                 }
+            } else if is_stack_rotate && func == BIN_POPD {
+                // c:Src/builtin.c:872-936 + c:1197-1199 — `popd +N` /
+                // `popd -N`: when the target +N/-N is NOT firstnode
+                // (i.e., N != 0 / N != top-of-stack), remove the
+                // target entry from dirstack WITHOUT changing PWD or
+                // pushing pre_pwd to the stack. C's logic:
+                //   target = dir (the +N resolved node);
+                //   if (dir != firstnode(dirstack)) return dir;
+                //   // … cd_do_chdir path runs only if target IS top
+                //
+                // The Rust dispatch reached here for the
+                // "target-not-top" case after cd_get_dest already
+                // resolved to dirstack[k-1]. Just remove that index
+                // and skip the cd / pre_pwd-insert paths.
+                // Bug #466 in docs/BUGS.md.
+                let dd: usize = argv[0][1..].parse().unwrap_or(0);
+                let pushdminus = isset(PUSHDMINUS);
+                let from_top = (argv[0].starts_with('+')) ^ pushdminus;
+                let m = d.len();
+                let n = m + 1;
+                // popd's stack-rotate-vs-top logic mirrors C: the
+                // virtual stack is pre_pwd ++ DIRSTACK_old; position 0
+                // is the CURRENT pwd, so "popd +0" / "popd +N where
+                // N maps to top" pops the top (handled by the
+                // existing BIN_POPD arm below). For N that resolves
+                // to a non-top dirstack index, remove from dirstack
+                // directly.
+                let k = if from_top { dd } else { n - 1 - dd };
+                if k >= 1 && k - 1 < d.len() {
+                    d.remove(k - 1);
+                    // Override the cd path: keep PWD at pre_pwd so
+                    // the surrounding flow doesn't cd to the removed
+                    // entry. Clear `old` so OLDPWD isn't updated
+                    // either. The destination passed to bin_cd was
+                    // the removed entry; we overwrite the post-cd
+                    // PWD write below to pre_pwd.
+                    skip_popd_n_cd = true;
+                }
             } else if func == BIN_PUSHD || (func == BIN_CD && autopushd) {
                 // c:849 — push pre-cd pwd.
                 // c:1210-1218 — PUSHDIGNOREDUPS: skip duplicate of
@@ -1659,6 +1698,24 @@ pub fn bin_cd(
                 }
             }
         }
+    }
+    // c:Src/builtin.c:872-936 — `popd +N` (N != 0) removes the
+    // target entry from dirstack WITHOUT changing PWD. cd_do_chdir
+    // already chdir'd into the removed target's path; revert that
+    // back to pre_pwd and skip the OLDPWD update + PWD write so the
+    // post-popd CWD remains the pre-popd PWD. Bug #466 in
+    // docs/BUGS.md.
+    if skip_popd_n_cd {
+        // Restore process cwd to pre_pwd. Ignore errors; the
+        // dirstack mutation already happened.
+        let _ = env::set_current_dir(&pre_pwd);
+        // c:Src/builtin.c:1245-1252 — print dirstack on POPD unless
+        // quiet. Pass func=BIN_POPD so the dirstack-print branch
+        // still fires for the listing (matches zsh's `popd +N` echo
+        // of the resulting stack).
+        cd_new_pwd(func, 0, OPT_ISSET(ops, b'q') as i32);
+        unqueue_signals();
+        return 0;
     }
     if let Some(o) = old {
         // c:1239 oldpwd = pwd
