@@ -1401,6 +1401,18 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 b'%' => pputc(bv, b'%'),
                 // c:897 — `%)` (literal close-paren — used in %(x.t.f))
                 b')' => pputc(bv, b')'),
+                // c:Src/prompt.c:663-675 — `%<...<` / `%>...>` truncation
+                // directives. Without numeric prefix the truncation
+                // width is 0 (no truncation); with a prefix it bounds
+                // the bracketed region. Walks via prompttrunc which
+                // handles the matching `<`/`>` close. Without these
+                // arms the unknown-escape default below consumed the
+                // first `>` and left the second as a literal char,
+                // producing visible `>` in the output. Bug #439.
+                b'<' | b'>' => {
+                    let truncchar = xc as i32;
+                    let _ = prompttrunc(bv, arg, truncchar, doprint, endchar);
+                }
                 // c:899 — null terminator inside an escape
                 0 => return 0,
                 // c:Src/prompt.c — unknown `%X`: C's putpromptchar
@@ -1875,8 +1887,36 @@ pub fn prompttrunc(
         }
 
         bv.truncwidth = 0; // c:1431
+    } else {
+        // c:Src/prompt.c:1608-1617 — `arg <= 0` (no width prefix). Walk
+        // past the optional `>`-string content until the matching
+        // `truncchar`. Backslash escapes the next byte. Bug #439: the
+        // previous Rust port had only the `arg > 0` body, so `%>>`
+        // and `%<<` (no prefix) left the second `>`/`<` as a literal
+        // char in the output, while the dispatcher had already
+        // consumed the first one — visible `>` / `<` artifact.
+        let tchar = truncchar as u8;
+        let endchar_u8 = endchar as u8;
+        if bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) != endchar_u8 {
+            bv.fm_pos += 1; // c:1610 — past the `<`/`>` marker
+        }
+        while let Some(&c) = bv.fm.as_bytes().get(bv.fm_pos) {
+            if c == 0 || c == tchar {
+                break;
+            }
+            if c == b'\\' && bv.fm.as_bytes().get(bv.fm_pos + 1).is_some() {
+                bv.fm_pos += 1; // c:1613
+            }
+            bv.fm_pos += 1; // c:1614
+        }
+        // c:1616-1617 — `if (bv->truncwidth || !*bv->fm) return 0;`
+        if bv.truncwidth != 0
+            || bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) == 0
+        {
+            return 0;
+        }
     }
-    0 // c:1471
+    1 // c:1619
 }
 
 /// Push a parser context token. Port of `cmdpush()` from
