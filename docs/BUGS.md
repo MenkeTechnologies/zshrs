@@ -47103,7 +47103,7 @@ no longer reports the internal trap-machinery scalar.
 | 84 | `bindkey -L` 117 entries vs zsh's 31 (default keymap differs) | **port-bug** | normalize via post-process |
 | 85 | `"${(s.X.)s[@]}"` on scalar with `[@]` returns empty | **fixed** 2026-06-02 | `(@s.X.)s` flag-first form |
 | 86 | `${1:?msg}` error format has spurious `:1:` line | **port-bug** | sed-strip the line number |
-| 87 | `setopt` (no args) empty under `-fc`; zsh shows `nohashdirs/norcs` | **port-bug** | `$options[rcs]` direct query |
+| 87 | `setopt` (no args) empty under `-fc`; zsh shows `nohashdirs/norcs` | **fixed** 2026-06-04 | `$options[rcs]` direct query |
 | 88 | `setopt nounset` doesn't fire on unset var in arith `$((x+1))` | **fixed** 2026-06-02 | `[[ -v var ]]` guard |
 | 89 | `extended_glob #`/`##` quantifiers not recognized (literal) | **fixed** 2026-06-04 | `[[ "aaaa" == a# ]]` matches |
 | 90 | `$ZSH_PATCHLEVEL` = literal `"unknown"` vs zsh's commit | **fixed** 2026-06-02 | fallback to `$ZSH_VERSION` |
@@ -47283,7 +47283,7 @@ no longer reports the internal trap-machinery scalar.
 | 264 | `${widgets[fn]}` after `zle -N fn` returns literal `builtin` for all queries (no real lookup) | **fixed** 2026-06-04 | `zle -N foo; echo ${widgets[foo]}` → `user:foo` matching zsh |
 | 265 | `$MATCH` not populated by `(#m)` flag in `${var/pat/repl}` substitution (works in `=~`) | **fixed** 2026-06-02 | use `=~` then manually substitute |
 | 266 | `$match[N]` backref array not populated by `(#b)` in substitution | **fixed** 2026-06-02 | use `=~` to capture, build repl manually |
-| 267 | Bare `setopt` (no args) prints nothing instead of listing currently-set options | **port-bug** | use `set -o` (POSIX form) |
+| 267 | Bare `setopt` (no args) prints nothing instead of listing currently-set options | **fixed** 2026-06-04 | use `set -o` (POSIX form) |
 | 268 | Autovars `LISTMAX`/`MAILCHECK`/`KEYTIMEOUT`/`PERIOD` typed `scalar` instead of `integer` | **fixed** 2026-06-03 | vm_helper init uses setiparam for these autovars per C `Src/params.c:857-860` |
 | 269 | `$SPROMPT` autovar default empty (zsh: `zsh: correct '%R' to '%r' [nyae]?`) | **fixed** 2026-06-02 | explicit `SPROMPT=...` init in .zshrc |
 | 270 | `${(t)watch}` autovar absent — zsh: `array-special`; `watch` user-tracking feature dead | **port-bug** | (none — feature not implemented) |
@@ -47410,7 +47410,7 @@ no longer reports the internal trap-machinery scalar.
 | 391 | PS4 escape expansion broken — `%x`/`%N`/`%I`/`%_` printed literally during `set -x` (zsh: expanded) | **fixed** 2026-06-03 | abandon `set -x`; use manual `echo` debugging |
 | 392 | `${(qq)arr[@]}` only quotes whitespace-containing elements (zsh: force-quotes all) | **fixed** 2026-06-02 | `printf "'%s' " "${a[@]}"` instead |
 | 393 | `jobs %X` rc=1 on unknown-job instead of 127 + `%` not stripped in error msg (zsh: rc=127, msg `not found: NAME`) | **fixed** 2026-06-02 | match on diagnostic text instead of `$?` |
-| 394 | `setopt` no-args dump empty under `-f` — should list `nohashdirs`/`norcs` (zsh: shows divergent-from-default) | **port-bug** | probe specific opts with `[[ -o NAME ]]` |
+| 394 | `setopt` no-args dump empty under `-f` — should list `nohashdirs`/`norcs` (zsh: shows divergent-from-default) | **fixed** 2026-06-04 | probe specific opts with `[[ -o NAME ]]` |
 | 395 | `compdef` shipped as permanent builtin — zsh: not defined until `compinit`; breaks `${+functions[compdef]}` guard | **fixed** 2026-06-02 | probe `_comp_setup` instead |
 | 396 | `$funcsourcetrace` records `:0` instead of `:1` for function-definition line (parallel to #385 LINENO base) | **fixed** 2026-06-02 | `$(( line + 1 ))` adjust when emitting |
 | 397 | **CRITICAL** `printf "X" > FILE` writes to BOTH stdout AND file — builtin bypasses shell redirection (echo/print work) | **fixed** 2026-06-02 | use `print -r --` instead, or wrap printf in subshell |
