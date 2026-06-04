@@ -7905,7 +7905,18 @@ pub fn bin_print(
         if let Some(ref v) = dest_var {
             setsparam(v, &out);
         } else {
-            print!("{}", out);
+            // c:Src/builtin.c — C printf goes through libc fwrite to
+            // stdout, unbuffered when fd 1 is the redirect target.
+            // Rust's `print!` is line-buffered; without a trailing
+            // newline the bytes stay in the buffer past the redirect
+            // restore and land on the original stdout. Route through
+            // stdout().write_all + flush so the bytes hit fd 1 (the
+            // redirect target) immediately. Bug #397.
+            use std::io::Write as _;
+            let stdout = io::stdout();
+            let mut lk = stdout.lock();
+            let _ = lk.write_all(out.as_bytes());
+            let _ = lk.flush();
         }
         return 0;
     }
@@ -8225,6 +8236,17 @@ pub fn bin_print(
             let mut lk = stdout.lock();
             let _ = lk.write_all(body.as_bytes()); // c:5124
             let _ = lk.write_all(final_term); // c:5132
+            // c:Src/builtin.c — C printf goes through libc fwrite to
+            // stdout (fd 1) which is unbuffered when the builtin runs
+            // under a redirect (because dup2 to fd 1 puts the file
+            // there). Rust's `io::stdout()` is LINE-buffered, so
+            // `printf "abcde"` (no `\n`) leaves bytes pending in the
+            // userspace buffer; when the surrounding `> file` redirect
+            // closes the dup'd fd, those bytes flush AFTER the restore
+            // — landing on the original stdout (terminal) AND missing
+            // the file. Flush here so the bytes hit fd 1 (the redirect
+            // target) before bin_print returns. Bug #397.
+            let _ = lk.flush();
         }
     }
     0
