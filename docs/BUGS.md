@@ -44466,6 +44466,53 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #597 — `"${a[@]:^b}"` / `"${a[@]:^^b}"` collapse to scalar instead of preserving array shape
+
+**Status:** `fixed` 2026-06-04 — `[@]`/`[*]` subscript on the zip
+LHS now bypasses the DQ scalar-collapse path so the interleave
+walks per-element (matches zsh's SCANPM_ISVAR_AT carry-through
+from params.c:2027-2029).
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(1 2 3); b=(a b c); print -l "${a[@]:^b}"'
+1
+a
+2
+b
+3
+c
+
+# Before fix:
+$ zshrs --zsh -c 'a=(1 2 3); b=(a b c); print -l "${a[@]:^b}"'
+1 2 3
+a              # collapsed LHS to "1 2 3", truncated to one zip pair
+
+# After fix:
+$ zshrs --zsh -c 'a=(1 2 3); b=(a b c); print -l "${a[@]:^b}"'
+1
+a
+2
+b
+3
+c
+```
+
+**Root cause** — both the `:^` (SUB_ZIP) and `:^^` (SUB_ZIP_LONG)
+arms in `src/ported/subst.rs` checked `qt` (DQ context) to decide
+whether to sepjoin the LHS into a single scalar before zipping.
+The C source's nojoin/SCANPM_ISVAR_AT mechanism keeps array shape
+across the qt transition when `[@]`/`[*]` subscript is present
+(params.c:2027-2029); the Rust port collapsed regardless of
+subscript so explicit `[@]` lost element shape.
+
+**Fix** — both arms gate the qt-collapse path on `!is_at_subscript_zip`
+(subscript ≠ `@` / `*`). The bare-DQ form `"${a:^b}"` (no explicit
+`[@]`) still collapses to the documented `[sepjoin(a), b[0]]`
+shape; explicit splat preserves per-element zip.
+
+---
+
 ## #596 — `${a/|/-}` and `${a//|/-}` mis-treat bare `|` as alternation — should be literal in patterns
 
 **Status:** `fixed` 2026-06-04 — `escape_bare_alt_pipes` (existing
@@ -46403,6 +46450,7 @@ no longer reports the internal trap-machinery scalar.
 | 594 | `${a:s/PAT/REPL/X}` silently ignores trailing garbage after modifier delim — should emit "unrecognized modifier" | **fixed** 2026-06-04 | modify() post-loop check for leftover chars; emit `:X` form if leftover is `:X`, bare form otherwise (matches C subst.c:3786-3790) |
 | 595 | `${a:s/PAT}` (missing closing delim) and bare `${a:s}` silently no-op — should emit "bad substitution" | **fixed** 2026-06-04 | modify() `:s` arm: track pat_closed flag, error on missing closing delim or bare `:s` (matches C subst.c modify() :s arm) |
 | 596 | `${a/\|/-}` and `${a//\|/-}` mis-treat bare `\|` as alternation — should be literal in `/`/`//` patterns | **fixed** 2026-06-04 | escape_bare_alt_pipes applied to single + global replace pat (was already applied to ##/##/%/%% arms) |
+| 597 | `"${a[@]:^b}"` / `"${a[@]:^^b}"` collapse to scalar instead of preserving array shape | **fixed** 2026-06-04 | :^ and :^^ arms gate qt-collapse on `!is_at_subscript` so explicit `[@]` walks per-element zip |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
