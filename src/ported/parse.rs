@@ -1968,6 +1968,40 @@ fn par_funcdef() -> Option<ZshCommand> {
                     zshlex();
                     continue;
                 }
+                // c:Src/exec.c::execcmd_args — function name tokens
+                // in `function NAME { ... }` form go through globbing
+                // at parse time. zsh's `function with[bracket] { ... }`
+                // triggers a glob expansion of `with[bracket]`; no file
+                // matches → "no matches found: NAME" + rc=1 (when
+                // NOMATCH is set, the default). Bug #536: zshrs accepted
+                // the literal bracket-containing name and registered
+                // the function silently. Mirror C by probing for glob
+                // metachars on the name; if present AND no file
+                // matches, emit the diagnostic and abort the parse.
+                let has_glob_chars = s.chars().any(|c| {
+                    matches!(
+                        c,
+                        '[' | ']'
+                            | '*'
+                            | '?'
+                            | crate::ported::zsh_h::Inbrack
+                            | crate::ported::zsh_h::Outbrack
+                            | crate::ported::zsh_h::Star
+                            | crate::ported::zsh_h::Quest
+                    )
+                });
+                if has_glob_chars && crate::ported::zsh_h::isset(crate::ported::zsh_h::NOMATCH) {
+                    let untok = crate::ported::lex::untokenize(s);
+                    let glob_result = crate::ported::glob::glob(&untok);
+                    if glob_result.is_empty() {
+                        crate::ported::utils::zerr(&format!("no matches found: {}", untok));
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::utils::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        return None;
+                    }
+                }
                 names.push(s.to_string());
                 zshlex();
             }
