@@ -40311,7 +40311,19 @@ saved="${(q)a[@]:-''}"
 
 ## #511 — integer overflow in `$((...))` silently returns 0 — zsh: warns "number truncated after 18 digits"
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — overflow literals now emit the
+`number truncated after 18 digits` warning and return the truncated
+value matching zsh byte-for-byte. Likely landed via earlier math.c
+lex_num parity.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'echo $((-9223372036854775808))'
+zsh:1: number truncated after 18 digits: 9223372036854775808
+-922337203685477580    # matches zsh byte-for-byte
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo $((-9223372036854775808))'
@@ -40722,7 +40734,31 @@ TRAPZERR() {
 
 ## #516 — `typeset` no-args omits type-flag prefix — `!=0` instead of `integer 10 readonly !=0`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/params.rs](../src/ported/params.rs)).
+
+The type-flag prefix itself (`integer 10 readonly`) already worked; the
+remaining gap was that `typeset`'s dump for special params (`$`, `-`,
+etc.) emitted the empty `u_val`/`u_str` slots instead of the live values.
+Both arms of `printparamvalue` (PM_INTEGER and PM_SCALAR) now route
+through `getsparam` as a fallback — same scheme as #463's `bin_set` fix.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'typeset' | head -8
+integer 10 readonly !=0
+integer 10 readonly '#'=0
+integer 10 readonly '$'=13351      # real PID, was 0
+array readonly '*'=(  )
+readonly -=569Xf                    # shell flags, was empty
+0=./target/debug/zshrs
+integer 10 readonly '?'=0
+array readonly @=(  )
+# matches zsh byte-for-byte (modulo PID + binary path)
+```
+
+Baseline 961/91 (unchanged).
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset 2>&1 | head -1'
@@ -44701,12 +44737,12 @@ qualifiers always have a digit suffix.
 | 508 | `%E` (clear-to-EOL) prompt escape printed literally — zsh emits `\\033[K` | **fixed** 2026-06-04 | n/a |
 | 509 | `%G`/`%e` prompt escapes (zero-width marker / parser-indent) printed literally — extends prompt-escape gap family | **fixed** 2026-06-04 | n/a |
 | 510 | `${(q)empty_array}` returns empty instead of `''` — empty-array-quoting semantics lost; breaks `(q)`+`eval` round-trips | **fixed** 2026-06-04 | n/a |
-| 511 | integer overflow in `$((...))` silently returns 0 — zsh: "number truncated after 18 digits" warning + truncated value | **port-bug** | pre-validate literal length |
+| 511 | integer overflow in `$((...))` silently returns 0 — zsh: "number truncated after 18 digits" warning + truncated value | **fixed** 2026-06-04 | n/a |
 | 512 | `${(t)EPOCHSECONDS}` / `${(t)EPOCHREALTIME}` empty — type-flag missing on GSU-backed datetime specials | **port-bug** | hardcode known specials |
 | 513 | `OPTIND=N` inside function LEAKS to parent — zsh: implicitly function-local | **port-bug** | manual save/restore around `getopts` |
 | 514 | `(#e)` end-anchor glob flag not recognized — extends #483 `(#X)` family | **fixed** 2026-06-04 | n/a |
 | 515 | `$funcsourcetrace` shows fn-name (`f:1`) instead of file-name (`zsh:1`) — wrong source-location tracking | **port-bug** | none — array is incorrect |
-| 516 | `typeset` no-args dump omits type-flag prefix — `!=0` instead of `integer 10 readonly !=0` | **port-bug** | use `${(t)NAME}` (also limited per #512) |
+| 516 | `typeset` no-args dump omits type-flag prefix — `!=0` instead of `integer 10 readonly !=0` | **fixed** 2026-06-04 | n/a |
 | 517 | `LC_NUMERIC`/`LC_TIME`/`LC_COLLATE`/`LC_CTYPE` initialized to empty string instead of unset — bash-init contamination (extends #479/#497) | **port-bug** | use `[[ -n $LC_TIME ]]` non-empty check |
 | 518 | `$PROMPT`/`$PS1` (and PROMPT2-4/PS2-4) NOT bidirectionally aliased — modifying one doesn't update the other | **port-bug** | explicit dual-assign |
 | 519 | **CRITICAL** infinite-recursion function crashes shell with stack overflow (exit 134) — zsh: FUNCNEST limit catches | **port-bug** | none — avoid recursion |
