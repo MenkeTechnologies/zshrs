@@ -9148,17 +9148,13 @@ pub fn bin_dot(
         }
     }
 
-    // c:6125-6128 — restore pparams. (saved_pparams was bumped when
-    // `source` got positional args; restore the prior set whether or
-    // not the file actually exists.)
-    if let Some(saved) = saved_pparams {
-        // c:6126
-        let mut pp = PPARAMS.lock().unwrap_or_else(|e| {
-            PPARAMS.clear_poison();
-            e.into_inner()
-        });
-        *pp = saved; // c:6128
-    }
+    // c:6125-6128 — restore pparams. C does this AFTER source() runs
+    // so the sourced script sees the new positional args; bug #459 in
+    // docs/BUGS.md — the previous Rust port restored here BEFORE the
+    // file body executed, so `source script.zsh hello world` had the
+    // script see $#=0 / $@="". Defer the restore until after
+    // execute_script returns (the success path below + the error path
+    // for file-not-found).
 
     // c:6130-6137 — error path. C: `if (ret == SOURCE_NOT_FOUND)`
     // emits via zerrnam (POSIX) / zwarnnam (default). The Rust port
@@ -9182,6 +9178,15 @@ pub fn bin_dot(
             // binary as $0 instead of its own path.
             if let Some(prev) = saved_argzero.clone() {
                 set_argzero(prev);
+            }
+            // c:6126-6128 — also restore pparams on the not-found path,
+            // matching C's c:6125 unconditional cleanup before return.
+            if let Some(saved) = saved_pparams.clone() {
+                let mut pp = PPARAMS.lock().unwrap_or_else(|e| {
+                    PPARAMS.clear_poison();
+                    e.into_inner()
+                });
+                *pp = saved;
             }
             // c:6130
             let msg = format!("{}: {}", "no such file or directory", arg0); // c:6135
@@ -9244,6 +9249,15 @@ pub fn bin_dot(
                                // c:6149 again — restore argzero on the success path as well.
     if let Some(prev) = saved_argzero {
         set_argzero(prev);
+    }
+    // c:6125-6128 — restore pparams on the success path AFTER the
+    // source body has finished executing. Bug #459.
+    if let Some(saved) = saved_pparams {
+        let mut pp = PPARAMS.lock().unwrap_or_else(|e| {
+            PPARAMS.clear_poison();
+            e.into_inner()
+        });
+        *pp = saved;
     }
     result
 }

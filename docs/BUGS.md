@@ -36204,7 +36204,17 @@ build process, or detect zshrs separately via
 
 ## #445 — `exec N<<<str` here-string-to-fd doesn't persist — fd unusable after exec
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `exec N<<<str` now correctly persists
+the here-string-backed fd; `cat <&3` reads the content matching zsh.
+Likely landed via earlier `exec` + here-string redirection parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'exec 3<<<hi; cat <&3'
+hi    # matches zsh byte-for-byte
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'exec 3<<<hi; cat <&3'
@@ -36266,7 +36276,17 @@ rm "$tmpfd"
 
 ## #446 — `noglob` standalone accepted as no-op — extends #413 parser strictness gap
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `noglob` followed by a redirect with
+no command now correctly emits `redirection with no command` rc=1
+matching zsh. Likely landed via earlier parser strictness work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'noglob 2>&1'
+zsh:1: redirection with no command    # rc=1, matches zsh
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'noglob 2>&1; echo rc=$?'
@@ -36937,7 +36957,18 @@ echo "${(j:|:)arr}"
 
 ## #458 — `[[ "$a" == $p ]]` treats `$p` as glob pattern by default — zsh requires `${~p}` opt-in
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `[[ "$a" == $p ]]` with `p="*"` now
+returns `n` (literal compare) matching zsh. Param expansion on the RHS
+is correctly treated as literal by default; `${~p}` opt-in still globs.
+Likely landed via earlier `cond_match` parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'p="*"; [[ "abc" == $p ]] && echo m || echo n'
+n    # matches zsh — literal compare, no glob expansion
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'p="*"; [[ "abc" == $p ]] && echo m || echo n'
@@ -37001,7 +37032,39 @@ Quoted form is literal in both shells.
 
 ## #459 — `source script.zsh ARGS` doesn't pass positional args to sourced script
 
-**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 ([src/ported/builtin.rs](../src/ported/builtin.rs)).
+
+**Root cause** — `bin_dot`'s ppparams save/install/restore sequence was
+incorrectly ordered: zshrs restored `PPARAMS` BEFORE calling
+`execute_script`, so the sourced script body saw the OLD (empty) positional
+args. C `Src/builtin.c:6125-6128` restores AFTER `source()` returns.
+
+**Fix** — defer the `PPARAMS` restore until after the `execute_script`
+call. The success-path restore now lives near the function tail (next to
+`argzero` restore), and the file-not-found error path got its own restore
+before the `zwarnnam` + early return so cleanup is uniform.
+
+**Verify**
+```sh
+$ cat > /tmp/_src.zsh <<'EOF'
+echo "received: $@"
+echo "count: $#"
+EOF
+
+$ ./target/debug/zshrs --zsh -fc 'source /tmp/_src.zsh hello world'
+received: hello world
+count: 2    # matches zsh
+
+# regression: pparams restored after source returns
+$ ./target/debug/zshrs --zsh -fc 'set -- a b c; source /tmp/_src.zsh x y z; echo "after: $@"'
+received: x y z
+count: 3
+after: a b c    # outer pparams restored
+```
+
+Baseline 960/92 → 961/91 (+1 pass, 0 regressions).
+
+**Original report**
 
 ```sh
 $ cat > /tmp/_src.zsh <<EOF
@@ -44128,8 +44191,8 @@ qualifiers always have a digit suffix.
 | 442 | `$ZSH_VERSION` exposes zshrs internal version `5.9.0.3-test` instead of zsh-compat `5.9` — breaks feature-detect scripts | **fixed** 2026-06-04 | n/a |
 | 443 | `EUID=0`/`UID=0`/`PPID=99` assignment silently accepted — special-var syscall setters missing (security-relevant) | **fixed** 2026-06-04 | n/a |
 | 444 | `$ZSH_PATCHLEVEL` returns literal `unknown` — git-derived build identifier missing | **fixed** 2026-06-04 | n/a |
-| 445 | `exec N<<<str` here-string-to-fd doesn't persist — fd unusable after exec (file form works) | **port-bug** | use temp file + `exec N<file` |
-| 446 | `noglob` standalone accepted as no-op (zsh: parse error) — extends #413 parser strictness gap | **port-bug** | CI lint for prefix-keyword-no-command |
+| 445 | `exec N<<<str` here-string-to-fd doesn't persist — fd unusable after exec (file form works) | **fixed** 2026-06-04 | n/a |
+| 446 | `noglob` standalone accepted as no-op (zsh: parse error) — extends #413 parser strictness gap | **fixed** 2026-06-04 | n/a |
 | 447 | `${(flag)scalar[@]}` returns empty for ALL flags (R/U/L/Q/V) — flag-on-scalar-with-@ broken | **port-bug** | bind scalar to typed array first |
 | 448 | `print -s "text"` doesn't add to history — `fc -l` shows nothing (zsh: line appears) | **port-bug** | manual history-file append |
 | 449 | `[[ "x" == pat\\* ]]` backslash-escape in pattern not honored — `\\*` treated as glob wildcard | **port-bug** | quoted-string pattern form `"pat*"` |
@@ -44141,8 +44204,8 @@ qualifiers always have a digit suffix.
 | 455 | function definitions inside `$(...)` cmd-substitution LEAK to parent — extends #451 to cmdsub context | **port-bug** | manual save/restore via `declare -f` |
 | 456 | `[[ "(x)" == "(x)" ]]` doesn't match — quoted parens in pattern not treated as literal (same family as #13/#449) | **port-bug** | use `case` instead of `[[ ]]` for literals |
 | 457 | nested `${(j:|:)${(s/:/)a}}` paramexp returns only first split element instead of joined whole | **port-bug** | use intermediate array variable |
-| 458 | `[[ "$a" == $p ]]` treats `$p` as glob by default — zsh requires `${~p}` or `GLOB_SUBST` opt-in (security-relevant inverse) | **port-bug** | quote the RHS `"$p"` |
-| 459 | **CRITICAL** `source script.zsh ARGS` ignores positional args — sourced script sees `$#=0` | **port-bug** | `set -- ARGS; source script.zsh` |
+| 458 | `[[ "$a" == $p ]]` treats `$p` as glob by default — zsh requires `${~p}` or `GLOB_SUBST` opt-in (security-relevant inverse) | **fixed** 2026-06-04 | n/a |
+| 459 | **CRITICAL** `source script.zsh ARGS` ignores positional args — sourced script sees `$#=0` | **fixed** 2026-06-04 | n/a |
 | 460 | `typeset -aix arr=(...)` flag conflict silently accepted, `-i` dropped (zsh: "inconsistent type") | **port-bug** | manually validate flag combos |
 | 461 | `trap` no-args output omits `TRAPNAME()` function-form handlers (zsh shows them) — extends #381 listing side | **port-bug** | explicit `${+functions[TRAP$sig]}` probe loop |
 | 462 | `disown` in subshell emits "no current job" diagnostic (zsh: silent no-op when subshell's job-table is empty) | **port-bug** | pass explicit pid + `2>/dev/null` |
