@@ -40338,7 +40338,30 @@ float f=$value
 
 ## #507 — `${(Q)var}` unquote-flag with `\"` in value removes the `"` instead of keeping it
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `${(Q)a}` now passes
+through literal `"` characters; `(q)`+`(Q)` round-trip is
+also byte-exact.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a="hello\"world"; echo "${(Q)a}"'
+hello"world
+$ ./target/debug/zshrs --zsh -c 'a="hello\"world"; echo "${(Q)a}"'
+hello"world
+
+# (q)+(Q) round-trip:
+$ /opt/homebrew/bin/zsh -fc 'a="hello \"world\""; b="${(q)a}"; echo "b=$b"; echo "c=${(Q)b}"'
+b=hello\ \"world\"
+c=hello "world"
+$ ./target/debug/zshrs --zsh -c 'a="hello \"world\""; b="${(q)a}"; echo "b=$b"; echo "c=${(Q)b}"'
+b=hello\ \"world\"
+c=hello "world"
+```
+
+Doc-only flip; no code change in this turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a="hello\"world"; echo "${(Q)a}"'
@@ -40346,45 +40369,6 @@ hello"world
 
 $ ./target/debug/zshrs --zsh -c 'a="hello\"world"; echo "${(Q)a}"'
 helloworld
-```
-
-The `(Q)` paramexp flag is the **inverse of `(q)`** —
-it strips ONE level of shell-quoting from the value.
-
-After shell processing of the assignment:
-- `a` contains: `hello"world` (the `\"` became literal
-  `"`)
-
-Then `${(Q)a}` should:
-- zsh: pass-through (Q is for unquoting; no quoting to
-  remove — outputs `hello"world` unchanged)
-- zshrs: removes the `"` character entirely — outputs
-  `helloworld`
-
-zshrs's Q is over-aggressively removing characters
-that aren't quoting markers. The `"` in the value is
-data, not quoting.
-
-**Where** — `src/ported/paramsubst/flags/q.rs::unquote`:
-the Q flag's parser likely treats ANY `"` char as
-removable quoting instead of only structural quotes
-(i.e., quotes added by `(q)`).
-
-**Impact** — round-trips through `(q)` + `(Q)` are
-incorrect for values containing literal `"`:
-
-```sh
-a='hello "world"'
-b=${(q)a}     # b = 'hello\ \"world\"'
-c=${(Q)b}     # zsh: c = a (round-trip)
-              # zshrs: c may not equal a
-```
-
-Affects data serialization through paramexp flags.
-
-**Workaround** — use external `eval` to round-trip:
-```sh
-eval "result=$b"
 ```
 
 ---
