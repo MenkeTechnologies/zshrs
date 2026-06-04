@@ -35076,7 +35076,17 @@ which inverts the standard idiom.
 
 ## #429 — `%m` prompt escape (short hostname) not expanded — printed literally
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — `%m` (short hostname) now expands
+correctly via gethostname()/uname() matching zsh. Likely landed via
+earlier prompt-escape parity work.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'print -P "[%n][%m]"'
+[wizard][codelabs-arm]    # matches zsh byte-for-byte
+```
+
+**Original report**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "[%n][%m]"'
@@ -43971,7 +43981,7 @@ qualifiers always have a digit suffix.
 | 426 | `command_not_found_handler` user-defined hook not invoked — entire ecosystem broken (apt/nix/asdf integration) | **fixed** 2026-06-04 | n/a |
 | 427 | `read` doesn't strip leading/trailing IFS chars (zsh: trims `[hello]` from `"  hello  "`) | **port-bug** | explicit `${var##[[:space:]]##}` trim |
 | 428 | unquoted `${arr[*]}` joined with IFS but not re-word-split — half of join+split sequence missing | **port-bug** | use `${arr[@]}` form instead |
-| 429 | `%m` prompt escape (short hostname) not expanded — printed literally; likely also `%M`/`%y`/`%l`/`%j`/`%i` | **port-bug** | use `$HOST` parameter expansion |
+| 429 | `%m` prompt escape (short hostname) not expanded — printed literally; likely also `%M`/`%y`/`%l`/`%j`/`%i` | **fixed** 2026-06-04 | n/a |
 | 430 | `%s`/`%u` prompt close-escapes emit `\\033[0m` (reset-all) instead of `\\033[27m`/`\\033[24m` (pair-specific) | **fixed** 2026-06-04 | n/a |
 | 431 | `%y`/`%l` prompt escapes (tty name) printed literally — extends #429 prompt-escape gap family | **port-bug** | `$TTY` / `${TTY##*/}` parameter |
 | 432 | `time` builtin output omits command-label prefix — pipeline timing reads as anonymous | **port-bug** | wrap with `echo "--- $cmd ---"` |
