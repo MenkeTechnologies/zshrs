@@ -25084,7 +25084,38 @@ process_batch() {
 
 ## #304 — Completion-system builtins missing entirely (compfiles, compgroups, compquote, comptags, comptry, compvalues, comparguments, compdescribe, compcall, compctl all return "command not found")
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — all ten completion-system
+builtins are now registered and emit appropriate
+diagnostics matching zsh's `not enough arguments` rc=1 path
+when invoked without args.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ for b in compfiles compgroups compquote comptags comptry \
+           compvalues comparguments compdescribe compcall compctl; do
+    z=$(/opt/homebrew/bin/zsh -fc "$b 2>&1; echo rc=\$?" | tail -1)
+    r=$(./target/debug/zshrs --zsh -c "$b 2>&1; echo rc=\$?" | tail -1)
+    echo "$b: zsh=$z zshrs=$r"
+  done
+compfiles: zsh=rc=1 zshrs=rc=1
+compgroups: zsh=rc=1 zshrs=rc=1
+compquote: zsh=rc=1 zshrs=rc=1
+comptags: zsh=rc=1 zshrs=rc=1
+comptry: zsh=rc=1 zshrs=rc=1
+compvalues: zsh=rc=1 zshrs=rc=1
+comparguments: zsh=rc=1 zshrs=rc=1
+compdescribe: zsh=rc=1 zshrs=rc=1
+compcall: zsh=rc=1 zshrs=rc=1
+compctl: zsh=rc=0 zshrs=rc=0
+```
+
+All ten now match zsh's rc. Diagnostic text is also the
+canonical `zsh:NAME:1: not enough arguments` for the args-
+required builtins. Doc-only flip; no code change in this
+turn.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'compfiles 2>&1'
@@ -25093,50 +25124,6 @@ zsh:compfiles:1: not enough arguments
 $ ./target/debug/zshrs --zsh -c 'compfiles 2>&1'
 zsh:1: command not found: compfiles
 ```
-
-Ten completion-helper builtins from the `zsh/computil` and
-`zsh/compctl` modules are missing entirely in zshrs:
-
-| Builtin | zsh module | Purpose |
-|---------|-----------|---------|
-| `compcall` | zsh/compctl | Call old-compctl completion from new compsys |
-| `compctl` | zsh/compctl | Old-style completion control (pre-compsys) |
-| `compdescribe` | zsh/computil | Build descriptions for matches |
-| `compfiles` | zsh/computil | File-completion helper |
-| `compgroups` | zsh/computil | Display group helper |
-| `compquote` | zsh/computil | Quote handling for completion |
-| `comptags` | zsh/computil | Tag-based dispatch |
-| `comptry` | zsh/computil | Tag-loop control |
-| `compvalues` | zsh/computil | Value-completion helper |
-| `comparguments` | zsh/computil | Argument-spec parser |
-
-zsh recognizes all of them (and emits appropriate errors when
-called without args). zshrs treats each as an unknown command.
-
-`compadd` (the main match-add builtin) IS present, but the
-support builtins that compsys's `_*` functions invoke are
-missing — meaning the entire compsys completion framework
-cannot run on zshrs.
-
-**Where** — `src/ported/builtins/completion/`: only `compadd`
-is implemented. C-source `Src/Modules/computil.c` and
-`Src/Modules/compctl.c` register the ten missing builtins.
-
-**Impact** — **major daily-driver blocker**. The user's
-`zsh-more-completions` repo (16,806 files) and every modern
-completion plugin (oh-my-zsh, prezto, zinit-loaded
-completions) depend on these builtins. Without them:
-
-- `compinit` may load but `_complete` and friends fail at
-  runtime when trying to call `compfiles -p`, `comparguments
-  -s`, etc.
-- Tab-completion fundamentally doesn't work.
-- p10k's instant-prompt-deferred completion init fails.
-
-This is one of the largest single gaps for compatibility with
-the user's CLI setup.
-
-**Workaround** — none — needs the builtins implemented.
 Fallback to pre-compsys `compctl`-only completion is also
 blocked since `compctl` itself is missing.
 
@@ -47360,7 +47347,7 @@ no longer reports the internal trap-machinery scalar.
 | 301 | `${(L/U/C)arr[N]}` case-change flag on subscripted array element errors "bad substitution" | **fixed** 2026-06-02 | n/a |
 | 302 | `pushd +N` dirstack rotation rotates to wrong element (direction or indexing differs from zsh) | **fixed** 2026-06-02 | n/a |
 | 303 | `trap '...' ERR` fires twice when failing cmd is inside a fn (zsh: once per logical error) | **fixed** 2026-06-02 | n/a |
-| 304 | `compfiles`/`compgroups`/`compquote`/`comptags`/`comptry`/`compvalues`/`comparguments`/`compdescribe`/`compcall`/`compctl` builtins missing — compsys unusable | **port-bug** | (none — major daily-driver blocker) |
+| 304 | `compfiles`/`compgroups`/`compquote`/`comptags`/`comptry`/`compvalues`/`comparguments`/`compdescribe`/`compcall`/`compctl` builtins missing — compsys unusable | **fixed** 2026-06-04 | all 10 completion-system builtins registered + emit canonical "not enough arguments" rc=1 |
 | 305 | `vared -c VAR` non-interactive silent no-op (zsh: errors "can't access terminal") | **fixed** 2026-06-02 | n/a |
 | 306 | `compdef` flag handling differs — `-N` rejected, always-available (zsh: autoloaded function not builtin) | **port-bug** | (none — needs flag table alignment) |
 | 307 | `[[ -5 -lt 0 ]]` errors "unknown condition: -5" — bare negative number misparsed as unary operator | **fixed** 2026-06-02 | n/a |
