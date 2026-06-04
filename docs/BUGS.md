@@ -26683,7 +26683,61 @@ first_comma_replaced="${_joined/,/_}"
 
 ## #323 — `functions[f]+="..."` append-to-function-body doesn't append
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — actual root cause was a
+stale compiled-function cache, not the assignment dispatch.
+Both `+=` and direct `=` re-assignment to an existing
+function are now functional.
+
+**Root cause** — `src/ported/modules/parameter.rs::setfunction`
+correctly updated `shfunctab` with the new body and the
+parsed `Eprog`, but the executor's `functions_compiled`
+HashMap retained the previously-compiled bytecode chunk
+from the original `f() { … }` definition. The function
+dispatch path checks `functions_compiled` first
+(`fusevm_bridge.rs:893` / `:6886`) and runs the cached
+chunk — so the new body in shfunctab was never seen.
+
+The compile-time path for `functions[f]+="echo b"` was
+already correct: fetch existing body via
+`BUILTIN_ARRAY_INDEX`, `Concat` with new tail,
+`BUILTIN_SET_ASSOC` calls `assignsparam("functions[f]",
+"\techo aecho b", ASSPM_WARN)`, which dispatches to
+`setpmfunction` → `setfunction`. The new body was stored
+correctly; the dispatch just ignored it.
+
+**Fix** — `setfunction` (c:314 port) now also
+`exec.functions_compiled.remove(name)` after writing to
+shfunctab. The next call to `f` re-compiles from the new
+body. Also added a defensive ASSPM_AUGMENT path in
+`assignsparam`'s `functions[]` arm for direct
+`assignsparam("functions[f]", val, ASSPM_AUGMENT)` callers
+(not exercised by `functions[f]+=` because the compile path
+already does the concat, but matches C semantics).
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'f() { echo a; }; functions[f]+="echo b"; f'
+aecho b
+$ ./target/debug/zshrs --zsh -c 'f() { echo a; }; functions[f]+="echo b"; f'
+aecho b
+
+$ /opt/homebrew/bin/zsh -fc 'f() { echo a; }; functions[f]="echo new"; f'
+new
+$ ./target/debug/zshrs --zsh -c 'f() { echo a; }; functions[f]="echo new"; f'
+new
+
+# Regression: regular define still works:
+$ /opt/homebrew/bin/zsh -fc 'h() { echo regular; }; h'
+regular
+$ ./target/debug/zshrs --zsh -c 'h() { echo regular; }; h'
+regular
+```
+
+All three cases match byte-for-byte. zshrs_shell baseline
+preserved at 967/85.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { echo a; }; functions[f]+="echo b"; f'
@@ -26691,44 +26745,6 @@ aecho b
 
 $ ./target/debug/zshrs --zsh -c 'f() { echo a; }; functions[f]+="echo b"; f'
 a
-```
-
-zsh's `functions[name]=value` and `functions[name]+=value`
-provide programmatic modification of function bodies via the
-`functions` introspection assoc:
-- `=` replaces the entire body
-- `+=` appends to the existing body
-
-zshrs supports `=` (verified in earlier tests — `functions[h]="echo from-assoc"`
-works) but doesn't apply `+=` — the append silently no-ops.
-
-Note: zsh's `+=` concatenates raw text without inserting a
-newline, producing the malformed body `echo aecho b` which
-runs as a single command `echo aecho b`. zshrs is right to be
-suspicious of this behavior, but should match zsh for parity.
-
-**Where** — `src/ported/params/functions_assoc.rs::append_to_body`:
-`+=` operator not dispatched on the functions assoc. C-source
-`Src/parameter.c::set_function` handles both assignment forms
-via `setpparam()`.
-
-**Impact** — function-augmentation plugins that programmatic-
-ally modify existing function bodies break:
-
-```sh
-# Plugin pattern: prepend logging to user fns
-for fn in "${(@k)functions}"; do
-    [[ "$fn" == _* ]] && continue
-    functions[$fn]="log_call '$fn'; ${functions[$fn]}"
-done
-# zsh: every non-internal fn gets log_call prepended
-# zshrs: functions table doesn't accept the assignment (or += equivalent), silent no-op
-```
-
-**Workaround** — read body, rewrite full assignment:
-```sh
-body="${functions[f]}"
-functions[f]="$body"$'\n'"echo b"
 ```
 
 ---
@@ -47259,7 +47275,7 @@ no longer reports the internal trap-machinery scalar.
 | 320 | `${@/pat/repl}`/`${@#pre}`/`${@%suf}` apply only to first positional (zsh: per-element; `//` form works) | **port-bug** | copy to array, use `[@]` |
 | 321 | `KEYTIMEOUT` default is `40` instead of zsh's `10` — vi-mode/multi-key bindings feel sluggish | **fixed** 2026-06-02 | n/a |
 | 322 | `${arr[*]/pat/repl}`/`[*]#`/`[*]%` applies per-element instead of scalar-context (zsh: joins to scalar first) | **fixed** 2026-06-02 | n/a |
-| 323 | `functions[f]+="..."` append-to-fn-body no-op (zsh: appends raw text) | **port-bug** | read body, full reassign |
+| 323 | `functions[f]+="..."` append-to-fn-body no-op (zsh: appends raw text) | **fixed** 2026-06-04 | setfunction invalidates functions_compiled cache so dispatch picks up new body |
 | 324 | `strftime -r FORMAT STRING` reverse-parse errors "format not matched" — string→epoch broken | **port-bug** | external `date -j -f` |
 | 325 | `$'\xNN\xNN'` C-string hex escapes treat UTF-8 sequence as 2 bytes (zsh: combines into multibyte char via locale) | **port-bug** | use `\uNNNN` Unicode form (unverified) |
 | 326 | `typeset +i n` clears value AND removes attribute (zsh: preserves value as scalar) | **port-bug** | save/restore around toggle |

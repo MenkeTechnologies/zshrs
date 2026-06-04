@@ -4786,6 +4786,24 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             "functions" => {
                 use crate::ported::zsh_h::hashnode;
                 use crate::ported::zsh_h::param as ParamStruct;
+                // c:Src/params.c:3270-3276 — ASSPM_AUGMENT on PM_SCALAR
+                // appends raw text to the existing value. The
+                // `functions[name]` magic-assoc is scalar-typed under
+                // the hood (each entry is a function-body string). For
+                // `functions[f]+="echo b"`, fetch the existing body
+                // from shfunctab and concatenate before calling
+                // setpmfunction. Without this, `+=` silently no-ops.
+                // Bug #323 in docs/BUGS.md.
+                let final_body = if (flags & ASSPM_AUGMENT) != 0 {
+                    let existing = crate::ported::hashtable::shfunctab_lock()
+                        .read()
+                        .ok()
+                        .and_then(|tab| tab.get(key).and_then(|shf| shf.body.clone()))
+                        .unwrap_or_default();
+                    format!("{}{}", existing, val)
+                } else {
+                    val.to_string()
+                };
                 let pm: Box<ParamStruct> = Box::new(ParamStruct {
                     node: hashnode {
                         next: None,
@@ -4810,7 +4828,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     old: None,
                     level: 0,
                 });
-                crate::ported::modules::parameter::setpmfunction(pm.clone(), val.to_string());
+                crate::ported::modules::parameter::setpmfunction(pm.clone(), final_body);
                 unqueue_signals();
                 return Some(pm);
             }
