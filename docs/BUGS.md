@@ -29980,6 +29980,24 @@ wait "$p1"
 
 ## #370 — `${(t)1}` positional-parameter type returns `scalar` instead of `array-special`
 
+**Status:** `fixed` 2026-06-03 — no longer reproduces.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'set -- a; echo "[${(t)1}]"'
+[array-special]
+$ ./target/debug/zshrs --zsh -fc 'set -- a; echo "[${(t)1}]"'
+[array-special]
+$ /opt/homebrew/bin/zsh -fc 'set -- a b; echo "[${(t)1}] [${(t)2}] [${(t)@}]"'
+[array-special] [array-special] [array-readonly-special]
+$ ./target/debug/zshrs --zsh -fc 'set -- a b; echo "[${(t)1}] [${(t)2}] [${(t)@}]"'
+[array-special] [array-special] [array-readonly-special]
+```
+
+Doc-only flip; no code change in this commit.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -30084,6 +30102,51 @@ if `-A` were a display request. This leaks internal state.
 ---
 
 ## #372 — `print -P "%F{invalid_color}"` drops entire format instead of emitting default-color recovery
+
+**Status:** `fixed` 2026-06-03 — `%F{invalid}` / `%K{invalid}`
+fallback paths now emit `\e[39m` / `\e[49m` (default-color
+SGR) explicitly when the color name doesn't resolve.
+
+**Root cause** — `src/ported/prompt.rs`'s `%F`/`%K` arm
+called `tunsetattrs` + `applytextattributes` in the
+unknown-color fallback path. zshrs's `applytextattributes`
+is a DIFF emitter: when no fg/bg color was previously set,
+the no-change tunsetattrs produced empty SGR — so
+`%F{invalid}x%f` collapsed to bare `x`. C's tsetcap path
+unconditionally emits the default-color escape for the
+corresponding axis (`\e[39m` fg / `\e[49m` bg).
+
+**Fix** — in both the `%F`/`%K` fallback (invalid color)
+arm AND the `%f`/`%k` reset arm, fall back to the literal
+`\e[39m`/`\e[49m` SGR when `applytextattributes` returns
+empty.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -P "%F{invalid}x%f"' | od -An -c | head -1
+         033   [   3   9   m   x 033   [   3   9   m  \n
+$ ./target/debug/zshrs --zsh -fc 'print -P "%F{invalid}x%f"' | od -An -c | head -1
+         033   [   3   9   m   x 033   [   3   9   m  \n
+
+# Background equivalent
+$ /opt/homebrew/bin/zsh -fc 'print -P "%K{invalid}x%k"' | od -An -c | head -1
+         033   [   4   9   m   x 033   [   4   9   m  \n
+$ ./target/debug/zshrs --zsh -fc 'print -P "%K{invalid}x%k"' | od -An -c | head -1
+         033   [   4   9   m   x 033   [   4   9   m  \n
+
+# Regression: valid color still works
+$ ./target/debug/zshrs --zsh -fc 'print -P "%F{red}x%f"' | od -An -c | head -1
+         033   [   3   1   m   x 033   [   3   9   m  \n
+```
+
+The bare `%F` (no brace) edge case where zsh treats arg=0
+as color 0 (black, SGR 30m) still diverges — zshrs returns
+the default-fg fallback. Separate cosmetic issue for the
+no-brace path; primary `%F{...}` recovery is fixed.
+
+Test baseline preserved at 957/95.
+
+**Original report:**
 
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 

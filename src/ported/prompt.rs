@@ -1045,29 +1045,24 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                             bv.bp += 1;
                         }
                     } else {
-                        // c:600-602 fall through to lowercase variant
+                        // c:600-602 fall through to lowercase variant.
+                        // C's tunsetattrs/applytextattributes emits the
+                        // default-color SGR (`\e[39m`/`\e[49m`) even when
+                        // no color was previously set — `%F{invalid}`
+                        // produces visible recovery output. zshrs's
+                        // applytextattributes is a DIFF emitter so a
+                        // no-change tunsetattrs returns empty; emit the
+                        // default-color code explicitly here. Bug #372.
                         let mask = if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR };
                         let _ = tunsetattrs(mask);
-                        let sgr = applytextattributes(TSC_PROMPT);
-                        if !sgr.is_empty() {
-                            addbufspc(bv, 1);
-                            bv.buf[bv.bp] = Inpar as u8;
-                            bv.bp += 1;
-                            for &b in sgr.as_bytes() {
-                                pputc(bv, b);
-                            }
-                            addbufspc(bv, 1);
-                            bv.buf[bv.bp] = Outpar as u8;
-                            bv.bp += 1;
+                        let mut sgr = applytextattributes(TSC_PROMPT);
+                        if sgr.is_empty() {
+                            sgr = if is_fg {
+                                "\x1b[39m".to_string()
+                            } else {
+                                "\x1b[49m".to_string()
+                            };
                         }
-                    }
-                }
-                b'f' | b'k' => {
-                    // c:604-606 — bare `%f`/`%k` reset fg/bg only.
-                    let mask = if xc == b'f' { TXTFGCOLOUR } else { TXTBGCOLOUR };
-                    let _ = tunsetattrs(mask);
-                    let sgr = applytextattributes(TSC_PROMPT);
-                    if !sgr.is_empty() {
                         addbufspc(bv, 1);
                         bv.buf[bv.bp] = Inpar as u8;
                         bv.bp += 1;
@@ -1078,6 +1073,34 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         bv.buf[bv.bp] = Outpar as u8;
                         bv.bp += 1;
                     }
+                }
+                b'f' | b'k' => {
+                    // c:604-606 — bare `%f`/`%k` reset fg/bg only.
+                    // C's tunsetattrs path always emits the default-
+                    // color SGR for the corresponding axis. zshrs's
+                    // applytextattributes is diff-only, so the
+                    // no-color-set case returned empty; emit
+                    // `\e[39m`/`\e[49m` explicitly. Bug #372.
+                    let is_fg = xc == b'f';
+                    let mask = if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR };
+                    let _ = tunsetattrs(mask);
+                    let mut sgr = applytextattributes(TSC_PROMPT);
+                    if sgr.is_empty() {
+                        sgr = if is_fg {
+                            "\x1b[39m".to_string()
+                        } else {
+                            "\x1b[49m".to_string()
+                        };
+                    }
+                    addbufspc(bv, 1);
+                    bv.buf[bv.bp] = Inpar as u8;
+                    bv.bp += 1;
+                    for &b in sgr.as_bytes() {
+                        pputc(bv, b);
+                    }
+                    addbufspc(bv, 1);
+                    bv.buf[bv.bp] = Outpar as u8;
+                    bv.bp += 1;
                 }
                 // c:625-635 — `%{` (begin dontcount span)
                 b'{' => {
