@@ -1300,8 +1300,14 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 b't' | b'T' | b'@' | b'*' | b'w' | b'W' | b'D' => {
                     let tmfmt: String;
                     match xc {
-                        b'T' => tmfmt = "%H:%M".to_string(),    // c:715
-                        b'*' => tmfmt = "%H:%M:%S".to_string(), // c:718
+                        // c:715 — exact C source: `tmfmt = "%K:%M";`.
+                        // %K is zsh's 24-hr-no-leading-zero extension
+                        // (handled by ztrftime preprocessor at
+                        // utils.rs:4279). zsh renders 9 AM as `9:06`,
+                        // NOT `09:06`. Bug #619 sibling of #599.
+                        b'T' => tmfmt = "%K:%M".to_string(),    // c:715
+                        // c:718 — exact C source: `tmfmt = "%K:%M:%S";`.
+                        b'*' => tmfmt = "%K:%M:%S".to_string(), // c:718
                         // c:721 — exact C source: `tmfmt = "%a %f";`.
                         // The `%f` extension is handled by zshrs's
                         // ztrftime preprocessor at utils.rs:4293 →
