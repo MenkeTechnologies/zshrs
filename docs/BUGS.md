@@ -44466,6 +44466,50 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #608 — `typeset -p n` for integer with base displays as `BASE#VAL` instead of decimal
+
+**Status:** `fixed` 2026-06-04 — `printparamvalue` PM_INTEGER arm
+ported to emit raw `%ld` per `Src/params.c:6051-6057` instead of
+routing through `getsparam` (which applies `convbase` formatting).
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'integer -i 16 n=255; typeset -p n'
+typeset -i16 n=255
+
+# Before fix:
+$ zshrs --zsh -c 'integer -i 16 n=255; typeset -p n'
+typeset -i16 n=16#FF      # base-formatted value polluted typeset -p
+
+# After fix:
+$ zshrs --zsh -c 'integer -i 16 n=255; typeset -p n'
+typeset -i16 n=255
+
+# $n expansion still respects the base flag:
+$ zshrs --zsh -c 'integer -i 16 n=255; echo $n'
+16#FF
+```
+
+**Root cause** — `src/ported/params.rs::printparamvalue` PM_INTEGER
+arm routed through `getsparam(&p.node.nam)` which calls `convbase`
+to format the integer using `pm.base` (`16#FF` for base 16). C's
+`printf("%ld", p->gsu.i->getfn(p))` emits the raw decimal value
+unconditionally — the base flag only affects `$n` expansion, not
+`typeset -p` output.
+
+The `getsparam` routing was added for special-integer fallback
+(PPID/EUID/SECONDS where `intgetfn` reads `pm.u_val` = 0 because
+the value is computed via `lookup_special_var`), but the
+fallback was unconditional, polluting ordinary integers.
+
+**Fix** — call the custom `gsu_i.getfn` when present, else
+`intgetfn`. Print as raw decimal (`%ld` equivalent). For the
+PPID-style case (intgetfn returns 0), only then fall through to
+`getsparam`, and strip any `BASE#` prefix from the resulting
+string before printing so the output stays decimal-only.
+
+---
+
 ## #607 — `${a:#(foo|bar}` silently returns input — `:#` filter arm sibling of #605/#606
 
 **Status:** `fixed` 2026-06-04 — same `patcompile` precheck applied
@@ -46870,6 +46914,7 @@ no longer reports the internal trap-machinery scalar.
 | 605 | `${a/(foo\|bar/X}` / `${a//(foo\|bar/X}` silently return input — no "bad pattern" error on unbalanced paren | **fixed** 2026-06-04 | pre-check patcompile in `/` and `//` arms; emit "bad pattern: PAT" matching Src/glob.c:2674-2677 |
 | 606 | `${a##(foo\|bar}` / `${a#(foo\|bar}` / `${a%%(foo\|bar}` / `${a%(foo\|bar}` silently return input — sibling of #605 | **fixed** 2026-06-04 | same patcompile precheck applied to ##/#/%%/% arms via replace_all |
 | 607 | `${a:#(foo\|bar}` silently returns input — `:#` filter arm sibling of #605/#606 | **fixed** 2026-06-04 | same patcompile precheck applied to `:#` arm at subst.rs:6018 |
+| 608 | `typeset -p n` for integer with base displays as `BASE#VAL` instead of decimal | **fixed** 2026-06-04 | printparamvalue PM_INTEGER arm emits raw decimal via gsu_i.getfn / intgetfn; getsparam fallback strips BASE# prefix |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
