@@ -7145,7 +7145,71 @@ zsh-portable code:
 
 ## #99 — Extended-glob `(#cN,M)` count quantifier not recognized
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 — glob-qualifier parser
+prematurely rejected `(#X...)` (non-`#q`) flag forms.
+
+**Root cause** — `src/ported/glob.rs::parse_qualifiers` is the
+trailing-paren classifier (C `Src/glob.c::checkglobqual`, c:1156-
+1203). For input `/tmp/zg/a(#c1,2)`, the function found the
+trailing `(...)` group, but its `if/else if` ladder only
+recognized `(#q...)` as the explicit-qualifier form — every
+other `(#X...)` form fell through to the `glob_isset(BAREGLOBQUAL)`
+arm and was passed to `parse_qualifier_string`, which saw `#` as
+the first qualifier letter and emitted
+`unknown file attribute: #` via the strict-default arm added by
+bug #583.
+
+C's `checkglobqual` (c:1192-1194) returns 0 (NOT a qualifier
+list) when `EXTENDEDGLOB` is on AND the first char inside `(`
+is `Pound` AND the second char is NOT `q` — pattern-flag forms
+`(#c…)`, `(#i)`, `(#l)`, `(#a)`, `(#s)`, `(#e)`, `(#m)` route
+to `patcompile` rather than the qualifier scanner.
+
+**Fix** — `src/ported/glob.rs::parse_qualifiers`: after the
+`#q` check, insert a new arm — when `EXTENDEDGLOB` is on AND
+the inner starts with `#` (but isn't `#q`), return
+`(pattern.to_string(), None)` so the unmodified pattern reaches
+the pattern compiler, which already implements `(#cN,M)`
+(`src/ported/pattern.rs:840-949`). Direct port of C
+c:1192-1194.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ mkdir -p /tmp/zg && touch /tmp/zg/a /tmp/zg/aa /tmp/zg/aaa
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; print -l /tmp/zg/a(#c1,2)'
+/tmp/zg/a
+/tmp/zg/aa
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; print -l /tmp/zg/a(#c1,2)'
+/tmp/zg/a
+/tmp/zg/aa
+
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; print -l /tmp/zg/a(#c2)'
+/tmp/zg/aa
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; print -l /tmp/zg/a(#c2)'
+/tmp/zg/aa
+
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; print -l /tmp/zg/a(#c1,3)'
+/tmp/zg/a
+/tmp/zg/aa
+/tmp/zg/aaa
+$ ./target/debug/zshrs --zsh -c 'setopt extended_glob; print -l /tmp/zg/a(#c1,3)'
+/tmp/zg/a
+/tmp/zg/aa
+/tmp/zg/aaa
+```
+
+Regressions clean:
+- bare qualifier `*(.)` still works (no `#` prefix → falls into
+  BAREGLOBQUAL arm as before).
+- explicit `*(#q.)` still works (`#q` prefix → strip-prefix arm
+  fires first).
+- without `extended_glob` set, `a(#c1,2)` errors with
+  `unknown file attribute: #` in both shells.
+
+zshrs_shell baseline preserved at 967/85.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; touch /tmp/zg/a /tmp/zg/aa /tmp/zg/aaa; print -l /tmp/zg/a(#c1,2)'
@@ -7154,47 +7218,6 @@ $ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; touch /tmp/zg/a /tmp/zg/aa /t
 
 $ ./target/debug/zshrs --zsh -c 'setopt extended_glob; touch /tmp/zg/a /tmp/zg/aa /tmp/zg/aaa; print -l /tmp/zg/a(#c1,2)'
 (empty)
-```
-
-The `(#cN,M)` extended_glob quantifier matches the preceding
-character/group N-to-M times. zsh matches `a` and `aa` (1 to 2 a's).
-zshrs returns nothing — the count syntax isn't recognized.
-
-Same family as bug #89 (extended_glob `#`/`##` quantifiers
-missing) — the entire `(#...)` flag family is partially or fully
-unimplemented:
-- `(#c)` — count
-- `(#a)` — approximate match
-- `(#i)` — case-insensitive
-- `(#l)` — case-loose
-- `(#s)` — anchor at start
-- `(#e)` — anchor at end
-- `(#m)` — record match
-
-Per `man zshexpn` § FILENAME GENERATION:
-> `(#cN,M)` — Matches the preceding character or group between N
-> and M times.
-
-**Where** — `src/ported/pattern.rs::compile_extended_glob`: the
-`(#flag)` glob-flag parser table is missing entries for `c`, `a`,
-`i`, `l`, `s`, `e`, `m`. C-source `Src/pattern.c::patcompile`
-handles each `(#X...)` flag specifically.
-
-**Impact** — every script using `(#c)` count or other
-zsh-specific extended_glob flags silently fails to match:
-
-```sh
-setopt extended_glob
-# match passwords with 8-16 chars
-[[ "$pw" == [a-zA-Z0-9]##(#c8,16) ]] && echo "valid"
-# zsh: validates correctly
-# zshrs: always fails (no match)
-```
-
-**Workaround** — `[[ ... =~ ... ]]` regex with explicit character
-class and `{N,M}` quantifier:
-```sh
-[[ "$pw" =~ "^[a-zA-Z0-9]{8,16}$" ]] && echo "valid"
 ```
 
 ---
