@@ -44466,6 +44466,55 @@ qualifiers always have a digit suffix.
 
 ---
 
+## #593 — `repeat N CMD ARG; CMD2` parses error near second command — short-loop body consumed trailing `;`
+
+**Status:** `fixed` 2026-06-04 — `parse_loop_body` short-form path now
+calls `par_list1()` (single sublist, leaves separator) instead of
+`par_list()` (consumes one trailing `;`/`\n`).
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'repeat 2 print x; print y'
+x
+x
+y
+
+# Before fix:
+$ zshrs --zsh -c 'repeat 2 print x; print y'
+zshrs:1: parse error near `print'
+
+# After fix:
+$ zshrs --zsh -c 'repeat 2 print x; print y'
+x
+x
+y
+```
+
+**Root cause** — `src/ported/parse.rs::parse_loop_body` short-form
+fallthrough (line ~8076) wrapped the body via `par_list().map(...)`.
+`par_list()` parses one sublist AND consumes the trailing separator
+(`;`/`\n`/`&`) at line 961-963. That swallowed the separator
+between the loop body and the next outer command, so `repeat 2
+print x; print y` parsed as a single short-loop body of `print x`
+followed by an unseparated `print y` — par_cmd's post-compound
+guard at parse.rs:1170 then fired `parse error near print` because
+the trailing token was STRING_LEX instead of a separator.
+
+**Fix** — direct port of C's `par_save_list1` (parse.c:481-486 macro
+→ par_list1 at parse.c:808-817 → par_sublist). Short form parses
+exactly ONE sublist and leaves the SEPER for the outer parser.
+zshrs's existing `par_list1()` already returns a `ZshSublist`
+without consuming the separator; the fix wraps it as a single-element
+`ZshProgram { lists: [ZshList { sublist, flags: default }] }`.
+
+**Affects** — all short-form variants routed through
+`parse_loop_body`: `repeat N CMD`, `while COND CMD`, `until COND
+CMD`, `for VAR (LIST) CMD`. Note: while/until short forms still
+have a separate cond-greedy bug (parse_program_until eats body
+when no DOLOOP/INBRACE seen); tracked as a separate entry.
+
+---
+
 ## #592 — `${(k)h[(R)pat]}` returns matched values instead of matched keys — outer `(k)` flag not honored by assoc subscript
 
 **Status:** `fixed` 2026-06-04 — ported from `Src/params.c::scanparamvals`
@@ -46221,6 +46270,7 @@ no longer reports the internal trap-machinery scalar.
 | 590 | `${a/(#b)(l)*/--$match[1]--}` single-replace leaves $match[] empty — only `//` populated backrefs | **fixed** 2026-06-04 | replace_one routes through glob_match_static (pattryrefs) instead of bare pattry |
 | 591 | `${(qq)*[N]:-foo}` returns `''` instead of `'foo'` — :- default doesn't survive (qq) on positional-special | **fixed** 2026-06-04 | :- seed split_parts when var_name is *,@,argv (positional-special) |
 | 592 | `${(k)h[(R)pat]}` returns matched values instead of keys — outer `(k)` flag not honored by assoc subscript MATCH path | **fixed** 2026-06-04 | bridge re-injects `(k)`/`(@k)` outer flag; assoc subscript MATCH path pushes KEY when WANTKEYS; `nojoin==2` arm honors raw_value when non-splat subscript present |
+| 593 | `repeat N CMD ARG; CMD2` parse error near second command — short-loop body consumed trailing `;` | **fixed** 2026-06-04 | parse_loop_body short form uses par_list1 (single sublist, leaves separator) instead of par_list |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
