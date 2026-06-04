@@ -31713,6 +31713,64 @@ For assocs, this is harder — `(e)` was the intended
 
 ## #408 — `${a[1,5,2]}` 3-arg array slice silently accepted (zsh: bad substitution)
 
+**Status:** `fixed` 2026-06-03 — `paramsubst` now rejects
+subscript bodies with more than one top-level comma,
+matching C `Src/params.c:2102-2106`'s `if (*s == ',')
+zerr("invalid subscript")` after end-arg consumption.
+
+**Root cause** — `src/ported/subst.rs::paramsubst` extracted
+the bracket body verbatim and handed `"1,5,2"` to the
+downstream slice/getarg paths. Several downstream
+`split_once(',')` consumers happily took the first comma
+and dispatched leniently — one (`mathevali` on `"5,2"`)
+treats `,` as the math comma operator and returned 2, so
+`a[1,5,2]` silently degraded to `a[1,2]`.
+
+C's `getindex` (Src/params.c:2001) catches this via:
+- `getarg(&s, ...)` for start, optional `,` + `getarg` for
+  end (c:2107-2117), THEN
+- `if (s == tbrack) accept; else fall through with
+  s = *pptr` (c:2154-2157) — leaving the bracket
+  unconsumed, which the outer paramsubst surfaces as
+  "bad substitution".
+
+**Fix** — gate the extracted subscript body on
+top-level-comma count BEFORE handing to downstream paths:
+- Walk the singsub'd body, tracking `()`/`[]`/`{}` depth.
+- Count commas at depth 0.
+- If `commas > 1`, emit `zerr("bad substitution")` +
+  `errflag_set_error()` and return the zsh-canonical empty
+  result tuple. Bug #408.
+
+Applied to BOTH the primary subscript (`${a[…]}`) and the
+recursive second subscript (`${a[…][…]}`) at the two body-
+slice extraction points in `paramsubst`.
+
+**Verify**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(1 2 3 4 5); echo "[${a[1,5,2]}]"'
+zsh:1: bad substitution
+$ ./target/debug/zshrs --zsh -fc 'a=(1 2 3 4 5); echo "[${a[1,5,2]}]"'
+zsh:1: bad substitution
+
+$ ./target/debug/zshrs --zsh -fc 'a=(1 2 3 4 5); echo "[${a[1,3][1,2,3]}]"'
+zsh:1: bad substitution
+
+# Regression checks — single + range + flag subscripts still work
+$ ./target/debug/zshrs --zsh -fc 'a=(1 2 3 4 5); echo "[${a[1,3]}]"'
+[1 2 3]
+$ ./target/debug/zshrs --zsh -fc 'a=(1 2 3 4 5); echo "[${a[2]}]"'
+[2]
+$ ./target/debug/zshrs --zsh -fc 'a=(x y z); echo "[${a[(i)y]}]"'
+[2]
+$ ./target/debug/zshrs --zsh -fc 'a=(1 2 3 4 5); echo "[${a[1,3][1]}]"'
+[1]
+```
+
+Test baseline preserved at 957/95.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
