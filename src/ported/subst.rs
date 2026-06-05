@@ -4585,6 +4585,15 @@ pub fn paramsubst(
                     Some((flags, num, pat))
                 })(sub)
                 {
+                    // c:Src/params.c:1564-1572 — `singsub(&s)` on the
+                    // subscript expression before pattern compilation,
+                    // so `${h[(R)$x]}` expands $x first. Mirrors the
+                    // array-side fix below at line ~4760.
+                    let pat = if pat.contains('$') || pat.contains('`') {
+                        singsub(&pat)
+                    } else {
+                        pat
+                    };
                     // c:Src/params.c:1696-1750 assoc-subscript flag
                     // dispatch:
                     //   (r)/(R): match against VALUE, return VALUE(s)
@@ -4755,6 +4764,24 @@ pub fn paramsubst(
                 {
                     let (flags, num, beg, pat) =
                         (flags, num, beg, pat);
+                    // c:Src/params.c:1564-1572 — `if (needtok) { ...
+                    // singsub(&s); ... }`. The subscript expression
+                    // (pattern) goes through `singsub` so `${a[(I)$x]}`
+                    // expands `$x` to the variable's value before
+                    // pattern compilation. Without this, the literal
+                    // text "$x" reached patcompile and never matched any
+                    // element value. The unquoted-DQ fast paths at
+                    // compile_zsh.rs:3447 (braced_subscript_dynamic_ref)
+                    // handled this for direct `${a[...]}` reads via
+                    // EXPAND_TEXT, but the runtime arithsubst path
+                    // (`(( y = ${a[(I)$x]} ))`) routes through
+                    // arithsubst → singsub → paramsubst and arrives
+                    // here with the literal pattern. Bug #195 sibling.
+                    let pat = if pat.contains('$') || pat.contains('`') {
+                        singsub(&pat)
+                    } else {
+                        pat
+                    };
                     let return_index = flags.contains('I') || flags.contains('i'); // c:1412/1416 ind=1
                     let down = flags.contains('I') || flags.contains('R'); // c:1416/c:1418 down=1
                     let exact = flags.contains('e'); // c:Src/params.c:1419 e flag — literal compare, no glob
