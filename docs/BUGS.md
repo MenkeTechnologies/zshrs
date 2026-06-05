@@ -31807,6 +31807,70 @@ above. Need to verify whether `coproc` itself works at all.
 
 ## #388 — `coproc` builtin doesn't open a coprocess — entire feature missing
 
+**Status:** `fixed` 2026-06-05 (`print -p` / `read -p` forms;
+`<&p` / `>&p` redirect form still pending).
+
+**Root cause** — the `coproc CMD` launch path
+(`BUILTIN_RUN_COPROC` at `src/fusevm_bridge.rs::register_builtins`)
+correctly forks a child with stdin/stdout wired to two pipes and
+stored the read/write fds in the `$COPROC` array. But the
+canonical `coprocin`/`coprocout` globals (declared at
+`src/ported/modules/clone.rs:262`, mirroring
+`Src/exec.c:430-431`) were never updated. `bin_read`'s `-p` arm
+(`src/ported/builtin.rs::9852`) checks `coprocin` to decide
+"is a coprocess live"; `bin_print`'s `-p` arm rejected with
+"no coprocess" unconditionally (the comment said "coprocout
+isn't wired yet"). Both gates fired even when a coproc was
+running.
+
+A second leak: even when `-p` reached the read path, `bin_read`
+used `ufd = 0` (stdin) for the actual byte source unless
+`-u FD` was set. So `read -p` would read from stdin instead of
+the coprocess's output fd.
+
+**Fix** — three-part:
+
+1. `src/fusevm_bridge.rs` `BUILTIN_RUN_COPROC` parent arm —
+   after storing the fds in `$COPROC`, also write them to the
+   canonical `crate::ported::modules::clone::coprocin` /
+   `coprocout` atomics so the read/print `-p` arms find the
+   pipe.
+2. `src/ported/builtin.rs` `bin_print` `-p` arm — when
+   `OPT_ISSET(ops, b'p')`, read `coprocout`. If `>= 0`, dup
+   it as the destination fd and write the body there (matching
+   the `-u FD` path). Otherwise emit
+   `"-p: no coprocess"` + rc=1.
+3. `src/ported/builtin.rs` `bin_read` — when
+   `OPT_ISSET(ops, b'p')`, set `ufd = coprocin` (instead of
+   defaulting to fd 0). The existing read pipeline at
+   `read_byte_from_fd` then pulls from the coprocess output
+   correctly.
+
+**Verify**
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'coproc cat; print -p hello; read -p line; echo "[$line]"'
+[hello]
+$ ./target/debug/zshrs --zsh -c 'coproc cat; print -p hello; read -p line; echo "[$line]"'
+[hello]
+```
+
+Regression check — all of these still match zsh:
+- `print -p` without coproc: `"-p: no coprocess"` rc=1
+- `print -u 2 stderr`: writes to fd 2
+- plain `print hello` / `read x < <(echo input)`: unaffected
+- `coproc` launch / `$COPROC` array population: unchanged
+
+**Sub-issue (not fixed)** — the `<&p` / `>&p` redirect forms
+that splice the coproc fds into a command's stdin/stdout still
+hang. Those need wiring in `compile_redir` / `host_apply_redirect`
+to treat the literal `&p` target as the coproc-fd lookup.
+Documented inline; tracked as a follow-up.
+
+Baseline preserved: 968/84 zshrs_shell tests.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47876,7 +47940,7 @@ no longer reports the internal trap-machinery scalar.
 | 385 | `$LINENO` inside function returns 1 instead of 0 — base-index off-by-one | **fixed** 2026-06-02 | `$((LINENO - 1))` |
 | 386 | `readonly` no-args dumps nothing instead of listing readonly variables (zsh: full dump) | **fixed** 2026-06-02 | parse `typeset -p VAR` for `-r` flag |
 | 387 | `read -p "prompt"` parsing — `-p` not recognized as coprocess flag, treats arg as identifier | **fixed** 2026-06-02 | `print -n` to stderr + bare `read` |
-| 388 | `coproc CMD` doesn't open coprocess — `print -p`/`read -p`/`<&p` all broken, entire feature missing | **port-bug** | named pipes (mkfifo) for two-way IPC |
+| 388 | `coproc CMD` doesn't open coprocess — `print -p`/`read -p`/`<&p` all broken, entire feature missing | fixed (partial) | (print -p / read -p forms wired via coprocin/coprocout globals + canonical read-fd routing; `<&p`/`>&p` redirect form is a separate sub-issue tracked inline) |
 | 389 | `TRAPZERR()` function-form not invoked on non-zero exit — error-tracing frameworks broken | **fixed** 2026-06-02 | `setopt err_exit` + explicit `\|\|` checks |
 | 390 | `$PS4` default value empty — `set -x` produces no source/function/line/depth context | **fixed** 2026-06-03 | seed `PS4=$'%F{blue}%x\\t%0N\\t%I\\t%_%f\\t'` in zshrc |
 | 391 | PS4 escape expansion broken — `%x`/`%N`/`%I`/`%_` printed literally during `set -x` (zsh: expanded) | **fixed** 2026-06-03 | abandon `set -x`; use manual `echo` debugging |
