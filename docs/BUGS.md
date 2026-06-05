@@ -28721,7 +28721,24 @@ defaults are.
 
 ## #344 — `bindkey -r "key"` doesn't remove the binding — silent no-op
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, current binary
+removes the binding correctly. Fix in
+`src/ported/zle/zle_keymap.rs:1565-1606` — `bin_bindkey_bind`
+walks argv with `stride = 1` when `func_c == 'r'`, translates
+each token through `getkeystring` (so `^a` → 0x01), then writes
+`km.first[seq] = None` (or `km.multi.remove(seq)`) to clear the
+binding. Code comment at line 1573 references this bug.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'bindkey -r "^a"; bindkey "^a"'
+"^A" undefined-key
+$ ./target/debug/zshrs --zsh -fc 'bindkey -r "^a"; bindkey "^a"'
+"^A" undefined-key
+```
+
+Parity. BUGS.md was stale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'bindkey -r "^a"; bindkey "^a"'
