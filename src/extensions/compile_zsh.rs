@@ -8941,8 +8941,14 @@ fn has_unquoted_expansion(s: &str) -> bool {
             if c == '$' && i + 1 < chars.len() && chars[i + 1] == '\u{88}' {
                 return true;
             }
-            // Backtick command sub
-            if c == '`' || c == '\u{96}' || c == '\u{95}' {
+            // Backtick command sub — literal `` ` ``, Tick TOKEN
+            // (`\u{93}`), or Qtick TOKEN (`\u{99}` — DQ-context backtick
+            // marker). The previous version checked `\u{96}` (Bang) and
+            // `\u{95}` (OutangProc) which are unrelated TOKENs — backtick
+            // cmd-subst inside an unquoted array literal never matched, so
+            // `a=(\`cmd\`)` got no word-split and the output joined as one
+            // element. Matches Src/zsh.h:174/180 Tick/Qtick constants.
+            if c == '`' || c == '\u{93}' || c == '\u{99}' {
                 return true;
             }
         }
