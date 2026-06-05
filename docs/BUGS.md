@@ -29001,46 +29001,59 @@ have gaps per #205).
 
 ## #349 — `export ASSOC_VAR` for associative array adds malformed `NAME=` empty entry to environment
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — bin_typeset's bare-name export-mirror block now checks `(PM_ARRAY|PM_HASHED)` and skips `env::set_var` for array/assoc-shaped params, mirroring C `Src/builtin.c:2302-2307`.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A H=(k v); export H; env | grep "^H="'
 (no output)
 
-$ ./target/debug/zshrs --zsh -c 'typeset -A H=(k v); export H; env | grep "^H="'
+$ ./target/debug/zshrs --zsh -c 'typeset -A H=(k v); export H; env | grep "^H="'   # before
 H=
 ```
 
-zsh refuses to export associative arrays — the env-var
-contract is "scalar string", so attempting to export an assoc
-silently does nothing (and `env` shows no entry).
+**Root cause** — `src/ported/builtin.rs` bare-name post-assign export block (~line 5125) unconditionally wrote `env::set_var(arg, val)` whenever `PM_EXPORTED` was set, regardless of param type. Env strings are single `name=value` pairs with no representation for indexed or hashed data, so arrays and assocs produced empty `NAME=` entries (also affected `export arr` where arr is an indexed array).
 
-zshrs adds an entry `H=` (empty value) to env, since assoc
-can't be serialized as a single env value. This pollutes the
-environment of every child process with malformed entries.
+C zsh gates the addenv call:
 
-**Where** — `src/ported/builtins/export.rs::handle_assoc`:
-should refuse to export assoc, but currently inserts the
-NAME with empty value. C-source `Src/builtin.c::bin_export`
-checks `param->node.flags & PM_HASHED` and skips the env
-update.
-
-**Impact** — child processes inherit empty `H=` entries that
-confuse environment-parsing tools:
-
-```sh
-typeset -A api_endpoints=(prod x stage y)
-export api_endpoints
-# zsh: no env entry created
-# zshrs: env has "api_endpoints=" (empty), confuses other tools
-# subprocess sees the empty env var and may interpret as "unset" or fail
+```c
+if (!(pm->node.flags & (PM_ARRAY|PM_HASHED))) {
+    if (pm->node.flags & PM_EXPORTED) {
+        if (!(pm->node.flags & PM_UNSET) && !pm->env && !ASG_VALUEP(asg))
+            addenv(pm, getsparam(pname));
+    } else if (pm->env && !(pm->node.flags & PM_HASHELEM))
+        delenv(pm);
 ```
 
-**Workaround** — explicitly serialize assoc before export:
-```sh
-typeset -A api_endpoints=(prod x stage y)
-export api_endpoints_serialized="$(typeset -p api_endpoints)"
+**Fix** (`src/ported/builtin.rs` export-mirror block): check the pm flags AND the parallel storage paths (paramtab_hashed_storage, exec_hooks::array/assoc) before calling env::set_var. zshrs's array/assoc data sometimes lives in parallel stores so the paramtab flag check alone is insufficient.
+
+```rust
+if (on as u32 & PM_EXPORTED) != 0 {
+    let is_array_or_hashed = paramtab().read().ok()
+        .and_then(|t| t.get(arg).map(|pm| pm.node.flags as u32))
+        .map_or(false, |f| (f & (PM_ARRAY | PM_HASHED)) != 0)
+        || paramtab_hashed_storage().lock().ok().map_or(false, |s| s.contains_key(arg))
+        || exec_hooks::array(arg).is_some()
+        || exec_hooks::assoc(arg).is_some();
+    if !is_array_or_hashed {
+        env::set_var(arg, val);
+    }
+}
 ```
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'typeset -A H=(k v); export H; env | grep "^H="'
+(no output)
+$ ./target/debug/zshrs -fc 'arr=(1 2 3); export arr; env | grep "^arr="'
+(no output)
+$ ./target/debug/zshrs -fc 'x=hello; export x; env | grep "^x="'    # scalar regression
+x=hello
+$ ./target/debug/zshrs -fc 'export y=world; env | grep "^y="'        # name=value form
+y=world
+```
+
+Test baseline 1025/27 preserved.
 
 ---
 
@@ -48397,7 +48410,7 @@ no longer reports the internal trap-machinery scalar.
 | 346 | `read -E` flag (echo input back to stdout) not implemented — tee-like read pipelines silently lose output | **fixed** 2026-06-02 | use explicit `tee /dev/stderr` |
 | 347 | `read -z` flag (read from command buffer) returns empty — buffer-roundtrip broken | **fixed** 2026-06-02 | (none — buffer not connected) |
 | 348 | `read -p VAR` flag semantics differ — zsh: read-from-coproc (errors when none), zshrs: parse-error/silent | **fixed** 2026-06-02 | use `read <&p` (may also be broken per #205) |
-| 349 | `export ASSOC_VAR` for assoc adds malformed `NAME=` empty entry to env (zsh: refuses) | **fixed** 2026-06-02 | serialize via `typeset -p` before export |
+| 349 | `export ASSOC_VAR` for assoc adds malformed `NAME=` empty entry to env (zsh: refuses) | **fixed** 2026-06-05 | bin_typeset export-mirror block skips env::set_var for PM_ARRAY/PM_HASHED params (also checks parallel storage for the case where pm.flags aren't stamped); mirrors C `Src/builtin.c:2302-2307` |
 | 350 | Integer arithmetic at INT64 boundary returns `0` silently — overflow indistinguishable from intended zero | **fixed** 2026-06-02 | range-validate inputs before arith |
 | 351 | `typeset -p arr` doesn't quote space-containing elements — round-trip via eval splits "a b" into 2 elems | **fixed** 2026-06-02 | manual `(qq)`-quote (also gappy per #290) |
 | 352 | `print -P "%u"`/`%s` reset codes use generic `ESC[0m` instead of attribute-specific `ESC[24m`/`ESC[27m` | **fixed** 2026-06-02 | manual ANSI escape codes |
