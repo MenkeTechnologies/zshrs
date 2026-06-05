@@ -6920,6 +6920,37 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             walk_bare_modifier_chain(chars, &mut j);
             j
         }
+        // c:Src/subst.c:2596 — `$~NAME` / `$~` is the GLOB_SUBST flag
+        // prefix. The `~` (literal or Tilde token `\u{98}`) is part of
+        // the paramsubst syntax. When followed by an identifier, the
+        // expansion spans `$~NAME`; when followed by anything else
+        // (whitespace, `]`, end-of-string, etc.), the bare `$~`
+        // expands to empty. paramsubst's `~` arm at subst.rs:10601
+        // already handles both shapes correctly, but the segment
+        // splitter previously returned just `$` and left the `~` in
+        // the trailing literal — so the bridge emitted `$` + literal
+        // `~` instead of routing the whole `$~` through paramsubst.
+        // Bug #547 in docs/BUGS.md (surrounding-text DQ form).
+        Some('~') | Some('\u{98}') => {
+            let mut j = i + 2;
+            // Optional second `~` for the `$~~NAME` toggle-off form.
+            if j < chars.len()
+                && (chars[j] == '~' || chars[j] == '\u{98}')
+            {
+                j += 1;
+            }
+            // Optional trailing identifier.
+            if j < chars.len()
+                && (chars[j].is_ascii_alphabetic() || chars[j] == '_')
+            {
+                while j < chars.len()
+                    && (chars[j].is_ascii_alphanumeric() || chars[j] == '_')
+                {
+                    j += 1;
+                }
+            }
+            j
+        }
         // All-digit positional: $0..$N
         Some(ch) if ch.is_ascii_digit() => {
             let mut j = i + 1;
