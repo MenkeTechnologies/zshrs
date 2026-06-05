@@ -1829,7 +1829,7 @@ pub fn putoldhistentryontop(keep_going: i32) -> i32 {
 pub fn prepnexthistent() -> i64 {
     // c:1387
     let cap = histsiz.load(SeqCst);
-    if histlinect.load(SeqCst) >= cap {
+    if cap > 0 && histlinect.load(SeqCst) >= cap {
         if let Some(oldest) = ring_oldest() {
             // Drop oldest from ring
             let mut ring = hist_ring.lock().unwrap();
