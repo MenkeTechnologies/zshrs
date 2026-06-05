@@ -6447,8 +6447,16 @@ fn render_cmd_for_debug(cmd: &crate::parse::ZshCommand) -> String {
             .map(|w| crate::lex::untokenize_preserve_quotes(w))
             .collect::<Vec<_>>()
             .join(" "),
-        ZshCommand::Subsh(_) => "( ... )".to_string(),
-        ZshCommand::Cursh(_) => "{ ... }".to_string(),
+        // c:Src/text.c::gettext2 SUBSH/CURSH branches — `time (cmd)`
+        // and `time { cmd }` printtime via `printjob → dumptime` read
+        // p->text built from the AST's full reconstruction (with the
+        // outer parens/braces + a trailing semicolon per nested
+        // statement). zshrs's previous placeholder `"( ... )"` lost
+        // the body; mirror the C textual round-trip so `time (sleep
+        // 0.1; echo done)` prints `( sleep 0.1; echo done; )`.
+        // Bug #432.
+        ZshCommand::Subsh(prog) => format!("( {} )", render_program_for_debug(prog)),
+        ZshCommand::Cursh(prog) => format!("{{ {} }}", render_program_for_debug(prog)),
         ZshCommand::For(_) => "for ...".to_string(),
         ZshCommand::Case(_) => "case ...".to_string(),
         ZshCommand::If(_) => "if ...".to_string(),
@@ -6458,6 +6466,21 @@ fn render_cmd_for_debug(cmd: &crate::parse::ZshCommand) -> String {
         ZshCommand::FuncDef(_) => "funcdef ...".to_string(),
         _ => String::new(),
     }
+}
+
+fn render_program_for_debug(prog: &crate::parse::ZshProgram) -> String {
+    // c:Src/text.c::gettext2 LIST_PIPE — each list emits its sublist
+    // text + `;` separator. The outer subshell/cursh wrapper supplies
+    // the parens/braces; here we just join the contained statements.
+    let mut out = String::new();
+    for list in &prog.lists {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(&render_sublist_for_debug(&list.sublist));
+        out.push(';');
+    }
+    out
 }
 
 /// True iff `s` contains `target` at a position not preceded by the `\0`

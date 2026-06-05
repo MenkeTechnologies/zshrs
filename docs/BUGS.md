@@ -36070,60 +36070,47 @@ PS1='[%l] %~ %# '
 
 ## #432 — `time` builtin output omits command label — pipeline timing reads as anonymous
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — Subsh/Cursh debug renderer now reconstructs the parenthesized/braced body instead of emitting the `( ... )` / `{ ... }` placeholder.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '(time (true | true | true)) 2>&1 | tail -1'
 ( true | true | true; )  0.00s user 0.00s system 70% cpu 0.002 total
 
-$ ./target/debug/zshrs --zsh -c '(time (true | true | true)) 2>&1 | tail -1'
+$ ./target/debug/zshrs --zsh -c '(time (true | true | true)) 2>&1 | tail -1'   # before
 0.00s user 0.00s system 80% cpu 0.003 total
 ```
 
-zsh's `time` builtin prefixes the timing line with the
-canonical-form of the timed command (`( true | true |
-true; )`). zshrs emits only the bare timing — no
-command-string prefix.
+**Root cause** — `compile_zsh.rs::render_cmd_for_debug` returned the placeholder `"( ... )"` for `ZshCommand::Subsh(_)` and `"{ ... }"` for `Cursh(_)`. The TIME_SUBLIST builtin reads this rendered text as the `desc` operand (mirrors C `printtime`'s `%J` substitution which pulls `p->text` populated at fork-time by `getjobtext`, Src/jobs.c:1028-1029), so the wrapped command body was dropped.
 
-Without the prefix, batch-timing output is anonymous:
+**Fix** (`src/extensions/compile_zsh.rs`): render the subshell/cursh body by recursing into the contained `ZshProgram`, joining nested statements with `; `, and wrapping in `( … )` / `{ … }` to mirror C `Src/text.c::gettext2`'s SUBSH/CURSH branches:
 
-```sh
-for cmd in cmd-a cmd-b cmd-c; do
-    time $cmd
-done 2>&1 | grep total
-# zsh output:
-#   cmd-a  0.5s user ...
-#   cmd-b  1.2s user ...
-#   cmd-c  0.3s user ...
-# zshrs output:
-#   0.5s user ...
-#   1.2s user ...
-#   0.3s user ...
-# (which result belongs to which cmd?)
+```rust
+ZshCommand::Subsh(prog) => format!("( {} )", render_program_for_debug(prog)),
+ZshCommand::Cursh(prog) => format!("{{ {} }}", render_program_for_debug(prog)),
+
+fn render_program_for_debug(prog: &ZshProgram) -> String {
+    let mut out = String::new();
+    for list in &prog.lists {
+        if !out.is_empty() { out.push(' '); }
+        out.push_str(&render_sublist_for_debug(&list.sublist));
+        out.push(';');
+    }
+    out
+}
 ```
 
-**Where** — `src/ported/builtins/time.rs::format_output`:
-must prepend the canonical-form of the timed command.
-C-source `Src/exec.c::pipe_print` builds the
-command-string from the pipeline AST and prepends it to
-the timefmt output.
+**Verify**:
 
-**Impact** — batch-timing scripts lose command-result
-correlation. Also affects perf-comparison output that
-relies on grepping the timing lines.
-
-`TIMEFMT` customization is still respected for the
-numeric portion in both shells; the difference is
-specifically the command-label prefix.
-
-**Workaround** — wrap the timed command:
 ```sh
-echo "--- $cmd ---"
-time $cmd
+$ ./target/debug/zshrs -fc 'time (sleep 0.1; echo done)' 2>&1 | tail -1
+( sleep 0.1; echo done; )  0.00s user 0.00s system 0% cpu 0.103 total
+$ ./target/debug/zshrs -fc 'time (echo a | grep a)' 2>&1 | tail -1
+( echo a | grep a; )  0.00s user 0.00s system 53% cpu 0.004 total
+$ ./target/debug/zshrs -fc 'time { sleep 0.05; echo done; }' 2>&1 | tail -1
+{ sleep 0.05; echo done; }  0.00s user 0.00s system 0% cpu 0.110 total
 ```
 
-Adds visible separator but defeats single-line
-grep-and-parse workflows.
+Test baseline 1024/28 preserved.
 
 ---
 
@@ -48491,7 +48478,7 @@ no longer reports the internal trap-machinery scalar.
 | 429 | `%m` prompt escape (short hostname) not expanded — printed literally; likely also `%M`/`%y`/`%l`/`%j`/`%i` | **fixed** 2026-06-04 | n/a |
 | 430 | `%s`/`%u` prompt close-escapes emit `\\033[0m` (reset-all) instead of `\\033[27m`/`\\033[24m` (pair-specific) | **fixed** 2026-06-04 | n/a |
 | 431 | `%y`/`%l` prompt escapes (tty name) printed literally — extends #429 prompt-escape gap family | **fixed** 2026-06-04 | n/a |
-| 432 | `time` builtin output omits command-label prefix — pipeline timing reads as anonymous | **fixed** 2026-06-02 | wrap with `echo "--- $cmd ---"` |
+| 432 | `time` builtin output omits command-label prefix — pipeline timing reads as anonymous | **fixed** 2026-06-05 | render_cmd_for_debug now reconstructs Subsh `( body )` and Cursh `{ body }` via recursive ZshProgram walk (mirrors C `Src/text.c::gettext2` SUBSH/CURSH branches) instead of `( ... )` / `{ ... }` placeholders |
 | 433 | `time` builtin ignores `$TIMEFMT` parameter — hardcoded format always used | **fixed** 2026-06-02 | `awk` reformat the hardcoded output |
 | 434 | `read -e` echo-mode flag not recognized — input consumed silently instead of echoed to stdout | **fixed** 2026-06-02 | `tee /dev/stderr` or explicit `echo "$REPLY"` |
 | 435 | `typeset -A` no-args lists internal introspection assocs (aliases/builtins/commands) instead of user-defined | **fixed** 2026-06-04 | `typeset -p +H \| grep "typeset -A"` |
