@@ -38807,21 +38807,28 @@ pipestatus=[0 1 0] PIPESTATUS=[0 1 0]
 
 ## #475 — bash-only builtins shipped in `--zsh` mode (`caller`/`help`/`complete`/`compopt`/`mapfile`)
 
-**Status:** `partial-fix` 2026-06-04 — 4 of 7 bash-only
-builtins (caller/help/complete/compgen) now correctly emit
-`command not found` rc=127 in `--zsh` mode. Remaining
-(compopt/mapfile/readarray) route through a different
-dispatch path not yet identified; deferred. Closed via:
-1. New library-side `crate::IS_ZSH_MODE` atomic set by
+**Status:** `fixed` 2026-06-05 — all 7 bash-only builtins
+(caller/help/complete/compgen/compopt/mapfile/readarray)
+now correctly emit `command not found` rc=127 in `--zsh`
+mode. The remaining compopt/mapfile/readarray were closed
+by #504's compile-path fix that routes them through
+`Op::CallFunction` so `host_exec_external` emits the
+canonical diagnostic with the user-typed name.
+
+Original partial-fix scaffolding:
+1. Library-side `crate::IS_ZSH_MODE` atomic set by
    `bins/zshrs.rs` parse-args when `--zsh` is selected.
 2. Bridge closures for `BUILTIN_CALLER`, `BUILTIN_HELP`,
    `BUILTIN_COMPLETE`, `BUILTIN_COMPGEN` gate on
    `IS_ZSH_MODE.load()` and emit `command not found` +
    rc=127 before invoking the bash-compat handler.
 3. `dispatch_builtin_raw` gate for compopt/mapfile/
-   readarray (didn't take effect — these names don't
-   route through the generic builtintab path; gate kept
-   as defensive code).
+   readarray (initially didn't fire because these names
+   bypassed the generic builtintab path; #504 added a
+   `compile_simple` arm that forces `builtin_id = None` for
+   these three when `IS_ZSH_MODE`, routing them through
+   `Op::CallFunction` → `host_exec_external` →
+   canonical `command not found: <name>` rc=127).
 
 **Verify** vs `/opt/homebrew/bin/zsh`:
 
@@ -38841,10 +38848,10 @@ $ ./target/debug/zshrs --zsh -fc 'type caller'
 caller not found
 ```
 
-Remaining gap: `compopt`, `mapfile`, `readarray` still
-silently return rc=0 because their dispatch path isn't
-through the bridge closures or generic builtintab lookup
-gated above. Tracked for a separate fix.
+Remaining gap (now closed by #504): `compopt`, `mapfile`,
+`readarray` ALSO emit `command not found` rc=127 — see
+the #504 detail block for the routing-through-CallFunction
+mechanism.
 
 zshrs_shell baseline preserved at 970/82.
 
@@ -48260,7 +48267,7 @@ no longer reports the internal trap-machinery scalar.
 | 472 | `typeset -H` (hide value) doesn't suppress value in `typeset -p` output — leaks secrets in listings | **fixed** 2026-06-04 | `local -H a=secret; typeset -p a` → `typeset a` matching zsh |
 | 473 | `[[ "ab" == a|b ]]` zshrs runs `b` as command — `\|` in pattern parsed as pipe (security-relevant) | **fixed** 2026-06-04 | par_cond emits `parse error near <tok>` per parse.c:1818 |
 | 474 | `$PIPESTATUS` (uppercase) exposed as alias to `$pipestatus` — zsh has only lowercase; breaks bash-vs-zsh detection | **fixed** 2026-06-04 | uppercase alias gated out of `--zsh` mode |
-| 475 | bash-only builtins (`caller`/`help`/`complete`/`compopt`/`mapfile`) shipped in `--zsh` mode — extends bash-compat-contamination family | **partial-fix** 2026-06-04 | caller/help/complete/compgen now `command not found`; compopt/mapfile/readarray deferred |
+| 475 | bash-only builtins (`caller`/`help`/`complete`/`compopt`/`mapfile`) shipped in `--zsh` mode — extends bash-compat-contamination family | fixed | (all 7 now emit `command not found` rc=127 in `--zsh` — compopt/mapfile/readarray closed by #504 via `compile_simple` routing through Op::CallFunction → host_exec_external) |
 | 476 | `case "x" in) ...; esac` empty pattern silently accepted as no-op (zsh: parse error) — extends parser-strictness family | **fixed** 2026-06-04 | n/a |
 | 477 | `${a:0:n}` substring with bare-name length accepted (zsh: "unrecognized modifier") — bash-compat permissiveness | **fixed** 2026-06-04 | alpha-LENGTH gate at substring arm matches C `check_colon_subscript` |
 | 478 | `read "?prompt"` emits prompt to stdout instead of stderr — corrupts cmdsub-captured output | **fixed** 2026-06-04 | n/a |
