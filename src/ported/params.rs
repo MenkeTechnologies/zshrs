@@ -2090,11 +2090,50 @@ pub fn createparam(
         // real outer value. Snapshot the current value via the GSU
         // getfn now so the saved chain carries the right string.
         // Bug #8 in docs/BUGS.md (`local IFS=:` leaked past return).
+        //
+        // c:Src/builtin.c:2382-2424 copyparam for PM_HASHED — same
+        // shape, different storage. zshrs's PM_HASHED data lives in
+        // the parallel `paramtab_hashed_storage` map keyed by name (no
+        // scope dimension), so a `local -A h` shadow that writes
+        // through set_assoc would clobber the outer scope's bag and
+        // endparamscope's pm.old restoration alone wouldn't recover
+        // it. Push the current paramtab_hashed_storage[name] onto the
+        // shadow stack BEFORE the fresh pm gets installed, so when
+        // endparamscope unwinds the PM_HASHED stale entry it can pop
+        // and restore. Bug #415.
         let oldpm = if let Some(mut op) = oldpm {
             if (op.node.flags as u32 & PM_SPECIAL) != 0 {
                 let getfn_ptr = op.gsu_s.as_ref().map(|g| g.getfn);
                 if let Some(getfn) = getfn_ptr {
                     op.u_str = Some(getfn(&op));
+                }
+            }
+            if (op.node.flags as u32 & PM_HASHED) != 0
+                && (flags as u32 & PM_LOCAL) != 0
+            {
+                // Push current paramtab_hashed_storage[name] (Some/None)
+                // onto the shadow stack so endparamscope can restore.
+                // Then CLEAR the storage so the local shadow starts
+                // with an empty bag — without this, `local -A h` (no
+                // value) leaves the outer's data visible and a
+                // subsequent `h[x]=v` appends to it instead of
+                // creating a fresh local assoc. C's copyparam handles
+                // this via separate `tpm` / `pm` u.hash slots so the
+                // pm.u.hash that fresh writes go through is
+                // zero-initialised; zshrs's parallel storage is one
+                // map per name, so the save+clear pair is the
+                // equivalent.
+                let saved: Option<IndexMap<String, String>> = paramtab_hashed_storage()
+                    .lock()
+                    .ok()
+                    .and_then(|m| m.get(name).cloned());
+                let stk_mtx = PARAMTAB_HASHED_SHADOW_STACK
+                    .get_or_init(|| Mutex::new(HashMap::new()));
+                if let Ok(mut stk) = stk_mtx.lock() {
+                    stk.entry(name.to_string()).or_default().push(saved);
+                }
+                if let Ok(mut m) = paramtab_hashed_storage().lock() {
+                    m.insert(name.to_string(), IndexMap::new());
                 }
             }
             Some(op)
@@ -9107,6 +9146,11 @@ pub fn endparamscope() {
             // (or remove if no outer binding existed).
             if let Some(pm) = tab.remove(&n) {
                 let had_outer = pm.old.is_some();
+                let outer_is_assoc = pm
+                    .old
+                    .as_ref()
+                    .map(|p| (p.node.flags as u32 & PM_HASHED) != 0)
+                    .unwrap_or(false);
                 if let Some(prev) = pm.old {
                     // c:scanendscope:5933 pm->old = tpm->old
                     let restored_is_special = (prev.node.flags as u32 & PM_SPECIAL) != 0;
@@ -9134,6 +9178,31 @@ pub fn endparamscope() {
                         .ok()
                         .as_deref_mut()
                         .map(|m| m.remove(&n));
+                }
+                // RUST-ONLY: PM_HASHED outer-pm restoration — pop the
+                // saved paramtab_hashed_storage[name] from the shadow
+                // stack and re-install it so the outer scope's assoc
+                // data is visible again. Mirrors the C copyparam +
+                // pm.old chain via parallel storage. Bug #415. Symmetric
+                // with the createparam push-side.
+                if was_assoc && outer_is_assoc {
+                    let stk_mtx = PARAMTAB_HASHED_SHADOW_STACK
+                        .get_or_init(|| Mutex::new(HashMap::new()));
+                    let saved = if let Ok(mut stk) = stk_mtx.lock() {
+                        stk.get_mut(&n).and_then(|v| v.pop()).flatten()
+                    } else {
+                        None
+                    };
+                    if let Ok(mut m) = paramtab_hashed_storage().lock() {
+                        match saved {
+                            Some(map) => {
+                                m.insert(n.clone(), map);
+                            }
+                            None => {
+                                m.remove(&n);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -10339,6 +10408,19 @@ pub(crate) fn paramtab_hashed_storage() -> &'static Mutex<HashMap<String, IndexM
 {
     PARAMTAB_HASHED_STORAGE_INNER.get_or_init(|| Mutex::new(HashMap::new()))
 }
+
+/// Shadow stack for `paramtab_hashed_storage` entries displaced by
+/// `local -A NAME` / `typeset -A NAME` shadows inside a function. The
+/// canonical assoc data lives in `paramtab_hashed_storage` (a flat
+/// HashMap keyed by name with NO scope dimension — Rust-only parallel
+/// store; the C side keeps assoc data in pm.u_hash so it rides the
+/// pm.old chain automatically). createparam pushes the displaced
+/// value when a PM_LOCAL|PM_HASHED shadow installs; endparamscope
+/// pops on PM_HASHED restoration so the outer scope's bag comes
+/// back. Mirrors C's `copyparam` (Src/builtin.c:2382-2424) via
+/// parallel storage. Bug #415.
+static PARAMTAB_HASHED_SHADOW_STACK: OnceLock<Mutex<HashMap<String, Vec<Option<IndexMap<String, String>>>>>> =
+    OnceLock::new();
 
 /// Mirror the global `paramtab` (and the parallel hashed-storage
 /// table) into the three HashMaps that `SubstState` uses as its
