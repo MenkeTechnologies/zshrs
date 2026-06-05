@@ -5774,7 +5774,18 @@ pub fn doshfunc(
     // single-line-function format. Bug #54/#74/#86 in docs/BUGS.md.
     let saved_lineno = crate::ported::lex::lineno();
     crate::ported::lex::set_lineno(0);
+    // c:Src/exec.c:6173-6175 + c:6196-6198 — `runshfunc` saves
+    // zunderscore before the body runs and restores it after, so
+    // `$_` reads outside the function continue to reflect the
+    // function CALL's last arg (set by setunderscore at c:3491
+    // before doshfunc enters). Without this, commands inside the
+    // body (`:`, `echo`, etc.) update `$_` to their own last arg,
+    // and the post-call `echo "[$_]"` sees the body's residue
+    // instead of the call's arg. Bug surfaced via
+    // test_dollar_underscore_after_function_call.
+    let saved_zunderscore = crate::ported::params::getsparam("_").unwrap_or_default();
     let body_status = body_runner();
+    crate::ported::params::set_zunderscore(std::slice::from_ref(&saved_zunderscore));
     crate::ported::lex::set_lineno(saved_lineno);
     LASTVAL.store(body_status, Ordering::Relaxed);
 
