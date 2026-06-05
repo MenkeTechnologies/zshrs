@@ -5098,6 +5098,24 @@ pub fn bin_typeset(
                         pm.node.flags = (pm.node.flags & !post_assign_mask) | post_assign_to_set;
                     }
                 }
+                // c:Src/params.c — when PM_UNIQUE is freshly stamped on
+                // an EXISTING array via bare `typeset -U arr` (no value
+                // assignment), zsh dedups the current contents in-place
+                // (verified vs /opt/homebrew/bin/zsh: `arr=(a b a c b);
+                // typeset -U arr; echo "$arr[@]"` → "a b c"). Apply the
+                // same dedup here.
+                if (post_assign_to_set as u32 & PM_UNIQUE) != 0 {
+                    let existing = crate::ported::params::getaparam(arg);
+                    if let Some(arr) = existing {
+                        let mut seen: std::collections::HashSet<String> =
+                            std::collections::HashSet::new();
+                        let deduped: Vec<String> = arr
+                            .into_iter()
+                            .filter(|e| seen.insert(e.clone()))
+                            .collect();
+                        crate::ported::params::setaparam(arg, deduped);
+                    }
+                }
                 // c:Src/params.c:3024 addenv — mirror PM_EXPORTED to OS env.
                 if (on as u32 & PM_EXPORTED) != 0 {
                     if let Some(val) = saved_val.as_deref().or(Some("")) {
