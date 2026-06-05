@@ -484,9 +484,19 @@ impl ShellExecutor {
             .unwrap_or(0)
     }
 
-    /// `readonly` / `typeset -r` — Param has PM_READONLY.
+    /// `readonly` / `typeset -r` / read-only-by-design (LINENO, PPID,
+    /// $$, $?, $!, ...) — match user-side rejection in C's
+    /// assignstrvalue at `Src/params.c:2699-2703` which gates on
+    /// `pm->node.flags & PM_READONLY` where the IPDEF4 family declares
+    /// `PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY | PM_RO_BY_DESIGN`
+    /// (both bits set together). zshrs's special_params table carries
+    /// PM_RO_BY_DESIGN alone for IPDEF4 entries so internal direct-write
+    /// paths (BUILTIN_SET_LINENO bypasses via pm.u_val) don't trip the
+    /// readonly guard. User-facing checks must accept either bit. Bug
+    /// #418-family / test_lineno_intrinsic_readonly.
     pub fn is_readonly_param(&self, name: &str) -> bool {
-        (self.param_flags(name) as u32 & PM_READONLY) != 0
+        let flags = self.param_flags(name) as u32;
+        (flags & (PM_READONLY | crate::ported::zsh_h::PM_RO_BY_DESIGN)) != 0
     }
 
     /// Most-recent-command exit status. Reads canonical
