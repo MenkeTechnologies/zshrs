@@ -10382,6 +10382,34 @@ pub fn bin_test(
         argv.remove(0); // c:7272
     }
 
+    // c:Src/builtin.c:7276-7280 + Src/parse.c par_cond — when the
+    // 2-arg form is `[ -FLAG operand ]` and `-FLAG` isn't a recognized
+    // unary op letter, par_cond emits `unknown condition: -FLAG` rc=2.
+    // The cond.rs walker's primary arm falls through to "bare arg /
+    // implicit -n" silently, returning 0 (truthy). Pre-flight: if
+    // 2-arg AND argv[0] starts with `-` AND argv[0] isn't a known
+    // unary op nor `!`/`(`, emit the canonical diagnostic.
+    if argv.len() == 2
+        && argv[0].starts_with('-')
+        && argv[0].len() >= 2
+        && argv[0] != "!"
+    {
+        let op_char = argv[0].chars().nth(1).unwrap_or(' ');
+        let is_known_unary = argv[0].len() == 2
+            && matches!(
+                op_char,
+                'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'k' | 'L'
+                    | 'n' | 'o' | 'p' | 'r' | 's' | 'S' | 't' | 'u' | 'v'
+                    | 'w' | 'x' | 'z' | 'G' | 'N' | 'O'
+            );
+        if !is_known_unary {
+            crate::ported::utils::zwarnnam(
+                name,
+                &format!("unknown condition: {}", argv[0]),
+            );
+            return 2;
+        }
+    }
     // c:Src/builtin.c:7276-7280 — `[ ]`/`test` uses `parse_cond`
     // which has no rule for TEST_INANG (`<`) or TEST_OUTANG (`>`) as
     // binary string-comparators; the parser errors with
