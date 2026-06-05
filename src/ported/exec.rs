@@ -653,9 +653,15 @@ pub fn loadautofn(
         Ok(t) => t,
         Err(_) => return 1,
     };
-    // c:5142 — `shf->filename = ztrdup(dir_path)`.
+    // c:Src/exec.c:5735/5757 — `loadautofnsetfile(shf, fdir)`. The
+    // helper stamps PM_LOADDIR alongside the filename when fdir is
+    // present, so `whence -v NAME` later concatenates the directory
+    // with `/NAME` (PM_LOADDIR branch at hashtable.rs:1350). zshrs's
+    // prior `shf->filename = dir_path` assignment skipped the flag
+    // → `type colors` printed `from /path/to/functions` instead of
+    // `from /path/to/functions/colors`. Mirror C exactly.
     unsafe {
-        (*shf).filename = dir_path.clone().or(Some(path.clone()));
+        loadautofnsetfile(&mut *shf, dir_path.as_deref().or(Some(&path)));
     }
     // c:5148 — `shf->node.flags &= ~PM_UNDEFINED`.
     unsafe {
