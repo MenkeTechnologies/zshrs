@@ -1766,13 +1766,27 @@ impl ShellExecutor {
                 if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
                     let boxed = Box::new(stub.clone());
                     let ptr = Box::into_raw(boxed);
-                    let _ = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
+                    let load_rc = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
                     unsafe {
                         let _ = Box::from_raw(ptr);
                     }
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let wrapped = format!("{name}() {{\n{body}\n}}");
                         let _ = self.execute_script_zsh_pipeline(&wrapped);
+                    } else if load_rc != 0 {
+                        // c:Src/exec.c:5713-5719 / 5635-5644 —
+                        // `execautofn`'s `if (!loadautofn(...)) return 1`
+                        // propagates the loadautofn failure as the
+                        // command's exit status. zshrs's previous
+                        // path returned None here, falling through to
+                        // execute_external which emitted a SECOND
+                        // diagnostic (`command not found: NAME`) on
+                        // top of loadautofn's `function definition
+                        // file not found`. Mirror C: when load failed
+                        // AND the stub still has no body, surface
+                        // status=1 so the caller does NOT fall back
+                        // to PATH search.
+                        return Some(1);
                     }
                 } else if let Some(body) = stub.body.clone() {
                     // c:Src/Modules/parameter.c::setpmfunction — function
