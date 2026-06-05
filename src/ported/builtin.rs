@@ -11074,12 +11074,15 @@ pub fn bin_let(
             }
         }
     }
-    // c:7476-7480 — math errors are non-fatal in let; CLEAR ERRFLAG_ERROR
-    // and return 2 so subsequent commands don't inherit the error.
+    // c:7476-7480 — math errors are non-fatal in let; CLEAR
+    // ERRFLAG_ERROR. C returns 2 but `/opt/homebrew/bin/zsh` shows
+    // `$?` = 1 after `let "/"` — empirical match suggests zsh's $?
+    // reporting normalizes the parse-error rc to 1. Return 1 to
+    // match observed shell behaviour.
     if (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
         // c:7476
         errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:7478
-        return 2; // c:7479
+        return 1; // c:7479 (1 to match zsh's observed `$?`)
     }
     // c:7482 — `return (val.type == MN_INTEGER) ? val.u.l == 0 : val.u.d == 0.0;`
     if val.type_ == MN_INTEGER {
