@@ -2148,62 +2148,84 @@ pub fn applytextattributes(flags: i32) -> String {
     let old_s = old & TXTSTANDOUT != 0;
     let new_s = new & TXTSTANDOUT != 0;
 
-    // c:Src/prompt.c:1640-1718 — the C tsetcap sequence emits
-    // SELECTIVE attribute-off escapes via the terminfo `me` /
-    // `se` / `ue` caps (TCALLATTRSOFF / TCSTANDOUTEND /
-    // TCUNDERLINEEND). On every SGR-aware terminal those map to:
-    //   bold off      → SGR 22  (`\x1b[22m`)
-    //   underline off → SGR 24  (`\x1b[24m`)
-    //   standout off  → SGR 27  (`\x1b[27m`)
-    //
-    // The previous Rust port emitted the full reset `\x1b[0m`
-    // whenever any attribute was turning off, then re-enabled the
-    // surviving attributes — which clobbered any active color
-    // alongside the targeted attribute. Bug #115 in
-    // docs/BUGS.md: `%F{red}%Bbold%b regular%f` lost the red
-    // color when `%b` fired. Emit selective off-codes so other
-    // attributes (including colors) survive.
-    if old_b && !new_b {
-        result.push_str("\x1b[22m"); // bold off
-    }
-    if old_u && !new_u {
-        result.push_str("\x1b[24m"); // underline off
-    }
-    if old_s && !new_s {
-        result.push_str("\x1b[27m"); // standout off
-    }
-    if !old_b && new_b {
-        result.push_str("\x1b[1m");
-    }
-    if !old_u && new_u {
-        result.push_str("\x1b[4m");
-    }
-    if !old_s && new_s {
-        result.push_str("\x1b[7m");
-    }
-
-    if (old & TXT_ATTR_FG_MASK) != (new & TXT_ATTR_FG_MASK) {
-        if new & TXTFGCOLOUR != 0 {
-            let raw = (new & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT;
-            let c = if new & TXT_ATTR_FG_24BIT != 0 {
+    // c:Src/prompt.c:1640-1718 — tsetcap dispatch. Observable
+    // /opt/homebrew/bin/zsh output (cross-checked via od -c):
+    //   - `%b`/`%u`/`%s` (attr off): full reset `\e[0m` + re-apply
+    //     EVERY surviving attribute AND color.
+    //   - `%f` (fg off): selective `\e[39m`.
+    //   - `%k` (bg off): selective `\e[49m`.
+    //   - `%B`/`%U`/`%S` (attr on): emit attr-on cap + re-apply
+    //     active colors (terminfo bold cap historically resets
+    //     colors on some terms).
+    //   - color change: emit new color code only.
+    let attr_off = (old_b && !new_b) || (old_u && !new_u) || (old_s && !new_s);
+    let attr_on = (!old_b && new_b) || (!old_u && new_u) || (!old_s && new_s);
+    let fg_emit_color = |attrs, out: &mut String| {
+        if attrs & TXTFGCOLOUR != 0 {
+            let raw = (attrs & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT;
+            let c = if attrs & TXT_ATTR_FG_24BIT != 0 {
                 COLOR_24BIT | (raw as Color & 0x00ff_ffff)
             } else {
                 raw as Color
             };
-            result.push_str(&color_to_ansi(c, true));
+            out.push_str(&color_to_ansi(c, true));
+        }
+    };
+    let bg_emit_color = |attrs, out: &mut String| {
+        if attrs & TXTBGCOLOUR != 0 {
+            let raw = (attrs & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT;
+            let c = if attrs & TXT_ATTR_BG_24BIT != 0 {
+                COLOR_24BIT | (raw as Color & 0x00ff_ffff)
+            } else {
+                raw as Color
+            };
+            out.push_str(&color_to_ansi(c, false));
+        }
+    };
+    if attr_off {
+        result.push_str("\x1b[0m");
+        if new_b {
+            result.push_str("\x1b[1m");
+        }
+        if new_u {
+            result.push_str("\x1b[4m");
+        }
+        if new_s {
+            result.push_str("\x1b[7m");
+        }
+        fg_emit_color(new, &mut result);
+        bg_emit_color(new, &mut result);
+        *current = pending;
+        return result;
+    }
+    if attr_on {
+        if !old_b && new_b {
+            result.push_str("\x1b[1m");
+        }
+        if !old_u && new_u {
+            result.push_str("\x1b[4m");
+        }
+        if !old_s && new_s {
+            result.push_str("\x1b[7m");
+        }
+        // Re-apply colors after attribute-on so terminal that
+        // resets colors on bold-cap doesn't lose them. Mirrors
+        // /opt/homebrew/bin/zsh: `%F{red}%B` emits
+        // `\e[31m \e[1m \e[31m`.
+        fg_emit_color(new, &mut result);
+        bg_emit_color(new, &mut result);
+    }
+
+    if (old & TXT_ATTR_FG_MASK) != (new & TXT_ATTR_FG_MASK) && !attr_on {
+        if new & TXTFGCOLOUR != 0 {
+            fg_emit_color(new, &mut result);
         } else {
             result.push_str("\x1b[39m");
         }
     }
-    if (old & TXT_ATTR_BG_MASK) != (new & TXT_ATTR_BG_MASK) {
+    if (old & TXT_ATTR_BG_MASK) != (new & TXT_ATTR_BG_MASK) && !attr_on {
         if new & TXTBGCOLOUR != 0 {
-            let raw = (new & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT;
-            let c = if new & TXT_ATTR_BG_24BIT != 0 {
-                COLOR_24BIT | (raw as Color & 0x00ff_ffff)
-            } else {
-                raw as Color
-            };
-            result.push_str(&color_to_ansi(c, false));
+            bg_emit_color(new, &mut result);
         } else {
             result.push_str("\x1b[49m");
         }
