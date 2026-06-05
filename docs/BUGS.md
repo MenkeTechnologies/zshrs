@@ -47070,7 +47070,7 @@ no longer reports the internal trap-machinery scalar.
 | 51 | `${#*}` access corrupts `$@`/`$*` for rest of fn | **fixed** 2026-06-02 | n/a |
 | 52 | `${(q)arr}` per-element quote, doesn't quote join-sep | **fixed** 2026-06-02 | `${(j: :)${(@q)a}}` explicit |
 | 53 | `${(P)$ref}` doesn't resolve `name[idx]` indirect | **fixed** 2026-06-02 | `eval "val=\\${$ref}"` |
-| 54 | `warn_create_global` / `warn_nested_var` warnings silent | **port-bug** | strict `local` discipline |
+| 54 | `warn_create_global` / `warn_nested_var` warnings silent | **fixed** 2026-06-04 | strict `local` discipline |
 | 55 | `setopt err_return` doesn't fire on command failure | **fixed** 2026-06-02 | explicit `\|\| return $?` |
 | 56 | Signal trap output captured into `$(...)` result | **port-bug** | guard cmd-sub output |
 | 57 | `setopt octal_zeroes` ignored by arith parser | **fixed** 2026-06-02 | `8#NNN` explicit base |
@@ -47090,7 +47090,7 @@ no longer reports the internal trap-machinery scalar.
 | 71 | `${var:N:M}` accepts non-digit offset (bashism) | **fixed** 2026-06-02 | wrap offset in `$(( ))` |
 | 72 | `log` builtin registered but dispatch → `/usr/bin/log` | **fixed** 2026-06-02 | `print -- $watch` instead |
 | 73 | `$ZSH_VERSION` includes `.0.3-test` suffix vs `5.9` | **fixed** 2026-06-02 | parse `${ZSH_VERSION%%.0*}` |
-| 74 | `local -r` violation in fn doesn't abort script | **port-bug** | check fn exit status |
+| 74 | `local -r` violation in fn doesn't abort script | **fixed** 2026-06-04 | check fn exit status |
 | 75 | `typeset -i x; x="bad math"` silently coerces to 0 | **fixed** 2026-06-02 | regex-validate input first |
 | 76 | `zmodload` lists 32 auto-loaded modules vs zsh's 1 | **fixed** 2026-06-04 | now reports 1 (zsh/main) matching zsh |
 | 77 | `${h[(k)-key]}` flag-lookup of dash key returns empty | **fixed** 2026-06-02 | direct `${h[$opt]+set}` |
@@ -47102,7 +47102,7 @@ no longer reports the internal trap-machinery scalar.
 | 83 | `${a[(s.,.)N,M]}` slice with flag returns full array | **fixed** 2026-06-02 | drop subscript flag |
 | 84 | `bindkey -L` 117 entries vs zsh's 31 (default keymap differs) | **port-bug** | normalize via post-process |
 | 85 | `"${(s.X.)s[@]}"` on scalar with `[@]` returns empty | **fixed** 2026-06-02 | `(@s.X.)s` flag-first form |
-| 86 | `${1:?msg}` error format has spurious `:1:` line | **port-bug** | sed-strip the line number |
+| 86 | `${1:?msg}` error format has spurious `:1:` line | **fixed** 2026-06-04 | sed-strip the line number |
 | 87 | `setopt` (no args) empty under `-fc`; zsh shows `nohashdirs/norcs` | **fixed** 2026-06-04 | `$options[rcs]` direct query |
 | 88 | `setopt nounset` doesn't fire on unset var in arith `$((x+1))` | **fixed** 2026-06-02 | `[[ -v var ]]` guard |
 | 89 | `extended_glob #`/`##` quantifiers not recognized (literal) | **fixed** 2026-06-04 | `[[ "aaaa" == a# ]]` matches |
@@ -47143,7 +47143,7 @@ no longer reports the internal trap-machinery scalar.
 | 124 | `typeset -f` source-as-typed vs zsh pretty-printed | **fixed** 2026-06-02 | normalize whitespace |
 | 125 | `var=${a[-1]}` assignment returns empty (echo works) | **fixed** 2026-06-02 | `var=${a[${#a}]}` positive idx |
 | 126 | `${s:N:}` empty length silently returns empty (zsh errors) | **fixed** 2026-06-02 | careful syntax |
-| 127 | `$'\xNN'` interpreted as Unicode codepoint + UTF-8 re-encode | **port-bug** | `printf '\xNN'` direct |
+| 127 | `$'\xNN'` interpreted as Unicode codepoint + UTF-8 re-encode | **fixed** 2026-06-02 | `printf '\xNN'` direct |
 | 128 | `${(C)arr[N]}` indexed-element case-flag errors "bad substitution" | **fixed** 2026-06-02 | assign to scalar first |
 | 129 | `local -a a=("$@")` splits quoted args (without `-a` works) | **fixed** 2026-06-02 | n/a |
 | 130 | `${var@X}` bash parameter-transform accepted (zsh errors) | **fixed** 2026-06-02 | `${(U)x}`/`${(L)x}`/`${(q)x}` |
