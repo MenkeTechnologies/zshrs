@@ -5096,7 +5096,88 @@ pub fn paramsubst(
                 // Direct port of Src/params.c getasub which routes
                 // scalar pattern lookups through getindex with
                 // PATSCAN_FIRST/LAST.
-                if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                // c:Src/params.c:1419-1426 — `(w)`/`(W)`/`(p)`/`(f)`
+                // flags set `word=1` so the subscript indexes the
+                // scalar by WORDS rather than chars. `(s.X.)` alone
+                // just sets `sep` without flipping word; per zsh, it's
+                // a NO-OP for an integer scalar subscript (verified vs
+                // /opt/homebrew/bin/zsh — `${a[(s/::/)2]}` returns
+                // char[2], not split[2]). Only fall into the word arm
+                // when one of w/W/p/f is present.
+                if let Some((word_flags, num_str, sep)) =
+                    (|s: &str| -> Option<(String, String, String)> {
+                        let s = s.trim_start();
+                        let rest = s.strip_prefix('(')?;
+                        let close = rest.find(')')?;
+                        let f = &rest[..close];
+                        let n = rest[close + 1..].to_string();
+                        let mut sep_explicit: Option<String> = None;
+                        let mut has_word = false;
+                        let mut chars = f.chars().peekable();
+                        while let Some(c) = chars.next() {
+                            match c {
+                                'w' | 'W' | 'p' => has_word = true,
+                                'f' => {
+                                    has_word = true;
+                                    sep_explicit = Some("\n".to_string());
+                                }
+                                's' => {
+                                    let delim = chars.next()?;
+                                    let mut body = String::new();
+                                    for cc in chars.by_ref() {
+                                        if cc == delim {
+                                            break;
+                                        }
+                                        body.push(cc);
+                                    }
+                                    sep_explicit = Some(body);
+                                }
+                                _ => return None,
+                            }
+                        }
+                        if !has_word {
+                            return None;
+                        }
+                        Some((
+                            f.to_string(),
+                            n,
+                            sep_explicit.unwrap_or_else(|| " \t\n".to_string()),
+                        ))
+                    })(sub)
+                {
+                    let _ = word_flags;
+                    if let Ok(idx_n) = num_str.parse::<i64>() {
+                        // Split scalar by sep. For default whitespace
+                        // sep, split on any whitespace char (matches
+                        // zsh IFS behavior).
+                        let words: Vec<String> = if sep == " \t\n" {
+                            scalar
+                                .split_whitespace()
+                                .map(|s| s.to_string())
+                                .collect()
+                        } else {
+                            scalar
+                                .split(sep.as_str())
+                                .map(|s| s.to_string())
+                                .collect()
+                        };
+                        let len = words.len() as i64;
+                        let i = if idx_n == 0 {
+                            -1
+                        } else if idx_n < 0 {
+                            len + idx_n
+                        } else {
+                            idx_n - 1
+                        };
+                        if i >= 0 && (i as usize) < words.len() {
+                            words[i as usize].clone()
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        String::new()
+                    }
+                } else if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
                     let s = s.trim_start();
                     let rest = s.strip_prefix('(')?;
                     let close = rest.find(')')?;
@@ -5186,6 +5267,36 @@ pub fn paramsubst(
                         } else {
                             None
                         }
+                    })
+                    .or_else(|| {
+                        // c:Src/params.c:1419-1480 — subscript flag block
+                        // followed by integer index. When (s/X/) is the
+                        // ONLY flag (no w/W/p/f), it's a NO-OP for int
+                        // index: just strip the flag block and parse the
+                        // remainder. Verified vs /opt/homebrew/bin/zsh:
+                        //   `a=hello; ${a[(s/l/)1]}` → "h" (char[1]).
+                        let s = sub.trim();
+                        let rest = s.strip_prefix('(')?;
+                        let close = rest.find(')')?;
+                        // Verify the flag block contains only known
+                        // subscript flag chars and `s.X.` body.
+                        let f = &rest[..close];
+                        let mut chars = f.chars();
+                        while let Some(c) = chars.next() {
+                            match c {
+                                's' => {
+                                    let delim = chars.next()?;
+                                    for cc in chars.by_ref() {
+                                        if cc == delim {
+                                            break;
+                                        }
+                                    }
+                                }
+                                'e' | 'n' | 'b' => {}
+                                _ => return None,
+                            }
+                        }
+                        rest[close + 1..].trim().parse::<i64>().ok()
                     })
                     .or_else(|| {
                         // mathevali fallback for arith subscripts like
