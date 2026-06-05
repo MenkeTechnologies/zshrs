@@ -638,7 +638,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_TEST, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = dispatch_builtin("test", args);
+        // Distinguish `[ … ]` from `test …` by sniffing the trailing
+        // `]` — `[` requires it (c:Src/builtin.c:7241), `test` rejects
+        // it. The compile path emits BUILTIN_TEST for both, so the
+        // dispatch name carries the `[` vs `test` semantic for
+        // execbuiltin's funcid (BIN_BRACKET=21 vs BIN_TEST=20). Without
+        // this, bin_test's `if func == BIN_BRACKET` arm (which pops
+        // the trailing `]`) never fired for `[` calls, so the `]`
+        // leaked into evalcond as a positional and silently changed
+        // the result. Bug surfaced via test_test_dashdash_unknown_condition.
+        let name = if args.last().map(|s| s.as_str()) == Some("]") {
+            "["
+        } else {
+            "test"
+        };
+        let status = dispatch_builtin(name, args);
         Value::Status(status)
     });
 
