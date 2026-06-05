@@ -12884,6 +12884,56 @@ trap 'echo got' USR1
 
 ## #158 — Function-def redirect `f() { ... } < file` not honored at call time
 
+**Status:** `fixed` 2026-06-05 — `compile_command` Redirected
+arm now wraps the function body in a Cursh+Redirected scope
+so the trailing redirects open on every call (matching C zsh's
+`Shfunc.redir` semantics).
+
+**Root cause** — the parser already produced
+`Redirected(FuncDef(...), [trailing_redirs])` via par_cmd's
+trailing-redirect collector, but `compile_command`'s
+Redirected arm short-circuited on FuncDef with a comment
+"deferred (#158)" and just compiled the FuncDef body
+without the redirects. The redirects were silently dropped:
+the file was never opened at def time (avoiding the
+zero-byte-file bug at #187/#194) but never applied at call
+time either.
+
+**Fix** — `src/extensions/compile_zsh.rs::compile_command`
+Redirected arm — when inner is a FuncDef, rewrite the
+funcdef body to be a single-list program wrapping the
+original body in `Redirected(Cursh(body), redirs)`. The
+existing Cursh→Redirected compile path already emits
+`WithRedirectsBegin/End` around the brace group, so reuse
+it instead of inventing a new opcode. The function then
+registers with a body chunk that opens the redirects on
+every call and closes them when the body returns —
+matching C zsh's `Shfunc.redir` applied around the
+doshfunc body.
+
+**Verify**
+
+```sh
+$ echo "hello-from-file" > /tmp/fd158.txt
+$ /opt/homebrew/bin/zsh -fc 'f() { read line; echo "got=[$line]"; } < /tmp/fd158.txt; f'
+got=[hello-from-file]
+$ ./target/debug/zshrs --zsh -c 'f() { read line; echo "got=[$line]"; } < /tmp/fd158.txt; f'
+got=[hello-from-file]
+
+$ /opt/homebrew/bin/zsh -fc 'f() { echo "from-fn"; } > /tmp/fd_out.txt; f; cat /tmp/fd_out.txt'
+from-fn
+$ ./target/debug/zshrs --zsh -c 'f() { echo "from-fn"; } > /tmp/fd_out.txt; f; cat /tmp/fd_out.txt'
+from-fn
+```
+
+Both input-redirect and output-redirect forms match zsh
+byte-for-byte. Regression check: plain `f() { echo hi; }; f`
+and multi-statement bodies still work.
+
+Baseline preserved: 971/81 zshrs_shell tests.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47596,7 +47646,7 @@ no longer reports the internal trap-machinery scalar.
 | 155 | `${str[N,M+1]}` slice subscript ignores var/arith | **fixed** 2026-06-02 | pre-compute index |
 | 156 | `[[ -e /path/*.glob ]]` glob-expands in test (zsh: literal) | **fixed** 2026-06-02 | external `ls` test |
 | 157 | `TRAP<SIG>()` function-named trap handlers not recognized | **fixed** 2026-06-02 | explicit `trap` builtin |
-| 158 | Function-def redirect `f() {} < file` not honored | **port-bug** | redirect at call site |
+| 158 | Function-def redirect `f() {} < file` not honored | fixed | (compile_command Redirected arm wraps body in Cursh+Redirected scope so redirects open per-call matching C `Shfunc.redir`) |
 | 159 | `while [[ $((i++)) -lt N ]]` only iterates once | **fixed** 2026-06-02 | n/a |
 | 160 | `autoload -U +X funcname` doesn't actually load function body | **fixed** 2026-06-02 | drop `+X`, lazy load |
 | 161 | `case x in)` empty pattern silently accepted (zsh: parse error) | **fixed** 2026-06-02 | n/a |
