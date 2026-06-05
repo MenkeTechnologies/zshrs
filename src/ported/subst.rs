@@ -2788,47 +2788,54 @@ pub fn paramsubst(
     // "hello|key". Pipes inside `(...)`, inside `[...]`, or already
     // escaped with `\` are left untouched.
     let escape_bare_alt_pipes = |s: &str| -> String {
+        // Bug #365: iterate by CHAR not byte. Previous byte-loop
+        // pushed each byte as a separate char via `c as char`, which
+        // for multibyte UTF-8 (e.g. `é` = 0xC3 0xA9) produced two
+        // Latin-1 chars `Ã©` — re-encoding as 4 UTF-8 bytes and
+        // mangling the pattern. All meta chars handled here (`\\`,
+        // `[`, `]`, `(`, `)`, `|`) are ASCII, so a char-iter is the
+        // correct shape.
         let mut out = String::with_capacity(s.len());
         let mut depth = 0i32;
         let mut in_class = false;
-        let bytes = s.as_bytes();
+        let chars: Vec<char> = s.chars().collect();
         let mut i = 0;
-        while i < bytes.len() {
-            let c = bytes[i];
-            if c == b'\\' && i + 1 < bytes.len() {
-                out.push(c as char);
-                out.push(bytes[i + 1] as char);
+        while i < chars.len() {
+            let c = chars[i];
+            if c == '\\' && i + 1 < chars.len() {
+                out.push(c);
+                out.push(chars[i + 1]);
                 i += 2;
                 continue;
             }
             if in_class {
-                if c == b']' {
+                if c == ']' {
                     in_class = false;
                 }
-                out.push(c as char);
+                out.push(c);
                 i += 1;
                 continue;
             }
             match c {
-                b'[' => {
+                '[' => {
                     in_class = true;
                     out.push('[');
                 }
-                b'(' => {
+                '(' => {
                     depth += 1;
                     out.push('(');
                 }
-                b')' => {
+                ')' => {
                     if depth > 0 {
                         depth -= 1;
                     }
                     out.push(')');
                 }
-                b'|' if depth == 0 => {
+                '|' if depth == 0 => {
                     out.push('\\');
                     out.push('|');
                 }
-                _ => out.push(c as char),
+                _ => out.push(c),
             }
             i += 1;
         }

@@ -30277,10 +30277,18 @@ print "✓ done"
 
 ## #365 — `${s/multibyte_char/repl}` pattern substitution PANICS with "not a char boundary"
 
-**Status:** `fixed` — `parse_param_modifier`'s default-family
-detection sliced `&rest[..2]` / `&rest[..1]` unconditionally,
-panicking when the leading byte was multibyte; corrected
-2026-06-02.
+**Status:** `fixed` — two-part fix. The initial crash fix
+(2026-06-02) added `is_char_boundary` guards in
+`parse_param_modifier`. The remaining functional gap — where
+multibyte patterns silently failed to match instead of
+substituting — was fixed 2026-06-05: `escape_bare_alt_pipes`
+(subst.rs:2790) walked the pattern BYTE-BY-BYTE and pushed
+each byte as a separate Unicode codepoint via `c as char`, so
+`é` (2 bytes 0xC3 0xA9) became `Ã©` (codepoints U+00C3 +
+U+00A9 → 4 UTF-8 bytes). The mangled pattern never matched.
+Fixed by iterating chars instead; all meta chars handled in
+this fn (`\\`, `[`, `]`, `(`, `)`, `|`) are ASCII so the
+shape change is pure UTF-8 correctness.
 
 **Root cause** — `src/extensions/compile_zsh.rs::parse_param_modifier`
 detects the `${var:OP...}` / `${var OP...}` operators by
@@ -48217,7 +48225,7 @@ no longer reports the internal trap-machinery scalar.
 | 362 | `typeset -Z N` zero-pad doesn't truncate values wider than N — extra digits leak through | **fixed** 2026-06-02 | manual truncate before assign |
 | 363 | `${(z)cmd}` tokenize-flag drops comment tokens AND doesn't preserve `$VAR` literals — completion/parsing tools break | **fixed** 2026-06-02 | strip `#*` before tokenizing (partial fix) |
 | 364 | `$'\uNNNN'` Unicode-codepoint escape in C-string not interpreted — emits literal `uNNNN` | **fixed** 2026-06-02 | embed Unicode chars literally in source |
-| 365 | `${s/multibyte_char/repl}` substitution PANICS with "not a char boundary" — **CRITICAL CRASH** | fixed (crash only) | (parse_param_modifier is_char_boundary guards stop the panic; functional substitution on multibyte chars still inert — tracked separately) |
+| 365 | `${s/multibyte_char/repl}` substitution PANICS with "not a char boundary" — **CRITICAL CRASH** | fixed | crash guarded via is_char_boundary (2026-06-02); functional multibyte substitution now works (2026-06-05) — `escape_bare_alt_pipes` was byte-walking the pattern and re-encoding each byte as a Unicode codepoint, mangling `é`→`Ã©`; switched to char iteration |
 | 366 | `h[multibyte_key]=v` assoc with UTF-8 key PANICS with "not a char boundary" — **CRITICAL CRASH** | fixed | (closed by #365 — compile_zsh parse_param_modifier byte-slice now `is_char_boundary`-guarded) |
 | 367 | `$?` bare `?` in `$((...))` arith not resolved — treats as `0` instead of last exit status | **fixed** 2026-06-02 | explicit `$?` |
 | 368 | `$#` bare `#` in `$((...))` arith not resolved — treats as `0` instead of positional count | **fixed** 2026-06-02 | explicit `$#` |
