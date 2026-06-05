@@ -2386,16 +2386,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // keys, so pre-resolve here.
         let resolved_key = with_executor(|exec| {
             let is_indexed = exec.array(&name).is_some();
+            let is_assoc = exec.assoc(&name).is_some();
+            let is_scalar = !is_indexed && !is_assoc && exec.scalar(&name).is_some();
             // c:Src/params.c::getindex — `(i)pat` / `(I)pat` / `(R)pat`
             // / `(r)pat` subscript flags on an indexed array LHS resolve
-            // to a numeric index (first / last match of pat). zshrs's
-            // read-form `${a[(i)pat]}` already implements this in
-            // subst.rs; the LHS assignment path silently stored the
-            // literal "(i)pat" as an assoc key (or worse, on indexed
-            // arrays, dropped the assignment entirely). Bug #293 in
-            // docs/BUGS.md. Detect the `(flags)pat` shape and resolve
-            // to a numeric index before assignsparam.
-            if is_indexed {
+            // to a numeric index (first / last match of pat). On a
+            // SCALAR LHS the same flags resolve to a CHAR position
+            // (1-based first/last match of pat in the scalar string)
+            // for the c:2748+ char-splice assignment. zshrs's
+            // read-form `${a[(i)pat]}` already implements both shapes;
+            // the LHS assignment path silently stored the literal
+            // "(i)pat" as an assoc key (for scalar: auto-vivified to
+            // PM_HASHED via the assignsparam unknown-subscript
+            // fallback). Bug #293 (array) / scalar sibling.
+            //
+            // Detect the `(flags)pat` shape and resolve to a numeric
+            // index before assignsparam.
+            if is_indexed || is_scalar {
                 if let Some(rest) = key.strip_prefix('(') {
                     if let Some(close) = rest.find(')') {
                         let flags = &rest[..close];
@@ -2442,6 +2449,94 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 let idx_1based = match found {
                                     Some(i) => (i + 1) as i64,
                                     None => (arr.len() + 1) as i64,
+                                };
+                                return idx_1based.to_string();
+                            }
+                            // Scalar LHS — resolve to a CHAR position
+                            // (1-based first/last match of pat in the
+                            // string). c:Src/params.c:1411-1418 — the
+                            // scalar path returns the char index from
+                            // sliding-window pattern match against
+                            // pm.u_str. Same algorithm as the read-form
+                            // at subst.rs:5283-5306. Bug (scalar
+                            // sibling of #293): `a=hello; a[(I)l]=X`
+                            // previously auto-vivified `a` into
+                            // PM_HASHED with key "(I)l" instead of
+                            // splicing X at the last 'l' position
+                            // (yielding "helXo").
+                            if is_scalar {
+                                let s = exec.scalar(&name).unwrap_or_default();
+                                let s_chars: Vec<char> = s.chars().collect();
+                                let n = s_chars.len();
+                                let want_last = flags.contains('I') || flags.contains('R');
+                                let exact = flags.contains('e');
+                                let mut found: Option<usize> = None;
+                                'outer: for start in 0..=n {
+                                    let lengths: Box<dyn Iterator<Item = usize>> = if want_last {
+                                        Box::new((1..=(n - start)).rev())
+                                    } else {
+                                        Box::new(1..=(n - start))
+                                    };
+                                    for len in lengths {
+                                        let cand: String =
+                                            s_chars[start..start + len].iter().collect();
+                                        let matched = if exact {
+                                            cand == pat
+                                        } else {
+                                            crate::ported::pattern::patcompile(
+                                                pat,
+                                                crate::ported::zsh_h::PAT_HEAPDUP as i32,
+                                                None,
+                                            )
+                                            .map_or(false, |p| {
+                                                crate::ported::pattern::pattry(&p, &cand)
+                                            })
+                                        };
+                                        if matched {
+                                            found = Some(start);
+                                            if !want_last {
+                                                break 'outer;
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                                // (I)/(R): scan again to find LAST.
+                                if want_last {
+                                    let mut last_found: Option<usize> = found;
+                                    for start in (0..=n).rev() {
+                                        for len in 1..=(n - start) {
+                                            let cand: String =
+                                                s_chars[start..start + len].iter().collect();
+                                            let matched = if exact {
+                                                cand == pat
+                                            } else {
+                                                crate::ported::pattern::patcompile(
+                                                    pat,
+                                                    crate::ported::zsh_h::PAT_HEAPDUP as i32,
+                                                    None,
+                                                )
+                                                .map_or(false, |p| {
+                                                    crate::ported::pattern::pattry(&p, &cand)
+                                                })
+                                            };
+                                            if matched {
+                                                last_found = Some(start);
+                                                break;
+                                            }
+                                        }
+                                        if last_found.is_some()
+                                            && last_found.unwrap() >= start
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    found = last_found;
+                                }
+                                let idx_1based = match found {
+                                    Some(i) => (i + 1) as i64,
+                                    // (i) miss → len+1 (one past end).
+                                    None => (n + 1) as i64,
                                 };
                                 return idx_1based.to_string();
                             }
