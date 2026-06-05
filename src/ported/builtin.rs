@@ -6915,10 +6915,32 @@ pub fn bin_whence(
             //   hn, printflags)` → printbuiltinnode at Src/builtin.c:174.
             // Inline match-on-(wd|csh|v) reimplementation deleted —
             // route through the canonical port at builtin.rs:139.
-            let builtin_node: Option<*mut hashnode> = BUILTINS
-                .iter()
-                .find(|b| b.node.nam == *arg)
-                .map(|b| &b.node as *const hashnode as *mut hashnode);
+            // c:Src/Modules/files.c:806-824 — bare `mkdir`/`rm`/`mv`/`ln`/
+            // `chmod`/`chown`/`chgrp`/`sync`/`rmdir` and their `zf_*`
+            // aliases are bound by `zsh/files`. Without explicit
+            // `zmodload zsh/files`, `type rm` reports `/bin/rm` (the
+            // PATH lookup result) — the builtin name shouldn't appear
+            // in builtintab at all per C's lazy paramtab/builtintab
+            // wiring. Skip the lookup here when the module is unloaded
+            // so the search falls through to the cmdnamtab/$PATH path
+            // below. Bug #28 in docs/BUGS.md.
+            let is_files_gated = matches!(
+                arg.as_str(),
+                "mkdir" | "rmdir" | "rm" | "mv" | "ln" | "chmod" | "chown" | "chgrp" | "sync"
+                    | "zf_mkdir" | "zf_rmdir" | "zf_rm" | "zf_mv" | "zf_ln" | "zf_chmod"
+                    | "zf_chown" | "zf_chgrp" | "zf_sync"
+            ) && !crate::ported::module::MODULESTAB
+                .lock()
+                .unwrap()
+                .is_loaded("zsh/files");
+            let builtin_node: Option<*mut hashnode> = if is_files_gated {
+                None
+            } else {
+                BUILTINS
+                    .iter()
+                    .find(|b| b.node.nam == *arg)
+                    .map(|b| &b.node as *const hashnode as *mut hashnode)
+            };
             if let Some(hn) = builtin_node {
                 printbuiltinnode(hn, printflags); // c:4124
                 informed = 1; // c:4125

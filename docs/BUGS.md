@@ -47044,7 +47044,7 @@ no longer reports the internal trap-machinery scalar.
 | 25 | `$ZSH_SCRIPT` unset, `$ZSH_ARGZERO` wrong | **fixed** 2026-06-02 | fall back to `$0` |
 | 26 | `emulate -L sh` missing KSH_ARRAYS | **fixed** 2026-06-02 | `setopt ksh_arrays` explicit |
 | 27 | `caller`/`help` extra builtins shadow user fns | **fixed** 2026-06-02 | `disable caller help` |
-| 28 | `mkdir`/`rm`/`mv`/etc. shadowed as shell builtins | **port-bug** | `command rm` to bypass — partial overlap with #530 (require zmodload zsh/files) |
+| 28 | `mkdir`/`rm`/`mv`/etc. shadowed as shell builtins | **fixed** 2026-06-04 | `command rm` to bypass — partial overlap with #530 (require zmodload zsh/files) |
 | 29 | `"argv[N]=..."` literal stripped inside double quotes | **fixed** 2026-06-02 | escape `\[` `\]` |
 | 30 | `setopt no_clobber` rejects `> /dev/null` | **fixed** 2026-06-02 | `>\|` force-clobber |
 | 31 | `${EPOCHSECONDS:-x}` always uses default | **fixed** 2026-06-04 | direct `$EPOCHSECONDS` access |
@@ -47546,7 +47546,7 @@ no longer reports the internal trap-machinery scalar.
 | 527 | `(( () ))` empty math silently rc=1 — zsh: "bad math expression: operand expected" rc=2 | **fixed** 2026-06-03 | n/a |
 | 528 | `typeset -a a=("hello world")` splits QUOTED string into multiple elements — worse than #502 | **fixed** 2026-06-04 | n/a |
 | 529 | `$((1+(2))` paren-mismatch math silently rc=0 (no output) — zsh: parse error | **port-bug** | visual audit |
-| 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **partial-fix** 2026-06-04 | `${modules[zsh/files]}` unset by default; `type mkdir` builtintab gate deferred |
+| 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **fixed** 2026-06-04 | `${modules[zsh/files]}` unset by default; `type rm` reports `/bin/rm`; exec falls through to PATH |
 | 531 | `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 trap-function family | **port-bug** | string-form `trap`/`CHLD` |
 | 532 | zsh modules `zsh/stat`/`zsh/zselect`/`zsh/zpty`/`zsh/zftp` auto-loaded — extends #530 (zmodload-required-but-pre-loaded) | **partial-fix** 2026-06-04 | introspection now unset; `type X` builtintab gate deferred |
 | 533 | `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2 (worst-case rc=0 set-e bypass) | **fixed** 2026-06-02 | visual audit |
