@@ -4445,7 +4445,16 @@ pub fn paramsubst(
             // split_parts pipeline that handles outer-flag + subscript
             // composition correctly.
             if let Some(sub) = subscript.as_deref() {
-                if casmod == CASMOD_NONE && quotemod == 0 && !length_op {
+                if !length_op {
+                    // c:Src/subst.c:2681+ — nested expansion result with
+                    // an outer `[N]` subscript: split the result into
+                    // parts, pick the subscript, then let downstream
+                    // arms (case-mod / quote-mod / pad / etc.) apply.
+                    // The previous gate at `casmod == CASMOD_NONE &&
+                    // quotemod == 0` meant `${(C)${(P)name}[1]}`
+                    // dropped the `[1]` entirely and applied `(C)` to
+                    // the joined string. zsh applies subscript FIRST,
+                    // then the outer flag. Bug #195 in docs/BUGS.md.
                     let parts: Vec<String> =
                         sv.split_whitespace().map(String::from).collect();
                     if sub == "@" || sub == "*" {
