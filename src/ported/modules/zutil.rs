@@ -2778,8 +2778,32 @@ pub fn bin_zparseopts(
             })
             .unwrap_or(false);
         if whole_match {
-            let idx = whole_idx.unwrap();
-            let dn_len = descs[idx].name.len();
+            let raw_idx = whole_idx.unwrap();
+            let dn_len = descs[raw_idx].name.len();
+            // c:Src/Modules/zutil.c:1648-1650 — `add_opt_val` calls
+            // `map_opt_desc(d)` to resolve the `-M` alias chain
+            // (`-foo=f` redirects --foo into spec f's array). zshrs
+            // pushes inline at each match site; replicate the redirect
+            // here so the value lands in the mapped target spec.
+            // Without this, `-M f=optf -foo=f` left $optf empty
+            // because the --foo match pushed into spec `-foo`'s own
+            // array `f` instead of following the alias to `optf`.
+            let idx = {
+                let cur = &descs[raw_idx];
+                if cur.flags & ZOF_MAP != 0 {
+                    let arr_name = cur.arr_name.clone().unwrap_or_default();
+                    if arr_name != cur.name {
+                        descs
+                            .iter()
+                            .position(|d| d.name == arr_name)
+                            .unwrap_or(raw_idx)
+                    } else {
+                        raw_idx
+                    }
+                } else {
+                    raw_idx
+                }
+            };
             let dflags = descs[idx].flags;
             let dname = descs[idx].name.clone();
             if (dflags & ZOF_ARG) != 0 {
