@@ -15758,53 +15758,55 @@ definition.
 
 ## #195 — `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — paramsubst's casmod arm now skips the `arrays_get(var_name)` refetch when `var_name` is a subexp temp (`__subexp_arr_*`) AND a non-splat subscript was applied; transforms `value` (the collapsed pick or slice) instead.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'arr=("hello world" "foo bar"); name=arr; echo "${(C)${(P)name}[1]}"'
 Hello World
 
-$ ./target/debug/zshrs --zsh -c 'arr=("hello world" "foo bar"); name=arr; echo "${(C)${(P)name}[1]}"'
+$ ./target/debug/zshrs --zsh -c 'arr=("hello world" "foo bar"); name=arr; echo "${(C)${(P)name}[1]}"'   # before
 Hello World Foo Bar
 ```
 
-`${(C)${(P)name}[N]}` should:
-1. Deref `(P)name` → returns array `("hello world", "foo bar")`.
-2. Index `[1]` → first element `"hello world"`.
-3. Apply `(C)` capitalize → `"Hello World"`.
+**Root cause** — `paramsubst` resolves nested array-shaped subexpressions (e.g. `${(s. .)s}`, `${(P)name}`) by stashing the array elements under a synthetic name `__subexp_arr_N` (subst.rs:4091) and routing `var_name` through the normal array-subscript path. The single-slot subscript arm at line 4946 picks the element into `raw_value`, but the casmod arm at line 8960 then re-fetches `arrays_get("__subexp_arr_N")` — which still holds the FULL split — and transforms every element, losing the subscript pick.
 
-zsh produces `"Hello World"`. zshrs applies `(C)` to the FULL
-array (capitalizing all elements: "Hello World Foo Bar") and
-ignores the outer `[1]` subscript.
+C's `Src/subst.c:2915 v->scanflags ? 1 : 0` clears `isarr` after a single-slot subscript so the casmod runs on the picked scalar. zshrs's parallel temp-array storage didn't honor that clear.
 
-The inner-subscript form `${(C)${(P)name[1]}}` works in zshrs
-but errors in zsh (bug #192).
+**Fix** (`src/ported/subst.rs` casmod arm ~line 8960):
 
-Same family as #182 (after-deref indexing returns full array)
-and #147 (modifier dropped after flag) — context propagation
-through nested `${...}` forms broken.
-
-**Where** — `src/ported/paramsubst.rs::nested_subscript`: outer
-subscript applied to inner expansion not honored when inner is
-array-context after flag. C-source `Src/subst.c::dosubst`
-threads subscript through to apply after the inner expansion
-resolves.
-
-**Impact** — code intending to apply case flag to a specific
-indirect-array element gets the flag applied to all elements:
-
-```sh
-arrname=user_emails
-echo "Primary: ${(C)${(P)arrname}[1]}"
-# zsh: "Primary: Alice@Example.com"
-# zshrs: "Primary: Alice@Example.com Bob@Example.com Charlie@Example.com"
+```rust
+let has_non_splat_subscript = subscript.as_deref().map_or(false, |s| s != "@" && s != "*");
+let is_subexp_temp = var_name.starts_with("__subexp_arr_");
+if let Some(parts) = split_parts.clone() {
+    // existing split_parts path
+} else if has_non_splat_subscript && is_subexp_temp {
+    // value already holds the picked (single or sliced) result
+    let parts: Vec<String> = value.split_whitespace().map(|s| transform(s)).collect();
+    value = parts.join(" ");
+    if subscript.as_deref().map_or(false, |s| s.contains(',')) {
+        split_parts = Some(parts);
+    }
+} else if let Some(arr) = arrays_get(&var_name) {
+    // existing whole-array transform path
+}
 ```
 
-**Workaround** — temp variable:
+For slices (`[N,M]`) the re-split preserves the trimmed array shape so downstream auto-splat sees the correct length; for single-slot picks the one-element re-split-then-join is identity.
+
+**Verify**:
+
 ```sh
-local -a deref=("${(@P)arrname}")
-echo "Primary: ${(C)deref[1]}"
+$ ./target/debug/zshrs -fc 's="x y z"; echo "${(U)${(s. .)s}[1]}"; echo "${(U)${(s. .)s}[2]}"; echo "${(U)${(s. .)s}[@]}"; echo "${(U)${(s. .)s}[1,2]}"; echo "${(L)${(s. .)s}[3]}"'
+X
+Y
+X Y Z
+X Y
+z
+$ ./target/debug/zshrs -fc 'arr=("hello world" "foo bar"); name=arr; echo "${(C)${(P)name}[1]}"'
+Hello World
 ```
+
+Test baseline 1025/27 (was 1024/28 — `test_nested_expansion_subscript_after_flag` flipped).
 
 ---
 
@@ -48241,7 +48243,7 @@ no longer reports the internal trap-machinery scalar.
 | 192 | `${(P)name[N]:mod}` indirect-arr-elem with modifier works (zsh: errors) | **fixed** 2026-06-02 | temp var split |
 | 193 | `(( y = ${x:?msg} ))` continues after required-param error | **fixed** 2026-06-02 | n/a |
 | 194 | `function f { :; } > /file` keyword-form fn-def redirect at def time | **fixed** 2026-06-02 | redirect at call site |
-| 195 | `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored | **fixed** 2026-06-04 | temp `deref=("${(@P)name}")` |
+| 195 | `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored | **fixed** 2026-06-05 | paramsubst casmod arm skips arrays_get refetch for `__subexp_arr_*` temp + non-splat subscript; transforms collapsed value (mirrors C `Src/subst.c:2915` isarr-clear on single-slot pick) |
 | 196 | Anonymous fn output lost in `$(() { :; })` cmdsub or `(() { :; })` subshell | **fixed** 2026-06-03 | cmd_or_math fallback no longer calls skipcomm (lex.c:519-520) |
 | 197 | `typeset -f` function-body display collapses statement newlines into `; ` | **fixed** 2026-06-04 | newlines preserved with tab indent matching zsh |
 | 198 | `bindkey -L` output uses individual entries instead of `-R` range-compressed | **demo-error** 2026-06-04 | range-compaction logic exists at zle_keymap.rs:1762-1775; diff was \$EDITOR=nvim auto-setting VIMODE so zsh -f used viins (mostly self-insert ranges), zshrs used emacs (varied widgets) |
