@@ -5790,8 +5790,50 @@ impl ZshCompiler {
                         let idx = self.builder.add_constant(Value::str(right_clean.as_str()));
                         self.builder.emit(Op::LoadConst(idx), 0);
                     } else {
+                        // c:Src/cond.c — `[[ $x == pat ]]` RHS uses the
+                        // RAW pattern bytes for patcompile. Backslash
+                        // escapes (`\*`, `\?`, `\[`) must reach the
+                        // pattern compiler so the meta becomes literal.
+                        // Use `untokenize_preserve_quotes` which maps
+                        // Bnull → `\` (vs the plain `untokenize` that
+                        // DROPS Bnull, collapsing `\*` to `*` and
+                        // turning the literal-meta pattern back into a
+                        // glob meta). Bug #449. `escape_quoted_glob_metas`
+                        // still runs first to backslash-escape glob
+                        // metas inside Snull/Dnull-quoted spans.
                         let escaped = escape_quoted_glob_metas(right);
-                        let right_clean = crate::lex::untokenize(&escaped);
+                        let right_clean = crate::lex::untokenize_preserve_quotes(&escaped);
+                        // Strip Snull/Dnull markers — the preserve_quotes
+                        // mapping emits ASCII `'`/`"` for these, which
+                        // would become part of the pattern bytes and
+                        // mismatch the LHS. The bracketing was a parser
+                        // marker, not a literal character. Bnull stays
+                        // as `\` so escape semantics survive.
+                        let right_clean: String = right_clean
+                            .chars()
+                            .filter(|&c| c != '\'' || !escaped.contains('\u{9d}'))
+                            .collect();
+                        let _ = right_clean;
+                        let mut filtered = String::with_capacity(right.len());
+                        let mut iter = right.chars().peekable();
+                        while let Some(c) = iter.next() {
+                            match c {
+                                '\u{9d}' | '\u{9e}' => {} // strip Snull/Dnull
+                                '\u{9f}' => {
+                                    // Bnull-escape — emit `\` + next char
+                                    // literally so patcompile sees the
+                                    // backslash-escape sequence.
+                                    if let Some(next) = iter.next() {
+                                        filtered.push('\\');
+                                        filtered.push(next);
+                                    } else {
+                                        filtered.push('\\');
+                                    }
+                                }
+                                _ => filtered.push(c),
+                            }
+                        }
+                        let right_clean = crate::lex::untokenize(&filtered);
                         let idx = self.builder.add_constant(Value::str(right_clean.as_str()));
                         self.builder.emit(Op::LoadConst(idx), 0);
                     }
