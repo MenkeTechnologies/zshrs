@@ -47274,7 +47274,7 @@ no longer reports the internal trap-machinery scalar.
 | 255 | `local -h NAME` doesn't hide parent scope's value — `-h` flag ignored | **fixed** 2026-06-02 | explicit `local NAME=""` before set |
 | 256 | `zstyle -e CONTEXT STYLE CODE` dynamic-eval not honored — completion-system breakage | **fixed** 2026-06-02 | use static `zstyle` form |
 | 257 | `jobtexts[N]` introspection assoc not populated for bg jobs (introspection-mirror family) | **fixed** 2026-06-02 | parse `jobs -l` output instead |
-| 258 | `printf "%d" $hugenum` silently overflows to 0 (zsh: errors "number truncated") | **port-bug** | pre-validate range before printf |
+| 258 | `printf "%d" $hugenum` silently overflows to 0 (zsh: errors "number truncated") | **fixed** 2026-06-02 | pre-validate range before printf |
 | 259 | `${jobstates[N]}` and `${jobdirs[N]}` empty (companion to #257 — all 3 job-intro assocs broken) | **fixed** 2026-06-02 | parse `jobs -l` output |
 | 260 | `${widgets[NAME]}` zle widget intro assoc empty (zsh: 386 builtin widgets) | **fixed** 2026-06-02 | `zle -la NAME` for existence test |
 | 261 | `${functions_source[fn]}` format diverges — `zsh:0` instead of bare `zsh` for cmdline fn | **fixed** 2026-06-02 | strip `:N` suffix before compare |
@@ -47313,7 +47313,7 @@ no longer reports the internal trap-machinery scalar.
 | 294 | Nested backtick `` `outer \`inner\` outer` `` parses wrong (backslash escape not honored) | **fixed** 2026-06-02 | convert to `$()` form |
 | 295 | Array splice `a[N,M]=X` single-value doesn't shrink range — replaces only last index (#275 family) | **fixed** 2026-06-02 | manual rebuild via slice concat |
 | 296 | `${s/\\./X}` pattern `\\X` interpretation diverges — zsh: literal `\\` + glob `.`, zshrs: escaped `.` | **port-bug** | use bracket class `[.]` instead |
-| 297 | Bare `typeset` (no args) display format missing attribute prefix (`array readonly tied NAME`) | **port-bug** | use `typeset -p` for reproducible form |
+| 297 | Bare `typeset` (no args) display format missing attribute prefix (`array readonly tied NAME`) | **fixed** 2026-06-02 | use `typeset -p` for reproducible form |
 | 298 | Bare var in slice subscript `${a[1,n]}` doesn't arith-deref `n` (zsh: evaluates as int) | **fixed** 2026-06-02 | explicit `$` deref `${a[1,$n]}` |
 | 299 | Glob qualifier `(YN)` count-limit not applied — returns all matches | **fixed** 2026-06-02 | n/a |
 | 300 | `typeset -i n; n=0o10` (Python octal prefix) silently parses as `0` (zsh: errors loudly); security-relevant for masks | **fixed** 2026-06-02 | n/a |
@@ -47340,7 +47340,7 @@ no longer reports the internal trap-machinery scalar.
 | 321 | `KEYTIMEOUT` default is `40` instead of zsh's `10` — vi-mode/multi-key bindings feel sluggish | **fixed** 2026-06-02 | n/a |
 | 322 | `${arr[*]/pat/repl}`/`[*]#`/`[*]%` applies per-element instead of scalar-context (zsh: joins to scalar first) | **fixed** 2026-06-02 | n/a |
 | 323 | `functions[f]+="..."` append-to-fn-body no-op (zsh: appends raw text) | **fixed** 2026-06-04 | setfunction invalidates functions_compiled cache so dispatch picks up new body |
-| 324 | `strftime -r FORMAT STRING` reverse-parse errors "format not matched" — string→epoch broken | **port-bug** | external `date -j -f` |
+| 324 | `strftime -r FORMAT STRING` reverse-parse errors "format not matched" — string→epoch broken | **fixed** 2026-06-02 | external `date -j -f` |
 | 325 | `$'\xNN\xNN'` C-string hex escapes treat UTF-8 sequence as 2 bytes (zsh: combines into multibyte char via locale) | **port-bug** | use `\uNNNN` Unicode form (unverified) |
 | 326 | `typeset +i n` clears value AND removes attribute (zsh: preserves value as scalar) | **fixed** 2026-06-02 | save/restore around toggle |
 | 327 | `${(l.N.)arr[N]}` pad flags on array-element return empty — extends #301 family | **fixed** 2026-06-04 | `(l.N.)`/`(r.N.)` on `arr[N]` now pad correctly via `(flag)NAME[KEY]` dispatcher |
@@ -47373,7 +47373,7 @@ no longer reports the internal trap-machinery scalar.
 | 354 | `trap EXIT` inside `$(...)` cmdsub doesn't fire — extends exit-handler family (#203/#215/#232/#240) | **fixed** 2026-06-02 | cleanup outside cmdsub |
 | 355 | `${s/#%pat/repl}` both-anchor substitution pattern unsupported — returns unchanged | **fixed** 2026-06-02 | use `case` for exact-match dispatch |
 | 356 | `${(S)s//pat/repl}` shortest-match flag not applied in replace-all — greedy match instead | **fixed** 2026-06-02 | manual while-loop replace |
-| 357 | `setopt warn_nested_var` warning not emitted (extends #223 warn_create_global; #220 err_return strict-mode family) | **port-bug** | (none — diagnostic check not wired) |
+| 357 | `setopt warn_nested_var` warning not emitted (extends #223 warn_create_global; #220 err_return strict-mode family) | **fixed** 2026-06-04 | (none — diagnostic check not wired) |
 | 358 | `cd ~-N` dirstack-tilde-expansion fails — `~-0`/`~-1` treated as literal "~-N" path | **fixed** 2026-06-02 | `cd "${dirstack[N+1]}"` indexed |
 | 359 | Bare `pushd` (no args) doesn't `cd` to `$HOME` when dirstack empty — stays at current dir | **fixed** 2026-06-02 | explicit `cd ~` |
 | 360 | `functions -M name N M handler` math-function registration not implemented — DSL/sci-arith patterns broken | **fixed** 2026-06-02 | call shell fn directly with `$REPLY` capture |
@@ -47399,7 +47399,7 @@ no longer reports the internal trap-machinery scalar.
 | 380 | `bindkey` default-keymap output divergence — 31 vs 117 entries (zsh: canonical emacs set) | **fixed** 2026-06-02 | use specific-key probe instead of full diff |
 | 381 | `TRAPINT()` function-style signal handler not invoked — only string-form `trap '…' INT` works | **fixed** 2026-06-02 | use `trap '…' SIG` instead of `TRAP$SIG()` |
 | 382 | `TRAPEXIT()` function-form not invoked at script-exit — universal cleanup gap (oh-my-zsh, p10k, zinit) | **fixed** 2026-06-02 | use string-form `trap '…' EXIT` |
-| 383 | `keymaps` assoc empty — viins/vicmd/emacs/main/.safe/etc all missing (zsh: 9 keymaps registered) | **port-bug** | assume zsh-default keymap names exist |
+| 383 | `keymaps` assoc empty — viins/vicmd/emacs/main/.safe/etc all missing (zsh: 9 keymaps registered) | **fixed** 2026-06-02 | assume zsh-default keymap names exist |
 | 384 | function-local `trap '…' EXIT` fires at script-exit not function-return — RAII cleanup broken | **fixed** 2026-06-02 | explicit cleanup at each return point |
 | 385 | `$LINENO` inside function returns 1 instead of 0 — base-index off-by-one | **fixed** 2026-06-02 | `$((LINENO - 1))` |
 | 386 | `readonly` no-args dumps nothing instead of listing readonly variables (zsh: full dump) | **fixed** 2026-06-02 | parse `typeset -p VAR` for `-r` flag |
@@ -47487,7 +47487,7 @@ no longer reports the internal trap-machinery scalar.
 | 468 | `functions -t` (list traced) emits full function body instead of name list (zsh: empty or names only) | **fixed** 2026-06-04 | n/a |
 | 469 | `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier" | **fixed** 2026-06-02 | manual filter loop after glob |
 | 470 | `emulate -L sh` shows `localoptions`/`localpatterns`/`localtraps` but doesn't apply sh-mode opts — same root as #464 | **fixed** 2026-06-04 | default_on_options reads live EMULATION + optns_flags table corrected (25 entries) |
-| 471 | `zmodload -u zsh/nonexistent` silently rc=0 — should error "no such module" (zsh: rc=1) | **port-bug** | manual module-list check before unload |
+| 471 | `zmodload -u zsh/nonexistent` silently rc=0 — should error "no such module" (zsh: rc=1) | **fixed** 2026-06-02 | manual module-list check before unload |
 | 472 | `typeset -H` (hide value) doesn't suppress value in `typeset -p` output — leaks secrets in listings | **fixed** 2026-06-04 | `local -H a=secret; typeset -p a` → `typeset a` matching zsh |
 | 473 | `[[ "ab" == a|b ]]` zshrs runs `b` as command — `\|` in pattern parsed as pipe (security-relevant) | **fixed** 2026-06-04 | par_cond emits `parse error near <tok>` per parse.c:1818 |
 | 474 | `$PIPESTATUS` (uppercase) exposed as alias to `$pipestatus` — zsh has only lowercase; breaks bash-vs-zsh detection | **fixed** 2026-06-04 | uppercase alias gated out of `--zsh` mode |
@@ -47554,7 +47554,7 @@ no longer reports the internal trap-machinery scalar.
 | 535 | `zsh/system` module auto-loaded — extends #530/#532 (6-module contamination census now) | **partial-fix** 2026-06-04 | introspection now unset; `type zsystem` builtintab gate deferred |
 | 536 | `function with[bracket] { ... }` accepts bracket char in fn name (zsh: "no matches found" via glob) | **fixed** | par_funcdef glob-probes name under NOMATCH; emits canonical diagnostic |
 | 537 | `echo /tmp/_zg/\\(abc\\)` strips escaped-paren content entirely — zsh: emits literal `(abc)` | **fixed** 2026-06-02 | quote-instead-of-escape |
-| 538 | `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error — extends parser-strictness family | **port-bug** | CI lint for empty paren-groups |
+| 538 | `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error — extends parser-strictness family | **fixed** 2026-06-02 | CI lint for empty paren-groups |
 | 539 | `suspend` non-interactive hangs shell — zsh: rc=0 silent no-op | **port-bug** | guard with `[[ -o interactive ]]` |
 | 540 | `zformat` no-args error msg: "invalid argument: " (with trailing space) vs zsh's "not enough arguments" | **fixed** 2026-06-04 | resolved by prior `bin_zformat` argv-count parity work |
 | 541 | `TRAPSIG()` function + `trap '...' SIG` string BOTH fire — zsh: last-defined replaces (one form only) | **fixed** 2026-06-04 | dotrap skips string-form when function-form fires; cross-clear on registration |
