@@ -228,6 +228,21 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
 /// matching `Src/exec.c:execcmd_exec`'s dispatch at c:3050-3068.
 /// Without this, compile-time builtin resolution silently ignored
 /// user wrappers (e.g. ZPWR's `cd () { builtin cd "$@"; … }`).
+/// True for builtins that are bound by zsh/files's boot_/setup_
+/// chain (Src/Modules/files.c:806-824). These are the bare-name
+/// `mkdir`/`rm`/`mv`/`ln`/`chmod`/`chown`/`chgrp`/`sync`/`rmdir`
+/// AND their `zf_*` aliases at c:816-824. Without explicit
+/// `zmodload zsh/files`, the names fall through to PATH lookup
+/// (zsh's `type rm` reports `/bin/rm`). Bug #28.
+fn module_gated_files_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "mkdir" | "rmdir" | "rm" | "mv" | "ln" | "chmod" | "chown" | "chgrp" | "sync"
+            | "zf_mkdir" | "zf_rmdir" | "zf_rm" | "zf_mv" | "zf_ln" | "zf_chmod"
+            | "zf_chown" | "zf_chgrp" | "zf_sync"
+    )
+}
+
 pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // c:Src/exec.c — when any redirect in the current scope failed
     // (e.g. noclobber blocked a `>` overwrite), zsh refuses to
@@ -301,6 +316,27 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         let mut synth = crate::ported::zsh_h::job::default();
         crate::ported::jobs::waitonejob(&mut synth);
         return status;
+    }
+    // c:Src/Modules/files.c:806-814 — `mkdir`, `rm`, `mv`, `ln`, `chmod`,
+    // `chown`, `chgrp`, `sync`, `rmdir` are bound by the `zsh/files`
+    // module's boot_/setup_ chain. Without explicit `zmodload zsh/files`,
+    // these bare names fall through to PATH (`/bin/rm`, `/usr/bin/chmod`,
+    // etc.) in zsh; `type rm` reports `rm is /bin/rm`. The `zf_*`
+    // aliases (`zf_rm`, `zf_chmod`, …) are bound by the same module
+    // and gated the same way. Bug #28 in docs/BUGS.md.
+    if module_gated_files_builtin(name) {
+        if !crate::ported::module::MODULESTAB.lock().unwrap().is_loaded("zsh/files") {
+            // Strip the `zf_` prefix when routing to PATH so `zf_rm`
+            // (when zsh/files isn't loaded) still finds /bin/rm.
+            let path_name = name.strip_prefix("zf_").unwrap_or(name);
+            let status = with_executor(|exec| exec.execute_external(path_name, &args, &[]))
+                .unwrap_or(127);
+            crate::ported::builtin::LASTVAL
+                .store(status, std::sync::atomic::Ordering::Relaxed);
+            let mut synth = crate::ported::zsh_h::job::default();
+            crate::ported::jobs::waitonejob(&mut synth);
+            return status;
+        }
     }
     let status = dispatch_builtin_raw(name, args);
     // c:Src/jobs.c:1748 waitonejob — canonical single-command pipestats update.
