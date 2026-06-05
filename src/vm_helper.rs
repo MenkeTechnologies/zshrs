@@ -1251,6 +1251,16 @@ impl ShellExecutor {
         // / `typeset -p modules` etc. see the special entries.
         init_partab_params(); // c:Src/Modules/parameter.c:2341 boot_/enables_ chain
 
+        // c:Src/init.c:1703 init_bltinmods — must run before user
+        // code so default-loaded modules (zsh/watch, …) get their
+        // boot_ entry points called and their params (e.g. `watch`,
+        // `WATCH`) seeded in paramtab. Without this, `${(t)watch}`
+        // returned empty even though zsh treats zsh/watch as loaded
+        // by default. The bin entry skips zsh_main → init_bltinmods,
+        // so we run it here from ShellExecutor::new for the same
+        // effect. Bug #270.
+        crate::ported::init::init_bltinmods();
+
         // c:Src/params.c:873-876 — `gethostname(hostnam,256);
         //                            setsparam("HOST", ztrdup_metafy(hostnam));`
         // Plain port of the createparamtable HOST init. Direct
