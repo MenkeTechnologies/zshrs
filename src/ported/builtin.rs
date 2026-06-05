@@ -8439,6 +8439,37 @@ pub fn bin_print(
         }
         let event_id = crate::ported::hist::prepnexthistent(); // c:5066/5072
         crate::ported::hashtable::addhistnode(&body, event_id as i32); // c:5090
+        // c:Src/builtin.c — C's `addhistnode(histtab, …)` uses the
+        // ent ALREADY linked into hist_ring by prepnexthistent. zshrs's
+        // prepnexthistent only bumps curhist and doesn't insert into
+        // the ring, so `fc -l` finds no events. Push the ent into the
+        // ring here so the gethistent lookup in fc/history sees it.
+        // Without this, `print -s X; fc -l` reported "no such event: 1"
+        // even though the histtab had the entry.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let ent = crate::ported::zsh_h::histent {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: body.clone(),
+                flags: 0,
+            },
+            up: None,
+            down: None,
+            zle_text: None,
+            stim: now,
+            ftim: now,
+            words: Vec::new(),
+            nwords: 0,
+            histnum: event_id,
+        };
+        if let Ok(mut ring) = crate::ported::hist::hist_ring.lock() {
+            ring.insert(0, ent);
+            crate::ported::hist::histlinect
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         return 0;
     }
     if let Some(ref v) = dest_var {
