@@ -5732,31 +5732,23 @@ via early-return wrappers.
 
 ## #81 — Glob with `extended_glob ~` exclusion produces duplicates + matches dir itself
 
-**Status:** `partial-fixed` 2026-06-02 — original framing pointed at the
-glob engine. Deep tracing (via temporary eprintln in
-`glob_path`/`expand_glob`/`BUILTIN_PRINT`/`bin_print`) showed that
-the engine itself returns the CORRECT 2-element result for
-`/tmp/zgq/*~*b*` — `[/tmp/zgq/a, /tmp/zgq/c]`. The 4 extra lines
-(`/tmp/zgq/a /tmp/zgq/c /tmp/zgq/b /tmp/zgq`) appear AFTER
-`bin_print` completes its write loop, originating from outside the
-shell's expansion path entirely.
+**Status:** `fixed` 2026-06-05 — glob engine returns the correct
+2-element result `[/tmp/zgq/a, /tmp/zgq/c]` for
+`/tmp/zgq/*~*b*` matching `/opt/homebrew/bin/zsh`. The
+original `partial-fixed` framing (2026-06-02) tracked a residual
+stdout-leak issue from a concurrent `zshrs-daemon` fsnotify
+emission that was misread as glob-engine output; with daemon
+idle / dir pre-existing, output matches zsh exactly. That leak
+belongs to bug #70's territory. Re-verified 2026-06-05.
 
-Likely source: the running `zshrs-daemon` process emits fsnotify
-output (mkdir + touch events for `/tmp/zgq` and its contents)
-through a shared stdout. Bug #70 (filesystem watcher leaks to
-stderr) is the underlying issue; the lines look like glob-engine
-output by coincidence because the pattern matches the files the
-daemon is reporting on.
-
-Status flipped from `port-bug` to `partial-fixed` since the glob
-engine is verified-correct; the residual stdout leak belongs in
-bug #70's territory (daemon notify routing). #62's bug-fix already
-covered the `pat~pat` exclusion in `glob_path`.
-
-Verified: with daemon idle / dir pre-existing (no events), output
-matches zsh exactly: `/tmp/zgq/a / /tmp/zgq/c`. The duplicate +
-extras only appear when fsnotify events fire concurrently with
-the shell's stdout.
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extended_glob; print -l /tmp/zgq/*~*b*'
+/tmp/zgq/a
+/tmp/zgq/c
+$ ./target/debug/zshrs --zsh -fc 'setopt extended_glob; print -l /tmp/zgq/*~*b*'
+/tmp/zgq/a
+/tmp/zgq/c
+```
 
 ### Original report
 
@@ -6101,9 +6093,10 @@ for ip in "${(@s. .)ips}"; do ping -c 1 "$ip"; done
 
 ## #86 — `${1:?msg}` parameter-required error format has spurious `:1:` line number
 
-**Status:** `partial-fixed` 2026-06-03 — rc=126 + spurious
-`permission denied:` line eliminated; remaining cosmetic
-`:1:` line-number prefix in zwarning still differs.
+**Status:** `fixed` 2026-06-05 — rc=126 + spurious
+`permission denied:` line eliminated and the `:1:` cosmetic
+gap also closed. Re-verified: `f() { echo "${1:?required}"; }; f`
+emits `f: 1: required` matching `/opt/homebrew/bin/zsh` exactly.
 
 **Recent fix (rc=126 → rc=1)** — `src/fusevm_bridge.rs`
 BUILTIN_EXEC_DYNAMIC (and the static exec() shim) gained an
@@ -41593,10 +41586,11 @@ Both fail in zshrs.
 
 ## #515 — `$funcsourcetrace` shows fn-name (`f:1`) instead of file-name (`zsh:1`)
 
-**Status:** `partial-fixed` 2026-06-03 — filename component
-now correctly shows source filename (`zsh`); residual
-off-by-one on lineno (`zsh:0` vs zsh's `zsh:1`) is tracked
-separately as #396.
+**Status:** `fixed` 2026-06-05 — filename component fixed
+(2026-06-03) and the residual lineno off-by-one is now also
+resolved (likely closed by #396's parallel work). Verified:
+`f() { echo "[$funcsourcetrace[1]]"; }; f` → `[zsh:1]`
+matching `/opt/homebrew/bin/zsh` exactly.
 
 **Root cause** — `src/ported/subst.rs::arrays_get` had a
 fallback arm for `funcfiletrace` / `funcsourcetrace` /
@@ -42660,13 +42654,13 @@ expressions.
 
 ## #530 — zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) shipped as always-available — zsh: require `zmodload zsh/files`
 
-**Status:** `partial-fix` 2026-06-04 — `${modules[zsh/files]}`
-introspection now returns unset by default and flips to
-loaded after `zmodload zsh/files`. The `type mkdir` /
-`command -v mkdir` lookup still finds the zshrs-side
-shell builtin because builtintab registration is
-independent of modulestab. Same remaining-gap class as
-#532/#535. Closed via the `#532` fix combo.
+**Status:** `fixed` 2026-06-05 — `${modules[zsh/files]}`
+introspection returns unset by default and flips to loaded
+after `zmodload zsh/files`. The `type mkdir` / `command -v
+mkdir` lookup also now matches zsh: pre-zmodload the builtin
+is NOT visible (`type mkdir` → `/bin/mkdir`), post-zmodload
+it IS (`type mkdir` → `shell builtin`). Closed via the
+`#532` fix combo's builtintab/modulestab gating.
 
 **Verify** vs `/opt/homebrew/bin/zsh`:
 
