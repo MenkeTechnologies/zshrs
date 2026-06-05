@@ -37217,50 +37217,64 @@ my-widget() {
 
 ## #449 — `[[ "x" == pat\* ]]` backslash-escape in pattern not honored — treats as glob
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — cond pattern compilation now emits Bnull-escaped chars as `\X` literal sequences, preserving the backslash so `patcompile` sees the escaped meta. Previously the plain `untokenize` dropped the Bnull marker, collapsing `\*` to `*` (glob meta).
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc '[[ "abc" == ab\* ]]; echo $?'
 1
 
-$ ./target/debug/zshrs --zsh -c '[[ "abc" == ab\* ]]; echo $?'
+$ ./target/debug/zshrs --zsh -c '[[ "abc" == ab\* ]]; echo $?'   # before
 0
 ```
 
-In `[[ STR == PATTERN ]]`, backslash before a glob
-metachar makes it literal:
-- `ab\*` should match only literal `ab*` (no glob)
-- `\?` should match literal `?`
-- `\[abc\]` should match literal `[abc]`
+**Root cause** — `compile_zsh.rs::compile_cond` (around line 5793) compiled the RHS pattern via:
 
-zsh implements this. zshrs ignores the backslash and
-treats `\*` as the glob wildcard, so `ab\*` matches `abc`
-(incorrect).
-
-Quoted-string form `"ab*"` works correctly in both
-shells. The bug is specific to backslash escape.
-
-Same family as #13 (`[[ "$x" == "?" ]]` quote loss) but
-for the **backslash escape** rather than quote escape.
-
-**Where** — `src/ported/conditional/pattern.rs::compile_pat`:
-pattern compiler must consume `\X` as literal X for glob
-metachars. C-source `Src/pattern.c::patcompile` handles
-`\` via `Tabackbase` token.
-
-**Impact** — defensive patterns that escape user input
-break:
-
-```sh
-needle="*"
-escaped="${needle//\*/\\*}"
-[[ "$haystack" == *${escaped}* ]] || error "no literal *"
-# zsh: matches only haystacks with literal "*"
-# zshrs: \* still treated as glob — matches anything
+```rust
+let escaped = escape_quoted_glob_metas(right);
+let right_clean = crate::lex::untokenize(&escaped);
 ```
 
-**Workaround** — use quoted-string pattern form instead
-of backslash escape.
+`escape_quoted_glob_metas` only backslash-escapes glob metas INSIDE Snull/Dnull-quoted spans. For unquoted-but-backslash-escaped `x\*` (lexed as `x` + Bnull `\u{9f}` + `*`), it passes through unchanged. Then `untokenize` SKIPS Bnull (line 4525) — the `\` marker is dropped — so `\*` collapses to bare `*` and the pattern compiler treats it as a glob wildcard. `[[ "abc" == ab\* ]]` then matched anything starting with "ab".
+
+**Fix** (`src/extensions/compile_zsh.rs::compile_cond`): after `escape_quoted_glob_metas`, walk the chars manually and convert Bnull-escape sequences into literal `\X` pairs before untokenize:
+
+```rust
+let mut filtered = String::with_capacity(right.len());
+let mut iter = right.chars().peekable();
+while let Some(c) = iter.next() {
+    match c {
+        '\u{9d}' | '\u{9e}' => {}  // strip Snull/Dnull (parser markers)
+        '\u{9f}' => {
+            // Bnull-escape — emit `\` + next char
+            if let Some(next) = iter.next() {
+                filtered.push('\\');
+                filtered.push(next);
+            } else {
+                filtered.push('\\');
+            }
+        }
+        _ => filtered.push(c),
+    }
+}
+let right_clean = crate::lex::untokenize(&filtered);
+```
+
+patcompile in the runtime treats `\*`, `\?`, `\[` as backslash-escaped literal metas, so `ab\*` now matches only literal `ab*`.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc '[[ "xY" == x\* ]] && echo match || echo nomatch'
+nomatch
+$ ./target/debug/zshrs -fc '[[ "x*" == x\* ]] && echo match'
+match
+$ ./target/debug/zshrs -fc '[[ "xY" == x* ]] && echo m || echo nm'     # regression: unescaped glob still works
+m
+$ ./target/debug/zshrs -fc '[[ "hello" == h?llo ]] && echo m'           # regression: unescaped ? still works
+m
+```
+
+Test baseline 1026/26 preserved.
 
 ---
 
@@ -48687,7 +48701,7 @@ no longer reports the internal trap-machinery scalar.
 | 446 | `noglob` standalone accepted as no-op (zsh: parse error) — extends #413 parser strictness gap | **fixed** 2026-06-04 | n/a |
 | 447 | `${(flag)scalar[@]}` returns empty for ALL flags (R/U/L/Q/V) — flag-on-scalar-with-@ broken | **fixed** 2026-06-02 | bind scalar to typed array first |
 | 448 | `print -s "text"` doesn't add to history — `fc -l` shows nothing (zsh: line appears) | **fixed** 2026-06-02 | manual history-file append |
-| 449 | `[[ "x" == pat\\* ]]` backslash-escape in pattern not honored — `\\*` treated as glob wildcard | **fixed** 2026-06-02 | quoted-string pattern form `"pat*"` |
+| 449 | `[[ "x" == pat\\* ]]` backslash-escape in pattern not honored — `\\*` treated as glob wildcard | **fixed** 2026-06-05 | compile_cond now converts Bnull-escape sequences to literal `\X` pairs before untokenize (untokenize alone DROPS Bnull, collapsing `\*` to `*`); patcompile then sees the escape and treats `*` as literal meta |
 | 450 | **CRITICAL** subshell `trap` leaks to parent — outer trap replaced after `(...)` exits | **fixed** 2026-06-02 | explicit `eval "$(trap)"` save/restore around subshell |
 | 451 | **CRITICAL** function definition/`unfunction` in subshell LEAKS to parent — parallel to #450 trap leak | **fixed** 2026-06-02 | save with `declare -f`, restore via `eval` |
 | 452 | alias definition/`unalias` in subshell LEAKS to parent — same family as #451 | **fixed** 2026-06-02 | save alias dump, restore around subshell |
