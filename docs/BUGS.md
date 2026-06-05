@@ -27800,6 +27800,80 @@ counter=$((counter + amount))   # works in both
 
 ## #338 — `h["key'with'special"]=v` assoc keys with embedded quotes/specials lost (silent fail)
 
+**Status:** `fixed` 2026-06-05 (unquoted + dynamic-key forms;
+DQ-wrapped literal-key form is a separate sub-issue tracked
+inline). Two-part fix.
+
+**Root cause** — the storage path
+(`src/extensions/compile_zsh.rs::compile_assign` line 1901)
+runs `untokenize_preserve_quotes(&assign.name)` then
+`split_subscript` — so `h["q'q"]=v` stores the literal
+5-byte key `"q'q"` (including the outer double quotes).
+But the lookup path's static fast path
+(`compile_expand` line 3210 region) ran on plain
+`untokenize(s)` which STRIPS Snull/Dnull/Bnull markers (the
+zshrs `untokenize` deliberately skips them, unlike C zsh's
+canonical `Src/lex.c::untokenize` which maps them back to
+`'`/`"`/`\` via `ztokens[c - Pound]`). Result: the lookup
+key text shrank from 5 bytes to 3 bytes, missing the stored
+entry.
+
+A second leak: the ARRAY_INDEX fast path re-built a
+`${name[idx]}` body and re-ran the lexer via
+`paramsubst_to_value`, which re-stripped quote-like chars
+in the subscript.
+
+**Fix** — two-part:
+
+1. `src/extensions/compile_zsh.rs::compile_expand` — use
+   `untokenize_preserve_quotes(s)` (NOT plain `untokenize`)
+   for the subscript fast-path probe. Mirrors the storage
+   path which already uses the preserve variant. Static
+   fast path now fires regardless of DQ/Bnull state —
+   `braced_subscript_ref` rejects `$`-containing keys so
+   qt has no observable effect for the resolved literal.
+2. `src/fusevm_bridge.rs::register_builtins`
+   `BUILTIN_ARRAY_INDEX` handler — for simple idx (no
+   outer-flag sentinels, no `(…)` flag prefix, not splat,
+   not slice), bypass `paramsubst_to_value` and do a direct
+   `exec.assoc(name).get(idx)` lookup. The pre-evaluated
+   key string must match the stored key byte-for-byte; the
+   paramsubst re-parse would have re-lexed the subscript
+   and stripped quote-active bytes again.
+
+**Verify**
+
+```sh
+$ ./target/debug/zshrs --zsh -fc $'typeset -A h; h["q\'q"]=v; echo ${h["q\'q"]}'
+v
+$ ./target/debug/zshrs --zsh -fc $'typeset -A h; k="a\'b"; h[$k]=v; echo "[${h[$k]}]"'
+[v]
+$ ./target/debug/zshrs --zsh -fc 'typeset -A h; h[plain]=v; echo "[${h[plain]}]"'
+[v]
+```
+
+All three match `/opt/homebrew/bin/zsh -fc '…'`.
+
+**Sub-issue (not fixed)** — DQ-wrapped literal-key form
+`echo "[${h["q'q"]}]"` still returns empty. In DQ context
+the outer `"…"` routes through `BUILTIN_EXPAND_TEXT` mode 1
+which calls `multsub` → `stringsubst` → `paramsubst`,
+bypassing the compile-path fast path entirely. paramsubst's
+subscript expansion at `src/ported/subst.rs:4264` calls
+`singsub(&raw_sub)` which treats the inner `"…"` as DQ
+delimiters and strips them. Stripping is structurally
+correct for `$var`-containing subscripts (where DQ
+unescape must run) but wrong for literal subscripts. A
+clean fix needs to distinguish "subscript that needs
+substitution" from "literal subscript with quote chars" at
+the paramsubst level. Tracked as a follow-up; the more
+common bare-form
+`${h["q'q"]}` and variable indirection forms work now.
+
+Baseline preserved: 971/81 zshrs_shell tests.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47614,7 +47688,7 @@ no longer reports the internal trap-machinery scalar.
 | 335 | `hashdirs` option default differs — zsh: off (default), zshrs: on | **fixed** 2026-06-02 | explicit `unsetopt hashdirs` in .zshrc |
 | 336 | `${(O)@}`/`${(n)@}`/`${(oi)@}` sort variants on positionals all silently no-op (extends #277/#332) | **fixed** 2026-06-02 | copy to array, sort via `[@]` |
 | 337 | `(( n += "5" ))` quoted-string operands in `(( ))` arith treated as `0` (zsh: parses as int) | **fixed** 2026-06-02 | use `$((...))` form |
-| 338 | `h["key'with'special"]=v` assoc keys with embedded quotes/specials lost silently | **port-bug** | sanitize keys to alphanumeric |
+| 338 | `h["key'with'special"]=v` assoc keys with embedded quotes/specials lost silently | fixed (partial) | (unquoted + dynamic-key forms work via `untokenize_preserve_quotes` + direct assoc lookup; DQ-wrapped literal-key form still empty — sub-issue tracked inline) |
 | 339 | `h["a\\nb"]=v` assoc keys with backslash escapes round-trip differently — `(@k)` output not quoted | **port-bug** | base64-encode keys |
 | 340 | `print -P "%Nd"`/`%-Nd` numeric path-truncate prompt-escape not implemented (e.g., `%2d` last-2-comps) | **fixed** 2026-06-02 | manual `${PWD##*/}` |
 | 341 | `$((arr[(i)pat]))` subscript-flag inside arith subscript returns 0 (zsh: returns match index) | **fixed** 2026-06-02 | extract index first via temp var |
