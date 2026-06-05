@@ -6013,7 +6013,15 @@ pub fn paramsubst(
                             })
                             .collect()
                     }),
-                });
+                })
+                // c:Src/subst.c — on an indexed array, `(kv)` mirrors
+                // `(k)` and `(v)`: each returns the array values
+                // (verified vs /opt/homebrew/bin/zsh:
+                // `arr=(a b c); echo "${(kv)arr}"` → "a b c"). Without
+                // this fallback the (kv) arm produced empty for indexed
+                // arrays because `assoc_get` returned None and the
+                // magic-assoc tables didn't match.
+                .or_else(|| crate::ported::exec_hooks::array(&var_name));
             value = magic_assoc_array
                 .as_ref()
                 .map(|v| v.join(" "))
