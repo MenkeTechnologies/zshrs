@@ -47333,6 +47333,48 @@ Test baseline 1023/29 preserved.
 
 ---
 
+## #623 — `${(kv)arr}` on an indexed array returns empty instead of values
+
+**Status:** `fixed` 2026-06-05 — `(kv)` arm's magic_assoc_array fallback chain now terminates with `exec_hooks::array`, mirroring the sibling fallback in the `(k)`-only arm.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'arr=(a b c); echo "kv=[${(kv)arr}]"'
+kv=[a b c]
+
+$ ./target/debug/zshrs --zsh -c 'arr=(a b c); echo "kv=[${(kv)arr}]"'   # before
+kv=[]
+```
+
+**Root cause** — `src/ported/subst.rs::paramsubst` `(kv)` outer-flag arm at line ~5985 builds `magic_assoc_array` by checking `assoc_get(&var_name)` then a chain of magic-assoc tables (aliases, functions, commands, partab_scan_keys). For an indexed array `arr=(a b c)`, none of these matched — assoc_get returns None, var_name isn't in any magic table, partab_scan_keys returns None. The arm fell through to `value = unwrap_or_default()` → empty string.
+
+The sibling `(k)`-only arm at line ~6056 already terminated its chain with `.or_else(|| exec_hooks::array(&var_name))` mirroring zsh's quirk that `(k)` on an indexed array returns the array values (not indices). The `(kv)` arm was structurally divergent and missed this fallback.
+
+**Fix** (`src/ported/subst.rs` line ~5990): append the same array-fallback to the `(kv)` chain:
+
+```rust
+magic_assoc_array = assoc_get(&var_name)
+    .map(...)
+    .or_else(|| match var_name.as_str() { "aliases" => ..., _ => partab_scan_keys })
+    .or_else(|| crate::ported::exec_hooks::array(&var_name));
+```
+
+For an indexed array, `(kv)` produces the same flat value list as `(k)` and `(v)` — there's no separate index "key" dimension that survives the splat. This matches zsh's behavior verbatim.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'arr=(a b c); echo "kv=[${(kv)arr}]"'
+kv=[a b c]
+$ ./target/debug/zshrs -fc 'typeset -A h=(a 1 b 2); echo "kv=${(kv)h}"'    # assoc regression
+kv=a 1 b 2
+$ ./target/debug/zshrs -fc 'echo "kv=[${(kv)nope}]"'                       # unset
+kv=[]
+```
+
+Test baseline 1025/27 preserved.
+
+---
+
 ## #622 — `(( y = ${a[(I)$x]} ))` returns 0 because subscript pattern `$x` not expanded — breaks `add-zsh-hook`
 
 **Status:** `fixed` 2026-06-05 — paramsubst's array `(R/I/r/i)` and assoc `(R/I/r/i/K/k)` flag-form subscript dispatches now singsub the pattern before patcompile, mirroring C `Src/params.c:1564-1572 if (needtok) { ... singsub(&s); }`.
@@ -48760,6 +48802,7 @@ no longer reports the internal trap-machinery scalar.
 | 620 | `h[Q-${h[$k]}]=z` (nested assoc subscript in assign LHS) errors "no matches found: Q-${h[a]}" — segment splitter treats literal `${` as non-expansion | **fixed** 2026-06-05 | compile_zsh.rs::split_word_segments — `is_literal_dollar_with_expansion` peek now accepts ASCII `{`/`(` (assoc-LHS path arrives ASCII-untokenized via untokenize_preserve_quotes); find_expansion_end gets a `Some('{')` arm with depth tracking on `{`/`}` mirroring the META-Inbrace arm |
 | 621 | `for k in ${color[(I)3?]}` iterates ONCE with k="30 31 32 33" instead of four times — assoc `(I)`/`(R)`/`(K)` multi-match returns scalar instead of array shape | **fixed** 2026-06-05 | subst.rs c:3950 splat-seed block — broaden gate (was `(@k)` + `(R)/(r)` only) to fire for ANY assoc subscript with `(R)/(r)/(I)/(i)/(K)/(k)` even without `(@)` outer flag; matches C `paramvalarr` returning `char **` from Src/params.c:689 (array shape inherent to the multi-match) |
 | 622 | `(( y = ${a[(I)$x]} ))` returns 0 instead of N — subscript-pattern `$x` not expanded before patcompile in arith path; breaks `autoload -Uz add-zsh-hook preexec preexec_foo` (the autoload body uses `${hooktypes[(I)$1]}`) | **fixed** 2026-06-05 | paramsubst's array (R/I/r/i) and assoc (R/I/r/i/K/k) flag-form subscript dispatches now singsub the pattern (mirrors C `Src/params.c:1564-1572 if (needtok) { ... singsub(&s); }`); fast-path braced_subscript_dynamic_ref already did this for direct reads via EXPAND_TEXT mode 1 but the arithsubst path bypassed it |
+| 623 | `${(kv)arr}` on an indexed array returns empty instead of values — (kv) arm's magic-assoc fallback chain didn't terminate with `exec_hooks::array` | **fixed** 2026-06-05 | append `.or_else(|| exec_hooks::array(&var_name))` to magic_assoc_array lookup (sibling of the `(k)`-arm fallback at line 6056); matches zsh's `arr=(a b c); echo "${(kv)arr}"` → "a b c" |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
