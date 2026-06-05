@@ -6980,7 +6980,37 @@ pub fn bin_whence(
                 .lock()
                 .unwrap()
                 .is_loaded("zsh/files");
-            let builtin_node: Option<*mut hashnode> = if is_files_gated {
+            // c:Bug #532/#535 — same logic for module-bound builtin
+            // names that ship statically linked in zshrs but require
+            // an explicit `zmodload` before `type X` reports them as
+            // a builtin in C zsh:
+            //   * zsh/stat       → stat, zstat
+            //   * zsh/zselect    → zselect
+            //   * zsh/zpty       → zpty
+            //   * zsh/net/tcp    → ztcp
+            //   * zsh/zftp       → zftp
+            //   * zsh/system     → zsystem, syserror
+            let is_module_gated = |modname: &str, names: &[&str]| -> bool {
+                names.iter().any(|n| arg.as_str() == *n)
+                    && !crate::ported::module::MODULESTAB
+                        .lock()
+                        .unwrap()
+                        .is_loaded(modname)
+            };
+            let is_stat_gated = is_module_gated("zsh/stat", &["stat", "zstat"]);
+            let is_zselect_gated = is_module_gated("zsh/zselect", &["zselect"]);
+            let is_zpty_gated = is_module_gated("zsh/zpty", &["zpty"]);
+            let is_ztcp_gated = is_module_gated("zsh/net/tcp", &["ztcp"]);
+            let is_zftp_gated = is_module_gated("zsh/zftp", &["zftp"]);
+            let is_system_gated =
+                is_module_gated("zsh/system", &["zsystem", "syserror"]);
+            let is_module_bound_gated = is_stat_gated
+                || is_zselect_gated
+                || is_zpty_gated
+                || is_ztcp_gated
+                || is_zftp_gated
+                || is_system_gated;
+            let builtin_node: Option<*mut hashnode> = if is_files_gated || is_module_bound_gated {
                 None
             } else {
                 BUILTINS
