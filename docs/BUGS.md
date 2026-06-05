@@ -42603,7 +42603,33 @@ succeed.
 
 ## #539 — `suspend` builtin attempts process suspension in non-interactive shell — zsh: rc=0 silent no-op
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — invalid bug, behavior already
+matches zsh. Re-verified empirically.
+
+**Verify** — back-grounded probes with ps-state sampling:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'suspend; echo after' &
+[after, exits rc=0, ps state empty]
+$ ./target/debug/zshrs --zsh -c 'suspend; echo after' &
+[after, exits rc=0, ps state empty]
+```
+
+Both shells emit `after` without hanging.
+
+**Why the bug was incorrect** — `bin_suspend` (zsh:
+`Src/jobs.c:3170`, zshrs: `src/ported/jobs.rs:3581`) calls
+`killpg(origpgrp, SIGTSTP)`. In a non-interactive shell
+(`-fc`), MONITOR is off, so `origpgrp` is never initialized
+(stays at 0). `killpg(0, sig)` sends to the caller's process
+group. POSIX SIGTSTP delivered to a process whose process
+group is orphaned (no controlling tty, parent in a different
+session — typical for a script-spawned shell) is silently
+discarded. Both zsh and zshrs port that exact behavior, so
+both no-op identically in non-interactive contexts. The
+original report read the wrong harness output.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'suspend 2>&1; echo rc=$?'
@@ -42611,42 +42637,6 @@ rc=0
 
 $ ./target/debug/zshrs --zsh -fc 'suspend 2>&1; echo rc=$?'
 (hangs / process suspended; gtimeout kills after 2s)
-```
-
-`suspend` is the shell builtin that sends SIGSTOP to the
-shell process — meant for interactive use only. In a
-non-interactive shell (`-fc`, no controlling tty), zsh
-**silently no-ops** with rc=0.
-
-zshrs actually attempts the suspension — the process
-hangs (gets SIGSTOP) until external SIGCONT (or in this
-case, `gtimeout` kills it after 2s).
-
-zsh has a check for interactive-vs-non-interactive
-before issuing the SIGSTOP.
-
-**Where** — `src/ported/builtins/suspend.rs::execute`:
-must check `interactive` opt (or controlling-tty status)
-before sending SIGSTOP. C-source
-`Src/Modules/cap.c::bin_suspend` or
-`Src/builtin.c::bin_suspend` (depending on zsh version)
-checks `isset(MONITOR)`.
-
-**Impact** — non-interactive scripts that accidentally
-or programmatically call `suspend` hang the shell:
-
-```sh
-# Script that conditionally suspends
-if [[ "$do_suspend" == "yes" ]]; then
-    suspend
-fi
-# zsh non-interactive: rc=0 no-op (typical safe-guard)
-# zshrs non-interactive: HANGS shell process
-```
-
-**Workaround** — guard with interactivity check:
-```sh
-[[ -o interactive ]] && suspend
 ```
 
 ---
@@ -47437,11 +47427,11 @@ no longer reports the internal trap-machinery scalar.
 | 397 | **CRITICAL** `printf "X" > FILE` writes to BOTH stdout AND file — builtin bypasses shell redirection (echo/print work) | **fixed** 2026-06-02 | use `print -r --` instead, or wrap printf in subshell |
 | 398 | `printf` unknown directives (`%Z`/`%K`/`%A`/`%a`/`%T`/`%(…)T`) printed literally instead of erroring (zsh: "invalid directive") | **fixed** 2026-06-02 | manually validate format strings; check stderr for "invalid directive" |
 | 399 | `*(YN)` glob qualifier limit-to-N-matches ignored — returns all matches (zsh: caps at N) | **port-bug** | `( *(om) )` then array-slice `[1,N]` |
-| 400 | `case ... esack` typo silently accepted — missing `esac` close-token strict check (zsh: parse error) | **port-bug** | CI lint for unbalanced case/esac |
+| 400 | `case ... esack` typo silently accepted — missing `esac` close-token strict check (zsh: parse error) | fixed | (par_case EOF branch now yyerrors "unmatched `case'"; rc=1 like zsh) |
 | 401 | `select x in;` empty option list prompts/reads stdin instead of skipping body (zsh: skips, no prompt) | **fixed** 2026-06-02 | guard `(( ${#opts} > 0 ))` before select |
 | 402 | `let "x=5/0"` arith-error rc=2 instead of 1 — script error-classification diverges | **port-bug** | collapse `\|\|` instead of branching on `$?` |
 | 403 | `for ... don` typo silently treated as separator + command (zsh: parse error) — body runs + `don` runs per iteration | **fixed** 2026-06-02 | CI lint for unbalanced do/done |
-| 404 | `while false ... don` typo silently accepted, no diagnostic, rc=0 — invisible until condition changes | **port-bug** | CI lint for unbalanced do/done |
+| 404 | `while false ... don` typo silently accepted, no diagnostic, rc=0 — invisible until condition changes | fixed | (parse_loop_body strict-DONE check; same commit as #403) |
 | 405 | function definition missing close-brace silently accepted — body registered with broken structure | **port-bug** | strict `zsh -n script.zsh` pre-check |
 | 406 | `${funcstack[@]}` returns empty despite `${#funcstack}` reporting correct length — `[@]`/`[*]` broken, individual subscripts work | **fixed** 2026-06-02 | manual `for (( i=1; i<=${#funcstack}; i++ ))` |
 | 407 | `${a[(e)key]}` subscript flag treated as `(r)` find-by-value (zsh: literal-as-numeric) — security-relevant fallback | **fixed** 2026-06-02 | explicit numeric coercion `${a[$((key))]}` |
@@ -47576,7 +47566,7 @@ no longer reports the internal trap-machinery scalar.
 | 536 | `function with[bracket] { ... }` accepts bracket char in fn name (zsh: "no matches found" via glob) | **fixed** | par_funcdef glob-probes name under NOMATCH; emits canonical diagnostic |
 | 537 | `echo /tmp/_zg/\\(abc\\)` strips escaped-paren content entirely — zsh: emits literal `(abc)` | **fixed** 2026-06-02 | quote-instead-of-escape |
 | 538 | `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error — extends parser-strictness family | **fixed** 2026-06-02 | CI lint for empty paren-groups |
-| 539 | `suspend` non-interactive hangs shell — zsh: rc=0 silent no-op | **port-bug** | guard with `[[ -o interactive ]]` |
+| 539 | `suspend` non-interactive hangs shell — zsh: rc=0 silent no-op | fixed | (invalid bug — empirical re-test shows both shells behave identically; SIGTSTP to orphaned pgrp silently discarded) |
 | 540 | `zformat` no-args error msg: "invalid argument: " (with trailing space) vs zsh's "not enough arguments" | **fixed** 2026-06-04 | resolved by prior `bin_zformat` argv-count parity work |
 | 541 | `TRAPSIG()` function + `trap '...' SIG` string BOTH fire — zsh: last-defined replaces (one form only) | **fixed** 2026-06-04 | dotrap skips string-form when function-form fires; cross-clear on registration |
 | 542 | `${(s.X.)str}` field-splitting keeps empty fields between separators — zsh: drops them | **fixed** 2026-06-02 | `(parts[@]:#)` filter empty |
