@@ -501,6 +501,17 @@ pub fn accept_last(
 /// `1..N` are the real matches, so the table is 1-indexed).
 pub fn comp_mod(mut v: i32, m: i32) -> i32 {
     // c:1364
+    // Guard: C source assumes `m > 0` (lastpermmnum is always
+    // populated from the match-list count by the time do_ambig_menu
+    // calls it). With `m == 0`, the `while v < 0; v += m;` loop at
+    // c:1371-1372 spins forever. zshrs's unit tests call do_ambig_menu
+    // directly from a fresh state where lastpermmnum == 0 and the
+    // process hangs (cargo test never finishes). C zsh hits the same
+    // bug if any internal path forgets to populate lastpermmnum;
+    // defensive guard with no behavior change for valid `m > 0`.
+    if m <= 0 {
+        return 0;
+    }
     if v >= 0 {
         // c:1364
         v -= 1; // c:1367
