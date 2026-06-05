@@ -2573,6 +2573,17 @@ pub fn modname_ok(p: &str) -> i32 {
 pub fn require_module(table: &mut modulestab, modname: &str, _features: Option<&[String]>) -> i32 {
     if try_load_module(table, modname) == 0 {
         // Module not in static table — report failure.
+        // c:Src/module.c:1610-1623 — do_load_module's zwarn arm.
+        // zsh emits "failed to load module `<name>': <dlerror>" when
+        // dlopen fails for an unknown module. zshrs's static-link
+        // path has no dlopen but the user-visible miss is the same;
+        // emit the canonical message so user scripts wrapping
+        // `zmodload` in error-handling see the expected diagnostic.
+        // Bug #376 in docs/BUGS.md.
+        crate::ported::utils::zwarn(&format!(
+            "failed to load module `{}'",
+            modname
+        ));
         return 1;
     }
     // c:Src/module.c:2354-2356 — when the module is found but its

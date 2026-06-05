@@ -47149,7 +47149,7 @@ no longer reports the internal trap-machinery scalar.
 | 130 | `${var@X}` bash parameter-transform accepted (zsh errors) | **fixed** 2026-06-02 | `${(U)x}`/`${(L)x}`/`${(q)x}` |
 | 131 | `%(N~.A.B)` prompt conditional evaluates path-depth wrong | **fixed** 2026-06-02 | manual `precmd` depth check |
 | 132 | `(( x = "5" + "3" ))` quoted numeric strings not coerced | **fixed** 2026-06-02 | drop quotes for known-numeric |
-| 133 | `zstat -F "fmt"` format flag ignored | **port-bug** | external `stat -f`/`stat --format` |
+| 133 | `zstat -F "fmt"` format flag ignored | **fixed** 2026-06-02 | external `stat -f`/`stat --format` |
 | 134 | `${"":h}` empty-string head modifier returns `/` (zsh: `.`) | **fixed** 2026-06-02 | explicit empty-check |
 | 135 | `*(om)` glob qualifier mtime ordering broken | **fixed** 2026-06-02 | external `ls -t` |
 | 136 | `%E` prompt escape (clear-EOL) not expanded; literal `%E` | **fixed** 2026-06-02 | manual `$'\e[K'` |
@@ -47180,7 +47180,7 @@ no longer reports the internal trap-machinery scalar.
 | 161 | `case x in)` empty pattern silently accepted (zsh: parse error) | **fixed** 2026-06-02 | n/a |
 | 162 | `${(l.5)x}` missing close-delim silently accepted (zsh: error) | **fixed** 2026-06-02 | n/a |
 | 163 | `${(t)1}` positional type returns `scalar` (zsh: `array-special`) | **fixed** 2026-06-02 | `[[ "$#" -gt 0 ]]` test |
-| 164 | Extended_glob `^pat` (negation prefix) not recognized | **port-bug** | loop with `[[ == ]] continue` |
+| 164 | Extended_glob `^pat` (negation prefix) not recognized | **fixed** 2026-06-02 | loop with `[[ == ]] continue` |
 | 165 | `${$((expr))}` arith-as-name returns empty (zsh: expr value) | **fixed** 2026-06-02 | n/a |
 | 166 | `for x in $@` keeps empty elements (zsh: removes via IFS-split) | **fixed** 2026-06-02 | `[[ -z $arg ]] continue` |
 | 167 | Unclosed `{ cmd` silently runs (zsh: parse error) | **fixed** 2026-06-02 | n/a |
@@ -47227,7 +47227,7 @@ no longer reports the internal trap-machinery scalar.
 | 208 | Function defined inside `(...)` subshell leaks into parent shell | **fixed** 2026-06-02 | n/a |
 | 209 | Alias defined inside `(...)` subshell leaks into parent shell | **fixed** 2026-06-02 | explicit `unalias` after |
 | 210 | `(unfunction f)`/`(zmodload m)` in subshell mutate parent state (destructive) | **partial-fix** 2026-06-02 (unfunction fixed via #208; zmodload deferred) | n/a (unfunction); avoid `(zmodload …)` |
-| 211 | `$-` (option chars) missing `f`/other letters (option-to-char table incomplete) | **port-bug** | use `setopt \| grep ...` instead |
+| 211 | `$-` (option chars) missing `f`/other letters (option-to-char table incomplete) | **fixed** 2026-06-02 | use `setopt \| grep ...` instead |
 | 212 | `${(b)str}` over-escapes non-glob chars (tab, etc) — extra `\` inserted | **fixed** 2026-06-02 | n/a |
 | 213 | `${assoc[(R)value]}` reverse-search-by-value errors `bad substitution` | **fixed** 2026-06-02 | manual `for k v in "${(@kv)h}"` loop |
 | 214 | `chpwd`/`chpwd_functions` hook not fired on `cd` — breaks p10k/oh-my-zsh/zoxide/direnv | **fixed** 2026-06-02 | wrap `cd` in function dispatching hooks |
@@ -47392,7 +47392,7 @@ no longer reports the internal trap-machinery scalar.
 | 373 | `pipestatus=(...)` user-overwrite accepted — pipestatus not readonly (zsh: silently rejects) | **fixed** 2026-06-02 | defensive copy before user-code |
 | 374 | `reswords=...` user-overwrite accepted — reswords not readonly (zsh: "read-only variable") | **fixed** 2026-06-02 | defensive copy |
 | 375 | `commands[name]=path` slice-write accepted — security-relevant cmd-cache poisoning (zsh: "attempt to set slice") | **port-bug** | use `whence -p` / `command -v` for path resolution |
-| 376 | `zmodload zsh/nonexistent` silent failure — missing dlopen error message (zsh: "failed to load module: dlopen…") | **port-bug** | probe module file existence manually |
+| 376 | `zmodload zsh/nonexistent` silent failure — missing dlopen error message (zsh: "failed to load module: dlopen…") | **fixed** 2026-06-04 | probe module file existence manually |
 | 377 | `zmodload` no-args lists *available* modules instead of *loaded* modules (zsh: just `zsh/main`) | **fixed** 2026-06-02 | track loaded modules manually in user assoc |
 | 378 | `${#var}` ignores locale — always char count even in C/POSIX (zsh: byte count when LC_CTYPE not UTF-8) | **fixed** 2026-06-02 | `wc -c` for byte count |
 | 379 | `zle -la` returns empty — builtin widget registry not exposed (zsh: 386 widgets incl `.accept-line`) | **fixed** 2026-06-02 | hardcode widget list / probe `${+widgets[N]}` |
@@ -47427,7 +47427,7 @@ no longer reports the internal trap-machinery scalar.
 | 408 | `${a[1,5,2]}` 3-arg array slice silently accepted (zsh: bad substitution) — third arg ignored | **fixed** 2026-06-02 | explicit step loop |
 | 409 | `(#i)PATTERN` glob case-folding flag not recognized — treated as literal filename component | **fixed** 2026-06-04 | n/a |
 | 410 | `typeset -p PATH` doesn't expose tied scalar/array pair (zsh: `export -T PATH path=(...)`) — state-snapshot lossy | **fixed** 2026-06-02 | manually pair-emit `path` array |
-| 411 | `[ "abc" -eq 5 ]` silent rc=1 instead of "integer expression expected" + rc=2 — type-error coerced to 0 | **port-bug** | pre-validate operand with `=~ ^-?[0-9]+$` |
+| 411 | `[ "abc" -eq 5 ]` silent rc=1 instead of "integer expression expected" + rc=2 — type-error coerced to 0 | **fixed** 2026-06-02 | pre-validate operand with `=~ ^-?[0-9]+$` |
 | 412 | `$PROMPT3` default empty — `select` prompt missing (zsh: `\\033[1;34m-->>>> \\033[0m`) | **fixed** 2026-06-02 | seed `PS3` in zshrc |
 | 413 | `do` standalone-keyword silently accepted as no-op (zsh: parse error near `do`) — reserved-word strict check missing | **fixed** 2026-06-02 | `zsh -n script.zsh` pre-check |
 | 414 | `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape) — opposite of #398 printf direction | **fixed** 2026-06-04 | n/a |
@@ -47507,12 +47507,12 @@ no longer reports the internal trap-machinery scalar.
 | 488 | `cd /no/such` error message includes `(os error 2)` — zsh: plain "no such file or directory" (case-sensitive matches break) | **fixed** 2026-06-04 | n/a |
 | 489 | `(#cN,M)` count-range glob flag not recognized — extends #425 (`#cN` exact-count) to ranges | **fixed** 2026-06-04 | `(#c,M)` no-min and `(#c,)` shapes now parse + match per zsh |
 | 490 | `>&5` (write to invalid fd) silently rc=0 — zsh: "bad file descriptor" rc=1 | **fixed** 2026-06-04 | n/a |
-| 491 | `kill 9999999` error includes `(os error 3)` Rust-format — extends #488 family across all syscall-wrapping builtins | **port-bug** | `sed`-strip `(os error N)` suffix |
+| 491 | `kill 9999999` error includes `(os error 3)` Rust-format — extends #488 family across all syscall-wrapping builtins | **fixed** 2026-06-02 | `sed`-strip `(os error N)` suffix |
 | 492 | `echo hi >&-` close-fd-then-write — zsh: hi written then closed; zshrs: dropped (closed before write) | **fixed** 2026-06-04 | n/a |
 | 493 | `%i` prompt escape (line number) returns 0 instead of 1 — off-by-one (extends #385/#396 line-numbering family) | **fixed** 2026-06-04 | n/a |
 | 494 | `$((a + 1))` with `a="42xyz"` silently coerces to 0 — zsh: "bad math expression: operator expected" | **fixed** 2026-06-04 | n/a |
 | 495 | `${(C)a[1]}` capitalize-flag + array-subscript errors "bad substitution" — extends #436 flag×subscript family | **fixed** 2026-06-04 | n/a |
-| 496 | **CRITICAL** `type ./path` PANICS with "attempt to subtract with overflow" at builtin.rs:5959 — relative-path arg crashes shell | **port-bug** | strip `./` prefix before passing to `type` |
+| 496 | **CRITICAL** `type ./path` PANICS with "attempt to subtract with overflow" at builtin.rs:5959 — relative-path arg crashes shell | **fixed** 2026-06-02 | strip `./` prefix before passing to `type` |
 | 497 | `$RPROMPT` initialized to empty string instead of unset (extends #479 bash-compat-init family) | **fixed** 2026-06-04 | `--zsh` mode no longer pre-inits RPROMPT/RPS1 |
 | 498 | `readonly x=N` on already-readonly x silently rc=0 — zsh errors "read-only variable" | **fixed** 2026-06-04 | n/a |
 | 499 | `times` builtin output uses 3-decimal precision instead of zsh's 2-decimal — parser format diff | **fixed** 2026-06-04 | n/a |
@@ -47528,7 +47528,7 @@ no longer reports the internal trap-machinery scalar.
 | 509 | `%G`/`%e` prompt escapes (zero-width marker / parser-indent) printed literally — extends prompt-escape gap family | **fixed** 2026-06-04 | n/a |
 | 510 | `${(q)empty_array}` returns empty instead of `''` — empty-array-quoting semantics lost; breaks `(q)`+`eval` round-trips | **fixed** 2026-06-04 | n/a |
 | 511 | integer overflow in `$((...))` silently returns 0 — zsh: "number truncated after 18 digits" warning + truncated value | **fixed** 2026-06-04 | n/a |
-| 512 | `${(t)EPOCHSECONDS}` / `${(t)EPOCHREALTIME}` empty — type-flag missing on GSU-backed datetime specials | **port-bug** | hardcode known specials |
+| 512 | `${(t)EPOCHSECONDS}` / `${(t)EPOCHREALTIME}` empty — type-flag missing on GSU-backed datetime specials | **fixed** 2026-06-04 | hardcode known specials |
 | 513 | `OPTIND=N` inside function LEAKS to parent — zsh: implicitly function-local | **fixed** 2026-06-02 | manual save/restore around `getopts` |
 | 514 | `(#e)` end-anchor glob flag not recognized — extends #483 `(#X)` family | **fixed** 2026-06-04 | n/a |
 | 515 | `$funcsourcetrace` shows fn-name (`f:1`) instead of file-name (`zsh:1`) — wrong source-location tracking | **fixed** 2026-06-04 | `funcsourcetrace[1]` shows `zshrs:1` matching zsh's `zsh:1` shell-name shape |
