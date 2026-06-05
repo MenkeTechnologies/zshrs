@@ -29295,7 +29295,20 @@ echo "typeset -a a=( ${(qq)a[@]} )"
 
 ## #352 — `print -P "%u"`/`%s` reset codes use generic `ESC[0m` instead of attribute-specific off codes
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-04 (already credited in BUGS line
+~2316 "`%b`/`%u`/`%s` 'off' escapes"). Re-verified 2026-06-05:
+
+```
+$ /opt/homebrew/bin/zsh -fc 'print -P "%Ux%u"' | od -c | head -1
+0000000  033   [   4   m   x 033   [   2   4   m  \n
+$ ./target/debug/zshrs --zsh -fc 'print -P "%Ux%u"' | od -c | head -1
+0000000  033   [   4   m   x 033   [   2   4   m  \n
+```
+
+Both attribute-specific off-codes now (24m, 23m / 27m / 22m).
+BUGS.md status was stale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -P "%Ux%u"' | od -c | head -1
