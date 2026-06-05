@@ -1197,74 +1197,63 @@ impl ShellExecutor {
         }
 
         let template = &args[0];
-        let items = &args[1..];
+        let items: Vec<String> = args[1..].to_vec();
 
-        // Parametrise the template ONCE: substitute `{}` with `${=__zshrs_p_arg__}`
-        // and parse + compile the result a single time. Per-iteration we just
-        // bind the parameter via `setsparam`; the same compiled chunk runs every
-        // time. The `${=...}` `=` flag forces word-splitting on $IFS so an item
-        // like "a b" still expands to two arguments — matching the old literal-
-        // substitution behavior for whitespace-bearing items. VMs are recycled
-        // through `fusevm::VMPool` so their internal Vec capacities (stack,
-        // frames, slot_buf, globals) carry across iterations.
-        //
-        // Semantic change vs the prior `template.replace("{}", item)` approach:
-        // `{}` placeholders inside single-quoted regions of the template won't
-        // expand (single quotes suppress parameter substitution), whereas
-        // literal substitution would have replaced them. Common usage
-        // (`pmap 'cmd {}' arg1 arg2`) puts `{}` outside of any quoting, so
-        // this matches.
-        const ARG_PARAM: &str = "__zshrs_p_arg__";
-        let parametrised = template.replace("{}", &format!("${{={}}}", ARG_PARAM));
+        // Substitute `{}` with `${=__ZSHRS_P_ARG__}` ONCE — the `=`
+        // flag forces word-splitting on $IFS so an item like "a b"
+        // still expands to two arguments at use site. Per-item the
+        // subprocess receives the item via the `__ZSHRS_P_ARG__` env
+        // var so the template's expansion picks it up natively.
+        const ARG_ENV: &str = "__ZSHRS_P_ARG__";
+        let parametrised = template.replace("{}", &format!("${{={}}}", ARG_ENV));
 
-        let saved_errflag = errflag.load(Ordering::Relaxed);
-        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        crate::ported::parse::parse_init(&parametrised);
-        let prog = crate::ported::parse::parse();
-        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
-        errflag.store(saved_errflag, Ordering::Relaxed);
-        if parse_failed {
-            eprintln!("zshrs:pmap:1: parse error in template");
-            return 1;
-        }
-        let compiler = crate::compile_zsh::ZshCompiler::new();
-        let chunk = compiler.compile(&prog);
-        crate::fusevm_disasm::maybe_print_stdout("builtin_pmap", &chunk);
+        // Resolve our own binary once so every parallel subprocess
+        // runs zshrs (NOT /bin/sh) — preserves zshrs-specific
+        // builtins (`echo` flags, `print -P`, etc.).
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("zshrs:pmap:1: current_exe: {}", e);
+                return 1;
+            }
+        };
 
-        let mut results: Vec<(i32, String)> = Vec::with_capacity(items.len());
-        let mut pool = fusevm::VMPool::with_capacity(1);
-        for item in items {
-            // Bind the iteration variable for this item.
-            crate::ported::params::setsparam(ARG_PARAM, item);
-
-            // Capture stdout
-            let output = Vec::new();
-            let status = {
-                let mut vm = pool.acquire(chunk.clone());
-                register_builtins(&mut vm);
-                let _ctx = ExecutorContext::enter(self);
-                let s = match vm.run() {
-                    fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
-                    fusevm::VMResult::Error(_) => 1,
-                };
-                pool.release(vm);
-                s
-            };
-            results.push((status, String::from_utf8_lossy(&output).to_string()));
-        }
+        use rayon::prelude::*;
+        // Run all items in parallel via rayon's work-stealing pool.
+        // `par_iter().collect()` preserves the input order in the
+        // result Vec — so pmap's documented "output collected in
+        // order" guarantee holds across the parallel run. The
+        // subprocess inherits our env (so $PATH etc. work) plus
+        // gets ARG_ENV=item.
+        let results: Vec<(i32, Vec<u8>, Vec<u8>)> = items
+            .par_iter()
+            .map(|item| {
+                let output = Command::new(&exe)
+                    .args(["--zsh", "-c", &parametrised])
+                    .env(ARG_ENV, item)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .output();
+                match output {
+                    Ok(o) => (o.status.code().unwrap_or(1), o.stdout, o.stderr),
+                    Err(_) => (1, Vec::new(), Vec::new()),
+                }
+            })
+            .collect();
 
         let mut any_fail = false;
-        for (status, stdout) in results {
+        for (status, stdout, stderr) in results {
             if !stdout.is_empty() {
-                print!("{}", stdout);
+                let _ = std::io::stdout().write_all(&stdout);
+            }
+            if !stderr.is_empty() {
+                let _ = std::io::stderr().write_all(&stderr);
             }
             if status != 0 {
                 any_fail = true;
             }
         }
 
-        // Clear the iteration variable so it doesn't leak into the caller's scope.
-        crate::ported::params::unsetparam(ARG_PARAM);
         if any_fail {
             1
         } else {
@@ -1285,46 +1274,43 @@ impl ShellExecutor {
         }
 
         let template = &args[0];
-        let items = &args[1..];
+        let items: Vec<String> = args[1..].to_vec();
 
-        // See `builtin_pmap` for the parametrise-then-compile-once rationale.
-        const ARG_PARAM: &str = "__zshrs_p_arg__";
-        let parametrised = template.replace("{}", &format!("${{={}}}", ARG_PARAM));
+        const ARG_ENV: &str = "__ZSHRS_P_ARG__";
+        let parametrised = template.replace("{}", &format!("${{={}}}", ARG_ENV));
 
-        let saved_errflag = errflag.load(Ordering::Relaxed);
-        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        crate::ported::parse::parse_init(&parametrised);
-        let prog = crate::ported::parse::parse();
-        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
-        errflag.store(saved_errflag, Ordering::Relaxed);
-        if parse_failed {
-            eprintln!("zshrs:pgrep:1: parse error in template");
-            return 1;
-        }
-        let compiler = crate::compile_zsh::ZshCompiler::new();
-        let chunk = compiler.compile(&prog);
-        crate::fusevm_disasm::maybe_print_stdout("builtin_pgrep", &chunk);
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("zshrs:pgrep:1: current_exe: {}", e);
+                return 1;
+            }
+        };
 
-        let mut pool = fusevm::VMPool::with_capacity(1);
-        for item in items {
-            crate::ported::params::setsparam(ARG_PARAM, item);
-            let status = {
-                let mut vm = pool.acquire(chunk.clone());
-                register_builtins(&mut vm);
-                let _ctx = ExecutorContext::enter(self);
-                let s = match vm.run() {
-                    fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
-                    fusevm::VMResult::Error(_) => 1,
-                };
-                pool.release(vm);
-                s
-            };
-            if status == 0 {
+        use rayon::prelude::*;
+        // Parallel filter: keep input order via `.collect()`, output
+        // only items whose test passed (rc=0).
+        let pass_flags: Vec<bool> = items
+            .par_iter()
+            .map(|item| {
+                let status = Command::new(&exe)
+                    .args(["--zsh", "-c", &parametrised])
+                    .env(ARG_ENV, item)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                match status {
+                    Ok(s) => s.success(),
+                    Err(_) => false,
+                }
+            })
+            .collect();
+
+        for (item, &passed) in items.iter().zip(pass_flags.iter()) {
+            if passed {
                 println!("{}", item);
             }
         }
-
-        crate::ported::params::unsetparam(ARG_PARAM);
         0
     }
 
@@ -1341,48 +1327,42 @@ impl ShellExecutor {
         }
 
         let template = &args[0];
-        let items = &args[1..];
+        let items: Vec<String> = args[1..].to_vec();
 
-        // See `builtin_pmap` for the parametrise-then-compile-once rationale.
-        const ARG_PARAM: &str = "__zshrs_p_arg__";
-        let parametrised = template.replace("{}", &format!("${{={}}}", ARG_PARAM));
+        const ARG_ENV: &str = "__ZSHRS_P_ARG__";
+        let parametrised = template.replace("{}", &format!("${{={}}}", ARG_ENV));
 
-        let saved_errflag = errflag.load(Ordering::Relaxed);
-        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        crate::ported::parse::parse_init(&parametrised);
-        let prog = crate::ported::parse::parse();
-        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
-        errflag.store(saved_errflag, Ordering::Relaxed);
-        if parse_failed {
-            eprintln!("zshrs:peach:1: parse error in template");
-            return 1;
-        }
-        let compiler = crate::compile_zsh::ZshCompiler::new();
-        let chunk = compiler.compile(&prog);
-        crate::fusevm_disasm::maybe_print_stdout("builtin_peach", &chunk);
-
-        let mut any_fail = false;
-        let mut pool = fusevm::VMPool::with_capacity(1);
-        for item in items {
-            crate::ported::params::setsparam(ARG_PARAM, item);
-            let status = {
-                let mut vm = pool.acquire(chunk.clone());
-                register_builtins(&mut vm);
-                let _ctx = ExecutorContext::enter(self);
-                let s = match vm.run() {
-                    fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
-                    fusevm::VMResult::Error(_) => 1,
-                };
-                pool.release(vm);
-                s
-            };
-            if status != 0 {
-                any_fail = true;
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("zshrs:peach:1: current_exe: {}", e);
+                return 1;
             }
-        }
+        };
 
-        crate::ported::params::unsetparam(ARG_PARAM);
-        if any_fail {
+        use rayon::prelude::*;
+        use std::sync::atomic::AtomicBool;
+        // peach: "fire-and-forget, print as completed" (no order
+        // guarantee). Inherit stdout/stderr so each subprocess
+        // streams to the parent's tty as it runs. par_iter().for_each
+        // runs items concurrently; failures are aggregated via an
+        // atomic flag.
+        let any_fail = AtomicBool::new(false);
+        items.par_iter().for_each(|item| {
+            let status = Command::new(&exe)
+                .args(["--zsh", "-c", &parametrised])
+                .env(ARG_ENV, item)
+                .status();
+            let ok = match status {
+                Ok(s) => s.success(),
+                Err(_) => false,
+            };
+            if !ok {
+                any_fail.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+
+        if any_fail.load(std::sync::atomic::Ordering::Relaxed) {
             1
         } else {
             0
