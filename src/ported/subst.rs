@@ -4672,7 +4672,8 @@ pub fn paramsubst(
                 if sub == "*" || sub == "@" {
                     // c:2916 (full array)
                     arr.join(" ")
-                } else if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                } else if let Some((flags, num, beg, pat)) =
+                    (|s: &str| -> Option<(String, Option<i64>, Option<i64>, String)> {
                     // c:Src/params.c:1411-1418 — `(i)/(I)/(r)/(R)`
                     // array subscript flags. Per C:
                     //   (i)pat: rev=ind=1, down=0 → first match, INDEX
@@ -4687,40 +4688,74 @@ pub fn paramsubst(
                     let s = s.trim_start();
                     let rest = s.strip_prefix('(')?;
                     let close = rest.find(')')?;
-                    let flags = rest[..close].to_string();
+                    let body = &rest[..close];
                     let pat = rest[close + 1..].to_string();
+                    // c:Src/params.c:1431-1454 — `(n.N.)` and `(b.N.)`
+                    // sub-flags each take an integer arg delimited by
+                    // the next char after the letter. Parse them out
+                    // so `(n.2.r)` (pick 2nd match) and `(b.3.r)`
+                    // (start at offset 3) work.
+                    let mut flags = String::new();
+                    let mut num: Option<i64> = None;
+                    let mut beg: Option<i64> = None;
+                    let mut chars = body.chars().peekable();
+                    while let Some(c) = chars.next() {
+                        match c {
+                            'I' | 'R' | 'i' | 'r' | 'e' => flags.push(c),
+                            'n' | 'b' => {
+                                let delim = chars.next()?;
+                                let mut numstr = String::new();
+                                for cc in chars.by_ref() {
+                                    if cc == delim {
+                                        break;
+                                    }
+                                    numstr.push(cc);
+                                }
+                                let n = numstr.trim().parse::<i64>().ok()?;
+                                if c == 'n' {
+                                    num = Some(n);
+                                } else {
+                                    beg = Some(n);
+                                }
+                                flags.push(c);
+                            }
+                            _ => return None,
+                        }
+                    }
                     // c:Src/params.c:1419 — `(e)` ALONE doesn't trigger
-                    // the search arm; it's a `quote_arg` modifier on
-                    // (r)/(R)/(i)/(I). Require at least one search
-                    // letter for this dispatch to claim the subscript;
-                    // a bare `(e)pat` falls through to the numeric-
-                    // index parse below (so `${arr[(e)one]}` parses
-                    // "one" as a numeric index → 0 → empty). Bug #407.
+                    // the search arm; require at least one search letter.
                     let has_search = flags.contains('I')
                         || flags.contains('R')
                         || flags.contains('i')
                         || flags.contains('r');
-                    if has_search
-                        && flags
-                            .chars()
-                            .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'n' | 'e'))
-                    {
-                        Some((flags, pat))
-                    } else {
-                        None
+                    if !has_search {
+                        return None;
                     }
+                    Some((flags, num, beg, pat))
                 })(sub)
                 {
+                    let (flags, num, beg, pat) =
+                        (flags, num, beg, pat);
                     let return_index = flags.contains('I') || flags.contains('i'); // c:1412/1416 ind=1
                     let down = flags.contains('I') || flags.contains('R'); // c:1416/c:1418 down=1
                     let exact = flags.contains('e'); // c:Src/params.c:1419 e flag — literal compare, no glob
+                    let nth = num.unwrap_or(1).max(1) as usize;
+                    // c:Src/params.c — `(b.N.)` is 1-based offset
+                    // (start from the N-th element). Convert to
+                    // 0-based for slicing.
+                    let start_offset = (beg.unwrap_or(1) - 1).max(0) as usize;
                     let mut found_idx: Option<usize> = None; // c:1500
-                    let iter: Box<dyn Iterator<Item = (usize, &String)>> = if down {
-                        Box::new(arr.iter().enumerate().rev())
+                    let mut match_count: usize = 0;
+                    let arr_len = arr.len();
+                    let iter_range: Box<dyn Iterator<Item = usize>> = if down {
+                        let lo = start_offset.min(arr_len);
+                        Box::new((lo..arr_len).rev())
                     } else {
-                        Box::new(arr.iter().enumerate())
+                        let lo = start_offset.min(arr_len);
+                        Box::new(lo..arr_len)
                     };
-                    for (idx, elem) in iter {
+                    for idx in iter_range {
+                        let elem = &arr[idx];
                         let matched = if exact {
                             elem == &pat
                         } else {
@@ -4728,8 +4763,11 @@ pub fn paramsubst(
                                 .map_or(false, |__p| pattry(&__p, elem))
                         };
                         if matched {
-                            found_idx = Some(idx);
-                            break;
+                            match_count += 1;
+                            if match_count == nth {
+                                found_idx = Some(idx);
+                                break;
+                            }
                         }
                     }
                     match found_idx {
