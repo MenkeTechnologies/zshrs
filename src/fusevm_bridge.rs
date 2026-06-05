@@ -931,6 +931,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut clean_env = false;
         let mut login = false;
         let mut i = 0;
+        // c:Src/builtin.c:1075-1080 — track if any flag was consumed.
+        // `exec -c`, `exec -l`, `exec -a NAME` without a following
+        // command emit "exec requires a command to execute" rc=1.
+        // Bare `exec` (no args at all) is the silent-redirect-apply
+        // form per POSIX.
+        let mut saw_flag = false;
         while i < args.len() {
             let a = &args[i];
             if a == "--" {
@@ -949,6 +955,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // following) tried to exec `-` as a literal command and
             // exited the shell. Bug #252.
             if a == "-" {
+                saw_flag = true;
                 login = true;
                 args.remove(i);
                 continue;
@@ -958,16 +965,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             match a.as_str() {
                 "-a" => {
+                    saw_flag = true;
                     args.remove(i);
                     if i < args.len() {
                         argv0_override = Some(args.remove(i));
                     }
                 }
                 "-c" => {
+                    saw_flag = true;
                     clean_env = true;
                     args.remove(i);
                 }
                 "-l" => {
+                    saw_flag = true;
                     login = true;
                     args.remove(i);
                 }
@@ -975,6 +985,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         let Some(cmd) = args.first().cloned() else {
+            if saw_flag {
+                // c:Src/builtin.c:1078-1080 — flags consumed but no
+                // command follows → "exec requires a command to
+                // execute" rc=1.
+                eprintln!("zshrs:1: exec requires a command to execute");
+                return Value::Status(1);
+            }
             // `exec` with no command + no redirects = no-op success.
             return Value::Status(0);
         };
