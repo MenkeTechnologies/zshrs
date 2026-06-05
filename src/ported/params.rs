@@ -4969,6 +4969,46 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     level: 0,
                 }));
             }
+            "options" => {
+                // c:Src/Modules/parameter.c:926 setpmoption — userspace
+                // `options[X]=on|off` toggles option X via dosetopt, not
+                // a generic assoc-write. Build a synthetic Param whose
+                // node.nam carries the option name and dispatch to the
+                // canonical setpmoption port (`src/ported/modules/
+                // parameter.rs:1620`), which calls optlookup + dosetopt.
+                use crate::ported::zsh_h::hashnode;
+                use crate::ported::zsh_h::param as ParamStruct;
+                let pm: Box<ParamStruct> = Box::new(ParamStruct {
+                    node: hashnode {
+                        next: None,
+                        nam: key.to_string(),
+                        flags: 0,
+                    },
+                    u_data: 0,
+                    u_arr: None,
+                    u_str: None,
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                });
+                crate::ported::modules::parameter::setpmoption(
+                    pm.clone(),
+                    val.to_string(),
+                );
+                unqueue_signals();
+                return Some(pm);
+            }
             _ => {}
         }
     }
@@ -5053,12 +5093,18 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // table mutations that bypass `assignsparam` stay free. Bug
     // #242 in docs/BUGS.md.
     if subscript.is_some() {
+        // `options` is intentionally NOT in this list — C zsh's
+        // `setpmoption`/`setpmoptions` (Src/Modules/parameter.c:926-979)
+        // accept "on"/"off" writes and translate them to dosetopt calls.
+        // The `options` arm above this readonly-list check routes
+        // `options[X]=on|off` writes through the canonical setpmoption
+        // port, so by the time we reach here `options` has already
+        // returned. Bug #342.
         let is_readonly_magic = matches!(
             name,
             "builtins"
                 | "commands"
                 | "modules"
-                | "options"
                 | "parameters"
                 | "dis_builtins"
                 | "history"
