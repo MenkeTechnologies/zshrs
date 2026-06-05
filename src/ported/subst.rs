@@ -8952,11 +8952,47 @@ pub fn paramsubst(
                     cap_word(s) // c:3937
                 } // c:3937
             }; // c:3937
+            // c:Src/subst.c:2915 — `v->scanflags ? 1 : 0`. Any non-splat
+            // subscript (single-slot `[N]`, range `[N,M]`) collapses the
+            // array shape to the picked value(s) — the casmod must
+            // operate on that result, not refetch the source array.
+            // For sub-expression temps (`__subexp_arr_*` names produced
+            // by the multsub branch at line 4084), arrays_get(temp)
+            // returns the full split and would transform every element,
+            // producing e.g. "X Y Z" instead of "X" for
+            // `${(U)${(s. .)s}[1]}` or "X Y Z" instead of "X Y" for
+            // `${(U)${(s. .)s}[1,2]}`. Bug #195.
+            //
+            // Gate: skip the arrays_get refetch when a NON-SPLAT
+            // subscript was applied AND the source array is a subexp
+            // temp (the regular `${(U)arr[1]}` path is handled by the
+            // arrays-source casmod earlier; the temp arm is the unique
+            // case where subscript-collapsed value lives in `value`
+            // but arrays_get still resolves to the full array).
+            let has_non_splat_subscript = subscript
+                .as_deref()
+                .map_or(false, |s| s != "@" && s != "*");
+            let is_subexp_temp = var_name.starts_with("__subexp_arr_");
             if let Some(parts) = split_parts.clone() {
                 // c:3937
                 let new_parts: Vec<String> = parts.iter().map(|s| transform(s)).collect();
                 value = new_parts.join(" "); // c:3937
                 split_parts = Some(new_parts); // c:3937
+            } else if has_non_splat_subscript && is_subexp_temp {
+                // Subexp temp + non-splat subscript: value already
+                // holds the picked (single or sliced) result; for
+                // slices the value is the joined slice. To preserve
+                // array shape on slice, re-split on whitespace before
+                // transform. For single-slot, len=1 → transform-then-
+                // join is identity.
+                let parts: Vec<String> = value
+                    .split_whitespace()
+                    .map(|s| transform(s))
+                    .collect();
+                value = parts.join(" ");
+                if subscript.as_deref().map_or(false, |s| s.contains(',')) {
+                    split_parts = Some(parts);
+                }
             } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| transform(s)).collect();
                 value = new_arr.join(" "); // c:3937
