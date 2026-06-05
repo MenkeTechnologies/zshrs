@@ -16895,14 +16895,32 @@ a function instead of an alias.
 
 ## #210 — `(unfunction f)` / `(zmodload module)` mutate parent shell state
 
-**Status:** `partial-fix` 2026-06-02 — `(unfunction f)` no
-longer leaks (fixed by the #208 subshell shfunc snapshot
-patch — same snapshot/restore machinery handles both
-add/define and remove/unfunction via the
-shfunctab+functions_compiled+function_source triple).
-`(zmodload module)` still leaks: modulestab snapshot would
-require module-clone plumbing that's deferred. See
-`Verify (post-fix)` below.
+**Status:** `fixed` 2026-06-05 — both `(unfunction f)` and
+`(zmodload module)` are now properly contained in the
+subshell.
+
+Earlier partial-fix (2026-06-02) closed `(unfunction f)` via
+the #208 shfunctab snapshot. The remaining `(zmodload)`
+leak is now closed by snapshotting the modulestab module
+flags at subshell entry and restoring on subshell_end.
+
+**Fix** — three-part addition:
+
+1. `src/vm_helper.rs::SubshellSnapshot` — new
+   `modules: HashMap<String, i32>` field. Stores
+   `(module_name → flags_bitmask)` snapshot since the
+   `module` struct itself doesn't derive `Clone` (carries
+   `LinkList<String>` and `Linkedmod`) — and `zmodload`'s
+   only introspection-visible mutation IS the flags
+   bitmask (`MOD_INIT_B` for loaded, `MOD_UNLOAD` for
+   unloaded).
+2. `src/fusevm_bridge.rs::host_subshell_begin` — at
+   subshell entry, walk `MODULESTAB.modules` and collect
+   `(name, flags)` pairs into the snapshot.
+3. `src/fusevm_bridge.rs::subshell_end` — restore each
+   module's flags from the snapshot via per-entry write
+   so any subshell `zmodload` that flipped
+   `MOD_INIT_B` rolls back cleanly.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { echo body; }; (unfunction f); echo "after"; type f 2>&1'
@@ -48038,7 +48056,7 @@ no longer reports the internal trap-machinery scalar.
 | 207 | `emulate ksh` doesn't apply `KSH_ARRAYS`/`BSD_ECHO`/etc option bundle | **fixed** 2026-06-02 | explicit `setopt ksh_arrays` after |
 | 208 | Function defined inside `(...)` subshell leaks into parent shell | **fixed** 2026-06-02 | n/a |
 | 209 | Alias defined inside `(...)` subshell leaks into parent shell | **fixed** 2026-06-02 | explicit `unalias` after |
-| 210 | `(unfunction f)`/`(zmodload m)` in subshell mutate parent state (destructive) | **partial-fix** 2026-06-02 (unfunction fixed via #208; zmodload deferred) | n/a (unfunction); avoid `(zmodload …)` |
+| 210 | `(unfunction f)`/`(zmodload m)` in subshell mutate parent state (destructive) | fixed | (unfunction fixed 2026-06-02 via #208; zmodload fixed 2026-06-05 by adding `modules: HashMap<String, i32>` flag snapshot to SubshellSnapshot + per-entry restore in subshell_end) |
 | 211 | `$-` (option chars) missing `f`/other letters (option-to-char table incomplete) | **fixed** 2026-06-02 | use `setopt \| grep ...` instead |
 | 212 | `${(b)str}` over-escapes non-glob chars (tab, etc) — extra `\` inserted | **fixed** 2026-06-02 | n/a |
 | 213 | `${assoc[(R)value]}` reverse-search-by-value errors `bad substitution` | **fixed** 2026-06-02 | manual `for k v in "${(@kv)h}"` loop |

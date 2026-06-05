@@ -257,6 +257,19 @@ pub struct SubshellSnapshot {
     /// parent's source after subshell exit, not the subshell's
     /// overridden body. Bug #208 in docs/BUGS.md.
     pub function_source: HashMap<String, String>,
+    /// Parent's modulestab `modules` map at subshell entry. zsh forks
+    /// for `(...)` so a `(zmodload zsh/X)` inside the subshell sets
+    /// MOD_INIT_B on the child's modulestab; when the child exits the
+    /// flag dies with it and the parent's modulestab is untouched.
+    /// zshrs runs subshells in-process, so a subshell `zmodload`
+    /// would otherwise flip the parent's `${modules[zsh/X]}` from
+    /// unset to "loaded". Snapshot here and restore on subshell_end.
+    /// Bug #210 in docs/BUGS.md. Stored as `(name → flags)`
+    /// since `module` struct doesn't derive Clone (LinkList/
+    /// Linkedmod) — and the only thing `zmodload` mutates that
+    /// affects introspection is the flags bitmask (MOD_INIT_B
+    /// for loaded, MOD_UNLOAD for unloaded).
+    pub modules: HashMap<String, i32>,
 }
 
 #[allow(unused_imports)]

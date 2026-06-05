@@ -6606,6 +6606,26 @@ impl fusevm::ShellHost for ZshrsHost {
                     .unwrap_or_default(),
                 functions_compiled: exec.functions_compiled.clone(),
                 function_source: exec.function_source.clone(),
+                // c:Src/exec.c::entersubsh — subshell forks its own
+                // modulestab. A `(zmodload zsh/X)` inside the
+                // subshell flips MOD_INIT_B on the CHILD's
+                // modulestab; when the child exits the change
+                // dies with it. zshrs's in-process subshell would
+                // otherwise leak the load to the parent.
+                // Bug #210 in docs/BUGS.md. Snapshot just the
+                // (name → flags) pairs since the only mutating
+                // field is the flags bitmask (MOD_INIT_B for
+                // loaded, MOD_UNLOAD for unloaded).
+                modules: crate::ported::module::MODULESTAB
+                    .lock()
+                    .ok()
+                    .map(|t| {
+                        t.modules
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.node.flags))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             });
             // Subshell starts with EXIT trap cleared so the parent's
             // EXIT handler doesn't fire when the subshell ends. zsh:
@@ -6750,6 +6770,18 @@ impl fusevm::ShellHost for ZshrsHost {
                 // still run the override.
                 exec.functions_compiled = snap.functions_compiled;
                 exec.function_source = snap.function_source;
+                // c:Src/exec.c::entersubsh — restore parent's
+                // modulestab so a subshell `(zmodload zsh/X)` doesn't
+                // leak to the parent. Bug #210 in docs/BUGS.md.
+                // Restore via per-module flag write since the
+                // snapshot is `(name → flags)` only.
+                if let Ok(mut t) = crate::ported::module::MODULESTAB.lock() {
+                    for (name, saved_flags) in &snap.modules {
+                        if let Some(m) = t.modules.get_mut(name) {
+                            m.node.flags = *saved_flags;
+                        }
+                    }
+                }
             }
         });
         // Decrement SUBSHELL_DEPTH. If a deferred subshell exit
