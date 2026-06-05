@@ -19,7 +19,7 @@ use crate::ported::utils::{errflag, zwarnnam};
 use crate::ported::zsh_h::PAT_HEAPDUP;
 use crate::ported::zsh_h::{
     eprog, features, hashnode, isset, module, opt_name, options, param, Eprog, HashNode, Param,
-    Patprog, ERRFLAG_INT, EXTENDEDGLOB, OPT_ISSET, PAT_STATIC, PM_ARRAY,
+    Patprog, ERRFLAG_INT, EXTENDEDGLOB, MAX_OPS, OPT_ISSET, PAT_STATIC, PM_ARRAY,
 };
 use std::collections::HashMap;
 use std::io::Write;
@@ -837,17 +837,105 @@ pub fn testforstyle(ctxt: &str, style: &str) -> i32 {
 pub fn bin_zstyle(
     nam: &str,
     args: &[String], // c:487
-    ops: &options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
-    // c:495-540 — flag dispatch backed by the global zstyletab.
-    // c:495-498 — `args.empty()` means "no positional args"; the
-    // canonical bare-`zstyle` list form. zsh's C body checks
-    // listflags / `-L`/`-l` BEFORE this so the -L/-l output can
-    // still flow through with no positional args (the form
-    // `zstyle -L`). Mirror by gating this bare-list arm on flags
-    // being clear of -L/-l; otherwise fall through to the
-    // OPT_ISSET(L|l) arm below.
+    // c:Src/Modules/zutil.c:487 — bin_zstyle parses args[0] directly
+    // (BUILTIN spec has NULL optstr at c:2139) so the dispatch order
+    // and unknown-flag diagnostic match zsh exactly. Build a local
+    // `options` struct here, mirroring what execbuiltin's option
+    // parser would have produced if there had been an optstr — then
+    // the existing OPT_ISSET-driven flag arms below run unchanged.
+    //
+    // C flow at c:491-512 + c:587-600:
+    //   - !args[0]                         → bare list mode
+    //   - args[0] == "-" or "--"           → lone dash; positional follows
+    //   - args[0] starts with -X + extra   → "invalid argument: %s"
+    //   - args[0] == "-L"                  → list mode (ZSLIST_SYNTAX)
+    //   - args[0] == "-e"                  → eval+add (handled like setstyle)
+    //   - args[0] == "-d|-s|-b|-a|-t|-T|-m|-g" → action mode (positional follows)
+    //   - else any other "-X"              → "invalid option: -X" rc=1
+    let mut ops_local = options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    };
+    let mut positional_start = 0;
+    if let Some(first) = args.first() {
+        let fb = first.as_bytes();
+        if fb.first() == Some(&b'-') && fb.len() >= 2 && fb[1] != b'-' {
+            if fb.len() > 2 {
+                // c:497-499 — extra chars after the option letter
+                // (e.g. `-Lx`) → "invalid argument: -Lx" rc=1.
+                crate::ported::utils::zwarnnam(
+                    nam,
+                    &format!("invalid argument: {}", first),
+                );
+                return 1;
+            }
+            let oc = fb[1];
+            if matches!(
+                oc,
+                b'L' | b'l'
+                    | b'e'
+                    | b'd'
+                    | b's'
+                    | b'b'
+                    | b'a'
+                    | b't'
+                    | b'T'
+                    | b'm'
+                    | b'g'
+                    | b'n'
+                    | b'H'
+            ) {
+                ops_local.ind[oc as usize] = 1;
+                positional_start = 1;
+            } else {
+                // c:597-599 default arm — "invalid option: -X".
+                crate::ported::utils::zwarnnam(
+                    nam,
+                    &format!("invalid option: {}", first),
+                );
+                return 1;
+            }
+        } else if fb == b"-" || fb == b"--" {
+            // c:508-511 — lone `-` or `--` with no following positional
+            // is "not enough arguments" (the lone dash implies set-style
+            // mode which requires ≥2 positionals).
+            if args.len() == 1 {
+                crate::ported::utils::zwarnnam(nam, "not enough arguments");
+                return 1;
+            }
+            positional_start = 1;
+        }
+    }
+    let args: &[String] = &args[positional_start..];
+    let ops: &options = &ops_local;
+    // c:Src/Modules/zutil.c:588-604 — min-args check per action flag.
+    // After the args[0] option is consumed, the remaining positionals
+    // must satisfy each action's min count or "not enough arguments"
+    // fires. Without this gate `zstyle -g`, `-s`, `-t`, `-T` (etc.)
+    // silently returned rc=1 instead of emitting the canonical
+    // diagnostic.
+    let min_args = if OPT_ISSET(ops, b'd') {
+        0
+    } else if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'b') || OPT_ISSET(ops, b'a')
+        || OPT_ISSET(ops, b'm')
+    {
+        3
+    } else if OPT_ISSET(ops, b't') || OPT_ISSET(ops, b'T') {
+        2
+    } else if OPT_ISSET(ops, b'g') {
+        1
+    } else {
+        0 // L/l/e/n/H or no flag — no min check at this layer
+    };
+    if args.len() < min_args {
+        crate::ported::utils::zwarnnam(nam, "not enough arguments");
+        return 1;
+    }
     if args.is_empty() && !OPT_ISSET(ops, b'L') && !OPT_ISSET(ops, b'l') {
         // c:Src/Modules/zutil.c:184-216 printstylenode in ZSLIST_BASIC
         // mode: emit one block per style — first the style name on its
