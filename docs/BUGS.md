@@ -30062,9 +30062,17 @@ formatting, etc.
 
 ## #363 — `${(z)cmd}` tokenize-flag drops comment tokens and doesn't preserve `$VAR` literals
 
-**Status:** `partial fix` — comment-token handling fixed; `$VAR`
-literal preservation is a separate re-expansion issue under DQ
-splat; 2026-06-02.
+**Status:** `fixed` 2026-06-05 — two-part fix. The initial
+comment-token fix (2026-06-02) closed the LEXFLAGS_COMMENTS_KEEP/
+STRIP gate inversion. The `$VAR` re-expansion gap was closed
+2026-06-05: in DQ context `"${(z)c}"` produced a single-element
+result because (a) c:3032 sepjoin collapsed the splat shape
+(fixed by setting isarr=-1 in DQ when shsplit is active, mirroring
+the `[@]` SCANPM_ISVAR_AT case) and (b) `$VAR` in the tokenized
+words triggered downstream stringsubst re-expansion (fixed by
+Bnull-prefixing `$` and `` ` `` chars so they survive
+stringsubst's expansion arms and untokenize to literal at the
+final pass — mirrors C bufferwords' tokenized output).
 
 **Root cause (comments)** — `src/ported/subst.rs::paramsubst`
 `(z)` tokenizer treated the `#` arm as:
@@ -48217,7 +48225,7 @@ no longer reports the internal trap-machinery scalar.
 | 360 | `functions -M name N M handler` math-function registration not implemented — DSL/sci-arith patterns broken | **fixed** 2026-06-02 | call shell fn directly with `$REPLY` capture |
 | 361 | `typeset -R N` width-flag doesn't truncate values longer than N — overflow ruins fixed-width column alignment | **fixed** 2026-06-02 | manual `[[ ${#s} -gt N ]] && s="${s: -N}"` |
 | 362 | `typeset -Z N` zero-pad doesn't truncate values wider than N — extra digits leak through | **fixed** 2026-06-02 | manual truncate before assign |
-| 363 | `${(z)cmd}` tokenize-flag drops comment tokens AND doesn't preserve `$VAR` literals — completion/parsing tools break | **fixed** 2026-06-02 | strip `#*` before tokenizing (partial fix) |
+| 363 | `${(z)cmd}` tokenize-flag drops comment tokens AND doesn't preserve `$VAR` literals — completion/parsing tools break | fixed | both gaps closed: comment-token gate (2026-06-02) + DQ-splat preservation via isarr=-1 in shsplit-active path + Bnull-prefix `$`/`` ` `` to prevent stringsubst re-expansion (2026-06-05) |
 | 364 | `$'\uNNNN'` Unicode-codepoint escape in C-string not interpreted — emits literal `uNNNN` | **fixed** 2026-06-02 | embed Unicode chars literally in source |
 | 365 | `${s/multibyte_char/repl}` substitution PANICS with "not a char boundary" — **CRITICAL CRASH** | fixed | crash guarded via is_char_boundary (2026-06-02); functional multibyte substitution now works (2026-06-05) — `escape_bare_alt_pipes` was byte-walking the pattern and re-encoding each byte as a Unicode codepoint, mangling `é`→`Ã©`; switched to char iteration |
 | 366 | `h[multibyte_key]=v` assoc with UTF-8 key PANICS with "not a char boundary" — **CRITICAL CRASH** | fixed | (closed by #365 — compile_zsh parse_param_modifier byte-slice now `is_char_boundary`-guarded) |
