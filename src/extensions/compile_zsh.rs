@@ -806,15 +806,50 @@ impl ZshCompiler {
             ZshCommand::Redirected(inner, redirs) => {
                 // c:Src/exec.c — `f() { ... } > file` parses as
                 // Redirected(FuncDef(...), [redirs]). The redirects
-                // are meant to attach to the FUNCTION (apply at call
-                // time), not open at definition time. zsh defers the
-                // open via Shfunc.redir. zshrs's funcdef storage
-                // doesn't carry a redir chain yet, so the simplest
-                // correctness fix is to SKIP the redirect-open at
-                // def time — that prevents the zero-byte file
-                // creation reported in bug #187 / #194. Full
-                // redirect-attached-to-fn semantic is #158, deferred.
+                // attach to the FUNCTION (apply at call time), not at
+                // definition time. zsh defers the open via Shfunc.redir
+                // applied around the body during execfuncdef-driven
+                // doshfunc. zshrs's funcdef storage doesn't carry a
+                // separate redir chain — instead, wrap the body
+                // AST in a Redirected node BEFORE compile_funcdef
+                // runs, so the compiled body chunk itself begins with
+                // a WithRedirectsBegin/End scope. Mirrors the
+                // canonical zsh behaviour where `f` opens the redirs
+                // on every call. Bug #158.
                 if matches!(inner.as_ref(), ZshCommand::FuncDef(_)) {
+                    if let ZshCommand::FuncDef(mut f) = *inner.clone() {
+                        // Build a single-list body that wraps the
+                        // existing function body in
+                        // Redirected(Cursh(body), redirs). The Cursh
+                        // arm of compile_command already handles
+                        // WithRedirectsBegin/End around a brace group,
+                        // so reuse it instead of re-emitting the
+                        // redirect bytecode here.
+                        let inner_program = std::mem::replace(
+                            &mut f.body,
+                            Box::new(crate::parse::ZshProgram { lists: Vec::new() }),
+                        );
+                        let wrapped = ZshCommand::Redirected(
+                            Box::new(ZshCommand::Cursh(inner_program)),
+                            redirs.clone(),
+                        );
+                        let list = crate::parse::ZshList {
+                            sublist: crate::parse::ZshSublist {
+                                pipe: crate::parse::ZshPipe {
+                                    cmd: wrapped,
+                                    next: None,
+                                    lineno: 1,
+                                    merge_stderr: false,
+                                },
+                                next: None,
+                                flags: crate::parse::SublistFlags::default(),
+                            },
+                            flags: crate::parse::ListFlags::default(),
+                        };
+                        f.body = Box::new(crate::parse::ZshProgram { lists: vec![list] });
+                        self.compile_command(&ZshCommand::FuncDef(f));
+                        return;
+                    }
                     self.compile_command(inner);
                     return;
                 }
