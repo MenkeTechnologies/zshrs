@@ -40179,6 +40179,63 @@ done
 
 ## #504 — bash-only `mapfile`/`readarray` shipped as builtins in `--zsh` mode
 
+**Status:** `fixed` 2026-06-05 — compile path now routes
+`mapfile`/`readarray`/`compopt` through `Op::CallFunction` in
+`--zsh` mode so `host_exec_external` prints the canonical
+"command not found" diagnostic with the user-typed name.
+
+**Root cause** — fusevm reserves `BUILTIN_MAPFILE` (id 31)
+and `BUILTIN_COMPOPT` (id 132) for the bash `mapfile`/
+`readarray`/`compopt` builtins. compile_zsh's dispatch path
+looks up the name via `fusevm::shell_builtins::builtin_id`
+and emits `Op::CallBuiltin(31, …)` / `Op::CallBuiltin(132,
+…)` directly. Neither opcode had a host handler registered
+in `fusevm_bridge.rs::register_builtins`, so fusevm's VM
+treated the op as a no-op rc=0 — the bash-only builtins
+silently succeeded. The pre-existing gate in
+`dispatch_builtin_raw` (line 201-207) never fired because
+the compile path bypassed `dispatch_builtin_raw` entirely.
+
+**Fix** — `src/extensions/compile_zsh.rs::compile_simple`
+dispatch arm — when the command word is `mapfile`,
+`readarray`, or `compopt` AND `IS_ZSH_MODE` is set, force
+`builtin_id = None` so the rest of the path emits
+`Op::CallFunction(name_idx, argc)`. fusevm's VM falls
+through `call_function` → `dispatch_function_call` (returns
+None — no shfunc) → `h.exec(full)` →
+`ZshrsHost::exec` → `host_exec_external` →
+`execute_external` which prints
+`zsh:1: command not found: <name>` and returns 127. The
+diagnostic carries the actual user-typed name
+(`mapfile` vs `readarray`).
+
+A defensive
+`BUILTIN_MAPFILE` host handler is also registered in
+`src/fusevm_bridge.rs::register_builtins` so any unexpected
+direct-emit path (legacy bytecode caches, future internal
+callers) still produces the right diagnostic instead of a
+silent rc=0.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'mapfile; echo rc=$?'
+zsh:1: command not found: mapfile
+rc=127
+$ ./target/debug/zshrs --zsh -c 'readarray; echo rc=$?'
+zsh:1: command not found: readarray
+rc=127
+$ ./target/debug/zshrs --zsh -c 'compopt; echo rc=$?'
+zsh:1: command not found: compopt
+rc=127
+```
+
+All three match `/opt/homebrew/bin/zsh -fc` byte-for-byte.
+
+Baseline preserved: 970/82 zshrs_shell tests.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47402,7 +47459,7 @@ no longer reports the internal trap-machinery scalar.
 | 372 | `print -P "%F{invalid}"` drops entire format instead of emitting default-color escape | **fixed** 2026-06-02 | use ANSI escapes directly |
 | 373 | `pipestatus=(...)` user-overwrite accepted — pipestatus not readonly (zsh: silently rejects) | **fixed** 2026-06-02 | defensive copy before user-code |
 | 374 | `reswords=...` user-overwrite accepted — reswords not readonly (zsh: "read-only variable") | **fixed** 2026-06-02 | defensive copy |
-| 375 | `commands[name]=path` slice-write accepted — security-relevant cmd-cache poisoning (zsh: "attempt to set slice") | **port-bug** | use `whence -p` / `command -v` for path resolution |
+| 375 | `commands[name]=path` slice-write accepted — security-relevant cmd-cache poisoning (zsh: "attempt to set slice") | fixed | (assignsparam readonly-magic-assoc list rejects slice writes with `read-only variable: commands`; stricter than current brew zsh, blocks `commands[sudo]=` rewrite) |
 | 376 | `zmodload zsh/nonexistent` silent failure — missing dlopen error message (zsh: "failed to load module: dlopen…") | **fixed** 2026-06-04 | probe module file existence manually |
 | 377 | `zmodload` no-args lists *available* modules instead of *loaded* modules (zsh: just `zsh/main`) | **fixed** 2026-06-02 | track loaded modules manually in user assoc |
 | 378 | `${#var}` ignores locale — always char count even in C/POSIX (zsh: byte count when LC_CTYPE not UTF-8) | **fixed** 2026-06-02 | `wc -c` for byte count |
@@ -47426,7 +47483,7 @@ no longer reports the internal trap-machinery scalar.
 | 396 | `$funcsourcetrace` records `:0` instead of `:1` for function-definition line (parallel to #385 LINENO base) | **fixed** 2026-06-02 | `$(( line + 1 ))` adjust when emitting |
 | 397 | **CRITICAL** `printf "X" > FILE` writes to BOTH stdout AND file — builtin bypasses shell redirection (echo/print work) | **fixed** 2026-06-02 | use `print -r --` instead, or wrap printf in subshell |
 | 398 | `printf` unknown directives (`%Z`/`%K`/`%A`/`%a`/`%T`/`%(…)T`) printed literally instead of erroring (zsh: "invalid directive") | **fixed** 2026-06-02 | manually validate format strings; check stderr for "invalid directive" |
-| 399 | `*(YN)` glob qualifier limit-to-N-matches ignored — returns all matches (zsh: caps at N) | **port-bug** | `( *(om) )` then array-slice `[1,N]` |
+| 399 | `*(YN)` glob qualifier limit-to-N-matches ignored — returns all matches (zsh: caps at N) | fixed | (Y count applied; result capped at N; default-sort ordering diff still present, separate from count-limit) |
 | 400 | `case ... esack` typo silently accepted — missing `esac` close-token strict check (zsh: parse error) | fixed | (par_case EOF branch now yyerrors "unmatched `case'"; rc=1 like zsh) |
 | 401 | `select x in;` empty option list prompts/reads stdin instead of skipping body (zsh: skips, no prompt) | **fixed** 2026-06-02 | guard `(( ${#opts} > 0 ))` before select |
 | 402 | `let "x=5/0"` arith-error rc=2 instead of 1 — script error-classification diverges | **port-bug** | collapse `\|\|` instead of branching on `$?` |
@@ -47531,7 +47588,7 @@ no longer reports the internal trap-machinery scalar.
 | 501 | `pushd` empty-stack no-args rc=1 instead of zsh's rc=0 — extends #487 pushd-no-args family | **fixed** 2026-06-04 | n/a |
 | 502 | `typeset -a b=($var)` word-splits unquoted `$var` (plain `b=($var)` works) — typeset/local/readonly arg-parse path splits incorrectly | **fixed** 2026-06-04 | n/a |
 | 503 | `${(@k)empty_assoc}` produces one empty-string iteration — should be zero (zsh: skip loop entirely) | **fixed** 2026-06-04 | n/a |
-| 504 | bash-only `mapfile`/`readarray` shipped as builtins in `--zsh` mode — extends #475 bash-compat-contamination | **port-bug** | use `$ZSH_VERSION`/`$BASH_VERSION` for detection |
+| 504 | bash-only `mapfile`/`readarray` shipped as builtins in `--zsh` mode — extends #475 bash-compat-contamination | fixed | (compile path routes mapfile/readarray/compopt through `Op::CallFunction` in `--zsh` mode → `host_exec_external` → canonical `command not found: <name>` + rc=127) |
 | 505 | `integer x="STRING"` silently coerces to 0 — zsh errors "bad math expression" (extends #411/#494 coercion family) | **fixed** 2026-06-04 | n/a |
 | 506 | `float f="3.14abc"` silently coerces to 0.0 — zsh errors "bad math expression" (extends #505) | **fixed** 2026-06-04 | n/a |
 | 507 | `${(Q)var}` unquote-flag with `\"` in value drops the `"` instead of keeping it — round-trips via `(q)`+`(Q)` incorrect | **fixed** 2026-06-04 | unquote_one only strips `'`/`"` when balanced; orphan quotes survive as literals |

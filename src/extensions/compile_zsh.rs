@@ -1658,6 +1658,20 @@ impl ZshCompiler {
             // at bin_break c:5865 never fired. Route through
             // BUILTIN_LOGOUT which dispatches by name "logout".
             Some(crate::vm_helper::BUILTIN_LOGOUT)
+        } else if (dispatch_first_raw == "mapfile" || first_clean == "mapfile"
+                || dispatch_first_raw == "readarray" || first_clean == "readarray"
+                || dispatch_first_raw == "compopt" || first_clean == "compopt")
+            && crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            // c:Bug #504 — bash `mapfile`/`readarray`/`compopt` map to
+            // dedicated fusevm opcodes (BUILTIN_MAPFILE, BUILTIN_COMPOPT)
+            // but zshrs has no host handler — fusevm's VM no-ops the op
+            // and returns rc=0, silently succeeding bash-only builtins
+            // in --zsh parity mode. Route through Op::CallFunction so
+            // host_exec_external prints the canonical
+            // "command not found: <name>" diagnostic + rc=127 matching
+            // zsh's external-command-lookup miss.
+            None
         } else {
             // Try the raw form first (handles already-untokenized inputs
             // from internal callers); fall back to the cleaned form so

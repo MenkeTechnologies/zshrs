@@ -636,6 +636,36 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     reg_passthru!(vm, BUILTIN_INTEGER, "integer");
     reg_passthru!(vm, BUILTIN_FLOAT, "float");
     reg_passthru!(vm, BUILTIN_READ, "read");
+    // c:Bug #504 — fusevm reserves BUILTIN_MAPFILE for the bash
+    // mapfile/readarray builtins. Neither exists in zsh; in --zsh
+    // parity mode the dispatch must emit "command not found" + rc=127
+    // matching zsh's external-command-lookup miss. The previous wiring
+    // left BUILTIN_MAPFILE unregistered, so fusevm's VM treated the op
+    // as a no-op rc=0 — `mapfile` (and `readarray`) silently succeeded
+    // in --zsh mode. The host gate in `dispatch_builtin_raw` never
+    // fired because the compile path emitted `Op::CallBuiltin(31, ..)`
+    // directly. Register the slot so the gate runs (or a future
+    // non-zsh mode can wire in a real impl).
+    vm.register_builtin(fusevm::shell_builtins::BUILTIN_MAPFILE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        // The fusevm name→id map collapses both `mapfile` and
+        // `readarray` to the same opcode; pick the right diagnostic
+        // by sniffing the user's actual invocation. The xtrace ARGS
+        // push earlier records the cmd-prefix as the bottom of the
+        // popped argv, but `args` here excludes the prefix — so we
+        // can't recover the user-typed name from the stack. Default
+        // to `mapfile` (the more-common spelling); both produce
+        // identical diagnostics in any case.
+        if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("zsh:1: command not found: mapfile");
+            let _ = args;
+            return Value::Status(127);
+        }
+        // Non-zsh modes (bash drop-in) get a passthru to the canonical
+        // dispatcher in case a future port adds a real mapfile builtin
+        // — until then the rc=1 unknown-command default applies.
+        Value::Status(dispatch_builtin("mapfile", args))
+    });
     reg_passthru!(vm, BUILTIN_BREAK, "break");
     reg_passthru!(vm, BUILTIN_CONTINUE, "continue");
     reg_passthru!(vm, BUILTIN_SHIFT, "shift");
