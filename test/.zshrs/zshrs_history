@@ -1,0 +1,2 @@
+: 1780675675:0;declare HOME=test; echo $HOME
+: 1780675675:0;typeset HOME=test; typeset -p HOME
