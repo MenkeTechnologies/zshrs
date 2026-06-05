@@ -1190,10 +1190,19 @@ pub fn gmatchcmp(
         let follow = (key & GS_LINKED) != 0;
         let key_unshifted = if follow { key >> GS_SHIFT } else { key };
         let cmp = if key_unshifted == GS_NAME {
-            // c:945
+            // c:945 — `gmatch->name` in C zsh is the FULL match string
+            // (Src/glob.c sets it from the accumulated path during the
+            // scanner walk), so the qsort comparator inherently sorts by
+            // full path. The Rust port stores the basename in `name`;
+            // use `path` instead so `**/*` matches the full-path
+            // lexicographic order zsh produces. Verified vs
+            // /opt/homebrew/bin/zsh: `echo /tmp/rg/**/*` → `f sub sub/g`
+            // (sorted by full path, not basename).
+            let a_full = a.path.to_string_lossy();
+            let b_full = b.path.to_string_lossy();
             zstrcmp(
-                &a.name,
-                &b.name,
+                &a_full,
+                &b_full,
                 if numeric_sort {
                     crate::zsh_h::SORTIT_NUMERICALLY as u32
                 } else {
