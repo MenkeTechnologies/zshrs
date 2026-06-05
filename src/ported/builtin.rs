@@ -11900,7 +11900,14 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             0,
             -1,
             0,
-            Some("LeLdgabsTtmnH"),
+            // c:Src/Modules/zutil.c:2139 — `BUILTIN("zstyle", 0,
+            // bin_zstyle, 0, -1, 0, NULL, NULL)`. NULL optstr: bin_zstyle
+            // parses args[0] directly (see c:493-512 + c:587-600) so the
+            // diagnostic format for unknown flags matches zsh's
+            // "invalid option: -X" (the execbuiltin generic parser would
+            // have emitted "bad option: -X" which diverges from zsh).
+            // Bug surfaced via test_zstyle_unknown_flag_errors.
+            None,
             None,
         ),
         BUILTIN(
