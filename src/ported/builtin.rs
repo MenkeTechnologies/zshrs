@@ -2872,7 +2872,12 @@ pub fn fclist(
             if !OPT_ISSET(ops, b'n') {
                 let _ = write!(out, "{:>5}", ev);
                 if OPT_ISSET(ops, b'D') {
-                    let _ = write!(out, "{:>10}", entry.stim - entry.ftim);
+                    // c:Src/builtin.c — `-D` shows duration as M:SS.
+                    // C: `fprintf(f, "%d:%02d", (int)(d/60), (int)(d%60))`.
+                    // Direct ftim-minus-stim duration in seconds, then
+                    // M:SS layout (zero-pad seconds, no zero-pad minutes).
+                    let dur = entry.ftim.saturating_sub(entry.stim).max(0);
+                    let _ = write!(out, "  {}:{:02}", dur / 60, dur % 60);
                 }
                 if let Some(fmt) = tdfmt {
                     // c:1817 — `strftime(timebuf, 256, tdfmt,
