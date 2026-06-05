@@ -9452,9 +9452,6 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
     } else if t == PM_HASHED {
         if (printflags & PRINT_KV_PAIR) == 0 {
             print!("(");
-            if (printflags & PRINT_LINE) == 0 {
-                print!(" ");
-            }
         }
         // c:Src/params.c:6108-6110 — `scanhashtable(ht, 1, 0,
         //   PM_UNSET, ht->printnode, PRINT_KV_PAIR | (printflags &
@@ -9468,6 +9465,7 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
         // `k v` form otherwise — so `typeset h` for an assoc
         // printed `h=''` instead of `h=( [a]=1 [b]=2 )`. Bug #218
         // in docs/BUGS.md.
+        let mut had_entries = false;
         if let Ok(stor) = paramtab_hashed_storage().lock() {
             if let Some(map) = stor.get(&p.node.nam) {
                 let mut entries: Vec<(&String, &String)> = map.iter().collect();
@@ -9475,7 +9473,18 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
                 let mut first = true;
                 for (k, v) in entries {
                     if first {
+                        // Leading space before first entry
+                        // (only when not in PRINT_KV_PAIR mode).
+                        if (printflags & PRINT_KV_PAIR) == 0
+                            && (printflags & PRINT_LINE) == 0
+                        {
+                            print!(" ");
+                        }
+                        if (printflags & PRINT_LINE) != 0 {
+                            print!("\n  ");
+                        }
                         first = false;
+                        had_entries = true;
                     } else if (printflags & PRINT_LINE) != 0 {
                         print!("\n  ");
                     } else {
@@ -9488,11 +9497,17 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
             }
         }
         if (printflags & PRINT_KV_PAIR) == 0 {
+            // c:Src/params.c — empty assoc prints `( )` (single
+            // space between parens). Non-empty: `( [k]=v )` (space
+            // before first + space before close paren). Verified vs
+            // /opt/homebrew/bin/zsh: `declare -Ax h; declare -p h`
+            // → `typeset -Ax h=( )`.
             if (printflags & PRINT_LINE) == 0 {
                 print!(" ");
             }
             print!(")");
         }
+        let _ = had_entries;
     }
 }
 
