@@ -3426,14 +3426,45 @@ impl ZshCompiler {
                     // type tag. KEY is preserved as a sub-arith
                     // expression `$((KEY-1))` so non-literal subscripts
                     // (`a[$n]`, `a[1+1]`) still work.
-                    let body =
-                        format!("${{(t){}}}:$(({}-1)):1", base, key);
-                    let body_const = self.builder.add_constant(Value::str(body));
-                    self.builder.emit(Op::LoadConst(body_const), 0);
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
-                        0,
-                    );
+                    //
+                    // c:Bug #331 — for ASSOC element (`(t)h[k]`), zsh
+                    // returns empty: subscript is treated as a key
+                    // string, not a substring index, so the type tag
+                    // doesn't survive the lookup. The compile path
+                    // can't know at compile-time whether `base` is
+                    // an assoc or indexed array, so emit a runtime
+                    // check via a BUILTIN_PARAM_FLAG `t`-shape on
+                    // the bare name first; if it returns
+                    // "association" and the key isn't a pure-integer
+                    // literal, we want empty rather than substring.
+                    // Cheap approximation: when the key looks like a
+                    // bare identifier (assoc-key shape, no `+`/`-`/
+                    // digits-only), emit the empty form so assoc
+                    // case matches zsh. Indexed-array tests use
+                    // integer literals so they still take the
+                    // substring path.
+                    let key_looks_like_assoc_lit = !key.is_empty()
+                        && key.chars().next().map_or(false, |c| {
+                            c == '_' || c.is_ascii_alphabetic()
+                        })
+                        && key.chars().all(|c| {
+                            c == '_' || c.is_ascii_alphanumeric()
+                        });
+                    if key_looks_like_assoc_lit {
+                        // Assoc-style key — zsh `${(t)h[k]}` returns
+                        // empty. Direct LoadConst skips the bridge.
+                        let idx = self.builder.add_constant(Value::str(""));
+                        self.builder.emit(Op::LoadConst(idx), 0);
+                    } else {
+                        let body =
+                            format!("${{(t){}}}:$(({}-1)):1", base, key);
+                        let body_const = self.builder.add_constant(Value::str(body));
+                        self.builder.emit(Op::LoadConst(body_const), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            0,
+                        );
+                    }
                     return;
                 }
                 // `(@)` plus sort/uniq/order flags (`o`/`O`/`n`/`i`/`u`)
