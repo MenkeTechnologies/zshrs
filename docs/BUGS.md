@@ -28909,7 +28909,23 @@ some_command | tee /dev/stderr | while read line; do ...; done
 
 ## #347 — `read -z` flag (read from command buffer) not implemented
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — `bin_read` now handles `-z` by
+popping the front of `BUFSTACK` (the ZLE bufstack populated by
+`print -z`) and treating that string as the read source. Mirrors
+`Src/builtin.c:6769-6770` (init `zbuf`) + `c:7110-7115` (empty-pop
+returns 1 after assigning ""). Respects `-r`/`-R` (raw) and `-d`
+(delimiter) just like the fd path.
+
+```
+$ ./target/debug/zshrs --zsh -fc 'print -z "from-buf"; read -z line; echo "[$line]"'
+[from-buf]
+$ ./target/debug/zshrs --zsh -fc 'read -z empty; echo "rc=$? line=[$empty]"'
+rc=1 line=[]
+```
+
+Both match `/opt/homebrew/bin/zsh -fc` output exactly.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -z "from-buf"; read -z line; echo "[$line]"'
