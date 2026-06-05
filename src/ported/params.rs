@@ -9515,13 +9515,29 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         return;
     }
     if (f & PM_UNSET) != 0 {
+        // c:Src/params.c — PM_SPECIAL params (HOME/PATH/PWD/etc.)
+        // carry PM_UNSET when their u_str cache hasn't been seeded
+        // but the value is available via the GSU getfn. zshrs's
+        // -fc init path doesn't run createparamtable() so the env
+        // import + value-cache step is skipped — yet env::var()
+        // still gives a live value. Probe getsparam for a
+        // non-empty value before treating as truly unset so
+        // `typeset -p HOME` (which goes through this print) emits
+        // the expected `export HOME=…` line instead of nothing.
+        let has_special_value = (f & PM_SPECIAL) != 0
+            && hn.u_str.is_none()
+            && getsparam(&hn.node.nam).is_some();
         // c:6133-6143 — POSIX readonly/exported keep + PM_DEFAULTED
         // path: show as readonly/exported even if unset, with no
         // value (NAMEONLY).
         let posix_keep = (printflags & (PRINT_POSIX_READONLY | PRINT_POSIX_EXPORT)) != 0
             && (f & (PM_READONLY | PM_EXPORTED)) != 0;
         let defaulted = (f & PM_DEFAULTED) == PM_DEFAULTED; // c:6137
-        if posix_keep || defaulted {
+        if has_special_value {
+            // Seed u_str so the value-emit arm below picks it up.
+            hn.u_str = getsparam(&hn.node.nam);
+            hn.node.flags &= !(PM_UNSET as i32);
+        } else if posix_keep || defaulted {
             printflags |= PRINT_NAMEONLY;
         } else {
             return;
