@@ -11727,18 +11727,19 @@ mod tests {
                     .map(|pm| crate::ported::params::wordcharsgetfn(pm))
             })
             .unwrap_or_default();
-        let mut do_set = |val: String| {
-            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-                if let Some(pm) = tab.get_mut("WORDCHARS") {
-                    wordcharssetfn(pm, val);
-                }
-            }
+        // wordcharssetfn ignores its `_pm` arg and re-enters paramtab's
+        // read lock via inittyptab (sibling of the IFS deadlock above).
+        // Use a stack-local dummy pm instead of going through paramtab's
+        // write lock so the test never holds two paramtab locks at once.
+        let mut dummy = crate::ported::zsh_h::param::default();
+        let do_set = |dummy: &mut crate::ported::zsh_h::param, val: String| {
+            wordcharssetfn(dummy, val);
         };
-        do_set("é".to_string());
+        do_set(&mut dummy, "é".to_string());
         // 'é' is alphanumeric per Unicode → IWORD returns true via
         // is_alphanumeric short-circuit at c:4353. So we can't pin
         // the WORDCHARS-specific path with 'é'. Use a non-alnum char.
-        do_set(":".to_string());
+        do_set(&mut dummy, ":".to_string());
         // ':' is ASCII so wcsitype routes through TYPTAB (which now
         // has IWORD on ':' because wordcharssetfn called inittyptab).
         assert!(
@@ -11746,7 +11747,7 @@ mod tests {
             "c:4364 — wordchars membership through canonical global"
         );
         // Restore.
-        do_set(saved);
+        do_set(&mut dummy, saved);
     }
 
     /// `Src/utils.c:2090-2097` — `addmodulefd(fd, fdt)`. Stores the
@@ -12003,20 +12004,25 @@ mod tests {
             .ok()
             .and_then(|t| t.get("IFS").map(|pm| crate::ported::params::ifsgetfn(pm)))
             .unwrap_or_default();
-        let mut do_set = |val: String| {
-            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-                if let Some(pm) = tab.get_mut("IFS") {
-                    ifssetfn(pm, val);
-                }
-            }
+        // ifssetfn ignores its `_pm` arg (the C `gsu.s->setfn` receives
+        // the param but the IFS callback only touches the global `ifs`
+        // store + calls inittyptab). Calling through paramtab's write
+        // lock would deadlock because inittyptab() re-takes paramtab's
+        // read lock for the IFS walk (utils.rs:5028) — pthread rwlock
+        // forbids same-thread write→read upgrade. Pass a stack-local
+        // dummy pm instead so we never hold the paramtab lock during
+        // ifssetfn.
+        let mut dummy = crate::ported::zsh_h::param::default();
+        let do_set = |dummy: &mut crate::ported::zsh_h::param, val: String| {
+            ifssetfn(dummy, val);
         };
-        do_set(":".to_string());
+        do_set(&mut dummy, ":".to_string());
         assert!(
             wcsitype(':', ISEP as u32),
             "c:4367 — IFS membership through canonical global"
         );
         // Restore.
-        do_set(saved);
+        do_set(&mut dummy, saved);
     }
 
     /// c:536 — high-bit byte (>= 0x80) is nice when PRINTEIGHTBIT is

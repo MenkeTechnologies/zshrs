@@ -1202,11 +1202,20 @@ mod tests {
     }
 
     /// c:52 — `setpmmapfile` with both readonly flag values is safe.
+    /// The param NAME doubles as the mmap target filename (see setpmmapfile
+    /// at c:88 `open(name, O_RDWR|O_CREAT)`), so use a /tmp path — the
+    /// previous `__test_mapfile_a__` form created the file in cwd
+    /// (repo root when running `cargo test`), leaving an untracked
+    /// stray after every test run.
     #[test]
     fn setpmmapfile_both_readonly_flags_safe() {
         let _g = crate::test_util::global_state_lock();
-        setpmmapfile("__test_mapfile_a__", "/tmp/__nonexistent_a__", false);
-        setpmmapfile("__test_mapfile_b__", "/tmp/__nonexistent_b__", true);
+        let a = std::env::temp_dir().join("__zshrs_test_mapfile_a__");
+        let b = std::env::temp_dir().join("__zshrs_test_mapfile_b__");
+        setpmmapfile(&a.to_string_lossy(), "/tmp/__nonexistent_a__", false);
+        setpmmapfile(&b.to_string_lossy(), "/tmp/__nonexistent_b__", true);
+        let _ = std::fs::remove_file(&a);
+        let _ = std::fs::remove_file(&b);
     }
 
     /// c:181 — `unsetpmmapfile` non-existent name + both exp values safe.
