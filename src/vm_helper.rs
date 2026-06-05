@@ -2165,6 +2165,14 @@ impl ShellExecutor {
         // stays untouched; zshrs runs cmd-subst in-process so the
         // parent buffer is the only one — must flush before the swap.
         let _ = io::stdout().flush();
+        // c:Bug #56 — publish the saved outer stdout so a trap firing
+        // during the nested run routes body output to the parent's
+        // real stdout instead of the cmdsub's pipe-bound fd 1.
+        let saved_stderr_for_trap = unsafe { libc::dup(libc::STDERR_FILENO) };
+        crate::fusevm_bridge::CMDSUBST_OUTER_FDS.with(|s| {
+            s.borrow_mut()
+                .push((saved_stdout, saved_stderr_for_trap))
+        });
         unsafe {
             libc::dup2(write_fd, libc::STDOUT_FILENO);
             libc::close(write_fd);
@@ -2369,6 +2377,18 @@ impl ShellExecutor {
         // before we restore.
         let _ = io::stdout().flush();
 
+        // Pop the trap-routing stack BEFORE restoring stdout so any
+        // trap that fires during the restore goes to the cmdsub's
+        // pipe (matching what zsh's forked cmdsub would do — the
+        // child's fd 1 is the pipe right up until the child exits).
+        crate::fusevm_bridge::CMDSUBST_OUTER_FDS.with(|s| {
+            s.borrow_mut().pop();
+        });
+        if saved_stderr_for_trap >= 0 {
+            unsafe {
+                libc::close(saved_stderr_for_trap);
+            }
+        }
         // Restore stdout and read what was captured.
         unsafe {
             libc::dup2(saved_stdout, libc::STDOUT_FILENO);

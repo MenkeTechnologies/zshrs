@@ -3676,6 +3676,60 @@ Or use `set -e` (`err_exit`) which DOES work in zshrs (with the
 
 ## #56 — Signal trap fires INSIDE `$(...)` subshell instead of parent shell
 
+**Status:** `fixed` 2026-06-05 — trap dispatch in `dotrap` now
+routes the body's stdout to the parent's saved fd when a
+cmdsub capture is active.
+
+**Root cause** — zsh forks each `$(...)`, so a trap fired by
+`kill $$` from inside the cmdsub runs in the PARENT process
+whose fd 1 is still the terminal — the trap body's `echo X`
+goes to the terminal, not into the captured value. zshrs's
+in-process cmdsub dups the parent's fd 1 → pipe for the
+duration of the nested VM run. A signal handler invoked
+during that window saw fd 1 = pipe and the trap body's
+output got captured into `$result`.
+
+**Fix** — two-part:
+
+1. `src/fusevm_bridge.rs` (and `src/vm_helper.rs::
+   run_command_substitution`) — push the saved outer
+   `(stdout, stderr)` fds onto a `thread_local`
+   `CMDSUBST_OUTER_FDS` stack around the nested VM
+   invocation. Pop after restore. A new accessor
+   `cmdsubst_outer_stdout()` peeks the topmost saved
+   stdout.
+2. `src/ported/signals.rs::dotrap` — wrap the trap body's
+   `execute_script` call: if `cmdsubst_outer_stdout()`
+   returns `Some(fd)`, save current `STDOUT_FILENO` via
+   `dup`, `dup2(out_fd → 1)`, run the body, then `dup2`
+   the inner save back to fd 1. The trap body's writes
+   land on the parent's real stdout; the cmdsub's pipe
+   capture continues unaffected once the trap returns.
+
+This matches zsh's forked-cmdsub semantic without requiring
+zshrs to actually fork. Bash's `runtraps` does the same
+routing trick for the equivalent case.
+
+**Verify**
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'trap "echo TRAP" USR1; r=$(kill -USR1 $$ 2>/dev/null; echo result); echo "r=[$r]"'
+TRAP
+r=[result]
+$ ./target/debug/zshrs --zsh -c 'trap "echo TRAP" USR1; r=$(kill -USR1 $$ 2>/dev/null; echo result); echo "r=[$r]"'
+TRAP
+r=[result]
+```
+
+Byte-for-byte match.
+
+Regression checks:
+- trap fires OUTSIDE cmdsub still prints to stdout normally
+- plain cmdsub (`echo $(echo hi)`) unaffected
+- baseline 968/84 zshrs_shell tests preserved
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47618,7 +47672,7 @@ no longer reports the internal trap-machinery scalar.
 | 53 | `${(P)$ref}` doesn't resolve `name[idx]` indirect | **fixed** 2026-06-02 | `eval "val=\\${$ref}"` |
 | 54 | `warn_create_global` / `warn_nested_var` warnings silent | **fixed** 2026-06-04 | strict `local` discipline |
 | 55 | `setopt err_return` doesn't fire on command failure | **fixed** 2026-06-02 | explicit `\|\| return $?` |
-| 56 | Signal trap output captured into `$(...)` result | **port-bug** | guard cmd-sub output |
+| 56 | Signal trap output captured into `$(...)` result | fixed | (dotrap routes body stdout to saved outer fd from CMDSUBST_OUTER_FDS stack pushed by cmd_subst / run_command_substitution; matches zsh forked-cmdsub semantic without forking) |
 | 57 | `setopt octal_zeroes` ignored by arith parser | **fixed** 2026-06-02 | `8#NNN` explicit base |
 | 58 | `[[ "x*" == "x*" ]]` quoted-RHS-star still globbed | **fixed** 2026-06-02 | escape `\*` on RHS |
 | 59 | `setopt no_clobber` allows `>>` to create new file | **fixed** 2026-06-02 | pre-`touch` the file |

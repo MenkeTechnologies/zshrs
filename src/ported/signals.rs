@@ -1587,7 +1587,37 @@ pub fn dotrap(sig: i32) -> i32 {
     // fired — zsh semantics are last-defined-replaces, not
     // both-fire. Bug #541 in docs/BUGS.md.
     if let Some(body) = table_body.filter(|_| !fn_dispatched) {
+        // c:Bug #56 — when a trap fires DURING `$(...)` capture
+        // (cmdsub redirected fd 1 to a pipe), the trap body's
+        // stdout would land in the captured value. zsh forks each
+        // cmdsub so traps run in the parent process whose fd 1 is
+        // the terminal. zshrs's in-process cmdsub publishes the
+        // saved outer stdout via CMDSUBST_OUTER_FDS so the trap
+        // dispatcher can route body output to the parent's real
+        // stdout instead. Temporarily restore fd 1 to that saved
+        // outer stdout around the body, then revert to the
+        // cmdsub-bound fd. Same idea as bash's command-subst trap
+        // routing (Functions/Misc/runtraps).
+        let outer = crate::fusevm_bridge::cmdsubst_outer_stdout();
+        let saved_inner = if outer.is_some() {
+            unsafe { libc::dup(libc::STDOUT_FILENO) }
+        } else {
+            -1
+        };
+        if let Some(out_fd) = outer {
+            unsafe {
+                libc::dup2(out_fd, libc::STDOUT_FILENO);
+            }
+        }
         let _ = crate::ported::exec_hooks::execute_script(&body);
+        if let Some(_) = outer {
+            if saved_inner >= 0 {
+                unsafe {
+                    libc::dup2(saved_inner, libc::STDOUT_FILENO);
+                    libc::close(saved_inner);
+                }
+            }
+        }
     }
 
     // c:1277 — `if (sig == SIGEXIT) --in_exit_trap;` (decrement, not
