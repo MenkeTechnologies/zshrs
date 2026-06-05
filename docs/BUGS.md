@@ -47211,7 +47211,7 @@ no longer reports the internal trap-machinery scalar.
 | 192 | `${(P)name[N]:mod}` indirect-arr-elem with modifier works (zsh: errors) | **fixed** 2026-06-02 | temp var split |
 | 193 | `(( y = ${x:?msg} ))` continues after required-param error | **fixed** 2026-06-02 | n/a |
 | 194 | `function f { :; } > /file` keyword-form fn-def redirect at def time | **fixed** 2026-06-02 | redirect at call site |
-| 195 | `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored | **port-bug** | temp `deref=("${(@P)name}")` |
+| 195 | `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored | **fixed** 2026-06-04 | temp `deref=("${(@P)name}")` |
 | 196 | Anonymous fn output lost in `$(() { :; })` cmdsub or `(() { :; })` subshell | **fixed** 2026-06-03 | cmd_or_math fallback no longer calls skipcomm (lex.c:519-520) |
 | 197 | `typeset -f` function-body display collapses statement newlines into `; ` | **fixed** 2026-06-04 | newlines preserved with tab indent matching zsh |
 | 198 | `bindkey -L` output uses individual entries instead of `-R` range-compressed | **port-bug** | round-trip via zshrs's own output |
@@ -47288,7 +47288,7 @@ no longer reports the internal trap-machinery scalar.
 | 269 | `$SPROMPT` autovar default empty (zsh: `zsh: correct '%R' to '%r' [nyae]?`) | **fixed** 2026-06-02 | explicit `SPROMPT=...` init in .zshrc |
 | 270 | `${(t)watch}` autovar absent — zsh: `array-special`; `watch` user-tracking feature dead | **port-bug** | (none — feature not implemented) |
 | 271 | `h=([k]=v)` bash-style assoc init treated as glob — errors "no matches found" | **fixed** 2026-06-02 | use flat-pairs `h=(k v k v)` instead |
-| 272 | `typeset -axU` `-U` dedup not applied when combined with `-x` (export) | **port-bug** | separate into `typeset -aU` then `typeset -x` |
+| 272 | `typeset -axU` `-U` dedup not applied when combined with `-x` (export) | **fixed** 2026-06-02 | separate into `typeset -aU` then `typeset -x` |
 | 273 | `TIMEFMT` autovar in inconsistent state — value reads correctly but `(t)`/`${-NONE}` signal "unset" | **fixed** 2026-06-02 | explicit `[[ -z ]]` check before := defaulting |
 | 274 | `$PROMPT3` autovar default empty — zsh: colored `-->>>>` select prompt | **fixed** 2026-06-02 | explicit `PROMPT3=...` init |
 | 275 | Array splice `a[1,0]=(...)` reverse-range form replaces first elem instead of prepending (data loss) | **fixed** 2026-06-02 | explicit `a=(NEW "${a[@]}")` |
