@@ -35173,6 +35173,95 @@ name="${name%%[[:space:]]##}"
 
 ## #428 — unquoted `${arr[*]}` joined with IFS but not word-split — half of join+split missing
 
+**Status:** `fixed` 2026-06-05 — three-part fix across compile
+path + paramsubst isarr state machine + the fast-path
+`BUILTIN_ARRAY_JOIN_STAR` handler. `${arr[*]}`, `${arr[@]}`,
+`"${arr[*]}"`, `"${arr[@]}"`, `"$*"`, `$*`, `"$@"`, and
+`b="${arr[*]}"` all match `/opt/homebrew/bin/zsh` byte-for-byte
+with custom IFS.
+
+**Root cause** — three independent gaps:
+
+1. The compile-path `[*]` fast path
+   (`src/extensions/compile_zsh.rs::compile_expand`) emitted
+   `BUILTIN_ARRAY_JOIN_STAR` for any `${name[*]}` regardless of
+   DQ context. The handler returned a single `Value::Str`, so
+   UNQUOTED `${a[*]}` produced one argv entry instead of N
+   IFS-word-split entries.
+2. paramsubst (`src/ported/subst.rs`) treated `[*]` and `[@]`
+   identically — both set `isarr=-1` (SCANPM_ISVAR_AT-equivalent).
+   C zsh differentiates: `[@]` keeps splat (`isarr=-1`, c:3032
+   gate `isarr>0` doesn't fire); `[*]` clears SCANPM_ISVAR_AT
+   so `isarr=1`, the c:3032 sepjoin runs in DQ, and the array
+   collapses to a scalar joined by IFS[0]. zshrs's unified
+   `is_at_subscript = sub == "@" || sub == "*"` was treating
+   both forms as splat-preserving.
+3. The value-init block at `subst.rs::5908` joined the array
+   with hardcoded `" "` (space). When the c:3032 transition
+   fired, it left `value` as space-joined instead of
+   IFS[0]-joined — so `"${a[*]}"` with `IFS=":"` came out
+   `x y z` instead of `x:y:z`.
+
+**Fix** — three-part:
+
+1. `src/extensions/compile_zsh.rs::compile_expand` — skip the
+   `BUILTIN_ARRAY_JOIN_STAR` fast path for `[*]` in DQ context.
+   Routes through `BUILTIN_EXPAND_TEXT` mode 1 → multsub →
+   paramsubst, which bumps `in_dq_context` and handles
+   join-via-IFS through the canonical sepjoin path. Unquoted
+   `${a[*]}` still takes the fast path; the JOIN_STAR handler
+   now does the IFS-word-split itself.
+2. `src/extensions/compile_zsh.rs::compile_expand` (line 2655
+   region) — for quoted `"$*"`, route through `BUILTIN_EXPAND_TEXT`
+   mode 1 with body `$*` instead of the bare-`$*` JOIN_STAR.
+   EXPAND_TEXT's `in_dq_context` bump lets the handler return
+   the IFS-joined scalar correctly.
+3. `src/fusevm_bridge.rs::register_builtins`
+   `BUILTIN_ARRAY_JOIN_STAR` — in unquoted context, after
+   joining via IFS[0], word-split the result via IFS (every
+   IFS char is a separator, empty fields dropped per
+   Src/subst.c::prefork c:184-187) and return `Value::Array`.
+   In DQ context, return `Value::str(joined)` unchanged.
+4. `src/ported/subst.rs::paramsubst` — split
+   `is_at_subscript` into `is_strict_at_subscript`
+   (`@` only) and `is_star_subscript` (`*` only). `[@]` sets
+   `isarr=-1`; `[*]` sets `isarr=1` (positive). Same split for
+   bare positional `$@`/`$*` (gated on `subscript.is_none()`
+   so slice forms like `${*[2,4]}` keep their existing
+   getarrvalue-driven scanflags).
+5. `src/ported/subst.rs::paramsubst` c:3032 qt-sepjoin arm —
+   when the transition fires for an array-shaped name,
+   re-join the array with IFS[0] (or `sep` if set by `(j)`
+   flag) so the joined value carries the right separator.
+   Previous behaviour left `value` as the space-joined form
+   from line 5908.
+
+**Verify**
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); IFS=":"; printf "[%s]\n" ${a[*]}'
+[x]
+[y]
+[z]
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); IFS=":"; printf "[%s]\n" ${a[*]}'
+[x]
+[y]
+[z]
+
+$ /opt/homebrew/bin/zsh -fc 'a=(x y z); IFS=":"; printf "[%s]\n" "${a[*]}"'
+[x:y:z]
+$ ./target/debug/zshrs --zsh -c 'a=(x y z); IFS=":"; printf "[%s]\n" "${a[*]}"'
+[x:y:z]
+```
+
+All 8 probes (`${a[*]}`, `${a[@]}`, `"${a[*]}"`, `"${a[@]}"`,
+`$*`, `"$*"`, `"$@"`, `b="${a[*]}"`) match byte-for-byte.
+
+Baseline improved from 970/82 → 971/81 (one
+previously-failing test now passes; no regressions).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47615,7 +47704,7 @@ no longer reports the internal trap-machinery scalar.
 | 425 | `(#cN)` glob exact-count flag not recognized — extends #409 family | **fixed** 2026-06-04 | n/a |
 | 426 | `command_not_found_handler` user-defined hook not invoked — entire ecosystem broken (apt/nix/asdf integration) | **fixed** 2026-06-04 | n/a |
 | 427 | `read` doesn't strip leading/trailing IFS chars (zsh: trims `[hello]` from `"  hello  "`) | **fixed** 2026-06-04 | n/a |
-| 428 | unquoted `${arr[*]}` joined with IFS but not re-word-split — half of join+split sequence missing | **port-bug** | use `${arr[@]}` form instead |
+| 428 | unquoted `${arr[*]}` joined with IFS but not re-word-split — half of join+split sequence missing | fixed | (compile path skips JOIN_STAR fast path in DQ; JOIN_STAR handler IFS-word-splits unquoted; paramsubst differentiates `[*]` vs `[@]` isarr state; c:3032 sepjoin uses IFS[0]) |
 | 429 | `%m` prompt escape (short hostname) not expanded — printed literally; likely also `%M`/`%y`/`%l`/`%j`/`%i` | **fixed** 2026-06-04 | n/a |
 | 430 | `%s`/`%u` prompt close-escapes emit `\\033[0m` (reset-all) instead of `\\033[27m`/`\\033[24m` (pair-specific) | **fixed** 2026-06-04 | n/a |
 | 431 | `%y`/`%l` prompt escapes (tty name) printed literally — extends #429 prompt-escape gap family | **fixed** 2026-06-04 | n/a |

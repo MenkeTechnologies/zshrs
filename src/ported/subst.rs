@@ -5941,18 +5941,46 @@ pub fn paramsubst(
             let is_at_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"));
             // c:Src/subst.c:2916 — `(v->scanflags & SCANPM_ISVAR_AT)
             // ? -1 : v->scanflags ? 1 : 0`. SCANPM_ISVAR_AT is set
-            // both for `arr[@]`/`arr[*]` subscripts AND for the
-            // pseudo-names `@`/`*` themselves (positional-param splat
-            // form). Treating bare `@`/`*` as splat-preserving (-1)
-            // keeps `isarr > 0` false at the c:3032 qt-collapse so
-            // `"${(o)@}"` retains array shape and the c:4245 sort
-            // block fires. Bug #277. `argv` is the PM_ARRAY alias
-            // for pparams; subscriptless `argv` keeps isarr=1.
-            let is_at_var = matches!(var_name.as_str(), "@" | "*");
+            // ONLY for the `@` subscript (and the bare `@`/`*`
+            // pseudo-names which are positional-param splat forms).
+            // The `[*]` subscript clears SCANPM_ISVAR_AT — its
+            // scanflags are non-zero (so isarr=1, positive), which
+            // means the c:3032 qt-sepjoin fires in DQ and the
+            // array collapses to a single scalar. That's the
+            // documented "${a[*]}" = join-via-IFS behaviour.
+            // Bug #428 in docs/BUGS.md.
+            //
+            // For `[@]` and bare positional `@`/`*`, splat is
+            // preserved (isarr=-1) so the c:4245 sort/splat block
+            // fires even in DQ. Bug #277.
+            let is_strict_at_subscript = matches!(subscript.as_deref(), Some("@"));
+            // c:Src/subst.c — same `*` vs `@` distinction applies
+            // to the positional-param pseudo-names. `$@` keeps
+            // splat (-1, SCANPM_ISVAR_AT) so quoted `"$@"` survives
+            // the c:3032 sepjoin. `$*` clears SCANPM_ISVAR_AT (it
+            // joins-via-IFS in DQ per the documented `"$*"` = IFS-
+            // joined-scalar semantics). Bug #428.
+            let is_strict_at_var = matches!(var_name.as_str(), "@");
+            let is_star_var = matches!(var_name.as_str(), "*");
             if (arrays_contains(&var_name) || assoc_contains(&var_name))
                 && (subscript.is_none() || is_at_subscript)
             {
-                isarr = if is_at_subscript || is_at_var { -1 } else { 1 };
+                isarr = if is_strict_at_subscript || is_strict_at_var {
+                    -1
+                } else {
+                    1
+                };
+            } else if (is_strict_at_var || is_star_var) && subscript.is_none() {
+                // Bare `$@` / `$*` (no subscript) outside the
+                // array_contains gate — positional params don't
+                // always register as `arrays_contains("@")`. `$@`
+                // keeps splat shape for the auto-splat block; `$*`
+                // gets isarr=1 so c:3032 collapses it to a scalar
+                // in DQ. Gated on `subscript.is_none()` so slice
+                // forms like `${*[2,4]}` don't get re-shaped here
+                // — they own their own scanflags state per
+                // getarrvalue (Src/params.c:2922).
+                isarr = if is_strict_at_var { -1 } else { 1 };
             }
         }
         // subst.c:3885-3887 YUK — empty / empty-first array → scalar "" when !plan9
@@ -6000,12 +6028,32 @@ pub fn paramsubst(
             // scalar instead of splatting per-word.
             if qt && isarr > 0 && spsep.is_none() {
                 // c:3032 + c:3317 !spsep guard
-                // value already holds the sepjoin'd form from the
-                // value-init block above (raw_value via getsparam =
-                // sepjoin(arr) at params.c:2367, OR the arr.join(" ")
-                // branch). The C source does sepjoin here; we
-                // mirror by leaving `value` as-is (already joined)
-                // and zeroing isarr to signal scalar shape.
+                // C: `val = sepjoin(aval, sep, 1);`. `sep` defaults
+                // to first IFS char when no (j) flag overrode it.
+                // The value-init block at line 5908 unconditionally
+                // joined with " " (the historical default) which
+                // misses user-set IFS. Re-join with IFS[0] here so
+                // `"${a[*]}"` with IFS=":" produces `x:y:z` instead
+                // of the hardcoded `x y z`. Bug #428.
+                if let Some(arr) = arrays_get(&var_name) {
+                    let join_sep: String = sep.clone().unwrap_or_else(|| {
+                        let ifs = crate::ported::params::getsparam("IFS")
+                            .unwrap_or_else(|| " \t\n".to_string());
+                        ifs.chars().next().map(String::from).unwrap_or_default()
+                    });
+                    value = arr.join(&join_sep);
+                } else if let Some(m) = assoc_get(&var_name) {
+                    let join_sep: String = sep.clone().unwrap_or_else(|| {
+                        let ifs = crate::ported::params::getsparam("IFS")
+                            .unwrap_or_else(|| " \t\n".to_string());
+                        ifs.chars().next().map(String::from).unwrap_or_default()
+                    });
+                    value = m
+                        .values()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(&join_sep);
+                }
                 isarr = 0; // c:3034
             }
         }
