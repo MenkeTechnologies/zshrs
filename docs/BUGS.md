@@ -43895,7 +43895,13 @@ flags against the documented list (S/I/V/q/Q/C/U/L/...).
 
 ## #547 — `echo "$~"` emits literal `$~` — zsh: empty (drops invalid `$X`)
 
-**Status:** `partial-fix` 2026-06-04 — the bug report's framing
+**Status:** `fixed` 2026-06-05 — both no-NAME forms AND
+surrounding-text DQ forms now match zsh. Initial partial-fix
+covered `$~` / `$~~` alone (unquoted + DQ-alone); the
+follow-up extended `find_expansion_end` in the segment
+splitter to recognize the `$~` shape inside surrounding text.
+
+**Original partial-fix framing:** the bug report's framing
 ("drops invalid `$X`") was incomplete. The C source at
 `Src/subst.c:2596-2602` actually treats `$~` as the
 `GLOB_SUBST` (forced-on) flag prefix, and `$~~` as the
@@ -43941,28 +43947,33 @@ $ ./target/debug/zshrs --zsh -fc 'x=hi; echo "$~x"'
 hi
 ```
 
-**Remaining gap** — DQ strings with literal text surrounding
-the `$~` still emit the literal `$~`:
+**Surrounding-text DQ form** (also 2026-06-05) — fixed by
+extending `find_expansion_end` in
+`src/extensions/compile_zsh.rs` (the segment splitter that
+runs on DQ words) to recognize `$~` / `$~~` / `$~NAME`
+shapes as their own expansion segment. Previously the
+default arm returned `i + 1` for any `$X` where `X` wasn't
+already enumerated, so for `"[$~]"` it pulled just `$` into
+the expansion and left `~]` as a trailing literal. Now the
+`Some('~') | Some('\u{98}')` arm walks the optional second
+`~`, then any identifier name, so the whole `$~`/`$~~`/
+`$~NAME` becomes one expansion segment. The runtime
+paramsubst's `~` arm (subst.rs:10601) then handles the
+empty-name case by dropping the consumed chars per
+Src/subst.c:2596-2602.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'echo "[$~]"'
 []
-$ ./target/debug/zshrs --zsh -fc 'echo "[$~]"'
-[$~]
+$ ./target/debug/zshrs --zsh -c 'echo "[$~]"'
+[]
+$ /opt/homebrew/bin/zsh -fc 'echo "before$~after"'
+before
+$ ./target/debug/zshrs --zsh -c 'echo "before$~after"'
+before
 ```
 
-The DQ-string-with-surrounding-text path lexes `$~` as a
-separate sub-form within the surrounding DQ word; the
-compile-time fast path doesn't match (the untokenized word
-doesn't `starts_with("$~")` — it starts with the literal
-text). The runtime `paramsubst` `~`/`Tilde` arm at
-`subst.rs` would catch it, but the DQ word splitter routes
-the `$` Qstring through a separate fast path that emits the
-literal `$~` before reaching paramsubst. Fixing this needs
-DQ-segment routing work; deferred.
-
-**Workaround** — same as before — but most call sites use
-the unquoted or `"$~"`-alone form which now matches zsh.
+All forms now match `/opt/homebrew/bin/zsh` byte-for-byte.
 
 zshrs_shell baseline preserved at 967/85.
 
@@ -48339,7 +48350,7 @@ no longer reports the internal trap-machinery scalar.
 | 544 | `a[0]="x"` zero-index array assignment silently accepted — zsh: "invalid subscript range" (zsh is 1-indexed) | **fixed** 2026-06-03 | n/a |
 | 545 | `${(s.X.)XXX}` all-separator string gives 4 empty fields — zsh: 2 (extends #542) | **fixed** 2026-06-03 | n/a |
 | 546 | `${(!)var}` invalid paramexp flag silently accepted — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
-| 547 | `echo "$~"` emits literal `$~` — zsh: drops invalid `$X` to empty | **partial-fix** 2026-06-04 | unquoted + DQ-alone forms now match; surrounding-text DQ deferred |
+| 547 | `echo "$~"` emits literal `$~` — zsh: drops invalid `$X` to empty | fixed | (no-NAME, DQ-alone, and surrounding-text DQ forms all match; find_expansion_end extended to recognize `$~`/`$~~`/`$~NAME` as one expansion segment) |
 | 548 | `${(   )a}` whitespace-only flag-paren error: "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 549 | `?(a)` extglob in zsh-mode: zshrs uses bash-style "zero-or-one" — zsh: rejects as broken glob-qualifier | **fixed** 2026-06-03 | n/a |
 | 550 | `${((O))a}` nested-paren flag silently accepted as no-op — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
