@@ -7948,16 +7948,30 @@ pub fn bin_print(
     } else {
         None
     };
-    // c:Src/builtin.c:4828 — `-p` writes to the coprocess fd. zshrs
-    // doesn't run coprocesses, so there's never one to write to.
-    // Match zsh's exact diagnostic + exit 1 when -p is used without
-    // an active coprocess (Src/builtin.c:5050 `zwarnnam(name, "-p:
-    // no coprocess")`). Previously fell through to stdout, masking
-    // the misconfiguration.
-    if OPT_ISSET(ops, b'p') {
-        zwarnnam(name, "-p: no coprocess");
-        return 1;
-    }
+    // c:Src/builtin.c:4827-4828 — `-p` writes to the coprocess fd
+    // (the canonical `coprocout` global; Src/exec.c:430). When a
+    // coproc is live, write to that fd; otherwise emit the same
+    // diagnostic + rc=1 zsh does (Src/builtin.c:5050
+    // `zwarnnam(name, "-p: no coprocess")`). Bug #388.
+    let print_dash_p_fd: Option<fs::File> = if OPT_ISSET(ops, b'p') {
+        let coprocout = crate::ported::modules::clone::coprocout
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if coprocout < 0 {
+            zwarnnam(name, "-p: no coprocess");
+            return 1;
+        }
+        // c:4843 — dup for an owned writer that close-on-drop
+        // doesn't close the user's original fd.
+        let dup_fd = unsafe { libc::dup(coprocout) };
+        if dup_fd < 0 {
+            zwarnnam(name, "-p: no coprocess");
+            return 1;
+        }
+        use std::os::unix::io::FromRawFd;
+        Some(unsafe { fs::File::from_raw_fd(dup_fd) })
+    } else {
+        None
+    };
     // c:4815-4851 — `-u FD` (and `-p` coprocess) dispatch. Parses FD,
     // dup's it for an owned descriptor, opens as a File for writes.
     // The previous Rust port silently dropped `-u`, so `print -u 2
@@ -8393,7 +8407,12 @@ pub fn bin_print(
         } else {
             b"\n"
         };
-        if let Some(mut f) = dest_fd {
+        // c:Bug #388 — `-p` and `-u` are mutually exclusive but both
+        // route to the same write-to-fd path. Prefer the `-p`-resolved
+        // coprocout (when present) over the `-u`-resolved fd. If
+        // neither, fall through to stdout below.
+        let dest_fd_active = print_dash_p_fd.or(dest_fd);
+        if let Some(mut f) = dest_fd_active {
             // c:4847 — write to dup'd file descriptor.
             use std::io::Write as _;
             let _ = f.write_all(body.as_bytes()); // c:5124 fwrite
@@ -9850,11 +9869,17 @@ pub fn bin_read(
         return compctlread(name, &args[argi..]);
     }
 
-    // Optional explicit input FD via -u. When unspecified, fall back
-    // to fd 0 (stdin). All read paths below route bytes through
-    // `read_byte_from_fd` so `read -u 3 var` after `exec 3< file`
-    // correctly pulls from the user fd.
-    let ufd: i32 = if OPT_HASARG(ops, b'u') {
+    // Optional explicit input FD via -u, or coprocin via -p. When
+    // unspecified, fall back to fd 0 (stdin). All read paths below
+    // route bytes through `read_byte_from_fd` so `read -u 3 var`
+    // after `exec 3< file` correctly pulls from the user fd; with
+    // `-p`, the same path reads from coprocin (set by the BUILTIN_
+    // RUN_COPROC handler at fusevm_bridge.rs around the
+    // `coproc CMD` launch). Bug #388.
+    let ufd: i32 = if OPT_ISSET(ops, b'p') {
+        crate::ported::modules::clone::coprocin
+            .load(std::sync::atomic::Ordering::Relaxed)
+    } else if OPT_HASARG(ops, b'u') {
         OPT_ARG(ops, b'u').and_then(|s| s.parse().ok()).unwrap_or(0)
     } else {
         0

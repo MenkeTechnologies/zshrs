@@ -2875,6 +2875,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     exec.unset_scalar(&name);
                     exec.set_array(name, vec![read_fd.to_string(), write_fd.to_string()]);
                 });
+                // c:Src/exec.c — `coprocin`/`coprocout` are the
+                // canonical globals that bin_read's `-p` arm
+                // (Src/builtin.c:6510) and bin_print's `-p` arm
+                // (Src/builtin.c:4827) read to find the
+                // coprocess fds. The Rust port has the atomic
+                // declarations at src/ported/modules/clone.rs:262
+                // but the coproc-launch path never updated them,
+                // so `read -p` / `print -p` always errored with
+                // "-p: no coprocess" even when a coproc was
+                // running. Bug #388 in docs/BUGS.md. Update them
+                // here so the canonical builtins find the live
+                // pipe.
+                crate::ported::modules::clone::coprocin
+                    .store(read_fd, std::sync::atomic::Ordering::Relaxed);
+                crate::ported::modules::clone::coprocout
+                    .store(write_fd, std::sync::atomic::Ordering::Relaxed);
                 Value::Status(0)
             }
         }
