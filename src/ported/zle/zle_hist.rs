@@ -1029,16 +1029,18 @@ pub fn zle_setline() -> i32 {
     // c:772
     // C body (c:772-792): replace current line with the entry at
     //                    history.cursor. Used after history navigation.
-    if let Some(entry) = history()
-        .lock()
-        .unwrap()
-        .entries
-        .get(history().lock().unwrap().cursor)
-    {
-        let line = entry.line.clone();
-        ZLELINE.lock().unwrap().clear();
-        ZLELINE.lock().unwrap().extend(line.chars());
-        ZLECS.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
+    // Cannot lock history() twice in one expression: the outer
+    // `.entries.get(...)` keeps its guard alive while the inner
+    // `.cursor` re-locks → same-thread non-reentrant Mutex deadlock.
+    let line: Option<String> = {
+        let h = history().lock().unwrap();
+        h.entries.get(h.cursor).map(|e| e.line.clone())
+    };
+    if let Some(line) = line {
+        let mut zl = ZLELINE.lock().unwrap();
+        zl.clear();
+        zl.extend(line.chars());
+        ZLECS.store(zl.len(), Ordering::SeqCst);
         return 0;
     }
     1
