@@ -1227,11 +1227,47 @@ pub fn bin_set(
             // to use ztrcmp earlier in the series).
             entries.sort_by(|a, b| hnamcmp(&a.0, &b.0));
             for (k, v) in entries {
+                // c:Src/params.c::printparamnode — single-char names
+                // that double as shell metacharacters (`#` comment,
+                // `$` substitution, `*` glob, `?` glob, `@` splat)
+                // are wrapped in single quotes so the output
+                // round-trips through the shell parser. Other
+                // single-char specials (`!`, `-`, `0`) appear bare
+                // because they're unambiguous in name position.
+                // Verified against /opt/homebrew/bin/zsh `set` output.
+                let needs_quote_name = matches!(k.as_str(), "#" | "$" | "*" | "?" | "@");
+                let kq: String = if needs_quote_name {
+                    format!("'{}'", k)
+                } else {
+                    k.clone()
+                };
                 if hadplus {
                     // c:681 PRINT_NAMEONLY
-                    println!("{}", k);
+                    println!("{}", kq);
+                } else if matches!(k.as_str(), "*" | "@" | "argv") {
+                    // c:Src/params.c — `*` / `@` / `argv` are array-
+                    // shaped (positional params); print as `( e1 e2 …)`
+                    // mirroring zsh's array form so `set` output
+                    // round-trips. Without this special-case, zshrs
+                    // showed `'*'='1 2'` (joined scalar) instead of
+                    // zsh's `'*'=( 1 2 )` (array splat).
+                    let pp = PPARAMS.lock().ok();
+                    let elems: Vec<String> = pp
+                        .as_ref()
+                        .map(|p| p.iter().cloned().collect())
+                        .unwrap_or_default();
+                    let body: String = elems
+                        .iter()
+                        .map(|e| quotedzputs(e))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if elems.is_empty() {
+                        println!("{}=(  )", kq);
+                    } else {
+                        println!("{}=( {} )", kq, body);
+                    }
                 } else {
-                    println!("{}={}", k, quotedzputs(&v));
+                    println!("{}={}", kq, quotedzputs(&v));
                 }
             }
         }
