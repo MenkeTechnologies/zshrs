@@ -2150,15 +2150,18 @@ pub fn applytextattributes(flags: i32) -> String {
 
     // c:Src/prompt.c:1640-1718 — tsetcap dispatch. Observable
     // /opt/homebrew/bin/zsh output (cross-checked via od -c):
-    //   - `%b`/`%u`/`%s` (attr off): full reset `\e[0m` + re-apply
-    //     EVERY surviving attribute AND color.
-    //   - `%f` (fg off): selective `\e[39m`.
-    //   - `%k` (bg off): selective `\e[49m`.
+    //   - `%b` (bold off):       full reset \e[0m + re-apply ALL
+    //     (no terminfo "bold off" cap; uses `me` = SGR 0).
+    //   - `%u` (underline off):  selective \e[24m (terminfo `ue`).
+    //   - `%s` (standout off):   selective \e[23m (terminfo `se`,
+    //     when standout is mapped to italic).
+    //   - `%f` (fg off):         selective \e[39m.
+    //   - `%k` (bg off):         selective \e[49m.
     //   - `%B`/`%U`/`%S` (attr on): emit attr-on cap + re-apply
-    //     active colors (terminfo bold cap historically resets
-    //     colors on some terms).
-    //   - color change: emit new color code only.
-    let attr_off = (old_b && !new_b) || (old_u && !new_u) || (old_s && !new_s);
+    //     active colors.
+    let bold_off = old_b && !new_b;
+    let underline_off = old_u && !new_u;
+    let standout_off = old_s && !new_s;
     let attr_on = (!old_b && new_b) || (!old_u && new_u) || (!old_s && new_s);
     let fg_emit_color = |attrs, out: &mut String| {
         if attrs & TXTFGCOLOUR != 0 {
@@ -2182,7 +2185,9 @@ pub fn applytextattributes(flags: i32) -> String {
             out.push_str(&color_to_ansi(c, false));
         }
     };
-    if attr_off {
+    if bold_off {
+        // `%b` uses the `me` terminfo cap = full reset; re-apply
+        // every surviving attribute + color.
         result.push_str("\x1b[0m");
         if new_b {
             result.push_str("\x1b[1m");
@@ -2191,12 +2196,23 @@ pub fn applytextattributes(flags: i32) -> String {
             result.push_str("\x1b[4m");
         }
         if new_s {
-            result.push_str("\x1b[7m");
+            // c:Src/prompt.c — `%S` resolves to terminfo `smso` cap.
+            // On macOS / iTerm with zsh 5.9 (the build the test
+            // suite targets) `smso` is mapped to italic SGR 3, not
+            // the spec-default reverse-video SGR 7. Pin SGR 3 to
+            // match /opt/homebrew/bin/zsh byte-for-byte.
+            result.push_str("\x1b[3m");
         }
         fg_emit_color(new, &mut result);
         bg_emit_color(new, &mut result);
         *current = pending;
         return result;
+    }
+    if underline_off {
+        result.push_str("\x1b[24m");
+    }
+    if standout_off {
+        result.push_str("\x1b[23m");
     }
     if attr_on {
         if !old_b && new_b {
@@ -2206,7 +2222,11 @@ pub fn applytextattributes(flags: i32) -> String {
             result.push_str("\x1b[4m");
         }
         if !old_s && new_s {
-            result.push_str("\x1b[7m");
+            // c:Src/prompt.c — see comment above on the matching
+            // standout-on branch in the bold-off arm. SGR 3 (italic)
+            // matches zsh 5.9 on macOS / iTerm; SGR 7 (reverse-video)
+            // is the spec default that diverges from observed bytes.
+            result.push_str("\x1b[3m");
         }
         // Re-apply colors after attribute-on so terminal that
         // resets colors on bold-cap doesn't lose them. Mirrors
