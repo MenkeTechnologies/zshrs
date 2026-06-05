@@ -4546,28 +4546,28 @@ pub fn paramsubst(
                     let pat = rest[close + 1..].to_string();
                     // c:Src/params.c:1396-1431 — assoc subscript handles
                     // (r)/(R) (value-match → value), (k)/(K) (key-match
-                    // → value), and (e)/(n)/(b) modifiers. (i)/(I) set
-                    // SCANPM_MATCHKEY on the value-bag and the actual
-                    // key extraction lands in a deferred scan path
-                    // (c:1719-1735) that returns no rows in practice for
-                    // hash-with-(i)/(I) — observable zsh returns empty.
-                    // Don't accept i/I here; let direct-subscript take
-                    // them (which also returns empty).
+                    // → value), (i)/(I) (key-pattern → matching key —
+                    // verified vs /opt/homebrew/bin/zsh `${h[(I)a]}` →
+                    // 'a'), and (e)/(n)/(b) modifiers. Earlier framing
+                    // claimed (i)/(I) returns empty for assocs; zsh
+                    // actually returns the matched KEY text.
                     //
                     // c:Src/params.c:1419 — `(e)` ALONE is a quote_arg
                     // modifier (treat subscript literally, no pattern);
-                    // for assoc without `(k)/(r)` it means "exact key
-                    // lookup". Require at least one search letter for
-                    // this dispatch; bare `(e)KEY` falls through to the
-                    // exact-key map.get below. Bug #407.
+                    // for assoc without `(k)/(r)/(i)/(I)` it means
+                    // "exact key lookup". Require at least one search
+                    // letter for this dispatch; bare `(e)KEY` falls
+                    // through to the exact-key map.get below. Bug #407.
                     let has_search = flags.contains('R')
                         || flags.contains('r')
                         || flags.contains('k')
-                        || flags.contains('K');
+                        || flags.contains('K')
+                        || flags.contains('i')
+                        || flags.contains('I');
                     if has_search
                         && flags
                             .chars()
-                            .all(|c| matches!(c, 'R' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b'))
+                            .all(|c| matches!(c, 'R' | 'r' | 'k' | 'K' | 'i' | 'I' | 'n' | 'e' | 'b'))
                     {
                         Some((flags, pat))
                     } else {
@@ -4589,9 +4589,24 @@ pub fn paramsubst(
                     // matched. `${h[(k)-a]}` had the same root cause
                     // (the leading-dash framing in BUGS.md was a
                     // misdirection — all `(k)` lookups were broken).
-                    let match_against_key = flags.contains('k') || flags.contains('K');
+                    // c:Src/params.c:1396-1431 — `i`/`I`/`k`/`K` all
+                    // match against KEYS; lowercase variants return
+                    // the first key, uppercase variants return all
+                    // matching keys. `(i)/(I)` use glob, `(k)/(K)` are
+                    // exact-only.
+                    let match_against_key = flags.contains('k')
+                        || flags.contains('K')
+                        || flags.contains('i')
+                        || flags.contains('I');
                     let return_all =
-                        flags.contains('R') || flags.contains('K');
+                        flags.contains('R') || flags.contains('K') || flags.contains('I');
+                    // `(i)/(I)` on assoc returns the KEY directly (zsh
+                    // semantics) regardless of the outer (k) flag; `(k)/
+                    // (K)` continues to return the value per Bug #77.
+                    let force_return_key = flags.contains('i') || flags.contains('I');
+                    // `(i)/(I)` use glob matching against keys (not
+                    // exact); `(k)/(K)` are exact-only per C source.
+                    let key_glob = flags.contains('i') || flags.contains('I');
                     let exact = flags.contains('e'); // c:1419 e flag — literal compare
                     // c:Src/params.c:665-681 scanparamvals — when the outer
                     // `(k)` paramflag is set (SCANPM_WANTKEYS bit), the hash
@@ -4605,9 +4620,10 @@ pub fn paramsubst(
                     //   /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2 c 1);
                     //     echo "${(k)h[(k)a]}"'  → '1'  (key-match still
                     //     returns value).
-                    let return_key = (hkeys & SCANPM_WANTKEYS) != 0
-                        && !match_against_key
-                        && (hvals & SCANPM_WANTVALS) == 0;
+                    let return_key = force_return_key
+                        || ((hkeys & SCANPM_WANTKEYS) != 0
+                            && !match_against_key
+                            && (hvals & SCANPM_WANTVALS) == 0);
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if match_against_key {
@@ -4616,8 +4632,9 @@ pub fn paramsubst(
                             v.as_str()
                         };
                         // c:Src/params.c — k/K (key-match path) is
-                        // exact-only, no glob; r/R use patcompile.
-                        let matched = if match_against_key || exact {
+                        // exact-only, no glob; r/R use patcompile; i/I
+                        // use patcompile against the KEY (key_glob).
+                        let matched = if exact || (match_against_key && !key_glob) {
                             hay == pat.as_str()
                         } else {
                             patcompile(&pat, PAT_HEAPDUP as i32, None)
