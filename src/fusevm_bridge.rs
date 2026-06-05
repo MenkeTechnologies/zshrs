@@ -2150,11 +2150,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::builtin::BREAKS.store(0, SeqCst);
             crate::ported::builtin::CONTFLAG.store(0, SeqCst);
 
+            // c:Src/loop.c — `select` increments LOOPS for the body so
+            // `break` / `continue` inside the body see loops > 0 and
+            // don't emit `not in while, until, select, or repeat loop`.
+            // Mirrors execwhile/execrepeat's `LOOPS.fetch_add` pattern.
+            // The decrement happens after the body call so a body that
+            // explicitly returns / errors still leaves the counter
+            // balanced for the next iteration.
+            crate::ported::builtin::LOOPS.fetch_add(1, SeqCst);
+
             crate::fusevm_disasm::maybe_print_stdout("select:body", &chunk);
             let mut body_vm = fusevm::VM::new(chunk.clone());
             register_builtins(&mut body_vm);
             let _ = body_vm.run();
             last_status = body_vm.last_status;
+
+            crate::ported::builtin::LOOPS.fetch_sub(1, SeqCst);
 
             // Drain the canonical BREAKS/CONTFLAG counters. Mirrors
             // loop.c:529-534's `if (breaks) { breaks--; if (breaks ||
