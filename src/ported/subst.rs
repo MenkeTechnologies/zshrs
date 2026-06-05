@@ -8977,7 +8977,36 @@ pub fn paramsubst(
                 split_parts = None; // c:3906 (sepjoin collapses to scalar)
                 joined = true;
             } else if let Some(arr) = arrays_get(&var_name) {
-                value = arr.join(sp); // c:3906
+                // Bug #328: `${(j:SEP:)NAME[N,M]}` — when a slice
+                // subscript is present, sepjoin must operate on the
+                // SLICE elements (aval, per c:3906), not the full
+                // backing array. zsh C's aval points at the slice
+                // result of getarrvalue (Src/params.c:2548); the
+                // Rust port stuffs the slice into `value` as a
+                // joined string and loses the per-element view. Re-
+                // extract the slice from the full array via
+                // getarrvalue before applying sep so the j flag sees
+                // the same aval the C source would have.
+                let slice_arr: Option<Vec<String>> = subscript
+                    .as_deref()
+                    .and_then(|s| {
+                        let stripped = if let Some(rest) = s.strip_prefix('(') {
+                            rest.find(')').map(|c| &rest[c + 1..]).unwrap_or(s)
+                        } else {
+                            s
+                        };
+                        stripped.split_once(',')
+                    })
+                    .and_then(|(lo_s, hi_s)| {
+                        let lo = lo_s.trim().parse::<i64>().ok()?;
+                        let hi = hi_s.trim().parse::<i64>().ok()?;
+                        Some(getarrvalue(&arr, lo, hi))
+                    });
+                if let Some(slice) = slice_arr {
+                    value = slice.join(sp); // c:3906 over aval (slice)
+                } else {
+                    value = arr.join(sp); // c:3906
+                }
                 joined = true;
             } else if let Some(map) = assoc_get(&var_name) {
                 let vals: Vec<String> = map.values().cloned().collect();

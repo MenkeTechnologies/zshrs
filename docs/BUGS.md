@@ -27363,15 +27363,23 @@ $ ./target/debug/zshrs --zsh -c 'a=(x y z); echo "[${(l.3.)a[1]}]"'
 
 ## #328 — All `${(FLAG)arr[N]}` flags on subscripted-array-element broken (case/type/pad/quote/sort/unique/join/eval/P/split/visible/D)
 
-**Status:** `partial-fix` 2026-06-04 — the dispatcher gap for
+**Status:** `fixed` 2026-06-05 — the dispatcher gap for
 single-element-index targets is closed across the
 case/type/pad/quote families: `(C)`/`(L)`/`(U)`/`(q)`/`(qq)`/
 `(Q)`/`(t)`/`(l)`/`(r)` on `arr[N]` all match zsh. The
-`(j::)` join flag on a slice target `arr[N,M]` still
-diverges (zsh joins per separator, zshrs IFS-joins). Other
-flags within this 20-flag family are also reachable on
-single-element targets per cumulative `(flag)NAME[KEY]`
-parity work (`#308`, `#327`, `#301`).
+`(j::)`/`(F)`/`(p)` join flags on a slice target `arr[N,M]`
+were the remaining gap: zsh joins the slice with sep, zshrs
+was joining the FULL array (ignoring the subscript). Root
+cause: the late-sepjoin path at subst.rs:8979 read
+`arrays_get(&var_name)` directly, while zsh's c:3906 sepjoin
+reads `aval` (the slice result of getarrvalue at
+Src/params.c:2548). Fixed by re-extracting the slice via
+getarrvalue when subscript is a comma-slice before joining.
+Also added the join-flag + slice route through
+BUILTIN_BRIDGE_BRACE_ARRAY (extensions/compile_zsh.rs:3507) —
+mirrors the (@) + sort/uniq + slice route at line 3489.
+Verified: `${(j:-:)a[1,2]}`, `${(F)a[1,2]}`, `${(j:.:)a[1,-1]}`,
+`${(j:-:)a[-2,-1]}` all match `/opt/homebrew/bin/zsh`.
 
 **Verify** vs `/opt/homebrew/bin/zsh`:
 
@@ -48174,7 +48182,7 @@ no longer reports the internal trap-machinery scalar.
 | 325 | `$'\xNN\xNN'` C-string hex escapes treat UTF-8 sequence as 2 bytes (zsh: combines into multibyte char via locale) | **fixed** 2026-06-02 | use `\uNNNN` Unicode form (unverified) |
 | 326 | `typeset +i n` clears value AND removes attribute (zsh: preserves value as scalar) | **fixed** 2026-06-02 | save/restore around toggle |
 | 327 | `${(l.N.)arr[N]}` pad flags on array-element return empty — extends #301 family | **fixed** 2026-06-04 | `(l.N.)`/`(r.N.)` on `arr[N]` now pad correctly via `(flag)NAME[KEY]` dispatcher |
-| 328 | ALL `${(FLAG)arr[N]}` flags broken on subscripted-array-element (20+ flags: case/type/pad/quote/sort/unique/join/eval/P/split/visible/D) | **partial-fix** 2026-06-04 | case/type/pad/quote families (`C`/`L`/`U`/`q`/`qq`/`Q`/`t`/`l`/`r`) now match; `(j::)` on slice deferred |
+| 328 | ALL `${(FLAG)arr[N]}` flags broken on subscripted-array-element (20+ flags: case/type/pad/quote/sort/unique/join/eval/P/split/visible/D) | fixed | case/type/pad/quote families (`C`/`L`/`U`/`q`/`qq`/`Q`/`t`/`l`/`r`) match; `(j::)`/`(F)`/`(p)` on slice now match (late-sepjoin honors slice via getarrvalue + compile_zsh routes join+slice through BUILTIN_BRIDGE_BRACE_ARRAY) |
 | 329 | `setopt globsubst` doesn't enable variable-as-glob-pattern expansion (`${~var}` still works) | **fixed** 2026-06-02 | use `${~var}` per-expansion |
 | 330 | `${~$(cmdsub)}` forced-glob marker on cmdsub doesn't trigger glob — returns empty | **fixed** 2026-06-04 | flag-loop accepts Tilde TOKEN (\u{98}) per `Src/subst.c:2596` |
 | 331 | ALL `${(FLAG)assoc[k]}` flags broken on subscripted-assoc-element (mirrors #328 for assoc) | fixed | (case/quote families fixed 2026-06-04; `(t)h[k]` now gated on key-shape heuristic — alpha-id keys emit empty matching zsh, integer keys keep substring path for indexed-array regression) |
