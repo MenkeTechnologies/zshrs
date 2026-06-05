@@ -3946,6 +3946,37 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                     qs.short_circuit = Some(n);
                 }
             }
+            // c:Src/glob.c:1599-1620 `case 'e'` — `(e:CODE:)` shell-
+            // eval qualifier. The body is delimited by the char
+            // immediately following 'e' (matched at both ends).
+            // Common forms in zsh scripts: `(e:'[[ -L $REPLY ]]':)`
+            // for symlink filter, etc. The body runs against each
+            // candidate path with $REPLY set; the file is kept iff
+            // the body returns 0. zshrs's qualifier::Eval variant
+            // was defined but had no parser arm — was rejected as
+            // "unknown file attribute: e". Bug #469.
+            'e' => {
+                let delim = match chars.next() {
+                    Some(d) => d,
+                    None => break,
+                };
+                let mut body = String::new();
+                while let Some(&pc) = chars.peek() {
+                    if pc == delim {
+                        chars.next();
+                        break;
+                    }
+                    body.push(pc);
+                    chars.next();
+                }
+                if negated {
+                    // (^e:CODE:) inverts; we route through Eval and
+                    // flip by wrapping the body. Simpler: just store
+                    // and let the negated flag at the qualifier_set
+                    // level handle inversion.
+                }
+                qs.qualifiers.push(qualifier::Eval(body));
+            }
             // c:Src/glob.c:1758-1762 — `default: zerr("unknown file
             // attribute: %c", *s); restore_globstate(saved); return;`.
             // Bug #583: zshrs's `_ => {}` arm silently accepted any
@@ -4692,7 +4723,35 @@ fn check_single_qualifier(qual: &qualifier, path: &Path, meta: &Metadata) -> boo
                 false
             }
         }
-        qualifier::Eval(_) => true, // Would need shell integration
+        qualifier::Eval(code) => {
+            // c:Src/glob.c:1599-1620 — `(e:CODE:)` shell-eval
+            // qualifier. C sets up REPLY to the current path,
+            // execstring(code, …), and keeps the file iff the body
+            // returned 0.
+            //
+            // The Rust port routes through ShellExecutor::execute_script
+            // which parses + compiles + runs the body. Save/restore
+            // REPLY around the call so other code seeing $REPLY sees
+            // a sane value after the glob finishes.
+            let saved_reply = crate::ported::params::getsparam("REPLY");
+            // Set REPLY to the path being tested.
+            crate::ported::params::setsparam("REPLY", &path.to_string_lossy());
+            let mut keep = false;
+            crate::fusevm_bridge::with_executor(|exec| {
+                let rc = exec.execute_script(code).unwrap_or(1);
+                keep = rc == 0;
+            });
+            // Restore REPLY.
+            match saved_reply {
+                Some(v) => {
+                    crate::ported::params::setsparam("REPLY", &v);
+                }
+                None => {
+                    crate::ported::params::unsetparam("REPLY");
+                }
+            }
+            keep
+        }
     }
 }
 

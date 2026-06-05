@@ -38477,6 +38477,27 @@ functions -t | grep -E "^[a-zA-Z_]+ \(\)" | awk '{print $1}'
 
 ## #469 — `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier"
 
+**Status:** `fixed` 2026-06-05 — glob qualifier parser now
+recognizes `e` followed by a delimited body, stores it as
+`qualifier::Eval(code)`, and the matcher evaluates the body per
+candidate with `$REPLY` set to the path. Filter keeps the file iff
+the body returns 0. Per c:Src/glob.c:1599-1620.
+
+**Verify** vs `/opt/homebrew/bin/zsh`:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg && touch /tmp/_zg/bar.c /tmp/_zg/foo.txt; echo /tmp/_zg/*(e:'\''[[ $REPLY == *.c ]]'\'':)'
+/tmp/_zg/bar.c
+
+$ ./target/debug/zshrs --zsh -c 'mkdir -p /tmp/_zg && touch /tmp/_zg/bar.c /tmp/_zg/foo.txt; echo /tmp/_zg/*(e:'\''[[ $REPLY == *.c ]]'\'':)'
+/tmp/_zg/bar.c
+```
+
+REPLY is saved/restored across the eval so callers' `$REPLY`
+state is preserved.
+
+### Original report
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -48383,7 +48404,7 @@ no longer reports the internal trap-machinery scalar.
 | 466 | `pushd +N` / `popd +N` dirstack indexing cycles wrong direction — +1 lands on wrong stack entry | **fixed** 2026-06-04 | `popd +N` arm added to bin_cd post-cd dirstack maintenance per `Src/builtin.c:872-936` |
 | 467 | `$-` shell-flags parameter missing `f` flag when shell launched with `-f` — likely `c`/`i`/`s`/`l` also missing | **fixed** 2026-06-04 | n/a |
 | 468 | `functions -t` (list traced) emits full function body instead of name list (zsh: empty or names only) | **fixed** 2026-06-04 | n/a |
-| 469 | `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier" | **fixed** 2026-06-02 | manual filter loop after glob |
+| 469 | `*(e:CODE:)` glob qualifier (shell-eval filter) not recognized — errors "unrecognized modifier" | fixed | parser + qualifier::Eval matcher; body runs via execute_script with $REPLY set, file kept iff rc=0 |
 | 470 | `emulate -L sh` shows `localoptions`/`localpatterns`/`localtraps` but doesn't apply sh-mode opts — same root as #464 | **fixed** 2026-06-04 | default_on_options reads live EMULATION + optns_flags table corrected (25 entries) |
 | 471 | `zmodload -u zsh/nonexistent` silently rc=0 — should error "no such module" (zsh: rc=1) | **fixed** 2026-06-02 | manual module-list check before unload |
 | 472 | `typeset -H` (hide value) doesn't suppress value in `typeset -p` output — leaks secrets in listings | **fixed** 2026-06-04 | `local -H a=secret; typeset -p a` → `typeset a` matching zsh |
