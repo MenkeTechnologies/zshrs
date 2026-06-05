@@ -29794,7 +29794,18 @@ done
 
 ## #357 — `setopt warn_nested_var` warning not emitted (extends #223 warn_create_global family)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, parity.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'setopt warn_nested_var; f() { local X; g() { X=1; }; g; }; f'
+g: scalar parameter X set in enclosing scope in function g
+$ ./target/debug/zshrs --zsh -fc 'setopt warn_nested_var; f() { local X; g() { X=1; }; g; }; f'
+g: scalar parameter X set in enclosing scope in function g
+```
+
+BUGS.md status was stale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt warn_nested_var; f() { local X; g() { X=1; }; g; }; f'
