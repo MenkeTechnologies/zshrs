@@ -5278,7 +5278,15 @@ pub fn paramsubst(
                     }
                     match (found, return_index) {
                         (Some((s, _)), true) => (s + 1).to_string(),
-                        (Some((s, e)), false) => s_chars[s..e].iter().collect(),
+                        (Some((s, _e)), false) => {
+                            // c:Src/params.c:1798-1980 — scalar (r)/(R)
+                            // returns the CHAR at the match position,
+                            // not the full matched substring. Verified
+                            // vs /opt/homebrew/bin/zsh:
+                            //   s="barfooxyz"; ${s[(r)foo]} → "f"
+                            //   (the first char of "foo" at position 4)
+                            s_chars.get(s).map(|c| c.to_string()).unwrap_or_default()
+                        }
                         (None, true) => {
                             // (i) returns len+1, (I) returns 0 on no match.
                             // Direct port of Src/params.c getindex.
