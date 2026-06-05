@@ -47100,7 +47100,7 @@ no longer reports the internal trap-machinery scalar.
 | 81 | `extended_glob *~b` returns duplicates + matches dir | **fixed** 2026-06-02 | loop with `[[ == ... ]] continue` |
 | 82 | `"PREFIX${(s.X.)var}"` repeats prefix per element | **fixed** 2026-06-02 | `arr=("${(s.X.)v}"); "P:${arr[*]}"` |
 | 83 | `${a[(s.,.)N,M]}` slice with flag returns full array | **fixed** 2026-06-02 | drop subscript flag |
-| 84 | `bindkey -L` 117 entries vs zsh's 31 (default keymap differs) | **port-bug** | normalize via post-process |
+| 84 | `bindkey -L` 117 entries vs zsh's 31 (default keymap differs) | **demo-error** 2026-06-04 | normalize via post-process — diff was \$EDITOR=nvim auto-setting VIMODE; with EDITOR unset both shells produce identical 117 lines |
 | 85 | `"${(s.X.)s[@]}"` on scalar with `[@]` returns empty | **fixed** 2026-06-02 | `(@s.X.)s` flag-first form |
 | 86 | `${1:?msg}` error format has spurious `:1:` line | **fixed** 2026-06-04 | sed-strip the line number |
 | 87 | `setopt` (no args) empty under `-fc`; zsh shows `nohashdirs/norcs` | **fixed** 2026-06-04 | `$options[rcs]` direct query |
@@ -47214,7 +47214,7 @@ no longer reports the internal trap-machinery scalar.
 | 195 | `${(C)${(P)name}[N]}` flag applied to full array, outer subscript ignored | **fixed** 2026-06-04 | temp `deref=("${(@P)name}")` |
 | 196 | Anonymous fn output lost in `$(() { :; })` cmdsub or `(() { :; })` subshell | **fixed** 2026-06-03 | cmd_or_math fallback no longer calls skipcomm (lex.c:519-520) |
 | 197 | `typeset -f` function-body display collapses statement newlines into `; ` | **fixed** 2026-06-04 | newlines preserved with tab indent matching zsh |
-| 198 | `bindkey -L` output uses individual entries instead of `-R` range-compressed | **port-bug** | round-trip via zshrs's own output |
+| 198 | `bindkey -L` output uses individual entries instead of `-R` range-compressed | **demo-error** 2026-06-04 | range-compaction logic exists at zle_keymap.rs:1762-1775; diff was \$EDITOR=nvim auto-setting VIMODE so zsh -f used viins (mostly self-insert ranges), zshrs used emacs (varied widgets) |
 | 199 | `${(qq)x}` with embedded newline emits mixed `'a'$'\n''b'` instead of literal | **fixed** 2026-06-02 | n/a |
 | 200 | `${(k)assoc[key]}` key-flag with subscript returns empty (zsh: key when exists) | **fixed** 2026-06-02 | n/a |
 | 201 | `typeset +x VAR` doesn't remove VAR from environment (security-relevant) | **fixed** 2026-06-02 | `unset VAR; typeset VAR=$saved` re-bind |
@@ -47360,8 +47360,8 @@ no longer reports the internal trap-machinery scalar.
 | 341 | `$((arr[(i)pat]))` subscript-flag inside arith subscript returns 0 (zsh: returns match index) | **fixed** 2026-06-02 | extract index first via temp var |
 | 342 | `options[opt]=on/off` assignment doesn't toggle option — assoc-write→state binding missing | **port-bug** | direct `setopt`/`unsetopt` |
 | 343 | `bindkey "key" widget` define-binding silent no-op — every `.zshrc` keybinding ignored (daily-driver blocker) | **fixed** 2026-06-02 | (none — keymap insert broken) |
-| 344 | `bindkey -r "key"` doesn't remove binding — companion to #343, key remains bound | **port-bug** | (none — keymap delete broken) |
-| 345 | Default `^A` binding differs — `self-insert` (zsh -f) vs `beginning-of-line` (zshrs always) | **port-bug** | (none — -f doesn't strip keymap) |
+| 344 | `bindkey -r "key"` doesn't remove binding — companion to #343, key remains bound | **fixed** 2026-06-04 | (none — keymap delete broken) |
+| 345 | Default `^A` binding differs — `self-insert` (zsh -f) vs `beginning-of-line` (zshrs always) | **demo-error** 2026-06-04 | with \$EDITOR unset both shells default to emacs keymap where \`^A\` is beginning-of-line; the diff was \$EDITOR=nvim auto-setting VIMODE → viins keymap (^A = self-insert) |
 | 346 | `read -E` flag (echo input back to stdout) not implemented — tee-like read pipelines silently lose output | **fixed** 2026-06-02 | use explicit `tee /dev/stderr` |
 | 347 | `read -z` flag (read from command buffer) returns empty — buffer-roundtrip broken | **fixed** 2026-06-02 | (none — buffer not connected) |
 | 348 | `read -p VAR` flag semantics differ — zsh: read-from-coproc (errors when none), zshrs: parse-error/silent | **fixed** 2026-06-02 | use `read <&p` (may also be broken per #205) |
@@ -47585,7 +47585,7 @@ no longer reports the internal trap-machinery scalar.
 | 566 | `echo -e "\\uNNNN"` / `echo -e "\\UNNNNNNNN"` Unicode escapes passed through literally — zsh decodes | **fixed** 2026-06-02 | embed UTF-8 char literal |
 | 567 | `$'\\UNNNNNNNN'` ANSI-C 8-hex Unicode escape passed through literally — zsh decodes (extends #364) | **fixed** 2026-06-02 | embed UTF-8 char literal |
 | 568 | `read -A a </dev/null` on empty input creates 0-elem array — zsh: 1-elem empty array | **fixed** 2026-06-02 | use `$?` from `read` not `${#a}` |
-| 569 | `bindkey` no-args listing omits range-compaction `"^A"-"^C" self-insert` — emits each key (117 lines vs zsh 31) | **port-bug** | query specific keys with `bindkey '^X'` |
+| 569 | `bindkey` no-args listing omits range-compaction `"^A"-"^C" self-insert` — emits each key (117 lines vs zsh 31) | **demo-error** 2026-06-04 | range-compaction at scanbindlist works correctly for runs of same widget; the 31-line zsh output assumed \$EDITOR=vi/nvim (sets VIMODE → viins keymap with mostly self-insert) |
 | 570 | `${(n)a[1,-1]}` paramsubst flag + array-slice errors "bad substitution" — extends #436 to slice form | **fixed** 2026-06-04 | (@) + sort + slice now routes through BRIDGE_BRACE_ARRAY |
 | 571 | `${(Z)a}` flag without required arg errors "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 572 | `print -S arg` history-save flag emits arg to stdout (and doesn't save) — zsh: silent save | **fixed** 2026-06-04 | `print -S hello` exits silently with rc=0 matching zsh |
