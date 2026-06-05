@@ -34666,75 +34666,70 @@ porting between zsh-impls.
 
 ## #415 — function-local `typeset -A h` clobbers global `h` instead of shadowing
 
-**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — createparam saves the displaced `paramtab_hashed_storage[name]` onto a per-name shadow stack when installing a PM_LOCAL|PM_HASHED shadow; endparamscope pops on PM_HASHED outer-pm restoration. Mirrors C's `copyparam` (Src/builtin.c:2382-2424) via parallel storage.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h=(o 1); f() { typeset -A h=(i 2); }; f; echo "after_o=[${h[o]}] after_i=[${h[i]}]"'
 after_o=[1] after_i=[]
 
-$ ./target/debug/zshrs --zsh -c 'typeset -A h=(o 1); f() { typeset -A h=(i 2); }; f; echo "after_o=[${h[o]}] after_i=[${h[i]}]"'
+$ ./target/debug/zshrs --zsh -c 'typeset -A h=(o 1); f() { typeset -A h=(i 2); }; f; echo "after_o=[${h[o]}] after_i=[${h[i]}]"'   # before
 after_o=[] after_i=[2]
 ```
 
-zsh: function-local `typeset -A h=(i 2)` **shadows** the
-global `h`. After the function returns, the global is
-intact — `h[o]=1` survives, `h[i]` is undefined.
+**Root cause** — zshrs's PM_HASHED data doesn't live in `pm.u_hash`; it lives in a parallel `paramtab_hashed_storage: HashMap<String, IndexMap<...>>` keyed by name (no scope dimension). The pm.old chain that handles PM_SCALAR / PM_ARRAY shadows correctly through `param.u_str` / `param.u_arr` doesn't carry the assoc data, so:
 
-zshrs: function-local `typeset -A` **clobbers** the
-global. After the function returns, the *function's*
-state leaks out — `h[o]` is gone, `h[i]=2` persists.
+1. `typeset -A h=(i 2)` inside f → createparam shadows the global pm at locallevel=1, then set_assoc writes `paramtab_hashed_storage["h"] = {i:2}` — **clobbering the outer scope's `{o:1}`**.
+2. f returns → endparamscope restores `paramtab["h"]` from `pm.old` (outer's pm), but the parallel storage at `paramtab_hashed_storage["h"]` still holds `{i:2}`.
+3. Reads of `${h[o]}` find `paramtab["h"]` (outer pm with PM_HASHED), follow through to `paramtab_hashed_storage["h"] = {i:2}`, return empty.
 
-Tested with scalar `local` and regular array `local -a`
-in earlier hunts and those shadow correctly. The bug is
-specific to associative arrays (`typeset -A` /
-`local -A`).
+C zsh side-steps this by storing the assoc HashTable directly in `pm.u.hash` so the pm.old chain trivially carries it.
 
-**Where** — `src/ported/builtins/typeset.rs::declare_assoc`
-or the scope-push for assoc parameters: the function-
-local declaration must push a new entry onto the param
-stack without modifying or merging with the parent
-scope's assoc. C-source `Src/params.c::setlocal_assoc`
-saves the parent's `Param` struct and restores on
-function exit.
+**Fix** (`src/ported/params.rs`):
 
-**Impact** — **Function isolation broken for assocs**.
-Every script that uses local hashtables for per-function
-state mutates the caller's hash:
+1. Add a shadow stack `PARAMTAB_HASHED_SHADOW_STACK: HashMap<String, Vec<Option<IndexMap<...>>>>` (locking via `OnceLock<Mutex<...>>`).
 
-```sh
-typeset -A config=(theme dark size 14)
-render() {
-    typeset -A config=(theme override-only)   # intended: local view
-    echo "${config[theme]}"   # "override-only"
-}
-render
-echo "${config[theme]}"   # zsh: "dark" (untouched)
-                          # zshrs: empty — config[theme] gone
-echo "${config[size]}"    # zsh: "14" (untouched)
-                          # zshrs: empty — clobbered
-```
-
-Affects:
-- Plugin loaders that use assoc for option-storage
-- Themes that have per-render local overrides
-- Memoization caches passed through helper functions
-
-The shadowing bug is **silent** — code appears to work
-on first call, then state from the function leaks to the
-caller on subsequent calls.
-
-**Workaround** — manual save/restore:
-```sh
-render() {
-    local saved=("${(@kv)config}")
-    typeset -A config=()
-    config[theme]="override-only"
-    # ... use config ...
-    config=("${saved[@]}")  # restore
+2. `createparam` (around line 2099) — when allocating a fresh pm under PM_LOCAL flags AND the displaced oldpm has PM_HASHED, push the current `paramtab_hashed_storage[name]` onto the shadow stack, THEN clear the storage so the local shadow starts empty (without the clear, bare `local -A h` followed by `h[x]=v` would append to the outer's data since there's no value-overwriting set_assoc call):
+```rust
+if (op.node.flags as u32 & PM_HASHED) != 0
+    && (flags as u32 & PM_LOCAL) != 0
+{
+    let saved = paramtab_hashed_storage().lock().ok().and_then(|m| m.get(name).cloned());
+    PARAMTAB_HASHED_SHADOW_STACK.get_or_init(...).lock().map(|mut stk|
+        stk.entry(name.to_string()).or_default().push(saved));
+    paramtab_hashed_storage().lock().map(|mut m| m.insert(name.to_string(), IndexMap::new()));
 }
 ```
 
-Ugly and error-prone for nested patterns.
+3. `endparamscope` — when restoring a stale PM_HASHED pm whose outer (`pm.old`) is also PM_HASHED, pop from the shadow stack and re-install:
+```rust
+if was_assoc && outer_is_assoc {
+    let saved = PARAMTAB_HASHED_SHADOW_STACK.get_or_init(...).lock().ok()
+        .and_then(|mut stk| stk.get_mut(&n).and_then(|v| v.pop()).flatten());
+    match saved {
+        Some(map) => paramtab_hashed_storage().insert(n, map),
+        None => paramtab_hashed_storage().remove(&n),
+    }
+}
+```
+
+The existing "no outer binding" arm at the same site already removes the storage slot, so the `None` push path nests correctly: at each pop, if the saved was `None`, the slot becomes empty.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'typeset -gA h=(a 1 b 2); f() { typeset -A h=(x 99); echo "in:${(kv)h}"; }; f; echo "out:${(kv)h}"'
+in:x 99
+out:a 1 b 2
+$ ./target/debug/zshrs -fc 'typeset -gA h=(a 1); f() { local -A h; h[x]=99; echo "in:${(kv)h}"; }; f; echo "out:${(kv)h}"'
+in:x 99
+out:a 1
+$ ./target/debug/zshrs -fc 'typeset -gA h=(a 1); f() { typeset -A h=(x 99); g; echo "fn:${(kv)h}"; }; g() { typeset -A h=(z 5); echo "g:${(kv)h}"; }; f; echo "out:${(kv)h}"'
+g:z 5
+fn:x 99
+out:a 1
+```
+
+Three-level nesting verified. Test baseline 1024/28 (was 1023/29 — `test_local_assoc_array_shadows_outer` flipped).
 
 ---
 
@@ -48479,7 +48474,7 @@ no longer reports the internal trap-machinery scalar.
 | 412 | `$PROMPT3` default empty — `select` prompt missing (zsh: `\\033[1;34m-->>>> \\033[0m`) | **fixed** 2026-06-02 | seed `PS3` in zshrc |
 | 413 | `do` standalone-keyword silently accepted as no-op (zsh: parse error near `do`) — reserved-word strict check missing | **fixed** 2026-06-02 | `zsh -n script.zsh` pre-check |
 | 414 | `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape) — opposite of #398 printf direction | **fixed** 2026-06-04 | n/a |
-| 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **fixed** 2026-06-02 | manual save/restore via `${(@kv)config}` |
+| 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **fixed** 2026-06-05 | createparam saves displaced paramtab_hashed_storage[name] onto shadow stack for PM_LOCAL|PM_HASHED; endparamscope pops on outer-pm restoration (mirrors C copyparam via parallel storage) |
 | 416 | `unset PATH` ignored — command lookup still resolves (security bypass for sandboxing patterns) | **fixed** 2026-06-04 | try `PATH=` empty assignment (needs verify) |
 | 417 | `unset RANDOM` ignored — special-param regenerator stays active (zsh: returns empty after unset) | **fixed** 2026-06-04 | n/a |
 | 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **fixed** 2026-06-05 | unsetparam retains PM_SPECIAL pms in paramtab with PM_UNSET (mirror C `Src/params.c:3911-3913`); getsparam honors PM_UNSET as empty; re-assignment reuses pm via createparam oldpm so intsetfn name-dispatch fires through intsecondssetfn |
