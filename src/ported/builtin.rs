@@ -10467,6 +10467,41 @@ pub fn bin_test(
         crate::ported::utils::zwarnnam(name, "too many arguments");
         return 2;
     }
+    // c:Src/parse.c par_cond — 4-arg form `-FLAG operand extra extra` /
+    // any 4+ arg layout where args[0] is a recognized unary flag with
+    // extras after the operand → "too many arguments".
+    if argv.len() == 4 && argv[0].starts_with('-') && argv[0].len() == 2 {
+        let op_char = argv[0].chars().nth(1).unwrap_or(' ');
+        if matches!(
+            op_char,
+            'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'k' | 'L'
+                | 'n' | 'o' | 'p' | 'r' | 's' | 'S' | 't' | 'u' | 'v'
+                | 'w' | 'x' | 'z' | 'G' | 'N' | 'O'
+        ) {
+            crate::ported::utils::zwarnnam(name, "too many arguments");
+            return 2;
+        }
+    }
+    // c:Src/parse.c par_cond — 4+ args with no recognised connective:
+    // "condition expected: ARGV[0]" rc=2 (zsh points at the first
+    // operand, mirroring 2-arg bare-operands message).
+    if argv.len() >= 4 && argv[0] != "(" {
+        let has_connective = argv
+            .iter()
+            .any(|a| matches!(a.as_str(), "&&" | "||" | "-a" | "-o"));
+        let has_paren = argv.iter().any(|a| a == "(");
+        let has_known_binop_mid = argv
+            .iter()
+            .any(|a| known_binops.contains(&a.as_str()));
+        if !has_connective && !has_paren && !has_known_binop_mid {
+            crate::ported::utils::zwarn(&format!(
+                "condition expected: {}",
+                argv[0]
+            ));
+            let _ = name;
+            return 2;
+        }
+    }
 
     // c:Src/builtin.c:7276-7280 + Src/parse.c par_cond — when the
     // 2-arg form is `[ -FLAG operand ]` and `-FLAG` isn't a recognized
