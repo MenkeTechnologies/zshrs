@@ -47058,13 +47058,13 @@ no longer reports the internal trap-machinery scalar.
 | 39 | `${arr:#"literal"}` quoted pat still globbed | **fixed** 2026-06-02 | n/a |
 | 40 | `print -aC N` ignores `-a` (column-major instead of row) | **fixed** 2026-06-02 | sort input in advance |
 | 41 | Glob qualifier `Yn` (limit) returns all matches | **fixed** 2026-06-02 | `head -n` or array slice |
-| 42 | Bare `typeset` prints `name=val` only, no attrs | **port-bug** | use `typeset -p` |
+| 42 | Bare `typeset` prints `name=val` only, no attrs | **fixed** 2026-06-02 | use `typeset -p` |
 | 43 | `${#var:mod}` / `${#var/pat/rep}` / `${#arr[i,j]}` ignores transform | **fixed** 2026-06-02 | assign to temp first |
 | 44 | `set -x` PS4 doesn't expand `%x %N %I %_` | **fixed** 2026-06-03 | `PS4="+ "` simple |
 | 45 | `${#$}` returns 0 (length of PID) | **fixed** 2026-06-02 | `pid=$$; ${#pid}` |
 | 46 | nested `` `\`...\`` `` backquotes mishandled | **fixed** 2026-06-02 | use `$(...)` instead |
 | 47 | `${(b)str}` escapes space/semi (C-zsh doesn't) | **fixed** 2026-06-02 | drop `(b)` flag |
-| 48 | `typeset -m PAT` rejects pattern arg | **port-bug** | iterate `${(k)parameters}` |
+| 48 | `typeset -m PAT` rejects pattern arg | **fixed** 2026-06-04 | iterate `${(k)parameters}` |
 | 49 | `(( "abc" == "abc" ))` quoted strings → false | **fixed** 2026-06-02 | drop quotes |
 | 50 | Trap inherited from outer doesn't fire in fn | **fixed** 2026-06-03 | n/a |
 | 51 | `${#*}` access corrupts `$@`/`$*` for rest of fn | **fixed** 2026-06-02 | n/a |
