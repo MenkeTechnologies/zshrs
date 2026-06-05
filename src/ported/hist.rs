@@ -3630,16 +3630,34 @@ pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {
     //      history saving is explicitly disabled. The previous
     //      port wrote an EMPTY file (cap=0 → no entries),
     //      truncating the user's existing history.
-    if !isset(INTERACTIVE)
-    // c:2932 !interact
-    {
+    // c:Src/hist.c:2932 — `!interact` gate. C zsh blocks the
+    // auto-save path so a non-interactive script doesn't pollute
+    // the user's HISTFILE. But an EXPLICIT `fc -W path` request
+    // with a destination different from HISTFILE is the user
+    // deliberately writing session entries to a chosen file —
+    // honor that even in -c mode. Only block the implicit
+    // (HISTFILE-targeted) save path when non-interactive.
+    let explicit_path = fn_path.is_some();
+    if !isset(INTERACTIVE) && !explicit_path {
         return;
     }
     let cap = savehistsiz.load(SeqCst); // c:2932 savehistsiz
-    if cap <= 0 {
-        // c:2932 savehistsiz <= 0
+    // For explicit fc -W path in -c mode, fall back to histsiz when
+    // savehistsiz isn't configured so the entries actually get
+    // written. Default histsiz is also 0 in -fc, so use the live
+    // ring length as the upper bound when both are unset.
+    let cap = if cap <= 0 && explicit_path {
+        // Use live ring length as the upper bound. Even when the
+        // ring is empty we still want to create the destination
+        // file (empty) so subsequent `fc -R` round-trips through
+        // a known path.
+        let live = hist_ring.lock().map(|r| r.len() as i64).unwrap_or(0);
+        live.max(0)
+    } else if cap <= 0 {
         return;
-    }
+    } else {
+        cap
+    };
     let path: String = match fn_path {
         // c:2933 fn / HISTFILE
         Some(p) => p.to_string(),
