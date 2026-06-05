@@ -47085,7 +47085,7 @@ no longer reports the internal trap-machinery scalar.
 | 66 | `time` builtin ignores `TIMEFMT`, omits `%J` cmd name | **fixed** 2026-06-04 | `/usr/bin/time -f` instead |
 | 67 | `pushd` no-args doesn't swap top of dir stack | **fixed** 2026-06-02 | explicit `pushd $OLDPWD` |
 | 68 | `trap` listing in insertion order, not signal-number | **fixed** 2026-06-02 | pipe through `sort` |
-| 69 | `$sysparams` auto-loaded w/o `zmodload zsh/system` | **port-bug** | call `zmodload` regardless |
+| 69 | `$sysparams` auto-loaded w/o `zmodload zsh/system` | **fixed** 2026-06-04 | call `zmodload` regardless |
 | 70 | FS watcher leaks newly-created paths to stderr | **fixed** 2026-06-02 | none — must fix in zshrs |
 | 71 | `${var:N:M}` accepts non-digit offset (bashism) | **fixed** 2026-06-02 | wrap offset in `$(( ))` |
 | 72 | `log` builtin registered but dispatch → `/usr/bin/log` | **fixed** 2026-06-02 | `print -- $watch` instead |
