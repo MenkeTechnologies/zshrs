@@ -27539,14 +27539,19 @@ $ ./target/debug/zshrs --zsh -c 'cd /tmp; touch ztcs_a ztcs_b; echo ${~$(echo "z
 
 ## #331 — ALL `${(FLAG)assoc[k]}` flags broken on subscripted-assoc-element (mirrors #328 for assoc)
 
-**Status:** `partial-fix` 2026-06-04 — case/quote families
-on assoc-subscript targets now match zsh: `(C)`/`(L)`/`(U)`/
-`(q)`/`(qq)`/`(Q)` on `h[k]` all return the expected
-flag-applied scalar. Closed via the same cumulative
-`(flag)NAME[KEY]` dispatcher parity as `#328`. `(t)h[k]`
-diverges: zsh returns empty (assoc-subscript not type-tagged),
-zshrs returns the char-indexed type letter (the `#308` fix
-over-applied — assoc shape needs a separate gate).
+**Status:** `fixed` 2026-06-05 — case/quote/type families
+on assoc-subscript targets now all match zsh. Earlier
+partial-fix (2026-06-04) handled `(C)`/`(L)`/`(U)`/`(q)`/
+`(qq)`/`(Q)` via the cumulative `(flag)NAME[KEY]` dispatcher.
+The remaining `(t)h[k]` divergence (zsh: empty, zshrs:
+char-indexed last char of "association") is closed by gating
+the `#308` `(t)NAME[KEY]` substring-on-type-tag fast path
+on a key-shape heuristic: when the key looks like an assoc
+identifier (`_` or alpha first char, all alphanumeric/`_`
+after), emit a direct `LoadConst("")` instead of the
+substring. Indexed-array integer keys still take the
+substring path so `${(t)a[1]}` continues to return the
+first char of the array's type tag.
 
 **Verify** vs `/opt/homebrew/bin/zsh`:
 
@@ -48154,7 +48159,7 @@ no longer reports the internal trap-machinery scalar.
 | 328 | ALL `${(FLAG)arr[N]}` flags broken on subscripted-array-element (20+ flags: case/type/pad/quote/sort/unique/join/eval/P/split/visible/D) | **partial-fix** 2026-06-04 | case/type/pad/quote families (`C`/`L`/`U`/`q`/`qq`/`Q`/`t`/`l`/`r`) now match; `(j::)` on slice deferred |
 | 329 | `setopt globsubst` doesn't enable variable-as-glob-pattern expansion (`${~var}` still works) | **fixed** 2026-06-02 | use `${~var}` per-expansion |
 | 330 | `${~$(cmdsub)}` forced-glob marker on cmdsub doesn't trigger glob — returns empty | **fixed** 2026-06-04 | flag-loop accepts Tilde TOKEN (\u{98}) per `Src/subst.c:2596` |
-| 331 | ALL `${(FLAG)assoc[k]}` flags broken on subscripted-assoc-element (mirrors #328 for assoc) | **partial-fix** 2026-06-04 | case/quote families now match; `(t)h[k]` over-applies type-substring transform |
+| 331 | ALL `${(FLAG)assoc[k]}` flags broken on subscripted-assoc-element (mirrors #328 for assoc) | fixed | (case/quote families fixed 2026-06-04; `(t)h[k]` now gated on key-shape heuristic — alpha-id keys emit empty matching zsh, integer keys keep substring path for indexed-array regression) |
 | 332 | `${(u)@}` unique flag on positionals not applied — extends #277 sort family | **fixed** 2026-06-02 | copy to array, dedup via `[@]` |
 | 333 | `${(qL)*}` chained quote+lower on `$*` only applies lowercase, drops quote | **fixed** 2026-06-02 | apply flags sequentially via temp array |
 | 334 | `zsh -f` doesn't disable `rcs` option — `[[ -o rcs ]]` returns "on" instead of "off" | **fixed** 2026-06-02 | (none — needs init.rs to toggle flag) |
