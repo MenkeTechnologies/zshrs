@@ -1199,38 +1199,56 @@ impl ShellExecutor {
         let template = &args[0];
         let items = &args[1..];
 
-        // Compile template once, execute for each item on VM — no forks
-        let mut results: Vec<(i32, String)> = Vec::with_capacity(items.len());
+        // Parametrise the template ONCE: substitute `{}` with `${=__zshrs_p_arg__}`
+        // and parse + compile the result a single time. Per-iteration we just
+        // bind the parameter via `setsparam`; the same compiled chunk runs every
+        // time. The `${=...}` `=` flag forces word-splitting on $IFS so an item
+        // like "a b" still expands to two arguments — matching the old literal-
+        // substitution behavior for whitespace-bearing items. VMs are recycled
+        // through `fusevm::VMPool` so their internal Vec capacities (stack,
+        // frames, slot_buf, globals) carry across iterations.
+        //
+        // Semantic change vs the prior `template.replace("{}", item)` approach:
+        // `{}` placeholders inside single-quoted regions of the template won't
+        // expand (single quotes suppress parameter substitution), whereas
+        // literal substitution would have replaced them. Common usage
+        // (`pmap 'cmd {}' arg1 arg2`) puts `{}` outside of any quoting, so
+        // this matches.
+        const ARG_PARAM: &str = "__zshrs_p_arg__";
+        let parametrised = template.replace("{}", &format!("${{={}}}", ARG_PARAM));
 
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+        crate::ported::parse::parse_init(&parametrised);
+        let prog = crate::ported::parse::parse();
+        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        errflag.store(saved_errflag, Ordering::Relaxed);
+        if parse_failed {
+            eprintln!("zshrs:pmap:1: parse error in template");
+            return 1;
+        }
+        let compiler = crate::compile_zsh::ZshCompiler::new();
+        let chunk = compiler.compile(&prog);
+        crate::fusevm_disasm::maybe_print_stdout("builtin_pmap", &chunk);
+
+        let mut results: Vec<(i32, String)> = Vec::with_capacity(items.len());
+        let mut pool = fusevm::VMPool::with_capacity(1);
         for item in items {
-            let cmd = template.replace("{}", item);
-            // Phase 2 migration: parse_init + parse + ZshCompiler.
-            // Mirror Src/init.c errflag save/clear/check around parse.
-            let saved_errflag = errflag.load(Ordering::Relaxed);
-            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-            crate::ported::parse::parse_init(&cmd);
-            let prog = crate::ported::parse::parse();
-            let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
-            errflag.store(saved_errflag, Ordering::Relaxed);
-            if parse_failed {
-                eprintln!("zshrs:pmap:1: parse error");
-                results.push((1, String::new()));
-                continue;
-            }
-            let compiler = crate::compile_zsh::ZshCompiler::new();
-            let chunk = compiler.compile(&prog);
+            // Bind the iteration variable for this item.
+            crate::ported::params::setsparam(ARG_PARAM, item);
 
             // Capture stdout
             let output = Vec::new();
             let status = {
-                crate::fusevm_disasm::maybe_print_stdout("builtin_pmap", &chunk);
-                let mut vm = fusevm::VM::new(chunk);
+                let mut vm = pool.acquire(chunk.clone());
                 register_builtins(&mut vm);
                 let _ctx = ExecutorContext::enter(self);
-                match vm.run() {
+                let s = match vm.run() {
                     fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
                     fusevm::VMResult::Error(_) => 1,
-                }
+                };
+                pool.release(vm);
+                s
             };
             results.push((status, String::from_utf8_lossy(&output).to_string()));
         }
@@ -1245,6 +1263,8 @@ impl ShellExecutor {
             }
         }
 
+        // Clear the iteration variable so it doesn't leak into the caller's scope.
+        crate::ported::params::unsetparam(ARG_PARAM);
         if any_fail {
             1
         } else {
@@ -1267,36 +1287,44 @@ impl ShellExecutor {
         let template = &args[0];
         let items = &args[1..];
 
-        // Compile and run on VM — no forks. parse_init+parse + ZshCompiler.
+        // See `builtin_pmap` for the parametrise-then-compile-once rationale.
+        const ARG_PARAM: &str = "__zshrs_p_arg__";
+        let parametrised = template.replace("{}", &format!("${{={}}}", ARG_PARAM));
+
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+        crate::ported::parse::parse_init(&parametrised);
+        let prog = crate::ported::parse::parse();
+        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        errflag.store(saved_errflag, Ordering::Relaxed);
+        if parse_failed {
+            eprintln!("zshrs:pgrep:1: parse error in template");
+            return 1;
+        }
+        let compiler = crate::compile_zsh::ZshCompiler::new();
+        let chunk = compiler.compile(&prog);
+        crate::fusevm_disasm::maybe_print_stdout("builtin_pgrep", &chunk);
+
+        let mut pool = fusevm::VMPool::with_capacity(1);
         for item in items {
-            let cmd = template.replace("{}", item);
-            // Mirror Src/init.c errflag save/clear/check around parse.
-            let saved_errflag = errflag.load(Ordering::Relaxed);
-            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-            crate::ported::parse::parse_init(&cmd);
-            let prog = crate::ported::parse::parse();
-            let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
-            errflag.store(saved_errflag, Ordering::Relaxed);
-            if parse_failed {
-                continue;
-            }
-            let compiler = crate::compile_zsh::ZshCompiler::new();
-            let chunk = compiler.compile(&prog);
-
-            crate::fusevm_disasm::maybe_print_stdout("builtin_pgrep", &chunk);
-            let mut vm = fusevm::VM::new(chunk);
-            register_builtins(&mut vm);
-            let _ctx = ExecutorContext::enter(self);
-            let status = match vm.run() {
-                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
-                fusevm::VMResult::Error(_) => 1,
+            crate::ported::params::setsparam(ARG_PARAM, item);
+            let status = {
+                let mut vm = pool.acquire(chunk.clone());
+                register_builtins(&mut vm);
+                let _ctx = ExecutorContext::enter(self);
+                let s = match vm.run() {
+                    fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
+                    fusevm::VMResult::Error(_) => 1,
+                };
+                pool.release(vm);
+                s
             };
-
             if status == 0 {
                 println!("{}", item);
             }
         }
 
+        crate::ported::params::unsetparam(ARG_PARAM);
         0
     }
 
@@ -1315,40 +1343,45 @@ impl ShellExecutor {
         let template = &args[0];
         let items = &args[1..];
 
-        // Compile and run on VM — no forks, fire-and-forget style.
-        // parse_init+parse + ZshCompiler.
+        // See `builtin_pmap` for the parametrise-then-compile-once rationale.
+        const ARG_PARAM: &str = "__zshrs_p_arg__";
+        let parametrised = template.replace("{}", &format!("${{={}}}", ARG_PARAM));
+
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+        crate::ported::parse::parse_init(&parametrised);
+        let prog = crate::ported::parse::parse();
+        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        errflag.store(saved_errflag, Ordering::Relaxed);
+        if parse_failed {
+            eprintln!("zshrs:peach:1: parse error in template");
+            return 1;
+        }
+        let compiler = crate::compile_zsh::ZshCompiler::new();
+        let chunk = compiler.compile(&prog);
+        crate::fusevm_disasm::maybe_print_stdout("builtin_peach", &chunk);
+
         let mut any_fail = false;
-
+        let mut pool = fusevm::VMPool::with_capacity(1);
         for item in items {
-            let cmd = template.replace("{}", item);
-            // Mirror Src/init.c errflag save/clear/check around parse.
-            let saved_errflag = errflag.load(Ordering::Relaxed);
-            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-            crate::ported::parse::parse_init(&cmd);
-            let prog = crate::ported::parse::parse();
-            let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
-            errflag.store(saved_errflag, Ordering::Relaxed);
-            if parse_failed {
-                any_fail = true;
-                continue;
-            }
-            let compiler = crate::compile_zsh::ZshCompiler::new();
-            let chunk = compiler.compile(&prog);
-
-            crate::fusevm_disasm::maybe_print_stdout("builtin_peach", &chunk);
-            let mut vm = fusevm::VM::new(chunk);
-            register_builtins(&mut vm);
-            let _ctx = ExecutorContext::enter(self);
-            let status = match vm.run() {
-                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
-                fusevm::VMResult::Error(_) => 1,
+            crate::ported::params::setsparam(ARG_PARAM, item);
+            let status = {
+                let mut vm = pool.acquire(chunk.clone());
+                register_builtins(&mut vm);
+                let _ctx = ExecutorContext::enter(self);
+                let s = match vm.run() {
+                    fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
+                    fusevm::VMResult::Error(_) => 1,
+                };
+                pool.release(vm);
+                s
             };
-
             if status != 0 {
                 any_fail = true;
             }
         }
 
+        crate::ported::params::unsetparam(ARG_PARAM);
         if any_fail {
             1
         } else {
