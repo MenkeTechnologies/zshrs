@@ -47234,7 +47234,7 @@ no longer reports the internal trap-machinery scalar.
 | 215 | `zshexit` hook function not fired on shell exit (also breaks combined with #203) | **fixed** 2026-06-02 | `trap "..." EXIT` at top-level |
 | 216 | `${(t)var:-default}` after `unset var` returns empty instead of default | **fixed** 2026-06-02 | n/a |
 | 217 | `setopt cdable_vars` ignored — `cd VAR` doesn't deref VAR as path | **fixed** 2026-06-02 | n/a |
-| 218 | `typeset NAME` for assoc array prints nothing (zsh: `h=( [k]=v ... )` form) | **port-bug** | `typeset -p h` explicit |
+| 218 | `typeset NAME` for assoc array prints nothing (zsh: `h=( [k]=v ... )` form) | **fixed** 2026-06-04 | `typeset -p h` explicit |
 | 219 | `typeset -i "h[k]"` integer-on-assoc-element silently accepted (zsh: rejects) | **fixed** 2026-06-02 | n/a |
 | 220 | `setopt err_return` doesn't abort function on failed command (fn-scoped strict mode dead) | **fixed** 2026-06-02 | explicit `\|\| return $?` per command |
 | 221 | `disable -f FN` doesn't disable — `FN` still callable, `dis_functions[FN]` empty | **fixed** 2026-06-02 | `unfunction FN` destructive |
@@ -47269,7 +47269,7 @@ no longer reports the internal trap-machinery scalar.
 | 250 | `typeset -ia`/`typeset -Fa` accepted (zsh: errors "inconsistent type for assignment") | **fixed** 2026-06-02 | split into `-a` then per-elem arith |
 | 251 | `command -- echo hi` doesn't recognize `--` end-of-options separator | **fixed** 2026-06-02 | drop the `--` |
 | 252 | `exec -` (dash, no command) errors "exec: -: not found" instead of no-op | **fixed** 2026-06-02 | drop the `exec -` |
-| 253 | `$0` inside sourced file (top-level) isn't updated — breaks `${0:A:h}` plugin-dir pattern | **port-bug** | pass file path as parameter explicitly |
+| 253 | `$0` inside sourced file (top-level) isn't updated — breaks `${0:A:h}` plugin-dir pattern | **fixed** 2026-06-02 | pass file path as parameter explicitly |
 | 254 | `UID=N`/`EUID=N` writes silently accepted (zsh: attempts setuid syscall) — privilege-drop silent no-op | **fixed** 2026-06-02 | use external setuid wrapper |
 | 255 | `local -h NAME` doesn't hide parent scope's value — `-h` flag ignored | **fixed** 2026-06-02 | explicit `local NAME=""` before set |
 | 256 | `zstyle -e CONTEXT STYLE CODE` dynamic-eval not honored — completion-system breakage | **fixed** 2026-06-02 | use static `zstyle` form |

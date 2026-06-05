@@ -4972,9 +4972,30 @@ pub fn bin_typeset(
             // pre-conversion scalar value so the re-assignment after
             // type flip preserves it through the new setfn.
             let saved_val = getsparam(arg);
-            let was_fresh = saved_val.is_none();
+            // c:Src/builtin.c:3072 — `if (!getsparam(pname))
+            //     setsparam(pname, "");`. C zsh's getsparam returns the
+            // join-of-values for PM_HASHED and PM_ARRAY so this gate
+            // fires only for truly-undeclared names. zshrs's getsparam
+            // returns None for assoc/array (it routes through the
+            // PM_SCALAR / PM_INTEGER / PM_*FLOAT arms only), so this
+            // branch falsely fired for an existing hash AND triggered
+            // assignsparam's PM_HASHED→PM_SCALAR coerce at params.rs:
+            // 5368-5374 which removes the entry from
+            // paramtab_hashed_storage. Bug #218 in docs/BUGS.md.
+            //
+            // Gate on the paramtab flag instead: if the param exists
+            // and is PM_HASHED/PM_ARRAY, treat it as already-declared
+            // even though getsparam returned None.
+            let already_typed = paramtab().read().ok().and_then(|t| {
+                t.get(arg).map(|pm| {
+                    let f = pm.node.flags as u32;
+                    let typ = PM_TYPE(f);
+                    typ == PM_HASHED || typ == PM_ARRAY
+                })
+            }).unwrap_or(false);
+            let was_fresh = saved_val.is_none() && !already_typed;
             if was_fresh {
-                // c:3072 — `if (!getsparam(arg)) setsparam(arg, "")`.
+                // c:3072 — `if (!getsparam(pname)) setsparam(pname, "")`.
                 setsparam(arg, ""); // c:3074
                 // c:Src/builtin.c:2544 — `if (isset(TYPESETTOUNSET))
                 //     pm->node.flags |= PM_DEFAULTED;`. Under
