@@ -4042,26 +4042,24 @@ pub fn bin_typeset(
     // "not valid in this context: a*" because the per-arg loop's
     // identifier validation rejected `*`. Bug #48 in docs/BUGS.md.
     if OPT_ISSET(&ops, b'm') && !argv.is_empty() {
-        // c:3041 — set PRINT_TYPE and PRINT_NAMEONLY appropriately
-        // for the pattern-list path. Without `-p`, PRINT_TYPE flips
-        // on (so each match prints with attribute words like the
-        // no-args path); when no on-bits, PRINT_NAMEONLY suppresses
-        // value emission (zsh lists only names by default with
-        // -m + value-less arg).
+        // c:Src/builtin.c:2240-2247 — for the no-on/no-roff/no-value
+        // `typeset -m "pat"` path, typeset_single calls
+        // `printnode(PRINT_INCLUDEVALUE|PRINT_WITH_NAMESPACE)`. That
+        // shape emits `name=value` directly without going through
+        // printparamnode's attribute-walk arm (which fires only on
+        // PRINT_TYPESET / PRINT_POSIX_*). Bug #48 in docs/BUGS.md:
+        // previous Rust port set PRINT_TYPE here which routed each
+        // match through the attribute walk, prefixing every entry
+        // with `array`/`integer`/etc. zsh's actual output for
+        // `typeset -m "a*"` is `a=1\nargv=(  )` (no prefix words).
+        //
+        // With `-p`, use PRINT_TYPESET to emit reparseable form
+        // (`typeset a=1` / `typeset -a argv=(  )`).
         let mut local_printflags = printflags;
-        if !OPT_ISSET(&ops, b'p') {
-            if (on | roff) == 0 {
-                local_printflags |= PRINT_TYPE;
-            }
-            if on == 0 {
-                // c:3054 — when not setting attributes, list names only.
-                // BUT `typeset -m "a*"` in zsh shows `a=1` (name=value)
-                // form too — that's because PRINT_TYPE format prints
-                // value AFTER the attribute words. The PRINT_NAMEONLY
-                // gate at the C source only applies when -p is also
-                // false; keep value-emission unless explicit `-p`.
-                let _ = on;
-            }
+        if OPT_ISSET(&ops, b'p') {
+            local_printflags |= PRINT_TYPESET;
+        } else if (on | roff) == 0 {
+            local_printflags |= PRINT_INCLUDEVALUE;
         }
         for pattern in argv.iter() {
             // c:3061 — `patcompile(asg->name, 0, NULL)` glob-compile.
@@ -4092,6 +4090,27 @@ pub fn bin_typeset(
                     .filter(|(k, pm)| {
                         let f = pm.node.flags as u32;
                         if (f & PM_UNSET) != 0 {
+                            return false;
+                        }
+                        // c:Src/builtin.c:3081 — `for (i = 0; i <
+                        //   paramtab->hsize; i++)` walks paramtab
+                        // entries. C zsh's PARTAB magic-assoc names
+                        // (aliases/commands/functions/parameters/etc.)
+                        // are NOT in paramtab — they live behind a
+                        // dedicated PARTAB scanfn in Src/Modules/
+                        // parameter.c. The pattry loop therefore
+                        // never sees them and the for-loop's
+                        // typeset_single never fires on them.
+                        //
+                        // zshrs's init_partab_params inserts them into
+                        // paramtab as PM_HIDE-tagged placeholders so
+                        // ${parameters[name]} etc. resolve. Skip
+                        // PM_HIDE entries here to restore the C
+                        // invisibility — `typeset -m "a*"` no longer
+                        // emits `aliases` / `array argv=(  )` etc.
+                        // alongside the legitimate `a=1`. Bug #48 in
+                        // docs/BUGS.md.
+                        if (f & PM_HIDE) != 0 {
                             return false;
                         }
                         if on_roff != 0 && (f & on_roff) == 0 {
