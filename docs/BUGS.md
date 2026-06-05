@@ -31273,7 +31273,29 @@ do the actual PATH search, not the cached assoc).
 
 ## #376 — `zmodload zsh/nonexistent` silent failure — missing dlopen error message
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partially-fixed` 2026-06-05 — `require_module`
+(`src/ported/module.rs:2602`) now emits the canonical
+`zsh:1: failed to load module \`zsh/nonexistent'` diagnostic, so
+scripts checking exit code + stderr regex on "failed to load"
+work. The trailing `: dlopen(...) tried '...' (no such file)`
+detail is omitted because zshrs's modules are statically linked
+— there's no real `dlerror()` to report. Adding a synthetic
+path-not-found message would be a fabricated diagnostic, not a
+port; we leave it off intentionally.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'zmodload zsh/nonexistent 2>&1; echo rc=$?'
+zsh:1: failed to load module `zsh/nonexistent': dlopen(...): no such file
+rc=1
+$ ./target/debug/zshrs --zsh -fc 'zmodload zsh/nonexistent 2>&1; echo rc=$?'
+zsh:1: failed to load module `zsh/nonexistent'
+rc=1
+```
+
+Diagnostic prefix matches; trailing dlerror text intentionally
+omitted (no dlopen → no dlerror).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'zmodload zsh/nonexistent 2>&1; echo rc=$?'
@@ -31321,7 +31343,18 @@ diagnostic.
 
 ## #377 — `zmodload` no-args lists *available* modules instead of *loaded* modules
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, parity.
+
+```
+$ env -i PATH=/usr/bin:/bin /opt/homebrew/bin/zsh -fc 'zmodload'
+zsh/main
+$ env -i PATH=/usr/bin:/bin ./target/debug/zshrs --zsh -fc 'zmodload'
+zsh/main
+```
+
+BUGS.md status was stale.
+
+### Original report
 
 ```sh
 $ env -i PATH=/usr/bin:/bin /opt/homebrew/bin/zsh -fc 'zmodload'
