@@ -5968,6 +5968,20 @@ impl ZshCompiler {
         self.builder.emit(Op::SetStatus, 0);
         let end = self.builder.current_pos();
         self.builder.patch_jump(end_jump, end);
+        // c:Src/exec.c:5262-5265 — `if (errflag) { errflag &=
+        //   ~ERRFLAG_ERROR; return 2; }`. The math command (`(( ... ))`)
+        // recovers from soft errors (readonly write, division by zero,
+        // etc.) by clearing ERRFLAG_ERROR and returning status 2. The
+        // needs_eval + pre_check arms above already invoke
+        // BUILTIN_ARITH_CMD_FINISH for this; the ArithCompiler fast
+        // path skipped it, so a readonly-write inside `(( x = 10 ))`
+        // aborted the script instead of setting $? = 2 and continuing.
+        // Bug #154 in docs/BUGS.md.
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_CMD_FINISH, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
         self.emit_cmd_pop();
     }
 

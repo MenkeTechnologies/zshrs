@@ -47170,7 +47170,7 @@ no longer reports the internal trap-machinery scalar.
 | 151 | `${(@qq)arr}` only quotes first element (rest unquoted) | **fixed** 2026-06-02 | explicit per-element loop |
 | 152 | `${(qq)arr}` per-element when zsh joins-then-quotes | **fixed** 2026-06-02 | `${(qq)${(j: :)arr}}` |
 | 153 | `${#${(z)s}}` returns 5 vs 4 (off-by-one count) | **fixed** 2026-06-02 | n/a |
-| 154 | Readonly var modifiable via `(( ))` / `let` arith | **port-bug** | post-assignment check |
+| 154 | Readonly var modifiable via `(( ))` / `let` arith | **fixed** 2026-06-04 | post-assignment check |
 | 155 | `${str[N,M+1]}` slice subscript ignores var/arith | **fixed** 2026-06-02 | pre-compute index |
 | 156 | `[[ -e /path/*.glob ]]` glob-expands in test (zsh: literal) | **fixed** 2026-06-02 | external `ls` test |
 | 157 | `TRAP<SIG>()` function-named trap handlers not recognized | **fixed** 2026-06-02 | explicit `trap` builtin |
