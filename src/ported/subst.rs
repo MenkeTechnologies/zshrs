@@ -4260,8 +4260,36 @@ pub fn paramsubst(
             }
             if idx > sub_start {
                 let raw_sub: String = body_chars[sub_start..idx].iter().collect();
+                // Bug #338 sub-issue — DQ-wrapped literal subscript
+                // `${h["q'q"]}` inside outer `"…"`: the literal `"…"`
+                // delimiters around the key are part of the stored
+                // assoc key (zsh stores the literal byte sequence
+                // including the DQs — verified vs /opt/homebrew/bin/zsh).
+                // singsub → prefork strips DQ pairs and the embedded
+                // single quote (treating `'` as SQ delimiter inside
+                // DQ when it should be literal), turning `"q'q"` (5
+                // bytes) into `qq` (2 bytes) and missing the stored
+                // entry. When the subscript text has NO `$` /
+                // String/Qstring/Tick tokens — i.e. it's a pure
+                // literal — bypass singsub and use the lexer-
+                // preserving variant which maps Dnull→`"`/Snull→`'`/
+                // Bnull→`\\` without stripping. Mirrors the storage-
+                // path fast path already in
+                // src/extensions/compile_zsh.rs::compile_assign which
+                // uses untokenize_preserve_quotes on the same key.
+                let has_expansion = raw_sub.chars().any(|c| {
+                    c == crate::ported::zsh_h::Stringg
+                        || c == crate::ported::zsh_h::Qstring
+                        || c == crate::ported::zsh_h::Tick
+                        || c == crate::ported::zsh_h::Qtick
+                        || c == crate::ported::zsh_h::Inpar
+                });
                 // Subscript expressions can contain $vars — singsub them.
-                let expanded = singsub(&raw_sub); // c:2899
+                let expanded = if has_expansion {
+                    singsub(&raw_sub) // c:2899
+                } else {
+                    crate::ported::lex::untokenize_preserve_quotes(&raw_sub)
+                };
                 // c:Src/params.c:2102-2106 — `if (*s == ',') zerr("invalid
                 // subscript")` — the subscript grammar is `start[,end]`,
                 // exactly two comma-separated args. A third comma is a
