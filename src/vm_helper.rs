@@ -2869,6 +2869,17 @@ thread_local! {
 /// through canonical `PARTAB` (Src/Modules/parameter.c:2235 ports).
 /// Returns `None` if name isn't a known magic-assoc.
 pub fn partab_get(name: &str, key: &str) -> Option<String> {
+    // c:Src/Modules/system.c:902,904 — `sysparams` and `errnos` are
+    // bound by zsh/system's boot_/setup_ chain. Same for `mapfile`
+    // from zsh/mapfile. Without explicit `zmodload`, these names
+    // are unset in zsh; gate the PARTAB dispatch here so they
+    // resolve via the empty-fallback path (matching ${sysparams[k]:-x}
+    // taking the default). Bug #69 in docs/BUGS.md.
+    if let Some(modname) = module_gated_partab_module(name) {
+        if !crate::ported::module::MODULESTAB.lock().unwrap().is_loaded(modname) {
+            return None;
+        }
+    }
     for entry in PARTAB.iter() {
         if entry.name == name {
             return (entry.getfn)(std::ptr::null_mut(), key).and_then(|p| p.u_str);
@@ -2877,11 +2888,31 @@ pub fn partab_get(name: &str, key: &str) -> Option<String> {
     None
 }
 
+/// Returns the owning module name for partab entries that are
+/// bound by an explicit zmodload — `sysparams`/`errnos` from
+/// zsh/system, `mapfile` from zsh/mapfile. Other partab entries
+/// (aliases/commands/functions/...) are part of zsh/main and
+/// always available.
+fn module_gated_partab_module(name: &str) -> Option<&'static str> {
+    match name {
+        "sysparams" | "errnos" => Some("zsh/system"),
+        "mapfile" => Some("zsh/mapfile"),
+        _ => None,
+    }
+}
+
 /// PM_ARRAY lookup for `${name}` / `${name[N]}` — walks
 /// PARTAB_ARRAY and dispatches the whole-array getfn (Src/Modules/
 /// parameter.c:2239-2291 ports). Returns `None` if name isn't a
 /// known PM_ARRAY magic-assoc.
 pub fn partab_array_get(name: &str) -> Option<Vec<String>> {
+    // Bug #69 — gate module-bound PARTAB names on the owning
+    // module's MOD_LINKED && !MOD_UNLOAD state.
+    if let Some(modname) = module_gated_partab_module(name) {
+        if !crate::ported::module::MODULESTAB.lock().unwrap().is_loaded(modname) {
+            return None;
+        }
+    }
     for entry in PARTAB_ARRAY.iter() {
         if entry.name == name {
             return Some((entry.getfn)(std::ptr::null_mut()));
@@ -2910,6 +2941,13 @@ pub fn partab_array_flags(name: &str) -> Option<u32> {
 /// Scan helper for `${(k)name}` — enumerates keys via canonical
 /// scanfn, collected into Vec via SCAN_KEYS thread-local.
 pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
+    // Bug #69 — gate module-bound PARTAB names on the owning
+    // module's MOD_LINKED && !MOD_UNLOAD state.
+    if let Some(modname) = module_gated_partab_module(name) {
+        if !crate::ported::module::MODULESTAB.lock().unwrap().is_loaded(modname) {
+            return None;
+        }
+    }
     for entry in PARTAB.iter() {
         if entry.name == name {
             SCAN_KEYS.with(|k| k.borrow_mut().clear());
