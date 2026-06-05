@@ -28116,6 +28116,62 @@ idx="${items[(i)$needle]}"
 
 ## #342 — `options[opt]=on/off` assignment to introspection assoc doesn't toggle the option
 
+**Status:** `fixed` 2026-06-05 — `assignsparam` now routes
+subscripted writes to `options` through the canonical
+`setpmoption` port (`Src/Modules/parameter.c:926`), which
+calls `optlookup` + `dosetopt`. The blanket readonly-magic-
+assoc gate that previously rejected the write is updated
+to skip `options` so the new arm fires first.
+
+**Root cause** — zshrs's #242 fix added a readonly-magic-
+assoc list at `src/ported/params.rs::assignsparam` that
+intercepts subscripted writes to introspection assocs like
+`commands`/`modules`/`parameters` and rejects them with
+`read-only variable: NAME`. That list also blanketed
+`options`. But C zsh treats `options` as a *side-effect*
+magic-assoc — `options[X]=on|off` writes are valid and call
+`dosetopt(optlookup(X), val == "on", 0, opts)` to toggle
+the option (`Src/Modules/parameter.c:926` setpmoption).
+Result: zshrs userspace couldn't config-toggle options via
+the assoc form, even though `setopt X` / `unsetopt X` worked.
+
+**Fix** — two-part:
+1. `src/ported/params.rs::assignsparam` subscripted-write
+   dispatch — new `"options"` arm builds a synthetic Param
+   carrying the option name in `node.nam` and dispatches to
+   `crate::ported::modules::parameter::setpmoption(pm, val)`.
+   That fn already exists (`src/ported/modules/parameter.rs:1620`,
+   port of `Src/Modules/parameter.c:926`) and handles
+   invalid-value / no-such-option / can't-change-option
+   diagnostics matching C.
+2. `src/ported/params.rs::assignsparam` readonly-list — drop
+   `options` from the `is_readonly_magic` match so the
+   subscripted-write path reaches the new arm. The other
+   18 introspection assocs (`commands`, `modules`, …) stay
+   read-only, matching C's PM_READONLY semantics for them.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'options[verbose]=on; [[ -o verbose ]] && echo ON || echo OFF'
+ON
+$ ./target/debug/zshrs --zsh -fc 'setopt verbose; options[verbose]=off; [[ -o verbose ]] && echo ON || echo OFF'
+OFF
+$ ./target/debug/zshrs --zsh -fc 'options[verbose]=garbage 2>&1; echo rc=$?'
+zsh:1: invalid value: garbage
+rc=0
+```
+All three match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+
+Regression check — `commands[evil]=/bin/sh` still rejected:
+```sh
+$ ./target/debug/zshrs --zsh -fc 'commands[evil]=/bin/sh'
+zsh:1: read-only variable: commands
+```
+
+Baseline preserved: 970/82 zshrs_shell tests.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47426,7 +47482,7 @@ no longer reports the internal trap-machinery scalar.
 | 339 | `h["a\\nb"]=v` assoc keys with backslash escapes round-trip differently — `(@k)` output not quoted | **port-bug** | base64-encode keys |
 | 340 | `print -P "%Nd"`/`%-Nd` numeric path-truncate prompt-escape not implemented (e.g., `%2d` last-2-comps) | **fixed** 2026-06-02 | manual `${PWD##*/}` |
 | 341 | `$((arr[(i)pat]))` subscript-flag inside arith subscript returns 0 (zsh: returns match index) | **fixed** 2026-06-02 | extract index first via temp var |
-| 342 | `options[opt]=on/off` assignment doesn't toggle option — assoc-write→state binding missing | **port-bug** | direct `setopt`/`unsetopt` |
+| 342 | `options[opt]=on/off` assignment doesn't toggle option — assoc-write→state binding missing | fixed | (assignsparam routes subscripted `options` writes through canonical setpmoption → optlookup + dosetopt) |
 | 343 | `bindkey "key" widget` define-binding silent no-op — every `.zshrc` keybinding ignored (daily-driver blocker) | **fixed** 2026-06-02 | (none — keymap insert broken) |
 | 344 | `bindkey -r "key"` doesn't remove binding — companion to #343, key remains bound | **fixed** 2026-06-04 | (none — keymap delete broken) |
 | 345 | Default `^A` binding differs — `self-insert` (zsh -f) vs `beginning-of-line` (zshrs always) | **demo-error** 2026-06-04 | with \$EDITOR unset both shells default to emacs keymap where \`^A\` is beginning-of-line; the diff was \$EDITOR=nvim auto-setting VIMODE → viins keymap (^A = self-insert) |
@@ -47449,8 +47505,8 @@ no longer reports the internal trap-machinery scalar.
 | 362 | `typeset -Z N` zero-pad doesn't truncate values wider than N — extra digits leak through | **fixed** 2026-06-02 | manual truncate before assign |
 | 363 | `${(z)cmd}` tokenize-flag drops comment tokens AND doesn't preserve `$VAR` literals — completion/parsing tools break | **fixed** 2026-06-02 | strip `#*` before tokenizing (partial fix) |
 | 364 | `$'\uNNNN'` Unicode-codepoint escape in C-string not interpreted — emits literal `uNNNN` | **fixed** 2026-06-02 | embed Unicode chars literally in source |
-| 365 | `${s/multibyte_char/repl}` substitution PANICS with "not a char boundary" — **CRITICAL CRASH** | **port-bug** | use sed/external for multibyte substitution |
-| 366 | `h[multibyte_key]=v` assoc with UTF-8 key PANICS with "not a char boundary" — **CRITICAL CRASH** | **port-bug** | use ASCII-only keys |
+| 365 | `${s/multibyte_char/repl}` substitution PANICS with "not a char boundary" — **CRITICAL CRASH** | fixed (crash only) | (parse_param_modifier is_char_boundary guards stop the panic; functional substitution on multibyte chars still inert — tracked separately) |
+| 366 | `h[multibyte_key]=v` assoc with UTF-8 key PANICS with "not a char boundary" — **CRITICAL CRASH** | fixed | (closed by #365 — compile_zsh parse_param_modifier byte-slice now `is_char_boundary`-guarded) |
 | 367 | `$?` bare `?` in `$((...))` arith not resolved — treats as `0` instead of last exit status | **fixed** 2026-06-02 | explicit `$?` |
 | 368 | `$#` bare `#` in `$((...))` arith not resolved — treats as `0` instead of positional count | **fixed** 2026-06-02 | explicit `$#` |
 | 369 | `wait %1` job-spec resolution fails "no such job" — zsh: succeeds (ec=0) | **fixed** 2026-06-02 | capture `$!` and wait by PID |
