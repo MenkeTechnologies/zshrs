@@ -4306,6 +4306,16 @@ pub fn getsparam(name: &str) -> Option<String> {
     //    for PM_ARRAY (matches `getstrvalue` at params.c:2358).
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
+            // c:Src/params.c:2335-2358 — `if (pm->node.flags & PM_UNSET)
+            // return ""`. Unset specials kept in paramtab (PM_SPECIAL
+            // retention path, c:3911) read as empty, not as their stale
+            // u.val / u.str. Without this, `unset SECONDS; echo
+            // "[$SECONDS]"` printed `[0]` instead of `[]` — the
+            // PM_UNSET pm fell through to the integer path and
+            // returned convbase(0). Bug #418 in docs/BUGS.md.
+            if (pm.node.flags as u32 & PM_UNSET) != 0 {
+                return None;
+            }
             let t = PM_TYPE(pm.node.flags as u32);
             // c:2390-2538 — when PM_LEFT/PM_RIGHT_B/PM_RIGHT_Z + width
             // are set, getstrvalue (called from getsparam in C) applies
@@ -6419,9 +6429,39 @@ pub fn unsetparam(name: &str) {
                 .write()
                 .unwrap()
                 .insert(name.to_string(), pm_owned);
+        } else if (pm_owned.node.flags as u32 & PM_SPECIAL) != 0
+            && (pm_owned.node.flags as u32 & PM_REMOVABLE) == 0
+        {
+            // c:Src/params.c:3911-3913 — `if ((pm->flags &
+            // (PM_SPECIAL|PM_REMOVABLE)) == PM_SPECIAL) return 0;`.
+            // PM_SPECIAL params (SECONDS, RANDOM, HOME, IFS, ...)
+            // stay in paramtab with PM_UNSET set after unset. A
+            // subsequent re-assign (`SECONDS=100`) finds the same
+            // pm via createparam's `oldpm` lookup, hits the reuse
+            // arm (c:1132), preserves the PM_INTEGER|PM_SPECIAL
+            // flags + gsu vtable, so intsetfn's name-dispatch
+            // fires and routes through intsecondssetfn. Without
+            // this, the special pm was dropped, a fresh PM_SCALAR
+            // pm was created for the re-assignment, the value
+            // landed in pm.u_str, and lookup_special_var kept
+            // reading the time-since-shtimer delta. Bug #418 in
+            // docs/BUGS.md.
+            //
+            // PM_UNSET is already stamped by unsetparam_pm at
+            // line 6491; keep it on the re-inserted pm so reads
+            // still see "unset" until re-assignment clears it
+            // (clear_unset_special at line 4756 handles the
+            // regenerator-style unset_specials set; the pm flag
+            // is cleared inside assignsparam's value-write arm
+            // via stdunsetfn's symmetric set/clear convention).
+            paramtab()
+                .write()
+                .unwrap()
+                .insert(name.to_string(), pm_owned);
         }
-        // No pm.old + no rejection → drop entirely (matches the
-        // C path at c:3935 where the node is removed from paramtab).
+        // No pm.old + no rejection + not PM_SPECIAL → drop entirely
+        // (matches the C path at c:3935 where the node is removed
+        // from paramtab).
     }
     // c:Src/params.c:3905-3935 — tied-alt removal. Cascade the
     // unset to the paired name (PATH↔path etc.). Also clear the OS
