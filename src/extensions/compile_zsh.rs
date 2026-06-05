@@ -3504,6 +3504,30 @@ impl ZshCompiler {
                         return;
                     }
                 }
+                // Bug #328: `${(j:SEP:)NAME[N,M]}` / `${(F)NAME[N,M]}` /
+                // `${(p)NAME[N,M]}` — array-join flags on an array slice.
+                // The post-ARRAY_INDEX sentinel/Concat path stringifies
+                // the slice to "x y" BEFORE j/F can join, defeating the
+                // flag. Route the whole substitution through
+                // BUILTIN_BRIDGE_BRACE_ARRAY (= paramsubst direct entry)
+                // which handles the slice+join atomically in one C-style
+                // paramsubst call — c:Src/subst.c:3032 sepjoin transition
+                // fires correctly when isarr is preserved through the
+                // slice extraction.
+                let has_join_flag = flags.chars().any(|c| matches!(c, 'j' | 'F' | 'p'));
+                if has_join_flag && key_is_slice_or_idx_flag {
+                    if let Some(inner) =
+                        untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
+                    {
+                        let body_const = self.builder.add_constant(Value::str(inner));
+                        self.builder.emit(Op::LoadConst(body_const), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            0,
+                        );
+                        return;
+                    }
+                }
                 // If the only flag is `(@)`, skip the
                 // BUILTIN_PARAM_FLAG round-trip — the sentinel/Concat
                 // machinery collapses a Value::Array result back to
