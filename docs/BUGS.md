@@ -47238,8 +47238,8 @@ no longer reports the internal trap-machinery scalar.
 | 219 | `typeset -i "h[k]"` integer-on-assoc-element silently accepted (zsh: rejects) | **fixed** 2026-06-02 | n/a |
 | 220 | `setopt err_return` doesn't abort function on failed command (fn-scoped strict mode dead) | **fixed** 2026-06-02 | explicit `\|\| return $?` per command |
 | 221 | `disable -f FN` doesn't disable — `FN` still callable, `dis_functions[FN]` empty | **fixed** 2026-06-02 | `unfunction FN` destructive |
-| 222 | `zmodload -a` lists 0 auto-loaded modules (zsh: 27 builtin→module bindings) | **port-bug** | try-and-catch with `zmodload -e` |
-| 223 | `setopt warn_create_global` no warning on implicit global creation in fn | **port-bug** | manual audit / explicit `local` always |
+| 222 | `zmodload -a` lists 0 auto-loaded modules (zsh: 27 builtin→module bindings) | **fixed** 2026-06-04 | try-and-catch with `zmodload -e` |
+| 223 | `setopt warn_create_global` no warning on implicit global creation in fn | **fixed** 2026-06-04 | manual audit / explicit `local` always |
 | 224 | `unsetopt typeset_silent` + `typeset X` doesn't print existing value | **fixed** 2026-06-02 | explicit `echo "X=$X"` for debug |
 | 225 | `printf "%(%Y)T"` silently treats as literal (zsh: errors "invalid directive") | **fixed** 2026-06-02 | use `zsh/datetime` `strftime` builtin |
 | 226 | `alias -s SUFFIX=cmd` doesn't populate `saliases` introspection assoc | **fixed** 2026-06-02 | parse `alias -s` output instead |
