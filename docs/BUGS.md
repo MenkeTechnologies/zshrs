@@ -47486,10 +47486,10 @@ no longer reports the internal trap-machinery scalar.
 | 399 | `*(YN)` glob qualifier limit-to-N-matches ignored — returns all matches (zsh: caps at N) | fixed | (Y count applied; result capped at N; default-sort ordering diff still present, separate from count-limit) |
 | 400 | `case ... esack` typo silently accepted — missing `esac` close-token strict check (zsh: parse error) | fixed | (par_case EOF branch now yyerrors "unmatched `case'"; rc=1 like zsh) |
 | 401 | `select x in;` empty option list prompts/reads stdin instead of skipping body (zsh: skips, no prompt) | **fixed** 2026-06-02 | guard `(( ${#opts} > 0 ))` before select |
-| 402 | `let "x=5/0"` arith-error rc=2 instead of 1 — script error-classification diverges | **port-bug** | collapse `\|\|` instead of branching on `$?` |
+| 402 | `let "x=5/0"` arith-error rc=2 instead of 1 — script error-classification diverges | fixed | (invalid bug — zshrs matches upstream `bin_let` spec (zsh commit 9429940b7b "let should return 2 if error"); brew 5.9.1 predates the patch) |
 | 403 | `for ... don` typo silently treated as separator + command (zsh: parse error) — body runs + `don` runs per iteration | **fixed** 2026-06-02 | CI lint for unbalanced do/done |
 | 404 | `while false ... don` typo silently accepted, no diagnostic, rc=0 — invisible until condition changes | fixed | (parse_loop_body strict-DONE check; same commit as #403) |
-| 405 | function definition missing close-brace silently accepted — body registered with broken structure | **port-bug** | strict `zsh -n script.zsh` pre-check |
+| 405 | function definition missing close-brace silently accepted — body registered with broken structure | fixed | (strict OUTBRACE_TOK gate added to all 3 funcdef body-parse arms in parse.rs; rc=1 like zsh) |
 | 406 | `${funcstack[@]}` returns empty despite `${#funcstack}` reporting correct length — `[@]`/`[*]` broken, individual subscripts work | **fixed** 2026-06-02 | manual `for (( i=1; i<=${#funcstack}; i++ ))` |
 | 407 | `${a[(e)key]}` subscript flag treated as `(r)` find-by-value (zsh: literal-as-numeric) — security-relevant fallback | **fixed** 2026-06-02 | explicit numeric coercion `${a[$((key))]}` |
 | 408 | `${a[1,5,2]}` 3-arg array slice silently accepted (zsh: bad substitution) — third arg ignored | **fixed** 2026-06-02 | explicit step loop |
@@ -47508,7 +47508,7 @@ no longer reports the internal trap-machinery scalar.
 | 421 | `^` parsed as glob-negation even when `extended_glob` is off — gating missing on `^`/`~`/`#` extended-glob operators | **fixed** 2026-06-02 | escape with backslash `\\^` |
 | 422 | sourced-file errors prefixed `zsh:` instead of `/path/to/file:` — extends #420, breaks .zshrc plugin-bisect debugging | **fixed** 2026-06-04 | n/a |
 | 423 | **CRITICAL** `PATH=str` doesn't update tied `path` array — one-way tie broken (path=arr→PATH works) | **fixed** 2026-06-02 | always also `path=("${(@s/:/)PATH}")` after PATH= |
-| 424 | **CRITICAL** scalar→array tie broken for MANPATH/FPATH/CDPATH — generalizes #423 to all tied params | **port-bug** | manual rebuild of `manpath`/`fpath`/`cdpath` after scalar assignment |
+| 424 | **CRITICAL** scalar→array tie broken for MANPATH/FPATH/CDPATH — generalizes #423 to all tied params | fixed | (covered by #423 fix — assignsparam tail cascades PATH/FPATH/MANPATH/CDPATH/PSVAR writes via colon-split) |
 | 425 | `(#cN)` glob exact-count flag not recognized — extends #409 family | **fixed** 2026-06-04 | n/a |
 | 426 | `command_not_found_handler` user-defined hook not invoked — entire ecosystem broken (apt/nix/asdf integration) | **fixed** 2026-06-04 | n/a |
 | 427 | `read` doesn't strip leading/trailing IFS chars (zsh: trims `[hello]` from `"  hello  "`) | **fixed** 2026-06-04 | n/a |

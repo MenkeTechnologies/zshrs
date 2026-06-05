@@ -860,7 +860,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let opts = HashMap::new();
         let vars = HashMap::new();
-        let r = evalcond(&["abc123", "=~", "([a-z]+)([0-9]+)"], &opts, &vars, false);
+        let r = evalcond(&["abc123", "=~", "([a-z]+)([0-9]+)"], &opts, &vars, false, None);
         assert_eq!(r, 0);
         let m = getaparam("match");
         assert_eq!(
@@ -878,7 +878,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let opts = HashMap::new();
         let vars = HashMap::new();
-        let r = evalcond(&["abc123", "=~", "([a-z]+)([0-9]+)"], &opts, &vars, false);
+        let r = evalcond(&["abc123", "=~", "([a-z]+)([0-9]+)"], &opts, &vars, false, None);
         assert_eq!(r, 0);
         let b = getaparam("mbegin");
         let e = getaparam("mend");
@@ -1025,7 +1025,7 @@ mod tests {
         let empty = dir.path().join("empty");
         File::create(&empty).unwrap();
         assert_eq!(
-            evalcond(&["-s", empty.to_str().unwrap()], &opts, &vars, true),
+            evalcond(&["-s", empty.to_str().unwrap()], &opts, &vars, true, None),
             1,
             "c:179 — `-s` must be false for 0-byte file"
         );
@@ -1034,14 +1034,14 @@ mod tests {
         let mut f = File::create(&nonempty).unwrap();
         f.write_all(b"data").unwrap();
         assert_eq!(
-            evalcond(&["-s", nonempty.to_str().unwrap()], &opts, &vars, true),
+            evalcond(&["-s", nonempty.to_str().unwrap()], &opts, &vars, true, None),
             0,
             "c:179 — `-s` must be true for non-empty file"
         );
 
         let missing = dir.path().join("not_there");
         assert_eq!(
-            evalcond(&["-s", missing.to_str().unwrap()], &opts, &vars, true),
+            evalcond(&["-s", missing.to_str().unwrap()], &opts, &vars, true, None),
             1,
             "c:179 — `-s` must be false when stat fails (missing file)"
         );
@@ -1285,7 +1285,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         // Balanced: ! ( -z "" )  →  ! true → false (1)
-        assert_eq!(evalcond(&["!", "(", "-z", "", ")"], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["!", "(", "-z", "", ")"], &opts, &vars, true, None), 1);
         // Missing close paren: error
         assert_eq!(
             evalcond(&["(", "-z", ""], &opts, &vars, true, None),
@@ -1674,7 +1674,7 @@ mod tests {
         File::create(&exe).unwrap();
         std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(
-            evalcond(&["-x", exe.to_str().unwrap()], &opts, &vars, false),
+            evalcond(&["-x", exe.to_str().unwrap()], &opts, &vars, false, None),
             0,
             "ztst:128 — -x true for 0755 file",
         );
@@ -1682,7 +1682,7 @@ mod tests {
         File::create(&noexe).unwrap();
         std::fs::set_permissions(&noexe, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert_eq!(
-            evalcond(&["-x", noexe.to_str().unwrap()], &opts, &vars, false),
+            evalcond(&["-x", noexe.to_str().unwrap()], &opts, &vars, false, None),
             1,
             "ztst:128 — -x false for 0644 file",
         );
@@ -1698,7 +1698,7 @@ mod tests {
         File::create(&readable).unwrap();
         std::fs::set_permissions(&readable, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert_eq!(
-            evalcond(&["-r", readable.to_str().unwrap()], &opts, &vars, false),
+            evalcond(&["-r", readable.to_str().unwrap()], &opts, &vars, false, None),
             0,
             "ztst:117 — -r true for 0644 file",
         );
