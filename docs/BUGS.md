@@ -37262,7 +37262,19 @@ echo "${(R)arr[@]}"
 
 ## #448 — `print -s "text"` doesn't add to history — line never appears in `fc -l`
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, parity.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'print -s "history-cmd"; fc -l'
+    1  history-cmd
+$ ./target/debug/zshrs --zsh -fc 'print -s "history-cmd"; fc -l'
+    1  history-cmd
+```
+
+Byte-identical (`od -c` confirms same padding). BUGS.md status
+was stale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'print -s "history-cmd"; fc -l'
