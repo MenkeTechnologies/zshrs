@@ -840,7 +840,9 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
 name = "fusevm"
-version = "0.14.0"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6402dddbe370deca363f362bfcff084f0b6fed3dafe015c742dc7a899aa53986"
 dependencies = [
  "chrono",
  "cranelift-codegen",
@@ -3589,7 +3591,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zshrs"
-version = "0.11.28"
+version = "0.11.29"
 dependencies = [
  "atty",
  "base64",
@@ -3646,7 +3648,7 @@ dependencies = [
 
 [[package]]
 name = "zshrs-daemon"
-version = "0.11.28"
+version = "0.11.29"
 dependencies = [
  "atty",
  "axum",
