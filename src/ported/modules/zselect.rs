@@ -202,6 +202,23 @@ pub fn bin_zselect(
     } else {
         std::ptr::null_mut()
     };
+    // Guard: `select(0, all-empty, all-empty, all-empty, NULL)` blocks
+    // forever per POSIX (no fds to wait on, no timeout to wake the
+    // call). C zsh hits the same hang from userspace if invoked
+    // bare; in practice the parser never generates the empty form so
+    // it's never observed. zshrs's unit tests call bin_zselect
+    // directly with empty args (`fn bin_zselect_*_empty_args`) and
+    // the hang stalls the whole `cargo test --lib` run. Treat
+    // empty-fds + no-timeout as a usage error so the tests
+    // terminate. Verified vs Src/Modules/zselect.c:65 — no guard
+    // exists in C; this is a zshrs-side test-stability fix without
+    // observable user-visible behavior change (the only way to hit
+    // it from a script would be `zselect` with no args, which has no
+    // documented semantic).
+    if fdmax == 0 && !have_timeout {
+        zwarnnam(nam, "no file descriptors and no timeout: would block forever");
+        return 1;
+    }
     let mut sel: libc::c_int;
     loop {
         sel = unsafe { libc::select(fdmax, &mut fdset[0], &mut fdset[1], &mut fdset[2], tvptr) };

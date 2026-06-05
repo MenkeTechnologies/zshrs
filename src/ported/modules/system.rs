@@ -2418,13 +2418,41 @@ mod tests {
         );
     }
 
-    /// c:65 — `bin_sysread` no-args returns nonzero (usage error).
+    /// c:65 — `bin_sysread` no-args returns nonzero. The C source reads
+    /// stdin into `REPLY` when no outvar is given, so this test asserts
+    /// non-success — which is only true when stdin yields no data
+    /// (EOF → rc=5). Under `cargo test` in a terminal, stdin is the
+    /// inherited TTY and a read might succeed with TTY chatter → rc=0,
+    /// flaking the test. Pin stdin to a closed pipe so the read
+    /// deterministically returns 0 bytes → bin_sysread returns 5 (EOF).
     #[test]
     fn bin_sysread_no_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
+        // Create a pipe and close the write end so reading the read
+        // end returns 0 bytes (EOF). dup2 the read end over fd 0 for
+        // the duration of the call.
+        let mut pipefds: [libc::c_int; 2] = [0, 0];
+        let pipe_rc = unsafe { libc::pipe(pipefds.as_mut_ptr()) };
+        if pipe_rc != 0 {
+            // pipe(2) failed — fall back to original behavior; the
+            // test will still pass if stdin happens to be empty.
+            let ops = empty_ops_sys();
+            let r = bin_sysread("sysread", &[], &ops, 0);
+            assert_ne!(r, 0, "sysread no args → usage error");
+            return;
+        }
+        let read_fd = pipefds[0];
+        let write_fd = pipefds[1];
+        unsafe { libc::close(write_fd) }; // close write → EOF on read
+        let saved_stdin = unsafe { libc::dup(0) };
+        unsafe { libc::dup2(read_fd, 0) };
         let ops = empty_ops_sys();
         let r = bin_sysread("sysread", &[], &ops, 0);
-        assert_ne!(r, 0, "sysread no args → usage error");
+        // Restore stdin and clean up.
+        unsafe { libc::dup2(saved_stdin, 0) };
+        unsafe { libc::close(saved_stdin) };
+        unsafe { libc::close(read_fd) };
+        assert_ne!(r, 0, "sysread no args + closed stdin → EOF (rc=5)");
     }
 
     /// c:264 — `bin_syswrite` no-args returns nonzero (usage error).
