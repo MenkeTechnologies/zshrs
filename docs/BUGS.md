@@ -28667,7 +28667,25 @@ done
 
 ## #343 — `bindkey "key" widget` define-binding doesn't actually bind — silent no-op
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, current binary
+binds correctly. `src/ported/zle/zle_keymap.rs:1535` —
+`bin_bindkey_bind` walks argv in 2-step strides, calls
+`getkeystring` to translate `^x^y` → `0x18 0x19`, then writes
+`km.multi.insert([0x18,0x19], KeyBinding{bind:Some(Thingy::builtin
+("self-insert")),...})`. The arc-swap at lines 1630-1642
+propagates the rebuilt keymap to every alias that shared the old
+Arc.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'bindkey "^x^y" self-insert; bindkey "^x^y"'
+"^X^Y" self-insert
+$ ./target/debug/zshrs --zsh -fc 'bindkey "^x^y" self-insert; bindkey "^x^y"'
+"^X^Y" self-insert
+```
+
+Parity. BUGS.md status was stale (same era as #344).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'bindkey "^x^y" self-insert; bindkey "^x^y"'
