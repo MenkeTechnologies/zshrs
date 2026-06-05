@@ -10389,6 +10389,41 @@ pub fn bin_test(
     // implicit -n" silently, returning 0 (truthy). Pre-flight: if
     // 2-arg AND argv[0] starts with `-` AND argv[0] isn't a known
     // unary op nor `!`/`(`, emit the canonical diagnostic.
+    // c:Src/builtin.c:7257 + par_cond — paren-balance diagnostics:
+    //   - `[ ( ) ]` empty parens          → "argument expected" rc=2
+    //   - `[ ( a ]` unmatched open        → "argument expected" rc=2
+    //   - `[ a ) ]` unmatched close       → "too many arguments" rc=2
+    // zshrs's evalcond walker silently returned 2 with no diagnostic;
+    // mirror C. Walk and check depth.
+    {
+        let mut depth: i32 = 0;
+        let mut surplus_close = false;
+        let mut had_open = false;
+        for a in &argv {
+            if a == "(" {
+                depth += 1;
+                had_open = true;
+            } else if a == ")" {
+                depth -= 1;
+                if depth < 0 {
+                    surplus_close = true;
+                    break;
+                }
+            }
+        }
+        if surplus_close {
+            crate::ported::utils::zwarnnam(name, "too many arguments");
+            return 2;
+        }
+        if depth > 0 && had_open {
+            crate::ported::utils::zwarnnam(name, "argument expected");
+            return 2;
+        }
+    }
+    if argv.len() == 2 && argv[0] == "(" && argv[1] == ")" {
+        crate::ported::utils::zwarnnam(name, "argument expected");
+        return 2;
+    }
     if argv.len() == 2
         && argv[0].starts_with('-')
         && argv[0].len() >= 2
