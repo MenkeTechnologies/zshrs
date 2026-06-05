@@ -3226,6 +3226,15 @@ pub fn bin_kill(
             }
             None => {
                 zwarnnam(nam, &format!("unknown signal: SIG{}", bare)); // c:2974
+                // c:Src/jobs.c — when `-NAME` lookup fails AND there's
+                // at least one positional remaining (i.e. user really
+                // tried to kill something), zsh emits a follow-up hint
+                // `type kill -L for a list of signals` rc=1.
+                // Verified vs /opt/homebrew/bin/zsh:
+                //   `kill -INVALID 1` →
+                //     "kill:1: unknown signal: SIGINVALID"
+                //     "kill:1: type kill -L for a list of signals"
+                zwarnnam(nam, "type kill -L for a list of signals");
                 return 1;
             }
         }
