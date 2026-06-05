@@ -47333,6 +47333,64 @@ Test baseline 1023/29 preserved.
 
 ---
 
+## #624 — `LINENO=99` / `HISTCMD=42` / `PPID=999` silently accepted instead of erroring
+
+**Status:** `fixed` 2026-06-05 — `vm_helper::is_readonly_param` now matches `(PM_READONLY | PM_RO_BY_DESIGN)`, mirroring C's `PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY | PM_RO_BY_DESIGN` where both bits are set together.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'LINENO=99'
+zsh:1: read-only variable: LINENO
+rc=1
+
+$ ./target/debug/zshrs --zsh -c 'LINENO=99'   # before
+rc=0
+```
+
+**Root cause** — zshrs's `special_params` table uses `pm_flags: PM_READONLY` for IPDEF4-family entries (LINENO, HISTCMD, PPID, $$, $?, $!, ZSH_SUBSHELL), but `createparamtable` did NOT actually surface PM_READONLY in the stored pm.node.flags. The flags resolved to `PM_INTEGER | PM_SPECIAL | PM_RO_BY_DESIGN` (0x300002) — no PM_READONLY bit (0x400).
+
+Inspecting `params.rs:9877-9885`, the comment explains the design choice:
+
+> zshrs's special params (e.g. `$!`, `$$`, `$?`, `LINENO`) carry PM_RO_BY_DESIGN instead of PM_READONLY so internal writes pass `assignstrvalue`
+
+That is, internal mutation paths (BUILTIN_SET_LINENO per-pipe line tracking, etc.) need to bypass the readonly guard. The choice was to drop PM_READONLY entirely and gate only on PM_RO_BY_DESIGN at print/listing sites.
+
+C zsh takes the opposite approach: both bits are set on the pm (`PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY | PM_RO_BY_DESIGN`), and the per-name `gsu.i->setfn` for these is `varint_readonly_gsu`'s setfn which is a no-op. Internal call sites just write the underlying C global directly (`lineno = N`).
+
+zshrs's BUILTIN_SET_LINENO follows the C pattern — direct write to `pm.u_val` without going through `assignstrvalue`. So the user-facing PM_READONLY gate doesn't need to be silently dropped; we just need the gate to accept either bit.
+
+**Fix** (`src/vm_helper.rs::is_readonly_param`):
+
+```rust
+pub fn is_readonly_param(&self, name: &str) -> bool {
+    let flags = self.param_flags(name) as u32;
+    (flags & (PM_READONLY | PM_RO_BY_DESIGN)) != 0
+}
+```
+
+The check is the first gate in `BUILTIN_SET_VAR` (`src/fusevm_bridge.rs:3324`), before any env-mutation or setsparam routing. Now LINENO/HISTCMD/PPID/$$ user assignments error correctly. Internal direct-write paths (BUILTIN_SET_LINENO mutates `pm.u_val` without going through this gate) continue working.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'LINENO=99'
+zshrs:1: read-only variable: LINENO
+rc=1
+$ ./target/debug/zshrs -fc 'HISTCMD=42'
+zshrs:1: read-only variable: HISTCMD
+rc=1
+$ ./target/debug/zshrs -fc 'PPID=999'
+zshrs:1: read-only variable: PPID
+rc=1
+$ ./target/debug/zshrs -fc 'echo $LINENO
+echo "next $LINENO"'                                                   # regression: LINENO tracking still works
+1
+next 2
+```
+
+Test baseline 1026/26 (was 1025/27 — `test_lineno_intrinsic_readonly` flipped).
+
+---
+
 ## #623 — `${(kv)arr}` on an indexed array returns empty instead of values
 
 **Status:** `fixed` 2026-06-05 — `(kv)` arm's magic_assoc_array fallback chain now terminates with `exec_hooks::array`, mirroring the sibling fallback in the `(k)`-only arm.
@@ -48803,6 +48861,7 @@ no longer reports the internal trap-machinery scalar.
 | 621 | `for k in ${color[(I)3?]}` iterates ONCE with k="30 31 32 33" instead of four times — assoc `(I)`/`(R)`/`(K)` multi-match returns scalar instead of array shape | **fixed** 2026-06-05 | subst.rs c:3950 splat-seed block — broaden gate (was `(@k)` + `(R)/(r)` only) to fire for ANY assoc subscript with `(R)/(r)/(I)/(i)/(K)/(k)` even without `(@)` outer flag; matches C `paramvalarr` returning `char **` from Src/params.c:689 (array shape inherent to the multi-match) |
 | 622 | `(( y = ${a[(I)$x]} ))` returns 0 instead of N — subscript-pattern `$x` not expanded before patcompile in arith path; breaks `autoload -Uz add-zsh-hook preexec preexec_foo` (the autoload body uses `${hooktypes[(I)$1]}`) | **fixed** 2026-06-05 | paramsubst's array (R/I/r/i) and assoc (R/I/r/i/K/k) flag-form subscript dispatches now singsub the pattern (mirrors C `Src/params.c:1564-1572 if (needtok) { ... singsub(&s); }`); fast-path braced_subscript_dynamic_ref already did this for direct reads via EXPAND_TEXT mode 1 but the arithsubst path bypassed it |
 | 623 | `${(kv)arr}` on an indexed array returns empty instead of values — (kv) arm's magic-assoc fallback chain didn't terminate with `exec_hooks::array` | **fixed** 2026-06-05 | append `.or_else(|| exec_hooks::array(&var_name))` to magic_assoc_array lookup (sibling of the `(k)`-arm fallback at line 6056); matches zsh's `arr=(a b c); echo "${(kv)arr}"` → "a b c" |
+| 624 | `LINENO=99` / `HISTCMD=42` / `PPID=999` silently accepted instead of erroring `read-only variable: NAME` — IPDEF4-family specials carry PM_RO_BY_DESIGN alone (no PM_READONLY) so user assignment passed the gate | **fixed** 2026-06-05 | `vm_helper::is_readonly_param` now matches `(PM_READONLY \| PM_RO_BY_DESIGN)` to mirror C's `PM_READONLY_SPECIAL = PM_SPECIAL \| PM_READONLY \| PM_RO_BY_DESIGN`; internal direct-write paths (BUILTIN_SET_LINENO via pm.u_val) still bypass since they don't go through the user-assignment dispatcher |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
