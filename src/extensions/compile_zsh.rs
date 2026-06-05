@@ -1771,12 +1771,16 @@ impl ZshCompiler {
         // multios. Non-write-side redirects flush the bag for that fd
         // first (rare interleaving — preserve order).
         //
-        // First pass: count writes per fd.
+        // First pass: count writes and reads per fd.
         let mut writes_per_fd: std::collections::HashMap<u8, usize> =
+            std::collections::HashMap::new();
+        let mut reads_per_fd: std::collections::HashMap<u8, usize> =
             std::collections::HashMap::new();
         let fd_of = |r: &crate::parse::ZshRedir| -> u8 {
             if r.fd >= 0 {
                 r.fd as u8
+            } else if r.rtype == REDIR_READ {
+                0
             } else {
                 1
             }
@@ -1787,9 +1791,12 @@ impl ZshCompiler {
                 || t == REDIR_APP
                 || t == REDIR_APPNOW
         };
+        let is_read_side = |t: i32| -> bool { t == REDIR_READ };
         for r in redirs {
             if is_write_side(r.rtype) && r.varid.is_none() {
                 *writes_per_fd.entry(fd_of(r)).or_insert(0) += 1;
+            } else if is_read_side(r.rtype) && r.varid.is_none() {
+                *reads_per_fd.entry(fd_of(r)).or_insert(0) += 1;
             }
         }
         // Second pass: emit. For an fd with N>1 writes, collect
@@ -1800,6 +1807,8 @@ impl ZshCompiler {
             u8,
             Vec<(String, u8)>,
         > = std::collections::HashMap::new();
+        let mut pending_multios_read: std::collections::HashMap<u8, Vec<String>> =
+            std::collections::HashMap::new();
         // We don't have direct access to op_byte without re-deriving
         // it, so do a small helper.
         let derive_op = |r: &crate::parse::ZshRedir| -> Option<u8> {
@@ -1815,6 +1824,43 @@ impl ZshCompiler {
         };
         for redir in redirs {
             let fd = fd_of(redir);
+            let is_multios_read_candidate = is_read_side(redir.rtype)
+                && redir.varid.is_none()
+                && reads_per_fd.get(&fd).copied().unwrap_or(0) >= 2;
+            if is_multios_read_candidate {
+                let name_clean = crate::lex::untokenize(&redir.name);
+                pending_multios_read
+                    .entry(fd)
+                    .or_default()
+                    .push(name_clean);
+                let bag_now = pending_multios_read
+                    .get(&fd)
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                let total = reads_per_fd.get(&fd).copied().unwrap_or(0);
+                if bag_now == total {
+                    if let Some(sources) = pending_multios_read.remove(&fd) {
+                        let n = sources.len();
+                        for source in &sources {
+                            let s_const = self
+                                .builder
+                                .add_constant(Value::str(source.as_str()));
+                            self.builder.emit(Op::LoadConst(s_const), 0);
+                        }
+                        self.builder.emit(Op::LoadInt(fd as i64), 0);
+                        let argc = (n + 1) as u8;
+                        self.builder.emit(
+                            Op::CallBuiltin(
+                                crate::vm_helper::BUILTIN_MULTIOS_READ,
+                                argc,
+                            ),
+                            0,
+                        );
+                        self.builder.emit(Op::Pop, 0);
+                    }
+                }
+                continue;
+            }
             let is_multios_candidate = is_write_side(redir.rtype)
                 && redir.varid.is_none()
                 && writes_per_fd.get(&fd).copied().unwrap_or(0) >= 2;

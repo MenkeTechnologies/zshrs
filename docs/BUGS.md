@@ -2141,9 +2141,8 @@ zshrs_shell regression: 925/127 (baseline preserved with
 
 ## #36 — MULTIOS not implemented: `> a > b` and `< a < b` don't tee/cat
 
-**Status:** `fixed` 2026-06-05 — output-side MULTIOS (the `> a >
-b` fan-out) ported. The input-side `< a < b` concat is a separate
-arm not yet wired.
+**Status:** `fixed` 2026-06-05 — both output-side MULTIOS (the
+`> a > b` fan-out) AND input-side (`< a < b` concat) ported.
 
 **Output-side fix** — compile_zsh's new `compile_redirs_multios`
 helper coalesces consecutive write/append redirects targeting the
@@ -2171,6 +2170,21 @@ hi
 $ /opt/homebrew/bin/zsh -fc 'echo hi > /tmp/a > /tmp/b > /tmp/c'
 $ ./target/debug/zshrs --zsh -fc 'echo hi > /tmp/a > /tmp/b > /tmp/c'
 # Both write all three files.
+```
+
+**Input-side fix** — symmetric: a new `BUILTIN_MULTIOS_READ` op
+opens every source file, spawns a producer thread that reads each
+source in order and writes to a pipe, dup2's the pipe read-end
+onto fd 0. When the thread exits the pipe's write-end closes and
+the consumer sees EOF.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'cat < /tmp/a < /tmp/b'
+a1
+a2
+$ ./target/debug/zshrs --zsh -fc 'cat < /tmp/a < /tmp/b'
+a1
+a2
 ```
 
 **Original report:** below.

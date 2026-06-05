@@ -4856,6 +4856,133 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         });
         Value::Status(0)
     });
+    // c:Src/exec.c:2418 input-arm — MULTIOS read fan-in. Stack
+    // layout pushed by compile_zsh:
+    //   [source_1, source_2, …, source_N, fd]
+    // argc = N + 1. Opens every source, sets up a pipe + producer
+    // thread that reads each source in order and writes to the
+    // pipe write-end, then closes its write-end so the consumer
+    // gets EOF. dup2 the pipe read-end onto fd. Bug #36 input
+    // side in docs/BUGS.md.
+    vm.register_builtin(BUILTIN_MULTIOS_READ, |vm, argc| {
+        if argc < 2 {
+            return Value::Status(1);
+        }
+        let fd = vm.pop().to_int() as i32;
+        let n_sources = (argc - 1) as usize;
+        let mut sources: Vec<String> = Vec::with_capacity(n_sources);
+        for _ in 0..n_sources {
+            sources.push(vm.pop().to_str());
+        }
+        sources.reverse();
+
+        // Open every source.
+        let mut source_fds: Vec<i32> = Vec::with_capacity(sources.len());
+        for path in &sources {
+            match fs::File::open(path) {
+                Ok(f) => source_fds.push(f.into_raw_fd()),
+                Err(e) => {
+                    let msg = match e.kind() {
+                        std::io::ErrorKind::PermissionDenied => "permission denied",
+                        std::io::ErrorKind::NotFound => "no such file or directory",
+                        _ => "open failed",
+                    };
+                    eprintln!("{}:1: {}: {}", shname(), msg, path);
+                    for prev in &source_fds {
+                        unsafe {
+                            libc::close(*prev);
+                        }
+                    }
+                    with_executor(|exec| {
+                        exec.redirect_failed = true;
+                    });
+                    return Value::Status(1);
+                }
+            }
+        }
+
+        // Save current fd state for scope-end restoration.
+        let saved = unsafe { libc::dup(fd) };
+        if saved >= 0 {
+            with_executor(|exec| {
+                if let Some(top) = exec.redirect_scope_stack.last_mut() {
+                    top.push((fd, saved));
+                } else {
+                    unsafe { libc::close(saved) };
+                }
+            });
+        }
+
+        // Create the concatenator pipe.
+        let (read_end, write_end) = match os_pipe::pipe() {
+            Ok(p) => p,
+            Err(_) => {
+                for f in &source_fds {
+                    unsafe {
+                        libc::close(*f);
+                    }
+                }
+                return Value::Status(1);
+            }
+        };
+        // dup the pipe read-end onto fd before spawning the
+        // producer; close the original read_end so the consumer
+        // (reading via fd) is the sole reference until scope-end.
+        let read_dup = unsafe { libc::dup(AsRawFd::as_raw_fd(&read_end)) };
+        drop(read_end);
+        if read_dup < 0 {
+            for f in &source_fds {
+                unsafe {
+                    libc::close(*f);
+                }
+            }
+            return Value::Status(1);
+        }
+        unsafe {
+            libc::dup2(read_dup, fd);
+            libc::close(read_dup);
+        }
+        // Spawn the producer.
+        let source_fds_for_thread = source_fds.clone();
+        let handle = std::thread::spawn(move || {
+            let mut w = write_end;
+            let mut buf = [0u8; 8192];
+            for sfd in source_fds_for_thread {
+                loop {
+                    let n = unsafe {
+                        libc::read(
+                            sfd,
+                            buf.as_mut_ptr() as *mut libc::c_void,
+                            buf.len(),
+                        )
+                    };
+                    if n <= 0 {
+                        break;
+                    }
+                    let n = n as usize;
+                    if std::io::Write::write_all(&mut w, &buf[..n]).is_err() {
+                        break;
+                    }
+                }
+                unsafe {
+                    libc::close(sfd);
+                }
+            }
+            // Closing w (the write_end) at scope drop signals EOF
+            // to the consumer.
+        });
+        with_executor(|exec| {
+            // Track using a closed-write sentinel — the producer
+            // owns write_end so we just need to join. Use -1 fd
+            // marker meaning "no fd to close".
+            if let Some(top) = exec.multios_scope_stack.last_mut() {
+                top.push((-1, handle));
+            } else {
+                let _ = handle.join();
+            }
+        });
+        Value::Status(0)
+    });
     // c:Src/exec.c — block-level redirect-failure gate. When a
     // compound command (`{ … } < file`, `( … ) > file`, etc.) has a
     // failing redirect (e.g. `< /nonexistent`), zsh skips the entire
@@ -6465,6 +6592,28 @@ pub const BUILTIN_EXEC_HERESTR_FD: u16 = 615;
 ///      the pipe (draining the thread) and join before restoring.
 pub const BUILTIN_MULTIOS_REDIRECT: u16 = 617;
 
+/// MULTIOS input-side concatenation for `cmd < a < b` shapes
+/// (Bug #36 input arm). C zsh's `Src/exec.c:2418` mfds dispatch
+/// also covers the read direction — when multiple `<` redirects
+/// target the same fd, mfds[fd] grows and addfd splices a
+/// concatenating cat into the pipe.
+///
+/// Stack layout: `[source_1, source_2, …, source_N, fd]`. Pops
+/// N + 1 elements (argc = N + 1). All sources are file paths; the
+/// op_byte is implicitly READ.
+///
+/// Runtime:
+///   1. Open every source file for reading.
+///   2. Save `dup(fd)` onto the redirect_scope_stack.
+///   3. Create a pipe; spawn a thread that reads each source in
+///      order and writes every chunk to the pipe write-end. Close
+///      write-end when done so the consumer sees EOF.
+///   4. dup2 the pipe read-end onto `fd`.
+///   5. Track the JoinHandle so scope-end joins (no fd-close needed
+///      here — the producer thread closes its own pipe write-end
+///      on exit).
+pub const BUILTIN_MULTIOS_READ: u16 = 618;
+
 /// `redirection with no command` parse-time error for bare
 /// `builtin 2>&1` / `command < file` / `exec >&-` precmd-keyword
 /// shapes with a redirect but no following command. Direct port
@@ -7842,8 +7991,10 @@ impl ShellExecutor {
         }
         if let Some(scope) = self.multios_scope_stack.pop() {
             for (write_fd, handle) in scope {
-                unsafe {
-                    libc::close(write_fd);
+                if write_fd >= 0 {
+                    unsafe {
+                        libc::close(write_fd);
+                    }
                 }
                 let _ = handle.join();
             }
