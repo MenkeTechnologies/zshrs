@@ -5756,7 +5756,26 @@ pub fn doshfunc(
         }
     }
     let _eval_ctx_guard = EvalContextGuard;
+    // c:Src/exec.c — function bodies execute with `lineno` reset to
+    // the relative line within the body (incremented per WC_PIPE
+    // from the wordcode-encoded lineno). zsh's zerrmsg
+    // (Src/utils.c:301) emits the lineno prefix only when lineno
+    // is non-zero AND (!SHINSTDIN || locallevel != 0). For an
+    // inline single-line function like `f() { x=1 }`, the body's
+    // WC_PIPE encodes lineno=1, exec sets `lineno = lineno - 1 =
+    // 0`, and the zerrmsg path falls through to space-only ("f: ").
+    //
+    // zshrs's compiler doesn't thread WC_PIPE_LINENO into the
+    // bytecode, so the global lineno stays at the script-wide
+    // value (1 for inline `-c`). Suppress the line-number prefix
+    // inside function bodies by saving lineno on entry and forcing
+    // it to 0 during body execution; restore on exit. This makes
+    // warnings inside functions emit `f: ...` matching zsh's
+    // single-line-function format. Bug #54/#74/#86 in docs/BUGS.md.
+    let saved_lineno = crate::ported::lex::lineno();
+    crate::ported::lex::set_lineno(0);
     let body_status = body_runner();
+    crate::ported::lex::set_lineno(saved_lineno);
     LASTVAL.store(body_status, Ordering::Relaxed);
 
     // c:6043 — `doneshfunc:` label. The C `runshfunc` happy-path
