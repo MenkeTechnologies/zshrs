@@ -3172,6 +3172,14 @@ pub fn bin_kill(
                 return 1;
             }
             let name = argv[idx].as_str();
+            // c:Src/jobs.c — empty signal-name after `-s` emits
+            // `-: signal name expected` rc=1 (verified vs
+            // /opt/homebrew/bin/zsh: `kill -s "" 1` →
+            //   "zsh:kill:1: -: signal name expected" rc=1).
+            if name.is_empty() {
+                zwarnnam(nam, "-: signal name expected");
+                return 1;
+            }
             let upper = name.to_ascii_uppercase();
             let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
             match sigs_number(bare) {
