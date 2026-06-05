@@ -3205,9 +3205,12 @@ pub fn bin_zmodload_auto(
         fchar = if OPT_ISSET(ops, b'I') { 'C' } else { 'c' };
         let _ = fchar;
         if args.is_empty() {
-            // c:2732
-            // List all autoloadable conditions
-            for (name, module) in &table.autoload_conditions {
+            // c:2732 — same sorted=1 dispatch as the builtins arm
+            // below (Bug #222).
+            let mut entries: Vec<(&String, &String)> =
+                table.autoload_conditions.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            for (name, module) in entries {
                 println!("{} {}", module, name);
             }
             return 0;
@@ -3215,7 +3218,10 @@ pub fn bin_zmodload_auto(
     } else if OPT_ISSET(ops, b'p') {
         // c:2774 — params branch
         if args.is_empty() {
-            for (name, module) in &table.autoload_params {
+            let mut entries: Vec<(&String, &String)> =
+                table.autoload_params.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            for (name, module) in entries {
                 println!("{} {}", module, name);
             }
             return 0;
@@ -3223,7 +3229,10 @@ pub fn bin_zmodload_auto(
     } else if OPT_ISSET(ops, b'f') {
         // mathfns branch
         if args.is_empty() {
-            for (name, module) in &table.autoload_mathfuncs {
+            let mut entries: Vec<(&String, &String)> =
+                table.autoload_mathfuncs.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            for (name, module) in entries {
                 println!("{} {}", module, name);
             }
             return 0;
@@ -3231,7 +3240,15 @@ pub fn bin_zmodload_auto(
     } else {
         // Default: builtins branch
         if args.is_empty() {
-            for (name, module) in &table.autoload_builtins {
+            // c:Src/module.c:2756 — `scanhashtable(autoloadtab, 1, 0,
+            //   0, ...)`. The sorted=1 arg sorts entries by name before
+            // dispatch. zshrs's HashMap iteration is unordered, so the
+            // 27 auto-loaded entries came out in random order. Bug
+            // #222 in docs/BUGS.md. Sort by name to match zsh.
+            let mut entries: Vec<(&String, &String)> =
+                table.autoload_builtins.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            for (name, module) in entries {
                 autoloadscan(
                     name,
                     module,
