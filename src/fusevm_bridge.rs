@@ -743,6 +743,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // does the same default-list-nothing.
             return Value::Status(0);
         };
+        // c:Src/exec.c:3435-3436 — `builtin NAME` with NAME not in
+        // builtintab emits `zwarn("no such builtin: %s", cmdarg)`
+        // and returns 1. zshrs's dispatch_builtin_raw bare-returned 1
+        // silently. Probe the table here so the diagnostic fires
+        // before dispatch.
+        let tab = crate::ported::builtin::createbuiltintable();
+        if !tab.contains_key(name.as_str()) {
+            eprintln!("zshrs:1: no such builtin: {}", name);
+            return Value::Status(1);
+        }
         // `builtin foo` MUST bypass function shadow — that's the whole
         // point of the prefix. Use the _raw helper, not the shadow-aware
         // one. Without this, `cd () { builtin cd "$@"; }` recurses.
