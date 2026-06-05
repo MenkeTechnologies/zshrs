@@ -47312,7 +47312,7 @@ no longer reports the internal trap-machinery scalar.
 | 293 | `arr[(i)pat]=value` — subscript flag on LHS of assignment silently fails | **fixed** 2026-06-02 | n/a |
 | 294 | Nested backtick `` `outer \`inner\` outer` `` parses wrong (backslash escape not honored) | **fixed** 2026-06-02 | convert to `$()` form |
 | 295 | Array splice `a[N,M]=X` single-value doesn't shrink range — replaces only last index (#275 family) | **fixed** 2026-06-02 | manual rebuild via slice concat |
-| 296 | `${s/\\./X}` pattern `\\X` interpretation diverges — zsh: literal `\\` + glob `.`, zshrs: escaped `.` | **port-bug** | use bracket class `[.]` instead |
+| 296 | `${s/\\./X}` pattern `\\X` interpretation diverges — zsh: literal `\\` + glob `.`, zshrs: escaped `.` | **fixed** 2026-06-02 | bracket class `[.]` instead |
 | 297 | Bare `typeset` (no args) display format missing attribute prefix (`array readonly tied NAME`) | **fixed** 2026-06-02 | use `typeset -p` for reproducible form |
 | 298 | Bare var in slice subscript `${a[1,n]}` doesn't arith-deref `n` (zsh: evaluates as int) | **fixed** 2026-06-02 | explicit `$` deref `${a[1,$n]}` |
 | 299 | Glob qualifier `(YN)` count-limit not applied — returns all matches | **fixed** 2026-06-02 | n/a |
@@ -47341,7 +47341,7 @@ no longer reports the internal trap-machinery scalar.
 | 322 | `${arr[*]/pat/repl}`/`[*]#`/`[*]%` applies per-element instead of scalar-context (zsh: joins to scalar first) | **fixed** 2026-06-02 | n/a |
 | 323 | `functions[f]+="..."` append-to-fn-body no-op (zsh: appends raw text) | **fixed** 2026-06-04 | setfunction invalidates functions_compiled cache so dispatch picks up new body |
 | 324 | `strftime -r FORMAT STRING` reverse-parse errors "format not matched" — string→epoch broken | **fixed** 2026-06-02 | external `date -j -f` |
-| 325 | `$'\xNN\xNN'` C-string hex escapes treat UTF-8 sequence as 2 bytes (zsh: combines into multibyte char via locale) | **port-bug** | use `\uNNNN` Unicode form (unverified) |
+| 325 | `$'\xNN\xNN'` C-string hex escapes treat UTF-8 sequence as 2 bytes (zsh: combines into multibyte char via locale) | **fixed** 2026-06-02 | use `\uNNNN` Unicode form (unverified) |
 | 326 | `typeset +i n` clears value AND removes attribute (zsh: preserves value as scalar) | **fixed** 2026-06-02 | save/restore around toggle |
 | 327 | `${(l.N.)arr[N]}` pad flags on array-element return empty — extends #301 family | **fixed** 2026-06-04 | `(l.N.)`/`(r.N.)` on `arr[N]` now pad correctly via `(flag)NAME[KEY]` dispatcher |
 | 328 | ALL `${(FLAG)arr[N]}` flags broken on subscripted-array-element (20+ flags: case/type/pad/quote/sort/unique/join/eval/P/split/visible/D) | **partial-fix** 2026-06-04 | case/type/pad/quote families (`C`/`L`/`U`/`q`/`qq`/`Q`/`t`/`l`/`r`) now match; `(j::)` on slice deferred |
@@ -47583,7 +47583,7 @@ no longer reports the internal trap-machinery scalar.
 | 564 | `\[pat\]` backslash-escaped brackets in `[[ == pat ]]` don't match literal `[`/`]` — zsh matches | **fixed** 2026-06-02 | single-quote the pattern RHS |
 | 565 | `echo -e "\\0NNN"` octal escape passed through literally despite `-e` — zsh decodes | **fixed** 2026-06-02 | use `printf '\\NNN'` or `$'\\NNN'` |
 | 566 | `echo -e "\\uNNNN"` / `echo -e "\\UNNNNNNNN"` Unicode escapes passed through literally — zsh decodes | **fixed** 2026-06-02 | embed UTF-8 char literal |
-| 567 | `$'\\UNNNNNNNN'` ANSI-C 8-hex Unicode escape passed through literally — zsh decodes (extends #364) | **port-bug** | embed UTF-8 char literal |
+| 567 | `$'\\UNNNNNNNN'` ANSI-C 8-hex Unicode escape passed through literally — zsh decodes (extends #364) | **fixed** 2026-06-02 | embed UTF-8 char literal |
 | 568 | `read -A a </dev/null` on empty input creates 0-elem array — zsh: 1-elem empty array | **fixed** 2026-06-02 | use `$?` from `read` not `${#a}` |
 | 569 | `bindkey` no-args listing omits range-compaction `"^A"-"^C" self-insert` — emits each key (117 lines vs zsh 31) | **port-bug** | query specific keys with `bindkey '^X'` |
 | 570 | `${(n)a[1,-1]}` paramsubst flag + array-slice errors "bad substitution" — extends #436 to slice form | **fixed** 2026-06-04 | (@) + sort + slice now routes through BRIDGE_BRACE_ARRAY |
