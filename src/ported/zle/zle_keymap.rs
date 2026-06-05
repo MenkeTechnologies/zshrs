@@ -1565,7 +1565,14 @@ pub fn bin_bindkey_bind(
     let stride = if func_c == 'r' { 1 } else { 2 };
     let mut i = 0;
     while i + (stride - 1) < argv.len() {
-        let seq_bytes = argv[i].as_bytes();
+        // c:Src/Zle/zle_keymap.c:1023-1040 — `seq = getkeystring(*argv,
+        //   &len, GETKEYS_BINDKEY, NULL); seq = metafy(seq, len, META_USEHEAP);`
+        // The user-typed string `^A` is 2 chars that getkeystring translates
+        // to the single byte 0x01. Without this translation, `bindkey -r
+        // "^A"` was inserting/clearing `b"^A"` (2 raw bytes) in km.multi
+        // — `^A` (0x01) at km.first[1] stayed untouched. Bug #344 in
+        // docs/BUGS.md.
+        let seq_bytes = crate::ported::zle::zle_bindings::getkeystring(&argv[i]);
         let target = if stride == 2 {
             Some(argv[i + 1].clone())
         } else {
