@@ -25236,6 +25236,49 @@ silently does nothing — neither errors nor edits.
 
 ## #306 — `compdef -a/-k/-N` flag handling differs from zsh
 
+**Status:** `fixed` 2026-06-05 — invalid bug, zshrs's compdef
+flag table matches zsh's autoloaded compdef byte-for-byte.
+
+**Why the bug was incorrect** — `zsh -fc 'compdef -N foo'`
+emits `command not found` because `-f` skips loading
+`compinit`, so compdef-the-function isn't autoloaded yet. The
+original report compared that "not loaded" error against
+zshrs's "unknown option: -N" error and concluded the flag
+tables diverged. They don't. The canonical
+`Completion/compinit:267` getopts spec is `"anpPkKde"` — the
+function ALSO rejects `-N`. zshrs's behaviour matches zsh's
+post-compinit behaviour exactly.
+
+The remaining divergence is intentional and per-project rule:
+zshrs ships `compdef` as an always-available builtin (no
+`autoload`/`compinit` ceremony required), per the
+"compat floor not ceiling" rule. Per the project's "world's
+most powerful CLI setup" framing, removing the loading-
+ceremony tax is a deliberate UX win — not a bug.
+
+**Verify** — flag-for-flag parity against zsh's
+`Completion/compinit:267-289` getopts spec:
+
+| Flag | zsh func | zshrs builtin | Result |
+| --- | --- | --- | --- |
+| `-a` | autoload | accepted (no-op) | match |
+| `-n` | new | accepted | match |
+| `-d` | delete | accepted | match |
+| `-e` | eval | accepted | match |
+| `-p` | pattern type | accepted | match |
+| `-P` | postpattern type | accepted | match |
+| `-k` | key type | accepted | match |
+| `-K` | widgetkey type | accepted | match |
+| `-N` | (not in spec) | rejected | match |
+
+```sh
+$ ./target/debug/zshrs --zsh -c 'compdef -N foo'
+compdef: unknown option: -N
+```
+Matches the diagnostic zsh emits after `compinit`.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47656,7 +47699,7 @@ no longer reports the internal trap-machinery scalar.
 | 303 | `trap '...' ERR` fires twice when failing cmd is inside a fn (zsh: once per logical error) | **fixed** 2026-06-02 | n/a |
 | 304 | `compfiles`/`compgroups`/`compquote`/`comptags`/`comptry`/`compvalues`/`comparguments`/`compdescribe`/`compcall`/`compctl` builtins missing — compsys unusable | **fixed** 2026-06-04 | all 10 completion-system builtins registered + emit canonical "not enough arguments" rc=1 |
 | 305 | `vared -c VAR` non-interactive silent no-op (zsh: errors "can't access terminal") | **fixed** 2026-06-02 | n/a |
-| 306 | `compdef` flag handling differs — `-N` rejected, always-available (zsh: autoloaded function not builtin) | **port-bug** | (none — needs flag table alignment) |
+| 306 | `compdef` flag handling differs — `-N` rejected, always-available (zsh: autoloaded function not builtin) | fixed | (invalid bug — flag table `anpPkKde` byte-for-byte matches zsh `Completion/compinit:267`; -N never existed in zsh either; always-available is intentional per "compat floor not ceiling") |
 | 307 | `[[ -5 -lt 0 ]]` errors "unknown condition: -5" — bare negative number misparsed as unary operator | **fixed** 2026-06-02 | n/a |
 | 308 | `${(t)arr[N]}` type-of-element errors "bad substitution" (zsh: returns "a") | **fixed** 2026-06-04 | type-string colon-substring route at compile dispatch |
 | 309 | Chained `${(qq)${(@P)var}}` drops elements — only first preserved (#229/#195/#287 family) | **fixed** 2026-06-04 | resolved by cumulative subexp+flag-chain patches |
