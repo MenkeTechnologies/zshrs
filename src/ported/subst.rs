@@ -5926,8 +5926,42 @@ pub fn paramsubst(
                 // `${#:-foo}` returns 3 (length of "foo"), not 0
                 // (length of empty pre-modifier raw_value).
                 if getlen < 3 {
-                    // c:3867 char count
-                    raw_value_for_len.chars().count()
+                    // c:Src/utils.c MB_METASTRLEN — under C/POSIX
+                    // locale (CODESET ≠ "UTF-8"), zsh's mbrtowc
+                    // returns one char per byte and the length op
+                    // reports BYTE count. zshrs's chars().count() is
+                    // ALWAYS char count, so it diverges under
+                    // LC_ALL=C. Bug #378. Branch on the active
+                    // locale's CODESET: UTF-8 → char count;
+                    // else → byte count. Inlined here because the
+                    // src/ported/ port-only check forbids
+                    // Rust-original helper fns.
+                    let utf8 = unsafe {
+                        // Ensure setlocale has been called from the
+                        // environment so nl_langinfo reflects the
+                        // user's LC_*. Rust test harnesses don't run
+                        // setlocale by default, so the C-locale
+                        // codeset (US-ASCII) would shadow the
+                        // process-environment LC_CTYPE setting.
+                        // Cached lazily via Once.
+                        static SETLOCALE_DONE: std::sync::Once = std::sync::Once::new();
+                        SETLOCALE_DONE.call_once(|| {
+                            let empty = std::ffi::CString::new("").unwrap();
+                            libc::setlocale(libc::LC_CTYPE, empty.as_ptr());
+                        });
+                        let ptr = libc::nl_langinfo(libc::CODESET);
+                        if ptr.is_null() {
+                            true
+                        } else {
+                            let cs = std::ffi::CStr::from_ptr(ptr).to_string_lossy();
+                            cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8")
+                        }
+                    };
+                    if utf8 {
+                        raw_value_for_len.chars().count()
+                    } else {
+                        raw_value_for_len.len()
+                    }
                 } else {
                     // c:3869 word count
                     let multi = if getlen > 3 { 1 } else { 0 };

@@ -31379,7 +31379,29 @@ zmodload zsh/stat && my_loaded[zsh/stat]=1
 
 ## #378 — `${#var}` ignores locale — always returns char count even in C/POSIX locale
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — `${#var}` scalar length branches
+on the active locale's CODESET. UTF-8 → char count;
+non-UTF-8 (e.g. `LC_ALL=C` → US-ASCII) → byte count. Mirrors
+C's `MB_METASTRLEN` which routes through `mbrtowc`, returning one
+char per byte under C locale. `setlocale(LC_CTYPE, "")` is called
+lazily on first `${#…}` to seed nl_langinfo from the
+environment so the test harness (which doesn't run setlocale)
+still sees the user's locale.
+
+```
+$ LC_ALL=C /opt/homebrew/bin/zsh -fc 'a="héllo"; echo "${#a}"'
+6
+$ LC_ALL=C ./target/debug/zshrs --zsh -fc 'a="héllo"; echo "${#a}"'
+6
+$ /opt/homebrew/bin/zsh -fc 'a="héllo"; echo "${#a}"'
+5
+$ ./target/debug/zshrs --zsh -fc 'a="héllo"; echo "${#a}"'
+5
+```
+
+Parity both locales.
+
+### Original report
 
 ```sh
 $ LC_ALL=C /opt/homebrew/bin/zsh -fc 'a="héllo"; echo "${#a}"'
