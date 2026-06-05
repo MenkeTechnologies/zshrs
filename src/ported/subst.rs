@@ -6317,25 +6317,29 @@ pub fn paramsubst(
                 }
             }
         }
-        // c:Src/subst.c — `${(@k)assoc[(R)pat]}` / `${(@k)assoc[(r)pat]}`
-        // preserves ARRAY shape across the assoc subscript MATCH path
-        // so consumers like `failed=("${(@k)map[(R)pat]}")` get one
-        // element per matched key. raw_value carries the joined keys
-        // ("k1 k2") from the assoc (R) dispatch at line 4538; split
-        // back to Vec for splat. Gated on nojoin == 2 (the `(@)` outer
-        // flag), assoc-backed name, a (R)/(r) subscript, and a
-        // non-empty raw_value (skip when the match returned nothing).
-        // Bug #592.
-        if nojoin == 2
-            && magic_assoc_array.is_none()
+        // c:Src/subst.c — `${assoc[(R)pat]}` / `${assoc[(I)pat]}` /
+        // `${assoc[(K)pat]}` preserve ARRAY shape across the assoc
+        // subscript MATCH path so consumers like
+        // `for k in ${h[(I)pat]}` iterate per matched key. C source
+        // returns `char **` from paramvalarr (params.c:689) for the
+        // multi-match capital flags (R/I/K); the Rust port joins them
+        // to a single scalar in the assoc dispatch (line 4646). Split
+        // back to Vec for splat shape regardless of (@) outer flag —
+        // zsh's paramvalarr return is inherently array-shaped; the
+        // c:3032 DQ-collapse arm below downgrades to scalar in qt
+        // context just like any other array result.
+        // Bug #592 + colors() `for k in ${color[(I)3?]}` failure.
+        if magic_assoc_array.is_none()
             && split_parts.is_none()
             && !raw_value.is_empty()
-            && (hkeys & SCANPM_WANTKEYS) != 0
             && assoc_contains(&var_name)
             && subscript
                 .as_deref()
                 .map_or(false, |s| {
-                    s.trim_start().starts_with("(R)") || s.trim_start().starts_with("(r)")
+                    let t = s.trim_start();
+                    t.starts_with("(R)") || t.starts_with("(r)")
+                        || t.starts_with("(I)") || t.starts_with("(i)")
+                        || t.starts_with("(K)") || t.starts_with("(k)")
                 })
         {
             let parts: Vec<String> = raw_value
