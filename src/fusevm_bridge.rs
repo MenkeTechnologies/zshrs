@@ -2615,35 +2615,65 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ARRAY_JOIN_STAR, |vm, _argc| {
         let name = vm.pop().to_str();
-        let result = with_executor(|exec| {
+        let (joined, ifs_full, in_dq) = with_executor(|exec| {
             // c:Src/params.c — `"$*"` joins by IFS[0]. zsh
             // distinguishes IFS=unset (→ default `" "`) from
             // IFS="" (→ EMPTY separator → fields concatenate).
             // chars().next() collapsed both into the default, so
             // IFS="" was treated as IFS=" ".
-            let sep = match exec.scalar("IFS") {
-                Some(s) => s.chars().next().map(|c| c.to_string()).unwrap_or_default(),
-                None => " ".to_string(),
-            };
-            if name == "@" || name == "*" || name == "argv" {
-                return exec.pparams().join(&sep);
-            }
-            // c:Src/params.c — assoc-splat values for `"${h[@]}"`
-            // / `"${h[*]}"`. Bug #109 in docs/BUGS.md: BUILTIN_
-            // ARRAY_JOIN_STAR (the quoted form) only consulted
-            // exec.array(); for an assoc-named param, that missed
-            // and fell through to scalar (also empty). Mirror the
-            // BUILTIN_ARRAY_ALL fix one floor up.
-            if let Some(assoc_map) = exec.assoc(&name) {
-                return assoc_map.values().cloned().collect::<Vec<_>>().join(&sep);
-            }
-            if let Some(arr) = exec.array(&name) {
+            let ifs_full = exec
+                .scalar("IFS")
+                .unwrap_or_else(|| " \t\n".to_string());
+            let sep = ifs_full
+                .chars()
+                .next()
+                .map(|c| c.to_string())
+                .unwrap_or_default();
+            let in_dq = exec.in_dq_context > 0;
+            let joined = if name == "@" || name == "*" || name == "argv" {
+                exec.pparams().join(&sep)
+            } else if let Some(assoc_map) = exec.assoc(&name) {
+                // c:Src/params.c — assoc-splat values for
+                // `"${h[@]}"` / `"${h[*]}"`. Bug #109 in
+                // docs/BUGS.md.
+                assoc_map.values().cloned().collect::<Vec<_>>().join(&sep)
+            } else if let Some(arr) = exec.array(&name) {
                 arr.join(&sep)
             } else {
                 exec.get_variable(&name)
-            }
+            };
+            (joined, ifs_full, in_dq)
         });
-        Value::str(result)
+        // c:Src/subst.c — UNQUOTED `${name[*]}` (or `$*`) goes
+        // through the canonical "join via IFS[0], then word-split
+        // via IFS" pipeline. The fast-path bypassed paramsubst
+        // entirely so it never word-split, producing one joined
+        // string instead of N argv entries. Bug #428.
+        //
+        // In QUOTED (`"${name[*]}"`) context, the result IS a
+        // single scalar — return it as Str without splitting.
+        if in_dq {
+            return Value::str(joined);
+        }
+        if joined.is_empty() {
+            return Value::Array(Vec::new());
+        }
+        // IFS word-split — every IFS char is a separator. Empty
+        // resulting fields are dropped (the canonical
+        // "remove empty unquoted words" pass from
+        // Src/subst.c::prefork c:184-187).
+        let parts: Vec<String> = joined
+            .split(|c: char| ifs_full.contains(c))
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+        if parts.is_empty() {
+            Value::Array(Vec::new())
+        } else if parts.len() == 1 {
+            Value::str(parts.into_iter().next().unwrap())
+        } else {
+            Value::Array(parts.into_iter().map(Value::str).collect())
+        }
     });
 
     vm.register_builtin(BUILTIN_ARRAY_ALL, |vm, _argc| {

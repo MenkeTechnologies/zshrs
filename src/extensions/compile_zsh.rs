@@ -2653,13 +2653,21 @@ impl ZshCompiler {
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
             if in_dq && name == "*" {
-                // Discard the GET_VAR result; JOIN_STAR re-fetches the
-                // array and joins by IFS first char. (We can't easily
-                // join an in-stack Array without a dedicated op.)
+                // Discard the GET_VAR result and route the quoted
+                // `"$*"` through BUILTIN_EXPAND_TEXT mode 1 with body
+                // "$*". EXPAND_TEXT bumps the executor's in_dq_context
+                // around the call, so multsub → paramsubst sees qt=true
+                // and runs the canonical IFS-join with single-scalar
+                // shape (Src/subst.c c:3032 sepjoin). Routing through
+                // JOIN_STAR directly missed the DQ context and the
+                // handler couldn't tell quoted from unquoted, so the
+                // post-join word-split fired even for `"$*"`. Bug #428.
                 self.builder.emit(Op::Pop, 0);
-                self.builder.emit(Op::LoadConst(idx), 0);
+                let body_const = self.builder.add_constant(Value::str("$*"));
+                self.builder.emit(Op::LoadConst(body_const), 0);
+                self.builder.emit(Op::LoadInt(1), 0);
                 self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR, 1),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2),
                     0,
                 );
             }
@@ -3150,18 +3158,42 @@ impl ZshCompiler {
         // expansion is the RHS of a scalar assignment. Without this,
         // `b="${a[@]}"` captured only the first element because the
         // Array was implicitly truncated by the scalar conversion.
+        //
+        // Skip the fast path in DQ context. The fast-path joiner
+        // (BUILTIN_ARRAY_JOIN_STAR) for `[*]` always returns a
+        // single Value::Str, which is correct in QUOTED ("`${a[*]}`")
+        // context. But in UNQUOTED context, zsh's canonical
+        // `${a[*]}` does join-via-IFS[0] THEN word-split-via-IFS —
+        // producing N argv entries. The fast path can't word-split
+        // because it can't see IFS at the right point. Routing
+        // unquoted-`[*]` here is fine (the JOIN_STAR handler
+        // does the split itself); routing quoted-`[*]` through the
+        // slow EXPAND_TEXT → multsub → paramsubst chain keeps the
+        // single-string semantics intact. Bug #428.
         if !has_bnull {
-            if let Some(name) = array_splice_ref(&untoked) {
-                let idx = self.builder.add_constant(Value::str(name));
-                self.builder.emit(Op::LoadConst(idx), 0);
-                let force_join = self.scalar_assign_depth > 0;
-                let bid = if array_splice_is_star(&untoked) || force_join {
-                    crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR
-                } else {
-                    crate::vm_helper::BUILTIN_ARRAY_ALL
-                };
-                self.builder.emit(Op::CallBuiltin(bid, 0), 0);
-                return;
+            let raw_dq_for_splice = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+            let dq_for_splice = raw_dq_for_splice || self.dq_context_depth > 0;
+            let is_star = array_splice_is_star(&untoked);
+            // Force-join via the fast path only when (a) it's
+            // `[@]` (no split needed), or (b) we're in a scalar-
+            // assign or non-DQ unquoted context where the JOIN_STAR
+            // handler's own DQ-aware split logic produces the right
+            // result. Quoted `"${a[*]}"` falls through to the slow
+            // paramsubst path.
+            let take_fast = !is_star || !dq_for_splice;
+            if take_fast {
+                if let Some(name) = array_splice_ref(&untoked) {
+                    let idx = self.builder.add_constant(Value::str(name));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    let force_join = self.scalar_assign_depth > 0;
+                    let bid = if is_star || force_join {
+                        crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR
+                    } else {
+                        crate::vm_helper::BUILTIN_ARRAY_ALL
+                    };
+                    self.builder.emit(Op::CallBuiltin(bid, 0), 0);
+                    return;
+                }
             }
         }
 
