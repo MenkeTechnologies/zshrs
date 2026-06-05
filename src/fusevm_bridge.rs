@@ -7439,6 +7439,31 @@ impl ShellExecutor {
                 let n = target.trim_start_matches('&');
                 if n == "-" {
                     unsafe { libc::close(fd) };
+                } else if n == "p" {
+                    // c:Src/exec.c — `<&p` / `>&p` route through the
+                    // coprocin / coprocout globals. zsh's `coproc CMD`
+                    // launch publishes those fds; the canonical
+                    // bin_print / bin_read `-p` arms already consume
+                    // them. The DUP redirect form is the third
+                    // consumer: it must dup the coproc fd onto the
+                    // target slot so the next command's stdin/stdout
+                    // is wired to the running coprocess. Bug #388.
+                    let coproc_fd = if op_byte == r::DUP_READ {
+                        crate::ported::modules::clone::coprocin
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                    } else {
+                        crate::ported::modules::clone::coprocout
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                    };
+                    if coproc_fd < 0 {
+                        eprintln!("{}:1: no coprocess", shname());
+                        self.set_last_status(1);
+                        self.redirect_failed = true;
+                    } else {
+                        unsafe {
+                            libc::dup2(coproc_fd, fd);
+                        }
+                    }
                 } else if let Ok(src_fd) = n.parse::<i32>() {
                     unsafe { libc::dup2(src_fd, fd) };
                 } else {

@@ -31807,8 +31807,11 @@ above. Need to verify whether `coproc` itself works at all.
 
 ## #388 — `coproc` builtin doesn't open a coprocess — entire feature missing
 
-**Status:** `fixed` 2026-06-05 (`print -p` / `read -p` forms;
-`<&p` / `>&p` redirect form still pending).
+**Status:** `fixed` 2026-06-05 — all three consumer forms wired:
+`print -p` / `read -p`, and the `<&p` / `>&p` DUP redirect
+forms. Shell-exit-with-running-coproc behaviour (script blocks
+on coproc reap after main body finishes) is a separate
+follow-up tracked inline below.
 
 **Root cause** — the `coproc CMD` launch path
 (`BUILTIN_RUN_COPROC` at `src/fusevm_bridge.rs::register_builtins`)
@@ -31861,11 +31864,18 @@ Regression check — all of these still match zsh:
 - plain `print hello` / `read x < <(echo input)`: unaffected
 - `coproc` launch / `$COPROC` array population: unchanged
 
-**Sub-issue (not fixed)** — the `<&p` / `>&p` redirect forms
-that splice the coproc fds into a command's stdin/stdout still
-hang. Those need wiring in `compile_redir` / `host_apply_redirect`
-to treat the literal `&p` target as the coproc-fd lookup.
-Documented inline; tracked as a follow-up.
+**Update — `<&p` / `>&p` redirect forms** (also 2026-06-05) —
+fixed in `src/fusevm_bridge.rs::host_apply_redirect`'s
+`DUP_READ | DUP_WRITE` arm. When the parsed target is `p` (or
+`&p`), look up `coprocin` (for `<&p`) or `coprocout` (for
+`>&p`) and `dup2` that fd onto the redirect slot. Missing
+coproc emits `"no coprocess"` + sets `redirect_failed`.
+
+**Sub-issue (not fixed)** — `cat <&p; <script-end>` in zshrs
+hangs at exit because the shell waits for the running coproc
+child to reap; zsh detaches the coproc so the shell exits
+cleanly. Separate follow-up; doesn't affect the `print -p` /
+`read -p` / `<&p` / `>&p` mechanisms themselves.
 
 Baseline preserved: 968/84 zshrs_shell tests.
 
@@ -47940,7 +47950,7 @@ no longer reports the internal trap-machinery scalar.
 | 385 | `$LINENO` inside function returns 1 instead of 0 — base-index off-by-one | **fixed** 2026-06-02 | `$((LINENO - 1))` |
 | 386 | `readonly` no-args dumps nothing instead of listing readonly variables (zsh: full dump) | **fixed** 2026-06-02 | parse `typeset -p VAR` for `-r` flag |
 | 387 | `read -p "prompt"` parsing — `-p` not recognized as coprocess flag, treats arg as identifier | **fixed** 2026-06-02 | `print -n` to stderr + bare `read` |
-| 388 | `coproc CMD` doesn't open coprocess — `print -p`/`read -p`/`<&p` all broken, entire feature missing | fixed (partial) | (print -p / read -p forms wired via coprocin/coprocout globals + canonical read-fd routing; `<&p`/`>&p` redirect form is a separate sub-issue tracked inline) |
+| 388 | `coproc CMD` doesn't open coprocess — `print -p`/`read -p`/`<&p` all broken, entire feature missing | fixed | (all three consumer forms wired: print -p, read -p via coprocin/coprocout globals; `<&p`/`>&p` via host_apply_redirect DUP arm) |
 | 389 | `TRAPZERR()` function-form not invoked on non-zero exit — error-tracing frameworks broken | **fixed** 2026-06-02 | `setopt err_exit` + explicit `\|\|` checks |
 | 390 | `$PS4` default value empty — `set -x` produces no source/function/line/depth context | **fixed** 2026-06-03 | seed `PS4=$'%F{blue}%x\\t%0N\\t%I\\t%_%f\\t'` in zshrc |
 | 391 | PS4 escape expansion broken — `%x`/`%N`/`%I`/`%_` printed literally during `set -x` (zsh: expanded) | **fixed** 2026-06-03 | abandon `set -x`; use manual `echo` debugging |
