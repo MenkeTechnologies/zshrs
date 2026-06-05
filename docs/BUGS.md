@@ -42769,14 +42769,30 @@ status.)
 
 ## #532 — Multiple zsh modules (`zsh/stat`, `zsh/zselect`, `zsh/zpty`, `zsh/zftp`) auto-loaded in `--zsh` mode — extends #530
 
-**Status:** `partial-fix` 2026-06-04 — `${modules[X]}`
-introspection no longer reports the four bug-named modules
-as loaded by default; they correctly return unset until
-`zmodload NAME`. The `type X` / `command -v X` lookup still
-finds the builtins because the zsh/stat / zsh/zftp builtins
-are also registered in the canonical builtintab; gating the
-builtintab entries on module-loaded state is a separate
-substrate fix (deferred).
+**Status:** `fixed` 2026-06-05 — both the
+`${modules[X]}` introspection AND `type X` / `command -v X`
+lookups now match zsh: unset/`not found` until `zmodload
+NAME`, then "shell builtin" after.
+
+**Earlier partial-fix (2026-06-04)** addressed only the
+introspection arm via `register_bltinmods` not marking these
+modules as default-loaded. The remaining `type X` divergence
+was closed by extending the existing `is_files_gated` pattern
+in `bin_whence` (`src/ported/builtin.rs`) — added per-module
+gates that skip the builtintab lookup until the owning module
+is loaded:
+- `zsh/stat` → `stat`, `zstat`
+- `zsh/zselect` → `zselect`
+- `zsh/zpty` → `zpty`
+- `zsh/net/tcp` → `ztcp`
+- `zsh/zftp` → `zftp`
+- `zsh/system` → `zsystem`, `syserror`
+
+When the module isn't loaded, the lookup falls through to
+the cmdnamtab/$PATH path so `type stat` reports
+`/usr/bin/stat` (matching zsh) and `type zselect` reports
+`not found` (matching zsh). After `zmodload zsh/X`, the
+gate releases and the builtin is found again.
 
 **Root cause** — `src/ported/module.rs::modulestab::register_bltinmods`
 pre-registered every linked module into `modules` HashMap
@@ -43072,12 +43088,16 @@ echo "still running"
 
 ## #535 — `zsh/system` module auto-loaded — extends #530/#532 to a 6-module contamination
 
-**Status:** `partial-fix` 2026-06-04 — `${modules[zsh/system]}`
-now returns unset by default and `zmodload zsh/system`
-flips to loaded; closed via the #532 fix combo. The
-`type zsystem` lookup still reports `zsystem` as a shell
-builtin because the builtintab registration is independent
-of modulestab. Same remaining-gap class as #532.
+**Status:** `fixed` 2026-06-05 — both the
+`${modules[zsh/system]}` introspection AND `type zsystem` /
+`command -v zsystem` lookups now match zsh: unset/`not found`
+until `zmodload zsh/system`, then "shell builtin".
+
+The earlier partial-fix (2026-06-04) handled the
+introspection arm. The `type X` arm was closed alongside #532
+by extending `bin_whence`'s `is_files_gated` pattern to
+include `zsh/system → zsystem, syserror`. See #532 for the
+combined gating list.
 
 **Verify** vs `/opt/homebrew/bin/zsh`:
 
@@ -48335,10 +48355,10 @@ no longer reports the internal trap-machinery scalar.
 | 529 | `$((1+(2))` paren-mismatch math silently rc=0 (no output) — zsh: parse error | fixed | (parse_program_until emits yyerror on LEXERR matching `Src/parse.c::par_event` c:671-680; rc=1 like zsh) |
 | 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **fixed** 2026-06-04 | `${modules[zsh/files]}` unset by default; `type rm` reports `/bin/rm`; exec falls through to PATH |
 | 531 | `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 trap-function family | fixed | (bin_fg BIN_WAIT branch calls dotrap(SIGCHLD) after each waitpid; both function- and string-form traps fire) |
-| 532 | zsh modules `zsh/stat`/`zsh/zselect`/`zsh/zpty`/`zsh/zftp` auto-loaded — extends #530 (zmodload-required-but-pre-loaded) | **partial-fix** 2026-06-04 | introspection now unset; `type X` builtintab gate deferred |
+| 532 | zsh modules `zsh/stat`/`zsh/zselect`/`zsh/zpty`/`zsh/zftp` auto-loaded — extends #530 (zmodload-required-but-pre-loaded) | fixed | (introspection arm fixed 2026-06-04; `type X` builtintab gate added via bin_whence per-module gates 2026-06-05) |
 | 533 | `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2 (worst-case rc=0 set-e bypass) | **fixed** 2026-06-02 | visual audit |
 | 534 | `builtin 2>&1` (bare redirect on reserved word) silently rc=0 — extends parser-strictness family | **fixed** 2026-06-02 | CI lint for prefix-keyword-no-command |
-| 535 | `zsh/system` module auto-loaded — extends #530/#532 (6-module contamination census now) | **partial-fix** 2026-06-04 | introspection now unset; `type zsystem` builtintab gate deferred |
+| 535 | `zsh/system` module auto-loaded — extends #530/#532 (6-module contamination census now) | fixed | (introspection arm fixed 2026-06-04; `type zsystem`/`type syserror` builtintab gate added via bin_whence 2026-06-05) |
 | 536 | `function with[bracket] { ... }` accepts bracket char in fn name (zsh: "no matches found" via glob) | **fixed** | par_funcdef glob-probes name under NOMATCH; emits canonical diagnostic |
 | 537 | `echo /tmp/_zg/\\(abc\\)` strips escaped-paren content entirely — zsh: emits literal `(abc)` | **fixed** 2026-06-02 | quote-instead-of-escape |
 | 538 | `[[ ( ) ]]` empty paren-group silently rc=0 — zsh: parse error — extends parser-strictness family | **fixed** 2026-06-02 | CI lint for empty paren-groups |
