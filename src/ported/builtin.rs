@@ -10404,6 +10404,59 @@ pub fn bin_test(
             return 2;
         }
     }
+    // c:Src/parse.c par_cond — 3-arg form analysis:
+    //   (a) `[ -X arg extra ]` — unary at pos 0, extra at pos 2
+    //       → "too many arguments"
+    //   (b) `[ a OP b ]` with unknown OP → "unknown condition: OP"
+    //   (c) `[ a b c ]` (no recognised op at pos 1) →
+    //       "condition expected: b"
+    let known_binops: &[&str] = &[
+        "=", "==", "!=", "<", ">",
+        "-eq", "-ne", "-lt", "-gt", "-le", "-ge",
+        "-nt", "-ot", "-ef",
+        "&&", "||", "-a", "-o",
+        "=~", "-regex-match",
+    ];
+    if argv.len() == 3 && argv[0].starts_with('-') && argv[0].len() == 2 {
+        let op_char = argv[0].chars().nth(1).unwrap_or(' ');
+        let is_known_unary = matches!(
+            op_char,
+            'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'k' | 'L'
+                | 'n' | 'o' | 'p' | 'r' | 's' | 'S' | 't' | 'u' | 'v'
+                | 'w' | 'x' | 'z' | 'G' | 'N' | 'O'
+        );
+        // For unary-flag-at-pos-0 with a 3rd extra arg, the canonical
+        // diagnostic is "too many arguments" — UNLESS args[1] is itself
+        // a binary op (e.g., `-z -lt 5` which is malformed differently).
+        if is_known_unary && !known_binops.contains(&argv[1].as_str()) {
+            crate::ported::utils::zwarnnam(name, "too many arguments");
+            return 2;
+        }
+    }
+    if argv.len() == 3
+        && !argv[0].starts_with('-')
+        && argv[0] != "!"
+        && argv[0] != "("
+    {
+        let mid = argv[1].as_str();
+        if mid.starts_with('-')
+            && argv[1].len() >= 2
+            && !known_binops.contains(&mid)
+        {
+            crate::ported::utils::zwarnnam(
+                name,
+                &format!("unknown condition: {}", argv[1]),
+            );
+            return 2;
+        }
+        if !known_binops.contains(&mid) {
+            crate::ported::utils::zwarn(&format!(
+                "condition expected: {}",
+                argv[1]
+            ));
+            return 2;
+        }
+    }
     if argv.len() == 4
         && matches!(
             argv[1].as_str(),
