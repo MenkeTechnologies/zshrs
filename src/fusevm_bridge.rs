@@ -981,7 +981,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     login = true;
                     args.remove(i);
                 }
-                _ => break,
+                _ => {
+                    // c:Src/exec.c:3196-3208 — when an unrecognized
+                    // `-X`-style arg has NO following arg, the lexer's
+                    // IS_DASH walk hits the "no next node" branch at
+                    // c:3199 before the unknown-flag-letter switch at
+                    // c:3249, so the canonical message is "exec
+                    // requires a command to execute" rc=1 (verified vs
+                    // `/opt/homebrew/bin/zsh -fc 'exec --bad'`).
+                    // Consume the lone flag so the post-loop check
+                    // fires. When a following arg exists, leave the
+                    // unknown-flag arg in place — that arg becomes
+                    // the command name and execution proceeds.
+                    if args.len() == 1 {
+                        saw_flag = true;
+                        args.remove(i);
+                        continue;
+                    }
+                    break;
+                }
             }
         }
         let Some(cmd) = args.first().cloned() else {
