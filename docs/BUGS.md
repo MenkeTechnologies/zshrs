@@ -47264,6 +47264,72 @@ Test baseline 964/88 preserved.
 
 ---
 
+## #620 — `h[Q-${h[$k]}]=z` (nested assoc subscript in assign LHS) errors "no matches found: Q-${h[a]}" — segment splitter treats literal `${` as non-expansion
+
+**Status:** `fixed` 2026-06-05 — compile_zsh.rs's `split_word_segments` / `find_expansion_end` now recognize ASCII `${` and `$(` shapes (in addition to META Inbrace/Inpar).
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a x); k=a; h[Q-${h[$k]}]=z; print -l ${(kv)h}'
+Q-x
+z
+a
+x
+
+$ ./target/debug/zshrs --zsh -fc 'typeset -A h=(a x); k=a; h[Q-${h[$k]}]=z; print -l ${(kv)h}'   # before
+zshrs:1: no matches found: Q-${h[a]}
+```
+
+**Root cause** — `src/extensions/compile_zsh.rs::compile_assign` (line 2088) calls `untokenize_preserve_quotes(&assign.name)` to recover ASCII text for the LHS subscript. The extracted key `Q-${h[$k]}` arrives at `compile_word_str` as raw ASCII (META TOKEN markers gone). `split_word_segments`'s expansion-trigger check at line ~6770 (`is_literal_dollar_with_expansion`) accepted META Inbrace `\u{8f}` after `$` but NOT literal `{`. Same for `find_expansion_end` — it had a `Some('\u{8f}')` arm but no `Some('{')` arm.
+
+So for ASCII `Q-${h[$k]}`:
+- Position 2 (`$`+`{`) — NOT detected as expansion start.
+- Position 6 (`$`+`k`) — DETECTED as expansion start (matches alphanumeric peek).
+
+Segments came out as `[Literal("Q-${h["), Expansion("$k"), Literal("]}")]`. The literal `"Q-${h["` contained `[`, triggering `needs_glob = true`. After concat, the runtime saw `Q-${h[a]}` and tried to glob it → "no matches found".
+
+**Fix** (`src/extensions/compile_zsh.rs`):
+
+1. `is_literal_dollar_with_expansion` peek (line ~6770) — add literal `{` and `(` alongside the META forms:
+```rust
+n == '\u{8f}'  // Inbrace
+    || n == '{'        // literal `${`  (ASCII-pre-untokenized path)
+    || n == '\u{88}'  // Inpar
+    || n == '('        // literal `$(`
+    || ...
+```
+
+2. `find_expansion_end` (line ~6984) — add a `Some('{')` arm that mirrors the Inbrace arm with depth tracking on literal `{`/`}` (accept META forms too for mixed-tokenization safety):
+```rust
+Some('{') => {
+    let mut depth = 1;
+    let mut j = i + 2;
+    while j < chars.len() && depth > 0 {
+        match chars[j] {
+            '{' | '\u{8f}' => depth += 1,
+            '}' | '\u{90}' => depth -= 1,
+            _ => {}
+        }
+        j += 1;
+    }
+    j
+}
+```
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'typeset -A h=(a x); k=a; h[Q-${h[$k]}]=z; print "${h[Q-x]}"'
+z
+$ ./target/debug/zshrs -fc 'typeset -A h=(a x b y); for k in a b; do h[fg-${h[$k]}]=$k; done; print "${h[fg-x]} ${h[fg-y]}"'
+a b
+$ ./target/debug/zshrs -fc 'autoload -Uz colors && colors; echo "fg-red=$fg[red]"'
+fg-red=[31m
+```
+
+Test baseline 1023/29 preserved.
+
+---
+
 ## #621 — `for k in ${color[(I)3?]}` iterates ONCE instead of per matched key — assoc multi-match returns scalar instead of array shape
 
 **Status:** `fixed` 2026-06-05 — assoc subscript `(R)`/`(I)`/`(K)` (and lowercase) multi-match results now seed `split_parts` regardless of `(@)` outer flag, matching C's `paramvalarr` returning `char **`.
@@ -48611,6 +48677,7 @@ no longer reports the internal trap-machinery scalar.
 | 617 | `(( b = a ))` with `a=1.5` creates `b` as PM_INTEGER 1 instead of PM_FFLOAT 1.5 — compile-time pre-check mutates paramtab | **fixed-partial** 2026-06-04 | added mathevali_noeval (Rust-only, allowlisted) routing through matheval with noeval=1 so setmathvar's c:1002-1003 noeval-bail prevents paramtab mutation; operator forms still truncate (separate gap) |
 | 618 | `print -P "%i"` stuck at 1 inside fn; `%I` off by funcstack offset | **fixed** 2026-06-04 | both arms read `$LINENO` (executor maintains correctly); `%I` adds funcstack.flineno offset per Src/prompt.c:901-920 |
 | 619 | `print -P "%T"` / `%*` emit leading-zero hour — uses `%H` not `%K` | **fixed** 2026-06-04 | switch `%T` from `%H:%M` to `%K:%M` and `%*` to `%K:%M:%S` per Src/prompt.c:715/:718 (zsh ext, no leading zero) |
+| 620 | `h[Q-${h[$k]}]=z` (nested assoc subscript in assign LHS) errors "no matches found: Q-${h[a]}" — segment splitter treats literal `${` as non-expansion | **fixed** 2026-06-05 | compile_zsh.rs::split_word_segments — `is_literal_dollar_with_expansion` peek now accepts ASCII `{`/`(` (assoc-LHS path arrives ASCII-untokenized via untokenize_preserve_quotes); find_expansion_end gets a `Some('{')` arm with depth tracking on `{`/`}` mirroring the META-Inbrace arm |
 | 621 | `for k in ${color[(I)3?]}` iterates ONCE with k="30 31 32 33" instead of four times — assoc `(I)`/`(R)`/`(K)` multi-match returns scalar instead of array shape | **fixed** 2026-06-05 | subst.rs c:3950 splat-seed block — broaden gate (was `(@k)` + `(R)/(r)` only) to fire for ANY assoc subscript with `(R)/(r)/(I)/(i)/(K)/(k)` even without `(@)` outer flag; matches C `paramvalarr` returning `char **` from Src/params.c:689 (array shape inherent to the multi-match) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
