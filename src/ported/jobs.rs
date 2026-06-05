@@ -2866,6 +2866,35 @@ pub fn bin_fg(
                     if let Ok(mut tab) = table.lock() {
                         update_bg_job(&mut tab, pid, status);
                     }
+                    // c:Src/jobs.c:644-645 — `if (sigtrapped[SIGCHLD]
+                    // && job != thisjob) dotrap(SIGCHLD);`. C zsh's
+                    // canonical site for the SIGCHLD-trap dispatch
+                    // sits in update_job, gated on the job index NOT
+                    // matching the foreground job. The Rust update_job
+                    // port doesn't have the job index, and findproc
+                    // can miss the pid when the bg-job procs vec
+                    // wasn't populated by the spawn site — so the
+                    // dispatch never fires through that path.
+                    // bin_wait's reaper loop already has the pid and
+                    // runs only for `wait` (which by definition is
+                    // waiting on background jobs, so the "job !=
+                    // thisjob" condition is always true here). Fire
+                    // the trap from this site so function-form
+                    // TRAPCHLD() {…} and string-form `trap '…' CHLD`
+                    // both reach userspace. Bug #531 in docs/BUGS.md.
+                    let chld_trapped = crate::ported::signals::sigtrapped
+                        .lock()
+                        .ok()
+                        .and_then(|g| g.get(libc::SIGCHLD as usize).copied())
+                        .unwrap_or(0);
+                    let chld_string_trap = crate::ported::builtin::traps_table()
+                        .lock()
+                        .ok()
+                        .map(|t| t.contains_key("CHLD") || t.contains_key("SIGCHLD"))
+                        .unwrap_or(false);
+                    if chld_trapped != 0 || chld_string_trap {
+                        crate::ported::signals::dotrap(libc::SIGCHLD);
+                    }
                 } else {
                     break;
                 }

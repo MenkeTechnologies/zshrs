@@ -42055,6 +42055,53 @@ mkdir is a shell builtin
 
 ## #531 — `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 family
 
+**Status:** `fixed` 2026-06-05 — `bin_fg` BIN_WAIT loop now
+calls `dotrap(SIGCHLD)` after each successful waitpid,
+gated on a live function-form or string-form CHLD trap.
+
+**Root cause** — C zsh's canonical SIGCHLD-trap dispatch
+sits inside `update_job` at `Src/jobs.c:644-645`:
+```c
+if (sigtrapped[SIGCHLD] && job != thisjob)
+    dotrap(SIGCHLD);
+```
+The Rust port at `src/ported/jobs.rs::update_job` doesn't
+have the `job_idx` (the `&mut job` reference loses the
+table position). The dispatch had no equivalent site in
+zshrs, so even though `TRAPCHLD() { … }` correctly
+installed a function trap via `settrap(SIGCHLD, NULL,
+ZSIG_FUNC)` (exec.rs:6315), nothing called `dotrap` when
+the child exited.
+
+A defensive add inside `update_bg_job` (which DOES know
+the job index) was ineffective because `findproc` returns
+None for spawned bg jobs whose `procs` vec wasn't
+populated by the spawn site — a separate gap that prevents
+the dispatch path from even reaching the trap arm.
+
+**Fix** — `src/ported/jobs.rs::bin_fg` BIN_WAIT branch.
+After each successful `waitpid(-1, …, 0)` in the reaper
+loop, check both `sigtrapped[SIGCHLD]` (function-form via
+TRAPCHLD or `settrap`) AND the canonical `traps_table`
+HashMap for a string-form `trap '…' CHLD`. If either is
+present, call `dotrap(SIGCHLD)`. The "job != thisjob"
+gate is implicit here — `wait` is by definition operating
+on background jobs, so the C-source condition is always
+true at this site.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'TRAPCHLD() { echo CHLD fired; }; true & wait'
+CHLD fired
+$ ./target/debug/zshrs --zsh -fc 'trap "echo string-trap" CHLD; true & wait'
+string-trap
+```
+Both match `/opt/homebrew/bin/zsh -fc '…'` byte-for-byte.
+
+Baseline preserved: 970/82 zshrs_shell tests.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47671,7 +47718,7 @@ no longer reports the internal trap-machinery scalar.
 | 528 | `typeset -a a=("hello world")` splits QUOTED string into multiple elements — worse than #502 | **fixed** 2026-06-04 | n/a |
 | 529 | `$((1+(2))` paren-mismatch math silently rc=0 (no output) — zsh: parse error | **port-bug** | visual audit |
 | 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **fixed** 2026-06-04 | `${modules[zsh/files]}` unset by default; `type rm` reports `/bin/rm`; exec falls through to PATH |
-| 531 | `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 trap-function family | **port-bug** | string-form `trap`/`CHLD` |
+| 531 | `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 trap-function family | fixed | (bin_fg BIN_WAIT branch calls dotrap(SIGCHLD) after each waitpid; both function- and string-form traps fire) |
 | 532 | zsh modules `zsh/stat`/`zsh/zselect`/`zsh/zpty`/`zsh/zftp` auto-loaded — extends #530 (zmodload-required-but-pre-loaded) | **partial-fix** 2026-06-04 | introspection now unset; `type X` builtintab gate deferred |
 | 533 | `(( 5 + ))` trailing-operator math silently rc=0 — zsh: "operand expected" rc=2 (worst-case rc=0 set-e bypass) | **fixed** 2026-06-02 | visual audit |
 | 534 | `builtin 2>&1` (bare redirect on reserved word) silently rc=0 — extends parser-strictness family | **fixed** 2026-06-02 | CI lint for prefix-keyword-no-command |
