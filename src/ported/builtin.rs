@@ -10444,6 +10444,24 @@ pub fn bin_test(
             );
             return 2;
         }
+    } else if argv.len() == 2
+        && !argv[0].starts_with('-')
+        && argv[0] != "!"
+        && argv[0] != "("
+        && argv[1] != ")"
+    {
+        // c:Src/parse.c par_cond — 2-arg form with two bare operands
+        // (no flag, no `!`, no paren wrapping) is a parse error —
+        // zsh emits "parse error: condition expected: SECOND_OPERAND"
+        // (via zwarn, no builtin-name prefix). Verified vs
+        // /opt/homebrew/bin/zsh: `[ "" "" ]` →
+        //   "zsh:1: parse error: condition expected: " rc=2
+        crate::ported::utils::zwarn(&format!(
+            "parse error: condition expected: {}",
+            argv[0]
+        ));
+        let _ = name;
+        return 2;
     }
     // c:Src/builtin.c:7276-7280 — `[ ]`/`test` uses `parse_cond`
     // which has no rule for TEST_INANG (`<`) or TEST_OUTANG (`>`) as
