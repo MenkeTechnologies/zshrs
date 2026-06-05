@@ -34928,58 +34928,64 @@ mechanism for randomness control.
 
 ## #418 — `unset SECONDS` / `unset EPOCHSECONDS` ignored — regenerators stay active
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — `unsetparam` now retains PM_SPECIAL pms in paramtab with PM_UNSET set (mirroring C `Src/params.c:3911-3913`); `getsparam` honors PM_UNSET as empty; subsequent re-assignment finds the pm via `createparam`'s oldpm reuse arm, preserving PM_INTEGER|PM_SPECIAL + gsu vtable so `intsetfn` dispatches through `intsecondssetfn`.
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'SECONDS=10; unset SECONDS; echo "[$SECONDS]"'
 []
 
-$ ./target/debug/zshrs --zsh -c 'SECONDS=10; unset SECONDS; echo "[$SECONDS]"'
+$ ./target/debug/zshrs --zsh -c 'SECONDS=10; unset SECONDS; echo "[$SECONDS]"'   # before
 [10]
 ```
 
-Same family as #417 (RANDOM unset ignored) — applied to
-the time-tracking special parameters:
+**Root cause** — `src/ported/params.rs::unsetparam` removed the pm from paramtab unconditionally when there was no `pm.old` chain. C's `unsetparam_pm` (Src/params.c:3911-3913) keeps PM_SPECIAL params in the table on unset:
 
-- `SECONDS` — seconds since shell start (or last set)
-- `EPOCHSECONDS` — Unix epoch seconds (from `zsh/datetime`)
-- Likely also: `EPOCHREALTIME`, `EGID`, `EUID`, `UID`,
-  `GID`, `HISTCMD`, `PPID`
+```c
+if ((pm->level && locallevel >= pm->level) ||
+    (pm->node.flags & (PM_SPECIAL|PM_REMOVABLE)) == PM_SPECIAL)
+    return 0;  /* skip removenode */
+```
 
-All zsh-specials whose value is computed on-read should
-have an unset path that suppresses the getter. zsh
-implements this; zshrs's getter fires unconditionally.
+So `SECONDS` (PM_SPECIAL without PM_REMOVABLE) stays with PM_UNSET set. The next `SECONDS=N` finds it via `createparam`'s `oldpm` lookup, reuses the entry with PM_INTEGER|PM_SPECIAL intact, and `intsetfn`'s name-dispatch routes through `intsecondssetfn` (shtimer update).
 
-**Where** — `src/ported/params/seconds.rs::unset_handler`
-and equivalent files: must mark the parameter
-`PM_UNSET` and have the `getfn` return empty when the
-flag is set. C-source `Src/params.c::*setfn` family
-respects `PM_UNSET`.
+In zshrs's pre-fix flow, the pm was dropped → re-assignment created a fresh PM_SCALAR → value landed in `pm.u_str` → `lookup_special_var` kept reading `now - shtimer` (unchanged) → `$SECONDS` always read the original delta.
 
-**Impact** — test fixtures and benchmarking utilities
-that use `unset SECONDS; SECONDS=0` to reset the
-seconds-counter behave incorrectly:
+There was a second bug stacked on top: even after the pm was correctly retained, the read path didn't honor PM_UNSET. `getsparam` walked paramtab and returned `convbase(pm.u_val, base) = "0"` for the unset SECONDS, instead of empty per C's `Src/params.c:2335-2358` `if (pm->node.flags & PM_UNSET) return ""`.
 
-```sh
-benchmark() {
-    unset SECONDS
-    SECONDS=0
-    "$@"
-    printf "elapsed: %d sec\n" "$SECONDS"
+**Fix** (`src/ported/params.rs`):
+
+1. `unsetparam` (around line 6422): add PM_SPECIAL-retention re-insert branch alongside the existing pm.old branch:
+```rust
+} else if (pm_owned.node.flags as u32 & PM_SPECIAL) != 0
+    && (pm_owned.node.flags as u32 & PM_REMOVABLE) == 0
+{
+    paramtab().write().unwrap().insert(name.to_string(), pm_owned);
 }
-# zsh: clean reset, accurate timing
-# zshrs: SECONDS already had a value from earlier in the
-#        session; unset is ignored; final value includes
-#        pre-benchmark drift
 ```
 
-**Workaround** — explicit reassign instead of unset:
+2. `getsparam` (around line 4313): early-return None when paramtab pm has PM_UNSET set:
+```rust
+if (pm.node.flags as u32 & PM_UNSET) != 0 {
+    return None;
+}
+```
+
+The clear_unset_special hook in `assignsparam` (line 4756) already clears the `unset_specials` set on re-assignment so `lookup_special_var` re-enables the regenerator getter for `RANDOM` etc.
+
+**Verify**:
+
 ```sh
-SECONDS=0
+$ ./target/debug/zshrs -fc 'echo $SECONDS; unset SECONDS; echo "[$SECONDS]"; SECONDS=100; echo "$SECONDS"'
+0
+[]
+100
+$ ./target/debug/zshrs -fc 'echo $RANDOM; unset RANDOM; echo "[$RANDOM]"; RANDOM=42; echo "$RANDOM"'
+16807
+[]
+17766
 ```
 
-(Skipping the unset; the regenerator base resets on
-assignment.)
+Test baseline 1023/29 preserved.
 
 ---
 
@@ -48476,7 +48482,7 @@ no longer reports the internal trap-machinery scalar.
 | 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **fixed** 2026-06-02 | manual save/restore via `${(@kv)config}` |
 | 416 | `unset PATH` ignored — command lookup still resolves (security bypass for sandboxing patterns) | **fixed** 2026-06-04 | try `PATH=` empty assignment (needs verify) |
 | 417 | `unset RANDOM` ignored — special-param regenerator stays active (zsh: returns empty after unset) | **fixed** 2026-06-04 | n/a |
-| 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **fixed** 2026-06-04 | n/a |
+| 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **fixed** 2026-06-05 | unsetparam retains PM_SPECIAL pms in paramtab with PM_UNSET (mirror C `Src/params.c:3911-3913`); getsparam honors PM_UNSET as empty; re-assignment reuses pm via createparam oldpm so intsetfn name-dispatch fires through intsecondssetfn |
 | 419 | `unset LINENO` silently accepted — no "read-only variable" diagnostic (zsh: emits warning) | **fixed** 2026-06-04 | n/a |
 | 420 | `eval` errors prefixed `zsh:` instead of `(eval):` — source-context lost (also affects funcname/sourced-file prefixes) | **fixed** 2026-06-04 | n/a |
 | 421 | `^` parsed as glob-negation even when `extended_glob` is off — gating missing on `^`/`~`/`#` extended-glob operators | **fixed** 2026-06-02 | escape with backslash `\\^` |
