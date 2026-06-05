@@ -8107,15 +8107,33 @@ pub fn paramsubst(
                         let len = parts
                             .get(1) // c:715
                             .map(|s| crate::ported::math::mathevali(&singsub(s)).unwrap_or(0)); // c:715
+                        // c:Src/subst.c:3683-3690 — negative length is
+                        // first adjusted by `length += alen - offset`,
+                        // then if still negative, `zerr("substring
+                        // expression: %d < %d", length+offset, offset)`
+                        // fires and substitution aborts. zshrs's prior
+                        // port silently clamped to 0 via `.max(0)` so
+                        // `a=(); a=("${a[@]:0:-1}")` succeeded with an
+                        // empty slice instead of producing the C
+                        // diagnostic. Bug #120 in docs/BUGS.md.
                         let kept: Vec<String> = match len {
                             // c:715
                             Some(l) if l >= 0 => {
                                 arr.iter().skip(lo).take(l as usize).cloned().collect()
                             } // c:715
                             Some(l) => {
-                                // c:715 (negative len = from-end)
-                                let end = ((n - lo as i64) + l).max(0) as usize; // c:715
-                                arr.iter().skip(lo).take(end).cloned().collect()
+                                // c:3684 — length += alen - offset
+                                let adjusted = l + (n - lo as i64); // c:3685
+                                if adjusted < 0 {
+                                    // c:3686-3690
+                                    crate::ported::utils::zerr(&format!(
+                                        "substring expression: {} < {}",
+                                        adjusted + lo as i64,
+                                        lo
+                                    ));
+                                    return (String::new(), 0, Vec::new()); // c:3689
+                                }
+                                arr.iter().skip(lo).take(adjusted as usize).cloned().collect()
                                 // c:715
                             } // c:715
                             None => arr.iter().skip(lo).cloned().collect(), // c:715

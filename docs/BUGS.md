@@ -47053,7 +47053,7 @@ no longer reports the internal trap-machinery scalar.
 | 34 | case `(a*\|b*))` paren-alt doesn't match w/ extended_glob | **fixed** 2026-06-02 | drop outer parens or double them |
 | 35 | `${(v)h[key]}` errors with bad substitution | **fixed** 2026-06-02 | drop the `(v)` for single subscript |
 | 36 | MULTIOS not implemented (multiple `>` / `<` redirects) | **fixed** 2026-06-02 | explicit `tee`/`cat` |
-| 37 | `"${(z)str}"` quoted form splits fields | **port-bug** | `${(j: :)${(z)str}}` rejoin |
+| 37 | `"${(z)str}"` quoted form splits fields | **fixed** 2026-06-02 | `${(j: :)${(z)str}}` rejoin |
 | 38 | prompt escapes `%m`/`%C`/`%i`/`%l`/`%y`/`%E`/`%v`/`%b`/`%u`/`%s`/`%f`/`%k` missing | **fixed** 2026-06-04 | use `$HOST`/`$PWD` etc |
 | 39 | `${arr:#"literal"}` quoted pat still globbed | **fixed** 2026-06-02 | n/a |
 | 40 | `print -aC N` ignores `-a` (column-major instead of row) | **fixed** 2026-06-02 | sort input in advance |
@@ -47093,7 +47093,7 @@ no longer reports the internal trap-machinery scalar.
 | 74 | `local -r` violation in fn doesn't abort script | **port-bug** | check fn exit status |
 | 75 | `typeset -i x; x="bad math"` silently coerces to 0 | **fixed** 2026-06-02 | regex-validate input first |
 | 76 | `zmodload` lists 32 auto-loaded modules vs zsh's 1 | **fixed** 2026-06-04 | now reports 1 (zsh/main) matching zsh |
-| 77 | `${h[(k)-key]}` flag-lookup of dash key returns empty | **port-bug** | direct `${h[$opt]+set}` |
+| 77 | `${h[(k)-key]}` flag-lookup of dash key returns empty | **fixed** 2026-06-02 | direct `${h[$opt]+set}` |
 | 78 | `echoti` output emitted AFTER next stdout (buf flush) | **fixed** 2026-06-02 | direct `printf '\e[...'` |
 | 79 | Job control table empty: `jobs`/`wait %N`/`kill %N`/`disown` fail | **fixed** 2026-06-02 | use `$!` PID instead |
 | 80 | `trap EXIT` in fn fires at script exit, lost in nested fns | **fixed** 2026-06-02 | explicit cleanup at fn epilogue |
@@ -47136,7 +47136,7 @@ no longer reports the internal trap-machinery scalar.
 | 117 | Extended_glob `(group)#` quantifier not recognized | **fixed** 2026-06-04 | `[[ "abab" == (ab)# ]]` matches |
 | 118 | `(( y = x ))` doesn't coerce non-numeric string to 0 | **fixed** 2026-06-02 | `integer y; y=$x` |
 | 119 | `glob_subst` doesn't trigger filename expansion in for-loop | **fixed** 2026-06-02 | `eval "echo ..."` force-expand |
-| 120 | `a=("${a[@]:0:-1}")` on empty arr produces 1-element arr | **port-bug** | length-gated branch |
+| 120 | `a=("${a[@]:0:-1}")` on empty arr produces 1-element arr | **fixed** 2026-06-04 | length-gated branch |
 | 121 | `[[ -N -op -M ]]` negative-number operands error "unknown condition" | **fixed** 2026-06-02 | use `(( ))` arith |
 | 122 | Exit status of `$()` inside `${x:-$()}` not propagated | **fixed** 2026-06-02 | pre-eval cmdsub |
 | 123 | `${arr[@]}` inside heredoc returns only first element | **fixed** 2026-06-02 | `${(j: :)arr}` or pre-join |
