@@ -3492,6 +3492,22 @@ fn skipcomm() -> Result<(), ()> {
     let mut pct = 1;
     let mut start = true;
 
+    // c:Src/lex.c skipcomm (ZSH_OLD path) — the C source's pct
+    // counter mis-tracks `case PAT)` as a cmdsub close because
+    // the case pattern's `)` decrements pct prematurely. C zsh's
+    // NEW skipcomm (default since 5.0.x) recursively re-parses the
+    // body so case/esac context is known. zshrs's port still rides
+    // the OLD pct counter. Bridge the gap with a `case`-keyword
+    // depth tracker: when between `case <word> in` and `esac`,
+    // each `)` is a pattern close and must NOT decrement pct.
+    // Word boundaries come from a small accumulator that flushes
+    // on whitespace / structural separators. Bug #291.
+    let mut word_buf = String::with_capacity(8);
+    let mut case_depth: i32 = 0;
+    // 0 = no recent `case`; 1 = saw `case`, expecting subject word;
+    // 2 = saw subject word, expecting `in`.
+    let mut case_pending: i32 = 0;
+
     loop {
         let c = hgetc();
         let c = match c {
@@ -3504,17 +3520,55 @@ fn skipcomm() -> Result<(), ()> {
 
         let iswhite = crate::ztype_h::inblank(c as u8);
 
+        // Word boundary keyword tracking.
+        let is_word_terminator = iswhite
+            || c == '\n'
+            || c == ';'
+            || c == '&'
+            || c == '|'
+            || c == '('
+            || c == ')';
+        if is_word_terminator && !word_buf.is_empty() {
+            match word_buf.as_str() {
+                "case" => case_pending = 1,
+                "in" if case_pending == 2 => {
+                    case_depth += 1;
+                    case_pending = 0;
+                }
+                "esac" => {
+                    if case_depth > 0 {
+                        case_depth -= 1;
+                    }
+                    case_pending = 0;
+                }
+                _ => match case_pending {
+                    1 => case_pending = 2,
+                    2 => case_pending = 0,
+                    _ => {}
+                },
+            }
+            word_buf.clear();
+        } else if !is_word_terminator {
+            word_buf.push(c);
+        }
+
         match c {
             '(' => {
                 pct += 1;
                 add(c);
             }
             ')' => {
-                pct -= 1;
-                if pct == 0 {
-                    return Ok(());
+                // c:Bug #291 — inside a case block, `)` closes a
+                // pattern (not the cmdsub).
+                if case_depth > 0 {
+                    add(c);
+                } else {
+                    pct -= 1;
+                    if pct == 0 {
+                        return Ok(());
+                    }
+                    add(c);
                 }
-                add(c);
             }
             '\\' => {
                 add(c);

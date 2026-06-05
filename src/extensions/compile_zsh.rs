@@ -7061,19 +7061,65 @@ fn strip_cmd_subst(s: &str) -> Option<&str> {
     // check, `$(echo foo)$(echo bar)` matched too — the outer `$(` and
     // final `)` are not paired, the body is `echo foo)$(echo bar` which
     // ran as a malformed script and dropped the second cmd subst.
+    //
+    // c:Bug #291 — case-pattern `)` is also paren-balanced in the
+    // simple counter, but it's NOT the cmdsub closer. zsh's NEW
+    // skipcomm walks the case-grammar; here we mirror with a
+    // small word-tracking heuristic: between `case <word> in` and
+    // `esac`, `)` chars don't decrement the cmdsub depth. Same
+    // logic the skipcomm port uses.
     let inner = &s[2..s.len() - 1];
     let mut depth = 1i32;
     let chars: Vec<char> = inner.chars().collect();
+    let mut word_buf = String::with_capacity(8);
+    let mut case_depth: i32 = 0;
+    // 0 = no `case`; 1 = saw `case`, expect subject word;
+    // 2 = saw subject word, expect `in`.
+    let mut case_pending: i32 = 0;
     let mut i = 0;
     while i < chars.len() {
-        match chars[i] {
+        let c = chars[i];
+        let is_word_terminator = c == ' '
+            || c == '\t'
+            || c == '\n'
+            || c == ';'
+            || c == '&'
+            || c == '|'
+            || c == '('
+            || c == ')';
+        if is_word_terminator && !word_buf.is_empty() {
+            match word_buf.as_str() {
+                "case" => case_pending = 1,
+                "in" if case_pending == 2 => {
+                    case_depth += 1;
+                    case_pending = 0;
+                }
+                "esac" => {
+                    if case_depth > 0 {
+                        case_depth -= 1;
+                    }
+                    case_pending = 0;
+                }
+                _ => match case_pending {
+                    1 => case_pending = 2,
+                    2 => case_pending = 0,
+                    _ => {}
+                },
+            }
+            word_buf.clear();
+        } else if !is_word_terminator {
+            word_buf.push(c);
+        }
+        match c {
             '(' => depth += 1,
             ')' => {
-                depth -= 1;
-                if depth == 0 && i < chars.len() - 1 {
-                    // Found a closing `)` mid-string → not a single cmd
-                    // subst (the rest is a separate token / second subst).
-                    return None;
+                if case_depth == 0 {
+                    depth -= 1;
+                    if depth == 0 && i < chars.len() - 1 {
+                        // Found a closing `)` mid-string → not a single cmd
+                        // subst (the rest is a separate token / second subst).
+                        return None;
+                    }
                 }
             }
             _ => {}

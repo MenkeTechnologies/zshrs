@@ -24117,6 +24117,71 @@ done
 
 ## #291 — `$(case word in pat) ... esac)` parse error — `case` inside cmdsub misparses paren
 
+**Status:** `fixed` 2026-06-05 — both layers (lexer skipcomm
+and compile-path strip_cmd_subst) now track `case` block depth
+so the pattern's `)` doesn't terminate the cmdsub body.
+
+**Root cause** — TWO independent paren counters were
+mis-tracking case patterns:
+
+1. `src/ported/lex.rs::skipcomm` walks the body byte-by-byte
+   with a `pct` counter. C's NEW skipcomm (default since
+   5.0.x) recursively re-parses the body so case/esac
+   context is known; zshrs's port ran the OLD pct counter
+   which mistook the case pattern's `)` for a cmdsub close.
+   The body was captured truncated at the first `)` after
+   `in`.
+2. `src/extensions/compile_zsh.rs::strip_cmd_subst` runs at
+   compile time to extract the inner body from a `$(…)`
+   token for forwarding to `run_command_substitution`. It
+   walked the chars with its own depth counter that flagged
+   any closing `)` mid-string as "this is two cmdsubs back
+   to back". The case-pattern `)` tripped that early-close
+   check and the path returned None → the body never reached
+   the run path.
+
+**Fix** — apply the same `case`-keyword depth tracker to both
+counters:
+
+* word boundary detection via a small running `word_buf`
+  flushed on whitespace / structural separators (`;`, `&`,
+  `|`, `(`, `)`)
+* state machine: `case → subject-word → in` enters
+  `case_depth += 1`; `esac` decrements
+* in either counter, `)` is a no-op while `case_depth > 0`
+
+C zsh's NEW skipcomm achieves this via full recursive parsing;
+the heuristic above covers the common forms (`PAT)`,
+`PAT1|PAT2)`, nested `case`/`esac`) without re-architecting
+the lexer.
+
+**Verify**
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo $(case x in x) echo y;; esac)'
+y
+$ ./target/debug/zshrs --zsh -c 'echo $(case x in x) echo y;; esac)'
+y
+
+$ /opt/homebrew/bin/zsh -fc 'echo $(case a in a|b) echo A;; *) echo other;; esac)'
+A
+$ ./target/debug/zshrs --zsh -c 'echo $(case a in a|b) echo A;; *) echo other;; esac)'
+A
+
+$ /opt/homebrew/bin/zsh -fc 'echo $(case x in x) case y in y) echo nested;; esac;; esac)'
+nested
+$ ./target/debug/zshrs --zsh -c 'echo $(case x in x) case y in y) echo nested;; esac;; esac)'
+nested
+```
+
+Regression checks: plain `$(echo hi)`, two-cmdsubst
+`$(echo a)$(echo b)`, math `$((1+2))`, and arbitrary
+`$(echo "(test)")` all still produce the same output as zsh.
+
+Baseline preserved: 968/84 zshrs_shell tests.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47954,7 +48019,7 @@ no longer reports the internal trap-machinery scalar.
 | 288 | `typeset -A h; h[]=value` empty-subscript silently accepted (zsh: errors) — permissive-parser family | **fixed** 2026-06-02 | careful syntax |
 | 289 | `zmodload -L` output format wrong — bare module names vs `zmodload zsh/NAME` reproducible-script form | **fixed** 2026-06-04 | `zmodload -L` emits `zmodload zsh/main` matching zsh |
 | 290 | `${(q)arr}`/`${(qq)arr}` drops empty array elements and doesn't always-quote simple chars (round-trip broken) | **fixed** 2026-06-02 | per-element loop applying `(qq)` |
-| 291 | `$(case word in pat) ... esac)` parse error — case-pattern `)` mis-tracked as cmdsub closer | **port-bug** | extract case into a named function |
+| 291 | `$(case word in pat) ... esac)` parse error — case-pattern `)` mis-tracked as cmdsub closer | fixed | (case-keyword depth tracker added to both lex.rs skipcomm and compile_zsh.rs strip_cmd_subst paren counters so case-pattern `)` doesn't close the cmdsub) |
 | 292 | `case "$x" in $pat)`/`$((expr)))`/`$(cmd)))` — case pattern doesn't expand var/arith/cmdsub | **fixed** 2026-06-02 | pre-resolve to temp param |
 | 293 | `arr[(i)pat]=value` — subscript flag on LHS of assignment silently fails | **fixed** 2026-06-02 | n/a |
 | 294 | Nested backtick `` `outer \`inner\` outer` `` parses wrong (backslash escape not honored) | **fixed** 2026-06-02 | convert to `$()` form |
