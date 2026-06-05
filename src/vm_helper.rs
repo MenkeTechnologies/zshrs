@@ -2384,8 +2384,19 @@ impl ShellExecutor {
         crate::fusevm_bridge::CMDSUBST_OUTER_FDS.with(|s| {
             s.borrow_mut().pop();
         });
+        // c:Bug #353 — restore fd 2 from the saved outer stderr. A
+        // body that ran `exec 2>&1` (no command, just redirects)
+        // would have committed fd 2 → the cmdsub's pipe write end.
+        // In zsh's forked cmdsub the committed redirect dies with
+        // the child; zshrs's in-process cmdsub would leak the dup
+        // back to the parent and keep the pipe write-end alive,
+        // blocking the parent's read on the read_end forever.
+        // Always restoring fd 2 here rolls back any commit so the
+        // pipe write-end count drops to zero when we drop the
+        // local write_fd reference (which already happened above).
         if saved_stderr_for_trap >= 0 {
             unsafe {
+                libc::dup2(saved_stderr_for_trap, libc::STDERR_FILENO);
                 libc::close(saved_stderr_for_trap);
             }
         }

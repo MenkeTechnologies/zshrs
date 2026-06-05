@@ -29070,6 +29070,53 @@ PS1=$'\e[31mred\e[39m '
 
 ## #353 — `exec FD>&1` inside `$(...)` cmdsub doesn't capture FD-write content
 
+**Status:** `fixed` 2026-06-05 — `run_command_substitution`
+now restores fd 2 from a snapshot taken at cmdsub entry,
+rolling back any `exec REDIRS` commit the body made.
+
+**Root cause** — in zsh's forked cmdsub, `exec 2>&1` (no
+command, just redirects) commits the redirects to the child
+process; when the child exits the committed fds die with it
+and the parent's fd 2 is untouched. zshrs's in-process
+cmdsub had no equivalent rollback — if the body ran
+`exec 2>&1`, fd 2 in the parent was dup'd to the cmdsub's
+pipe write end and stayed that way after the cmdsub
+returned. The parent then had TWO references to the pipe
+write end (fd 2 + the local `write_fd` in the original
+dup'd source), so when the local was dropped, the pipe
+write count was still 1 from fd 2 → the parent's read on
+`read_end` blocked forever.
+
+**Fix** — `src/vm_helper.rs::run_command_substitution` —
+the trap-routing infrastructure from #56 already saved fd 2
+via `dup` at cmdsub entry. Always
+`dup2(saved_stderr → STDERR_FILENO)` after the nested VM
+returns (instead of just closing the dup). Any body that
+committed `exec 2>&FD` gets rolled back to the
+pre-cmdsub stderr, the pipe-write-count drops to zero, and
+the parent's read returns the captured content cleanly.
+
+**Verify**
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'r=$(exec 2>&1; echo "to-stderr" >&2); echo "[$r]"'
+[to-stderr]
+$ ./target/debug/zshrs --zsh -c 'r=$(exec 2>&1; echo "to-stderr" >&2); echo "[$r]"'
+[to-stderr]
+```
+
+Other variants tested:
+- `r=$(echo before; exec 2>&1; echo after >&2)` → `[before\nafter]`
+- `r=$(grep notthere /nonexistent 2>&1)` → captures the
+  `grep: ...` error from stderr
+- `r=$(exec 2>&1); echo "outer-stderr-test" >&2` → `outer-stderr-test`
+  reaches the parent's actual stderr (no leak into the
+  next command)
+
+Baseline preserved: 968/84 zshrs_shell tests.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47969,7 +48016,7 @@ no longer reports the internal trap-machinery scalar.
 | 350 | Integer arithmetic at INT64 boundary returns `0` silently — overflow indistinguishable from intended zero | **fixed** 2026-06-02 | range-validate inputs before arith |
 | 351 | `typeset -p arr` doesn't quote space-containing elements — round-trip via eval splits "a b" into 2 elems | **fixed** 2026-06-02 | manual `(qq)`-quote (also gappy per #290) |
 | 352 | `print -P "%u"`/`%s` reset codes use generic `ESC[0m` instead of attribute-specific `ESC[24m`/`ESC[27m` | **fixed** 2026-06-02 | manual ANSI escape codes |
-| 353 | `exec FD>&1` inside `$(...)` cmdsub doesn't capture FD-write content — stderr-capture idiom broken | **port-bug** | use temp file for stderr capture |
+| 353 | `exec FD>&1` inside `$(...)` cmdsub doesn't capture FD-write content — stderr-capture idiom broken | fixed | (run_command_substitution restores fd 2 from snapshot at cmdsub entry, rolling back any `exec REDIRS` commit the body made — pipe write count drops to 0 cleanly) |
 | 354 | `trap EXIT` inside `$(...)` cmdsub doesn't fire — extends exit-handler family (#203/#215/#232/#240) | **fixed** 2026-06-02 | cleanup outside cmdsub |
 | 355 | `${s/#%pat/repl}` both-anchor substitution pattern unsupported — returns unchanged | **fixed** 2026-06-02 | use `case` for exact-match dispatch |
 | 356 | `${(S)s//pat/repl}` shortest-match flag not applied in replace-all — greedy match instead | **fixed** 2026-06-02 | manual while-loop replace |
