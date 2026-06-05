@@ -4538,41 +4538,51 @@ pub fn paramsubst(
                 // (r)pat (search values, return matching value).
                 // Direct port of Src/params.c getarg's hash-aware
                 // index/match handling.
-                if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                if let Some((flags, num, pat)) =
+                    (|s: &str| -> Option<(String, Option<i64>, String)> {
                     let s = s.trim_start();
                     let rest = s.strip_prefix('(')?;
                     let close = rest.find(')')?;
-                    let flags = rest[..close].to_string();
+                    let body = &rest[..close];
                     let pat = rest[close + 1..].to_string();
-                    // c:Src/params.c:1396-1431 — assoc subscript handles
-                    // (r)/(R) (value-match → value), (k)/(K) (key-match
-                    // → value), (i)/(I) (key-pattern → matching key —
-                    // verified vs /opt/homebrew/bin/zsh `${h[(I)a]}` →
-                    // 'a'), and (e)/(n)/(b) modifiers. Earlier framing
-                    // claimed (i)/(I) returns empty for assocs; zsh
-                    // actually returns the matched KEY text.
-                    //
-                    // c:Src/params.c:1419 — `(e)` ALONE is a quote_arg
-                    // modifier (treat subscript literally, no pattern);
-                    // for assoc without `(k)/(r)/(i)/(I)` it means
-                    // "exact key lookup". Require at least one search
-                    // letter for this dispatch; bare `(e)KEY` falls
-                    // through to the exact-key map.get below. Bug #407.
+                    // c:Src/params.c:1419-1454 — parse n/b sub-flags
+                    // with delimited integer body. `(n.N.)` picks the
+                    // Nth match; negative N reverses direction (xor
+                    // semantics with r/R: r+neg → R, R+neg → r).
+                    let mut flags = String::new();
+                    let mut num: Option<i64> = None;
+                    let mut chars = body.chars().peekable();
+                    while let Some(c) = chars.next() {
+                        match c {
+                            'R' | 'r' | 'k' | 'K' | 'i' | 'I' | 'e' => flags.push(c),
+                            'n' | 'b' => {
+                                let delim = chars.next()?;
+                                let mut numstr = String::new();
+                                for cc in chars.by_ref() {
+                                    if cc == delim {
+                                        break;
+                                    }
+                                    numstr.push(cc);
+                                }
+                                let n = numstr.trim().parse::<i64>().ok()?;
+                                if c == 'n' {
+                                    num = Some(n);
+                                }
+                                flags.push(c);
+                            }
+                            _ => return None,
+                        }
+                    }
                     let has_search = flags.contains('R')
                         || flags.contains('r')
                         || flags.contains('k')
                         || flags.contains('K')
                         || flags.contains('i')
                         || flags.contains('I');
-                    if has_search
-                        && flags
-                            .chars()
-                            .all(|c| matches!(c, 'R' | 'r' | 'k' | 'K' | 'i' | 'I' | 'n' | 'e' | 'b'))
-                    {
-                        Some((flags, pat))
-                    } else {
-                        None
+                    if !has_search {
+                        return None;
                     }
+                    Some((flags, num, pat))
                 })(sub)
                 {
                     // c:Src/params.c:1696-1750 assoc-subscript flag
@@ -4598,8 +4608,17 @@ pub fn paramsubst(
                         || flags.contains('K')
                         || flags.contains('i')
                         || flags.contains('I');
-                    let return_all =
+                    // c:Src/params.c — (n.N.) with negative N flips
+                    // the direction. (n.-1.r) → R semantics (all matches);
+                    // (n.-1.R) → r (single match). Verified vs
+                    // /opt/homebrew/bin/zsh: typeset -A h=(a 1 b 1 c 2);
+                    // ${h[(n.-1.r)1]} → "1 1"; ${h[(n.-1.R)1]} → "1".
+                    let neg_n = num.map_or(false, |n| n < 0);
+                    let mut return_all =
                         flags.contains('R') || flags.contains('K') || flags.contains('I');
+                    if neg_n {
+                        return_all = !return_all;
+                    }
                     // `(i)/(I)` on assoc returns the KEY directly (zsh
                     // semantics) regardless of the outer (k) flag; `(k)/
                     // (K)` continues to return the value per Bug #77.
