@@ -1141,8 +1141,19 @@ pub fn sourcehome(s: &str) {
 
 /// Port of `void init_bltinmods(void)` from Src/init.c:1703.
 pub fn init_bltinmods() { // c:1703
-                          // #include "bltinmods.list"                                             // c:1720
-                          // load_module("zsh/main", NULL, 0);                                     // c:1720
+    // #include "bltinmods.list"                                             // c:1705
+    // load_module("zsh/main", NULL, 0);                                     // c:1706
+    //
+    // C's bltinmods.list is autotools-generated and contains a
+    // `register_module(name, setup_, ...)` line per statically-linked
+    // module — which seeds MODULESTAB and runs each module's setup_
+    // (and later boot_) entry points. Our equivalent is the
+    // register_builtin_modules() call inside `modulestab::new()`, which
+    // is reached the first time MODULESTAB is observed. Force that
+    // observation here so default-loaded modules
+    // (zsh/parameter, zsh/main, zsh/watch, …) register their
+    // builtins/params/preprompt hooks before user code runs.
+    drop(crate::ported::module::MODULESTAB.lock().unwrap());
 }
 
 /// Port of `mod_export void noop_function(void)` from Src/init.c:1713.

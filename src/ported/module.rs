@@ -1152,6 +1152,25 @@ impl modulestab {
             }
             self.modules.insert(name.to_string(), module);
         }
+        // c:Src/init.c:1708 init_bltinmods — run per-module `boot_`
+        // for each statically-linked default-loaded module so paramtab
+        // entries (e.g. `watch`/`WATCH` from zsh/watch, c:734) get
+        // installed without an explicit zmodload. Without this,
+        // `${(t)watch}` returns empty instead of `array-special`
+        // even though zsh treats zsh/watch as effectively part of
+        // the shell. Bug #270 in docs/BUGS.md. Keep the modules at
+        // their MOD_LINKED-without-MOD_INIT_B initial state so the
+        // `zmodload` (no-args) listing — gated on MOD_INIT_B per
+        // bug #76 — still shows only `zsh/main`.
+        for name in zsh_default_loaded {
+            #[allow(clippy::single_match)]
+            match *name {
+                "zsh/watch" => {
+                    crate::ported::modules::watch::boot_(std::ptr::null());
+                }
+                _ => {}
+            }
+        }
 
         // c:Src/init.c:1708 init_bltinmods + Config/installmodules —
         // canonical auto-load builtin→module bindings reported by

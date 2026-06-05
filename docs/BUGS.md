@@ -22000,8 +22000,29 @@ SPROMPT="zsh: correct '%R' to '%r' [nyae]? "
 
 ## #270 — `${(t)watch}` autovar absent entirely (zsh: `array-special`)
 
-**Status:** `fixed` 2026-06-03 — `boot_(zsh/watch)` now registers
-`watch` and `WATCH` in paramtab during `zmodload zsh/watch`.
+**Status:** `fixed` 2026-06-05 — `boot_(zsh/watch)` now runs at
+shell startup (not just on explicit `zmodload zsh/watch`),
+seeding `watch` / `WATCH` in paramtab before any user code.
+
+**Follow-up fix** — the original 2026-06-03 fix wired up the
+per-module `boot_` dispatch arm, but only fired it on explicit
+`zmodload zsh/watch`. C `Src/init.c:1703` runs
+`init_bltinmods()` (via `#include "bltinmods.list"` +
+`load_module("zsh/main", NULL, 0)`) BEFORE user code, so all
+statically-linked default-loaded modules get their boot_ called
+at startup. Two additional changes ported that init step:
+1. `src/ported/init.rs:1142-1158` — `init_bltinmods()` now
+   forces MODULESTAB lazy-init (which calls
+   `register_builtin_modules()` and the per-module boot_ loop).
+2. `src/ported/module.rs:1052-1062` — `register_builtin_modules`
+   now runs `watch::boot_(NULL)` for every entry in
+   `zsh_default_loaded`. The modules stay at their initial
+   `MOD_LINKED`-without-`MOD_INIT_B` state so `zmodload`
+   (no-args) listing — gated on MOD_INIT_B per #76 — still
+   shows only `zsh/main`.
+3. `src/vm_helper.rs:1252-1262` — `ShellExecutor::new` calls
+   `init_bltinmods()` next to `init_partab_params()` since the
+   bin entry skips `zsh_main`.
 
 **Root cause** — `zsh/watch`'s `boot_()` port at
 `src/ported/modules/watch.rs:737` mirrored the C body's
@@ -47286,7 +47307,7 @@ no longer reports the internal trap-machinery scalar.
 | 267 | Bare `setopt` (no args) prints nothing instead of listing currently-set options | **fixed** 2026-06-04 | use `set -o` (POSIX form) |
 | 268 | Autovars `LISTMAX`/`MAILCHECK`/`KEYTIMEOUT`/`PERIOD` typed `scalar` instead of `integer` | **fixed** 2026-06-03 | vm_helper init uses setiparam for these autovars per C `Src/params.c:857-860` |
 | 269 | `$SPROMPT` autovar default empty (zsh: `zsh: correct '%R' to '%r' [nyae]?`) | **fixed** 2026-06-02 | explicit `SPROMPT=...` init in .zshrc |
-| 270 | `${(t)watch}` autovar absent — zsh: `array-special`; `watch` user-tracking feature dead | **port-bug** | (none — feature not implemented) |
+| 270 | `${(t)watch}` autovar absent — zsh: `array-special`; `watch` user-tracking feature dead | fixed | (`init_bltinmods` runs `boot_(zsh/watch)` at shell startup; `${(t)watch}` → `[array-special]` parity) |
 | 271 | `h=([k]=v)` bash-style assoc init treated as glob — errors "no matches found" | **fixed** 2026-06-02 | use flat-pairs `h=(k v k v)` instead |
 | 272 | `typeset -axU` `-U` dedup not applied when combined with `-x` (export) | **fixed** 2026-06-02 | separate into `typeset -aU` then `typeset -x` |
 | 273 | `TIMEFMT` autovar in inconsistent state — value reads correctly but `(t)`/`${-NONE}` signal "unset" | **fixed** 2026-06-02 | explicit `[[ -z ]]` check before := defaulting |
@@ -47368,7 +47389,7 @@ no longer reports the internal trap-machinery scalar.
 | 349 | `export ASSOC_VAR` for assoc adds malformed `NAME=` empty entry to env (zsh: refuses) | **fixed** 2026-06-02 | serialize via `typeset -p` before export |
 | 350 | Integer arithmetic at INT64 boundary returns `0` silently — overflow indistinguishable from intended zero | **fixed** 2026-06-02 | range-validate inputs before arith |
 | 351 | `typeset -p arr` doesn't quote space-containing elements — round-trip via eval splits "a b" into 2 elems | **fixed** 2026-06-02 | manual `(qq)`-quote (also gappy per #290) |
-| 352 | `print -P "%u"`/`%s` reset codes use generic `ESC[0m` instead of attribute-specific `ESC[24m`/`ESC[27m` | **port-bug** | manual ANSI escape codes |
+| 352 | `print -P "%u"`/`%s` reset codes use generic `ESC[0m` instead of attribute-specific `ESC[24m`/`ESC[27m` | **fixed** 2026-06-02 | manual ANSI escape codes |
 | 353 | `exec FD>&1` inside `$(...)` cmdsub doesn't capture FD-write content — stderr-capture idiom broken | **port-bug** | use temp file for stderr capture |
 | 354 | `trap EXIT` inside `$(...)` cmdsub doesn't fire — extends exit-handler family (#203/#215/#232/#240) | **fixed** 2026-06-02 | cleanup outside cmdsub |
 | 355 | `${s/#%pat/repl}` both-anchor substitution pattern unsupported — returns unchanged | **fixed** 2026-06-02 | use `case` for exact-match dispatch |
