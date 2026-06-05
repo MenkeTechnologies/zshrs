@@ -103,6 +103,26 @@ thread_local! {
     /// stack overflow). zsh's in_trap counter at Src/signals.c
     /// serves the same purpose.
     static DEBUG_TRAP_REENTRY: Cell<bool> = const { Cell::new(false) };
+    /// Stack of (saved_stdout, saved_stderr) tuples pushed by
+    /// `cmd_subst` around its nested-VM run. RUST-ONLY: zsh forks
+    /// each cmdsub so trap output during the cmdsub naturally
+    /// lands on the PARENT's stdout. zshrs's in-process cmdsub
+    /// dups fd 1 → pipe, so a trap firing during cmdsub would
+    /// emit into the captured value. Traps consult this stack
+    /// to route their body output to the topmost saved_stdout
+    /// instead of the cmdsub's fd 1. Bug #56 in docs/BUGS.md.
+    pub static CMDSUBST_OUTER_FDS: RefCell<Vec<(i32, i32)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// Peek the outermost cmdsub-saved (stdout, stderr) fds, if any.
+/// Returns None when no cmdsub is currently capturing. Used by the
+/// trap dispatcher in `src/ported/signals.rs::dotrap` to route trap
+/// body output to the parent's real stdout (matching zsh's forked
+/// cmdsub behaviour) instead of the cmdsub's pipe-bound fd 1.
+/// Bug #56 in docs/BUGS.md.
+pub fn cmdsubst_outer_stdout() -> Option<i32> {
+    CMDSUBST_OUTER_FDS.with(|s| s.borrow().last().map(|(o, _)| *o))
 }
 
 // Thread-local pointer to the current ShellExecutor.
@@ -6952,11 +6972,21 @@ impl fusevm::ShellHost for ZshrsHost {
         if saved_stdout < 0 {
             return String::new();
         }
+        let saved_stderr = unsafe { libc::dup(libc::STDERR_FILENO) };
         let write_fd = AsRawFd::as_raw_fd(&write_end);
         unsafe {
             libc::dup2(write_fd, libc::STDOUT_FILENO);
         }
         drop(write_end);
+
+        // c:Bug #56 — publish the saved outer fds so a trap firing
+        // during the nested VM run can route its body output to the
+        // PARENT's stdout instead of the cmdsub's pipe-bound fd 1.
+        // zsh's forked cmdsub gets this for free (trap runs in the
+        // parent process whose fd 1 is untouched). zshrs's
+        // in-process cmdsub needs this thread-local stack so the
+        // trap dispatcher can find the right destination fd.
+        CMDSUBST_OUTER_FDS.with(|s| s.borrow_mut().push((saved_stdout, saved_stderr)));
 
         crate::fusevm_disasm::maybe_print_stdout("host.cmd_subst", sub);
         let mut vm = fusevm::VM::new(sub.clone());
@@ -6965,9 +6995,16 @@ impl fusevm::ShellHost for ZshrsHost {
         let _ = vm.run();
         let cmd_status = vm.last_status;
 
+        CMDSUBST_OUTER_FDS.with(|s| {
+            s.borrow_mut().pop();
+        });
+
         unsafe {
             libc::dup2(saved_stdout, libc::STDOUT_FILENO);
             libc::close(saved_stdout);
+            if saved_stderr >= 0 {
+                libc::close(saved_stderr);
+            }
         }
 
         // Inner cmd's status not propagated for the same reason as
