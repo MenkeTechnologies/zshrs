@@ -13478,7 +13478,29 @@ fn parse_int_arg(s: &str) -> i64 {
                 );
                 val
             }
-            Err(_) => matheval(body).map(|f| f.l).unwrap_or(0),
+            Err(_) => {
+                // c:Src/builtin.c — printf %d accepts a float
+                // operand and truncates toward zero (POSIX). The
+                // bare `body.parse::<i64>()` fails on "3.14" so
+                // route through f64 parse before falling back to
+                // matheval. Verified vs /opt/homebrew/bin/zsh:
+                //   `printf "%d" 3.14`   → 3
+                //   `printf "%i" -5.99`  → -5
+                if let Ok(f) = body.parse::<f64>() {
+                    f.trunc() as i64
+                } else {
+                    let m = matheval(body)
+                        .map(|n| {
+                            if n.type_ == crate::ported::zsh_h::MN_INTEGER {
+                                n.l
+                            } else {
+                                n.d.trunc() as i64
+                            }
+                        })
+                        .unwrap_or(0);
+                    m
+                }
+            }
         }
     };
     if neg {
