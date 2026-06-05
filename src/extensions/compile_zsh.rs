@@ -1975,7 +1975,22 @@ impl ZshCompiler {
                 // expands. Without this, the literal "$plugin" was
                 // stored as the assoc key. Same fast/slow path as
                 // the Array branch's subscripted-assign below.
-                let key_has_expansion = key.contains('$') || key.contains('`');
+                //
+                // c:Bug #339 — `$'...'` ANSI-C string IS NOT a
+                // variable expansion; zsh stores the literal source
+                // bytes verbatim (e.g. `h[$'a\nb']=v` stores the
+                // 7-byte key `$'a\nb'`). zshrs's compile path lumped
+                // `$'…'` in with `$var` and ran the key through
+                // compile_word_str, which decoded `$'a\nb'` to the
+                // 3-byte `a\nb`. Detect the `$'…'` shape and treat
+                // it as a literal LoadConst (same as a quoted
+                // string subscript).
+                let key_is_ansi_c_literal = key.starts_with("$'")
+                    && key.ends_with('\'')
+                    && key.len() >= 3
+                    && !key[2..key.len() - 1].contains('\'');
+                let key_has_expansion = !key_is_ansi_c_literal
+                    && (key.contains('$') || key.contains('`'));
                 if key_has_expansion {
                     self.compile_word_str(key);
                 } else {
