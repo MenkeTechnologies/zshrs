@@ -5157,10 +5157,17 @@ pub fn bin_typeset(
                 // storage paths and emit the right form directly,
                 // mirroring printparamvalue's PM_ARRAY/PM_HASHED arms
                 // (params.rs:8819+).
+                //
+                // Order matters: assoc lookup falls back to
+                // exec_hooks::assoc which reads the executor's
+                // assoc_arrays storage. typeset -A populated via
+                // `typeset -A h=(a 1 b 2)` lives there, not in
+                // paramtab_hashed_storage. Bug #218 in docs/BUGS.md.
                 let assoc = crate::ported::params::paramtab_hashed_storage()
                     .lock()
                     .ok()
-                    .and_then(|s| s.get(arg).cloned());
+                    .and_then(|s| s.get(arg).cloned())
+                    .or_else(|| crate::ported::exec_hooks::assoc(arg));
                 if let Some(map) = assoc {
                     let mut entries: Vec<(&String, &String)> = map.iter().collect();
                     entries.sort_by(|(a, _), (b, _)| a.cmp(b));
