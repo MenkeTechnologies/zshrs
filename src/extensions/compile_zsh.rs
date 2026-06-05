@@ -2103,12 +2103,31 @@ impl ZshCompiler {
                 // element array RHS.
                 let key_is_range = !key.contains('$')
                     && !key.contains('`')
-                    && key.contains(',')
-                    && !assign.append;
+                    && key.contains(',');
                 if key_is_range {
-                    // Stack order matches the Array RHS path at line
-                    // 1879+: [elem0, name, key], argc = 1 + 2 = 3.
-                    self.compile_word_str(s);
+                    // c:Src/params.c:2895 setarrvalue — range append
+                    // `a[lo,hi]+=tail` pre-concats the existing slice
+                    // with tail then splices the joined value back.
+                    // For scalar a="hello"; `a[2,3]+="X"` → existing
+                    // slice "el" + "X" = "elX" → splice replaces chars
+                    // 2-3 with "elX" → "helXlo". Without this, the
+                    // append fell through to the SET_ASSOC path which
+                    // auto-vivified the scalar into PM_HASHED with key
+                    // "2,3"="elX". Sibling of #589.
+                    if assign.append {
+                        let name_const = self.builder.add_constant(Value::str(base));
+                        self.builder.emit(Op::LoadConst(name_const), 0);
+                        let key_const = self.builder.add_constant(Value::str(key));
+                        self.builder.emit(Op::LoadConst(key_const), 0);
+                        self.builder
+                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
+                        self.compile_word_str(s);
+                        self.builder.emit(Op::Concat, 0);
+                    } else {
+                        // Stack order matches the Array RHS path at line
+                        // 1879+: [elem0, name, key], argc = 1 + 2 = 3.
+                        self.compile_word_str(s);
+                    }
                     let name_const = self.builder.add_constant(Value::str(base));
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     let key_const = self.builder.add_constant(Value::str(key));
