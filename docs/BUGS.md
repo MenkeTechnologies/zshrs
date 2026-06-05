@@ -29006,7 +29006,24 @@ analyze "$captured_cmd"
 
 ## #348 — `read -p VAR` flag semantics differ — zsh: read from coproc; zshrs: parse error
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, parity. Fix in
+`src/ported/builtin.rs:9993-10002` — `bin_read` checks for `-p`
+(or `-u p`) and emits the canonical
+`zsh:read:1: -p: no coprocess` error before identifier
+validation when `clone::coprocin < 0`.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'read -p line'; echo rc=$?
+zsh:read:1: -p: no coprocess
+rc=1
+$ ./target/debug/zshrs --zsh -fc 'read -p line'; echo rc=$?
+zsh:read:1: -p: no coprocess
+rc=1
+```
+
+BUGS.md status was stale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'read -p line' 2>&1
