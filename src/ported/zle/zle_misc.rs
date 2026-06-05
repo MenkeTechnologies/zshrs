@@ -1293,8 +1293,11 @@ pub fn universalargument(args: &[String]) -> i32 {
     //               (no digits) which multiplies tmult by 4.
     let digcnt = 0;
     if digcnt == 0 {
-        ZMOD.lock().unwrap().tmult = ZMOD.lock().unwrap().tmult.saturating_mul(4);
-        // c:1027
+        // c:1027 — `zmod.tmult *= 4`. Cannot lock ZMOD twice in one
+        // expression (RHS guard outlives read, LHS lock deadlocks
+        // the same thread on non-reentrant std::sync::Mutex).
+        let mut g = ZMOD.lock().unwrap();
+        g.tmult = g.tmult.saturating_mul(4);
     }
     ZMOD.lock().unwrap().flags |= MOD_TMULT; // c:1029
     PREFIXFLAG.store(1, SeqCst); // c:1030

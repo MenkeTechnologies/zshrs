@@ -1445,15 +1445,21 @@ pub fn infernexthist() -> i32 {
     // C body (c:1741-1770): walk forward in history to find the entry
     //                      whose first word matches the previously
     //                      accepted entry's first word.
-    if history().lock().unwrap().cursor + 1 >= history().lock().unwrap().entries.len() {
-        return 1;
-    }
-    let cur_first: String = history().lock().unwrap().entries[history().lock().unwrap().cursor]
-        .line
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_string();
+    // Cannot lock history() twice in one expression — RHS guard
+    // outlives read and LHS lock deadlocks the same thread on
+    // non-reentrant std::sync::Mutex. Hoist both reads.
+    let cur_first: String = {
+        let h = history().lock().unwrap();
+        if h.cursor + 1 >= h.entries.len() {
+            return 1;
+        }
+        h.entries[h.cursor]
+            .line
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_string()
+    };
     if cur_first.is_empty() {
         return 1;
     }
@@ -1509,7 +1515,9 @@ pub fn vifetchhistory() -> i32 {
         if history().lock().unwrap().entries.is_empty() {
             return 1;
         }
-        history().lock().unwrap().cursor = history().lock().unwrap().entries.len() - 1;
+        // Single-statement double-lock would deadlock; hoist.
+        let mut h = history().lock().unwrap();
+        h.cursor = h.entries.len() - 1;
         return 0;
     }
     if (n as usize) > history().lock().unwrap().entries.len() {
