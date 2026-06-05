@@ -7377,7 +7377,22 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
             zshlex();
         }
 
-        if tok() == ENDINPUT || tok() == LEXERR {
+        if tok() == ENDINPUT {
+            break;
+        }
+        if tok() == LEXERR {
+            // c:Src/parse.c:671-680 par_event — when the lexer
+            // returned LEXERR (e.g. unbalanced `$((1+(2))` math
+            // sub, unterminated string, etc.), C emits `yyerror(1)`
+            // and sets errflag so the script aborts with a parse
+            // error diagnostic + non-zero exit. zshrs's
+            // parse_program_until previously just `break`'d on
+            // LEXERR, silently swallowing the malformed input and
+            // exiting rc=0 — so `$((1+(2))` ran as if it were
+            // empty. Bug #529 in docs/BUGS.md. Emit yyerror
+            // mirroring the C behaviour; the broken script then
+            // surfaces the parse error to the caller.
+            yyerror("");
             break;
         }
 
