@@ -47060,7 +47060,7 @@ no longer reports the internal trap-machinery scalar.
 | 20 | recursive parsers very slow vs C-zsh | **perf-issue** | 362 trimmed test inputs |
 | 21 | nested `$(( a + $((b)) ))` garbles outer expansion | **fixed** 2026-06-02 | extract inner to var first |
 | 22 | heredoc `\$VAR` escape not honored | **fixed** 2026-06-02 | use `<<'END'` quoted form |
-| 23 | worker-pool shutdown INFO leaks to stdout | **port-bug** | close duped fd before exit |
+| 23 | worker-pool shutdown INFO leaks to stdout | fixed | (info demoted to debug at worker.rs:249 — no leak at default log level) |
 | 24 | `typeset -T` tied colon-array no-sync | **fixed** 2026-06-02 | manual `${(j.:.)arr}` rejoin |
 | 25 | `$ZSH_SCRIPT` unset, `$ZSH_ARGZERO` wrong | **fixed** 2026-06-02 | fall back to `$0` |
 | 26 | `emulate -L sh` missing KSH_ARRAYS | **fixed** 2026-06-02 | `setopt ksh_arrays` explicit |
