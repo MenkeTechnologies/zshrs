@@ -10382,6 +10382,39 @@ pub fn bin_test(
         argv.remove(0); // c:7272
     }
 
+    // c:Src/parse.c par_cond — 3-arg form with binary op at args[0]
+    // (instead of args[1]) is a parse error: zsh treats args[0] as a
+    // unary condition probe; binary ops aren't valid unary ops →
+    // "unknown condition: ARGV[0]" rc=2. Verified vs
+    // /opt/homebrew/bin/zsh: `[ -lt 5 3 ]` →
+    //   "zsh:[:1: unknown condition: -lt" rc=2.
+    // Also: 4-arg with binop at args[1] (the valid binop slot) →
+    // "too many arguments" because the extra trailing arg can't be
+    // consumed.
+    if argv.len() == 3 && argv[0].starts_with('-') && argv[0].len() >= 3 {
+        if matches!(
+            argv[0].as_str(),
+            "-eq" | "-ne" | "-lt" | "-gt" | "-le" | "-ge"
+                | "-nt" | "-ot" | "-ef"
+        ) {
+            crate::ported::utils::zwarnnam(
+                name,
+                &format!("unknown condition: {}", argv[0]),
+            );
+            return 2;
+        }
+    }
+    if argv.len() == 4
+        && matches!(
+            argv[1].as_str(),
+            "=" | "==" | "!=" | "-eq" | "-ne" | "-lt" | "-gt" | "-le" | "-ge"
+                | "-nt" | "-ot" | "-ef"
+        )
+    {
+        crate::ported::utils::zwarnnam(name, "too many arguments");
+        return 2;
+    }
+
     // c:Src/builtin.c:7276-7280 + Src/parse.c par_cond — when the
     // 2-arg form is `[ -FLAG operand ]` and `-FLAG` isn't a recognized
     // unary op letter, par_cond emits `unknown condition: -FLAG` rc=2.
