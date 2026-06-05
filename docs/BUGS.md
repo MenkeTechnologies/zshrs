@@ -28043,9 +28043,11 @@ counter=$((counter + amount))   # works in both
 
 ## #338 — `h["key'with'special"]=v` assoc keys with embedded quotes/specials lost (silent fail)
 
-**Status:** `fixed` 2026-06-05 (unquoted + dynamic-key forms;
-DQ-wrapped literal-key form is a separate sub-issue tracked
-inline). Two-part fix.
+**Status:** `fixed` 2026-06-05 — all three forms (bare,
+DQ-wrapped, and dynamic-key) now match zsh. Three-part fix:
+the original two-part fix (compile_expand subscript fast-path
++ ARRAY_INDEX direct-lookup bypass) plus a third part for the
+DQ-wrapped literal-key path landed 2026-06-05.
 
 **Root cause** — the storage path
 (`src/extensions/compile_zsh.rs::compile_assign` line 1901)
@@ -28097,21 +28099,17 @@ $ ./target/debug/zshrs --zsh -fc 'typeset -A h; h[plain]=v; echo "[${h[plain]}]"
 
 All three match `/opt/homebrew/bin/zsh -fc '…'`.
 
-**Sub-issue (not fixed)** — DQ-wrapped literal-key form
-`echo "[${h["q'q"]}]"` still returns empty. In DQ context
-the outer `"…"` routes through `BUILTIN_EXPAND_TEXT` mode 1
-which calls `multsub` → `stringsubst` → `paramsubst`,
-bypassing the compile-path fast path entirely. paramsubst's
-subscript expansion at `src/ported/subst.rs:4264` calls
-`singsub(&raw_sub)` which treats the inner `"…"` as DQ
-delimiters and strips them. Stripping is structurally
-correct for `$var`-containing subscripts (where DQ
-unescape must run) but wrong for literal subscripts. A
-clean fix needs to distinguish "subscript that needs
-substitution" from "literal subscript with quote chars" at
-the paramsubst level. Tracked as a follow-up; the more
-common bare-form
-`${h["q'q"]}` and variable indirection forms work now.
+**Sub-issue (fixed 2026-06-05)** — DQ-wrapped literal-key
+form `echo "[${h["q'q"]}]"` previously returned empty. Fixed
+at `src/ported/subst.rs:4261-4290`: when the subscript text
+has NO String/Qstring/Tick/Qtick/Inpar tokens (i.e. it's a
+pure literal with no `$var`/cmd-sub to expand), bypass
+`singsub` (which strips DQ pairs and treats inner `'` as SQ
+delimiter, losing both bytes) and use
+`untokenize_preserve_quotes` instead — same lexer-preserving
+variant the storage path uses at `compile_zsh.rs::compile_assign`.
+Verified: bare, DQ-wrapped, and dynamic-key forms all match
+`/opt/homebrew/bin/zsh`.
 
 Baseline preserved: 971/81 zshrs_shell tests.
 
@@ -48192,7 +48190,7 @@ no longer reports the internal trap-machinery scalar.
 | 335 | `hashdirs` option default differs — zsh: off (default), zshrs: on | **fixed** 2026-06-02 | explicit `unsetopt hashdirs` in .zshrc |
 | 336 | `${(O)@}`/`${(n)@}`/`${(oi)@}` sort variants on positionals all silently no-op (extends #277/#332) | **fixed** 2026-06-02 | copy to array, sort via `[@]` |
 | 337 | `(( n += "5" ))` quoted-string operands in `(( ))` arith treated as `0` (zsh: parses as int) | **fixed** 2026-06-02 | use `$((...))` form |
-| 338 | `h["key'with'special"]=v` assoc keys with embedded quotes/specials lost silently | fixed (partial) | (unquoted + dynamic-key forms work via `untokenize_preserve_quotes` + direct assoc lookup; DQ-wrapped literal-key form still empty — sub-issue tracked inline) |
+| 338 | `h["key'with'special"]=v` assoc keys with embedded quotes/specials lost silently | fixed | bare/DQ-wrapped/dynamic-key forms all match zsh; subst.rs:4261 bypass singsub for token-free literal subscripts → untokenize_preserve_quotes preserves Dnull→`"`/Snull→`'`/Bnull→`\\` |
 | 339 | `h["a\\nb"]=v` assoc keys with backslash escapes round-trip differently — `(@k)` output not quoted | fixed | (compile_assign now detects `$'…'` ANSI-C literal subscripts and routes them through LoadConst instead of compile_word_str — storage preserves source bytes matching zsh) |
 | 340 | `print -P "%Nd"`/`%-Nd` numeric path-truncate prompt-escape not implemented (e.g., `%2d` last-2-comps) | **fixed** 2026-06-02 | manual `${PWD##*/}` |
 | 341 | `$((arr[(i)pat]))` subscript-flag inside arith subscript returns 0 (zsh: returns match index) | **fixed** 2026-06-02 | extract index first via temp var |
