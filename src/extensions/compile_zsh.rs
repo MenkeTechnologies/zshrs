@@ -6768,12 +6768,17 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
         //   distinguish from a literal trailing `$`.
         let is_meta_dollar = c == '\u{85}' || c == '\u{8c}';
         let is_literal_dollar_with_expansion = c == '$' && {
-            // peek next char — must be `{`-meta, `(`-meta, or ident-start
+            // peek next char — must be `{`-meta/literal, `(`-meta/literal,
+            // or ident-start. The literal `{` and `(` cases apply when
+            // the input has been pre-untokenized (assoc-LHS key arrives
+            // ASCII after untokenize_preserve_quotes in compile_assign).
             chars
                 .get(i + 1)
                 .map(|&n| {
                     n == '\u{8f}'  // Inbrace
+                        || n == '{'        // literal `${`
                         || n == '\u{88}'  // Inpar
+                        || n == '('        // literal `$(`
                         || n == '_'
                         || n.is_ascii_alphanumeric()
                         || n == '@' || n == '*' || n == '#' || n == '?'
@@ -6964,6 +6969,22 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
                 match chars[j] {
                     '\u{8f}' => depth += 1,
                     '\u{90}' => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            j
+        }
+        // Literal `{` after `$`: same as Inbrace but on the ASCII path
+        // (untokenize_preserve_quotes upstream). Track depth on literal
+        // `{`/`}`. Bug: nested `h[Q-${h[$k]}]=v` in assignment LHS.
+        Some('{') => {
+            let mut depth = 1;
+            let mut j = i + 2;
+            while j < chars.len() && depth > 0 {
+                match chars[j] {
+                    '{' | '\u{8f}' => depth += 1,
+                    '}' | '\u{90}' => depth -= 1,
                     _ => {}
                 }
                 j += 1;
