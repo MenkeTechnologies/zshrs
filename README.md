@@ -208,6 +208,8 @@ peach 'convert {} {}.png' *.svg
 barrier 'npm test' ::: 'cargo test' ::: 'pytest'
 ```
 
+`pmap` / `pgrep` / `peach` run their body through the shared fusevm bytecode VM with the `{}` placeholder substituted as `${=__zshrs_p_arg__}` (matching zsh `SH_WORD_SPLIT` on literal substitution). The body is parsed and compiled to a fusevm `Chunk` ONCE before the input is iterated; the per-iteration loop sets the param via `setsparam`, acquires a VM from `fusevm::VMPool` (preserves Vec capacities across iterations), runs the cached chunk, and releases the VM back to the pool. `unsetparam` runs once at the end. No fork, no per-iteration parse/compile, no per-iteration VM allocation.
+
 ---
 
 ## [0x05] AOP INTERCEPT
