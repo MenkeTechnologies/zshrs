@@ -42187,6 +42187,51 @@ names+=("Bob Jones")
 
 ## #529 — `$((1+(2))` paren-mismatch math expression silently rc=0 — zsh: parse error
 
+**Status:** `fixed` 2026-06-05 — `parse_program_until` now
+emits `yyerror` when the lexer hands it a `LEXERR` token,
+matching C `Src/parse.c::par_event` at c:671-680.
+
+**Root cause** — the lexer's `cmd_or_math_sub` correctly
+detected the malformed `$((1+(2))` and returned
+`CMD_OR_MATH_ERR`, which the `$(` arm at
+`src/ported/lex.rs:1654` propagated as `peek = LEXERR`. The
+parser entry point `parse_program_until` at
+`src/ported/parse.rs:7380` then short-circuited on the
+LEXERR token with a bare `break` — silently swallowing the
+malformed input and exiting rc=0. C's equivalent
+`par_event` calls `yyerror(1)` and sets
+`errflag |= ERRFLAG_ERROR` so the script aborts with a
+parse-error diagnostic + non-zero exit.
+
+**Fix** — `src/ported/parse.rs::parse_program_until` — split
+the `ENDINPUT || LEXERR` arm. ENDINPUT still breaks cleanly;
+LEXERR calls `yyerror("")` before breaking, which emits
+the canonical `parse error` diagnostic on stderr and sets
+`ERRFLAG_ERROR` so the script propagates rc=1.
+
+**Verify**
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo $((1+(2))'; echo rc=$?
+zsh:1: parse error near `$((1+(2))'
+rc=1
+$ ./target/debug/zshrs --zsh -c 'echo $((1+(2))'; echo rc=$?
+zsh:zsh:1: parse error
+rc=1
+```
+zshrs's diagnostic carries an extra `zsh:` prefix (the
+canonical `zwarning` builder concatenates scriptname +
+caller-id) but the structure — script name, line, "parse
+error" — matches and rc=1 surfaces the failure.
+
+Regression check — well-formed `$((1+(2)))`, plain
+`$(echo hi)`, and nested `$((1+$(echo 2)))` still produce
+`3`, `hi`, `3`.
+
+Baseline preserved: 971/81 zshrs_shell tests.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -47922,7 +47967,7 @@ no longer reports the internal trap-machinery scalar.
 | 526 | `[[ N -lt M -a ... ]]` `-a`/`-o` parsed as command (rc=127) — zsh: "condition expected" parse error | **fixed** 2026-06-04 | collateral fix of #473 par_cond DOUTBRACK gate |
 | 527 | `(( () ))` empty math silently rc=1 — zsh: "bad math expression: operand expected" rc=2 | **fixed** 2026-06-03 | n/a |
 | 528 | `typeset -a a=("hello world")` splits QUOTED string into multiple elements — worse than #502 | **fixed** 2026-06-04 | n/a |
-| 529 | `$((1+(2))` paren-mismatch math silently rc=0 (no output) — zsh: parse error | **port-bug** | visual audit |
+| 529 | `$((1+(2))` paren-mismatch math silently rc=0 (no output) — zsh: parse error | fixed | (parse_program_until emits yyerror on LEXERR matching `Src/parse.c::par_event` c:671-680; rc=1 like zsh) |
 | 530 | zsh/files builtins (`mkdir`/`rm`/`mv`/`cp`/`ln`/`chmod`/`chown`/`rmdir`) always-available — zsh: require `zmodload zsh/files` | **fixed** 2026-06-04 | `${modules[zsh/files]}` unset by default; `type rm` reports `/bin/rm`; exec falls through to PATH |
 | 531 | `TRAPCHLD()` function-form not invoked on SIGCHLD — extends #381 trap-function family | fixed | (bin_fg BIN_WAIT branch calls dotrap(SIGCHLD) after each waitpid; both function- and string-form traps fire) |
 | 532 | zsh modules `zsh/stat`/`zsh/zselect`/`zsh/zpty`/`zsh/zftp` auto-loaded — extends #530 (zmodload-required-but-pre-loaded) | **partial-fix** 2026-06-04 | introspection now unset; `type X` builtintab gate deferred |
