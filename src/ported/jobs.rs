@@ -3070,15 +3070,36 @@ pub fn bin_kill(
                             println!("{}", n); // c:2862
                         }
                     } else {
-                        // c:2823 — symbolic; uppercase, strip SIG, look up.
-                        let upper = token.to_ascii_uppercase();
-                        let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
-                        if let Some(n) = sigs_number(bare) {
-                            // c:2828
-                            println!("{}", n); // c:2842
-                        } else {
-                            zwarnnam(nam, &format!("unknown signal: SIG{}", bare)); // c:2845
+                        // c:2820-2823 — `zstrtol` parses leading
+                        // `-`/`+` as sign + digits. For `-X` (sign
+                        // consumed, no digit), signame points PAST
+                        // the `-` so the diagnostic emits `SIGX` not
+                        // `SIG-X`. C's flow then takes the `else`
+                        // branch at c:2849-2852 which ALWAYS emits
+                        // unknown without re-looking-up — verified vs
+                        // /opt/homebrew/bin/zsh: `kill -l -TERM`
+                        // emits "unknown signal: SIGTERM" rc=1 even
+                        // though TERM IS a valid signal name. Mirror
+                        // that: when token has a leading `-`/`+`,
+                        // skip the lookup and emit unknown directly.
+                        let sign_stripped = token
+                            .strip_prefix('-')
+                            .or_else(|| token.strip_prefix('+'));
+                        if let Some(stripped) = sign_stripped {
+                            let upper = stripped.to_ascii_uppercase();
+                            let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
+                            zwarnnam(nam, &format!("unknown signal: SIG{}", bare)); // c:2851
                             returnval += 1;
+                        } else {
+                            let upper = token.to_ascii_uppercase();
+                            let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
+                            if let Some(n) = sigs_number(bare) {
+                                // c:2828
+                                println!("{}", n); // c:2842
+                            } else {
+                                zwarnnam(nam, &format!("unknown signal: SIG{}", bare)); // c:2845
+                                returnval += 1;
+                            }
                         }
                     }
                 }
