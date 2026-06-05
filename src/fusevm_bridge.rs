@@ -2156,6 +2156,34 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 idx = rest.to_string();
             }
         }
+        // c:Src/subst.c subscript parsing — when paramsubst re-parses
+        // the synthesized `${name[idx]}` body, characters like `'`
+        // `"` `\` `$` etc. are LEXER-active inside the `[…]` and get
+        // reinterpreted (quote-strip, paramsubst recursion, …). For
+        // PRE-EVALUATED key strings (the dynamic-key fast path at
+        // compile_zsh.rs:3234 already expanded `$k` via EXPAND_TEXT),
+        // the idx is a literal string that must match the stored key
+        // byte-for-byte — no further reinterpretation. Direct assoc
+        // lookup bypasses the lexer for this case, avoiding the
+        // quote-strip bug where `h[a'b]` failed to resolve because
+        // paramsubst's subscript lexer treated the `'` as a quote.
+        // Bug #338. Only fires for simple assoc-name + non-flag idx
+        // (no outer-flag sentinels, no `(…)` flag prefix on idx, no
+        // splat operator). Other paths (slice, splat, flag-based
+        // search, magic-assoc) still flow through paramsubst.
+        let idx_is_simple = !outer_k
+            && !outer_at
+            && !idx.starts_with('(')
+            && idx != "@"
+            && idx != "*"
+            && !idx.contains(',');
+        if idx_is_simple {
+            if let Some(v) = with_executor(|exec| {
+                exec.assoc(&name).and_then(|m| m.get(&idx).cloned())
+            }) {
+                return Value::str(v);
+            }
+        }
         let body = if outer_k && outer_at {
             format!("${{(@k){}[{}]}}", name, idx)
         } else if outer_k {

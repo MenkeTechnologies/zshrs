@@ -3201,26 +3201,37 @@ impl ZshCompiler {
         // BUILTIN_ARRAY_INDEX which routes through assoc_arrays first then
         // falls back to indexed arrays.
         //
-        // Skip in DQ context. The fast-path calls paramsubst with
-        // qt=false hardcoded, bypassing the lexer → prefork →
-        // stringsubst → paramsubst chain where C zsh's
-        // `qt = c == Qstring` (Src/subst.c:283) would have set DQ.
-        // Falling through to BUILTIN_EXPAND_TEXT mode 1 routes
-        // through multsub which propagates qt via Qstring tokens.
-        if !has_bnull {
-            let raw_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
-            let dq = raw_dq || self.dq_context_depth > 0;
-            if !dq {
-                if let Some((base, key)) = braced_subscript_ref(&untoked) {
-                    let name_const = self.builder.add_constant(Value::str(base));
-                    let key_const = self.builder.add_constant(Value::str(key));
-                    self.builder.emit(Op::LoadConst(name_const), 0);
-                    self.builder.emit(Op::LoadConst(key_const), 0);
-                    self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
-                    return;
-                }
-            }
+        // Previously skipped in DQ context with the rationale that the
+        // fast path calls paramsubst with qt=false hardcoded. But for
+        // a STATIC literal key (no `$`-expansion), the DQ context
+        // doesn't change the key bytes — and routing through the
+        // dynamic path (EXPAND_TEXT) strips outer `"…"` from the key
+        // text, which silently rewrites e.g. `${h["q'q"]}` to look up
+        // key `q'q` (3 bytes) when the assoc actually stored the
+        // 5-byte literal `"q'q"`. Bug #338 in docs/BUGS.md.
+        //
+        // The subscript probe runs on `untokenize_preserve_quotes`
+        // (NOT plain `untokenize`) so the inner Snull/Dnull markers
+        // are mapped back to `'`/`"`/`\` — matching what the
+        // canonical storage path (`assignsparam` in
+        // `src/ported/params.rs:4765`, called from the compile
+        // path at `src/extensions/compile_zsh.rs:1901` via
+        // `untokenize_preserve_quotes(&assign.name)` then
+        // `split_subscript`) extracts. Plain `untokenize` drops the
+        // null markers so `"q'q"` shrank to `q'q` (3 bytes) and the
+        // lookup missed the 5-byte stored key. Static fast path now
+        // fires regardless of DQ/Bnull state — `braced_subscript_ref`
+        // already rejects `$`-containing keys so qt has no observable
+        // effect for the resolved literal.
+        let untoked_preserve = crate::lex::untokenize_preserve_quotes(s);
+        if let Some((base, key)) = braced_subscript_ref(&untoked_preserve) {
+            let name_const = self.builder.add_constant(Value::str(base));
+            let key_const = self.builder.add_constant(Value::str(key));
+            self.builder.emit(Op::LoadConst(name_const), 0);
+            self.builder.emit(Op::LoadConst(key_const), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
+            return;
         }
 
         // Fast path: `${NAME[KEY]}` where KEY contains `$` expansions
