@@ -28134,6 +28134,63 @@ cache[$clean_key]="value"
 
 ## #339 — `h["a\\nb"]=v` assoc key with literal backslash-escape stored as different key than zsh
 
+**Status:** `fixed` 2026-06-05 — `$'…'` ANSI-C-quoted
+subscripts now stored as literal source bytes matching zsh.
+
+**Root cause** — at
+`src/extensions/compile_zsh.rs::compile_assign` line 1978,
+the path tested
+`let key_has_expansion = key.contains('$') || key.contains('`');`
+to decide whether to emit `LoadConst(key)` (literal) or
+`compile_word_str(key)` (runtime expansion). Both `$var`
+expansions AND `$'…'` ANSI-C string literals contain `$`
+— so the latter were routed through `compile_word_str`,
+which decoded the escape and stored the EVALUATED form.
+For `h[$'a\nb']=v` zsh stores the 7-byte literal source
+`$'a\nb'`; zshrs stored the 3-byte decoded `a\nb` (with
+an actual `\n` byte).
+
+The same bug affected `(@k)` display because there's no
+display-time `quotedzputs` quoting — the divergence was
+in the STORAGE path, not the display.
+
+**Fix** — distinguish the two `$`-leading forms. `$'…'` is
+NOT a variable expansion; zsh stores its source bytes
+verbatim. Detect the `$'…'` shape (starts with `$'`, ends
+with `'`, no embedded `'`) and treat it as a literal
+`LoadConst`. `$var` / `$(cmd)` / backtick forms still take
+the expansion path.
+
+```rust
+let key_is_ansi_c_literal = key.starts_with("$'")
+    && key.ends_with('\'')
+    && key.len() >= 3
+    && !key[2..key.len() - 1].contains('\'');
+let key_has_expansion = !key_is_ansi_c_literal
+    && (key.contains('$') || key.contains('`'));
+```
+
+**Verify**
+
+```sh
+$ /opt/homebrew/bin/zsh -fc "typeset -A h; h[\$'lit']=v; for k in \"\${(@k)h}\"; do printf \"[%s](%d)\\n\" \"\$k\" \"\${#k}\"; done"
+[$'lit'](6)
+$ ./target/debug/zshrs --zsh -c "typeset -A h; h[\$'lit']=v; for k in \"\${(@k)h}\"; do printf \"[%s](%d)\\n\" \"\$k\" \"\${#k}\"; done"
+[$'lit'](6)
+
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h; h[$'\''a\nb'\'']=v; for k in "${(@k)h}"; do printf "[%s](%d)\n" "$k" "${#k}"; done'
+[$'a\nb'](7)
+$ ./target/debug/zshrs --zsh -c 'typeset -A h; h[$'\''a\nb'\'']=v; for k in "${(@k)h}"; do printf "[%s](%d)\n" "$k" "${#k}"; done'
+[$'a\nb'](7)
+```
+
+Regression checks: `$var` expansion (`p=KEY; h[$p]=v`) still
+stores `KEY`, plain keys (`h[plain]=v`) still store `plain`.
+
+Baseline preserved: 968/84 zshrs_shell tests.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -48067,7 +48124,7 @@ no longer reports the internal trap-machinery scalar.
 | 336 | `${(O)@}`/`${(n)@}`/`${(oi)@}` sort variants on positionals all silently no-op (extends #277/#332) | **fixed** 2026-06-02 | copy to array, sort via `[@]` |
 | 337 | `(( n += "5" ))` quoted-string operands in `(( ))` arith treated as `0` (zsh: parses as int) | **fixed** 2026-06-02 | use `$((...))` form |
 | 338 | `h["key'with'special"]=v` assoc keys with embedded quotes/specials lost silently | fixed (partial) | (unquoted + dynamic-key forms work via `untokenize_preserve_quotes` + direct assoc lookup; DQ-wrapped literal-key form still empty — sub-issue tracked inline) |
-| 339 | `h["a\\nb"]=v` assoc keys with backslash escapes round-trip differently — `(@k)` output not quoted | **port-bug** | base64-encode keys |
+| 339 | `h["a\\nb"]=v` assoc keys with backslash escapes round-trip differently — `(@k)` output not quoted | fixed | (compile_assign now detects `$'…'` ANSI-C literal subscripts and routes them through LoadConst instead of compile_word_str — storage preserves source bytes matching zsh) |
 | 340 | `print -P "%Nd"`/`%-Nd` numeric path-truncate prompt-escape not implemented (e.g., `%2d` last-2-comps) | **fixed** 2026-06-02 | manual `${PWD##*/}` |
 | 341 | `$((arr[(i)pat]))` subscript-flag inside arith subscript returns 0 (zsh: returns match index) | **fixed** 2026-06-02 | extract index first via temp var |
 | 342 | `options[opt]=on/off` assignment doesn't toggle option — assoc-write→state binding missing | fixed | (assignsparam routes subscripted `options` writes through canonical setpmoption → optlookup + dosetopt) |
