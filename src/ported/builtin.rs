@@ -10083,8 +10083,84 @@ pub fn bin_read(
         }
     }
 
-    // Read one byte at a time until newline (or nchars when -k).
+    // c:Src/builtin.c:6769-6770 — `-z` pops the front of the ZLE
+    // bufstack into `zbuf` and reads from THAT instead of the file
+    // descriptor. When the bufstack is empty the popped value is the
+    // empty string, which makes `zread` return EOF immediately;
+    // c:7110-7115 then returns 1 after the reply assignment.
+    //
+    //     zbuforig = zbuf = (!OPT_ISSET(ops,'z')) ? NULL :
+    //         (nonempty(bufstack)) ? (char *)getlinknode(bufstack) :
+    //         ztrdup("");
+    //     ...
+    //     if (zbuforig) { char first = *zbuforig; ... if (!first) return 1; }
+    //
+    // The default delim handling (newline-terminated, raw or
+    // backslash-cooked) still applies — read up to the first newline
+    // in the popped buffer or to its end if no newline.
     let mut buf = String::new();
+    if OPT_ISSET(ops, b'z') {
+        let popped: Option<String> = {
+            let mut stack = crate::ported::zle::zle_main::BUFSTACK.lock().unwrap();
+            if stack.is_empty() {
+                None
+            } else {
+                Some(stack.remove(0))
+            }
+        };
+        let zbuf = popped.clone().unwrap_or_default();
+        let raw_mode = OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'R');
+        if OPT_HASARG(ops, b'd') {
+            let arg = OPT_ARG(ops, b'd').unwrap_or("");
+            let delim = arg.as_bytes().first().copied().unwrap_or(b'\0');
+            let mut out = Vec::<u8>::new();
+            for &b in zbuf.as_bytes() {
+                if b == delim {
+                    break;
+                }
+                out.push(b);
+            }
+            buf = String::from_utf8_lossy(&out).into_owned();
+        } else {
+            let mut out = Vec::<u8>::new();
+            let bytes = zbuf.as_bytes();
+            let mut i = 0;
+            while i < bytes.len() {
+                let b = bytes[i];
+                if !raw_mode && b == b'\\' && i + 1 < bytes.len() {
+                    let nx = bytes[i + 1];
+                    if nx == b'\n' {
+                        i += 2;
+                        continue;
+                    }
+                    out.push(nx);
+                    i += 2;
+                    continue;
+                }
+                if b == b'\n' {
+                    break;
+                }
+                out.push(b);
+                i += 1;
+            }
+            buf = String::from_utf8_lossy(&out).into_owned();
+        }
+        // c:7102-7109 — -e/-E echo, -e suppresses assignment.
+        let opt_e = OPT_ISSET(ops, b'e');
+        let opt_big_e = OPT_ISSET(ops, b'E');
+        if opt_e || opt_big_e {
+            println!("{}", buf);
+        }
+        if !opt_e {
+            setsparam(&reply, &buf);
+        }
+        // c:7110-7115 — empty bufstack pop → return 1 even after assign.
+        return if popped.is_none() || popped.as_deref() == Some("") {
+            1
+        } else {
+            0
+        };
+    }
     if OPT_ISSET(ops, b'k') {
         // c:6588
         // c:Src/builtin.c — `-k 0` (zero chars requested) is a no-op
