@@ -5121,10 +5121,31 @@ pub fn bin_typeset(
                         crate::ported::params::setaparam(arg, deduped);
                     }
                 }
-                // c:Src/params.c:3024 addenv — mirror PM_EXPORTED to OS env.
+                // c:Src/builtin.c:2302-2307 — `if (!(pm->node.flags &
+                // (PM_ARRAY|PM_HASHED))) { ... addenv(pm, getsparam(pname)); }`.
+                // Arrays and associative arrays are NOT mirrored to the
+                // OS env even when PM_EXPORTED is set — env strings are
+                // single name=value pairs and have no representation
+                // for indexed or hashed data. zsh silently no-ops the
+                // export request for these types; zshrs's prior code
+                // wrote a malformed empty `h=` entry for `export h`
+                // where h is an assoc. Bug #349.
                 if (on as u32 & PM_EXPORTED) != 0 {
-                    if let Some(val) = saved_val.as_deref().or(Some("")) {
-                        env::set_var(arg, val);
+                    let is_array_or_hashed = paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|t| t.get(arg).map(|pm| pm.node.flags as u32))
+                        .map_or(false, |f| (f & (PM_ARRAY | PM_HASHED)) != 0)
+                        || crate::ported::params::paramtab_hashed_storage()
+                            .lock()
+                            .ok()
+                            .map_or(false, |s| s.contains_key(arg))
+                        || crate::ported::exec_hooks::array(arg).is_some()
+                        || crate::ported::exec_hooks::assoc(arg).is_some();
+                    if !is_array_or_hashed {
+                        if let Some(val) = saved_val.as_deref().or(Some("")) {
+                            env::set_var(arg, val);
+                        }
                     }
                 }
             }
