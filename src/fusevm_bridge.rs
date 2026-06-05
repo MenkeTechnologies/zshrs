@@ -4690,6 +4690,172 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         Value::Status(0)
     });
+    // c:Src/exec.c:2418 + addfd splice — MULTIOS fan-out. Stack
+    // layout pushed by compile_zsh's coalescing pass:
+    //   [target_1, op_byte_1, target_2, op_byte_2, …, target_N,
+    //    op_byte_N, fd]
+    // argc = 2N + 1. Pops, opens every target, sets up a pipe +
+    // splitter thread that reads pipe → writes every chunk to
+    // every opened target, dup2's pipe-write-end onto fd. The
+    // splitter is closed + joined by host_redirect_scope_end.
+    // Bug #36 in docs/BUGS.md.
+    vm.register_builtin(BUILTIN_MULTIOS_REDIRECT, |vm, argc| {
+        if argc < 3 || argc % 2 == 0 {
+            // Bad shape — bail.
+            return Value::Status(1);
+        }
+        // Pop fd first (top of stack).
+        let fd = vm.pop().to_int() as i32;
+        // Then pop (op, target) pairs in reverse compile order.
+        let n_targets = ((argc - 1) / 2) as usize;
+        let mut pairs: Vec<(u8, String)> = Vec::with_capacity(n_targets);
+        for _ in 0..n_targets {
+            let op_byte = vm.pop().to_int() as u8;
+            let target = vm.pop().to_str();
+            pairs.push((op_byte, target));
+        }
+        // Restore compile order (target_1 first).
+        pairs.reverse();
+
+        // Open every target per its op_byte.
+        let mut target_fds: Vec<i32> = Vec::with_capacity(pairs.len());
+        for (op_byte, target) in &pairs {
+            let open_result = match *op_byte {
+                r::WRITE | r::CLOBBER => fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(target),
+                r::APPEND => fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .append(true)
+                    .open(target),
+                _ => fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(target),
+            };
+            match open_result {
+                Ok(file) => target_fds.push(file.into_raw_fd()),
+                Err(e) => {
+                    let msg = match e.kind() {
+                        std::io::ErrorKind::PermissionDenied => "permission denied",
+                        std::io::ErrorKind::NotFound => "no such file or directory",
+                        std::io::ErrorKind::IsADirectory => "is a directory",
+                        _ => "redirect failed",
+                    };
+                    eprintln!("{}:1: {}: {}", shname(), msg, target);
+                    // Close already-opened fds to avoid leaks.
+                    for prev in &target_fds {
+                        unsafe {
+                            libc::close(*prev);
+                        }
+                    }
+                    with_executor(|exec| {
+                        exec.redirect_failed = true;
+                    });
+                    return Value::Status(1);
+                }
+            }
+        }
+
+        // Save current fd state for scope-end restoration.
+        let saved = unsafe { libc::dup(fd) };
+        if saved >= 0 {
+            with_executor(|exec| {
+                if let Some(top) = exec.redirect_scope_stack.last_mut() {
+                    top.push((fd, saved));
+                } else {
+                    unsafe { libc::close(saved) };
+                }
+            });
+        }
+
+        // Create the splitter pipe.
+        let (read_end, write_end) = match os_pipe::pipe() {
+            Ok(p) => p,
+            Err(_) => {
+                for f in &target_fds {
+                    unsafe {
+                        libc::close(*f);
+                    }
+                }
+                return Value::Status(1);
+            }
+        };
+        let pipe_write_raw = AsRawFd::as_raw_fd(&write_end);
+        // Spawn the splitter thread: read pipe → write every chunk
+        // to every target fd. Each write inside the thread uses
+        // libc::write directly on the raw fd (no Rust File ownership
+        // so the splitter can close after EOF without racing main).
+        let target_fds_for_thread = target_fds.clone();
+        let handle = std::thread::spawn(move || {
+            let mut r = read_end;
+            let mut buf = [0u8; 8192];
+            loop {
+                match std::io::Read::read(&mut r, &mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        for &tfd in &target_fds_for_thread {
+                            let mut off = 0;
+                            while off < n {
+                                let w = unsafe {
+                                    libc::write(
+                                        tfd,
+                                        buf[off..n].as_ptr() as *const libc::c_void,
+                                        n - off,
+                                    )
+                                };
+                                if w <= 0 {
+                                    break;
+                                }
+                                off += w as usize;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            // Close every target so file contents flush.
+            for tfd in target_fds_for_thread {
+                unsafe {
+                    libc::close(tfd);
+                }
+            }
+        });
+
+        // Dup the pipe write-end onto the target fd; close the
+        // original write_end so EOF arrives when host_redirect_scope_end
+        // closes our tracked pipe_write_fd.
+        let write_dup = unsafe { libc::dup(pipe_write_raw) };
+        drop(write_end);
+        if write_dup < 0 {
+            return Value::Status(1);
+        }
+        unsafe {
+            libc::dup2(write_dup, fd);
+            libc::close(write_dup);
+        }
+        // Track the running splitter so scope-end can drain + join.
+        // The "write_fd" we store is the user-visible fd (e.g. 1).
+        // Closing that fd at scope-end isn't quite right; we need a
+        // way to send EOF. Solution: track the write_dup we just
+        // closed; instead keep a second dup for the close-on-end.
+        let close_on_end = unsafe { libc::dup(fd) };
+        with_executor(|exec| {
+            if let Some(top) = exec.multios_scope_stack.last_mut() {
+                top.push((close_on_end, handle));
+            } else {
+                // No scope — leak the dup; thread will keep running
+                // until process exit. Should not happen because
+                // host_redirect_scope_begin pushed a frame.
+                unsafe { libc::close(close_on_end) };
+            }
+        });
+        Value::Status(0)
+    });
     // c:Src/exec.c — block-level redirect-failure gate. When a
     // compound command (`{ … } < file`, `( … ) > file`, etc.) has a
     // failing redirect (e.g. `< /nonexistent`), zsh skips the entire
@@ -6274,6 +6440,31 @@ pub const BUILTIN_COND_STR_NONEMPTY: u16 = 614;
 /// failure. argc = 2.
 pub const BUILTIN_EXEC_HERESTR_FD: u16 = 615;
 
+/// MULTIOS write/append fan-out for `cmd > a > b` / `cmd > a >> b`
+/// style redirects (Bug #36 in docs/BUGS.md). zsh's MULTIOS option
+/// (Src/exec.c:2418 `mfds[fd1]` check + addfd splice) creates a
+/// pipe at fd1, spawns an internal "tee" process that copies
+/// stdin → every collected target file. Without this, only the
+/// LAST redirect target survives because each dup2 overwrites the
+/// previous binding.
+///
+/// Stack layout (pushed by compile_zsh's compile_redirs coalescing
+/// pass): `[target_1, op_byte_1, target_2, op_byte_2, …, target_N,
+/// op_byte_N, fd]`. Pops 2N+1 elements; `argc = 2*N + 1`.
+///
+/// Runtime:
+///   1. Open all targets per their op_byte (WRITE truncate /
+///      APPEND).
+///   2. Save `dup(fd)` onto the active redirect_scope_stack so
+///      `host_redirect_scope_end` restores the original fd.
+///   3. Create a pipe; spawn a thread that reads from the pipe
+///      read-end and writes every chunk to every opened target.
+///   4. dup2 the pipe write-end onto `fd` so the command's writes
+///      go through the splitter.
+///   5. Track `(pipe_write_fd, JoinHandle)` so scope-end can close
+///      the pipe (draining the thread) and join before restoring.
+pub const BUILTIN_MULTIOS_REDIRECT: u16 = 617;
+
 /// `redirection with no command` parse-time error for bare
 /// `builtin 2>&1` / `command < file` / `exec >&-` precmd-keyword
 /// shapes with a redirect but no following command. Direct port
@@ -7630,16 +7821,31 @@ impl ShellExecutor {
     /// saved fds are appended by host_apply_redirect into the top scope.
     pub fn host_redirect_scope_begin(&mut self, _count: u8) {
         self.redirect_scope_stack.push(Vec::new());
+        self.multios_scope_stack.push(Vec::new());
     }
 
     /// Pop the top redirect scope, restoring saved fds.
     pub fn host_redirect_scope_end(&mut self) {
+        // c:Src/exec.c — restore saved fds FIRST so the multios
+        // pipe-write end is released from `fd`, then close our
+        // tracked close_on_end (the last surviving writer dup), then
+        // join the splitter thread. If we closed close_on_end before
+        // restoring saved, `fd` would still hold a pipe writer and
+        // the thread would block forever waiting for EOF.
         if let Some(saved) = self.redirect_scope_stack.pop() {
             for (fd, saved_fd) in saved.into_iter().rev() {
                 unsafe {
                     libc::dup2(saved_fd, fd);
                     libc::close(saved_fd);
                 }
+            }
+        }
+        if let Some(scope) = self.multios_scope_stack.pop() {
+            for (write_fd, handle) in scope {
+                unsafe {
+                    libc::close(write_fd);
+                }
+                let _ = handle.join();
             }
         }
     }

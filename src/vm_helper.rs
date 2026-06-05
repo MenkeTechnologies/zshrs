@@ -408,6 +408,14 @@ pub struct ShellExecutor {
     /// is a Vec of (fd, saved_dup_fd) pairs taken from `dup(fd)` before the
     /// redirect was applied; `with_redirects_end` `dup2`s them back and closes.
     pub redirect_scope_stack: Vec<Vec<(i32, i32)>>,
+    /// Per-scope MULTIOS tee state. Each entry is `(pipe_write_fd,
+    /// JoinHandle)`: the pipe write-end currently dup2'd onto the
+    /// command's fd, and the splitter thread that reads from the
+    /// pipe read-end and writes to every collected target. Closed
+    /// + joined by `host_redirect_scope_end` BEFORE the saved fds
+    /// are restored so the splitter drains every byte the body
+    /// wrote into the pipe. Bug #36 in docs/BUGS.md.
+    pub multios_scope_stack: Vec<Vec<(i32, std::thread::JoinHandle<()>)>>,
     /// Set by `host_apply_redirect` when a redirect target couldn't be
     /// opened (permission denied, no such directory, etc). The next
     /// builtin/command checks this at entry and short-circuits with
@@ -986,6 +994,7 @@ impl ShellExecutor {
             async_jobs: HashMap::new(),
             next_async_id: 1,
             redirect_scope_stack: Vec::new(),
+            multios_scope_stack: Vec::new(),
             redirect_failed: false,
             functions_compiled: HashMap::new(),
             function_source: HashMap::new(),

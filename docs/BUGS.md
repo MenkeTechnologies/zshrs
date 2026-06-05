@@ -2141,6 +2141,44 @@ zshrs_shell regression: 925/127 (baseline preserved with
 
 ## #36 — MULTIOS not implemented: `> a > b` and `< a < b` don't tee/cat
 
+**Status:** `fixed` 2026-06-05 — output-side MULTIOS (the `> a >
+b` fan-out) ported. The input-side `< a < b` concat is a separate
+arm not yet wired.
+
+**Output-side fix** — compile_zsh's new `compile_redirs_multios`
+helper coalesces consecutive write/append redirects targeting the
+same fd into a single `BUILTIN_MULTIOS_REDIRECT` op. The runtime
+(fusevm_bridge) opens every target, creates a pipe, spawns a
+splitter thread that reads pipe → writes every chunk to every
+target, and dup2's the pipe write-end onto the fd. On
+`WithRedirectsEnd` the redirect_scope_stack restores the saved fds
+FIRST (releasing the pipe writer from `fd`), then the
+multios_scope_stack closes the tracked writer-dup (last surviving
+writer → splitter EOF), then joins the splitter thread.
+
+Mirrors C zsh's `Src/exec.c:2418-2566` mfds + addfd splice path.
+
+**Verify**
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'echo hi > /tmp/a > /tmp/b; cat /tmp/a; cat /tmp/b'
+hi
+hi
+$ ./target/debug/zshrs --zsh -fc 'echo hi > /tmp/a > /tmp/b; cat /tmp/a; cat /tmp/b'
+hi
+hi
+
+$ /opt/homebrew/bin/zsh -fc 'echo hi > /tmp/a > /tmp/b > /tmp/c'
+$ ./target/debug/zshrs --zsh -fc 'echo hi > /tmp/a > /tmp/b > /tmp/c'
+# Both write all three files.
+```
+
+**Original report:** below.
+
+---
+
+### Original report
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh

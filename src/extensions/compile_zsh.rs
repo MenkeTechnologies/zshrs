@@ -859,9 +859,7 @@ impl ZshCompiler {
                 // restored. Status is whatever the inner cmd left.
                 self.builder
                     .emit(Op::WithRedirectsBegin(redirs.len() as u8), 0);
-                for r in redirs {
-                    self.compile_redir(r);
-                }
+                self.compile_redirs_multios(redirs);
                 // c:Src/exec.c — if any redirect failed (e.g.
                 // `{ … } < /nonexistent`), zsh aborts the entire body
                 // and sets $? = 1. Check the flag after opening all
@@ -1166,9 +1164,7 @@ impl ZshCompiler {
             if !simple.redirs.is_empty() {
                 self.builder
                     .emit(Op::WithRedirectsBegin(simple.redirs.len() as u8), 0);
-                for redir in &simple.redirs {
-                    self.compile_redir(redir);
-                }
+                self.compile_redirs_multios(&simple.redirs);
                 if simple.assigns.is_empty() {
                     // c:3340-3364 — invoke NULLCMD/READNULLCMD.
                     let is_single_read = simple.redirs.len() == 1
@@ -1296,9 +1292,7 @@ impl ZshCompiler {
         if has_redirects {
             self.builder
                 .emit(Op::WithRedirectsBegin(simple.redirs.len() as u8), 0);
-            for redir in &simple.redirs {
-                self.compile_redir(redir);
-            }
+            self.compile_redirs_multios(&simple.redirs);
         }
 
         // ── Dispatch by first-word kind ───────────────────────────────
@@ -1760,6 +1754,118 @@ impl ZshCompiler {
     }
 
     /// Translate a ZshRedir → fusevm Redirect/HereDoc/HereString op.
+    /// Compile a redirect list with MULTIOS coalescing. Groups two or
+    /// more WRITE/APPEND/CLOBBER redirects targeting the same fd into
+    /// a single BUILTIN_MULTIOS_REDIRECT call so the runtime sets up
+    /// a tee splitter (Bug #36 in docs/BUGS.md). All other redirect
+    /// shapes (READ, DUP_READ, DUP_WRITE, READ_WRITE, heredocs, …)
+    /// pass through to the per-redir Op::Redirect path unchanged.
+    /// Mirrors C zsh's `Src/exec.c:2418 mfds[fd1]` + addfd splice
+    /// dispatch — when MULTIOS is on (default) and fd1 already has a
+    /// multio bag, a new redirect to the same fd appends to the bag
+    /// instead of overwriting.
+    fn compile_redirs_multios(&mut self, redirs: &[crate::parse::ZshRedir]) {
+        // Group consecutive write-side redirects by fd. We treat the
+        // first occurrence of an fd as the bag's anchor; if a second
+        // write-side redirect targets the same fd, mark them all for
+        // multios. Non-write-side redirects flush the bag for that fd
+        // first (rare interleaving — preserve order).
+        //
+        // First pass: count writes per fd.
+        let mut writes_per_fd: std::collections::HashMap<u8, usize> =
+            std::collections::HashMap::new();
+        let fd_of = |r: &crate::parse::ZshRedir| -> u8 {
+            if r.fd >= 0 {
+                r.fd as u8
+            } else {
+                1
+            }
+        };
+        let is_write_side = |t: i32| -> bool {
+            t == REDIR_WRITE
+                || t == REDIR_WRITENOW
+                || t == REDIR_APP
+                || t == REDIR_APPNOW
+        };
+        for r in redirs {
+            if is_write_side(r.rtype) && r.varid.is_none() {
+                *writes_per_fd.entry(fd_of(r)).or_insert(0) += 1;
+            }
+        }
+        // Second pass: emit. For an fd with N>1 writes, collect
+        // pushes and emit BUILTIN_MULTIOS_REDIRECT once at the LAST
+        // write to that fd (preserving the script order of
+        // intervening non-multios redirects).
+        let mut pending_multios: std::collections::HashMap<
+            u8,
+            Vec<(String, u8)>,
+        > = std::collections::HashMap::new();
+        // We don't have direct access to op_byte without re-deriving
+        // it, so do a small helper.
+        let derive_op = |r: &crate::parse::ZshRedir| -> Option<u8> {
+            if r.rtype == REDIR_WRITE {
+                Some(fusevm::op::redirect_op::WRITE)
+            } else if r.rtype == REDIR_WRITENOW {
+                Some(fusevm::op::redirect_op::CLOBBER)
+            } else if r.rtype == REDIR_APP || r.rtype == REDIR_APPNOW {
+                Some(fusevm::op::redirect_op::APPEND)
+            } else {
+                None
+            }
+        };
+        for redir in redirs {
+            let fd = fd_of(redir);
+            let is_multios_candidate = is_write_side(redir.rtype)
+                && redir.varid.is_none()
+                && writes_per_fd.get(&fd).copied().unwrap_or(0) >= 2;
+            if !is_multios_candidate {
+                self.compile_redir(redir);
+                continue;
+            }
+            let op_byte = match derive_op(redir) {
+                Some(o) => o,
+                None => {
+                    self.compile_redir(redir);
+                    continue;
+                }
+            };
+            let name_clean = crate::lex::untokenize(&redir.name);
+            pending_multios
+                .entry(fd)
+                .or_default()
+                .push((name_clean, op_byte));
+            // When the bag for this fd is now complete (we've seen
+            // every multios entry counted in pass 1), emit the
+            // coalesced op.
+            let bag_now = pending_multios.get(&fd).map(|v| v.len()).unwrap_or(0);
+            let total = writes_per_fd.get(&fd).copied().unwrap_or(0);
+            if bag_now == total {
+                if let Some(pairs) = pending_multios.remove(&fd) {
+                    let n = pairs.len();
+                    // Push (target, op_byte) pairs in compile order.
+                    for (target, op_byte) in &pairs {
+                        let t_const =
+                            self.builder.add_constant(Value::str(target.as_str()));
+                        self.builder.emit(Op::LoadConst(t_const), 0);
+                        self.builder.emit(Op::LoadInt(*op_byte as i64), 0);
+                    }
+                    // Then push fd.
+                    self.builder.emit(Op::LoadInt(fd as i64), 0);
+                    // CallBuiltin pops 2N + 1 from the stack.
+                    let argc = (2 * n + 1) as u8;
+                    self.builder.emit(
+                        Op::CallBuiltin(
+                            crate::vm_helper::BUILTIN_MULTIOS_REDIRECT,
+                            argc,
+                        ),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0); // discard Status
+                }
+            }
+        }
+    }
+
     fn compile_redir(&mut self, redir: &crate::parse::ZshRedir) {
         // Default fd: stdin for read-side redirects, stdout for write-side.
         let fd_default: u8 = match redir.rtype {
