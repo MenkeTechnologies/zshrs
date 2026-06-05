@@ -47264,6 +47264,63 @@ Test baseline 964/88 preserved.
 
 ---
 
+## #621 — `for k in ${color[(I)3?]}` iterates ONCE instead of per matched key — assoc multi-match returns scalar instead of array shape
+
+**Status:** `fixed` 2026-06-05 — assoc subscript `(R)`/`(I)`/`(K)` (and lowercase) multi-match results now seed `split_parts` regardless of `(@)` outer flag, matching C's `paramvalarr` returning `char **`.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -A color=(30 black 31 red 32 green 33 yellow); for k in ${color[(I)3?]}; do echo "k=$k v=${color[$k]}"; done'
+k=33 v=yellow
+k=30 v=black
+k=31 v=red
+k=32 v=green
+
+$ ./target/debug/zshrs --zsh -fc 'typeset -A color=(30 black 31 red 32 green 33 yellow); for k in ${color[(I)3?]}; do echo "k=$k v=${color[$k]}"; done'   # before
+k=30 31 32 33 v=
+```
+
+**Root cause** — `src/ported/subst.rs::paramsubst` assoc subscript dispatch (line ~4646) joins matched keys/values with space: `out.join(" ")`. The result lands in `raw_value` as a single scalar. The existing splat-shape seed block at line ~6320 only fired for `(@k)` outer flag + `(R)/(r)` subscript, so `${color[(I)3?]}` (no `(@)`, `(I)` flag) stayed scalar. The user's `for` loop got one iteration with the joined string as `$k`.
+
+zsh's C source returns `char **` from `paramvalarr` (Src/params.c:689) — an inherently array-shaped result for the multi-match (R/I/K capital) flag variants.
+
+**Fix** (`src/ported/subst.rs` near line 6320): broaden the splat-seed gate. Drop the `nojoin == 2` ((@) flag) requirement and the `SCANPM_WANTKEYS` ((k) flag) requirement; accept any of `(R)/(r)/(I)/(i)/(K)/(k)` subscript prefixes:
+
+```rust
+if magic_assoc_array.is_none()
+    && split_parts.is_none()
+    && !raw_value.is_empty()
+    && assoc_contains(&var_name)
+    && subscript.as_deref().map_or(false, |s| {
+        let t = s.trim_start();
+        t.starts_with("(R)") || t.starts_with("(r)")
+            || t.starts_with("(I)") || t.starts_with("(i)")
+            || t.starts_with("(K)") || t.starts_with("(k)")
+    })
+{
+    let parts: Vec<String> = raw_value.split(' ').filter(|s| !s.is_empty()).map(String::from).collect();
+    if !parts.is_empty() {
+        split_parts = Some(parts);
+        isarr = 1;
+    }
+}
+```
+
+The c:3032 DQ-collapse arm below downgrades to scalar in `qt` context, so DQ-wrapped `"${h[(R)pat]}"` still sepjoin's to a single scalar matching zsh.
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'typeset -A h=(a 1 b 2 c 1); for x in ${h[(R)1]}; do echo "x=$x"; done'
+x=1
+x=1
+$ ./target/debug/zshrs -fc 'typeset -A h=(a 1 b 2 c 1); for x in "${h[(R)1]}"; do echo "x=$x"; done'   # DQ collapse
+x=1 1
+```
+
+Test baseline 1023/29 preserved.
+
+---
+
 ## #587 — `${a[(r)y]:-default}` fires default even when `(r)y` matches — flag-form subscripts not is_set
 
 **Status:** `fixed` 2026-06-04 — paramsubst's `is_set` check now
@@ -48554,6 +48611,7 @@ no longer reports the internal trap-machinery scalar.
 | 617 | `(( b = a ))` with `a=1.5` creates `b` as PM_INTEGER 1 instead of PM_FFLOAT 1.5 — compile-time pre-check mutates paramtab | **fixed-partial** 2026-06-04 | added mathevali_noeval (Rust-only, allowlisted) routing through matheval with noeval=1 so setmathvar's c:1002-1003 noeval-bail prevents paramtab mutation; operator forms still truncate (separate gap) |
 | 618 | `print -P "%i"` stuck at 1 inside fn; `%I` off by funcstack offset | **fixed** 2026-06-04 | both arms read `$LINENO` (executor maintains correctly); `%I` adds funcstack.flineno offset per Src/prompt.c:901-920 |
 | 619 | `print -P "%T"` / `%*` emit leading-zero hour — uses `%H` not `%K` | **fixed** 2026-06-04 | switch `%T` from `%H:%M` to `%K:%M` and `%*` to `%K:%M:%S` per Src/prompt.c:715/:718 (zsh ext, no leading zero) |
+| 621 | `for k in ${color[(I)3?]}` iterates ONCE with k="30 31 32 33" instead of four times — assoc `(I)`/`(R)`/`(K)` multi-match returns scalar instead of array shape | **fixed** 2026-06-05 | subst.rs c:3950 splat-seed block — broaden gate (was `(@k)` + `(R)/(r)` only) to fire for ANY assoc subscript with `(R)/(r)/(I)/(i)/(K)/(k)` even without `(@)` outer flag; matches C `paramvalarr` returning `char **` from Src/params.c:689 (array shape inherent to the multi-match) |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
