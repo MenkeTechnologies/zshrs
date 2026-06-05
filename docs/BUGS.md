@@ -47333,6 +47333,83 @@ Test baseline 1023/29 preserved.
 
 ---
 
+## #622 — `(( y = ${a[(I)$x]} ))` returns 0 because subscript pattern `$x` not expanded — breaks `add-zsh-hook`
+
+**Status:** `fixed` 2026-06-05 — paramsubst's array `(R/I/r/i)` and assoc `(R/I/r/i/K/k)` flag-form subscript dispatches now singsub the pattern before patcompile, mirroring C `Src/params.c:1564-1572 if (needtok) { ... singsub(&s); }`.
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(c1 c2 c3); x=c2; (( y = ${a[(I)$x]} )); echo "y=$y"'
+y=2
+
+$ ./target/debug/zshrs --zsh -c 'a=(c1 c2 c3); x=c2; (( y = ${a[(I)$x]} )); echo "y=$y"'   # before
+y=0
+
+$ /opt/homebrew/bin/zsh -fc 'autoload -Uz add-zsh-hook; preexec_foo() { echo p; }; add-zsh-hook preexec preexec_foo; echo "rc=$?"'
+rc=0
+
+$ ./target/debug/zshrs --zsh -c 'autoload -Uz add-zsh-hook; preexec_foo() { echo p; }; add-zsh-hook preexec preexec_foo; echo "rc=$?"'   # before
+Usage: add-zsh-hook hook function
+Valid hooks are:
+  chpwd precmd preexec periodic zshaddhistory zshexit zsh_directory_name
+rc=1
+```
+
+**Root cause** — `src/ported/subst.rs::paramsubst` subscript dispatch at lines ~4711 (array) and ~4547 (assoc) extracts the pattern as `let pat = rest[close + 1..].to_string();` — literal text after the `(flags)` block. The pattern then flows directly into `patcompile(&pat, ...)` and `pattry(&p, elem)` without `$`-expansion.
+
+The compile-time fast-path `braced_subscript_dynamic_ref` (compile_zsh.rs:3447) handled this for direct reads like `echo "${a[(I)$x]}"` by emitting `BUILTIN_EXPAND_TEXT(key, mode 1)` → expands `$x` → then `BUILTIN_ARRAY_INDEX`. So the direct read worked.
+
+But arith context (`(( y = ${a[(I)$x]} ))`) routes through compile_arith → BUILTIN_ARITH_EVAL → arithsubst → singsub → paramsubst, hitting the literal-pat path. The whole expression was singsub'd once, but the subscript pattern stayed unexpanded because paramsubst re-extracts it from the body before any per-subscript singsub.
+
+This broke `autoload -Uz add-zsh-hook preexec preexec_foo` — the autoload body's validation is:
+```sh
+elif (( help || $# != 2 || ${hooktypes[(I)$1]} == 0 )); then
+  print -u$(( 2 - help )) $usage
+  return $(( 1 - help ))
+```
+
+`${hooktypes[(I)$1]}` inside `(( ))` matched the literal string `$1` against array elements → no match → returns 0 → validation rejected the hook.
+
+C zsh's `Src/params.c::getarg`:
+```c
+if (needtok) {
+    ...
+    singsub(&s);
+    ...
+}
+```
+
+`needtok` is set when the subscript text contains tokens that need expansion (`$`, backtick, etc.). The pattern arg `s` is singsub'd before pattern compilation.
+
+**Fix** (`src/ported/subst.rs`): add singsub on the pattern in both subscript-flag dispatches:
+
+```rust
+let pat = if pat.contains('$') || pat.contains('`') {
+    singsub(&pat)
+} else {
+    pat
+};
+```
+
+Applied symmetrically to the assoc path (line ~4587 just before `match_against_key`) and the array path (line ~4757 just before `return_index`).
+
+**Verify**:
+
+```sh
+$ ./target/debug/zshrs -fc 'a=(c1 c2 c3); x=c2; (( y = ${a[(I)$x]} )); echo "y=$y"'
+y=2
+$ ./target/debug/zshrs -fc 'a=(c1 c2 c3); x=c2; echo "${a[(I)$x]}"; echo "${a[(R)$x]}"'    # direct read regression
+2
+c2
+$ ./target/debug/zshrs -fc 'typeset -A h=(a 1 b 2 c 1); v=1; echo "${h[(R)$v]}"'           # assoc
+1 1
+$ ./target/debug/zshrs -fc 'autoload -Uz add-zsh-hook; preexec_foo() { echo p; }; add-zsh-hook preexec preexec_foo; echo "rc=$?"'
+rc=0
+```
+
+Test baseline 1025/27 preserved.
+
+---
+
 ## #621 — `for k in ${color[(I)3?]}` iterates ONCE instead of per matched key — assoc multi-match returns scalar instead of array shape
 
 **Status:** `fixed` 2026-06-05 — assoc subscript `(R)`/`(I)`/`(K)` (and lowercase) multi-match results now seed `split_parts` regardless of `(@)` outer flag, matching C's `paramvalarr` returning `char **`.
@@ -48682,6 +48759,7 @@ no longer reports the internal trap-machinery scalar.
 | 619 | `print -P "%T"` / `%*` emit leading-zero hour — uses `%H` not `%K` | **fixed** 2026-06-04 | switch `%T` from `%H:%M` to `%K:%M` and `%*` to `%K:%M:%S` per Src/prompt.c:715/:718 (zsh ext, no leading zero) |
 | 620 | `h[Q-${h[$k]}]=z` (nested assoc subscript in assign LHS) errors "no matches found: Q-${h[a]}" — segment splitter treats literal `${` as non-expansion | **fixed** 2026-06-05 | compile_zsh.rs::split_word_segments — `is_literal_dollar_with_expansion` peek now accepts ASCII `{`/`(` (assoc-LHS path arrives ASCII-untokenized via untokenize_preserve_quotes); find_expansion_end gets a `Some('{')` arm with depth tracking on `{`/`}` mirroring the META-Inbrace arm |
 | 621 | `for k in ${color[(I)3?]}` iterates ONCE with k="30 31 32 33" instead of four times — assoc `(I)`/`(R)`/`(K)` multi-match returns scalar instead of array shape | **fixed** 2026-06-05 | subst.rs c:3950 splat-seed block — broaden gate (was `(@k)` + `(R)/(r)` only) to fire for ANY assoc subscript with `(R)/(r)/(I)/(i)/(K)/(k)` even without `(@)` outer flag; matches C `paramvalarr` returning `char **` from Src/params.c:689 (array shape inherent to the multi-match) |
+| 622 | `(( y = ${a[(I)$x]} ))` returns 0 instead of N — subscript-pattern `$x` not expanded before patcompile in arith path; breaks `autoload -Uz add-zsh-hook preexec preexec_foo` (the autoload body uses `${hooktypes[(I)$1]}`) | **fixed** 2026-06-05 | paramsubst's array (R/I/r/i) and assoc (R/I/r/i/K/k) flag-form subscript dispatches now singsub the pattern (mirrors C `Src/params.c:1564-1572 if (needtok) { ... singsub(&s); }`); fast-path braced_subscript_dynamic_ref already did this for direct reads via EXPAND_TEXT mode 1 but the arithsubst path bypassed it |
 
 Of five hundred and seventy-three entries, two are fixed (5, 7), 2 freshly
 fixed in this session (#398, #496) but counts remain accurate to
