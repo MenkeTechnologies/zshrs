@@ -9371,10 +9371,50 @@ pub fn paramsubst(
                                              // Mirror by setting split_parts so the auto_splat block
                                              // (or DQ join via sepjoin gate) consumes the list.
                                              // Per c:3274 split-from-scalar convention, isarr = 2.
+            // Bug #363: zsh's `(z)` flag produces TOKENIZED words —
+            // a `$` inside any word is the literal char `$`, NOT a
+            // new param reference. Without an "already-tokenized"
+            // marker, downstream stringsubst re-expands `$VAR` as a
+            // fresh param-ref (UNSET → empty → element elided).
+            // Prefix `$` and `` ` `` with Bnull (the lexer's
+            // backslash-token) so the chars survive stringsubst's
+            // `$`/`` ` `` arms (Src/subst.c:265 `case Bnull: *s='\0'`
+            // skip) and untokenize to the literal char at the final
+            // output pass. Mirrors C bufferwords' tokenized result.
+            let bnull = crate::ported::zsh_h::Bnull;
+            for w in words.iter_mut() {
+                if w.contains('$') || w.contains('`') {
+                    let mut out = String::with_capacity(w.len() + 2);
+                    for c in w.chars() {
+                        if c == '$' || c == '`' {
+                            out.push(bnull);
+                        }
+                        out.push(c);
+                    }
+                    *w = out;
+                }
+            }
             value = words.join(" "); // c:4191 single-word case
             if !words.is_empty() {
                 split_parts = Some(words); // c:4194
-                isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274 split-from-scalar
+                // Bug #363 sub-issue: in DQ context, (z) flag must
+                // preserve splat shape per zsh — `"${(z)c}"` produces
+                // a multi-arg splat where adjacent text glues to the
+                // first/last word (mirrors `"${a[@]}"`). Without the
+                // negative-isarr gate, c:3032 sepjoin fires and
+                // collapses the words to a single scalar; the
+                // downstream auto_splat block (gated on isarr != 0)
+                // then never emits per-word. Setting isarr to a
+                // negative marker (mirrors the SCANPM_ISVAR_AT case
+                // at line 5969 for `[@]`) skips c:3032 (`isarr > 0`)
+                // while keeping auto_splat eligible. Bug #363.
+                isarr = if qt {
+                    -1 // c:3274 + c:3032 isarr<0 skip-sepjoin
+                } else if nojoin != 0 {
+                    1
+                } else {
+                    2 // c:3274 split-from-scalar (unquoted)
+                };
             }
         } // c:2473
 
