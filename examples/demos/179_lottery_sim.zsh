@@ -11,7 +11,7 @@ draw_lottery() {
     for ((i=0; i<n; i++)); do
         j=$(( RANDOM % ${#pool[@]} + 1 ))
         drawn+=(${pool[j]})
-        pool=("${pool[@]:0:$((j-1))}" "${pool[@]:j}")
+        pool=("${pool[@]:0:$((j-1))}" "${pool[@]:$j}")
     done
     echo "${(n)drawn}"   # sorted numeric output
 }
@@ -70,9 +70,13 @@ echo "6/49 expected matches per draw ≈ 0.73"
 echo "5/69 expected matches per draw ≈ $(( 5 * 5 * 100 / 69 )) / 100"
 
 # === ztest assertions ===
-# NOTE: draw_lottery uses ${(n)drawn} numeric-sort flag which zshrs reports as
-# "unrecognized modifier" — function output is empty, so detailed assertions
-# would all fail. Stick to deterministic theoretical-math sanity.
+# Original batch-agent note misdiagnosed the cause as `${(n)drawn}`.
+# The actual demo bug was `${pool[@]:j}` — bare `j` is parsed as a
+# `:modifier` letter, not as the variable name. Real zsh emits the
+# same "unrecognized modifier `j'" diagnostic (verified against
+# /opt/homebrew/bin/zsh). Fixed in-place by writing `${pool[@]:$j}`.
+# `${(n)drawn}` is fine on its own (`./zshrs --zsh -c 'a=(10 2 30);
+# echo "${(on)a[@]}"'` → `2 10 30`).
 zassert_eq "$(( 5 * 5 * 100 / 69 ))" 36     "5*5*100/69 = 36 (int floor)"
 zassert_eq "$(( 6 * 6 * 100 / 49 ))" 73     "6*6*100/49 = 73 (int floor)"
 zassert_ok 1                                "demo loaded"
