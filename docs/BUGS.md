@@ -37612,7 +37612,27 @@ Tedious and error-prone for nested patterns.
 
 ## #451 — function definition/unfunction in subshell LEAKS to parent — parallel to #450 trap leak
 
-**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, parity.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'f() { echo outer; }; (f() { echo inner; }; f); f'
+inner
+outer
+$ ./target/debug/zshrs --zsh -fc 'f() { echo outer; }; (f() { echo inner; }; f); f'
+inner
+outer
+
+$ /opt/homebrew/bin/zsh -fc 'f() { echo outer; }; (unfunction f); f'
+outer
+$ ./target/debug/zshrs --zsh -fc 'f() { echo outer; }; (unfunction f); f'
+outer
+```
+
+Subshell function-table isolation works correctly — both
+redefine-in-subshell and unfunction-in-subshell scoped to the
+subshell. BUGS.md status was stale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { echo outer; }; (f() { echo inner; }; f); f'
@@ -37687,7 +37707,24 @@ Tedious for nested patterns.
 
 ## #452 — alias definition/unalias in subshell LEAKS to parent — same family as #451
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, parity.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'alias foo=bar; (alias baz=qux); alias' | grep -E '^(foo|baz)='
+foo=bar
+$ ./target/debug/zshrs --zsh -fc 'alias foo=bar; (alias baz=qux); alias' | grep -E '^(foo|baz)='
+foo=bar
+
+$ /opt/homebrew/bin/zsh -fc 'alias foo=bar; (unalias foo); alias foo'
+foo=bar
+$ ./target/debug/zshrs --zsh -fc 'alias foo=bar; (unalias foo); alias foo'
+foo=bar
+```
+
+Subshell alias-table isolation works (both define and unalias
+contained). BUGS.md status was stale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'alias x=hi; (alias x=bye); alias x'
@@ -37833,7 +37870,30 @@ or fork a real zshrs child for full isolation.
 
 ## #455 — function definitions inside `$(...)` command-substitution LEAK to parent
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — `run_command_substitution` in
+`src/vm_helper.rs:2273-2390` now snapshots and restores the
+canonical `shfunctab` plus the executor's `functions_compiled`
+and `function_source` tables across the cmd-subst execution.
+Mirrors `Src/exec.c:4783 getoutput`'s fork boundary (where the
+child's mutations naturally die with the process) and parallels
+the existing paramtab/opts/traps snapshot pattern already in
+this block.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'x=$(foo() { echo bar; }; foo); typeset -f foo; echo "rc=$?"'
+rc=1
+$ ./target/debug/zshrs --zsh -fc 'x=$(foo() { echo bar; }; foo); typeset -f foo; echo "rc=$?"'
+rc=1
+```
+
+Inner function still callable inside the cmd-subst (`x=bar`
+produced as expected). Parity with zsh.
+
+zshrs_shell baseline: 1029/23 (improved from 1026/26 before the
+fix — three shell tests started passing because they exercised
+this same isolation property).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=$(g() { echo def; }; g); echo "captured=[$a]"; g 2>&1'

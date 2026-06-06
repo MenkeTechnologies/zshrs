@@ -2286,6 +2286,20 @@ impl ShellExecutor {
                     .lock()
                     .map(|t| t.clone())
                     .unwrap_or_default();
+                // c:Src/exec.c:4783 — function definitions / unfunction
+                // inside `$(...)` must also be isolated from the parent.
+                // C zsh's getoutput() forks, so the child's shfunctab
+                // mutations die with the child. zshrs's in-process
+                // cmd-subst needs to snapshot/restore the function
+                // tables manually alongside the param/opts/trap snaps
+                // already in this block. Bug #455.
+                let shfunctab_snap = crate::ported::hashtable::shfunctab_lock()
+                    .read()
+                    .ok()
+                    .map(|t| t.snapshot())
+                    .unwrap_or_default();
+                let functions_compiled_snap = self.functions_compiled.clone();
+                let function_source_snap = self.function_source.clone();
                 let mut vm = fusevm::VM::new(chunk);
                 register_builtins(&mut vm);
                 vm.set_shell_host(Box::new(ZshrsHost));
@@ -2387,6 +2401,13 @@ impl ShellExecutor {
                 if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                     *t = traps_snap;
                 }
+                // Restore function tables (parallel to the trap/param
+                // restore above). Bug #455.
+                if let Ok(mut t) = crate::ported::hashtable::shfunctab_lock().write() {
+                    t.restore(shfunctab_snap);
+                }
+                self.functions_compiled = functions_compiled_snap;
+                self.function_source = function_source_snap;
             }
         }
         // Restore LINENO so outer xtrace sees the outer line.
