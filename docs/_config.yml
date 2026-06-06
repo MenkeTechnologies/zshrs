@@ -1,0 +1,22 @@
+# Jekyll site config for the docs/ GitHub Pages publish.
+#
+# The only thing we use Jekyll for is converting docs/*.md → HTML so
+# they render on menketechnologies.github.io/zshrs. We never use
+# Liquid templating ({{ var }} / {% tag %}) — every brace pattern in
+# our docs is shell-script syntax (`${VAR}`, `$((expr))`, fold markers
+# `#{{{`) or Rust format-string escapes (`format!("{{ {} }}")`), all
+# of which Liquid mis-parses as malformed variable interpolations and
+# aborts the whole site build on. See the BUGS.md line 36377 failure:
+#
+#     Liquid Exception: Liquid syntax error (line 36377):
+#     Variable '{{ {}' was not properly terminated with regexp: /}}/
+#
+# This `defaults` block disables Liquid for every file under docs/.
+# Markdown → HTML conversion still runs normally; only the Liquid
+# templating pass is skipped, so every brace pattern flows through
+# literally without parsing.
+defaults:
+  - scope:
+      path: ""
+    values:
+      render_with_liquid: false
