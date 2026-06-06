@@ -2233,6 +2233,29 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // callmathfunc reads it back. Routed here BEFORE the module
     // arms below so a user-registered fn shadows a built-in name
     // (matching C lookup order).
+    //
+    // C zsh's `Src/math.c:1037-1116 callmathfunc` walks the
+    // canonical `mathfuncs` table (Src/module.c:1258) — a shell
+    // function with the same name as the math call is NOT
+    // dispatched unless an MFF_USERFUNC entry was installed via
+    // `functions -M`. Bug #360: previously zshrs dispatched ANY
+    // matching shfunc, so unregistered `myadd() {…}; $((myadd(2,3)))`
+    // entered doshfunc and produced a math-error rather than
+    // "unknown function: myadd" (the zsh behavior).
+    //
+    // Gate the dispatch on a present MFF_USERFUNC entry whose
+    // shfunc handler resolves to `name` (per C math.c:1108's
+    // `if (f->flags & MFF_USERFUNC)` check).
+    let is_registered_userfunc = crate::ported::module::MATHFUNCS
+        .lock()
+        .ok()
+        .map(|tab| {
+            tab.iter().any(|p| {
+                p.name == name && (p.flags & crate::ported::zsh_h::MFF_USERFUNC) != 0
+            })
+        })
+        .unwrap_or(false);
+    if is_registered_userfunc {
     if let Some(mut shfunc) = crate::ported::utils::getshfunc(name) {
         // Build largs = [name, arg-strings].
         let mut largs: Vec<String> = vec![name.to_string()];
@@ -2261,6 +2284,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             type_: MN_INTEGER,
         };
     }
+    } // close `if mathfunc_entry.is_some()`
 
     if is_module_func && !module_loaded {
         crate::ported::utils::zerr(&format!("unknown function: {}", name));

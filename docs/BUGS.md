@@ -30040,7 +30040,29 @@ cd ~
 
 ## #360 — `functions -M name N M handler` math-function registration not implemented
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `partially-fixed` 2026-06-05 — `callmathfunc`
+(`src/ported/math.rs:2236`) now gates the user-shfunc dispatch
+on a present `MFF_USERFUNC` entry in the canonical `MATHFUNCS`
+table, mirroring `Src/math.c:1108`'s `if (f->flags &
+MFF_USERFUNC)` check. Without `-M` registration the unregistered
+shell-fn route is closed and the standard
+"unknown function: NAME" diagnostic fires.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'myadd() { (( REPLY = $1 + $2 )); }; echo $((myadd(2,3)))'
+zsh:1: unknown function: myadd
+$ ./target/debug/zshrs --zsh -fc 'myadd() { (( REPLY = $1 + $2 )); }; echo $((myadd(2,3)))'
+zsh:1: unknown function: myadd
+```
+
+The `-M`-registered path still fails — when `functions -M` is in
+play and `doshfunc` runs the handler body containing its own
+`(( ... ))`, the outer math parser dies with "operand expected
+at end of string". Root cause is a missing math-context
+save/restore in `doshfunc`; needs a follow-up port of zsh's
+math re-entrancy state-stack.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'myadd() { (( REPLY = $1 + $2 )); }; functions -M myadd 2 2 myadd; echo $((myadd(2,3)))'
@@ -36777,7 +36799,18 @@ truncation logic in a precmd hook.
 
 ## #440 — `**` recursive glob breadth-first ordering instead of zsh's depth-first
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, parity.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg/{a,b,c} && touch /tmp/_zg/a/x /tmp/_zg/b/y /tmp/_zg/c/z; echo /tmp/_zg/**/*'
+/tmp/_zg/a /tmp/_zg/a/x /tmp/_zg/b /tmp/_zg/b/y /tmp/_zg/c /tmp/_zg/c/z
+$ ./target/debug/zshrs --zsh -fc 'echo /tmp/_zg/**/*'
+/tmp/_zg/a /tmp/_zg/a/x /tmp/_zg/b /tmp/_zg/b/y /tmp/_zg/c /tmp/_zg/c/z
+```
+
+DFS depth-first ordering byte-identical to zsh. Status was stale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'mkdir -p /tmp/_zg/{a,b,c} && touch /tmp/_zg/a/x /tmp/_zg/b/y /tmp/_zg/c/z; echo /tmp/_zg/**/*'
@@ -37280,7 +37313,19 @@ keyword followed by something other than a command".
 
 ## #447 — `${(flag)scalar[@]}` returns empty for ALL flags — flag-on-scalar-with-@ broken
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, parity.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'a=hello; echo "[${(R)a[@]}][${(U)a[@]}][${(L)a[@]}][${(Q)a[@]}]"'
+[hello][HELLO][hello][hello]
+$ ./target/debug/zshrs --zsh -fc 'a=hello; echo "[${(R)a[@]}][${(U)a[@]}][${(L)a[@]}][${(Q)a[@]}]"'
+[hello][HELLO][hello][hello]
+```
+
+Flag application on scalar with `[@]` subscript works for all
+flags. Status was stale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=hello; echo "[${(R)a[@]}][${(U)a[@]}][${(L)a[@]}][${(Q)a[@]}]"'
