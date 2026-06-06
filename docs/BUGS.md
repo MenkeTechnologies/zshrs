@@ -37541,7 +37541,29 @@ Test baseline 1026/26 preserved.
 
 ## #450 — subshell `trap` leaks to parent — outer trap not preserved across `(...)` block
 
-**Status:** `port-bug` — **CRITICAL** — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — `subshell_begin` now calls
+`queue_signals()` after pushing the snapshot; `subshell_end`
+calls `unqueue_signals()` after restoring the parent's traps.
+Signals delivered during subshell execution are queued by
+`zhandler` (Src/signals.c:393's `queueing_enabled` arm) and
+drained against the parent's restored trap table on
+`unqueue_signals()` (Src/signals.h:114's
+`run_queued_signals()` tail).
+
+```
+$ /opt/homebrew/bin/zsh -fc 'trap "echo OUTER" USR1; (trap "echo INNER" USR1; kill -USR1 $$); echo done'
+OUTER
+done
+$ ./target/debug/zshrs --zsh -fc 'trap "echo OUTER" USR1; (trap "echo INNER" USR1; kill -USR1 $$); echo done'
+OUTER
+done
+```
+
+`kill -USR1 $$` from inside `(...)` is now correctly routed
+through the OUTER trap (matching zsh's signal-to-parent
+semantics). INNER trap stays scoped to the subshell.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'trap "echo OUTER" USR1; (trap "echo INNER" USR1; kill -USR1 $$); echo done'
