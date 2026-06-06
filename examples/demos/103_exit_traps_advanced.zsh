@@ -62,3 +62,22 @@ log_event() {
     trap 'log_event ENTER' EXIT
     echo "block body"
 )
+
+# === ztest assertions ===
+# EXIT trap fires on subshell exit.
+out=$( ( trap 'echo bye' EXIT; echo hi ) )
+zassert_contains "$out" "hi"  "subshell body ran"
+zassert_contains "$out" "bye" "EXIT trap fired"
+# Capture order of output: hi then bye.
+zassert_eq "$out" "hi
+bye"  "EXIT runs after body"
+# trap - SIG removes trap.
+out2=$( trap 'echo nope' EXIT; trap - EXIT; echo done )
+zassert_eq "$out2" "done"  "trap - clears handler"
+# ZERR fires on nonzero command — capture via file (zshrs ZERR output does
+# not flow through $(...) capture in current build).
+zerr_tmp=/tmp/zshrs_zerr_$$
+( trap 'echo ZERR > '"$zerr_tmp"'' ZERR; false ) 2>/dev/null
+zassert_eq "$(cat $zerr_tmp 2>/dev/null)" "ZERR"  "ZERR trap fires on false"
+rm -f "$zerr_tmp"
+ztest_run

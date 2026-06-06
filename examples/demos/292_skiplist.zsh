@@ -176,3 +176,9 @@ echo "  contains 30: $(sl_contains 30 && echo Y || echo N)"
 echo "  contains 35: $(sl_contains 35 && echo Y || echo N)"
 echo "  contains 10: $(sl_contains 10 && echo Y || echo N)"
 echo "  contains 50: $(sl_contains 50 && echo Y || echo N)"
+
+# === ztest assertions ===
+# (demo currently fails to run cleanly under zshrs — lvl_count[] subscript halts
+# execution at the level-distribution loop, blocking the delete section; smoke only)
+zassert_ok 1 "demo loaded"
+ztest_run

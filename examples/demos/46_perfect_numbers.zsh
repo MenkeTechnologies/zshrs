@@ -40,3 +40,15 @@ for ((n = 1; n <= 100; n++)); do
     [[ "$(classify $n)" == abundant ]] && (( ab++ ))
 done
 echo "abundant count: $ab"
+
+# === ztest assertions ===
+zassert_eq "$(sum_proper_divisors 6)"   6    "sum-divisors 6 (1+2+3)"
+zassert_eq "$(sum_proper_divisors 28)"  28   "sum-divisors 28"
+zassert_eq "$(sum_proper_divisors 12)"  16   "sum-divisors 12 (abundant)"
+zassert_eq "$(sum_proper_divisors 7)"   1    "sum-divisors 7 (prime)"
+zassert_eq "$(classify 6)"   "perfect"    "6 perfect"
+zassert_eq "$(classify 28)"  "perfect"    "28 perfect"
+zassert_eq "$(classify 12)"  "abundant"   "12 abundant"
+zassert_eq "$(classify 7)"   "deficient"  "7 deficient (prime)"
+zassert_eq "$ab"             22           "abundant count 1..100"
+ztest_run

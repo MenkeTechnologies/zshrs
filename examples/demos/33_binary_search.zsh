@@ -26,3 +26,13 @@ echo "array: ${sorted[@]}"
 for t in 23 5 100 91 2 13; do
     bsearch $t "${sorted[@]}"
 done
+
+# === ztest assertions ===
+zassert_eq "$(bsearch 23 "${sorted[@]}")" "found 23 at index 6"  "mid"
+zassert_eq "$(bsearch 5  "${sorted[@]}")" "found 5 at index 2"   "early"
+zassert_eq "$(bsearch 2  "${sorted[@]}")" "found 2 at index 1"   "leftmost"
+zassert_eq "$(bsearch 91 "${sorted[@]}")" "found 91 at index 10" "rightmost"
+zassert_eq "$(bsearch 100 "${sorted[@]}")" "100 not found"       "absent high"
+zassert_eq "$(bsearch 13 "${sorted[@]}")"  "13 not found"        "absent gap"
+zassert_dies "bsearch 100 ${sorted[@]} >/dev/null" "absent exits nonzero"
+ztest_run

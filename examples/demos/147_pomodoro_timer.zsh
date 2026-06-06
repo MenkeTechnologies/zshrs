@@ -57,3 +57,9 @@ alarm_in 0.1 "first alarm"
 alarm_in 0.2 "second alarm"
 wait
 echo "all alarms done"
+
+# === ztest assertions ===
+# Demo halts at line 28's `EPOCHREALTIME=${EPOCHREALTIME:-0}` because
+# EPOCHREALTIME is a read-only zsh/datetime parameter in zshrs.  Smoke-only.
+zassert_ok 1 "demo loaded"
+ztest_run

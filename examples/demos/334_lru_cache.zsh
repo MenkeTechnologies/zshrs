@@ -177,3 +177,22 @@ echo "── stats ──"
 echo "  ops: O(1) get, O(1) put, O(1) eviction"
 echo "  storage: doubly linked list + hash map"
 echo "  apps: page cache, CPU cache, web cache, CDN"
+
+# === ztest assertions ===
+CAPACITY=3
+lru_init
+lru_put A 1 > /dev/null
+lru_put B 2 > /dev/null
+lru_put C 3 > /dev/null
+zassert_eq "$(lru_size)" 3 "size after 3 puts"
+zassert_eq "$(lru_get A)" "1" "get A"
+zassert_eq "$(lru_get B)" "2" "get B"
+zassert_eq "$(lru_get C)" "3" "get C"
+zassert_eq "$(lru_get Z)" "MISS" "miss"
+lru_put D 4 > /dev/null    # evicts A (LRU)
+zassert_eq "$(lru_get A)" "MISS" "A evicted"
+zassert_eq "$(lru_get B)" "2"    "B retained"
+zassert_eq "$(lru_size)"  3      "size still 3"
+lru_put B 22 > /dev/null   # update existing
+zassert_eq "$(lru_get B)" "22"   "B updated"
+ztest_run

@@ -141,3 +141,21 @@ for ((i=1; i<=${#arr}; i++)); do
     done
 done
 echo "  brute-force: $bf   $([[ $inversions == $bf ]] && echo ✓ || echo ✗)"
+
+# === ztest assertions ===
+zassert_eq "$inversions" 14    "inversions of (8 4 2 1 5 7 3 6) = 14"
+zassert_eq "$inversions" "$bf" "BIT inversions = brute force"
+# Fresh BIT for clean test
+bit_build 1 2 3 4 5
+zassert_eq "$N" 5                        "N=5 after fresh build"
+zassert_eq "$(bit_prefix 5)" 15          "prefix(5) = 1+2+3+4+5"
+zassert_eq "$(bit_prefix 3)" 6           "prefix(3) = 6"
+zassert_eq "$(bit_range 2 4)" 9          "range(2,4) = 2+3+4"
+zassert_eq "$(bit_range 1 1)" 1          "range(1,1)"
+zassert_eq "$(bit_range 5 5)" 5          "range(5,5)"
+bit_update 3 10
+zassert_eq "$(bit_prefix 5)" 25          "after +10 on idx 3: prefix = 25"
+zassert_eq "$(bit_range 3 3)" 13         "range(3,3) after +10"
+# Lower-bound search
+zassert_eq "$(bit_lower_bound 1)" 1      "lower_bound(1) = idx 1 (val 1)"
+ztest_run

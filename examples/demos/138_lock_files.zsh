@@ -96,3 +96,24 @@ check_stale() {
     return 1
 }
 check_stale && echo "lock cleared"
+
+# === ztest assertions ===
+# Make sure lock_dir is clean to start each assert.
+rm -rf "$LOCK_DIR"
+zassert_ok "$(acquire_lock >/dev/null && echo 1)" "first acquire succeeds"
+# Second attempt should fail (lock held); $? becomes non-zero.
+acquire_lock >/dev/null 2>&1
+rc=$?
+zassert_ne "$rc" "0" "double acquire fails (non-zero rc)"
+release_lock >/dev/null
+zassert_eq "$(test -d "$LOCK_DIR" && echo y || echo n)" "n" "release_lock removes dir"
+# Re-acquire after release.
+zassert_ok "$(acquire_lock >/dev/null && echo 1)" "re-acquire after release"
+release_lock >/dev/null
+# stale detection on a fake pid
+mkdir -p "$LOCK_DIR"
+echo 99999 > "$LOCK_DIR/pid"
+check_stale_out=$(check_stale)
+zassert_contains "$check_stale_out" "clearing" "stale lock detected"
+zassert_eq "$(test -d "$LOCK_DIR" && echo y || echo n)" "n" "stale lock cleared"
+ztest_run

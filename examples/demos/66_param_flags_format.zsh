@@ -38,3 +38,14 @@ banner() {
 banner "HELLO" 20
 banner "WORLD" 20
 banner "zshrs!" 20
+
+# === ztest assertions ===
+v=42; zassert_eq "${(l:8::0:)v}"      "00000042" "(l) zero-pad 42 to width 8"
+h=hello; zassert_eq "${(l:10:: :)h}"  "     hello" "(l) space-pad hello to 10"
+x=X; zassert_eq "${(l:8::-:)x}"       "-------X"  "(l) dash-pad X to 8"
+zassert_eq "${(r:8::*:)h}"            "hello***"  "(r) star right-pad"
+y=x; zassert_eq "${(r:10:: :)y}"      "x         " "(r) space right-pad"
+n=42; zassert_eq "${(l:6::0:)n}"      "000042"    "(l) zero-pad 42 to 6"
+zassert_eq "$(banner HELLO 20)"       "[       HELLO        ]" "banner HELLO width 20"
+zassert_eq "$(banner ZS 6)"           "[  ZS  ]"   "banner ZS width 6"
+ztest_run

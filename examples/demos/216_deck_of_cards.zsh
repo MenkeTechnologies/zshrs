@@ -96,3 +96,16 @@ done
 for r in $ranks; do
     printf "  %s: %d\n" $r ${rh[$r]:-0}
 done
+
+# === ztest assertions ===
+build_deck
+zassert_eq "${#deck[@]}" 52   "new deck has 52 cards"
+zassert_eq "${deck[1]}"  "2♠"  "first card is 2♠"
+zassert_eq "${deck[52]}" "A♣"  "last card is A♣"
+zassert_eq "$(classify_poker A♠ A♥ K♠ K♥ Q♦)" "two pair"        "two pair"
+zassert_eq "$(classify_poker A♠ A♥ A♦ 2♠ 2♥)" "full house"      "full house"
+zassert_eq "$(classify_poker A♠ A♥ A♦ A♣ K♠)" "four of a kind"  "four of a kind"
+zassert_eq "$(classify_poker A♠ K♥ Q♦ J♣ T♠)" "high card"       "high card"
+zassert_eq "$(classify_poker A♠ A♥ K♠ Q♥ J♦)" "one pair"        "one pair"
+zassert_eq "$(classify_poker A♠ A♥ A♦ K♠ Q♥)" "three of a kind" "three of a kind"
+ztest_run

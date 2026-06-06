@@ -167,3 +167,23 @@ specials=(
 for s in "${specials[@]}"; do
     echo "  $s"
 done
+
+# === ztest assertions ===
+zassert_eq "$(ip_to_int 0.0.0.0)" "0"                   "0.0.0.0 = 0"
+zassert_eq "$(ip_to_int 255.255.255.255)" "4294967295"  "255.255.255.255 = 2^32-1"
+zassert_eq "$(ip_to_int 127.0.0.1)" "2130706433"        "127.0.0.1 = 0x7F000001"
+zassert_eq "$(int_to_ip 0)" "0.0.0.0"                   "0 → 0.0.0.0"
+zassert_eq "$(int_to_ip 2130706433)" "127.0.0.1"        "2130706433 → 127.0.0.1"
+zassert_eq "$(cidr_mask 24)" "4294967040"               "/24 mask = 0xFFFFFF00"
+zassert_eq "$(cidr_mask 0)" "0"                         "/0 mask = 0"
+zassert_eq "$(int_to_ip $(network 192.168.1.10 24))" "192.168.1.0"  "network 192.168.1.10/24"
+zassert_eq "$(int_to_ip $(broadcast 192.168.1.10 24))" "192.168.1.255"  "broadcast 192.168.1.10/24"
+zassert_eq "$(host_count 24)" "254"                     "/24 → 254 usable"
+zassert_eq "$(host_count 30)" "2"                       "/30 → 2 usable"
+zassert_eq "$(ip_class 10.0.0.1)"   "A"                 "10.x → class A"
+zassert_eq "$(ip_class 192.168.1.1)" "C"                "192.x → class C"
+is_private 10.0.0.1 && r=1 || r=0; zassert_eq "$r" "1"  "10.x is private"
+is_private 8.8.8.8 && r=1 || r=0; zassert_eq "$r" "0"   "8.8.8.8 not private"
+ip_in_network 192.168.1.50 192.168.1.0 24 && r=1 || r=0; zassert_eq "$r" "1"  "ip_in_network match"
+ip_in_network 192.168.2.50 192.168.1.0 24 && r=1 || r=0; zassert_eq "$r" "0"  "ip_in_network miss"
+ztest_run

@@ -189,3 +189,21 @@ for m in {1..12}; do
     d=$(days_in_month $m 2026)
     printf "  %-10s %2d days\n" "${MONTHS[m]}" $d
 done
+
+# === ztest assertions ===
+# Leap years.
+zassert_eq "$(days_in_month 2 2024)" "29"  "2024 is leap (div 4, not 100)"
+zassert_eq "$(days_in_month 2 2025)" "28"  "2025 non-leap"
+zassert_eq "$(days_in_month 2 2000)" "29"  "2000 is leap (div 400)"
+zassert_eq "$(days_in_month 2 2100)" "28"  "2100 non-leap (div 100, not 400)"
+zassert_eq "$(days_in_month 2 1900)" "28"  "1900 non-leap"
+# Standard months.
+zassert_eq "$(days_in_month 1  2026)" "31" "January"
+zassert_eq "$(days_in_month 4  2026)" "30" "April"
+zassert_eq "$(days_in_month 12 2026)" "31" "December"
+# Day-of-week (0=Mon based on Zeller mapping).
+zassert_eq "$(day_of_week 1 1 2024)" "0"   "Jan 1 2024 = Monday"
+zassert_eq "$(day_of_week 1 1 2000)" "5"   "Jan 1 2000 = Saturday (Zeller)"
+zassert_eq "${MONTHS[5]}" "May"            "MONTHS[5]"
+zassert_eq "${DAYS[1]}"   "Mo"             "DAYS[1]"
+ztest_run

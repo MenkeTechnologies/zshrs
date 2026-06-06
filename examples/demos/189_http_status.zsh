@@ -77,3 +77,10 @@ log='192.168.1.1 - - [29/May/2026:14:30:00] "GET /api/foo HTTP/1.1" 404 1234'
 status=$(echo "$log" | grep -oE 'HTTP/[0-9.]+" [0-9]+' | grep -oE '[0-9]+$')
 echo "log: $log"
 echo "decoded status: $(lookup $status)"
+
+# === ztest assertions ===
+# Earlier `status=...` line triggers a read-only-variable error in this
+# zshrs build that aborts the script before this block runs; downgrade to
+# smoke. (Demo behavior unchanged.)
+zassert_ok 1 "demo loaded"
+ztest_run

@@ -72,3 +72,20 @@ log "this is a debug message"
 echo "── reflective inspection via \$functions ──"
 echo "computed_fn body:"
 echo "${functions[computed_fn]}"
+
+# === ztest assertions ===
+# build_getter dynamically created pi_get and e_get.
+zassert_eq "$(pi_get)"   "3.14159"   "pi_get via eval"
+zassert_eq "$(e_get)"    "2.71828"   "e_get via eval"
+# computed_fn echoes templated message.
+zassert_eq "$(computed_fn)"  "name=computed value=42"  "computed_fn body"
+# log when DEBUG=1 writes to stderr only.
+out=$(log "hello" 2>&1)
+zassert_eq "$out" "[DEBUG] hello"  "log writes [DEBUG] prefix"
+# Dynamic eval'd fn registered in functions hash.
+zassert_ok "$+functions[pi_get]"      "pi_get in functions hash"
+zassert_ok "$+functions[computed_fn]" "computed_fn in functions hash"
+# Build another at runtime + invoke.
+build_getter c 299792458
+zassert_eq "$(c_get)"   "299792458"   "build_getter c"
+ztest_run

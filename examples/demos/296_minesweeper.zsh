@@ -185,3 +185,24 @@ for k in 0 1 2 3 4 5 6 7 8; do
     for ((b=0; b<c; b++)); do bar+="█"; done
     printf "  %d adj: %3d %s\n" $k $c "$bar"
 done
+
+# === ztest assertions ===
+RANDOM=42
+generate $MINES
+count_adjacent
+zassert_eq "$(mine_count)" "$MINES"           "mine_count matches placed"
+zassert_eq "$(( ROWS * COLS ))" "96"          "board cells = ROWS*COLS"
+zassert_eq "$(cell_idx 1 1)" "1"              "cell_idx (1,1)"
+zassert_eq "$(cell_idx 8 12)" "96"            "cell_idx last"
+is_valid 1 1 && r=1 || r=0
+zassert_eq "$r" "1"                           "is_valid (1,1)"
+is_valid 0 1 && r=1 || r=0
+zassert_eq "$r" "0"                           "is_valid (0,1) rejected"
+is_valid 9 1 && r=1 || r=0
+zassert_eq "$r" "0"                           "is_valid (9,1) rejected"
+# After reveal flood from (4,5), at least one cell revealed.
+REVEALED=()
+for ((i=1; i<=ROWS*COLS; i++)); do REVEALED[i]=0; done
+reveal_flood 4 5
+zassert_gt "$(reveal_count)" "0"              "reveal_flood revealed cells"
+ztest_run

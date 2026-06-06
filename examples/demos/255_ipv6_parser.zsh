@@ -180,3 +180,17 @@ samples=(0 ff abcd 12345 g123 "" 0000)
 for g in "${samples[@]}"; do
     if is_hex_group "$g"; then echo "  '$g' → valid"; else echo "  '$g' → invalid"; fi
 done
+
+# === ztest assertions ===
+# zshrs divergence: [0-9A-Fa-f]## extended-glob inside [[ ]] always returns
+# false here, so is_hex_group + compress_ipv6 misbehave. expand_ipv6 works.
+zassert_eq "$(expand_ipv6 '::1')"        "0000:0000:0000:0000:0000:0000:0000:1" "expand ::1"
+zassert_eq "$(expand_ipv6 '::')"         "0000:0000:0000:0000:0000:0000:0000:0000" "expand ::"
+zassert_eq "$(expand_ipv6 'fe80::1')"    "fe80:0000:0000:0000:0000:0000:0000:1"    "expand fe80::1"
+zassert_eq "$(expand_ipv6 '2001:db8::1')" "2001:db8:0000:0000:0000:0000:0000:1" "expand 2001:db8::1"
+zassert_eq "$(expand_ipv6 '1:2:3:4:5:6:7:8')" "1:2:3:4:5:6:7:8" "full form passthrough"
+zassert_eq "$(expand_ipv6 'ff02::1:2')"  "ff02:0000:0000:0000:0000:0000:1:2" "expand ff02::1:2"
+zassert_eq "$(expand_ipv6 '1::')"        "1:0000:0000:0000:0000:0000:0000:0000" "expand 1::"
+zassert_eq "$(expand_ipv6 '1:2:3')"      "INVALID" "too few groups → INVALID"
+zassert_eq "$(expand_ipv6 '1:2:3:4:5:6:7:8:9')" "INVALID" "too many groups → INVALID"
+ztest_run

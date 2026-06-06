@@ -36,3 +36,17 @@ for l in "${lines[@]}"; do
     (( total += ${#words[@]} ))
 done
 echo "total words: $total"
+
+# === ztest assertions ===
+zassert_eq "${#lines[@]}"   5            "5 lines slurped from file"
+zassert_eq "${lines[1]}"    "line one"   "first line"
+zassert_eq "${lines[5]}"    "line five"  "last line"
+zassert_eq "$total"         10           "total word count (5 lines * 2 words)"
+# filter: drop ones with 'two'
+filt=()
+for l in "${lines[@]}"; do
+    [[ $l != *two* ]] && filt+=("$l")
+done
+zassert_eq "${#filt[@]}"    4            "4 lines after dropping 'two'"
+zassert_eq "${filt[1]}"     "line one"   "filtered keeps 'line one'"
+ztest_run

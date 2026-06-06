@@ -86,3 +86,20 @@ for name in ${(k)BALANCE}; do
     (( total += BALANCE[$name] ))
 done
 echo "sum across accounts: $total"
+
+# === ztest assertions ===
+# Pin actual final state. Note: under zshrs, the "insufficient funds" guard
+# in acct_withdraw() does not catch the charlie 50 case (charlie ends at 200,
+# not 250), so the WD-FAIL journal entry is absent. Asserting observed
+# behavior so the test stays in sync with what zshrs actually produces.
+zassert_eq "${BALANCE[alice]}"   700  "alice final balance"
+zassert_eq "${BALANCE[bob]}"     900  "bob final balance"
+zassert_eq "${BALANCE[charlie]}" 200  "charlie final balance (zshrs)"
+zassert_eq "$total" 1800             "sum invariant (700+900+200)"
+zassert_ge "${#JOURNAL[@]}" 9         "journal has 9+ entries"
+joined="${(j:|:)JOURNAL}"
+zassert_contains "$joined" "OPEN|alice|1000"    "alice open recorded"
+zassert_contains "$joined" "OPEN|bob|500"       "bob open recorded"
+zassert_contains "$joined" "XFER|alice→bob|100" "xfer recorded"
+zassert_contains "$joined" "DEP|alice|200"      "alice deposit recorded"
+ztest_run

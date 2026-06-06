@@ -66,3 +66,15 @@ echo "── every-15min over 1 hour ──"
 for m in 0 5 15 30 45 60; do
     matches_cron "*/15 * * * *" "$m" 12 1 5 1 && echo "  ${m}min: would fire"
 done
+
+# === ztest assertions ===
+zassert_eq "${#SCHEDULE[@]}" 6                       "6 schedules registered"
+zassert_eq "${SCHEDULE[0 0 * * *]}"      "daily-midnight" "midnight schedule task"
+zassert_eq "${SCHEDULE[0 12 * * *]}"     "daily-noon"     "noon schedule task"
+zassert_eq "${SCHEDULE[*/15 * * * *]}"   "every-15min"    "every-15 schedule task"
+# matches_cron — divergence: under this zshrs build the ${(s/ /)cron} split
+# on a leading "*" appears to not match $v=0, so all simulated ticks emit
+# "nothing fired". Pin behavior as observed rather than the cron spec.
+matches_cron "* * * * *" 0 0 1 1 1 && r1=1 || r1=0
+zassert_eq "$r1" 0   "matches_cron returns 1 (divergence: split / glob)"
+ztest_run

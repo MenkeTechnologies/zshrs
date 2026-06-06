@@ -172,3 +172,27 @@ echo "    indir: P"
 echo "    counter: # ##"
 echo
 echo "  see Src/subst.c paramsubst for full implementation"
+
+# === ztest assertions ===
+# (demo halts on (l:5::0::) padding flag — zshrs flag parser doesn't accept
+# the legacy zsh padding syntax. Assertions cover the working subset.)
+path="/usr/local/bin/zsh.tar.gz"
+zassert_eq "${path:h}" "/usr/local/bin"      ":h head"
+zassert_eq "${path:t}" "zsh.tar.gz"          ":t tail"
+zassert_eq "${path:r}" "/usr/local/bin/zsh.tar" ":r root"
+zassert_eq "${path:e}" "gz"                  ":e ext"
+zassert_eq "${path:t:r}" "zsh.tar"           ":t:r chain"
+text="Hello World"
+zassert_eq "${(U)text}" "HELLO WORLD"        "(U) upper"
+zassert_eq "${(L)text}" "hello world"        "(L) lower"
+arr=(banana apple cherry date)
+zassert_eq "${(o)arr[*]}" "apple banana cherry date" "(o) sort asc"
+zassert_eq "${(O)arr[*]}" "date cherry banana apple" "(O) sort desc"
+dups=(a b c a d b e c)
+zassert_eq "${(u)dups[*]}" "a b c d e"       "(u) unique"
+joined=(a b c)
+zassert_eq "${(j:-:)joined}" "a-b-c"         "(j:-:) join"
+target="zshrs"
+ref="target"
+zassert_eq "${(P)ref}" "zshrs"               "(P) indirect expansion"
+ztest_run

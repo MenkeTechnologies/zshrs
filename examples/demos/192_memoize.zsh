@@ -83,3 +83,18 @@ echo "── cache eviction (manual) ──"
 echo "size: ${#MEMO_CACHE[@]}"
 MEMO_CACHE=()
 echo "after clear: ${#MEMO_CACHE[@]}"
+
+# === ztest assertions ===
+# slow_fib (uncached) — output correctness
+zassert_eq "$(slow_fib 0)"  0  "fib(0)"
+zassert_eq "$(slow_fib 1)"  1  "fib(1)"
+zassert_eq "$(slow_fib 5)"  5  "fib(5)"
+zassert_eq "$(slow_fib 10)" 55 "fib(10)"
+# memo_fib value correctness (cache state across $() subshells is lost,
+# but the recursive result still computes correctly)
+zassert_eq "$(memo_fib 10)" 55 "memo_fib(10)"
+zassert_eq "$(memo_fib 15)" 610 "memo_fib(15)"
+square() { echo $(( $1 * $1 )); }
+zassert_eq "$(square 5)"  25  "square 5"
+zassert_eq "$(square 10)" 100 "square 10"
+ztest_run

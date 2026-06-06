@@ -54,3 +54,13 @@ csv_read_simple() {
 }
 echo "simple row:"
 csv_read_simple "alice,30,admin"
+
+# === ztest assertions ===
+zassert_eq "$(csv_escape_field plain)"                 "plain"                          "no quoting needed"
+zassert_eq "$(csv_escape_field 'has,comma')"           '"has,comma"'                    "comma forces quoting"
+zassert_eq "$(csv_escape_field 'she said "hi"')"       '"she said ""hi"""'              "embedded quote doubled"
+zassert_eq "$(csv_write_row a b c)"                    "a,b,c"                          "row basic"
+zassert_eq "$(csv_write_row Alice 30 Admin)"           "Alice,30,Admin"                 "row people"
+zassert_eq "$(csv_write_row 'x, y' z)"                 '"x, y",z'                       "row with commas"
+zassert_contains "$(csv_write_row 1 'Alice, A.' alice@example.com admin)" '"Alice, A."'  "field with comma quoted"
+ztest_run

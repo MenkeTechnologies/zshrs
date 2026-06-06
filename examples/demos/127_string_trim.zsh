@@ -93,3 +93,23 @@ echo "── repeat string N times ──"
 echo "$(repeat_char "-" 30)"
 echo "$(repeat_char "=" 30)"
 echo "$(repeat_char "abc" 5)"   # repeats string, not just char
+
+# === ztest assertions ===
+# trim_left/right + trim
+zassert_eq "$(trim_left "   hi")"    "hi"   "trim_left"
+zassert_eq "$(trim_right "hi   ")"   "hi"   "trim_right"
+zassert_eq "$(trim "   hi   ")"      "hi"   "trim both"
+# squeeze
+zassert_eq "$(squeeze_ws "a    b   c")"  "a b c"  "squeeze ws"
+# repeat_char
+zassert_eq "$(repeat_char '-' 5)"  "-----"          "repeat 5 dashes"
+zassert_eq "$(repeat_char 'ab' 3)" "ababab"         "repeat string"
+zassert_eq "${#$(repeat_char '-' 30)}"  "30"        "repeat 30 dashes length"
+# pad_left / pad_right / center
+zassert_eq "$(pad_left '42' 5 '0')"   "00042"      "pad_left 0"
+zassert_eq "$(pad_right 'hi' 5 '-')"  "hi---"      "pad_right -"
+zassert_eq "$(center 'X' 5 '-')"      "--X--"      "center -"
+zassert_eq "$(center 'X' 6 '-')"      "--X---"     "center even width"
+# pad larger than width = passthrough
+zassert_eq "$(pad_left 'hello' 3)" "hello"  "pad noop when too big"
+ztest_run

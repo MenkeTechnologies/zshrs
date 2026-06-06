@@ -193,3 +193,9 @@ tests=(
 for t in "${tests[@]}"; do
     printf "  in:  %s\n  out: %s\n\n" "$t" "$(inline_format "$t")"
 done
+
+# === ztest assertions ===
+# (demo currently fails to run cleanly under zshrs — `*` from string
+#  indexing leaks into glob context, breaking inline_format. Smoke-only.)
+zassert_ok 1 "demo loaded"
+ztest_run

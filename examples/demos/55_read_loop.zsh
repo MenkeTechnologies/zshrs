@@ -50,3 +50,13 @@ second
 third
 fourth
 EOF
+
+# === ztest assertions ===
+zassert_eq "$count"             5  "plain read counted 5 lines"
+zassert_eq "${wordcount[the]}"  3  "'the' counted 3x via read+split"
+zassert_eq "${wordcount[fox]}"  2  "'fox' counted 2x"
+zassert_eq "${wordcount[brown]}" 2 "'brown' counted 2x"
+zassert_eq "${wordcount[quick]}" 1 "'quick' counted once"
+zassert_eq "${#wordcount[@]}"   7  "7 unique words across heredoc"
+zassert_eq "$n"                 4  "nl-style numbered 4 lines"
+ztest_run

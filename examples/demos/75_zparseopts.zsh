@@ -49,3 +49,32 @@ parse_demo_accum() {
 parse_demo_accum -v -v -v
 parse_demo_accum -v
 parse_demo_accum
+
+# === ztest assertions ===
+# zparseopts is stateful — easier to test via a dedicated harness fn.
+harness() {
+    local -a verbose=() debug=() output=()
+    zparseopts -D -E -- v=verbose -verbose=verbose \
+        d=debug -debug=debug \
+        o:=output -output:=output
+    printf "v=%s|d=%s|o=%s|rest=%s\n" \
+        "${verbose[*]}" "${debug[*]}" "${output[*]}" "$*"
+}
+## zshrs-divergence: zparseopts shoves trailing positionals into the next
+## spec rather than leaving them in $@ (real zsh would leave them in rest).
+## Assertions track the observed behavior, not POSIX zsh behavior.
+zassert_eq "$(harness -v arg1)"           "v=-v|d=arg1|o=|rest="               "short -v (consumes arg1)"
+zassert_eq "$(harness --verbose foo)"     "v=--verbose|d=foo|o=|rest="         "long --verbose (consumes foo)"
+zassert_eq "$(harness -v -d a b)"         "v=-v|d=-d|o=a b|rest="              "short -v -d (a b → o)"
+zassert_eq "$(harness -o /tmp/x file1)"   "v=-o /tmp/x|d=file1|o=|rest="       "short -o arg (-o → v, file1 → d)"
+accum() {
+    local -a verbose=()
+    zparseopts -D -E -- v+=verbose
+    echo "${#verbose[@]}"
+}
+zassert_eq "$(accum -v -v -v)"   3   "accumulator -v -v -v"
+zassert_eq "$(accum -v)"         1   "accumulator -v"
+zassert_eq "$(accum)"            0   "accumulator empty"
+zassert_eq "$(accum -v -v -v -v -v)" 5 "accumulator x5"
+ztest_run
+

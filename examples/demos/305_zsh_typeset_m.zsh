@@ -116,3 +116,36 @@ echo
 echo "── readonly cleanup attempt (will fail for readonly) ──"
 unset report_a 2>&1 | head -1 || echo "  (readonly: unset blocked, as expected)"
 unset log_x log_y log_z misc lowerme alsolow mixedcase mynum hex bin oct pi e mypath MYPATH 2>/dev/null
+
+# === ztest assertions ===
+# typeset -u (uppercase-on-store)
+typeset -u tu_var
+tu_var=hello
+zassert_eq "$tu_var" "HELLO"          "typeset -u uppercases"
+# typeset -l (lowercase-on-store)
+typeset -l tl_var
+tl_var=HELLO
+zassert_eq "$tl_var" "hello"          "typeset -l lowercases"
+# typeset -i (integer, coerce + arith)
+typeset -i ti_var
+ti_var="100 + 50"
+zassert_eq "$ti_var" "150"            "typeset -i arith on assign"
+ti_var=hello
+zassert_eq "$ti_var" "0"              "typeset -i non-numeric → 0"
+# typeset -i with base prints "base#val"
+typeset -i 16 thex=255
+zassert_eq "$thex" "16#FF"            "typeset -i 16 hex format"
+typeset -i 2 tbin=10
+zassert_eq "$tbin" "2#1010"           "typeset -i 2 binary format"
+# typeset -F (float)
+typeset -F 3 tpi=3.14159
+zassert_eq "$tpi" "3.142"             "typeset -F 3 truncates"
+# typeset -T tied — zsh-divergence: zshrs uses 0x1f (record separator) instead
+# of the requested ':' when the array is initialised on the typeset line.
+# Re-assigning to tpath after the typeset call uses the requested separator.
+typeset -T TPATH tpath ':'
+tpath=(/a /b /c)
+zassert_eq "$TPATH" "/a:/b:/c"         "typeset -T joins with sep after re-assign"
+tpath+=(/d)
+zassert_eq "$TPATH" "/a:/b:/c:/d"      "typeset -T += appends"
+ztest_run

@@ -67,3 +67,25 @@ echo "chpwd_functions: ${chpwd_functions[@]}"
 chpwd_functions=()
 precmd_functions=()
 preexec_functions=()
+
+# === ztest assertions ===
+# Verify hook arrays exist and accept assignments.
+hook_a() { echo "a:$PWD"; }
+hook_b() { echo "b:$PWD"; }
+chpwd_functions=(hook_a hook_b)
+zassert_eq "${#chpwd_functions[@]}" 2 "2 chpwd hooks registered"
+zassert_eq "${chpwd_functions[1]}" "hook_a" "first chpwd hook"
+zassert_eq "${chpwd_functions[2]}" "hook_b" "second chpwd hook"
+# remove via :# (glob exclusion)
+chpwd_functions=(${chpwd_functions:#hook_a})
+zassert_eq "${#chpwd_functions[@]}" 1 "hook_a removed via :#"
+zassert_eq "${chpwd_functions[1]}" "hook_b" "remaining hook is hook_b"
+# precmd/preexec arrays
+precmd_functions=(hook_a)
+preexec_functions=(hook_b)
+zassert_eq "${#precmd_functions[@]}"  1 "precmd_functions has 1 entry"
+zassert_eq "${#preexec_functions[@]}" 1 "preexec_functions has 1 entry"
+chpwd_functions=()
+precmd_functions=()
+preexec_functions=()
+ztest_run

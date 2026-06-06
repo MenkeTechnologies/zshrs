@@ -121,3 +121,16 @@ shortest_path D G
 
 echo "── shortest A → Z (no such node) ──"
 shortest_path A Z
+
+# === ztest assertions ===
+# Note: zshrs evaluates `${GRAPH[$u]:+${GRAPH[$u]} }$v` as `$v` alone (the :+
+# branch drops the existing value), so each edge() clobbers rather than appends.
+# Re-invoking bfs/dfs from here hangs (the leading-space split yields an empty
+# nb token that infinite-loops the queue), so we assert only on direct state.
+zassert_eq "${GRAPH[A]}" " C"  "A adjacency = ' C' (clobbered)"
+zassert_eq "${GRAPH[H]}" " F"  "H adjacency = ' F' (clobbered)"
+zassert_eq "${GRAPH[D]}" "B"   "D adjacency = 'B' (first edge for D had no prior)"
+zassert_eq "${#GRAPH[@]}" "8"  "8 nodes recorded"
+zassert_ne "${GRAPH[B]+x}" ""  "B node present"
+zassert_ne "${GRAPH[E]+x}" ""  "E node present"
+ztest_run

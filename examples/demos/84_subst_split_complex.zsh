@@ -56,3 +56,32 @@ back=${(j/:/)arr4}
 echo "orig: $orig"
 echo "back: $back"
 [[ "$orig" == "$back" ]] && echo "round-trip OK"
+
+# === ztest assertions ===
+# $= word-splitting
+sentence="alpha beta gamma delta"
+arr=( $=sentence )
+zassert_eq "${#arr[@]}"     4              "\$= splits into 4 words"
+zassert_eq "${arr[1]}"      "alpha"        "\$= first word"
+zassert_eq "${arr[4]}"      "delta"        "\$= last word"
+# (s::) split
+csv="one,two,three,four,five"
+csv_arr=( ${(s:,:)csv} )
+zassert_eq "${#csv_arr[@]}" 5              "(s:,:) splits 5 fields"
+zassert_eq "${csv_arr[3]}"  "three"        "(s:,:) 3rd field"
+# (f) split on newlines
+multiline=$(printf 'a\nb\nc')
+ml_arr=( ${(f)multiline} )
+zassert_eq "${#ml_arr[@]}"  3              "(f) split on newlines"
+zassert_eq "${ml_arr[2]}"   "b"            "(f) 2nd line"
+# (j::) join
+parts=(alpha beta gamma delta)
+zassert_eq "${(j:,:)parts}"      "alpha,beta,gamma,delta"     "(j:,:) join"
+zassert_eq "${(j: | :)parts}"    "alpha | beta | gamma | delta" "(j::) multichar join"
+# round-trip
+orig="x:y:z:a:b"
+arr_rt=( ${(s/:/)orig} )
+back=${(j/:/)arr_rt}
+zassert_eq "$back" "$orig"                 "split/join round-trip"
+ztest_run
+

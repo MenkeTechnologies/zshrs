@@ -47,3 +47,38 @@ words=(apple banana cherry date apricot)
 for w in "${words[@]}"; do
     [[ $w == ap* ]] && echo "ap-prefix: $w"
 done
+
+# === ztest assertions ===
+classify_ext() {
+    case $1 in
+        *.txt) echo text ;;
+        *.PNG|*.png|*.jpg) echo image ;;
+        *.gz|*.zip) echo archive ;;
+        *.csv) echo data ;;
+        *.zsh|*.zshrc) echo "zsh script" ;;
+        *) echo other ;;
+    esac
+}
+zassert_eq "$(classify_ext hello.txt)"   "text"        "txt → text"
+zassert_eq "$(classify_ext image.PNG)"   "image"       "PNG → image"
+zassert_eq "$(classify_ext log_2026.gz)" "archive"     "gz → archive"
+zassert_eq "$(classify_ext data.csv)"    "data"        "csv → data"
+zassert_eq "$(classify_ext README)"      "other"       "no-ext → other"
+zassert_eq "$(classify_ext test.zshrc)"  "zsh script"  "zshrc → zsh script"
+classify_num() {
+    case $1 in
+        0)        echo zero ;;
+        [1-9])    echo single ;;
+        [1-9][0-9])  echo double ;;
+        *)        echo "triple+" ;;
+    esac
+}
+zassert_eq "$(classify_num 0)"   "zero"     "0 → zero"
+zassert_eq "$(classify_num 5)"   "single"   "5 → single"
+zassert_eq "$(classify_num 50)"  "double"   "50 → double"
+zassert_eq "$(classify_num 100)" "triple+"  "100 → triple+"
+[[ apple == ap* ]] && r=1 || r=0
+zassert_eq "$r" "1"  "apple matches ap*"
+[[ banana == ap* ]] && r=1 || r=0
+zassert_eq "$r" "0"  "banana not ap*"
+ztest_run

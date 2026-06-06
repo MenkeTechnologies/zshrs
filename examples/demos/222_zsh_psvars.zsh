@@ -78,3 +78,14 @@ echo "expanded: $(print -P $PS1)"
 
 # Restore
 PS1=$save_PS1
+
+# === ztest assertions ===
+zassert_eq "$(print -P '%(?.OK.FAIL)')" "OK"  "%(?...) true branch"
+zassert_eq "$(print -P '%%')"           "%"   "%% literal"
+zassert_eq "$(print -P 'plain')"        "plain" "non-escape passthrough"
+zassert_ok  "$(print -P '%n')"           "%n expands to non-empty"
+zassert_ok  "$(print -P '%d')"           "%d expands to cwd"
+zassert_contains "$(print -P '%~')" "/"  "%~ contains slash"
+zassert_eq "$PS2" "... "                  "PS2 customized"
+zassert_eq "$PS3" "Pick: "                "PS3 customized"
+ztest_run

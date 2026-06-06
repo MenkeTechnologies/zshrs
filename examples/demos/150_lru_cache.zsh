@@ -87,3 +87,22 @@ echo "── reset by clearing ──"
 CACHE=()
 LRU_ORDER=()
 echo "size: ${#CACHE[@]}"
+
+# === ztest assertions ===
+zassert_eq "${#CACHE[@]}" "0" "reset clears CACHE"
+zassert_eq "${#LRU_ORDER[@]}" "0" "reset clears LRU_ORDER"
+# rebuild and replay the eviction path under assertions
+cache_set k1 v1 >/dev/null
+cache_set k2 v2 >/dev/null
+cache_set k3 v3 >/dev/null
+zassert_eq "${#CACHE[@]}" "3" "cache at capacity"
+zassert_eq "${LRU_ORDER[1]}" "k1" "oldest = k1"
+zassert_eq "${LRU_ORDER[3]}" "k3" "newest = k3"
+cache_get k1 >/dev/null
+zassert_eq "${LRU_ORDER[3]}" "k1" "k1 moves to MRU"
+zassert_eq "${LRU_ORDER[1]}" "k2" "k2 now oldest"
+cache_set k4 v4 >/dev/null
+zassert_eq "${CACHE[k2]+x}" "" "k2 evicted as oldest"
+zassert_eq "${#CACHE[@]}"   "3" "size held at capacity"
+zassert_contains "$(cache_get missing)" "miss" "miss reported for unknown"
+ztest_run

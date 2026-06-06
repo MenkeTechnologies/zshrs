@@ -101,3 +101,17 @@ for prefix in server database features paths; do
 done
 
 command rm -f $tmpfile
+
+# === ztest assertions ===
+zassert_eq "${TOML[title]}"          "zshrs config"        "title parsed"
+zassert_eq "${TOML[version]}"        "4.7"                 "version parsed"
+zassert_eq "${TOML[server.host]}"    "localhost"           "section.key host"
+zassert_eq "${TOML[server.port]}"    "8080"                "section.key port"
+zassert_eq "${TOML[server.enabled]}" "true"                "bool stored as string"
+zassert_eq "${TOML[database.name]}"  "mydb"                "db.name"
+zassert_eq "${TOML[database.pool]}"  "16"                  "db.pool"
+zassert_eq "${TOML[features.fuse]}"  "true"                "features.fuse"
+zassert_eq "${TOML[paths.log]}"      "/var/log/zshrs.log"  "paths.log"
+zassert_eq "${TOML[paths.cache]}"    "/var/cache/zshrs"    "paths.cache"
+zassert_ge "${#TOML[@]}" "12" "at least 12 keys parsed"
+ztest_run

@@ -25,3 +25,14 @@ echo "the quick brown fox jumps" | wc -w
 
 echo "── grep filter ──"
 printf "apple\nbanana\nape\ncherry\n" | grep '^a'
+
+# === ztest assertions ===
+zassert_contains "$(printf 'a\nb\nc\nd\ne\n' | wc -l)" "5"  "wc -l 5 lines"
+zassert_eq "$(printf 'b\na\nc\n' | sort | head -1)" "a"     "sort + head -1"
+zassert_eq "$(printf '1\n3\n2\n' | sort -n -r | head -1)" "3" "sort -nr top"
+zassert_eq "$(printf 'a\nb\na\nc\nb\na\n' | sort -u | wc -l | tr -d ' ')" "3" "sort -u unique count"
+zassert_eq "$(echo 'Hello World' | tr 'a-z' 'A-Z')" "HELLO WORLD" "upper-case tr"
+zassert_eq "$(echo 'Hello World' | tr 'A-Z' 'a-z')" "hello world" "lower-case tr"
+zassert_contains "$(echo 'the quick brown fox jumps' | wc -w)" "5" "wc -w 5 words"
+zassert_eq "$(printf 'apple\nape\nbanana\n' | grep '^a' | wc -l | tr -d ' ')" "2" "grep ^a counts 2"
+ztest_run

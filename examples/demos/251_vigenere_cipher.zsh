@@ -101,3 +101,22 @@ for ((r=0; r<5; r++)); do
     done
     echo "  $row"
 done
+
+# === ztest assertions ===
+zassert_eq "$(char_idx A)" "0"   "A → 0"
+zassert_eq "$(char_idx Z)" "25"  "Z → 25"
+zassert_eq "$(char_idx a)" "0"   "a → 0"
+zassert_eq "$(char_idx z)" "25"  "z → 25"
+zassert_eq "$(char_idx ' ')" "-1" "space → -1"
+zassert_eq "$(idx_to_char 0 u)"  "A" "0 → A"
+zassert_eq "$(idx_to_char 25 u)" "Z" "25 → Z"
+zassert_eq "$(idx_to_char 0 l)"  "a" "0 → a"
+zassert_eq "$(encrypt HELLO KEY)" "RIJVS"          "encrypt HELLO/KEY"
+zassert_eq "$(encrypt ATTACKATDAWN LEMON)" "LXFOPVEFRNHR" "encrypt ATTACKATDAWN/LEMON"
+zassert_eq "$(decrypt RIJVS KEY)" "HELLO"          "decrypt RIJVS/KEY"
+zassert_eq "$(decrypt LXFOPVEFRNHR LEMON)" "ATTACKATDAWN" "decrypt round trip"
+zassert_eq "$(encrypt ABCDEFGHIJKLMNOPQRSTUVWXYZ A)" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "key=A is identity"
+enc_round=$(encrypt 'Cryptography is fun!' MENKE)
+dec_round=$(decrypt "$enc_round" MENKE)
+zassert_eq "$dec_round" "Cryptography is fun!" "punct passthrough round-trip"
+ztest_run

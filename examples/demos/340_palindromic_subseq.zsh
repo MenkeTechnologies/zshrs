@@ -219,3 +219,16 @@ echo "  Related problems:"
 echo "    min insertions/deletions to make palindrome"
 echo "    min cuts to partition into palindromes"
 echo "    count distinct palindromic subsequences (harder)"
+
+# === ztest assertions ===
+zassert_eq "$(lps bbbab)"   4 "bbbab LPS"
+zassert_eq "$(lps cbbd)"    2 "cbbd LPS"
+zassert_eq "$(lps racecar)" 7 "racecar full palindrome"
+zassert_eq "$(lps abcde)"   1 "abcde no palindrome"
+zassert_eq "$(lps aaaa)"    4 "aaaa all-same"
+zassert_eq "$(lps_direct bbbab)"   4 "direct bbbab"
+zassert_eq "$(lps_direct racecar)" 7 "direct racecar"
+zassert_eq "$(brute_count_palin_subseq abc)"  3 "abc palin count"
+zassert_eq "$(brute_count_palin_subseq aba)"  5 "aba palin count"
+zassert_eq "$(brute_count_palin_subseq abca)" 7 "abca palin count"
+ztest_run

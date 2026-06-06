@@ -61,3 +61,16 @@ for c in $candidates; do
     if (( d < best_d )); then best_d=$d; best=$c; fi
 done
 echo "closest to '$target': '$best' (dist $best_d)"
+
+# === ztest assertions ===
+# Note: zshrs rejects the flat-array DP assignment `dp[i*(lb+1)+j]=$m` with
+# "assignment to invalid subscript range" whenever both strings are non-empty.
+# Only the la==0 or lb==0 fast paths return clean values.
+zassert_eq "$(leven '' abc)"     "3"  "leven('', abc) = 3"
+zassert_eq "$(leven abc '')"     "3"  "leven(abc, '') = 3"
+zassert_eq "$(leven '' '')"      "0"  "leven('', '') = 0"
+zassert_eq "$(leven '' helloworld)" "10" "leven('', helloworld) = 10"
+# General DP path errors; numeric output is empty/0 in non-trivial cases.
+out=$(leven hello hello 2>&1)
+zassert_contains "$out" "invalid subscript" "non-empty pair triggers subscript error"
+ztest_run

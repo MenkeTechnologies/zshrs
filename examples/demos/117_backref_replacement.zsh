@@ -58,3 +58,30 @@ msg=${log_line##*\] }
 echo "level=$level"
 echo "date=$date_part"
 echo "msg=$msg"
+
+# === ztest assertions ===
+ss="alice:30:admin"
+zassert_eq "${ss/:/=}"   "alice=30:admin"      "first colon -> ="
+zassert_eq "${ss//:/=}"  "alice=30=admin"      "all colons -> ="
+# Case mutation flags
+phrase="zsh shell"
+zassert_eq "${(L)phrase}"  "zsh shell"   "(L) lowercase"
+zassert_eq "${(U)phrase}"  "ZSH SHELL"   "(U) uppercase"
+zassert_eq "${(C)phrase}"  "Zsh Shell"   "(C) capitalize"
+# strip prefix/suffix
+data="prefix_value_suffix"
+core=${data#prefix_}
+core=${core%_suffix}
+zassert_eq "$core"  "value"  "double strip"
+# trim shortest vs longest
+t="a.b.c.d"
+zassert_eq "${t%.*}"   "a.b.c"  "%.* shortest end"
+zassert_eq "${t%%.*}"  "a"      "%%.* longest end"
+# join with separator (zshrs doesn't interpolate $sep inside (j:..:); use literal)
+arr=(a b c d)
+zassert_eq "${(j:|:)arr}"  "a|b|c|d"  "(j:|:) literal join"
+# URL parse
+zassert_eq "$level"      "ERROR"   "level parsed"
+zassert_eq "$date_part"  "2026-05-29 14:30:00"  "date parsed"
+zassert_eq "$msg"        "failed to connect"    "msg parsed"
+ztest_run

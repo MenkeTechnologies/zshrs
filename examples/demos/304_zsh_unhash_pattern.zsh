@@ -117,3 +117,33 @@ alias only_one='echo lonely'
 echo "  before: $(alias only_one 2>/dev/null)"
 unalias only_one
 echo "  after unalias only_one: $(alias only_one 2>/dev/null || echo '(not defined)')"
+
+# === ztest assertions ===
+# unalias -m
+alias xpat_a='echo a'
+alias xpat_b='echo b'
+alias xpat_c='echo c'
+alias xkeep='echo keep'
+unalias -m 'xpat_*' 2>/dev/null
+zassert_eq "$(alias xpat_a 2>/dev/null)" ""    "unalias -m removed xpat_a"
+zassert_eq "$(alias xpat_b 2>/dev/null)" ""    "unalias -m removed xpat_b"
+zassert_contains "$(alias xkeep 2>/dev/null)" "xkeep"  "unalias -m left xkeep"
+unalias xkeep 2>/dev/null
+# unset -m on parameters
+typeset -g zkill1=v1 zkill2=v2 zkeep=keep
+unset -m 'zkill*' 2>/dev/null
+zassert_eq "${zkill1:-unset}" "unset"          "unset -m removed zkill1"
+zassert_eq "${zkill2:-unset}" "unset"          "unset -m removed zkill2"
+zassert_eq "${zkeep:-unset}" "keep"            "unset -m left zkeep"
+unset zkeep
+# unfunction -m
+zfn_a() { echo a; }
+zfn_b() { echo b; }
+zkeep_fn() { echo keep; }
+unfunction -m 'zfn_*' 2>/dev/null
+zfn_a_out=$(zfn_a 2>/dev/null || echo gone)
+zassert_eq "$zfn_a_out" "gone"                 "unfunction -m removed zfn_a"
+zkeep_out=$(zkeep_fn 2>/dev/null)
+zassert_eq "$zkeep_out" "keep"                 "unfunction -m left zkeep_fn"
+unfunction zkeep_fn 2>/dev/null
+ztest_run

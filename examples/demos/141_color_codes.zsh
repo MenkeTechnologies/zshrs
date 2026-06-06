@@ -56,3 +56,19 @@ for c in {16..51}; do
     printf '\033[38;5;%dm█' $c
 done
 printf '\033[0m\n'
+
+# === ztest assertions ===
+# print -P emits raw ANSI; assert on the encoded escape bytes.
+zassert_contains "$(red foo)"    $'\e[31m'    "red helper emits SGR 31"
+zassert_contains "$(green bar)"  $'\e[32m'    "green helper emits SGR 32"
+zassert_contains "$(yellow baz)" $'\e[33m'    "yellow helper emits SGR 33"
+zassert_contains "$(bold zoo)"   $'\e[1m'     "bold helper emits SGR 1"
+zassert_contains "$(red foo)"    "foo"        "red helper preserves content"
+# 256-color codes have %F{N} pattern -> 38;5;N
+zassert_contains "$(print -P '%F{196}x%f')" "38;5;196" "256-color SGR encoded"
+# Status indicators
+zassert_contains "$(ok done)"   "✓"  "ok shows checkmark"
+zassert_contains "$(fail err)"  "✗"  "fail shows cross"
+zassert_contains "$(warn wd)"   "⚠"  "warn shows triangle"
+zassert_contains "$(info i)"    "ℹ"  "info shows i-glyph"
+ztest_run

@@ -92,3 +92,19 @@ ci() {
 }
 echo "$1000 @ 5% for 10y: $(ci 1000 5 10)"
 echo "$5000 @ 7% for 5y: $(ci 5000 7 5)"
+
+# === ztest assertions ===
+# Note: calc_eval's `${expr//\$$k/${VARS[$k]}}` indirect-var substitution
+# pattern doesn't fire under zshrs, so `c = (a+b)*2` resolves to 0.  Assert on
+# what does work — calc_set, plain arithmetic, and the to_f / to_c / ci fns.
+calc_set demo_x 7 >/dev/null
+zassert_eq "${VARS[demo_x]}" "7" "calc_set stores value"
+zassert_eq "$(calc_eval 2+3)"     "5"   "calc_eval bare arithmetic add"
+zassert_eq "$(calc_eval '2 * 4')" "8"   "calc_eval bare arithmetic mul"
+zassert_eq "$(to_f 0)"   "32"   "0°C → 32°F"
+zassert_eq "$(to_f 100)" "212"  "100°C → 212°F"
+zassert_eq "$(to_c 32)"  "0"    "32°F → 0°C"
+zassert_eq "$(to_c 212)" "100"  "212°F → 100°C"
+zassert_eq "$(ci 1000 5 10)" "1623" "compound 1000@5% 10y (integer-only)"
+zassert_eq "$(ci 5000 7 5)"  "7010" "compound 5000@7% 5y (integer-only)"
+ztest_run

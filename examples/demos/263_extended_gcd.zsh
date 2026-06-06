@@ -82,3 +82,31 @@ msg=42
 c=$(modpow_stub() { local r=1 b=$1 ex=$2 m=$3; (( b %= m )); while (( ex > 0 )); do (( ex & 1 )) && (( r = r * b % m )); (( ex >>= 1 )); (( b = b * b % m )); done; echo $r; }; modpow_stub $msg $e $n)
 back=$(modpow_stub() { local r=1 b=$1 ex=$2 m=$3; (( b %= m )); while (( ex > 0 )); do (( ex & 1 )) && (( r = r * b % m )); (( ex >>= 1 )); (( b = b * b % m )); done; echo $r; }; modpow_stub $c $d $n)
 echo "  msg=$msg → enc=msg^e mod n = $c → dec=enc^d mod n = $back"
+
+# === ztest assertions ===
+ext_gcd 48 18
+zassert_eq "${EGCD[g]}" "6"  "gcd(48,18) = 6"
+ext_gcd 17 13
+zassert_eq "${EGCD[g]}" "1"  "gcd(17,13) = 1 (coprime)"
+ext_gcd 270 192
+zassert_eq "${EGCD[g]}" "6"  "gcd(270,192) = 6"
+# Bezout identity check: a·x + b·y = gcd
+ext_gcd 100 75
+g=${EGCD[g]}; x=${EGCD[x]}; y=${EGCD[y]}
+zassert_eq "$g" "25"          "gcd(100,75) = 25"
+zassert_eq "$((100 * x + 75 * y))" "25" "Bezout: 100x + 75y = 25"
+zassert_eq "$(mod_inv 3 11)"  "4"  "3⁻¹ mod 11 = 4"
+zassert_eq "$(mod_inv 7 26)"  "15" "7⁻¹ mod 26 = 15"
+zassert_eq "$(mod_inv 10 17)" "12" "10⁻¹ mod 17 = 12"
+zassert_eq "$(mod_inv 15 100)" "no-inverse" "gcd(15,100)=5 → no inverse"
+zassert_eq "$(mod_inv 6 9)"    "no-inverse" "gcd(6,9)=3 → no inverse"
+# φ(12) = 4 (a ∈ {1,5,7,11})
+phi=0
+for a in {1..11}; do
+    ext_gcd $a 12
+    (( EGCD[g] == 1 )) && (( phi++ ))
+done
+zassert_eq "$phi" "4" "φ(12) = 4"
+# RSA-toy: msg → enc → dec
+zassert_eq "$back" "42" "RSA round-trip msg=42"
+ztest_run

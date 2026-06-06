@@ -48,3 +48,14 @@ for ((n = 1; n <= 100; n++)); do
     fi
 done
 echo "n=$best gives length $bestlen"
+
+# === ztest assertions ===
+zassert_eq "$(collatz_seq 6)"   "6 3 10 5 16 8 4 2 1" "collatz sequence n=6"
+zassert_eq "$(collatz_seq 1)"   "1"                    "collatz n=1 base case"
+zassert_eq "$(collatz_len 1)"   0                      "collatz length n=1"
+zassert_eq "$(collatz_len 6)"   8                      "collatz length n=6"
+zassert_eq "$(collatz_len 27)"  111                    "collatz length n=27 (famous)"
+zassert_eq "$(collatz_len 7)"   16                     "collatz length n=7"
+zassert_eq "$best"              97                     "max-length n in 1..100"
+zassert_eq "$bestlen"           118                    "max length value in 1..100"
+ztest_run

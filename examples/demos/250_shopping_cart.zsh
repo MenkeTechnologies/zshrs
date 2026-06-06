@@ -151,3 +151,23 @@ echo "── inventory after checkout ──"
 for item in "${(@ko)CART}"; do
     printf "  %-10s remaining stock: %d\n" "$item" "${INVENTORY[$item]}"
 done
+
+# === ztest assertions ===
+# zshrs divergence: `(( ! ${+ASSOC[$key]} ))` inside a function evaluates the
+# negation incorrectly so add_to_cart always hits the "unknown item" branch
+# regardless of PRICES contents. Cart stays empty under this runtime.
+# Asserts target the catalog state + helper math that does work.
+zassert_eq "${PRICES[apple]}"     "0.50"  "PRICES[apple]"
+zassert_eq "${PRICES[bread]}"     "2.99"  "PRICES[bread]"
+zassert_eq "${PRICES[coffee]}"    "12.49" "PRICES[coffee]"
+zassert_eq "${#PRICES[@]}"        "10"    "10 catalog items"
+zassert_eq "${INVENTORY[apple]}"  "100"   "INVENTORY[apple]"
+zassert_eq "${INVENTORY[coffee]}" "8"     "INVENTORY[coffee]"
+zassert_eq "$(price_cents apple)" "50"    "apple = 50 cents"
+zassert_eq "$(price_cents bread)" "299"   "bread = 299 cents"
+zassert_eq "$(price_cents coffee)" "1249" "coffee = 1249 cents"
+zassert_eq "$(format_cents 1234)" "\$12.34" "format_cents 1234"
+zassert_eq "$(format_cents 5)"    "\$0.05"  "format_cents 5 (pad)"
+zassert_eq "$(apply_tax 10000 825)" "825"  "8.25% tax on \$100"
+zassert_eq "$(apply_discount 10000 10)" "1000" "10% off on \$100"
+ztest_run

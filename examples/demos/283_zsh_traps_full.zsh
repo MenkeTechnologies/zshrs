@@ -128,3 +128,18 @@ echo "  total USR1 fires:         $usr1_cnt"
 echo "  total USR2 fires:         $usr2_cnt"
 echo "  total ERR fires:          $err_cnt"
 echo "  total ZERR fires:         $zerr_cnt"
+
+# === ztest assertions ===
+# 3 USR1 sent, then ignored, then reset to default, then re-trapped + 1 = 4 fires
+zassert_eq "$usr1_cnt" 4 "USR1 fired 4 times across reinstall cycle"
+zassert_eq "$usr2_cnt" 1 "USR2 fired once"
+zassert_eq "$zerr_cnt" 2 "ZERR fired on failing commands"
+# Counters never went negative
+zassert_ge "$int_cnt"  0 "INT counter non-negative"
+zassert_ge "$term_cnt" 0 "TERM counter non-negative"
+zassert_ge "$hup_cnt"  0 "HUP counter non-negative"
+# Function with trap returns 0 from explicit `false` ZERR catches but doesn't propagate failure
+trigger_ok() { true; }
+trigger_ok
+zassert_eq "$?" 0 "true command exits 0"
+ztest_run

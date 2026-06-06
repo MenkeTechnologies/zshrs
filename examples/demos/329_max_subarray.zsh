@@ -203,3 +203,22 @@ echo "── stats ──"
 echo "  Kadane complexity:  O(n) time, O(1) space"
 echo "  Brute-force:        O(n²)"
 echo "  Application:        stock profit, signal peaks, ML segmentation"
+
+# === ztest assertions ===
+kadane -2 1 -3 4 -1 2 1 -5 4
+zassert_eq "${RES[1]}" 6 "kadane mixed"
+kadane 1 2 3 4 5
+zassert_eq "${RES[1]}" 15 "kadane all pos"
+kadane -1 -2 -3 -4
+zassert_eq "${RES[1]}" -1 "kadane all neg"
+kadane 0 0 0
+zassert_eq "${RES[1]}" 0  "kadane zeros"
+zassert_eq "$(brute_force_max 3 -2 5 -1 6 -3 2 7 -5 2 1)" 17 "brute force"
+kadane_with_indices -2 1 -3 4 -1 2 1 -5 4
+zassert_eq "${RES_IDX[1]}" 6 "kadane idx sum"
+zassert_eq "${RES_IDX[2]}" 4 "kadane idx start"
+zassert_eq "${RES_IDX[3]}" 7 "kadane idx end"
+zassert_eq "$(max_profit 7 1 5 3 6 4)" 5 "stock profit"
+zassert_eq "$(max_profit 7 6 4 3 1)"   0 "stock no profit"
+zassert_eq "$(circular_max 5 -3 5)" 10 "circular wrap"
+ztest_run

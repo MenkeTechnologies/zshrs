@@ -55,3 +55,15 @@ echo "$logs" | awk '{print $1, $NF}' | grep -E ' [0-9]+$' \
     } END {
         for (k in sum) printf "  %s: %d bytes\n", k, sum[k]
     }' | sort
+
+# === ztest assertions ===
+zassert_eq "$(echo "$logs" | wc -l | tr -d ' ')" 10 "10 log entries"
+zassert_eq "$total_bytes" 12681  "total bytes served"
+ips=$(echo "$logs" | awk '{print $1}' | sort -u | wc -l | tr -d ' ')
+zassert_eq "$ips" 5 "5 unique IPs"
+errs=$(echo "$logs" | grep -cE ' (4[0-9]{2}|5[0-9]{2}) ')
+zassert_eq "$errs" 4 "4 error requests (401,403,404,500)"
+gets=$(echo "$logs" | grep -cE '"GET ')
+zassert_eq "$gets" 7 "7 GET requests"
+zassert_contains "$logs" "192.168.1.10" "logs contain client IP"
+ztest_run

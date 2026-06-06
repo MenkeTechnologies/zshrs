@@ -106,3 +106,13 @@ echo "  → github.com/MenkeTechnologies/zshrs"
 echo
 
 banner "" 70
+
+# === ztest assertions ===
+zassert_eq "$(banner foo 10 | wc -l | tr -d ' ')" "3"  "banner emits 3 lines"
+out=$(banner "hi" 8)
+zassert_contains "$out" "hi"            "banner contains text"
+zassert_contains "$out" "════════"      "banner contains rule"
+zassert_eq "${#cat_list}" "16"          "16 categories listed"
+# Verify PID interpolation didn't fail
+zassert_gt "$$" "0"                     "PID present"
+ztest_run

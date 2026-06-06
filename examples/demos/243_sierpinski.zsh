@@ -69,3 +69,17 @@ for ((i=0; i<SZ; i++)); do
     done
     echo "$line"
 done
+
+# === ztest assertions ===
+# Carpet predicate: (0,0) is solid; (4,4) sits in the central 3x3 hole of the
+# first iteration (rows 3..5 cols 3..5) so it's hollow; bitwise sierpinski:
+# (i & j)==0 holds along row 0 and col 0.
+zassert_ok "${functions[carpet]:+1}" "carpet function defined"
+if carpet 0 0; then zassert_ok 1 "carpet (0,0) solid"; else zassert_ok 0 "carpet (0,0) solid"; fi
+if carpet 4 4; then zassert_ok 0 "carpet (4,4) hole"; else zassert_ok 1 "carpet (4,4) hole"; fi
+if carpet 0 5; then zassert_ok 1 "carpet (0,5) solid (row 0)"; else zassert_ok 0 "carpet (0,5) solid"; fi
+if carpet 13 13; then zassert_ok 0 "carpet (13,13) center hole"; else zassert_ok 1 "carpet (13,13) center hole"; fi
+# Pascal mod 2: row 4 (i.e. n=3 binomials 1 3 3 1) → 1 1 1 1; assert row size pattern.
+zassert_eq "$ROWS" "16" "ROWS constant"
+zassert_eq "$SZ"   "27" "SZ constant (final carpet)"
+ztest_run

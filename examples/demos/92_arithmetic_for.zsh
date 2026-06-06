@@ -60,3 +60,39 @@ for ((n = 2, count = 0; count < 10; n++)); do
     fi
 done
 echo
+
+# === ztest assertions ===
+# Basic counter
+seen=()
+for ((i = 0; i < 5; i++)); do seen+=("$i"); done
+zassert_eq "${(j: :)seen}" "0 1 2 3 4" "C-style basic counter"
+# Descending
+seen=()
+for ((i = 10; i > 0; i -= 2)); do seen+=("$i"); done
+zassert_eq "${(j: :)seen}" "10 8 6 4 2" "C-style descending step"
+# Multi-counter
+sums=()
+for ((i = 0, j = 10; i < 5; i++, j--)); do sums+=("$((i+j))"); done
+zassert_eq "${(j: :)sums}" "10 10 10 10 10" "multi-counter comma"
+# Triangular
+sum=0
+for ((n = 1; n <= 10; n++)); do (( sum += n )); done
+zassert_eq "$sum" 55 "T(10) = 55"
+# Compound cond
+seen=()
+for ((i = 0; i < 10 && i * i < 50; i++)); do seen+=("$i"); done
+zassert_eq "${(j: :)seen}" "0 1 2 3 4 5 6 7" "compound cond i*i<50"
+# Primes
+primes=()
+isprime2() {
+    local n=$1 k
+    (( n < 2 )) && return 1
+    for ((k = 2; k * k <= n; k++)); do (( n % k == 0 )) && return 1; done
+    return 0
+}
+for ((n = 2, c = 0; c < 5; n++)); do
+    if isprime2 $n; then primes+=("$n"); (( c++ )); fi
+done
+zassert_eq "${(j: :)primes}" "2 3 5 7 11" "first 5 primes"
+ztest_run
+

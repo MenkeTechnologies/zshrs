@@ -58,3 +58,15 @@ done
 
 echo
 echo "── total words: ${#words[@]} ──"
+
+# === ztest assertions ===
+zassert_eq "${#words[@]}" 25 "25 words in vocabulary"
+out_tiger=$(play_chain tiger 5)
+zassert_contains "$out_tiger" "start: tiger"  "tiger chain starts"
+zassert_contains "$out_tiger" "chain length:" "tiger chain has length"
+zassert_contains "$out_tiger" "rabbit"        "tiger → rabbit step"
+out_apple=$(play_chain apple 8)
+zassert_contains "$out_apple" "start: apple"  "apple chain starts"
+out_lion=$(play_chain lion 6)
+zassert_contains "$out_lion" "chain length: 6" "lion chain reaches length 6"
+ztest_run

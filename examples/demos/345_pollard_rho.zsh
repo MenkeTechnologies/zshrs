@@ -160,3 +160,22 @@ echo "  trial division alone: O(sqrt(n))"
 echo "  Pollard rho:          O(n^(1/4)) for moderate composites"
 echo "  Pollard p-1:          finds smooth factors quickly"
 echo "  GNFS:                 best known for very large n"
+
+# === ztest assertions ===
+zassert_eq "$(gcd 48 18)"     6   "gcd(48,18)"
+zassert_eq "$(gcd 100 75)"    25  "gcd(100,75)"
+zassert_eq "$(gcd 17 13)"     1   "gcd coprime"
+zassert_eq "$(gcd 0 5)"       5   "gcd(0,5)"
+factor 91
+zassert_eq "${FACTORS[*]}" "7 13" "factor 91"
+factor 1024
+zassert_eq "${#FACTORS}" 10 "factor 1024 = 2^10"
+factor 65535
+zassert_eq "${FACTORS[*]}" "3 5 17 257" "factor 65535"
+if is_prime 1009; then zassert_ok 1 "1009 prime"
+else zassert_ok 0 "1009 should be prime"; fi
+if is_prime 1024; then zassert_ok 0 "1024 should not be prime"
+else zassert_ok 1 "1024 composite"; fi
+if is_prime 65537; then zassert_ok 1 "65537 prime"
+else zassert_ok 0 "65537 should be prime"; fi
+ztest_run

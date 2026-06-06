@@ -138,3 +138,20 @@ for klen in 1 2 3 4 5; do
         printf "  keylen=%d : avg Hamming/bit ≈ %d.%02d\n" $klen $((normalized/100)) $((normalized%100))
     fi
 done
+
+# === ztest assertions ===
+# Round-trip is the defining property
+zassert_eq "$(xor_decode "$(xor_hex "hello" "key")" "key")" "hello" "round-trip 'hello' / key='key'"
+zassert_eq "$(xor_decode "$(xor_hex "ZSHRS" "XOR")" "XOR")" "ZSHRS" "round-trip 'ZSHRS'"
+zassert_eq "$(xor_decode "$(xor_hex "1234567890" "9")" "9")" "1234567890" "round-trip with single-char key"
+# Known hex output for short string + key
+zassert_eq "$(xor_hex "hello" "key")" "03 00 15 07 0a" "xor_hex(hello,key) bytes"
+zassert_eq "$(xor_hex "A" "A")" "00" "A xor A = 00"
+# Hamming popcount
+zassert_eq "$(hamming 0 0)"    0  "hamming(0,0) = 0"
+zassert_eq "$(hamming 0 255)"  8  "hamming(0,255) = 8 bits"
+zassert_eq "$(hamming 1 2)"    2  "hamming(1,2) = 2 (0b01 vs 0b10)"
+zassert_eq "$(hamming 7 0)"    3  "hamming(7,0) = 3 set bits"
+# Self-XOR identity
+zassert_eq "$back" "$test_str" "(plain xor K) xor K = plain"
+ztest_run

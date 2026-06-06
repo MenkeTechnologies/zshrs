@@ -181,3 +181,24 @@ done
 echo "  total chars (if flat): $total_chars"
 echo "  ratio of nodes/chars: $(( NEXT * 100 / total_chars ))%"
 echo "  (lower ratio = better compression via shared prefixes)"
+
+# === ztest assertions ===
+trie_init
+trie_insert apple
+trie_insert app
+trie_insert apt
+# trie_search status codes
+if trie_search apple; then zassert_ok 1 "apple found"
+else zassert_ok 0 "apple should find"; fi
+trie_search app
+zassert_eq $? 0 "app is word"
+trie_search appl
+zassert_eq $? 1 "appl is prefix only"
+trie_search xyz
+zassert_eq $? 2 "xyz not in trie"
+# Cardinality
+zassert_ok "$NEXT"     "node count > 0"
+zassert_ok "${#CHILDREN}" "children edges > 0"
+# Total words inserted in earlier section
+zassert_eq "${#words}" 34 "34 dict words"
+ztest_run

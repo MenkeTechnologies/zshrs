@@ -90,3 +90,20 @@ for f in "$tmpdir"/**/*(N.); do
     (( total += size ))
 done
 echo "  total: $total bytes"
+
+# === ztest assertions ===
+# stat -f / -c flags fail in this zshrs build (stat is a builtin), so byte
+# totals stay 0. File-count and extension classifications still work.
+zassert_ok "$tmpdir" "tmpdir name set"
+[[ -d "$tmpdir/src" ]] && r=1 || r=0; zassert_eq "$r" 1 "src/ exists"
+[[ -f "$tmpdir/README.md" ]] && r=1 || r=0; zassert_eq "$r" 1 "README.md exists"
+file_count=0
+for f in "$tmpdir"/**/*(N.); do (( file_count++ )); done
+zassert_eq "$file_count" 10 "10 regular files in fixture"
+md_count=0
+for f in "$tmpdir"/**/*.md(N.); do (( md_count++ )); done
+zassert_eq "$md_count" 3 "3 markdown files (README/guide/intro)"
+rs_count=0
+for f in "$tmpdir"/**/*.rs(N.); do (( rs_count++ )); done
+zassert_eq "$rs_count" 6 "6 .rs files"
+ztest_run

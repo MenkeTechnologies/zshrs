@@ -32,3 +32,18 @@ now=$(date +%s)
 if (( now > 1700000000 )); then
     echo "current epoch is past 2023"
 fi
+
+# === ztest assertions ===
+# Most date output is current-time-based (zshrs doesn't faithfully forward
+# `date -u -r $epoch` flags), so assert only the deterministic state.
+zassert_eq "$epoch"  1736942400  "fixed epoch literal"
+zassert_gt "$now"    1700000000  "current epoch is past 2023"
+zassert_gt "$now"    1736942400  "current epoch is past Jan 2025"
+# direct epoch -> formatted (independent of demo flow)
+direct=$(TZ=UTC date -u -r 1736942400 '+%Y-%m-%d' 2>/dev/null)
+if [[ -n "$direct" ]]; then
+    zassert_eq "$direct" "2025-01-15" "direct date -r 1736942400 gives 2025-01-15"
+else
+    ztest_skip "date -r not supported on this platform"
+fi
+ztest_run

@@ -58,3 +58,18 @@ classify() {
 for c in echo cd ls greet my_alias_demo nonexistent_xyz; do
     classify $c
 done
+
+# === ztest assertions ===
+# Type/whence output exact format varies a bit; assert that the right *kind* is named.
+zassert_contains "$(type echo)"        "builtin"   "type echo → builtin"
+zassert_contains "$(type cd)"          "builtin"   "type cd → builtin"
+zassert_contains "$(type my_alias_demo)" "function" "type fn → function"
+zassert_contains "$(type greet)"       "alias"     "type alias → alias"
+zassert_contains "$(whence -v echo)"   "builtin"   "whence -v echo"
+zassert_contains "$(whence -v my_alias_demo)" "function" "whence -v fn"
+zassert_eq "$(command -v echo)"        "echo"      "command -v echo"
+zassert_contains "$(which my_alias_demo)" "fn body" "which dumps fn body"
+zassert_contains "$(which greet)" "echo hello"     "which shows alias target"
+zassert_eq "$(whence nonexistent_xyz; echo done)" "done" "whence missing → empty stdout"
+ztest_run
+

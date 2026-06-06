@@ -56,3 +56,14 @@ while true; do
     fi
     seen[$n]=1
 done
+
+# === ztest assertions ===
+zassert_eq "$(sum_sq_digits 19)" 82  "sum-sq-digits 19"
+zassert_eq "$(sum_sq_digits 7)"  49  "sum-sq-digits 7"
+zassert_eq "$(sum_sq_digits 1)"  1   "sum-sq-digits 1"
+is_happy 19  && zassert_ok 1 "19 is happy"  || zassert_ok 0 "19 is happy"
+is_happy 4   && zassert_ok 0 "4 unhappy"    || zassert_ok 1 "4 unhappy"
+is_happy 7   && zassert_ok 1 "7 is happy"   || zassert_ok 0 "7 is happy"
+zassert_eq "${#happy[@]}"  11                            "happy count 1..50"
+zassert_eq "${happy[*]}"   "1 7 10 13 19 23 28 31 32 44 49" "happy list 1..50"
+ztest_run

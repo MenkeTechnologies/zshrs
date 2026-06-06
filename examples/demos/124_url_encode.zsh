@@ -65,3 +65,19 @@ build_query() {
 build_query name "Alice" "age" 30 "role" "ad/min"
 build_query q "hello world" "lang" "en US"
 build_query email "user@host.com" "subject" "100% off"
+
+# === ztest assertions ===
+zassert_eq "$(url_encode 'hello world')"   "hello+world"         "encode space → +"
+zassert_eq "$(url_encode 'foo@bar.com')"   "foo%40bar.com"       "encode @"
+zassert_eq "$(url_encode '100% done')"     "100%25+done"         "encode % and space"
+zassert_eq "$(url_encode 'a.b-c_d~e')"     "a.b-c_d~e"           "encode preserves unreserved"
+# Round-trip for safe inputs
+for s in "hello world" "foo@bar.com" "abc 123"; do
+    enc=$(url_encode "$s")
+    dec=$(url_decode "$enc")
+    zassert_eq "$dec" "$s" "round-trip: $s"
+done
+# build_query produces & separator
+q=$(build_query a 1 b 2)
+zassert_eq "$q"  "a=1&b=2"  "build_query a=1&b=2"
+ztest_run

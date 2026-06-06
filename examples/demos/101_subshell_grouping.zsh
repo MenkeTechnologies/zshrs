@@ -59,3 +59,26 @@ echo "── pipeline launches subshells ──"
 v=parent
 echo data | { read l; v=changed; echo "in subshell: v=$v"; }
 echo "parent: v=$v (depends on pipefail and shell flags)"
+
+# === ztest assertions ===
+# subshell var-leak: ( x=inner ) MUST NOT change outer x
+xx=outer
+( xx=inner )
+zassert_eq "$xx" "outer"  "subshell does not leak assignment"
+# group {} MUST change outer y
+yy=outer
+{ yy=inner; }
+zassert_eq "$yy" "inner"  "group preserves scope"
+# nested subshells: outer z unchanged
+zz=outer
+( zz=middle; ( zz=innermost ) )
+zassert_eq "$zz" "outer"  "nested subshell isolation"
+# exit code of subshell
+( exit 7 )
+zassert_eq "$?" "7"   "subshell exit code propagates"
+# command sub captures stdout
+zassert_eq "$( echo hello )" "hello"  "command sub capture"
+# pipeline rightmost wins (no pipefail)
+( exit 7 ) | ( exit 11 )
+zassert_eq "$?" "11"  "pipe rightmost exit"
+ztest_run

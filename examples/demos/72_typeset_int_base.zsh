@@ -44,3 +44,19 @@ echo "ee (E 4): $ee"
 echo "── readonly numerics ──"
 typeset -ri ROCONST=42
 echo "ROCONST: $ROCONST"
+
+# === ztest assertions ===
+zassert_eq "$hex"  "16#FF"  "typeset -i 16 hex=255 → 16#FF"
+zassert_eq "$bin"  "2#1010" "typeset -i 2 bin=10 → 2#1010"
+zassert_eq "$oct"  "8#100"  "typeset -i 8 oct=64 → 8#100"
+zassert_eq "$dec"  "42"     "typeset -i 10 dec=42 → 42"
+zassert_eq $(( 0xff ))   255 "arith 0xff"
+zassert_eq $(( 2#1010 )) 10  "arith 2#1010"
+zassert_eq $(( 16#ff ))  255 "arith 16#ff"
+zassert_eq $(( 8#777 ))  511 "arith 8#777"
+zassert_eq "$x"    "16#FFF"  "x reassigned 4095 in base16"
+zassert_eq "$x8"   "8#7777"  "4095 in base8"
+zassert_eq "$x2"   "2#1010"  "10 in base2"
+zassert_eq "$pi"   "3.142"   "F 3 truncated pi"
+zassert_eq "$ROCONST" 42     "readonly value"
+ztest_run

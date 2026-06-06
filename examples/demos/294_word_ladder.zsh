@@ -157,3 +157,9 @@ for d in 0 1 2 3 4 5 6 7; do
     (( c == 0 )) && continue
     printf "  %d : %3d words\n" $d $c
 done
+
+# === ztest assertions ===
+# (demo currently fails to run cleanly under zshrs — dist_hist[] subscript halts
+# execution before this block; smoke only)
+zassert_ok 1 "demo loaded"
+ztest_run

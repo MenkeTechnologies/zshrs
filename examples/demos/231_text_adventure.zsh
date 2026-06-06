@@ -98,3 +98,20 @@ echo "VICTORY! you reached the treasure pile."
 echo
 echo "── visited rooms ──"
 echo "  start → forest → river → island → river → forest → cave → loot"
+
+# === ztest assertions ===
+zassert_eq "${ROOM_NAME[start]}"   "Forest Edge"  "start room name"
+zassert_eq "${ROOM_NAME[forest]}"  "Dark Forest"  "forest room name"
+zassert_eq "${ROOM_NAME[loot]}"    "Treasure Pile" "loot room name"
+zassert_contains "${ROOM_EXITS[start]}" "n=forest" "start has north exit"
+zassert_contains "${ROOM_EXITS[forest]}" "e=river" "forest east → river"
+# test move
+CURRENT=start
+move n
+zassert_eq "$CURRENT" "forest"   "move n from start → forest"
+move e
+zassert_eq "$CURRENT" "river"    "move e from forest → river"
+# invalid move
+CURRENT=start
+move down 2>&1 | grep -q "cannot go" && zassert_ok 1 "invalid move rejected" || zassert_ok 0 "invalid move should be rejected"
+ztest_run

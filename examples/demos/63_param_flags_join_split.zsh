@@ -35,3 +35,19 @@ echo "── pipe through both: split then re-join differently ──"
 src="a:b:c:d"
 arr3=( ${(s/:/)src} )
 echo "via (j: , :): ${(j: , :)arr3}"
+
+# === ztest assertions ===
+zassert_eq "${(j:,:)arr}"        "alpha,beta,gamma,delta"          "(j) comma join"
+zassert_eq "${(j:-:)arr}"        "alpha-beta-gamma-delta"          "(j) dash join"
+zassert_eq "${(j: -> :)arr}"     "alpha -> beta -> gamma -> delta" "(j) multi-char join"
+parts=( ${(s:,:)csv} )
+zassert_eq "${#parts[@]}"        4                                  "(s) split count"
+zassert_eq "${parts[1]}"         "one"                              "(s) first part"
+zassert_eq "${parts[4]}"         "four"                             "(s) last part"
+fs=( ${(f)multi} )
+zassert_eq "${#fs[@]}"           3                                  "(f) newline split count"
+zassert_eq "${fs[2]}"            "line2"                            "(f) middle line"
+zassert_eq "${(F)arr}"           $'alpha\nbeta\ngamma\ndelta'       "(F) join with newlines"
+zassert_eq "${#arr2[@]}"         5                                  "round-trip split count = 5"
+zassert_eq "$joined"             "a-b-c-d-e"                        "round-trip joined"
+ztest_run

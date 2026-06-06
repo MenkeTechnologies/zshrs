@@ -64,3 +64,20 @@ add_to_path() {
 add_to_path /tmp
 add_to_path /nonexistent_xyz
 add_to_path /tmp  # second add should skip
+
+# === ztest assertions ===
+# PATH ↔ path[] is tied; PATH must be non-empty and contain at least one entry.
+zassert_ne "$PATH" ""        "PATH set"
+zassert_gt "${#path[@]}" "0" "path[] has entries"
+# typeset -U dedupe
+typeset -U dedupe_test=( a b a c b a )
+zassert_eq "${#dedupe_test[@]}" "3" "typeset -U dedupes literals"
+# add_to_path behavior
+zassert_eq "$(add_to_path /nonexistent_xyz)" "skip (not a dir): /nonexistent_xyz" "add_to_path rejects missing"
+# After first add_to_path /tmp, /tmp should be at path[1] (re-add path also lands there)
+zassert_eq "${path[1]}" "/tmp" "add_to_path prepends /tmp"
+# Second add_to_path /tmp returns silently — no echo
+zassert_eq "$(add_to_path /tmp)" "" "second add_to_path /tmp is silent (already in path)"
+# Filter for existing dirs
+zassert_eq "$(filter_existing /tmp /nonexistent_xyz_zzz)" "/tmp" "filter_existing keeps only real dirs"
+ztest_run

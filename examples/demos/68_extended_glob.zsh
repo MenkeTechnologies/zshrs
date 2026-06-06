@@ -44,3 +44,34 @@ print -l ${arr:#a*}
 
 echo "── (M):# match-keep ──"
 print -l ${(M)arr:#a*}
+
+# === ztest assertions ===
+# alternation
+matched=()
+for x in $arr; do
+    [[ $x == (apple|cherry) ]] && matched+=($x)
+done
+zassert_eq "${#matched[@]}" 2 "(apple|cherry) matches 2"
+# negation
+nota=()
+for x in $arr; do
+    [[ $x == ^a* ]] && nota+=($x)
+done
+zassert_eq "${nota[*]}" "banana cherry" "^a* yields non-a-prefix"
+# except
+exc=()
+for x in $arr; do
+    [[ $x == a*~apple ]] && exc+=($x)
+done
+zassert_eq "${exc[*]}" "avocado almond" "a*~apple"
+# # 0+ rep
+s=foobaarrr
+[[ $s == foob(a#)r* ]] && zassert_ok 1 "a# 0+ rep matches"   || zassert_ok 0 "a# 0+ rep matches"
+[[ $s == foob(a##)r* ]] && zassert_ok 1 "a## 1+ rep matches" || zassert_ok 0 "a## 1+ rep matches"
+# parameter substitution
+files=(test.txt foo.log bar.txt main.zsh)
+nottxt=( ${files:#*.txt} )
+zassert_eq "${nottxt[*]}" "foo.log main.zsh" ":# drops .txt"
+keepa=( ${(M)arr:#a*} )
+zassert_eq "${#keepa[@]}" 3 "(M):# keeps 3 a-prefix"
+ztest_run

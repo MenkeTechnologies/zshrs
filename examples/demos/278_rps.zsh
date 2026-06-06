@@ -123,3 +123,24 @@ RANDOM=42
 play_match random random 1000
 echo "  random vs random over 1000: W=${WIN_COUNT[random]} D=${DRAW_COUNT[random]}"
 echo "  (expected ~333 each if uniform)"
+
+# === ztest assertions ===
+# duel return semantics are the deterministic core (independent of PRNG).
+duel R R; zassert_eq "$?" 0  "tie: R vs R"
+duel R S; zassert_eq "$?" 1  "Rock beats Scissors"
+duel P R; zassert_eq "$?" 1  "Paper beats Rock"
+duel S P; zassert_eq "$?" 1  "Scissors beats Paper"
+duel S R; zassert_eq "$?" 2  "p2 wins: Rock>Scissors"
+duel R P; zassert_eq "$?" 2  "p2 wins: Paper>Rock"
+duel P S; zassert_eq "$?" 2  "p2 wins: Scissors>Paper"
+# Cycle strategy
+zassert_eq "$(throw_cycle 0)" "R" "cycle index 0 -> R"
+zassert_eq "$(throw_cycle 1)" "P" "cycle index 1 -> P"
+zassert_eq "$(throw_cycle 2)" "S" "cycle index 2 -> S"
+zassert_eq "$(throw_cycle 3)" "R" "cycle wraps at 3 -> R"
+# throw_random returns valid choice
+r=$(throw_random)
+zassert_match '^[RPS]$' "$r" "throw_random yields R/P/S"
+# strategy list
+zassert_eq "${#strategies}" 6 "6 strategies"
+ztest_run

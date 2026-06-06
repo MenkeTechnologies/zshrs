@@ -165,3 +165,29 @@ for d in 30 50 70; do
         printf "  density=%2d%% : avg MST = %d (over %d trials)\n" $d $((sum / trials)) $trials
     fi
 done
+
+# === ztest assertions ===
+# Union-find: connect, find, components
+uf_reset 5
+zassert_eq "${#PARENT_UF}" "5"           "uf_reset creates 5 nodes"
+uf_union 1 2
+uf_union 3 4
+count_components 5
+zassert_eq "$result" "3"                 "after 2 unions of 5 nodes, 3 components"
+uf_union 1 3
+count_components 5
+zassert_eq "$result" "2"                 "after 3rd union, 2 components"
+# Kruskal on a small fixed graph
+EDGES=("1 1 2" "2 2 3" "3 3 4" "4 1 4" "5 1 3")
+kruskal_weight 4
+zassert_eq "$result" "6"                 "MST(1+2+3)=6 on 4-node chain"
+zassert_eq "${#MST_EDGES}" "3"           "MST has n-1=3 edges"
+# Deterministic: same seed reproduces
+RANDOM=42
+gen_graph 10 100
+n1=${#EDGES}
+RANDOM=42
+gen_graph 10 100
+n2=${#EDGES}
+zassert_eq "$n1" "$n2"                   "seed 42 reproduces"
+ztest_run

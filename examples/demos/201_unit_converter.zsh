@@ -110,3 +110,18 @@ echo "1 day → $(convert_time 1 day hr) hr"
 echo "1 year → $(convert_time 1 year day) day"
 echo "3600 s → $(convert_time 3600 s hr) hr"
 echo "1 week → $(convert_time 1 week min) min"
+
+# === ztest assertions ===
+zassert_eq "$(convert_length 1 m cm)"  "100.00"  "1 m = 100 cm"
+zassert_eq "$(convert_length 1 km m)"  "1000.00" "1 km = 1000 m"
+zassert_eq "$(convert_length 1 mi ft)" "5280.00" "1 mi = 5280 ft"
+zassert_eq "$(convert_weight 1 kg g)"  "1000.00" "1 kg = 1000 g"
+zassert_eq "$(convert_weight 1 lb kg)" "0.45"    "1 lb ≈ 0.45 kg (integer trunc)"
+zassert_eq "$(convert_temp 0 C F)"     32        "0 C = 32 F"
+zassert_eq "$(convert_temp 100 C F)"   212       "100 C = 212 F"
+zassert_eq "$(convert_temp 32 F C)"    0         "32 F = 0 C"
+zassert_eq "$(convert_temp 0 C K)"     273       "0 C = 273 K"
+zassert_eq "$(convert_time 1 hr s)"    3600      "1 hr = 3600 s"
+zassert_eq "$(convert_time 1 day hr)"  24        "1 day = 24 hr"
+zassert_eq "$(convert_time 1 year day)" 365      "1 year = 365 day"
+ztest_run

@@ -107,3 +107,23 @@ echo "  → github.com/MenkeTechnologies/zshrs"
 echo
 
 banner "" 66
+
+# === ztest assertions ===
+# banner produces 3 lines for arbitrary text (top bar, padded text, bottom bar)
+banner_lines=$(banner "hi" 20 | wc -l)
+# wc -l on macOS pads with spaces — strip via arith context
+zassert_eq "$(( banner_lines + 0 ))" 3 "banner emits 3 lines"
+# batch index has exactly 25 entries (demos 261-285)
+zassert_eq "${#batches}" 25 "batches array has 25 entries (261-285)"
+# prev summary covers 11 prior batches
+zassert_eq "${#prev}" 11 "11 cumulative batch summaries"
+# First batch is 261 prime factorization
+zassert_match '^261\|' "${batches[1]}" "first batch entry is 261"
+# Last batch is 285
+zassert_match '^285\|' "${batches[25]}" "last batch entry is 285"
+# ZSH_VERSION populated
+zassert_ne "$ZSH_VERSION" "" "ZSH_VERSION is set"
+# argv0 should be 'banner' (last fn call seen) or the script — runtime-dependent
+zassert_ne "$0" "" "\$0 not empty"
+zassert_eq "$$" "$(echo $$)" "\$\$ stable"
+ztest_run

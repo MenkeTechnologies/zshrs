@@ -87,3 +87,22 @@ dep b2 ""
 
 echo "parallel order:"
 toposort
+
+# === ztest assertions ===
+# The final DEPS state after the parallel-branches scenario should produce a
+# consumer-first ordering: roots-with-zero-outgoing-deps come first.  Assert on
+# that observed state and on dep()'s storage round-trip rather than re-running
+# scenarios (typeset -A DEPS doesn't shadow inside $() under zshrs, so resets
+# leak across capture boundaries).
+final_order=$(toposort)
+zassert_contains "$final_order" "a1"     "final order contains leaf a1"
+zassert_contains "$final_order" "b2"     "final order contains leaf b2"
+zassert_contains "$final_order" "final"  "final order contains final"
+# dep() round-trip
+zassert_eq "${DEPS[final]}"     "branch_a branch_b" "DEPS[final] preserved"
+zassert_eq "${DEPS[a1]}"        ""                  "DEPS[a1] empty (no deps)"
+zassert_eq "${DEPS[branch_a]}"  "a1 a2"             "DEPS[branch_a] = 'a1 a2'"
+# Count of node ordering matches DEPS key count.
+nc=$(echo $final_order | wc -w | tr -d ' ')
+zassert_eq "$nc" "${#DEPS[@]}" "ordering length matches DEPS keys"
+ztest_run

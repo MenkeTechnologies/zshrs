@@ -7656,6 +7656,17 @@ impl fusevm::ShellHost for ZshrsHost {
             "zcalc" => {
                 return Some(crate::extensions::ext_builtins::zcalc(&args));
             }
+            // ztest framework (src/extensions/ztest.rs — port of
+            // ../strykelang's unit-test framework). All zassert_*/
+            // ztest_* names route through the single try_dispatch
+            // helper so adding/removing assertions only touches
+            // ztest.rs.
+            n if crate::extensions::ztest::try_dispatch_known(n) => {
+                let status = with_executor(|exec| {
+                    crate::extensions::ztest::try_dispatch(exec, n, &args).unwrap_or(1)
+                });
+                return Some(status);
+            }
             // Daemon-managed z* builtins — thin IPC wrappers. Short-circuit BEFORE
             // the function-lookup path so a missing daemon doesn't fall through to
             // "command not found". The name list is owned by the daemon crate

@@ -114,3 +114,29 @@ for f in "${files[@]}"; do
 done
 
 command rm -rf $tmpdir
+
+# === ztest assertions ===
+tmpdir2=$(mktemp -d)
+cat > $tmpdir2/a <<'EOF'
+#!/usr/bin/env zshrs
+EOF
+cat > $tmpdir2/b <<'EOF'
+#!/bin/bash
+EOF
+cat > $tmpdir2/c <<'EOF'
+#!/usr/bin/perl
+EOF
+cat > $tmpdir2/d <<'EOF'
+plain text
+EOF
+cat > $tmpdir2/e <<'EOF'
+#!/usr/bin/awk -f
+EOF
+zassert_eq "$(classify_shebang $tmpdir2/a)" "env:zshrs"   "env:zshrs"
+zassert_eq "$(classify_shebang $tmpdir2/b)" "direct:bash" "direct:bash"
+zassert_eq "$(classify_shebang $tmpdir2/c)" "direct:perl" "direct:perl"
+zassert_eq "$(classify_shebang $tmpdir2/d)" "none"        "no shebang"
+zassert_eq "$(classify_shebang $tmpdir2/e)" "direct:awk"  "direct:awk -f arg dropped"
+zassert_eq "$(classify_shebang $tmpdir2/nonexistent)" "unreadable" "missing file"
+command rm -rf $tmpdir2
+ztest_run

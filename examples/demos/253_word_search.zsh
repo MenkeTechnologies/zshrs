@@ -85,3 +85,17 @@ echo
 echo "── stats ──"
 echo "  found: $found / $total"
 echo "  hit rate: $(( found * 100 / total ))%"
+
+# === ztest assertions ===
+zassert_eq "$ROWS" "9"  "9 rows"
+zassert_eq "$COLS" "9"  "9 columns"
+zassert_eq "${#FLAT}" "81" "flat string is 9x9 = 81 chars"
+zassert_eq "${FLAT[1,5]}" "ZSHRS" "row 1 starts ZSHRS"
+zassert_contains "$FLAT" "RUST"  "FLAT contains RUST"
+zassert_contains "$FLAT" "FORK"  "FLAT contains FORK"
+zassert_contains "$FLAT" "CACHE" "FLAT contains CACHE"
+zassert_eq "$found" "6" "6 words found"
+zassert_eq "$total" "8" "8 words searched"
+if find_word ZSHRS  >/dev/null; then zassert_ok 1 "ZSHRS findable";  else zassert_ok 0 "ZSHRS findable"; fi
+if find_word PYTHON >/dev/null; then zassert_ok 0 "PYTHON not in grid"; else zassert_ok 1 "PYTHON not in grid"; fi
+ztest_run

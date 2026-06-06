@@ -67,3 +67,28 @@ for a in 0 1; do
             "$([[ $left -eq $right ]] && echo OK || echo FAIL)"
     done
 done
+
+# === ztest assertions ===
+# AND: only (1,1) → 1
+zassert_eq $(( 0 & 0 )) 0  "0 AND 0"
+zassert_eq $(( 1 & 0 )) 0  "1 AND 0"
+zassert_eq $(( 1 & 1 )) 1  "1 AND 1"
+# OR: only (0,0) → 0
+zassert_eq $(( 0 | 0 )) 0  "0 OR 0"
+zassert_eq $(( 1 | 0 )) 1  "1 OR 0"
+zassert_eq $(( 1 | 1 )) 1  "1 OR 1"
+# XOR
+zassert_eq $(( 1 ^ 1 )) 0  "1 XOR 1"
+zassert_eq $(( 1 ^ 0 )) 1  "1 XOR 0"
+# NAND/NOR/XNOR
+zassert_eq $(( ! (1 & 1) )) 0  "NAND 1,1"
+zassert_eq $(( ! (0 | 0) )) 1  "NOR 0,0"
+zassert_eq $(( ! (1 ^ 0) )) 0  "XNOR 1,0"
+# Full adder: 1+1+1 = sum=1, cout=1
+sum=$(( 1 ^ 1 ^ 1 ))
+cout=$(( (1 & 1) | (1 & (1 ^ 1)) ))
+zassert_eq "$sum"  "1"  "adder sum 1+1+1"
+zassert_eq "$cout" "1"  "adder cout 1+1+1"
+# De Morgan: !(1 & 0) == (!1 | !0)
+zassert_eq $(( ! (1 & 0) ))    $(( ! 1 | ! 0 ))  "De Morgan"
+ztest_run

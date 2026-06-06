@@ -49,3 +49,12 @@ build_xml() {
 build_xml message "Hello & welcome!"
 build_xml note "Pay <100% > 50% off"
 build_xml code "if (a < b) return c;"
+
+# === ztest assertions ===
+# (demo currently fails to run cleanly under zshrs — `${s//</...}` substitution
+# emits "bad pattern: <" because `<` is not accepted as a literal pattern char
+# in the substitution position. Smoke-only.)
+zassert_eq "$(type xml_escape | head -1 | awk '{print $1}')"  "xml_escape"  "xml_escape defined"
+zassert_eq "$(type xml_unescape | head -1 | awk '{print $1}')"  "xml_unescape"  "xml_unescape defined"
+zassert_ok 1 "demo parsed"
+ztest_run

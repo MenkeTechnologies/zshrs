@@ -156,3 +156,16 @@ echo "    consonant-start: move consonant cluster to end + 'ay'"
 echo "    'string' → 'ingstray' (str → end)"
 echo "    'eat' → 'eatway'"
 echo "    'rhythm' → 'rhythmay' (no vowel, fallback)"
+
+# === ztest assertions ===
+zassert_eq "$(pig_latin_word pig)"     "igpay"      "pig → igpay"
+zassert_eq "$(pig_latin_word latin)"   "atinlay"    "latin"
+zassert_eq "$(pig_latin_word hello)"   "ellohay"    "hello"
+zassert_eq "$(pig_latin_word string)"  "ingstray"   "consonant cluster"
+zassert_eq "$(pig_latin_word eat)"     "eatway"     "vowel-start"
+zassert_eq "$(pig_latin_word rhythm)"  "rhythmay"   "no vowel fallback"
+zassert_eq "$(pig_latin_word Awesome)" "Awesomeway" "cap preserved"
+zassert_eq "$(pig_latin 'the quick brown fox')" "ethay uickqay ownbray oxfay" "sentence"
+zassert_ok "$(is_vowel a && echo 1)"   "is_vowel a"
+zassert_eq "$(is_vowel z && echo 1)"   ""           "is_vowel z false"
+ztest_run

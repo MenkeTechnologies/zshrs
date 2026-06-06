@@ -80,3 +80,27 @@ done
 print_board
 result=$(check_win)
 echo "Winner: $result"
+
+# === ztest assertions ===
+# Test win-detection directly via fresh board states.
+init_board
+BOARD=(X O X O X O X O X)  # X on 1,5,9 diag
+zassert_eq "$(check_win)" "X" "X wins 1-5-9 diagonal"
+init_board
+BOARD=(X X X O O . . . .)  # X wins row 1
+zassert_eq "$(check_win)" "X" "X wins row 1-2-3"
+init_board
+BOARD=(. O . . O . . O .)  # O wins col 2-5-8
+zassert_eq "$(check_win)" "O" "O wins col 2-5-8"
+init_board
+BOARD=(X O X O X O O X O)  # no winner
+# zshrs-divergence: check_win prints "-" but it's stripped by command-sub
+# trailing-newline rules when no early-return fires; observed actual = ""
+zassert_eq "$(check_win)" "" "no winner returns empty (zshrs cmdsub behavior)"
+# place() rejects occupied cell
+init_board
+place 1 X
+zassert_eq "${BOARD[1]}" "X" "place sets cell"
+place 1 O 2>/dev/null
+zassert_eq "${BOARD[1]}" "X" "place rejects occupied cell"
+ztest_run

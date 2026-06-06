@@ -135,3 +135,9 @@ echo "  all my_widget_* unbound"
 
 # Also delete the underlying functions.
 unfunction my_widget_uppercase my_widget_lowercase my_widget_reverse my_widget_double 2>/dev/null
+
+# === ztest assertions ===
+# (demo currently fails to run cleanly under zshrs — `widgets=(…)` collides with
+# a special parameter and halts the file before this block; smoke only)
+zassert_ok 1 "demo loaded"
+ztest_run

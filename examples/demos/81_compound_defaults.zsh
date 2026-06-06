@@ -53,3 +53,31 @@ echo "── null-string handling (treat empty as unset) ──"
 empty=""
 echo "empty:-A    = ${empty:-A}      # :- treats empty as unset"
 echo "empty-A     = ${empty-A}       # plain - keeps empty as 'set'"
+
+# === ztest assertions ===
+unset xx
+zassert_eq "${xx:-fallback}"  "fallback"  ":- on unset"
+zassert_eq "${xx:-fallback}"  "fallback"  ":- doesn't assign"
+zassert_eq "${xx:-still-unset}" "still-unset" "xx remains unset after :-"
+unset yy
+zassert_eq "${yy:=initial}"   "initial"   ":= assigns and returns"
+zassert_eq "$yy"              "initial"   ":= persisted assignment"
+zassert_eq "${yy:=ignored}"   "initial"   ":= no-op when already set"
+unset zz
+zassert_eq "${zz:+ALT}"       ""          ":+ on unset returns empty"
+zz=present
+zassert_eq "${zz:+ALT}"       "ALT"       ":+ on set returns alt"
+unset a b c
+zassert_eq "${a:-${b:-${c:-final}}}"  "final"  "nested :- chain"
+b=middle
+zassert_eq "${a:-${b:-${c:-final}}}"  "middle" "nested :- picks first set"
+file="archive.tar.gz"
+zassert_eq "${file%.*}"  "archive.tar" "trim shortest .* (root)"
+zassert_eq "${file%%.*}" "archive"     "trim longest .* (full root)"
+zassert_eq "${file#*.}"  "tar.gz"      "trim shortest prefix .*"
+zassert_eq "${file##*.}" "gz"          "trim longest prefix .*"
+empty=""
+zassert_eq "${empty:-A}" "A" ":- treats empty as unset"
+zassert_eq "${empty-A}"  ""  "plain - keeps empty as set"
+ztest_run
+

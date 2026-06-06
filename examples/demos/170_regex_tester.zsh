@@ -48,3 +48,26 @@ for pat in "${patterns[@]}"; do
         echo "matches '$pat': MATCH=$MATCH"
     fi
 done
+
+# === ztest assertions ===
+# Numeric pattern.
+[[ "12345" =~ '^[0-9]+$' ]] && r1=ok || r1=no
+zassert_eq "$r1" "ok"          "all-digits matches ^[0-9]+\$"
+[[ "12a"   =~ '^[0-9]+$' ]] && r2=ok || r2=no
+zassert_eq "$r2" "no"          "12a does not match ^[0-9]+\$"
+# Email pattern.
+[[ "alice@example.com" =~ '^[a-z]+@[a-z]+\.[a-z]+$' ]] && r3=ok || r3=no
+zassert_eq "$r3" "ok"          "email matches"
+# Name pattern with capture groups.
+[[ "John Smith" =~ '^([A-Z][a-z]+) ([A-Z][a-z]+)$' ]]
+zassert_eq "${match[1]}" "John"  "first capture = John"
+zassert_eq "${match[2]}" "Smith" "second capture = Smith"
+# Hex color match.
+[[ "#ff0000" =~ '^#([0-9a-fA-F]{6})$' ]] && r4=ok || r4=no
+zassert_eq "$r4" "ok"           "#ff0000 matches hex pattern"
+[[ "#tooshort" =~ '^#([0-9a-fA-F]{6})$' ]] && r5=ok || r5=no
+zassert_eq "$r5" "no"           "#tooshort rejected"
+# MATCH variable populated.
+[[ "Hello World 42" =~ '[0-9]+' ]]
+zassert_eq "$MATCH" "42"        "MATCH variable captures number"
+ztest_run

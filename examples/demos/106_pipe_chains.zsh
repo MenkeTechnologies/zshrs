@@ -50,3 +50,24 @@ set -o pipefail
 ( exit 7 ) | true
 echo "leftmost via pipefail: $?"
 set +o pipefail
+
+# === ztest assertions ===
+# 3-stage pipeline: sort -u | wc -l ⇒ 3 unique items.
+count=$(printf "banana\napple\ncherry\napple\nbanana\n" | sort -u | wc -l | tr -d ' ')
+zassert_eq "$count" "3"  "sort -u | wc -l"
+# Conditional success chain
+zassert_eq "$(echo hello | grep -q hello && echo found || echo missing)"  "found"   "&& fires on success"
+zassert_eq "$(echo hello | grep -q xyz   && echo found || echo missing)"  "missing" "|| fires on failure"
+# String transform via pipe
+zassert_eq "$(echo 'hello world' | tr 'a-z' 'A-Z')"  "HELLO WORLD"  "tr upcase pipe"
+# Sort/uniq numeric
+zassert_eq "$(printf '3\n1\n2\n' | sort -n | tr '\n' ' ')"  "1 2 3 "   "numeric sort"
+# rightmost exit code wins without pipefail
+( exit 7 ) | ( exit 11 )
+zassert_eq "$?"  "11"  "rightmost wins"
+# pipefail propagates leftmost nonzero
+set -o pipefail
+( exit 5 ) | true
+zassert_eq "$?"  "5"  "pipefail propagates left"
+set +o pipefail
+ztest_run

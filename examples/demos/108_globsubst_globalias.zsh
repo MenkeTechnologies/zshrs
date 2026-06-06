@@ -55,3 +55,27 @@ print -l (alpha|gamma).log
 cd /tmp
 rm -rf "$tmpdir"
 unsetopt extended_glob
+
+# === ztest assertions ===
+# =cmd expansion → absolute path containing /echo, /cat respectively.
+zassert_contains "$(echo =echo)"  "echo"  "=echo resolves to a path containing 'echo'"
+zassert_contains "$(echo =cat)"   "cat"   "=cat resolves to a path containing 'cat'"
+# nullglob → empty array
+setopt nullglob
+n_matches=( /tmp/__never_matches_xyz_*(.) )
+zassert_eq "${#n_matches[@]}" "0"  "nullglob empties unmatched"
+unsetopt nullglob
+# extended_glob alternation finds the two files we created.
+setopt extended_glob
+d3=/tmp/zshrs_glob3_$$
+mkdir -p "$d3"
+touch "$d3"/{alpha,beta,gamma,delta}.log
+cd "$d3"
+matches=( (alpha|gamma).log )
+zassert_eq "${#matches[@]}" "2"  "extglob alt: 2 matches"
+zassert_contains "${matches[*]}" "alpha.log"  "match alpha.log"
+zassert_contains "${matches[*]}" "gamma.log"  "match gamma.log"
+cd /tmp
+rm -rf "$d3"
+unsetopt extended_glob
+ztest_run

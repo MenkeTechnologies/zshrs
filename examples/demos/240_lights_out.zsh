@@ -103,3 +103,28 @@ for i in 1 2 3 4 5; do
     echo "lights: $(count_on)"
     echo
 done
+
+# === ztest assertions ===
+init_board
+zassert_eq "$(count_on)" "0" "init: all off"
+zassert_eq "${#BOARD[@]}" "25" "5x5 board has 25 cells"
+press 3 3
+zassert_eq "$(count_on)" "5" "press(3,3) lights up self+4 neighbours"
+press 3 3
+zassert_eq "$(count_on)" "0" "press(3,3) twice cancels"
+init_board
+press 1 1
+zassert_eq "$(count_on)" "3" "press(1,1) corner: self+2 neighbours"
+init_board
+press 5 5
+zassert_eq "$(count_on)" "3" "press(5,5) corner: self+2 neighbours"
+init_board
+BOARD[$(( (3-1) * SIZE + 3 ))]=1
+BOARD[$(( (2-1) * SIZE + 3 ))]=1
+BOARD[$(( (4-1) * SIZE + 3 ))]=1
+BOARD[$(( (3-1) * SIZE + 2 ))]=1
+BOARD[$(( (3-1) * SIZE + 4 ))]=1
+zassert_eq "$(count_on)" "5" "plus pattern lights up"
+press 3 3
+zassert_eq "$(count_on)" "0" "press(3,3) clears plus pattern"
+ztest_run

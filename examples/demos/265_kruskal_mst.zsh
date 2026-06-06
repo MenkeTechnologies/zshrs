@@ -126,3 +126,14 @@ echo "  components after partial MST: ${#comp2}"
 for k in "${(@k)comp2}"; do
     printf "    root %s: %d nodes\n" $k ${comp2[$k]}
 done
+
+# === ztest assertions ===
+zassert_eq "${#mst}"   5    "MST has |V|-1 edges"
+zassert_eq "$total"    20   "MST total weight"
+zassert_eq "${#comp}"  1    "single component after Kruskal"
+zassert_eq "${#comp2}" 3    "disconnected graph: 3 components (ABC | D | EFG)"
+zassert_eq "${comp2[D]}" 1  "isolated D forms component of size 1"
+zassert_eq "${#nodes}" 6    "6 nodes"
+zassert_eq "${#edges}" 10   "10 input edges"
+zassert_eq "${sorted[1]}" "1 A B"  "sort -n picks lightest edge first"
+ztest_run

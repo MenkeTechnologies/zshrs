@@ -46,3 +46,18 @@ time_block "loop-1000" \
 echo "── parse a static date back (TZ-bound) ──"
 # strftime can parse with -r flag in some zsh versions; fall back to TZ=UTC.
 TZ=UTC strftime "Decode %F %T from epoch=$fixed" $fixed
+
+# === ztest assertions ===
+# EPOCHSECONDS / EPOCHREALTIME / timing are non-deterministic — assert bounds.
+zassert_gt "$EPOCHSECONDS"        1577836800  "EPOCHSECONDS > 2020-01-01"
+zassert_lt "$EPOCHSECONDS"        4102444800  "EPOCHSECONDS < 2100-01-01"
+real=$EPOCHREALTIME
+zassert_match '^[0-9]+\.[0-9]+$' "$real"      "EPOCHREALTIME is sec.fraction"
+zassert_eq "${real%%.*}"          "$EPOCHSECONDS" "real integer part == EPOCHSECONDS"
+fixed=1736942400
+zassert_eq "$(TZ=UTC strftime '%Y-%m-%d %H:%M:%S' $fixed)" "2025-01-15 12:00:00" "strftime fixed epoch"
+zassert_eq "$(TZ=UTC strftime '%Y-%m-%dT%H:%M:%SZ' $fixed)" "2025-01-15T12:00:00Z" "ISO 8601"
+zassert_eq "$(TZ=UTC strftime '%A, %B %-d, %Y' $fixed)"   "Wednesday, January 15, 2025" "day name"
+zassert_eq "$(TZ=UTC strftime 'DOY=%j Week=%V' $fixed)"   "DOY=015 Week=03" "DOY+ISO week"
+ztest_run
+

@@ -55,3 +55,20 @@ traced_fn() {
     echo "in body"
 }
 traced_fn 2>&1 | head -3 || true
+
+# === ztest assertions ===
+# Define + verify fresh introspectable functions.
+ifoo() { echo ifoo_body; }
+ibar() { echo ibar_body; }
+zassert_eq "$(ifoo)"   "ifoo_body"   "fn ifoo callable"
+zassert_eq "$(ibar)"   "ibar_body"   "fn ibar callable"
+zassert_ok "$+functions[ifoo]"        "functions hash contains ifoo"
+zassert_ok "$+functions[ibar]"        "functions hash contains ibar"
+# Add via eval, must show up.
+eval 'ibaz() { echo ibaz_body; }'
+zassert_eq "$(ibaz)"   "ibaz_body"   "eval-defined fn callable"
+zassert_ok "$+functions[ibaz]"        "eval-defined in functions hash"
+# Delete + confirm gone.
+unfunction ifoo
+zassert_eq "$+functions[ifoo]" "0"    "unfunction removes from hash"
+ztest_run

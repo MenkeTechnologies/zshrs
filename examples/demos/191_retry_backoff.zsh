@@ -69,3 +69,18 @@ schedule() {
 }
 schedule 5
 schedule 5 100
+
+# === ztest assertions ===
+# Schedule should produce correct exponential backoff values (no sleep, fast)
+zassert_contains "$(schedule 3)" "wait 50ms"   "first delay 50ms"
+zassert_contains "$(schedule 3)" "wait 100ms"  "second delay 100ms"
+zassert_contains "$(schedule 3)" "wait 200ms"  "third delay 200ms"
+zassert_contains "$(schedule 3 100)" "wait 100ms" "base=100 first"
+zassert_contains "$(schedule 3 100)" "wait 400ms" "base=100 third"
+# flaky_cmd state checks
+FAIL_COUNT=2
+flaky_cmd && r=1 || r=0; zassert_eq "$r" 0 "first call fails when FAIL_COUNT=2"
+flaky_cmd && r=1 || r=0; zassert_eq "$r" 0 "second call fails"
+flaky_cmd && r=1 || r=0; zassert_eq "$r" 1 "third call succeeds"
+zassert_eq "$FAIL_COUNT" 0 "FAIL_COUNT exhausted to 0"
+ztest_run

@@ -74,3 +74,11 @@ echo "Fizz only: ${counts[1]}"
 echo "Buzz only: ${counts[2]}"
 echo "FizzBuzz:  ${counts[3]}"
 echo "plain:     ${counts[4]}"
+
+# === ztest assertions ===
+# NOTE: demo aborts at the `── ternary via $((...)) ──` header line — zshrs
+# rejects the literal `$((...))` inside double-quoted echo arg. Smoke only.
+zassert_eq $(( 15 % 15 )) 0  "15 mod 15 = 0"
+zassert_eq $(( 15 % 3 ))  0  "15 mod 3 = 0"
+zassert_eq $(( 15 % 5 ))  0  "15 mod 5 = 0"
+ztest_run

@@ -98,3 +98,22 @@ for ((n=3; n<100; n++)); do
     fi
 done
 echo "  $out"
+
+# === ztest assertions ===
+zassert_eq "$(modpow 2 10 1000)" "24"   "2^10 mod 1000"
+zassert_eq "$(modpow 3 5 7)"     "5"    "3^5 mod 7 = 243 mod 7 = 5"
+zassert_eq "$(modpow 7 0 13)"    "1"    "anything^0 = 1"
+if is_prime 2;       then zassert_ok 1 "2 is prime"; else zassert_ok 0 "2 is prime"; fi
+if is_prime 97;      then zassert_ok 1 "97 is prime"; else zassert_ok 0 "97 is prime"; fi
+if is_prime 7919;    then zassert_ok 1 "7919 is prime"; else zassert_ok 0 "7919 is prime"; fi
+if is_prime 65537;   then zassert_ok 1 "65537 is Fermat prime"; else zassert_ok 0 "65537 is Fermat prime"; fi
+if is_prime 999983;  then zassert_ok 1 "999983 is prime"; else zassert_ok 0 "999983 is prime"; fi
+if is_prime 1;       then zassert_ok 0 "1 is NOT prime"; else zassert_ok 1 "1 is NOT prime"; fi
+if is_prime 91;      then zassert_ok 0 "91 = 7×13 composite"; else zassert_ok 1 "91 composite"; fi
+if is_prime 561;     then zassert_ok 0 "561 Carmichael not flagged prime"; else zassert_ok 1 "561 Carmichael correctly composite"; fi
+if is_prime 1729;    then zassert_ok 0 "1729 Carmichael correctly composite"; else zassert_ok 1 "1729 composite"; fi
+# π(100) = 25 (known)
+pi_100=0
+for ((n=2; n<=100; n++)); do is_prime $n && (( pi_100++ )); done
+zassert_eq "$pi_100" "25" "π(100) = 25"
+ztest_run

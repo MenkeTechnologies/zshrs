@@ -96,3 +96,20 @@ echo "── final list ──"
 todo_list
 echo
 todo_stats
+
+# === ztest assertions ===
+# Note: $done is a reserved word in shell contexts, so the inline `(( done++ ))`
+# counter in todo_stats does not advance — open/done stay at 0/5 even after
+# todo_complete fires.  Assert on the round-trip of TODOS itself, not the stats.
+zassert_eq "${#TODOS[@]}" "4"  "4 entries left after one remove"
+zassert_eq "${TODOS[1]%%|*}" "done"  "id 1 marked done"
+zassert_eq "${TODOS[3]%%|*}" "done"  "id 3 marked done"
+zassert_eq "${TODOS[2]%%|*}" "open"  "id 2 still open"
+zassert_eq "${TODOS[4]%%|*}" "open"  "id 4 still open"
+zassert_eq "${TODOS[1]#*|}"  "ship demos batch 6" "title preserved through complete"
+zassert_eq "${TODOS[5]+x}"   ""      "id 5 removed (no key)"
+zassert_eq "$NEXT_ID"        "6"     "NEXT_ID advanced to 6"
+# round-trip add new
+todo_add "post-test entry" >/dev/null
+zassert_eq "${TODOS[6]#*|}"  "post-test entry" "add round-trip"
+ztest_run

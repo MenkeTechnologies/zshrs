@@ -53,3 +53,20 @@ for f in $files; do
 done
 echo "zsh files: ${zsh_only[@]}"
 echo "others:    ${other[@]}"
+
+# === ztest assertions ===
+nozsh=( ${files:#*.zsh} )
+zassert_eq "${nozsh[*]}" "README.md install.sh notes.txt" ":# drops .zsh"
+keep=( ${(M)files:#*.zsh} )
+zassert_eq "${keep[*]}"  "main.zsh test.zsh build.zsh"     "(M):# keeps .zsh"
+arr=(apple banana cherry date)
+zassert_eq "${arr[(i)apple]}"  1 "(i)apple = 1"
+zassert_eq "${arr[(i)cherry]}" 3 "(i)cherry = 3"
+zassert_eq "${arr[(i)nope]}"   5 "(i) not-found = len+1 (4+1=5)"
+items=(foo bar foo baz foo)
+zassert_eq "${items[(i)foo]}"  1 "(i) first foo idx"
+zassert_eq "${items[(I)foo]}"  5 "(I) last foo idx"
+zassert_eq "${#zsh_only[@]}"   3 "partition zsh count"
+zassert_eq "${#other[@]}"      3 "partition other count"
+zassert_eq "${zsh_only[*]}"   "main.zsh test.zsh build.zsh" "partition zsh files"
+ztest_run

@@ -66,3 +66,17 @@ echo "── snapshot of opts before/after fn with emulate ──"
 echo "before: $(echo $-)"
 sh_demo
 echo "after: $(echo $-)"
+
+# === ztest assertions ===
+# emulate -L should locally flip opts and restore on return.
+zassert_contains "$(sh_demo)"  "shwordsplit (sh): ON"  "emulate -L sh flips shwordsplit"
+zassert_contains "$(sh_demo)"  "globsubst (sh): ON"    "emulate -L sh flips globsubst"
+zassert_contains "$(ksh_demo)" "kshglob (ksh): ON"     "emulate -L ksh flips kshglob"
+# After fn returns, outer scope must have shwordsplit OFF again.
+[[ -o shwordsplit ]] && zassert_ok 0 "outer shwordsplit restored OFF" || zassert_ok 1 "outer shwordsplit restored OFF"
+# ksh arith uses (( )) and assigns x in caller scope.
+zassert_contains "$(ksh_arith)" "x=8" "ksh arith 5+3"
+# zsh_mode (no shwordsplit) keeps "one two three" as one word in $s
+# (assigned to result=( $s ) — zsh doesn't word-split unquoted vars).
+zassert_eq "$(zsh_mode)" "zsh mode count: 1" "zsh: no shwordsplit"
+ztest_run

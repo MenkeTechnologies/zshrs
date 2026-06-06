@@ -105,3 +105,16 @@ unfunction periodic monitor1 monitor2 chpwd_log chpwd_stat 2>/dev/null
 unfunction precmd_jobs precmd_stat precmd_log preexec_audit 2>/dev/null
 echo "  all hook functions unfunc'd"
 echo "  total ticks fired this run: $tick_count"
+
+# === ztest assertions ===
+zassert_eq "$tick_count" 3 "periodic fired 3 times via manual invocation"
+zassert_eq "$PERIOD"     0 "PERIOD ends disabled (final assignment was 0)"
+zassert_eq "${#chpwd_functions}" 2 "chpwd_functions has 2 entries"
+zassert_eq "${chpwd_functions[1]}" "chpwd_log"  "first chpwd hook"
+zassert_eq "${chpwd_functions[2]}" "chpwd_stat" "second chpwd hook"
+zassert_eq "${#precmd_functions}" 3 "precmd_functions has 3 entries"
+zassert_eq "${precmd_functions[1]}" "precmd_jobs" "first precmd hook"
+zassert_eq "${#preexec_functions}" 1 "preexec_functions has 1 entry"
+zassert_eq "${periodic_functions[1]}" "monitor1" "periodic_functions[1]"
+zassert_eq "${periodic_functions[2]}" "monitor2" "periodic_functions[2]"
+ztest_run

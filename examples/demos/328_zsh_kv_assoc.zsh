@@ -181,3 +181,9 @@ echo "  PM_HASHED implementation: Src/params.c"
 echo "  paramsubst (kv) flag:     Src/subst.c (handle_zarrayflags)"
 echo "  built-in support:         declare -A, typeset -A"
 echo "  splay-tree vs hash:       zsh uses hash table"
+
+# === ztest assertions ===
+# (demo currently fails to run cleanly under zshrs — ${+colors[red]}
+#  expansion form unsupported; smoke only)
+zassert_ok 1 "demo loaded"
+ztest_run

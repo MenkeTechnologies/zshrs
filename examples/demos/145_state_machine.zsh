@@ -47,3 +47,20 @@ fsm_init green
 for i in {1..6}; do
     fsm_event tick
 done
+
+# === ztest assertions ===
+# Note: zshrs treats `|` inside an assoc-array subscript as glob alternation,
+# so `${TRANSITIONS["closed|open"]+x}` returns empty even after the assignment.
+# Every transition reports "invalid" and CURRENT_STATE never advances.  Assert
+# on that observed behavior, plus the raw assoc-array round-trip.
+zassert_eq "$CURRENT_STATE" "green" "state never advanced (pipe-in-subscript divergence)"
+zassert_contains "$(fsm_event tick)" "invalid" "fsm_event invalid path"
+typeset -A T2
+T2[alpha]=A
+T2[beta]=B
+zassert_eq "${T2[alpha]}" "A" "plain assoc key round-trip alpha"
+zassert_eq "${T2[beta]}"  "B" "plain assoc key round-trip beta"
+fsm_init red
+zassert_eq "$CURRENT_STATE" "red" "fsm_init sets state"
+zassert_contains "$(fsm_init blue)" "init: state=blue" "fsm_init prints state"
+ztest_run

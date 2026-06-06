@@ -149,3 +149,16 @@ for p in "${expected_pairs[@]}"; do
     got=$(soundex "$name")
     printf "  %-12s → %s (expected %s) %s\n" "$name" "$got" "$expected" "$([[ $got == $expected ]] && echo ✓ || echo ✗)"
 done
+
+# === ztest assertions ===
+zassert_eq "$(soundex Robert)"    "R163"  "soundex Robert"
+zassert_eq "$(soundex Rupert)"    "R163"  "soundex Rupert (same as Robert)"
+zassert_eq "$(soundex Rubin)"     "R150"  "soundex Rubin"
+zassert_eq "$(soundex Smith)"     "S530"  "soundex Smith"
+zassert_eq "$(soundex Smyth)"     "S530"  "soundex Smyth (homophone)"
+zassert_eq "$(soundex Lee)"       "L000"  "soundex Lee"
+zassert_eq "$(soundex Lloyd)"     "L300"  "soundex Lloyd"
+zassert_eq "$(soundex X)"         "X000"  "soundex single letter padded"
+zassert_eq "$(soundex_digit b)"   "1"     "digit b"
+zassert_eq "$(soundex_digit r)"   "6"     "digit r"
+ztest_run

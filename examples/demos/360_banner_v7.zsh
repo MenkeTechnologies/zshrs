@@ -102,3 +102,13 @@ echo "  CI runtime:   ~50s parallel (361 tests + coverage pin)"
 echo
 
 banner "→ github.com/MenkeTechnologies/zshrs" 72
+
+# === ztest assertions ===
+out=$(banner "hi" 10)
+zassert_contains "$out" "═════════"           "banner has horizontal rule"
+zassert_contains "$out" "hi"                  "banner contains text"
+zassert_eq "$(echo "$out" | wc -l | tr -d ' ')" "3" "banner is 3 lines"
+zassert_eq "${batches[1]%%|*}" "336"          "batches[1] index 336"
+zassert_eq "${prev[1]%%|*}" "001-030"         "prev[1] range start"
+zassert_eq "${#batches}" "25"                 "25 batch entries (336-360)"
+ztest_run

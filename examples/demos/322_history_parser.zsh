@@ -159,3 +159,18 @@ echo "    EXTENDED_HISTORY — w/ ts + duration"
 echo "    INC_APPEND_HISTORY — write each cmd immediately"
 echo "    HIST_IGNORE_DUPS  — skip duplicates"
 echo "    SHARE_HISTORY     — across sessions"
+
+# === ztest assertions ===
+# Re-run parse for a known entry to assert.
+parse_history_line ": 1717000000:0;ls -la"
+zassert_eq "${H[format]}" "extended" "ext fmt detected"
+zassert_eq "${H[cmd]}"    "ls -la"   "ext cmd extracted"
+parse_history_line "ls"
+zassert_eq "${H[format]}" "raw"      "raw fmt detected"
+zassert_eq "${H[cmd]}"    "ls"       "raw cmd"
+zassert_eq "${#sample_history}" 13   "sample size"
+zassert_eq "$ext_count" 11           "extended count"
+zassert_eq "$raw_count" 2            "raw count"
+zassert_eq "${cmd_count[git]}" 4     "git frequency"
+zassert_eq "${cmd_count[cd]}"  2     "cd frequency"
+ztest_run

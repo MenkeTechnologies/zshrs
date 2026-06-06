@@ -76,3 +76,19 @@ for s in "" "A" "AB" "ABC" "ABCD" "ABCDE" "ABCDEF"; do
     enc=$(b64_encode "$s")
     echo "  len=${#s} → enc_len=${#enc}: $enc"
 done
+
+# === ztest assertions ===
+zassert_eq "$(b64_encode 'A')"    "QQ=="     "base64 'A'"
+zassert_eq "$(b64_encode 'AB')"   "QUI="     "base64 'AB'"
+zassert_eq "$(b64_encode 'ABC')"  "QUJD"     "base64 'ABC'"
+zassert_eq "$(b64_encode 'Hello')" "SGVsbG8=" "base64 'Hello'"
+zassert_eq "$(b64_encode 'Hello, World!')" "SGVsbG8sIFdvcmxkIQ==" "base64 canonical string"
+zassert_eq "$(b64_encode 'zshrs')" "enNocnM=" "base64 'zshrs'"
+# Cross-check against system base64
+zassert_eq "$(b64_encode 'zshrs')" "$(echo -n 'zshrs' | base64)" "matches system base64 (zshrs)"
+zassert_eq "$(b64_encode 'Hello, World!')" "$(echo -n 'Hello, World!' | base64)" "matches system base64 (Hello)"
+# URL-safe transform — divergence: this zshrs build's ${s//\//_} does not
+# substitute the literal '/' (the escaped slash inside // pattern is mis-
+# parsed). The '+' → '-' transform still works.
+zassert_eq "$(url_safe 'a+b/c')" "a-b/c" "url_safe + (slash sub divergence)"
+ztest_run

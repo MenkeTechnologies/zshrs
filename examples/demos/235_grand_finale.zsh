@@ -82,3 +82,15 @@ echo
 echo "  → github.com/MenkeTechnologies/zshrs"
 echo
 print_banner "" 60
+
+# === ztest assertions ===
+zassert_eq "${#batches[@]}"  9   "9 batch entries"
+zassert_eq "${#features[@]}" 12  "12 feature lines"
+b1=$(print_banner "HI" 20)
+zassert_contains "$b1" "HI" "banner shows text"
+# count ═ chars per banner line (20 wide)
+bar_line=$(echo "$b1" | head -1)
+zassert_contains "$bar_line" "═" "banner uses ═ char"
+zassert_ok "$ZSH_VERSION" "ZSH_VERSION populated"
+zassert_match '[0-9]+\.[0-9]+' "$ZSH_VERSION" "ZSH_VERSION looks like a version"
+ztest_run

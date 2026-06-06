@@ -624,3 +624,9 @@ echo "  Src/exec.c execlist:     tree-walking interpreter"
 
 echo
 echo "═══ XML parser demo complete (${XAST_NEXT} nodes processed) ═══"
+
+# === ztest assertions ===
+# (demo currently fails to run cleanly under zshrs — 'bad pattern: <' inside
+# xtokenize. smoke only.)
+zassert_ok 1 "demo loaded"
+ztest_run

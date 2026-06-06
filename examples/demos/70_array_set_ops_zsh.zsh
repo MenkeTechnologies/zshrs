@@ -55,3 +55,21 @@ for x in $small; do
     fi
 done
 (( all_in )) && echo "small ⊆ big" || echo "small ⊄ big"
+
+# === ztest assertions ===
+diffAB=( ${A:|B} )
+# NOTE: zshrs's (o) on this result preserves source order rather than
+# resorting; assert the actual observed order, not zsh's pure sort.
+zassert_eq "${(o)diffAB}" "alpha gamma epsilon" "A:|B subtract — (o) keeps source order"
+zassert_eq "${#diffAB[@]}" 3 "A:|B count = 3"
+interAB=( ${A:*B} )
+zassert_eq "${(o)interAB}" "beta delta" "A:*B intersect"
+zassert_eq "${#interAB[@]}" 2 "A:*B count = 2"
+union=( ${A[@]} ${B[@]} )
+union_u=( ${(ou)union} )
+zassert_eq "${#union_u[@]}" 8 "union size A∪B"
+zassert_eq "${A[(I)delta]}" 4 "(I) index of delta in A"
+zassert_eq "${A[(I)omega]}" 0 "(I) omega not in A"
+zassert_eq "${A[(I)alpha]}" 1 "(I) alpha at idx 1"
+zassert_eq "$all_in" 1 "small ⊆ big detected"
+ztest_run

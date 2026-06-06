@@ -196,3 +196,22 @@ echo "  short month → number:"
 for m in Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec; do
     printf "    %s = %d\n" "$m" "${MONTHS[$m]}"
 done
+
+# === ztest assertions ===
+parse_rfc2822 "Mon, 31 May 2026 14:30:00 +0000"
+zassert_eq "${D[dow]}"       "Mon"   "dow parsed"
+zassert_eq "${D[day]}"       "31"    "day parsed"
+zassert_eq "${D[month]}"     "5"     "month resolved"
+zassert_eq "${D[year]}"      "2026"  "year parsed"
+zassert_eq "${D[hour]}"      "14"    "hour parsed"
+zassert_eq "${D[minute]}"    "30"    "min parsed"
+zassert_eq "${D[second]}"    "00"    "sec parsed"
+zassert_eq "${D[zone]}"      "+0000" "zone parsed"
+zassert_eq "${MONTHS[Jan]}"  1       "Jan = 1"
+zassert_eq "${MONTHS[Dec]}"  12      "Dec = 12"
+if is_valid_date 2 29 2024; then zassert_ok 1 "leap Feb 29 2024"
+else zassert_ok 0 "should be valid"; fi
+if is_valid_date 2 29 2023; then zassert_ok 0 "shouldn't be valid"
+else zassert_ok 1 "non-leap Feb 29 2023 rejected"; fi
+zassert_eq "$(rfc2822_to_epoch 1 1 1970 0 0 0 +0000)" 2208988800 "unix epoch from 1900"
+ztest_run

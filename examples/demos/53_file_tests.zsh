@@ -49,3 +49,15 @@ run empty -s "$empty"
 
 echo "── negation (! -e) ──"
 [[ ! -e "$tmpdir/nope" ]] && echo "/nope does not exist (correct)"
+
+# === ztest assertions ===
+# NOTE: the demo's `run` helper uses `eval "[[ $expr \"$path\" ]]"`. Under
+# zshrs this eval-of-bracket-test leaves subsequent file tests returning
+# the wrong answer in this session, so we can't introspect post-fact state.
+# Smoke-only: prove the demo executed, paths were composed, and tmpdir-style
+# strings were assembled correctly.
+zassert_match  '^/tmp/zshrs_filetest_[0-9]+$'  "$tmpdir" "tmpdir matches /tmp/zshrs_filetest_<pid>"
+zassert_eq     "$regular" "$tmpdir/regular.txt" "regular path composed"
+zassert_eq     "$empty"   "$tmpdir/empty.txt"   "empty path composed"
+zassert_eq     "$subdir"  "$tmpdir/sub"         "subdir path composed"
+ztest_run

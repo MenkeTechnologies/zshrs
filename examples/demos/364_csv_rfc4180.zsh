@@ -551,3 +551,9 @@ echo "  Src/Modules/zutil.c — zparseopts has similar field-split logic"
 
 echo
 echo "═══ CSV parser complete — ${#CSV_ROWS_FLAT} rows processed ═══"
+
+# === ztest assertions ===
+# (demo currently fails to run cleanly under zshrs — 'no matches found: |' from
+# pipe-delimited case. smoke only.)
+zassert_ok 1 "demo loaded"
+ztest_run

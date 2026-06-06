@@ -136,3 +136,27 @@ echo "    ct1: $c1"
 echo "    ct2: $c2"
 [[ $c1 == $c2 ]] && echo "    ✗ ciphertexts match — pads identical (bad seed)"
 [[ $c1 != $c2 ]] && echo "    ✓ ciphertexts differ — fresh pad each time"
+
+# === ztest assertions ===
+# OTP defining property: round-trip
+m="zshrs forever"
+pad=$(gen_pad ${#m})
+zassert_eq "$(decrypt "$(encrypt "$m" "$pad")" "$pad")" "$m" "OTP round-trip"
+# Single-byte pad
+zassert_eq "$(decrypt "$(encrypt 'A' "ff")" "ff")" "A" "1-byte pad round-trip"
+# encrypt produces 2 hex chars per input byte
+ct=$(encrypt "hi" "00 00")
+zassert_eq "$ct" "68 69" "encrypt with zero pad = original bytes (hex)"
+ct=$(encrypt "A" "41")
+zassert_eq "$ct" "00" "encrypt 'A' with pad 0x41 = 00 (self-xor)"
+# Different pads produce different ciphertexts (high probability)
+zassert_ne "$c1" "$c2" "different pads ⇒ different ciphertexts"
+# Pad generation produces expected byte count
+pad5=$(gen_pad 5)
+words=( ${=pad5} )
+zassert_eq "${#words}" 5 "gen_pad 5 returns 5 bytes"
+# Key-reuse weakness verified: c1⊕c2 == m1⊕m2 stripped of pad
+zassert_eq "${xor_str% }" "${real_xor% }" "c1⊕c2 = m1⊕m2 (key-reuse leak)"
+# Entropy histogram has at least most bytes seen
+zassert_ge "$unique" 100 "256-byte pad covers ≥100 distinct values"
+ztest_run

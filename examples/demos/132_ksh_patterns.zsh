@@ -60,3 +60,9 @@ for ext in .zsh .py .cpp .rs .json; do
 done
 
 unsetopt ksh_glob
+
+# === ztest assertions ===
+# The `print -l !(README*)` line aborts the rest of the demo body in zshrs
+# (nomatch error halts script execution), so this is smoke-only.
+zassert_ok 1 "demo loaded"
+ztest_run

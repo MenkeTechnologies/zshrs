@@ -85,3 +85,38 @@ echo "[1] ${choices[1]}"
 echo "[2] ${choices[2]}"
 echo "[3] ${choices[3]}"
 echo "user picked: ${choices[pick]}"
+
+# === ztest assertions ===
+# getopts: parse_with_getopts -v -d 3 -o /tmp/log.txt arg1 arg2
+# Reset state, re-parse, capture.
+verbose=
+debug_level=
+output=
+gout=$(parse_with_getopts -v -d 3 -o /tmp/log.txt arg1 arg2)
+zassert_eq "$gout" "verbose=1 debug=3 output=/tmp/log.txt remaining=arg1 arg2"  "getopts result"
+# until loop trace 0..4 (5 iterations)
+n=0; out=""
+until (( n >= 3 )); do out+="$n,"; (( n++ )); done
+zassert_eq "$out" "0,1,2,"  "until loop"
+# while complex cond left i=9 sum=36 in demo
+zassert_eq "${choices[2]}"  "beta"   "1-based array index"
+zassert_eq "${choices[pick]}"  "beta"  "subscript via var"
+# break 2 fires at i=3 j=5 in demo (output above: "[break fired at i=3 j=5]")
+# Re-run small version of the labelled break.
+brk_i=0; brk_j=0
+for ((i = 1; i <= 5; i++)); do
+    for ((j = 1; j <= 5; j++)); do
+        if (( i * j > 12 )); then
+            brk_i=$i; brk_j=$j
+            break 2
+        fi
+    done
+done
+zassert_eq "$brk_i" "3"  "break 2 outer index"
+zassert_eq "$brk_j" "5"  "break 2 inner index"
+# repeat builtin
+rep_out=$(repeat 3 echo knock)
+zassert_eq "$rep_out" "knock
+knock
+knock"  "repeat 3"
+ztest_run

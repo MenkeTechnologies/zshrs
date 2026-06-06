@@ -41,3 +41,16 @@ for f in {0..15}; do
     idx=$(( f % 8 + 1 ))
     printf "  %s\n" "${braille[idx]}"
 done
+
+# === ztest assertions ===
+zassert_eq "$(draw_bar 0 10)"   "[░░░░░░░░░░]   0%"  "0% bar width=10"
+zassert_eq "$(draw_bar 50 10)"  "[█████░░░░░]  50%"  "50% bar width=10"
+zassert_eq "$(draw_bar 100 10)" "[██████████] 100%"  "100% bar width=10"
+zassert_eq "${#stages[@]}" 5     "5 stages defined"
+zassert_eq "${stages[1]}"  "init"      "first stage"
+zassert_eq "${stages[5]}"  "configure" "last stage"
+zassert_eq "${#frames[@]}" 4     "4 ASCII spinner frames"
+zassert_eq "${#braille[@]}" 8    "8 braille frames"
+zassert_eq "${frames[1]}"  "|"   "first ASCII frame"
+zassert_eq "${braille[1]}" "⠋"   "first braille frame"
+ztest_run

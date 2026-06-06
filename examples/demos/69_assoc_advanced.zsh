@@ -64,3 +64,27 @@ echo "remaining keys: ${(ok)inv}"
 echo "── clear all ──"
 inv=()
 echo "after clear: ${#inv[@]}"
+
+# === ztest assertions ===
+typeset -A v
+v[apple]=10
+v[banana]=5
+v[cherry]=20
+v[date]=8
+zassert_eq "${#v[@]}"  4    "4 keys in v"
+zassert_eq "${v[apple]}"  10 "v[apple]=10"
+zassert_eq "${v[banana]}" 5  "v[banana]=5"
+# key existence idiom
+[[ -n ${v[apple]+x} ]] && zassert_ok 1 "+x exists for apple"  || zassert_ok 0 "+x exists for apple"
+[[ -n ${v[mango]+x} ]] && zassert_ok 0 "+x absent for mango"  || zassert_ok 1 "+x absent for mango"
+# sorted keys
+zassert_eq "${(ok)v}" "apple banana cherry date" "(ok) keys sorted"
+# delete
+unset 'v[date]'
+zassert_eq "${#v[@]}"  3    "3 keys after unset date"
+# clear
+v=()
+zassert_eq "${#v[@]}"  0    "0 keys after clear"
+zassert_eq "${#snapshot[@]}"  4   "snapshot copy preserved 4 keys"
+zassert_eq "${snapshot[banana]}"  5 "snapshot[banana]"
+ztest_run

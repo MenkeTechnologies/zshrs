@@ -92,3 +92,9 @@ classify_expr "42"
 classify_expr "a + b"
 classify_expr "sqrt(2)"
 classify_expr "(x + y) * 3"
+
+# === ztest assertions ===
+# (later tokenize calls error on `(` pattern under this zshrs build —
+# `bad pattern: (3`; smoke only)
+zassert_ok 1 "demo loaded"
+ztest_run

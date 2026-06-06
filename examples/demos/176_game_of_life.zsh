@@ -93,3 +93,17 @@ echo "── final cell count ──"
 alive=0
 for v in "${GRID[@]}"; do (( alive += v )); done
 echo "alive: $alive"
+
+# === ztest assertions ===
+zassert_eq "$ROWS" 8                   "8 rows"
+zassert_eq "$COLS" 20                  "20 cols"
+zassert_eq "${#GRID[@]}" $((8*20))     "grid is 160 cells"
+# After 4 generations, final alive count is 8.
+zassert_eq "$alive" 8                  "8 cells alive after 4 generations"
+# get_cell stays in bounds.
+zassert_eq "$(get_cell -1 0)" 0       "off-grid (-1) returns 0"
+zassert_eq "$(get_cell 0 100)" 0      "off-grid (col=100) returns 0"
+# Each cell is 0 or 1.
+sample=${GRID[1]}
+zassert_match '^[01]$' "$sample"      "cell value is 0/1"
+ztest_run

@@ -91,3 +91,20 @@ echo "saved 10 entries to $tmpfile ($(wc -l < $tmpfile) lines)"
 KVS=()
 load_kvs "$tmpfile"
 echo "loaded back ${#KVS[@]} entries"
+
+# === ztest assertions ===
+# Re-populate to a known state for testing.
+KVS=()
+KVS[a]=1
+KVS[b]=2
+KVS[c]=3
+zassert_eq "${#KVS[@]}" 3       "3 entries inserted"
+zassert_eq "${KVS[a]}"  1       "KVS[a]=1"
+zassert_eq "${KVS[b]}"  2       "KVS[b]=2"
+save_kvs "$tmpfile"
+zassert_ok "$(test -f "$tmpfile" && echo y)" "save_kvs wrote file"
+KVS=()
+zassert_eq "${#KVS[@]}" 0       "KVS cleared"
+load_kvs "$tmpfile"
+zassert_ge "${#KVS[@]}" 1       "load_kvs hydrated at least 1 entry"
+ztest_run

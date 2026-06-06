@@ -132,3 +132,20 @@ for ((i=1; i<=N; i++)); do
     fi
 done
 (( ! neg_cyc )) && echo "  ✓ no negative cycle"
+
+# === ztest assertions ===
+# After all-pairs computation:
+zassert_eq "$N"          5    "5 nodes"
+zassert_eq "$neg_cyc"    0    "no negative cycle detected"
+# d(A,C) shortcut via D: A→E(-4) doesn't reach C; via B→D→C: 3+1-5 = -1
+zassert_eq "${D[$(( (1-1)*N + 3 ))]}" -3 "d(A,C) = -3 (via E,D,C)"
+zassert_eq "${D[$(( (1-1)*N + 4 ))]}"  2 "d(A,D) = 2 (via E)"
+zassert_eq "${D[$(( (1-1)*N + 5 ))]}" -4 "d(A,E) = -4 (direct)"
+zassert_eq "${D[$(( (2-1)*N + 1 ))]}"  3 "d(B,A) = 3 (via D)"
+zassert_eq "${D[$(( (3-1)*N + 5 ))]}"  3 "d(C,E) = 3 (via B,D)"
+zassert_eq "${D[$(( (5-1)*N + 1 ))]}"  8 "d(E,A) = 8 (via D)"
+zassert_eq "${D[$(( (4-1)*N + 2 ))]}" -1 "d(D,B) = -1 (via C)"
+# Diagonal stays at 0 (no negative cycle means diag stays 0)
+zassert_eq "${D[$(( (1-1)*N + 1 ))]}"  0 "d(A,A) = 0"
+zassert_eq "$(node_idx C)" 3 "node_idx('C') = 3"
+ztest_run

@@ -194,3 +194,49 @@ echo "  Kahn's algorithm: O(V + E)"
 echo "  alternative: Tarjan DFS (3-color)"
 echo "  applications: build systems, package mgmt, course planning,"
 echo "                spreadsheet evaluation, instruction scheduling"
+
+# === ztest assertions ===
+ts_clear
+ts_add a b
+ts_add b c
+ts_add c d
+ts_add d e
+ts_add e
+zassert_ok 1 "linear chain sorted ok" && topo_sort
+zassert_eq "${ORDER[*]}" "e d c b a" "linear chain order"
+# diamond
+ts_clear
+ts_add d b c
+ts_add b a
+ts_add c a
+ts_add a
+topo_sort
+zassert_eq "${ORDER[*]}" "a b c d" "diamond order"
+zassert_eq "${ORDER[1]}" "a" "diamond first = a"
+zassert_eq "${ORDER[4]}" "d" "diamond last = d"
+# cycle detection
+ts_clear
+ts_add A B
+ts_add B C
+ts_add C A
+if topo_sort; then
+    zassert_ok 0 "should detect cycle"
+else
+    zassert_ok 1 "cycle detected"
+fi
+# install order count
+ts_clear
+ts_add nginx libpcre openssl
+ts_add postgres libssl libxml libreadline
+ts_add libssl openssl
+ts_add openssl libcrypt
+ts_add libxml libxml-base
+ts_add libpcre libpcre-base
+ts_add libcrypt
+ts_add libpcre-base
+ts_add libxml-base
+ts_add libreadline libncurses
+ts_add libncurses
+topo_sort
+zassert_eq "${#ORDER}" 11 "install pkg count"
+ztest_run

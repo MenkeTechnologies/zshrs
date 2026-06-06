@@ -145,3 +145,20 @@ for u in oz lb stick kg; do
     factor=${MASS[$u]}
     echo "  1 $u = $factor g"
 done
+
+# === ztest assertions ===
+zassert_eq "${VOL[cup]}"    "240"  "1 cup = 240 ml"
+zassert_eq "${VOL[tsp]}"    "5"    "1 tsp = 5 ml"
+zassert_eq "${VOL[tbsp]}"   "15"   "1 tbsp = 15 ml"
+zassert_eq "${VOL[l]}"      "1000" "1 l = 1000 ml"
+zassert_eq "${VOL[gallon]}" "3785" "1 gallon ≈ 3785 ml"
+zassert_eq "${MASS[oz]}"    "28"   "1 oz ≈ 28 g"
+zassert_eq "${MASS[lb]}"    "454"  "1 lb ≈ 454 g"
+zassert_eq "${MASS[stick]}" "113"  "1 stick butter ≈ 113 g"
+zassert_eq "$(parse_qty 2)"   "2000"  "parse 2 → 2000"
+zassert_eq "$(parse_qty '1/2')" "500"   "parse 1/2 → 500"
+zassert_eq "$(parse_qty '1/4')" "250"   "parse 1/4 → 250"
+zassert_eq "$(format_qty 500)"  "0 1/2" "format 500 → 0 1/2"
+zassert_eq "$(format_qty 1000)" "1"     "format 1000 → 1"
+zassert_eq "$(format_qty 2500)" "2 1/2" "format 2500 → 2 1/2"
+ztest_run

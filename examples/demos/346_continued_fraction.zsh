@@ -142,3 +142,21 @@ echo "  Diophantine equations (Pell's equation)"
 echo "  cryptography (Wiener's attack on RSA)"
 echo "  music theory (equal temperament approximations)"
 echo "  calendar systems (year length)"
+
+# === ztest assertions ===
+cf_expand 13 4
+zassert_eq "${CF[*]}" "3 4"           "cf 13/4 = [3;4]"
+cf_expand 22 7
+zassert_eq "${CF[*]}" "3 7"           "cf 22/7 = [3;7]"
+cf_expand 21 5
+zassert_eq "${CF[*]}" "4 5"           "cf 21/5 = [4;5]"
+cf_expand 1 1
+zassert_eq "${CF[*]}" "1"             "cf 1/1 = [1]"
+cf_convergents 3 7 15 1
+zassert_eq "${NUMS[*]}" "3 22 333 355" "pi convergent numerators"
+zassert_eq "${DENS[*]}" "1 7 106 113"  "pi convergent denominators"
+sqrt_cf 4 5
+zassert_eq "${CF[*]}" "2"             "sqrt 4 perfect square returns [2]"
+sqrt_cf 2 4
+zassert_eq "${CF[*]}" "1 2 2 2 2"     "sqrt 2 CF = [1;2,2,2,2]"
+ztest_run

@@ -70,3 +70,23 @@ classify() {
 for n in -5 0 7 42 100 1000; do
     printf "%5d → %s\n" $n "$(classify $n)"
 done
+
+# === ztest assertions ===
+# Numeric -eq / -lt / -gt etc.
+[[ 5 -eq 5 ]] && zassert_ok 1  "5 -eq 5" || zassert_ok 0 "5 -eq 5"
+[[ 5 -lt 10 ]] && zassert_ok 1 "5 -lt 10" || zassert_ok 0 "5 -lt 10"
+[[ 10 -gt 5 ]] && zassert_ok 1 "10 -gt 5" || zassert_ok 0 "10 -gt 5"
+[[ 5 -ne 10 ]] && zassert_ok 1 "5 -ne 10" || zassert_ok 0 "5 -ne 10"
+# String lexical
+[[ "apple" < "banana" ]] && zassert_ok 1 "apple < banana lex" || zassert_ok 0 "apple < banana lex"
+# Glob match
+[[ "hello world" == *world* ]] && zassert_ok 1 "glob contains" || zassert_ok 0 "glob contains"
+[[ "hello world" == hello* ]] && zassert_ok 1 "glob starts" || zassert_ok 0 "glob starts"
+# classify dispatch
+zassert_eq "$(classify -5)"   "neg"            "classify -5"
+zassert_eq "$(classify 0)"    "zero"           "classify 0"
+zassert_eq "$(classify 7)"    "single digit"   "classify 7"
+zassert_eq "$(classify 42)"   "double digit"   "classify 42"
+zassert_eq "$(classify 100)"  "100+"           "classify 100"
+zassert_eq "$(classify 1000)" "100+"           "classify 1000"
+ztest_run

@@ -92,3 +92,19 @@ for s in apple banana cherry date elderberry fig grape honeydew kiwi lemon; do
 done
 echo "  hashed: 10 unique inputs"
 echo "  unique hashes: ${#hash_set[@]}"
+
+# === ztest assertions ===
+# Known hash values (computed by the implementation, asserted here as
+# regression pins — change them only if the algorithm itself changes).
+zassert_eq "$(poly_hash '')"     "00000000" "poly empty"
+zassert_eq "$(poly_hash 'a')"    "00000061" "poly 'a'"
+zassert_eq "$(poly_hash 'abc')"  "00622526" "poly 'abc'"
+zassert_eq "$(djb2_hash '')"     "00001505" "djb2 empty (5381)"
+zassert_eq "$(djb2_hash 'abc')"  "0b885c8b" "djb2 'abc'"
+zassert_eq "$(fnv1a '')"         "811c9dc5" "fnv1a empty (offset basis)"
+zassert_eq "$(adler32 '')"       "00000001" "adler32 empty"
+zassert_eq "$(adler32 'Wikipedia')" "11e60398" "adler32 Wikipedia"
+# Determinism: same input → same hash
+zassert_eq "$(djb2_hash 'check')" "$(djb2_hash 'check')" "djb2 deterministic"
+zassert_eq "${#hash_set[@]}" 10 "10 unique djb2 hashes for 10 inputs"
+ztest_run

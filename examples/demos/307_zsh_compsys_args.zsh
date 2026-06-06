@@ -122,3 +122,22 @@ echo "    Src/Zle/complete.c   — completion dispatch"
 echo "    Src/Zle/compsys.c    — main completion system"
 echo "    Src/Zle/computil.c   — _arguments + helpers"
 echo "    Src/Zle/zle_keymap.c — TAB binding"
+
+# === ztest assertions ===
+# Re-register and verify compdef + zstyle accept the calls
+_ct_widget() { :; }
+compdef _ct_widget ct_widget 2>/dev/null
+zassert_eq "$?" "0"                            "compdef accepts registration"
+compdef -d ct_widget 2>/dev/null
+zassert_eq "$?" "0"                            "compdef -d accepts dereg"
+unfunction _ct_widget 2>/dev/null
+# zstyle accepts pattern + style
+zstyle ':completion:ct:*' menu select 2>/dev/null
+zassert_eq "$?" "0"                            "zstyle set"
+# zstyle -L lists registered styles (or just exits 0 when none)
+zstyle -L 2>/dev/null > /dev/null
+zassert_eq "$?" "0"                            "zstyle -L exits cleanly"
+# autoload + compinit available
+typeset -f compinit > /dev/null 2>&1 && r=1 || r=0
+zassert_eq "$r" "1"                            "compinit autoloaded"
+ztest_run

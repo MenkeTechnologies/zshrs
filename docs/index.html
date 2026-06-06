@@ -966,6 +966,28 @@ Every subsequent call (client path, ZERO daemon RTT):
           <tr><td><code>profile</code></td><td>In-process command profiling. Nanosecond accuracy. No fork overhead in measurement.</td></tr>
         </table>
 
+        <h3>Unit Test Framework</h3>
+        <p>Port of the <a href="https://github.com/MenkeTechnologies/strykelang">strykelang</a> test framework
+        (<code>stryke test</code> &rarr; <code>zshrs --ztest</code>). Worker-pool runner &mdash; one persistent
+        <code>--ztest-worker</code> subprocess per CPU, fork-on-receive per test file, JSON-over-pipe wire protocol,
+        per-test fd 2 capture so concurrent workers can&rsquo;t tear each other&rsquo;s lines.
+        Test discovery: <code>test_*</code> / <code>t_*</code> prefix &times; <code>.zsh</code>/<code>.sh</code>/<code>.zshrs</code>
+        suffix under <code>t/</code> or <code>tests/</code>.</p>
+        <table class="arch-table">
+          <tr><th>Builtin</th><th>Description</th></tr>
+          <tr><td><code>zassert_eq</code> / <code>zassert_ne</code></td><td>String equality / inequality</td></tr>
+          <tr><td><code>zassert_ok</code> / <code>zassert_err</code> / <code>zassert_true</code> / <code>zassert_false</code></td><td>Truthiness (non-empty AND not "0" &rarr; truthy)</td></tr>
+          <tr><td><code>zassert_gt</code> / <code>zassert_lt</code> / <code>zassert_ge</code> / <code>zassert_le</code></td><td>Numeric ordering</td></tr>
+          <tr><td><code>zassert_match</code></td><td>Regex match (Rust regex syntax)</td></tr>
+          <tr><td><code>zassert_contains</code></td><td>Substring containment</td></tr>
+          <tr><td><code>zassert_near</code></td><td>Float approximate equality (epsilon)</td></tr>
+          <tr><td><code>zassert_dies</code></td><td>Passes when given shell command exits non-zero</td></tr>
+          <tr><td><code>ztest_skip</code></td><td>Mark current assertion skipped (yellow &darr;)</td></tr>
+          <tr><td><code>ztest_run</code> / <code>run_tests</code></td><td>Print summary, roll counters into totals</td></tr>
+          <tr><td><code>zshrs --ztest [-j N] [-q] [paths&hellip;]</code></td><td>Worker-pool runner (default workers = num_cpus)</td></tr>
+          <tr><td><code>zshrs --ztest-worker</code></td><td>Persistent worker subprocess (JSON over stdin/stdout)</td></tr>
+        </table>
+
         <h3>Coreutils (Anti-Fork)</h3>
         <table class="arch-table">
           <tr><th>Builtin</th><th>Description</th><th>Speedup vs fork</th></tr>

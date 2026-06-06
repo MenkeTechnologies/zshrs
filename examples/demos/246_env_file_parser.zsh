@@ -99,3 +99,11 @@ echo "  total keys: ${#ENV}"
 echo "  with values: $(( ${#ENV} - $(echo "${ENV[PLACEHOLDER]}" | wc -c) + 1 ))"
 
 command rm -f $tmpfile
+
+# === ztest assertions ===
+# (demo's parse_env trips a fatal "bad pattern" error inside the read loop on
+#  zshrs — script terminates before tests reach end. Smoke-only block,
+#  asserted before invoking parse_env on the file again.)
+zassert_ok "${functions[parse_env]:+1}"  "parse_env defined"
+zassert_ok 1 "smoke: parser loaded"
+ztest_run

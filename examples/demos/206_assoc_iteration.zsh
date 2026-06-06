@@ -91,3 +91,17 @@ for v in ${(v)m}; do
     (( v > max_v )) && max_v=$v
 done
 echo "  min: $min_v, max: $max_v, range: $((max_v - min_v))"
+
+# === ztest assertions ===
+zassert_eq "${#m[@]}" 7              "7 entries in m"
+zassert_eq "$count" 7                "count matches size"
+zassert_eq "$sum" 73                 "sum 10+5+20+8+15+3+12"
+zassert_eq "$(( sum / count ))" 10   "mean (integer)"
+zassert_eq "$min_v" 3                "min value (fig=3)"
+zassert_eq "$max_v" 20               "max value (cherry=20)"
+zassert_eq "${doubled[apple]}" 20    "doubled[apple]=20"
+zassert_eq "${doubled[fig]}" 6       "doubled[fig]=6"
+zassert_eq "${#small[@]}" 3          "3 small entries (<10)"
+zassert_eq "${#large[@]}" 4          "4 large entries (>=10)"
+zassert_eq "${#merged[@]}" 7         "merged keeps all 7 keys"
+ztest_run

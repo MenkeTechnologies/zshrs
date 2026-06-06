@@ -362,3 +362,22 @@ echo "    Src/Modules/zutil.c         — zparseopts pattern dispatcher"
 
 echo
 echo "═══ Sudoku solver complete (${STEPS} solver steps cumulative) ═══"
+
+# === ztest assertions ===
+# Solver itself is skipped on CI (per the demo); we test the support functions.
+zassert_eq "$(idx 1 1)" "1"   "idx(1,1) = 1"
+zassert_eq "$(idx 1 9)" "9"   "idx(1,9) = 9"
+zassert_eq "$(idx 9 9)" "81"  "idx(9,9) = 81"
+zassert_eq "$(idx 5 5)" "41"  "idx(5,5) = 41"
+# Load a valid puzzle and check geometry.
+load_string "534678912672195348198342567859761423426853791713924856961537284287419635345286179"
+zassert_eq "${#BOARD}" "81"   "board has 81 cells"
+zassert_eq "$(cell 1 1)" "5"  "BOARD(1,1) = 5"
+zassert_eq "$(cell 9 9)" "9"  "BOARD(9,9) = 9"
+# is_valid: should allow placing existing solution values.
+load_string "534678912672195348198342567859761423426853791713924856961537284287419635345286170"
+is_valid 9 9 9 && rc=0 || rc=1
+zassert_eq "$rc" "0" "9 at (9,9) is valid in this puzzle"
+is_valid 9 9 5 && rc=0 || rc=1
+zassert_eq "$rc" "1" "5 at (9,9) is invalid (already in col)"
+ztest_run

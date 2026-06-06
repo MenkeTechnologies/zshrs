@@ -136,3 +136,17 @@ if (( found )); then
 else
     echo "  no path found"
 fi
+
+# === ztest assertions ===
+zassert_eq "$ROWS"            10        "grid rows"
+zassert_eq "$COLS"            11        "grid cols"
+zassert_eq "$sr,$sc"          "1,1"     "start coord"
+zassert_eq "$gr,$gc"          "10,8"    "goal coord"
+zassert_eq "$found"           1         "A* found path"
+zassert_eq "$(( ${#path} - 1 ))" 16     "path length steps"
+zassert_eq "${path[1]}"       "1,1"     "path begins at start"
+zassert_eq "${path[-1]}"      "10,8"    "path ends at goal"
+zassert_eq "$(cell 1 1)"      "S"       "cell(1,1) is start"
+zassert_eq "$(cell 10 8)"     "G"       "cell(10,8) is goal"
+zassert_eq "$(cell 1 6)"      "#"       "cell(1,6) is wall"
+ztest_run

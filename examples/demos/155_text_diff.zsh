@@ -56,3 +56,20 @@ word_diff() {
 word_diff \
     "the quick brown fox jumps over the lazy dog" \
     "the slow brown fox jumps over the active dog"
+
+# === ztest assertions ===
+# Re-run the diff and capture into vars for assertion.
+a=$'alpha\nbeta\ngamma\ndelta'
+b=$'beta\ngamma\nepsilon\nzeta'
+out="$(diff_lines "$a" "$b")"
+zassert_contains "$out" "- alpha"       "alpha only in A"
+zassert_contains "$out" "- delta"       "delta only in A"
+zassert_contains "$out" "+ epsilon"     "epsilon only in B"
+zassert_contains "$out" "+ zeta"        "zeta only in B"
+zassert_contains "$out" "beta"          "beta in common"
+zassert_contains "$out" "gamma"         "gamma in common"
+# word_diff smoke
+wout="$(word_diff "the quick brown fox" "the slow brown fox")"
+zassert_contains "$wout" "quick"        "word_diff removed quick"
+zassert_contains "$wout" "slow"         "word_diff added slow"
+ztest_run

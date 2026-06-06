@@ -41,3 +41,14 @@ echo "after manual_arr+=: manual_str still=$manual_str"
 echo "── PATH itself is the classic tied pair ──"
 echo "first 3 path[]:"
 print -l $path[1] $path[2] $path[3]
+
+# === ztest assertions ===
+# Tied colon-arrays not fully implemented in zshrs yet — typeset -T with
+# custom separator errors out. Focus on what does work: manual sync and
+# PATH/path classic pair.
+zassert_eq "$manual_str" "alpha:beta:gamma"  "manual_str preserved"
+zassert_eq "${#manual_arr[@]}" "4"           "manual_arr appended"
+# PATH and path are tied for free.
+zassert_ok "${path[1]}"  "path[1] non-empty"
+zassert_contains "$PATH" ":"  "PATH contains separator"
+ztest_run

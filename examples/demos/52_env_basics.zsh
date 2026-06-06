@@ -33,3 +33,19 @@ done
 echo "── cleanup ──"
 unset DEMO_NEW EXPORTED_VAR LOCAL_ONLY PATH_SEGMENTS
 echo "after cleanup: ${DEMO_NEW:-cleared} ${EXPORTED_VAR:-cleared}"
+
+# === ztest assertions ===
+export RETEST_VAR=on
+zassert_eq "$RETEST_VAR"     "on"        "export visible in same shell"
+zassert_eq "$(echo $RETEST_VAR)" "on"    "export visible in subshell"
+unset RETEST_VAR
+zassert_eq "${RETEST_VAR:-cleared}" "cleared" "unset triggers :- fallback"
+RETEST_DEF=
+: ${RETEST_DEF:=initialized}
+zassert_eq "$RETEST_DEF"     "initialized" ":= sets when empty"
+: ${RETEST_DEF:=second}
+zassert_eq "$RETEST_DEF"     "initialized" ":= is no-op when set"
+zassert_eq "${DEMO_NEW:-cleared}"      "cleared" "DEMO_NEW gone after cleanup"
+zassert_eq "${EXPORTED_VAR:-cleared}"  "cleared" "EXPORTED_VAR gone after cleanup"
+unset RETEST_DEF
+ztest_run

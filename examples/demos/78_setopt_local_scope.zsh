@@ -62,3 +62,20 @@ emulate_zsh_check() {
 }
 emulate_zsh_check
 echo "back in zsh — pwd $PWD recognized"
+
+# === ztest assertions ===
+# Verify glob option restores after the local_options fn exits.
+isolated_no_glob >/dev/null
+if [[ -o glob ]]; then zassert_ok 1 "glob option restored after fn"
+else                   zassert_ok 0 "glob option restored after fn"; fi
+# typeset locals must NOT leak.
+demo_locals >/dev/null
+zassert_eq "${n:-undef}" "undef" "local -i n did not leak"
+zassert_eq "${f:-undef}" "undef" "local -F f did not leak"
+zassert_eq "${s:-undef}" "undef" "local s did not leak"
+# emulate -L sh inside local_options must not affect outer shell — verify PWD eval'd.
+zassert_ok "$PWD" "PWD still accessible after emulate -L sh"
+out_iso=$(isolated_no_glob)
+zassert_contains "$out_iso" "OFF inside (expected)" "no_glob takes effect inside fn"
+ztest_run
+

@@ -51,3 +51,14 @@ for k in ${(k)freq}; do
     (( n += freq[$k] ))
 done
 echo "total chars: $total, total words: $n, avg: $(( total / n )) chars/word"
+
+# === ztest assertions ===
+zassert_eq "${#freq[@]}" 11             "unique word count"
+zassert_eq "${freq[the]}" 5             "'the' freq"
+zassert_eq "${freq[fox]}" 3             "'fox' freq"
+zassert_eq "${freq[brown]}" 2           "'brown' freq"
+zassert_eq "${freq[at]}" 1              "'at' freq"
+zassert_eq "$n" 20                      "total tokens"
+zassert_eq "$total" 72                  "sum of char counts"
+zassert_eq "$(( total / n ))" 3         "avg word length"
+ztest_run

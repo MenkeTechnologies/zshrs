@@ -211,3 +211,18 @@ echo "  Nim sum (3,5,7) = $(nim_sum 3 5 7)"
 echo "  Strategy: keep nim sum = 0 after every OPT move"
 echo "  → RAND can never restore sum to 0"
 echo "  → OPT always responds, takes last pile"
+
+# === ztest assertions ===
+zassert_eq "$(nim_sum 3 4 5)" 2 "nim sum 3,4,5"
+zassert_eq "$(nim_sum 1 2 3)" 0 "nim sum 1,2,3 = P-pos"
+zassert_eq "$(nim_sum 5 5)"   0 "twin piles"
+zassert_eq "$(nim_sum 1 4 5)" 0 "1,4,5 = P-pos"
+zassert_eq "$(nim_sum 3 5 7)" 1 "3,5,7 N-pos"
+if is_p_position 1 2 3; then zassert_ok 1 "1,2,3 is P"
+else zassert_ok 0 "1,2,3 should be P"; fi
+if is_p_position 3 4 5; then zassert_ok 0 "3,4,5 should not be P"
+else zassert_ok 1 "3,4,5 is N"; fi
+if is_game_over 0 0 0; then zassert_ok 1 "all zero = over"
+else zassert_ok 0 "all zero should be over"; fi
+zassert_eq "$opt_wins" 10 "OPT wins all 10"
+ztest_run

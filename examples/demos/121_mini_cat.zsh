@@ -84,3 +84,29 @@ mini_cat -n "$tmpdir/a.txt" "$tmpdir/b.txt"
 
 echo "── missing file ──"
 mini_cat -n /nonexistent_xyz 2>&1
+
+# === ztest assertions ===
+td=/tmp/zshrs_minicat_test_$$
+mkdir -p "$td"
+printf 'alpha\nbeta\ngamma\n' > "$td/x.txt"
+# Plain pass-through: 3 lines.
+zassert_eq "$(mini_cat $td/x.txt)" "alpha
+beta
+gamma"  "mini_cat plain"
+# -n prepends numbered prefix
+out=$(mini_cat -n $td/x.txt)
+zassert_contains "$out" "1  alpha"  "mini_cat -n line 1"
+zassert_contains "$out" "3  gamma"  "mini_cat -n line 3"
+# -E appends $ at line end
+out_e=$(mini_cat -E $td/x.txt)
+zassert_contains "$out_e" "alpha$"  "mini_cat -E end marker"
+# Missing file → stderr message; stdout empty
+err=$(mini_cat /nonexistent_xyz_test 2>&1 >/dev/null)
+zassert_contains "$err" "no such file"  "mini_cat missing"
+# Squeeze blanks: input with consecutive empty lines → single blank between blocks
+printf 'one\n\n\n\ntwo\n' > "$td/b.txt"
+squeezed=$(mini_cat -s $td/b.txt)
+# 'one' + 1 blank + 'two' = 3 lines
+zassert_eq "$(echo "$squeezed" | wc -l | tr -d ' ')" "3"  "mini_cat -s squeezes blanks"
+rm -rf "$td"
+ztest_run

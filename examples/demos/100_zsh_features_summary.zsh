@@ -74,3 +74,21 @@ typeset -A counts; counts[a]=10; (( counts[a]++ )); echo "counts[a]=${counts[a]}
 echo "── 20. array subtract/intersect (Src/subst.c) ──"
 A=(1 2 3 4); B=(2 4 6)
 echo "A-B=${A:|B} A&B=${A:*B}"
+
+# === ztest assertions ===
+zassert_eq $((0xff))          255   "hex literal"
+zassert_eq $((2#1010))         10   "binary literal"
+zassert_eq "${#s}"              5   "param expansion length"
+zassert_eq "${s:u}"        "HELLO"  "uppercase mod"
+zassert_eq "${s:l}"        "hello"  "lowercase mod"
+zassert_eq "${p:h}"   "/usr/local/bin"  "head modifier"
+zassert_eq "${p:t}"   "git"             "tail modifier"
+zassert_eq "${m[k1]}"  "v1"   "assoc lookup"
+zassert_eq "${counts[a]}"  11  "arith on assoc"
+# zshrs divergence: ${A:|B} word-splits even inside double quotes when passed
+# directly to a builtin — use an intermediate scalar to force join.
+sub=${A:|B}
+inter=${A:*B}
+zassert_eq "$sub"   "1 3"   "array subtract"
+zassert_eq "$inter" "2 4"   "array intersect"
+ztest_run

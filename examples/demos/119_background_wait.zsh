@@ -69,3 +69,23 @@ timeout_run "sleep 0.05" 500
 timeout_run "sleep 5" 200
 
 echo "── all done ──"
+
+# === ztest assertions ===
+# Smoke: bg + wait returns success and captures exit code.
+(true) &
+wait $!
+zassert_eq "$?" "0"  "wait success bg"
+(exit 7) &
+wait $!
+zassert_eq "$?" "7"  "wait propagates exit 7"
+(exit 0) &
+wait $!
+zassert_eq "$?" "0"  "wait propagates exit 0"
+# $! is set after bg
+(sleep 0.05) &
+zassert_ne "$!" ""  "\$! set after bg"
+wait
+# Async pipeline produces all 5 sorted lines
+out=$({ printf 'A\nB\nC\n'; printf 'D\nE\n'; } | sort | tr '\n' ' ')
+zassert_eq "$out" "A B C D E "  "async pipeline sort"
+ztest_run

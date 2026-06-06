@@ -87,3 +87,21 @@ for k in ${(ko)bucket}; do
     for ((i=0; i<count; i++)); do bar+="*"; done
     printf "  %3d | %4d | %s\n" $k $count "$bar"
 done
+
+# === ztest assertions ===
+# Max from SALES is Dec=220.
+zassert_eq "$max" 220                        "max month value is 220 (Dec)"
+zassert_eq "${SALES[Jul]}" 200               "Jul = 200"
+zassert_eq "${SALES[Jan]}" 50                "Jan = 50"
+zassert_eq "${#months[@]}" 12                "12 months"
+# Histogram counts from data=(5 1 2 4 2 5 4 5 2 1 2 5 4 4 5 2).
+# Manually: 1→2 2→5 4→4 5→5
+zassert_eq "${bucket[1]}" 2                  "value 1 appears 2 times"
+zassert_eq "${bucket[2]}" 5                  "value 2 appears 5 times"
+zassert_eq "${bucket[4]}" 4                  "value 4 appears 4 times"
+zassert_eq "${bucket[5]}" 5                  "value 5 appears 5 times"
+# Total samples
+total_samples=0
+for k in ${(k)bucket}; do (( total_samples += bucket[$k] )); done
+zassert_eq "$total_samples" 16               "16 total samples"
+ztest_run

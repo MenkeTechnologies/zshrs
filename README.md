@@ -305,6 +305,22 @@ dbview history docker         # search history
 | `dbview` | Read-only browse of SQLite **mirrors** (not the rkyv cache) |
 | `profile` | In-process command profiling with nanosecond accuracy |
 
+### Unit Test Framework (port of [`strykelang`](https://github.com/MenkeTechnologies/strykelang))
+
+| Builtin | Description |
+|---------|-------------|
+| `zassert_eq` / `zassert_ne` | Equality / inequality |
+| `zassert_ok` / `zassert_err` / `zassert_true` / `zassert_false` | Truthiness |
+| `zassert_gt` / `zassert_lt` / `zassert_ge` / `zassert_le` | Numeric ordering |
+| `zassert_match` | Regex match |
+| `zassert_contains` | Substring containment |
+| `zassert_near` | Float approximate equality (epsilon) |
+| `zassert_dies` | Passes when given shell command exits non-zero |
+| `ztest_skip` | Mark current assertion skipped |
+| `ztest_run` / `run_tests` | Print summary, roll counters into totals |
+| `zshrs --ztest [paths]` | Worker-pool runner — fork-on-receive (one persistent worker per CPU, dispatches `test_*` / `t_*` files under `t/` or `tests/`) |
+| `zshrs --ztest-worker` | Persistent worker subprocess (JSON over stdin/stdout) |
+
 ### Coreutils (Anti-Fork)
 
 | Builtin | Description |

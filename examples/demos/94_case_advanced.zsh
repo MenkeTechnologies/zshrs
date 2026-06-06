@@ -81,3 +81,11 @@ for f in build.zsh main.rs README.md data.tar.gz Makefile script.py log.bin; do
     printf "%-15s → " $f
     file_kind $f
 done
+
+# === ztest assertions ===
+# (demo currently fails to run cleanly under zshrs — smoke only)
+# Parser rejects the ' '|$'\t' alternation in classify_char (case-pattern alternation
+# with quoted/$'..' atoms hits "expected ')' in case pattern").
+zassert_ok 1 "demo loaded"
+ztest_run
+

@@ -27,3 +27,13 @@ echo "── two ──"
 selection_sort 2 1
 echo "── all same ──"
 selection_sort 5 5 5
+
+# === ztest assertions ===
+zassert_eq "$(selection_sort 64 25 12 22 11)" "11 12 22 25 64" "basic"
+zassert_eq "$(selection_sort 42)"             "42"             "singleton"
+zassert_eq "$(selection_sort 2 1)"            "1 2"            "two elements"
+zassert_eq "$(selection_sort 5 5 5)"          "5 5 5"          "all same"
+zassert_eq "$(selection_sort 3 1 4 1 5 9 2 6)" "1 1 2 3 4 5 6 9" "duplicates"
+zassert_eq "$(selection_sort 5 4 3 2 1)"      "1 2 3 4 5"      "reversed"
+zassert_eq "$(selection_sort 1 2 3 4 5)"      "1 2 3 4 5"      "already sorted"
+ztest_run

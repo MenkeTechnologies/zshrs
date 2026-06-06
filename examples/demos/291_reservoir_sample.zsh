@@ -146,3 +146,18 @@ echo "    ${(@n)RESERVOIR}"
 RANDOM=42
 echo "  Fisher-Yates partial k=5 from 1..20:"
 echo "    $(fy_partial 5 "${items[@]:0:20}" | tr ' ' '\n' | sort -n | tr '\n' ' ')"
+
+# === ztest assertions ===
+RANDOM=42
+items2=()
+for i in {1..50}; do items2+=($i); done
+reservoir_array 5 "${items2[@]}"
+zassert_eq "${#RESERVOIR}" "5"                "k=5 sample size"
+reservoir_array 10 a b c
+zassert_eq "${RESERVOIR[*]}" "a b c"          "k>N returns all 3"
+zassert_eq "${#RESERVOIR}" "3"                "k>N size = N"
+reservoir_array 5 a b c d e
+zassert_eq "${RESERVOIR[*]}" "a b c d e"      "k=N returns all"
+reservoir_array 1 "${items2[@]}"
+zassert_eq "${#RESERVOIR}" "1"                "k=1 single pick"
+ztest_run

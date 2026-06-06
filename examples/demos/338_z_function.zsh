@@ -144,3 +144,18 @@ z_search "$text" "$pat"
 echo "  pat='$pat' in text (len ${#text}):"
 echo "  matches at: ${MATCHES[*]}"
 echo "  count: ${#MATCHES}"
+
+# === ztest assertions ===
+z_function "aabcaabxaaaz"
+zassert_eq "${Z[1]}" 12 "Z[1] = full"
+zassert_eq "${Z[2]}" 1  "Z[2] = 1"
+zassert_eq "${Z[5]}" 3  "Z[5] = 3"
+z_search "MISSISSIPPI" "ISS"
+zassert_eq "${MATCHES[*]}" "2 5" "ISS in MISSISSIPPI"
+z_search "ABABABAB" "ABAB"
+zassert_eq "${MATCHES[*]}" "1 3 5" "ABAB occurrences"
+z_search "no match here" "xyz"
+zassert_eq "${#MATCHES}" 0 "no match"
+z_search "ABABABABABABAB" "ABAB"
+zassert_eq "${#MATCHES}" 6 "ABAB count in 14-char"
+ztest_run

@@ -32,3 +32,15 @@ files=(/etc/passwd /usr/bin/zsh /tmp/test.log)
 print -l ${files:t}     # all tail
 echo "---"
 print -l ${files:h}     # all dirname
+
+# === ztest assertions ===
+zassert_eq "${p:h}" "/usr/local/share/zsh/site-functions"            ":h dirname"
+zassert_eq "${p:t}" "_completion.gz"                                  ":t basename"
+zassert_eq "${p:r}" "/usr/local/share/zsh/site-functions/_completion" ":r root"
+zassert_eq "${p:e}" "gz"                                              ":e extension"
+zassert_eq "${p:h:h}" "/usr/local/share/zsh"                          ":h:h chained"
+zassert_eq "${p:s/share/SHARE/}" "/usr/local/SHARE/zsh/site-functions/_completion.gz" ":s substitution"
+zassert_eq "${files[1]:t}" "passwd"   "array element :t"
+zassert_eq "${files[2]:t}" "zsh"      "array element :t #2"
+zassert_eq "${files[3]:h}" "/tmp"     "array element :h"
+ztest_run

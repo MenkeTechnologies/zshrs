@@ -128,3 +128,20 @@ echo
 echo "── tree memory ──"
 echo "  N = $N"
 echo "  SEG entries = ${#SEG} (≈ 4N = $((4*N)))"
+
+# === ztest assertions ===
+# Final state after the two point updates above
+zassert_eq "$N"        16   "tree size"
+zassert_eq "${#SEG}"   64   "SEG ≈ 4N entries"
+zassert_eq "$(query 1 16)" 173 "sum after final updates"
+zassert_eq "$mismatches" 0  "200 random queries match brute force"
+# Rebuild fresh + run primitive queries
+build 1 2 3 4 5
+zassert_eq "$N"              5   "N after rebuild"
+zassert_eq "$(query 1 5)"    15  "sum 1..5 = 15"
+zassert_eq "$(query 1 1)"    1   "single-element query"
+zassert_eq "$(query 2 4)"    9   "range sum 2..4 = 2+3+4"
+update 3 100
+zassert_eq "$(query 1 5)"    112 "sum after update: 1+2+100+4+5"
+zassert_eq "$(query 3 3)"    100 "point query reflects update"
+ztest_run

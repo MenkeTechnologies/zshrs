@@ -48,3 +48,28 @@ print -E 'tab\there'
 echo "── -c columns honors widest entry ──"
 mixed=(short medium longer "longest-of-all")
 print -aC 2 "${mixed[@]}"
+
+# === ztest assertions ===
+# -l one-per-line.
+out_l="$(print -l alpha beta gamma)"
+zassert_eq "$out_l" $'alpha\nbeta\ngamma'      "print -l one-per-line"
+# -N NUL separator (replaced to | for inspection).
+out_n="$(print -N a b c | tr '\0' '|')"
+zassert_eq "$out_n" "a|b|c|"                   "print -N NUL-separated"
+# -n suppresses trailing newline.
+out_nn="$(print -n nonl)"
+zassert_eq "$out_nn" "nonl"                    "print -n no trailing newline"
+# -r raw — backslash sequences are literal.
+out_r="$(print -r 'literal\ttab')"
+zassert_eq "$out_r" 'literal\ttab'             "print -r literal"
+# default print: \t expands.
+out_def="$(print 'tab\there')"
+zassert_contains "$out_def" $'\t'              "print default expands \\t"
+# -f printf-style format.
+out_f="$(print -f "%-10s %d\n" alice 30)"
+zassert_contains "$out_f" "alice"              "print -f label"
+zassert_contains "$out_f" "30"                 "print -f number"
+# -R is like -r.
+out_R="$(print -R 'has\\backslash')"
+zassert_eq "$out_R" 'has\\backslash'           "print -R like -r"
+ztest_run

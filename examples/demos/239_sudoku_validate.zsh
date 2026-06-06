@@ -186,3 +186,38 @@ load_grid \
     "........." \
     "........."
 if validate_grid; then echo "VALID"; else echo "INVALID"; fi
+
+# === ztest assertions ===
+load_grid \
+    "53..7...." \
+    "6..195..." \
+    ".98....6." \
+    "8...6...3" \
+    "4..8.3..1" \
+    "7...2...6" \
+    ".6....28." \
+    "...419..5" \
+    "....8..79"
+zassert_eq "$(get_cell 1 1)" "5" "cell (1,1) = 5"
+zassert_eq "$(get_cell 1 2)" "3" "cell (1,2) = 3"
+zassert_eq "$(get_cell 9 9)" "9" "cell (9,9) = 9"
+zassert_eq "$(get_cell 1 3)" "0" "cell (1,3) blank → 0"
+if validate_grid; then zassert_ok 1  "classic puzzle is valid"; else zassert_ok 0 "classic puzzle is valid"; fi
+load_grid \
+    "53.5....." \
+    "........." "........." "........." "........." "........." \
+    "........." "........." "........."
+if validate_grid; then zassert_ok 0 "dup-in-row rejected"; else zassert_ok 1 "dup-in-row rejected"; fi
+load_grid \
+    "5........" "........." "........." "5........" "........." \
+    "........." "........." "........." "........."
+if validate_grid; then zassert_ok 0 "dup-in-col rejected"; else zassert_ok 1 "dup-in-col rejected"; fi
+load_grid \
+    "5........" ".5......." "........." "........." "........." \
+    "........." "........." "........." "........."
+if validate_grid; then zassert_ok 0 "dup-in-block rejected"; else zassert_ok 1 "dup-in-block rejected"; fi
+load_grid \
+    "........." "........." "........." "........." "........." \
+    "........." "........." "........." "........."
+if validate_grid; then zassert_ok 1 "empty grid is valid"; else zassert_ok 0 "empty grid is valid"; fi
+ztest_run

@@ -91,3 +91,21 @@ mini_wc "$tmpdir/a.txt" "$tmpdir/b.txt"
 
 echo "── from stdin ──"
 printf 'aaa bbb\nccc\n' | mini_wc
+
+# === ztest assertions ===
+td=/tmp/zshrs_miniwc_test_$$
+mkdir -p "$td"
+printf 'one two three\nfour five\nsix\n' > "$td/a.txt"
+# -l: 3 lines
+zassert_eq "$(mini_wc -l $td/a.txt | awk '{print $1}')"  "3"   "mini_wc -l = 3"
+# -w: 6 words (3+2+1)
+zassert_eq "$(mini_wc -w $td/a.txt | awk '{print $1}')"  "6"   "mini_wc -w = 6"
+# -c: 28 chars (13+1+9+1+3+1) = 28
+zassert_eq "$(mini_wc -c $td/a.txt | awk '{print $1}')"  "28"  "mini_wc -c = 28"
+# Default all-three on one line
+default_line=$(mini_wc $td/a.txt | awk '{print $1, $2, $3}')
+zassert_eq "$default_line"  "3 6 28"  "mini_wc default columns"
+# stdin path
+zassert_eq "$(printf 'aaa bbb\nccc\n' | mini_wc -l | awk '{print $1}')"  "2"  "mini_wc -l stdin"
+rm -rf "$td"
+ztest_run

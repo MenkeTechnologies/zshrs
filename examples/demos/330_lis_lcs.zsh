@@ -214,3 +214,18 @@ echo "  LIS O(n²)     — DP table"
 echo "  LIS O(n log n) — patience sort"
 echo "  LCS O(m·n)    — DP table"
 echo "  edit distance  — Wagner-Fischer DP"
+
+# === ztest assertions ===
+zassert_eq "$(lis 10 22 9 33 21 50 41 60)"   5 "LIS classic"
+zassert_eq "$(lis 1 2 3 4 5)"                5 "LIS sorted"
+zassert_eq "$(lis 5 4 3 2 1)"                1 "LIS reverse"
+zassert_eq "$(lis_nlogn 10 22 9 33 21 50 41 60)" 5 "LIS nlogn"
+zassert_eq "$(lis_nlogn 10 9 2 5 3 7 101 18)"    4 "LIS nlogn 2"
+zassert_eq "$(lcs ABCBDAB BDCAB)"            4 "LCS classic"
+zassert_eq "$(lcs_str ABCBDAB BDCAB)"   "BDAB" "LCS string"
+zassert_eq "$(lcs abc abc)"                  3 "LCS identical"
+zassert_eq "$(lcs ABC DEF)"                  0 "LCS no common"
+zassert_eq "$(edit_distance kitten sitting)" 3 "edit dist Levenshtein"
+zassert_eq "$(edit_distance abc abc)"        0 "edit dist identical"
+zassert_eq "$(edit_distance horse ros)"      3 "edit dist horse→ros"
+ztest_run

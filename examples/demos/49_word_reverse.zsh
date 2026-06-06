@@ -37,3 +37,13 @@ echo "── capitalize ──"
 for s in "hello world" "the quick brown fox" "MIXED case HERE"; do
     echo "'$s' → '$(capitalize_words $s)'"
 done
+
+# === ztest assertions ===
+zassert_eq "$(reverse_words 'the quick brown fox')" "fox brown quick the"     "reverse 4 words"
+zassert_eq "$(reverse_words 'hello world')"         "world hello"             "reverse 2 words"
+zassert_eq "$(reverse_words 'single')"              "single"                  "reverse 1 word"
+zassert_eq "$(reverse_words 'a b c d e f g')"       "g f e d c b a"           "reverse 7 letters"
+zassert_eq "$(capitalize_words 'hello world')"      "Hello World"             "capitalize 2 words"
+zassert_eq "$(capitalize_words 'the quick brown fox')" "The Quick Brown Fox"  "capitalize 4 words"
+zassert_eq "$(capitalize_words 'MIXED case HERE')"  "Mixed Case Here"         "capitalize mixed case input"
+ztest_run
