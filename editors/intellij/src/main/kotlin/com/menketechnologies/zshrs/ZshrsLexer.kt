@@ -63,6 +63,28 @@ class ZshrsLexer : LexerBase() {
     /// `j=$(( … ))` / `x=$(cmd)` render as a single DQ string segment
     /// (the rest of the file dimmed-out as STRING_DQ color).
     private var dqInterpResumeState = STATE_NORMAL
+    /// Stack of return-states for NESTED string-in-cmdsub-in-string /
+    /// arith / cmdsub chains.
+    ///
+    /// Problem this solves: when [lexInsideDqCmdsub] / [lexInsideDqArith]
+    /// dispatch the inner [advance] in STATE_NORMAL, that advance can
+    /// itself open a new sub-state (e.g. a `"..."` string inside a
+    /// `$(cmd)` cmdsub). The wrapper's `state = savedState` line then
+    /// clobbers the inner string's STATE_DQ_RESUME, so the body of the
+    /// inner string gets lex'd as NORMAL code — `'` opens a stray
+    /// SQ string and consumes everything to the next `'`, etc.
+    ///
+    /// Fix: when the wrapper detects state changed under it (the inner
+    /// advance opened a new sub-state), push the outer state onto this
+    /// stack and leave the inner state alone. When the inner sub-state
+    /// reaches its close handler (close-quote / matching paren), pop
+    /// the stack to restore the outer mode.
+    ///
+    /// Concrete case fixed: `$(printf "%d" "'$ch")` — the second
+    /// `"..."` inside `$(...)` was getting clobbered to cmdsub mode,
+    /// so its body's `'$ch` lexed as SQ-open + variable, and the rest
+    /// of the cmdsub body lex'd as code-inside-SQ-string nonsense.
+    private val nestedReturnStates = ArrayDeque<Int>()
     /// When STATE_DQ_FORMAT / STATE_BT_FORMAT is set, this is the
     /// pre-computed byte length of the printf format spec starting
     /// at the current pos. The next advance() emits exactly that
@@ -83,6 +105,7 @@ class ZshrsLexer : LexerBase() {
         pendingStringResumeState = STATE_NORMAL
         dqInterpParenDepth = 0
         dqInterpResumeState = STATE_NORMAL
+        nestedReturnStates.clear()
         advance()
     }
 
@@ -177,6 +200,17 @@ class ZshrsLexer : LexerBase() {
                 tokenType = ZshrsTokenTypes.DOUBLE_SEMI
             }
             c == ';' && peek(1) == '|' -> emit(2, ZshrsTokenTypes.DOUBLE_SEMI)
+            // zsh glob qualifier — `(qualifier)` immediately after a
+            // glob char (`*` / `?` / `]`), like `*(.)`, `*(om)`, `*(.N)`,
+            // `*(L0)`, `**/*(.f-700)`. The content is a compact set of
+            // single-char codes (`.`, `/`, `@`, `*`, `=`, `N`, etc.) +
+            // optional operands (`L0`, `m-7`, `o[odd…m]`, `f-100`,
+            // `[N1,N2]`). Conservatively only fire when the previous
+            // non-whitespace token was GLOB or RBRACKET so plain `(...)`
+            // command groups / array literals stay LPAREN. Without this
+            // every qualifier rendered as LPAREN + free-text + RPAREN
+            // and lost the visual cue.
+            c == '(' && tryConsumeGlobQualifier() -> { /* token emitted */ }
             c == '(' -> emit(1, ZshrsTokenTypes.LPAREN)
             c == ')' -> emit(1, ZshrsTokenTypes.RPAREN)
             c == '{' && paramBraceDepth > 0 -> {
@@ -327,7 +361,19 @@ class ZshrsLexer : LexerBase() {
             if (c == quote) {
                 p++  // include the closing quote in the literal token
                 tokenEnd = p; pos = p
-                state = STATE_NORMAL
+                // If a cmdsub/arith wrapper pushed an outer state on
+                // entry, this close pops back to it. Without the pop
+                // the outer cmdsub/arith would stay in STATE_NORMAL
+                // and lex its trailing content as top-level code
+                // (the bug behind `$(printf "%d" "'$ch")` where the
+                // inner `"..."` closing dropped us out of cmdsub mode
+                // and the trailing `)` got tokenized as a bare RPAREN
+                // at top level).
+                state = if (nestedReturnStates.isNotEmpty()) {
+                    nestedReturnStates.removeLast()
+                } else {
+                    STATE_NORMAL
+                }
                 tokenType = tt
                 return
             }
@@ -493,8 +539,15 @@ class ZshrsLexer : LexerBase() {
                 ')' -> dqInterpParenDepth--
             }
         }
-        // Stay in arith mode for the next advance().
-        state = savedState  // STATE_DQ_ARITH
+        // Restore arith mode UNLESS the inner advance opened a new
+        // sub-state (nested string / cmdsub / arith). If so, push our
+        // outer state onto the stack and let the inner one run; when
+        // its close handler fires, the stack pop restores us.
+        if (state == STATE_NORMAL) {
+            state = savedState  // STATE_DQ_ARITH
+        } else {
+            nestedReturnStates.addLast(savedState)
+        }
     }
 
     /// One `advance()` while inside the body of a `$(cmd)` command
@@ -534,7 +587,54 @@ class ZshrsLexer : LexerBase() {
                 ')' -> dqInterpParenDepth--
             }
         }
-        state = savedState  // STATE_DQ_CMDSUB
+        // Same nested-state handling as lexInsideDqArith — restore
+        // cmdsub mode UNLESS the inner advance opened a new sub-state
+        // (e.g. nested `"..."` string inside `$(cmd)`). Push and let
+        // the inner state run; pop on its close.
+        if (state == STATE_NORMAL) {
+            state = savedState  // STATE_DQ_CMDSUB
+        } else {
+            nestedReturnStates.addLast(savedState)
+        }
+    }
+
+    /// Try to lex `(qualifier-content)` as ONE [ZshrsTokenTypes.GLOB]
+    /// token starting at the current `(`. Returns true if the pattern
+    /// matched and a token was emitted; false otherwise (caller falls
+    /// through to plain LPAREN emit).
+    ///
+    /// Disambiguation: only fires when the byte immediately preceding
+    /// `(` is `*`, `?`, or `]` — the three things zsh expands as glob
+    /// patterns that can take a trailing qualifier. Plain `(cmd)`
+    /// command groups and `(a b c)` array literals don't have a glob
+    /// prefix so they stay LPAREN.
+    ///
+    /// Content scan: walks from `pos+1` to the matching `)` (respects
+    /// nested parens). If every char is in [GLOB_QUAL_CHARS] AND the
+    /// matching `)` is found within MAX_QUAL_LEN bytes, emit. Anything
+    /// else (alternation pipe `|`, embedded space, command call,
+    /// excessive length) falls through.
+    private fun tryConsumeGlobQualifier(): Boolean {
+        if (pos == 0) return false
+        val prev = buf[pos - 1]
+        if (prev != '*' && prev != '?' && prev != ']') return false
+        var p = pos + 1
+        var depth = 1
+        val maxEnd = (pos + MAX_QUAL_LEN).coerceAtMost(endOffset)
+        while (p < maxEnd && depth > 0) {
+            val c = buf[p]
+            when {
+                c == '(' -> depth++
+                c == ')' -> { depth--; if (depth == 0) break }
+                c !in GLOB_QUAL_CHARS -> return false
+            }
+            p++
+        }
+        if (depth != 0 || p >= endOffset || buf[p] != ')') return false
+        p++  // include closing `)`
+        tokenEnd = p; pos = p
+        tokenType = ZshrsTokenTypes.GLOB
+        return true
     }
 
     private fun consumeString(quote: Char, tt: IElementType) {
@@ -898,15 +998,75 @@ class ZshrsLexer : LexerBase() {
         /// at depth 0 we flip back to STATE_DQ_RESUME.
         const val STATE_DQ_CMDSUB = 8
 
-        // printf format-spec character classes. Mirrors
-        // strykelang's FORMAT_FLAGS / FORMAT_LENGTH / FORMAT_CONV.
-        // Conversion chars cover the POSIX set plus zsh's
-        // `printf %b` (backslash-escape interpretation).
+        // Glob-qualifier character classes (zsh `*(qualifier)` syntax,
+        // Src/glob.c::qualname / qualifier_chars). Includes all
+        // single-char codes the qualifier grammar accepts, the
+        // operand letters (L/m/c/a sizes + times), the modifier ops
+        // (+, -, ^), the separator (,) for compound qualifiers
+        // (`*(.f-700)`), the comparison and number chars for size /
+        // mode operands, and `#` for `(#q...)` extended-glob qualifier
+        // prefix. Used by [tryConsumeGlobQualifier].
+        private val GLOB_QUAL_CHARS = setOf(
+            '.', '/', '@', '=', '*', '+', ',', ':', '-', '^', '#',
+            // file-type / perm flags
+            'p', 'r', 'w', 'x', 'A', 'I', 'R', 'W', 'X', 's', 'S',
+            // time-based: m=mtime, a=atime, c=ctime + units
+            'm', 'a', 'c', 'M', 'C',
+            // owner / group
+            'u', 'g', 'U', 'G', 'o',
+            // sort / order
+            'O', 't',
+            // size: L + units (k/K/m/M/p/P)
+            'L', 'l', 'k', 'K', 'P',
+            // misc: N=NULL_GLOB, Y=count, D=dotfiles, e=eval, f=mode,
+            // n=numeric-sort, T=link-target, F=non-empty-dir, H=hidden
+            'N', 'Y', 'D', 'e', 'f', 'n', 'T', 'F', 'H',
+            // digits for numeric operands (L0, m-7, [1,3], etc.)
+            '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+            // brackets used in `o[oxabc]` / `[1,2]` (in qualifier value pos)
+            '[', ']', '{', '}',
+            // space — `(. f-700)` is valid (zsh ignores qualifier whitespace)
+            ' ', '\t',
+        )
+        /// Conservative cap on glob-qualifier content length —
+        /// anything longer is almost certainly not a qualifier
+        /// (qualifiers in real code are < 12 chars typically;
+        /// even compound forms like `(. f-700,om)` stay under 16).
+        private const val MAX_QUAL_LEN = 32
+
+        // printf format-spec character classes + zsh prompt-expansion
+        // character classes. Mirrors strykelang's FORMAT_FLAGS /
+        // FORMAT_LENGTH / FORMAT_CONV. The single STRING_FORMAT token
+        // type covers both printf format codes (`%d`/`%s`/`%10.2f` in
+        // `printf "%-15s\n" "$x"`) and zsh prompt-expansion codes
+        // (`%U`/`%B`/`%F{red}` in `print -P "..."` / `PROMPT="..."`).
+        // Without including the prompt codes in FORMAT_CONV the lexer
+        // emitted them as literal STRING_DQ — they lost the distinct
+        // format-spec color and the visual cue that `%U term %u` means
+        // "underline this", not literal text.
         private val FORMAT_FLAGS = setOf('-', '+', '0', ' ', '#', '\'')
         private val FORMAT_LENGTH = setOf('l', 'h', 'L', 'q', 'z', 'j', 't')
         private val FORMAT_CONV = setOf(
+            // POSIX printf conversions + zsh `printf %b` (backslash-escape).
             'd', 'i', 'o', 'u', 'x', 'X', 'e', 'E', 'f', 'g', 'G',
             's', 'c', 'b', 'p', 'n', '%',
+            // zsh prompt-expansion single-char codes (Src/prompt.c).
+            // U/u — underline on/off, B/b — bold on/off, S/s — standout
+            // on/off, F/K — fg/bg color (the `{color}` arg is handled
+            // by the trailing-char scan; the base char alone gets us
+            // the STRING_FORMAT color on `%F` even when no arg follows).
+            // Lower-case letters that aren't already in printf conv:
+            // m (machine), y (tty), h (history N), j (job count),
+            // l (line), r (terminal), t (12h time), w (day-of-week),
+            // v (psvar). Upper-case: D (date), E (clear-to-EOL),
+            // I (locate), M (full machine), N (script), T (24h time),
+            // H (hostname), L (SHLVL). Symbols common in prompts:
+            // ~ (cwd-tilde), ? (last status), # (level marker),
+            // ! (history N), _ (parser-state), * (asterisk), @ (12h),
+            // / (cwd), . (period in version).
+            'U', 'u', 'B', 'S', 'F', 'K', 'k', 'm', 'y', 'h', 'j',
+            'D', 'E', 'I', 'M', 'N', 'T', 'H', 'L',
+            'r', 'v', 'w', '~', '?', '!', '_', '*', '@', '/',
         )
 
         /// True if the char after a `$` would START a real interpolation
