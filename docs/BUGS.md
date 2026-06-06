@@ -36403,7 +36403,20 @@ uses `read -e` in inspection mode).
 
 ## #435 — `typeset -A` no-args lists internal introspection assocs instead of user-defined
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, parity.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2); typeset -A 2>&1 | head -3'
+h=( [a]=1 [b]=2 )
+$ ./target/debug/zshrs --zsh -fc 'typeset -A h=(a 1 b 2); typeset -A 2>&1 | head -3'
+h=( [a]=1 [b]=2 )
+```
+
+Internal introspection assocs (aliases/builtins/commands/etc.)
+correctly filtered out of the user-facing dump. BUGS.md status
+was stale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2); typeset -A 2>&1 | head -3'
@@ -44706,7 +44719,20 @@ echo "/tmp/dir-(prod)/file"   # quoted = literal
 
 ## #555 — `compgen` bash builtin shipped as always-available — extends #475/#504 family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, parity.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'compgen 2>&1; echo rc=$?'
+zsh:1: command not found: compgen
+rc=127
+$ ./target/debug/zshrs --zsh -fc 'compgen 2>&1; echo rc=$?'
+zsh:1: command not found: compgen
+rc=127
+```
+
+BUGS.md status was stale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'compgen 2>&1; echo rc=$?'
