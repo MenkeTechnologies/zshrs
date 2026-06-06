@@ -430,6 +430,36 @@
             JetBrains plugin at <code>editors/intellij/</code> drives
             both. Hand-rolled JSON-RPC framing, zero new dependencies.</p>
           </div>
+          <div class="cat-card">
+            <h4>First POSIX-compatible shell with a builtin unit-test framework</h4>
+            <p><strong>World&rsquo;s first POSIX-compatible shell to ship
+            a unit-test framework + worker-pool runner in the binary,
+            zero external install.</strong> <code>zassert_eq</code> /
+            <code>zassert_ne</code> / <code>zassert_ok</code> /
+            <code>zassert_gt</code> / <code>zassert_lt</code> /
+            <code>zassert_match</code> / <code>zassert_contains</code> /
+            <code>zassert_near</code> / <code>zassert_dies</code> &mdash;
+            14 assertion verbs &mdash; plus <code>ztest_skip</code> and
+            <code>ztest_run</code> (alias <code>run_tests</code>) are
+            shell builtins, callable from any <code>.zsh</code> / <code>.sh</code>
+            script with no <code>npm i</code>, <code>gem install</code>,
+            or <code>cargo install</code> step. <code>zshrs --ztest [paths&hellip;]</code>
+            runs a worker-pool: N persistent <code>--ztest-worker</code>
+            subprocesses (one per CPU) fork-on-receive per test, JSON-over-pipe
+            wire protocol, per-test fd 2 capture so concurrent workers
+            never tear each other&rsquo;s output &mdash; the same architecture
+            <code>cargo-nextest</code> brought to Rust testing, now in
+            a shell binary. Every other POSIX-family shell (bash, zsh,
+            ksh, dash, fish) relies on third-party packages installed
+            separately: <code>bats-core</code>, <code>shunit2</code>,
+            <code>Bach</code>, <code>ShellSpec</code>, <code>zunit</code>,
+            <code>korn-spec</code>. PowerShell&rsquo;s Pester (preinstalled
+            on Windows 10+) is the closest precedent, but PowerShell
+            is not POSIX. Nushell ships <code>std assert</code> builtins
+            but is its own non-POSIX language and has no integrated
+            runner. Lives in <code>src/extensions/ztest.rs</code>; port
+            of strykelang&rsquo;s <code>stryke test</code> runner.</p>
+          </div>
         </div>
 
         <p style="font-size: 12px; color: var(--text-muted); margin-top: 0.8rem;">
