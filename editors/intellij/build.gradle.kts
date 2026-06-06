@@ -2,7 +2,7 @@ import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
     id("java")
-    id("org.jetbrains.kotlin.jvm") version "2.0.21"
+    id("org.jetbrains.kotlin.jvm") version "2.2.0"
     id("org.jetbrains.intellij.platform") version "2.16.0"
 }
 
@@ -24,6 +24,13 @@ dependencies {
             providers.gradleProperty("platformType").get(),
             providers.gradleProperty("platformVersion").get(),
         )
+        // 2025.2+ ships com.intellij.spellchecker as a PLATFORM MODULE
+        // (lib/modules/intellij.spellchecker.jar), not an embedded
+        // platform class. Declare it as a bundled-module dep so the
+        // SpellcheckingStrategy class resolves at compile + runtime.
+        // Required by ZshrsSpellcheckingStrategy / the
+        // `spellchecker.support` EP registration in plugin.xml.
+        bundledModule("intellij.spellchecker")
         pluginVerifier()
         zipSigner()
         testFramework(TestFrameworkType.Platform)
