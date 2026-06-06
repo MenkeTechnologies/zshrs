@@ -2834,7 +2834,8 @@ fn run_interactive() {
 
     maybe_source_zshrs_startup_config(&mut executor, no_rcs);
 
-    // Initialize compsys cache (single SQLite db for all completions)
+    // Initialize compsys SQLite mirror (read-only inspection target;
+    // the authoritative completion cache is the rkyv-mmap'd shard set)
     let cache_path = dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("zshrs/compsys.db");
