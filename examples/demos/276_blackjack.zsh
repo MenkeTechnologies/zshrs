@@ -166,3 +166,23 @@ echo "  A,A,9   = $(hand_value A A 9)"
 echo "  A,5,Q   = $(hand_value A 5 10)"
 echo "  K,Q,J   = $(hand_value K Q J)"
 echo "  A,A,A,A = $(hand_value A A A A)"
+
+# === ztest assertions ===
+# Hand-value edge cases (deterministic regardless of RANDOM seed).
+zassert_eq "$(hand_value A K)"       21  "A+K = 21 (Ace soft)"
+zassert_eq "$(hand_value A A 9)"     21  "A+A+9 = 21 (one ace soft)"
+zassert_eq "$(hand_value A 5 10)"    16  "A+5+10 = 16 (ace forced hard)"
+zassert_eq "$(hand_value K Q J)"     30  "K+Q+J = 30 (no aces)"
+zassert_eq "$(hand_value A A A A)"   14  "four aces = 11+1+1+1"
+zassert_eq "$(hand_value 2 3 4)"     9   "low cards sum"
+zassert_eq "$(hand_value A 9)"       20  "A+9 = 20"
+# card_value spot checks
+zassert_eq "$(card_value A)"   1  "Ace base value 1"
+zassert_eq "$(card_value K)"   10 "King = 10"
+zassert_eq "$(card_value 7)"   7  "numeric card"
+# Deck has 52 cards
+zassert_eq "${#deck}"  52  "standard deck = 52 cards"
+# rank_of
+zassert_eq "$(rank_of A♠)"  "A"  "rank_of strips suit (A)"
+zassert_eq "$(rank_of 10♥)" "10" "rank_of preserves 10"
+ztest_run

@@ -51,3 +51,26 @@ done
 echo "── replace + strip combined ──"
 path=/usr/share/zsh
 echo "uppercase last dir: ${path:t:u}"
+
+# === ztest assertions ===
+pp=/usr/local/share/zsh/site-functions/_completion.gz
+# #pat: trim shortest prefix
+zassert_eq "${pp#*/}"  "usr/local/share/zsh/site-functions/_completion.gz"  "#*/ shortest start"
+# ##pat: trim longest prefix
+zassert_eq "${pp##*/}" "_completion.gz"  "##*/ longest start (basename)"
+# %pat: trim shortest suffix
+zassert_eq "${pp%/*}"  "/usr/local/share/zsh/site-functions"  "%/* shortest end (dirname)"
+# %%pat: trim longest suffix
+zassert_eq "${pp%%/*}" ""  "%%/* longest end (empty before root)"
+# Chained: file stem
+zassert_eq "${${pp##*/}%.*}"  "_completion"  "chained ## then %"
+# strip protocol via #*://
+url=https://example.com/path
+zassert_eq "${url#*://}"     "example.com/path"           "strip protocol"
+zassert_eq "${url#http://}"  "https://example.com/path"   "unchanged when prefix absent"
+# file extension strip
+zassert_eq "${${:-main.rs}%.*}"   "main"   "strip .rs"
+zassert_eq "${${:-data.tar.gz}%.*}" "data.tar"  "strip last .gz only (%.*)"
+# tail+upper modifier chain
+zassert_eq "${path:t:u}"  "ZSH"  "(:t:u) basename uppercased"
+ztest_run

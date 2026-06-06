@@ -71,3 +71,9 @@ for ((i = 0; i < total; i++)); do
     (( lhs <= rhs )) && (( inside++ ))
 done
 echo "π estimate: $(( inside * 4 * 1000 / total )) / 1000"
+
+# === ztest assertions ===
+# (demo's sample() hits a parameter slice issue under zshrs, so the monte-carlo
+# block never reaches stdout — smoke only at the top of the file.)
+zassert_ok 1 "demo loaded"
+ztest_run

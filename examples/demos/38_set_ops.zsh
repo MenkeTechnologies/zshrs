@@ -41,3 +41,14 @@ for x in "${b[@]}"; do
 done
 echo "── symmetric difference ──"
 print -l ${(o)symdiff}
+
+# === ztest assertions ===
+zassert_eq "${(j: :)${(o)union}}"   "apple banana cherry date elderberry fig grape" "union"
+zassert_eq "${(j: :)${(o)inter}}"   "banana date"                                   "intersection"
+zassert_eq "${(j: :)${(o)diff}}"    "apple cherry"                                  "A - B"
+zassert_eq "${(j: :)${(o)symdiff}}" "apple cherry elderberry fig grape"             "symmetric diff"
+zassert_eq "${#union}"  "7" "union size"
+zassert_eq "${#inter}"  "2" "intersection size"
+zassert_eq "${#diff}"   "2" "difference size"
+zassert_eq "${#symdiff}" "5" "symdiff size"
+ztest_run

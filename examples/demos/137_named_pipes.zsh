@@ -33,3 +33,11 @@ wait
 echo "total: $count"
 
 echo "── done ──"
+
+# === ztest assertions ===
+zassert_eq "$line"  "msg from writer" "single-msg fifo round-trip"
+zassert_eq "$count" "5"                "5-msg stream count"
+zassert_eq "$m"     "msg-5"            "last message captured"
+# fifo path is still on disk until EXIT trap fires
+zassert_ok "$(test -p "$fifo" && echo yes)" "fifo node still present"
+ztest_run

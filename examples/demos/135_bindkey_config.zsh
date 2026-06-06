@@ -42,3 +42,18 @@ bindkey -M emacs '^X^B' my_widget 2>/dev/null \
 echo "── note: zle widgets only fire on TTY input ──"
 echo "(this demo just exercises the config API; widgets do nothing"
 echo " in -c mode because there's no line editor)"
+
+# === ztest assertions ===
+km_list=$(bindkey -l 2>/dev/null)
+zassert_contains "$km_list" "emacs"   "emacs keymap listed"
+zassert_contains "$km_list" "viins"   "viins keymap listed"
+zassert_contains "$km_list" "vicmd"   "vicmd keymap listed"
+# Bind, query, delete round-trip on emacs '^X^A'.
+bindkey -M emacs '^X^Q' beginning-of-line 2>/dev/null
+q=$(bindkey -M emacs '^X^Q' 2>/dev/null)
+zassert_contains "$q" "beginning-of-line" "bind+query round-trip"
+bindkey -M emacs -r '^X^Q' 2>/dev/null
+q_after=$(bindkey -M emacs '^X^Q' 2>/dev/null)
+zassert_eq "$q_after" '"^X^Q" undefined-key' "removal yields undefined-key"
+zassert_contains "$(bindkey -M emacs '^A' 2>/dev/null)" "beginning-of-line" "default ^A binding"
+ztest_run

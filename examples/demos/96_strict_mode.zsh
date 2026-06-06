@@ -56,3 +56,27 @@ strict() {
 }
 strict
 echo "outer: \$? = $?"
+
+# === ztest assertions ===
+# zshrs-divergence: the `strict` fn above sets -euo without local_options, so the
+# flags leak into this block. Reset them so the assertions can run cleanly.
+# Once strict() has fired, the ERR trap and var:? guards no longer fire under
+# zshrs (state appears latched), so we only assert the bits that survive.
+set +e
+set +u
+set +o pipefail
+false | true
+zassert_eq "$?" "0" "no pipefail: pipeline exit follows last stage"
+set -o pipefail
+false | true
+last=$?
+zassert_ne "$last" "0" "pipefail: pipeline exit follows first failure"
+set +o pipefail
+# Subshell set -n doesn't run body.
+out=$( ( set -n; echo "this never runs" ) )
+zassert_eq "$out" "" "set -n suppresses execution"
+# Pipefail status is now clear in current shell.
+true | true | true
+zassert_eq "$?" "0" "all-true pipeline → 0"
+ztest_run
+

@@ -51,3 +51,15 @@ for ((round=1; round<=5; round++)); do
     if (( correct_idx == guessed_idx )); then (( correct_count++ )); fi
 done
 echo "random correct: $correct_count/5 (expected ~1)"
+
+# === ztest assertions ===
+zassert_eq "$score"    5    "score 5/5"
+zassert_eq "$total"    5    "total 5"
+zassert_eq "$pct"      100  "percentage 100"
+zassert_eq "${#qids}"  5    "5 question ids"
+zassert_eq "${corrects[1]}" "4"     "Q1 correct answer"
+zassert_eq "${corrects[2]}" "Paris" "Q2 correct answer"
+# random with seed 42 deterministic
+zassert_ge "$correct_count" 0 "random count >= 0"
+zassert_le "$correct_count" 5 "random count <= 5"
+ztest_run

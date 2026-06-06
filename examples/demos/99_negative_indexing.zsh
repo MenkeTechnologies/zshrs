@@ -48,3 +48,29 @@ for ((i = 1; i <= ${#arr[@]}; i += 2)); do
     (( end > ${#arr[@]} )) && end=${#arr[@]}
     echo "chunk: ${arr[i,end]}"
 done
+
+# === ztest assertions ===
+zassert_eq "${arr[1]}"      "alpha"   "arr[1] = first"
+zassert_eq "${arr[-1]}"     "theta"   "arr[-1] = last"
+zassert_eq "${arr[-2]}"     "eta"     "arr[-2] = penultimate"
+zassert_eq "${arr[-3]}"     "zeta"    "arr[-3]"
+zassert_eq "${arr[3]}"      "gamma"   "arr[3]"
+zassert_eq "${arr[1,3]}"    "alpha beta gamma"      "arr[1,3] slice"
+zassert_eq "${arr[3,-1]}"   "gamma delta epsilon zeta eta theta" "arr[3,-1]"
+zassert_eq "${arr[-3,-1]}"  "zeta eta theta"        "arr[-3,-1]"
+zassert_eq "${#arr[@]}"     8                       "len = 8"
+## zshrs-divergence: "${arr[@]:O:L}" splits into multiple words even when quoted,
+## unlike standard zsh which keeps the slice as a single joined string. Capture
+## via a scalar to force a single argument.
+slice1="${arr[@]:1:3}"
+slice2="${arr[@]:3:2}"
+zassert_eq "$slice1"  "beta gamma delta"      "0-based offset:length"
+zassert_eq "$slice2"  "delta epsilon"         "skip-3 take-2"
+s="abcdefghij"
+zassert_eq "${s[1]}"        "a"        "scalar s[1]"
+zassert_eq "${s[-1]}"       "j"        "scalar s[-1]"
+zassert_eq "${s[3,5]}"      "cde"      "scalar s[3,5]"
+zassert_eq "${s[-3,-1]}"    "hij"      "scalar s[-3,-1]"
+zassert_eq "${#s}"          10         "scalar length"
+ztest_run
+

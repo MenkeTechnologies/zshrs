@@ -71,3 +71,13 @@ debug_fn() {
     if (( DEBUG )); then set +x; fi
 }
 debug_fn 2>&1 | head -8
+
+# === ztest assertions ===
+zassert_eq "$x" 5  "outer x retained"
+zassert_eq "$y" 10 "outer y retained"
+zassert_eq $((x+y)) 15 "plain arithmetic"
+zassert_eq "$DEBUG" 1 "DEBUG flag set"
+# capture trace output and look for xtrace marker
+trace_out=$({ set -x; a=11; b=22; c=$((a+b)); set +x; } 2>&1)
+zassert_contains "$trace_out" "+" "trace has '+' prefix"
+ztest_run

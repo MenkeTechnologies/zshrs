@@ -61,3 +61,22 @@ for w in zzz aaa bbb ccc ddd eee fff hhh iii jjj kkk lll mmm; do
     fi
 done
 echo "tested $total uninserted; $positives false positives"
+
+# === ztest assertions ===
+zassert_eq "$(bloom_check apple)"      "maybe" "inserted apple -> maybe"
+zassert_eq "$(bloom_check cherry)"     "maybe" "inserted cherry -> maybe"
+zassert_eq "$(bloom_check grape)"      "maybe" "inserted grape -> maybe"
+zassert_eq "$(bloom_check watermelon)" "no"    "uninserted watermelon -> no"
+zassert_eq "$(bloom_check xyz)"        "no"    "uninserted xyz -> no"
+zassert_eq "$total"     "13"  "total uninserted = 13"
+zassert_eq "$positives" "0"   "0 false positives for this corpus"
+# Add idempotency: re-add doesn't change bit count or check result.
+bits_before=${#BLOOM_BITS[@]}
+bloom_add apple
+zassert_eq "${#BLOOM_BITS[@]}" "$bits_before" "re-adding apple keeps bit count"
+zassert_eq "$(bloom_check apple)" "maybe" "apple still maybe"
+# str_hash determinism
+h1=$(str_hash "foo")
+h2=$(str_hash "foo")
+zassert_eq "$h1" "$h2" "str_hash deterministic"
+ztest_run

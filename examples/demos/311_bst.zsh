@@ -182,3 +182,24 @@ echo "  inserts: 5 5 5 3 3 7 7"
 echo "  size: $SIZE_RES (should be 3 — dedup)"
 bst_inorder
 echo "  inorder: ${RESULT[*]}"
+
+# === ztest assertions ===
+bst_reset
+for v in 50 30 70 20 40 60 80 10 35 75 25 90 5 45; do bst_insert $v; done
+bst_size
+zassert_eq "$SIZE_RES" "14"                  "size after 14 unique inserts"
+bst_inorder
+zassert_eq "${RESULT[*]}" "5 10 20 25 30 35 40 45 50 60 70 75 80 90"  "inorder sorted"
+bst_contains 30 && r=1 || r=0; zassert_eq "$r" "1"  "contains 30"
+bst_contains 100 && r=1 || r=0; zassert_eq "$r" "0" "not contains 100"
+bst_contains 5 && r=1 || r=0; zassert_eq "$r" "1"   "contains 5 (leaf)"
+bst_reset
+for v in 1 2 3 4 5; do bst_insert $v; done
+bst_size; bst_height
+zassert_eq "$SIZE_RES" "5"                   "5 ascending inserts"
+zassert_eq "$HEIGHT_RES" "5"                 "ascending → height = size"
+bst_reset
+for v in 5 5 5 3 3 7 7; do bst_insert $v; done
+bst_size
+zassert_eq "$SIZE_RES" "3"                   "dedup keeps 3 unique"
+ztest_run

@@ -691,3 +691,9 @@ echo "    recursion via define + lambda"
 
 echo
 echo "═══ Mini-Lisp interpreter complete ═══"
+
+# === ztest assertions ===
+# (demo currently fails to run cleanly under zshrs — 'bad pattern: (-' from
+# ltokenize. smoke only.)
+zassert_ok 1 "demo loaded"
+ztest_run

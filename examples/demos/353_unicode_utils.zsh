@@ -214,3 +214,18 @@ echo "  \${#s} counts code points (chars), not bytes"
 echo "  display width depends on terminal — use wcwidth() for accuracy"
 echo "  combining marks (U+0300..036F) have width 0"
 echo "  CJK + emoji are typically width 2 (wide cells)"
+
+# === ztest assertions ===
+is_ascii "A" && a=1 || a=0
+zassert_eq "$a" "1"             "A is ascii"
+is_ascii "中" && a=1 || a=0
+zassert_eq "$a" "0"             "中 is not ascii"
+is_control "A" && a=1 || a=0
+zassert_eq "$a" "0"             "A is not control"
+zassert_eq "$(char_width A)"  "1"  "char_width ASCII = 1"
+zassert_eq "$(char_width 中)" "2"  "char_width CJK = 2"
+zassert_eq "$(char_width あ)" "2"  "char_width Hiragana = 2"
+zassert_eq "$(display_width hello)"  "5"  "display_width hello"
+zassert_eq "$(display_width 中国)"   "4"  "display_width 中国 = 4 (2+2)"
+zassert_eq "$(display_width abc中)"  "5"  "display_width abc中 = 5 (1+1+1+2)"
+ztest_run

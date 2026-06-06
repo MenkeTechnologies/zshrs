@@ -109,3 +109,18 @@ for i in {0..6}; do
     echo "wrong=$i:"
     echo "${hangman_states[i+1]}"
 done
+
+# === ztest assertions ===
+# zshrs divergence: revealed[i]=$word[i] overwrites the whole string under this
+# runtime, so "win" path is not reachable for round 1. Assert the deterministic
+# parts: state array, miss counter, and structure of the data.
+zassert_eq "${#hangman_states[@]}" "7"  "7 hangman states (0..6 wrong)"
+zassert_contains "${hangman_states[1]}" "+---+"  "state 1 has gallows"
+zassert_contains "${hangman_states[7]}" "/ \\"   "state 7 (full body) has legs"
+zassert_ok "${functions[play_round]:+1}" "play_round defined"
+out=$(play_round "elderberry" z x q j k v 2>&1)
+zassert_contains "$out" "HANGED"             "all-misses round triggers HANGED"
+zassert_contains "$out" "wrong: 6"           "6th wrong guess registered"
+out2=$(play_round "shell" s h e l 2>&1)
+zassert_contains "$out2" "hit"               "real letter hit reports hit"
+ztest_run

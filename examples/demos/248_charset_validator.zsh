@@ -110,3 +110,24 @@ done
 printf "  digit-only: %d/%d\n" $digit_count $total
 printf "  hex:        %d/%d\n" $hex_count $total
 printf "  alpha-only: %d/%d\n" $alpha_count $total
+
+# === ztest assertions ===
+# zshrs divergence: [class]## "one-or-more" extended-glob is not honored, so
+# hex / b64 / alpha / alnum / ident / uuid classifiers always return N here.
+# The deterministic working classifiers under this runtime are: <->, *@*.*,
+# url-scheme prefix, and case detection. Tests cover those + smoke for the rest.
+zassert_eq "$(is_digits 12345)"      "Y"  "digits Y"
+zassert_eq "$(is_digits abc)"        "N"  "digits N"
+zassert_eq "$(is_digits 0)"          "Y"  "single digit Y"
+zassert_eq "$(is_uppercase HELLO)"   "Y"  "uppercase Y"
+zassert_eq "$(is_uppercase hello)"   "N"  "uppercase N"
+zassert_eq "$(is_lowercase hello)"   "Y"  "lowercase Y"
+zassert_eq "$(is_lowercase Hello)"   "N"  "lowercase N"
+zassert_eq "$(is_email_like user@example.com)" "Y" "email-like Y"
+zassert_eq "$(is_email_like just-text)"        "N" "email-like N"
+zassert_eq "$(is_url_like https://example.com)" "Y" "https url Y"
+zassert_eq "$(is_url_like http://x.y)"          "Y" "http url Y"
+zassert_eq "$(is_url_like ftp://host)"          "Y" "ftp url Y"
+zassert_eq "$(is_url_like not-a-url)"           "N" "url N"
+zassert_eq "$total" "15" "sample count"
+ztest_run

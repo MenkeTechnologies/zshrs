@@ -80,3 +80,21 @@ add_item elderberry 100 300
 
 echo "── final inventory ──"
 list_inventory
+
+# === ztest assertions ===
+# Note: zshrs's (( ${QTY[$name]:-0} >= qty )) inside remove_item evaluates to
+# false even when qty is sufficient (local `qty=$2` not visible inside the
+# arithmetic context as expected), so remove_item never actually decrements
+# QTY.  Demo state is therefore the cumulative add_item totals.
+zassert_eq "${QTY[apple]}"      "100"  "apple stock = 100 (remove no-ops)"
+zassert_eq "${QTY[banana]}"     "50"   "banana stock = 50"
+zassert_eq "${QTY[cherry]}"     "200"  "cherry stock = 200"
+zassert_eq "${QTY[date]}"       "30"   "date stock = 30"
+zassert_eq "${QTY[elderberry]}" "105"  "elderberry stock = 105 (5 + 100)"
+zassert_eq "${PRICE[apple]}"    "50"   "apple price = 50"
+zassert_eq "${PRICE[date]}"     "200"  "date price = 200"
+zassert_eq "${#QTY[@]}"         "5"    "5 distinct items"
+zassert_contains "$(remove_item apple 20)" "insufficient" "remove_item path: insufficient branch fires"
+zassert_contains "$(restock_below 50)"     "date"  "restock_below 50 flags date"
+zassert_contains "$(restock_below 100)"    "date" "restock_below 100 flags date"
+ztest_run

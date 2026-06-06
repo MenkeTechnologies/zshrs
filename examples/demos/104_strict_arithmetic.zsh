@@ -55,3 +55,32 @@ echo "── float promotion ──"
 echo "5 / 2 (int): $(( 5 / 2 ))"
 echo "5.0 / 2 (float): $(( 5.0 / 2 ))"
 echo "5 / 2.0 (float): $(( 5 / 2.0 ))"
+
+# === ztest assertions ===
+# Modulo with negatives (zsh: truncated-toward-zero)
+zassert_eq $(( -7 % 3 ))   -1   "-7 % 3"
+zassert_eq $(( 7 % -3 ))    1   "7 % -3"
+zassert_eq $(( -7 % -3 ))  -1   "-7 % -3"
+# Ternary precedence (right-assoc)
+zassert_eq $(( 1 ? 2 : 3 ? 4 : 5 ))             2  "ternary right-assoc"
+zassert_eq $(( 0 ? 1 : (5 < 10 ? 50 : 99) ))   50  "ternary nested"
+# Pre/post increment
+i=5
+v_post=$((i++))
+zassert_eq "$v_post" "5"  "i++ returns old"
+zassert_eq "$i"      "6"  "i after i++"
+i=5
+v_pre=$((++i))
+zassert_eq "$v_pre"  "6"  "++i returns new"
+# Bit ops chain
+zassert_eq $(( (0xff & 0x0f) | 0x10 ))   31   "bit-ops chain"
+zassert_eq $(( 1 << 8 ))                256   "1<<8"
+# Right-assoc **
+zassert_eq $(( 2 ** 3 ** 2 ))           512   "right-assoc pow"
+# Comma operator
+zassert_eq $(( a = 5, b = 10, a + b ))   15   "comma op result"
+zassert_eq "$a" "5"   "comma op left effect"
+zassert_eq "$b" "10"  "comma op middle effect"
+# Float division
+zassert_near $(( 5.0 / 2 ))  2.5   0.0001  "float div"
+ztest_run

@@ -48,3 +48,19 @@ for r in I IV IX XIV XL XLIX XC XCIX CD CDXLIV CM CMXCIX M MCMXCIV MMXXIV MMMCMX
     rt=$(to_roman $n)
     printf "%10s → %4d → %s %s\n" "$r" $n "$rt" "$([[ "$rt" == "$r" ]] && echo OK || echo FAIL)"
 done
+
+# === ztest assertions ===
+zassert_eq "$(to_roman 1)"     "I"           "1 = I"
+zassert_eq "$(to_roman 4)"     "IV"          "4 = IV (subtractive)"
+zassert_eq "$(to_roman 9)"     "IX"          "9 = IX"
+zassert_eq "$(to_roman 49)"    "XLIX"        "49 = XLIX"
+zassert_eq "$(to_roman 1994)"  "MCMXCIV"     "1994 = MCMXCIV"
+zassert_eq "$(to_roman 2024)"  "MMXXIV"      "2024 = MMXXIV"
+zassert_eq "$(to_roman 3999)"  "MMMCMXCIX"   "3999 = MMMCMXCIX (max)"
+zassert_eq "$(from_roman I)"        1        "I = 1"
+zassert_eq "$(from_roman IV)"       4        "IV = 4"
+zassert_eq "$(from_roman MCMXCIV)"  1994     "MCMXCIV = 1994"
+zassert_eq "$(from_roman MMMCMXCIX)" 3999    "MMMCMXCIX = 3999"
+# Round trip
+zassert_eq "$(to_roman $(from_roman MMXXIV))" "MMXXIV" "round trip MMXXIV"
+ztest_run

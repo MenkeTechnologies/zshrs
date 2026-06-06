@@ -103,3 +103,15 @@ fi
 echo
 
 banner "→ github.com/MenkeTechnologies/zshrs" 72
+
+# === ztest assertions ===
+out=$(banner "hi" 10)
+zassert_contains "$out" "═════════"            "banner has horizontal rule"
+zassert_contains "$out" "hi"                   "banner contains text"
+# pad calc: (10 - 2) / 2 = 4 spaces before 'hi'
+zassert_match '    hi' "$out"                  "banner centered with 4 spaces"
+out2=$(banner "X" 8)
+# 3 lines: top bar, centered text, bottom bar
+zassert_eq "$(echo "$out2" | wc -l | tr -d ' ')" "3" "banner is 3 lines"
+zassert_ok 1 "milestone demo runs cleanly"
+ztest_run

@@ -71,3 +71,21 @@ check_password "ZshRsIsBest2026!"
 check_password "aaaaaaaaaaaaaaaa"
 check_password "qwerty123"
 check_password "MyStrongP@ss123!"
+
+# === ztest assertions ===
+# check_password emits "score= N strength=X" lines we can parse.
+out_strong="$(check_password "MyStrongP@ss123!")"
+zassert_contains "$out_strong" "strength=strong" "MyStrongP@ss123! is strong"
+zassert_contains "$out_strong" "len=16"          "MyStrongP@ss123! len 16"
+out_weak="$(check_password "abc")"
+zassert_contains "$out_weak" "strength=very weak" "abc is very weak"
+zassert_contains "$out_weak" "len= 3"             "abc len 3"
+out_med="$(check_password "P@ssw0rd")"
+zassert_contains "$out_med" "strength=medium"     "P@ssw0rd is medium"
+# Password containing 'password' gets penalty.
+out_pen="$(check_password "password")"
+zassert_contains "$out_pen" "score= 0"            "password literal scored 0 after penalty"
+# All-lowercase, single class.
+out_lc="$(check_password "aaaaaaaaaaaaaaaa")"
+zassert_contains "$out_lc" "features=[a-z ]"     "single-class features"
+ztest_run

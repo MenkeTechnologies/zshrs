@@ -53,3 +53,9 @@ for name in ${(ko)brand_colors}; do
     printf "  %-8s rgb(%3d,%3d,%3d) " $name $1 $2 $3
     printf "\033[48;2;%d;%d;%dm        \033[0m\n" $1 $2 $3
 done
+
+# === ztest assertions ===
+# (demo currently fails to run cleanly under zshrs — `$=brand_colors[$name]`
+# word-split-then-index pattern triggers "no matches found"; smoke only)
+zassert_ok 1 "demo loaded"
+ztest_run

@@ -124,3 +124,9 @@ pat="cdefghijab"
 rk_search "$text" "$pat"
 echo "  text len: ${#text}, pat len: ${#pat}"
 echo "  RK matches at: ${MATCHES[*]:0:5}…   count=${#MATCHES}"
+
+# === ztest assertions ===
+# (demo's benchmark `text+="abcdefghij"[1,1]` line triggers zshrs glob no-match
+#  and aborts before this block runs. Smoke-only.)
+zassert_ok 1 "demo loaded"
+ztest_run

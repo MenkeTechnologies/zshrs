@@ -50,3 +50,23 @@ for pair in "8 15" "6 9" "17 23" "14 21"; do
         echo "$1 and $2 share gcd $g"
     fi
 done
+
+# === ztest assertions ===
+zassert_eq "$(gcd 12 18)"     6   "gcd 12,18"
+zassert_eq "$(gcd 100 75)"    25  "gcd 100,75"
+zassert_eq "$(gcd 7 13)"      1   "gcd coprime"
+zassert_eq "$(gcd 0 5)"       5   "gcd 0,5 = 5"
+zassert_eq "$(gcd 1071 462)"  21  "gcd big pair"
+zassert_eq "$(gcd -12 18)"    6   "gcd negative-aware"
+zassert_eq "$(lcm 4 6)"       12  "lcm 4,6"
+zassert_eq "$(lcm 7 13)"      91  "lcm coprime"
+zassert_eq "$(lcm 100 75)"    300 "lcm 100,75"
+zassert_eq "$(lcm 0 5)"       0   "lcm with 0"
+# gcd of array
+nums=(48 36 60 24 12)
+g=${nums[1]}
+for ((i = 2; i <= ${#nums[@]}; i++)); do
+    g=$(gcd $g ${nums[i]})
+done
+zassert_eq "$g"  12 "gcd reduce array"
+ztest_run

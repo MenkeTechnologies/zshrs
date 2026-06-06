@@ -107,3 +107,17 @@ echo "  → github.com/MenkeTechnologies/zshrs"
 echo
 
 banner "" 66
+
+# === ztest assertions ===
+zassert_eq "${#batches[@]}"  "10" "10 batches listed"
+zassert_eq "${#features[@]}" "18" "18 coverage highlights"
+zassert_ok "${functions[ascii_logo]:+1}" "ascii_logo defined"
+zassert_ok "${functions[banner]:+1}"     "banner defined"
+out=$(banner hello 20)
+zassert_contains "$out" "hello" "banner contains the text"
+zassert_contains "$out" "═"     "banner draws double-line border"
+zassert_contains "${batches[1]}" "001-030" "first batch covers 001-030"
+zassert_contains "${batches[10]}" "236-260" "last batch covers 236-260"
+zassert_contains "${features[1]}" "arithmetic" "feature 1 mentions arithmetic"
+zassert_ok "$$" "PID is set"
+ztest_run

@@ -33,3 +33,24 @@ echo "── (V) make invisibles visible ──"
 mixed=$'foo\nbar\tbaz'
 echo "raw width=${#mixed}"
 echo "(V)   : ${(V)mixed}"
+
+# === ztest assertions ===
+# (M):# keep matching — apple appears twice in arr
+kept=( ${(M)arr:#a*} )
+zassert_eq "${#kept[@]}" 2 "(M):# kept 2 apples"
+zassert_eq "${kept[1]}"  "apple" "(M):# first match"
+# :# drop matching
+dropped=( ${arr:#a*} )
+zassert_eq "${#dropped[@]}" 4 "':#' dropped a-prefix → 4 left"
+zassert_eq "${dropped[1]}" "banana" "first non-a entry"
+# (P) indirection
+varname=arr
+zassert_eq "${(P)varname}" "apple banana cherry banana apple grape" "(P) indirect read"
+# raw length of $'foo\nbar\tbaz' = 11
+zassert_eq "${#mixed}" 11 "raw width with newline+tab"
+# quoted forms
+unsafe='hello "world" $x'
+qq=${(qq)unsafe}
+expected_qq=\''hello "world" $x'\'
+zassert_eq "$qq" "$expected_qq" "(qq) single-quoted form"
+ztest_run

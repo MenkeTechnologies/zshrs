@@ -61,3 +61,17 @@ for line in "${data[@]}"; do
     args=(${(s/|/)line})
     render "$template" "${args[@]}"
 done
+
+# === ztest assertions ===
+zassert_eq "$(render 'Hello, {{name}}!' name=Alice)" \
+           "Hello, Alice!"                                  "basic 1-var"
+zassert_eq "$(render 'X={{a}} Y={{b}}' a=1 b=2)" \
+           "X=1 Y=2"                                        "multi-var"
+zassert_eq "$(render '{{g}}, {{n}}. {{g}} again!' g=Hi n=World)" \
+           "Hi, World. Hi again!"                           "repeated key"
+zassert_eq "$(render '{{a}} {{missing}} {{c}}' a=1 c=3)" \
+           "1 {{missing}} 3"                                "missing key kept literal"
+zassert_eq "$(render 'User {{id}}: {{name}} ({{role}})' id=1 name=Alice role=admin)" \
+           "User 1: Alice (admin)"                          "batch row 1"
+zassert_eq "$(render 'noop')" "noop"                       "no placeholders"
+ztest_run

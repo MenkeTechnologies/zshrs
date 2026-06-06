@@ -146,3 +146,18 @@ echo "    XL = 40, XC = 90"
 echo "    CD = 400, CM = 900"
 echo "  no IIII / VIIII, no LL / DD / MM (use M instead)"
 echo "  max valid: MMMCMXCIX = 3999"
+
+# === ztest assertions ===
+zassert_eq "$(int_to_roman 1)"    "I"        "1 → I"
+zassert_eq "$(int_to_roman 4)"    "IV"       "4 → IV"
+zassert_eq "$(int_to_roman 9)"    "IX"       "9 → IX"
+zassert_eq "$(int_to_roman 1492)" "MCDXCII"  "1492 → MCDXCII"
+zassert_eq "$(int_to_roman 2024)" "MMXXIV"   "2024 → MMXXIV"
+zassert_eq "$(int_to_roman 3999)" "MMMCMXCIX" "3999 → MMMCMXCIX"
+zassert_eq "$(roman_to_int I)"      1     "I → 1"
+zassert_eq "$(roman_to_int IV)"     4     "IV → 4"
+zassert_eq "$(roman_to_int MCMXCIX)" 1999 "MCMXCIX → 1999"
+zassert_eq "$(roman_to_int MMXXIV)" 2024  "MMXXIV → 2024"
+zassert_eq "$(int_to_roman 0)"    "out-of-range" "0 invalid"
+zassert_eq "$(int_to_roman 4000)" "out-of-range" "4000 invalid"
+ztest_run

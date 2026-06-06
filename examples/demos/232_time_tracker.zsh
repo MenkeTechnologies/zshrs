@@ -74,3 +74,15 @@ echo "  $max_proj: $max_min min — $max_task"
 echo
 echo "── average session length ──"
 echo "  $(( total / ${#SESSIONS[@]} )) min"
+
+# === ztest assertions ===
+zassert_eq "${#SESSIONS[@]}" 9 "9 sessions logged"
+zassert_eq "${PROJECT_TOTALS[zshrs]}"       320  "zshrs total = 90+60+120+50"
+zassert_eq "${PROJECT_TOTALS[strykelang]}"  120  "strykelang total = 45+75"
+zassert_eq "${PROJECT_TOTALS[admin]}"        50  "admin total = 30+20"
+zassert_eq "${PROJECT_TOTALS[learning]}"     60  "learning total = 60"
+zassert_eq "$total"          550  "grand total"
+zassert_eq "$max_min"        120  "longest session = 120"
+zassert_eq "$max_proj"       "zshrs" "longest session project"
+zassert_eq "$max_task"       "ship demos" "longest session task"
+ztest_run

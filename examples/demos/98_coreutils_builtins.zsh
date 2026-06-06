@@ -63,3 +63,20 @@ echo "── tee through file then back ──"
 echo "broadcast" | tee "$tmpdir/copy.log" | head -1
 echo "tee'd contents:"
 cat "$tmpdir/copy.log"
+
+# === ztest assertions ===
+zassert_eq "$(head -n 2 "$tmpdir/data.txt")"   $'line 1\nline 2'  "head -n 2"
+zassert_eq "$(tail -n 2 "$tmpdir/data.txt")"   $'line 4\nline 5'  "tail -n 2"
+zassert_eq "$(wc -l < "$tmpdir/data.txt" | tr -d ' ')" "5"        "wc -l = 5"
+zassert_eq "$(echo 'the quick brown fox' | wc -w | tr -d ' ')" "4" "wc -w = 4"
+zassert_eq "$({ echo gamma; echo alpha; echo beta; } | sort)" $'alpha\nbeta\ngamma' "sort asc"
+zassert_eq "$({ echo alpha; echo gamma; echo beta; } | sort -r)" $'gamma\nbeta\nalpha' "sort -r desc"
+zassert_eq "$({ echo 10; echo 2; echo 100; echo 1; } | sort -n)" $'1\n2\n10\n100' "sort -n numeric"
+zassert_eq "$(echo 'Hello World' | tr 'a-z' 'A-Z')" "HELLO WORLD" "tr upper"
+zassert_eq "$(echo 'Hello World' | tr 'A-Z' 'a-z')" "hello world" "tr lower"
+zassert_eq "$(echo 'alice,30,admin' | cut -d, -f1)" "alice" "cut -f1"
+zassert_eq "$(echo 'alice,30,admin' | cut -d, -f2)" "30"    "cut -f2"
+zassert_eq "$(echo 'alice,30,admin' | cut -d, -f3)" "admin" "cut -f3"
+zassert_eq "$({ echo banana; echo apple; echo cherry; echo banana; } | sort -u | head -2)" $'apple\nbanana' "sort -u + head"
+ztest_run
+

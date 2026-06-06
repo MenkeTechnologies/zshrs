@@ -46,3 +46,28 @@ echo "via (z):"
 print -l ${(z)text}
 echo "via \$=:"
 print -l $=text
+
+# === ztest assertions ===
+cmd='echo hello world "quoted phrase"'
+tokens=( ${(z)cmd} )
+zassert_eq "${#tokens[@]}" 4         "(z) splits into 4 tokens"
+zassert_eq "${tokens[1]}" "echo"     "(z) token 1"
+zassert_eq "${tokens[2]}" "hello"    "(z) token 2"
+zassert_eq "${tokens[3]}" "world"    "(z) token 3"
+zassert_eq "${tokens[4]}" '"quoted phrase"' "(z) token 4 keeps quotes"
+# Single-quoted phrase stays as single token.
+cmd3="echo 'hello world' 'with spaces'"
+t3=( ${(z)cmd3} )
+zassert_eq "${#t3[@]}" 3             "(z) single-quoted is one token"
+# Chain operators tokenized separately.
+chain='echo a && echo b'
+parts=( ${(z)chain} )
+zassert_eq "${#parts[@]}" 5          "(z) keeps && as own token"
+zassert_eq "${parts[3]}" "&&"        "(z) && is token 3"
+# (z) vs $= behaviour difference: (z) respects quoting, $= does not.
+text='one "two three" four'
+zsplit=( ${(z)text} )
+naive=( $=text )
+zassert_eq "${#zsplit[@]}" 3         "(z) quoting yields 3 tokens"
+zassert_eq "${#naive[@]}"  4         "\$= naive split yields 4 tokens"
+ztest_run

@@ -107,3 +107,14 @@ for p in "${people[@]}"; do
     [[ ${parts[4]} == active ]] && (( active++ ))
 done
 echo "active: $active"
+
+# === ztest assertions ===
+zassert_eq "${#people[@]}" 7  "7 people in dataset"
+zassert_eq "$active"       5  "5 active people"
+# direct field tests
+zassert_contains "$(find_by_name alice)"   "alice|30|admin"   "find_by_name alice"
+zassert_contains "$(find_by_name nobody)"  "no match"          "find_by_name miss"
+zassert_contains "$(filter role admin)"    "alice"             "filter role=admin has alice"
+zassert_contains "$(filter role admin)"    "carol"             "filter role=admin has carol"
+zassert_contains "$(filter status active)" "bob"               "filter status=active has bob"
+ztest_run

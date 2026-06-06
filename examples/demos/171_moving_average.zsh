@@ -65,3 +65,16 @@ for ((i=1; i<=n-2; i++)); do
         printf "  trend ↗ at i=%d (%d→%d→%d)\n" $i ${values[i]} ${values[i+1]} ${values[i+2]}
     fi
 done
+
+# === ztest assertions ===
+# values = 7 4 9 11 5 8 3 12 6 10 14 2 7 9 11 5 ; n = 16
+zassert_eq "${#values[@]}" 16    "array length"
+zassert_eq "$(mean 7 4 9 11 5)" 7         "mean of first 5 elems = 7 (int floor)"
+zassert_eq "$(min "${values[@]}")" 2      "global min"
+zassert_eq "$(max "${values[@]}")" 14     "global max"
+zassert_eq "$(mean 10 20 30)"    20       "mean 10/20/30"
+zassert_eq "$(min 5 3 7 1 9)"    1        "min varargs"
+zassert_eq "$(max 5 3 7 1 9)"    9        "max varargs"
+# 3-window starting at i=1 → values[1..3] = 7 4 9 → mean 6 (int floor: 20/3=6)
+zassert_eq "$(mean ${values[1]} ${values[2]} ${values[3]})" 6 "3-window i=1 mean"
+ztest_run

@@ -157,3 +157,13 @@ echo "  diff/patch (file similarity)"
 echo "  plagiarism detection"
 echo "  data dedup (long shared chunks)"
 echo "  database joins on substring matches"
+
+# === ztest assertions ===
+zassert_eq "$(lcs_substring ABABC BABCA)"     "4|BABC" "ABABC vs BABCA"
+zassert_eq "$(lcs_substring ABCDXYZ XYZABCD)" "4|ABCD" "ABCDXYZ vs XYZABCD"
+zassert_eq "$(lcs_substring abc abc)"         "3|abc"  "identical"
+zassert_eq "$(lcs_substring abc xyz)"         "0|"     "no common"
+zassert_eq "$(brute_lcs ABC XBC)"             "2|BC"   "brute ABC vs XBC"
+zassert_eq "$(brute_lcs abcdef cdefgh)"       "4|cdef" "brute long"
+zassert_eq "$(lcs_substring OldSite NewSite)" "4|Site" "OldSite vs NewSite"
+ztest_run

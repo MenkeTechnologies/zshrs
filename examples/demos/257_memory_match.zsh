@@ -115,3 +115,27 @@ for pair in "1 2" "3 4" "5 6" "7 8" "9 10"; do
     (( attempts++ ))
 done
 echo "  matches: $matches/$attempts"
+
+# === ztest assertions ===
+init_board
+zassert_eq "${#board[@]}" "16"     "16 cards"
+zassert_eq "${#revealed[@]}" "16"  "16 revealed flags"
+zassert_eq "$(count_revealed)" "0" "all hidden initially"
+# Index the deck against the known fixed permutation and pick a real pair.
+# symbols=(A A B B C C D D E E F F G G H H), order=(2 9 5 14 1 10 7 13 4 11 8 16 3 12 6 15)
+# board[1]=symbols[2]=A, board[5]=symbols[1]=A → flip 1,5 must match.
+if flip 1 5; then zassert_ok 1 "board[1] == board[5] (both A)"; else zassert_ok 0 "board[1] == board[5]"; fi
+# After matching, two cells revealed
+zassert_eq "$(count_revealed)" "2" "match reveals 2 cells"
+# Non-match should NOT leave cells revealed.
+init_board
+if flip 1 2; then zassert_ok 0 "1,2 not a match"; else zassert_ok 1 "1,2 not a match"; fi
+zassert_eq "$(count_revealed)" "0" "miss hides both again"
+# Sanity check deck distribution: each of A..H appears twice.
+total_A=0
+for i in {1..16}; do [[ ${board[i]} == A ]] && (( total_A++ )); done
+zassert_eq "$total_A" "2" "A appears exactly twice"
+total_H=0
+for i in {1..16}; do [[ ${board[i]} == H ]] && (( total_H++ )); done
+zassert_eq "$total_H" "2" "H appears exactly twice"
+ztest_run

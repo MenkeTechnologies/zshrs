@@ -134,3 +134,16 @@ for e in "${neg_edges[@]}"; do
     fi
 done
 (( ! detected )) && echo "  no neg cycle"
+
+# === ztest assertions ===
+zassert_eq "$N"           6 "6 nodes"
+zassert_eq "${dist[S]}"   0 "d(S,S) = 0"
+zassert_eq "${dist[A]}"   4 "d(S,A) = 4"
+zassert_eq "${dist[B]}"   1 "d(S,B) = 1 (via A, -3 edge)"
+zassert_eq "${dist[C]}"   3 "d(S,C) = 3 (direct)"
+zassert_eq "${dist[D]}"   5 "d(S,D) = 5 (via A,B)"
+zassert_eq "${dist[E]}"   7 "d(S,E) = 7 (via A,B,D)"
+zassert_eq "${prev[B]}"   A "prev[B] = A"
+zassert_eq "$neg_cycle"   0 "no neg cycle in main graph"
+zassert_eq "$detected"    1 "negative cycle detected in test graph"
+ztest_run

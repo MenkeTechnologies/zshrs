@@ -87,3 +87,24 @@ print -P "  ✓ print -v capture: working"
 print -P "  ✓ print -aC columns: working"
 print -P "  ✓ print -l per-line: working"
 print -P "  ✓ print -z buffer push: accepted (non-interactive)"
+
+# === ztest assertions ===
+# print -v captures into variable
+print -v cap "hello world"
+zassert_eq "$cap" "hello world"          "print -v captures plain"
+print -v multi -l one two three
+zassert_contains "$multi" "one"          "print -v -l captures multi"
+zassert_contains "$multi" "two"          "print -v -l captures all"
+# print -r is raw (no \n interpretation)
+out=$(print -r 'a\nb')
+zassert_eq "$out" 'a\nb'                 "print -r preserves backslash"
+# print -l one-per-line
+out=$(print -l x y z)
+zassert_eq "$out" "$(printf 'x\ny\nz')" "print -l newline separated"
+# print -m matches pattern
+out=$(print -m 'a*' apple banana avocado cherry)
+zassert_eq "$out" "apple avocado"        "print -m glob match"
+# print -f formats
+out=$(print -f "%d-%s\n" 5 hi)
+zassert_eq "$out" "5-hi"                 "print -f"
+ztest_run

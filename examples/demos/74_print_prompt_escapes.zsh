@@ -32,3 +32,23 @@ print -P "before %{<lit>%} after"
 
 echo "── %% literal percent ──"
 print -P "literal: %%"
+
+# === ztest assertions ===
+# Many %-escapes are environment-dependent (%n=user, %M=hostname, %d=cwd) —
+# assert on the deterministic ones: conditionals, literal %%, %{...%} passthrough.
+true
+ok_out=$(print -P "after true: %(?.OK.FAIL)")
+zassert_eq "$ok_out"    "after true: OK"     "%(?.) picks .true on success"
+false
+fail_out=$(print -P "after false: %(?.OK.FAIL)")
+zassert_eq "$fail_out"  "after false: FAIL"  "%(?.) picks .false on error"
+pct=$(print -P "literal: %%")
+zassert_eq "$pct"       "literal: %"         "%% emits literal %"
+litpass=$(print -P "before %{<lit>%} after")
+zassert_eq "$litpass"   "before <lit> after" "%{...%} literal pass-through"
+red_raw=$(print -P "%F{red}red%f")
+zassert_contains "$red_raw" "red"            "%F{red} contains the text"
+user=$(print -P "%n")
+zassert_ok "$user" "%n produces a username"
+ztest_run
+

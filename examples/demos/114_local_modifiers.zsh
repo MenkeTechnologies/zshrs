@@ -68,3 +68,38 @@ fn_private() {
 }
 fn_private 2>/dev/null && echo "private works" || echo "private not supported (OK)"
 echo "outside: p=${p:-cleared}"
+
+# === ztest assertions ===
+# local -i auto-evaluates arithmetic on assignment
+fn_int_check() {
+    local -i z
+    z="3 + 4"
+    echo $z
+}
+zassert_eq "$(fn_int_check)" "7"  "local -i auto-eval"
+# local -a fresh
+fn_arr_check() {
+    local -a it=(x y z)
+    echo "${it[*]}"
+}
+zassert_eq "$(fn_arr_check)" "x y z"  "local -a"
+# local -A fresh
+fn_assoc_check() {
+    local -A m=(k1 v1)
+    echo "${m[k1]}"
+}
+zassert_eq "$(fn_assoc_check)" "v1"  "local -A"
+# nested local scopes
+outer_check() {
+    local x=outer_val
+    inner_check() { local x=inner_val; echo "$x"; }
+    inner_check
+    echo "$x"
+}
+zassert_eq "$(outer_check)" "inner_val
+outer_val"  "nested local scopes"
+# local var doesn't leak to caller
+items=""
+fn_arr_check >/dev/null
+zassert_eq "${items:-unset}" "unset"  "local -a does not leak"
+ztest_run

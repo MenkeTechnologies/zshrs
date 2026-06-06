@@ -47,3 +47,14 @@ demo_scope() {
 }
 demo_scope
 echo "outside: $outer"
+
+# === ztest assertions ===
+zassert_eq "$(greet world)"           "Hello, world!" "greet world"
+zassert_eq "$(greet zshrs)"           "Hello, zshrs!" "greet zshrs"
+zassert_eq "$(sum 1 2 3 4 5)"         15              "sum 1..5"
+zassert_eq "$(sum 10 20 30)"          60              "sum 10 20 30"
+zassert_eq "$(max 3 1 4 1 5 9 2 6)"   9               "max varargs"
+if is_positive 7; then zassert_ok 1 "is_positive 7"; else zassert_ok 0 "is_positive 7"; fi
+if is_positive -3; then zassert_ok 0 "is_positive -3 negated"; else zassert_ok 1 "is_positive -3 negated"; fi
+zassert_eq "$outer"                   "outer_val"     "local scope did not leak"
+ztest_run

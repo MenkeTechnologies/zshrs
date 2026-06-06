@@ -76,3 +76,18 @@ self_info() {
     echo "  arity: $#"
 }
 self_info one two three
+
+# === ztest assertions ===
+zassert_eq "$CALL_DEPTH" 11 "recursion depth hit 11"
+si=$(self_info one two three)
+zassert_contains "$si" "function: self_info" "self_info knows its own name"
+zassert_contains "$si" "args: one two three" "self_info shows args"
+zassert_contains "$si" "arity: 3"            "self_info shows arity"
+lwc=$(worker)
+zassert_contains "$lwc" "[caller: worker]"   "log_with_caller sees caller"
+zassert_contains "$lwc" "worker did its thing" "log_with_caller payload"
+nested=$(level1)
+zassert_contains "$nested" "show_stack"      "nested call has show_stack in stack"
+zassert_contains "$nested" "level1"          "nested stack contains level1"
+zassert_contains "$nested" "depth: 4"        "depth=4 in triple-nested"
+ztest_run

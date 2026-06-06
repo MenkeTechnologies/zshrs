@@ -64,3 +64,13 @@ echo "  zshrs: the FIRST compiled"
 echo "  Unix shell — drop-in zsh"
 echo "  replacement in Rust."
 echo "  ───────────────────────────"
+
+# === ztest assertions ===
+zassert_eq "${#batches[@]}" 7        "7 batches recorded"
+zassert_eq "${batches[1]%%:*}" "01-30"   "first batch range"
+zassert_eq "${batches[1]#*:}"  "fundamentals" "first batch theme"
+zassert_eq "${batches[7]%%:*}" "161-185" "last batch range"
+zassert_ok "${#features[@]}"        "features array populated"
+zassert_ge "${#features[@]}" 15     "at least 15 features listed"
+zassert_contains "${features[1]}" "arithmetic" "first feature mentions arithmetic"
+ztest_run

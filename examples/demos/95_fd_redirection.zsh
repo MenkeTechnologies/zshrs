@@ -51,3 +51,29 @@ gamma
 alpha
 beta
 EOF
+
+# === ztest assertions ===
+tmpdir2=/tmp/zshrs_fd_assert_$$
+mkdir -p "$tmpdir2"
+echo "line1" > "$tmpdir2/a.txt"
+echo "line2" >> "$tmpdir2/a.txt"
+zassert_eq "$(cat "$tmpdir2/a.txt")" $'line1\nline2' "> + >> append works"
+{ echo o; echo e >&2; } 2>&1 > "$tmpdir2/out.log"
+zassert_eq "$(cat "$tmpdir2/out.log")" "o" "stdout-only after 2>&1 >"
+{ echo o2; echo e2 >&2; } &> "$tmpdir2/merged.log"
+zassert_contains "$(cat "$tmpdir2/merged.log")" "o2" "&> captures stdout"
+zassert_contains "$(cat "$tmpdir2/merged.log")" "e2" "&> captures stderr"
+zassert_eq "$(grep needle <<< 'look for the needle here')" "look for the needle here" "here-string"
+ls /nonexistent_xyz_abc 2>/dev/null
+zassert_ne "$?" "0" "missing path → nonzero status"
+{ echo a; echo b; echo c; } > "$tmpdir2/multi.log"
+zassert_eq "$(wc -l < "$tmpdir2/multi.log" | tr -d ' ')" "3" "block redirect line count"
+zassert_eq "$(sort <<EOF
+gamma
+alpha
+beta
+EOF
+)" $'alpha\nbeta\ngamma' "heredoc into sort"
+rm -rf "$tmpdir2"
+ztest_run
+

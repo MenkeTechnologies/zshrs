@@ -53,3 +53,16 @@ for ctx in plugin:a plugin:b plugin:c; do
     zstyle -s ":$ctx" enabled e
     echo "$ctx enabled: $e"
 done
+
+# === ztest assertions ===
+zassert_eq "$out"          "select" "zstyle -s round-trip"
+zassert_eq "$test_show"    "true"   "zstyle context-pattern match"
+zassert_eq "$my_theme"     "dracula" "zstyle -s fallback default"
+zassert_eq "$is_color"     "yes"    "zstyle -b colorize"
+zassert_eq "$v"            "3"      "zstyle -s int round-trip"
+zassert_eq "$e"            "yes"    "zstyle wildcard context match"
+zassert_eq "${#hosts_arr[@]}" "3"   "zstyle -a hosts count"
+zassert_eq "${hosts_arr[1]}"  "host1" "zstyle -a hosts[1]"
+zstyle -s ':completion:*' menu out_after
+zassert_eq "$out_after" "" "zstyle -d removes the style"
+ztest_run

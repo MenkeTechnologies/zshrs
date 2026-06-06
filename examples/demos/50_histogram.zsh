@@ -44,3 +44,15 @@ for k v in "${(@kv)freq}"; do
     args+=("$k" "$v")
 done
 histogram "${args[@]}" | sort
+
+# === ztest assertions ===
+zassert_eq "${freq[the]}"    3 "'the' appears 3 times"
+zassert_eq "${freq[fox]}"    2 "'fox' appears 2 times"
+zassert_eq "${freq[quick]}"  1 "'quick' appears once"
+zassert_eq "${freq[dog]}"    1 "'dog' appears once"
+zassert_eq "${#freq[@]}"     8 "8 unique words in text"
+# Render a known histogram and check shape.
+out=$(histogram a 3 b 5 2>&1)
+zassert_contains "$out" "a          ### (3)" "histogram bar row a"
+zassert_contains "$out" "b          ##### (5)" "histogram bar row b"
+ztest_run

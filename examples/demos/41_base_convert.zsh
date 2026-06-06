@@ -42,3 +42,19 @@ echo "0b1010 = $(from_bin 1010)"
 echo "0x1F   = $(from_hex 1F)"
 echo "0o755  = $(from_oct 755)"
 echo "0b11111111 = $(from_bin 11111111)"
+
+# === ztest assertions ===
+zassert_eq "$(to_bin 0)"      "0"          "0 = 0"
+zassert_eq "$(to_bin 10)"     "1010"       "10 = 1010"
+zassert_eq "$(to_bin 255)"    "11111111"   "255 = 11111111"
+zassert_eq "$(to_bin 256)"    "100000000"  "256 = 1<<8"
+zassert_eq "$(to_hex 255)"    "ff"         "255 hex"
+zassert_eq "$(to_hex 256)"    "100"        "256 hex"
+zassert_eq "$(to_oct 8)"      "10"         "8 oct"
+zassert_eq "$(to_oct 64)"     "100"        "64 oct"
+zassert_eq "$(from_bin 1010)" "10"         "from_bin 1010"
+zassert_eq "$(from_hex 1F)"   "31"         "from_hex 1F"
+zassert_eq "$(from_oct 755)"  "493"        "from_oct 755"
+# Round trip
+zassert_eq "$(from_bin $(to_bin 42))" "42" "round trip 42"
+ztest_run

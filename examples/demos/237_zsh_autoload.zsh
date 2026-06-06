@@ -79,3 +79,28 @@ echo "first: ${fpath[1]}"
 fpath=( ${fpath:#$tmpfp} )
 unfunction greet farewell sum 2>/dev/null
 command rm -rf "$tmpfp"
+
+# === ztest assertions ===
+tmpfp2=/tmp/zshrs_fp_test_$$
+mkdir -p "$tmpfp2"
+cat > "$tmpfp2/myfn" <<'EOF'
+echo "loaded-myfn"
+EOF
+cat > "$tmpfp2/addfn" <<'EOF'
+local s=0
+for n in "$@"; do (( s += n )); done
+echo $s
+EOF
+fpath=("$tmpfp2" $fpath)
+autoload -Uz myfn
+autoload -Uz addfn
+zassert_eq "$(myfn)"            "loaded-myfn"   "autoload triggers body"
+zassert_eq "$(addfn 1 2 3 4 5)" 15              "autoload sum 1..5"
+zassert_eq "$(myfn)"            "loaded-myfn"   "second call uses cached body"
+# Pre-call introspection: zshrs marker shows 'autoload -X' before first invocation;
+# after invocation, body should be cached.
+myfn >/dev/null
+zassert_contains "${functions[myfn]}" "loaded-myfn" "functions[] body introspection after load"
+unfunction myfn addfn 2>/dev/null
+command rm -rf "$tmpfp2"
+ztest_run

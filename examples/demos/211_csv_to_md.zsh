@@ -40,3 +40,21 @@ csv_to_md <<EOF
 Col1,Col2,Col3
 A,B,C
 EOF
+
+# === ztest assertions ===
+t1=$(csv_to_md <<EOF
+Name,Age,Role
+Alice,30,Admin
+EOF
+)
+zassert_contains "$t1" "| Name | Age | Role |" "t1 header row"
+zassert_contains "$t1" "| --- | --- | --- |"  "t1 separator row"
+zassert_contains "$t1" "| Alice | 30 | Admin |" "t1 data row"
+t2=$(csv_to_md <<EOF
+Col1,Col2,Col3
+A,B,C
+EOF
+)
+zassert_contains "$t2" "| A | B | C |" "t2 single data row"
+zassert_eq $(echo "$t2" | wc -l | tr -d ' ') 3 "t2 has 3 lines (header,sep,data)"
+ztest_run

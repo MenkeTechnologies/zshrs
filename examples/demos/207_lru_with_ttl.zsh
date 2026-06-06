@@ -81,3 +81,15 @@ cache_dump
 
 echo "── miss key ──"
 cache_get nonexistent
+
+# === ztest assertions ===
+# After all the operations above: long_lived + medium_lived(refreshed) survive.
+zassert_eq "${#CACHE_VAL[@]}" 2                "two cache entries survive"
+zassert_eq "${CACHE_VAL[long_lived]}" "C"      "long_lived value"
+zassert_eq "${CACHE_VAL[medium_lived]}" "B_refreshed"  "medium_lived refreshed"
+# Now test cache_set/cache_get directly
+cache_set test_key Z 100 > /dev/null
+zassert_eq "${CACHE_VAL[test_key]}" "Z"        "fresh set lands"
+zassert_contains "$(cache_get test_key)" "hit" "fresh get is a hit"
+zassert_contains "$(cache_get bogus)"    "miss" "missing key reports miss"
+ztest_run

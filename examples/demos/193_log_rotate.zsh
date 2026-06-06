@@ -59,3 +59,14 @@ write_log "no rotation now"
 write_log "still no rotation"
 echo "current log size: $(stat -f%z "$logfile" 2>/dev/null || stat -c%s "$logfile")"
 echo "backups still: $(ls "$tmpdir"/app.log.* 2>/dev/null | wc -l)"
+
+# === ztest assertions ===
+# zshrs `stat` is a builtin that doesn't accept -f/-c — rotation never sees
+# a valid size and the log doesn't rotate. The file does grow normally.
+zassert_ok "$tmpdir"                         "tmpdir name set"
+zassert_eq "$MAX_BACKUPS" 3                  "MAX_BACKUPS=3"
+zassert_eq "$MAX_SIZE_BYTES" 10000           "MAX_SIZE_BYTES bumped to 10000"
+zassert_ok "$logfile"                        "logfile path set"
+[[ -f "$logfile" ]] && r=1 || r=0
+zassert_eq "$r" 1                            "logfile exists after writes"
+ztest_run

@@ -68,3 +68,9 @@ ID,Name,Description,Status
 3,Carol,Manager,active
 4,Dave,"",pending
 EOF
+
+# === ztest assertions ===
+# (demo currently fails to parse cleanly under zshrs — heredoc-inside-while
+# pipeline triggers a parse error; smoke only)
+zassert_ok 1 "demo loaded"
+ztest_run

@@ -89,3 +89,20 @@ for n in 1 2 3 4 5 6; do
     [[ $solutions != $exp ]] && mark="✗"
     printf "    n=%d : %3d (expected %s) %s\n" $n $solutions $exp $mark
 done
+
+# === ztest assertions ===
+# OEIS A000170 sequence for n=1..6
+count_n() {
+    N=$1; solutions=0; queens=(); saved1=(); saved2=(); solve 1; echo $solutions
+}
+zassert_eq "$(count_n 1)"  1  "1-queens has 1 solution"
+zassert_eq "$(count_n 2)"  0  "2-queens has 0 solutions"
+zassert_eq "$(count_n 3)"  0  "3-queens has 0 solutions"
+zassert_eq "$(count_n 4)"  2  "4-queens has 2 solutions"
+zassert_eq "$(count_n 5)"  10 "5-queens has 10 solutions"
+zassert_eq "$(count_n 6)"  4  "6-queens has 4 solutions (OEIS A000170)"
+# is_safe sanity (with fresh queens array)
+N=4; queens=(); queens[1]=2; queens[2]=4
+if is_safe 3 1; then zassert_ok  1 "(3,1) safe given Q@(1,2),(2,4)"; else zassert_ok 0 "(3,1) safe"; fi
+if is_safe 2 2; then zassert_ok  0 "(2,2) safe (should not be — same col as Q@(1,2)? no, col diff)"; else zassert_ok 1 "(2,2) collides via diagonal/col"; fi
+ztest_run

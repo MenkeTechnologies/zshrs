@@ -218,3 +218,18 @@ echo "  classical ciphers covered: columnar transposition, rail fence"
 echo "  vulnerability: preserves letter frequency (defeated by Kasiski/Friedman)"
 echo "  strength: hides patterns / digraphs"
 echo "  WWI-era use: ADFGVX, double transposition"
+
+# === ztest assertions ===
+enc=$(columnar_encrypt "HELLOWORLD" "KEY")
+zassert_eq "$enc" "EORXHLODLWLX"               "columnar HELLOWORLD/KEY"
+enc=$(columnar_encrypt "ATTACKATDAWN" "LEMON")
+zassert_eq "$enc" "TANAKWTTXCAXADX"            "columnar ATTACKATDAWN/LEMON"
+enc=$(columnar_encrypt "MEETMEMIDNIGHT" "ZEBRA")
+zassert_eq "$enc" "MNXEIHEMGTDTMEI"            "columnar MEETMEMIDNIGHT/ZEBRA"
+enc=$(rail_fence_encrypt "WEAREDISCOVEREDFLEEATONCE" 3)
+zassert_eq "$enc" "WECRLTEERDSOEEFEAOCAIVDEN"  "rail fence 3 rails"
+enc=$(rail_fence_encrypt "ATTACKATDAWN" 3)
+zassert_eq "$enc" "ACDTAKTANTAW"               "rail fence ATTACK 3 rails"
+enc=$(rail_fence_encrypt "HELLOWORLD" 2)
+zassert_eq "$enc" "HLOOLELWRD"                 "rail fence HELLOWORLD 2 rails"
+ztest_run

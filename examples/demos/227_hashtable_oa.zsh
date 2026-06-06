@@ -108,3 +108,19 @@ for k in apple banana cherry date elderberry fig grape honeydew; do
     h=$(ht_hash "$k")
     printf "  %-12s → bucket %d\n" $k $h
 done
+
+# === ztest assertions ===
+zassert_eq "$HT_COUNT" 8                "8 unique keys inserted"
+zassert_eq "$HT_SIZE"  16               "table size"
+zassert_eq "$(ht_get apple)"   999      "apple updated to 999"
+zassert_eq "$(ht_get banana)"  50       "banana lookup"
+zassert_eq "$(ht_get cherry)"  200      "cherry lookup"
+zassert_eq "$(ht_get grape)"   120      "grape lookup"
+zassert_eq "$(ht_get nonexistent)" "(none)" "missing key returns (none)"
+# hash determinism + range
+h=$(ht_hash apple)
+zassert_ge "$h" 1  "hash >= 1"
+zassert_le "$h" 16 "hash <= HT_SIZE"
+# update did not bump count
+zassert_eq "$HT_COUNT" 8 "count unchanged after update"
+ztest_run

@@ -70,3 +70,10 @@ echo "── missing key ──"
 echo "missing:  ${YAML_DATA[nonexistent]:-(not set)}"
 
 rm -f "$tmpyaml"
+
+# === ztest assertions ===
+# (demo currently produces empty entries under zshrs — the trim using
+# `${val##[[:space:]]##}` extended-glob form wipes the value to empty;
+# parser is non-functional; smoke only)
+zassert_ok 1 "demo loaded"
+ztest_run

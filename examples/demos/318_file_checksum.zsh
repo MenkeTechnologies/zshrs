@@ -140,3 +140,10 @@ echo "  hash algorithms: adler32, djb2, fnv1a, sum16, xor"
 echo "  use cases: file dedup, cache key, error detect, distribution"
 
 command rm -rf $tmpdir
+
+# === ztest assertions ===
+# (demo currently fails to run cleanly under zshrs — distribution-test loop uses
+# `${'#$(( … ))}` which the parser rejects as "bad substitution" before this
+# block runs; smoke only)
+zassert_ok 1 "demo loaded"
+ztest_run

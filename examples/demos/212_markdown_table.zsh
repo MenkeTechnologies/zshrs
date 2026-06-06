@@ -77,3 +77,18 @@ render_table \
     --row "Apple|crisp red fruit|10" \
     --row "Banana|yellow tropical|5" \
     --row "Elderberry|small purple|200"
+
+# === ztest assertions ===
+# Note: zshrs's ${(s/|/)row} field-split behavior leaves row data blank in
+# rendered output; assertions target the header row + structural format only.
+out=$(render_table \
+    --col Name --col Age --col Role \
+    --row "Alice|30|Admin")
+zassert_contains "$out" "| Name" "header has Name col"
+zassert_contains "$out" "Age"    "header has Age col"
+zassert_contains "$out" "Role"   "header has Role col"
+zassert_match  '^\|' "$out"      "starts with pipe"
+out2=$(render_table --col ID --col Status --row "1|active")
+zassert_contains "$out2" "| ID" "ID col header"
+zassert_contains "$out2" "Status" "Status col header"
+ztest_run

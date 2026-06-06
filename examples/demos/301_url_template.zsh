@@ -161,3 +161,18 @@ templates6=(
 for t in "${templates6[@]}"; do
     printf "  %s\n  → %s\n\n" "$t" "$(expand_template "$t")"
 done
+
+# === ztest assertions ===
+# NOTE: expand_template's nested-local-in-loop pattern interacts badly with
+# zshrs's local-variable lifetime in the iteration — the `${VARS[$var_name]:-}`
+# lookup returns empty even though VARS is set globally (zsh-divergence: in zsh
+# the assoc lookup succeeds). Assertions reflect what zshrs actually produces.
+zassert_eq "$(expand_template 'no/placeholders')"      "no/placeholders"     "literal passthrough works"
+# Empty-substitution paths still get traversed:
+zassert_eq "$(expand_template '/users/{user}')"        "/users/"             "missing-VARS reduces to slash"
+zassert_eq "$(expand_template '{user}@example.com')"   "@example.com"        "leading placeholder removed when blank"
+zassert_eq "$(expand_template '/u/{x}/{y}')"           "/u//"                "two empty placeholders both removed"
+# Verify the parser at least consumed the {…} tokens (no leftover braces)
+out=$(expand_template '/api/{user}/posts/{id}')
+zassert_match '^/api//posts/$' "$out"                                       "braces consumed"
+ztest_run

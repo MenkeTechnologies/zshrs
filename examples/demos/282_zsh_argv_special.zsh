@@ -125,3 +125,45 @@ getopts_demo() {
     echo "  remaining \$@ = $@"
 }
 getopts_demo -a -c foo -b -d bar leftover1 leftover2
+
+# === ztest assertions ===
+# Function FUNCTION_ARGZERO semantics: $0 inside function = function name
+zassert_eq "$(nested0() { echo "$0"; }; nested0)" "nested0" "\$0 inside fn = fn name"
+# Slicing
+slice_collect() {
+    echo "${@:2:3}"
+}
+zassert_eq "$(slice_collect a b c d e f)" "b c d" "\${@:2:3} returns 3 starting at 2"
+# Default-value parameter expansion
+df() { echo "${3:-FALLBACK}"; }
+zassert_eq "$(df a b)" "FALLBACK"  "\${3:-FALLBACK} when only 2 args"
+zassert_eq "$(df a b c)" "c"       "\${3:-FALLBACK} when 3rd is set"
+# shift consumes args
+sh1() { shift; echo "$1"; }
+zassert_eq "$(sh1 a b c)" "b" "shift drops first arg"
+sh2() { shift 2; echo "$#"; }
+zassert_eq "$(sh2 a b c d)" "2" "shift 2 drops two"
+# getopts produces deterministic OPTIND
+gopt() {
+    OPTIND=1
+    while getopts "ab" opt; do :; done
+    echo "$OPTIND"
+}
+zassert_eq "$(gopt -a -b extra)" "3" "OPTIND after parsing -a -b"
+# argv reflects positional params
+echo_argv() { echo "$argv"; }
+zassert_eq "$(echo_argv x y z)" "x y z" "\$argv joined"
+# \$@ vs \$* in single-quote iteration: $* joins
+star_iter() {
+    local i=0 a
+    for a in "$*"; do (( i++ )); done
+    echo "$i"
+}
+zassert_eq "$(star_iter a b c)" "1" '"$*" iterates once'
+at_iter() {
+    local i=0 a
+    for a in "$@"; do (( i++ )); done
+    echo "$i"
+}
+zassert_eq "$(at_iter a b c)" "3" '"$@" iterates per-arg'
+ztest_run

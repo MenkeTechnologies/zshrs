@@ -34,3 +34,21 @@ echo "── replace ──"
 str="banana"
 echo "first a → A: ${str/a/A}"
 echo "all   a → A: ${str//a/A}"
+
+# === ztest assertions ===
+unset uvar
+zassert_eq "${uvar:-fallback}" "fallback"  "default fallback for unset"
+unset uvar2
+: "${uvar2:=hello}"
+zassert_eq "$uvar2"            "hello"     ":= assigns and sets"
+zassert_eq "${#s}"             "8"         "length"
+zassert_eq "${s[1,3]}"         "abc"       "substring [1,3]"
+zassert_eq "${s[4,-1]}"        "defgh"     "substring [4,-1]"
+zassert_eq "${s[-3,-1]}"       "fgh"       "negative substring"
+zassert_eq "${path#*/}"        "usr/local/bin/zshrs" "# strips shortest prefix"
+zassert_eq "${path##*/}"       "zshrs"     "## strips longest prefix"
+zassert_eq "${file%.*}"        "readme.md" "% strips shortest suffix"
+zassert_eq "${file%%.*}"       "readme"    "%% strips longest suffix"
+zassert_eq "${str/a/A}"        "bAnana"    "/ replaces first match"
+zassert_eq "${str//a/A}"       "bAnAnA"    "// replaces all matches"
+ztest_run

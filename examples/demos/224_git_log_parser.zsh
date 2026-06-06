@@ -102,3 +102,34 @@ Date:   Today
 
     second commit
 EOF
+
+# === ztest assertions ===
+subs=$(cat <<'EOF' | extract_subjects
+commit aaaa
+Author: A <a@x>
+Date:   Today
+
+    first commit
+
+commit bbbb
+Author: B <b@x>
+Date:   Today
+
+    second commit
+EOF
+)
+zassert_contains "$subs" "first commit"   "subject 1 extracted"
+zassert_contains "$subs" "second commit"  "subject 2 extracted"
+
+stats=$(cat <<'EOF' | extract_stats
+5       2       src/main.rs
+12      0       src/lib.rs
+0       8       src/old.rs
+3       3       README.md
+EOF
+)
+zassert_contains "$stats" "src/main.rs"   "stats: main.rs row"
+zassert_contains "$stats" "+12"           "stats: lib.rs additions"
+zassert_contains "$stats" "-8"            "stats: old.rs deletions"
+zassert_contains "$stats" "README.md"     "stats: README.md row"
+ztest_run

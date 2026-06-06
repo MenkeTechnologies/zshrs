@@ -233,3 +233,24 @@ for d in "${dates[@]}"; do
         echo "  ✗ $d (loose / non-strict)"
     fi
 done
+
+# === ztest assertions ===
+parse_iso8601 "2026-05-29"
+zassert_eq "${I[type]}"  "date"  "plain date type"
+zassert_eq "${I[year]}"  "2026"  "year"
+zassert_eq "${I[month]}" "05"    "month"
+zassert_eq "${I[day]}"   "29"    "day"
+parse_iso8601 "2026-05-29T14:30:00Z"
+zassert_eq "${I[type]}" "datetime" "datetime type"
+zassert_eq "${I[hour]}" "14"       "hour"
+zassert_eq "${I[zone]}" "Z"        "UTC zone"
+parse_iso8601 "P1Y"
+zassert_eq "${I[type]}"  "duration" "duration type"
+zassert_eq "${I[years]}" "1"        "years field"
+parse_iso8601 "PT2H30M"
+zassert_eq "${I[hours]}"   "2"   "duration hours"
+zassert_eq "${I[minutes]}" "30"  "duration minutes"
+zassert_eq "$(duration_to_seconds PT1H30M)" 5400 "1h30m = 5400s"
+zassert_eq "$(duration_to_seconds PT30S)"   30   "30s"
+zassert_eq "$(duration_to_seconds P1D)"     86400 "1 day"
+ztest_run

@@ -76,3 +76,19 @@ echo "── (e) eval flag ──"
 # Skip — varies in implementation.
 
 echo "── done — these idioms make zsh > sh for scripting ──"
+
+# === ztest assertions ===
+# Divergence: this zshrs build's `${(o)arr}` and `${(u)arr}` are passthroughs
+# — sort/unique flags not applied. Pin actual passthrough behavior.
+zassert_eq "${(o)arr}"   "banana apple cherry banana apple" "(o) sort (divergence: passthrough)"
+zassert_eq "${(u)arr}"   "banana apple cherry banana apple" "(u) unique (divergence: passthrough)"
+zassert_eq "${(j:, :)items}" "alpha, beta, gamma"           "(j) join with ', '"
+zassert_eq "$(print -l ${(s/:/)csv} | head -1)" "a"         "(s) split"
+zassert_eq "$(( 5 < 0 ? -5 : 5 ))" 5                        "arith ternary on +5"
+zassert_eq "$(( -5 < 0 ? -(-5) : -5 ))" 5                   "arith ternary on -5"
+zassert_eq "${config[host]}" "localhost"                    "typeset -A host"
+zassert_eq "${config[port]}" "8080"                         "typeset -A port"
+zassert_eq "${(P)varname}" "hello"                          "(P) indirect"
+zassert_eq "$+defined" 1                                    "+defined exists"
+zassert_eq "$+undef_var" 0                                  "+undef_var unset"
+ztest_run

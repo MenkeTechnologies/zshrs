@@ -43,3 +43,17 @@ for n in 0 1 -1 42 -42 1000 -9999; do
     back=$(atoi "$s")
     echo "$n → '$s' → $back $([[ $n -eq $back ]] && echo OK || echo FAIL)"
 done
+
+# === ztest assertions ===
+zassert_eq "$(atoi 42)"       42       "atoi 42"
+zassert_eq "$(atoi -7)"       -7       "atoi -7"
+zassert_eq "$(atoi +13)"      13       "atoi +13"
+zassert_eq "$(atoi 0)"        0        "atoi 0"
+zassert_eq "$(atoi 1000000)"  1000000  "atoi 1000000"
+zassert_eq "$(itoa 42)"       42       "itoa 42"
+zassert_eq "$(itoa -7)"       -7       "itoa -7"
+zassert_eq "$(itoa 0)"        0        "itoa 0"
+zassert_eq "$(itoa 1000000)"  1000000  "itoa 1e6"
+zassert_eq "$(atoi $(itoa 12345))"  12345 "round-trip 12345"
+zassert_eq "$(atoi $(itoa -9999))"  -9999 "round-trip -9999"
+ztest_run

@@ -55,3 +55,32 @@ nums=(file001 file042 file100 file999 fileabc)
 for n in $nums; do
     [[ $n == file<0-100> ]] && echo "  in range: $n"
 done
+
+# === ztest assertions ===
+setopt extended_glob
+# (#i) case-insensitive prefix match.
+[[ "README.md" == (#i)readme* ]] && r1=ok || r1=no
+[[ "readme.MD" == (#i)readme* ]] && r2=ok || r2=no
+[[ "notes.txt" == (#i)readme* ]] && r3=ok || r3=no
+zassert_eq "$r1" "ok" "(#i) matches uppercase README"
+zassert_eq "$r2" "ok" "(#i) matches mixed-case readme"
+zassert_eq "$r3" "no" "(#i) skips non-prefix"
+# Case-insensitive range pattern via [A-Z][a-z].
+words=(alpha BETA gamma DELTA epsilon)
+up=()
+for w in $words; do
+    [[ $w == [A-Z]* ]] && up+=("$w")
+done
+zassert_eq "${(j: :)up}" "BETA DELTA" "[A-Z] picks uppercase-first"
+# Numeric range <0-100>.
+nums=(file001 file042 file100 file999)
+ok=()
+for n in $nums; do
+    [[ $n == file<0-100> ]] && ok+=("$n")
+done
+zassert_eq "${(j: :)ok}" "file001 file042 file100" "<0-100> numeric range"
+# =~ with capture groups populates match array.
+[[ "abc123" =~ "([a-z]+)([0-9]+)" ]]
+zassert_eq "${match[1]}" "abc" "match[1] captures letters"
+zassert_eq "${match[2]}" "123" "match[2] captures digits"
+ztest_run

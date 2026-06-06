@@ -77,3 +77,17 @@ echo "── negative ──"
 for n in -1 -42 -100; do
     printf "%4d → %s\n" $n "$(num_to_words $n)"
 done
+
+# === ztest assertions ===
+zassert_eq "$(num_to_words 0)"       "zero"                            "0 → zero"
+zassert_eq "$(num_to_words 5)"       "five"                            "5 → five"
+zassert_eq "$(num_to_words 13)"      "thirteen"                        "13 → thirteen"
+zassert_eq "$(num_to_words 20)"      "twenty"                          "20 → twenty"
+zassert_eq "$(num_to_words 21)"      "twenty one"                      "21 → twenty one"
+zassert_eq "$(num_to_words 99)"      "ninety nine"                     "99 → ninety nine"
+zassert_eq "$(num_to_words 100)"     "one hundred"                     "100 → one hundred"
+zassert_eq "$(num_to_words 250)"     "two hundred and fifty"           "250 → two hundred and fifty"
+zassert_eq "$(num_to_words 1000)"    "one thousand"                    "1000 → one thousand"
+zassert_eq "$(num_to_words 2026)"    "two thousand twenty six"         "2026 → two thousand twenty six"
+zassert_eq "$(num_to_words -42)"     "negative forty two"              "-42 → negative forty two"
+ztest_run

@@ -65,3 +65,16 @@ for pair in "listen silent" "hello world" "race care" "abc abd"; do
         echo "  '$1' ↔ '$2' not anagram"
     fi
 done
+
+# === ztest assertions ===
+zassert_ok "$(is_anagram listen silent && echo y)"   "listen and silent are anagrams"
+zassert_err "$(is_anagram hello world && echo y)"    "hello and world not anagrams"
+zassert_ok "$(is_anagram race care && echo y)"       "race and care anagrams"
+zassert_err "$(is_anagram abc abd && echo y)"        "abc/abd not anagrams"
+# canonical forms equal for known anagram pairs.
+zassert_eq "$(canonical listen)" "$(canonical silent)" "listen ≈ silent canonical"
+zassert_eq "$(canonical stone)" "$(canonical notes)"   "stone ≈ notes canonical"
+zassert_ne "$(canonical hello)" "$(canonical world)"   "hello ≠ world canonical"
+zassert_eq "${#words[@]}" 30                           "30 input words"
+zassert_eq "${#ANAGRAMS[@]}" 10                        "10 distinct canonical forms"
+ztest_run

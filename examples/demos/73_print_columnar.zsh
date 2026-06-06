@@ -37,3 +37,21 @@ print -u 2 "this goes to stderr"
 echo "── concatenate arrays then column-print ──"
 combined=( ${fruits[1,8]} ${fruits[9,16]} )
 print -aC 4 $combined
+
+# === ztest assertions ===
+zassert_eq "${#fruits[@]}"     16        "fruit array length"
+zassert_eq "${fruits[1]}"      "apple"   "first fruit"
+zassert_eq "${fruits[16]}"     "raspberry" "last fruit"
+zassert_eq "${fruits[-1]}"     "raspberry" "negative index last"
+zassert_eq "${#combined[@]}"   16        "concatenated array length"
+out3=$(print -aC 3 $fruits)
+zassert_contains "$out3" "apple"     "3-col output contains apple"
+zassert_contains "$out3" "raspberry" "3-col output contains raspberry"
+out1=$(print -aC 1 alpha beta gamma delta)
+zassert_eq "$out1" $'alpha\nbeta\ngamma\ndelta' "1-col print -aC stacks one per line"
+outl=$(print -l ${fruits[1,5]})
+zassert_eq "$outl" $'apple\nbanana\ncherry\ndate\nelderberry' "print -l one per line"
+outr=$(print -r 'literal\n\t$pwd')
+zassert_eq "$outr" 'literal\n\t$pwd' "print -r preserves backslashes literally"
+ztest_run
+

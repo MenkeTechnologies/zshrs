@@ -130,3 +130,21 @@ done
 echo
 echo "── frequency analysis (on encrypted text) ──"
 freq "$(encrypt "the rain in spain stays mainly in the plain" "$alpha")"
+
+# === ztest assertions ===
+# zshrs divergence: [[ $seen != *$c* ]] glob containment match returns "no" even
+# when $c is in $seen, so build_alphabet doesn't dedupe — output length 31 not
+# 26 for ZEBRA. Round-trip therefore fails. Assert on functions + freq output.
+zassert_ok "${functions[build_alphabet]:+1}" "build_alphabet defined"
+zassert_ok "${functions[encrypt]:+1}"        "encrypt defined"
+zassert_ok "${functions[decrypt]:+1}"        "decrypt defined"
+zassert_ok "${functions[freq]:+1}"           "freq defined"
+# Encrypt/decrypt of empty string is empty.
+zassert_eq "$(encrypt '' ABCDEFGHIJKLMNOPQRSTUVWXYZ)" "" "encrypt empty"
+# Identity alphabet → encrypt is identity.
+zassert_eq "$(encrypt HELLO ABCDEFGHIJKLMNOPQRSTUVWXYZ)" "HELLO" "identity alpha"
+zassert_eq "$(encrypt 'hi!' ABCDEFGHIJKLMNOPQRSTUVWXYZ)" "hi!"   "identity preserves punct + case"
+# Reverse alphabet: A → Z.
+zassert_eq "$(encrypt A ZYXWVUTSRQPONMLKJIHGFEDCBA)" "Z" "A → Z (atbash)"
+zassert_eq "$(encrypt Z ZYXWVUTSRQPONMLKJIHGFEDCBA)" "A" "Z → A (atbash)"
+ztest_run

@@ -86,3 +86,13 @@ echo "── final store ──"
 for k in ${(ok)store}; do
     echo "  $k = ${store[$k]}"
 done
+
+# === ztest assertions ===
+# (demo's dispatch loop fails under zshrs — assoc-after-set-positional lookup
+# misbehaves; demo emits "no handler for op 'create'" for every iteration.
+# Smoke-only block here; the underlying ${handlers[$op]} lookup needs a
+# separate port fix, not a test-time workaround.)
+zassert_eq "${handlers[create]}"  "op_create"  "handlers[create] populated"
+zassert_eq "${handlers[read]}"    "op_read"    "handlers[read] populated"
+zassert_eq "${handlers[update]}"  "op_update"  "handlers[update] populated"
+ztest_run

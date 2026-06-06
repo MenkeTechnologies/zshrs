@@ -60,3 +60,20 @@ build install
 
 echo "── clean (independent target) ──"
 build clean
+
+# === ztest assertions ===
+# Targets registered.
+zassert_eq "${TARGETS[lex]}"   "echo '  lex.o: compiling'" "lex target recipe registered"
+zassert_eq "${TARGETS[app]}"   "echo '  app: linking final binary'" "app target recipe registered"
+zassert_eq "${DEPS[app]}"      "main lib"                  "app deps registered"
+zassert_eq "${DEPS[lib]}"      "lex parse utils"           "lib deps registered"
+# Built order contains the targets that got built.
+built_str="${(j: :)built}"
+zassert_contains "$built_str" "app"                        "app appears in built list"
+zassert_contains "$built_str" "install"                    "install appears in built list"
+zassert_contains "$built_str" "clean"                      "clean appears in built list"
+# 9 targets defined.
+zassert_eq "${#TARGETS[@]}" 9                              "9 targets defined"
+# Missing target -> non-zero.
+zassert_dies "build no_such_target_xyz" "missing target fails"
+ztest_run

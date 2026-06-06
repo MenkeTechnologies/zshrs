@@ -118,3 +118,20 @@ printf "  before:\n"
 echo "$input" | sed 's/^/    /'
 printf "  after:\n"
 squash_blanks "$input" | sed 's/^/    /'
+
+# === ztest assertions ===
+# zshrs divergence: [[:space:]]## extended-glob inside parameter expansion
+# isn't honored, so strip/collapse return input unchanged here. tabs, EOL,
+# and squash work fine. Assert on the working subset.
+zassert_eq "$(expand_tabs $'a\tb' 4)" "a    b" "tab expanded to 4 spaces"
+zassert_eq "$(expand_tabs $'a\tb' 2)" "a  b"   "tab expanded to 2 spaces"
+zassert_eq "$(expand_tabs $'\tx' 4)"  "    x"  "leading tab"
+zassert_eq "$(unexpand_tabs '    x' 4)" $'\tx' "4 spaces → tab"
+zassert_eq "$(unexpand_tabs 'a    b' 4)" $'a\tb' "interior 4-space → tab"
+nor=$(normalize_eol $'a\r\nb\rc\nd')
+zassert_eq "$nor" $'a\nb\nc\nd' "EOL normalize CRLF/CR/LF"
+sq=$(squash_blanks $'a\n\n\nb')
+zassert_contains "$sq" $'a\n\nb' "squash multiple blank lines"
+zassert_ok "${functions[strip]:+1}"      "strip defined"
+zassert_ok "${functions[collapse]:+1}"   "collapse defined"
+ztest_run

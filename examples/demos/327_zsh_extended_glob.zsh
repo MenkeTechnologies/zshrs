@@ -149,3 +149,30 @@ echo "    [^x]       — char negation"
 echo "    (#i)       — case-insensitive"
 echo "    (#a1)      — approximate match with 1 error"
 echo "  glob qualifiers handle file metadata in the pattern."
+
+# === ztest assertions ===
+# Build fresh fixture (the demo's tmpdir was already torn down).
+ztd=$(mktemp -d)
+touch $ztd/a.txt $ztd/b.txt $ztd/c.log
+touch $ztd/foo.py $ztd/bar.py
+touch $ztd/t1.zsh $ztd/t2.zsh $ztd/t10.zsh
+cd $ztd
+setopt extended_glob 2>/dev/null
+txts=( *.txt )
+zassert_eq "${#txts}" 2 "txt count"
+pys=( *.py )
+zassert_eq "${#pys}" 2 "py count"
+notxt=( ^*.txt )
+zassert_contains "${notxt[*]}" "foo.py" "negation includes py"
+alts=( *.(txt|log) )
+zassert_eq "${#alts}" 3 "alternation txt|log"
+nrange=( t<1-5>.zsh )
+zassert_contains "${nrange[*]}" "t1.zsh"  "range includes t1"
+zassert_contains "${nrange[*]}" "t2.zsh"  "range includes t2"
+# case-insensitive
+touch $ztd/Cap.txt
+ci=( (#i)cap.txt )
+zassert_contains "${ci[*]}" "Cap.txt" "case-insensitive match"
+cd /tmp
+command rm -rf $ztd
+ztest_run

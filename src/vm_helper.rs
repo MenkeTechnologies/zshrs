@@ -459,6 +459,43 @@ pub struct ShellExecutor {
     /// Array→(scalar, sep) reverse-tie table. Used by BUILTIN_SET_ARRAY to
     /// join the array elements with `sep` and mirror to the scalar side.
     pub tied_array_to_scalar: HashMap<String, (String, String)>,
+
+    // ── ztest framework counters (extensions/ztest.rs) ──────────────────
+    //
+    // Mirrors strykelang's per-VMHelper test counters
+    // (strykelang/builtins.rs:22292-22308 + builtins.rs::test_pass/_fail/_skip,
+    //  builtins.rs::test_pass_count etc.). Each `zassert_*` builtin bumps
+    // the per-block counter; `ztest_run` rolls per-block into _total and
+    // resets the per-block side, so a single test file with multiple
+    // `ztest_run` calls can reuse the counters. The worker-pool runner in
+    // src/extensions/ztest.rs reads pass_total+pass_count and
+    // fail_total+fail_count after `execute_script` returns for the cumulative
+    // numbers (strykelang/cli_runners.rs:115-118). `ztest_run_failed` is a
+    // sticky bool the runner reads so a test that asserts but then exits
+    // 0 still flags as failed. `ztest_suppress_stdout` matches
+    // VMHelper::suppress_stdout — the runner sets it inside the forked
+    // grandchild so the per-test stderr capture stays clean.
+    /// Per-block pass count (reset by `ztest_run`).
+    pub ztest_pass_count: std::sync::atomic::AtomicUsize,
+    /// Per-block fail count (reset by `ztest_run`).
+    pub ztest_fail_count: std::sync::atomic::AtomicUsize,
+    /// Per-block skip count (reset by `ztest_run`).
+    pub ztest_skip_count: std::sync::atomic::AtomicUsize,
+    /// Cumulative pass total across the run.
+    pub ztest_pass_total: std::sync::atomic::AtomicUsize,
+    /// Cumulative fail total across the run.
+    pub ztest_fail_total: std::sync::atomic::AtomicUsize,
+    /// Cumulative skip total across the run.
+    pub ztest_skip_total: std::sync::atomic::AtomicUsize,
+    /// Sticky failure flag — set by any `ztest_run` that observed fails;
+    /// the CLI runner reads this so a test that asserts then exits 0
+    /// still counts as a failed file.
+    pub ztest_run_failed: std::sync::atomic::AtomicBool,
+    /// Suppress per-assertion `✓`/`✗` lines on stderr. Set by the worker
+    /// runner inside the forked child when it has already redirected
+    /// fd 2 to a tmp file (we still want the lines, but only after the
+    /// runner re-emits them under print_lock to avoid line-tearing).
+    pub ztest_suppress_stdout: bool,
 }
 
 impl ShellExecutor {
@@ -1024,6 +1061,14 @@ impl ShellExecutor {
             function_def_file: HashMap::new(),
             prompt_funcstack: Vec::new(),
             tied_array_to_scalar: HashMap::new(),
+            ztest_pass_count: std::sync::atomic::AtomicUsize::new(0),
+            ztest_fail_count: std::sync::atomic::AtomicUsize::new(0),
+            ztest_skip_count: std::sync::atomic::AtomicUsize::new(0),
+            ztest_pass_total: std::sync::atomic::AtomicUsize::new(0),
+            ztest_fail_total: std::sync::atomic::AtomicUsize::new(0),
+            ztest_skip_total: std::sync::atomic::AtomicUsize::new(0),
+            ztest_run_failed: std::sync::atomic::AtomicBool::new(false),
+            ztest_suppress_stdout: false,
         };
         // Mirror env-derived path arrays into the `arrays` table so
         // user-level `fpath` / `path` array reads see the inherited

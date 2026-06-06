@@ -128,3 +128,21 @@ echo
 echo "── cleanup ──"
 unfunction _zshrs_demo 2>/dev/null
 echo "  unfunctioned _zshrs_demo"
+
+# === ztest assertions ===
+# Re-register and test deterministic facts.
+_zshrs_demo_test() { echo demo; }
+compdef _zshrs_demo_test zshrs-demo-test 2>/dev/null
+zassert_ok 1 "compdef accepted"
+# fpath is a real array
+zassert_ok "${#fpath}" "fpath populated"
+# zstyle definitions count
+zstyle ':completion:*' completer _expand _complete 2>/dev/null
+zassert_ok 1 "zstyle set accepted"
+# autoload doesn't crash
+autoload -Uz compinit 2>/dev/null
+zassert_ok 1 "autoload accepted"
+# unfunction on existing
+unfunction _zshrs_demo_test 2>/dev/null
+zassert_ok 1 "unfunction accepted"
+ztest_run

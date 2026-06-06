@@ -64,3 +64,14 @@ echo
 echo "── meta: print number of demos ──"
 demo_count=$(ls examples/demos/*.zsh 2>/dev/null | wc -l)
 echo "this repo has $((demo_count + 0)) demos"
+
+# === ztest assertions ===
+zassert_eq "$(fact 5)"  120     "fact(5)"
+zassert_eq "$(fact 10)" 3628800 "fact(10)"
+zassert_eq "$(fact 0)"  1       "fact(0) base"
+is_even_rec 4 && zassert_ok 1 "4 is even" || zassert_ok 0 "4 should be even"
+is_even_rec 7 && zassert_ok 0 "7 should be odd" || zassert_ok 1 "7 is odd"
+zassert_ok "$demo_count" "demo_count populated"
+zassert_gt "$demo_count" 0 "demo_count is positive"
+zassert_contains "${functions[demo_fn]}" "hello" "functions[] reflection"
+ztest_run

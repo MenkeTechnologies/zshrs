@@ -32,3 +32,15 @@ echo "alice=${scores[alice]}"
 echo "bob=${scores[bob]}"
 echo "carol=${scores[carol]}"
 echo "size=${#scores[@]}"
+
+# === ztest assertions ===
+zassert_eq "${colors[red]}"    255  "lookup red"
+zassert_eq "${colors[green]}"  128  "lookup green"
+zassert_eq "${colors[blue]}"   64   "lookup blue"
+zassert_eq "${colors[white]}"  255  "lookup white"
+zassert_eq "${#colors[@]}"     4    "colors size"
+zassert_eq "${scores[alice]}"  90   "scores alice"
+zassert_eq "${scores[bob]}"    85   "scores bob"
+zassert_eq "${scores[carol]}"  92   "scores carol"
+zassert_eq "${#scores[@]}"     3    "scores size"
+ztest_run

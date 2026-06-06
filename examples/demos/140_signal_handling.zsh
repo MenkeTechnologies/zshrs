@@ -62,3 +62,29 @@ done
 sleep 0.05
 echo "USR1 fired $caught times"
 trap - USR1
+
+# === ztest assertions ===
+zassert_eq "$caught" "5" "USR1 fired 5x in loop"
+# Re-arm trap, count again, verify state isolation per arming session.
+fired=0
+trap '(( fired++ ))' USR1
+kill -USR1 $$
+sleep 0.05
+kill -USR1 $$
+sleep 0.05
+trap - USR1
+zassert_eq "$fired" "2" "re-armed trap counts 2"
+# Nested subshell trap output ordering
+nested_out=$(
+    (
+        trap 'echo OUT' EXIT
+        (
+            trap 'echo IN' EXIT
+            echo body
+        )
+    )
+)
+zassert_contains "$nested_out" "IN"  "inner EXIT trap fired"
+zassert_contains "$nested_out" "OUT" "outer EXIT trap fired"
+zassert_contains "$nested_out" "body" "subshell body ran"
+ztest_run

@@ -57,3 +57,22 @@ echo "── sequence in array literal ──"
 arr=(item_{01..05})
 echo "n=${#arr[@]}"
 print -l ${arr}
+
+# === ztest assertions ===
+zassert_eq "$(echo {{1..3},{a..c}})" "1 2 3 a b c"          "nested brace groups"
+zassert_eq "$(echo {a,b,c}{1,2,3})"  "a1 a2 a3 b1 b2 b3 c1 c2 c3" "cross product"
+zassert_eq "$(echo {0..20..5})"      "0 5 10 15 20"          "numeric range with step"
+zassert_eq "$(echo {01..10})"        "01 02 03 04 05 06 07 08 09 10" "zero-padded sequence"
+zassert_eq "$(echo {a..e})"          "a b c d e"             "letter range asc"
+zassert_eq "$(echo {e..a})"          "e d c b a"             "letter range desc"
+zassert_eq "$(echo file_{01..03}.txt)" "file_01.txt file_02.txt file_03.txt" "prefix + suffix"
+zassert_eq "$(echo \{not,expanded\})" "{not,expanded}"        "escaped braces"
+zassert_eq "$(echo "{not,expanded}")" "{not,expanded}"        "quoted braces"
+arr2=(item_{01..05})
+zassert_eq "${#arr2[@]}" 5            "brace seq into array"
+zassert_eq "${arr2[1]}"  "item_01"    "first brace seq element"
+zassert_eq "${arr2[5]}"  "item_05"    "last brace seq element"
+prefix=item
+zassert_eq "$(echo ${prefix}_{1..4})" "item_1 item_2 item_3 item_4" "param + brace"
+ztest_run
+

@@ -39,3 +39,17 @@ check 200; echo "check 200 → $?"
 
 echo "── exit with code ──"
 ( exit 5 ); echo "subshell exit → $?"
+
+# === ztest assertions ===
+true;  zassert_eq $? 0 "true exits 0"
+false; zassert_eq $? 1 "false exits 1"
+return_42; zassert_eq $? 42 "return 42"
+check 50;  zassert_eq $? 0 "check 50 → 0"
+check 0;   zassert_eq $? 1 "check 0 → 1"
+check 200; zassert_eq $? 2 "check 200 → 2"
+( exit 5 ); zassert_eq $? 5 "subshell exit 5"
+echo needle | grep -q needle  && zassert_ok 1 "grep found"  || zassert_ok 0 "grep found"
+echo needle | grep -q missing && zassert_ok 0 "grep missing"|| zassert_ok 1 "grep missing"
+setopt pipefail; false | true; zassert_eq $? 1 "pipefail: 1"
+unsetopt pipefail; false | true; zassert_eq $? 0 "no pipefail: 0"
+ztest_run

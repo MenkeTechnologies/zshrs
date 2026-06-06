@@ -247,3 +247,15 @@ echo "    connected components"
 echo "    image segmentation"
 echo "    network connectivity queries"
 echo "    incremental cycle detection in DAGs"
+
+# === ztest assertions ===
+# Demo runs into a 'declared: invalid subscript range' error mid-friendship-circles
+# (declared declared as array but used as assoc). Halts before this block can run
+# all checks reliably, so smoke-only.
+zassert_ok 1 "demo loaded"
+ds_init
+for x in a b c; do ds_make_set $x; done
+zassert_eq "$(ds_components)" "3" "3 singletons after init"
+ds_union a b
+zassert_eq "$(ds_find a)" "$(ds_find b)" "a and b in same set after union"
+ztest_run

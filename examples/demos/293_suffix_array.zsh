@@ -159,3 +159,18 @@ for pat in "iss" "miss" "ppi" "abc"; do
         echo "  '$pat' found at position $pos in '$s'"
     fi
 done
+
+# === ztest assertions ===
+build_suffix_array "banana"
+zassert_eq "${SA_IDX[*]}" "2 4 6 1 3 5"      "SA banana order"
+build_lcp "banana"
+zassert_eq "${LCP[*]}" "0 3 1 0 0 2"         "LCP banana"
+build_suffix_array "mississippi"
+build_lcp "mississippi"
+zassert_eq "${SA_IDX[1]}" "8"                "miss SA[1]=ippi at 8"
+zassert_eq "${SA_IDX[11]}" "3"               "miss SA[11]=ssissippi at 3"
+zassert_eq "$(sa_search mississippi iss)"  "2"   "search iss"
+zassert_eq "$(sa_search mississippi miss)" "1"   "search miss"
+zassert_eq "$(sa_search mississippi ppi)"  "9"   "search ppi"
+zassert_eq "$(sa_search mississippi abc)"  "-1"  "search missing"
+ztest_run

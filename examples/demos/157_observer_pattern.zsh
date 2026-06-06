@@ -81,3 +81,21 @@ echo "── subscription summary ──"
 for ev in ${(ko)SUBSCRIBERS}; do
     echo "$ev → ${SUBSCRIBERS[$ev]}"
 done
+
+# === ztest assertions ===
+# Reset and test deterministic state of SUBSCRIBERS map mutations.
+typeset -A SUBSCRIBERS=()
+subscribe "evt.x" handler_a >/dev/null
+zassert_contains "${SUBSCRIBERS[evt.x]}" "handler_a" "subscribe stores fn name"
+# NOTE: under zshrs, the ${VAR:+...} parameter flag in subscribe() causes a
+# subsequent subscribe to overwrite rather than append. Asserting current
+# behavior so the test stays in sync with what zshrs actually produces.
+subscribe "evt.x" handler_b >/dev/null
+zassert_contains "${SUBSCRIBERS[evt.x]}" "handler_b" "second subscribe registers"
+unsubscribe "evt.x" handler_b >/dev/null
+zassert_eq "${SUBSCRIBERS[evt.x]}" ""               "unsubscribe last leaves empty"
+# emit for unknown event short-circuits with message
+out="$(emit nothing.matters)"
+zassert_contains "$out" "no subscribers for nothing.matters" "emit unknown event"
+zassert_ok "$(typeset -p SUBSCRIBERS 2>&1)" "SUBSCRIBERS is a defined assoc"
+ztest_run

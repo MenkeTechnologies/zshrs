@@ -257,6 +257,10 @@ pub mod regex_mod;
 /// `stringsort` submodule.
 #[path = "extensions/stringsort.rs"]
 pub mod stringsort;
+/// `ztest` submodule — shell-level unit test framework
+/// (port of `../strykelang` test framework).
+#[path = "extensions/ztest.rs"]
+pub mod ztest;
 /// `worker` submodule.
 #[path = "extensions/worker.rs"]
 pub mod worker;

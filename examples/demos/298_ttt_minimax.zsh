@@ -178,3 +178,36 @@ BOARD=(X O X
        O X O)
 score=$(minimax 1)
 echo "    score: $score (0 = draw)"
+
+# === ztest assertions ===
+# winner detection — row, column, diagonal
+BOARD=(X X X
+       _ O _
+       _ _ O)
+zassert_eq "$(winner)" "X"   "winner: top row X"
+BOARD=(O _ X
+       O X _
+       O _ _)
+zassert_eq "$(winner)" "O"   "winner: left col O"
+BOARD=(X _ O
+       _ X O
+       _ _ X)
+zassert_eq "$(winner)" "X"   "winner: diagonal X"
+BOARD=(X O X
+       O X O
+       O X O)
+zassert_eq "$(winner)" "D"   "winner: draw (full board no line)"
+BOARD=(X _ _
+       _ _ _
+       _ _ _)
+zassert_eq "$(winner)" "N"   "winner: N (no winner, not full)"
+# minimax terminal scores
+BOARD=(X X X _ _ _ _ _ _)
+zassert_eq "$(minimax 1)" "10"   "minimax X-wins terminal = 10"
+BOARD=(O O O _ _ _ _ _ _)
+zassert_eq "$(minimax 0)" "-10"  "minimax O-wins terminal = -10"
+BOARD=(X O X
+       O X O
+       O X O)
+zassert_eq "$(minimax 1)" "0"    "minimax draw terminal = 0"
+ztest_run

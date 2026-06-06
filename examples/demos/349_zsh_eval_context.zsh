@@ -155,3 +155,33 @@ echo "── reset ──"
 FUNCNEST=
 unset FUNCNEST
 echo "  FUNCNEST cleared"
+
+# === ztest assertions ===
+zassert_eq "$ZSH_NAME"      "zsh"           "ZSH_NAME"
+zassert_match '^5\.'        "$ZSH_VERSION"  "ZSH_VERSION starts with 5."
+# ZSH_SUBSHELL is "0" at top level (counter, not truthy flag)
+zassert_eq   "$ZSH_SUBSHELL" "0" "ZSH_SUBSHELL=0 at top"
+# zshrs leaves ZSH_EVAL_CONTEXT empty (zsh-divergence: zsh sets 'toplevel')
+# funcstack inside nested calls: 3 frames
+capture_stack() {
+    typeset -ga STACK_SNAPSHOT
+    STACK_SNAPSHOT=("${funcstack[@]}")
+}
+o1() { o2; }
+o2() { o3; }
+o3() { capture_stack; }
+o1
+zassert_eq "${STACK_SNAPSHOT[1]}" "capture_stack" "funcstack[1] = innermost"
+zassert_eq "${STACK_SNAPSHOT[2]}" "o3"            "funcstack[2]"
+zassert_eq "${STACK_SNAPSHOT[3]}" "o2"            "funcstack[3]"
+zassert_eq "${STACK_SNAPSHOT[4]}" "o1"            "funcstack[4]"
+# pipestatus
+true | true | false
+zassert_eq "${pipestatus[*]}" "0 0 1" "pipestatus false at end"
+true | true | true
+zassert_eq "${pipestatus[*]}" "0 0 0" "pipestatus all true"
+# Exit chain via $?
+false; zassert_eq "$?" "1"  "false → 1"
+true;  zassert_eq "$?" "0"  "true → 0"
+(exit 42); zassert_eq "$?" "42" "subshell exit 42"
+ztest_run

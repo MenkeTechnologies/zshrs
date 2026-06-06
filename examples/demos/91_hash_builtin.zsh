@@ -45,3 +45,24 @@ unhash -d zsh_src 2>/dev/null || true
 unhash -d zsh_tests 2>/dev/null || true
 echo "after clear:"
 hash -d | wc -l
+
+# === ztest assertions ===
+hash -r   # clear cmd-cache for a clean slate
+hash mybash=/bin/sh
+zassert_contains "$(hash)" "mybash"   "hash sets entry"
+hash -r
+# After -r, cmd-cache should be empty.
+zassert_eq "$(hash | wc -l | tr -d ' ')" "0"  "hash -r empties cmd-cache"
+# Named dirs
+hash -d work=/tmp
+expanded=$(eval echo "~work")
+zassert_eq "$expanded" "/tmp" "named dir ~work → /tmp"
+unhash -d work 2>/dev/null || true
+hash -d proj1=/tmp
+hash -d proj2=/tmp
+zassert_contains "$(hash -d)" "proj1" "hash -d lists named dir"
+zassert_contains "$(hash -d)" "proj2" "hash -d lists multiple"
+unhash -d proj1 2>/dev/null || true
+unhash -d proj2 2>/dev/null || true
+ztest_run
+

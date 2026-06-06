@@ -178,3 +178,28 @@ for s in "${samples[@]}"; do
     done
     printf "  '%s' has %d palindromic substrings\n" "$s" $total
 done
+
+# === ztest assertions ===
+# Manacher returns "len|palindrome" pair.
+# For 'racecar' (length-7 odd palindrome): max radius = 7
+r=$(manacher "racecar")
+zassert_eq "${r%|*}" 7 "racecar longest pal length = 7"
+# Single char
+r=$(manacher "a")
+zassert_eq "${r%|*}" 1 "single char len 1"
+# Empty string
+r=$(manacher "")
+zassert_eq "${r%|*}" 0 "empty string len 0"
+# aaaaa: all same
+r=$(manacher "aaaaa")
+zassert_eq "${r%|*}" 5 "aaaaa entire string is palindrome"
+# No palindromes longer than 1
+r=$(manacher "abcdef")
+zassert_eq "${r%|*}" 1 "abcdef has no palindromes >1"
+# Transformation includes ^ and # separators
+zassert_eq "$t" '^#r#a#c#e#c#a#r#$' "transformed string for 'racecar'"
+# count_palindromes for 'aaaa' = 10 (per zshrs observed)
+zassert_eq "$total" 10 "racecar has 10 palindromic substrings (last iteration)"
+# Final state from the count-palindromes loop is 'racecar' (last sample)
+zassert_eq "${samples[-1]}" "racecar" "last sample in count loop"
+ztest_run

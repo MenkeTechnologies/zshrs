@@ -90,3 +90,35 @@ while (( iter < 100 )); do
     (( iter++ ))
 done
 echo "  (1, 1): iter=$iter (escaped early)"
+
+# === ztest assertions ===
+zassert_eq "$WIDTH"    "40" "WIDTH set"
+zassert_eq "$HEIGHT"   "16" "HEIGHT set"
+zassert_eq "$MAX_ITER" "20" "MAX_ITER set"
+zassert_eq "$S"        "1024" "fixed-point scale"
+# Recompute c=(-0.5,0) — should iterate to 100.
+cx=-500; cy=0; zx=0; zy=0; iter=0
+while (( iter < 100 )); do
+    zx2=$(( zx * zx / 1000 ))
+    zy2=$(( zy * zy / 1000 ))
+    if (( zx2 + zy2 > 4000 )); then break; fi
+    new_zx=$(( zx2 - zy2 + cx ))
+    new_zy=$(( 2 * zx * zy / 1000 + cy ))
+    zx=$new_zx; zy=$new_zy
+    (( iter++ ))
+done
+zassert_eq "$iter" "100" "(-0.5, 0) is in the Mandelbrot set"
+# c=(1,1) — should escape quickly.
+cx=1000; cy=1000; zx=0; zy=0; iter=0
+while (( iter < 100 )); do
+    zx2=$(( zx * zx / 1000 ))
+    zy2=$(( zy * zy / 1000 ))
+    if (( zx2 + zy2 > 4000 )); then break; fi
+    new_zx=$(( zx2 - zy2 + cx ))
+    new_zy=$(( 2 * zx * zy / 1000 + cy ))
+    zx=$new_zx; zy=$new_zy
+    (( iter++ ))
+done
+zassert_lt "$iter" "10"  "(1,1) escapes within 10 iterations"
+zassert_eq "$((WIDTH * HEIGHT))" "640" "total pixel count"
+ztest_run

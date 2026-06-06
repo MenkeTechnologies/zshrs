@@ -144,3 +144,24 @@ parse_request "$req3"
 cookie_val=${HEADERS[cookie]}
 echo "  cookie header: $cookie_val"
 parse_cookie "$cookie_val"
+
+# === ztest assertions ===
+# Parse req1: GET with query string
+parse_request "$req1"
+zassert_eq "${REQ[method]}"      "GET"          "req1 method"
+zassert_eq "${REQ[pathonly]}"    "/api/users"   "req1 path stripped of query"
+zassert_eq "${REQ[query]}"       "id=42&format=json"  "req1 query string"
+zassert_eq "${REQ[proto]}"       "HTTP/1.1"     "req1 proto"
+zassert_eq "${HEADERS[host]}"    "api.example.com" "req1 Host header (lowercased key)"
+zassert_eq "${HEADERS[user-agent]}" "curl/7.88.1" "req1 User-Agent header"
+zassert_eq "${#HEADERS}"         4              "req1 has 4 headers"
+# Parse req2: POST with JSON body
+parse_request "$req2"
+zassert_eq "${REQ[method]}"      "POST"         "req2 method"
+zassert_eq "${REQ[body]}"        '{"user":"alice","pass":"s3cret"}' "req2 body preserved"
+zassert_eq "${HEADERS[content-type]}" "application/json" "req2 content-type"
+# Parse req4: DELETE no body
+parse_request "$req4"
+zassert_eq "${REQ[method]}"      "DELETE"       "req4 method"
+zassert_eq "${REQ[body]}"        ""             "req4 has no body"
+ztest_run

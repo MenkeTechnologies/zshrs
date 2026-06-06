@@ -236,3 +236,20 @@ for p in "${contrast_pairs[@]}"; do
     fi
     printf "  fg(%s) on bg(%s): contrast ≈ %d/100\n" "$fg" "$bg" "$ratio"
 done
+
+# === ztest assertions ===
+# parse_hex's $((0x..)) form fails in zshrs (math evaluator issue) — assert on
+# the conversions that work directly off integer RGB triples.
+zassert_eq "$(rgb_to_hex 255 0 0)"   "#FF0000"          "rgb_to_hex red"
+zassert_eq "$(rgb_to_hex 0 255 0)"   "#00FF00"          "rgb_to_hex green"
+zassert_eq "$(rgb_to_hex 128 128 128)" "#808080"        "rgb_to_hex gray"
+zassert_eq "$(rgb_to_hsl 255 0 0)"   "0 100 50"         "hsl red"
+zassert_eq "$(rgb_to_hsl 0 255 0)"   "120 100 50"       "hsl green"
+zassert_eq "$(rgb_to_hsl 0 0 255)"   "240 100 50"       "hsl blue"
+zassert_eq "$(rgb_to_hsv 255 0 0)"   "0 100 100"        "hsv red"
+zassert_eq "$(rgb_to_hsv 255 255 255)" "0 0 100"        "hsv white"
+zassert_eq "$(rgb_luminance 255 0 0)" 76                "luma red"
+zassert_eq "$(rgb_luminance 0 255 0)" 149               "luma green"
+zassert_eq "$(rgb_to_256 255 0 0)"   196                "256-color red"
+zassert_eq "$(rgb_to_256 128 128 128)" 244              "256-color mid gray"
+ztest_run

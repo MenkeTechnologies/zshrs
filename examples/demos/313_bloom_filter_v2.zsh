@@ -159,3 +159,24 @@ echo
 echo "── space efficiency ──"
 echo "  ${#words} items in ${BITS} bits = $(( BITS / 8 )) bytes total"
 echo "  per item: $(( BITS / 8 / ${#words} )) bytes (vs ~10+ for hash set)"
+
+# === ztest assertions ===
+bf_init
+zassert_eq "$(bf_count_set)" "0"           "init: zero bits set"
+for w in apple banana cherry; do bf_add "$w"; done
+zassert_gt "$(bf_count_set)" "0"           "after adds: bits set"
+bf_contains apple && r=1 || r=0
+zassert_eq "$r" "1"                        "no false negative for apple"
+bf_contains banana && r=1 || r=0
+zassert_eq "$r" "1"                        "no false negative for banana"
+bf_contains cherry && r=1 || r=0
+zassert_eq "$r" "1"                        "no false negative for cherry"
+# After 20 adds the bits-set count should match observed value
+bf_init
+for w in apple banana cherry date elderberry fig grape honeydew kiwi lemon mango nectarine orange papaya quince raspberry strawberry tangerine ugli vanilla; do
+    bf_add "$w"
+done
+n=$(bf_count_set)
+zassert_le "$n" "60"                       "20 items × 3 hashes set ≤ 60 bits"
+zassert_ge "$n" "30"                       "≥ 30 bits set"
+ztest_run

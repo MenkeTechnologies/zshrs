@@ -132,3 +132,30 @@ done
 for k in "${(@ko)pattern_count}"; do
     printf "  %-20s × %d\n" "$k" "${pattern_count[$k]}"
 done
+
+# === ztest assertions ===
+# RANDOM is seeded — exercise structural invariants that don't depend on PRNG.
+# Total rolls per phase is exact.
+sum_hist() {
+    local total=0 k
+    for k in "${(@k)pattern_count}"; do (( total += pattern_count[$k] )); done
+    echo $total
+}
+zassert_eq "$(sum_hist)" 200 "pseudo-Yahtzee phase rolled 200 hands"
+# All roll values are in [n, n*sides] range
+v=$(roll 3 6)
+zassert_ge "$v" 3   "3d6 >= 3"
+zassert_le "$v" 18  "3d6 <= 18"
+v=$(roll 1 20)
+zassert_ge "$v" 1   "1d20 >= 1"
+zassert_le "$v" 20  "1d20 <= 20"
+v=$(roll 5 6)
+zassert_ge "$v" 5   "5d6 >= 5"
+zassert_le "$v" 30  "5d6 <= 30"
+# χ² fit for fair d6 under default χ²₁₀,0.05 ≈ 18.31
+zassert_lt "$chi" 19 "2d6 χ² fits under threshold"
+# d20 range positive (basic sanity)
+zassert_gt "$(( max - min ))" 0 "d20 distribution non-degenerate"
+zassert_ge "$min_k" 1   "d20 min-face index in range"
+zassert_le "$max_k" 20  "d20 max-face index in range"
+ztest_run

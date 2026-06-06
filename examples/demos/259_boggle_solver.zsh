@@ -106,3 +106,19 @@ for w in "${found[@]}"; do
     fi
 done
 echo "  longest: '$longest' (${#longest} chars)"
+
+# === ztest assertions ===
+zassert_eq "$ROWS" "4" "4x4 grid"
+zassert_eq "$COLS" "4" "4 cols"
+zassert_eq "$(cell_at 1 1)" "C" "cell (1,1) = C"
+zassert_eq "$(cell_at 1 4)" "S" "cell (1,4) = S"
+zassert_eq "$(cell_at 4 4)" "T" "cell (4,4) = T"
+zassert_eq "$(cell_at 5 1)" "" "out-of-bounds row → empty"
+zassert_eq "$(cell_at 1 0)" "" "out-of-bounds col → empty"
+zassert_eq "${#DICT[@]}" "52" "52 dictionary words"
+if find_word_in_grid CAT; then zassert_ok 1 "CAT findable"; else zassert_ok 0 "CAT findable"; fi
+if find_word_in_grid STONE; then zassert_ok 1 "STONE findable"; else zassert_ok 0 "STONE findable"; fi
+if find_word_in_grid PYTHON; then zassert_ok 0 "PYTHON not in grid"; else zassert_ok 1 "PYTHON not in grid"; fi
+zassert_eq "${#found[@]}" "32"  "32 of 52 dict words found"
+zassert_eq "$longest" "STONE"   "longest found = STONE"
+ztest_run

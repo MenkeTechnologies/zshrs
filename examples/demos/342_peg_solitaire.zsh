@@ -202,3 +202,19 @@ echo "── notation ──"
 echo "  peg layout uses standard 33-cell English board"
 echo "  proven: with optimal play, exactly 1 peg can be left in center"
 echo "  this requires backtracking (greedy gets stuck around 5-8 pegs)"
+
+# === ztest assertions ===
+init_board
+zassert_eq "$(count_pegs)" 32 "32 initial pegs"
+zassert_eq "$(cell_v 4 4)" "_"  "center is hole"
+zassert_eq "$(cell_v 1 1)" "X"  "corner is off-board"
+zassert_eq "$(cell_v 4 1)" "P"  "left arm has peg"
+# Reset and apply one valid move
+init_board
+if try_move 2 4 1 0; then zassert_ok 1 "valid jump"
+else zassert_ok 0 "jump should be valid"; fi
+zassert_eq "$(count_pegs)" 31 "31 after one jump"
+# Invalid: can't jump into a peg
+if try_move 1 1 1 0; then zassert_ok 0 "invalid jump succeeded"
+else zassert_ok 1 "invalid jump rejected"; fi
+ztest_run

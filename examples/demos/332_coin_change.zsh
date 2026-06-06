@@ -162,3 +162,18 @@ echo "  min coins DP:   O(amount × |coins|)"
 echo "  count ways DP:  O(amount × |coins|)"
 echo "  Greedy fails when coin system isn't 'canonical'"
 echo "  US coins ARE canonical; {1,3,4} is NOT"
+
+# === ztest assertions ===
+US=(1 5 10 25)
+zassert_eq "$(min_coins 1   "${US[@]}")"  1 "min coins 1"
+zassert_eq "$(min_coins 6   "${US[@]}")"  2 "min coins 6"
+zassert_eq "$(min_coins 41  "${US[@]}")"  4 "min coins 41"
+zassert_eq "$(min_coins 100 "${US[@]}")"  4 "min coins 100"
+zassert_eq "$(min_coins 6   1 3 4)"       2 "non-canonical 6"
+zassert_eq "$(min_coins 11  1 3 4)"       3 "non-canonical 11"
+zassert_eq "$(min_coins 1   2 4 6)"      -1 "impossible"
+zassert_eq "$(count_ways 5   "${US[@]}")"   2 "ways 5"
+zassert_eq "$(count_ways 10  "${US[@]}")"   4 "ways 10"
+zassert_eq "$(count_ways 100 "${US[@]}")" 242 "ways 100"
+zassert_eq "$(min_coins 47 1 5 10 25)"   5 "47 cents"
+ztest_run

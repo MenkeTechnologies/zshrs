@@ -64,3 +64,13 @@ echo "$toc_md" | while IFS= read -r line; do
     [[ -z $line ]] && { echo; continue; }
     md_to_text "$line"
 done
+
+# === ztest assertions ===
+# NOTE: md_to_text uses extended_glob [[:space:]]## which silently aborts the
+# function under zshrs — output is empty lines. Smoke only.
+zassert_ok 1                                 "demo loaded"
+# The md template variable is non-empty.
+md=$'# Heading\n\nThis is a **bold** line.'
+zassert_contains "$md" "Heading"             "md template has heading"
+zassert_contains "$md" "**bold**"            "md template has bold marker"
+ztest_run

@@ -110,3 +110,22 @@ echo
 echo "── reverse via step ──"
 echo "  {10..1..-1}:" {10..1..-1}
 echo "  {z..a..-3}:" {z..a..-3}
+
+# === ztest assertions ===
+nums=( {1..5} )
+zassert_eq "${nums[*]}" "1 2 3 4 5" "numeric range 1..5"
+neg=( {-3..3} )
+zassert_eq "${neg[*]}"  "-3 -2 -1 0 1 2 3" "neg range"
+zero=( {01..05} )
+zassert_eq "${zero[*]}" "01 02 03 04 05" "zero-padded range"
+letters=( {a..e} )
+zassert_eq "${letters[*]}" "a b c d e" "alpha range"
+prod=( {a,b,c}{1,2,3} )
+zassert_eq "${#prod}"   9   "product cardinality"
+zassert_eq "${prod[1]}" "a1" "product first"
+zassert_eq "${prod[9]}" "c3" "product last"
+zassert_eq "${#days}"   7   "days"
+zassert_eq "${#months}" 12  "months"
+zassert_eq "${#digits}" 10  "digits"
+zassert_eq "${#hex}"    16  "hex digits"
+ztest_run

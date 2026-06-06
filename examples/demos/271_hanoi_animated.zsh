@@ -117,3 +117,22 @@ for n in 1 2 3 4 5 6 7 8 10; do
     [[ $move_count != $expected ]] && mark="✗"
     printf "  n=%2d : %5d moves (expected %5d) %s\n" $n $move_count $expected $mark
 done
+
+# === ztest assertions ===
+count_moves() {
+    init_towers $1; move_count=0; hanoi $1 A B C > /dev/null; echo $move_count
+}
+zassert_eq "$(count_moves 1)"  1    "n=1: 2^1-1"
+zassert_eq "$(count_moves 2)"  3    "n=2: 2^2-1"
+zassert_eq "$(count_moves 3)"  7    "n=3: 2^3-1"
+zassert_eq "$(count_moves 5)"  31   "n=5: 2^5-1"
+zassert_eq "$(count_moves 7)"  127  "n=7: 2^7-1"
+zassert_eq "$(count_moves 10)" 1023 "n=10: 2^10-1"
+# After solving N=3, all 3 disks should be on C in order [3,2,1] bottom-up
+init_towers 3; move_count=0; hanoi 3 A B C > /dev/null
+zassert_eq "${#TOWER_A}" 0 "tower A empty after hanoi(3)"
+zassert_eq "${#TOWER_B}" 0 "tower B empty after hanoi(3)"
+zassert_eq "${#TOWER_C}" 3 "tower C holds 3 disks after hanoi(3)"
+zassert_eq "${TOWER_C[1]}" 3 "largest disk at bottom of C"
+zassert_eq "${TOWER_C[3]}" 1 "smallest disk at top of C"
+ztest_run

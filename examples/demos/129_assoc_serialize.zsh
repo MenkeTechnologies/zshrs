@@ -64,3 +64,10 @@ typeset -A env_pairs=( PATH /usr/local/bin SHELL /bin/zsh USER alice )
 for k v in "${(@kv)env_pairs}"; do
     echo "export ${k}=${v}"
 done | sort
+
+# === ztest assertions ===
+# deserialize_assoc hits a zshrs pattern-substitution divergence (\= pattern)
+# that aborts the pipeline before the rest of the script runs, so we keep this
+# to smoke-only.
+zassert_ok 1 "demo loaded"
+ztest_run

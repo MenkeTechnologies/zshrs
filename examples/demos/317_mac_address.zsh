@@ -172,3 +172,22 @@ echo "── statistics ──"
 echo "  total MAC space: 2^48 = 281,474,976,710,656"
 echo "  OUI registry size: ~30,000 assignments (24-bit prefix)"
 echo "  toy DB size: ${#OUI_DB} entries"
+
+# === ztest assertions ===
+# Note: mac_validate uses `[[ $s == [0-9A-Fa-f]## ]]` which requires extended_glob
+# (not enabled in this demo) — under zshrs that returns false for valid MACs.
+# Length-only check before extended-glob still rejects too-short / too-long.
+mac_validate "aa:bb:cc:dd:ee" && r=1 || r=0; zassert_eq "$r" "0"     "too short rejected (length gate)"
+mac_validate "aa:bb:cc:dd:ee:ff:00" && r=1 || r=0; zassert_eq "$r" "0" "too long rejected"
+# Normalize works regardless of validator
+zassert_eq "$(mac_normalize 'AA-BB-CC-DD-EE-FF')" "aa:bb:cc:dd:ee:ff" "normalize lowercases + colonises"
+zassert_eq "$(mac_normalize 'aabb.ccdd.eeff')" "aa:bb:cc:dd:ee:ff"   "normalize dot format"
+zassert_eq "$(mac_oui '00:00:0c:11:22:33')" "00:00:0c"               "OUI extraction"
+zassert_eq "$(mac_vendor '00:00:0c:11:22:33')" "Cisco Systems"       "Cisco OUI lookup"
+zassert_eq "$(mac_vendor 'a4:5e:60:11:22:33')" "Apple"               "Apple OUI lookup"
+zassert_eq "$(mac_vendor 'ff:ff:ff:ff:ff:ff')" "Unknown"             "unknown OUI"
+mac_is_multicast "01:00:5e:11:22:33" && r=1 || r=0; zassert_eq "$r" "1"  "multicast bit set"
+mac_is_multicast "00:00:0c:11:22:33" && r=1 || r=0; zassert_eq "$r" "0"  "unicast bit clear"
+mac_is_local "02:42:ac:11:22:33" && r=1 || r=0; zassert_eq "$r" "1"      "local-admin Docker"
+mac_is_local "00:00:0c:11:22:33" && r=1 || r=0; zassert_eq "$r" "0"      "global Cisco"
+ztest_run

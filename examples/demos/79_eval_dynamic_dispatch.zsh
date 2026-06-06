@@ -60,3 +60,20 @@ for input in hello exit; do
     cmd=${actions[$input]}
     $cmd
 done
+
+# === ztest assertions ===
+expr='echo "computed at runtime: $((2*21))"'
+zassert_eq "$(eval $expr)"                "computed at runtime: 42"   "basic eval"
+zassert_eq "$(eval 'echo $(( 2 ** 16 ))')" "65536"                    "eval into capture"
+def_fn delta
+zassert_eq "$(delta D1 D2)"               "defined delta: D1 D2"      "eval-defined fn"
+def_fn echoer
+zassert_eq "$(echoer single)"             "defined echoer: single"    "second eval-defined fn"
+ops=("2 + 3" "10 * 5" "100 / 7" "2 ** 8")
+zassert_eq "$(eval "echo \$(( ${ops[1]} ))")" "5"   "eval ops[1]"
+zassert_eq "$(eval "echo \$(( ${ops[3]} ))")" "14"  "eval ops[3] (100/7)"
+typeset -A H
+H[k]='echo "hit-k"'
+zassert_eq "$(eval ${H[k]})"              "hit-k"                     "dispatch table assoc lookup"
+ztest_run
+

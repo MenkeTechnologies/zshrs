@@ -74,3 +74,39 @@ counter_set 100
 counter_get
 counter_set 200
 counter_get
+
+# === ztest assertions ===
+# (P) indirection
+real_name="origin_value"
+proxy=real_name
+zassert_eq "${(P)proxy}" "origin_value" "(P) name-reference"
+# Lookup by computed name
+typeset item_aa=10 item_bb=20
+for k in aa bb; do
+    name="item_$k"
+    case "$k" in
+        aa) zassert_eq "${(P)name}" "10" "(P) computed name aa" ;;
+        bb) zassert_eq "${(P)name}" "20" "(P) computed name bb" ;;
+    esac
+done
+# eval-assign
+target=zzz
+eval "$target=42"
+zassert_eq "$zzz" "42" "eval-assign to dynamic name"
+# (P) on array
+arr=(alpha beta gamma)
+ref=arr
+zassert_eq "${(P)ref}" "alpha beta gamma" "(P) on array name"
+# $+var existence
+existing=present
+unset notdefined
+zassert_eq "$+existing"  "1" "+var existing → 1"
+zassert_eq "$+notdefined" "0" "+var unset → 0"
+# typeset accessor
+make_accessor zclick
+zclick_set 7
+zassert_eq "$(zclick_get)" "7"  "auto-generated getter returns set value"
+zclick_set hello-world
+zassert_eq "$(zclick_get)" "hello-world" "auto-generated setter overwrite"
+ztest_run
+

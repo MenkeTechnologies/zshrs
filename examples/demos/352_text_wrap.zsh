@@ -191,3 +191,30 @@ for w in 40 60 80; do
     done <<< "$wrapped"
     echo "  width=$w: $line_count lines, longest line $max_len"
 done
+
+# === ztest assertions ===
+short_text="zshrs is fast"
+wrapped=$(greedy_wrap "$short_text" 20)
+zassert_eq "$wrapped" "zshrs is fast" "greedy_wrap fits in one line"
+wrapped=$(greedy_wrap "one two three four" 10)
+zassert_contains "$wrapped" $'one two\n' "wrap splits at width 10"
+# longest line never exceeds width
+wrapped=$(greedy_wrap "$long_text" 40)
+max=0
+while IFS= read -r ln; do (( ${#ln} > max )) && max=${#ln}; done <<< "$wrapped"
+zassert_le "$max" 40 "wrap40 longest <= 40"
+wrapped=$(greedy_wrap "$long_text" 60)
+max=0
+while IFS= read -r ln; do (( ${#ln} > max )) && max=${#ln}; done <<< "$wrapped"
+zassert_le "$max" 60 "wrap60 longest <= 60"
+# center align pads
+out=$(center_align "hi" 10)
+zassert_eq "${#out}" "6"             "center 'hi' in 10 = '    hi' (4 spaces)"
+zassert_match '^    hi$' "$out"      "center pads with 4 leading spaces"
+# right align
+out=$(right_align "hi" 10)
+zassert_eq "${#out}" "10"            "right_align width 10"
+zassert_match '        hi$' "$out"   "right_align hi to width 10"
+# whitespace collapse
+zassert_eq "$(collapse_ws "  a   b   c  ")" "a b c" "collapse whitespace"
+ztest_run

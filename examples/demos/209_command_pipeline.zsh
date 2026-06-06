@@ -83,3 +83,15 @@ printf '%d\n' 1 2 3 4 5 6 7 8 | while read n; do
         echo $(( n * n ))
     fi
 done | (sum=0; while read v; do (( sum += v )); done; echo "sum=$sum")
+
+# === ztest assertions ===
+zassert_eq "$(map double 1 2 3)" "$(printf '2\n4\n6')"   "map double 1 2 3"
+zassert_eq "$(filter is_even 1 2 3 4 5 6)" "$(printf '2\n4\n6')" "filter even 1..6"
+zassert_eq "$(reduce add 0 1 2 3 4 5)"     15           "reduce sum 1..5"
+zassert_eq "$(reduce add 0 1 2 3 4 5 6 7 8 9 10)" 55    "reduce sum 1..10"
+zassert_eq "$(double 7)"  14    "double 7"
+zassert_eq "$(square 9)"  81    "square 9"
+is_even 4 && r=1 || r=0; zassert_eq "$r" 1 "is_even 4"
+is_even 5 && r=1 || r=0; zassert_eq "$r" 0 "is_even 5 → false"
+zassert_eq "$result" 60        "named pipeline result on mixed sign input"
+ztest_run

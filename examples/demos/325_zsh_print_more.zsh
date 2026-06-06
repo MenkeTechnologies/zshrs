@@ -122,3 +122,14 @@ echo "  echo:        " "$(echo "tab\there")"
 echo "  print:       " "$(print "tab\there")"
 echo "  print -r:    " "$(print -r "tab\there")"
 echo "  print -e:    " "$(print -e "tab\there")"
+
+# === ztest assertions ===
+zassert_eq "$(print -r 'a\tb')" 'a\tb'    "print -r raw"
+zassert_eq "$(print -l a b c)"  "$(printf 'a\nb\nc')" "print -l one per line"
+zassert_eq "$(print -n hi)"     "hi"      "print -n no newline"
+zassert_eq "$(print -o c a b)"  "a b c"   "print -o sort asc"
+zassert_eq "$(print -O c a b)"  "c b a"   "print -O sort desc"
+print -v captured "hello world"
+zassert_eq "$captured"          "hello world" "print -v captures"
+zassert_eq "$(print -m 'a*' apple banana avocado)" "apple avocado" "print -m filter"
+ztest_run

@@ -64,3 +64,24 @@ if [[ -n ${TAB+x} ]]; then echo "  ✓ typeset -T (tied)"; fi
 
 echo "── summary ──"
 echo "this zshrs supports: builtins + coreutils + most modules + zsh-isms"
+
+# === ztest assertions ===
+# Core builtins must exist.
+zassert_ok "$+builtins[echo]"     "echo is a builtin"
+zassert_ok "$+builtins[typeset]"  "typeset is a builtin"
+zassert_ok "$+builtins[local]"    "local is a builtin"
+zassert_ok "$+builtins[setopt]"   "setopt is a builtin"
+zassert_ok "$+builtins[autoload]" "autoload is a builtin"
+# typeset -A creates assoc.
+typeset -A test_m=(a 1 b 2)
+zassert_eq "${test_m[a]}" "1"  "typeset -A stores value"
+zassert_eq "${test_m[b]}" "2"  "typeset -A second value"
+# typeset -i creates integer.
+typeset -i test_n=42
+zassert_eq "$test_n" "42"      "typeset -i stores int"
+# array literal works.
+test_arr=(a b c)
+zassert_eq "${#test_arr[@]}" "3" "array literal length"
+# PID is positive.
+zassert_gt "$$" 0              "$$ PID positive"
+ztest_run

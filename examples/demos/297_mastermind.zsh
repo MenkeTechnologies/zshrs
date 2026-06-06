@@ -131,3 +131,17 @@ for c in "${COLORS[@]}"; do
     printf "  %s: %4d (%2d.%d%%) %s\n" $c $n $((pct/10)) $((pct%10)) "$bar"
 done
 echo "  (uniform ≈ 16.6% per color)"
+
+# === ztest assertions ===
+SECRET=(R G B Y)
+zassert_eq "$(score R G B Y)" "4 0"   "exact match all 4 black"
+zassert_eq "$(score Y B G R)" "0 4"   "all wrong-position 4 white"
+zassert_eq "$(score R G B G)" "3 0"   "3 black 0 white"
+zassert_eq "$(score P O P O)" "0 0"   "no match"
+SECRET=(R R R R)
+zassert_eq "$(score R R R R)" "4 0"   "all same exact"
+zassert_eq "$(score G G G G)" "0 0"   "all same no overlap"
+zassert_eq "$(score R G R G)" "2 0"   "two of same color, two blacks no whites"
+zassert_eq "${#COLORS}" "6"            "6 colors defined"
+zassert_eq "$CODE_LEN" "4"             "code length 4"
+ztest_run

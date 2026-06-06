@@ -66,3 +66,27 @@ echo "RO=$RO type=${(t)RO}"
 echo "── unset forms ──"
 unset a b s n
 echo "after unset: a='${a:-cleared}' b='${b:-cleared}'"
+
+# === ztest assertions ===
+# After unset above, a/b cleared. arr/arr3/map still around.
+zassert_eq "${a:-cleared}" "cleared"   "unset cleared a"
+zassert_eq "${b:-cleared}" "cleared"   "unset cleared b"
+# arr was (alpha beta gamma) + (delta) = 4 elements
+zassert_eq "${#arr[@]}"  "4"  "arr length after +="
+zassert_eq "${arr[-1]}"  "delta"  "arr last element"
+zassert_eq "${arr[1]}"   "alpha"  "arr first element (1-based)"
+# arr2 reassigned to (x y z)
+zassert_eq "${arr2[*]}"   "x y z"   "arr2 reassign"
+# arr3 element 2 replaced
+zassert_eq "${arr3[*]}"  "red YELLOW blue"  "arr3 element replace"
+# map (assoc) has 4 keys
+zassert_eq "${#map[@]}"  "4"   "map size after k4"
+zassert_eq "${map[k4]}"  "v4"  "map k4 value"
+# typeset -i n=42 had base; here local cleared
+ml=42
+zassert_eq "$ml"  "42"  "plain scalar"
+# typeset variants reported correct types
+zassert_contains "${(t)a2}"  "array"        "a2 type is array"
+zassert_contains "${(t)m2}"  "association"  "m2 type is association"
+zassert_contains "${(t)RO}"  "readonly"     "RO type is readonly"
+ztest_run

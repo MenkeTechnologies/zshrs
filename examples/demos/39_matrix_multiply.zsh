@@ -36,3 +36,18 @@ matmul 2  1 2 3 4   5 6 7 8
 
 echo "── identity · M = M ──"
 matmul 3  1 0 0 0 1 0 0 0 1   7 8 9 4 5 6 1 2 3
+
+# === ztest assertions ===
+# Capture matmul output for 2x2: [[1 2][3 4]] * [[5 6][7 8]] = [[19 22][43 50]]
+out=$(matmul 2  1 2 3 4   5 6 7 8)
+zassert_contains "$out" "19 22"           "row 1: 19 22"
+zassert_contains "$out" "43 50"           "row 2: 43 50"
+# Identity * M = M
+out=$(matmul 3  1 0 0 0 1 0 0 0 1   7 8 9 4 5 6 1 2 3)
+zassert_contains "$out" "7 8 9"           "identity preserves row 1"
+zassert_contains "$out" "4 5 6"           "identity preserves row 2"
+zassert_contains "$out" "1 2 3"           "identity preserves row 3"
+# Zero matrix * anything = zero
+out=$(matmul 2  0 0 0 0   1 2 3 4)
+zassert_eq "$(echo "$out" | tr -s ' \n' ' ')"  "0 0 0 0 "  "zero * M = zero"
+ztest_run

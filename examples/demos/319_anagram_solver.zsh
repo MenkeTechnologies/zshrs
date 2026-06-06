@@ -156,3 +156,14 @@ echo "  largest group: $(for k in "${(@k)groups}"; do
     members=( ${=groups[$k]} )
     echo "${#members} $k"
 done | sort -rn | head -1)"
+
+# === ztest assertions ===
+zassert_eq "$(canonical listen)"  "eilnst"  "canonical listen"
+zassert_eq "$(canonical silent)"  "eilnst"  "canonical silent"
+zassert_eq "$(canonical enlist)"  "eilnst"  "canonical enlist"
+zassert_eq "$(canonical CAT)"     "act"     "canonical case-insensitive"
+zassert_eq "$(canonical sturdy)"  "drstuy"  "canonical sturdy"
+zassert_eq "${#DICT}"             55        "dict size"
+zassert_eq "$(canonical 'the eyes')"  "$(canonical 'they see')"  "phrase anagram"
+zassert_eq "$(canonical elvis)"   "$(canonical lives)"           "elvis~lives"
+ztest_run

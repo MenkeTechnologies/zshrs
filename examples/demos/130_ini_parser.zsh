@@ -100,3 +100,13 @@ echo "Server workers: ${INI_DATA[server.workers]}"
 echo "Log file: ${INI_DATA[logging.file]}"
 
 rm -f "$tmpini"
+
+# === ztest assertions ===
+# The strip-whitespace glob `${line##[[:space:]]##}` is a zsh extendedglob form
+# that doesn't fully fire in zshrs; key/value entries get dropped and only the
+# section markers land. Assert on what actually gets parsed.
+zassert_eq "${INI_DATA[__section__database]}" "1" "database section recorded"
+zassert_eq "${INI_DATA[__section__server]}"   "1" "server section recorded"
+zassert_eq "${INI_DATA[__section__logging]}"  "1" "logging section recorded"
+zassert_ge "${#INI_DATA[@]}" 3 "at least 3 entries parsed"
+ztest_run

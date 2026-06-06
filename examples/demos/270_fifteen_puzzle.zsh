@@ -123,3 +123,20 @@ print_board
 inv=$(count_inversions)
 solv=$(is_solvable && echo YES || echo NO)
 echo "  inversions: $inv   solvable: $solv (expected NO — single transposition)"
+
+# === ztest assertions ===
+zassert_eq "$SIZE"     4    "4x4 board"
+zassert_eq "${#BOARD}" 16   "16 cells"
+zassert_eq "$expected_solved" 1 "reversing scramble restores solved state"
+# Test unsolvable detection on current BOARD (14<->15 swap)
+zassert_eq "$inv"  1   "single transposition = 1 inversion"
+zassert_eq "$solv" "NO" "single-transposition state is unsolvable"
+# Restart fresh: solved state has 0 inversions and IS solvable
+init_solved
+zassert_eq "$(count_inversions)" 0 "solved state has 0 inversions"
+if is_solvable; then zassert_ok 1 "solved state is solvable"; else zassert_ok 0 "solved state should be solvable"; fi
+zassert_eq "$(blank_pos)" 16 "blank starts at cell 16 in solved layout"
+# Single move sanity
+move R
+if (( $? == 0 )); then zassert_ok 0 "move R from corner should fail"; else zassert_ok 1 "move R off right edge is rejected"; fi
+ztest_run

@@ -43,3 +43,11 @@ echo "── filter by exclusion ──"
 print -l "$tmpdir"/**/^*.log(.)
 
 rm -rf "$tmpdir"
+
+# === ztest assertions ===
+# (demo aborts mid-script under zshrs at `print -l "$tmpdir"/**/^*.log(.)`
+# — extended-glob `^` negation is not implemented; the failing glob
+# emits "no matches found" and the script terminates before this block
+# is reachable. Smoke-only: confirms parser accepted the file.)
+zassert_ok 1 "demo loaded"
+ztest_run

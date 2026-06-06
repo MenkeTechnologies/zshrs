@@ -141,3 +141,36 @@ echo "── statistics ──"
 echo "  grid: ${ROWS}x${COLS} = $(( ROWS * COLS )) cells"
 echo "  rules: B3/S23 (Conway)"
 echo "  seeded patterns: glider, blinker, block"
+
+# === ztest assertions ===
+# Block (still life) is invariant
+init_grid
+seed_block 4 8
+b0=$(count_live)
+step
+b1=$(count_live)
+step
+b2=$(count_live)
+zassert_eq "$b0" "4"  "block: 4 live cells initial"
+zassert_eq "$b1" "4"  "block: still life gen 1"
+zassert_eq "$b2" "4"  "block: still life gen 2"
+# Blinker (period 2)
+init_grid
+seed_blinker 5 10
+bl0=$(count_live)
+step
+bl1=$(count_live)
+step
+bl2=$(count_live)
+zassert_eq "$bl0" "3"  "blinker: 3 cells initial"
+zassert_eq "$bl1" "3"  "blinker: still 3 cells gen 1 (rotated)"
+zassert_eq "$bl2" "3"  "blinker: back to gen 0 cell count"
+# Glider (5 cells, conserved over period 4)
+init_grid
+seed_glider 2 5
+g0=$(count_live)
+step; step; step; step
+g4=$(count_live)
+zassert_eq "$g0" "5"  "glider: 5 live cells"
+zassert_eq "$g4" "5"  "glider: still 5 after period 4"
+ztest_run

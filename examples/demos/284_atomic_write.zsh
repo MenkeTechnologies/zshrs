@@ -116,4 +116,28 @@ cas_file "$tmpdir/cas.txt" "$init_hash" "should fail"  # stale hash now
 echo "  final:"
 read_file "$tmpdir/cas.txt" | sed 's/^/    /'
 
+# === ztest assertions ===
+testdir=$(mktemp -d)
+# atomic_write writes file
+atomic_write "$testdir/x.txt" "hello world"
+zassert_eq "$(cat "$testdir/x.txt")" "hello world" "atomic_write content"
+# File is readable
+zassert_ok "$([[ -r $testdir/x.txt ]] && echo 1)" "file readable"
+# Overwrite works
+atomic_write "$testdir/x.txt" "overwritten"
+zassert_eq "$(cat "$testdir/x.txt")" "overwritten" "atomic_write overwrites"
+# read_file helper
+zassert_eq "$(read_file "$testdir/x.txt")" "overwritten" "read_file returns content"
+zassert_eq "$(read_file "$testdir/nonexistent")" "" "read_file empty on missing"
+# Lock acquire/release
+mylock="$testdir/m.lock"
+acquire_lock "$mylock" > /dev/null
+zassert_ok "$([[ -d $mylock ]] && echo 1)" "lock dir created on acquire"
+acquire_lock "$mylock" > /dev/null
+zassert_eq "$?" 1 "second acquire fails (lock held)"
+release_lock "$mylock" > /dev/null
+zassert_err "$([[ -d $mylock ]] && echo 1)" "lock dir removed on release"
+command rm -rf "$testdir"
+
 command rm -rf "$tmpdir"
+ztest_run

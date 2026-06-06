@@ -113,3 +113,14 @@ echo "  bugs found:   20 documented in docs/BUGS.md"
 echo
 
 banner "→ github.com/MenkeTechnologies/zshrs" 72
+
+# === ztest assertions ===
+out=$(banner "x" 8)
+zassert_contains "$out" "═══════"            "banner has horizontal rule"
+zassert_contains "$out" "x"                  "banner contains text"
+zassert_eq "$(echo "$out" | wc -l | tr -d ' ')" "3" "banner 3 lines"
+zassert_eq "${batches[1]%%|*}" "361"          "batches[1] = 361"
+zassert_eq "${batches[7]%%|*}" "367"          "batches[7] = 367"
+zassert_eq "${#batches}" "7"                  "7 batch entries (361-367)"
+zassert_eq "${prev[15]%%|*}" "361-367"        "prev[15] = 361-367 range"
+ztest_run

@@ -5,3 +5,9 @@ name="zshrs"
 greeting="Hello"
 echo "$greeting, $name!"
 echo "$greeting, world!"
+
+# === ztest assertions ===
+zassert_eq "$name"     "zshrs"  "name assignment"
+zassert_eq "$greeting" "Hello"  "greeting assignment"
+zassert_eq "$greeting, $name!"  "Hello, zshrs!"  "interpolation"
+ztest_run

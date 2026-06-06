@@ -83,3 +83,18 @@ echo "matches 'al':"
 generate_candidates al "${candidates[@]}"
 echo "matches 'b':"
 generate_candidates b "${candidates[@]}"
+
+# === ztest assertions ===
+zassert_contains "$(_describe_opts foo -h:help)" "-h" "_describe_opts emits opt name"
+zassert_contains "$(_describe_opts foo -h:help)" "help" "_describe_opts emits help text"
+zassert_contains "$(_describe_kvs bar a 1 b 2)" "a" "_describe_kvs emits key"
+zassert_contains "$(_describe_kvs bar a 1 b 2)" "= 1" "_describe_kvs emits value"
+# array layout
+zassert_eq "${#candidates[@]}" "7"      "candidates count"
+zassert_eq "${candidates[1]}"   "alpha" "candidates[1]"
+zassert_eq "${candidates[7]}"   "zebra" "candidates[7]"
+# spec-parsing inside _describe_opts uses ${spec%%:*} / ${spec#*:}
+spec="-x:flag desc"
+zassert_eq "${spec%%:*}" "-x"        "spec opt-name strip"
+zassert_eq "${spec#*:}"  "flag desc" "spec help-text strip"
+ztest_run

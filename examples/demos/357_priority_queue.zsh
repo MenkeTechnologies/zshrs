@@ -259,3 +259,39 @@ echo "    Huffman coding"
 echo "    A* search"
 echo "    k-way merge"
 echo "    top-k from a stream"
+
+# === ztest assertions ===
+heap_init
+zassert_eq "$(heap_size)" "0" "empty heap size"
+heap_push 5; heap_push 2; heap_push 8; heap_push 1; heap_push 9
+zassert_eq "$(heap_size)" "5" "size after 5 pushes"
+zassert_eq "$(heap_peek)" "1" "min after 5 pushes"
+heap_pop
+zassert_eq "$HEAP_RESULT" "1" "pop returns min"
+heap_pop
+zassert_eq "$HEAP_RESULT" "2" "second pop returns next-min"
+# Build a full heap-sort sequence.
+heap_init
+for v in 7 3 5 1 4 2 8 6; do heap_push $v; done
+out=""
+size=$(heap_size)
+for ((i=1; i<=size; i++)); do
+    heap_pop
+    out+="$HEAP_RESULT "
+done
+zassert_eq "${out% }" "1 2 3 4 5 6 7 8" "heap sort"
+# Priority queue
+ph_init
+ph_push 5 "low"
+ph_push 1 "urgent"
+ph_push 3 "normal"
+ph_pop
+zassert_eq "$PH_RESULT" "1 urgent" "highest priority (lowest num) popped first"
+# Dijkstra distances
+# (dist is typeset -A inside dijkstra; we test the printed distances)
+dijkstra A > /tmp/_pq357_dij
+zassert_contains "$(cat /tmp/_pq357_dij)" "B: 7"  "Dijkstra: A→B = 7"
+zassert_contains "$(cat /tmp/_pq357_dij)" "C: 9"  "Dijkstra: A→C = 9"
+zassert_contains "$(cat /tmp/_pq357_dij)" "F: 11" "Dijkstra: A→F = 11"
+rm -f /tmp/_pq357_dij
+ztest_run

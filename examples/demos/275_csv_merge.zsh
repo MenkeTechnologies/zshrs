@@ -127,4 +127,19 @@ for uid in "${(@ko)totals}"; do
 done
 echo "  user $top_uid (${user_name[$top_uid]}) — $(format_cents $top_total)"
 
+# === ztest assertions ===
+zassert_eq "${user_name[1]}"   "Alice"  "user 1 = Alice"
+zassert_eq "${user_name[5]}"   "Eve"    "user 5 = Eve"
+zassert_eq "${user_email[2]}"  "bob@example.com" "user 2 email"
+zassert_eq "${counts[1]}"      3        "Alice has 3 orders"
+zassert_eq "${counts[2]}"      2        "Bob has 2 orders"
+zassert_eq "${counts[3]}"      1        "Carol has 1 order"
+zassert_eq "${counts[5]}"      1        "Eve has 1 order"
+zassert_eq "${totals[1]}"      17399    "Alice total cents = 29.99 + 99.00 + 45.00 = 173.99"
+zassert_eq "${totals[2]}"      26550    "Bob total cents = 15.50 + 250.00 = 265.50"
+zassert_eq "$top_uid"          2        "Bob is top spender"
+zassert_eq "$top_total"        26550    "top total = 26550 cents"
+zassert_eq "$(format_cents 17399)" '$173.99' "format_cents formats correctly"
+
 command rm -rf $tmpdir
+ztest_run

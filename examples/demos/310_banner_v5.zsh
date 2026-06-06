@@ -120,3 +120,14 @@ echo "  CI runtime:   ~30s (310 demos + coverage pin)"
 echo
 
 banner "→ github.com/MenkeTechnologies/zshrs" 70
+
+# === ztest assertions ===
+zassert_eq "${#batches}" "25"            "25 demos in batch 12 (286-310)"
+zassert_eq "${#prev}"    "12"            "12 prior ranges listed"
+out=$(banner "hi" 10)
+zassert_contains "$out" "hi"             "banner contains text"
+zassert_eq "$(echo "$out" | wc -l | tr -d ' ')" "3"  "banner 3 lines"
+# Check first batch entry parses cleanly
+first="${batches[1]}"
+zassert_eq "${first%%|*}" "286"          "first batch entry = 286"
+ztest_run

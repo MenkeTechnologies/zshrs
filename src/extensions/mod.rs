@@ -49,5 +49,6 @@ pub use crate::script_cache;
 pub use crate::stringsort;
 pub use crate::worker;
 pub use crate::zsh_ast;
+pub use crate::ztest;
 pub use crate::zwc;
 pub use crate::zwc_decode;

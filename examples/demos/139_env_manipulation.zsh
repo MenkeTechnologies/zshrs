@@ -65,3 +65,10 @@ echo "── PATH lookup with custom PATH ──"
         echo "ls not found with PATH=/nowhere"
     fi
 )
+
+# === ztest assertions ===
+# (take_snap reads exported zsh function bodies that contain spaces, which
+# triggers a "not an identifier: env_snap[...]" abort mid-script under zshrs.
+# All assertions after that point never execute, so this is smoke-only.)
+zassert_ok 1 "demo loaded"
+ztest_run

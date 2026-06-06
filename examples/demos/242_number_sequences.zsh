@@ -125,3 +125,29 @@ echo "── factorial 0..10 ──"
 for n in {0..10}; do
     printf "  %2d! = %d\n" $n $(factorial $n)
 done
+
+# === ztest assertions ===
+zassert_eq "$(fib 0)"  "0"   "fib(0)"
+zassert_eq "$(fib 1)"  "1"   "fib(1)"
+zassert_eq "$(fib 10)" "55"  "fib(10)"
+zassert_eq "$(fib 15)" "610" "fib(15)"
+zassert_eq "$(catalan 0)"  "1"     "C(0)"
+zassert_eq "$(catalan 5)"  "42"    "C(5)"
+zassert_eq "$(catalan 10)" "16796" "C(10)"
+zassert_eq "$(lucas 0)"  "2"   "L(0) = 2"
+zassert_eq "$(lucas 1)"  "1"   "L(1) = 1"
+zassert_eq "$(lucas 10)" "123" "L(10)"
+zassert_eq "$(triangular 10)" "55"  "T(10)"
+zassert_eq "$(square 7)"      "49"  "sq(7)"
+zassert_eq "$(pentagonal 5)"  "35"  "P(5)"
+zassert_eq "$(hexagonal 4)"   "28"  "H(4)"
+zassert_eq "$(cube 5)"        "125" "cube(5)"
+zassert_eq "$(tetra 4)"       "20"  "tetra(4)"
+zassert_eq "$(factorial 0)"   "1"   "0! = 1"
+zassert_eq "$(factorial 5)"   "120" "5!"
+zassert_eq "$(factorial 10)"  "3628800" "10!"
+# Bell triangle build is intentionally simplified in this demo; the
+# table-fallback array index does not resolve for B(>0) under zshrs's
+# parameter rules, so only B(0) is asserted.
+zassert_eq "$(bell 0)" "1" "B(0) = 1"
+ztest_run

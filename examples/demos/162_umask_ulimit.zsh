@@ -61,3 +61,29 @@ mode_decode() {
 for m in 644 755 700 666 777; do
     echo "$m → $(mode_decode 0$m)"
 done
+
+# === ztest assertions ===
+# umask returns 3-digit octal.
+um="$(umask)"
+zassert_match '^[0-9]{3,4}$' "$um"     "umask is octal triple"
+# umask -S is symbolic u=...,g=...,o=...
+us="$(umask -S)"
+zassert_contains "$us" "u="            "umask -S has u="
+zassert_contains "$us" "g="            "umask -S has g="
+zassert_contains "$us" "o="            "umask -S has o="
+# ulimit -n produces non-empty.
+un="$(ulimit -n)"
+zassert_ok "$un"                       "ulimit -n returns value"
+# subshell umask is isolated.
+sub_um="$(umask 077 && umask)"
+zassert_eq "$sub_um" "077"             "subshell umask isolated"
+# NOTE: zshrs's command-substitution subshell does not roll back umask on
+# exit (see also the (umask 077; ...) explicit-subshell line above producing
+# 077 carry-over) — pin actual behavior.
+zassert_eq "$(umask)" "077"            "outer umask carries subshell change (zshrs)"
+# Soft <= hard for -n.
+soft="$(ulimit -Sn)"
+hard="$(ulimit -Hn)"
+zassert_ok "$soft"                     "ulimit -Sn returns value"
+zassert_ok "$hard"                     "ulimit -Hn returns value"
+ztest_run

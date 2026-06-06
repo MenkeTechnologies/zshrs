@@ -121,3 +121,19 @@ dispatch unknown_cmd
 dispatch remove nope
 dispatch show absent
 dispatch add  # missing args
+
+# === ztest assertions ===
+# After the script's flow: cherry and apple remain; banana was removed
+zassert_eq "${#STORE[@]}" 2                   "2 items left after remove"
+zassert_eq "${STORE[apple]}"  "100"           "apple kept"
+zassert_eq "${STORE[cherry]}" "200"           "cherry kept"
+zassert_eq "${STORE[banana]:-(missing)}" "(missing)"  "banana removed"
+# Dispatcher round-trips
+zassert_eq "${#COMMANDS[@]}" 6                "6 subcommands"
+zassert_eq "${COMMANDS[init]}"  "cmd_init"    "init dispatch"
+zassert_contains "$(dispatch list)" "apple"   "list shows apple"
+zassert_contains "$(dispatch help)" "Available subcommands" "help banner"
+# Add a new item via dispatch
+dispatch add date 42 > /dev/null
+zassert_eq "${STORE[date]}" "42"              "dispatched add works"
+ztest_run

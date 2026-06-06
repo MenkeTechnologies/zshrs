@@ -164,3 +164,32 @@ echo "  data structures using AVL:"
 echo "    AVLTree<K,V> in some C++ libraries"
 echo "    Boost intrusive AVL set/map"
 echo "    Some database index implementations"
+
+# === ztest assertions ===
+V=(); LCH=(); RCH=(); HT=(); NID=0
+new_node 10; a=$LAST_NEW
+new_node 20; b=$LAST_NEW
+new_node 30; c=$LAST_NEW
+RCH[$a]=$b
+RCH[$b]=$c
+update_height $c
+update_height $b
+update_height $a
+zassert_eq "$(height $a)" "3"            "skewed-right height 3"
+zassert_eq "$(balance_factor $a)" "-2"   "skewed-right bf = -2 (RR scenario)"
+demo_left_rotate $a > /dev/null
+zassert_eq "${V[$NEW_ROOT]}" "20"        "after RR left-rotate, root val = 20"
+zassert_eq "${V[${LCH[$NEW_ROOT]}]}" "10"  "rotated left child val = 10"
+zassert_eq "${V[${RCH[$NEW_ROOT]}]}" "30"  "rotated right child val = 30"
+# LL scenario
+V=(); LCH=(); RCH=(); HT=(); NID=0
+new_node 30; a=$LAST_NEW
+new_node 20; b=$LAST_NEW
+new_node 10; c=$LAST_NEW
+LCH[$a]=$b
+LCH[$b]=$c
+update_height $c; update_height $b; update_height $a
+zassert_eq "$(balance_factor $a)" "2"    "skewed-left bf = 2 (LL scenario)"
+demo_right_rotate $a > /dev/null
+zassert_eq "${V[$NEW_ROOT]}" "20"        "after LL right-rotate, root val = 20"
+ztest_run

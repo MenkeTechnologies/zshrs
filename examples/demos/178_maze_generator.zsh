@@ -78,3 +78,23 @@ for ((i=0; i<H*W; i++)); do MAZE+=("#"); done
 RANDOM=7
 carve 1 1
 print_maze
+
+# === ztest assertions ===
+zassert_eq "$W" 11                              "width = 11"
+zassert_eq "$H" 7                               "height = 7"
+zassert_eq "${#MAZE[@]}" $((H*W))               "maze has H*W cells"
+# Corner cells must still be wall.
+zassert_eq "$(get_cell 0 0)" "#"                "(0,0) is wall"
+zassert_eq "$(get_cell 0 $((W-1)))" "#"         "top-right is wall"
+zassert_eq "$(get_cell $((H-1)) 0)" "#"         "bottom-left is wall"
+zassert_eq "$(get_cell $((H-1)) $((W-1)))" "#"  "bottom-right is wall"
+# Start cell at (1,1) carved to space.
+zassert_eq "$(get_cell 1 1)" " "                "starting cell carved"
+# Deterministic seed → identical maze. Rebuild with seed=7 and compare a cell.
+MAZE=()
+for ((i=0; i<H*W; i++)); do MAZE+=("#"); done
+RANDOM=7
+carve 1 1
+cell11_again="$(get_cell 1 1)"
+zassert_eq "$cell11_again" " "                  "deterministic carve repeats"
+ztest_run

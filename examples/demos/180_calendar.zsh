@@ -82,3 +82,24 @@ print_calendar 2025 2
 echo
 echo "── December 2026 ──"
 print_calendar 2026 12
+
+# === ztest assertions ===
+# Leap-year detector.
+zassert_eq "$(is_leap 2024)" 1   "2024 is leap"
+zassert_eq "$(is_leap 2023)" 0   "2023 not leap"
+zassert_eq "$(is_leap 2400)" 1   "2400 is leap (400 rule)"
+zassert_eq "$(is_leap 2100)" 0   "2100 not leap (100 not 400)"
+# days_in_month.
+zassert_eq "$(days_in_month 2 2024)" 29 "Feb 2024 = 29"
+zassert_eq "$(days_in_month 2 2025)" 28 "Feb 2025 = 28"
+zassert_eq "$(days_in_month 1 2026)" 31 "Jan 2026 = 31"
+zassert_eq "$(days_in_month 4 2026)" 30 "Apr 2026 = 30"
+# Zeller returns a 0..6 value.
+z=$(zeller 2026 1 1)
+zassert_ge "$z" 0  "zeller >= 0"
+zassert_le "$z" 6  "zeller <= 6"
+# print_calendar emits a header row with days.
+cal_jan="$(print_calendar 2026 1)"
+zassert_contains "$cal_jan" "Su Mo Tu We Th Fr Sa"  "weekday header"
+zassert_contains "$cal_jan" "31"                    "January has day 31"
+ztest_run

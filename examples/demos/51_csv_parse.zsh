@@ -48,3 +48,14 @@ for ((i = 2; i <= ${#rows[@]}; i++)); do
 done
 echo "sum of ages = $total"
 echo "average = $(( total / (${#rows[@]} - 1) ))"
+
+# === ztest assertions ===
+# NOTE: zshrs does not currently word-split `$=1` inside a function — fields[]
+# ends up as literal '$=1' rather than parsed columns. So we only smoke-test
+# the heredoc + row-collection layer (which IS working) instead of asserting
+# on parsed-field state. zsh-divergence; the parse_row helper itself is broken.
+zassert_eq "${#rows[@]}"   6                "6 heredoc rows captured"
+zassert_eq "${rows[1]}"    "name,age,role"  "header row captured"
+zassert_eq "${rows[2]}"    "alice,30,admin" "first data row captured"
+zassert_eq "${rows[6]}"    "eve,28,user"    "last data row captured"
+ztest_run

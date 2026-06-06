@@ -27,3 +27,17 @@ echo "── concat ──"
 prefix=">>>"
 suffix="<<<"
 echo "${prefix} $s ${suffix}"
+
+# === ztest assertions ===
+zassert_eq "${#s}"    13              "len"
+zassert_eq "${s:u}"   "HELLO, WORLD!" "upper"
+zassert_eq "${s:l}"   "hello, world!" "lower"
+zassert_eq "${s[1,5]}" "Hello"        "slice 1..5"
+zassert_eq "${s[8,12]}" "World"       "slice 8..12"
+zassert_eq "${s[-6,-1]}" "World!"     "negative slice"
+zassert_eq "${s%, *}" "Hello"         "strip suffix"
+zassert_eq "${s#*, }" "World!"        "strip prefix"
+zassert_eq "${s/l/L}" "HeLlo, World!" "replace first"
+zassert_eq "${s//l/L}" "HeLLo, WorLd!" "replace all"
+zassert_eq "${prefix} $s ${suffix}" ">>> Hello, World! <<<" "concat"
+ztest_run

@@ -183,3 +183,25 @@ unfunction recursive_dump 2>/dev/null
 unfunction report_error api_call db_query auth_check 2>/dev/null
 unfunction my_introspect_fn 2>/dev/null
 echo "  all done."
+
+# === ztest assertions ===
+# Top-level: funcstack empty
+zassert_eq "${#funcstack}" "0" "funcstack empty at top level"
+# Inside nested calls: funcstack length grows
+my_a() {
+    typeset -ga MY_STACK
+    MY_STACK=("${funcstack[@]}")
+}
+my_b() { my_a; }
+my_c() { my_b; }
+my_c
+zassert_eq "${#MY_STACK}" "3" "funcstack depth 3 inside nested calls"
+zassert_eq "${MY_STACK[1]}" "my_a" "innermost frame is my_a"
+zassert_eq "${MY_STACK[2]}" "my_b" "my_b in stack"
+zassert_eq "${MY_STACK[3]}" "my_c" "outermost frame is my_c"
+# functions assoc has the body
+my_simple_fn() { echo "marker_string_xyz"; }
+zassert_contains "${functions[my_simple_fn]}" "marker_string_xyz" "functions assoc has body"
+# ZSH_ARGZERO / $0 set
+zassert_ok "$0" "\$0 set"
+ztest_run

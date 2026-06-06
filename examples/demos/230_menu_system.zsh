@@ -91,3 +91,15 @@ walk_menu() {
     done
 }
 walk_menu
+
+# === ztest assertions ===
+zassert_eq "${MENU[1]}"          "File operations" "MENU[1]"
+zassert_eq "${MENU[5]}"          "Quit"             "MENU[5]"
+zassert_eq "${SUB_MENU[1.1]}"    "New file"        "submenu 1.1"
+zassert_eq "${SUB_MENU[3.2]}"    "Keybindings"     "submenu 3.2"
+zassert_eq "${#MENU[@]}"         5                  "5 top-level entries"
+zassert_eq "${#SUB_MENU[@]}"     7                  "7 sub entries"
+zassert_contains "$(handle_selection '' 1)"   "File operations" "select 1 → File operations"
+zassert_contains "$(handle_selection '' 99)"  "invalid"         "invalid selection 99"
+zassert_contains "$(handle_selection 3 1)"    "Theme"           "select 3.1 → Theme"
+ztest_run

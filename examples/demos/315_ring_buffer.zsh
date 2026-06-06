@@ -154,3 +154,25 @@ echo "── stats ──"
 echo "  capacity: $CAPACITY"
 echo "  current count: $COUNT"
 echo "  ops: rb_push / rb_pop / rb_print"
+
+# === ztest assertions ===
+CAPACITY=4
+rb_init
+zassert_eq "$COUNT" "0"                  "init count = 0"
+rb_push A
+rb_push B
+zassert_eq "$COUNT" "2"                  "after 2 pushes count = 2"
+zassert_eq "${RING[1]}" "A"              "ring[1] = A"
+rb_push C; rb_push D
+zassert_eq "$COUNT" "4"                  "filled to capacity"
+# Overflow: drop oldest
+rb_push E
+zassert_eq "$COUNT" "4"                  "count stays at capacity"
+rb_pop
+zassert_eq "$RB_RESULT" "B"              "after overflow first pop is B (A overwritten)"
+rb_pop; rb_pop; rb_pop
+zassert_eq "$COUNT" "0"                  "empty after popping all"
+# pop on empty
+rb_pop && r=1 || r=0
+zassert_eq "$r" "0"                      "rb_pop on empty returns nonzero"
+ztest_run

@@ -155,3 +155,15 @@ echo "── leet speak alphabet (advanced) ──"
 for k in "${(@ko)LEET_ADVANCED}"; do
     printf "  %s → %s\n" "$k" "${LEET_ADVANCED[$k]}"
 done | column -c 80 2>/dev/null || cat
+
+# === ztest assertions ===
+zassert_eq "$(leet_basic_encode hello)"        "h3ll0"               "basic hello"
+zassert_eq "$(leet_basic_encode 'leet speak')" "l337 5p34k"          "basic leet speak"
+zassert_eq "$(leet_basic_decode 'h3ll0')"      "hello"               "basic decode"
+zassert_eq "${LEET_BASIC[a]}"                  "4"                   "table a→4"
+zassert_eq "${LEET_BASIC[e]}"                  "3"                   "table e→3"
+zassert_eq "${LEET_ADVANCED[h]}"               "#"                   "advanced h→#"
+zassert_eq "${#LEET_BASIC}"                    6                     "basic table size"
+zassert_eq "${#LEET_ADVANCED}"                 25                    "advanced table size"
+zassert_eq "$(leet_advanced_encode hello)"     "#3110"               "advanced hello"
+ztest_run

@@ -37,3 +37,16 @@ for v in $(fib_seq 15); do
     (( total += v ))
 done
 echo "sum = $total"
+
+# === ztest assertions ===
+zassert_eq "$(fib_iter 0)"  0     "fib(0)"
+zassert_eq "$(fib_iter 1)"  1     "fib(1)"
+zassert_eq "$(fib_iter 5)"  5     "fib(5)"
+zassert_eq "$(fib_iter 10)" 55    "fib(10)"
+zassert_eq "$(fib_iter 15)" 610   "fib(15)"
+zassert_eq "$(fib_iter 20)" 6765  "fib(20)"
+# fib_seq 5 prints 0..5: 0 1 1 2 3 5
+zassert_eq "$(fib_seq 5 | tr '\n' ' ')" "0 1 1 2 3 5 " "fib_seq 5"
+# Sum F(0)..F(15) = F(17) - 1 = 1597 - 1 = 1596
+zassert_eq "$total" 1596 "sum fib(0..15)"
+ztest_run

@@ -94,3 +94,18 @@ start=$(ipv4_to_int "192.168.1.1")
 for ((n=start; n<start+5; n++)); do
     echo "  $(int_to_ipv4 $n)"
 done
+
+# === ztest assertions ===
+is_valid_ipv4 192.168.1.1 && r=1 || r=0; zassert_eq "$r" 1 "valid common ipv4"
+is_valid_ipv4 256.1.1.1 && r=1 || r=0;   zassert_eq "$r" 0 "256 out of range"
+is_valid_ipv4 1.2.3 && r=1 || r=0;       zassert_eq "$r" 0 "3-part rejected"
+zassert_eq "$(ipv4_to_int 192.168.1.1)" 3232235777    "ipv4_to_int 192.168.1.1"
+zassert_eq "$(ipv4_to_int 8.8.8.8)"     134744072     "ipv4_to_int 8.8.8.8"
+zassert_eq "$(int_to_ipv4 3232235777)"  "192.168.1.1" "int_to_ipv4 roundtrip"
+zassert_eq "$(ip_class 10.0.0.1)"   "A"   "class A"
+zassert_eq "$(ip_class 172.16.0.1)" "B"   "class B"
+zassert_eq "$(ip_class 192.168.1.1)" "C"  "class C"
+zassert_eq "$(ip_class 224.0.0.1)"  "D"   "class D"
+is_private 10.0.0.1     && r=1 || r=0; zassert_eq "$r" 1 "10/8 is private"
+is_private 8.8.8.8      && r=1 || r=0; zassert_eq "$r" 0 "8.8.8.8 not private"
+ztest_run

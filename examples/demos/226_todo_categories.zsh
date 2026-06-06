@@ -97,3 +97,23 @@ list_filtered
 echo
 echo "── stats ──"
 stats
+
+# === ztest assertions ===
+zassert_eq "${#TODOS[@]}" 7   "7 todos added"
+zassert_eq "$NEXT_ID"     8   "NEXT_ID after 7 adds"
+# task 1 completed
+parts1=( ${(s/|/)TODOS[1]} )
+zassert_eq "${parts1[5]}" "done" "task 1 status=done"
+# task 2 still open
+parts2=( ${(s/|/)TODOS[2]} )
+zassert_eq "${parts2[5]}" "open" "task 2 status=open"
+# task 6 completed
+parts6=( ${(s/|/)TODOS[6]} )
+zassert_eq "${parts6[5]}" "done" "task 6 status=done"
+# stats output
+stats_out=$(stats)
+zassert_contains "$stats_out" "total=7" "stats shows total=7"
+zassert_contains "$stats_out" "done=3"  "stats shows done=3"
+zassert_contains "$stats_out" "open=4"  "stats shows open=4"
+zassert_contains "$stats_out" "work: 3" "stats shows work: 3"
+ztest_run

@@ -72,3 +72,28 @@ calc "atan(1) * 4"
 echo "── multi-statement (comma) ──"
 calc "a = 5, b = 10, a + b"
 echo "a=$a b=$b"
+
+# === ztest assertions ===
+zassert_eq $(( 2 + 3 ))           5     "calc 2+3"
+zassert_eq $(( 100 / 7 ))         14    "calc 100/7"
+zassert_eq $(( 2 ** 10 ))         1024  "calc 2^10"
+zassert_eq $(( 0xff ))            255   "calc 0xff"
+zassert_eq $(( 0xFF + 1 ))        256   "calc 0xFF+1"
+zassert_eq $(( 2#1010 ))          10    "calc binary"
+zassert_eq $(( 8#777 ))           511   "calc octal"
+zassert_eq $(( 16#deadbeef ))     3735928559 "calc 32-bit hex"
+zassert_eq $(( 0xff & 0x0f ))     15    "bit and"
+zassert_eq $(( ~0xff & 0xfff ))   3840  "bit not + and"
+zassert_eq $(( 5 > 3 ? 1 : 0 ))   1     "ternary true"
+zassert_eq $(( 5 < 3 ? 1 : 0 ))   0     "ternary false"
+zassert_eq $(( 5 == 5 ? 100 : 200 ))   100   "ternary eq"
+nn=0
+(( nn = 5 ))
+zassert_eq "$nn" 5    "assign within arith"
+(( nn += 10 ))
+zassert_eq "$nn" 15   "compound +="
+(( nn *= 2 ))
+zassert_eq "$nn" 30   "compound *="
+zassert_eq $(( a = 5, b = 10, a + b )) 15 "comma-sequence result"
+ztest_run
+

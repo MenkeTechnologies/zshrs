@@ -94,3 +94,17 @@ hot_cold() {
     done
 }
 hot_cold 33
+
+# === ztest assertions ===
+out1=$(guess_game 50 1 100 7)
+zassert_contains "$out1" "HIT! (tries=1)" "50 found at midpoint in 1 try"
+out2=$(guess_game 73 1 100 7)
+zassert_contains "$out2" "HIT!"            "73 eventually found in 7 tries"
+out3=$(guess_game 1 1 1000 10)
+zassert_contains "$out3" "HIT! (tries=9)"  "1 in [1..1000] needs 9 tries (binary)"
+hc=$(hot_cold 33)
+zassert_contains "$hc" "guess=33"          "hot_cold reaches secret"
+zassert_contains "$hc" "HIT!"              "hot_cold final HIT"
+zassert_contains "$hc" "hotter"            "hot_cold prints 'hotter'"
+zassert_contains "$hc" "colder"            "hot_cold prints 'colder'"
+ztest_run

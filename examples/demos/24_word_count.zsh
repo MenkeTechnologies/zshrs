@@ -23,3 +23,18 @@ echo "── unique words: ${#counts[@]} ──"
 for k v in "${(@kv)counts}"; do
     printf "%4d %s\n" $v $k
 done | sort -k1,1 -nr -k2,2
+
+# === ztest assertions ===
+zassert_eq "${#counts[@]}" "11"   "unique word count"
+zassert_eq "${counts[the]}" "4"   "the appears 4x"
+zassert_eq "${counts[fox]}" "3"   "fox appears 3x"
+zassert_eq "${counts[dog]}" "3"   "dog appears 3x"
+zassert_eq "${counts[is]}"  "2"   "is appears 2x"
+zassert_eq "${counts[quick]}" "2" "quick appears 2x"
+zassert_eq "${counts[lazy]}"  "2" "lazy appears 2x"
+zassert_eq "${counts[brown]}" "1" "brown appears 1x"
+zassert_eq "${counts[jumps]}" "1" "jumps appears 1x"
+zassert_eq "${counts[over]}"  "1" "over appears 1x"
+zassert_eq "${counts[barks]}" "1" "barks appears 1x"
+zassert_eq "${counts[at]}"    "1" "at appears 1x"
+ztest_run

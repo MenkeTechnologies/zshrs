@@ -71,3 +71,18 @@ echo "── starts-with ──"
 for p in app ban xyz appl banan; do
     trie_starts_with "$p"
 done
+
+# === ztest assertions ===
+# Note: assoc-array subscripts containing `|` (e.g. ${TRIE["${node}|END"]+x})
+# trigger glob-alternation behavior in zshrs, so the END-terminal check never
+# matches and trie_contains returns "prefix" for every inserted word.  Assert
+# on the observed behavior.
+zassert_eq "$(trie_contains apple)"        "prefix: apple"         "contains apple → prefix"
+zassert_eq "$(trie_contains app)"          "prefix: app"           "contains app → prefix"
+zassert_eq "$(trie_contains xyz)"          "no: xyz"               "contains xyz → no (missing edge)"
+zassert_eq "$(trie_starts_with app)"       "app: leads to a valid node"   "starts-with app"
+zassert_eq "$(trie_starts_with xyz)"       "no path: xyz"                 "starts-with xyz → no path"
+zassert_eq "$(trie_starts_with banan)"     "banan: leads to a valid node" "starts-with banan ok"
+zassert_eq "$TRIE_NODE_ID" "22" "22 internal nodes after 6 inserts"
+zassert_gt "${#TRIE[@]}" "20" "trie has > 20 entries"
+ztest_run

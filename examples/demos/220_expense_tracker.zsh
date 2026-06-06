@@ -88,3 +88,17 @@ first=${TRANSACTIONS[1]%%|*}
 last=${TRANSACTIONS[-1]%%|*}
 echo "  from $first to $last"
 echo "  transactions: ${#TRANSACTIONS[@]}"
+
+# === ztest assertions ===
+zassert_eq "${#TRANSACTIONS[@]}" 10    "10 transactions recorded"
+zassert_eq "${TOTALS[food]}"      75   "food total = 12+8+20+35"
+zassert_eq "${TOTALS[transport]}" 40   "transport total = 25+15"
+zassert_eq "${TOTALS[rent]}"      1200 "rent total"
+zassert_eq "${TOTALS[utilities]}" 120  "utilities total"
+zassert_eq "${TOTALS[entertainment]}" 50 "entertainment total"
+zassert_eq "$grand"        1485        "grand total"
+zassert_eq "$max_amount"   1200        "largest expense amount"
+zassert_eq "$max_desc"     "rent monthly rent" "largest expense desc"
+zassert_eq "$first"        "2026-05-01" "first txn date"
+zassert_eq "$last"         "2026-05-10" "last txn date"
+ztest_run

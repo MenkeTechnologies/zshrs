@@ -144,3 +144,25 @@ for t in "${samples[@]}"; do
     printf "    KMP:   %s\n" "$kmp_str"
     printf "    naive: %s   %s\n" "$naive_str" "$([[ $kmp_str == $naive_str ]] && echo ✓ || echo ✗)"
 done
+
+# === ztest assertions ===
+kmp_search "MISSISSIPPI" "ISSI"
+zassert_eq "${MATCHES[*]}" "2 5" "ISSI in MISSISSIPPI at 2,5 (overlapping)"
+kmp_search "AAAAA" "AAA"
+zassert_eq "${MATCHES[*]}" "1 2 3" "AAA in AAAAA at 1,2,3 (overlapping)"
+kmp_search "hello world" "world"
+zassert_eq "${MATCHES[1]}" 7 "world starts at index 7 in hello world"
+kmp_search "hello world" "xyz"
+zassert_eq "${#MATCHES}" 0 "no match found"
+kmp_search "ABABABA" "ABA"
+zassert_eq "${MATCHES[*]}" "1 3 5" "ABA in ABABABA at 1,3,5"
+# Failure table for ABABAC: [0 0 1 2 3 0]
+build_failure "ABABAC"
+zassert_eq "${FAIL[1]}" 0  "FAIL[1] = 0"
+zassert_eq "${FAIL[3]}" 1  "FAIL[3] = 1"
+zassert_eq "${FAIL[5]}" 3  "FAIL[5] = 3"
+zassert_eq "${FAIL[6]}" 0  "FAIL[6] = 0 (mismatch break)"
+# KMP finds substring even when pattern overlaps with itself
+kmp_search "ABABABABA" "ABA"
+zassert_ge "${#MATCHES}" 3 "ABA in ABABABABA finds ≥3 (overlap)"
+ztest_run

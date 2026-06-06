@@ -61,3 +61,12 @@ echo "  zshrs: 200 demos strong"
 echo "  every one runs on CI"
 echo "  every one cites Src/*.c"
 echo "  ───────────────────────────"
+
+# === ztest assertions ===
+zassert_eq "${#categories[@]}" 8                "8 categories listed"
+zassert_contains "$(print_banner 'X' 10)" "=========="   "banner draws ="
+zassert_contains "$(print_banner 'X' 10)" "    X"        "banner centers text"
+zassert_eq $((2 ** 16))  65536                   "2^16 mini-demo"
+zassert_eq "$(typeset -A x=(k v); echo ${x[k]})" "v"     "assoc inline mini-demo"
+[[ abc123 =~ ([a-z]+)([0-9]+) ]] && zassert_eq "$match[1]" "abc" "regex match[1]"
+ztest_run

@@ -1252,6 +1252,55 @@ pub fn zshrs_main() {
         return;
     }
 
+    // --ztest-worker: persistent test-worker subprocess for the
+    // --ztest pool runner. Reads JSON requests from stdin, forks per
+    // request, child runs the test in-process and writes one JSON
+    // response per line to stdout. Port of stryke's --test-worker
+    // mode (../strykelang/strykelang/cli_runners.rs:204). Must be
+    // checked BEFORE any thread spawns in this process — raw
+    // libc::fork inside the loop requires the main thread is alone.
+    if args.iter().any(|a| a == "--ztest-worker") {
+        std::process::exit(zsh::ztest::run_ztest_worker_loop());
+    }
+
+    // --ztest [paths...]: shell-level unit-test runner — worker-pool
+    // architecture mirroring `stryke test` (../strykelang README
+    // [0x0C-test]). Empty paths → discover `t/` then `tests/`. Each
+    // test file is a shell script that calls `zassert_*` and ends
+    // with `ztest_run`. Implementation: src/extensions/ztest.rs.
+    //
+    // Flags consumed:
+    //   -j N    — N worker processes (default: num_cpus)
+    //   -q      — quiet (suppress per-file banners)
+    if let Some(idx) = args.iter().position(|a| a == "--ztest") {
+        let rest = &args[idx + 1..];
+        let mut j_threads: Option<String> = None;
+        let mut quiet = false;
+        let mut targets: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < rest.len() {
+            match rest[i].as_str() {
+                "-j" => {
+                    if i + 1 < rest.len() {
+                        j_threads = Some(rest[i + 1].clone());
+                        i += 2;
+                        continue;
+                    }
+                }
+                "-q" | "--quiet" => {
+                    quiet = true;
+                }
+                t => targets.push(t.to_string()),
+            }
+            i += 1;
+        }
+        std::process::exit(zsh::ztest::run_ztests_pool(
+            &targets,
+            j_threads.as_deref(),
+            quiet,
+        ));
+    }
+
     // (the `--daemon` arg is intercepted earlier in zshrs_main with a
     // pointer at the install paths; no second handler here.)
 

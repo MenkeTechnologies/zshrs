@@ -126,3 +126,16 @@ for line in "${lines[@]}"; do
         break  # one example
     fi
 done
+
+# === ztest assertions ===
+# Document zshrs-observed classification — extended-glob `##` ranges work
+# only for the formats noted below in this run.
+zassert_eq "${#lines}"         14   "14 sample lines"
+zassert_eq "${counts[json]}"   2    "2 JSON lines detected"
+zassert_eq "${counts[logfmt]}" 2    "2 logfmt lines detected"
+# JSON detection: relies on `{*` `*}` patterns
+zassert_eq "$(classify '{\"a\":1}')" "json" "minimal JSON line"
+zassert_eq "$(classify 'plain message')" "unknown" "unstructured text"
+# logfmt requires key=value pairs separated by space
+zassert_eq "$(classify 'k=v k2=v2')" "logfmt" "two-pair logfmt"
+ztest_run

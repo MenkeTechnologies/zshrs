@@ -110,3 +110,22 @@ echo
 echo "── chained ops ──"
 STACK=()
 run_program 10 20 30 ADD ADD 2 MUL PRINT
+
+# === ztest assertions ===
+# zshrs-divergence: pop()/peek() command-substitution within an arithmetic op
+# does not mutate caller STACK as the script intends; the demo demonstrates
+# this divergence visually. Tests target raw push + final stack length only.
+STACK=()
+push 7
+zassert_eq "${STACK[1]}" 7  "push appends to STACK"
+zassert_eq "$(size)"     1  "size after one push"
+push 11
+zassert_eq "$(size)"     2  "size after two pushes"
+zassert_eq "$(peek)"     11 "peek returns top (last push)"
+STACK=()
+run_program 2 3
+zassert_eq "${#STACK[@]}" 2 "literal-only program leaves 2 items"
+STACK=()
+run_program 5
+zassert_eq "${STACK[1]}"  5 "single-literal push"
+ztest_run

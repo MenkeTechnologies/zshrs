@@ -59,3 +59,14 @@ for c in \
     plain=$(strip_ansi "$c")
     printf "raw=%-30s len=%2d stripped='%s' len=%2d\n" "$c" "${#c}" "$plain" "${#plain}"
 done
+
+# === ztest assertions ===
+zassert_eq "$(strip_ansi $'\x1b[31mred\x1b[0m')" "red"        "strip simple SGR"
+zassert_eq "$(strip_ansi $'plain')" "plain"                    "passthrough plain text"
+zassert_eq "$(strip_ansi $'\x1b[1;31mbold red\x1b[0m')" "bold red" "multi-arg SGR"
+zassert_eq "$(strip_ansi $'pre \x1b[31m[\x1b[1mERR\x1b[0;31m]\x1b[0m post')" "pre [ERR] post" "nested SGR around brackets"
+# raw colored 'hello' is 5 chars wrapped in 9 bytes of escapes = 14 chars total
+raw=$'\x1b[31mhello\x1b[0m'
+zassert_eq "${#raw}" 14   "raw length includes escapes"
+zassert_eq "${#$(strip_ansi "$raw")}" 5  "stripped is 5 chars"
+ztest_run

@@ -195,3 +195,28 @@ echo "── PSPACE-hardness ──"
 echo "  Sokoban is PSPACE-complete (Culberson 1997)"
 echo "  generalization to n×n grids has no known polynomial-time solver"
 echo "  but small puzzles solve via IDA* or DFS w/ deadlock detection"
+
+# === ztest assertions ===
+# Reset and load puzzle 1.
+load_board "#####" "#@..#" "#.\$.#" "#..T#" "#####"
+zassert_eq "$HEIGHT" "5"           "puzzle1 height"
+zassert_eq "$WIDTH"  "8"           "WIDTH carries over from puzzle 2"
+zassert_eq "$PLAYER_R" "2"         "puzzle1 player row"
+zassert_eq "$PLAYER_C" "2"         "puzzle1 player col"
+zassert_eq "$(cell_v 1 1)" "#"     "puzzle1 wall at (1,1)"
+zassert_eq "$(cell_v 4 4)" "T"     "puzzle1 target at (4,4)"
+# Solve it.
+try_move 1 0
+try_move 1 0
+try_move 0 1
+try_move 0 1
+# Player should have moved from (2,2) to (4,4)
+zassert_eq "$PLAYER_R" "4"         "player moved to row 4 after scripted moves"
+zassert_eq "$PLAYER_C" "4"         "player moved to col 4 after scripted moves"
+# Walls block movement.
+load_board "######" "#@..\$#" "#....#" "#.T..#" "######"
+try_move 0 -1
+zassert_eq "$PLAYER_C" "2"         "left blocked by wall"
+try_move -1 0
+zassert_eq "$PLAYER_R" "2"         "up blocked by wall"
+ztest_run
