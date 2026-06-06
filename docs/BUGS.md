@@ -36278,7 +36278,19 @@ Test baseline 1024/28 preserved.
 
 ## #433 — `time` builtin ignores `$TIMEFMT` — uses hardcoded format regardless
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — re-verified, parity. `time` now
+formats via `$TIMEFMT` expansion (`%E`/`%U`/`%S`/`%P`/etc.).
+
+```
+$ /opt/homebrew/bin/zsh -fc 'TIMEFMT="ELAPSED=%E"; { time sleep 0.05; } 2>/tmp/_t; cat /tmp/_t'
+ELAPSED=0.06s
+$ ./target/debug/zshrs --zsh -fc 'TIMEFMT="ELAPSED=%E"; { time sleep 0.05; } 2>/tmp/_t; cat /tmp/_t'
+ELAPSED=0.06s
+```
+
+BUGS.md status was stale.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'TIMEFMT="ELAPSED=%E"; { time sleep 0.05; } 2>/tmp/_t; cat /tmp/_t'
