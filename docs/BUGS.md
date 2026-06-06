@@ -37771,7 +37771,23 @@ or run plugin in a forked zshrs child instead of `(...)`.
 
 ## #453 — ZLE widget registration in subshell LEAKS to parent — third member of subshell-scope-leak family
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — `subshell_begin` / `subshell_end`
+now snapshot and restore the canonical `THINGYTAB` (ZLE widget
+registry) alongside the existing paramtab/shfuncs/aliases snap.
+Mirrors `Src/exec.c::entersubsh`'s fork boundary for widget
+state. Bug #454 (keymap isolation) ported alongside.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'f() { :; }; zle -N w f; (zle -D w); zle -l w; echo rc=$?'
+rc=0
+$ ./target/debug/zshrs --zsh -fc 'f() { :; }; zle -N w f; (zle -D w); zle -l w; echo rc=$?'
+rc=0
+```
+
+Subshell `zle -N` add and `zle -D` delete both contained;
+parent's widget table untouched.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'f() { :; }; zle -N w f; (zle -D w); zle -l w; echo rc=$?'
@@ -37821,7 +37837,24 @@ subshell.)
 
 ## #454 — keymap creation/deletion (`bindkey -N`/`-D`) in subshell LEAKS to parent — extends #453
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — `KEYMAPNAMTAB` (named keymap
+registry) added to the subshell snap/restore block in
+`subshell_begin`/`subshell_end` (same place as #453's
+`THINGYTAB` snap). `Src/exec.c::entersubsh` fork-copy semantics.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'bindkey -N km; (bindkey -D km); bindkey -l | grep km; echo rc=$?'
+km
+rc=0
+$ ./target/debug/zshrs --zsh -fc 'bindkey -N km; (bindkey -D km); bindkey -l | grep km; echo rc=$?'
+km
+rc=0
+```
+
+Subshell `bindkey -N km` add and `bindkey -D km` delete both
+contained; parent's keymap registry untouched.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'bindkey -N testmap; (bindkey -D testmap); bindkey -l | grep testmap'
