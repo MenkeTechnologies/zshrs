@@ -164,15 +164,26 @@ class ZshrsLexer : LexerBase() {
         when {
             // Shebang first line takes priority over plain comment
             c == '#' && pos == 0 && peek(1) == '!' -> consumeShebang()
-            // `#` inside an open `${…}` is the parameter-length
-            // operator (`${#var}`) or a pattern-anchor (`${var/#pat/repl}`),
-            // NOT a line comment. Only treat `#` as a comment-start
-            // when we're at the OUTER lexer level (paramBraceDepth==0).
-            c == '#' && paramBraceDepth == 0 -> consumeLineComment()
-            // Inside `${…}`, emit `#` as part of the param-expansion
-            // segment so it gets the param color (not BAD_CHARACTER
-            // from the catch-all below). Covers `${#var}` length-op,
-            // `${var/#pat/repl}` pattern-anchor, etc.
+            // `#` is a line comment ONLY when at WORD-START — preceded
+            // by whitespace, BOL, or a metachar that ends the current
+            // word. Mid-word `#` is NOT a comment in zsh, so all of
+            // these stay non-comment:
+            //   * `abc#def` — `#` mid-word; zsh prints `abc#def`.
+            //   * `$((2#1010))` — arith base separator (binary literal).
+            //   * `(( 2#10 ))` — same, outside DQ.
+            //   * `*#` / `x##` — extended-glob quantifiers.
+            //   * `(#qX)` — extended-glob qualifier prefix (handled
+            //     separately by tryConsumeGlobQualifier).
+            // Without [isCommentStart] the `# 1010 ))` after the `2`
+            // in `$(( 2#1010 ))` ate the rest of the line as a comment
+            // and the closing `))` never got tokenized.
+            //
+            // Inside `${…}` (paramBraceDepth>0), `#` is the length-op
+            // (`${#var}`) or pattern-anchor (`${var/#pat/repl}`) — emit
+            // as PARAM_EXPANSION so it gets the param color (not
+            // BAD_CHARACTER from the catch-all).
+            c == '#' && paramBraceDepth == 0 && isCommentStart() -> consumeLineComment()
+            c == '#' && paramBraceDepth == 0 -> emit(1, ZshrsTokenTypes.OPERATOR)
             c == '#' -> emit(1, ZshrsTokenTypes.PARAM_EXPANSION)
             c == '\n' || c == '\r' || c == ' ' || c == '\t' -> consumeWhitespace()
             c == '"' -> consumeInterpolatingString('"', ZshrsTokenTypes.STRING_DQ)
@@ -635,6 +646,34 @@ class ZshrsLexer : LexerBase() {
         tokenEnd = p; pos = p
         tokenType = ZshrsTokenTypes.GLOB
         return true
+    }
+
+    /// True when the `#` at the current `pos` is a comment opener
+    /// (i.e. at WORD-START). zsh's word-start chars per
+    /// Src/lex.c::isep / Src/utils.c::inittyptab — a comment starts
+    /// only when `#` is preceded by:
+    ///   * BOL (`pos == 0`) — implicit word-start
+    ///   * `\n` / `\r` — end of previous line
+    ///   * ` ` / `\t` — IFS whitespace
+    ///   * `;` — list separator
+    ///   * `|` / `&` — pipeline / background / logical-op terminus
+    ///   * `(` / `)` — group / subshell boundary
+    ///   * `{` / `}` — command-group boundary
+    ///   * `<` / `>` — redirect terminus
+    ///   * `!` — `!` reserved word
+    ///   * `=` (right after assignment? no — that's mid-word).
+    /// Anything else means we're MID-WORD and `#` is a literal char
+    /// (`abc#def` is one word in zsh; `2#1010` is an arith base
+    /// separator; `*##.zsh` is an extended-glob quantifier).
+    private fun isCommentStart(): Boolean {
+        if (pos == 0) return true
+        return when (buf[pos - 1]) {
+            ' ', '\t', '\n', '\r',
+            ';', '|', '&',
+            '(', ')', '{', '}',
+            '<', '>', '!' -> true
+            else -> false
+        }
     }
 
     private fun consumeString(quote: Char, tt: IElementType) {
