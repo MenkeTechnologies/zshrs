@@ -65,11 +65,18 @@
     <!-- Platform LSP API (paid IDEs) -->
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.ultimate</depends>
-    <!-- Required for the `spellchecker.support` EP registration below.
-         Without this depends tag the SpellcheckingStrategy class loads
-         but the EP wiring no-ops and TypoInspection still fires on
-         every STRING_DQ / COMMENT / etc. token. -->
-    <depends>com.intellij.spellchecker</depends>
+    <!-- NOTE: do NOT declare `<depends>com.intellij.spellchecker</depends>`
+         here. zshrs targets platformVersion 2024.2.4 where the
+         spellchecker ships embedded in the platform JAR, NOT as a
+         separately-installable plugin ID. Adding the depends tag fails
+         plugin verification with "Plugin zshrs depends on unknown
+         plugin com.intellij.spellchecker". The `spellchecker.support`
+         EP below works without the depends declaration because the
+         SpellcheckingStrategy class and EP are both available on the
+         platform classpath. (strykelang on 2025.2 is the OPPOSITE
+         case — there spellchecker is a module that NEEDS the depends
+         tag + a bundledModule() build-script entry.) -->
+
 
     <extensions defaultExtensionNs="com.intellij">
         <!-- File types -->
