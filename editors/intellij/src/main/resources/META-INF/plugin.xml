@@ -65,6 +65,11 @@
     <!-- Platform LSP API (paid IDEs) -->
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.ultimate</depends>
+    <!-- Required for the `spellchecker.support` EP registration below.
+         Without this depends tag the SpellcheckingStrategy class loads
+         but the EP wiring no-ops and TypoInspection still fires on
+         every STRING_DQ / COMMENT / etc. token. -->
+    <depends>com.intellij.spellchecker</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <!-- File types -->
