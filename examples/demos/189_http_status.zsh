@@ -74,9 +74,9 @@ echo "total error codes defined: $err_count"
 echo "── status decoder for a log line ──"
 log='192.168.1.1 - - [29/May/2026:14:30:00] "GET /api/foo HTTP/1.1" 404 1234'
 # Extract status code.
-status=$(echo "$log" | grep -oE 'HTTP/[0-9.]+" [0-9]+' | grep -oE '[0-9]+$')
+statuss=$(echo "$log" | grep -oE 'HTTP/[0-9.]+" [0-9]+' | grep -oE '[0-9]+$')
 echo "log: $log"
-echo "decoded status: $(lookup $status)"
+echo "decoded status: $(lookup $statuss)"
 
 # === ztest assertions ===
 # Earlier `status=...` line triggers a read-only-variable error in this
