@@ -7131,6 +7131,24 @@ impl fusevm::ShellHost for ZshrsHost {
                             .collect()
                     })
                     .unwrap_or_default(),
+                // c:Src/exec.c::entersubsh — fork-copy semantics for
+                // THINGYTAB (ZLE widget registry). A subshell `zle -N`
+                // / `zle -D` mutation dies with the child in C zsh;
+                // mirror via in-process snapshot. Bug #453.
+                thingytab: crate::ported::zle::zle_thingy::thingytab()
+                    .lock()
+                    .ok()
+                    .map(|t| t.clone())
+                    .unwrap_or_default(),
+                // c:Src/exec.c::entersubsh — same fork-copy for the
+                // KEYMAPNAMTAB (named keymap registry). `bindkey -N km`
+                // / `bindkey -D km` inside a subshell dies with the
+                // child. Bug #454.
+                keymapnamtab: crate::ported::zle::zle_keymap::keymapnamtab()
+                    .lock()
+                    .ok()
+                    .map(|t| t.clone())
+                    .unwrap_or_default(),
             });
             // Subshell starts with EXIT trap cleared so the parent's
             // EXIT handler doesn't fire when the subshell ends. zsh:
@@ -7286,6 +7304,16 @@ impl fusevm::ShellHost for ZshrsHost {
                             m.node.flags = *saved_flags;
                         }
                     }
+                }
+                // c:Src/exec.c::entersubsh — restore parent's THINGYTAB
+                // so a subshell's `zle -N w f` / `zle -D w` doesn't
+                // affect the parent's widget registry. Bug #453.
+                if let Ok(mut t) = crate::ported::zle::zle_thingy::thingytab().lock() {
+                    *t = snap.thingytab;
+                }
+                // Same for KEYMAPNAMTAB. Bug #454.
+                if let Ok(mut t) = crate::ported::zle::zle_keymap::keymapnamtab().lock() {
+                    *t = snap.keymapnamtab;
                 }
             }
         });

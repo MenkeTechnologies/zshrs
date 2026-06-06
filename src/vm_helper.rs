@@ -270,6 +270,18 @@ pub struct SubshellSnapshot {
     /// affects introspection is the flags bitmask (MOD_INIT_B
     /// for loaded, MOD_UNLOAD for unloaded).
     pub modules: HashMap<String, i32>,
+    /// Parent's THINGYTAB (ZLE widget registry) at subshell entry.
+    /// zsh forks for `(...)` so `zle -N w f` / `zle -D w` inside the
+    /// subshell flip widget bindings only in the child; when the
+    /// child exits the parent's widget table is untouched. zshrs runs
+    /// subshells in-process so a subshell's `zle -D w` would
+    /// otherwise unbind the parent's widget. Bug #453 in docs/BUGS.md.
+    pub thingytab: HashMap<String, crate::ported::zle::zle_thingy::Thingy>,
+    /// Parent's KEYMAPNAMTAB (named keymap registry) at subshell
+    /// entry. Same fork-copy semantics as THINGYTAB — a subshell's
+    /// `bindkey -N km` / `bindkey -D km` mutates only the child's
+    /// keymap registry in C zsh. Bug #454 in docs/BUGS.md.
+    pub keymapnamtab: HashMap<String, crate::ported::zle::zle_keymap::KeymapName>,
 }
 
 #[allow(unused_imports)]
