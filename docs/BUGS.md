@@ -15608,7 +15608,27 @@ Baseline: 942/110 zshrs_shell — unchanged from before fix.
 
 ## #192 — `${(P)name[N]:mod}` indirect-array-elem with modifier works in zshrs (zsh: errors)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `wont-fix-as-divergence` 2026-06-05 — flagged as a
+deliberate zshrs extension. zsh's
+`Src/subst.c::dosubst` rejects `(P)+[N]:mod` as a parse
+ambiguity, but the composition is semantically well-defined and
+zshrs implements it correctly (indirect deref → element pick →
+modifier). The divergence makes cross-shell scripts portable
+zshrs → zsh fail, not the other way around, so the polarity is
+"zshrs more permissive".
+
+```
+$ /opt/homebrew/bin/zsh -fc 'arr=(/a/b /c/d); name=arr; echo "${(P)name[1]:t}"; echo "${(P)name[2]:t}"' 2>&1
+(empty - errors)
+
+$ ./target/debug/zshrs --zsh -fc 'arr=(/a/b /c/d); name=arr; echo "${(P)name[1]:t}"'
+b
+```
+
+Workaround for portability: split into two steps via temp
+variable (`local d="${(@P)name}"; echo "${d[1]:t}"`).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'arr=(/a/b /c/d); name=arr; echo "${(P)name[1]:t}"; echo "${(P)name[2]:t}"' 2>&1
@@ -16643,7 +16663,19 @@ done
 
 ## #206 — `setopt multios` doesn't fan-out — only last redirection target receives output
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — duplicate of #36 (already fixed
+2026-06-05). MULTIOS fan-out works for both output-side `> a > b`
+and input-side `< a < b`.
+
+```
+$ ./target/debug/zshrs --zsh -fc 'setopt multios; echo hi > /tmp/za > /tmp/zb; cat /tmp/za; cat /tmp/zb'
+hi
+hi
+```
+
+BUGS.md status was stale (this entry duplicates #36).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'setopt multios; echo hi > /tmp/za > /tmp/zb'
