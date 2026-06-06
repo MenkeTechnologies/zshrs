@@ -65,15 +65,24 @@
     <!-- Platform LSP API (paid IDEs) -->
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.ultimate</depends>
-    <!-- Required for the `spellchecker.support` EP registration below.
-         platformVersion 2025.2+ ships com.intellij.spellchecker as a
-         platform MODULE (lib/modules/intellij.spellchecker.jar). The
-         build.gradle.kts side declares `bundledModule("intellij.spellchecker")`
-         so the SpellcheckingStrategy class resolves at compile time;
-         this depends tag is what wires the runtime EP — without it the
-         strategy class loads but the EP wiring no-ops and TypoInspection
-         still fires on every STRING_DQ / COMMENT / HEREDOC token. -->
-    <depends>com.intellij.spellchecker</depends>
+    <!-- Plugin model v2 dependencies block (2025.2+). Bundled modules
+         like `intellij.spellchecker` are V2 modules with their own
+         classloader, NOT separately-installable plugin IDs — they
+         must be declared as `<module name="..."/>` here, not via the
+         legacy `<depends>com.intellij.spellchecker</depends>` tag
+         (which fails plugin verification with "unknown plugin"
+         because no plugin advertises that ID). build.gradle.kts has
+         the matching `bundledModule("intellij.spellchecker")` for
+         compile-time class resolution.
+
+         Required for the `spellchecker.support` EP registration
+         below to actually wire up at runtime — without it the
+         SpellcheckingStrategy class loads but the EP no-ops and
+         TypoInspection still fires on every STRING_DQ / COMMENT /
+         HEREDOC token. -->
+    <dependencies>
+        <module name="intellij.spellchecker"/>
+    </dependencies>
 
 
     <extensions defaultExtensionNs="com.intellij">
