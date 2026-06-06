@@ -1538,7 +1538,7 @@ fn completion(state: &State, params: &Value) -> Value {
     // bug the user filed: `zwh<TAB>` didn't offer `zwhere` because
     // the daemon `z*` builtins live in ZSHRS_BUILTIN_NAMES and were
     // never added to the completion list. Same issue for ext ported
-    // generally (74 in-process + 23 daemon = 97 names total).
+    // generally (91 in-process incl. ztest framework + 23 daemon = 114 names total).
     for n in crate::ext_builtins::EXT_BUILTIN_NAMES {
         if want(n) {
             push(&mut items, n, 3, "extension builtin");
