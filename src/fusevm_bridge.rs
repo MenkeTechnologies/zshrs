@@ -7181,6 +7181,17 @@ impl fusevm::ShellHost for ZshrsHost {
         // SUBSHELL_DEPTH declaration in src/ported/builtin.rs for
         // rationale).
         crate::ported::builtin::SUBSHELL_DEPTH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // c:Src/exec.c::entersubsh — C zsh's subshell is a forked
+        // child process: signals sent to the parent (via `kill $$`
+        // inside the subshell, where `$$` is the parent's pid)
+        // never reach the child's signal handlers. zshrs's
+        // in-process subshell shares the process pid with the
+        // parent, so without queueing the subshell's trap handler
+        // fires for signals that zsh would deliver only to the
+        // parent. Queue signals across the subshell body so the
+        // parent's restored trap table sees them after
+        // subshell_end's unqueue drain. Bug #450.
+        crate::ported::signals_h::queue_signals();
     }
 
     fn subshell_end(&mut self) -> Option<i32> {
@@ -7325,6 +7336,13 @@ impl fusevm::ShellHost for ZshrsHost {
         // boundary where the child's process::exit(N) becomes
         // $WAITSTATUS / $? in the parent.
         crate::ported::builtin::SUBSHELL_DEPTH.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        // c:Src/exec.c — drain the signal queue against the now-
+        // restored parent trap table. Pairs with the
+        // queue_signals() call at the end of subshell_begin.
+        // Any `kill $$` from inside the subshell is processed
+        // here against OUTER's trap, matching C zsh's
+        // signal-delivery-to-parent semantics. Bug #450.
+        crate::ported::signals_h::unqueue_signals();
         let exit_pending =
             crate::ported::builtin::EXIT_PENDING.load(std::sync::atomic::Ordering::Relaxed);
         if exit_pending != 0 {
