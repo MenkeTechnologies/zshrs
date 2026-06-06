@@ -47,9 +47,22 @@ class ZshrsLexer : LexerBase() {
     private var pendingStringResumeState = STATE_NORMAL
     /// Paren-depth tracker used by [lexInsideDqArith] and
     /// [lexInsideDqCmdsub] to know when the matching `))` / `)` closes
-    /// the interpolation block and we should flip back to
-    /// STATE_DQ_RESUME. Reset on every `$((` / `$(` opener.
+    /// the interpolation block and we should flip back to the
+    /// resume state. Reset on every `$((` / `$(` opener.
     private var dqInterpParenDepth = 0
+    /// Where to flip back to after the matching `))` / `)` closes a
+    /// `$((arith))` / `$(cmd)` interpolation. Set when the opener is
+    /// emitted in [consumeDollar]:
+    ///   * `STATE_NORMAL` when the opener was at top level (NOT inside
+    ///     a `"..."` string) — the close should return to the outer
+    ///     normal-state dispatcher.
+    ///   * `STATE_DQ_RESUME` when the opener was inside a `"..."`
+    ///     string — the close should return to string-content scanning.
+    /// Without this field the close path unconditionally flipped to
+    /// STATE_DQ_RESUME, which made every line after the first top-level
+    /// `j=$(( … ))` / `x=$(cmd)` render as a single DQ string segment
+    /// (the rest of the file dimmed-out as STRING_DQ color).
+    private var dqInterpResumeState = STATE_NORMAL
     /// When STATE_DQ_FORMAT / STATE_BT_FORMAT is set, this is the
     /// pre-computed byte length of the printf format spec starting
     /// at the current pos. The next advance() emits exactly that
@@ -68,6 +81,8 @@ class ZshrsLexer : LexerBase() {
         // classify the first `}` we see as a param-close.
         paramBraceDepth = 0
         pendingStringResumeState = STATE_NORMAL
+        dqInterpParenDepth = 0
+        dqInterpResumeState = STATE_NORMAL
         advance()
     }
 
@@ -409,10 +424,15 @@ class ZshrsLexer : LexerBase() {
         } else if (state == STATE_DQ_ARITH || state == STATE_DQ_CMDSUB) {
             // consumeDollar entered a `$((arith))` / `$(cmd)` sub-lex
             // block — keep its state (the sub-lex handlers know to
-            // flip back to DQ_RESUME on the matching `))` / `)`).
-            // Without this skip, the `state = resume` line below
-            // would overwrite the sub-lex state and the body would
-            // be re-absorbed into STRING_DQ on the next advance().
+            // flip back via dqInterpResumeState on the matching `))` /
+            // `)`). consumeDollar defaulted dqInterpResumeState to
+            // STATE_NORMAL (top-level case); override to the in-DQ
+            // resume state so the close returns into string-content
+            // mode instead of falling out of the surrounding string.
+            // Without this skip + override, the `state = resume` line
+            // below would overwrite the sub-lex state and the body
+            // would be re-absorbed into STRING_DQ on the next advance().
+            dqInterpResumeState = resume
         } else {
             state = resume
         }
@@ -442,7 +462,12 @@ class ZshrsLexer : LexerBase() {
             tokenEnd = pos + 2
             pos = tokenEnd
             tokenType = ZshrsTokenTypes.OPERATOR
-            state = STATE_DQ_RESUME
+            // Resume in-DQ string content if the opener was inside a
+            // `"..."`, otherwise drop back to the top-level dispatcher.
+            // Without picking the right state here, top-level `$((expr))`
+            // (e.g. `j=$(( RANDOM % i + 1 ))`) left the lexer in DQ_RESUME
+            // and the entire rest of the file rendered as STRING_DQ.
+            state = dqInterpResumeState
             return
         }
         // Otherwise run the normal dispatcher once; track depth so
@@ -450,10 +475,15 @@ class ZshrsLexer : LexerBase() {
         // early. Saved/restored entry state so we can return to it.
         val savedState = state
         state = STATE_NORMAL
-        val saveStart = tokenStart
         // Run one normal advance — re-enters this fn via the dispatch
         // at the top of advance() but state is now STATE_NORMAL so the
-        // normal lex path executes.
+        // normal lex path executes. `advance()` sets tokenStart/
+        // tokenEnd to the new token's actual span — DO NOT restore an
+        // older tokenStart after this point or IntelliJ will see the
+        // inner token as starting where the `$((` opener started and
+        // re-color the whole range as STRING. Previous revision saved
+        // and restored tokenStart which broke `$((expr))` syntax
+        // highlighting inside `"..."`.
         advance()
         // Track paren depth on the emitted token (might span multiple
         // chars but only `(` / `)` single-char tokens affect depth).
@@ -465,7 +495,6 @@ class ZshrsLexer : LexerBase() {
         }
         // Stay in arith mode for the next advance().
         state = savedState  // STATE_DQ_ARITH
-        tokenStart = saveStart  // preserve start of emitted token
     }
 
     /// One `advance()` while inside the body of a `$(cmd)` command
@@ -479,13 +508,25 @@ class ZshrsLexer : LexerBase() {
             tokenEnd = pos + 1
             pos = tokenEnd
             tokenType = ZshrsTokenTypes.OPERATOR
-            state = STATE_DQ_RESUME
+            // Resume in-DQ string content if the opener was inside a
+            // `"..."`, otherwise drop back to the top-level dispatcher.
+            // See dqInterpResumeState docs at field declaration —
+            // top-level `x=$(cmd)` was leaving lexer in DQ_RESUME and
+            // the entire rest of the file rendered as STRING_DQ.
+            state = dqInterpResumeState
             dqInterpParenDepth = 0
             return
         }
         val savedState = state
         state = STATE_NORMAL
-        val saveStart = tokenStart
+        // Same caveat as lexInsideDqArith above — do NOT restore
+        // tokenStart after `advance()`; the dispatcher set it to the
+        // new token's actual start. Restoring an older value makes
+        // IntelliJ see the inner identifier/number/operator span as
+        // starting at the `$(` opener and the IDE re-colors the whole
+        // range as STRING, so `$(classify 200)` inside `"..."` had
+        // `classify 200` rendered with string color instead of
+        // command/number colors.
         advance()
         if (tokenEnd == tokenStart + 1) {
             when (buf[tokenStart]) {
@@ -494,7 +535,6 @@ class ZshrsLexer : LexerBase() {
             }
         }
         state = savedState  // STATE_DQ_CMDSUB
-        tokenStart = saveStart
     }
 
     private fun consumeString(quote: Char, tt: IElementType) {
@@ -663,6 +703,31 @@ class ZshrsLexer : LexerBase() {
         // re-absorbed into the next STRING-literal segment, so the
         // arithmetic interior inherited italic-green string color.
         if (nxt == '(') {
+            // Decide where to flip back to after the matching `))` / `)`:
+            // if we ARE already inside a DQ string (state==STATE_NORMAL
+            // here while consumeStringInterpolation -> consumeDollar is in
+            // progress is the case — strykelang/zsh use a sub-lex mode
+            // for that), the wrapper at consumeStringInterpolation will
+            // pin DQ resume regardless. The check below captures the
+            // top-level case: when consumeDollar was called from the
+            // OUTER advance dispatcher (line 155 `c == '$' ->
+            // consumeDollar()`), nothing is wrapping us — the resume
+            // state after close must be STATE_NORMAL, NOT STATE_DQ_RESUME.
+            //
+            // We default to STATE_DQ_RESUME and let consumeStringInterpolation
+            // overwrite for in-DQ; here we just set the default based on
+            // whether we entered from outside a string. The OUTER caller
+            // (consumeStringInterpolation) sees the state we set and
+            // doesn't touch dqInterpResumeState — it owns the in-DQ case
+            // via its `else if (state == STATE_DQ_ARITH || ...)` arm.
+            //
+            // Heuristic: any call that arrived here via the outer
+            // `c == '$' -> consumeDollar()` dispatch is at top level —
+            // there is no surrounding interpolating-string scope so the
+            // post-close resume must be STATE_NORMAL. The in-DQ path
+            // overrides this by assigning STATE_DQ_RESUME below at
+            // [consumeStringInterpolation]'s `else if (state == STATE_DQ_ARITH || …)`.
+            dqInterpResumeState = STATE_NORMAL
             val isArith = p + 1 < endOffset && buf[p + 1] == '('
             if (isArith) {
                 // Emit `$((` as OPERATOR (3 bytes). Next advance()
@@ -919,6 +984,14 @@ class ZshrsLexer : LexerBase() {
             "znotify", "zping", "zprof", "zpty", "zpublish", "zregexparse", "zselect",
             "zsend", "zsetattr", "zsocket", "zsource", "zstat", "zsubscribe", "zsuggest",
             "zsync", "ztag", "ztie", "zunsubscribe", "zuntag", "zuntie", "zwc", "zwhere",
+            // ztest framework (src/extensions/ztest.rs) — shell-level
+            // unit-test builtins. Listed here so the plugin lexer
+            // colors them as Builtin (not Identifier) and they survive
+            // the "unknown command" inspection.
+            "run_tests", "zassert_contains", "zassert_dies", "zassert_eq", "zassert_err",
+            "zassert_false", "zassert_ge", "zassert_gt", "zassert_le", "zassert_lt",
+            "zassert_match", "zassert_ne", "zassert_near", "zassert_ok", "zassert_true",
+            "ztest_run", "ztest_skip",
         )
         // END-CANONICAL: builtins
     }

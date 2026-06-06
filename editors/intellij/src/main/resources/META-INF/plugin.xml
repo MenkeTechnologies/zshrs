@@ -102,6 +102,15 @@
         <!-- Color settings page -->
         <colorSettingsPage implementation="com.menketechnologies.zshrs.ZshrsColorSettingsPage"/>
 
+        <!-- Spell-check strategy: suppress TypoInspection on string /
+             heredoc / comment / shebang tokens. Shell scripts are full
+             of paths, C-function names (`Src/glob.c bracecomplete`,
+             `paramsubst`), banner dividers, and one-letter identifiers
+             that the platform dictionary flags as typos by default. -->
+        <spellchecker.support
+            language="zshrs"
+            implementationClass="com.menketechnologies.zshrs.ZshrsSpellcheckingStrategy"/>
+
         <!-- Commenter (line comment with #) -->
         <lang.commenter language="zshrs" implementationClass="com.menketechnologies.zshrs.ZshrsCommenter"/>
 

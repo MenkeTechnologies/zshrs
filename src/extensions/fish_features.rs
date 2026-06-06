@@ -132,6 +132,15 @@ const BUILTINS: &[&str] = &[
     "fc", "pushd", "popd", "dirs", "pwd", "true", "false", ":", "getopts", "compgen", "complete",
     "compopt", "shopt", "bind", "autoload", "zmodload", "zstyle", "zle", "bindkey", "setopt",
     "unsetopt", "emulate", "whence",
+    // ztest framework (src/extensions/ztest.rs) — shell-level unit
+    // test builtins. Listed here so highlight_shell() colors them as
+    // Command (not Error) at command position. EXT_BUILTIN_NAMES has
+    // the same entries for LSP completion/hover; this hardcoded list
+    // exists because highlight_shell predates EXT_BUILTIN_NAMES.
+    "run_tests", "zassert_contains", "zassert_dies", "zassert_eq", "zassert_err",
+    "zassert_false", "zassert_ge", "zassert_gt", "zassert_le", "zassert_lt",
+    "zassert_match", "zassert_ne", "zassert_near", "zassert_ok", "zassert_true",
+    "ztest_run", "ztest_skip",
 ];
 
 /// Highlight a shell command line
