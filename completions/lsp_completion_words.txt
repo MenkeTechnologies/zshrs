@@ -437,6 +437,7 @@ repeat
 return
 rm
 rmdir
+run_tests
 RMSTARSILENT
 RMSTARWAIT
 $RPROMPT
@@ -519,6 +520,20 @@ while
 $WORDCHARS
 XTRACE
 zask
+zassert_contains
+zassert_dies
+zassert_eq
+zassert_err
+zassert_false
+zassert_ge
+zassert_gt
+zassert_le
+zassert_lt
+zassert_match
+zassert_ne
+zassert_near
+zassert_ok
+zassert_true
 zcache
 zcompdump
 zcompile
@@ -572,6 +587,8 @@ zsync
 zsystem
 ztag
 ztcp
+ztest_run
+ztest_skip
 ztie
 zunsubscribe
 zuntag
