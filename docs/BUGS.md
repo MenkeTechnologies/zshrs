@@ -6921,7 +6921,34 @@ to terminate. Use plain command call:
 
 ## #95 — Signal trap from subshell-internal `kill $$` fires immediately, not after subshell
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — same fix as #450
+(`queue_signals()` across subshell body). Signals delivered
+during subshell execution are queued and drained against the
+parent's trap table after subshell exits, producing the
+deferred-trap ordering zsh exhibits.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'trap "echo [TRAP-FIRED]" USR1; (echo "sub-start"; kill -USR1 $$; echo "sub-mid"; sleep 0.05; echo "sub-end"); echo "main-after"'
+sub-start
+sub-mid
+sub-end
+zsh:1: no matches found: [TRAP-FIRED]
+main-after
+
+$ ./target/debug/zshrs --zsh -fc 'trap "echo [TRAP-FIRED]" USR1; (echo "sub-start"; kill -USR1 $$; echo "sub-mid"; sleep 0.05; echo "sub-end"); echo "main-after"'
+sub-start
+sub-mid
+sub-end
+zsh:1: no matches found: [TRAP-FIRED]
+main-after
+```
+
+Byte-identical ordering with zsh. The `[TRAP-FIRED]` glob error
+is incidental (-fc default nomatch); look at the
+sub-start/sub-mid/sub-end ordering — trap fires AFTER subshell
+end, not interleaved.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'trap "echo [TRAP-FIRED]" USR1; (echo "sub-start"; kill -USR1 $$; echo "sub-mid"; sleep 0.05; echo "sub-end"); echo "main-after"'
