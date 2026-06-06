@@ -1,3 +1,6 @@
+---
+render_with_liquid: false
+---
 # BUGS.md — Demo-surfaced zshrs port gaps
 
 This file logs port gaps and demo-authoring errors uncovered while
