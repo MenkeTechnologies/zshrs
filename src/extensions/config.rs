@@ -17,7 +17,7 @@
 //!
 //! [completion]
 //! max_matches = 1000  # max completion results to display
-//! fts_enabled = true  # use SQLite FTS5 for completion search
+//! fts_enabled = true  # populate the SQLite FTS5 mirror tables (rkyv shards are the authoritative completion cache; this toggle only affects `dbview` / SQL inspection)
 //! ast_cache = true    # pre-parse autoload functions to AST blobs
 //!
 //! [compsys]
@@ -44,7 +44,8 @@ use std::path::{Path, PathBuf};
 /// Top-level config.
 /// zshrs-original — no C counterpart. Each section maps onto a
 /// Rust subsystem that doesn't exist in C zsh (worker pool,
-/// FTS5-backed completion cache, async history writes, parallel
+/// rkyv-mmap'd completion cache with optional SQLite FTS5
+/// mirrors for `dbview`, async history writes, parallel
 /// glob).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]

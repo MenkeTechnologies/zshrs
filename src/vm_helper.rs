@@ -965,7 +965,7 @@ impl ShellExecutor {
                             tracing::info!(
                                 db_bytes = db_size,
                                 path = %cache_path.display(),
-                                "compsys: sqlite cache opened"
+                                "compsys: sqlite mirror opened (dbview/SQL inspection only; rkyv shards are the authoritative cache)"
                             );
                             Some(c)
                         }

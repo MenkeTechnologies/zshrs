@@ -1,10 +1,11 @@
-//! SQLite-backed completion engine for zshrs
+//! SQLite-backed completion engine (legacy / unused).
 //!
-//! Features:
-//! - FTS5 full-text search for instant fuzzy matching
-//! - Frequency tracking from command history
-//! - Persistent index survives shell restarts
-//! - Sub-millisecond queries on 40k+ completions
+//! Vestigial. The live completion hot path is the rkyv-mmap'd shard
+//! set (see `src/extensions/autoload_cache.rs` and `src/compsys/`);
+//! this module's `CompletionEngine` has zero callers. Kept only so
+//! removing it stays a deliberate cleanup commit rather than silent
+//! drift. Treat the rest of this file as a historical artifact &mdash;
+//! it does not back any completion behavior in the running shell.
 
 use rusqlite::{params, Connection};
 use std::path::PathBuf;

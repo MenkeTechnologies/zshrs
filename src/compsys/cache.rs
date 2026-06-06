@@ -1,7 +1,17 @@
-//! SQLite-backed cache for compsys
+//! SQLite mirror tables for compsys.
 //!
-//! MAXIMUM SPEED OPTIMIZATIONS:
-//! - FTS5 for prefix search (O(1) vs O(n) LIKE)
+//! NOT the completion cache. The authoritative completion / autoload
+//! cache is the rkyv-mmap'd shard set at `~/.cache/zshrs/*.rkyv`
+//! (zero-copy hot path; see `src/extensions/autoload_cache.rs` and
+//! `src/compsys/README.md`). This SQLite file is a read-only mirror
+//! hydrated alongside the shards for `dbview` / SQL inspection only
+//! &mdash; the Tab cache hit/miss path never opens this connection.
+//!
+//! Mirror-side optimizations (still in place because `dbview` queries
+//! benefit from them):
+//! - FTS5 vtables sit beside the flat mirror tables for ad-hoc SQL
+//!   prefix search from `dbview`; not consulted by the completion hot
+//!   path
 //! - WAL mode for concurrent reads
 //! - Memory-mapped I/O (mmap)
 //! - No JOINs, no GROUP BY, no subqueries

@@ -490,7 +490,7 @@
         <thead><tr><th>Module</th><th class="num">Lines</th><th>Description</th></tr></thead>
         <tbody>
           <tr><td>menu.rs</td><td class="num">3,567</td><td>Menu completion: selection UI, scrolling, columns, groups, colors, accept/reject</td></tr>
-          <tr><td>cache.rs</td><td class="num">1,859</td><td>SQLite-backed completion cache: autoload paths, compiled function index, invalidation</td></tr>
+          <tr><td>cache.rs</td><td class="num">1,859</td><td>SQLite mirror tables for compsys: autoload paths, compiled function index, invalidation. Mirror only &mdash; the authoritative completion cache is the rkyv-mmap'd shard set (zero-copy hot path); this file backs <code>dbview</code> / SQL inspection.</td></tr>
           <tr><td>functions.rs</td><td class="num">1,244</td><td>Completion function loading, autoload, function resolution from fpath</td></tr>
           <tr><td>base.rs</td><td class="num">1,177</td><td>Core completion types, match data, completion context, prefix/suffix handling</td></tr>
           <tr><td>main.rs</td><td class="num">1,077</td><td>Entry point, CLI, completion request dispatching</td></tr>
