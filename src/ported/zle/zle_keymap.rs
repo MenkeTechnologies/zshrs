@@ -2368,13 +2368,35 @@ pub fn default_bindings() {
     linkkeymap(Arc::new(vismap), "visual", 0); // c:1453
     linkkeymap(Arc::new(smap), ".safe", 1); // c:1454 — KM_IMMUTABLE
 
-    // c:1455-1458 — `if (isset(VIMODE)) linkkeymap(vmap, "main", 0);
-    //                else linkkeymap(emap, "main", 0);`
-    let main_src = if crate::ported::zsh_h::isset(crate::ported::zsh_h::VIMODE) {
-        "viins"
+    // c:Src/Zle/zle_keymap.c pre-2023-10-26 `default_bindings`
+    // (zsh 5.9 + 5.9.1 still ship this; commit f36fccbb removed
+    // it in zsh master, deferring main selection to sample
+    // .zshrc code). The check the homebrew/stable zsh binary
+    // performs is:
+    //
+    //     if (((ed = zgetenv("VISUAL")) && strstr(ed, "vi")) ||
+    //         ((ed = zgetenv("EDITOR")) && strstr(ed, "vi")))
+    //         linkkeymap(vmap, "main", 0);
+    //     else
+    //         linkkeymap(emap, "main", 0);
+    //
+    // VIMODE option still overrides (post-removal master also
+    // honors `isset(VIMODE)` if the user explicitly sets it).
+    // The check is `strstr(ed, "vi")` — substring match anywhere
+    // in the env-var value. So `EDITOR=nvim`, `vim`, `vi` all
+    // pick viins; `emacs`, `nano`, unset all pick emacs.
+    let pick_vi = if crate::ported::zsh_h::isset(crate::ported::zsh_h::VIMODE) {
+        true
     } else {
-        "emacs"
+        let visual_has_vi = std::env::var("VISUAL")
+            .map(|v| v.contains("vi"))
+            .unwrap_or(false);
+        let editor_has_vi = std::env::var("EDITOR")
+            .map(|v| v.contains("vi"))
+            .unwrap_or(false);
+        visual_has_vi || editor_has_vi
     };
+    let main_src = if pick_vi { "viins" } else { "emacs" };
     if let Some(km) = openkeymap(main_src) {
         linkkeymap(km, "main", 0);
     }

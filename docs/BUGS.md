@@ -6004,7 +6004,12 @@ recent=("${log_lines[-100,-1]}")           # both shells: last 100
 
 ## #84 — Default `bindkey -L` outputs 117 individual entries vs zsh's 31 ranged entries
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — same fix as #380. Default
+`main` keymap selection now honors `$EDITOR` / `$VISUAL` per
+zsh's pre-Oct-2023 `default_bindings` body. Under `EDITOR=nvim`
+both shells emit 31 entries from `viins`.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'bindkey -L | wc -l'
@@ -16078,7 +16083,12 @@ typeset -f f | sed 's/; /\n\t/g'
 
 ## #198 — `bindkey -L` output format diverges entirely from zsh
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — same fix as #380. Both shells
+now agree byte-for-byte. The format machinery
+(`scanbindlist`) was always correct; the divergence came from
+zshrs's hard-coded `main → emacs` link.
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'bindkey -L | head -1'
@@ -31664,37 +31674,40 @@ Also breaks bindkey introspection scripts that audit
 
 ## #380 — `bindkey` default-keymap output divergence — 31 vs 117 entries
 
-**Status:** `design-divergence` 2026-06-05 — zshrs's default
-`main` keymap links to `emacs` unconditionally; zsh's default
-selection consults `$EDITOR` (and other init-time env hints not
-visible in the public source) so `main` may resolve to `viins`
-when `EDITOR=*vi*`. Under `EDITOR=nvim` (common modern shell
-env), zsh -fc shows `bindkey -A viins main` and emits ~31
-entries from the minimal vi-insert default keymap; zshrs -fc
-shows `bindkey -A emacs main` and emits ~117 entries from the
-fuller emacs keymap.
+**Status:** `fixed` 2026-06-05 — `default_bindings`
+(`src/ported/zle/zle_keymap.rs:2371`) ported from zsh's
+pre-2023-10-26 `default_bindings` body (still ships in stable
+zsh 5.9 + 5.9.1; commit f36fccbb removed it in zsh master).
 
-The bindkey emit machinery itself is byte-correct (scanbindlist
-at `src/ported/zle/zle_keymap.rs:1751` coalesces contiguous
-same-binding ranges into `-R`/`-A` forms); the count delta is
-entirely from the keymap-content delta, not from a formatter
-gap. Cross-shell diff of `bindkey` output isn't meaningful
-when the *default keymap differs*.
-
-The same divergence shows in #84, #198, #569 — all stem from
-zshrs's hard-coded emacs default.
-
-```
-$ env -i HOME=$HOME PATH=/usr/bin EDITOR=nvim /opt/homebrew/bin/zsh -fc 'bindkey -lL main'
-bindkey -A viins main
-$ env -i HOME=$HOME PATH=/usr/bin                /opt/homebrew/bin/zsh -fc 'bindkey -lL main'
-bindkey -A emacs main
-$ ./target/debug/zshrs --zsh -fc 'bindkey -lL main'
-bindkey -A emacs main
+```c
+if (((ed = zgetenv("VISUAL")) && strstr(ed, "vi")) ||
+    ((ed = zgetenv("EDITOR")) && strstr(ed, "vi")))
+    linkkeymap(vmap, "main", 0);
+else
+    linkkeymap(emap, "main", 0);
 ```
 
-Workaround: explicit `bindkey -v` / `bindkey -e` at the top of
-your `.zshrc` — both shells then agree.
+`isset(VIMODE)` still overrides (post-removal master also
+honors that). `strstr(ed, "vi")` is a substring match, so
+`EDITOR=nvim`, `vim`, `vi` all pick `viins`; `emacs`, `nano`,
+or unset all pick `emacs`.
+
+```
+$ /opt/homebrew/bin/zsh -fc 'bindkey | wc -l'
+      31
+$ ./target/debug/zshrs --zsh -fc 'bindkey | wc -l'
+      31
+$ EDITOR=emacs /opt/homebrew/bin/zsh -fc 'bindkey | wc -l'
+     117
+$ EDITOR=emacs ./target/debug/zshrs --zsh -fc 'bindkey | wc -l'
+     117
+```
+
+Byte-identical counts under every `EDITOR=*` permutation tested
+(unset, `vi`, `vim`, `nvim`, `emacs`, etc.). Resolves #84,
+#198, #569 simultaneously.
+
+### Original report
 
 ### Original report
 
@@ -45787,7 +45800,15 @@ length.
 
 ## #569 — `bindkey` no-args listing omits range-compaction; emits each key on its own line
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-05 — same fix as #380. Both shells
+emit identical range-compacted output now that zshrs respects
+`$EDITOR`/`$VISUAL` for `main` keymap selection. Range
+compaction was always functional in `scanbindlist`; the bug was
+the keymap content (emacs has fewer contiguous-same-bind runs
+to compact than viins, so emacs-default-zshrs's output looked
+expansive next to vi-default-zsh).
+
+### Original report
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'bindkey 2>&1 | head -6'
