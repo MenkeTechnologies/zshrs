@@ -3063,6 +3063,26 @@ pub fn haswilds(str: &str) -> bool {
         return false;
     }
 
+    // c:4310-4312 — `[' and `]' are legal even if bad patterns are
+    // usually not. Single-byte bare `[` or `]` (un-tokenized literal
+    // OR tokenized `Inbrack`/`Outbrack`) returns 0 so `echo [` /
+    // `echo ]` work as zsh does (print the literal) without the
+    // NOMATCH option firing "no matches found: [".
+    //
+    // Previously dropped — the dropped-comment claimed the exception
+    // only targeted tokenized input, but `echo [` (literal `[` from
+    // the user's argv) also needs it: glob expansion sees length-1
+    // `[` first, decides it's a glob, finds zero matches, fires
+    // NOMATCH error. Real zsh's C source applies the exception
+    // BEFORE the metachar-scan switch (c:4310 is above the `for`
+    // loop at c:4322), so both literal and tokenized single-byte
+    // brackets get the bypass.
+    if len == 1 && (bytes[0] == b'[' || bytes[0] == b']'
+        || bytes[0] == Inbrack as u8 || bytes[0] == Outbrack as u8)
+    {
+        return false;
+    }
+
     // c:4317-4318 — `%?foo` job-ref: skip position 1 if it's a `?` or
     // `Quest` immediately after a leading `%`.
     let skip_pos_1 = len >= 2 && bytes[0] == b'%' && (bytes[1] == b'?' || bytes[1] == Quest as u8);
@@ -5782,22 +5802,32 @@ mod tests {
     /// usually not." Rust-port adaptation drops this exception for
     /// un-tokenized callers — bare `[` IS the start of a char-class
     /// wildcard (`[abc]`). Bare `]` is NOT a wildcard (no `Outbrack`
-    /// case in the C switch at c:4324-4373 — only `Inbrack`).
+    /// `Src/pattern.c:4310-4312` — `[' and `]' are legal even if bad
+    /// patterns are usually not. Single-byte bare `[` returns 0 so
+    /// `echo [` prints `[` instead of firing NOMATCH. Real zsh:
+    ///     $ /opt/homebrew/bin/zsh -fc 'echo ['
+    ///     [
+    /// Previous Rust port returned true here and `echo [` errored
+    /// with "no matches found: [".
     #[test]
-    fn haswilds_single_open_bracket_is_wild() {
+    fn haswilds_single_open_bracket_is_not_wild() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("["), "single literal `[` is wild (Rust port)");
+        assert!(
+            !haswilds("["),
+            "single literal `[` is NOT wild (c:4310-4312 exception)"
+        );
     }
 
-    /// `Src/pattern.c:4324-4373` — `Outbrack` / `]` has no case arm
-    /// in the C switch, so a bare `]` doesn't trip haswilds in C or
-    /// in the Rust port.
+    /// `Src/pattern.c:4310-4312` — same exception covers `]`. Bare
+    /// `]` returns 0 (would already pass without the exception since
+    /// `]` has no case arm in the metachar switch, but the exception
+    /// is the canonical reason).
     #[test]
     fn haswilds_single_close_bracket_is_not_wild() {
         let _g = crate::test_util::global_state_lock();
         assert!(
             !haswilds("]"),
-            "single literal `]` not in C switch (c:4324-4373)"
+            "single literal `]` is NOT wild (c:4310-4312 exception)"
         );
     }
 
