@@ -3856,12 +3856,23 @@ impl ZshCompiler {
                 let key_is_slice_or_idx_flag =
                     key.starts_with("(I)") || key.starts_with("(R)") || key.starts_with("(K)")
                         || (key.contains(',') && !key.starts_with('('));
-                if flags.contains('@')
-                    && flags
-                        .chars()
-                        .any(|c| matches!(c, 'o' | 'O' | 'n' | 'i' | 'u'))
-                    && key_is_slice_or_idx_flag
-                {
+                // c:Src/subst.c — single paramsubst call for the whole
+                // `${(flags)NAME[KEY]}` form is the C-faithful path:
+                // flag parsing, subscript flag dispatch (`getarg`), and
+                // sort/unique post-processing happen in one function
+                // with shared isarr/aval state. The split path
+                // (BUILTIN_ARRAY_INDEX → BUILTIN_PARAM_FLAG) collapses
+                // the array shape between the two builtins, which
+                // breaks `${(on)H[(I)pat]}` on empty H — the inner
+                // resolves to "" (scalar), the outer (on) sees a
+                // 1-element-empty array. Route through
+                // BUILTIN_BRIDGE_BRACE_ARRAY whenever the subscript is
+                // flag-form `(I)`/`(R)`/`(K)` AND outer carries a
+                // shape-affecting flag (`@`, `o`/`O`/`n`/`i`/`u`).
+                let has_shape_flag = flags
+                    .chars()
+                    .any(|c| matches!(c, '@' | 'o' | 'O' | 'n' | 'i' | 'u'));
+                if has_shape_flag && key_is_slice_or_idx_flag {
                     if let Some(inner) =
                         untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                     {

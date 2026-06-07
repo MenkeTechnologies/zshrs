@@ -4536,9 +4536,48 @@ pub fn untokenize(s: &str) -> String {
                 c if c == Comma => result.push(','),
                 c if c == Dash => result.push('-'),
                 c if c == Bang => result.push('!'),
-                c if c == Snull || c == Dnull || c == Bnull => {
-                    // Null markers - skip
+                c if c == Snull || c == Dnull => {
+                    // c:Src/exec.c:2077 + Src/lex.c:38 ztokens — C
+                    // maps Snull → `'` / Dnull → `"` because C's
+                    // untokenize fires on user-facing text (xtrace
+                    // output, error messages, command lookups). The
+                    // quote chars belong in that output.
+                    //
+                    // zshrs splits the responsibility across TWO
+                    // functions to match the Rust pipeline's call
+                    // shape:
+                    //   - `untokenize` (THIS function) — strips
+                    //     Snull / Dnull because it's invoked on the
+                    //     SUBSTITUTION STREAM (subst.rs:4438 rest-
+                    //     walker, multsub paths, etc.) where the
+                    //     lex's quote-pair markers must NOT reappear
+                    //     as literal `'`/`"` in the value text.
+                    //   - `untokenize_preserve_quotes` (lex.rs:4179)
+                    //     — maps Snull → `'`, Dnull → `"`, Bnull →
+                    //     `\` per C's ztokens table exactly. Used
+                    //     for assoc-key lookup (where keys can
+                    //     contain literal `'`/`"`), xtrace, error
+                    //     reporting.
+                    //
+                    // The split is deliberate, not a partial port.
+                    // Calling a value-stream caller through
+                    // `untokenize_preserve_quotes` would leak stray
+                    // quote chars into stored values; calling a
+                    // print-side caller through `untokenize` would
+                    // drop quote chars from the displayed text.
+                    // Each call site picks the variant that matches
+                    // its semantic contract.
                 }
+                // c:Src/exec.c:2077-2099 + Src/lex.c:38 ztokens —
+                // `ztokens[Bnull - Pound]` (index 27) = `\` literal.
+                // C maps Bnull → `\` so downstream patcompile sees the
+                // escape. The previous Rust port STRIPPED Bnull, which
+                // collapsed `[\\]` / `[\{]` / `[\}]` patterns to
+                // `[\]` / `[{]` / `[}]` before patcompile (subst.rs
+                // `${msg//PAT/REPL}` path) and tripped "bad pattern".
+                // Surfacing site: zinit zi-log message formatter
+                // (zinit.zsh:2191).
+                c if c == Bnull => result.push('\\'), // c:Src/lex.c:38
                 // c:2089 — `if (c != Nularg) *p++ = ztokens[c - Pound];`
                 // Nularg gets dropped (no replacement char emitted).
                 c if c == Nularg => {

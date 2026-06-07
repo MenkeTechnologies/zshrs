@@ -5955,6 +5955,123 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // the metacharacter checks see the canonical
                         // form. zsh's pattern.c expects `*` etc. as
                         // bare chars at the glob layer.
+                        // c:Src/pattern.c:4306 haswilds — token-only
+                        // gate matching C verbatim. C's haswilds checks
+                        // ONLY the META-TOKEN codes (Inpar `\u{88}`,
+                        // Bar `\u{89}`, Star `\u{87}`, Inbrack `\u{91}`,
+                        // Inang `\u{94}`, Quest `\u{86}`, Pound `\u{84}`
+                        // /EXTENDEDGLOB, Hat `\u{8a}`/EXTENDEDGLOB),
+                        // never their literal ASCII counterparts. The
+                        // lexer tokenizes source-level `[abc]` →
+                        // Inbrack/Outbrack, source-level `*.toml` → Star
+                        // — those reach haswilds with tokens and fire.
+                        // Bare literal `[`/`*`/`?` from `$'...'` decode,
+                        // `:-` default values, or variable expansion
+                        // never get shtokenize'd (C subst.c:3231 sets
+                        // globsubst=0 in the `:-` arm) so haswilds
+                        // skips them. Bug #625: `${${X}:-$'\e[hi]'}`
+                        // returned bare literal `[hi]` from the nested
+                        // paramsubst; the previous post-untokenize
+                        // haswilds saw literal `[` and globbed → NOMATCH
+                        // fired. The TOKEN-only check has to happen
+                        // PRE-untokenize so source-level Star tokens
+                        // (`*.toml`) survive while substituted bare
+                        // glob chars stay literal.
+                        let is_glob_pre = if noglob {
+                            false
+                        } else {
+                            use crate::ported::zsh_h::{
+                                isset, Bar, Bang, EXTENDEDGLOB, Hat, Inang, Inbrack, Inpar,
+                                KSHGLOB, Outbrack, Pound, Quest, SHGLOB, Star,
+                            };
+                            // c:Src/pattern.c:4310-4312 — single-byte
+                            // bare Inbrack/Outbrack is legal pattern.
+                            let bytes = s.as_bytes();
+                            let len = bytes.len();
+                            let single_bracket = len == 1
+                                && (bytes[0] == Inbrack as u8 || bytes[0] == Outbrack as u8);
+                            // c:4317-4318 — `%?foo` job-ref skip.
+                            let skip_pos_1 = len >= 2
+                                && bytes[0] == b'%'
+                                && bytes[1] == Quest as u8;
+                            let mut found = false;
+                            if !single_bracket {
+                                let disp = crate::ported::pattern::zpc_disables
+                                    .lock()
+                                    .unwrap();
+                                for i in 0..len {
+                                    if skip_pos_1 && i == 1 {
+                                        continue;
+                                    }
+                                    let b = bytes[i];
+                                    // c:4326-4335 Inpar — KSHGLOB
+                                    // prev-char gating mirrors C.
+                                    if b == Inpar as u8 {
+                                        let prev = if i > 0 { bytes[i - 1] } else { 0 };
+                                        if (!isset(SHGLOB)
+                                            && disp[crate::ported::zsh_h::ZPC_INPAR as usize] == 0)
+                                            || (i > 0
+                                                && isset(KSHGLOB)
+                                                && ((prev == Quest as u8
+                                                    && disp[crate::ported::zsh_h::ZPC_KSH_QUEST as usize] == 0)
+                                                    || (prev == Star as u8
+                                                        && disp[crate::ported::zsh_h::ZPC_KSH_STAR as usize] == 0)
+                                                    || (prev == b'+'
+                                                        && disp[crate::ported::zsh_h::ZPC_KSH_PLUS as usize] == 0)
+                                                    || (prev == Bang as u8
+                                                        && disp[crate::ported::zsh_h::ZPC_KSH_BANG as usize] == 0)
+                                                    || (prev == b'!'
+                                                        && disp[crate::ported::zsh_h::ZPC_KSH_BANG2 as usize] == 0)
+                                                    || (prev == b'@'
+                                                        && disp[crate::ported::zsh_h::ZPC_KSH_AT as usize] == 0)))
+                                        {
+                                            found = true;
+                                            break;
+                                        }
+                                    } else if b == Bar as u8 {
+                                        if disp[crate::ported::zsh_h::ZPC_BAR as usize] == 0 {
+                                            found = true;
+                                            break;
+                                        }
+                                    } else if b == Star as u8 {
+                                        if disp[crate::ported::zsh_h::ZPC_STAR as usize] == 0 {
+                                            found = true;
+                                            break;
+                                        }
+                                    } else if b == Inbrack as u8 {
+                                        if disp[crate::ported::zsh_h::ZPC_INBRACK as usize] == 0 {
+                                            found = true;
+                                            break;
+                                        }
+                                    } else if b == Inang as u8 {
+                                        if disp[crate::ported::zsh_h::ZPC_INANG as usize] == 0 {
+                                            found = true;
+                                            break;
+                                        }
+                                    } else if b == Quest as u8 {
+                                        if disp[crate::ported::zsh_h::ZPC_QUEST as usize] == 0 {
+                                            found = true;
+                                            break;
+                                        }
+                                    } else if b == Pound as u8 {
+                                        if isset(EXTENDEDGLOB)
+                                            && disp[crate::ported::zsh_h::ZPC_HASH as usize] == 0
+                                        {
+                                            found = true;
+                                            break;
+                                        }
+                                    } else if b == Hat as u8 {
+                                        if isset(EXTENDEDGLOB)
+                                            && disp[crate::ported::zsh_h::ZPC_HAT as usize] == 0
+                                        {
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            found
+                        };
                         let s = crate::lex::untokenize(&s);
                         // Skip glob expansion for assignment-shaped
                         // words (`NAME=value`). zsh doesn't expand the
@@ -5980,24 +6097,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 false
                             }
                         };
-                        // Glob-trigger decision: delegate to the
-                        // canonical `pattern::haswilds` (port of
-                        // `Src/pattern.c:4306-4376`). This is exactly
-                        // what `Src/glob.c:1230 zglob` calls before
-                        // running `glob_path`. `haswilds` already
-                        // covers every meta the inlined trigger list
-                        // previously enumerated — `*`, `?`, `[`, `(`
-                        // (alternation + qualifier suffix), `<` (numeric
-                        // range), and `^`/`#` under EXTENDEDGLOB —
-                        // and matches C verbatim. Replaces 40 lines of
-                        // duplicated trigger logic that drifted from
-                        // canonical (incorrectly triggered on `~`,
-                        // missed `#`/Pound under EXTENDEDGLOB; #89/#117
-                        // in docs/BUGS.md).
-                        if !noglob
-                            && !is_assignment_shape
-                            && crate::ported::pattern::haswilds(&s)
-                        {
+                        // Glob-trigger decision: pre-untokenize
+                        // haswilds_tokens_only result (computed above
+                        // before the untokenize that collapses META
+                        // tokens to their ASCII forms). The TOKEN-only
+                        // gate matches C `Src/pattern.c:4306-4376`
+                        // exactly — only Inbrack/Star/Quest/Inpar/Bar/
+                        // Inang/Pound/Hat token codes count as wild,
+                        // not their literal ASCII counterparts. Source-
+                        // level `*.toml` carries Star token so globs;
+                        // `$'…'`-decoded `[abc]` carries bare `[` so
+                        // stays literal. Bug #625.
+                        if is_glob_pre && !is_assignment_shape {
                             exec.expand_glob(&s)
                         } else {
                             vec![s]

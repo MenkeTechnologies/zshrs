@@ -19,6 +19,64 @@ CI green pending the underlying fix.
 
 ---
 
+## #625 — `${${X}:-$'\e[hi]'}` nested-subst loses `$'...'` glob-protection — NOMATCH on literal `[`
+
+**Status:** `fixed` 2026-06-06
+
+**Reproducer (pre-fix):**
+```
+$ ./zshrs --zsh -c 'setopt nomatch; echo ${${X}:-$'\''\e[hi]'\''}'
+zsh:1: no matches found: [hi]   ← BUG: NOMATCH on `[hi]`
+
+$ ./zshrs --zsh -c 'setopt nomatch; echo ${X:-$'\''\e[hi]'\''}'
+[hi]                            ← single-level worked
+
+$ /opt/homebrew/bin/zsh -fc 'setopt nomatch; echo ${${X}:-$'\''\e[hi]'\''}'
+[hi]                            ← real zsh works on the nested form
+```
+
+After fix: both `--zsh -c` forms emit `[hi]` literally, matching real zsh.
+
+**Surfaced via:** `zinit.zsh:251` — the `col-↔` array key uses
+```
+${${${(M)LANG:#*UTF-8*}:+$'\e[38;5;82m↔\e[0m'}:-$'\e[38;5;82m«-»\e[0m'}
+```
+to pick a UTF-8 emoji vs an ASCII `«-»` fallback. With LANG=foo the
+default fires, the `[38;5;82m` substring reaches glob expansion, and
+NOMATCH errors with the literal `[`. Sourcing zinit aborted in the
+top-level array initializer.
+
+**Root cause:** code-path divergence between single-level and nested
+forms, not a substitution bug:
+
+- Single-level `${X:-$'\e[hi]'}` matched `parse_param_modifier`
+  (compile_zsh.rs:7714) → emitted `BUILTIN_PARAM_DEFAULT_FAMILY` →
+  result returned as `Value::Str` directly to argv, never re-globbed.
+- Nested `${${X}:-…}` failed `parse_param_modifier` (inner `${…}`
+  in the name slot) → fell through to `BUILTIN_EXPAND_TEXT` mode 0
+  → `multsub` → post-paramsubst value `\x1b[hi]` (literal `[`, no
+  Inbrack token, matching C `globsubst=0`'s no-`shtokenize` flow
+  per Src/subst.c:3231) → bridge default arm at fusevm_bridge.rs:5829
+  called `untokenize` then `haswilds` → `haswilds` triggered on bare
+  ASCII `[` → `expand_glob` → NOMATCH fired.
+
+C zsh's `haswilds` (Src/pattern.c:4306) checks ONLY TOKEN codes
+(Inbrack, Star, Quest, Inpar, Bar, Inang, Pound/EXTENDEDGLOB,
+Hat/EXTENDEDGLOB) — never their literal ASCII counterparts. zshrs's
+`haswilds` (src/ported/pattern.rs:3058) added bare-ASCII checks for
+call sites that ran post-untokenize, which double-triggered here.
+
+**Fix:** replace the post-untokenize `haswilds` call in
+fusevm_bridge.rs's BUILTIN_EXPAND_TEXT default mode with an inline
+TOKEN-only check (C-faithful port of pattern.c:4306-4374) on the
+PRE-untokenize string. Source-level `*.toml` carries Star token →
+globs; substituted bare `[hi]`/`*.toml` from `$'...'`/`:-`-default/
+variable expansion carries literal chars → skips glob. The
+post-haswilds `untokenize` step still runs, so the final argv value
+never has stray TOKEN bytes.
+
+---
+
 ## #1 — `${(j:: :)arr}` empty-then-space joiner
 
 **Status:** `demo-error` (real zsh also rejects)

@@ -1100,17 +1100,24 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
 /// Port of `patgetglobflags(char **strp, long *assertp, int *ignore)` from `Src/pattern.c:1037`.
 ///
 /// C signature: `int patgetglobflags(char **strp, long *assertp,
-/// int *ignore)`. Parses the `(#...)` glob-flag specifier and writes
-/// the resulting bit-flag set + `assertp` value via the returned
-/// tuple — the global `patglobflags` AtomicI32 is the canonical
-/// store and is updated in place (matching C's direct global
-/// writes at pattern.c:1066, :1071, :1076, etc.).
+/// int *ignore)`. C reads/writes the file-static `patglobflags`
+/// directly via `|=` / `&=` at each switch arm (c:1064, 1070, 1075,
+/// 1080, 1085, 1090, 1095, 1100, 1112, 1116). The hoist loop in
+/// patcompile at c:582 / c:636 snapshots `patglobflags` into the
+/// compiled `Patprog`'s `globflags` and `globend` fields, so the
+/// per-arm writes are the canonical store — the return value is
+/// only the success/fail signal (1 / 0).
+///
+/// The Rust port stores `patglobflags` in an AtomicI32 and mirrors
+/// every C write through `fetch_or` / `fetch_and` ops so the same
+/// snapshot at c:636 works. The return tuple `(flag_bits, assertp,
+/// consumed)` is kept as an adapter for the patcompile hoist loop
+/// (pattern.rs:589) which used it to accumulate `hoisted_globflags`
+/// — those callers see the same bits via the atomic now, but
+/// changing the return shape is a wider refactor.
 ///
 /// Returns `Some((flag_bits, assertp_val, consumed_bytes))` on
 /// success (C returns 1), or `None` on parse failure (C returns 0).
-/// `flag_bits` is the OR of `GF_*` constants currently set;
-/// `assertp_val` is `P_ISSTART` / `P_ISEND` / 0; `consumed_bytes`
-/// counts bytes consumed including the closing `)`.
 pub fn patgetglobflags(s: &str) -> Option<(i32, i64, usize)> {
     // c:1037
     let bytes = s.as_bytes();
@@ -1118,77 +1125,90 @@ pub fn patgetglobflags(s: &str) -> Option<(i32, i64, usize)> {
         return None;
     }
     let mut i = 2;
+    // `bits` tracks what this call set so the caller can OR into
+    // `hoisted_globflags` (the patcompile-side accumulator). The
+    // canonical store is `patglobflags` (updated below per C arm).
     let mut bits: i32 = 0;
     let mut assertp: i64 = 0;
 
     while i < bytes.len() && bytes[i] != b')' {
         match bytes[i] {
-            // c:1051
-            // c:1075 — `'i'`: full case-insensitive, clears LCMATCHUC.
+            // c:1073-1076 `'i'`: `patglobflags = (patglobflags &
+            // ~GF_LCMATCHUC) | GF_IGNCASE`.
             b'i' => {
+                patglobflags.fetch_and(!GF_LCMATCHUC, Ordering::Relaxed);
+                patglobflags.fetch_or(GF_IGNCASE, Ordering::Relaxed);
                 bits |= GF_IGNCASE;
                 bits &= !GF_LCMATCHUC;
                 i += 1;
-            }
-            // c:1080-1081 — `'I'` clears BOTH GF_LCMATCHUC AND
-            // GF_IGNCASE: `patglobflags &= ~(GF_LCMATCHUC|GF_IGNCASE)`.
-            // The previous Rust port only cleared GF_IGNCASE,
-            // leaving GF_LCMATCHUC stuck on under `(#l)(#I)`.
+            } // c:1075
+            // c:1078-1081 — `'I'`: `patglobflags &= ~(GF_LCMATCHUC|GF_IGNCASE)`.
             b'I' => {
+                patglobflags.fetch_and(!(GF_LCMATCHUC | GF_IGNCASE), Ordering::Relaxed);
                 bits &= !(GF_LCMATCHUC | GF_IGNCASE);
                 i += 1;
-            } // c:1080-1081
-            // c:1070 — `'l'`: lowercase-in-pattern matches upper-too,
-            // clears GF_IGNCASE.
+            } // c:1080
+            // c:1068-1071 — `'l'`: `patglobflags = (patglobflags &
+            // ~GF_IGNCASE) | GF_LCMATCHUC`.
             b'l' => {
+                patglobflags.fetch_and(!GF_IGNCASE, Ordering::Relaxed);
+                patglobflags.fetch_or(GF_LCMATCHUC, Ordering::Relaxed);
                 bits |= GF_LCMATCHUC;
                 bits &= !GF_IGNCASE;
                 i += 1;
-            }
-            // c: `'L'` is NOT a documented C flag — C returns 0 from
-            // the default arm. The previous Rust port accepted `'L'`
-            // and silently cleared GF_LCMATCHUC, diverging from C's
-            // reject behavior. Remove the spurious arm so unknown
-            // flags fall through to the default `_ => return None`.
+            } // c:1070
+            // c:1083-1086 — `'b'`: `patglobflags |= GF_BACKREF`.
             b'b' => {
+                patglobflags.fetch_or(GF_BACKREF, Ordering::Relaxed);
                 bits |= GF_BACKREF;
                 i += 1;
             } // c:1085
+            // c:1088-1091 — `'B'`: `patglobflags &= ~GF_BACKREF`.
             b'B' => {
+                patglobflags.fetch_and(!GF_BACKREF, Ordering::Relaxed);
                 bits &= !GF_BACKREF;
                 i += 1;
             } // c:1090
+            // c:1093-1096 — `'m'`: `patglobflags |= GF_MATCHREF`.
             b'm' => {
+                patglobflags.fetch_or(GF_MATCHREF, Ordering::Relaxed);
                 bits |= GF_MATCHREF;
                 i += 1;
             } // c:1095
+            // c:1098-1101 — `'M'`: `patglobflags &= ~GF_MATCHREF`.
             b'M' => {
+                patglobflags.fetch_and(!GF_MATCHREF, Ordering::Relaxed);
                 bits &= !GF_MATCHREF;
                 i += 1;
             } // c:1100
+            // c:1103-1105 — `'s'`: sets `*assertp = P_ISSTART`,
+            // doesn't touch patglobflags.
             b's' => {
                 assertp = P_ISSTART as i64;
                 i += 1;
-            } // c:1105
+            } // c:1104
+            // c:1107-1109 — `'e'`: sets `*assertp = P_ISEND`.
             b'e' => {
                 assertp = P_ISEND as i64;
                 i += 1;
-            } // c:1110
+            } // c:1108
+            // c:1111-1113 — `'u'`: `patglobflags |= GF_MULTIBYTE`.
             b'u' => {
+                patglobflags.fetch_or(GF_MULTIBYTE, Ordering::Relaxed);
                 bits |= GF_MULTIBYTE;
                 i += 1;
-            } // c:1113
+            } // c:1112
+            // c:1115-1117 — `'U'`: `patglobflags &= ~GF_MULTIBYTE`.
             b'U' => {
+                patglobflags.fetch_and(!GF_MULTIBYTE, Ordering::Relaxed);
                 bits &= !GF_MULTIBYTE;
                 i += 1;
             } // c:1116
+            // c:1054-1066 — `'a'`: approximate-match error count.
+            // `ret = zstrtol(++ptr, &nptr, 10);` then
+            // `patglobflags = (patglobflags & ~0xff) | (ret & 0xff)`.
             b'a' => {
-                // c:1056 approximate
                 i += 1;
-                // c:1057 — `ret = zstrtol(++ptr, &nptr, 10);` — C
-                // explicitly checks `ptr == nptr` (no digits
-                // consumed) as an error per c:1063 (`ptr == nptr`
-                // condition). Pin this so empty `(#a)` is rejected.
                 let digit_start = i;
                 let mut errs: i32 = 0;
                 while i < bytes.len() && bytes[i].is_ascii_digit() {
@@ -1196,27 +1216,34 @@ pub fn patgetglobflags(s: &str) -> Option<(i32, i64, usize)> {
                     i += 1;
                 }
                 if i == digit_start {
-                    // c:1063 ptr == nptr
+                    // c:1062 `ptr == nptr` — no digits consumed.
                     return None;
                 }
                 if errs < 0 || errs > 254 {
-                    return None;
-                } // c:1064
-                bits = (bits & !0xff) | (errs & 0xff); // c:1066
+                    return None; // c:1062
+                }
+                // c:1064 — `patglobflags = (patglobflags & ~0xff) | (ret & 0xff)`.
+                let mask: i32 = !0xff;
+                let cur = patglobflags.load(Ordering::Relaxed);
+                patglobflags.store((cur & mask) | (errs & 0xff), Ordering::Relaxed);
+                bits = (bits & !0xff) | (errs & 0xff);
             }
+            // c:1046-1050 — `'q'`: glob qualifier, ignored in pattern
+            // code. Skip to the closing `)` without consuming bits.
             b'q' => {
-                // c:1048 qualifiers — skip
                 while i < bytes.len() && bytes[i] != b')' {
                     i += 1;
                 }
             }
+            // c:1119-1120 — `default: return 0`.
             _ => return None,
         }
     }
+    // c:1124-1125 — `if (*ptr != Outpar) return 0;`.
     if i >= bytes.len() {
         return None;
     }
-    i += 1; // skip ')'
+    i += 1; // c:1129 — `*strp = ptr + 1;` advance past `)`.
     Some((bits, assertp, i))
 }
 
@@ -5772,7 +5799,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert!(haswilds("*"));
         assert!(haswilds("?"));
-        assert!(haswilds("["));
+        // Length-1 `[` is the c:4310-4312 exception (bare `[` not wild),
+        // pinned in `haswilds_single_open_bracket_is_not_wild`. Use the
+        // multi-char form here to verify the Inbrack arm in the main
+        // metachar scan.
+        assert!(haswilds("[abc]"));
         assert!(!haswilds(""));
         assert!(!haswilds("plain.txt"));
     }
