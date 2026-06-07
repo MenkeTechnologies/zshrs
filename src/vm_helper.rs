@@ -871,41 +871,46 @@ impl ShellExecutor {
         // c:Src/init.c:1186-1193 — default prompt strings. zsh sets
         // PS4 to "+%N:%i> " for ZSH emulation ("+ " for KSH/SH).
         // Without seeding, PS4 reads empty and `set -x` output has
-        // no prefix at all. Bug #92 in docs/BUGS.md. Only seed if
-        // the slot is currently empty — preserve user's exported
-        // PS4 from the inherited env.
-        if crate::ported::params::getsparam("PS4")
-            .map_or(true, |s| s.is_empty())
-        {
-            setsparam("PS4", "+%N:%i> ");
-        }
+        // no prefix at all. Bug #92 in docs/BUGS.md.
+        //
+        // C zsh runs createparamtable's env-import loop (c:893-924)
+        // BEFORE init.c:1186 fires, so an exported $PS4 in the parent
+        // env wins over the default seed. zshrs's env import happens
+        // further down in ShellExecutor::new() (at the createparamtable
+        // call site), so getsparam() reads None here even when env has
+        // a value, and the default would clobber the user's PS4.
+        // Probe env::var directly: if the parent exported a non-empty
+        // value, import it now; only fall through to the default seed
+        // when both paramtab and env are empty. Mirrors the C ordering
+        // effect without reshuffling the rest of new(). Bug: `zshrs -x`
+        // ignored the user's custom PS4 unless re-forwarded with
+        // `PS4=$PS4 zshrs -x`.
+        let seed_prompt = |name: &str, default: &str| {
+            let cur = crate::ported::params::getsparam(name);
+            let have_param = cur.as_deref().map_or(false, |s| !s.is_empty());
+            if have_param {
+                return;
+            }
+            if let Ok(env_val) = std::env::var(name) {
+                if !env_val.is_empty() {
+                    setsparam(name, &env_val);
+                    return;
+                }
+            }
+            setsparam(name, default);
+        };
+        seed_prompt("PS4", "+%N:%i> ");
         // c:Src/init.c:1188-1189 — `prompt = ztrdup("%m%# "); prompt2
         // = ztrdup("%_> ");` for the interactive primary/secondary
         // prompts. PS1 may be reset by the prompt-theme layer; only
         // seed when the slot is empty so any prior theme write wins.
-        if crate::ported::params::getsparam("PS1")
-            .map_or(true, |s| s.is_empty())
-        {
-            setsparam("PS1", "%m%# ");
-        }
-        if crate::ported::params::getsparam("PS2")
-            .map_or(true, |s| s.is_empty())
-        {
-            setsparam("PS2", "%_> ");
-        }
+        seed_prompt("PS1", "%m%# ");
+        seed_prompt("PS2", "%_> ");
         // c:Src/init.c:1191 — `prompt3 = ztrdup("?# ");`
-        if crate::ported::params::getsparam("PS3")
-            .map_or(true, |s| s.is_empty())
-        {
-            setsparam("PS3", "?# ");
-        }
+        seed_prompt("PS3", "?# ");
         // c:Src/init.c:1194 — `sprompt = ztrdup("zsh: correct '%R'
         // to '%r' [nyae]? ");` — spelling-correction prompt.
-        if crate::ported::params::getsparam("SPROMPT")
-            .map_or(true, |s| s.is_empty())
-        {
-            setsparam("SPROMPT", "zsh: correct '%R' to '%r' [nyae]? ");
-        }
+        seed_prompt("SPROMPT", "zsh: correct '%R' to '%r' [nyae]? ");
         // c:Src/params.c:417-422 — `PROMPT*` aliases for `PS*`.
         // C zsh's IPDEF7("PROMPT", &prompt), IPDEF7("PROMPT2",
         // &prompt2), IPDEF7("PROMPT3", &prompt3), IPDEF7("PROMPT4",

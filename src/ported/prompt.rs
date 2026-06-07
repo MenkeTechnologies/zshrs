@@ -655,13 +655,16 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                             test = 1;
                         }
                     }
-                    // c:495-496 — `_`: cmd stack depth (cmdsp) >= arg.
-                    // zshrs doesn't track cmdsp the same way; mirror
-                    // the most common case (arg ≤ 0 → test=1) and
-                    // ignore arg > 0 (where C would check the live
-                    // cmdsp).
+                    // c:495-496 — `_`: `test = (cmdsp >= arg)` —
+                    // true when the cmdstack has at least `arg` items.
+                    // Reads the per-prompt CMDSTACK snapshot
+                    // (hydrated from the live parser stack at
+                    // putpromptchar entry, mirroring C's read of the
+                    // file-static cmdsp).
                     b'_' => {
-                        if 0 >= arg {
+                        let cmdsp = prompt_tls::CMDSTACK
+                            .with(|c| c.borrow().len() as i32);
+                        if cmdsp >= arg {
                             test = 1;
                         }
                     }
@@ -1105,12 +1108,16 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         bv.bp += 1;
                     }
                 }
-                // c:587-602 — `%F` (fg color, fall through to `%f` if invalid).
-                // C: `atr = parsecolorchar(arg, 1)` which reads bv->fm
-                // for `{NAME}` brace-arg or uses the numeric `arg`.
-                // Rust parsecolorchar diverged (takes name string only)
-                // so inline the brace-parse + color_from_name lookup
-                // here (matches C parsecolorchar c:318-356 behavior).
+                // c:621-644 — `%F` (fg color, fall through to `%f` if invalid).
+                // C: `atr = parsecolorchar(arg, 1)` (c:318) reads bv->fm
+                // for `{NAME}` brace-arg, else calls
+                // `match_colour(NULL, is_fg, arg)`. For bare `%F`
+                // (no `{`, default arg=0), match_colour returns
+                // `TXTFGCOLOUR | 0` — truthy, color 0 (black) →
+                // `\e[30m`. Same for `%K` → `\e[40m`. Rust
+                // parsecolorchar diverged (takes name string only) so
+                // inline the brace-parse + match_colour(NULL,_,arg)
+                // semantics here.
                 b'F' | b'K' => {
                     let is_fg = xc == b'F';
                     // c:589-595 — `if (bv->fm[1] == '{') { ... }`. Parse
@@ -1127,7 +1134,10 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                             color = color_from_name(name);
                             bv.fm_pos = end; // leave on `}`; outer +=1 advances past
                         }
-                    } else if arg > 0 {
+                    } else if arg >= 0 {
+                        // c:Src/prompt.c:349 — `match_colour(NULL, is_fg,
+                        // arg)` returns `on | (arg << shft)`; bare `%F`
+                        // has arg=0 → color 0 (black) → SGR 30.
                         color = Some(arg as Color);
                     }
                     if let Some(c) = color {
@@ -1440,6 +1450,21 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         .unwrap_or_else(|| "zsh".to_string());
                     stradd(bv, &nam);
                 }
+                // c:Src/prompt.c:889-900 — `%e` (function-stack depth):
+                //   int depth = 0;
+                //   Funcstack fsptr = funcstack;
+                //   while (fsptr) { depth++; fsptr = fsptr->prev; }
+                //   bv->bp += sprintf(bv->bp, "%d", depth);
+                // Counts the live funcstack (function calls + sourced
+                // files + traps). At top level, depth = 0 → emits "0".
+                b'e' => {
+                    let depth = crate::ported::modules::parameter::FUNCSTACK
+                        .lock()
+                        .ok()
+                        .map(|stk| stk.len())
+                        .unwrap_or(0);
+                    stradd(bv, &depth.to_string());
+                }
                 // c:Src/prompt.c:901-920 — `%I` (absolute source-file
                 // line). When inside a function (not FS_SOURCE / FS_EVAL),
                 // emit `lineno + funcstack->flineno` — `lineno` is the
@@ -1466,14 +1491,93 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     };
                     stradd(bv, &abs.to_string());
                 }
-                // c:Src/prompt.c — `%_` (parser context: the stack
-                // of `cmdpush` tokens like `for`, `while`, `case`,
-                // `cmdsubst`, etc.). zshrs doesn't expose the
-                // cmd_stack through prompt expansion; emit empty so
-                // the trace line stays clean (zsh emits an empty
-                // string at top level too).
+                // c:Src/prompt.c:855-880 — `%_` (parser context: the
+                // bottom-up cmdstack — print the last `arg` tokens in
+                // forward order; `arg <= 0` (default) prints all).
+                // `%-N_` prints the FIRST N tokens (top-down).
+                // Tokens come from the live parser stack; names map
+                // through CMDNAMES[CS_*] (c:62-71).
+                //
+                //   if (cmdsp) {
+                //     if (arg >= 0) {                       // c:857
+                //       if (arg > cmdsp || arg == 0) arg = cmdsp;
+                //       for (t0 = cmdsp - arg; arg--; t0++) {
+                //         stradd(cmdnames[cmdstack[t0]]);
+                //         if (arg) addbufspc(1), *bv->bp++ = ' ';
+                //       }
+                //     } else {                              // c:867
+                //       arg = -arg;
+                //       if (arg > cmdsp) arg = cmdsp;
+                //       for (t0 = 0; arg--; t0++) { ... }
+                //     }
+                //   }
                 b'_' => {
-                    // Empty — matches zsh's top-level rendering.
+                    let stack = prompt_tls::CMDSTACK.with(|c| c.borrow().clone());
+                    let cmdsp = stack.len() as i32;
+                    if cmdsp > 0 {
+                        let (start, mut count) = if arg >= 0 {
+                            let n = if arg == 0 || arg > cmdsp { cmdsp } else { arg };
+                            ((cmdsp - n) as usize, n) // c:860 — `t0 = cmdsp - arg`
+                        } else {
+                            let n = if -arg > cmdsp { cmdsp } else { -arg };
+                            (0usize, n) // c:871 — `t0 = 0`
+                        };
+                        let mut t0 = start;
+                        while count > 0 {
+                            count -= 1;
+                            let idx = stack[t0] as usize;
+                            if let Some(name) = CMDNAMES.get(idx) {
+                                stradd(bv, name); // c:861 / c:872
+                            }
+                            if count > 0 {
+                                stradd(bv, " "); // c:863-864 / c:874-875
+                            }
+                            t0 += 1;
+                        }
+                    }
+                }
+                // c:Src/prompt.c:829-854 — `%^` (parser context,
+                // top-down): print the last `arg` tokens in REVERSE
+                // order (newest first). `%-N^` prints the first N
+                // tokens in reverse from index N-1 down to 0.
+                //
+                //   if (cmdsp) {
+                //     if (arg >= 0) {                       // c:831
+                //       if (arg > cmdsp || arg == 0) arg = cmdsp;
+                //       for (t0 = cmdsp - 1; arg--; t0--) { ... }
+                //     } else {                              // c:841
+                //       arg = -arg;
+                //       if (arg > cmdsp) arg = cmdsp;
+                //       for (t0 = arg - 1; arg--; t0--) { ... }
+                //     }
+                //   }
+                b'^' => {
+                    let stack = prompt_tls::CMDSTACK.with(|c| c.borrow().clone());
+                    let cmdsp = stack.len() as i32;
+                    if cmdsp > 0 {
+                        let (start, mut count) = if arg >= 0 {
+                            let n = if arg == 0 || arg > cmdsp { cmdsp } else { arg };
+                            ((cmdsp - 1) as usize, n) // c:834 — `t0 = cmdsp - 1`
+                        } else {
+                            let n = if -arg > cmdsp { cmdsp } else { -arg };
+                            ((n - 1) as usize, n) // c:845 — `t0 = arg - 1`
+                        };
+                        let mut t0 = start as i32;
+                        while count > 0 {
+                            count -= 1;
+                            if t0 < 0 || (t0 as usize) >= stack.len() {
+                                break;
+                            }
+                            let idx = stack[t0 as usize] as usize;
+                            if let Some(name) = CMDNAMES.get(idx) {
+                                stradd(bv, name); // c:835 / c:846
+                            }
+                            if count > 0 {
+                                stradd(bv, " "); // c:837-838 / c:848-849
+                            }
+                            t0 -= 1;
+                        }
+                    }
                 }
                 // c:777-784 — `%l` (controlling tty, trimmed of
                 // `/dev/tty` or `/dev/` prefix). Bug #38 in
@@ -2197,11 +2301,14 @@ pub fn applytextattributes(flags: i32) -> String {
         }
         if new_s {
             // c:Src/prompt.c — `%S` resolves to terminfo `smso` cap.
-            // On macOS / iTerm with zsh 5.9 (the build the test
-            // suite targets) `smso` is mapped to italic SGR 3, not
-            // the spec-default reverse-video SGR 7. Pin SGR 3 to
-            // match /opt/homebrew/bin/zsh byte-for-byte.
-            result.push_str("\x1b[3m");
+            // Observed via `zsh -fc 'print -P %S | od -c'` on
+            // /opt/homebrew/bin/zsh 5.9.1 (arm-apple-darwin25): emits
+            // ESC `[7m` (reverse video — the SGR-standout spec
+            // default). Pin SGR 7 to match byte-for-byte. A prior
+            // port used SGR 3 (italic) under the assumption that
+            // smso was remapped on iTerm; the live observation
+            // contradicts that.
+            result.push_str("\x1b[7m");
         }
         fg_emit_color(new, &mut result);
         bg_emit_color(new, &mut result);
@@ -2212,7 +2319,12 @@ pub fn applytextattributes(flags: i32) -> String {
         result.push_str("\x1b[24m");
     }
     if standout_off {
-        result.push_str("\x1b[23m");
+        // c:Src/prompt.c — `%s` resolves to terminfo `rmso` cap;
+        // /opt/homebrew/bin/zsh 5.9.1 emits SGR 27 (standout off,
+        // spec default). Prior port used SGR 23 (italic-off) under
+        // the same incorrect smso-as-italic assumption; the
+        // observed bytes pin 27.
+        result.push_str("\x1b[27m");
     }
     if attr_on {
         if !old_b && new_b {
@@ -2222,11 +2334,10 @@ pub fn applytextattributes(flags: i32) -> String {
             result.push_str("\x1b[4m");
         }
         if !old_s && new_s {
-            // c:Src/prompt.c — see comment above on the matching
-            // standout-on branch in the bold-off arm. SGR 3 (italic)
-            // matches zsh 5.9 on macOS / iTerm; SGR 7 (reverse-video)
-            // is the spec default that diverges from observed bytes.
-            result.push_str("\x1b[3m");
+            // c:Src/prompt.c — `%S` resolves to terminfo `smso` cap;
+            // /opt/homebrew/bin/zsh 5.9.1 emits SGR 7 (verified via
+            // `print -P %S | od -c`).
+            result.push_str("\x1b[7m");
         }
         // Re-apply colors after attribute-on so terminal that
         // resets colors on bold-cap doesn't lose them. Mirrors
