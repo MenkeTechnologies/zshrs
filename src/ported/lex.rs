@@ -540,11 +540,25 @@ fn cmd_or_math() -> i32 {
 
     // c:506 — `cmdpop();` before rewind to command-parse path.
     cmdpop();
-    // Not math, back up
+    // c:Src/lex.c:513-516 — CMD path: push back the peeked char,
+    // then push back the `)` that dquote_parse consumed (this is the
+    // `c = ')'; hungetc(c);` sequence at C line 515-518 below the
+    // `if (!c)` block; the fall-through into the outer `hungetc(c)`
+    // at line 522 puts the `)` back into the input stream so the
+    // next zshlex re-emits it as OUTPAR_TOK).
+    //
+    // Without this hungetc, the inner `)` is lost from the stream
+    // permanently. For source `((a|)b)` the token stream loses
+    // the inner OUTPAR — emits INPAR INPAR STRING(a) BAR STRING(b)
+    // OUTPAR instead of the correct INPAR INPAR STRING(a) BAR
+    // OUTPAR STRING(b) OUTPAR. That broke par_case on every
+    // `((alt|alt)tail)` pattern — including zinit.zsh:2946
+    // `((add-|)fpath)` which fails as "expected ')' in case pattern".
     if let Some(c) = c {
         hungetc(c);
     }
     LEX_LEXSTOP.set(false);
+    hungetc(')'); // c:515-518 — the `)` dquote_parse consumed
 
     // Back up token
     while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {

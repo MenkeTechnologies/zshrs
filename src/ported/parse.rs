@@ -1732,19 +1732,34 @@ fn par_case() -> Option<ZshCommand> {
         // this, a `[`-prefixed pattern after the FIRST arm became
         // Inbrack instead of String and the pattern-loop bailed
         // out with "expected ')' in case pattern".
+        // c:Src/parse.c:1391 — `incasepat = 1; incmdpos = 0;` BEFORE
+        // the zshlex that advances past `;;` to the next arm's first
+        // token. The incmdpos=0 setting is what makes the lexer
+        // absorb the next arm's `((add-|)fpath)` into a single STRING
+        // (gettokstr's LX2_INPAR path at lex.c:1080+ runs only when
+        // incmdpos is FALSE — at incmdpos=1 the lexer emits raw
+        // INPAR_TOK for the inner `(` and par_case's pattern-read
+        // loop has no path to recover). Our Rust port previously set
+        // only incasepat=1 and not incmdpos=0, which forced
+        // multi-arm patterns like `((add-|)fpath)` to fail with
+        // "expected ')' in case pattern" — surfaced on
+        // zinit.zsh:2946.
         let terminator = match tok() {
             DSEMI => {
                 set_incasepat(1);
+                set_incmdpos(false);
                 zshlex();
                 CaseTerm::Break
             }
             SEMIAMP => {
                 set_incasepat(1);
+                set_incmdpos(false);
                 zshlex();
                 CaseTerm::Continue
             }
             SEMIBAR => {
                 set_incasepat(1);
+                set_incmdpos(false);
                 zshlex();
                 CaseTerm::TestNext
             }
