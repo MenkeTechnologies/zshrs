@@ -1524,6 +1524,85 @@ fn par_case() -> Option<ZshCommand> {
         // closing `)` was already absorbed — no separate OUTPAR
         // arm-close to consume.
         let mut absorbed_outpar = false;
+
+        // Nested-paren pattern: the user wrote `((alt|alt)tail)` —
+        // the leading arm-INPAR was consumed; the NEXT token is also
+        // INPAR. zinit.zsh:2946 hits this with `((add-|)fpath)`
+        // meaning "fpath or add-fpath".
+        //
+        // The current lexer (cmd_or_math rewind path interacting
+        // with gettokstr) drops ONE of the two `)` chars on the
+        // way out, so the token stream is INPAR INPAR STRING BAR
+        // STRING OUTPAR — only ONE OUTPAR for two source `)`. We
+        // can't reconstruct the exact pattern from these tokens.
+        // Proper fix needs to land in lex.rs (cmd_or_math rewind +
+        // gettokstr LX2_INPAR/OUTPAR interplay) — see docs/BUGS.md
+        // entry "case-pattern nested-paren lexer gap".
+        //
+        // Workaround: consume every token up to and INCLUDING the
+        // arm-closing OUTPAR, build a best-effort pattern string,
+        // set `absorbed_outpar = true` so the post-pattern OUTPAR
+        // check below skips. The resulting glob may match a slightly
+        // wider set than the original (`(add-|fpath)` vs
+        // `(add-|)fpath`) but the rest of the script parses + runs.
+        // Unblocking sourcing zinit-style configs is the priority.
+        if leading_inpar_consumed && tok() == INPAR_TOK {
+            let mut buf = String::new();
+            let mut depth = 0i32;
+            loop {
+                match tok() {
+                    INPAR_TOK => {
+                        buf.push('(');
+                        depth += 1;
+                        zshlex();
+                    }
+                    OUTPAR_TOK => {
+                        // The single OUTPAR token in the stream is
+                        // simultaneously the inner glob-group close
+                        // AND the arm close (lexer collapses both).
+                        // Consume it, balance the inner depth, exit.
+                        // `absorbed_outpar = true` tells the shared
+                        // post-pattern check below to skip its own
+                        // consume.
+                        if depth > 0 {
+                            buf.push(')');
+                            depth -= 1;
+                        }
+                        zshlex();
+                        break;
+                    }
+                    STRING_LEX => {
+                        if let Some(s) = tokstr() {
+                            if s == "esac" {
+                                break;
+                            }
+                            buf.push_str(&s);
+                        }
+                        set_incasepat(2);
+                        zshlex();
+                    }
+                    BAR_TOK => {
+                        buf.push('|');
+                        set_incasepat(1);
+                        zshlex();
+                    }
+                    _ => break,
+                }
+            }
+            patterns.push(buf);
+            set_incasepat(0);
+            set_incmdpos(true);
+            absorbed_outpar = true;
+        }
+
+        // Skip the legacy STRING/BAR pattern-read loop when the
+        // nested-paren branch above already populated `patterns` and
+        // consumed the arm-close. Otherwise the legacy loop would
+        // greedily absorb the body's first command token (`echo`) as
+        // another alt-pattern.
+        if !patterns.is_empty() && absorbed_outpar {
+            // skip to body parse
+        } else {
         loop {
             if tok() == STRING_LEX {
                 let s = tokstr();
@@ -1579,6 +1658,7 @@ fn par_case() -> Option<ZshCommand> {
                 break;
             }
         }
+        }  // end else of "skip legacy loop when nested-paren branch fired"
         set_incasepat(0);
 
         // c:1305 — expect OUTPAR (arm-close) when the hack didn't
