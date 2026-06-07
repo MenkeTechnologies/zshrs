@@ -5663,8 +5663,33 @@ impl ZshCompiler {
         };
         // Push an expanded word — `$HOME`/`~`/`$(…)`/etc. resolved.
         // Mode 1 = SQ-strip + DQ-strip + scalar expand, no split.
+        // After expansion, route the value through quotedzputs so
+        // non-printable bytes come back as `$'…'` source form
+        // (mirrors c:Src/cond.c:212,221,224 which call
+        // quotedzputs(operand, xtrerr) for the LHS / unary-test /
+        // non-pattern RHS). Without it, `[[ -n $'\C-[OP' ]]` traced
+        // as `[[ -n OP ]]` — the raw ESC + "OP" bytes leaked.
         let push_word = |s: &mut Self, word: &str| {
             s.compile_word_str(word);
+            s.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTEDZPUTS, 1),
+                0,
+            );
+            s.builder.emit(Op::Concat, 0);
+        };
+        // Pattern-op RHS variant — `=` / `==` / `!=` route through
+        // quote_tokenized_output (c:Src/cond.c:218), NOT quotedzputs.
+        // The former untokenizes lexer tokens (Star → `*`, …) and
+        // backslash-escapes ASCII specials so the source pattern
+        // surfaces verbatim. The latter (used by other operand
+        // contexts) wraps in `'…'` which would render
+        // `[[ x = a* ]]` as `[[ x = 'a*' ]]` — wrong.
+        let push_word_pattern = |s: &mut Self, word: &str| {
+            s.compile_word_str(word);
+            s.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTE_TOKENIZED_OUTPUT, 1),
+                0,
+            );
             s.builder.emit(Op::Concat, 0);
         };
         match c {
@@ -5701,7 +5726,17 @@ impl ZshCompiler {
                     push_lit(self, " ");
                     push_lit(self, &op_clean);
                     push_lit(self, " ");
-                    push_word(self, right);
+                    // c:Src/cond.c:214-218 — for COND_STREQ /
+                    // COND_STRDEQ / COND_STRNEQ (`=`, `==`, `!=`)
+                    // the RHS is the source pattern; render via
+                    // quote_tokenized_output, not quotedzputs.
+                    let is_pattern_op =
+                        matches!(op_clean.as_str(), "=" | "==" | "!=");
+                    if is_pattern_op {
+                        push_word_pattern(self, right);
+                    } else {
+                        push_word(self, right);
+                    }
                 }
             }
             ZshCond::Regex(left, regex) => {
