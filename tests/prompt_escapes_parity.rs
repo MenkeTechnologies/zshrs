@@ -541,7 +541,9 @@ mod ps4_audit {
         let z = run_zsh(r#"print -Prn -- '%*'"#);
         let r = run_zshrs(r#"print -Prn -- '%*'"#);
         assert_eq!(z.stdout.len(), r.stdout.len(), "%* length mismatch");
-        assert_eq!(z.stdout.len(), 8);
+        // Accept both 7 (`H:MM:SS`) and 8 (`HH:MM:SS`) for the same
+        // single-digit-hour reason as %T above.
+        assert!(z.stdout.len() == 7 || z.stdout.len() == 8);
         for (zb, rb) in z.stdout.bytes().zip(r.stdout.bytes()) {
             assert_eq!(
                 zb.is_ascii_digit(),
@@ -563,13 +565,19 @@ mod ps4_audit {
     }
 
     fn regex_like(s: &str, is_digit: impl Fn(char) -> bool, sep: char) -> bool {
+        // Accept H:MM (4 chars) and HH:MM (5 chars). zsh's %T renders
+        // single-digit hours without leading zero (`1:41` not `01:41`),
+        // so a strict `\d\d:\d\d` would only pass between 10:00 and
+        // 23:59 — flaky by clock.
         let chars: Vec<char> = s.chars().collect();
-        chars.len() == 5
-            && is_digit(chars[0])
-            && is_digit(chars[1])
-            && chars[2] == sep
-            && is_digit(chars[3])
-            && is_digit(chars[4])
+        let (hr_end, min_start) = match chars.len() {
+            4 => (1, 2),
+            5 => (2, 3),
+            _ => return false,
+        };
+        chars[..hr_end].iter().all(|c| is_digit(*c))
+            && chars[hr_end] == sep
+            && chars[min_start..].iter().all(|c| is_digit(*c))
     }
 
     // ─── env inheritance: PS4 + PROMPT4 alias ───────────────────
