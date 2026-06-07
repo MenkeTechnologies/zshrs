@@ -2472,7 +2472,21 @@ impl ZshCompiler {
                 // the top), pass through QUOTEDZPUTS, concat ` `
                 // separators, finish with `) `.
                 let n = elements.len();
-                let prefix = if assign.append {
+                // c:Src/exec.c::addvars:2627-2632 — `fprintf("%s=", name);
+                // fprintf("( "); for each: quotedzputs + ' '; fprintf(") ");`.
+                // For an empty list zsh's output is `name=( ) ` (one
+                // space inside the parens). The current loop emits
+                // `name=( ` as prefix, no element-spaces (n=0), then
+                // `) ` as close → `name=(  ) ` (two spaces). Use a
+                // prefix WITHOUT the trailing space for the empty case
+                // so the close ` ) ` produces `name=( ) ` matching zsh.
+                let prefix = if n == 0 {
+                    if assign.append {
+                        format!("{}+=(", assign.name)
+                    } else {
+                        format!("{}=(", assign.name)
+                    }
+                } else if assign.append {
                     format!("{}+=( ", assign.name)
                 } else {
                     format!("{}=( ", assign.name)

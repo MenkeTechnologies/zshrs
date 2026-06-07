@@ -315,7 +315,6 @@ const EXPECTED_FAILURES: &[&str] = &[
     "100_glob_qualifiers.zsh",
     "106_array_index.zsh",
     "108_time_block.zsh",
-    "112_array_empty.zsh",
     "113_param_double_colon.zsh",
     "116_proc_subst_eq.zsh",
     "117_time_pipeline.zsh",
