@@ -5230,31 +5230,120 @@ impl ZshCompiler {
 
         for arm in &c.arms {
             // xtrace: emit `case <word> (<pat1> | <pat2>)` per arm.
-            // Direct port of Src/loop.c:626-682 — printprompt4 then
-            // `fprintf(xtrerr, "case %s (", word)`, then each
-            // alternative joined by ` | `, then `)\n`. zshrs builds
-            // the line at runtime (because <word> is dynamic) by
-            // concatenating literal prefix + word + literal suffix.
-            // Pattern alts are static, baked into the suffix.
-            let pat_clean: Vec<String> = arm
-                .patterns
-                .iter()
-                .map(|p| crate::lex::untokenize(p))
-                .collect();
-            let pat_join = pat_clean.join(" | ");
-            let prefix_text = "case ".to_string();
-            let suffix_text = format!(" ({})", pat_join);
-            // Build: "case " + word + " (pat1 | pat2)"
-            let prefix_const = self.builder.add_constant(Value::str(prefix_text.as_str()));
+            // c:Src/loop.c:626-682 — for each pattern alt, C does:
+            //   pat = dupstring(ecrawstr(...));
+            //   if (htok) singsub(&pat);
+            //   quote_tokenized_output(pat, xtrerr);
+            // i.e. expand $VAR references THEN pass through
+            // quote_tokenized_output so Star tokens render as `*`
+            // (unescaped via ztokens lookup) and expanded values
+            // render as literal text. Build the trace string at
+            // runtime: piecewise per pattern (Subst segments go
+            // through EXPAND_TEXT mode 4 → singsub; Literal
+            // segments stay tokenized) and apply
+            // BUILTIN_QUOTE_TOKENIZED_OUTPUT to each segment so the
+            // source pattern shape surfaces. Gate the whole block on
+            // BUILTIN_XTRACE_IS_ON so the runtime cost is only paid
+            // when xtrace is actually enabled.
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_IS_ON, 0),
+                0,
+            );
+            let trace_skip = self.builder.emit(Op::JumpIfFalse(0), 0);
+            // Stack starts empty for this trace block.
+            // Push "case "
+            let prefix_const = self.builder.add_constant(Value::str("case "));
             self.builder.emit(Op::LoadConst(prefix_const), 0);
+            // Push word
             self.builder.emit(Op::GetSlot(word_slot), 0);
             self.builder.emit(Op::Concat, 0);
-            let suffix_const = self.builder.add_constant(Value::str(suffix_text.as_str()));
-            self.builder.emit(Op::LoadConst(suffix_const), 0);
+            // Push " ("
+            let open_const = self.builder.add_constant(Value::str(" ("));
+            self.builder.emit(Op::LoadConst(open_const), 0);
             self.builder.emit(Op::Concat, 0);
+            // For each pattern, emit the segments + concat.
+            for (pi, pattern) in arm.patterns.iter().enumerate() {
+                if pi > 0 {
+                    let sep_const = self.builder.add_constant(Value::str(" | "));
+                    self.builder.emit(Op::LoadConst(sep_const), 0);
+                    self.builder.emit(Op::Concat, 0);
+                }
+                let raw = pattern.as_str();
+                let has_expand = raw.contains('$')
+                    || raw.contains('`')
+                    || raw.contains('\u{85}')
+                    || raw.contains('\u{8c}')
+                    || raw.contains('\u{99}');
+                if has_expand {
+                    let segments = split_pattern_for_glob_subst(raw);
+                    for (sidx, seg) in segments.iter().enumerate() {
+                        match seg {
+                            PatSeg::Subst(text) => {
+                                let pc = self.builder.add_constant(Value::str(text.as_str()));
+                                self.builder.emit(Op::LoadConst(pc), 0);
+                                self.builder.emit(Op::LoadInt(4), 0);
+                                self.builder.emit(
+                                    Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 0),
+                                    0,
+                                );
+                                self.builder.emit(
+                                    Op::CallBuiltin(
+                                        crate::vm_helper::BUILTIN_QUOTE_TOKENIZED_OUTPUT,
+                                        1,
+                                    ),
+                                    0,
+                                );
+                            }
+                            PatSeg::Literal(text) => {
+                                // Pass the tokenized form straight to
+                                // QUOTE_TOKENIZED_OUTPUT — it maps
+                                // `\u{84}..\u{a1}` token chars back to
+                                // their source ASCII via ztokens
+                                // (Star → `*` unescaped). Don't
+                                // untokenize first because untokenize
+                                // turns Star into literal `*` which
+                                // then gets backslash-escaped.
+                                let pc = self.builder.add_constant(Value::str(text.as_str()));
+                                self.builder.emit(Op::LoadConst(pc), 0);
+                                self.builder.emit(
+                                    Op::CallBuiltin(
+                                        crate::vm_helper::BUILTIN_QUOTE_TOKENIZED_OUTPUT,
+                                        1,
+                                    ),
+                                    0,
+                                );
+                            }
+                        }
+                        // Concat with the trace buffer (always — even
+                        // the first segment goes onto the buffer
+                        // already on the stack).
+                        self.builder.emit(Op::Concat, 0);
+                    }
+                } else {
+                    // No expansion needed — pass raw pattern through
+                    // QUOTE_TOKENIZED_OUTPUT to render source form.
+                    let pc = self.builder.add_constant(Value::str(raw));
+                    self.builder.emit(Op::LoadConst(pc), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(
+                            crate::vm_helper::BUILTIN_QUOTE_TOKENIZED_OUTPUT,
+                            1,
+                        ),
+                        0,
+                    );
+                    self.builder.emit(Op::Concat, 0);
+                }
+            }
+            // Push ")"
+            let close_const = self.builder.add_constant(Value::str(")"));
+            self.builder.emit(Op::LoadConst(close_const), 0);
+            self.builder.emit(Op::Concat, 0);
+            // Emit trace line.
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
             self.builder.emit(Op::Pop, 0);
+            let trace_done = self.builder.current_pos();
+            self.builder.patch_jump(trace_skip, trace_done);
 
             let mut match_jumps = Vec::new();
             for pattern in &arm.patterns {
