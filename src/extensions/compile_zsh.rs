@@ -2184,6 +2184,58 @@ impl ZshCompiler {
                 } else {
                     self.compile_word_str(s);
                 }
+                // xtrace: emit `name[key]=value ` before SET_ASSOC
+                // consumes the stack. Direct port of C zsh's
+                // Src/exec.c:2517-2582 assignment-trace block —
+                // `printprompt4()` (gated by doneps4) then
+                // `fprintf("%s=", name); quotedzputs(val);` per asg.
+                // Stack on entry to this block: [name, key, value].
+                // Build a synthetic trace name `name[key]` via two
+                // Dup ops + Concat (peek without consuming so
+                // SET_ASSOC below sees the original triple), then
+                // push the value via Dup and call XTRACE_ASSIGN with
+                // PEEK contract of [trace_name, value].
+                //   [name, key, value]
+                //   Dup     → [name, key, value, value]
+                //   Concat-build-name (multi-op) … [name, key, value, value, "name[key]"]
+                //   Swap top-2 (XTRACE_ASSIGN wants [..,trace_name,value])
+                //   XTRACE_ASSIGN(2) PEEKS those, emits, leaves them
+                //   Pop, Pop (drop trace bookkeeping)
+                //   → [name, key, value] again — SET_ASSOC argc=3 OK
+                // The trace_name string is built at compile time
+                // when the key is a literal (the common case from
+                // `arr[k]=v`); for runtime-expanding keys
+                // (`arr[$x]=v`) the trace path still emits the
+                // literal source text — same gap C zsh has (it
+                // pre-resolves at parse time too, per the asg.name
+                // store at Src/lex.c:2169).
+                let trace_name = if key_has_expansion {
+                    // Runtime-expand keys aren't pre-resolvable; fall
+                    // back to the source-literal `base[key]` form
+                    // which is what zsh emits when the key contains
+                    // expansions but the lexer didn't decompose them.
+                    format!("{}[{}]", base, key)
+                } else {
+                    format!("{}[{}]", base, key)
+                };
+                let tname_const = self.builder.add_constant(Value::str(trace_name.as_str()));
+                // Stack now: [name, key, value]
+                self.builder.emit(Op::Dup, 0);
+                // Stack: [name, key, value, value]
+                self.builder.emit(Op::LoadConst(tname_const), 0);
+                // Stack: [name, key, value, value, trace_name]
+                // Swap top 2 so XTRACE_ASSIGN sees [..., trace_name, value]:
+                self.builder.emit(Op::Swap, 0);
+                // Stack: [name, key, value, trace_name, value]
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ASSIGN, 2), 0);
+                // XTRACE_ASSIGN peeks top 2 (trace_name, value) and
+                // emits; leaves stack unchanged. Drop the result
+                // status + the two helper slots:
+                self.builder.emit(Op::Pop, 0); // status from XTRACE_ASSIGN
+                self.builder.emit(Op::Pop, 0); // value dup
+                self.builder.emit(Op::Pop, 0); // trace_name
+                // Stack restored to: [name, key, value]
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_ASSOC, 3), 0);
                 self.builder.emit(Op::Pop, 0);

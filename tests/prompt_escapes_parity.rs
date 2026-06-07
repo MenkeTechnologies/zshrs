@@ -571,4 +571,124 @@ mod ps4_audit {
             && is_digit(chars[3])
             && is_digit(chars[4])
     }
+
+    // ─── env inheritance: PS4 + PROMPT4 alias ───────────────────
+    //
+    // C zsh's PS4 and PROMPT4 are aliases for the same `prompt4`
+    // C global (Src/params.c:381 IPDEF7R, c:421 IPDEF7), so
+    // exporting PROMPT4 in the parent env sets PS4 in the child.
+    // zshrs's paramtab keeps them as separate entries; the
+    // ShellExecutor::new env probe walks both. Without that walk,
+    // `zshrs -x` reverted to the default `+%N:%i> ` prefix
+    // whenever a user's shell exported only PROMPT4 (the form
+    // prompt themes / p10k use) and not PS4. Pin all four
+    // combinations so regression is caught at the parity layer.
+
+    /// `PS4=X zshrs -fxc 'echo h'` → trace uses `X`.
+    #[test]
+    fn xtrace_inherits_ps4_from_env() {
+        if !zsh_available() {
+            return;
+        }
+        let z = Command::new(zsh_path())
+            .args(["-fxc", "echo hi"])
+            .env("PS4", "DIRECT-PS4> ")
+            .env_remove("PROMPT4")
+            .output()
+            .expect("zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-fxc", "echo hi"])
+            .env("PS4", "DIRECT-PS4> ")
+            .env_remove("PROMPT4")
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        assert_eq!(
+            String::from_utf8_lossy(&z.stderr),
+            String::from_utf8_lossy(&r.stderr),
+            "PS4-from-env xtrace divergence"
+        );
+    }
+
+    /// `PROMPT4=X zshrs -fxc 'echo h'` → trace uses `X` (alias).
+    /// This is the user-reported case: their interactive shell
+    /// exports PROMPT4 (not PS4) and bare `zshrs -x` was emitting
+    /// the default prefix instead of the user's customised PS4.
+    #[test]
+    fn xtrace_inherits_prompt4_alias_from_env() {
+        if !zsh_available() {
+            return;
+        }
+        let z = Command::new(zsh_path())
+            .args(["-fxc", "echo hi"])
+            .env_remove("PS4")
+            .env("PROMPT4", "ALIAS-PROMPT4> ")
+            .output()
+            .expect("zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-fxc", "echo hi"])
+            .env_remove("PS4")
+            .env("PROMPT4", "ALIAS-PROMPT4> ")
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        assert_eq!(
+            String::from_utf8_lossy(&z.stderr),
+            String::from_utf8_lossy(&r.stderr),
+            "PROMPT4-alias-from-env xtrace divergence (PS4=PROMPT4 alias broken)"
+        );
+    }
+
+    /// Both PS4 and PROMPT4 set: PS4 wins (lookup order).
+    #[test]
+    fn xtrace_ps4_wins_over_prompt4_alias() {
+        if !zsh_available() {
+            return;
+        }
+        let z = Command::new(zsh_path())
+            .args(["-fxc", "echo hi"])
+            .env("PS4", "PRIMARY-PS4> ")
+            .env("PROMPT4", "SECONDARY-PROMPT4> ")
+            .output()
+            .expect("zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-fxc", "echo hi"])
+            .env("PS4", "PRIMARY-PS4> ")
+            .env("PROMPT4", "SECONDARY-PROMPT4> ")
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        assert_eq!(
+            String::from_utf8_lossy(&z.stderr),
+            String::from_utf8_lossy(&r.stderr),
+            "PS4-priority-over-PROMPT4 divergence"
+        );
+    }
+
+    /// Neither PS4 nor PROMPT4 in env: both shells fall back to the
+    /// documented default `+%N:%i> `.
+    #[test]
+    fn xtrace_default_prefix_when_env_empty() {
+        if !zsh_available() {
+            return;
+        }
+        let z = Command::new(zsh_path())
+            .args(["-fxc", "echo hi"])
+            .env_remove("PS4")
+            .env_remove("PROMPT4")
+            .output()
+            .expect("zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-fxc", "echo hi"])
+            .env_remove("PS4")
+            .env_remove("PROMPT4")
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        assert_eq!(
+            String::from_utf8_lossy(&z.stderr),
+            String::from_utf8_lossy(&r.stderr),
+            "default-PS4 divergence"
+        );
+    }
 }

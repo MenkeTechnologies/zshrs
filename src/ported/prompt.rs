@@ -1440,14 +1440,45 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 // being executed; same surface as %N for most contexts,
                 // differs inside autoloaded functions). Prefers
                 // ZSH_SCRIPT, falls back to ZSH_NAME for -c mode.
+                // c:Src/prompt.c:931-938 — `%x`:
+                //   if (funcstack && funcstack->tp != FS_SOURCE && !IN_EVAL_TRAP())
+                //     promptpath(funcstack->filename ?: "", arg, 0);
+                //   else
+                //     promptpath(scriptfilename ?: argzero, arg, 0);
+                //
+                // %x is the FILE that contains the code currently
+                // being parsed/executed: the active function's
+                // source file when inside a function (NOT a sourced
+                // top-level), else the file-static
+                // `scriptfilename`, falling back to `argzero`. The
+                // SCRIPTFILENAME / FUNCSTACK_FILENAME TLS were
+                // hydrated at putpromptchar entry from
+                // utils::scriptfilename_get() and the live
+                // funcstack — both update under bin_dot, doshfunc,
+                // and the startup source_from_memory wiring. Prior
+                // port read `$ZSH_SCRIPT` / `$ZSH_NAME` params,
+                // which don't move on `source`, so `%x` stayed at
+                // "zsh" through .zshenv / .zshrc execution.
                 b'x' => {
-                    let nam = crate::ported::params::getsparam("ZSH_SCRIPT")
-                        .filter(|s| !s.is_empty())
-                        .or_else(|| {
-                            crate::ported::params::getsparam("ZSH_NAME")
-                                .filter(|s| !s.is_empty())
-                        })
-                        .unwrap_or_else(|| "zsh".to_string());
+                    let in_fn_filename = prompt_tls::FUNCSTACK_FILENAME
+                        .with(|c| c.borrow().clone());
+                    let nam = if let Some(fname) = in_fn_filename {
+                        // Inside a function (not a sourced top-level)
+                        // — use funcstack->filename. Hydration at
+                        // prompt.rs:166 reads the last funcstack
+                        // entry's filename; that's the closest
+                        // mirror we have of the C
+                        // `funcstack->filename` walk.
+                        fname
+                    } else {
+                        prompt_tls::SCRIPTFILENAME
+                            .with(|c| c.borrow().clone())
+                            .or_else(|| prompt_tls::ARGEXTRA.with(|c| {
+                                let s = c.borrow().clone();
+                                if s.is_empty() { None } else { Some(s) }
+                            }))
+                            .unwrap_or_else(|| "zsh".to_string())
+                    };
                     stradd(bv, &nam);
                 }
                 // c:Src/prompt.c:889-900 — `%e` (function-stack depth):
