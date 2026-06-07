@@ -5283,16 +5283,60 @@ impl ZshCompiler {
                     || raw.contains('\u{8c}') // Qstring (ANSI-C)
                     || raw.contains('\u{99}'); // META-`` ` ``
                 if needs_runtime_expand {
-                    // BUILTIN_EXPAND_TEXT mode 4 = singsub-only
-                    // (variable / cmdsub / arith expansion; no glob,
-                    // no brace). Stack: [text, mode].
-                    let pat_const = self.builder.add_constant(Value::str(pattern.as_str()));
-                    self.builder.emit(Op::LoadConst(pat_const), 0);
-                    self.builder.emit(Op::LoadInt(4), 0);
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 0),
-                        0,
-                    );
+                    // Same source-meta-vs-substitution distinction as
+                    // the cond Binary path (search this file for
+                    // split_pattern_for_glob_subst). singsub-only
+                    // expansion on the WHOLE pattern reaches
+                    // patcompile with substituted bytes adjacent to
+                    // source-level glob metas; the latter survive
+                    // singsub but get untokenized to literal bytes
+                    // somewhere downstream and stop matching as
+                    // globs. Walk segments at compile time so the
+                    // substitution part goes through singsub and the
+                    // source-meta part lands as a constant whose
+                    // literal `*` / `?` / `[` bytes reach patcompile
+                    // as match-time globs. Bug: `case foo in $H*) …`
+                    // failed (with H=foo) because singsub of `$H*`
+                    // yielded `foo*` where the `*` was treated as a
+                    // literal post-expansion byte (the same root
+                    // cause as the `[[ foo = $H* ]]` bug at the cond
+                    // Binary path).
+                    let segments = split_pattern_for_glob_subst(raw);
+                    if segments.len() <= 1 {
+                        let pat_const = self.builder.add_constant(Value::str(pattern.as_str()));
+                        self.builder.emit(Op::LoadConst(pat_const), 0);
+                        self.builder.emit(Op::LoadInt(4), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 0),
+                            0,
+                        );
+                    } else {
+                        for (sidx, seg) in segments.iter().enumerate() {
+                            match seg {
+                                PatSeg::Subst(text) => {
+                                    let pc = self.builder.add_constant(Value::str(text.as_str()));
+                                    self.builder.emit(Op::LoadConst(pc), 0);
+                                    self.builder.emit(Op::LoadInt(4), 0);
+                                    self.builder.emit(
+                                        Op::CallBuiltin(
+                                            crate::vm_helper::BUILTIN_EXPAND_TEXT,
+                                            0,
+                                        ),
+                                        0,
+                                    );
+                                }
+                                PatSeg::Literal(text) => {
+                                    let lit = crate::lex::untokenize(text);
+                                    let pc =
+                                        self.builder.add_constant(Value::str(lit.as_str()));
+                                    self.builder.emit(Op::LoadConst(pc), 0);
+                                }
+                            }
+                            if sidx > 0 {
+                                self.builder.emit(Op::Concat, 0);
+                            }
+                        }
+                    }
                 } else {
                     // Patterns are RAW glob strings. The lexer encodes
                     // glob chars (`*`, `?`, `[`, `]`) in the META range
@@ -5834,24 +5878,85 @@ impl ZshCompiler {
                         && right.ends_with('\u{9e}')
                         && right.chars().filter(|&c| c == '\u{9e}').count() == 2;
                     if needs_expand {
-                        self.dq_context_depth += 1;
-                        self.compile_word_str(right);
-                        self.dq_context_depth -= 1;
                         // c:Src/options.c GLOB_SUBST. When the RHS
                         // pattern came from variable / cmd
                         // substitution, zsh's default-OFF
-                        // GLOB_SUBST keeps the resulting chars
-                        // LITERAL (no glob meta promotion).
-                        // Emit the runtime guard that consults
-                        // GLOB_SUBST and escapes meta chars when
-                        // off. Bug #116 in docs/BUGS.md.
-                        self.builder.emit(
-                            Op::CallBuiltin(
-                                crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD,
-                                1,
-                            ),
-                            0,
-                        );
+                        // GLOB_SUBST keeps the SUBSTITUTED chars
+                        // literal (no glob meta promotion) but
+                        // PRESERVES source-level glob metas as
+                        // matchable globs. The naive path that runs
+                        // GLOB_SUBST_GUARD over the WHOLE expanded
+                        // string escapes both kinds of metas, so
+                        // `[[ foo = $H* ]]` (with H=foo) became
+                        // `foo\*` and failed to match. Walk the
+                        // source segments at compile time and emit
+                        // each piece separately: substitution
+                        // segments go through compile_word_str +
+                        // GLOB_SUBST_GUARD (literal-ize value chars
+                        // when GLOB_SUBST off), source-level segments
+                        // (glob META tokens, literal text, DQ-wraps)
+                        // emit as raw constants without the guard.
+                        // The result on the stack concatenates the
+                        // pieces — source-level `*` survives as a
+                        // literal `*` byte that StrMatch/patcompile
+                        // treats as glob, substitution `*` survives
+                        // as `\*` literal. Bug #116 in docs/BUGS.md.
+                        // c:Src/subst.c — same split happens at
+                        // singsub time in C, with tokenized output
+                        // distinguishing substituted bytes from
+                        // source metas; this is the compile-time
+                        // analogue.
+                        let segments = split_pattern_for_glob_subst(right);
+                        if segments.len() <= 1 {
+                            // Single segment — preserve original
+                            // shape (the lone substitution case).
+                            self.dq_context_depth += 1;
+                            self.compile_word_str(right);
+                            self.dq_context_depth -= 1;
+                            self.builder.emit(
+                                Op::CallBuiltin(
+                                    crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD,
+                                    1,
+                                ),
+                                0,
+                            );
+                        } else {
+                            // Multiple segments — emit each, concat
+                            // sequentially. First segment establishes
+                            // the stack value; subsequent segments
+                            // get Concat-ed in.
+                            for (idx, seg) in segments.iter().enumerate() {
+                                match seg {
+                                    PatSeg::Subst(text) => {
+                                        self.dq_context_depth += 1;
+                                        self.compile_word_str(text);
+                                        self.dq_context_depth -= 1;
+                                        self.builder.emit(
+                                            Op::CallBuiltin(
+                                                crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD,
+                                                1,
+                                            ),
+                                            0,
+                                        );
+                                    }
+                                    PatSeg::Literal(text) => {
+                                        // Untokenize source-level
+                                        // tokens to their literal
+                                        // byte form (`\u{87}` Star
+                                        // → `*`) so patcompile
+                                        // treats them as globs.
+                                        let lit = crate::lex::untokenize(text);
+                                        let c = self
+                                            .builder
+                                            .add_constant(Value::str(lit.as_str()));
+                                        self.builder.emit(Op::LoadConst(c), 0);
+                                    }
+                                }
+                                if idx > 0 {
+                                    self.builder.emit(Op::Concat, 0);
+                                }
+                            }
+                        }
                     } else if rhs_is_pure_dq_pre {
                         // Literal-compare path: untokenize WITHOUT
                         // escaping glob metas. StrEq does a byte
@@ -7663,6 +7768,173 @@ fn extract_filter_pat_from_raw_s(s: &str) -> Option<String> {
 /// compiler uses ASCII `*` as the trigger byte (pattern.rs:439), so
 /// the same literal-preservation needs to happen at the source level
 /// via `\X` escapes.
+/// Pattern segment kind used by [`split_pattern_for_glob_subst`] —
+/// `Subst` runs through `compile_word_str` + `BUILTIN_GLOB_SUBST_GUARD`
+/// at runtime so substitution-result chars get literal-ized when
+/// `GLOB_SUBST` is off; `Literal` is emitted as a raw constant so
+/// source-level glob meta tokens (Star, Quest, Inbrack, …) survive
+/// into `StrMatch`/`patcompile` as match-time globs. Compile-time
+/// helper, no C analog (zsh's substitution path tokenizes inline).
+#[derive(Debug)]
+enum PatSeg {
+    Subst(String),
+    Literal(String),
+}
+
+/// Walk a cond-RHS pattern's tokenized form and split into
+/// substitution / literal segments. Mirrors the distinction zsh's
+/// singsub draws at run time between bytes that come from `$VAR` /
+/// `$(…)` / `\`…\`` (gated by `GLOB_SUBST`) and bytes that are
+/// source-level glob metas (always treated as globs). Used by the
+/// `[[ x = pat ]]` compile path so `[[ foo = $H* ]]` with H=foo
+/// matches: the `\u{8c}H` segment expands+guards to `foo`, the
+/// trailing `\u{87}` segment untokenizes to literal `*` which the
+/// pattern matcher treats as a glob.
+///
+/// Segment boundaries:
+///   - `\u{85}` (Stringg `$`), `\u{8c}` (Qstring `$`), bare `$`:
+///     start of a parameter expansion. Consume the `$` marker plus
+///     a following name (`[A-Za-z_][A-Za-z0-9_]*`) OR a brace
+///     `${…}` / paren `$(…)` span (depth-balanced) OR an arith
+///     `$((…))`.
+///   - `\u{93}` (Tick) / `` ` ``: backtick command substitution.
+///     Consume until the matching close tick.
+///   - `\u{9e}` (Dnull) / `\u{9d}` (Snull) / `"` / `'`: quoted
+///     span. Consume the entire matched pair as ONE Subst — the
+///     expander processes the contents as a single string.
+///   - Everything else: Literal. Includes source-level meta tokens
+///     (`\u{87}` Star, `\u{97}` Quest, `\u{91}` Inbrack, …) and
+///     plain ASCII.
+fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out: Vec<PatSeg> = Vec::new();
+    let mut lit = String::new();
+    let mut i = 0;
+    let flush_lit = |lit: &mut String, out: &mut Vec<PatSeg>| {
+        if !lit.is_empty() {
+            out.push(PatSeg::Literal(std::mem::take(lit)));
+        }
+    };
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\u{85}' | '\u{8c}' | '$' => {
+                // Parameter / arith / cmd-subst start. Collect the
+                // marker plus body.
+                flush_lit(&mut lit, &mut out);
+                let mut subst = String::new();
+                subst.push(c);
+                i += 1;
+                if let Some(&nxt) = chars.get(i) {
+                    if nxt == '{' || nxt == '\u{8f}' {
+                        // `${…}` — depth-balance braces.
+                        let open = nxt;
+                        let close = if nxt == '{' { '}' } else { '\u{90}' };
+                        subst.push(nxt);
+                        i += 1;
+                        let mut depth = 1i32;
+                        while i < chars.len() && depth > 0 {
+                            let cc = chars[i];
+                            subst.push(cc);
+                            if cc == open {
+                                depth += 1;
+                            } else if cc == close {
+                                depth -= 1;
+                            }
+                            i += 1;
+                        }
+                    } else if nxt == '(' || nxt == '\u{96}' {
+                        // `$(…)` or `$((…))` — depth-balance parens.
+                        let open = nxt;
+                        let close = if nxt == '(' { ')' } else { '\u{95}' };
+                        subst.push(nxt);
+                        i += 1;
+                        let mut depth = 1i32;
+                        while i < chars.len() && depth > 0 {
+                            let cc = chars[i];
+                            subst.push(cc);
+                            if cc == open {
+                                depth += 1;
+                            } else if cc == close {
+                                depth -= 1;
+                            }
+                            i += 1;
+                        }
+                    } else {
+                        // Bare `$NAME` — consume identifier chars.
+                        while i < chars.len() {
+                            let cc = chars[i];
+                            if cc.is_ascii_alphanumeric() || cc == '_' {
+                                subst.push(cc);
+                                i += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
+                out.push(PatSeg::Subst(subst));
+            }
+            '\u{93}' | '`' => {
+                // Backtick substitution — match to closing tick.
+                flush_lit(&mut lit, &mut out);
+                let close = c;
+                let mut subst = String::new();
+                subst.push(c);
+                i += 1;
+                while i < chars.len() {
+                    let cc = chars[i];
+                    subst.push(cc);
+                    i += 1;
+                    if cc == close {
+                        break;
+                    }
+                }
+                out.push(PatSeg::Subst(subst));
+            }
+            '\u{9e}' | '"' => {
+                // Double-quoted span: zsh expands the entire body as
+                // a single string. Treat the whole span as one Subst.
+                flush_lit(&mut lit, &mut out);
+                let close = c;
+                let mut subst = String::new();
+                subst.push(c);
+                i += 1;
+                while i < chars.len() {
+                    let cc = chars[i];
+                    subst.push(cc);
+                    i += 1;
+                    if cc == close {
+                        break;
+                    }
+                }
+                out.push(PatSeg::Subst(subst));
+            }
+            '\u{9d}' | '\'' => {
+                // Single-quoted span: pure literal. Take the entire
+                // span as Literal so untokenize strips the markers.
+                let close = c;
+                lit.push(c);
+                i += 1;
+                while i < chars.len() {
+                    let cc = chars[i];
+                    lit.push(cc);
+                    i += 1;
+                    if cc == close {
+                        break;
+                    }
+                }
+            }
+            _ => {
+                lit.push(c);
+                i += 1;
+            }
+        }
+    }
+    flush_lit(&mut lit, &mut out);
+    out
+}
+
 fn untokenize_preserve_quoted_pat_literals(s: &str) -> String {
     use crate::ported::zsh_h::{
         Bang, Bar, Bnull, Bnullkeep, Dash, Dnull, Equals, Hat, Inang, Inbrace, Inbrack, Inpar,
