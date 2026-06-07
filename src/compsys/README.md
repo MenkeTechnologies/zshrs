@@ -33,7 +33,7 @@ The completion engine that powers [zshrs](https://github.com/MenkeTechnologies/z
 
 ## [0x00] OVERVIEW
 
-compsys replaces zsh's C completion system with a Rust implementation whose **hot path is rkyv**: pre-compiled [fusevm](https://github.com/MenkeTechnologies/fusevm) chunks live in mmap'd shards under `~/.cache/zshrs/images/`, coordinated by `index.rkyv` (see [`docs/DAEMON.md`](../docs/DAEMON.md)). Where zsh scans `fpath` and reparses on every `compinit`, compsys consumes daemon-built images and falls through to compile-on-demand only on miss.
+compsys replaces zsh's C completion system with a Rust implementation whose **hot path is rkyv**: pre-compiled [fusevm](https://github.com/MenkeTechnologies/fusevm) chunks live in mmap'd shards under `~/.zshrs/images/`, coordinated by `index.rkyv` (see [`docs/DAEMON.md`](../docs/DAEMON.md)). Where zsh scans `fpath` and reparses on every `compinit`, compsys consumes daemon-built images and falls through to compile-on-demand only on miss.
 
 **SQLite** exists only as **read-only mirrors** (joinable rows, optional FTS materializations) for humans and `dbview`. Mirrors are hydrated from daemon state; they **do not define or influence** the shell completion cache.
 

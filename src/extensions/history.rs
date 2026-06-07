@@ -67,55 +67,6 @@ impl HistoryEngine {
             std::fs::create_dir_all(parent).ok();
         }
 
-        // One-shot migration. Two legacy sources, in priority order:
-        //   1. The previous shell-side path at
-        //      `$ZSHRS_HOME/zshrs_history` — was a sqlite db, briefly
-        //      named without the `.db` suffix. Move it into place.
-        //   2. The pre-2026-05-03 location at
-        //      `~/Library/Application Support/zshrs/history.db`
-        //      (macOS) / `$XDG_DATA_HOME/zshrs/history.db` (Linux).
-        //      Copy (don't move) so users who roll back keep the old
-        //      file readable.
-        // Both fire only when zshrs_history.db does not yet exist —
-        // never overwrites populated state. Schema is identical (same
-        // writer at every age), so byte-level copy is sufficient.
-        if !path.exists() {
-            let prev_inplace = Self::root().join("zshrs_history");
-            // Only move-rename if the file is actually a sqlite db —
-            // protects users who already created a flat-text
-            // `zshrs_history` by hand.
-            if prev_inplace.exists() && is_sqlite_file(&prev_inplace) {
-                match std::fs::rename(&prev_inplace, &path) {
-                    Ok(()) => tracing::info!(
-                        from = %prev_inplace.display(),
-                        to = %path.display(),
-                        "history: renamed legacy zshrs_history -> zshrs_history.db"
-                    ),
-                    Err(e) => tracing::warn!(?e, "history: rename legacy zshrs_history failed"),
-                }
-            }
-        }
-        if !path.exists() {
-            if let Some(legacy) = legacy_db_path() {
-                if legacy.exists() {
-                    if let Err(e) = std::fs::copy(&legacy, &path) {
-                        tracing::warn!(
-                            from = %legacy.display(),
-                            to = %path.display(),
-                            error = %e,
-                            "history: migrate from legacy path failed; starting empty"
-                        );
-                    } else {
-                        tracing::info!(
-                            from = %legacy.display(),
-                            to = %path.display(),
-                            "history: migrated from legacy path"
-                        );
-                    }
-                }
-            }
-        }
-
         let conn = Connection::open(&path)?;
         let engine = Self { conn };
         engine.init_schema()?;
@@ -130,9 +81,7 @@ impl HistoryEngine {
 
         // Rehydrate the flat text mirror from the sqlite index when
         // the text file is missing or stale (size 0 with a populated
-        // db — happens after the rename migration above moves the
-        // user's old `zshrs_history` to `.db`). Cheap: one-shot
-        // chronological dump, no FTS / no joins.
+        // db). Cheap: one-shot chronological dump, no FTS / no joins.
         if let Err(e) = engine.rehydrate_text_if_stale() {
             tracing::warn!(?e, "history: failed to rehydrate text mirror; continuing");
         }
@@ -145,9 +94,6 @@ impl HistoryEngine {
         engine.init_schema()?;
         Ok(engine)
     }
-
-    // Helpers below are inherent associated functions; see free
-    // `legacy_db_path()` outside the impl block for the migration source.
 
     /// `$ZSHRS_HOME/zshrs_history.db` — sqlite index that powers FTS5
     /// search, frequency tracking, dedup. Hidden under `.db` so the
@@ -547,19 +493,10 @@ impl HistoryEngine {
     }
 }
 
-/// Pre-2026-05-03 history db location. Returned only when the legacy
-/// file actually exists — used by `HistoryEngine::new` to migrate
-/// once into `$ZSHRS_HOME/zshrs_history.db`. Returns None if
-/// `dirs::data_dir` can't resolve (no $HOME / no platform data dir).
-fn legacy_db_path() -> Option<PathBuf> {
-    Some(dirs::data_dir()?.join("zshrs").join("history.db"))
-}
-
 /// Detect whether `path` is a sqlite database by sniffing the magic
-/// header (first 16 bytes start with `SQLite format 3\0`). Used by
-/// the rename-migration to avoid clobbering a user's hand-written
-/// flat text file. Errors / short files / unknown content all return
-/// false (safe default — leave unknown content alone).
+/// header (first 16 bytes start with `SQLite format 3\0`). Errors /
+/// short files / unknown content all return false (safe default —
+/// leave unknown content alone).
 fn is_sqlite_file(path: &std::path::Path) -> bool {
     let mut f = match std::fs::File::open(path) {
         Ok(f) => f,

@@ -1,7 +1,7 @@
 //! SQLite mirror tables for compsys.
 //!
 //! NOT the completion cache. The authoritative completion / autoload
-//! cache is the rkyv-mmap'd shard set at `~/.cache/zshrs/*.rkyv`
+//! cache is the rkyv-mmap'd shard set at `~/.zshrs/*.rkyv`
 //! (zero-copy hot path; see `src/extensions/autoload_cache.rs` and
 //! `src/compsys/README.md`). This SQLite file is a read-only mirror
 //! hydrated alongside the shards for `dbview` / SQL inspection only
@@ -28,10 +28,17 @@ pub struct CompsysCache {
     conn: Connection,
 }
 
-/// Returns the default cache path: ~/.zshrs/compsys.db
+/// Returns the default cache path: `$ZSHRS_HOME/compsys.db` (default
+/// `~/.zshrs/compsys.db`). Project policy forbids `~/.cache/zshrs/`
+/// and `~/Library/Caches/zshrs/`.
 pub fn default_cache_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".cache/zshrs/compsys.db")
+    let root = if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
+        PathBuf::from(custom)
+    } else {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        PathBuf::from(home).join(".zshrs")
+    };
+    root.join("compsys.db")
 }
 
 impl CompsysCache {
@@ -90,7 +97,7 @@ impl CompsysCache {
     fn init_schema(&self) -> rusqlite::Result<()> {
         // Migration: drop the legacy `bytecode BLOB` column from `autoloads`
         // if and only if the table already exists with that schema. Bytecode
-        // now lives in the rkyv shard at ~/.cache/zshrs/autoloads.rkyv (see
+        // now lives in the rkyv shard at ~/.zshrs/autoloads.rkyv (see
         // `crate::autoload_cache`); SQLite holds only the body/source
         // metadata. The user's directive: "delete all sqlite columns related
         // to bytecode, sqlite3 is read only mirror".
@@ -246,7 +253,7 @@ impl CompsysCache {
     /// Schema migrations for existing databases.
     ///
     /// The legacy `bytecode BLOB` re-add path was removed when bytecode moved
-    /// to the rkyv shard (~/.cache/zshrs/autoloads.rkyv). The pre-v0.8.16
+    /// to the rkyv shard (~/.zshrs/autoloads.rkyv). The pre-v0.8.16
     /// `ast` column is still detected here and dropped — its data was the
     /// same kind of bytecode and is now obsolete.
     fn migrate(&self) -> rusqlite::Result<()> {
