@@ -6073,7 +6073,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let bytes = base64_decode(&body_b64);
         let status = match bincode::deserialize::<fusevm::Chunk>(&bytes) {
             Ok(chunk) => with_executor(|exec| {
-                let def_file = exec.scriptfilename.clone();
+                // c:Src/exec.c:5383 — `shf->filename =
+                // ztrdup(scriptfilename);` — the function's
+                // definition-file is read from the canonical
+                // file-scope `scriptfilename` global at compile
+                // time, NOT from a per-executor struct field.
+                // exec.scriptfilename is seeded once at
+                // bins/zshrs.rs:1717 to the bin basename ("zsh")
+                // and never updates on source/dot, so reading from
+                // it left every user function's def_file as "zsh".
+                // Route through scriptfilename_get() so source /
+                // dot's set_scriptfilename calls propagate.
+                let def_file = crate::ported::utils::scriptfilename_get()
+                    .or_else(|| exec.scriptfilename.clone());
                 if !body_source.is_empty() {
                     exec.function_source
                         .insert(name.clone(), body_source.clone());
