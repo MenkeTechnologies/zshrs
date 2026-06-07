@@ -169,7 +169,19 @@ pub fn dump_tokens(src: &str) -> String {
             return out;
         }
         let raw = lex::tokstr().unwrap_or_default();
-        let plain = lex::untokenize_preserve_quotes(&raw);
+        // For DISPLAY purposes (matching `Src/zsh dumptokens`
+        // output byte-for-byte), `Qstring` (U+008C — the DQ-context
+        // `$` marker per Src/zsh.h:167) must render as `$`.
+        // `untokenize_preserve_quotes` deliberately leaves Qstring
+        // raw so `stringsubst` at Src/subst.c:283 can branch on
+        // `qt = c == Qstring`, but the lex-stream dump is consumed
+        // by human eyeballs and diff harnesses against upstream's
+        // dumptokens output, both of which expect `$`. Replace it
+        // here after the untokenize pass so the in-tree consumer
+        // contract (stringsubst etc.) is untouched but the dump
+        // shows what `dumptokens` shows.
+        let plain = lex::untokenize_preserve_quotes(&raw)
+            .replace(crate::ported::zsh_h::Qstring, "$");
         out.push_str(tok_name(tok));
         out.push('\t');
         out.push_str(&plain);
