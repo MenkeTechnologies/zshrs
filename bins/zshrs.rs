@@ -1865,6 +1865,13 @@ pub fn zshrs_main() {
         //   restore). Bug #318 in docs/BUGS.md — script mode left
         //   SCRIPTNAME=None so `%N` fell back to ZSH_NAME ("zsh").
         zsh::ported::utils::set_scriptname(Some(args[1].clone()));
+        // c:Src/init.c:1573 — `scriptfilename = ztrdup(runscript);`
+        // — PS4's `%x` reads this (Src/prompt.c:931 path). Without
+        // the matching write, `zshrs -x script.zsh` left the
+        // scriptfilename TLS at "zsh" (the executor seed at
+        // vm_helper.rs:1318), so xtrace col 1 showed "zsh" instead
+        // of the script path for top-level lines.
+        zsh::ported::utils::set_scriptfilename(Some(args[1].clone()));
         // c:Src/init.c:965 — `setsparam("ZSH_ARGZERO", ztrdup(posixzero));`
         // posixzero is the script path under script mode (or the
         // shell binary path under -c/interactive). In zshrs's script
@@ -2632,14 +2639,33 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str)
     } else {
         None
     };
-    // Port of `source()` scriptname swap from Src/init.c:1591
+    // Port of `source()` scriptname swap from Src/init.c:1591-1592
     // (`scriptname = s; scriptfilename = s;`). Drives `%N` / `%x`
     // prompt expansion (and the corresponding xtrace prefix line)
     // to show the sourced file path during the source body, then
     // restore the prior value on exit. The C source pairs this
     // with the argzero swap above — both are in flight together.
-    let saved_scriptname = executor.scriptname.take();
-    executor.scriptname = Some(path.to_string_lossy().to_string());
+    //
+    // Two stores per side: the canonical file-static
+    // `crate::ported::utils::{scriptname,scriptfilename}` that the
+    // prompt expander reads (prompt.rs:152-164 hydrates
+    // SCRIPTNAME/SCRIPTFILENAME TLS from these), AND the
+    // ShellExecutor.scriptname field used by some legacy callers.
+    // Previously only the latter was written, so PS4's `%x` / `%N`
+    // kept showing "zsh" (the initial set_scriptname value seeded
+    // at executor construction) all the way through .zshenv /
+    // .zshrc / .zprofile sourcing. Bug surfaced as
+    //   `zsh    zsh    1    export …`
+    // (zshrs) vs
+    //   `/Users/wizard/.zshenv    /Users/wizard/.zshenv    1    export …`
+    // (real zsh) in the user's PS4 parity screenshot.
+    let path_str = path.to_string_lossy().to_string();
+    let saved_scriptname_field = executor.scriptname.take();
+    executor.scriptname = Some(path_str.clone());
+    let saved_scriptname = zsh::ported::utils::scriptname_get();
+    let saved_scriptfilename = zsh::ported::utils::scriptfilename_get();
+    zsh::ported::utils::set_scriptname(Some(path_str.clone()));
+    zsh::ported::utils::set_scriptfilename(Some(path_str));
 
     // Parse and execute the entire file as one stream — port of
     // C `source()` → `loop(0, 0)` (Src/init.c:1551, 1627). The
@@ -2669,7 +2695,9 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str)
         }
     }
     // Restore scriptname per Src/init.c source() exit path.
-    executor.scriptname = saved_scriptname;
+    executor.scriptname = saved_scriptname_field;
+    zsh::ported::utils::set_scriptname(saved_scriptname);
+    zsh::ported::utils::set_scriptfilename(saved_scriptfilename);
 }
 
 /// Source a file
@@ -2684,6 +2712,15 @@ fn source_file(executor: &mut ShellExecutor, path: &PathBuf) {
     }
 
     if let Ok(contents) = std::fs::read_to_string(path) {
+        // c:Src/init.c:1591-1592 — `scriptname = s; scriptfilename
+        // = s;` for the duration of the source body. Without these
+        // writes, PS4's %x / %N renders "zsh" instead of the file
+        // path. See source_from_memory for the longer comment.
+        let path_str = path.to_string_lossy().to_string();
+        let saved_scriptname = zsh::ported::utils::scriptname_get();
+        let saved_scriptfilename = zsh::ported::utils::scriptfilename_get();
+        zsh::ported::utils::set_scriptname(Some(path_str.clone()));
+        zsh::ported::utils::set_scriptfilename(Some(path_str));
         let mut buffer = String::new();
         let mut in_multiline = false;
 
@@ -2728,6 +2765,11 @@ fn source_file(executor: &mut ShellExecutor, path: &PathBuf) {
         if !buffer.is_empty() {
             process_line(&buffer, executor);
         }
+        // Restore scriptname/scriptfilename per Src/init.c source()
+        // exit path. Mirrors the equivalent restore in
+        // source_from_memory above.
+        zsh::ported::utils::set_scriptname(saved_scriptname);
+        zsh::ported::utils::set_scriptfilename(saved_scriptfilename);
     }
 }
 

@@ -705,18 +705,12 @@ mod tests {
     /// c:21 — `bin_zsocket -l` and `bin_zsocket -a` with non-numeric
     /// args don't panic.
     ///
-<<<<<<< Updated upstream
-    /// `-l PATH` calls `bind(2)` on the path, which CREATES a unix
-    /// socket file at that path. Use a `$TMPDIR` path so the test
-    /// doesn't leave a stray "abc" / "xyz" socket in the project
-    /// root (previous form did, then `cargo test` runs left a fake
-    /// `abc` file in cwd that the user kept having to delete).
-=======
-    /// `-l <path>` binds a Unix socket at `<path>`; the prior bare
-    /// `"abc"` arg created a socket in the repo root that `git
-    /// status` then flagged. Route through a tempdir path and clean
-    /// up after.
->>>>>>> Stashed changes
+    /// `-l <path>` calls `bind(2)` on the path, which CREATES a Unix
+    /// socket file at that path; `-a <path>` connects but also can
+    /// touch the filesystem. The prior bare `"abc"` / `"xyz"` args
+    /// left strays in the repo root that surfaced in `git status`
+    /// after every `cargo test` run. Route through `$TMPDIR` and
+    /// pre+post cleanup.
     #[test]
     fn bin_zsocket_a_l_flags_with_arbitrary_arg_no_panic() {
         let _g = crate::test_util::global_state_lock();
@@ -726,27 +720,17 @@ mod tests {
         let _ = std::fs::remove_file(&abc_path);
         let mut ops = empty_ops();
         ops.ind[b'a' as usize] = 1;
-<<<<<<< Updated upstream
         let _ = bin_zsocket("zsocket", &[xyz_path.to_string_lossy().into()], &ops, 0);
-        let mut ops2 = empty_ops();
-        ops2.ind[b'l' as usize] = 1;
-        let _ = bin_zsocket("zsocket", &[abc_path.to_string_lossy().into()], &ops2, 0);
-        let _ = std::fs::remove_file(&xyz_path);
-        let _ = std::fs::remove_file(&abc_path);
-=======
-        let _ = bin_zsocket("zsocket", &["xyz".to_string()], &ops, 0);
-        let sock_path = std::env::temp_dir().join("zshrs_test_zsocket_l");
-        let _ = std::fs::remove_file(&sock_path);
         let mut ops2 = empty_ops();
         ops2.ind[b'l' as usize] = 1;
         let _ = bin_zsocket(
             "zsocket",
-            &[sock_path.to_string_lossy().into_owned()],
+            &[abc_path.to_string_lossy().into()],
             &ops2,
             0,
         );
-        let _ = std::fs::remove_file(&sock_path);
->>>>>>> Stashed changes
+        let _ = std::fs::remove_file(&xyz_path);
+        let _ = std::fs::remove_file(&abc_path);
     }
 
     /// c:351-387 — full lifecycle setup→features→enables→boot→cleanup→finish.

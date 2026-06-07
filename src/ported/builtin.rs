@@ -613,10 +613,77 @@ pub fn execbuiltin(
                         // c:443 — `fprintf(xtrerr, "%s", name);`
         eprint!("{}", name); // c:443
                              // c:444-447 — `while (*fullargv) { fputc(' ',xtrerr); quotedzputs(...); }`
+        // C zsh's parser pre-splits `name=value` args for
+        // BINF_ASSIGN-flagged builtins (export/typeset/declare/local/
+        // readonly/integer/float) into asg{name,value} nodes, which
+        // the c:448-491 branch emits as
+        //   `quotedzputs(name) + '=' + quotedzputs(value)` (c:453,487-488).
+        // zshrs's compiler doesn't populate `assigns`; args arrive
+        // here as the unsplit `"name=value"` whole-strings, so the
+        // c:443-446 path quotes the entire string and produces
+        // `export 'VAR=val'` instead of `export VAR=val`. Inline the
+        // same split here — the prefix is a legal scalar/array name
+        // (ident, optionally `[subscript]`) followed by `=` or
+        // `+=`, and the suffix is the value. Detection mirrors the
+        // C parser at Src/lex.c:2169 (gettokstr ASSIGN recognition)
+        // and is faithful to what the C path would have produced
+        // from a pre-split asg node.
+        let is_assign = (bn_ref.node.flags as u32 & BINF_ASSIGN) != 0;
         for s in fullargv {
             // c:444
             eprint!(" "); // c:445 fputc(' ', xtrerr)
-            eprint!("{}", quotedzputs(s)); // c:446
+            let mut emitted = false;
+            if is_assign {
+                let sbytes = s.as_bytes();
+                // Walk the ident prefix.
+                let mut i = 0usize;
+                if !sbytes.is_empty()
+                    && (sbytes[0].is_ascii_alphabetic() || sbytes[0] == b'_')
+                {
+                    i = 1;
+                    while i < sbytes.len()
+                        && (sbytes[i].is_ascii_alphanumeric() || sbytes[i] == b'_')
+                    {
+                        i += 1;
+                    }
+                    // Optional `[subscript]` — bracket-balanced.
+                    if i < sbytes.len() && sbytes[i] == b'[' {
+                        let mut depth = 1i32;
+                        i += 1;
+                        while i < sbytes.len() && depth > 0 {
+                            match sbytes[i] {
+                                b'[' => depth += 1,
+                                b']' => depth -= 1,
+                                _ => {}
+                            }
+                            i += 1;
+                        }
+                        if depth != 0 {
+                            i = 0; // unbalanced — bail to default path
+                        }
+                    }
+                    if i > 0 {
+                        // Match `=` or `+=` separator.
+                        let (sep_len, sep) = if sbytes.get(i) == Some(&b'+')
+                            && sbytes.get(i + 1) == Some(&b'=')
+                        {
+                            (2usize, "+=")
+                        } else if sbytes.get(i) == Some(&b'=') {
+                            (1usize, "=")
+                        } else {
+                            (0, "")
+                        };
+                        if sep_len != 0 {
+                            // c:453,487-488 — emit name + sep + quoted(value).
+                            eprint!("{}{}{}", &s[..i], sep, quotedzputs(&s[i + sep_len..]));
+                            emitted = true;
+                        }
+                    }
+                }
+            }
+            if !emitted {
+                eprint!("{}", quotedzputs(s)); // c:446
+            }
         }
         // c:448-491 — `if (assigns) { for (node = firstnode(assigns); ...) }`.
         for asg in &assigns {
@@ -9554,7 +9621,13 @@ pub fn bin_dot(
     // argv[0]) but `arg0` (the user-supplied name) is what zsh
     // actually shows in diagnostics, so use arg0.
     let old_scriptname = crate::ported::utils::scriptname_get(); // c:1557
+    let old_scriptfilename = crate::ported::utils::scriptfilename_get(); // c:1558
     crate::ported::utils::set_scriptname(Some(arg0.clone())); // c:1591
+    // c:1592 — `scriptfilename = s;` — PS4 `%x` reads this; without
+    // the store the bottom of an `xtrace` line stack stays "zsh"
+    // (the executor seed) even inside the sourced file. Bug shared
+    // with source_from_memory in bins/zshrs.rs.
+    crate::ported::utils::set_scriptfilename(Some(arg0.clone())); // c:1592
 
     crate::ported::init::sourcelevel.fetch_add(1, Relaxed); // c:1606
     let result = match fs::read_to_string(&path) {
@@ -9564,8 +9637,10 @@ pub fn bin_dot(
         Err(_) => 128 - 2,
     };
     crate::ported::init::sourcelevel.fetch_sub(1, Relaxed); // c:1644
-    // c:1666 — `scriptname = old_scriptname;`
+    // c:1666 — `scriptname = old_scriptname;` and matching
+    // scriptfilename restore from the c:1667 line.
     crate::ported::utils::set_scriptname(old_scriptname);
+    crate::ported::utils::set_scriptfilename(old_scriptfilename);
                                                             // c:5842 RETFLAG is set by bin_break's BIN_RETURN arm. Once the
                                                             // sourced file's execute_script unwinds, the return has been
                                                             // serviced; clear the flag so the outer compile unit's main loop
