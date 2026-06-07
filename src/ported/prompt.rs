@@ -461,13 +461,86 @@ pub fn parsehighlight(spec: &str) -> zattr {
     attrs
 }
 
-/// Parse a single colour character from a `%F{...}` argument.
-/// Port of `parsecolorchar(zattr arg, int is_fg)` from Src/prompt.c:318.
-pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {
+/// Port of `static zattr parsecolorchar(zattr arg, int is_fg)` from
+/// `Src/prompt.c:318`. C body:
+/// ```c
+/// if (bv->fm[1] == '{') {
+///     char *ep;
+///     bv->fm += 2; /* skip over F{ */
+///     if ((ep = strchr(bv->fm, '}'))) {
+///         … promptexpand the brace body, then
+///         arg = match_colour((const char **)&coll, is_fg, 0);
+///         bv->fm = ep;
+///     } else {
+///         arg = match_colour((const char **)&bv->fm, is_fg, 0);
+///         if (*bv->fm != '}') bv->fm--;
+///     }
+/// } else
+///     arg = match_colour(NULL, is_fg, arg);
+/// return arg;
+/// ```
+///
+/// Reads `bv->fm[1]` to detect the optional `{NAME}` brace form;
+/// otherwise treats `arg` as a pre-supplied color index and returns
+/// the corresponding `TXTFGCOLOUR|(arg<<SHFT)` zattr packing.
+///
+/// Sig matches C (bv first by reference, then arg+is_fg). The
+/// previous Rust port took `(&str, bool) -> Option<(Color, String)>`
+/// which couldn't read bv->fm at all and wasn't callable from the
+/// matching C site.
+pub fn parsecolorchar(bv: &mut buf_vars, arg: zattr, is_fg: bool) -> zattr {
     // c:318
-    let color = color_from_name(arg)?; // c:318 (match_colour)
-    let ansi = color_to_ansi(color, is_fg); // c:2440
-    Some((color, ansi))
+    use crate::ported::zsh_h::{
+        TXTBGCOLOUR, TXTFGCOLOUR, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_COL_SHIFT,
+    };
+    let on_bit = if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR };
+    let shift = if is_fg {
+        TXT_ATTR_FG_COL_SHIFT
+    } else {
+        TXT_ATTR_BG_COL_SHIFT
+    };
+    // c:320 — `if (bv->fm[1] == '{')`.
+    if bv.fm.as_bytes().get(bv.fm_pos + 1).copied() == Some(b'{') {
+        // c:322 — `bv->fm += 2; /* skip over F{ */`.
+        bv.fm_pos += 2;
+        let bytes = bv.fm.as_bytes();
+        // c:323 — `strchr(bv->fm, '}')`.
+        let mut ep = bv.fm_pos;
+        while ep < bytes.len() && bytes[ep] != b'}' {
+            ep += 1;
+        }
+        if ep < bytes.len() {
+            // c:325-340 — extract name, promptexpand-wrap, match_colour.
+            // The promptexpand round-trip lets `%F{%vCOLOR}` resolve
+            // dynamic color names; collapsed here to a direct name
+            // lookup since the brace-content is consumed verbatim
+            // (promptexpand-as-input-of-color-name is rare and the
+            // Rust port's color_from_name already handles `bg=` /
+            // `fg=` / numeric / named forms).
+            let name: String = bv.fm[bv.fm_pos..ep].to_string();
+            // c:337 — `bv->fm = ep;` — consume up through the `}`.
+            bv.fm_pos = ep;
+            if let Some(color) = color_from_name(&name) {
+                return on_bit | ((color as zattr) << shift);
+            }
+            // C falls back to default arg on lookup miss.
+            on_bit | (arg << shift)
+        } else {
+            // c:343-346 — no close-brace; match_colour walks bv->fm
+            // and returns. Without the close-brace path, the rest of
+            // the prompt would be consumed as the color name — which
+            // is wrong. Back up to before `{` and treat as no color.
+            if bv.fm_pos > 0 {
+                bv.fm_pos -= 1;
+            }
+            arg
+        }
+    } else {
+        // c:349 — `arg = match_colour(NULL, is_fg, arg)` — with NULL
+        // name and pre-supplied arg, returns the color-bits version
+        // of arg (no parsing).
+        on_bit | (arg << shift)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1710,6 +1783,48 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 b'<' | b'>' => {
                     let truncchar = xc as i32;
                     let _ = prompttrunc(bv, arg, truncchar, doprint, endchar);
+                }
+                // c:Src/prompt.c:657-661 — `%[arg INNER ]content<endchar>`.
+                // C body:
+                //   if (idigit(*++bv->fm))
+                //       arg = zstrtol(bv->fm, &bv->fm, 10);
+                //   if (!prompttrunc(arg, ']', doprint, endchar))
+                //       return *bv->fm;
+                // The `*++bv->fm` advances PAST the `[` before the digit
+                // check, AND the inline-digit reparse may consume more.
+                // prompttrunc then does another `bv->fm++` past the
+                // current char (treating it as the truncstr opener
+                // char, not content). The net effect: the first byte
+                // immediately after `[` (or after the inline digit run)
+                // is silently skipped — see `/bin/zsh -fc 'print -nP
+                // "%5[a]bcdef"'` emits `bcdef` (the `a` is skipped,
+                // default `<` becomes the marker but content fits).
+                b'[' => {
+                    let mut local_arg = arg;
+                    // c:658 — `*++bv->fm` advances past the `[` byte.
+                    bv.fm_pos += 1;
+                    let bytes = bv.fm.as_bytes();
+                    // c:658-659 — inline digits override arg.
+                    if bv.fm_pos < bytes.len() && idigit(bytes[bv.fm_pos]) {
+                        let mut end = bv.fm_pos;
+                        while end < bytes.len() && idigit(bytes[end]) {
+                            end += 1;
+                        }
+                        let num: i32 = std::str::from_utf8(&bytes[bv.fm_pos..end])
+                            .ok()
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0);
+                        local_arg = num;
+                        bv.fm_pos = end;
+                    }
+                    let _ = prompttrunc(bv, local_arg, b']' as i32, doprint, endchar);
+                    // prompttrunc consumed the truncstr + bracketed
+                    // content; the outer `bv.fm_pos += 1` below would
+                    // skip a byte of whatever follows. Pre-decrement
+                    // to cancel that out.
+                    if bv.fm_pos > 0 {
+                        bv.fm_pos -= 1;
+                    }
                 }
                 // c:899 — null terminator inside an escape
                 0 => return 0,
@@ -4347,14 +4462,9 @@ mod tests {
         let _ = expand("%Q");
     }
 
-    #[test]
-    #[ignore = "diagnostic dump — run with --ignored"]
-    fn dump_prompt_escapes() {
-        for s in &["%B", "%b", "%F{red}", "%f", "%{ABCD%}", "%{ABCD%}xyz"] {
-            let out = expand(s);
-            eprintln!("expand({s:?}) = {out:?}");
-        }
-    }
+    // `dump_prompt_escapes` was a diagnostic eprintln dump, not a
+    // test — moved to `examples/dump_prompt_escapes.rs`. Invoke via
+    // `cargo run --example dump_prompt_escapes`.
 
     // ─── promptexpand zsh-corpus pins ───────────────────────────────
 
@@ -4884,13 +4994,15 @@ mod tests {
         assert_eq!(out, "nested");
     }
 
-    /// `%5[a]bcdef` — `%[a]` is the OLD truncation syntax (c:701-705)
-    /// where `[a]` is the truncation marker shown on overflow. Real
-    /// zsh emits "bcdef" (5 chars). The Rust port may emit slightly
-    /// more or less depending on prompttrunc wiring; verify length is
-    /// in a small range covering both behaviors.
+    /// c:Src/prompt.c:657 — `%5[a]bcdef` opens a truncation directive:
+    /// arg=5 width, `]` is the truncstr terminator. The C parser
+    /// silently skips the first byte after `[` (via the `*++bv->fm` +
+    /// inner `bv->fm++` quirk), so `a` is dropped from the truncstr
+    /// and the default `<` marker is inserted — but the content
+    /// `bcdef` is exactly 5 chars, so no truncation happens and
+    /// output is `bcdef`. Verified against `/bin/zsh -fc 'print -nP
+    /// "%5[a]bcdef"'` → 5 bytes.
     #[test]
-    #[ignore = "GAP: prompttrunc / countprompt wiring incomplete"]
     fn putpromptchar_truncation_bracket_truncates_to_width() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%5[a]bcdef");
@@ -4930,38 +5042,37 @@ mod tests {
     // #[ignore]'d so CI passes; remove ignore when sig is fixed.
     // ═══════════════════════════════════════════════════════════════════
 
-    /// PIN: `parsecolorchar` SIGNATURE BUG.
-    ///
     /// C `Src/prompt.c:318` — `zattr parsecolorchar(zattr arg, int is_fg)`.
     /// Reads `bv->fm[1]` for the `{NAME}` brace arg, mutates `bv->fm`,
     /// returns the encoded `zattr` (with TXTFGCOLOUR / TXTBGCOLOUR +
     /// color packed in TXT_ATTR_FG_COL_MASK / TXT_ATTR_BG_COL_MASK).
-    ///
-    /// Rust port: `pub fn parsecolorchar(arg: &str, is_fg: bool) ->
-    /// Option<(Color, String)>`. Takes color NAME as the arg
-    /// (totally wrong — C takes numeric arg + reads bv->fm for the
-    /// optional brace name), no bv access (so caller had to inline the
-    /// brace-parse logic in putpromptchar), returns a tuple instead of
-    /// zattr. The fn can't be called with C's contract.
-    ///
-    /// Until the signature is corrected to match C (would need bv to
-    /// become a thread-local or first-arg parameter, and zattr return),
-    /// the inline brace-parse in putpromptchar is the only working path.
+    /// Sig now matches C: `(bv: &mut buf_vars, arg: zattr, is_fg: bool)
+    /// -> zattr`.
     #[test]
-    #[ignore = "ZSHRS BUG: parsecolorchar signature diverges from C — Rust=(arg:&str, is_fg:bool)->Option<(Color,String)>, C=(arg:zattr, is_fg:int)->zattr; reads bv->fm[1] in C, no equivalent in Rust"]
     fn parsecolorchar_signature_matches_c() {
-        // Faithful C call: `parsecolorchar(1 as zattr, true)` should
-        // return zattr with TXTFGCOLOUR | (1 << TXT_ATTR_FG_COL_SHIFT)
-        // packed in. Rust's sig can't even be called this way.
-        //
-        // When fixed:
-        //   let zattr_out = parsecolorchar(1 as zattr, true);
-        //   assert_eq!(zattr_out & TXTFGCOLOUR, TXTFGCOLOUR);
-        //   assert_eq!(
-        //       (zattr_out & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT,
-        //       1
-        //   );
-        panic!("parsecolorchar signature is divergent — test cannot exercise the C contract; remove #[ignore] after signature is corrected");
+        use crate::ported::zsh_h::{TXTFGCOLOUR, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT};
+        let mut bv = buf_vars {
+            buf: vec![0u8; 16],
+            bufspc: 16,
+            bp: 0,
+            bufline: 0,
+            bp1: None,
+            fm: "F".to_string(), // no `{` follow → take the `match_colour(NULL,_,arg)` path
+            fm_pos: 0,
+            truncwidth: 0,
+            dontcount: 0,
+            trunccount: 0,
+            rstring: None,
+            Rstring: None,
+            attrs: 0,
+            in_escape: false,
+        };
+        let zattr_out = super::parsecolorchar(&mut bv, 1, true);
+        assert_eq!(zattr_out & TXTFGCOLOUR, TXTFGCOLOUR);
+        assert_eq!(
+            (zattr_out & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT,
+            1
+        );
     }
 
     /// PIN: `match_colour` SIGNATURE BUG.
