@@ -323,7 +323,6 @@ const EXPECTED_FAILURES: &[&str] = &[
     "122_case_multi_pat.zsh",
     "123_glob_qualifiers_more.zsh",
     "125_param_defined.zsh",
-    "126_func_shift.zsh",
     "13_redir_dup.zsh",
     "130_cond_logic.zsh",
     "132_pipe_multi.zsh",
