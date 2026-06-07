@@ -623,6 +623,7 @@ fn diagnose(text: &str) -> Vec<Value> {
         // If we're inside a multi-line quote opened on a previous line,
         // scan for its close. Skip block-keyword scanning entirely for
         // this line — the line content is string-body, not zsh code.
+        let mut post_quote_tail: Option<usize> = None;
         if let Some(q) = open_quote {
             let bytes = line.as_bytes();
             let mut i = 0usize;
@@ -639,14 +640,22 @@ fn diagnose(text: &str) -> Vec<Value> {
                 }
                 i += 1;
             }
-            if let Some(_close_pos) = closed_at {
-                // Quote closed on this line. Remaining content is code,
-                // but for simplicity skip the rest of this line too —
-                // multi-line-quote-then-code-on-same-close-line is rare.
+            if let Some(close_pos) = closed_at {
                 open_quote = None;
+                // Multi-line `$(... "string with `(` `)` ..." ...)` form
+                // (e.g. examples/demos/365_mini_lisp.zsh:574, 654, 660)
+                // closes the quote then has code after. Drop into the
+                // normal token-level scan, but starting at close_pos+1,
+                // so trailing `)` matches the `$( … )` opener pushed on
+                // the prior line. Block-keyword scan stays skipped (the
+                // line is mostly string-body; partial coverage avoids
+                // re-triggering case/done/fi false positives).
+                post_quote_tail = Some(close_pos + 1);
+            } else {
+                // Still inside the multi-line quote — entire line is
+                // string body. Skip both scans.
+                continue;
             }
-            // Skip block-keyword scan + token-level scan for this line.
-            continue;
         }
         let trimmed = line.trim_start();
         if trimmed.starts_with('#') {
@@ -710,7 +719,7 @@ fn diagnose(text: &str) -> Vec<Value> {
         //   '['  — single bracket          ']'
         //   'A'  — arithmetic `((`         `))`
         //   'D'  — conditional `[[`        `]]`
-        let mut i = 0usize;
+        let mut i = post_quote_tail.unwrap_or(0);
         let bytes = line.as_bytes();
         while i < bytes.len() {
             let c = bytes[i] as char;
@@ -917,6 +926,13 @@ fn diagnose(text: &str) -> Vec<Value> {
         // quoted strings, otherwise lines like `# foo case bar` or
         // `echo "if you like"` push spurious entries onto block_stack
         // and surface as "unclosed `case` block" / "unclosed `if`".
+        // Skip when the line opened inside a multi-line quote that
+        // just closed — most of the line is string body and partial
+        // strip_comments_and_strings analysis would mis-flag tokens
+        // before close_pos.
+        if post_quote_tail.is_some() {
+            continue;
+        }
         let code_only = strip_comments_and_strings(line);
         for (tok_idx, kw_raw) in code_only.split_whitespace().enumerate() {
             // Strip trailing shell-statement-separator punctuation
@@ -9408,13 +9424,18 @@ mod tests {
 
     #[test]
     fn user_doc_ignores_single_hash_comments() {
-        // Only `##` lines attach. Plain `#` comments are routine code
-        // remarks and must NOT show up as docstrings.
+        // Only `##` lines attach to the doc block. Plain `#` comments
+        // are routine code remarks and must NOT show up as docstrings.
+        // The minimal "defined here" card (find_user_symbol_doc fallback
+        // at lsp.rs:2038) still fires so hover doesn't go blank for an
+        // undocumented symbol, but it must contain NO part of the `#`
+        // comment text.
         let src = "# This is just a code comment, not a docstring.\n\
                    function f() {}\n";
+        let card = super::find_user_symbol_doc(src, "f").expect("minimal card");
         assert!(
-            super::find_user_symbol_doc(src, "f").is_none(),
-            "plain `#` comments must not attach as docs",
+            !card.contains("just a code comment"),
+            "plain `#` comments must not leak into doc card: {card:?}"
         );
     }
 
@@ -9426,21 +9447,28 @@ mod tests {
 
     #[test]
     fn user_doc_returns_none_when_no_doc_block() {
+        // No `##` doc block → falls through to the "defined here"
+        // minimal card (find_user_symbol_doc fallback at lsp.rs:2038).
+        // The card must mention the symbol but carry no doc body.
         let src = "function greet() {}\n";
-        assert!(super::find_user_symbol_doc(src, "greet").is_none());
+        let card = super::find_user_symbol_doc(src, "greet").expect("minimal card");
+        assert!(card.contains("greet"), "card must name the symbol: {card:?}");
     }
 
     #[test]
     fn user_doc_stops_at_intervening_single_hash_line() {
         // `## doc` then `# code comment` then `function f` —
-        // intervening single-`#` terminates the doc block, so no
-        // doc attaches.
+        // intervening single-`#` terminates the doc-block collection,
+        // so the rich-doc card is suppressed. The minimal "defined
+        // here" card still fires (per lsp.rs:2038 fallback), but it
+        // must NOT contain the `## Real doc here.` text.
         let src = "## Real doc here.\n\
                    # Inline comment unrelated to the doc.\n\
                    function f() {}\n";
+        let card = super::find_user_symbol_doc(src, "f").expect("minimal card");
         assert!(
-            super::find_user_symbol_doc(src, "f").is_none(),
-            "intervening `#` comment must terminate doc collection",
+            !card.contains("Real doc here"),
+            "intervening `#` must break doc collection: {card:?}"
         );
     }
 

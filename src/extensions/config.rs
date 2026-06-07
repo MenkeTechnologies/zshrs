@@ -460,17 +460,23 @@ max_matches = 42
     fn config_path_ends_in_config_toml() {
         let _g = crate::test_util::global_state_lock();
         let p = config_path();
+        // Canonical name is `zshrs.toml` per
+        // daemon_presence::config_file_path (line 399) — documented at
+        // daemon_presence.rs:30 as `$ZSHRS_HOME/zshrs.toml` or
+        // `~/.zshrs/zshrs.toml`. Test name says "config_toml" but
+        // pins the actual canonical filename.
         assert_eq!(
             p.file_name().and_then(|s| s.to_str()),
-            Some("config.toml"),
+            Some("zshrs.toml"),
             "{:?}",
             p
         );
+        // Parent dir is `.zshrs` (the hidden config home), not `zshrs`.
         assert_eq!(
             p.parent()
                 .and_then(|d| d.file_name())
                 .and_then(|s| s.to_str()),
-            Some("zshrs"),
+            Some(".zshrs"),
             "{:?}",
             p
         );

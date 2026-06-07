@@ -3630,17 +3630,18 @@ pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {
     //      history saving is explicitly disabled. The previous
     //      port wrote an EMPTY file (cap=0 → no entries),
     //      truncating the user's existing history.
-    // c:Src/hist.c:2932 — `!interact` gate. C zsh blocks the
-    // auto-save path so a non-interactive script doesn't pollute
-    // the user's HISTFILE. But an EXPLICIT `fc -W path` request
-    // with a destination different from HISTFILE is the user
-    // deliberately writing session entries to a chosen file —
-    // honor that even in -c mode. Only block the implicit
-    // (HISTFILE-targeted) save path when non-interactive.
-    let explicit_path = fn_path.is_some();
-    if !isset(INTERACTIVE) && !explicit_path {
+    // c:Src/hist.c:2932 — `!interact` gate. C zsh ALWAYS blocks the
+    // save path in non-interactive mode regardless of `fn` — the C
+    // body is `if (!interact || …) return;`. Honour that exactly so
+    // non-interactive scripts can't pollute the user's HISTFILE even
+    // by passing an explicit path. The previous Rust divergence
+    // (allow explicit `fc -W path`) broke the test pin at
+    // hist.rs:5388 (`!interact must skip write; original content
+    // preserved`) and is a Rule-A violation against the C source.
+    if !isset(INTERACTIVE) {
         return;
     }
+    let explicit_path = fn_path.is_some();
     let cap = savehistsiz.load(SeqCst); // c:2932 savehistsiz
     // For explicit fc -W path in -c mode, fall back to histsiz when
     // savehistsiz isn't configured so the entries actually get
