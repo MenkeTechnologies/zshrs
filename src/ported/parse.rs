@@ -1709,11 +1709,43 @@ fn par_if() -> Option<ZshCommand> {
         let body = parse_program_until(Some(&[OUTBRACE_TOK]));
         if tok() == OUTBRACE_TOK {
             zshlex();
+            // c:Src/parse.c:1469-1470 — `zshlex(); incmdpos = 1;`. C
+            // par_if explicitly resets incmdpos to 1 after consuming
+            // OUTBRACE so subsequent commands (`; echo after`, `else`
+            // following the `}` without a `;`) are at command position
+            // and tokenize correctly.
+            set_incmdpos(true);
         }
         Box::new(body)
     } else {
         Box::new(parse_program_until(Some(&[ELSE, ELIF, FI])))
     };
+
+    // c:Src/parse.c:1471-1472 — `if (tok == SEPER) break;`. For
+    // brace-form `if … { … }`, C par_if breaks out of the outer
+    // construct loop WITHOUT consuming the SEPER when one
+    // immediately follows the closing `}`. The SEPER stays in the
+    // lexer for the OUTER par_list to consume as the if-statement's
+    // list separator. Our Rust port's loop below calls skip_separators
+    // which would eat that SEPER and leave tok=STRING(next-command),
+    // triggering par_cmd's "STRING_LEX after compound = parse error"
+    // check at line ~1170. Without this early-exit, brace-form
+    //   if [[ … ]] { … }; echo after
+    // failed with `parse error near 'echo'` on zinit.zsh:1422.
+    //
+    // We only need this when use_brace is true and the next token
+    // is a separator (SEPER / NEWLIN / SEMI) AND it's NOT followed
+    // by ELSE/ELIF (those would extend the construct). Since the
+    // brace-form already consumed its closing `}` (saw_terminator
+    // is true), early-return is safe.
+    if use_brace && matches!(tok(), SEPER | NEWLIN | SEMI | ENDINPUT) {
+        return Some(ZshCommand::If(ZshIf {
+            cond,
+            then,
+            elif: Vec::new(),
+            else_: None,
+        }));
+    }
 
     // Parse elif and else. zsh accepts the SAME elif/else
     // continuations for both classic `then/fi` AND the brace
