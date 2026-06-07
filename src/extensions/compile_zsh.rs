@@ -10445,29 +10445,9 @@ mod tests {
         );
     }
 
-    #[test]
-    #[ignore = "diagnostic dump — run with --ignored"]
-    fn dump_ops_for_failing_constructs() {
-        for src in [
-            "$(echo hi)",
-            "greet() { echo hi; }",
-            "echo *.txt",
-            "cat <<EOF\nhi\nEOF\n",
-            "true && echo a",
-            "false || echo a",
-            "echo $HOME",
-            "echo ~/x",
-        ] {
-            let chunk = compile_src(src);
-            eprintln!("=== src: {src:?} ===");
-            for (i, op) in chunk.ops.iter().enumerate() {
-                eprintln!("  [{i:3}] {op:?}");
-            }
-            for (i, sc) in chunk.sub_chunks.iter().enumerate() {
-                eprintln!("  sub_chunk[{i}] ops={:?}", sc.ops);
-            }
-        }
-    }
+    // `dump_ops_for_failing_constructs` was a diagnostic eprintln dump,
+    // not a test — moved to `examples/dump_compile_ops.rs`. Invoke via
+    // `cargo run --example dump_compile_ops`.
 
     #[test]
     fn chunk_source_field_populated() {
