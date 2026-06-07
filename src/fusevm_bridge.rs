@@ -5592,14 +5592,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // PURE PASSTHRU: reconstruct `${name:offset:length}` and route
     // through `subst::paramsubst`. Length sentinel `i64::MIN` =
     // "no length given" (omit the `:length` portion).
+    //
+    // c:Src/subst.c:1571,3781 — `${name:-N}` is the colon-default
+    // operator, NOT a substring with negative offset. zsh's lexical
+    // rule disambiguates via a literal space: `${name: -N}` (space
+    // before `-`) is the substring form. The reconstructed body MUST
+    // preserve that space when offset < 0; otherwise paramsubst's
+    // `:-` dispatch fires on the synthesized `${name:-N}` body and
+    // returns N as the unset-default instead of slicing the last N
+    // chars. Length-form `${name:-N:M}` has the same trap.
     vm.register_builtin(BUILTIN_PARAM_SUBSTRING, |vm, _argc| {
         let length = vm.pop().to_int();
         let offset = vm.pop().to_int();
         let name = vm.pop().to_str();
+        let off_sep = if offset < 0 { " " } else { "" };
         let body = if length == i64::MIN {
-            format!("${{{}:{}}}", name, offset)
+            format!("${{{}:{}{}}}", name, off_sep, offset)
         } else {
-            format!("${{{}:{}:{}}}", name, offset, length)
+            format!("${{{}:{}{}:{}}}", name, off_sep, offset, length)
         };
         paramsubst_to_value(&body)
     });
@@ -5608,15 +5618,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // PURE PASSTHRU: rebuild `${name:offset:length}` using the
     // expression text verbatim (paramsubst's offset/length
     // parser evaluates arith / param refs itself).
+    //
+    // c:Src/subst.c:1571,3781 — same `:-` disambiguation trap as
+    // BUILTIN_PARAM_SUBSTRING. The expression text may itself start
+    // with `-` (e.g. `${VAR:$((-1))}` arith resolves at the body-
+    // assembly layer in some upstream paths, leaving `-1` in
+    // off_expr). Insert a leading space when off_expr starts with
+    // `-` so paramsubst's check_colon_subscript (subst.c:1571)
+    // accepts the operand as a math expression instead of the
+    // `:-` operator catching it.
     vm.register_builtin(BUILTIN_PARAM_SUBSTRING_EXPR, |vm, _argc| {
         let has_len = vm.pop().to_int() != 0;
         let len_expr = vm.pop().to_str();
         let off_expr = vm.pop().to_str();
         let name = vm.pop().to_str();
+        let off_sep = if off_expr.starts_with('-') { " " } else { "" };
         let body = if has_len {
-            format!("${{{}:{}:{}}}", name, off_expr, len_expr)
+            format!("${{{}:{}{}:{}}}", name, off_sep, off_expr, len_expr)
         } else {
-            format!("${{{}:{}}}", name, off_expr)
+            format!("${{{}:{}{}}}", name, off_sep, off_expr)
         };
         paramsubst_to_value(&body)
     });
