@@ -4721,8 +4721,15 @@ pub fn parse_init(input: &str) {
     // installs these via `install_emulation_defaults` (options.c:172)
     // at shell startup; zshrs's parse-only test entry path bypasses
     // init_main, so we mirror the `zsh` emulation defaults here.
-    // Only seeds when unset so a script that explicitly disabled an
-    // option stays so.
+    //
+    // We unconditionally OVERWRITE these on every parse_init so cross-
+    // test option pollution (a prior test that flipped one of these
+    // and panicked before its restore ran) doesn't leak into the
+    // parser's reserved-word recognition / one-liner detection. The
+    // `Only seeds when unset` shape we used before allowed `repeat 3
+    // do …`, `if …; then …`, and `function f() {}` parse pins to
+    // randomly fail when a sibling test had toggled `shortloops` /
+    // `multifuncdef` / etc. inside the same suite run.
     for (name, default) in [
         ("shortloops", true),
         ("shortrepeat", false),
@@ -4735,9 +4742,7 @@ pub fn parse_init(input: &str) {
         ("kshautoload", false),
         ("aliases", true),
     ] {
-        if crate::ported::options::opt_state_get(name).is_none() {
-            crate::ported::options::opt_state_set(name, default);
-        }
+        crate::ported::options::opt_state_set(name, default);
     }
     lex_init(input);
 }
@@ -10036,7 +10041,6 @@ esac"#;
     /// `parse_event(ENDINPUT)` on empty input returns None.
     /// C `Src/parse.c:715-ish` — empty token stream → no program.
     #[test]
-    #[ignore = "ZSHRS BUG: parse_event setup needs lex state — exact behavior on empty input verification pending"]
     fn parse_event_empty_returns_none() {
         let _g = crate::test_util::global_state_lock();
         init_parse();

@@ -1303,12 +1303,19 @@ pub fn parse_string(s: &str, reset_lineno: i32) -> Option<eprog> {
 /// failure worth surfacing.
 pub fn isgooderr(e: i32, dir: &str) -> bool {
     // c:652
-    let dir_x_ok = std::path::Path::new(&unmeta(dir))
-        .metadata()
-        .map(|m| m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false);
-    // c:658-659 — `(e != EACCES || !access(dir, X_OK)) && e != ENOENT && e != ENOTDIR`
-    (e != libc::EACCES || !dir_x_ok) && e != libc::ENOENT && e != libc::ENOTDIR
+    // c:Src/exec.c:658-659 — `(e != EACCES || !access(dir, X_OK)) &&
+    //   e != ENOENT && e != ENOTDIR`. C's `access(dir, X_OK)` returns
+    //   0 on success / -1 on failure. The previous Rust port used
+    //   `metadata().permissions().mode() & 0o111` which reports the
+    //   X bit even when the path doesn't exist as the EFFECTIVE caller
+    //   (root, ACLs, capabilities all flip access() vs raw mode).
+    //   `/no/such/dir` metadata() fails → returned false for
+    //   dir_x_ok, then `!false` = true, giving "good error" for a
+    //   nonexistent path. Use libc::access directly to match C exactly.
+    let unmeta_dir = unmeta(dir);
+    let cstr = std::ffi::CString::new(unmeta_dir.as_bytes()).unwrap_or_default();
+    let access_ok = unsafe { libc::access(cstr.as_ptr(), libc::X_OK) } == 0;
+    (e != libc::EACCES || access_ok) && e != libc::ENOENT && e != libc::ENOTDIR
 }
 
 /// Port of `int iscom(char *s)` from `Src/exec.c:962`.
@@ -10859,7 +10866,6 @@ mod tests {
     /// out "unreadable / not directory" errnos so caller doesn't
     /// emit spurious warnings.
     #[test]
-    #[ignore = "ZSHRS BUG: isgooderr exact semantics need verification — C: `((e != EACCES || !access(dir, X_OK)) && e != ENOENT && e != ENOTDIR)`"]
     fn isgooderr_eacces_unreadable_dir_returns_false() {
         let _g = crate::test_util::global_state_lock();
         // /no/such/dir doesn't exist → access(X_OK) fails non-zero
@@ -11282,11 +11288,28 @@ mod tests {
     /// through CDPATH and cd_able_vars, both of which should miss for
     /// the empty string. Likely cd_able_vars("") or CDPATH-with-empty-element
     /// is silently matching $HOME or "." here.
+    /// C-faithful behavior: `cancd("")` enters the `!starts_with('/')`
+    /// branch (c:6376), calls `cancd2("")` which appends to PWD →
+    /// "PWD/" → fixdir → PWD itself → access+stat succeed → returns
+    /// `Some(pwd)`. Verified against `/bin/zsh -fc 'cd ""; echo $?'`
+    /// → `0` (success). The previous test expectation (None) was
+    /// based on a misread of the C source — pin actual behavior.
     #[test]
-    #[ignore = "ZSHRS BUG: cancd('') returns Some instead of None — likely cd_able_vars or empty CDPATH element matching $HOME (Src/exec.c:6383-6403)"]
     fn cancd_empty_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(cancd("").is_none(), "empty path → None");
+        // cancd("") returns Some — empty path resolves through PWD per
+        // the cancd2 path; matches C zsh's `cd ""` exit-0 behavior.
+        // Pin PWD to a known-existing dir so a prior test that left
+        // PWD set to a non-directory doesn't masquerade as the bug.
+        let saved_pwd = crate::ported::params::getsparam("PWD");
+        crate::ported::params::setsparam("PWD", "/");
+        let r = cancd("");
+        if let Some(p) = saved_pwd {
+            crate::ported::params::setsparam("PWD", &p);
+        } else {
+            crate::ported::params::unsetparam("PWD");
+        }
+        assert!(r.is_some(), "empty path → Some(pwd) per cancd2-via-PWD path");
     }
 
     /// c:4603 — `cancd("/")` root dir returns Some (always exists).

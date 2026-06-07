@@ -82,6 +82,19 @@ pub fn edcharsetfn(pm: *mut param, x: *mut libc::c_char) { // c:47
 /// ```
 pub fn matchgetfn(pm: *mut param) -> Vec<String> {
     // c:60
+    // c:Src/Modules/ksh93.c:60 — C's matchgetfn dereferences
+    // `pm->u.arr` directly with no null guard (the function is wired
+    // into a gsu_array vtable and never invoked with a NULL `pm`).
+    // The Rust port is callable from tests that pass `null_mut` to
+    // pin the safety boundary; preserve the convention by short-
+    // circuiting to an empty Vec when `pm` is null, BEFORE looking
+    // at the `match` paramtab entry. Without this, leftover `match`
+    // array values from a prior test (the global paramtab is shared
+    // across tests via the `global_state_lock`) leak into the null-pm
+    // call's return value, breaking the "null pm → empty vec" pin.
+    if pm.is_null() {
+        return Vec::new();
+    }
     // c:60 — `char **zsh_match = getaparam("match");`
     let zsh_match: Vec<String> = paramtab()
         .read()
@@ -813,6 +826,10 @@ mod tests {
     #[test]
     fn matchgetfn_with_param_no_array_returns_empty() {
         let _g = crate::test_util::global_state_lock();
+        // matchgetfn reads `match` from paramtab (ksh93.rs:60 — c:60).
+        // A prior subst-related test may have written to it; clear so
+        // the "no array data" branch isn't masked by leftover values.
+        crate::ported::params::unsetparam("match");
         let mut pm = param {
             node: hashnode {
                 next: None,

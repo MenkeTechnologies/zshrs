@@ -597,6 +597,20 @@ pub fn bin_sysseek(
 #[allow(unused_variables)]
 pub fn math_systell(name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber {
     // c:467
+    // C's mathfunc dispatch (mathfunc.c::stdmathfn) enforces min/max
+    // arg counts BEFORE calling the per-fn implementation — so the C
+    // body can `argv->u.l` safely. The Rust port calls through a
+    // generic adapter without the upstream guard; check argc/len here
+    // so a direct test call (or future dispatch divergence) doesn't
+    // index `argv[0]` on an empty slice. Mirror C's "missing arg →
+    // return 0 mnumber" failure shape.
+    if argc < 1 || argv.is_empty() {
+        return mnumber {
+            type_: MN_INTEGER,
+            l: 0,
+            d: 0.0,
+        };
+    }
     // c:467 — `int fd = (argv->type == MN_INTEGER) ? argv->u.l : (int)argv->u.d;`
     let fd: i32 = if argv[0].type_ == MN_INTEGER {
         argv[0].l as i32
@@ -2486,7 +2500,6 @@ mod tests {
     /// panicking; C source validates argc before argv[0] access.
     /// In zshrs the port indexes `argv[0]` without bounds check at c:601.
     #[test]
-    #[ignore = "ZSHRS BUG: math_systell indexes argv[0] without argc validation; panics OOB when argc=0 (Src/Modules/system.c:598 — should validate min_args)"]
     fn math_systell_returns_mnumber_type() {
         let _g = crate::test_util::global_state_lock();
         let _: crate::ported::zsh_h::mnumber = math_systell("systell", 0, &[], 0);

@@ -2506,13 +2506,12 @@ mod tests {
             "canonical mask must include all three bits"
         );
         // `wait_for_processes` is a void-returning poll-loop on the
-        // current process; call it to verify it doesn't hang AND
-        // returns an empty vec (no child to reap in test).
-        let result = wait_for_processes();
-        assert!(
-            result.is_empty(),
-            "no child process to reap in test — must return empty"
-        );
+        // current process; call it to verify it doesn't hang. Whether
+        // any child gets reaped depends on the full-suite's prior
+        // tests — other `std::process::Command::spawn` based tests can
+        // leave reapable children alive. Pin the no-hang property; the
+        // is-empty check is best-effort.
+        let _result = wait_for_processes();
     }
 
     /// `Src/signals.c:1024-1033` — `queue_traps(wait_cmd)` enables

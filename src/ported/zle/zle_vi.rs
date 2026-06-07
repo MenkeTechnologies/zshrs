@@ -2393,7 +2393,6 @@ mod tests {
     /// `viinsertbol` moves to first non-blank. C zle_vi.c:
     ///   `vifirstnonblank(zlenoargs); startvitext(1); return 0;`
     #[test]
-    #[ignore = "ZSHRS BUG: viinsertbol vifirstnonblank wiring — needs vifirstnonblank port verification"]
     fn viinsertbol_moves_to_first_non_blank() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();

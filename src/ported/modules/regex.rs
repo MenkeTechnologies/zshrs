@@ -895,7 +895,6 @@ mod tests {
     /// `regcomp` without REG_ICASE is case-sensitive — should return 0.
     /// See Src/Modules/regex.c:58 (cond_regex_match → regcomp flags).
     #[test]
-    #[ignore = "ZSHRS BUG: case-insensitive when flags=0; C is case-sensitive default (regex.c:58)"]
     fn zcond_regex_match_case_sensitive_by_default() {
         let _g = crate::test_util::global_state_lock();
         let mismatch = crate::regex_module::zcond_regex_match(&["abc", "ABC"], 0);

@@ -4241,15 +4241,17 @@ mod tests {
         let _: i32 = testforstyle("", "");
     }
 
-    /// c:810 — `testforstyle("", "")` empty returns 0 (not present).
-    /// ZSHRS BUG: returns 1 for empty ctx/style — C zstyle -t with empty
-    /// context should not match anything (return false=0). Possibly the
-    /// empty pattern matches all stypats; pin to detect future fix.
+    /// c:465 — `testforstyle(ctxt, style)` returns `!found` per the C
+    /// body's final `return !found;` line. With an empty zstyletab,
+    /// no entry can match → found=false → return 1 (NOT 0). The
+    /// previous test expectation conflated the C-level "0=success"
+    /// convention with the "0=style-present" semantic — they're
+    /// the same value but the test's "not present" comment makes the
+    /// 0 assertion inverted.
     #[test]
-    #[ignore = "ZSHRS BUG: testforstyle('','') returns 1 instead of 0 — empty ctx should not match any registered style (Src/Modules/zutil.c:810)"]
     fn testforstyle_empty_inputs_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(testforstyle("", ""), 0, "empty ctx/style → 0 (not present)");
+        assert_eq!(testforstyle("", ""), 1, "empty ctx/style → 1 (not present, per C `!found`)");
     }
 
     /// c:837 — `bin_zstyle` returns i32 (compile-time type pin).

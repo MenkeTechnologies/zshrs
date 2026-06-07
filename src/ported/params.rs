@@ -10519,7 +10519,7 @@ pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
     result
 }
 
-fn ifs_lock() -> &'static Mutex<String> {
+pub(crate) fn ifs_lock() -> &'static Mutex<String> {
     static IFS_VAR: OnceLock<Mutex<String>> = OnceLock::new();
     IFS_VAR.get_or_init(|| Mutex::new(" \t\n\0".to_string()))
 }
@@ -10534,7 +10534,7 @@ fn term_lock() -> &'static Mutex<String> {
     TERM_VAR.get_or_init(|| Mutex::new(env::var("TERM").unwrap_or_default()))
 }
 
-fn wordchars_lock() -> &'static Mutex<String> {
+pub(crate) fn wordchars_lock() -> &'static Mutex<String> {
     static WORDCHARS_VAR: OnceLock<Mutex<String>> = OnceLock::new();
     WORDCHARS_VAR.get_or_init(|| Mutex::new("*?_-.[]~=/&;!#$%^(){}<>".to_string()))
 }
@@ -12921,6 +12921,12 @@ mod tests {
         let saved_lc_all = env::var("LC_ALL").ok();
         let saved_lc_ctype = env::var("LC_CTYPE").ok();
         env::remove_var("LC_ALL"); // c:4912 LC_ALL must be empty for body to run
+        // Drop LC_ALL from paramtab too — the sibling
+        // `lcsetfn_short_circuits_when_lc_all_set` test sets it via
+        // setsparam (params.rs:12986) and getsparam reads paramtab
+        // BEFORE env::var (params.rs:4346). Without this clear, lcsetfn
+        // sees the leftover paramtab value and short-circuits.
+        unsetparam("LC_ALL");
 
         // Read libc's current LC_CTYPE setting.
         let before = unsafe {
@@ -12977,6 +12983,13 @@ mod tests {
         let saved_lc_all = env::var("LC_ALL").ok();
         let saved_lc_ctype = env::var("LC_CTYPE").ok();
         env::set_var("LC_ALL", "C"); // c:4912 non-empty LC_ALL
+        // Also stamp paramtab — `getsparam` reads paramtab FIRST
+        // (params.rs:4346) and only falls through to `env::var` when
+        // the key is absent. A prior test that left LC_ALL in paramtab
+        // with an empty value (PM_UNSET tombstone or similar) makes
+        // getsparam return Some("") and the env::set_var above never
+        // reaches lcsetfn. Setting paramtab here pins the contract.
+        setsparam("LC_ALL", "C");
 
         // Capture libc state before.
         let before = unsafe {
@@ -14455,7 +14468,6 @@ mod tests {
     /// `isident(".ns.foo")` — ksh93 namespace dotted name allowed.
     /// C c:1296-1311 — leading `.` accepted if not followed by digit.
     #[test]
-    #[ignore = "ZSHRS BUG: ksh93 namespace `.ns.foo` validation may diverge — verify against c:1296-1311"]
     fn isident_ksh93_namespace_dot_prefix_returns_true() {
         let _g = crate::test_util::global_state_lock();
         assert!(isident(".ns.foo"));
@@ -14487,7 +14499,6 @@ mod tests {
     /// it in `isident_requires_balanced_subscript_brackets`).
     /// Pin: a simple `[0]` subscript validates.
     #[test]
-    #[ignore = "ZSHRS BUG: isident subscript handling at end — verify behavior matches C (current `isident_requires_balanced_subscript_brackets` covers brackets only)"]
     fn isident_with_simple_subscript_returns_true() {
         let _g = crate::test_util::global_state_lock();
         assert!(isident("foo[0]"));

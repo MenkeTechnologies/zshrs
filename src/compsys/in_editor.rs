@@ -385,7 +385,6 @@ mod tests {
     // is the harness wires up without crashing; Phase 0.6 adds
     // an in-process `compinit` bootstrap so we can hard-assert.
     #[test]
-    #[ignore]
     fn complete_at_smoke_does_not_panic() {
         let req = CompsysRequest::new_with_default_budget("setopt ext", 10);
         let resp = complete_at(req);

@@ -159,10 +159,24 @@ pub fn selectlist(items: &[&str], start: usize) -> usize {
     let colsz = (ct + fct - 1) / fct; // c:377
 
     // c:379 — for (t1 = start; t1 != colsz && t1 - start < zterm_lines - 2; t1++)
+    //
+    // C uses `*ap` (NUL-terminated array walk) to bound the inner loop;
+    // the Rust port lost that sentinel, so an out-of-range `start` (or
+    // a row-offset that reaches past `ct`) indexes `items[idx]` and
+    // panics. Mirror the C terminator with explicit bounds checks:
+    //   - outer: stop when `t1 >= colsz` OR `start + t1*fct >= ct`
+    //   - inner: skip the row entirely when the column-base is OOB.
     let mut t1 = start;
     let max_lines = zterm_lines.saturating_sub(2);
-    while t1 != colsz && (t1 - start) < max_lines {
+    while t1 < colsz && (t1.saturating_sub(start)) < max_lines {
         let mut idx = t1; // c:381 ap = arr + t1
+        if idx >= ct {
+            // Past the last item — C's `*ap` would already be NULL here.
+            // Emit the blank line C would produce and advance.
+            let _ = stderr.write_all(b"\n");
+            t1 += 1;
+            continue;
+        }
         loop {
             // c:383 do {
             let entry = items[idx];
@@ -323,7 +337,6 @@ mod tests {
     /// bound `t1 - start < zterm_lines - 2`. Likely off-by-one in
     /// the Rust port's index walk past last column.
     #[test]
-    #[ignore = "ZSHRS BUG: selectlist panics with index OOB when start > 0; C handles paginated start cleanly. See Src/loop.c:379 column loop"]
     fn selectlist_start_in_range_no_panic() {
         let _g = crate::test_util::global_state_lock();
         let items = ["a", "b", "c", "d", "e"];
@@ -554,12 +567,6 @@ mod tests {
     /// c:347 — `selectlist` with start ≥ items.len() doesn't panic
     /// (start past end is degenerate but safe).
     #[test]
-    #[ignore = "ZSHRS BUG: selectlist indexes items[idx] without guarding \
-                inner loop's idx += colsz against bounds — panics on OOB at \
-                src/ported/loop.rs:168. C source (Src/loop.c:381-395) walks \
-                a NUL-terminated `arr + t1` array where overrun is bounded \
-                by `*ap` check; Rust port uses Vec indexing and lacks the \
-                terminator check"]
     fn selectlist_start_past_end_no_panic() {
         let _g = crate::test_util::global_state_lock();
         let _ = selectlist(&["a", "b"], 100);
@@ -578,11 +585,6 @@ mod tests {
 
     /// c:347 — `selectlist` with start at exactly items.len()-1 doesn't panic.
     #[test]
-    #[ignore = "ZSHRS BUG: selectlist inner column-walk loop adds colsz to \
-                idx without bounds check — panics at src/ported/loop.rs:168 \
-                when start lands such that idx += colsz exceeds items.len(). \
-                Same root cause as selectlist_start_past_end_no_panic — port \
-                drops C's NUL-terminator guard (Src/loop.c:381-395)"]
     fn selectlist_start_at_last_index_no_panic() {
         let _g = crate::test_util::global_state_lock();
         let _ = selectlist(&["a", "b", "c"], 2);

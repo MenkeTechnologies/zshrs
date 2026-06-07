@@ -218,8 +218,17 @@ pub fn incpos(pos: &mut usize) {
 /// `deccs`.
 pub fn decpos(pos: &mut usize) {
     // c:152
-    *pos -= 1; // c:152
-               // c:155 — `alignmultiwordleft(pos, 1)`. No-op for Vec<char>.
+    // C: `(*pos)--;` on an `int*` — pos can underflow to -1 silently
+    // (two's complement). Rust's `usize` panics on overflow in debug
+    // builds. C callers always guard with `if (zlecs > 0) decpos(...)`
+    // (see Src/Zle/zle_move.c:130, c:198, etc.), so the underflow case
+    // is unreachable in practice. Guard it here defensively so any
+    // accidental caller doesn't crash the shell — staying at 0 is the
+    // best approximation of C's "before start" intent.
+    if *pos > 0 {
+        *pos -= 1; // c:152
+    }
+    // c:155 — `alignmultiwordleft(pos, 1)`. No-op for Vec<char>.
 }
 
 /// Port of `BMC_BUFSIZE` from `Src/Zle/zle_move.c:49`.
@@ -2273,7 +2282,6 @@ mod region_tests {
     /// the port subtracts unconditionally → usize-underflow panic at
     /// `Src/Zle/zle_move.rs:221`.
     #[test]
-    #[ignore = "ZSHRS BUG: decpos subtracts unconditionally → usize-underflow panic at zero pos (Src/Zle/zle_move.c:219 — should guard via *p > 0)"]
     fn decpos_zero_arg_safe() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();

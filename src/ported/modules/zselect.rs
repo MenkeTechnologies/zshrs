@@ -43,6 +43,14 @@ pub fn handle_digits(
         zwarnnam(nam, &format!("garbage after file descriptor: {}", endptr));
         return 1; // c:52
     }
+    // c:Src/Modules/zselect.c — C uses `FD_SET` which is UB when
+    // fd >= FD_SETSIZE; both C and Rust would have undefined / panic
+    // behavior. Guard explicitly so the zshrs builtin reports a clean
+    // usage error instead of crashing the shell on huge fd values.
+    if fd < 0 || fd as usize >= libc::FD_SETSIZE {
+        zwarnnam(nam, &format!("file descriptor out of range: {}", argptr));
+        return 1;
+    }
     unsafe {
         libc::FD_SET(fd, fdset);
     } // c:55 FD_SET
@@ -757,7 +765,6 @@ mod tests {
     /// calls select(2) on an empty fd set with no timeout. C handles
     /// this differently — pin as ZSHRS BUG.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_zselect with no args hangs in select(2) with empty fdset; C should reject early or honor implicit timeout per Src/Modules/zselect.c:65"]
     fn bin_zselect_no_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
@@ -868,7 +875,6 @@ mod tests {
     /// c:68 — `bin_zselect` no-args HANGS in select(2) on empty fd_set.
     /// C source guards against this; zshrs port does not.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_zselect with no args hangs in select(2) on empty fd_set; C guards. See Src/Modules/zselect.c:68"]
     fn bin_zselect_empty_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();
@@ -1077,17 +1083,13 @@ mod tests {
     /// C source rejects with usage error: `zerr("file descriptor out of range")`.
     /// In zshrs the port panics via libc::FD_SET when fd > FD_SETSIZE.
     #[test]
-    #[ignore = "ZSHRS BUG: handle_digits panics in libc::FD_SET when fd > FD_SETSIZE; C source `Src/Modules/zselect.c:25` should usage-error"]
     fn handle_digits_huge_fd_no_panic() {
         let (mut set, mut fdmax) = fresh_set();
         let _ = handle_digits("zselect", "99999999", &mut set, &mut fdmax);
     }
 
     /// c:68 — `bin_zselect` returns i32 (compile-time pin).
-    /// IGNORED — bin_zselect no-args hangs in select(2); see pre-existing
-    /// ZSHRS BUG citation on `bin_zselect_no_args_returns_nonzero`.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_zselect with no args hangs in select(2) with empty fdset; C should reject early per Src/Modules/zselect.c:68"]
     fn bin_zselect_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();
@@ -1095,9 +1097,7 @@ mod tests {
     }
 
     /// c:68 — `bin_zselect` no-args returns nonzero (usage error, alt).
-    /// IGNORED — same ZSHRS BUG as `bin_zselect_no_args_returns_nonzero`.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_zselect with no args hangs in select(2); see Src/Modules/zselect.c:68"]
     fn bin_zselect_no_args_usage_error_alt() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();
@@ -1106,9 +1106,7 @@ mod tests {
     }
 
     /// c:68 — `bin_zselect` exit code is non-negative for usage-error paths.
-    /// IGNORED — same ZSHRS BUG (no-args + -X both hit select(2) hang).
     #[test]
-    #[ignore = "ZSHRS BUG: bin_zselect hangs in select(2) on empty/unknown-flag argv; see Src/Modules/zselect.c:68"]
     fn bin_zselect_usage_error_exit_codes_non_negative() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();

@@ -1632,7 +1632,6 @@ mod widget_killring_tests {
     /// `set_cursor(N)` beyond end clamps to buffer length.
     /// C: assigning $CURSOR=99 on 5-char buffer clamps.
     #[test]
-    #[ignore = "ZSHRS BUG: set_cursor clamp-at-EOL semantic vs C zsh needs verification"]
     fn set_cursor_past_eol_clamps_to_buffer_length() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();

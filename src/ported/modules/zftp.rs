@@ -364,6 +364,13 @@ pub fn zfunsetparam(name: &str) {
     // c:529
     // c:529-534 — paramtab->getnode(paramtab, name); pm->node.flags &=
     // ~PM_READONLY; unsetparam_pm(pm, 0, 1);
+    // C's `unsetparam(name)` on an empty name is a silent no-op (the
+    // paramtab lookup returns NULL). Rust's `std::env::remove_var("")`
+    // panics since 1.86 ("invalid argument"). Match C semantics:
+    // empty-name short-circuit.
+    if name.is_empty() {
+        return;
+    }
     // Static-link path: paramtab access goes through the params subsystem
     // which doesn't yet expose a typed `getnode`/`unsetparam_pm` wrapper.
     // Use the env-var fallback; full Param-flag path lives in
@@ -5609,7 +5616,6 @@ mod tests {
     /// on empty key per recent Rust safety hardening (since 1.86).
     /// Should guard empty-name short-circuit per C semantic.
     #[test]
-    #[ignore = "ZSHRS BUG: zfunsetparam('') panics in std::env::remove_var since Rust 1.86; C unsetparam('') is silent no-op. See Src/Modules/zftp.c:363"]
     fn zfunsetparam_empty_name_no_panic() {
         let _g = crate::test_util::global_state_lock();
         zfunsetparam("");

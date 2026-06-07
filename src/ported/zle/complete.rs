@@ -3095,7 +3095,6 @@ mod tests {
 
     /// `parse_ordering("")` returns -1 — no valid ordering token.
     #[test]
-    #[ignore = "ZSHRS BUG: parse_ordering('') edge case — empty-input behavior verification pending"]
     fn parse_ordering_empty_string_returns_neg_one() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();

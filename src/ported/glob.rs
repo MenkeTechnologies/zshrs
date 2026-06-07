@@ -7441,7 +7441,6 @@ mod tests {
     /// preserved. C glob.c:3690-3692 — if post-strip output is empty
     /// AND original had any inull, emit Nularg as the empty-arg marker.
     #[test]
-    #[ignore = "ZSHRS BUG: remnulargs empty-output Nularg-emit semantic (c:3690-3692) may not match — verify port"]
     fn remnulargs_empty_post_strip_emits_nularg_sentinel() {
         let _g = crate::test_util::global_state_lock();
         let mut s = format!("{}", crate::ported::zsh_h::Snull);
@@ -7458,7 +7457,6 @@ mod tests {
     /// inull (scan phase), or (b) transformed to literal `\` (copy
     /// phase). Pin the simpler case: a lone Bnullkeep is stripped.
     #[test]
-    #[ignore = "ZSHRS BUG: remnulargs Bnullkeep two-phase semantic (c:3669) likely diverges — verify"]
     fn remnulargs_lone_bnullkeep_stripped() {
         let _g = crate::test_util::global_state_lock();
         let mut s = format!("a{}b", crate::ported::zsh_h::Bnullkeep);

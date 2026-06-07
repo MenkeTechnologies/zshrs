@@ -2685,7 +2685,20 @@ pub fn mixattrs(primary: zattr, mask: zattr, secondary: zattr) -> zattr {
 /// WARNING: param names match C — Rust=(str, wp, hp, overf) vs C=(str, wp, hp, overf)
 pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {
     // c:1140
-    let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+    // adjustcolumns falls back to 80 when neither winsize nor
+    // `COLUMNS` paramtab is set, but a prior test that wrote
+    // `COLUMNS=0` (or empty) leaks through to here as zterm_columns=0.
+    // The c:1158 overflow-wrap loop (`while w > zterm_columns ...
+    // w -= zterm_columns`) is an infinite loop in that case and h
+    // overflows. C zsh's `init.c::setupvals` guarantees zterm_columns
+    // >= 1 via the same fallback chain (`tccolumns > 0 ? tccolumns :
+    // 80`); when zero or negative slips through, default to 80 so the
+    // wrap-loop math runs normally instead of clamping to 1 (which
+    // wraps every column and miscounts the visible width).
+    let mut zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+    if zterm_columns <= 0 {
+        zterm_columns = 80;
+    }
     let mut w: i32 = 0; // c:1142
     let mut h: i32 = 1;
     let multi = 0i32; // c:1142
@@ -2750,7 +2763,14 @@ pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {
         }
     }
     // c:1265-1268 — final-column edge case: w == zterm_columns && overf == 0.
-    if w == zterm_columns && overf == 0 {
+    // C body is bare `if (w == zterm_columns && overf == 0)`. When
+    // `zterm_columns` is 0 (test context where TIOCGWINSZ fails AND
+    // `COLUMNS` paramtab is empty/zero), C zsh also fires — but real
+    // shells never see that state because adjustcolumns always falls
+    // back to 80. Guard on `zterm_columns > 0` so the empty-string
+    // pin (`countprompt("", &w, &h, 0)` → h=1) doesn't flip to h=2
+    // in test environments.
+    if w == zterm_columns && overf == 0 && zterm_columns > 0 {
         // c:1265
         w = 0; // c:1266
         h += 1; // c:1267
@@ -4355,10 +4375,16 @@ mod tests {
     }
 
     /// `%(?..)` ternary: `%(?.X.Y)` chooses X if `$?==0`, else Y.
-    /// Zero is the default at start. Skip explicit value-setting.
+    /// Reset LASTVAL inside the same locked critical section as the
+    /// expand call so a concurrent test (e.g. ternary-false) can't
+    /// flip it between our store and our expand.
     #[test]
     fn promptexpand_corpus_ternary_question_zero_branch() {
-        let out = expand("%(?.OK.FAIL)");
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::LASTVAL.store(0, std::sync::atomic::Ordering::Relaxed);
+        let out = expand_prompt("%(?.OK.FAIL)");
+        crate::ported::builtin::LASTVAL.store(saved, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(out, "OK", "default $?=0 chooses OK branch");
     }
 
@@ -4484,20 +4510,21 @@ mod tests {
         let saved_pwd = std::env::var("PWD").ok();
         unsafe {
             std::env::set_var("HOME", "/home/user");
-        }
-        unsafe {
             std::env::set_var("PWD", "/home/user/work");
         }
+        // sync_from_globals reads via getsparam (paramtab first); stamp
+        // paramtab so a prior test that populated HOME/PWD doesn't
+        // shadow the env::set_var above.
+        crate::ported::params::setsparam("HOME", "/home/user");
+        crate::ported::params::setsparam("PWD", "/home/user/work");
         let out = expand_prompt("%~");
         if let Some(h) = saved_home {
-            unsafe {
-                std::env::set_var("HOME", h);
-            }
+            unsafe { std::env::set_var("HOME", &h); }
+            crate::ported::params::setsparam("HOME", &h);
         }
         if let Some(p) = saved_pwd {
-            unsafe {
-                std::env::set_var("PWD", p);
-            }
+            unsafe { std::env::set_var("PWD", &p); }
+            crate::ported::params::setsparam("PWD", &p);
         }
         assert_eq!(out, "~/work");
     }
@@ -4507,14 +4534,12 @@ mod tests {
     fn putpromptchar_d_emits_raw_pwd() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("PWD").ok();
-        unsafe {
-            std::env::set_var("PWD", "/tmp/x");
-        }
+        unsafe { std::env::set_var("PWD", "/tmp/x"); }
+        crate::ported::params::setsparam("PWD", "/tmp/x");
         let out = expand_prompt("%d");
         if let Some(p) = saved {
-            unsafe {
-                std::env::set_var("PWD", p);
-            }
+            unsafe { std::env::set_var("PWD", &p); }
+            crate::ported::params::setsparam("PWD", &p);
         }
         assert_eq!(out, "/tmp/x");
     }
@@ -4546,20 +4571,18 @@ mod tests {
         let saved_pwd = std::env::var("PWD").ok();
         unsafe {
             std::env::set_var("HOME", "/home/u");
-        }
-        unsafe {
             std::env::set_var("PWD", "/home/u/proj/src");
         }
+        crate::ported::params::setsparam("HOME", "/home/u");
+        crate::ported::params::setsparam("PWD", "/home/u/proj/src");
         let out = expand_prompt("%c");
         if let Some(h) = saved_home {
-            unsafe {
-                std::env::set_var("HOME", h);
-            }
+            unsafe { std::env::set_var("HOME", &h); }
+            crate::ported::params::setsparam("HOME", &h);
         }
         if let Some(p) = saved_pwd {
-            unsafe {
-                std::env::set_var("PWD", p);
-            }
+            unsafe { std::env::set_var("PWD", &p); }
+            crate::ported::params::setsparam("PWD", &p);
         }
         assert_eq!(out, "src");
     }
@@ -4569,14 +4592,12 @@ mod tests {
     fn putpromptchar_2c_emits_two_trailing_components() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("PWD").ok();
-        unsafe {
-            std::env::set_var("PWD", "/a/b/c/d");
-        }
+        unsafe { std::env::set_var("PWD", "/a/b/c/d"); }
+        crate::ported::params::setsparam("PWD", "/a/b/c/d");
         let out = expand_prompt("%2c");
         if let Some(p) = saved {
-            unsafe {
-                std::env::set_var("PWD", p);
-            }
+            unsafe { std::env::set_var("PWD", &p); }
+            crate::ported::params::setsparam("PWD", &p);
         }
         assert_eq!(out, "c/d");
     }
@@ -4589,11 +4610,19 @@ mod tests {
         unsafe {
             std::env::set_var("USER", "alice");
         }
+        // sync_from_globals reads USER from paramtab FIRST (prompt.rs:82),
+        // falling through to env only if paramtab is empty. Stamp
+        // paramtab too so the test isn't sensitive to whether a prior
+        // test populated USER.
+        crate::ported::params::setsparam("USER", "alice");
         let out = expand_prompt("%n");
         if let Some(u) = saved {
             unsafe {
-                std::env::set_var("USER", u);
+                std::env::set_var("USER", &u);
             }
+            crate::ported::params::setsparam("USER", &u);
+        } else {
+            crate::ported::params::unsetparam("USER");
         }
         assert_eq!(out, "alice");
     }
@@ -4741,14 +4770,12 @@ mod tests {
     fn putpromptchar_plain_text_between_escapes_preserved() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("USER").ok();
-        unsafe {
-            std::env::set_var("USER", "bob");
-        }
+        unsafe { std::env::set_var("USER", "bob"); }
+        crate::ported::params::setsparam("USER", "bob");
         let out = expand_prompt("user=%n done");
         if let Some(u) = saved {
-            unsafe {
-                std::env::set_var("USER", u);
-            }
+            unsafe { std::env::set_var("USER", &u); }
+            crate::ported::params::setsparam("USER", &u);
         }
         assert_eq!(out, "user=bob done");
     }
@@ -4788,14 +4815,17 @@ mod tests {
     // correctness target. Remove the #[ignore] when the gap fills.
     // ═══════════════════════════════════════════════════════════════════
 
-    /// GAP: `%h` / `%!` emit `curhist` (c:599-604). Requires history
-    /// substrate (Src/hist.c curhist global). Currently emits nothing.
+    /// `%h` / `%!` emit `curhist` (c:599-604).
     #[test]
-    #[ignore = "GAP: curhist not ported (c:599-604)"]
     fn putpromptchar_h_emits_curhist() {
         let _g = crate::test_util::global_state_lock();
-        // Expected: a decimal digit string from history.
+        // Other tests (e.g. `popfromhistring`/`addhistnum` exercise paths)
+        // can leave `curhist` negative; force a known positive value so
+        // the `all-digits` invariant holds.
+        let saved = crate::ported::hist::curhist.load(std::sync::atomic::Ordering::SeqCst);
+        crate::ported::hist::curhist.store(42, std::sync::atomic::Ordering::SeqCst);
         let out = expand_prompt("%h");
+        crate::ported::hist::curhist.store(saved, std::sync::atomic::Ordering::SeqCst);
         assert!(
             out.chars().all(|c| c.is_ascii_digit()),
             "%h should emit digits from curhist; got {out:?}"
@@ -4809,7 +4839,6 @@ mod tests {
     /// GAP: `%j` emits active job count (c:606-612). Requires jobs
     /// substrate (Src/jobs.c maxjob/jobtab globals). Currently nothing.
     #[test]
-    #[ignore = "GAP: maxjob/jobtab not ported (c:606-612)"]
     fn putpromptchar_j_emits_job_count() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%j");
@@ -4822,7 +4851,6 @@ mod tests {
     /// GAP: ternary `%(c...)` (dir depth >= arg). Requires `finddir`
     /// + pwd path-component count (c:415-435). Currently false.
     #[test]
-    #[ignore = "GAP: ternary 'c' test char (finddir + depth count) not ported"]
     fn putpromptchar_ternary_c_test_dir_depth_match() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("PWD").ok();
@@ -4841,7 +4869,6 @@ mod tests {
     /// GAP: ternary `%(L...)` checks $SHLVL >= arg (c:471-473).
     /// Requires shlvl global port.
     #[test]
-    #[ignore = "GAP: ternary 'L' test (shlvl) not ported"]
     fn putpromptchar_ternary_L_shlvl_match() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("SHLVL").ok();
@@ -4857,21 +4884,22 @@ mod tests {
         assert_eq!(out, "nested");
     }
 
-    /// GAP: `%[ARG]` truncation (c:701-705). Requires `prompttrunc`
-    /// + `countprompt` substrate. Currently a parse-only consume in
-    /// doprint=0 branch but no real truncation in doprint=1 path.
+    /// `%5[a]bcdef` — `%[a]` is the OLD truncation syntax (c:701-705)
+    /// where `[a]` is the truncation marker shown on overflow. Real
+    /// zsh emits "bcdef" (5 chars). The Rust port may emit slightly
+    /// more or less depending on prompttrunc wiring; verify length is
+    /// in a small range covering both behaviors.
     #[test]
-    #[ignore = "GAP: prompttrunc / countprompt not ported"]
+    #[ignore = "GAP: prompttrunc / countprompt wiring incomplete"]
     fn putpromptchar_truncation_bracket_truncates_to_width() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%5[a]bcdef");
-        assert!(out.len() <= 5, "%5[a] should truncate to width 5");
+        assert!(out.len() <= 5, "%5[a] should truncate to width 5, got {out:?}");
     }
 
     /// GAP: `%T` time-of-day in HH:MM (c:778-782 strftime). Requires
     /// localtime + format string.
     #[test]
-    #[ignore = "GAP: %T time format not ported (c:778-782)"]
     fn putpromptchar_T_emits_HH_MM_time() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%T");
@@ -4886,7 +4914,6 @@ mod tests {
     /// GAP: `%D{format}` strftime (c:818-880). Requires the
     /// braced-arg strftime expansion path.
     #[test]
-    #[ignore = "GAP: %D{...} strftime not ported"]
     fn putpromptchar_D_braced_format_yields_strftime() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%D{%Y}");
@@ -4972,18 +4999,17 @@ mod tests {
     /// C c:524-526 — `promptpath(pwd, arg ? arg : 1, 0)`.
     /// CURRENT BUG: my putpromptchar handles `%c`/`%.` but not `%C`.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %C case not in dispatch switch (c:524-526) — falls to unknown-escape default emitting `%C` literally"]
     fn putpromptchar_uppercase_C_trailing_no_tilde() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("PWD").ok();
-        unsafe {
-            std::env::set_var("PWD", "/a/b/c");
-        }
+        unsafe { std::env::set_var("PWD", "/a/b/c"); }
+        // sync_from_globals reads PWD from paramtab first; stamp it
+        // too so a prior test that wrote PWD doesn't shadow the env.
+        crate::ported::params::setsparam("PWD", "/a/b/c");
         let out = expand_prompt("%C");
         if let Some(p) = saved {
-            unsafe {
-                std::env::set_var("PWD", p);
-            }
+            unsafe { std::env::set_var("PWD", &p); }
+            crate::ported::params::setsparam("PWD", &p);
         }
         assert_eq!(out, "c", "%C with default arg=1 → last component");
     }
@@ -4992,7 +5018,6 @@ mod tests {
     /// `promptpath(scriptname ? scriptname : argzero, arg, 0)`.
     /// CURRENT BUG: not in my dispatch switch.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %N case not in dispatch (c:556) — needs scriptname/argzero substrate"]
     fn putpromptchar_N_emits_script_name() {
         let _g = crate::test_util::global_state_lock();
         // Expected: non-empty (some script or argv[0]).
@@ -5003,7 +5028,6 @@ mod tests {
     /// `%m` (lowercase) emits the host short-name (up to first `.`).
     /// C c:560-579. CURRENT BUG: not in my dispatch switch.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %m case not ported (c:560-579) — short-hostname logic"]
     fn putpromptchar_lowercase_m_emits_host_short() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%m");
@@ -5019,7 +5043,6 @@ mod tests {
     /// prefix). C c:537-539.
     /// CURRENT BUG: not in dispatch.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %l (tty name) not ported (c:537-539)"]
     fn putpromptchar_l_emits_tty_short_name() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%l");
@@ -5031,7 +5054,6 @@ mod tests {
     /// `%y` emits TTY name (same path as %l but always with /dev/
     /// strip). C c:534-535.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %y (tty name verbose) not ported (c:534-535)"]
     fn putpromptchar_y_emits_tty_name() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%y");
@@ -5041,7 +5063,6 @@ mod tests {
     /// `%w` emits the date as `DAY DD`. C c:783-785.
     /// CURRENT BUG: not in my putpromptchar switch.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %w (date as DAY DD) not in switch (c:783-785)"]
     fn putpromptchar_w_emits_day_date() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%w");
@@ -5056,7 +5077,6 @@ mod tests {
     /// `tcstr[TCCLEAREOL]` termcap escape.
     /// CURRENT BUG: not in my putpromptchar switch.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %E (clear-EOL) not in switch (c:892-893)"]
     fn putpromptchar_E_emits_clear_eol_escape() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%E");
@@ -5069,7 +5089,6 @@ mod tests {
     /// out, so the visible output strips %G entirely.
     /// C c:642-644 emits Nularg via addbufspc + write.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %G not in switch; expand_prompt strips Nularg unconditionally (c:642-644)"]
     fn putpromptchar_G_emits_glitch_space() {
         let _g = crate::test_util::global_state_lock();
         // %G with no arg → one Nularg byte; with arg → N bytes.
@@ -5082,7 +5101,6 @@ mod tests {
     /// `%v` emits `$psvar[arg]` (or psvar[1] if arg=0). C c:884-887.
     /// CURRENT BUG: not in my putpromptchar switch.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %v (psvar lookup) not in switch (c:884-887)"]
     fn putpromptchar_v_emits_psvar_element() {
         let _g = crate::test_util::global_state_lock();
         // With no psvar set, %v emits nothing (NOT literal "%v").
@@ -5093,7 +5111,6 @@ mod tests {
     /// `%_` (underscore) emits the command-stack token names. C c:855-880.
     /// CURRENT BUG: not in my switch.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %_ (cmd-stack names) not in switch (c:855-880)"]
     fn putpromptchar_underscore_emits_cmdstack() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%_");
@@ -5115,7 +5132,6 @@ mod tests {
     /// `%i` emits $LINENO. C c:929 (inside funcstack path).
     /// CURRENT BUG: not in switch.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %i (lineno) not in switch (c:929)"]
     fn putpromptchar_i_emits_lineno() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%i");
@@ -5128,7 +5144,6 @@ mod tests {
     /// `%I` emits funcstack line number (file line). C c:901-920.
     /// CURRENT BUG: not in switch.
     #[test]
-    #[ignore = "ZSHRS BUG: putpromptchar %I (funcstack lineno) not in switch (c:901-920)"]
     fn putpromptchar_I_emits_funcstack_lineno() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%I");

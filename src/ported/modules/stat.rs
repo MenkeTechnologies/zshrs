@@ -547,6 +547,14 @@ pub fn bin_stat(
     }
     let _ = show_type;
 
+    // c:Src/Modules/stat.c:bin_stat — C tracks per-file stat(2) failures
+    // and propagates a non-zero rc when any path errored (`ret = 1` at
+    // c:560-565 inside the per-path loop). The Rust port previously
+    // skipped the path on error via `continue` but unconditionally
+    // returned 0 at the end, masking ENOENT (and any other stat error)
+    // as success. Track the first failure rc and return it after the
+    // loop.
+    let mut rc: i32 = 0;
     for path in &argv {
         let meta = if use_lstat {
             fs::symlink_metadata(path)
@@ -561,6 +569,7 @@ pub fn bin_stat(
                 // port (Src/compat.c:194).
                 let msg = crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0));
                 zwarnnam(nam, &format!("{}: {}", path, msg));
+                rc = 1;
                 continue;
             }
         };
@@ -616,7 +625,7 @@ pub fn bin_stat(
         }
         sethparam(&name, flat); // c:params.c:3602
     }
-    0
+    rc
 }
 
 // `bintab` — port of `static struct builtin bintab[]` (stat.c:638).
@@ -1584,7 +1593,6 @@ mod tests {
     /// (C uses `stat(2)` which fails ENOENT, then zwarnnam + return 1).
     /// In zshrs the port silently returns 0.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_stat with nonexistent path returns 0 instead of nonzero (Src/Modules/stat.c:300 — stat(2) ENOENT path)"]
     fn bin_stat_nonexistent_path_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = crate::ported::zsh_h::options {
