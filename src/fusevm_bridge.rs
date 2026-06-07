@@ -4637,11 +4637,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if on {
             let n_args = argc.saturating_sub(1) as usize;
             let len = vm.stack.len();
+            // c:Src/exec.c:2055 — argv is the POST-expansion word
+            // list, so an arg that expanded to multiple words splats
+            // into multiple trace tokens AND an arg that expanded to
+            // zero words (empty unquoted `${UNSET}`) emits nothing.
+            // pop_args (line 6243) already does this splat for the
+            // real handler; mirror the same Array → splat / empty →
+            // drop logic here so xtrace renders `echo ${UNSET}` as
+            // `echo` (zsh) instead of `echo ''` (the previous
+            // single-arg stringify path returned "" and then
+            // quotedzputs wrapped it in `''`).
             let arg_strs: Vec<String> = if n_args > 0 && len >= n_args {
-                vm.stack[len - n_args..]
-                    .iter()
-                    .map(|v| quotedzputs(&v.to_str()))
-                    .collect()
+                let mut out = Vec::new();
+                for v in &vm.stack[len - n_args..] {
+                    match v {
+                        Value::Array(items) => {
+                            for item in items {
+                                out.push(quotedzputs(&item.to_str()));
+                            }
+                        }
+                        other => out.push(quotedzputs(&other.to_str())),
+                    }
+                }
+                out
             } else {
                 Vec::new()
             };
@@ -6217,7 +6235,21 @@ fn nodes_to_value(nodes: Vec<String>) -> Value {
     if stripped.is_empty() {
         Value::Array(Vec::new())
     } else if stripped.len() == 1 {
-        Value::str(stripped.into_iter().next().unwrap())
+        let only = stripped.into_iter().next().unwrap();
+        // c:Src/subst.c — an unquoted expansion that produces a
+        // single empty string drops from the resulting word list.
+        // pop_args at line 6243 splats Value::Array, so encoding
+        // empty-unquoted-result as Array(empty) propagates the drop
+        // through to argv. DQ context (in_dq_context > 0) keeps
+        // the empty string so `echo "${UNSET}"` still produces an
+        // empty arg per shell quoting rules.
+        if only.is_empty() {
+            let in_dq = with_executor(|exec| exec.in_dq_context > 0);
+            if !in_dq {
+                return Value::Array(Vec::new());
+            }
+        }
+        Value::str(only)
     } else {
         Value::Array(stripped.into_iter().map(Value::str).collect())
     }
