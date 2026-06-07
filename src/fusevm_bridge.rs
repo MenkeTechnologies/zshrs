@@ -6347,13 +6347,22 @@ fn nodes_to_value(nodes: Vec<String>) -> Value {
         Value::Array(Vec::new())
     } else if stripped.len() == 1 {
         let only = stripped.into_iter().next().unwrap();
-        // c:Src/subst.c — an unquoted expansion that produces a
-        // single empty string drops from the resulting word list.
-        // pop_args at line 6243 splats Value::Array, so encoding
-        // empty-unquoted-result as Array(empty) propagates the drop
-        // through to argv. DQ context (in_dq_context > 0) keeps
-        // the empty string so `echo "${UNSET}"` still produces an
-        // empty arg per shell quoting rules.
+        // c:Src/subst.c:183-186 — `else if (!(flags & PREFORK_SINGLE)
+        // && !(*ret_flags & PREFORK_KEY_VALUE) && !keep)
+        //   uremnode(list, node);`
+        // C zsh's prefork removes empty linknodes from the result
+        // list when in non-SINGLE (argv-context) mode. The ported
+        // prefork at subst.rs:388-396 honors the same delete-empty
+        // pass, but some paramsubst paths land here with a single-
+        // empty-string Vec instead of an empty Vec (paramsubst's
+        // slice / substring / parameter-flag branches allocate a
+        // result before checking emptiness). Mirror the prefork
+        // drop at this layer: single-empty under !in_dq_context
+        // collapses to Value::Array(empty), and pop_args (line 6243)
+        // splats the empty Array → zero argv words. DQ context
+        // (in_dq_context > 0) keeps the empty string so
+        // `echo "${UNSET}"` still produces an empty arg per zsh's
+        // quoting rules (c:Src/subst.c:1650-1656 isarr comment).
         if only.is_empty() {
             let in_dq = with_executor(|exec| exec.in_dq_context > 0);
             if !in_dq {
