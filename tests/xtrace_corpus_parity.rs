@@ -168,17 +168,17 @@ fn pinned_ps4() -> String {
 
 /// Per-snippet sandbox: corpus entries like `68_multios.zsh` and
 /// `127_redir_more.zsh` write to relative paths (`>file`, `>err1`,
-/// …) that would otherwise litter the repo root. Run each shell in
-/// a fresh tempdir so the redirection targets land there. Drop on
-/// scope exit so the harness cleans up after itself.
-fn make_sandbox() -> std::path::PathBuf {
+/// …) that would otherwise litter the repo root. Each invocation
+/// gets a FRESH tempdir so cross-snippet pollution doesn't bleed
+/// (e.g. `68_multios.zsh` creating `file` would otherwise change
+/// the result of `75_cond_file_more.zsh`'s `[[ -a file ]]`).
+fn make_sandbox(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "zshrs_xtrace_corpus_{}",
-        std::process::id()
+        "zshrs_xtrace_corpus_{}_{}",
+        std::process::id(),
+        tag
     ));
-    // Reuse the same per-process dir — each subprocess cd's into
-    // it. We don't need uniqueness per file; the sandbox just keeps
-    // pollution off cwd.
+    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
     dir
 }
@@ -312,7 +312,6 @@ const KNOWN_INFINITE_LOOPS: &[&str] = &[
 /// the test stay green.
 const EXPECTED_FAILURES: &[&str] = &[
     "02_pipe_two.zsh",
-    "06_for_in.zsh",
     "100_glob_qualifiers.zsh",
     "106_array_index.zsh",
     "108_time_block.zsh",
@@ -321,7 +320,6 @@ const EXPECTED_FAILURES: &[&str] = &[
     "116_proc_subst_eq.zsh",
     "117_time_pipeline.zsh",
     "118_param_exp_multi.zsh",
-    "12_while.zsh",
     "120_param_special.zsh",
     "122_case_multi_pat.zsh",
     "123_glob_qualifiers_more.zsh",
@@ -334,8 +332,6 @@ const EXPECTED_FAILURES: &[&str] = &[
     "135_cond_regex_complex.zsh",
     "136_param_flags_final_v2.zsh",
     "137_param_modifiers.zsh",
-    "14_while.zsh",
-    "16_try_always.zsh",
     "21_select.zsh",
     "23_param_expansion.zsh",
     "25_coproc.zsh",
@@ -343,8 +339,6 @@ const EXPECTED_FAILURES: &[&str] = &[
     "30_cond_complex.zsh",
     "32_for_cstyle.zsh",
     "33_redir_var.zsh",
-    "35_array_assign.zsh",
-    "41_nested_loops.zsh",
     "46_case_glob.zsh",
     "49_param_flags_basic.zsh",
     "50_param_substring.zsh",
@@ -376,8 +370,14 @@ fn check_parity(src: &Path, sandbox: &Path) -> Result<(), String> {
     if KNOWN_INFINITE_LOOPS.contains(&name.as_str()) {
         return Ok(());
     }
-    let z = run_zsh(src, sandbox);
-    let r = run_zshrs(src, sandbox);
+    // Fresh sandbox per file (the `sandbox` arg is the parent
+    // tempdir; this nests a unique subdir so files from one corpus
+    // entry can't change another entry's filesystem-test results).
+    let snip_dir = sandbox.join(name.trim_end_matches(".zsh"));
+    let _ = std::fs::remove_dir_all(&snip_dir);
+    let _ = std::fs::create_dir_all(&snip_dir);
+    let z = run_zsh(src, &snip_dir);
+    let r = run_zshrs(src, &snip_dir);
     if z.timed_out || r.timed_out {
         return Err(format!(
             "\n=== {} ===\n  TIMEOUT after {:?}: zsh_timed_out={} zshrs_timed_out={}\n",
@@ -402,7 +402,7 @@ fn corpus_xtrace_parity() {
         panic!("no .zsh corpus files found in tests/parity_corpus/");
     }
 
-    let sandbox = make_sandbox();
+    let sandbox = make_sandbox("aggregate");
     let mut passes = 0usize;
     let mut expected_passes_failing: Vec<String> = Vec::new();
     let mut expected_failures_now_passing: Vec<String> = Vec::new();
@@ -481,7 +481,7 @@ fn single_file() {
         eprintln!("zsh not on PATH — skipping");
         return;
     }
-    let sandbox = make_sandbox();
+    let sandbox = make_sandbox("single");
     match check_parity(&path, &sandbox) {
         Ok(_) => eprintln!("{} — PARITY", path.display()),
         Err(report) => panic!("{}", report),

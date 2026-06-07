@@ -135,6 +135,16 @@ pub struct ZshCompiler {
     /// `f() { body }` reads `$LINENO=0` matching zsh's def-line
     /// subtraction. Bug #385.
     pub is_function_body: bool,
+    /// Effective LINENO of the sublist whose body is currently
+    /// being compiled. Set by `compile_sublist` after applying the
+    /// `lineno_offset` / `lineno_addend` adjustments. Used by
+    /// `compile_for_words` / `compile_for_positional` /
+    /// `compile_for_arith` so the per-iteration `name=value`
+    /// xtrace renders the for-statement's line, not whatever
+    /// line the loop body's last statement left LINENO at —
+    /// matching C zsh's `execlist` save/restore of `lineno`
+    /// around each body execution (c:Src/exec.c::execlist:28,292).
+    pub current_sublist_line: i64,
 }
 
 impl Default for ZshCompiler {
@@ -164,6 +174,7 @@ impl ZshCompiler {
             last_assign_had_cmd_subst: false,
             defined_functions: std::collections::HashSet::new(),
             is_function_body: false,
+            current_sublist_line: 1,
         }
     }
 
@@ -299,6 +310,14 @@ impl ZshCompiler {
         } else {
             raw_line.saturating_sub(self.lineno_offset).max(1) + self.lineno_addend
         };
+        // Record the line of the sublist currently being compiled.
+        // Loop bodies (for, while, repeat) read this to restore
+        // LINENO at the top of each iteration so the per-iter
+        // `name=value` xtrace renders the loop-statement's line —
+        // matching C zsh's `execlist` save/restore at
+        // c:Src/exec.c:28 (`oldlineno = lineno`) and c:292
+        // (`lineno = oldlineno`).
+        self.current_sublist_line = rel_line as i64;
         self.builder.emit(Op::LoadInt(rel_line as i64), 0);
         self.builder
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
@@ -950,9 +969,14 @@ impl ZshCompiler {
                 for v in self.continue_patches.iter_mut() {
                     v.clear();
                 }
+                // c:Src/loop.c:746 — `cmdpush(CS_CURSH);` wraps the
+                // try arm so `%_` xtrace renders `cursh` for any
+                // statement inside it.
+                self.emit_cmd_push(crate::ported::zsh_h::CS_CURSH as u8);
                 self.try_block_depth += 1;
                 self.compile_program(&t.try_block);
                 self.try_block_depth -= 1;
+                self.emit_cmd_pop(); // c:Src/loop.c:759 — `cmdpop();`
                 // After the try-block, snapshot the escape patches it
                 // accumulated. Their targets will be patched to land
                 // at the always-arm entry so the finally clause runs
@@ -1014,7 +1038,11 @@ impl ZshCompiler {
                     0,
                 );
                 self.builder.emit(Op::Pop, 0);
+                // c:Src/loop.c:760 — `cmdpush(CS_ALWAYS);` wraps the
+                // always arm so `%_` xtrace renders `always`.
+                self.emit_cmd_push(crate::ported::zsh_h::CS_ALWAYS as u8);
                 self.compile_program(&t.always);
+                self.emit_cmd_pop();
                 // Whole-construct status: preserve the try block's
                 // status when the always arm exited cleanly.
                 self.builder.emit(
@@ -1344,6 +1372,26 @@ impl ZshCompiler {
         // N` target the N-th enclosing loop (1 = innermost, 2 = next
         // out, etc.). zsh clamps N to the available depth.
         if first == "break" {
+            // c:Src/exec.c:2055 execcmd_exec emits xtrace for every
+            // simple command before dispatching the handler. Our
+            // special-case path here jumps directly to the enclosing
+            // loop's break-patch list without going through the
+            // execbuiltin → bin_break path which normally emits the
+            // trace. Build the trace text statically and emit via
+            // BUILTIN_XTRACE_LINE so it lands at the same point in
+            // the stream as zsh.
+            let mut trace_text = String::from("break");
+            for w in &simple.words[1..] {
+                trace_text.push(' ');
+                trace_text.push_str(&crate::lex::untokenize(w));
+            }
+            let tc = self.builder.add_constant(Value::str(trace_text.as_str()));
+            self.builder.emit(Op::LoadConst(tc), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
             let levels: usize = simple
                 .words
                 .get(1)
@@ -1392,6 +1440,20 @@ impl ZshCompiler {
             return;
         }
         if first == "continue" {
+            // c:Src/exec.c:2055 — xtrace emit, same rationale as the
+            // `break` arm above.
+            let mut trace_text = String::from("continue");
+            for w in &simple.words[1..] {
+                trace_text.push(' ');
+                trace_text.push_str(&crate::lex::untokenize(w));
+            }
+            let tc = self.builder.add_constant(Value::str(trace_text.as_str()));
+            self.builder.emit(Op::LoadConst(tc), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
             let levels: usize = simple
                 .words
                 .get(1)
@@ -2395,6 +2457,71 @@ impl ZshCompiler {
                             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
                     }
                 }
+                // c:Src/exec.c::addvars:2624-2632 — `fprintf(xtrerr,
+                // "%s=", name); fprintf("( "); for each: quotedzputs +
+                // ' '; fprintf(") ");`. Emit before SET_ARRAY consumes
+                // the elements. Build the trace string with stack
+                // ops: start with `name=( `, for each element dup it
+                // out of the SET_ARRAY argv (positions -N..-1 below
+                // the top), pass through QUOTEDZPUTS, concat ` `
+                // separators, finish with `) `.
+                let n = elements.len();
+                let prefix = if assign.append {
+                    format!("{}+=( ", assign.name)
+                } else {
+                    format!("{}=( ", assign.name)
+                };
+                let pc = self.builder.add_constant(Value::str(prefix.as_str()));
+                self.builder.emit(Op::LoadConst(pc), 0);
+                // For each element peek it from the stack (N-1-i
+                // slots below the trace buffer we just pushed).
+                for i in 0..n {
+                    // Stack from bottom: [elem_0, …, elem_{N-1},
+                    // trace_buf, (any prior dup pushes)]. After the
+                    // loop we've pushed (i) extra (dup+QUOTEDZPUTS+
+                    // Concat per past iter); the next element to dup
+                    // is at depth (n - i) below the top.
+                    //
+                    // PushNth doesn't exist; emulate with PushIndex /
+                    // PushFromBase ops if available, else use Dup
+                    // after Swap dance. The cleanest available op
+                    // here is `Op::Dup` (top-of-stack copy) — to
+                    // reach element i, swap chains would be O(n²).
+                    //
+                    // Easier route: emit elements TWICE — once for
+                    // SET_ARRAY (already done above), and again for
+                    // the trace, via compile_word_str. Bear the
+                    // double-evaluation cost (only fires when xtrace
+                    // is on, and only for array-literal RHS).
+                    if i > 0 {
+                        let sep = self.builder.add_constant(Value::str(" "));
+                        self.builder.emit(Op::LoadConst(sep), 0);
+                        self.builder.emit(Op::Concat, 0);
+                    }
+                    self.assign_context_depth += 1;
+                    self.compile_word_str(&elements[i]);
+                    self.assign_context_depth -= 1;
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTEDZPUTS, 1),
+                        0,
+                    );
+                    self.builder.emit(Op::Concat, 0);
+                }
+                let close = self.builder.add_constant(Value::str(" ) "));
+                self.builder.emit(Op::LoadConst(close), 0);
+                self.builder.emit(Op::Concat, 0);
+                // Emit via XTRACE_ASSIGN-equivalent: we want the
+                // `printprompt4 + buf + ' '` shape (NO trailing
+                // newline) so a follow-on `arr+=(...)` on the same
+                // line in a `set -x` stream chains correctly per
+                // C's `doneps4` flag. The XTRACE_NEWLINE call
+                // emitted at the simple-command level later (or
+                // statement boundary) prints the `\n`.
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
                 let name_const = self.builder.add_constant(Value::str(assign.name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let argc = (elements.len() + 1) as u8;
@@ -4868,6 +4995,17 @@ impl ZshCompiler {
         self.builder
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_VAR, 2), 0);
         self.builder.emit(Op::Pop, 0);
+        // c:Src/exec.c::execlist:28+292 — restore `lineno` to the
+        // for-statement's line before the per-iter trace; matches
+        // execlist's save/restore around each body. See compile_for_words
+        // for the equivalent fix on the named-list path.
+        self.builder
+            .emit(Op::LoadInt(self.current_sublist_line), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
         // xtrace: emit `name=value\n` per iteration. Direct port of
         // Src/loop.c:163-166. XTRACE_LINE no-ops when -x is off.
         let assign_prefix = format!("{}=", var);
@@ -5052,6 +5190,23 @@ impl ZshCompiler {
             self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_VAR, 2), 0);
+            self.builder.emit(Op::Pop, 0);
+            // c:Src/exec.c::execlist:28+292 — restore `lineno` to
+            // the for-statement's line before the per-iter trace.
+            // execlist saves `oldlineno = lineno` at entry and
+            // restores it at exit; in our flat compile-time
+            // emission the body's SET_LINENO ops have advanced
+            // LINENO past the for-header, so on iter 2+ the
+            // `name=value` trace would emit with the body's last
+            // line. Reset to current_sublist_line (captured by
+            // compile_sublist) so each iter's trace shows the for
+            // line, matching zsh.
+            self.builder
+                .emit(Op::LoadInt(self.current_sublist_line), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1),
+                0,
+            );
             self.builder.emit(Op::Pop, 0);
             // xtrace: emit `name=value\n` per iteration. Direct port
             // of Src/loop.c:163-166:
