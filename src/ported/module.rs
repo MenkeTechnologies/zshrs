@@ -4180,9 +4180,13 @@ mod tests {
     fn test_module_table_new() {
         let _g = crate::test_util::global_state_lock();
         let table = modulestab::new();
+        // zsh/complete is in the default-loaded set (module.rs:1128).
+        // zsh/datetime and zsh/system are REGISTERED but carry
+        // MOD_UNLOAD at init — they require explicit `zmodload NAME`
+        // to become is_loaded(). Bugs #530/#532/#535.
         assert!(table.is_loaded("zsh/complete"));
-        assert!(table.is_loaded("zsh/datetime"));
-        assert!(table.is_loaded("zsh/system"));
+        assert!(!table.is_loaded("zsh/datetime"));
+        assert!(!table.is_loaded("zsh/system"));
         assert!(!table.is_loaded("nonexistent"));
     }
 
@@ -4204,7 +4208,22 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let table = modulestab::new();
         let loaded = table.list_loaded();
-        assert!(loaded.len() > 20);
+        // C zsh ships exactly 14 default-loaded modules (verified
+        // against Homebrew zsh 5.9.1; full list at module.rs:1126).
+        // The other ~17 registered modules carry MOD_UNLOAD until
+        // `zmodload NAME` clears it (see module.rs:1148-1152).
+        // Default-loaded count intersects (a) the registered set in
+        // `builtin_modules` (module.rs:1034-1105, ~30 entries) with
+        // (b) the `zsh_default_loaded` whitelist (module.rs:1126,
+        // 14 entries). Items in (b) but NOT (a) — `zsh/compctl`,
+        // `zsh/main`, `zsh/rlimits`, `zsh/zle` — currently land in the
+        // autoload registry only, so the actual count is 14 - 4 = 10
+        // (a couple of overlaps land it at ~11 in practice).
+        assert!(
+            loaded.len() >= 10,
+            "expected >= 10 default-loaded modules, got {}",
+            loaded.len()
+        );
         assert!(loaded.contains(&"zsh/complete"));
     }
 

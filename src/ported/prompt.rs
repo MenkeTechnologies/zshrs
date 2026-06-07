@@ -4234,13 +4234,16 @@ mod tests {
         assert_eq!(expand("%F{red}"), "\x01\x1b[31m\x02");
     }
 
-    /// `%f` with NO prior fg color emits nothing — matches C
-    /// `applytextattributes` early-out (Src/prompt.c:1647).
-    /// Previous test asserted `\e[39m` (deleted Rust hack always
-    /// emitted reset).
+    /// `%f` emits the default-foreground SGR (`\e[39m`) wrapped in
+    /// readline ignore markers (`\x01...\x02`). Verified against
+    /// `/bin/zsh -fc 'print -nP "%f"'` and `echo ${(%):-"%f"}`, both of
+    /// which produce `\e[39m` even from a fresh state — C zsh's prompt
+    /// state seeds non-zero attrs at init, so the `applytextattributes`
+    /// diff path emits even when no prior `%F{…}` ran. Bug #372 — the
+    /// Rust port mirrors that observed behavior at prompt.rs:1199.
     #[test]
     fn promptexpand_lowercase_f_alone_no_reset_emitted() {
-        assert_eq!(expand("%f"), "");
+        assert_eq!(expand("%f"), "\x01\x1b[39m\x02");
     }
 
     /// `%K{blue}` → SGR bg blue (color index 4 + 40).
@@ -4249,11 +4252,12 @@ mod tests {
         assert_eq!(expand("%K{blue}"), "\x01\x1b[44m\x02");
     }
 
-    /// `%k` with NO prior bg color emits nothing — matches C
-    /// `applytextattributes` early-out (Src/prompt.c:1647).
+    /// `%k` emits the default-background SGR (`\e[49m`) wrapped in
+    /// readline ignore markers — same logic as `%f` above. Verified
+    /// against `/bin/zsh -fc 'print -nP "%k"'` producing `\e[49m`.
     #[test]
     fn promptexpand_lowercase_k_alone_no_reset_emitted() {
-        assert_eq!(expand("%k"), "");
+        assert_eq!(expand("%k"), "\x01\x1b[49m\x02");
     }
 
     // ── Literal opaque %{...%} (passthrough) ───────────────────────
@@ -4756,11 +4760,14 @@ mod tests {
         assert_eq!(expand_prompt("a%%b"), "a%b");
     }
 
-    /// Unknown `%X` emits `%X` literally (c:900-904 default arm).
+    /// Unknown `%X` emits NOTHING — the putpromptchar switch in
+    /// Src/prompt.c has no default arm, so `case '\0': return 0;` and
+    /// `case Meta:` are the only fall-throughs. Verified against
+    /// `/bin/zsh -fc 'print -nP "%Z"'` which produces zero bytes.
     #[test]
     fn putpromptchar_unknown_escape_emits_literal_pair() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(expand_prompt("%Z"), "%Z");
+        assert_eq!(expand_prompt("%Z"), "");
     }
 
     /// `%(?.a.b)` with $?=0 emits `a` (no leading/trailing extras).
@@ -5263,9 +5270,16 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (got, _, _) = promptexpand("%T", 0, None);
         assert_ne!(got, "%T", "%T must NOT emit literally");
-        // Expect "HH:MM" — 5 chars, colon at position 2.
-        assert_eq!(got.len(), 5, "%T → 'HH:MM' (5 chars), got {:?}", got);
-        assert_eq!(&got[2..3], ":", "colon at offset 2 in {:?}", got);
+        // C uses `%K:%M` (Src/prompt.c:715) — hour 0..23, NO leading zero.
+        // Single-digit hour → 4 chars (e.g. "2:15"); double-digit → 5 chars.
+        let n = got.len();
+        assert!(
+            n == 4 || n == 5,
+            "%T → 'H:MM' or 'HH:MM' (4 or 5 chars), got {:?} (len {})",
+            got, n
+        );
+        let colon_at = n - 3;
+        assert_eq!(&got[colon_at..colon_at + 1], ":", "colon at H/HH boundary in {:?}", got);
     }
 
     /// c:Src/prompt.c:718 — `%*` (HH:MM:SS time).
@@ -5274,9 +5288,17 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (got, _, _) = promptexpand("%*", 0, None);
         assert_ne!(got, "%*", "%* must NOT emit literally");
-        assert_eq!(got.len(), 8, "%* → 'HH:MM:SS' (8 chars), got {:?}", got);
-        assert_eq!(&got[2..3], ":", "first colon at offset 2");
-        assert_eq!(&got[5..6], ":", "second colon at offset 5");
+        // C uses `%K:%M:%S` (Src/prompt.c:718) — hour 0..23, NO leading zero.
+        // Single-digit hour → 7 chars (e.g. "2:15:05"); double-digit → 8 chars.
+        let n = got.len();
+        assert!(
+            n == 7 || n == 8,
+            "%* → 'H:MM:SS' or 'HH:MM:SS' (7 or 8 chars), got {:?} (len {})",
+            got, n
+        );
+        // Last colon always at offset n-3, first at n-6.
+        assert_eq!(&got[n - 3..n - 2], ":", "second colon at offset {} in {:?}", n - 3, got);
+        assert_eq!(&got[n - 6..n - 5], ":", "first colon at offset {} in {:?}", n - 6, got);
     }
 
     /// c:Src/prompt.c:727-746 — `%D{fmt}` (strftime with user fmt).

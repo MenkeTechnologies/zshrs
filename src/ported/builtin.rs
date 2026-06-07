@@ -11492,14 +11492,16 @@ pub fn bin_let(
         }
     }
     // c:7476-7480 — math errors are non-fatal in let; CLEAR
-    // ERRFLAG_ERROR. C returns 2 but `/opt/homebrew/bin/zsh` shows
-    // `$?` = 1 after `let "/"` — empirical match suggests zsh's $?
-    // reporting normalizes the parse-error rc to 1. Return 1 to
-    // match observed shell behaviour.
+    // ERRFLAG_ERROR and return 2. Observed `/bin/zsh -fc 'let "/"; echo
+    // $?'` prints 1, not 2 — the discrepancy lives in zsh's outer
+    // execution path which normalises the builtin's rc to 1 for $?
+    // reporting, NOT inside bin_let itself. The function-level contract
+    // (what bin_let returns to its caller) is 2 per C, so the test
+    // (which calls bin_let directly) pins 2.
     if (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
         // c:7476
         errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:7478
-        return 1; // c:7479 (1 to match zsh's observed `$?`)
+        return 2; // c:7479
     }
     // c:7482 — `return (val.type == MN_INTEGER) ? val.u.l == 0 : val.u.d == 0.0;`
     if val.type_ == MN_INTEGER {

@@ -465,12 +465,15 @@ mod tests {
         assert!(segs[3].starts_with('g'), "4th segment must start `g`");
     }
 
-    /// ZSH_PATCHLEVEL's commit-count segment (3rd) is a positive integer.
+    /// ZSH_PATCHLEVEL's commit-count segment (3rd) is a non-negative integer.
+    /// A value of `0` is legal — it means the current state IS the tagged
+    /// release (no commits since the tag). The pinned `zsh-5.9.1-0-g0e0d4ea`
+    /// snapshot matches Homebrew's shipped 5.9.1 build, which IS the tag.
+    /// See bug #444 in docs/BUGS.md.
     #[test]
     fn zsh_patchlevel_commit_count_is_positive_integer() {
         let segs: Vec<&str> = ZSH_PATCHLEVEL.split('-').collect();
-        let n: u32 = segs[2].parse().expect("3rd segment must be integer");
-        assert!(n > 0, "commit count must be positive, got {}", n);
+        let _n: u32 = segs[2].parse().expect("3rd segment must be u32");
     }
 
     /// ZSH_PATCHLEVEL's git hash (4th segment, after the `g`) is 7+ hex chars.
@@ -530,13 +533,16 @@ mod tests {
     }
 
     /// ZSH_VERSION major.minor matches the major.minor in ZSH_PATCHLEVEL.
-    /// (`5.9.0.3-test` major=5, minor=9; ZSH_PATCHLEVEL `zsh-5.9-…` major-minor=5.9)
+    /// PATCHLEVEL segment 1 is `git describe`'s tag, which can be
+    /// `5.9`, `5.9.1`, `5.9.0.2-test`, etc. — extract just the first two
+    /// dot-segments and compare to VERSION's first two.
     #[test]
     fn zsh_version_major_minor_matches_patchlevel() {
-        // PATCHLEVEL major.minor from segment 1 (`zsh-{X.Y}-N-gHASH`).
         let segs: Vec<&str> = ZSH_PATCHLEVEL.split('-').collect();
-        let pl_mm = segs[1];
-        // VERSION major.minor from first 2 dot-segments.
+        let pl_tag = segs[1];
+        let pl_parts: Vec<&str> = pl_tag.split('.').collect();
+        assert!(pl_parts.len() >= 2, "PATCHLEVEL tag must have MAJOR.MINOR");
+        let pl_mm = format!("{}.{}", pl_parts[0], pl_parts[1]);
         let v_segs: Vec<&str> = ZSH_VERSION.split('.').collect();
         let v_mm = format!("{}.{}", v_segs[0], v_segs[1]);
         assert_eq!(

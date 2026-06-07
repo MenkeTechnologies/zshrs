@@ -1825,6 +1825,31 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             if buf.is_empty() {
                 return -1;
             }
+            // c:Src/pattern.c:1340-1351 — multi-char run with TRAILING `#`
+            // (or `(#cN,M)`) must backtrack ONE char so the trailing
+            // quantifier applies to the LAST char only. Without this,
+            // `fo#` compiles as `(fo)#` instead of `f` + `o#`, breaking
+            // `(fo#)#` against "ffo" (the test pin we are fixing).
+            //
+            // C body:
+            //   if ((*patparse == zpc_special[ZPC_HASH] || ...) && morelen)
+            //       patparse = patprev;
+            //
+            // morelen = "more than one char in the literal run". The
+            // backtrack pops the LAST byte from buf and rewinds patparse
+            // by 1 so the next patcomppiece call sees that byte as its
+            // own atom.
+            let has_trailing_hash = {
+                let sp_hash = zpc_special.lock().unwrap()[ZPC_HASH as usize];
+                let p = patparse.lock().unwrap();
+                let hash_at = local_off < p.len() && p.as_bytes()[local_off] == b'#';
+                drop(p);
+                hash_at && sp_hash == b'#'
+            };
+            if buf.len() > 1 && has_trailing_hash {
+                let _ = buf.pop();
+                local_off -= 1;
+            }
             patparse_off.store(local_off, Ordering::Relaxed);
             *flagp |= P_SIMPLE;
             // If it's a single char, mark simple; multi-char run stays pure-string.
@@ -2196,6 +2221,21 @@ fn patoptail(p: usize, val: usize) {
 #[derive(Clone)]
 #[allow(non_camel_case_types)]
 pub struct rpat {
+    /// Per-P_WBRANCH visit bitmap, keyed by WBRANCH-opcode offset.
+    /// Mirrors C's `Upat ptrp` (`pattern.c:3217`): every WBRANCH carries
+    /// an 8-byte payload sized as `union upat` — initialised to NULL,
+    /// then lazily filled by `patmatch` with a buffer the size of the
+    /// input string. Each byte tracks "have we already tried this
+    /// WBRANCH at this input position with at most this many errors?".
+    /// On revisit at the same position with the same-or-fewer errors,
+    /// C returns 0 to bound the recursion (`pattern.c:3245-3248`). The
+    /// Rust port keeps the bitmap on rpat (per-pattry call) instead of
+    /// inside the bytecode payload so the bytecode stays read-only —
+    /// the key is the WBRANCH offset; the value is a Vec<u8> the size
+    /// of the input. Without it, `(fo#)#` against ANY input that
+    /// requires the closure to consume at least one char per iteration
+    /// (like "ffo") burns through PATMATCH_MAX_DEPTH and aborts.
+    pub wbranch_visits: std::collections::HashMap<usize, Vec<u8>>,
     pub patbeginp: [usize; NSUBEXP], // c:241 capture starts (byte offsets)
     pub patendp: [usize; NSUBEXP],   // c:242 capture ends
     /// `parsfound` from `Src/pattern.c` (per c:2957/c:2989 references).
@@ -3220,6 +3260,7 @@ const I_OP: usize = 0; // opcode byte
 impl rpat {
     fn new() -> Self {
         Self {
+            wbranch_visits: std::collections::HashMap::new(),
             patbeginp: [usize::MAX; NSUBEXP],
             patendp: [0; NSUBEXP],
             captures_set: 0,
@@ -4100,9 +4141,34 @@ fn patmatch(
                     let br_next = u32::from_le_bytes(br_next_bytes) as usize;
                     let operand = br + I_BODY + br_extra;
                     let mut sub_state = state.clone();
-                    if let Some(end) =
+                    // c:Src/pattern.c:3210-3248 — P_WBRANCH per-position
+                    // visit guard. Allocate a bitmap sized to the input
+                    // (`zshcalloc((patinend - patinstart) + 1)`), then
+                    // check/set `*ptr = errsfound + 1` at the current
+                    // input offset. On revisit with the same-or-fewer
+                    // errors, return 0 to bound recursion. Without this,
+                    // `(fo#)#` against any non-trivial input recurses
+                    // until PATMATCH_MAX_DEPTH.
+                    let mut wbranch_skip = false;
+                    if br_op == P_WBRANCH {
+                        let bm = state
+                            .wbranch_visits
+                            .entry(br)
+                            .or_insert_with(|| vec![0u8; string.len() + 1]);
+                        let slot = bm.get(s_off).copied().unwrap_or(0);
+                        let cur = (state.errsfound as i32 + 1) as u8;
+                        if slot != 0 && (state.errsfound + 1) >= slot as i32 {
+                            wbranch_skip = true; // c:3245-3247
+                        } else if s_off < bm.len() {
+                            bm[s_off] = cur; // c:3248
+                        }
+                    }
+                    let sub_result = if wbranch_skip {
+                        None
+                    } else {
                         patmatch(code, operand, string, s_off, &mut sub_state, glob_flags)
-                    {
+                    };
+                    if let Some(end) = sub_result {
                         // c:108-144 (pattern.c header doc on P_WBRANCH):
                         //   "P_WBRANCH:  This works like a branch and is
                         //    used in complex closures, but the match must

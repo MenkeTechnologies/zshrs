@@ -49,5 +49,14 @@ pub fn global_state_lock() -> MutexGuard<'static, ()> {
     // is silently disabled.
     crate::ported::options::opt_state_set("promptpercent", true);
     crate::ported::options::opt_state_set("promptbang", true);
+    // `inittyptab` (Src/utils.c:4155) populates the global character
+    // classification table (`typtab[]`) — IIDENT, IALNUM, IDIGIT, ISEP,
+    // IWORD, etc. C calls it once at startup in `setupvals` (init.c) —
+    // without it `zistype('i', IIDENT)` returns false and `itype_end`
+    // can't parse identifiers, so `fetchvalue("intvar", …)` returns
+    // None even when the param exists in paramtab. Mirror the C startup
+    // call so any test that touches the param/lex pipelines sees a
+    // fully initialised table.
+    crate::ported::utils::inittyptab();
     g
 }
