@@ -1933,7 +1933,7 @@ impl ShellExecutor {
                         // Background: fill bytecode blobs for any autoloads that have body but no chunk.
                         // Sources of missing entries: (1) brand-new SQLite cache, (2) zshrs binary
                         // mtime advanced and invalidated previously-cached chunks. The rkyv shard
-                        // at ~/.cache/zshrs/autoloads.rkyv is additive — we compute the delta and
+                        // at ~/.zshrs/autoloads.rkyv is additive — we compute the delta and
                         // merge_in once at the end (single read + single write of the shard,
                         // even for 16k entries).
                         if let Some(ref cache) = self.compsys_cache {

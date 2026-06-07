@@ -97,10 +97,20 @@ impl CompletionEngine {
     }
 
     fn db_path() -> PathBuf {
-        dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("zshrs")
-            .join("completions.db")
+        // All zshrs state lives under `$ZSHRS_HOME` (default `~/.zshrs`),
+        // matching the daemon's CachePaths convention (daemon/paths.rs)
+        // and the `~/.zinit`/`~/.zpwr`/`~/.oh-my-zsh` precedent. We
+        // explicitly DO NOT use `dirs::cache_dir()` because that
+        // resolves to `~/Library/Caches/zshrs` on macOS or
+        // `~/.cache/zshrs` on Linux — both forbidden per project policy.
+        let root = if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
+            PathBuf::from(custom)
+        } else {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".zshrs")
+        };
+        root.join("completions.db")
     }
 
     fn init_schema(&self) -> rusqlite::Result<()> {

@@ -1,6 +1,6 @@
 //! rkyv-backed bytecode cache for autoload functions.
 //!
-//! Single-file shard at `~/.cache/zshrs/autoloads.rkyv`. Keyed by function name
+//! Single-file shard at `~/.zshrs/autoloads.rkyv`. Keyed by function name
 //! (not file path) — autoload bytecode is identified by the resolved function
 //! name, regardless of which fpath dir or .zwc archive it came from.
 //!
@@ -415,10 +415,21 @@ fn current_binary_mtime_secs() -> Option<i64> {
     })
 }
 /// `default_cache_path` — see implementation.
+///
+/// All zshrs state lives under `$ZSHRS_HOME` (default `~/.zshrs`),
+/// matching the daemon's `CachePaths` convention (daemon/paths.rs)
+/// and the `~/.zinit`/`~/.zpwr`/`~/.oh-my-zsh` precedent. Project
+/// policy forbids `~/.cache/zshrs/` and `~/Library/Caches/zshrs/`
+/// — both of which `dirs::cache_dir()` resolves to.
 pub fn default_cache_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".cache/zshrs/autoloads.rkyv")
+    let root = if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
+        PathBuf::from(custom)
+    } else {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join(".zshrs")
+    };
+    root.join("autoloads.rkyv")
 }
 /// `cache_enabled` — see implementation.
 pub fn cache_enabled() -> bool {
