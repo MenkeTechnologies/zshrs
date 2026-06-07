@@ -343,7 +343,6 @@ const EXPECTED_FAILURES: &[&str] = &[
     "71_background.zsh",
     "77_cmd_modifiers.zsh",
     "81_nested_complex.zsh",
-    "87_param_offset_negative.zsh",
     "88_cond_regex_simple.zsh",
     "91_math_bitwise.zsh",
     "96_redir_fd_complex.zsh",
