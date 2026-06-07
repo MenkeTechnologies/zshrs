@@ -1202,6 +1202,7 @@ mod tests {
     }
 
     /// c:52 — `setpmmapfile` with both readonly flag values is safe.
+<<<<<<< Updated upstream
     /// The param NAME doubles as the mmap target filename (see setpmmapfile
     /// at c:88 `open(name, O_RDWR|O_CREAT)`), so use a /tmp path — the
     /// previous `__test_mapfile_a__` form created the file in cwd
@@ -1216,6 +1217,34 @@ mod tests {
         setpmmapfile(&b.to_string_lossy(), "/tmp/__nonexistent_b__", true);
         let _ = std::fs::remove_file(&a);
         let _ = std::fs::remove_file(&b);
+=======
+    ///
+    /// First arg is a FILE PATH (setpmmapfile opens/writes it at
+    /// c:88), so use absolute paths under a tempdir to avoid
+    /// polluting cwd. Earlier the test wrote `__test_mapfile_a__`
+    /// directly into the repo root, which `git status` then surfaced
+    /// as an untracked file.
+    #[test]
+    fn setpmmapfile_both_readonly_flags_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = std::env::temp_dir();
+        let path_a = dir.join("zshrs_test_mapfile_a");
+        let path_b = dir.join("zshrs_test_mapfile_b");
+        let _ = std::fs::remove_file(&path_a);
+        let _ = std::fs::remove_file(&path_b);
+        setpmmapfile(
+            path_a.to_str().expect("tmp path utf8"),
+            "/tmp/__nonexistent_a__",
+            false,
+        );
+        setpmmapfile(
+            path_b.to_str().expect("tmp path utf8"),
+            "/tmp/__nonexistent_b__",
+            true, // readonly: setpmmapfile early-returns, no file write
+        );
+        let _ = std::fs::remove_file(&path_a);
+        let _ = std::fs::remove_file(&path_b);
+>>>>>>> Stashed changes
     }
 
     /// c:181 — `unsetpmmapfile` non-existent name + both exp values safe.
