@@ -337,7 +337,6 @@ const EXPECTED_FAILURES: &[&str] = &[
     "25_coproc.zsh",
     "26_time.zsh",
     "30_cond_complex.zsh",
-    "32_for_cstyle.zsh",
     "33_redir_var.zsh",
     "46_case_glob.zsh",
     "49_param_flags_basic.zsh",

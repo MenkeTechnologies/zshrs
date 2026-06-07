@@ -4882,7 +4882,15 @@ impl ZshCompiler {
         // time — Src/parse.c:972/977 differentiates CS_FOR vs
         // CS_FOREACH at parse time only, but execfor always uses
         // CS_FOR.
-        self.emit_cmd_push(crate::ported::zsh_h::CS_FOR as u8);
+        //
+        // The CStyle (arith) branch handles its own cmdstack push
+        // because C zsh emits the init trace BEFORE pushing CS_FOR
+        // (init trace fires inside execfor's iscond block at
+        // Src/loop.c:21-25, with cmdpush(CS_FOR) only at line 65).
+        let manage_cmd_stack = !matches!(f.list, ForList::CStyle { .. });
+        if manage_cmd_stack {
+            self.emit_cmd_push(crate::ported::zsh_h::CS_FOR as u8);
+        }
         match &f.list {
             ForList::Words(words) => {
                 self.compile_for_words(&f.var, words, &f.body);
@@ -4900,7 +4908,9 @@ impl ZshCompiler {
                 self.compile_for_positional(&f.var, &f.body);
             }
         }
-        self.emit_cmd_pop();
+        if manage_cmd_stack {
+            self.emit_cmd_pop();
+        }
     }
 
     fn compile_select(&mut self, f: &crate::parse::ZshFor) {
@@ -5302,12 +5312,54 @@ impl ZshCompiler {
             }
         };
 
+        // c:Src/loop.c::execfor — for arith form, init / cond / step
+        // each get their own `printprompt4 + fprintf("%s\n", str)`
+        // trace (c:Src/loop.c:72-74 for init, c:133-135 for cond,
+        // c:191-193 for step). Emit BUILTIN_XTRACE_LINE with the
+        // untokenized expression text. The init trace fires once
+        // before the loop top; cond + step fire each iteration.
+        //
+        // Capture the for-statement's effective line BEFORE
+        // compile_program(body) overwrites self.current_sublist_line
+        // (the body's last sublist would otherwise win). Used by the
+        // cond / step traces' SET_LINENO so each iter renders with
+        // the for-header's line.
+        let for_header_line = self.current_sublist_line;
         if !init.is_empty() {
+            let txt = self.builder.add_constant(Value::str(untoked_init.as_str()));
+            self.builder.emit(Op::LoadConst(txt), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
+            self.builder.emit(Op::Pop, 0);
             emit_arith(self, init);
             self.builder.emit(Op::Pop, 0);
         }
 
+        // c:Src/loop.c:65 — `cmdpush(CS_FOR);` after init eval/trace.
+        // compile_for skipped this push for the CStyle branch so the
+        // init trace renders WITHOUT the `for` cmdstack tag (zsh
+        // omits it because cmdpush hasn't happened yet). We push it
+        // now so cond / body / step all see the for-tag.
+        self.emit_cmd_push(crate::ported::zsh_h::CS_FOR as u8);
+
         let loop_top = self.builder.current_pos();
+        // c:Src/loop.c::execfor — cond xtrace re-restores LINENO
+        // to the for-header line (matches execlist save/restore)
+        // before the trace so each iter's cond/step line shows
+        // the for-statement's line not the body's last line.
+        self.builder.emit(Op::LoadInt(for_header_line), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
+        if !cond.is_empty() {
+            let txt = self.builder.add_constant(Value::str(untoked_cond.as_str()));
+            self.builder.emit(Op::LoadConst(txt), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
+            self.builder.emit(Op::Pop, 0);
+        }
         if !cond.is_empty() {
             // Cond is evaluated for truthiness — keep simple
             // ArithCompiler path unless comma OR a `$`-bearing
@@ -5345,6 +5397,20 @@ impl ZshCompiler {
         }
 
         if !step.is_empty() {
+            // c:Src/loop.c:191-193 — step trace before evaluation.
+            // Restore LINENO to the for-header line first (same
+            // reason as the cond trace above).
+            self.builder.emit(Op::LoadInt(for_header_line), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
+            let txt = self.builder.add_constant(Value::str(untoked_step.as_str()));
+            self.builder.emit(Op::LoadConst(txt), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
+            self.builder.emit(Op::Pop, 0);
             emit_arith(self, step);
             self.builder.emit(Op::Pop, 0);
         }
@@ -5358,6 +5424,8 @@ impl ZshCompiler {
                 self.builder.patch_jump(bp, loop_exit);
             }
         }
+        // Pair with the cmdpush we did after init.
+        self.emit_cmd_pop();
     }
 
     fn compile_case(&mut self, c: &crate::parse::ZshCase) {
