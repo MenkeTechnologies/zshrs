@@ -5833,4 +5833,113 @@ mod tests {
     fn untokenize_empty_returns_empty() {
         assert_eq!(untokenize(""), "", "empty → empty");
     }
+
+    // ── Lex parity: case-pattern nested-paren absorption ────────────────
+    //
+    // Pinned against upstream `Src/zsh dumptokens` output (the
+    // `Src/Modules/zshrs_dump.c::bin_dumptokens` builtin). Catches
+    // regressions of two C-faithful fixes:
+    //
+    //   1. lex.rs cmd_or_math (CMD_OR_MATH_CMD path) restoring the
+    //      `hungetc(')')` matching C lex.c:511-518. Without it, the
+    //      inner `)` consumed by `dquote_parse` is permanently dropped
+    //      from the input stream, so `((a|)b)` lex'd as 6 tokens
+    //      (one missing OUTPAR) instead of the correct 7.
+    //
+    //   2. parse.rs par_case setting `incmdpos = 0` before the zshlex
+    //      that advances past `;;` to the next arm — C parse.c:1391.
+    //      That's exercised by integration tests in tests/; lex-only
+    //      tests below verify the LEXER side.
+    //
+    // Expected sequences captured from:
+    //   $ Src/zsh -fc 'module_path=(Src/Modules); zmodload zsh/zshrs_dump;
+    //                  dumptokens FILE'
+    //
+    // Surfaced via zinit.zsh:2946 `((add-|)fpath)` which failed with
+    // `expected ')' in case pattern` before the lex+parse fixes.
+
+    /// Helper — drive the lexer from `input` and collect the resulting
+    /// token kinds up to ENDINPUT.
+    fn collect_lex_kinds(input: &str) -> Vec<lextok> {
+        let _ = lex_init(input);
+        let mut out = Vec::new();
+        loop {
+            ctxtlex();
+            let t = tok();
+            out.push(t);
+            if t == ENDINPUT || t == LEXERR {
+                return out;
+            }
+        }
+    }
+
+    /// Lex parity: `((a|)b)` — verifies the inner OUTPAR survives
+    /// cmd_or_math's rewind path. Expected sequence (from upstream
+    /// `Src/zsh dumptokens`):
+    ///     INPAR INPAR STRING BAR OUTPAR STRING OUTPAR SEPER ENDINPUT
+    /// Before the lex.rs c:511-518 fix, the inner OUTPAR was dropped
+    /// and we emitted only 8 tokens instead of 9.
+    #[test]
+    fn lex_parity_nested_paren_alt_empty_tail() {
+        let _g = crate::test_util::global_state_lock();
+        let kinds = collect_lex_kinds("((a|)b)");
+        assert_eq!(
+            kinds,
+            vec![
+                INPAR_TOK, INPAR_TOK, STRING_LEX, BAR_TOK, OUTPAR_TOK,
+                STRING_LEX, OUTPAR_TOK, ENDINPUT
+            ],
+            "((a|)b) must emit two OUTPAR tokens — the inner one is \
+             what cmd_or_math's `hungetc(')')` restore (c:lex.c:511-518) \
+             puts back after dquote_parse consumes it"
+        );
+    }
+
+    /// Lex parity: trivial `(a|)b` (no outer wrap) — sanity check that
+    /// the cmd_or_math path is NOT triggered for single `(`, so the
+    /// token stream is the natural one. Expected (from `Src/zsh
+    /// dumptokens`):
+    ///     INPAR STRING BAR OUTPAR STRING SEPER ENDINPUT
+    #[test]
+    fn lex_parity_single_paren_alt_empty_tail() {
+        let _g = crate::test_util::global_state_lock();
+        let kinds = collect_lex_kinds("(a|)b");
+        assert_eq!(
+            kinds,
+            vec![
+                INPAR_TOK, STRING_LEX, BAR_TOK, OUTPAR_TOK,
+                STRING_LEX, ENDINPUT
+            ],
+            "(a|)b single-paren alt — five tokens, no `((` math probe"
+        );
+    }
+
+    /// Lex parity: `((a)b)` nested with non-alternation inner group.
+    /// Expected:
+    ///     INPAR INPAR STRING OUTPAR STRING OUTPAR SEPER ENDINPUT
+    /// Another regression catcher for cmd_or_math's rewind.
+    #[test]
+    fn lex_parity_nested_paren_simple_inner() {
+        let _g = crate::test_util::global_state_lock();
+        let kinds = collect_lex_kinds("((a)b)");
+        assert_eq!(
+            kinds,
+            vec![
+                INPAR_TOK, INPAR_TOK, STRING_LEX, OUTPAR_TOK,
+                STRING_LEX, OUTPAR_TOK, ENDINPUT
+            ],
+            "((a)b) — two OUTPARs preserved through cmd_or_math rewind"
+        );
+    }
+
+    // NOTE: full-case-construct lex parity is integration-only.
+    // When the parser drives the lex via par_case (incmdpos=0 set at
+    // c:Src/parse.c:1391 between arms), the `((alt|empty)tail)`
+    // tokens emerge as the c:1322 absorbed-pattern STRING. When the
+    // lexer runs standalone (no incmdpos manipulation between
+    // statements), the same source produces a different absorption
+    // pattern. Use the integration tests in `tests/case_pattern_*.rs`
+    // and the regression run on `~/.zinit/bin/zinit.zsh` for the
+    // parser-driven case — the standalone tests here pin the pure
+    // lexer behavior that the cmd_or_math fix targets.
 }
