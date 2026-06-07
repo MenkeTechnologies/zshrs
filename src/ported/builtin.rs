@@ -4144,31 +4144,52 @@ pub fn bin_typeset(
         return 0;
     }
 
-    // c:Src/builtin.c:3042-3088 — `-m PATTERN` lists params matching
-    // the glob pattern instead of treating args as name[=value]
-    // pairs. Without this, `typeset -m "a*"` errored
-    // "not valid in this context: a*" because the per-arg loop's
-    // identifier validation rejected `*`. Bug #48 in docs/BUGS.md.
+    // c:Src/builtin.c:3042-3098 — `-m PATTERN` (or `+m PATTERN`) treats
+    // each arg as a glob, not a `name[=value]` pair.
+    //
+    // C splits into TWO subpaths:
+    //   +m: c:3068 `scanmatchtable(..., paramtab->printnode, printflags)`
+    //       — direct paramtab walk that prints PRINT_TYPE | PRINT_NAMEONLY
+    //         (built up at c:3051-3054 when on|roff == 0).
+    //   -m: c:3081-3094 build pmlist, then run `typeset_single` per
+    //       match. typeset_single's print path (c:2240-2247) uses
+    //         - PRINT_TYPESET with `-p`
+    //         - PRINT_INCLUDEVALUE otherwise, gated on
+    //             `!OPT_ISSET(ops,'g') && (unset(TYPESETSILENT) ||
+    //              OPT_ISSET(ops,'m'))`
+    //
+    // Earlier zshrs collapsed both into one `printparamnode(...,
+    // PRINT_INCLUDEVALUE)` call which:
+    //   - Made `+m` emit `name=value` instead of `name` / `integer NAME`.
+    //   - Ignored `-g` print suppression so `typeset -gm 'A*'` spammed
+    //     every match (zsh is silent: `-g` blocks the print). Hit
+    //     during zinit's plugin loader which runs `typeset -gm`
+    //     against the plugin's exported-var set on every load.
+    //     Bug #48 in docs/BUGS.md.
     if OPT_ISSET(&ops, b'm') && !argv.is_empty() {
-        // c:Src/builtin.c:2240-2247 — for the no-on/no-roff/no-value
-        // `typeset -m "pat"` path, typeset_single calls
-        // `printnode(PRINT_INCLUDEVALUE|PRINT_WITH_NAMESPACE)`. That
-        // shape emits `name=value` directly without going through
-        // printparamnode's attribute-walk arm (which fires only on
-        // PRINT_TYPESET / PRINT_POSIX_*). Bug #48 in docs/BUGS.md:
-        // previous Rust port set PRINT_TYPE here which routed each
-        // match through the attribute walk, prefixing every entry
-        // with `array`/`integer`/etc. zsh's actual output for
-        // `typeset -m "a*"` is `a=1\nargv=(  )` (no prefix words).
-        //
-        // With `-p`, use PRINT_TYPESET to emit reparseable form
-        // (`typeset a=1` / `typeset -a argv=(  )`).
-        let mut local_printflags = printflags;
-        if OPT_ISSET(&ops, b'p') {
-            local_printflags |= PRINT_TYPESET;
-        } else if (on | roff) == 0 {
-            local_printflags |= PRINT_INCLUDEVALUE;
+        // c:3043-3055 — printflags for the +m direct-scan path.
+        if !OPT_ISSET(&ops, b'p') {
+            if (on | roff) == 0 {
+                printflags |= PRINT_TYPE; // c:3052
+            }
+            if on == 0 {
+                printflags |= PRINT_NAMEONLY; // c:3054
+            }
         }
+        // c:2241 — typeset_single's `-m` print path always sets
+        // PRINT_WITH_NAMESPACE so dot-prefixed names (`.cd`) emit
+        // instead of being filtered at printparamnode's namespace gate.
+        let single_flags: i32 = if OPT_ISSET(&ops, b'p') {
+            PRINT_TYPESET | PRINT_WITH_NAMESPACE
+        } else {
+            PRINT_INCLUDEVALUE | PRINT_WITH_NAMESPACE
+        };
+        // c:2244 — `else if (!OPT_ISSET(ops,'g') && (unset(TYPESETSILENT)
+        // || OPT_ISSET(ops,'m')))` — typeset_single suppresses
+        // PRINT_INCLUDEVALUE when `-g` is set. `-p` bypasses (c:2242).
+        let do_minus_print = OPT_ISSET(&ops, b'p')
+            || (!OPT_ISSET(&ops, b'g')
+                && (!isset(TYPESETSILENT) || OPT_ISSET(&ops, b'm')));
         for pattern in argv.iter() {
             // c:3061 — `patcompile(asg->name, 0, NULL)` glob-compile.
             // Use the canonical pattern.rs port. On compile failure,
@@ -4231,10 +4252,32 @@ pub fn bin_typeset(
                 names.sort_by(|a, b| hnamcmp(a, b));
                 names
             };
-            for k in names {
-                if let Ok(mut tab) = paramtab().write() {
-                    if let Some(pm) = tab.get_mut(&k) {
-                        printparamnode(pm, local_printflags);
+            if OPT_PLUS(&ops, b'm') {
+                // c:3068-3070 — `+m`: direct print using the
+                // PRINT_TYPE | PRINT_NAMEONLY flags built above.
+                for k in names {
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(&k) {
+                            printparamnode(pm, printflags);
+                        }
+                    }
+                }
+                continue;
+            }
+            // c:3081-3094 — `-m`: typeset_single per match. For the
+            // pure listing case (no `=` value, no attribute mutation),
+            // typeset_single reduces to the c:2240-2247 print arm.
+            // Attribute-conversion (`-im PAT`, `-rm PAT`, etc.) on
+            // matched names isn't ported here yet; the early
+            // `return returnval` below short-circuits the per-arg
+            // name loop for `-m` args, so on/roff currently acts as
+            // a listing filter only.
+            if do_minus_print {
+                for k in names {
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(&k) {
+                            printparamnode(pm, single_flags);
+                        }
                     }
                 }
             }
@@ -5304,10 +5347,19 @@ pub fn bin_typeset(
             // rather than printing it.
             let user_on = (on as u32) & !PM_LOCAL;
             let at_top_scope = locallevel.load(Relaxed) == 0;
+            // c:Src/builtin.c:2244 — `else if (!OPT_ISSET(ops,'g') &&
+            // (unset(TYPESETSILENT) || OPT_ISSET(ops,'m')))`. The `-g`
+            // (global-scope) flag SUPPRESSES the bare-name print so
+            // `typeset -g ZPFX` is a silent declaration / no-op rather
+            // than a list. zinit's plugin loader runs `typeset -g VAR`
+            // for already-environment-exported names on every load;
+            // without this gate zshrs spammed `VAR=value` for each on
+            // startup.
             if user_on == 0
                 && off == 0
                 && at_top_scope
                 && !OPT_ISSET(&ops, b'p')
+                && !OPT_ISSET(&ops, b'g')
                 && (!isset(TYPESETSILENT) || OPT_ISSET(&ops, b'm'))
                 && pname_in_tab
             {

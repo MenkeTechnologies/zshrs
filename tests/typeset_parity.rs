@@ -319,3 +319,160 @@ mod right_align_and_single_array {
         assert_parity(r#"typeset -aS ary="x y"; echo "$#ary $ary[2]""#);
     }
 }
+
+/// `Src/builtin.c:2244` — typeset_single's print arm is gated on
+/// `!OPT_ISSET(ops,'g')`. Bare `typeset -g NAME` is a silent declare
+/// at scope, not a listing of an existing param. Hit during zinit's
+/// plugin loader which runs `typeset -g VAR` for already-exported
+/// env vars on every load; without the gate zshrs spammed `VAR=value`
+/// per call.
+mod g_suppresses_bare_print {
+    use super::*;
+
+    /// `typeset -g NAME` (NAME exists, no `=`) — silent.
+    #[test]
+    fn dash_g_silent_for_existing_scalar() {
+        assert_parity("TPSG_A=val; typeset -g TPSG_A; echo END");
+    }
+
+    /// `-gx` — silent (export attr, no listing).
+    #[test]
+    fn dash_gx_silent_for_existing_scalar() {
+        assert_parity("TPSG_B=val; typeset -gx TPSG_B; echo END");
+    }
+
+    /// `-gxU NAME` — silent.
+    #[test]
+    fn dash_gxU_silent_for_existing_scalar() {
+        assert_parity("TPSG_C=val; typeset -gxU TPSG_C; echo END");
+    }
+
+    /// `-gxU NAME=val` (assignment) — silent + sets.
+    #[test]
+    fn dash_gxU_assignment_silent_and_sets() {
+        assert_parity("typeset -gxU TPSG_D=/from/typeset; echo $TPSG_D");
+    }
+
+    /// `-g` doesn't suppress when `-p` is set: `-p` always prints
+    /// reparseable form (c:2242).
+    #[test]
+    fn dash_g_does_not_suppress_dash_p() {
+        assert_parity("TPSG_E=val; typeset -gp TPSG_E");
+    }
+
+    /// `typeset NAME` (no `-g`, NAME exists) — prints `NAME=value`.
+    /// Negative pin: the `-g` gate must NOT apply when `-g` is absent.
+    #[test]
+    fn bare_typeset_existing_still_prints() {
+        assert_parity("TPSG_F=val; typeset TPSG_F");
+    }
+
+    /// `typeset -g NAME` (NAME does NOT exist) — silent declare.
+    /// Without an existing param, the print path doesn't fire anyway,
+    /// but pin the surface: no output, no error.
+    #[test]
+    fn dash_g_fresh_name_silent() {
+        assert_parity("typeset -g TPSG_FRESH; echo END");
+    }
+
+    /// `typeset NAME` inside a function — silent (creates local
+    /// shadow via the c:2469 createparam path, not the print arm).
+    #[test]
+    fn bare_typeset_in_function_silent() {
+        assert_parity("TPSG_G=outer; f() { typeset TPSG_G; }; f; echo END");
+    }
+
+    /// `typeset -g NAME` inside a function — silent (global mark,
+    /// no shadow, no print).
+    #[test]
+    fn dash_g_in_function_silent() {
+        assert_parity("TPSG_H=outer; f() { typeset -g TPSG_H; }; f; echo END");
+    }
+}
+
+/// `Src/builtin.c:3042-3098` — `-m PATTERN` / `+m PATTERN` parity.
+/// Two distinct subpaths in C:
+///   `+m`: direct paramtab scan, PRINT_TYPE | PRINT_NAMEONLY.
+///   `-m`: per-match typeset_single (gated on `-g` via c:2244).
+///
+/// The earlier zshrs port collapsed both into one `printparamnode(...,
+/// PRINT_INCLUDEVALUE)` call which broke `+m` (emitted `name=value`
+/// instead of `name`) and ignored `-g` suppression so `typeset -gm
+/// 'PAT'` spammed every match. Pipe through `sort` so the parity
+/// check is independent of paramtab iteration order (zsh: hash
+/// bucket, zshrs: sorted via hnamcmp).
+mod m_pattern_listing {
+    use super::*;
+
+    /// `-m PAT` prints `name=value` for each match.
+    #[test]
+    fn dash_m_prints_name_equals_value() {
+        assert_parity(r#"TPSM_A=1; TPSM_B=2; typeset -m 'TPSM_*' | sort"#);
+    }
+
+    /// `+m PAT` prints names only (NAMEONLY). For typed params an
+    /// attribute prefix (`integer NAME`, etc.) is included.
+    #[test]
+    fn plus_m_prints_names_only() {
+        assert_parity(r#"TPSM_C=1; TPSM_D=2; typeset +m 'TPSM_*' | sort"#);
+    }
+
+    /// `+m PAT` with a typed match — attribute prefix appears.
+    #[test]
+    fn plus_m_typed_param_shows_attr_prefix() {
+        assert_parity(r#"typeset -i TPSM_INT=42; typeset +m 'TPSM_INT' | sort"#);
+    }
+
+    /// `-gm PAT` — silent. The `-g` flag suppresses typeset_single's
+    /// PRINT_INCLUDEVALUE emit. This was the canary bug.
+    #[test]
+    fn dash_gm_silent() {
+        assert_parity(r#"TPSM_E=1; TPSM_F=2; typeset -gm 'TPSM_*'; echo END"#);
+    }
+
+    /// `-g +m PAT` — `+m` uses scanmatchtable directly, bypassing
+    /// typeset_single's `-g` gate. Names still print.
+    #[test]
+    fn dash_g_plus_m_still_prints_names() {
+        assert_parity(r#"TPSM_G=1; TPSM_H=2; typeset -g +m 'TPSM_*' | sort"#);
+    }
+
+    /// `-pm PAT` — reparseable form (`typeset NAME=value` lines).
+    #[test]
+    fn dash_pm_prints_reparseable() {
+        assert_parity(r#"TPSM_I=1; typeset -pm 'TPSM_I'"#);
+    }
+
+    /// `-m` pattern with no matches — silent, exit 0.
+    #[test]
+    fn dash_m_no_match_silent() {
+        assert_parity(r#"typeset -m 'TPSM_NO_MATCH_AT_ALL_*'; echo END"#);
+    }
+
+    /// `+m` pattern with no matches — silent, exit 0.
+    #[test]
+    fn plus_m_no_match_silent() {
+        assert_parity(r#"typeset +m 'TPSM_NO_MATCH_AT_ALL_*'; echo END"#);
+    }
+
+    /// Quantifier `?` in pattern — single-char match works.
+    #[test]
+    fn dash_m_question_metachar() {
+        assert_parity(r#"TPSM_X1=a; TPSM_X2=b; TPSM_LONG=c; typeset -m 'TPSM_X?' | sort"#);
+    }
+
+    /// `-m` inside a function — typeset_single's print arm runs
+    /// against pattern-matched params, no shadow creation.
+    #[test]
+    fn dash_m_in_function_still_lists() {
+        assert_parity(
+            r#"TPSM_J=v; f() { typeset -m 'TPSM_J' | sort; }; f; echo END"#,
+        );
+    }
+
+    /// `-gm` inside a function — silent (combined with c:2244 gate).
+    #[test]
+    fn dash_gm_in_function_silent() {
+        assert_parity(r#"TPSM_K=v; f() { typeset -gm 'TPSM_K'; }; f; echo END"#);
+    }
+}
