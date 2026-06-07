@@ -714,10 +714,15 @@ impl ZshCompiler {
         }
         for (i, (stage_cmd, merge)) in stages.iter().enumerate() {
             let mut sub = ZshCompiler::new();
-            // Push CS_PIPE for stages 2+ (i > 0). Stage 1 (i == 0)
-            // runs with the parent's untouched cmdstack — that's the
-            // C `execcmd_exec(stage_1)` call BEFORE the cmdpush.
-            if i > 0 {
+            // c:Src/exec.c::execpline2 — recursive pipeline emit
+            // pushes CS_PIPE BEFORE each recursive call into the
+            // rest of the pipeline. Stage i (0-based) inherits `i`
+            // cumulative CS_PIPE pushes from the outer recursion
+            // depth: stage 0 = 0 pushes, stage 1 = 1 push, stage 2
+            // = 2 pushes, etc. zsh's `%_` then renders the chain
+            // (`pipe`, `pipe pipe`, `pipe pipe pipe`, …) matching
+            // the recursive call depth.
+            for _ in 0..i {
                 sub.emit_cmd_push(crate::ported::zsh_h::CS_PIPE as u8);
             }
             if *merge {
@@ -727,7 +732,8 @@ impl ZshCompiler {
                     .emit(Op::Redirect(2, fusevm::op::redirect_op::DUP_WRITE), 0);
             }
             sub.compile_command(stage_cmd);
-            if i > 0 {
+            // Pop the i CS_PIPE pushes from the head.
+            for _ in 0..i {
                 sub.emit_cmd_pop();
             }
             let sub_end = sub.builder.current_pos();
