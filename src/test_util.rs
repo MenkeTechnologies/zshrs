@@ -58,5 +58,45 @@ pub fn global_state_lock() -> MutexGuard<'static, ()> {
     // call so any test that touches the param/lex pipelines sees a
     // fully initialised table.
     crate::ported::utils::inittyptab();
+    // Clear `errflag` so a previous test that errored doesn't leak its
+    // ERRFLAG_ERROR / ERRFLAG_INT bits into this test's lex/parse/math
+    // pipeline. `errflag` is a process-wide `AtomicI32` (utils.rs); any
+    // test that calls `zerr()` sets it, and the next test sees a
+    // non-zero value at every "if errflag != 0 return LEXERR" gate
+    // (lex.rs:1064, parse.rs, math.rs, etc.). C zsh resets it at the
+    // top of every `loop` iteration in `init.c::zsh_main`; mirror that
+    // here so each test starts with a clean error state.
+    crate::ported::utils::errflag.store(0, std::sync::atomic::Ordering::Relaxed);
+    // Reset options that other tests temporarily flip. The lock
+    // serialises but doesn't restore on panic — a test that sets
+    // `octalzeroes=true` and panics before its restore leaves the
+    // option ON for every subsequent test. Force OFF here so each test
+    // starts from a deterministic default. Add other "test-toggled"
+    // options here as they surface as cross-test interference.
+    crate::ported::options::opt_state_set("octalzeroes", false);
+    crate::ported::options::opt_state_set("cbases", false);
+    // ksharrays flips array subscript base from 1 (zsh default) to 0
+    // (ksh emulation). Other tests temporarily enable it and the lock
+    // doesn't roll back on panic. Force OFF so `(( arr[2]=N ))` writes
+    // the 2nd (1-indexed) element as zsh expects.
+    crate::ported::options::opt_state_set("ksharrays", false);
+    // `casematch` defaults ON in real zsh (verified via `/bin/zsh -fc
+    // 'echo $options[casematch]'` → "on"). Without it stamped here,
+    // `zcond_regex_match` and other case-sensitivity-gated paths see
+    // the Rust-default `false` and silently swap to case-insensitive,
+    // breaking the `[[ abc =~ ABC ]] → no-match` pin.
+    crate::ported::options::opt_state_set("casematch", true);
+    // Reset emulation to EMULATE_ZSH so `init_builtins` (called by
+    // builtin tests) doesn't disable the `repeat` reswd in reswdtab
+    // for every subsequent test that tries to parse `repeat N do …`.
+    crate::ported::options::emulation
+        .store(crate::ported::zsh_h::EMULATE_ZSH, std::sync::atomic::Ordering::Relaxed);
+    // Re-enable `repeat` in reswdtab — once a prior test ran
+    // init_builtins under non-zsh emulation, the disable persists in
+    // the process-wide table. tab.enable is the C `disablenode(hn, 1)`
+    // equivalent (Src/hashtable.c::sethashnode_disable_state).
+    if let Ok(mut tab) = crate::ported::hashtable::reswdtab_lock().write() {
+        tab.enable("repeat");
+    }
     g
 }

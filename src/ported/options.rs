@@ -2529,25 +2529,23 @@ mod tests {
     }
 
     /// `Src/options.c:optns` — `nounset` flag (errors on unset var
-    /// reference). Round-trip set/clear.
+    /// reference). Round-trip set/clear via `opt_state_set_via_alias`:
+    /// `nounset` is the negation alias for canonical `unset`; once the
+    /// option-table init has run, the bare `opt_state_set("nounset", …)`
+    /// path bypasses alias resolution so subsequent reads (which DO
+    /// resolve aliases) negate via the canonical slot and return the
+    /// inverted bool. The alias-aware setter writes the canonical
+    /// slot directly, matching the reader's contract.
     #[test]
-    #[ignore = "ZSHRS BUG: this test uses raw opt_state_set(\"nounset\", true) \
-                but `nounset` is the negation alias for canonical `unset` \
-                (Src/options.c:optns). After option-table init, \
-                opt_state_get(\"nounset\") routes via alias to `unset` (true \
-                by zsh default) and negates → returns Some(false), failing \
-                the invariant. Fix: use opt_state_set_via_alias(\"nounset\", \
-                true) — surfaced 2026-05-29 when extra optlookup-probing \
-                tests altered the ordering"]
     fn options_corpus_nounset_round_trip() {
         let _g = crate::test_util::global_state_lock();
         let saved = opt_state_get("nounset");
-        opt_state_set("nounset", true);
+        opt_state_set_via_alias("nounset", true);
         assert_eq!(opt_state_get("nounset"), Some(true));
-        opt_state_set("nounset", false);
+        opt_state_set_via_alias("nounset", false);
         assert_eq!(opt_state_get("nounset"), Some(false));
         if let Some(s) = saved {
-            opt_state_set("nounset", s);
+            opt_state_set_via_alias("nounset", s);
         }
     }
 
@@ -2784,15 +2782,6 @@ mod tests {
     /// Snapshot+restore around the call to prevent leaking default
     /// option values into other tests that share OPTS_LIVE.
     #[test]
-    #[ignore = "ZSHRS BUG (latent test-design coupling): forces optlookup \
-                name-registry init, exposing pre-existing bug in \
-                options_corpus_nounset_round_trip which uses raw \
-                opt_state_set(\"nounset\", ...) instead of \
-                opt_state_set_via_alias. nounset is the negation alias for \
-                canonical `unset`; after init, get(\"nounset\") routes via \
-                alias to `unset` (true by zsh default) and returns \
-                Some(false), failing the corpus invariant. Corpus test \
-                should be fixed to use alias-aware setter"]
     fn createoptiontable_idempotent_repeated_calls() {
         let _g = crate::test_util::global_state_lock();
         let snap = opt_state_snapshot();

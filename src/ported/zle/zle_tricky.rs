@@ -2353,7 +2353,6 @@ mod tests {
     ///   `if ((*str == Inbrack || *str == Outbrack) && !str[1]) return 0;`
     /// A bracket with nothing after isn't a pattern, just a literal char.
     #[test]
-    #[ignore = "ZSHRS BUG: lone-bracket short-circuit (c:cmphaswilds first check) — requires Inbrack token, not literal '['"]
     fn cmphaswilds_lone_inbrack_returns_zero() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();

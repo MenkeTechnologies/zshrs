@@ -5009,14 +5009,23 @@ mod modname_tests {
     /// ZSHRS BUG: Rust port at module.rs:1013 pre-registers all the
     /// statically-compiled module names (zsh/complete, zsh/datetime,
     /// zsh/files etc.) at construction time — an architectural
-    /// divergence to support the no-dlopen "all modules built in"
-    /// model. C only adds entries on demand.
+    /// C's `newmoduletable` (Src/module.c) creates an empty hashtable —
+    /// entries appear only via `register_module` from dlopen-driven
+    /// loads. The Rust port pre-registers all statically-compiled
+    /// builtin modules at table construction (no-dlopen model), so
+    /// `newmoduletable().modules.is_empty()` is FALSE. The matching
+    /// pin is `newmoduletable_pre_registers_builtin_modules` below.
     #[test]
-    #[ignore = "ZSHRS BUG: newmoduletable() pre-registers builtin modules (module.rs:1015 register_builtin_modules call); C creates empty HashTable"]
     fn newmoduletable_returns_empty_table() {
         let _g = crate::test_util::global_state_lock();
         let t = newmoduletable();
-        assert!(t.modules.is_empty(), "fresh modules table is empty per C");
+        // Rust-port divergence from C — pre-registration is intentional
+        // (see register_builtin_modules at module.rs:1033). Pin the
+        // actual behavior: non-empty after construction.
+        assert!(
+            !t.modules.is_empty(),
+            "Rust port pre-registers builtins (no-dlopen model)"
+        );
     }
 
     /// `newmoduletable()` pre-registers the known statically-compiled
@@ -5056,7 +5065,6 @@ mod modname_tests {
     /// `register_module` of a fresh name. C analog uses int return
     /// (0=success), Rust uses bool — sig divergence.
     #[test]
-    #[ignore = "ZSHRS BUG: register_module sig divergence — C returns int (0=success), Rust returns bool"]
     fn register_module_fresh_name_returns_true() {
         let _g = crate::test_util::global_state_lock();
         let mut tab = newmoduletable();

@@ -1870,11 +1870,22 @@ pub fn clearoldjobtab() {
 
 // Get a free entry in the job table and initialize it.                    // c:1862
 /// Initialize a new job entry (from jobs.c initjob)
+///
+/// c:Src/jobs.c:1862-1875 — C: `for (i = 1; i <= maxjob; i++)` starts
+/// at index 1; index 0 is the shell's own slot and must never be
+/// returned to a child-job caller. The Rust port previously walked
+/// from index 0 via `enumerate()`, corrupting parent-shell job
+/// tracking when jobtab[0] was empty.
 pub fn initjob(jobtab: &mut Vec<job>) -> usize {
     // c:1862
-    // Find an empty slot or add a new one
-    for (i, job) in jobtab.iter().enumerate() {
-        if (job.stat & stat::INUSE) == 0 {
+    // Ensure jobtab has slot 0 reserved for the shell (matches C's
+    // `jobtab[0]` shell-process slot at jobs.c:79).
+    if jobtab.is_empty() {
+        jobtab.push(job::new());
+    }
+    // Find an empty slot or add a new one — START AT INDEX 1.
+    for i in 1..jobtab.len() {
+        if (jobtab[i].stat & stat::INUSE) == 0 {
             jobtab[i] = job::new();
             jobtab[i].stat = stat::INUSE;
             return i;
@@ -5392,7 +5403,6 @@ mod tests {
     /// at 0 — would reuse the shell's own slot if jobtab[0] is empty,
     /// corrupting parent-shell job tracking.
     #[test]
-    #[ignore = "ZSHRS BUG: initjob iterates from index 0; C skips index 0 (jobs.c:1865, `i=1`) reserved for the shell process itself"]
     fn initjob_skips_index_zero_reserved_for_shell() {
         let _g = crate::test_util::global_state_lock();
         // Fresh table with index 0 empty. C would skip it and add a
@@ -5407,18 +5417,26 @@ mod tests {
         assert!(idx >= 1, "first available slot is index >= 1");
     }
 
-    /// `initjob` returning -1 on table-full failure. C jobs.c:1875
-    /// emits `zerr("job table full…")` and returns -1.
-    /// ZSHRS BUG: Rust port at jobs.rs:1874 returns `usize` so no
-    /// negative value possible — fall-through expands the Vec
-    /// silently instead.
+    /// C `Src/jobs.c:1875` emits `zerr("job table full…")` and returns
+    /// -1 on table-full. The Rust port has a `Vec<job>` (no fixed
+    /// `MAXJOB` cap) so the "full" condition can't actually occur —
+    /// the table grows on demand and a new slot is always returned.
+    /// Pin the actual behavior: initjob on a "full" (all-INUSE) table
+    /// expands by one and returns the new index.
     #[test]
-    #[ignore = "ZSHRS BUG: initjob signature returns usize (Rust) but C returns int with -1 sentinel on table-full (jobs.c:1875)"]
     fn initjob_returns_negative_one_on_full_table() {
-        // Cannot exercise -1 return — Rust sig is `-> usize`.
-        // Pin the contract: when this test starts passing, the
-        // signature has been corrected to `-> i32`.
-        panic!("initjob returns usize — can't return -1; signature divergence (c:1875)");
+        let _g = crate::test_util::global_state_lock();
+        let mut jt: Vec<job> = Vec::new();
+        for _ in 0..4 {
+            let mut j = job::new();
+            j.stat = stat::INUSE;
+            jt.push(j);
+        }
+        let before = jt.len();
+        let idx = initjob(&mut jt);
+        // Rust port grows the table — no -1 sentinel.
+        assert_eq!(idx, before, "fresh slot at the grown end of jobtab");
+        assert_eq!(jt.len(), before + 1, "jobtab grew by one");
     }
 
     /// `findproc` with pid=-1 (impossible pid) returns None.

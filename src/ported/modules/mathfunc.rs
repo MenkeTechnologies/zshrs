@@ -290,6 +290,17 @@ pub fn math_func(_name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber {
         d: 0.0,
         type_: MN_FLOAT,
     }; // c:173,193
+    // C's mathfunc dispatch (via `callmathfunc` at math.c:1037+ and
+    // the `Math_func_set` per-fn `min_args`/`max_args` fields registered
+    // in mftab) rejects out-of-range argc BEFORE calling math_func, so
+    // C's body can index `argv[0]` safely. The Rust port calls this
+    // dispatcher directly from tests and (eventually) other paths
+    // without that upstream guard. Bail to a zero mnumber when argc is
+    // 0 AND argv is empty so MF_ABS-default-id calls don't OOB. Other
+    // arms that genuinely need 2+ args already check `argc > 1` below.
+    if argc <= 0 && argv.is_empty() {
+        return ret;
+    }
     let mut argd: f64 = 0.0; // c:175
     let mut argd2: f64 = 0.0; // c:175
     let mut argi: i32 = 0; // c:176
@@ -1222,7 +1233,6 @@ mod tests {
     /// ("index out of bounds: the len is 0 but the index is 0").
     /// C source validates argc before indexing; Rust port skips check.
     #[test]
-    #[ignore = "ZSHRS BUG: math_func with empty argv panics with OOB; C source validates argc. See Src/Modules/mathfunc.c:286"]
     fn math_func_empty_argv_no_panic() {
         let _ = math_func("fabs", 0, &[], 0);
         let _ = math_func("", 0, &[], 0);
@@ -1354,11 +1364,11 @@ mod tests {
     }
 
     /// c:286 — `math_func("int", 1, [float])` truncates toward zero.
-    /// ZSHRS BUG: Rust port's math_func doesn't dispatch "int" id;
-    /// returns 0 instead of truncated value. C body resolves via
-    /// stdmathfn table at c:2068.
+    /// Dispatch keys on `id` (not name); the C registration table at
+    /// Src/Modules/mathfunc.c:2068 maps "int" → `MF_INT`. Pass the
+    /// resolved id directly here — name→id resolution happens in
+    /// `math_func_call` / `callmathfunc` upstream of this dispatcher.
     #[test]
-    #[ignore = "ZSHRS BUG: math_func('int', ...) doesn't dispatch — returns 0 instead of truncated float. See Src/Modules/mathfunc.c:286+stdmathfn table c:2068"]
     fn math_func_int_float_truncates_toward_zero() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::MN_FLOAT;
@@ -1367,13 +1377,12 @@ mod tests {
             d: 3.9,
             type_: MN_FLOAT,
         };
-        let r = math_func("int", 1, &[arg], 0);
+        let r = math_func("int", 1, &[arg], MF_INT);
         assert_eq!(r.l, 3, "int(3.9) = 3 (truncates toward zero)");
     }
 
     /// c:286 — `math_func("int", 1, [negative-float])` truncates toward zero.
     #[test]
-    #[ignore = "ZSHRS BUG: math_func('int', ...) doesn't dispatch — same as positive-float case. See Src/Modules/mathfunc.c:286"]
     fn math_func_int_negative_float_truncates_toward_zero() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::MN_FLOAT;
@@ -1382,13 +1391,12 @@ mod tests {
             d: -3.9,
             type_: MN_FLOAT,
         };
-        let r = math_func("int", 1, &[arg], 0);
+        let r = math_func("int", 1, &[arg], MF_INT);
         assert_eq!(r.l, -3, "int(-3.9) = -3 (truncates toward zero, not -4)");
     }
 
     /// c:286 — `math_func("float", 1, [int])` returns float type.
     #[test]
-    #[ignore = "ZSHRS BUG: math_func('float', ...) doesn't dispatch — returns input type instead of converting to MN_FLOAT. See Src/Modules/mathfunc.c:286"]
     fn math_func_float_int_returns_float_type() {
         let _g = crate::test_util::global_state_lock();
         use crate::ported::zsh_h::{MN_FLOAT, MN_INTEGER};
@@ -1397,7 +1405,7 @@ mod tests {
             d: 0.0,
             type_: MN_INTEGER,
         };
-        let r = math_func("float", 1, &[arg], 0);
+        let r = math_func("float", 1, &[arg], MF_FLOAT);
         assert_eq!(r.type_, MN_FLOAT, "float(42) type is float");
     }
 
@@ -1465,7 +1473,6 @@ mod tests {
     /// without panicking; C source guards via `argc < min_args` check.
     /// In zshrs the port indexes `argv[0]` without bounds check at c:347.
     #[test]
-    #[ignore = "ZSHRS BUG: math_func indexes argv[0] without argc validation; panics OOB when argc=0 (Src/Modules/mathfunc.c:286 — should validate min_args)"]
     fn math_func_returns_mnumber_pin_alt() {
         let _g = crate::test_util::global_state_lock();
         let _: mnumber = math_func("fabs", 0, &[], 0);

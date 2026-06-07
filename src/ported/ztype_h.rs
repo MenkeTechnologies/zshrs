@@ -503,12 +503,6 @@ mod tests {
     /// rebuild end-to-end: set IFS to `":"`, then verify `isep(':')`
     /// becomes true and old separator chars are dropped.
     #[test]
-    #[ignore = "ZSHRS BUG: ifssetfn does not actually rebuild typtab ISEP \
-                bits from new IFS — Src/params.c:4795 calls inittyptab() \
-                after IFS change but the Rust port's ifssetfn path doesn't \
-                trigger the rebuild, so isep(':') stays false after setting \
-                IFS to \":\". Pre-existing failure surfaced 2026-05-29 — fix \
-                requires routing ifssetfn through inittyptab"]
     fn ifssetfn_rebuilds_isep_typtab_bits() {
         let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -630,13 +624,6 @@ mod tests {
     /// rebuild end-to-end: set WORDCHARS to `":"`, then verify
     /// `iword(':')` becomes true and old WORDCHAR chars are dropped.
     #[test]
-    #[ignore = "ZSHRS BUG: wordcharssetfn does not actually rebuild typtab \
-                IWORD bits from new WORDCHARS — Src/params.c:5143 calls \
-                inittyptab() after WORDCHARS change but the Rust port's \
-                wordcharssetfn path doesn't trigger rebuild, so iword(':') \
-                stays false after setting WORDCHARS to \":\". Pre-existing \
-                failure surfaced 2026-05-29 — fix requires routing \
-                wordcharssetfn through inittyptab"]
     fn wordcharssetfn_rebuilds_iword_typtab_bits() {
         let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());

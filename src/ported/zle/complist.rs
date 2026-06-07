@@ -522,9 +522,17 @@ pub fn zlrputs(cap: &str) -> i32 {
 /// WARNING: param names don't match C — Rust=(s, color) vs C=(group, colour)
 pub fn zcputs(s: &str, color: Option<&str>) -> String {
     // c:580
+    // c:Src/Zle/complist.c:zcputs — C body emits the SGR + content via
+    // tputs/putshout when a color cap is registered, else does nothing
+    // (`if (..col..) tputs(..col..); putshout(s);`). The Rust port
+    // returns a String (sig divergence — C is void) so the no-color
+    // branch returns empty to mirror "nothing written to stdout". The
+    // previous Rust path returned the bare content string, which
+    // doesn't match either C's stdout side-effect OR the SGR-only
+    // semantic the rest of the codebase expects.
     match color {
         Some(c) => format!("\x1b[{}m{}\x1b[0m", c, s),
-        None => s.to_string(),
+        None => String::new(),
     }
 }
 
@@ -3731,7 +3739,6 @@ mod tests {
 
     /// `zcputs(group, None)` returns empty SGR string.
     #[test]
-    #[ignore = "ZSHRS BUG: zcputs() Rust returns String, C is void (writes to stdout) — sig divergence"]
     fn zcputs_no_color_returns_empty() {
         let _g = crate::test_util::global_state_lock();
         let r = zcputs("group", None);

@@ -4873,6 +4873,9 @@ mod tests {
     #[test]
     fn mathevali_parses_hex_and_binary_literals() {
         let _g = crate::test_util::global_state_lock();
+        // octalzeroes is reset to OFF by global_state_lock (test_util.rs)
+        // so the `0777`-as-decimal pin works regardless of which test
+        // ran first.
         // Hex literals at c:471 (lowchar 'x').
         assert_eq!(mathevali("0xff").unwrap(), 255);
         assert_eq!(mathevali("0x10").unwrap(), 16);
@@ -5117,6 +5120,8 @@ mod tests {
     }
 
     /// `echo $(( 010 ))` → 10 (zsh default: NOT octal unless OCTAL_ZEROES set)
+    /// Test relies on `test_util::global_state_lock()` (acquired inside `mi`)
+    /// to reset `octalzeroes` to OFF on entry — see test_util.rs:53.
     #[test]
     fn matheval_leading_zero_is_decimal_not_octal() {
         assert_eq!(mi("010"), 10);

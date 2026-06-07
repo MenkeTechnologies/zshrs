@@ -78,6 +78,15 @@ pub fn zpcre_utf8_enabled() -> i32 {
 #[allow(unused_variables)]
 pub fn bin_pcre_compile(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
     // c:70
+    // c:Src/Modules/pcre.c BUILTIN spec — min_args=1 (regex pattern is
+    // required). C's execbuiltin gate rejects no-args before calling
+    // here; the Rust port calls this fn directly from tests / future
+    // dispatch paths without that gate, so an empty argv silently
+    // compiles an empty pattern and returns 0. Mirror C's usage error.
+    if args.is_empty() {
+        zwarnnam(nam, "not enough arguments");
+        return 1;
+    }
     // c:72-76 — locals at function top.
     let mut pcre_opts: u32 = 0; // c:72
     let target_len: i32; // c:73
@@ -1012,7 +1021,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         let r = bin_pcre_compile("pcre_compile", &[], &empty_ops(), 0);
-        assert_eq!(r, 0, "C body has no arity check; empty pattern compiles");
+        // Mirrors the C BUILTIN dispatcher's min_args=1 gate; the
+        // bin_pcre_compile fn-level guard at pcre.rs returns the usage
+        // error rc directly when no positional was passed.
+        assert_eq!(r, 1, "no args → usage error (missing pattern)");
     }
 
     /// c:328 — `bin_pcre_match` with no args returns 1 (needs at
@@ -1471,7 +1483,6 @@ mod tests {
     /// c:79 — `bin_pcre_compile` no-args MUST return nonzero (usage error).
     /// In zshrs the port returns 0 (success) silently.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_pcre_compile with no args returns 0 instead of usage-error nonzero (Src/Modules/pcre.c:79)"]
     fn bin_pcre_compile_no_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();

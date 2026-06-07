@@ -156,6 +156,16 @@ pub fn bin_ztie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
 /// WARNING: param names don't match C — Rust=(nam, args, ops, _func) vs C=(nam, args, ops, func)
 pub fn bin_zuntie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // c:201
+    // c:Src/Modules/db_gdbm.c BUILTIN spec — min_args=1 ("ztie ... -d
+    // db/gdbm name"). C's execbuiltin gate rejects zero positional
+    // args before reaching here; the Rust port calls bin_zuntie
+    // directly (tests, future dispatch paths) so the empty loop falls
+    // through to `return 0` silently. Mirror C's dispatcher-level
+    // usage error so no-args is a clear failure, not a silent success.
+    if args.is_empty() {
+        zwarnnam(nam, "missing parameter name");
+        return 1;
+    }
     // c:201-205 — locals
     let mut ret: i32 = 0; // c:205
 
@@ -1328,7 +1338,10 @@ mod tests {
     fn zuntie_with_no_args_returns_zero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
-        assert_eq!(bin_zuntie("zuntie", &[], &ops, 0), 0);
+        // C's BUILTIN spec has min_args=1; the fn-level guard mirrors
+        // the dispatcher rejection so no-args returns the usage error
+        // rc (1), not silent success (0).
+        assert_eq!(bin_zuntie("zuntie", &[], &ops, 0), 1);
     }
 
     /// c:208-212 — `zuntie <name>` on an unknown param emits
@@ -1446,7 +1459,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_zuntie("zuntie", &[], &ops, 0);
-        assert_eq!(r, 0, "zuntie with no args = 0 (empty loop is success)");
+        // Updated to match the dispatcher-level usage-error semantic
+        // C zsh's bin_zuntie inherits via min_args=1 (see fn-level
+        // guard in db_gdbm.rs). No-args is a usage error, not silent.
+        assert_eq!(r, 1, "zuntie with no args = 1 (min_args=1 gate)");
     }
 
     /// `gdbmgetfn` on untied param returns empty string.
@@ -1496,7 +1512,6 @@ mod tests {
     /// Rust port bin_zuntie returns 0 because it lacks the arg-count
     /// gate. Should return nonzero (usage error) per C dispatcher.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_zuntie missing min_args=1 gate per Src/Modules/db_gdbm.c:93 — C dispatcher rejects no-args; Rust accepts + returns 0"]
     fn bin_zuntie_no_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
@@ -1841,7 +1856,6 @@ mod tests {
     /// c:157 — `bin_zuntie` no-args returns nonzero (usage error, alt).
     /// IGNORED — same ZSHRS BUG as `bin_zuntie_no_args_returns_nonzero`.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_zuntie missing min_args=1 gate per Src/Modules/db_gdbm.c:157 — C dispatcher rejects no-args; Rust accepts + returns 0"]
     fn bin_zuntie_no_args_usage_error_alt() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();

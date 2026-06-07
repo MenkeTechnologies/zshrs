@@ -709,7 +709,12 @@ pub fn scrollwindow(lines: i32) {
     let s = if lines > 0 {
         format!("\x1b[{}S", lines)
     } else if lines < 0 {
-        format!("\x1b[{}T", -lines)
+        // c:Src/Zle/zle_refresh.c:708 — C does `-lines` on `int`, which
+        // wraps via two's complement when `lines == INT_MIN`. Rust's
+        // `-i32::MIN` overflows in debug builds. Use wrapping_neg so the
+        // behavior matches C exactly (and the absurd-large value emits
+        // a benign large positive on the escape sequence).
+        format!("\x1b[{}T", lines.wrapping_neg())
     } else {
         return;
     };
@@ -3899,7 +3904,6 @@ mod tests {
     /// scroll the opposite direction; C silently wraps via two's
     /// complement, Rust debug build traps on the overflow.
     #[test]
-    #[ignore = "ZSHRS BUG: scrollwindow(i32::MIN) panics 'attempt to negate with overflow' in debug build; C wraps silently via two's complement. See Src/Zle/zle_refresh.c:708 negate"]
     fn scrollwindow_i32_min_panics_zshrs_bug() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();

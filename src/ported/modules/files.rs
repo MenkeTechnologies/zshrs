@@ -229,6 +229,18 @@ pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {
         let oumask = unsafe { libc::umask(0) }; // c:123
         let mut builder = std::fs::DirBuilder::new();
         builder.mode(mode);
+        // c:Src/Modules/files.c:domkdir — when `-p` is set, the C body
+        // walks each intermediate path component, creating each as
+        // needed (the loop at c:131 increments past ENOENT and retries).
+        // The Rust port previously called `DirBuilder::create` which
+        // creates ONLY the leaf and fails with ENOENT for missing
+        // parents. Use `recursive(true)` so `mkdir -p a/b/c` works with
+        // missing `a` and `b`. The non-`-p` path (`p == 0`) keeps the
+        // strict single-level create so `mkdir x/y` with no `x` still
+        // errors the same way C does.
+        if p != 0 {
+            builder.recursive(true);
+        }
         let result = builder.create(path); // c:124 mkdir
         unsafe {
             libc::umask(oumask);
@@ -1723,7 +1735,6 @@ mod tests {
     /// don't exist. C-compatible `mkdir -p` is mandatory shell
     /// behavior; this breaks any script that relies on it.
     #[test]
-    #[ignore = "ZSHRS BUG: domkdir(-p) doesn't create intermediate dirs — `mkdir -p a/b/c` fails when a/b don't exist; C creates each level"]
     fn domkdir_with_p_creates_parents() {
         let _g = crate::test_util::global_state_lock();
         let parent = tempfile::tempdir().unwrap();

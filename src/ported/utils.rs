@@ -5023,13 +5023,22 @@ pub fn inittyptab() {
     // mark "blank repeated → no-skip" IFS chars. Mirrors C exactly.
     {
         // c:4216 — `for (s = ifs ? ifs : CURRENT_DEFAULT_IFS; ...)`.
-        // C: `paramtab->getnode("IFS")->gsu.s->getfn(pm)`. Rust:
-        // look up pm in paramtab, dispatch via ifsgetfn(pm).
+        // C reads the global `ifs` variable (the same one `ifssetfn`
+        // writes). The Rust port walks paramtab first (so the GSU
+        // dispatch path matches C); on miss, fall through to ifs_lock
+        // directly so a fresh `ifssetfn` update before any paramtab
+        // entry exists is still visible to inittyptab.
         let ifs = crate::ported::params::paramtab()
             .read()
             .ok()
             .and_then(|t| t.get("IFS").map(|pm| crate::ported::params::ifsgetfn(pm)))
-            .unwrap_or_default();
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                crate::ported::params::ifs_lock()
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default()
+            });
         let src: String = if ifs.is_empty() {
             DEFAULT_IFS.to_string()
         } else {
@@ -5076,6 +5085,9 @@ pub fn inittyptab() {
     // Drops to ASCII-only under MULTIBYTE_SUPPORT (the non-ASCII path
     // routes through wordchars_wide).
     {
+        // Same fallback as IFS above: paramtab first, then wordchars_lock
+        // so wordcharssetfn updates that bypass paramtab still reach
+        // the typtab rebuild.
         let wc = crate::ported::params::paramtab()
             .read()
             .ok()
@@ -5083,7 +5095,13 @@ pub fn inittyptab() {
                 t.get("WORDCHARS")
                     .map(|pm| crate::ported::params::wordcharsgetfn(pm))
             })
-            .unwrap_or_default();
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                crate::ported::params::wordchars_lock()
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default()
+            });
         let src: String = if wc.is_empty() {
             DEFAULT_WORDCHARS.to_string()
         } else {
@@ -13222,7 +13240,6 @@ mod tests {
     /// requires POSIXIDENTIFIERS check + ksh emulation gating that
     /// isn't fully wired.
     #[test]
-    #[ignore = "ZSHRS BUG: INAMESPC dot-recursion depends on POSIXIDENTIFIERS / EMULATE_KSH wiring (c:4400-4411) — unwired in current options.rs path"]
     fn itype_end_inamespc_walks_through_ksh93_dot() {
         let _g = crate::test_util::global_state_lock();
         inittyptab();

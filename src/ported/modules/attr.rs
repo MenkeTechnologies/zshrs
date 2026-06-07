@@ -375,6 +375,16 @@ pub fn bin_setattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 
 pub fn bin_delattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 {
     // c:150 — `int ret = 0, slen;`
     let _slen: usize;
+    // c:Src/Modules/attr.c — C's bin_delattr is dispatched by execbuiltin
+    // with `min_args=1` (BUILTIN spec at c:469), so argv[0] is always
+    // present when the C body runs. The Rust port calls this fn
+    // directly from tests / future code paths without that gate, so
+    // indexing `argv[0]` on an empty slice panics. Mirror C's
+    // dispatcher-level usage error here.
+    if argv.is_empty() {
+        zwarnnam(nam, "not enough arguments");
+        return 1;
+    }
     // c:153 — `int symlink = OPT_ISSET(ops, 'h');`
     let symlink: i32 = if OPT_ISSET(ops, b'h') { 1 } else { 0 };
     // c:154 — `char *file = argv[0], **attr = argv;`
@@ -1166,9 +1176,7 @@ mod tests {
     }
 
     /// c:254/327/375/415 — every bin_*attr returns i32 (compile-time pin).
-    /// IGNORED: bin_delattr panics on no-args; pin once delattr no-args usage path is fixed.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_delattr panics with index OOB on no-args instead of returning usage error (C source `Src/Modules/attr.c:375`)"]
     fn attr_builtins_all_return_i32_type() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
@@ -1199,7 +1207,6 @@ mod tests {
     /// c:375 — `bin_delattr` no args MUST return nonzero (C: usage error).
     /// In zshrs the port panics with index OOB instead.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_delattr no-args panics 'index 0 out of bounds for len 0' (C source `Src/Modules/attr.c:375` — should usage-error)"]
     fn bin_delattr_no_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
@@ -1217,9 +1224,7 @@ mod tests {
     }
 
     /// c:254/327/375/415 — all builtin exit codes non-negative.
-    /// IGNORED until bin_delattr no-args usage path is fixed.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_delattr panics on no-args; remove ignore once fixed (C source `Src/Modules/attr.c:375`)"]
     fn attr_builtins_exit_codes_non_negative() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();

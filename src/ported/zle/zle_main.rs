@@ -2957,7 +2957,6 @@ mod tests {
     /// `ungetbyte` then `getbyte(false)` returns the pushed byte.
     /// C ungetbyte + getbyte round-trip.
     #[test]
-    #[ignore = "ZSHRS BUG: ungetbyte/getbyte round-trip needs full ZLE input state — may need terminal setup"]
     fn ungetbyte_then_getbyte_round_trips() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();

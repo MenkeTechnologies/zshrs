@@ -3635,6 +3635,31 @@ fn approx_match_exactly(
         }
         // Edit operations — each costs 1 error.
         if state.errsfound < max_errs {
+            // c:Src/pattern.c:3520-3543 — Damerau transposition: swap two
+            // adjacent input chars to match two adjacent pat chars (i.e.
+            // input[s..s+2] reversed equals pat[p..p+2]). Costs 1 edit;
+            // pin for `(#a3)abcd` matching "dcba" — needs sub + transp +
+            // sub = 3 edits to bridge the reversal.
+            if s_off + 1 < input_bytes.len() && p_off + 1 < str_bytes.len()
+                && input_bytes[s_off] == str_bytes[p_off + 1]
+                && input_bytes[s_off + 1] == str_bytes[p_off]
+            {
+                *state = saved_outer.clone();
+                state.errsfound += 1;
+                let r = walk(
+                    code,
+                    next,
+                    string,
+                    input_bytes,
+                    str_bytes,
+                    s_off + 2,
+                    p_off + 2,
+                    state,
+                    glob_flags,
+                    max_errs,
+                );
+                update(&mut best, r);
+            }
             // Substitute.
             if s_off < input_bytes.len() {
                 *state = saved_outer.clone();
@@ -3908,16 +3933,22 @@ fn patmatch(
                 let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap()) as usize;
                 let set = &code[body + 4..body + 4 + len];
                 let input_bytes = string.as_bytes();
-                if s_off >= input_bytes.len() {
-                    return None;
-                }
-                let b = input_bytes[s_off];
-                // c:2694 charmatch — each set byte tested as a CHARMATCH
-                // candidate against the input. GF_LCMATCHUC asymmetric
-                // semantic: `[a]` matches "A" (chpa='a' lowercase), but
-                // `[A]` does NOT match "a" (chpa='A' uppercase, no fold).
-                let found = set.iter().any(|&c| charmatch(b, c, glob_flags));
-                if !found {
+                let max_errs = (glob_flags & 0xff) as i32;
+                let has_match = s_off < input_bytes.len()
+                    && set.iter().any(|&c| charmatch(input_bytes[s_off], c, glob_flags));
+                if !has_match {
+                    // c:Src/pattern.c:3463-3505 — approximate-match fail
+                    // handler. For non-P_EXACTLY opcodes, the ONLY
+                    // approximation path is "omit one input char" (skip
+                    // the input byte that didn't match, costing 1 edit,
+                    // then retry the same scan). For P_ANYOF that means
+                    // `[b][b]` against "bob" can match by omitting the
+                    // middle "o" with 1 edit — the `(#a1)[b][b]` pin.
+                    if state.errsfound < max_errs && s_off < input_bytes.len() {
+                        state.errsfound += 1;
+                        // Retry same scan with one input byte consumed.
+                        return patmatch(code, scan, string, s_off + 1, state, glob_flags);
+                    }
                     return None;
                 }
                 s_off += 1;
@@ -3927,14 +3958,17 @@ fn patmatch(
                 let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap()) as usize;
                 let set = &code[body + 4..body + 4 + len];
                 let input_bytes = string.as_bytes();
-                if s_off >= input_bytes.len() {
-                    return None;
-                }
-                let b = input_bytes[s_off];
+                let max_errs = (glob_flags & 0xff) as i32;
                 // c:2694 charmatch — same asymmetry as P_ANYOF; ANYBUT
                 // succeeds iff no set element charmatches the input.
-                let found = set.iter().any(|&c| charmatch(b, c, glob_flags));
-                if found {
+                let has_match = s_off < input_bytes.len()
+                    && !set.iter().any(|&c| charmatch(input_bytes[s_off], c, glob_flags));
+                if !has_match {
+                    if state.errsfound < max_errs && s_off < input_bytes.len() {
+                        // c:3463 — omit-input approx path (same as P_ANYOF).
+                        state.errsfound += 1;
+                        return patmatch(code, scan, string, s_off + 1, state, glob_flags);
+                    }
                     return None;
                 }
                 s_off += 1;

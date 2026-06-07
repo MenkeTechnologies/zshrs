@@ -195,8 +195,21 @@ pub fn viforwardword(args: &[String]) -> i32 {
     while n > 0 {
         // c:93
         n -= 1;
-        let cc =
-            wordclass(ZLELINE.lock().unwrap()[ZLECS.load(std::sync::atomic::Ordering::SeqCst)]); // c:95
+        // C reads `zleline[zlecs]` unconditionally — the underlying
+        // buffer is NUL-terminated, so even when `zlecs == zlell` the
+        // read hits the sentinel and the subsequent `while zlecs !=
+        // zlell` immediately fails. Rust's `Vec<char>` has no
+        // sentinel; reading at the end panics. Guard with a bounds
+        // check; when at EOL there's nothing to classify, so skip
+        // straight to the trailing blank-walk loop (which is also
+        // guarded by `ZLECS != ZLELL`).
+        let zlecs_cur = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+        let zlell_cur = ZLELL.load(std::sync::atomic::Ordering::SeqCst);
+        let cc = if zlecs_cur < zlell_cur {
+            wordclass(ZLELINE.lock().unwrap()[zlecs_cur]) // c:95
+        } else {
+            0 // dummy — the next while exits immediately on zlecs==zlell
+        };
         while ZLECS.load(std::sync::atomic::Ordering::SeqCst)
             != ZLELL.load(std::sync::atomic::Ordering::SeqCst)
             && wordclass(ZLELINE.lock().unwrap()[ZLECS.load(std::sync::atomic::Ordering::SeqCst)])
@@ -2081,7 +2094,6 @@ mod tests {
     /// `ZLECS != ZLELL` first. In zshrs the port indexes unconditionally
     /// at `Src/Zle/zle_word.rs:199` → panics on empty buffer.
     #[test]
-    #[ignore = "ZSHRS BUG: viforwardword indexes ZLELINE[ZLECS] without bounds check; panics on empty buffer (Src/Zle/zle_word.c:174 — should guard via ZLECS != ZLELL first)"]
     fn viforwardword_empty_args_in_exit_range() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
