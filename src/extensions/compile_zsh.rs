@@ -2442,16 +2442,35 @@ impl ZshCompiler {
                     self.builder.emit(Op::Pop, 0);
                     return;
                 }
-                // arr=(a b c) / arr+=(d e).
+                // arr=(a b c) / arr+=(d e). Direct port of
+                // c:Src/exec.c::addvars:2517-2632 — expand each
+                // element once, then emit the xtrace line
+                // `name=( elem1 elem2 ) ` using the same expanded
+                // values, then call SET_ARRAY with the values.
+                //
+                // C zsh evaluates RHS once: `prefork(list, ...)` then
+                // both `quotedzputs(*ptr, xtrerr)` (for trace, c:2628)
+                // AND `assignaparam(name, arr, ...)` (for assign,
+                // c:2633) read the same expanded `arr`. To get the
+                // single-eval property in our stack-machine port,
+                // stash each expanded value in a fresh slot right
+                // after compile_word_str, leaving the live copy on
+                // the stack for SET_ARRAY. The trace block then
+                // reads from the slots.
                 //
                 // Bump assign_context_depth so compile_word_str's
-                // own WORD_SPLIT call (for unquoted `$(...)`) is
-                // suppressed — the outer loop emits ONE
-                // WORD_SPLIT per element below. Without this, both
-                // emitted, and the second split saw a Value::Array
-                // converted-to-string ("a b c") with no IFS chars,
-                // collapsing 3 elements back into 1.
-                for elem in elements {
+                // own WORD_SPLIT (for unquoted `$(…)`) is suppressed
+                // — the outer loop emits ONE WORD_SPLIT per element
+                // below.
+                let n = elements.len();
+                let trace_slots: Vec<u16> = (0..n)
+                    .map(|_| {
+                        let s = self.next_slot;
+                        self.next_slot += 1;
+                        s
+                    })
+                    .collect();
+                for (i, elem) in elements.iter().enumerate() {
                     self.assign_context_depth += 1;
                     self.compile_word_str(elem);
                     self.assign_context_depth -= 1;
@@ -2462,81 +2481,50 @@ impl ZshCompiler {
                         self.builder
                             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
                     }
+                    // Stash the expanded value for the trace, leaving
+                    // the original on the stack for SET_ARRAY.
+                    self.builder.emit(Op::Dup, 0);
+                    self.builder.emit(Op::SetSlot(trace_slots[i]), 0);
                 }
-                // c:Src/exec.c::addvars:2624-2632 — `fprintf(xtrerr,
-                // "%s=", name); fprintf("( "); for each: quotedzputs +
-                // ' '; fprintf(") ");`. Emit before SET_ARRAY consumes
-                // the elements. Build the trace string with stack
-                // ops: start with `name=( `, for each element dup it
-                // out of the SET_ARRAY argv (positions -N..-1 below
-                // the top), pass through QUOTEDZPUTS, concat ` `
-                // separators, finish with `) `.
-                let n = elements.len();
-                // c:Src/exec.c::addvars:2627-2632 — `fprintf("%s=", name);
-                // fprintf("( "); for each: quotedzputs + ' '; fprintf(") ");`.
-                // For an empty list zsh's output is `name=( ) ` (one
-                // space inside the parens). The current loop emits
-                // `name=( ` as prefix, no element-spaces (n=0), then
-                // `) ` as close → `name=(  ) ` (two spaces). Use a
-                // prefix WITHOUT the trailing space for the empty case
-                // so the close ` ) ` produces `name=( ) ` matching zsh.
-                let prefix = if n == 0 {
-                    if assign.append {
-                        format!("{}+=(", assign.name)
-                    } else {
-                        format!("{}=(", assign.name)
-                    }
-                } else if assign.append {
+                // c:Src/exec.c::addvars:2624-2632 — emit the trace
+                // line. C's emission:
+                //   fprintf(xtrerr, "%s=", name);   // "name="
+                //   fprintf(xtrerr, "( ");          // "( "
+                //   for *ptr in arr:
+                //     quotedzputs(*ptr, xtrerr);    // "elem"
+                //     fputc(' ', xtrerr);           // " "
+                //   fprintf(xtrerr, ") ");          // ") "
+                // For empty arr the per-element loop is skipped so the
+                // bytes become `name=( ) `; for a 3-element array the
+                // bytes become `name=( a b c ) ` (one trailing space
+                // per element + the close's leading space-with-`) `).
+                // Build the same byte sequence via Concat ops — single
+                // uniform code path, no empty special case.
+                let prefix_str = if assign.append {
                     format!("{}+=( ", assign.name)
                 } else {
                     format!("{}=( ", assign.name)
                 };
-                let pc = self.builder.add_constant(Value::str(prefix.as_str()));
+                let pc = self.builder.add_constant(Value::str(prefix_str.as_str()));
                 self.builder.emit(Op::LoadConst(pc), 0);
-                // For each element peek it from the stack (N-1-i
-                // slots below the trace buffer we just pushed).
-                for i in 0..n {
-                    // Stack from bottom: [elem_0, …, elem_{N-1},
-                    // trace_buf, (any prior dup pushes)]. After the
-                    // loop we've pushed (i) extra (dup+QUOTEDZPUTS+
-                    // Concat per past iter); the next element to dup
-                    // is at depth (n - i) below the top.
-                    //
-                    // PushNth doesn't exist; emulate with PushIndex /
-                    // PushFromBase ops if available, else use Dup
-                    // after Swap dance. The cleanest available op
-                    // here is `Op::Dup` (top-of-stack copy) — to
-                    // reach element i, swap chains would be O(n²).
-                    //
-                    // Easier route: emit elements TWICE — once for
-                    // SET_ARRAY (already done above), and again for
-                    // the trace, via compile_word_str. Bear the
-                    // double-evaluation cost (only fires when xtrace
-                    // is on, and only for array-literal RHS).
-                    if i > 0 {
-                        let sep = self.builder.add_constant(Value::str(" "));
-                        self.builder.emit(Op::LoadConst(sep), 0);
-                        self.builder.emit(Op::Concat, 0);
-                    }
-                    self.assign_context_depth += 1;
-                    self.compile_word_str(&elements[i]);
-                    self.assign_context_depth -= 1;
+                let sep_const = self.builder.add_constant(Value::str(" "));
+                for slot in &trace_slots {
+                    self.builder.emit(Op::GetSlot(*slot), 0);
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTEDZPUTS, 1),
                         0,
                     );
                     self.builder.emit(Op::Concat, 0);
+                    self.builder.emit(Op::LoadConst(sep_const), 0);
+                    self.builder.emit(Op::Concat, 0);
                 }
-                let close = self.builder.add_constant(Value::str(" ) "));
+                let close = self.builder.add_constant(Value::str(") "));
                 self.builder.emit(Op::LoadConst(close), 0);
                 self.builder.emit(Op::Concat, 0);
-                // Emit via XTRACE_ASSIGN-equivalent: we want the
-                // `printprompt4 + buf + ' '` shape (NO trailing
-                // newline) so a follow-on `arr+=(...)` on the same
-                // line in a `set -x` stream chains correctly per
-                // C's `doneps4` flag. The XTRACE_NEWLINE call
-                // emitted at the simple-command level later (or
-                // statement boundary) prints the `\n`.
+                // Emit via BUILTIN_XTRACE_LINE — it gates on the
+                // live xtrace opt-state and skips the printprompt4 +
+                // eprintln when xtrace is off (same as C's
+                // `if (xtr) { … }` guard at c:Src/exec.c:2517).
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1),
                     0,
