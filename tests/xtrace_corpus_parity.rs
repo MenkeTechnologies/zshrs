@@ -330,7 +330,6 @@ const EXPECTED_FAILURES: &[&str] = &[
     "135_cond_regex_complex.zsh",
     "136_param_flags_final_v2.zsh",
     "137_param_modifiers.zsh",
-    "21_select.zsh",
     "23_param_expansion.zsh",
     "25_coproc.zsh",
     "26_time.zsh",

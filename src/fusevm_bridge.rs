@@ -2121,7 +2121,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
             let mut line = String::new();
             match reader.read_line(&mut line) {
-                Ok(0) => break, // EOF
+                Ok(0) => {
+                    // EOF — emit the final newline that zsh prints
+                    // after the prompt-then-EOF sequence (c:Src/loop.c
+                    // selectlist falls through to fputc('\n', stderr)
+                    // at the end of the read failure path). Without
+                    // this the next process's output runs directly
+                    // after `-->>>> ` on the same line.
+                    let _ = writeln!(std::io::stderr());
+                    let _ = std::io::stderr().flush();
+                    break;
+                }
                 Ok(_) => {}
                 Err(_) => break,
             }
