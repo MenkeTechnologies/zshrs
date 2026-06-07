@@ -9930,12 +9930,167 @@ pub fn bin_emulate(
         return 1; // c:6299
     }
 
-    // c:6302+ — `emulate <shname> <option> ...` per-command form. The full
-    // save/restore + parseopts cascade lives in src/ported/options.rs's
-    // emulate() helper; this branch defers to it once the typed `opts`
-    // array is exposed across the boundary. For now, switch emulation as
-    // in the single-arg form and skip the per-command save/restore.
-    let _ = (opt_r, shname);
+    // c:6302-6342 — `emulate <shname> [-o OPT|+o OPT|-LR ...]` per-command
+    // form. C: `argv++; emulate(shname, opt_R, ...); parseopts(...);` —
+    // switch emulation, then parse the remaining tokens as long-form
+    // options that apply ON TOP of the emulation defaults. zinit's
+    // +zi-log (zinit.zsh:2178) calls
+    //   `emulate -LR zsh -o extendedglob`
+    // which requires extendedglob to be set after the zsh-emulation
+    // reset, so the (#b)/(#m) flags in subsequent pattern subst calls
+    // are recognized. The previous Rust port returned 0 without
+    // applying ANY of the trailing options, so extendedglob stayed off
+    // and `${msg//(#b)…/…}` errored with `bad pattern: …`.
+    //
+    // The `-c command` (cmd-eval) and sticky-emulation paths at c:6329+
+    // remain unported (no zshrs caller exercises them yet) — the
+    // structural opt-application below is enough for the common
+    // `emulate -LR zsh -o NAME …` form.
+    let _ = opt_r;
+    // c:6306 — `emulate(shname, opt_R, &new_emulation, new_opts);` —
+    // apply emulation defaults to the live opts table.
+    crate::ported::options::emulate(shname.as_str(), opt_r);
+
+    // c:6308 — `parseopts(nam, &argv, new_opts, &cmd, optlist, 0)`.
+    // C body at Src/init.c:390+:
+    //   while (!optionbreak && *argv && (**argv == '-' || **argv == '+')) {
+    //       action = (**argv == '-');
+    //       while (*++*argv) {
+    //           if (**argv == '-') { /* `--` ends options; `--NAME` long form */ }
+    //           else if (**argv == 'c') { *cmdp = *argv; }
+    //           else if (**argv == 'o') {
+    //               if (!*++*argv) argv++;   // `-o NAME` separate-arg
+    //               if (!*argv) { WARN("string expected after -o"); return 1; }
+    //               longoptions: optno = optlookup(*argv);
+    //               if (!optno) { WARN("no such option: %s", *argv); return 1; }
+    //               dosetopt(optno, action, ...);
+    //               break;
+    //           }
+    //           else {  /* single-char option letter, e.g. 'L', 'R' */
+    //               optno = optlookupc(**argv);
+    //               dosetopt(optno, action, ...);
+    //           }
+    //       }
+    //       argv++;
+    //   }
+    //
+    // Faithful port: walk each arg, parse `-`/`+` action sign, then
+    // walk char-by-char. `--` ends options; `-o NAME` / `+o NAME`
+    // long-form (NAME inline-attached or separate arg); single-char
+    // option letters set/unset via `dosetopt` (Rust:
+    // `opt_state_set`). `-c command` records the cmd-eval mode (not
+    // wired through here — bin_emulate uses opt_L for localoptions
+    // only).
+    let mut i = 1; // skip shname (argv[0])
+    let mut optionbreak = false;
+    while !optionbreak && i < argv.len() {
+        let arg = &argv[i];
+        // c:Src/init.c:418 — only `-` / `+` start an option arg.
+        let first = arg.chars().next().unwrap_or('\0');
+        if first != '-' && first != '+' {
+            break;
+        }
+        let action = first == '-'; // c:420
+        // c:421-422 — bare `-` / `+` treated as `--` (end-of-options
+        // marker preserved as-is for caller).
+        if arg.len() == 1 {
+            i += 1;
+            break;
+        }
+        // Walk chars after the leading +/-.
+        let bytes: Vec<char> = arg.chars().collect();
+        let mut j = 1;
+        let mut consumed_next_arg = false;
+        while j < bytes.len() {
+            let ch = bytes[j];
+            if ch == '-' {
+                // c:425-429 — `--` ends options.
+                if j == 1 && bytes.len() == 2 {
+                    optionbreak = true;
+                    i += 1;
+                    break;
+                }
+                // c:432-460 — `--NAME` GNU-style long. `-` chars
+                // inside NAME become `_` (c:457-459). For bin_emulate
+                // we don't recognize `--version` / `--help` / etc.,
+                // just route the inline NAME as a long-form option.
+                let name: String = bytes[j + 1..]
+                    .iter()
+                    .collect::<String>()
+                    .replace('-', "_");
+                crate::ported::options::opt_state_set(
+                    &name.to_lowercase().replace('_', ""),
+                    action,
+                );
+                break;
+            }
+            if ch == 'o' || ch == 'O' {
+                // c:480-505 — `-o NAME` / `+o NAME`. NAME is either
+                // attached (rest of arg after `o`) or the next arg.
+                let name = if j + 1 < bytes.len() {
+                    bytes[j + 1..].iter().collect::<String>()
+                } else {
+                    if i + 1 >= argv.len() {
+                        zwarnnam(nam, "string expected after -o");
+                        return 1; // c:484-485
+                    }
+                    consumed_next_arg = true;
+                    argv[i + 1].clone()
+                };
+                crate::ported::options::opt_state_set(
+                    &name.to_lowercase().replace('_', ""),
+                    action,
+                );
+                break; // c:505 — break out of char walk after `-o`
+            }
+            if ch == 'c' {
+                // c:470-479 — `-c command`. bin_emulate's per-cmd
+                // form supports `emulate zsh -c 'body'` but the sticky
+                // emulation evaluator at c:6332-6373 isn't ported yet.
+                // Document the gap and skip the rest of the arg.
+                break;
+            }
+            // c:Src/init.c — single-char option letter dispatch via
+            // `optno = optlookupc(**argv); dosetopt(optno, action, ...)`.
+            // C maps the char through `optletters[]` (Src/options.c) to
+            // an OPT_* number, then writes the action bit.
+            //
+            // NOT PORTED here: the chars bin_emulate cares about (`L`,
+            // `R`, `l`) are extracted into `ops` by the dispatcher BEFORE
+            // bin_emulate runs (via the optstr declared at
+            // Src/builtin.c:99 for the emulate builtin). The Rust port's
+            // builtin dispatcher does the same — see `opt_l`, `opt_l_arg`,
+            // `opt_r` reads at the top of this function. So by the time
+            // parseopts runs, single-char options have already been
+            // consumed and `argv[1..]` contains only the long-form
+            // `-o NAME` / `--NAME` shapes that this loop handles.
+            // Unknown single-char chars are silently skipped (matching
+            // what the dispatcher would have flagged as a parse error
+            // before bin_emulate ran).
+            let _ = ch;
+            j += 1;
+        }
+        i += 1;
+        if consumed_next_arg {
+            i += 1;
+        }
+    }
+    // c:6314-6317 — `if (*argv) zwarnnam(nam, "unknown argument %s",
+    // *argv);`. Anything left after the option-parse loop is unknown.
+    // zinit's `emulate -LR zsh -o extendedglob` exhausts argv, so this
+    // arm doesn't fire — but mirror the C behavior for other callers.
+    if i < argv.len() && !optionbreak {
+        zwarnnam(nam, &format!("unknown argument: {}", argv[i]));
+        return 1;
+    }
+
+    // c:6339-6340 — `if (opt_L) opts[LOCALOPTIONS] = opts[LOCALTRAPS] =
+    //                opts[LOCALPATTERNS] = 1;`.
+    if opt_l_arg {
+        for nm in ["localoptions", "localtraps", "localpatterns"] {
+            crate::ported::options::opt_state_set(nm, true);
+        }
+    }
     0
 }
 
