@@ -2581,6 +2581,107 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
     });
 
+    // BUILTIN_QUOTEDZPUTS — re-wrap top-of-stack scalar via the
+    // canonical quotedzputs (Src/utils.c:6464). Non-printable bytes
+    // come back as `$'…'` C-string form so the cond xtrace prefix
+    // line preserves the source-quoting form for `[[ -n $'\C-[OP' ]]`
+    // instead of leaking raw ESC + "OP" bytes through the terminal.
+    vm.register_builtin(BUILTIN_QUOTEDZPUTS, |vm, _argc| {
+        let s = vm.pop().to_str();
+        Value::str(crate::ported::utils::quotedzputs(&s))
+    });
+
+    // BUILTIN_QUOTE_TOKENIZED_OUTPUT — char-aware mirror of
+    // c:Src/exec.c:2114 `quote_tokenized_output`. The canonical
+    // port at exec::quote_tokenized_output operates on bytes
+    // (zsh's metafied encoding); zshrs strings are UTF-8 so
+    // `\u{87}` Star is `[0xC2, 0x87]`, and a byte walk writes
+    // 0xC2 raw (invalid UTF-8 lead → U+FFFD on lossy decode).
+    // Walk by char and dispatch the same switch the byte port
+    // uses, but with the token chars matching the UTF-8 form.
+    vm.register_builtin(BUILTIN_QUOTE_TOKENIZED_OUTPUT, |vm, _argc| {
+        let s = vm.pop().to_str();
+        let mut out = String::with_capacity(s.len());
+        let chars: Vec<char> = s.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            // c:2120 — Meta-quoted byte: emit `*++s ^ 32`.
+            // In UTF-8 strings Meta is `\u{83}`; the next char is
+            // the metafied payload.
+            if c == '\u{83}' {
+                if let Some(&n) = chars.get(i + 1) {
+                    if (n as u32) < 0x80 {
+                        out.push(((n as u8) ^ 32) as char);
+                    } else {
+                        out.push(n);
+                    }
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+                continue;
+            }
+            // c:2124 — Nularg: skip.
+            if c == '\u{a1}' {
+                i += 1;
+                continue;
+            }
+            // c:2128-2143 — ASCII specials get backslash-prefixed
+            // then fall through to emit the literal char.
+            match c {
+                '\\' | '<' | '>' | '(' | '|' | ')' | '^' | '#' | '~'
+                | '[' | ']' | '*' | '?' | '$' | ' ' => {
+                    out.push('\\');
+                    out.push(c);
+                    i += 1;
+                    continue;
+                }
+                '\t' => {
+                    out.push_str("$'\\t'");
+                    i += 1;
+                    continue;
+                }
+                '\n' => {
+                    out.push_str("$'\\n'");
+                    i += 1;
+                    continue;
+                }
+                '\r' => {
+                    out.push_str("$'\\r'");
+                    i += 1;
+                    continue;
+                }
+                '=' => {
+                    if i == 0 {
+                        out.push('\\');
+                    }
+                    out.push(c);
+                    i += 1;
+                    continue;
+                }
+                _ => {}
+            }
+            // c:2163 — `if (itok(*s)) putc(ztokens[*s - Pound]);`
+            // Map zsh token chars (`\u{84}`..`\u{a1}` range, the
+            // ones the lexer emits for `#$^*()…`) back to their
+            // source ASCII via the `ztokens` table.
+            let cp = c as u32;
+            if (0x84..=0xa1).contains(&cp) {
+                let idx = (cp - 0x84) as usize;
+                let ztokens = crate::ported::lex::ztokens.as_bytes();
+                if idx < ztokens.len() {
+                    out.push(ztokens[idx] as char);
+                    i += 1;
+                    continue;
+                }
+            }
+            out.push(c);
+            i += 1;
+        }
+        Value::str(out)
+    });
+
     // BUILTIN_WORD_SPLIT — `${=var}` IFS-split runtime.
     // PURE PASSTHRU: route through canonical `subst::multsub` with
     // PREFORK_SPLIT flag (C port of `Src/subst.c::multsub` at c:544
@@ -6797,6 +6898,27 @@ pub const BUILTIN_ASSOC_HAS_KEY: u16 = 531;
 /// an Array on the stack. Used by `for x in $@` / `for x in $*`
 /// unquoted forms. Bug #166.
 pub const BUILTIN_ARRAY_DROP_EMPTY: u16 = 532;
+/// `BUILTIN_QUOTEDZPUTS` constant — run top-of-stack value through
+/// `crate::ported::utils::quotedzputs` and push the quoted result.
+/// Used by the cond xtrace path so non-printable bytes (e.g.
+/// `$'\C-[OP'` expanded ESC+OP) get re-wrapped in `$'…'` form for
+/// the trace prefix line, matching zsh's `Src/exec.c` cond trace
+/// which calls `quotedzputs(operand, xtrerr)` on each side. Bug
+/// surfaced when `[[ -n $'\C-[OP' ]]` traced as `[[ -n OP ]]`
+/// (raw bytes leaked through the terminal) vs zsh's
+/// `[[ -n $'\C-[OP' ]]` source-form preservation.
+pub const BUILTIN_QUOTEDZPUTS: u16 = 533;
+/// `BUILTIN_QUOTE_TOKENIZED_OUTPUT` — port of
+/// `crate::ported::exec::quote_tokenized_output` (Src/exec.c:2114)
+/// applied to top-of-stack scalar. Used by cond xtrace for the RHS
+/// of pattern-context comparisons (`=` / `==` / `!=`) where C zsh
+/// emits the SOURCE form: untokenize lexer tokens (Star → `*`,
+/// Inpar → `(`, …) and backslash-escape special chars, but
+/// preserve literal ASCII unchanged. Distinct from quotedzputs
+/// which wraps the whole string in `'…'` / `$'…'` based on
+/// non-printability — that's wrong for `[[ x = a* ]]` which must
+/// render as `[[ x = a* ]]`, not `'a*'`.
+pub const BUILTIN_QUOTE_TOKENIZED_OUTPUT: u16 = 534;
 
 /// Bridge into subst_port::substitute_brace_array for nested forms
 /// that need to PRESERVE array shape across the expand_string
