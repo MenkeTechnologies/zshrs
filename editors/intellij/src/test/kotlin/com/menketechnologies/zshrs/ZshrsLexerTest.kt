@@ -240,12 +240,17 @@ class ZshrsLexerTest {
 
     @Test fun `percent followed by non-conv-char is literal not a format spec`() {
         // `%` followed by chars that can never end in a conversion
-        // letter is literal text. Use `%!` — `!` is not a flag/length/
-        // conv char so printfFormatLen returns 0.
-        val toks = nonWs("echo \"go %! away\"")
+        // letter is literal text. Pick a sentinel that's NOT in any
+        // FORMAT_FLAGS/FORMAT_LENGTH/FORMAT_CONV set — `,` is safe
+        // (and stays safe under prompt-expansion-code additions like
+        // 84e710941b, which added `!` `?` `~` `_` `*` `@` `/` to
+        // FORMAT_CONV for zsh prompt-expansion highlighting and so
+        // `%!` etc. now DO emit STRING_FORMAT, leaving `,` as the
+        // canonical non-conv sentinel for this regression test).
+        val toks = nonWs("echo \"go %, away\"")
         val formats = toks.filter { it.first == ZshrsTokenTypes.STRING_FORMAT }
         assertEquals(
-            "lone % followed by `!` should NOT be a format spec: ${formats.map { it.second }}",
+            "lone % followed by `,` should NOT be a format spec: ${formats.map { it.second }}",
             0,
             formats.size,
         )
