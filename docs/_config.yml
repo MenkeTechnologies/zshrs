@@ -1,20 +1,49 @@
 # Jekyll site config for the docs/ GitHub Pages publish.
 #
-# The only thing we use Jekyll for is converting docs/*.md → HTML so
-# they render on menketechnologies.github.io/zshrs. We never use
-# Liquid templating ({{ var }} / {% tag %}) — every brace pattern in
-# our docs is shell-script syntax (`${VAR}`, `$((expr))`, fold markers
-# `#{{{`) or Rust format-string escapes (`format!("{{ {} }}")`), all
-# of which Liquid mis-parses as malformed variable interpolations and
-# aborts the whole site build on. See the BUGS.md line 36377 failure:
+# We use GH Pages purely to serve the hand-authored HTML hub
+# (index.html, report.html, reference.html, port_report.html,
+# daemon-report.html, compsys_port_report.html, hud-static.css,
+# hud-theme.js) — every Markdown file in this dir is an engineering
+# document that's only meant to be read on github.com itself, not
+# rendered through Jekyll.
 #
-#     Liquid Exception: Liquid syntax error (line 36377):
-#     Variable '{{ {}' was not properly terminated with regexp: /}}/
+# Why exclude every .md outright:
 #
-# This `defaults` block disables Liquid for every file under docs/.
-# Markdown → HTML conversion still runs normally; only the Liquid
-# templating pass is skipped, so every brace pattern flows through
-# literally without parsing.
+# 1) Liquid syntax errors. Our .md files are stuffed with shell-
+#    script (`${VAR}`, `$((expr))`, fold markers `#{{{`), Rust
+#    format-string escapes (`format!("{{ {} }}")`), and inline
+#    examples of zsh prompt expansion — all of which Liquid mis-
+#    parses as malformed variable interpolations and aborts the
+#    whole site build on. Hit empirically on BUGS.md line 36435:
+#
+#        Liquid Exception: Liquid syntax error (line 36435):
+#        Variable '{{ {}' was not properly terminated with regexp: /}}/
+#
+#    The `render_with_liquid: false` frontmatter option that was
+#    supposed to suppress this was added in Jekyll 4.0; GitHub
+#    Pages still ships Jekyll 3.10 (via github-pages 232), which
+#    silently ignores both per-file frontmatter and the `defaults`
+#    block below — so neither workaround actually disables the
+#    Liquid pass in production CI. Excluding is the only path that
+#    works on Jekyll 3.10.
+#
+# 2) The .md files aren't anchor targets for any link on the public
+#    hub. The hand-authored HTML is the canonical public surface;
+#    .md files are linked from each other (and from the README) via
+#    plain github.com URLs, which keep rendering as expected.
+#
+# If we ever switch Pages to a custom workflow that pins Jekyll 4+,
+# revisit this — the per-file `render_with_liquid: false` would then
+# let .md files build through.
+
+exclude:
+  - "*.md"
+  - "**/*.md"
+
+# Kept for forward-compat with Jekyll 4+ (no-op on Jekyll 3.10 but
+# harmless): if/when GH Pages upgrades, this disables Liquid on every
+# remaining file too, so any future .html that holds a `{{` literal
+# survives the build.
 defaults:
   - scope:
       path: ""
