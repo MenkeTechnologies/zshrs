@@ -1615,7 +1615,7 @@ pub fn bin_bindkey_bind(
         #[cfg(feature = "recorder")]
         if func_c != 'r' && crate::recorder::is_enabled() {
             let ctx = crate::recorder::recorder_ctx_global();
-            let seq_str = String::from_utf8_lossy(seq_bytes);
+            let seq_str = String::from_utf8_lossy(&seq_bytes);
             let widget_default = String::new();
             let widget_ref: &str = match func_c {
                 's' => "send-string", // c:1030
