@@ -3832,38 +3832,14 @@ impl ZshCompiler {
                     // Fall through to the default text-expansion path.
                     let _ = (flags, name);
                 } else {
-                    // Detect `[@]`/`[*]` on the ORIGINAL untoked text since
-                    // parse_zsh_flag stripped the suffix from `name`. This
-                    // flag is encoded into the runtime flags string with
-                    // sentinel `\u{03}` so the runtime handler knows the
-                    // user wrote `[@]` (which keeps array-only flags
-                    // active in DQ context per zsh subst.c).
-                    let inner = untoked
-                        .strip_prefix("${")
-                        .and_then(|s| s.strip_suffix('}'))
-                        .unwrap_or(&untoked);
-                    let had_at_or_star = inner.ends_with("[@]") || inner.ends_with("[*]");
-                    let mut flags_for_runtime = String::new();
-                    if dq_wrapped {
-                        flags_for_runtime.push('\u{02}');
-                    }
-                    if had_at_or_star {
-                        flags_for_runtime.push('\u{03}');
-                    }
-                    // Sentinel `\u{04}` = "RHS of a scalar assignment".
-                    // BUILTIN_PARAM_FLAG reads this at runtime and treats
-                    // it as PREFORK_SINGLE — split flags `(f)` / `(s)` /
-                    // `(0)` / `(z)` are suppressed per Src/subst.c:3902
-                    // ssub gate. Direct port of zsh's prefork being
-                    // called with PREFORK_SINGLE|PREFORK_ASSIGN by
-                    // Src/exec.c::addvars line 2546.
-                    if self.scalar_assign_depth > 0 {
-                        flags_for_runtime.push('\u{04}');
-                    }
-                    flags_for_runtime.push_str(flags);
+                    // c:Src/subst.c — `[@]`/`[*]` subscript flow and
+                    // scalar-assign-RHS PREFORK_SINGLE state flow
+                    // through executor state (in_dq_context /
+                    // in_scalar_assign) at runtime — no sentinel
+                    // prefix on the flag string.
                     let name_const = self.builder.add_constant(Value::str(name));
                     self.builder.emit(Op::LoadConst(name_const), 0);
-                    let flags_const = self.builder.add_constant(Value::str(flags_for_runtime));
+                    let flags_const = self.builder.add_constant(Value::str(flags));
                     self.builder.emit(Op::LoadConst(flags_const), 0);
                     self.builder
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 2), 0);
@@ -4198,6 +4174,14 @@ impl ZshCompiler {
                 // distinguish them and unconditionally errored,
                 // breaking `${(C)a[N]}` / `${(L)a[N]}` / `${(U)a[N]}`
                 // / etc. Use `\u{08}` for the value-passthru form.
+                //
+                // Routing through BUILTIN_BRIDGE_BRACE_ARRAY directly
+                // skipped paramsubst's flag-then-subscript composition
+                // path on `(r)`/`(R)` subscript flags (paramsubst
+                // returned ALL elements processed by outer (L), not
+                // just the matching one) — so the split-path with
+                // `\u{08}` stays until paramsubst's composition gets
+                // fixed.
                 let sentinel = self.builder.add_constant(Value::str("\u{08}"));
                 self.builder.emit(Op::LoadConst(sentinel), 0);
                 self.builder.emit(Op::Swap, 0);

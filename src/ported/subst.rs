@@ -4259,12 +4259,21 @@ pub fn paramsubst(
             return (String::new(), idx + 1, Vec::new());
         }
         // c:Src/subst.c — `${(flags)NAME[KEY]}` value-passthru
-        // shape. The compile fast path at compile_zsh.rs:~3188
-        // pre-resolves the NAME[KEY] lookup to a scalar value, then
-        // re-enters paramsubst via BUILTIN_PARAM_FLAG to apply the
-        // flag chain to that value. The `\u{08}` sentinel marks
-        // "rest of body IS the scalar value — skip name lookup,
-        // skip the literal-operand error". Bug #128 in docs/BUGS.md.
+        // shape. The compile fast path at compile_zsh.rs pre-resolves
+        // the NAME[KEY] lookup to a scalar value, then re-enters
+        // paramsubst via BUILTIN_PARAM_FLAG to apply the flag chain
+        // to that value. The `\u{08}` sentinel marks "rest of body
+        // IS the scalar value — skip name lookup, skip the literal-
+        // operand error". Bug #128 in docs/BUGS.md.
+        //
+        // Pending fix: paramsubst's flag-then-subscript composition
+        // path doesn't compose outer (L)/(C)/(U) with `(r)`/`(R)`
+        // subscript flags correctly (returns all elements processed
+        // instead of just the match). When that fix lands, the
+        // sentinel + split-path can be replaced with a direct
+        // BRIDGE_BRACE_ARRAY route — same shape as `(@)` / shape-flag
+        // chains. r_flag_then_L_lowercase parity test pins the
+        // composition.
         let mut prefiltered_value: Option<String> = None;
         if idx < body_chars.len() && body_chars[idx] == '\u{08}' {
             let val: String = body_chars[idx + 1..].iter().collect();

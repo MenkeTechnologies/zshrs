@@ -2339,19 +2339,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // valid zsh expression. Context bumps live in the caller
     // (BUILTIN_EXPAND_TEXT bumps `in_dq_context` and `in_scalar_assign`).
     vm.register_builtin(BUILTIN_PARAM_FLAG, |vm, _argc| {
-        let mut flags = vm.pop().to_str();
+        let flags = vm.pop().to_str();
         let name = vm.pop().to_str();
-        // Strip the compile-path sentinels — paramsubst doesn't
-        // recognize them and they'd corrupt the flag-block parse.
-        for sentinel in ['\u{02}', '\u{03}', '\u{04}'] {
-            if let Some(rest) = flags.strip_prefix(sentinel) {
-                flags = rest.to_string();
-            }
-        }
         // Bridge is a passthru: reconstruction goes straight to
-        // paramsubst, which now handles the `\u{01}` literal-operand
-        // sentinel internally (subst.rs paramsubst pre-name-walk
-        // branch). No bridge-side gating.
+        // paramsubst, which handles `\u{01}` literal-operand sentinel
+        // internally (subst.rs paramsubst pre-name-walk branch).
+        // No compile-time sentinel prefixes on flags anymore — DQ /
+        // [@]/[*] / scalar-assign-RHS state flows through
+        // exec.in_dq_context / exec.in_scalar_assign exclusively.
         let body = format!("${{({}){}}}", flags, name);
         paramsubst_to_value(&body)
     });
