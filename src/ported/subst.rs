@@ -3156,10 +3156,23 @@ pub fn paramsubst(
         // flag-loop in C, hoisted to function scope here.
         let mut escapes: bool = false; // c:2140
 
-        // Rust-port-only: temp slot for nested-expansion array result
-        // — NOT IN C. Set when `${(@)${(@)…}…}` outer (@) triggers
-        // multsub on the inner; cleared at end of paramsubst.
-        let mut subexp_array_temp: Option<String> = None; // c:N/A (Rust-only)
+        // c:Src/subst.c — nested-expansion array shape.
+        //   `subexp_array_temp`: the synthesized temp-array NAME bound
+        //     to `var_name` so the existing arrays_get/scalar-lookup
+        //     paths inside paramsubst can find the elements. The temp
+        //     itself is the side-channel through arrays_insert at line
+        //     ~4192; cleared at end of paramsubst.
+        //   `subexp_arr_parts`: the structural carrier — Some(Vec) when
+        //     the inner expansion produced a TRUE array result. C does
+        //     this via `Value.isarr` flowing from multsub through
+        //     getindex; the Rust port keeps the Vec locally so the
+        //     downstream [N] discriminator at line ~4777 can read
+        //     it directly without round-tripping through the arrays
+        //     table. Mirrors the (joined, arr_parts, isarr, _) return
+        //     shape from multsub at line ~4182 with the same isarr
+        //     semantic.
+        let mut subexp_array_temp: Option<String> = None;
+        let mut subexp_arr_parts: Option<Vec<String>> = None;
                                                           // c:Src/subst.c:2147 — flag-block entry. Accept both ASCII `(`
                                                           // and Inpar TOKEN (\u{88}) — the lexer emits Inpar TOKEN for
                                                           // `${(flag)name}` in DQ context and in the new bridge passthru
@@ -4188,8 +4201,16 @@ pub fn paramsubst(
                     static SEQ: AtomicUsize = AtomicUsize::new(0);
                     let n = SEQ.fetch_add(1, Ordering::Relaxed);
                     let temp = format!("__subexp_arr_{}", n);
-                    arrays_insert(temp.clone(), arr_parts);
+                    // c:Src/subst.c — `v.isarr = 1; aval = arr_parts;`
+                    // (the C path stores the array in the per-paramsubst
+                    // Value struct directly). Mirror by stashing the
+                    // Vec locally (subexp_arr_parts) for the downstream
+                    // [N] discriminator AND inserting into the arrays
+                    // table for var-lookup compat with the existing
+                    // paramsubst splat/subscript code.
+                    arrays_insert(temp.clone(), arr_parts.clone());
                     subexp_array_temp = Some(temp.clone());
+                    subexp_arr_parts = Some(arr_parts);
                     temp
                 } else {
                     joined
@@ -4765,18 +4786,19 @@ pub fn paramsubst(
                     //       collapsed to scalar). Multi-word but
                     //       NON-@-flagged inner is scalar.
                     //
-                    // Discriminate via `subexp_array_temp` (set at
-                    // line 4202 only when inner `multsub` produced
-                    // an array AND a temp name was stashed for the
-                    // splat path) AND a >1-element population check
-                    // — single-element arrays collapse to scalar
-                    // character subscript per the empirical real-zsh
-                    // behaviour above. Bug surface:
-                    // `${(P)${${(@f)$(echo $src)}[1]}}` (p_flag_indirects
-                    // megamonster test).
-                    let arr_shape: Option<Vec<String>> = subexp_array_temp
+                    // c:Src/subst.c — `if (isarr) {...}` arm. The
+                    // discriminator reads `subexp_arr_parts` directly,
+                    // mirroring the structural `Value.isarr` check in
+                    // C without round-tripping through the
+                    // `arrays_insert` side-channel that the var-lookup
+                    // path uses below. Single-element arrays collapse
+                    // to scalar character subscript per the empirical
+                    // real-zsh behaviour above — gate on `.len() > 1`.
+                    // Bug surface: `${(P)${${(@f)$(echo $src)}[1]}}`
+                    // (p_flag_indirects megamonster test).
+                    let arr_shape: Option<Vec<String>> = subexp_arr_parts
                         .as_ref()
-                        .and_then(|t| arrays_get(t))
+                        .cloned()
                         .filter(|a| a.len() > 1);
                     if sub == "@" || sub == "*" {
                         match arr_shape {
