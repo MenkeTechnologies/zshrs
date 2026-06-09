@@ -7222,9 +7222,6 @@ impl fusevm::ShellHost for ZshrsHost {
     fn str_match(&mut self, s: &str, pattern: &str) -> bool {
         // Shell glob match — `*`, `?`, `[...]`, alternation. Used by `[[ x = pat ]]`,
         // `case` arms, and any other point that compares against a glob pattern.
-        if std::env::var_os("ZSHRS_DEBUG_GLOB").is_some() {
-            eprintln!("[host.str_match] s={:?} pat={:?}", s, pattern);
-        }
         glob_match_static(s, pattern)
     }
 
