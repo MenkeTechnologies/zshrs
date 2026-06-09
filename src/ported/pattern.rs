@@ -1642,7 +1642,17 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             let p = patparse.lock().unwrap();
             let off2 = patparse_off.load(Ordering::Relaxed);
             if off2 >= p.len() {
-                return -1;
+                // c:Src/pattern.c — trailing `\` with no char to
+                // escape: emit as literal `\` so the pattern stays
+                // valid (real zsh accepts trailing raw `\` patterns).
+                drop(p);
+                *flagp |= P_SIMPLE;
+                let lit_off = patnode(P_EXACTLY);
+                let mut buf_lit = patout.lock().unwrap();
+                buf_lit.extend_from_slice(&1u32.to_le_bytes());
+                buf_lit.push(b'\\');
+                *tail_out = lit_off;
+                return lit_off as i64;
             }
             let escaped = p.as_bytes()[off2];
             drop(p);
@@ -1658,8 +1668,30 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
         b'<' => {
             // Numeric range: <a-b> / <a-> / <-b> / <-> .
             // Port of pattern.c:1528-1570 (Inang case).
-            patparse_off.fetch_add(1, Ordering::Relaxed);
-            *flagp &= !P_PURESTR;
+            //
+            // c:Src/pattern.c:1528 — C's `case Inang:` only fires for
+            // the Inang TOKEN (0x99) emitted by the lexer at
+            // Src/lex.c:1202 when `isnumglob()` returns true (i.e.
+            // the `<…>` body parses as a numeric range). Raw `<` (0x3C)
+            // in source — quoted `"<"`, escaped `\<`, or any `<` in a
+            // non-numglob position — never reaches the pattern compiler
+            // as a metachar; it falls through to the literal-run arm.
+            //
+            // zshrs's pattern compiler is fed by callers that mix lexer
+            // tokens with raw ASCII (singsub output, runtime-computed
+            // pattern strings that never went through `Src/lex.c:1201`'s
+            // isnumglob check). The faithful port: do the same
+            // `[digit]*-[digit]*>` walk inline that `isnumglob` does at
+            // lex.c:580-610, with full state-save + rewind on failure so
+            // a non-numeric `<` (e.g. `<[:digit:]]#>` from zconvey's
+            // color-marker pattern, or `<no-data>` from zinit.zsh:2507)
+            // falls back to the literal-run arm.
+            //
+            // The numglob shape mirrors C's isnumglob exactly: digits
+            // then `-` then digits then `>`. Empty leading / trailing
+            // digit runs are OK (gives the `<-N>` / `<N->` / `<->` forms).
+            let entry_off = patparse_off.load(Ordering::Relaxed);
+            patparse_off.fetch_add(1, Ordering::Relaxed); // consume `<`
             let parse_n = patparse.lock().unwrap();
             let nb = parse_n.as_bytes();
             let mut j = patparse_off.load(Ordering::Relaxed);
@@ -1673,10 +1705,22 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             if j > lo_start {
                 len_flag |= 1;
             } // c:1538 — `len |= 1`
-              // Mandatory dash.
+            // Mandatory dash. C's isnumglob bails (ret=0) here too —
+            // walks until non-digit, then if non-digit isn't `-` (or `>`
+            // after seeing `-`), returns "not numglob". Rewind the `<`
+            // consumption and fall through to the literal-run arm.
             if j >= nb.len() || nb[j] != b'-' {
                 drop(parse_n);
-                return -1;
+                patparse_off.store(entry_off, Ordering::Relaxed);
+                let h = patnode(P_EXACTLY);
+                let mut buf = patout.lock().unwrap();
+                let len: u32 = 1;
+                buf.extend_from_slice(&len.to_le_bytes());
+                buf.push(b'<');
+                patparse_off.fetch_add(1, Ordering::Relaxed);
+                *flagp |= P_SIMPLE;
+                *tail_out = h;
+                return h as i64;
             }
             j += 1; // c:1543 patparse++
             let mut to: i64 = 0;
@@ -1688,14 +1732,25 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             if j > hi_start {
                 len_flag |= 2;
             } // c:1548 — `len |= 2`
-              // Expect closing '>'.
+            // Expect closing '>'. Mirror the dash-failure rewind here
+            // too: a `<N-` without `>` is non-numglob per C's isnumglob.
             if j >= nb.len() || nb[j] != b'>' {
                 drop(parse_n);
-                return -1; // c:1551 (return 0 in C)
+                patparse_off.store(entry_off, Ordering::Relaxed);
+                let h = patnode(P_EXACTLY);
+                let mut buf = patout.lock().unwrap();
+                let len: u32 = 1;
+                buf.extend_from_slice(&len.to_le_bytes());
+                buf.push(b'<');
+                patparse_off.fetch_add(1, Ordering::Relaxed);
+                *flagp |= P_SIMPLE;
+                *tail_out = h;
+                return h as i64;
             }
             j += 1;
             drop(parse_n);
             patparse_off.store(j, Ordering::Relaxed);
+            *flagp &= !P_PURESTR;
 
             let off2 = match len_flag {
                 // c:1552-1567
