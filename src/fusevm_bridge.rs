@@ -2251,23 +2251,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
         let mut idx = vm.pop().to_str();
         let name = vm.pop().to_str();
-        // c:Src/subst.c — outer flag sentinels carried on the idx string:
-        //   `\u{02}` = compile-time DQ wrap signal
-        //   `\u{05}` = outer `(@)` flag (force array shape in DQ context)
-        // The (v)/(k)/(@k) outer-flag combos previously rode on
-        // `\u{06}`/`\u{07}` sentinels but now route through
-        // BUILTIN_BRIDGE_BRACE_ARRAY directly at compile_zsh.rs (the
-        // canonical paramsubst flag parser owns dispatch), so this
-        // strip loop only handles `\u{02}` and `\u{05}` now.
-        let mut outer_at = false;
-        for sentinel in ['\u{02}', '\u{05}'] {
-            if let Some(rest) = idx.strip_prefix(sentinel) {
-                if sentinel == '\u{05}' {
-                    outer_at = true;
-                }
-                idx = rest.to_string();
-            }
-        }
+        // c:Src/subst.c — outer-flag dispatch now lives at the compile
+        // path: `(@)` / `(@k)` / `(v)NAME[(I)pat]` / etc. all route
+        // through BUILTIN_BRIDGE_BRACE_ARRAY (= paramsubst direct entry,
+        // canonical flag parser at Src/subst.c:2147+). BUILTIN_ARRAY_INDEX
+        // receives clean name+key with no sentinel prefixes.
         // c:Src/subst.c subscript parsing — when paramsubst re-parses
         // the synthesized `${name[idx]}` body, characters like `'`
         // `"` `\` `$` etc. are LEXER-active inside the `[…]` and get
@@ -2283,8 +2271,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // (no outer-flag sentinels, no `(…)` flag prefix on idx, no
         // splat operator). Other paths (slice, splat, flag-based
         // search, magic-assoc) still flow through paramsubst.
-        let idx_is_simple = !outer_at
-            && !idx.starts_with('(')
+        let idx_is_simple = !idx.starts_with('(')
             && idx != "@"
             && idx != "*"
             && !idx.contains(',');
