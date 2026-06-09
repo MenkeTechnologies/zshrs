@@ -3110,12 +3110,19 @@ pub fn match_highlight(spec: &str) -> (zattr, zattr) {
 /// Port of `output_colour(int colour, int fg_bg, int truecol, char *buf)` from Src/prompt.c:2136.
 /// WARNING: param names don't match C — Rust=(colour, is_fg) vs C=(colour, fg_bg, truecol, buf)
 pub fn output_colour(colour: u8, is_fg: bool) -> String {
-    // c:2136
+    // c:Src/prompt.c:2440 set_colour_attribute — emits the active
+    // terminfo color sequence. Real terminals (xterm-style) define
+    // colors 8-15 as the bright 90-97 (fg) / 100-107 (bg) range, NOT
+    // the legacy "color 0-7 + bold" pattern. Mirror real-zsh's output
+    // on modern terminfo so `%K{8}` / `%F{8}` etc. match byte-for-byte.
+    // zsh_256_color_demo_with_conditional_newline parity test.
     let base = if is_fg { 30 } else { 40 };
     if colour < 8 {
         format!("\x1b[{}m", base + colour)
     } else if colour < 16 {
-        format!("\x1b[{};1m", base + colour - 8)
+        // 90-97 (fg) / 100-107 (bg) — bright color range.
+        let bright_base = if is_fg { 90 } else { 100 };
+        format!("\x1b[{}m", bright_base + colour - 8)
     } else {
         let mode = if is_fg { 38 } else { 48 };
         format!("\x1b[{};5;{}m", mode, colour)
