@@ -1552,6 +1552,7 @@ pub fn createparamtable() {
         // (HOME_GSU/IFS_GSU/...). Non-special scalars (no match)
         // leave gsu_s as None and fall back to strsetfn/strgetfn.
         let gsu_s: Option<Box<gsu_scalar>> = match ip.name {
+            "0" => Some(Box::new(ARGZERO_GSU.clone())), // c:225-226 / IPDEF2("0", argzero_gsu, 0)
             "HOME" => Some(Box::new(HOME_GSU.clone())), // c:248
             "IFS" => Some(Box::new(IFS_GSU.clone())),   // c:245
             "TERM" => Some(Box::new(TERM_GSU.clone())), // c:250
@@ -4830,9 +4831,18 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // pattern (zinit_zero_make_absolute / zinit_zero_cascading_fallback).
     // Subscripted forms (`0[key]=val`) are not valid for $0 and fall
     // through to the regular paramtab path which will error appropriately.
+    //
+    // The ARGZERO_GSU vtable is also registered on the "0" Param via
+    // add_special (line ~1555). However the bytecode VM's NAME=VALUE
+    // assignment path (compile_zsh.rs emit + bridge dispatch) bypasses
+    // assignsparam's gsu_s.setfn at params.rs:3767, so this name-string
+    // dispatch is still load-bearing. Removing it requires routing the
+    // VM's scalar-assign through `assignparam`/`assignsparam`'s GSU
+    // arm — a multi-file refactor.
     if name == "0" && subscript.is_none() {
         unqueue_signals();
-        argzerosetfn(val.to_string());
+        let mut dummy = param::default();
+        argzerosetfn(&mut dummy, val.to_string());
         return None;
     }
 
@@ -7990,8 +8000,11 @@ pub fn lcsetfn(pm: &str, x: Option<String>) {
 ///     zsfree(x);
 ///   }
 /// Port of `argzerosetfn(UNUSED(Param pm), char *x)` from `Src/params.c:4937`.
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn argzerosetfn(x: String) {
+/// `pm` is UNUSED in C (the `argzero` global is updated regardless of
+/// the Param the assignment hit), but the parameter is preserved here
+/// to match the C signature so this fn can wire into the GsuScalar.setfn
+/// slot directly (see ARGZERO_GSU at line ~8307).
+pub fn argzerosetfn(_pm: &mut param, x: String) {
     // c:4937
     // c:4937 — if (x).
     if !x.is_empty() {
@@ -8016,9 +8029,9 @@ pub fn argzerosetfn(x: String) {
 /// Both `argzero` and `posixzero` live in `utils.rs` (OnceLock storage).
 /// After `exec -a foo` or function-call argv-rewrite, `$0` under
 /// POSIXARGZERO reports the ORIGINAL startup `argv[0]`, not the
-/// rewritten name.
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn argzerogetfn() -> String {
+/// rewritten name. `pm` is UNUSED in C; signature preserved for the
+/// GsuScalar.getfn slot at ARGZERO_GSU (line ~8307).
+pub fn argzerogetfn(_pm: &param) -> String {
     if isset(POSIXARGZERO) {
         // c:4958
         posixzero().unwrap_or_default() // c:4959
@@ -8309,6 +8322,20 @@ pub fn histcharssetfn(_pm: &mut param, x: String) {
 // `assignstrvalue` dispatches via `pm->gsu.s->setfn(pm, val)`
 // (params.c:2748) exactly like C.
 // ---------------------------------------------------------------------
+
+/// Port of `static const struct gsu_scalar argzero_gsu` from `Src/params.c:225-226`.
+/// `{ argzerogetfn, argzerosetfn, nullunsetfn }`. Both functions' Rust
+/// signatures match C exactly (with `pm` UNUSED), so they wire into
+/// the GSU vtable directly — no Rust-only wrappers. The $0 Param picks
+/// this up at `add_special` (line ~1555) and `assignsparam` routes
+/// `0=value` through the canonical setter via the gsu_s.setfn dispatch
+/// at params.rs:3767.
+pub const ARGZERO_GSU: gsu_scalar = gsu_scalar {
+    // c:225-226
+    getfn: argzerogetfn,
+    setfn: argzerosetfn,
+    unsetfn: nullunsetfn,
+};
 
 /// Port of `static const struct gsu_scalar home_gsu` from `Src/params.c:248`.
 pub const HOME_GSU: gsu_scalar = gsu_scalar {
@@ -11348,9 +11375,12 @@ mod gsu_tests {
     #[test]
     fn test_argzero_round_trip() {
         let _g = crate::test_util::global_state_lock();
-        argzerosetfn("/bin/zsh".to_string());
-        assert_eq!(argzerogetfn(), "/bin/zsh");
-        argzerosetfn(String::new());
+        // pm is UNUSED in argzerosetfn / argzerogetfn (C signature
+        // matches Rust). Use Param::default() as the dummy carrier.
+        let mut pm = param::default();
+        argzerosetfn(&mut pm, "/bin/zsh".to_string());
+        assert_eq!(argzerogetfn(&pm), "/bin/zsh");
+        argzerosetfn(&mut pm, String::new());
     }
 
     #[test]
