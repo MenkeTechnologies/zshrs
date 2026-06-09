@@ -2324,23 +2324,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // canonical `${(flags)name}` form to `subst::paramsubst` (C port
     // of `Src/subst.c::paramsubst`). The bridge does no flag
     // walking, no DQ-context branching, no array/scalar shape
-    // selection — all of that lives inside paramsubst.
-    //
-    // Sentinel bytes the compile path tags onto `flags` (`\u{02}` =
-    // DQ-wrapped, `\u{03}` = had `[@]`/`[*]` subscript, `\u{04}` =
-    // scalar-assignment context) are stripped before the
-    // `${(flags)name}` reconstruction so paramsubst's input is a
-    // valid zsh expression. Context bumps live in the caller
-    // (BUILTIN_EXPAND_TEXT bumps `in_dq_context` and `in_scalar_assign`).
+    // selection — all of that lives inside paramsubst. Compile-time
+    // context (DQ / scalar-assign-RHS) flows through executor cells
+    // (in_dq_context, in_scalar_assign) bumped by BUILTIN_EXPAND_TEXT.
     vm.register_builtin(BUILTIN_PARAM_FLAG, |vm, _argc| {
         let flags = vm.pop().to_str();
         let name = vm.pop().to_str();
-        // Bridge is a passthru: reconstruction goes straight to
-        // paramsubst, which handles `\u{01}` literal-operand sentinel
-        // internally (subst.rs paramsubst pre-name-walk branch).
-        // No compile-time sentinel prefixes on flags anymore — DQ /
-        // [@]/[*] / scalar-assign-RHS state flows through
-        // exec.in_dq_context / exec.in_scalar_assign exclusively.
         let body = format!("${{({}){}}}", flags, name);
         paramsubst_to_value(&body)
     });
