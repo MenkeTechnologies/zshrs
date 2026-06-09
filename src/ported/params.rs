@@ -4820,6 +4820,22 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         None => (s, None),
     };
 
+    // c:Src/params.c:4937 argzerosetfn — `$0` assignment routes to the
+    // canonical setter that updates `argzero` (the special static used
+    // by `${0}` lookups) instead of writing to a paramtab entry named
+    // "0". Without this dispatch, `0=relative/path` landed in paramtab
+    // as a regular scalar while `argzero` stayed at the shell binary
+    // path, so the next `$0` read returned the binary path. Bug
+    // surface: zinit's `0="${${(M)0:#/*}:-$PWD/$0}"` make-$0-absolute
+    // pattern (zinit_zero_make_absolute / zinit_zero_cascading_fallback).
+    // Subscripted forms (`0[key]=val`) are not valid for $0 and fall
+    // through to the regular paramtab path which will error appropriately.
+    if name == "0" && subscript.is_none() {
+        unqueue_signals();
+        argzerosetfn(val.to_string());
+        return None;
+    }
+
     // c:Src/Modules/parameter.c — magic associative-array assignment
     // forms: `functions[name]=body`, `aliases[name]=value`,
     // `dis_functions[name]=body`, `saliases[name]=value`,
