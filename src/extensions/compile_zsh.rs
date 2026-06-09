@@ -6300,7 +6300,7 @@ impl ZshCompiler {
                     let rhs_is_pure_dq_pre = right.starts_with('\u{9e}')
                         && right.ends_with('\u{9e}')
                         && right.chars().filter(|&c| c == '\u{9e}').count() == 2;
-                    if needs_expand {
+                    if needs_expand && !rhs_is_pure_dq_pre {
                         // c:Src/options.c GLOB_SUBST. When the RHS
                         // pattern came from variable / cmd
                         // substitution, zsh's default-OFF
@@ -6329,6 +6329,17 @@ impl ZshCompiler {
                         // distinguishing substituted bytes from
                         // source metas; this is the compile-time
                         // analogue.
+                        //
+                        // Gate on !rhs_is_pure_dq_pre: when the WHOLE
+                        // RHS is one DQ span, the downstream StrEq
+                        // (line ~6470) does a byte-for-byte literal
+                        // compare. GLOB_SUBST_GUARD escapes `\` →
+                        // `\\` in the substituted value, doubling
+                        // the backslash count on the RHS while the
+                        // LHS stays literal — so `[[ "$a" == "$b" ]]`
+                        // with a=b="ab\\c" (4-byte `ab\c`) failed
+                        // because the RHS became 5-byte `ab\\c`.
+                        // qq_then_Q_roundtrip_specials parity test.
                         let segments = split_pattern_for_glob_subst(right);
                         if segments.len() <= 1 {
                             // Single segment — preserve original
@@ -6381,13 +6392,16 @@ impl ZshCompiler {
                             }
                         }
                     } else if rhs_is_pure_dq_pre {
-                        // Literal-compare path: untokenize WITHOUT
-                        // escaping glob metas. StrEq does a byte
-                        // compare; an `\?` escape would mismatch
-                        // the LHS's literal `?`.
-                        let right_clean = crate::lex::untokenize(right);
-                        let idx = self.builder.add_constant(Value::str(right_clean.as_str()));
-                        self.builder.emit(Op::LoadConst(idx), 0);
+                        // Literal-compare path: when the RHS is one DQ
+                        // span (including DQ-only-vars like `"$x"`),
+                        // StrEq does a byte compare. Route through
+                        // compile_word_str for full expansion (so
+                        // `"$x"` resolves to its value) WITHOUT
+                        // GLOB_SUBST_GUARD wrapping — escaping glob
+                        // metas / backslashes on this path would
+                        // mismatch the LHS literal value. Same shape
+                        // as the LHS path at line ~6440.
+                        self.compile_word_str(right);
                     } else {
                         // c:Src/cond.c — `[[ $x == pat ]]` RHS uses the
                         // RAW pattern bytes for patcompile. Backslash
