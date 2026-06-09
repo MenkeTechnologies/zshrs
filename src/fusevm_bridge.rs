@@ -2236,35 +2236,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
         let mut idx = vm.pop().to_str();
         let name = vm.pop().to_str();
-        // c:Src/subst.c — `\u{07}` (outer `(k)` flag) signals that the
-        // BUILTIN_ARRAY_INDEX caller stripped a redundant `(k)` outer
-        // flag but the assoc subscript MATCH path must still return
-        // KEYS instead of VALUES (e.g. `${(k)h[(R)pat]}`). When paired
-        // with `\u{05}` (outer `@`), the result must keep ARRAY shape
-        // so `print -l` splits per-key. Re-inject `(@k)` or `(k)` into
-        // the paramsubst body. Bug #592.
-        let mut outer_k = false;
-        let mut outer_v = false;
+        // c:Src/subst.c — outer flag sentinels carried on the idx string:
+        //   `\u{02}` = compile-time DQ wrap signal
+        //   `\u{05}` = outer `(@)` flag (force array shape in DQ context)
+        // The (v)/(k)/(@k) outer-flag combos previously rode on
+        // `\u{06}`/`\u{07}` sentinels but now route through
+        // BUILTIN_BRIDGE_BRACE_ARRAY directly at compile_zsh.rs (the
+        // canonical paramsubst flag parser owns dispatch), so this
+        // strip loop only handles `\u{02}` and `\u{05}` now.
         let mut outer_at = false;
-        for sentinel in ['\u{02}', '\u{05}', '\u{06}', '\u{07}'] {
+        for sentinel in ['\u{02}', '\u{05}'] {
             if let Some(rest) = idx.strip_prefix(sentinel) {
-                if sentinel == '\u{07}' {
-                    outer_k = true;
-                }
-                if sentinel == '\u{06}' {
-                    // c:Src/subst.c — `(v)NAME[(I)pat]` outer-v flag
-                    // with an `(I)/(i)` key-pattern subscript. The
-                    // subscript by itself returns matching KEYS; the
-                    // outer (v) pivots the result to the VALUES at
-                    // those keys. Re-inject `(v)` into the synthesized
-                    // paramsubst body so the dispatch at subst.rs:4870
-                    // sees `hvals & SCANPM_WANTVALS != 0` and flips
-                    // `return_key=false`. Without the re-inject, the
-                    // (v) was stripped at compile time and paramsubst
-                    // dropped it, returning keys unchanged. Symmetric
-                    // with the `\u{07}` (outer-k) re-inject below.
-                    outer_v = true;
-                }
                 if sentinel == '\u{05}' {
                     outer_at = true;
                 }
@@ -2286,8 +2268,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // (no outer-flag sentinels, no `(…)` flag prefix on idx, no
         // splat operator). Other paths (slice, splat, flag-based
         // search, magic-assoc) still flow through paramsubst.
-        let idx_is_simple = !outer_k
-            && !outer_at
+        let idx_is_simple = !outer_at
             && !idx.starts_with('(')
             && idx != "@"
             && idx != "*"
@@ -2299,17 +2280,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return Value::str(v);
             }
         }
-        let body = if outer_k && outer_at {
-            format!("${{(@k){}[{}]}}", name, idx)
-        } else if outer_k {
-            format!("${{(k){}[{}]}}", name, idx)
-        } else if outer_v && outer_at {
-            format!("${{(@v){}[{}]}}", name, idx)
-        } else if outer_v {
-            format!("${{(v){}[{}]}}", name, idx)
-        } else {
-            format!("${{{}[{}]}}", name, idx)
-        };
+        let body = format!("${{{}[{}]}}", name, idx);
         paramsubst_to_value(&body)
     });
     // BUILTIN_ASSOC_HAS_KEY — `${(k)assoc[name]}` key-existence query.
