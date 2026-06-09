@@ -2244,11 +2244,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // so `print -l` splits per-key. Re-inject `(@k)` or `(k)` into
         // the paramsubst body. Bug #592.
         let mut outer_k = false;
+        let mut outer_v = false;
         let mut outer_at = false;
         for sentinel in ['\u{02}', '\u{05}', '\u{06}', '\u{07}'] {
             if let Some(rest) = idx.strip_prefix(sentinel) {
                 if sentinel == '\u{07}' {
                     outer_k = true;
+                }
+                if sentinel == '\u{06}' {
+                    // c:Src/subst.c — `(v)NAME[(I)pat]` outer-v flag
+                    // with an `(I)/(i)` key-pattern subscript. The
+                    // subscript by itself returns matching KEYS; the
+                    // outer (v) pivots the result to the VALUES at
+                    // those keys. Re-inject `(v)` into the synthesized
+                    // paramsubst body so the dispatch at subst.rs:4870
+                    // sees `hvals & SCANPM_WANTVALS != 0` and flips
+                    // `return_key=false`. Without the re-inject, the
+                    // (v) was stripped at compile time and paramsubst
+                    // dropped it, returning keys unchanged. Symmetric
+                    // with the `\u{07}` (outer-k) re-inject below.
+                    outer_v = true;
                 }
                 if sentinel == '\u{05}' {
                     outer_at = true;
@@ -2288,6 +2303,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             format!("${{(@k){}[{}]}}", name, idx)
         } else if outer_k {
             format!("${{(k){}[{}]}}", name, idx)
+        } else if outer_v && outer_at {
+            format!("${{(@v){}[{}]}}", name, idx)
+        } else if outer_v {
+            format!("${{(v){}[{}]}}", name, idx)
         } else {
             format!("${{{}[{}]}}", name, idx)
         };

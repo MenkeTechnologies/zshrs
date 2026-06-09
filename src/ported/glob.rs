@@ -3613,19 +3613,62 @@ pub fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
         return (pattern.to_string(), None);
     }
 
-    // Find matching open paren
     let bytes = pattern.as_bytes();
+    // Backslash-escaped trailing `)` is literal — no qualifier block
+    // present. C's glob path handles this via Bnull preservation in
+    // the lexer; zshrs's path arrives here with `\)` for quoted
+    // close-parens (e.g. assoc-value `'\)'`). Without the gate, the
+    // qualifier-extraction walk below treats the literal `)` as the
+    // qualifier terminator.
+    let last_paren_escaped = {
+        let mut bs = 0usize;
+        let mut j = bytes.len() - 1;
+        while j > 0 && bytes[j - 1] == b'\\' {
+            bs += 1;
+            j -= 1;
+        }
+        bs % 2 == 1
+    };
+    if last_paren_escaped {
+        return (pattern.to_string(), None);
+    }
+
+    // Find matching open paren
     let mut depth = 0;
     let mut qual_start = None;
 
+    // c:Src/glob.c haswilds backslash handling — a `\(` / `\)` is a
+    // literal paren, not a qualifier delimiter. Track which paren
+    // bytes are escaped by a preceding `\` (counting consecutive
+    // backslashes — even count means the paren is unescaped, odd
+    // count means escaped). Without this gate, `\(*\)` is mis-parsed
+    // as `(*\)` qualifier + empty pattern prefix, sending `*\` to
+    // the qualifier-letter switch which emits "unknown file
+    // attribute: \".
+    let is_escaped = |idx: usize| -> bool {
+        let mut bs = 0usize;
+        let mut j = idx;
+        while j > 0 && bytes[j - 1] == b'\\' {
+            bs += 1;
+            j -= 1;
+        }
+        bs % 2 == 1
+    };
+
     for i in (0..bytes.len()).rev() {
         match bytes[i] {
-            b')' => depth += 1,
+            b')' => {
+                if !is_escaped(i) {
+                    depth += 1;
+                }
+            }
             b'(' => {
-                depth -= 1;
-                if depth == 0 {
-                    qual_start = Some(i);
-                    break;
+                if !is_escaped(i) {
+                    depth -= 1;
+                    if depth == 0 {
+                        qual_start = Some(i);
+                        break;
+                    }
                 }
             }
             _ => {}

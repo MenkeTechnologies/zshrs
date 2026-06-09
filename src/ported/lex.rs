@@ -2476,6 +2476,36 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
                     {
                         add(Bnull);
                         add(c);
+                        // c:Src/lex.c:1501 — the special-escape list
+                        // gives `\$` a Bnull marker on the `$`. The
+                        // literal `{` that immediately follows in
+                        // `\${…}` is NOT in C's special list (line
+                        // 1501 has no plain `{`), so C emits a raw
+                        // `{` here. C's downstream `skipparens`
+                        // (utils.c:2409) counts ONLY Inbrace/Outbrace
+                        // tokens, so the raw `{` doesn't perturb
+                        // depth. zshrs's subst-time brace scanner
+                        // (subst.rs:2896) accepts both Inbrace AND
+                        // raw `{` because intermediate untokenize
+                        // passes fold tokens to ASCII at several
+                        // places in the pipeline — so a raw `{` here
+                        // would be mis-counted as a nested
+                        // paramsubst opener inside `${var/pat/repl}`
+                        // replacements like `\${${(q)MATCH}-$IFS\}`
+                        // (p10k _p9k_must_init:8552). Emit Bnull
+                        // before the `{` (or `}`) so the subst
+                        // scanner's prev-char escape check sees the
+                        // Bnull and skips the brace. Symmetric with
+                        // the `}` arm above (`c == '}' && bct > 0`).
+                        if c == '$' && bct > 0 {
+                            if let Some(peek) = hgetc() {
+                                if peek == '{' || peek == '}' {
+                                    add(Bnull);
+                                }
+                                hungetc(peek);
+                                LEX_LEXSTOP.set(false);
+                            }
+                        }
                     }
                     Some(c) => {
                         add('\\');

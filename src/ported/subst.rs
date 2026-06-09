@@ -2895,14 +2895,58 @@ pub fn paramsubst(
                   // zshrs's brace-balance contract.
         let mut depth = 1_i32; // c:utils.c:2411
         let mut end = pos; // c:utils.c:2416
+        // c:Src/utils.c:2409 skipparens — counts ONLY Inbrace
+        // (`\u{8f}`) / Outbrace (`\u{90}`) tokens. Every `${`-form
+        // brace pair is tokenized by Src/lex.c:1546 (`add(Qstring);
+        // c = Inbrace; cmdpush(CS_BRACEPAR); bct++;`) and matched by
+        // c:1565-1577 (`c = Outbrace; bct--;`) BEFORE paramsubst
+        // runs; raw ASCII `{`/`}` never opens or closes a paramsubst
+        // body in C.
+        //
+        // RUST-ONLY ADAPTATION: zshrs has external paramsubst callers
+        // (tests at subst.rs:14345+ `psubst_arr`, the fusevm bridge
+        // string synthesizers) that pass paramsubst expressions as
+        // raw Rust string literals — `"${arr[1]}"` etc. — with no
+        // lex pass producing Inbrace/Outbrace tokens. The hybrid
+        // scanner below accepts both forms:
+        //   * Canonical token bytes (`Inbrace`/`Outbrace`) always
+        //     count, matching C exactly when the input came through
+        //     the lex pipeline (preserved end-to-end after the
+        //     `rest` walker at subst.rs:4554 stopped untokenizing
+        //     them).
+        //   * Raw ASCII `{` only counts when preceded by an
+        //     unescaped `$` (the `${` form per c:lex.c:1546). Bare
+        //     `{` in a replacement body (`${var/pat/{X}}` with
+        //     `prev=/`) stays uncounted, matching the C-faithful
+        //     contract that bare braces are literal.
+        //   * Raw ASCII `}` counts when its prev char isn't `\` or
+        //     Bnull — symmetric to the raw `{` gate, paired with
+        //     the canonical Outbrace tokens. `\}` (Bnull }) stays
+        //     literal.
+        // Bug surface: `${var/pat/{X}}` literal-brace pair (fsh-
+        // syntax-highlighting / fzf-tab) + `${x:-${y:-default}}`
+        // nested default (with tokens preserved through `rest`) +
+        // `\${y\}` escape (p10k `_p9k_must_init:8552`).
         while end < chars.len() && depth > 0 {
             let ch = chars[end];
             let prev = if end > 0 { chars[end - 1] } else { '\0' };
-            let escaped = prev == '\u{9f}' || prev == '\\';
-            if ch == Inbrace || (ch == '{' && !escaped) {
+            let prev2 = if end > 1 { chars[end - 2] } else { '\0' };
+            if ch == Inbrace {
                 depth += 1; // c:utils.c:2418
-            } else if ch == Outbrace || (ch == '}' && !escaped) {
+            } else if ch == '{' {
+                let dollar_preceded = prev == '$'
+                    && prev2 != '\\'
+                    && prev2 != '\u{9f}';
+                if dollar_preceded {
+                    depth += 1;
+                }
+            } else if ch == Outbrace {
                 depth -= 1; // c:utils.c:2420
+                if depth == 0 {
+                    break;
+                }
+            } else if ch == '}' && prev != '\\' && prev != '\u{9f}' {
+                depth -= 1;
                 if depth == 0 {
                     break;
                 }
@@ -4129,7 +4173,24 @@ pub fn paramsubst(
             //   scalar via singsub and the outer `(j)` had nothing to
             //   join. Bug #63 in docs/BUGS.md.
             let expanded = {
+                // c:Src/subst.c:2169 — `sub_flags` is the OUTER
+                // paramsubst's filter-disposition state (SUB_MATCH/M
+                // for `:#`, etc.). The inner recursive paramsubst
+                // (via multsub→prefork→stringsubst→paramsubst) at
+                // line 4019 unconditionally overwrites `sub_flags`
+                // with its own flag bits (typically 0 since the
+                // inner has no operator). When the inner returns,
+                // the outer's downstream `:#` arm at line 6700 reads
+                // sub_flags and gets the inner's 0 — so the M-flag
+                // `invert` was silently dropped and `${(M)${(k)h}:#p}`
+                // applied the NORMAL drop-matching filter instead
+                // of M's keep-matching one. Save and restore around
+                // the subexp call to mirror C's scoping (C's
+                // `sub_flags` is a function-local int saved across
+                // the recursive `multsub` call at c:2681).
+                let saved_sub_flags = sub_flags_get();
                 let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SUBEXP);
+                sub_flags_set(saved_sub_flags);
                 if isarr && !arr_parts.is_empty() {
                     // Generate a stable per-call temp name. We use a
                     // process-local counter; cleanup happens at end of
@@ -4511,11 +4572,50 @@ pub fn paramsubst(
         // is correct rather than a workaround.
         let rest: String = {
             let raw: String = body_chars[idx..].iter().collect();
+            // c:Src/subst.c — the body returned by skipparens(Inbrace,
+            // Outbrace, …) keeps tokenized form throughout. zshrs's
+            // downstream strip_prefix checks (`r.strip_prefix(":-")`,
+            // `r.strip_prefix("#")`, etc.) need ASCII for the operator
+            // characters, but the brace tokens for nested `${...}`
+            // MUST stay tokenized so the recursive paramsubst's
+            // skipparens-equivalent at subst.rs:2896 counts them via
+            // Inbrace/Outbrace exactly like C does. Folding them back
+            // to raw `{`/`}` (the prior unconditional
+            // `crate::lex::untokenize`) made inner braces
+            // indistinguishable from literal replacement-string braces
+            // like `${var/pat/{X}}` → the scanner mis-counted depth.
+            //
+            // Protect Inbrace / Outbrace through `untokenize` by
+            // swapping them to Private-Use-Area placeholders that fall
+            // outside the ITOK range (0x84..0xa1), run the canonical
+            // untokenize (which preserves its multi-char awareness for
+            // Qstring+Snull `$'…'` decoding etc.), then swap back. The
+            // placeholders never collide with real shell text.
+            const INBRACE_PH: char = '\u{e000}'; // Private Use Area
+            const OUTBRACE_PH: char = '\u{e001}';
             if raw.chars().any(|c| {
                 let cu = c as u32;
                 (0x84..=0xa1).contains(&cu)
+                    && c != crate::ported::zsh_h::Inbrace
+                    && c != crate::ported::zsh_h::Outbrace
             }) {
-                crate::lex::untokenize(&raw)
+                let swapped: String = raw
+                    .chars()
+                    .map(|c| match c {
+                        x if x == crate::ported::zsh_h::Inbrace => INBRACE_PH,
+                        x if x == crate::ported::zsh_h::Outbrace => OUTBRACE_PH,
+                        _ => c,
+                    })
+                    .collect();
+                let untoked = crate::lex::untokenize(&swapped);
+                untoked
+                    .chars()
+                    .map(|c| match c {
+                        INBRACE_PH => crate::ported::zsh_h::Inbrace,
+                        OUTBRACE_PH => crate::ported::zsh_h::Outbrace,
+                        _ => c,
+                    })
+                    .collect()
             } else {
                 raw
             }
@@ -4767,10 +4867,29 @@ pub fn paramsubst(
                     //   /opt/homebrew/bin/zsh -fc 'typeset -A h=(a 1 b 2 c 1);
                     //     echo "${(k)h[(k)a]}"'  → '1'  (key-match still
                     //     returns value).
-                    let return_key = force_return_key
+                    let mut return_key = force_return_key
                         || ((hkeys & SCANPM_WANTKEYS) != 0
                             && !match_against_key
                             && (hvals & SCANPM_WANTVALS) == 0);
+                    // c:Src/params.c:665-681 scanparamvals — when the
+                    // outer `(v)` paramflag is set (SCANPM_WANTVALS
+                    // bit) AND the inner subscript flag uses
+                    // (i)/(I) (key-pattern matching that defaults to
+                    // returning the KEY), pivot to return the VALUE
+                    // associated with each matched key. Verified vs
+                    // /opt/homebrew/bin/zsh:
+                    //   typeset -A M=(foo_a 1 foo_b 2 bar_x 3)
+                    //   echo "${(k)M[(I)foo*]}"   →  'foo_a foo_b'
+                    //   echo "${(v)M[(I)foo*]}"   →  '1 2'
+                    // Without this pivot, the outer (v) flag was
+                    // silently dropped and `(I)` kept returning
+                    // keys for both forms.
+                    if (hvals & SCANPM_WANTVALS) != 0
+                        && (hkeys & SCANPM_WANTKEYS) == 0
+                        && (flags.contains('i') || flags.contains('I'))
+                    {
+                        return_key = false;
+                    }
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if match_against_key {
@@ -6465,7 +6584,30 @@ pub fn paramsubst(
                 // misses user-set IFS. Re-join with IFS[0] here so
                 // `"${a[*]}"` with IFS=":" produces `x:y:z` instead
                 // of the hardcoded `x y z`. Bug #428.
-                if let Some(arr) = arrays_get(&var_name) {
+                //
+                // c:Src/subst.c:3032 — the sepjoin re-fetches from
+                // `aval` (the variable's raw value array). When the
+                // subscript dispatch above ALREADY produced an
+                // array-shape result (`split_parts` populated by the
+                // assoc/array flag-arms — `${h[(I)pat]}`, `${arr[(R)pat]}`,
+                // etc.), C's `aval` already points at the matched
+                // subset. zshrs's path re-reads `arrays_get`/
+                // `assoc_get` which loses the dispatch's filter and
+                // splices the FULL variable back in. Guard by
+                // preferring `split_parts` when the dispatch
+                // populated it; that's the dispatch's authoritative
+                // array shape. Without the guard, `${h[(I)*]}` (and
+                // every other subscript-flag form on assoc/array)
+                // returned all values regardless of which keys
+                // matched.
+                if let Some(sp) = split_parts.as_ref() {
+                    let join_sep: String = sep.clone().unwrap_or_else(|| {
+                        let ifs = crate::ported::params::getsparam("IFS")
+                            .unwrap_or_else(|| " \t\n".to_string());
+                        ifs.chars().next().map(String::from).unwrap_or_default()
+                    });
+                    value = sp.join(&join_sep);
+                } else if let Some(arr) = arrays_get(&var_name) {
                     let join_sep: String = sep.clone().unwrap_or_else(|| {
                         let ifs = crate::ported::params::getsparam("IFS")
                             .unwrap_or_else(|| " \t\n".to_string());
@@ -7400,6 +7542,52 @@ pub fn paramsubst(
                     (pat_buf, String::new())
                 };
                 let (raw_pat, raw_repl) = split_unescaped(rep);
+                // c:Src/subst.c — unquoted-context replacement: `\X`
+                // escapes get the backslash stripped (`\~` → `~`,
+                // `\$` → `$`, `\n` → `n`, etc.) because the surrounding
+                // unquoted-word pipeline applies the standard shell
+                // escape strip after the substitution. QT (`"…"`)
+                // context preserves `\X` literally — the quoted path
+                // bypasses the strip, matching real zsh (verified:
+                // `x=${p/foo/\~}` → `~`; `x="${p/foo/\~}"` → `\~`).
+                // The strip drops the LITERAL backslash only; Bnull
+                // (`\u{9f}`) markers stay so subsequent untokenize
+                // passes still resolve their escaped content.
+                let raw_repl = if !qt && raw_repl.contains('\\') {
+                    let chars: Vec<char> = raw_repl.chars().collect();
+                    let mut out = String::with_capacity(raw_repl.len());
+                    let mut i = 0;
+                    while i < chars.len() {
+                        if chars[i] == '\\' && i + 1 < chars.len() {
+                            out.push(chars[i + 1]);
+                            i += 2;
+                        } else {
+                            out.push(chars[i]);
+                            i += 1;
+                        }
+                    }
+                    out
+                } else {
+                    raw_repl
+                };
+                // c:Src/subst.c:3120-3133 — strip leading `#`/`%`
+                // anchor flag from PAT body. Applies to single replace
+                // `${var/#PAT/REPL}` and `${var/%PAT/REPL}` same as
+                // double replace `${var//#PAT/REPL}`. Without this,
+                // the `#` was forwarded into patcompile which read it
+                // as glob-`#` (0-or-more under extendedglob) at the
+                // wrong position and bailed with "bad pattern".
+                let (pat_anchor, pat_after_anchor) = if let Some(rest) = raw_pat.strip_prefix('#') {
+                    if let Some(rest2) = rest.strip_prefix('%') {
+                        ('B', rest2.to_string()) // both anchors
+                    } else {
+                        ('#', rest.to_string())
+                    }
+                } else if let Some(rest) = raw_pat.strip_prefix('%') {
+                    ('%', rest.to_string())
+                } else {
+                    ('\0', raw_pat.clone())
+                };
                 // Pattern: keep \X for glob meta literals (untokenize
                 // drops Bnull but pat still carries `\X` from the
                 // split-walk above for the "match this literal X"
@@ -7408,17 +7596,29 @@ pub fn paramsubst(
                 // is literal; escape it to `\|` so patcompile doesn't
                 // read it as alternation. Same fix as the `//` arm
                 // above. Bug #596.
-                let pat = escape_bare_alt_pipes(&singsub(&raw_pat));
+                let pat_body = escape_bare_alt_pipes(&singsub(&pat_after_anchor));
                 // c:Src/glob.c:2674-2677 — `patcompile` failure → "bad
                 // pattern" diagnostic. Single replace arm same as `//`
                 // arm above. Bug #605.
-                if !pat.is_empty()
-                    && patcompile(&pat, PAT_HEAPDUP as i32, None).is_none()
+                if !pat_body.is_empty()
+                    && patcompile(&pat_body, PAT_HEAPDUP as i32, None).is_none()
                 {
-                    zerr(&format!("bad pattern: {}", pat));
+                    zerr(&format!("bad pattern: {}", pat_body));
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
+                // Re-attach the anchor prefix so the downstream
+                // `replace_one` logic that dispatches on
+                // `pat.strip_prefix('#')`/`pat.strip_prefix('%')`/
+                // `pat.strip_prefix("#%")` continues to work without
+                // duplication. The patcompile validity check above
+                // already ran against the anchor-free body.
+                let pat = match pat_anchor {
+                    '#' => format!("#{}", pat_body),
+                    '%' => format!("%{}", pat_body),
+                    'B' => format!("#%{}", pat_body),
+                    _ => pat_body,
+                };
                 if std::env::var("ZSHRS_TRACE_REPL2").is_ok() {
                     eprintln!(
                         "[TRACE_REPL2] rep={:?} raw_pat={:?} pat={:?} raw_repl={:?}",

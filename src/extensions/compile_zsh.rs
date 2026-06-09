@@ -1721,7 +1721,28 @@ impl ZshCompiler {
         } else {
             first
         };
-        let first_clean = crate::lex::untokenize(dispatch_first_raw);
+        // c:Src/subst.c:169 + Src/glob.c:3649 — `prefork` runs
+        // `remnulargs(getdata(node))` on every word before command
+        // dispatch. remnulargs strips standalone Bnull / Snull / Dnull
+        // / Nularg sentinels in-place (Bnullkeep folds to literal `\`),
+        // so `\echo` (lex emits `Bnull echo`) reaches the cmd-name
+        // table as plain `echo`. zshrs's compile-time dispatch path
+        // skipped this strip and went straight to untokenize, which
+        // maps Bnull → `\` per c:Src/lex.c:38 ztokens. Result: the
+        // builtin/function table was probed with `\echo`, missed
+        // every entry, and fell through to "command not found:
+        // \echo". Run remnulargs first to mirror C's prefork chain
+        // before untokenize converts any surviving sentinels.
+        let first_clean = {
+            let mut tmp = dispatch_first_raw.to_string();
+            crate::ported::glob::remnulargs(&mut tmp);
+            // remnulargs may stamp `Nularg` on a wholly-empty word; drop
+            // it so the lookup sees `""` instead of a sentinel.
+            if tmp == crate::ported::zsh_h::Nularg.to_string() {
+                tmp.clear();
+            }
+            crate::lex::untokenize(&tmp)
+        };
         // c:Src/exec.c::execcmd — runtime function lookup wins over
         // builtins (shfunctab → bintab order). When the user defined a
         // function with the dispatch name earlier in this compile unit,
@@ -1801,7 +1822,23 @@ impl ZshCompiler {
             // chars doesn't reach the name table — without this,
             // `foo-bar()` registered cleanly but the call site looked
             // up `foo\u{9b}bar` and missed the registered function.
-            let cleaned_first = crate::lex::untokenize(first);
+            //
+            // c:Src/subst.c:169 — `prefork` runs `remnulargs` BEFORE
+            // any cmd-name lookup. remnulargs strips standalone Bnull
+            // / Snull / Dnull / Nularg sentinels so `\grep` (lex emits
+            // `Bnull grep`) reaches the external dispatch as `grep`.
+            // Without this step, untokenize's Bnull → `\` mapping
+            // (c:Src/lex.c:38 ztokens) routes the call through
+            // host_exec_external with cmd=`\grep`, missing the PATH
+            // hit and falling to "command not found: \grep".
+            let cleaned_first = {
+                let mut tmp = first.to_string();
+                crate::ported::glob::remnulargs(&mut tmp);
+                if tmp == crate::ported::zsh_h::Nularg.to_string() {
+                    tmp.clear();
+                }
+                crate::lex::untokenize(&tmp)
+            };
             let name_idx = self.builder.add_name(&cleaned_first);
             self.builder.emit(Op::CallFunction(name_idx, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
