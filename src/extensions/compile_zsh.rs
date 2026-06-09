@@ -3787,26 +3787,12 @@ impl ZshCompiler {
             }
         }
 
-        // Fast path: `${(flags)"literal"}` — zsh parameter flags applied
-        // to a literal string operand. Detection runs on the original `s`
-        // (with bslashquote markers intact) so we can distinguish a quoted
-        // literal from a bare name. The literal value is prefixed with
-        // `\u{01}` so BUILTIN_PARAM_FLAG skips the variable lookup and
-        // treats the rest as a scalar value.
-        if !has_bnull {
-            if let Some((flags, literal)) = parse_zsh_flag_literal(s) {
-                let mut tagged = String::with_capacity(literal.len() + 1);
-                tagged.push('\u{01}');
-                tagged.push_str(&literal);
-                let name_const = self.builder.add_constant(Value::str(tagged));
-                self.builder.emit(Op::LoadConst(name_const), 0);
-                let flags_const = self.builder.add_constant(Value::str(flags));
-                self.builder.emit(Op::LoadConst(flags_const), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 2), 0);
-                return;
-            }
-        }
+        // c:Src/subst.c — `${(flags)"literal"}` is a "bad substitution"
+        // parse error in zsh; paramsubst's name walker hits the `"` after
+        // the flag block, finds it's not a valid name char, and errors.
+        // Earlier this used a `\u{01}` sentinel fast path to short-circuit
+        // to the same error; removed in favor of letting paramsubst's
+        // natural body walk fire the error organically (matches C).
 
         // Fast path: `${(flags)NAME}` — zsh parameter flags. Emit
         // BUILTIN_PARAM_FLAG with [name, flags] on the stack.
@@ -8914,72 +8900,6 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     }
 
     None
-}
-
-/// Parse `${(flags)NAME}` and return (flags, name). The name must be a
-/// plain identifier; nested expansions or subscripted names disqualify
-/// this fast-path and route through the runtime expand instead.
-///
-/// Detect `${(flags)"literal"}` or `${(flags)'literal'}` shape. Caller
-/// passes the untokenize_preserve_quotes form so brace/paren markers are
-/// already mapped back to ASCII and Dnull/Snull are mapped to `"`/`'`.
-/// Returns (flags, literal_value) on match.
-fn parse_zsh_flag_literal(raw: &str) -> Option<(String, String)> {
-    let pq = crate::lex::untokenize_preserve_quotes(raw);
-    let inner = pq.strip_prefix("${")?.strip_suffix('}')?;
-    let inner_chars: Vec<char> = inner.chars().collect();
-    if inner_chars.first()? != &'(' {
-        return None;
-    }
-    let mut depth = 0;
-    let mut close_idx = None;
-    for (i, &c) in inner_chars.iter().enumerate() {
-        match c {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    close_idx = Some(i);
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    let close = close_idx?;
-    let flags: String = inner_chars[1..close].iter().collect();
-    let operand: Vec<char> = inner_chars[close + 1..].to_vec();
-    if operand.len() < 2 {
-        return None;
-    }
-    let (open, closec) = (operand[0], *operand.last().unwrap());
-    if !((open == '"' && closec == '"') || (open == '\'' && closec == '\'')) {
-        return None;
-    }
-    let literal: String = operand[1..operand.len() - 1].iter().collect();
-    // c:Src/subst.c:1942 — `${(flags)"literal"}` is a parse error in
-    // zsh ONLY when the operand is a true literal (no expansion).
-    // For DQ operands containing `$VAR`, `$(cmd)`, `$((expr))`, `` `cmd` ``,
-    // zsh expands first and applies the flag to the result. zshrs's
-    // fast-path was tagging ALL DQ-wrapped operands as literal, so
-    // `${(z)"$(echo hi)"}` errored "bad substitution" instead of
-    // joining the cmd-sub output. Skip the fast-path when the DQ
-    // operand contains expansion-triggering chars; let paramsubst
-    // handle it via the normal sub-expression path. SQ (single-quote)
-    // operands stay literal — `${(z)'$x'}` is `${(z)'$x'}` regardless.
-    // Bug #586.
-    if open == '"'
-        && (literal.contains('$')
-            || literal.contains('`')
-            || literal.contains('\u{85}') // Stringg ($-token)
-            || literal.contains('\u{8c}') // Qstring (DQ-$)
-            || literal.contains('\u{93}') // Tick (backtick)
-            || literal.contains('\u{99}'))
-    // Qtick (DQ-backtick)
-    {
-        return None;
-    }
-    Some((flags, literal))
 }
 
 fn parse_zsh_flag(s: &str) -> Option<(&str, &str)> {

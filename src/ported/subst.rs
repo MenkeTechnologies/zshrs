@@ -4248,16 +4248,13 @@ pub fn paramsubst(
         // never hit the prefix-strip arm — the outer became a no-op.
         // Skip the name-walk entirely when subexp_value is in flight.
         let name_start = idx;
-        // c:Src/subst.c:1942 — `${(flags)"literal"}` is a parse
-        // error in zsh ("bad substitution"). The compile fast path
-        // at extensions/compile_zsh.rs:2929 tags literal-operand
-        // reconstructions with `\u{01}` prefix so paramsubst (this
-        // function) can recognize them and emit the canonical error.
-        if idx < body_chars.len() && body_chars[idx] == '\u{01}' {
-            zerr("bad substitution");
-            errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
-            return (String::new(), idx + 1, Vec::new());
-        }
+        // c:Src/subst.c:1942 — `${(flags)"literal"}` raises "bad
+        // substitution" naturally through paramsubst's name-walker
+        // (the `"` char isn't a valid name char so the walker bails
+        // and the validity gate at subst.c:1885 fires). Earlier the
+        // compile path injected a `\u{01}` sentinel to short-circuit
+        // here; removed because the natural path produces the same
+        // error.
         // c:Src/subst.c — `${(flags)NAME[KEY]}` value-passthru
         // shape. The compile fast path at compile_zsh.rs pre-resolves
         // the NAME[KEY] lookup to a scalar value, then re-enters
