@@ -3508,19 +3508,7 @@ impl ZshCompiler {
         if !has_bnull {
             if let Some((name, key)) = bare_subscript_ref(&untoked) {
                 let name_const = self.builder.add_constant(Value::str(name));
-                // Prefix `\u{02}` to the key when the surrounding word
-                // is DQ-wrapped — BUILTIN_ARRAY_INDEX uses this to
-                // decide whether `[N,M]` range slices join (DQ) or
-                // stay as array (unquoted). Direct port of zsh's
-                // sepjoin nojoin gating per Src/subst.c paramsubst.
-                let raw_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
-                let dq = raw_dq || self.dq_context_depth > 0;
-                let key_str = if dq {
-                    format!("\u{02}{}", key)
-                } else {
-                    key.to_string()
-                };
-                let key_const = self.builder.add_constant(Value::str(key_str.as_str()));
+                let key_const = self.builder.add_constant(Value::str(key));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadConst(key_const), 0);
                 self.builder
@@ -3535,16 +3523,7 @@ impl ZshCompiler {
         if !has_bnull {
             if let Some((name, key, suffix)) = bare_subscript_with_suffix(&untoked) {
                 let name_const = self.builder.add_constant(Value::str(name));
-                // Same DQ-detection as the bare-subscript-ref path
-                // above so suffix-concat range slices still join.
-                let raw_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
-                let dq = raw_dq || self.dq_context_depth > 0;
-                let key_str = if dq {
-                    format!("\u{02}{}", key)
-                } else {
-                    key.to_string()
-                };
-                let key_const = self.builder.add_constant(Value::str(key_str.as_str()));
+                let key_const = self.builder.add_constant(Value::str(key));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadConst(key_const), 0);
                 self.builder
@@ -4039,26 +4018,26 @@ impl ZshCompiler {
                         return;
                     }
                 }
-                // If the only flag is `(@)`, skip the
-                // BUILTIN_PARAM_FLAG round-trip — the sentinel/Concat
-                // machinery collapses a Value::Array result back to
-                // scalar before the @-handler runs, defeating the
-                // splat. Direct port: `(@)`'s sole effect is nojoin=1
-                // (Src/subst.c:1813), and BUILTIN_ARRAY_INDEX already
-                // honors that via the `\u{05}` force-array sentinel.
-                // For mixed flag chains (`@` + sort/uniq/etc.) we still
-                // need the BUILTIN_PARAM_FLAG pass; route through the
-                // sentinel-then-flag form there.
+                // c:Src/subst.c — `(@)`-only outer flag. Route through
+                // BUILTIN_BRIDGE_BRACE_ARRAY with the full
+                // `${(@)NAME[KEY]}` body so paramsubst's flag parser
+                // sets nojoin=1 (Src/subst.c:1813) inline. Earlier this
+                // path used a `\u{05}` sentinel on the key + ARRAY_INDEX
+                // which then re-built the body; consolidating eliminates
+                // the sentinel.
                 let only_at_flag = flags.chars().all(|c| c == '@');
                 if only_at_flag && flags.contains('@') {
-                    let key_with_sentinel = format!("\u{05}{}", key);
-                    let name_const = self.builder.add_constant(Value::str(base));
-                    let key_const = self.builder.add_constant(Value::str(key_with_sentinel));
-                    self.builder.emit(Op::LoadConst(name_const), 0);
-                    self.builder.emit(Op::LoadConst(key_const), 0);
-                    self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
-                    return;
+                    if let Some(inner) =
+                        untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
+                    {
+                        let body_const = self.builder.add_constant(Value::str(inner));
+                        self.builder.emit(Op::LoadConst(body_const), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            0,
+                        );
+                        return;
+                    }
                 }
                 // `(k)NAME[(I)pat]` / `(v)NAME[(I)pat]` / `(k)NAME[(R)pat]`
                 // / etc. — when the subscript carries `(I)`/`(R)`/`(i)`/
@@ -4176,19 +4155,28 @@ impl ZshCompiler {
                         return;
                     }
                 }
-                // Sentinel `\u{05}` on the key signals BUILTIN_ARRAY_INDEX
-                // that the surrounding flag chain has explicit `@` —
-                // override the DQ-join behavior so a slice like `[1,3]`
-                // stays as Value::Array even inside `"…"`. Direct port
-                // of zsh's nojoin gating: `(@)` in subst.c sets nojoin=1
-                // so even DQ context preserves array shape.
-                let key_with_sentinel = if flags.contains('@') {
-                    format!("\u{05}{}", key)
-                } else {
-                    key.to_string()
-                };
+                // c:Src/subst.c — `${(flags)NAME[KEY]}` mixed-flag chain.
+                // When `@` is among the flags, route the whole
+                // expression through BUILTIN_BRIDGE_BRACE_ARRAY so
+                // paramsubst's nojoin gating fires on the (@) without a
+                // sentinel handshake to BUILTIN_ARRAY_INDEX. Without @,
+                // the legacy ARRAY_INDEX + PARAM_FLAG split-path is fine
+                // (DQ-join doesn't change shape).
+                if flags.contains('@') {
+                    if let Some(inner) =
+                        untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
+                    {
+                        let body_const = self.builder.add_constant(Value::str(inner));
+                        self.builder.emit(Op::LoadConst(body_const), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            0,
+                        );
+                        return;
+                    }
+                }
                 let name_const = self.builder.add_constant(Value::str(base));
-                let key_const = self.builder.add_constant(Value::str(key_with_sentinel));
+                let key_const = self.builder.add_constant(Value::str(key));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadConst(key_const), 0);
                 self.builder
