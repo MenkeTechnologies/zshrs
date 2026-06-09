@@ -297,6 +297,21 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         f
     });
     if glob_failed {
+        // c:Src/glob.c:1876-1880 + Src/exec.c — NOMATCH zerr sets
+        // ERRFLAG_ERROR (via utils.c:184); the C execlist loop's per-
+        // sublist post-exec path then resets the bit so subsequent
+        // sublists continue (verified: `zsh -fc 'ls /nope_*; echo
+        // after'` prints `after`). zshrs's vm dispatch doesn't have
+        // C's central execlist loop — the post-command-boundary
+        // equivalent is right HERE, where the dispatcher consumes
+        // `current_command_glob_failed` and surfaces status 1 for THIS
+        // command. Clear ERRFLAG_ERROR at the same boundary so the
+        // next command runs (while leaving ERRFLAG_INT etc. alone so
+        // ctrl-c still propagates).
+        crate::ported::utils::errflag.fetch_and(
+            !crate::ported::zsh_h::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         return 1; // c:1880 — command aborted, status 1
     }
     if let Some(status) = try_user_fn_override(name, &args) {
@@ -7804,6 +7819,32 @@ impl fusevm::ShellHost for ZshrsHost {
         // "permission denied:" line and rc=126 instead of rc=1.
         // Honour errflag here so the script ends with the
         // paramsubst error as the sole diagnostic. Bug #86.
+        //
+        // c:Src/exec.c — C's execlist loop clears ERRFLAG_ERROR
+        // between sublists when the error came from a NOMATCH-style
+        // command failure (glob no-match, etc.) so subsequent
+        // sublists run. zshrs's vm dispatch handles this at the
+        // post-command-boundary HERE: if THIS command has its
+        // `current_command_glob_failed` cell set (meaning the glob
+        // NOMATCH happened during this command's argv prep), surface
+        // status 1 and clear BOTH the cell AND ERRFLAG_ERROR so the
+        // NEXT exec call sees a clean state. The errflag from
+        // genuine script-fatal errors (parse, redirect, paramsubst
+        // `${:?msg}`) does NOT come paired with glob_failed, so
+        // those still short-circuit + propagate.
+        let glob_failed = with_executor(|exec| {
+            let f = exec.current_command_glob_failed.get();
+            exec.current_command_glob_failed.set(false);
+            f
+        });
+        if glob_failed {
+            crate::ported::utils::errflag.fetch_and(
+                !crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            with_executor(|exec| exec.set_last_status(1));
+            return 1;
+        }
         if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst)
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0
@@ -8547,8 +8588,18 @@ impl ShellExecutor {
         // status 1 — mirrors zsh's command-aborted-on-glob-error
         // behaviour. The flag is reset BEFORE returning so the next
         // command starts clean.
+        //
+        // c:Src/glob.c:1876-1880 + Src/exec.c — NOMATCH sets
+        // ERRFLAG_ERROR but C's execlist clears the bit per-sublist
+        // so subsequent commands run. Symmetric with the builtin
+        // dispatcher's clear at fusevm_bridge.rs:299 — clear it here
+        // too at the external-command post-command-boundary.
         if self.current_command_glob_failed.get() {
             self.current_command_glob_failed.set(false);
+            crate::ported::utils::errflag.fetch_and(
+                !crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             self.set_last_status(1);
             return 1;
         }
