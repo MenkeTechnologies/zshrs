@@ -5,10 +5,9 @@
 //! character the parser would otherwise treat specially: whitespace, glob
 //! metas, sigils, operators, quotes, brackets, braces, etc.
 //!
-//! These pins lock in the cases zshrs already matches and document the
-//! handful of edge-cases where zshrs diverges (tab → `$'\t'` vs `\<TAB>`,
-//! tilde, `=` after first char). Divergences are pinned with `#[ignore]`
-//! and a `ZSHRS BUG:` marker so they show up in the audit.
+//! These pins lock in the cases zshrs matches. The previously-pinned
+//! divergences (tab → `$'\t'`, mid-word `~` and `=`) are now fixed and
+//! kept as regression tests in `mod divergences`.
 
 #![allow(non_snake_case)]
 
@@ -241,34 +240,38 @@ mod round_trip {
     }
 }
 
-/// Divergences pinned with `#[ignore]` so they surface in the audit but
-/// don't break green. Remove `#[ignore]` once zshrs matches zsh.
+/// Previously pinned `#[ignore]` divergences, now fixed and pinned as
+/// regression tests. Each comment documents the original gap and the
+/// fix:
+///   - tab → `$'\t'`: utils.rs:7077 routes ASCII control bytes through
+///     the `$'…'` branch (the previous Rust port emitted `\<TAB>`).
+///   - mid-word `~`/`=`: utils.rs:6301-6306 gate ported — only escape
+///     at position 0, with MAGICEQUALSUBST + previous `=`/`:`, or for
+///     `~` with EXTENDEDGLOB. The previous Rust port over-escaped both.
 mod divergences {
     use super::*;
 
-    /// ZSHRS BUG: tab byte. zsh emits `tab$'\t'end` ($' ANSI-C form);
-    /// zshrs emits `tab\<TAB>end` (raw escaped tab byte). Both round-trip
-    /// but textual output differs.
+    /// zsh emits `tab$'\t'end` ($' ANSI-C form); regression pin
+    /// (previously emitted `tab\<TAB>end`). Routes through the
+    /// `c.is_ascii_control()` branch in `quotestring`.
     #[test]
-    #[ignore]
     fn zshrs_bug_tab_uses_raw_backslash_not_dollar_quote() {
         assert_parity("printf \"%q\\n\" \"tab\tend\"");
     }
 
-    /// ZSHRS BUG: `~` (tilde) at any position. zsh leaves bare;
-    /// zshrs escapes to `\~`. zsh's logic: tilde-expansion only happens at
-    /// word start in unquoted context, so mid-word `~` is safe bare.
+    /// `~` mid-word is bare per zsh's c:6306 gate (only escape if
+    /// position 0 or EXTENDEDGLOB). Regression pin for the
+    /// quotestring `=`/`~` gate.
     #[test]
-    #[ignore]
     fn zshrs_bug_tilde_over_escaped() {
         assert_parity(r#"printf "%q\n" "a~b""#);
     }
 
-    /// ZSHRS BUG: `=` not at first character. zsh leaves bare
-    /// (`key=value`); zshrs escapes to `key\=value`. zsh treats only
-    /// leading `=` specially (named directory / equal-expansion).
+    /// `=` not at first character is bare per zsh's c:6302-6305
+    /// gate (only escape if position 0 or MAGICEQUALSUBST with
+    /// preceding `=`/`:`). Regression pin for the quotestring
+    /// `=`/`~` gate.
     #[test]
-    #[ignore]
     fn zshrs_bug_equals_after_first_char_over_escaped() {
         assert_parity(r#"printf "%q\n" "key=value""#);
     }
