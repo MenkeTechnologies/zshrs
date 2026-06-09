@@ -1784,7 +1784,7 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
             // c:725
             if nomatch {
                 // c:725
-                zerr(&format!("{}: not found", cmdstr)); // c:726
+                zerr(&format!("{} not found", cmdstr)); // c:726 — `zerr("%s not found", cmdstr)`
             }
             None // c:728
         }
@@ -2058,7 +2058,11 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // command exits non-zero. The previous Rust port silently
         // returned None and filesub kept the literal `=cmd`,
         // diverging from zsh's hard-fail behaviour.
-        zerr(&format!("{}: not found", cmd));
+        // Untokenize Equals (`\u{8d}`) → `=` etc. before emit so
+        // `[ a == a ]` reports "= not found" (the second `=` came in
+        // as Equals from the lexer) instead of "\u{8d} not found".
+        let cmd_display = untokenize(&cmd);
+        zerr(&format!("{} not found", cmd_display)); // c:726
         errflag_set_error();
     }
     None
@@ -3263,9 +3267,9 @@ pub fn paramsubst(
                         }
                         hvals = SCANPM_WANTVALS;
                     } // c:2256
-                    '#' => {
+                    c if c == '#' || c == Pound => {
                         evalchar = true;
-                    } // c:1673 (# evalchar)
+                    } // c:2480-2483 (# / Pound)
                     'l' | 'r' => {
                         // c:2319-2378 (l/r pad). Direct port of the
                         // get_intarg / get_strarg sequence:
@@ -3481,10 +3485,9 @@ pub fn paramsubst(
                         // c:2217
                         sortit |= SORTIT_NUMERICALLY; // c:2218
                     } // c:2219
-                    '-' => {
-                        // c:2220 case '-': case Dash:
+                    c if c == '-' || c == Dash => {
+                        // c:2220-2223 case '-': case Dash:
                         sortit |= SORTIT_NUMERICALLY_SIGNED;
-                        // c:2222
                     } // c:2223
                     'a' => {
                         // c:2224
@@ -3521,9 +3524,9 @@ pub fn paramsubst(
                         idx += 1;
                         continue;
                     } // c:2485
-                    '*' => {
+                    c if c == '*' || c == Star => {
                         sub_flags_bits |= SUB_EGLOB;
-                    } // c:2168 (*)
+                    } // c:2167-2169 (* / Star)
                     'I' => {
                         // c:2189 (I:N:)
                         // (I:N:) — match the Nth occurrence in
@@ -3737,7 +3740,7 @@ pub fn paramsubst(
                         } // c:2413
                         continue; // c:2410
                     } // c:2409 (g)
-                    '~' => {
+                    c if c == '~' || c == Tilde => {
                         tok_arg = !tok_arg;
                     } // c:2157-2159 (~ / Tilde)
                     'm' => {
