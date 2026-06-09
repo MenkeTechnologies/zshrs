@@ -698,38 +698,28 @@ fn stringsubst(
             list.setdata(node_idx, str3.clone()); // c:237
             continue; // c:237
         } // c:237
-          // Literal `'…'` single-quoted span. The lexer normally
-          // converts these to `\u{9d}…\u{9d}` (handled above), but
-          // recursive paths that re-enter stringsubst with already-
-          // untokenized text (e.g. an outer expand_string ran
-          // `untokenize`, dropping SNULLs but preserving the literal
-          // `'`) still need the literal-span semantics. Per zsh single-
-          // bslashquote rules: contents are verbatim, no `$`/`${…}` / glob
-          // expansion fires inside. Strip the surrounding quotes and
-          // leave the body intact.
-        if c == '\'' {
-            // c:237
-            // Find matching close bslashquote — backslash inside `'…'` is
-            // NOT an escape (zsh rule), so don't track escaping.
-            let mut end = pos + 1; // c:237
-            while end < chars.len() && chars[end] != '\'' {
-                // c:237
-                end += 1; // c:237
-            } // c:237
-            let prefix: String = chars[..pos].iter().collect(); // c:237
-            let body: String = chars[pos + 1..end].iter().collect(); // c:237
-            let suffix: String = if end < chars.len() {
-                // c:237
-                chars[end + 1..].iter().collect() // c:237
-            } else {
-                // c:237
-                String::new() // c:237
-            }; // c:237
-            str3 = format!("{}{}{}", prefix, body, suffix); // c:237
-            pos += body.chars().count(); // c:237
-            list.setdata(node_idx, str3.clone()); // c:237
-            continue; // c:237
-        } // c:237
+          // c:Src/subst.c:237 — literal `'…'` single-quote SPAN
+          // handling in stringsubst. C's stringsubst dispatches on
+          // the lexer-emitted `Snull` token (Src/subst.c:301-304), NOT
+          // on a raw `'` byte: the lex stage at Src/lex.c:1638-1668
+          // tokenizes every source-level `'…'` into `Snull body Snull`
+          // BEFORE stringsubst sees the string. A raw `'` reaching
+          // stringsubst means the byte is already LITERAL — typically
+          // produced by a substitution result inside a DQ context
+          // (`"…'mixed'…"`), where the lexer kept the `'` as a plain
+          // char per Src/lex.c dquote_parse's default arm.
+          //
+          // Treating raw `'` as a SQ delimiter at this layer breaks
+          // `(qq)` quoting roundtrips and any DQ source containing
+          // literal apostrophes — the body between the `'`s gets
+          // stripped of its quotes, corrupting the value (Bug
+          // surface: `(qq)` produces `'mixed'` → `mixed` instead of
+          // the C-faithful `'\''mixed'\''`).
+          //
+          // The previous Rust port's literal-`'` arm here was an
+          // over-eager workaround; remove it so raw `'` flows through
+          // as literal character data, mirroring C's
+          // token-only `Snull` dispatch.
 
         let qt = c == Qstring; // c:237
                                // C zsh's stringsubst gates on the lexer-tokenized `String` /
@@ -4563,62 +4553,120 @@ pub fn paramsubst(
         }
 
         // c:Src/subst.c:2899+ — the remaining operator+pattern text
-        // after the name. The bridge passthru path delivers TOKEN-form
-        // bytes here (Pound \u{84} for `#`, Hat \u{8a}, Equals \u{86},
-        // Inbrack \u{91}, etc.). The downstream strip_prefix checks
-        // (`r.strip_prefix('#')`, `r.strip_prefix('%')` and friends)
-        // are ASCII-only — untokenize once so they match. patcompile
-        // also expects ASCII, so untokenizing the pattern text here
-        // is correct rather than a workaround.
+        // after the name. In C, paramsubst NEVER untokenizes this body
+        // — operator chars (`:`, `-`, `+`, `#`, `=`, `?`, `/`, `%`,
+        // `|`, `*`, `^`) arrive in whatever form lex left them, and
+        // brace tokens (Inbrace/Outbrace) for nested `${…}` stay
+        // tokenized so skipparens can count them.
+        //
+        // zshrs's downstream strip_prefix sites (`r.strip_prefix("#")`,
+        // `r.strip_prefix(":-")`, etc.) are ASCII-only, but the bridge
+        // synthesizer (compile_zsh.rs codegen → fusevm_bridge.rs
+        // paramsubst_to_value) hands us TOKEN-form bytes for chars
+        // that lex tokenized at parse time (Pound \u{84} for `#`,
+        // Equals \u{86}, Inbrack \u{91}, etc.). To match C's
+        // invariant — operators-ASCII-but-braces-token — walk the
+        // body inline: convert ITOK bytes via the canonical
+        // untokenize map (lex.rs:4499) BUT pass Inbrace/Outbrace
+        // through unchanged so they stay as ITOK bytes for the inner
+        // brace scanner at subst.rs:2896.
+        //
+        // No private-use-area placeholders, no sentinels — direct
+        // char-by-char walk mirroring C's ztokens[c - Pound] mapping
+        // with the brace pair skipped. `$'…'` segments (Qstring/
+        // Stringg + Snull … Snull) get delegated to `crate::lex::
+        // untokenize` on just that slice, which calls
+        // `getkeystring_dollar_quote` internally for the escape
+        // decode.
         let rest: String = {
-            let raw: String = body_chars[idx..].iter().collect();
-            // c:Src/subst.c — the body returned by skipparens(Inbrace,
-            // Outbrace, …) keeps tokenized form throughout. zshrs's
-            // downstream strip_prefix checks (`r.strip_prefix(":-")`,
-            // `r.strip_prefix("#")`, etc.) need ASCII for the operator
-            // characters, but the brace tokens for nested `${...}`
-            // MUST stay tokenized so the recursive paramsubst's
-            // skipparens-equivalent at subst.rs:2896 counts them via
-            // Inbrace/Outbrace exactly like C does. Folding them back
-            // to raw `{`/`}` (the prior unconditional
-            // `crate::lex::untokenize`) made inner braces
-            // indistinguishable from literal replacement-string braces
-            // like `${var/pat/{X}}` → the scanner mis-counted depth.
-            //
-            // Protect Inbrace / Outbrace through `untokenize` by
-            // swapping them to Private-Use-Area placeholders that fall
-            // outside the ITOK range (0x84..0xa1), run the canonical
-            // untokenize (which preserves its multi-char awareness for
-            // Qstring+Snull `$'…'` decoding etc.), then swap back. The
-            // placeholders never collide with real shell text.
-            const INBRACE_PH: char = '\u{e000}'; // Private Use Area
-            const OUTBRACE_PH: char = '\u{e001}';
-            if raw.chars().any(|c| {
+            let raw_chars: Vec<char> = body_chars[idx..].to_vec();
+            let mut out = String::with_capacity(raw_chars.len());
+            let mut i = 0usize;
+            while i < raw_chars.len() {
+                let c = raw_chars[i];
                 let cu = c as u32;
-                (0x84..=0xa1).contains(&cu)
-                    && c != crate::ported::zsh_h::Inbrace
-                    && c != crate::ported::zsh_h::Outbrace
-            }) {
-                let swapped: String = raw
-                    .chars()
-                    .map(|c| match c {
-                        x if x == crate::ported::zsh_h::Inbrace => INBRACE_PH,
-                        x if x == crate::ported::zsh_h::Outbrace => OUTBRACE_PH,
-                        _ => c,
-                    })
-                    .collect();
-                let untoked = crate::lex::untokenize(&swapped);
-                untoked
-                    .chars()
-                    .map(|c| match c {
-                        INBRACE_PH => crate::ported::zsh_h::Inbrace,
-                        OUTBRACE_PH => crate::ported::zsh_h::Outbrace,
-                        _ => c,
-                    })
-                    .collect()
-            } else {
-                raw
+                if (0x84..=0xa1).contains(&cu) {
+                    // `$'…'` ANSI-C string region — find closing Snull
+                    // and let canonical untokenize handle the decode
+                    // (it owns the escape table at lex.rs:4279).
+                    if (c == Qstring || c == Stringg)
+                        && i + 1 < raw_chars.len()
+                        && raw_chars[i + 1] == Snull
+                    {
+                        let mut j = i + 2;
+                        while j < raw_chars.len() && raw_chars[j] != Snull {
+                            j += 1;
+                        }
+                        let end = if j < raw_chars.len() { j + 1 } else { j };
+                        let segment: String = raw_chars[i..end].iter().collect();
+                        out.push_str(&crate::lex::untokenize(&segment));
+                        i = end;
+                        continue;
+                    }
+                    match c {
+                        x if x == Pound => out.push('#'),
+                        x if x == Stringg => out.push('$'),
+                        x if x == Hat => out.push('^'),
+                        x if x == Star => out.push('*'),
+                        x if x == Inpar => out.push('('),
+                        x if x == Outpar => out.push(')'),
+                        x if x == Inparmath => out.push('('),
+                        x if x == Outparmath => out.push(')'),
+                        x if x == Qstring => out.push('$'),
+                        x if x == Equals => out.push('='),
+                        x if x == crate::ported::zsh_h::Bar => out.push('|'),
+                        // Deliberate divergence from canonical
+                        // untokenize: preserve brace tokens so the
+                        // inner skipparens-equivalent at
+                        // subst.rs:2896 counts nested `${…}` via
+                        // Inbrace/Outbrace as C does. Folding them
+                        // to raw `{`/`}` makes inner braces
+                        // indistinguishable from literal replacement
+                        // braces like `${var/pat/{X}}` and the
+                        // scanner mis-counts depth.
+                        x if x == Inbrace => out.push(Inbrace),
+                        x if x == Outbrace => out.push(Outbrace),
+                        x if x == Inbrack => out.push('['),
+                        x if x == Outbrack => out.push(']'),
+                        x if x == Tick => out.push('`'),
+                        x if x == Inang => out.push('<'),
+                        x if x == Outang => out.push('>'),
+                        x if x == OutangProc => out.push('>'),
+                        x if x == Quest => out.push('?'),
+                        x if x == Tilde => out.push('~'),
+                        x if x == Qtick => out.push('`'),
+                        x if x == crate::ported::zsh_h::Comma => out.push(','),
+                        x if x == Dash => out.push('-'),
+                        x if x == Bang => out.push('!'),
+                        // c:Src/exec.c:2098 — `if (c != Nularg)` —
+                        // Snull/Dnull/Nularg drop silently on the
+                        // value-stream path (subst.rs caller). See
+                        // lex.rs:4569 for the full rationale.
+                        x if x == Snull || x == Dnull || x == Nularg => {}
+                        // Preserve Bnull / Bnullkeep — these are the
+                        // lex's escape markers ("next char is user-
+                        // literal"). Downstream consumers of the
+                        // `rest` body include singsub() calls on the
+                        // replacement string (subst.rs:7202-7203 for
+                        // `:/` and 7232+ for `//`/`///`), and singsub
+                        // → stringsubst recognizes Bnull at
+                        // c:Src/subst.c:301 (`else if (c == Bnull)
+                        // … skip; goto cont;`) to skip the marked
+                        // char without treating it as a `$` opener.
+                        // Folding Bnull → `\\` would lose this
+                        // escape semantic — stringsubst's check
+                        // works on Bnull byte, not on the raw
+                        // backslash that follows.
+                        x if x == Bnull => out.push(Bnull),
+                        x if x == Bnullkeep => out.push(Bnullkeep),
+                        _ => out.push(c),
+                    }
+                } else {
+                    out.push(c);
+                }
+                i += 1;
             }
+            out
         };
 
         // (P) indirect: take the var name from somewhere — either
@@ -4700,31 +4748,83 @@ pub fn paramsubst(
             // composition correctly.
             if let Some(sub) = subscript.as_deref() {
                 if !length_op {
-                    // c:Src/subst.c:2681+ — nested expansion result with
-                    // an outer `[N]` subscript: split the result into
-                    // parts, pick the subscript, then let downstream
-                    // arms (case-mod / quote-mod / pad / etc.) apply.
-                    // The previous gate at `casmod == CASMOD_NONE &&
-                    // quotemod == 0` meant `${(C)${(P)name}[1]}`
-                    // dropped the `[1]` entirely and applied `(C)` to
-                    // the joined string. zsh applies subscript FIRST,
-                    // then the outer flag. Bug #195 in docs/BUGS.md.
-                    let parts: Vec<String> =
-                        sv.split_whitespace().map(String::from).collect();
+                    // c:Src/subst.c:2681+ — nested expansion result
+                    // with an outer `[N]` subscript. Two sub-cases:
+                    //
+                    //   (a) ARRAY-shaped inner result (`(@)`-flagged
+                    //       expansion that produced multiple words,
+                    //       captured into `subexp_array_temp`) →
+                    //       `[N]` picks element N, `[N,M]` picks slice.
+                    //
+                    //   (b) Otherwise → SCALAR character subscript
+                    //       per Src/subst.c getindex scalar arm. Real
+                    //       zsh: `${${arr}[2]}` with arr=(hello world)
+                    //       → `e` (char 2 of joined scalar
+                    //       "hello world"); `${${(@f)$(echo myvar)}[1]}`
+                    //       → `m` (char 1 of single-element array
+                    //       collapsed to scalar). Multi-word but
+                    //       NON-@-flagged inner is scalar.
+                    //
+                    // Discriminate via `subexp_array_temp` (set at
+                    // line 4202 only when inner `multsub` produced
+                    // an array AND a temp name was stashed for the
+                    // splat path) AND a >1-element population check
+                    // — single-element arrays collapse to scalar
+                    // character subscript per the empirical real-zsh
+                    // behaviour above. Bug surface:
+                    // `${(P)${${(@f)$(echo $src)}[1]}}` (p_flag_indirects
+                    // megamonster test).
+                    let arr_shape: Option<Vec<String>> = subexp_array_temp
+                        .as_ref()
+                        .and_then(|t| arrays_get(t))
+                        .filter(|a| a.len() > 1);
                     if sub == "@" || sub == "*" {
-                        parts.join(" ")
+                        match arr_shape {
+                            Some(arr) => arr.join(" "),
+                            None => sv,
+                        }
                     } else if let Some((lo_s, hi_s)) = sub.split_once(',') {
                         let lo: i64 = lo_s.trim().parse().unwrap_or(1);
-                        let hi: i64 =
-                            hi_s.trim().parse().unwrap_or(parts.len() as i64);
-                        getarrvalue(&parts, lo, hi).join(" ")
+                        match arr_shape {
+                            Some(arr) => {
+                                let hi: i64 = hi_s.trim().parse().unwrap_or(arr.len() as i64);
+                                getarrvalue(&arr, lo, hi).join(" ")
+                            }
+                            None => {
+                                let hi: i64 = hi_s.trim().parse().unwrap_or(sv.chars().count() as i64);
+                                let n = sv.chars().count() as i64;
+                                let resolve = |k: i64| -> usize {
+                                    let k = if k < 0 { n + k + 1 } else { k };
+                                    if k < 1 { 0 } else if k > n { n as usize } else { (k - 1) as usize }
+                                };
+                                let l = resolve(lo);
+                                let h = if hi == 0 { n as usize } else {
+                                    let k = if hi < 0 { n + hi + 1 } else { hi };
+                                    if k < 1 { 0 } else if k > n { n as usize } else { k as usize }
+                                };
+                                if l >= h { String::new() } else { sv.chars().skip(l).take(h - l).collect() }
+                            }
+                        }
                     } else if let Ok(n) = sub.trim().parse::<i64>() {
-                        let nl = parts.len() as i64;
-                        let idx = if n < 0 { nl + n } else { n - 1 };
-                        if idx >= 0 && (idx as usize) < parts.len() {
-                            parts[idx as usize].clone()
-                        } else {
-                            String::new()
+                        match arr_shape {
+                            Some(arr) => {
+                                let nl = arr.len() as i64;
+                                let idx = if n < 0 { nl + n } else { n - 1 };
+                                if idx >= 0 && (idx as usize) < arr.len() {
+                                    arr[idx as usize].clone()
+                                } else {
+                                    String::new()
+                                }
+                            }
+                            None => {
+                                let nl = sv.chars().count() as i64;
+                                let idx = if n < 0 { nl + n } else { n - 1 };
+                                if idx >= 0 && (idx as usize) < sv.chars().count() {
+                                    sv.chars().nth(idx as usize).map(|c| c.to_string()).unwrap_or_default()
+                                } else {
+                                    String::new()
+                                }
+                            }
                         }
                     } else {
                         sv
@@ -7401,12 +7501,49 @@ pub fn paramsubst(
                     // individually → "XXX". Without (S) the longest
                     // match consumes all "aaa" → single "X". Bug #356.
                     let substr_short = (sub_flags_get() & SUB_SUBSTR) != 0;
+                    // c:Src/pattern.c P_ISSTART / P_ISEND — `(#s)` /
+                    // `(#e)` anchors that compare the absolute string
+                    // position against 0 / `string.len()`. The sliding
+                    // window below slices `cv[q..e]` into a fresh
+                    // String for each candidate, so the matcher loses
+                    // the absolute offset context and `(#s)` would
+                    // trivially pass at every q. C's pattry threads
+                    // the offset through; the Rust matcher doesn't
+                    // (yet), so gate the search bounds here. For an
+                    // alternation `((#s)X|X(#e))` BOTH anchors live in
+                    // the pattern text — restrict the search to q=0
+                    // OR end-positions where the match could end at
+                    // nn. Bug surface: `${x//((#s)…|…(#e))/}` for
+                    // boundary-only whitespace strip
+                    // (zinit_anchored_strip_both_ends megamonster).
+                    let has_start_anchor_global = pat.contains("(#s)");
+                    let has_end_anchor_global = pat.contains("(#e)");
                     let mut q = 0_usize;
                     while q < nn {
                         let mut m: Option<usize> = None;
+                        // c:Src/pattern.c P_ISSTART / P_ISEND — gate
+                        // candidate (q, e) spans by whether the
+                        // pattern's anchors permit them. (#s)-only:
+                        // q must be 0. (#e)-only: e must be nn. Both:
+                        // q==0 OR e==nn (alternation in the pattern).
+                        // Without anchors: any (q, e) is valid.
+                        let anchor_ok = |qx: usize, ex: usize| -> bool {
+                            if has_start_anchor_global && has_end_anchor_global {
+                                qx == 0 || ex == nn
+                            } else if has_start_anchor_global {
+                                qx == 0
+                            } else if has_end_anchor_global {
+                                ex == nn
+                            } else {
+                                true
+                            }
+                        };
                         if substr_short {
                             // Shortest: e walks q+1..=nn ascending.
                             for e in q + 1..=nn {
+                                if !anchor_ok(q, e) {
+                                    continue;
+                                }
                                 let c: String = cv[q..e].iter().collect();
                                 if crate::vm_helper::glob_match_static(&c, &pat) {
                                     m = Some(e);
@@ -7417,6 +7554,9 @@ pub fn paramsubst(
                             // Greedy (default): e walks q+1..=nn
                             // descending.
                             for e in (q + 1..=nn).rev() {
+                                if !anchor_ok(q, e) {
+                                    continue;
+                                }
                                 let c: String = cv[q..e].iter().collect();
                                 if crate::vm_helper::glob_match_static(&c, &pat) {
                                     m = Some(e);
@@ -7686,26 +7826,39 @@ pub fn paramsubst(
                     SKIP_FILESUB.with(|c| c.set(true));
                     let s = untokenize(&singsub(&raw_repl_clone));
                     SKIP_FILESUB.with(|c| c.set(saved_skip));
-                    // Strip `\X` → `X` to mirror the precomputed
-                    // path. Keep `\\` → `\` as a single backslash.
-                    let mut out = String::with_capacity(s.len());
-                    let mut it = s.chars().peekable();
-                    while let Some(c) = it.next() {
-                        if c == '\\' {
-                            if let Some(&nx) = it.peek() {
-                                if nx == '\\' {
-                                    out.push('\\');
+                    // c:Src/subst.c — `\X` strip in unquoted context
+                    // only. QT (DQ) context preserves `\X` literally so
+                    // ANSI-decoded escapes like `\033` survive into
+                    // `print -r --` output. Without the qt gate, the
+                    // per-match `(#b)` backref replacement stripped
+                    // every `\X` even when the caller surrounded the
+                    // expansion with `"…"` — matches the qt-aware
+                    // gate added to the precomputed `repl` path at
+                    // line 7547+. Mirror real zsh:
+                    //   `print -r -- "${p/(#b)(b)/\033X${match[1]}\033}"`
+                    //     → `\033Xb\033` (qt preserves the literal).
+                    if !qt {
+                        let mut out = String::with_capacity(s.len());
+                        let mut it = s.chars().peekable();
+                        while let Some(c) = it.next() {
+                            if c == '\\' {
+                                if let Some(&nx) = it.peek() {
+                                    if nx == '\\' {
+                                        out.push('\\');
+                                        it.next();
+                                        continue;
+                                    }
+                                    out.push(nx);
                                     it.next();
                                     continue;
                                 }
-                                out.push(nx);
-                                it.next();
-                                continue;
                             }
+                            out.push(c);
                         }
-                        out.push(c);
+                        out
+                    } else {
+                        s
                     }
-                    out
                 };
                 // c:Src/subst.c — `${var/#%pat/repl}` anchors the
                 // match at BOTH start AND end (the pattern must
