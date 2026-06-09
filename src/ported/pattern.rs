@@ -1460,7 +1460,31 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                 negate = true;
                 i_b += 1;
             }
+            // c:Src/pattern.c:1456-1459 — `[]...]` exception: when `]` is
+            // the FIRST char inside the class AND another `]` follows
+            // later (so the close is not ambiguous), the first `]` is a
+            // class member. Mirrors `[]x]` matching `]` or `x` in C.
+            if i_b < bb.len() && bb[i_b] == b']' && bb[i_b + 1..].contains(&b']') {
+                chars.push(b']');
+                i_b += 1;
+            }
             while i_b < bb.len() && bb[i_b] != b']' {
+                // c:Src/pattern.c — `\X` inside a class is handled in C
+                // by shtokenize converting it to `Bnullkeep X` upstream;
+                // by the time C's bracket walker runs, the `]` after `\`
+                // doesn't appear as raw `]` so the close-`]` scan
+                // doesn't trip on it. The Rust port may receive raw
+                // `\X` (callers that bypass shtokenize), so handle the
+                // backslash-escape inline: consume `\X` as a literal
+                // class-member byte. Bug surface:
+                // `${q//(#m)[\][()|\\*?#<>~^]/...}` — escaped `]` /
+                // `\\` / etc. inside the class are class members, not
+                // metacharacters.
+                if i_b + 1 < bb.len() && bb[i_b] == b'\\' {
+                    chars.push(bb[i_b + 1]);
+                    i_b += 2;
+                    continue;
+                }
                 if i_b + 1 < bb.len() && bb[i_b] == b'[' && bb[i_b + 1] == b':' {
                     let class_start = i_b + 2;
                     let mut j_b = class_start;
