@@ -2764,6 +2764,73 @@ pub fn paramsubst(
     ret_flags: &mut i32, // c:1625
 ) -> (String, usize, Vec<String>) {
     // c:1625
+    // c:Src/lex.c:1546 + Src/lex.c:1565 — C's lex emits Stringg/Qstring
+    // followed by Inbrace at every `${` opener and the matching Outbrace
+    // at the closer; paramsubst sees only the token form. Rust bridges
+    // and string-literal callers pass raw ASCII `${…}`, so pre-tokenize
+    // the matching brace pair here so the downstream scanner at
+    // subst.rs:2920 reads canonical Inbrace/Outbrace exclusively (drops
+    // the raw-`{`/`}` legs that previously made it a "hybrid scanner").
+    //
+    // Only the outermost `${…}` opened at `start_pos` is tokenized —
+    // nested `${…}` inside come from the lexer (already tokenized) or
+    // arrive raw and would be tokenized on their own recursive
+    // paramsubst entry. Escape-marked braces (`\{`, Bnull `{`) stay
+    // raw so the scanner's `prev != '\\'` and `prev != Bnull` gates
+    // continue to skip them.
+    let s_owned: String = {
+        let raw_chars: Vec<char> = s.chars().collect();
+        // start_pos points at `$` (or Stringg/Qstring); the brace, if
+        // any, sits at start_pos+1.
+        let brace_pos = start_pos + 1;
+        if brace_pos < raw_chars.len() && raw_chars[brace_pos] == '{' {
+            // Walk to find the matching `}` with depth tracking,
+            // honoring the same escape gates the post-tokenize scanner
+            // applies (so the input shape stays unchanged for already-
+            // escaped braces).
+            let mut depth = 1_i32;
+            let mut end = brace_pos + 1;
+            while end < raw_chars.len() && depth > 0 {
+                let ch = raw_chars[end];
+                let prev = if end > 0 { raw_chars[end - 1] } else { '\0' };
+                let prev2 = if end > 1 { raw_chars[end - 2] } else { '\0' };
+                if ch == Inbrace {
+                    depth += 1;
+                } else if ch == '{' {
+                    let dollar_preceded =
+                        prev == '$' && prev2 != '\\' && prev2 != Bnull;
+                    if dollar_preceded {
+                        depth += 1;
+                    }
+                } else if ch == Outbrace {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                } else if ch == '}' && prev != '\\' && prev != Bnull {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                end += 1;
+            }
+            if depth == 0 && end < raw_chars.len() && raw_chars[end] == '}' {
+                let mut out: String = String::with_capacity(s.len());
+                out.extend(raw_chars[..brace_pos].iter()); // up to but not including `{`
+                out.push(Inbrace);
+                out.extend(raw_chars[brace_pos + 1..end].iter()); // body
+                out.push(Outbrace);
+                out.extend(raw_chars[end + 1..].iter());
+                out
+            } else {
+                s.to_string()
+            }
+        } else {
+            s.to_string()
+        }
+    };
+    let s: &str = &s_owned;
     let chars: Vec<char> = s.chars().collect(); // c:1625
     let mut pos = start_pos + 1; // Skip $ or Qstring       // c:1625
     let mut result_nodes = Vec::new(); // c:1625
@@ -2877,12 +2944,6 @@ pub fn paramsubst(
                   // Surfacing site: zinit zi-log message formatter at
                   // zinit.zsh:2191 — `${msg//(#b)…[\{]…/…}`.
                   //
-                  // The proper-port path is to make every intermediate
-                  // step preserve token form (no untokenize on `rest`,
-                  // bridge synthesizers emit tokens) so this scanner
-                  // can be token-only. Until that wider refactor lands,
-                  // this hybrid scanner is the accurate description of
-                  // zshrs's brace-balance contract.
         let mut depth = 1_i32; // c:utils.c:2411
         let mut end = pos; // c:utils.c:2416
         // c:Src/utils.c:2409 skipparens — counts ONLY Inbrace
@@ -2893,50 +2954,21 @@ pub fn paramsubst(
         // runs; raw ASCII `{`/`}` never opens or closes a paramsubst
         // body in C.
         //
-        // RUST-ONLY ADAPTATION: zshrs has external paramsubst callers
-        // (tests at subst.rs:14345+ `psubst_arr`, the fusevm bridge
-        // string synthesizers) that pass paramsubst expressions as
-        // raw Rust string literals — `"${arr[1]}"` etc. — with no
-        // lex pass producing Inbrace/Outbrace tokens. The hybrid
-        // scanner below accepts both forms:
-        //   * Canonical token bytes (`Inbrace`/`Outbrace`) always
-        //     count, matching C exactly when the input came through
-        //     the lex pipeline (preserved end-to-end after the
-        //     `rest` walker at subst.rs:4554 stopped untokenizing
-        //     them).
-        //   * Raw ASCII `{` only counts when preceded by an
-        //     unescaped `$` (the `${` form per c:lex.c:1546). Bare
-        //     `{` in a replacement body (`${var/pat/{X}}` with
-        //     `prev=/`) stays uncounted, matching the C-faithful
-        //     contract that bare braces are literal.
-        //   * Raw ASCII `}` counts when its prev char isn't `\` or
-        //     Bnull — symmetric to the raw `{` gate, paired with
-        //     the canonical Outbrace tokens. `\}` (Bnull }) stays
-        //     literal.
-        // Bug surface: `${var/pat/{X}}` literal-brace pair (fsh-
-        // syntax-highlighting / fzf-tab) + `${x:-${y:-default}}`
-        // nested default (with tokens preserved through `rest`) +
-        // `\${y\}` escape (p10k `_p9k_must_init:8552`).
+        // The pre-tokenize pass at paramsubst entry converts the
+        // outermost `${…}` of any raw-ASCII caller input to
+        // Inbrace/Outbrace before this scanner runs, so the scanner
+        // is now strictly token-counting (1:1 with C's skipparens).
+        // Nested `${…}` inside the body either come through the lex
+        // pipeline already tokenized OR get tokenized on their own
+        // recursive paramsubst entry. Raw `{`/`}` that survives at
+        // this stage is a literal user character — not a paramsubst
+        // brace.
         while end < chars.len() && depth > 0 {
             let ch = chars[end];
-            let prev = if end > 0 { chars[end - 1] } else { '\0' };
-            let prev2 = if end > 1 { chars[end - 2] } else { '\0' };
             if ch == Inbrace {
                 depth += 1; // c:utils.c:2418
-            } else if ch == '{' {
-                let dollar_preceded = prev == '$'
-                    && prev2 != '\\'
-                    && prev2 != '\u{9f}';
-                if dollar_preceded {
-                    depth += 1;
-                }
             } else if ch == Outbrace {
                 depth -= 1; // c:utils.c:2420
-                if depth == 0 {
-                    break;
-                }
-            } else if ch == '}' && prev != '\\' && prev != '\u{9f}' {
-                depth -= 1;
                 if depth == 0 {
                     break;
                 }
