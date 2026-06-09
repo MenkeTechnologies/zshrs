@@ -7683,33 +7683,27 @@ pub fn paramsubst(
                 };
                 let (raw_pat, raw_repl) = split_unescaped(rep);
                 // c:Src/subst.c — unquoted-context replacement: `\X`
-                // escapes get the backslash stripped (`\~` → `~`,
-                // `\$` → `$`, `\n` → `n`, etc.) because the surrounding
-                // unquoted-word pipeline applies the standard shell
-                // escape strip after the substitution. QT (`"…"`)
-                // context preserves `\X` literally — the quoted path
-                // bypasses the strip, matching real zsh (verified:
-                // `x=${p/foo/\~}` → `~`; `x="${p/foo/\~}"` → `\~`).
-                // The strip drops the LITERAL backslash only; Bnull
-                // (`\u{9f}`) markers stay so subsequent untokenize
-                // passes still resolve their escaped content.
-                let raw_repl = if !qt && raw_repl.contains('\\') {
-                    let chars: Vec<char> = raw_repl.chars().collect();
-                    let mut out = String::with_capacity(raw_repl.len());
-                    let mut i = 0;
-                    while i < chars.len() {
-                        if chars[i] == '\\' && i + 1 < chars.len() {
-                            out.push(chars[i + 1]);
-                            i += 2;
-                        } else {
-                            out.push(chars[i]);
-                            i += 1;
-                        }
-                    }
-                    out
-                } else {
-                    raw_repl
-                };
+                // escapes are stripped by the surrounding shell
+                // word-evaluation pipeline AFTER the substitution
+                // (Bnull-marked escapes resolve via remnulargs at the
+                // shtokenize/multsub boundary; raw `\X` escapes get
+                // stripped by stringsubst's `\` handler at c:Src/subst.c:296).
+                //
+                // For inputs where my rest walker at subst.rs:4554
+                // preserves Bnull markers (the canonical lex path),
+                // remnulargs handles the strip on the way out — no
+                // local intervention needed. For inputs where the
+                // replacement contains RAW backslashes (rare, comes
+                // from singsub on runtime-computed strings that
+                // bypassed shtokenize), the trailing untokenize on
+                // the final value will drop them.
+                //
+                // This matches real zsh: `x=${p/foo/\~}` → `~` (the
+                // surrounding unquoted-word eval strips the `\`);
+                // `x="${p/foo/\~}"` → `\~` (DQ context preserves the
+                // `\`). Both paths now flow through the canonical
+                // post-substitution pipeline rather than a hand-
+                // rolled strip in this arm.
                 // c:Src/subst.c:3120-3133 — strip leading `#`/`%`
                 // anchor flag from PAT body. Applies to single replace
                 // `${var/#PAT/REPL}` and `${var/%PAT/REPL}` same as
