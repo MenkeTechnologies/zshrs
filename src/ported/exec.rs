@@ -8541,16 +8541,23 @@ pub fn execcmd_exec(
         // bits. execcmd_compile_head doesn't surface orig_cflags
         // separately, so approximate as the post-strip cflags.
         orig_cflags = cflags;
-        // c:3030-3086 — preargs = args after stripping the precmd
-        // prefix words. The compile_head dispatch returned the strip
-        // count, so apply it.
-        preargs = head_args[dispatch.precmd_skip..].to_vec();
-        // The remainder of args (after the BINF_PREFIX strip) is what
-        // the dispatch sees. Mirror C's `args` mutation: replace the
-        // contents past the head.
+        // c:3030-3086 — strip the precmd-modifier prefix from args.
+        // In C, the walk pulls one arg at a time from `args` into
+        // `preargs` via execcmd_getargs, then uremnodes each
+        // BINF_PREFIX modifier. At loop exit C's `preargs` holds the
+        // dispatch target (1 element) and `args` holds whatever's
+        // left; `joinlists(preargs, args)` (c:3305-3306) splices the
+        // target back onto the head. The net effect is `args` with
+        // the precmd modifiers stripped. We compute that final shape
+        // directly and leave `preargs` empty so the joinlists arm
+        // below is a no-op. Without this, preargs=head_args[skip..]
+        // plus a non-draining args was double-counting every word
+        // when both held the same suffix.
         if let Some(ref mut v) = args {
             v.drain(0..dispatch.precmd_skip);
         }
+        let _ = head_args;
+        preargs.clear();
         // c:3076 — `magic_assign = (hn->flags & BINF_MAGICEQUALS);`
         // — surface via cflags check: if a typeset-family builtin
         // landed, BINF_MAGICEQUALS is in its flags and dispatch
@@ -8558,10 +8565,23 @@ pub fn execcmd_exec(
         if (cflags & BINF_MAGICEQUALS) != 0 && typ != WC_TYPESET as i32 {
             magic_assign = 1;
         }
-        // hn is a pointer to the resolved builtin; the compile_head
-        // walk doesn't return it directly. Mark as None — the
-        // resolution loop below will re-look-up via builtintab.
+        // c:3056 — C's precmd walk sets `hn = builtintab->getnode(...)`
+        // for the dispatch target before breaking at c:3064. The
+        // Rust port's execcmd_compile_head returns is_builtin but
+        // not the entry pointer, and the second resolution loop
+        // below short-circuits on `is_builtin != 0` (c:3423-3426)
+        // without re-resolving. Look up the dispatch target now so
+        // `hn` is non-null at the execbuiltin call (c:4233 /
+        // exec.rs:10177); otherwise execbuiltin returns 1 silently
+        // on a null `bn`.
         hn = None;
+        if is_builtin != 0 {
+            if let Some(target) = args.as_ref().and_then(|v| v.first()) {
+                if let Some(entry) = BUILTINS.iter().find(|b| b.node.nam == *target) {
+                    hn = Some(entry as *const builtin as *mut builtin);
+                }
+            }
+        }
     } else {
         // c:3282-3283 — `else preargs = NULL;`
         // We use an empty preargs to model NULL — C's `preargs` is
@@ -10173,7 +10193,19 @@ pub fn execcmd_exec(
                 }
                 if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) == 0 {
                     // c:4232
-                    let a_vec: Vec<String> = args.clone().unwrap_or_default();
+                    // c:Src/builtin.c:262 — `name = (char *) ugetnode(args);`
+                    // C's execbuiltin consumes args[0] (the command name)
+                    // at entry. zshrs's execbuiltin reads the name from
+                    // `bn->node.nam` instead, so we strip args[0] here
+                    // before the call to match C's post-ugetnode argv
+                    // shape. Without this, e.g. `cmd=pwd; $cmd` reached
+                    // execbuiltin with args=["pwd"] and pwd's
+                    // maxargs=0 check rejected the empty call as
+                    // "too many arguments".
+                    let mut a_vec: Vec<String> = args.clone().unwrap_or_default();
+                    if !a_vec.is_empty() {
+                        a_vec.remove(0);
+                    }
                     let ret = crate::ported::builtin::execbuiltin(
                         a_vec,
                         assigns,

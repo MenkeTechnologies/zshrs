@@ -5287,10 +5287,45 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             eprintln!("{}:{}: permission denied: ", script_name, lineno);
             return Value::Status(126);
         }
-        // Non-empty path: route through the same logic ZshrsHost::exec
-        // uses — intercepts/AOP, command_hash, pre/postexec hooks.
-        let status = with_executor(|exec| exec.host_exec_external(&args));
-        crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
+        // c:Src/exec.c:2900 execcmd_exec — canonical simple-command
+        // dispatcher. Runs precmd-modifier walk (c:3013-3091), then
+        // dispatches to execbuiltin (c:4233) / runshfunc (c:3431+) /
+        // execute (c:4314) per the resolved head. zshrs's bytecode VM
+        // expanded the args before reaching here; we feed them in via
+        // eparams.args and let execcmd_exec do the rest exactly as C
+        // does for static heads. Without this, `c=builtin; $c source X`
+        // skipped the precmd walk and emitted "command not found:
+        // builtin".
+        let mut state = crate::ported::zsh_h::estate {
+            prog: Box::<crate::ported::zsh_h::eprog>::default(),
+            pc: 0,
+            strs: None,
+            strs_offset: 0,
+        };
+        let mut eparams = crate::ported::zsh_h::execcmd_params {
+            args: Some(args),
+            redir: None,
+            beg: 0,
+            varspc: None,
+            assignspc: None,
+            typ: crate::ported::zsh_h::WC_SIMPLE as i32,
+            postassigns: 0,
+            htok: 0,
+        };
+        // input/output=0 → no pipe redirection (use shell stdio
+        // directly); `output != 0` at c:2988 forks immediately. last1=1
+        // marks this as the last/only command (no further pipe stages).
+        crate::ported::exec::execcmd_exec(
+            &mut state,
+            &mut eparams,
+            0,                                    // input  (c:2989)
+            0,                                    // output (c:2988)
+            crate::ported::zsh_h::Z_SYNC as i32,  // how
+            1,                                    // last1=1 last/only
+            -1,                                   // close_if_forked
+        );
+        let status = crate::ported::builtin::LASTVAL
+            .load(std::sync::atomic::Ordering::Relaxed);
         let mut synth = crate::ported::zsh_h::job::default();
         crate::ported::jobs::waitonejob(&mut synth);
         Value::Status(status)

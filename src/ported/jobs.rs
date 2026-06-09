@@ -2931,15 +2931,14 @@ pub fn bin_fg(
                 -1
             }
         } else {
-            // c:Src/jobs.c:2144 — for non-jobspec args (no leading
-            // `%`, not numeric), getjob's findjobnam path fails and
-            // emits `job not found: %s` (not the `%s: no such job`
-            // form which is for the in-use-job check at c:2588). zshrs
-            // shortcuts past getjob for non-`%` args, so the wrong
-            // format leaks. Bug #500.
+            // c:Src/jobs.c:2144 — non-jobspec args. zsh's bin_fg/wait
+            // loop emits one diagnostic and BREAKS the loop on the
+            // first miss (verified vs /bin/zsh: `wait abc def` only
+            // reports `abc`). zshrs previously `continue`d, double-
+            // diagnosing.
             zwarnnam(name, &format!("job not found: {}", arg));
             returnval = 127; // c:Src/jobs.c:2589-2590 — `return 127;`
-            continue;
+            break;
         };
         if p < 0 {
             // c:Src/jobs.c:2580-2582 — `if (job == -1) { retval = 127; break; }`.
@@ -3238,13 +3237,12 @@ pub fn bin_kill(
             None => {
                 zwarnnam(nam, &format!("unknown signal: SIG{}", bare)); // c:2974
                 // c:Src/jobs.c — when `-NAME` lookup fails AND there's
-                // at least one positional remaining (i.e. user really
-                // tried to kill something), zsh emits a follow-up hint
-                // `type kill -L for a list of signals` rc=1.
-                // Verified vs /opt/homebrew/bin/zsh:
-                //   `kill -INVALID 1` →
-                //     "kill:1: unknown signal: SIGINVALID"
-                //     "kill:1: type kill -L for a list of signals"
+                // at least one positional remaining, zsh emits the
+                // follow-up hint `type kill -L for a list of signals`
+                // rc=1. The bundled C source uses capital `-L` (the
+                // tabular listing flag added in zsh 5.9.x-dev). Older
+                // /bin/zsh 5.9 shows lowercase `-l`; the bundled
+                // source AND /opt/homebrew/bin/zsh 5.9.1+ use `-L`.
                 zwarnnam(nam, "type kill -L for a list of signals");
                 return 1;
             }

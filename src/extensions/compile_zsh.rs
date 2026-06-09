@@ -2877,7 +2877,77 @@ impl ZshCompiler {
         // (the `[` looked unquoted post-untokenize), routed
         // through expand_glob, and NOMATCH-errored at runtime
         // even though the brackets are literally inside DQ.
-        let trigger_dollar = unquoted(&untoked, '$') || unquoted(&untoked, '`');
+        // Models c:Src/subst.c:282-330 `stringsubst`. C's expansion
+        // trigger fires on lexer-emitted META tokens — `String`
+        // (\u{85}) / `Qstring` (\u{8c}) for `$`, `Tick` (\u{93}) /
+        // `Qtick` (\u{99}) for backtick. The Rust port can't be a
+        // pure-token check because not every caller into
+        // compile_word_str hands us raw-lexer output: compile_assign's
+        // subscript-key path runs the name through
+        // `untokenize_preserve_quotes` first, so a `$n` subscript
+        // arrives as literal `$n` not `Stringg n`. We accept both
+        // forms; the literal arm is the divergence-from-C the Rust
+        // pipeline forces.
+        //
+        // Walk `s` (markers intact) and suppress while inside a
+        // SINGLE-quoted span. Dnull (DQ) is NOT a suppressor — `"$X"`
+        // and `"$(…)"` still expand in C. Without the SQ-aware walk,
+        // `alias 'foo'='hello $(a || b)/x'` fired trigger_dollar
+        // (because the previous `unquoted(&untoked, '$')` ran on the
+        // Snull-stripped form), routed through expand_word_glob, and
+        // tripped its pattern compiler on the literal `$(...)`.
+        //
+        // ANSI-C marker pair (`Stringg`/`Qstring` immediately followed
+        // by `Snull` — c:301-304 `else if (c == Snull) { ... }`) is
+        // metadata: C handles it via `stringsubstquote`, which decodes
+        // inline without recursing into paramsubst. Our ANSI-C fast
+        // path at lines 2559-2611 above takes pure spans; for
+        // chained/mixed shapes the word falls through to here. Skip
+        // the marker pair so a word like `$'\\e[2m'` doesn't
+        // false-positive.
+        let trigger_dollar = {
+            let chars: Vec<char> = s.chars().collect();
+            let mut inside_sq = false;
+            let mut found = false;
+            let mut i = 0;
+            while i < chars.len() {
+                let c = chars[i];
+                if c == '\u{9d}' {
+                    inside_sq = !inside_sq;
+                    i += 1;
+                    continue;
+                }
+                if !inside_sq
+                    && (c == '\u{85}' || c == '\u{8c}')
+                    && i + 1 < chars.len()
+                    && chars[i + 1] == '\u{9d}'
+                {
+                    i += 1;
+                    continue;
+                }
+                if !inside_sq
+                    && matches!(
+                        c,
+                        // String / Qstring / Tick / Qtick — c:283
+                        // `if ((qt = c == Qstring) || c == String)`
+                        // and c:331 `else if ((qt = c == Qtick) ||
+                        // c == Tick)`.
+                        '\u{85}' | '\u{8c}' | '\u{93}' | '\u{99}'
+                        // Plus literal `$` / `` ` `` — Rust-port
+                        // divergence: untokenize_preserve_quotes
+                        // converts the META forms to ASCII at some
+                        // callers (compile_assign subscript path)
+                        // before reaching here.
+                        | '$' | '`'
+                    )
+                {
+                    found = true;
+                    break;
+                }
+                i += 1;
+            }
+            found
+        };
         // Glob metacharacters arrive in two forms:
         //   - Literal char (`*`, `?`, `[`) — the lexer leaves them
         //     bare in some paths (e.g. SQ-stripped contexts)
@@ -2950,9 +3020,18 @@ impl ZshCompiler {
             // alternatives. Detected by `(`...`|`...`)` shape;
             // expand_glob's expand_glob_alternation helper does
             // the actual top-level-vs-nested check.
-            || (untoked.contains('(')
-                && untoked.contains('|')
-                && untoked.contains(')'))
+            //
+            // Run the check via `unquoted()` against `s` (which still
+            // carries Snull / Dnull markers) so a literal alternation
+            // shape sitting inside `'…'` / `"…"` doesn't trip the
+            // trigger. Without this, `alias 'foo'='hello $(a || b) world'`
+            // had `(`/`|`/`)` literally inside the SQ value; untokenize
+            // dropped the markers and `untoked.contains()` saw them
+            // as unquoted glob alternation, routing the word through
+            // expand_glob which then "bad pattern"-errored at runtime.
+            || ((unquoted(s, '(') || unquoted(s, '\u{88}'))
+                && (unquoted(s, '|') || unquoted(s, '\u{8e}'))
+                && (unquoted(s, ')') || unquoted(s, '\u{8a}')))
             // zsh numeric range glob `<N-M>`: any `<…-…>` shape with
             // optional digits on either side outside a bracket-class.
             || has_numeric_range_glob(&untoked);
@@ -3009,8 +3088,18 @@ impl ZshCompiler {
             }
         }
 
-        if !trigger_dollar && !trigger_glob && !trigger_tilde && !trigger_brace {
+        if !trigger_dollar && !trigger_glob && !trigger_tilde && !trigger_brace && !has_bnull {
             // Pure literal — strip any \0 bslashquote-sentinels.
+            //
+            // Bnull (`\u{9f}`) words have `\X` backslash escapes that
+            // untokenize materializes back to literal `\` — emitting
+            // them as LoadConst would print the raw backslash. C zsh's
+            // c:Src/subst.c prefork → stringsubst → untokenize chain
+            // applies remquotes/remnulargs INSIDE the substitution
+            // walk, stripping the Bnull escape AFTER stringsubst
+            // declines to expand. Route Bnull words through the bridge
+            // so the runtime expand path performs the same unescape;
+            // otherwise `echo \\$X` printed `\$X` instead of `$X`.
             let cleaned = strip_quote_markers(&untoked);
             let idx = self.builder.add_constant(Value::str(cleaned.as_str()));
             self.builder.emit(Op::LoadConst(idx), 0);
@@ -3136,6 +3225,22 @@ impl ZshCompiler {
         let has_quote_markers = s.contains('\u{9d}') || s.contains('\u{9e}');
         if !has_bnull && !has_quote_markers {
             if let Some(name) = bare_var_ref(&untoked) {
+                // c:Src/subst.c — `$#@` / `$#*` are bare-form shorthand
+                // for `${#@}` / `${#*}` (count of positional params).
+                // bare_var_ref returns the two-char name "#@" / "#*";
+                // GET_VAR on that name yields empty. Route to
+                // PARAM_LENGTH("@") / PARAM_LENGTH("*") instead so the
+                // recursive `${#@}` paramsubst path fires.
+                if name == "#@" || name == "#*" {
+                    let inner = &name[1..]; // "@" or "*"
+                    let idx = self.builder.add_constant(Value::str(inner));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_LENGTH, 1),
+                        0,
+                    );
+                    return;
+                }
                 let idx = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 // Special positional names (`argv` / `@` / `*`) in

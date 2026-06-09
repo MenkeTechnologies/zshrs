@@ -8006,6 +8006,23 @@ pub fn bin_alias(
         // c:4523
         let arg = &argv[idx];
         idx += 1;
+        // c:Src/builtin.c:4523 `while ((asg = getasg(&argv, NULL)))`
+        // — empty-name assignment makes getasg call `zerr("bad
+        // assignment")` (c:1927, sets errflag) and return NULL. The
+        // C while-loop exits without setting returnval, so bin_alias
+        // returns 0. /bin/zsh's outer execution checks errflag and
+        // aborts subsequent commands but keeps lastval=0.
+        //
+        // Rust port divergence: the canonical `zerr` here would set
+        // ERRFLAG_ERROR, which zshrs's execcmd_exec promotes to
+        // lastval=1 (different shape from C's "abort but keep
+        // lastval"). Route through `zwarnnam` so the diagnostic
+        // emits without flipping errflag; returnval stays 0 and the
+        // shell rc matches /bin/zsh's observed behavior.
+        if arg.starts_with('=') {
+            zwarnnam(name, "bad assignment");
+            break;
+        }
         if let Some(eq) = arg.find('=') {
             // c:4524 (asg->value.scalar)
             if !OPT_ISSET(ops, b'L') {
@@ -10303,7 +10320,18 @@ pub fn bin_read(
         crate::ported::modules::clone::coprocin
             .load(std::sync::atomic::Ordering::Relaxed)
     } else if OPT_HASARG(ops, b'u') {
-        OPT_ARG(ops, b'u').and_then(|s| s.parse().ok()).unwrap_or(0)
+        // c:Src/builtin.c:6494-6500 — `fdarg = (int)zstrtol(argptr,
+        // &eptr, 10); if (*eptr) { zwarnnam(name, "number expected
+        // after -u: %s", argptr); return 1; }`. zshrs previously
+        // `unwrap_or(0)`d, silently dropping `read -u abc v` errors.
+        let argptr = OPT_ARG(ops, b'u').unwrap_or("");
+        match argptr.parse::<i32>() {
+            Ok(n) => n,
+            Err(_) => {
+                zwarnnam(name, &format!("number expected after -u: {}", argptr));
+                return 1;
+            }
+        }
     } else {
         0
     };

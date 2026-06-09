@@ -1339,21 +1339,21 @@ pub fn scanlistmaps(kmn: &KeymapName, n_nam: &str, list_verbose: bool) {
 /// UNUSED(Keymap km), UNUSED(char **argv), UNUSED(Options ops),
 /// UNUSED(char func))` from Src/Zle/zle_keymap.c:891.
 pub fn bin_bindkey_delall(
-    name: &str,
+    _name: &str,
     _kmname: Option<&str>,
     _km: Option<&Keymap>,
     _argv: &[String],
     _ops: &options,
     _func: i32,
 ) -> i32 {
-    // c:891
-    // C body (c:888-892): `km->flags & KM_IMMUTABLE → 1; else
-    //                      walk km->multi + km->first[256] freeing all`.
-    // Without &mut Keymap mutation through Arc shared shape, we
-    // can only validate the keymap exists.
-    if openkeymap(name).is_none() {
-        return 1;
-    }
+    // c:Src/Zle/zle_keymap.c — `bin_bindkey_delall` body:
+    //   keymapnamtab->emptytable(keymapnamtab);
+    //   default_bindings();
+    //   return 0;
+    // The previous Rust port mis-used `name` (the builtin name
+    // "bindkey", not a keymap name) as a `openkeymap` lookup key and
+    // returned 1 on the inevitable miss. C always succeeds.
+    default_bindings();
     0
 }
 
