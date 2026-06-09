@@ -2991,25 +2991,13 @@ impl ShellExecutor {
             // parity bug #13).
             zerr(&format!("no matches found: {}", pattern)); // c:1877
             self.current_command_glob_failed.set(true);
-            // c:Src/glob.c:1876-1880 + Src/exec.c:1390 — NOMATCH zerr
-            // sets ERRFLAG_ERROR (via utils.c:184) so the CURRENT
-            // simple command aborts with status 1, but the SCRIPT
-            // continues to the next sublist. C zsh's execlist loop
-            // at exec.c:1390 (`while … && !errflag`) reads errflag
-            // and would exit too, except NOMATCH's zerr is matched
-            // by a corresponding clear at the sublist boundary
-            // (the precise C site is sublist post-exec cleanup —
-            // empirically: `zsh -fc 'ls /nope_*; echo after'` prints
-            // `after` despite the no-match zerr). zshrs's BUILTIN_
-            // ERREXIT_CHECK at fusevm_bridge.rs:5505 aborts the
-            // script on errflag in non-interactive mode, so leaving
-            // ERRFLAG_ERROR set after a NOMATCH would skip every
-            // subsequent command. Clear ERRFLAG_ERROR here — the
-            // `current_command_glob_failed` cell already aborts
-            // THIS command via the dispatch guard at
-            // fusevm_bridge.rs:299, matching the C-faithful semantic
-            // of "command fails, script continues" for NOMATCH.
-            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+            // c:Src/glob.c:1876-1880 — zerr sets ERRFLAG_ERROR and
+            // glob_failed cell carries the signal. The ERRFLAG_ERROR
+            // clear (so subsequent sublists run) now lives at the
+            // dispatcher's post-command-boundary at
+            // fusevm_bridge.rs:299 where current_command_glob_failed
+            // is consumed — matches C's execlist behavior of clearing
+            // command-error errflag between sublists.
             return Vec::new(); // c:1880 return
         }
         // Pattern has no glob meta — pass through literally.
