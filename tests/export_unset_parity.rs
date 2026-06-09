@@ -205,12 +205,13 @@ mod export_with_unset {
 mod array_export_zsh {
     use super::*;
 
-    /// In zsh, exported array becomes IFS-joined string in env.
-    /// Bash doesn't support exporting arrays at all. Pin zsh behavior.
+    /// zsh refuses to export non-PATH-style array vars: `typeset -gx arr`
+    /// is accepted but the array doesn't appear in the env passed to `sh`.
+    /// Pin: both shells emit `[]` because `sh` sees an unset `arr`.
+    /// Previously marked divergent; regression-pinned now that zshrs
+    /// agrees.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: exported array join format differs"]
     fn export_array_joins_with_colon() {
-        // Actually zsh joins exported arrays with `:` (PATH-style).
         assert_parity(r#"arr=(a b c); typeset -gx arr; sh -c 'echo "[$arr]"'"#);
     }
 }

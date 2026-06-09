@@ -43,13 +43,13 @@ use crate::ported::string::dupstrpfx;
 use crate::ported::zsh_h::{
     dirsav, hashnode, interact, isset, jobbing, nameddir, opt_name, shfunc, unset, Dash, Marker,
     Meta, Nularg, Pound, Snull, AUTONAMEDIRS, BANGHIST, BEEP, CHASELINKS, CSHJUNKIEQUOTES,
-    DEFAULT_IFS, DVORAK, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK,
+    DEFAULT_IFS, DVORAK, EMULATE_KSH, EMULATE_SH, EMULATION, EXTENDEDGLOB, FDT_EXTERNAL, FDT_FLOCK,
     FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, GLOBDOTS, HISTFLAG_NOEXEC,
-    LAST_NORMAL_TOK, MULTIBYTE, ND_NOABBREV, ND_USERNAME, NICEFLAG_HEAP, NICEFLAG_NODUP,
-    NICEFLAG_QUOTE, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, QT_BACKSLASH,
-    QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE,
-    QT_SINGLE, QT_SINGLE_OPTIONAL, RCQUOTES, RMSTARWAIT, SFC_SUBST, SHINSTDIN, SPECCHARS, XTRACE,
-    ZLE_CMD_TRASH,
+    LAST_NORMAL_TOK, MAGICEQUALSUBST, MULTIBYTE, ND_NOABBREV, ND_USERNAME, NICEFLAG_HEAP,
+    NICEFLAG_NODUP, NICEFLAG_QUOTE, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT,
+    QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE,
+    QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, RCQUOTES, RMSTARWAIT, SFC_SUBST, SHINSTDIN, SPECCHARS,
+    XTRACE, ZLE_CMD_TRASH,
 };
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
 use crate::ported::ztype_h::{
@@ -7064,12 +7064,29 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         // Bug #144/#149 in docs/BUGS.md: previous port mapped ALL
         // ispecial chars to `\<char>`, so `\n`/`\t`/etc. came out
         // as `\<actual-byte>` instead of `$'\n'`/`$'\t'`.
+        //
+        // c:6301-6306 — `=` and `~` are NOT escaped unless one of:
+        //   (B) the char is at position 0 (u == s)
+        //   (C) MAGICEQUALSUBST is set AND the previous byte is `=`
+        //       or `:` (covers `var==val`, `var:=val`)
+        //   (D) the char is `~` AND EXTENDEDGLOB is set
+        // Without these conditions, mid-word `=`/`~` falls through
+        // to the literal-emit path (c:6418-6434).
         let mut result = String::with_capacity(s.len() * 2);
-        for c in s.chars() {
+        let mut prev: char = '\0'; // would-be u[-1]
+        for (i, c) in s.chars().enumerate() {
+            // c:6301-6306 gate for `=`/`~` (condition A/B/C/D).
+            let eq_tilde_gate = if c == '=' || c == '~' {
+                i == 0 // c:6303 u == s
+                    || (isset(MAGICEQUALSUBST) && (prev == '=' || prev == ':')) // c:6304-6305
+                    || (c == '~' && isset(EXTENDEDGLOB)) // c:6306
+            } else {
+                true // c:6302 *u != '=' && *u != '~'
+            };
             if c == '\n' {
                 // c:6366-6371 — newline gets dedicated `$'\n'` form.
                 result.push_str("$'\\n'");
-            } else if ispecial(c) && c.is_ascii() && !c.is_ascii_control() {
+            } else if ispecial(c) && eq_tilde_gate && c.is_ascii() && !c.is_ascii_control() {
                 // c:6385-6395 — printable special → `\<char>`.
                 result.push('\\');
                 result.push(c);
@@ -7094,6 +7111,7 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
             } else {
                 result.push(c);
             }
+            prev = c;
         }
         result
     } else if quote_type == QT_SINGLE {
