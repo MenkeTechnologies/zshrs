@@ -4821,31 +4821,6 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         None => (s, None),
     };
 
-    // c:Src/params.c:4937 argzerosetfn — `$0` assignment routes to the
-    // canonical setter that updates `argzero` (the special static used
-    // by `${0}` lookups) instead of writing to a paramtab entry named
-    // "0". Without this dispatch, `0=relative/path` landed in paramtab
-    // as a regular scalar while `argzero` stayed at the shell binary
-    // path, so the next `$0` read returned the binary path. Bug
-    // surface: zinit's `0="${${(M)0:#/*}:-$PWD/$0}"` make-$0-absolute
-    // pattern (zinit_zero_make_absolute / zinit_zero_cascading_fallback).
-    // Subscripted forms (`0[key]=val`) are not valid for $0 and fall
-    // through to the regular paramtab path which will error appropriately.
-    //
-    // The ARGZERO_GSU vtable is also registered on the "0" Param via
-    // add_special (line ~1555). However the bytecode VM's NAME=VALUE
-    // assignment path (compile_zsh.rs emit + bridge dispatch) bypasses
-    // assignsparam's gsu_s.setfn at params.rs:3767, so this name-string
-    // dispatch is still load-bearing. Removing it requires routing the
-    // VM's scalar-assign through `assignparam`/`assignsparam`'s GSU
-    // arm — a multi-file refactor.
-    if name == "0" && subscript.is_none() {
-        unqueue_signals();
-        let mut dummy = param::default();
-        argzerosetfn(&mut dummy, val.to_string());
-        return None;
-    }
-
     // c:Src/Modules/parameter.c — magic associative-array assignment
     // forms: `functions[name]=body`, `aliases[name]=value`,
     // `dis_functions[name]=body`, `saliases[name]=value`,
@@ -5379,6 +5354,10 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         // special-scalar GSU table — same end-state as if
         // createparamtable had run.
         let gsu_s: Option<Box<gsu_scalar>> = match name {
+            "0" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(ARGZERO_GSU.clone())) // c:225-226 / IPDEF2("0", argzero_gsu, 0)
+            }
             "HOME" => {
                 pm_flags |= PM_SPECIAL as i32;
                 Some(Box::new(HOME_GSU.clone())) // c:248
@@ -5462,6 +5441,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         let pm = tab.get_mut(name).unwrap();
         if pm.gsu_s.is_none() {
             let new_gsu: Option<Box<gsu_scalar>> = match name {
+                "0" => Some(Box::new(ARGZERO_GSU.clone())), // c:225-226
                 "HOME" => Some(Box::new(HOME_GSU.clone())), // c:248
                 "IFS" => Some(Box::new(IFS_GSU.clone())),   // c:245
                 "TERM" => Some(Box::new(TERM_GSU.clone())), // c:250
