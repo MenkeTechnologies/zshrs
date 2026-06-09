@@ -2242,20 +2242,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // negative indices, magic-assoc shape lookup, DQ-join collapse)
     // lives inside paramsubst → fetchvalue → getarg in params.rs.
     //
-    // Sentinel bytes the compile path tags onto `idx` (`\u{02}` =
-    // compile-time DQ, `\u{05}` = outer `(@)` flag, `\u{06}` /
-    // `\u{07}` = outer `(v)`/`(k)` flag) are stripped here because
-    // paramsubst's input must be a valid zsh expression. Context
-    // bumps for DQ / (v) / (k) live in the callers (BUILTIN_EXPAND_TEXT
-    // bumps `in_dq_context`).
+    // Outer-flag dispatch (`(@)` / `(@k)` / `(v)NAME[(I)pat]` / etc.)
+    // routes through BUILTIN_BRIDGE_BRACE_ARRAY at the compile path
+    // (canonical paramsubst flag parser owns dispatch at Src/subst.c:2147+),
+    // so BUILTIN_ARRAY_INDEX receives clean name+key with no sentinel
+    // prefixes.
     vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
-        let mut idx = vm.pop().to_str();
+        let idx = vm.pop().to_str();
         let name = vm.pop().to_str();
-        // c:Src/subst.c — outer-flag dispatch now lives at the compile
-        // path: `(@)` / `(@k)` / `(v)NAME[(I)pat]` / etc. all route
-        // through BUILTIN_BRIDGE_BRACE_ARRAY (= paramsubst direct entry,
-        // canonical flag parser at Src/subst.c:2147+). BUILTIN_ARRAY_INDEX
-        // receives clean name+key with no sentinel prefixes.
         // c:Src/subst.c subscript parsing — when paramsubst re-parses
         // the synthesized `${name[idx]}` body, characters like `'`
         // `"` `\` `$` etc. are LEXER-active inside the `[…]` and get
