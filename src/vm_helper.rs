@@ -3396,6 +3396,9 @@ impl ShellExecutor {
 /// and the VM bridge; `src/ported/*` files inline the compile+match
 /// idiom directly to preserve PORT.md Rule 1 faithfulness.
 pub fn glob_match_static(s: &str, pattern: &str) -> bool {
+    if std::env::var_os("ZSHRS_DEBUG_GLOB").is_some() {
+        eprintln!("[glob_match_static] s={:?} pat={:?}", s, pattern);
+    }
     let Some(prog) = patcompile(pattern, PAT_HEAPDUP as i32, None) else {
         return false;
     };
