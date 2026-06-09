@@ -2913,37 +2913,14 @@ pub fn paramsubst(
     // length, :- :+ := :? defaults, # ## % %% strip, / // replace
     // with anchored # / % variants, :N:M slice, plus a permissive
     // (...)-flag prefix swallow.
-    if c == Inbrace || c == '{' {
-        // c:1885
-        pos += 1; // c:1885 (skip {)
-                  // c:Src/subst.c:1922 `skipparens(Inbrace, Outbrace,
-                  // &outbracep)` — in C, this counts ONLY tokenized
-                  // Inbrace (`\u{8f}`) / Outbrace (`\u{90}`) bytes
-                  // because every `${`-form brace pair is tokenized by
-                  // the lexer (Src/lex.c:1684 add(Stringg); add(Inbrace)
-                  // + the matching c:1565-1578 add(Outbrace)) before
-                  // paramsubst runs.
-                  //
-                  // Rust-port adapter — NOT C-faithful: zshrs's pipeline
-                  // ASCII-folds tokens at several intermediate stages
-                  // (the `rest` computation around line 4438 calls
-                  // `crate::lex::untokenize` on the post-name tail; the
-                  // `:-` / `:=` default-text singsub recurses with
-                  // literal `${...}` braces; bridge synthesizers in
-                  // fusevm_bridge.rs format Rust strings with ASCII
-                  // braces). So the scanner here accepts BOTH the
-                  // canonical token form AND literal ASCII `{`/`}`.
-                  //
-                  // Escape gating: `\{`/`\}` from lex.rs:2479 in DQ
-                  // context lands as literal `\` + `{`/`}` (matching
-                  // C's lex.c:1498-1515 + post-switch add(c) at
-                  // c:1630). Bnull (\u{9f}) + `{`/`}` is the unquoted
-                  // form. Either escape makes the brace transparent to
-                  // the counter — matching the intent that user-
-                  // escaped braces aren't depth-tracking braces.
-                  // Surfacing site: zinit zi-log message formatter at
-                  // zinit.zsh:2191 — `${msg//(#b)…[\{]…/…}`.
-                  //
+    if c == Inbrace {
+        // c:1885 — paramsubst's `${…}` arm. The leading `{` was
+        // tokenized to Inbrace either by the lex pipeline OR by the
+        // pre-tokenize pass at paramsubst entry (see top of
+        // paramsubst). The bare-`{` path is therefore impossible
+        // here; the scanner below only counts canonical
+        // Inbrace/Outbrace tokens.
+        pos += 1; // c:1885 (skip Inbrace)
         let mut depth = 1_i32; // c:utils.c:2411
         let mut end = pos; // c:utils.c:2416
         // c:Src/utils.c:2409 skipparens — counts ONLY Inbrace
