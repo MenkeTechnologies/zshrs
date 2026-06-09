@@ -2481,7 +2481,7 @@ pub fn pattryrefs(
     stringlen: i32,
     _unmetalenin: i32,
     _patstralloc: Option<&Patstralloc>,
-    _patoffset: i32,
+    patoffset: i32,
     nump: Option<&mut i32>,
     begp: Option<&mut Vec<i32>>,
     endp: Option<&mut Vec<i32>>,
@@ -2492,6 +2492,18 @@ pub fn pattryrefs(
         &string[..stringlen as usize]
     };
     let mut state = rpat::new();
+    // c:Src/pattern.c:2334 — `patflags = prog->flags;` C copies the
+    // prog's flags into the file-static `patflags` so subsequent
+    // patmatch calls can read PAT_NOTSTART / PAT_NOTEND inside the
+    // P_ISSTART / P_ISEND arms (c:3393, 3397). Rust mirrors this via
+    // the `patflags` AtomicI32 at pattern.rs:217.
+    //
+    // Without this propagation, `${str:#(#s)PAT}` / `${str:#PAT(#e)}`
+    // anchor checks fired at slice-local offset 0 / slice-local end
+    // regardless of whether the caller meant the slice was an
+    // interior chunk of a larger string (PAT_NOTSTART/PAT_NOTEND
+    // bits exist on the prog precisely so callers can signal this).
+    patflags.store(prog.0.flags, Ordering::Relaxed);
     // Pass the prog's GLOB flags (GF_* + `(#aN)` budget byte) to the
     // matcher. C threads `patglobflags` as a per-thread file-static;
     // the Rust port carries it through a fn param. The PAT_* flags
@@ -2524,12 +2536,20 @@ pub fn pattryrefs(
         // group is only fully captured after its P_CLOSE fired; the
         // matching open-bit `1 << i` would be set after P_OPEN even
         // when the rest of the match later fails to reach P_CLOSE.
+        //
+        // c:Src/pattern.c:2556-2558 — `*begp++ = CHARSUB(patinstart, *sp) + patoffset;`.
+        // `patoffset` is the start position of `string` within the
+        // ORIGINAL string the caller was matching against (used for
+        // paramsubst's sliding-window scan via `${var/PAT/REPL}`). Add
+        // it to every reported beg/end so MBEGIN/MEND / `$match` see
+        // positions relative to the original string, not the local
+        // trial slice.
         if let Some(bv) = begp {
             bv.clear();
             for i in 0..n {
                 let close_bit = 1u32 << (i + NSUBEXP);
                 if (state.captures_set & close_bit) != 0 {
-                    bv.push(state.patbeginp[i] as i32);
+                    bv.push(state.patbeginp[i] as i32 + patoffset);
                 } else {
                     bv.push(0);
                 }
@@ -2540,7 +2560,7 @@ pub fn pattryrefs(
             for i in 0..n {
                 let close_bit = 1u32 << (i + NSUBEXP);
                 if (state.captures_set & close_bit) != 0 {
-                    ev.push(state.patendp[i] as i32);
+                    ev.push(state.patendp[i] as i32 + patoffset);
                 } else {
                     ev.push(0);
                 }
@@ -4418,14 +4438,26 @@ fn patmatch(
                 return None;
             }
             P_ISSTART => {
-                // c:P_ISSTART
-                if s_off != 0 {
+                // c:Src/pattern.c:3392-3394 — `if (patinput != patinstart
+                // || (patflags & PAT_NOTSTART)) fail = 1;`. C bails on
+                // BOTH conditions: local-position-not-zero OR the
+                // caller-set PAT_NOTSTART flag (set by glob.c's
+                // set_pat_start when the test string is an interior
+                // slice of a larger buffer). Read patflags from the
+                // file-static (set at pattryrefs entry from prog flags).
+                if s_off != 0 || (patflags.load(Ordering::Relaxed) & PAT_NOTSTART as i32) != 0 {
                     return None;
                 }
             }
             P_ISEND => {
-                // c:P_ISEND
-                if s_off < string.len() {
+                // c:Src/pattern.c:3396-3398 — `if (patinput < patinend
+                // || (patflags & PAT_NOTEND)) fail = 1;`. Same shape as
+                // P_ISSTART: bail on local-not-at-end OR caller-set
+                // PAT_NOTEND (set by set_pat_end when the suffix was
+                // truncated).
+                if s_off < string.len()
+                    || (patflags.load(Ordering::Relaxed) & PAT_NOTEND as i32) != 0
+                {
                     return None;
                 }
             }
