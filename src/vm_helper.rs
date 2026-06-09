@@ -1780,12 +1780,12 @@ impl ShellExecutor {
                         let _ = Box::from_raw(ptr);
                     }
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
-                        let wrapped = format!("{name}() {{\n{body}\n}}");
-                        let _ = self.execute_script_zsh_pipeline(&wrapped);
+                        let registered = autoload_register_source(name, &body);
+                        let _ = self.execute_script_zsh_pipeline(&registered);
                     }
                 } else if let Some(body) = stub.body.clone() {
-                    let wrapped = format!("{name}() {{\n{body}\n}}");
-                    let _ = self.execute_script_zsh_pipeline(&wrapped);
+                    let registered = autoload_register_source(name, &body);
+                    let _ = self.execute_script_zsh_pipeline(&registered);
                 }
             }
         }
@@ -1848,8 +1848,8 @@ impl ShellExecutor {
                         let _ = Box::from_raw(ptr);
                     }
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
-                        let wrapped = format!("{name}() {{\n{body}\n}}");
-                        let _ = self.execute_script_zsh_pipeline(&wrapped);
+                        let registered = autoload_register_source(name, &body);
+                        let _ = self.execute_script_zsh_pipeline(&registered);
                     } else if load_rc != 0 {
                         // c:Src/exec.c:5713-5719 / 5635-5644 —
                         // `execautofn`'s `if (!loadautofn(...)) return 1`
@@ -1873,8 +1873,8 @@ impl ShellExecutor {
                     // not a fusevm Chunk). Lazy-compile here by feeding
                     // the body through the standard funcdef pipeline so
                     // the next CallFunction op finds the chunk.
-                    let wrapped = format!("{name}() {{\n{body}\n}}");
-                    let _ = self.execute_script_zsh_pipeline(&wrapped);
+                    let registered = autoload_register_source(name, &body);
+                    let _ = self.execute_script_zsh_pipeline(&registered);
                 }
             }
         }
@@ -2808,6 +2808,52 @@ impl ShellExecutor {
     }
 }
 
+// Source-form registration step used by the autoload-load path
+// (`dispatch_function_call` / `run_function_body_only`). Decides
+// whether to feed the file body to the funcdef pipeline VERBATIM
+// (zsh-style: the body's own `function NAME() {...}` definition
+// registers the function on execution) or to WRAP it in
+// `NAME() {...}` (ksh-style or multi-statement: the body is just
+// commands or includes additional statements past the def).
+//
+// The classification mirrors c:Src/exec.c:5725 + 5750 — KSHAUTOLOAD-
+// equivalent vs zsh-style autoload. The structural check is the
+// canonical `stripkshdef` (Src/exec.c:6291, ported at exec.rs:10548):
+// parse the body to Eprog, run stripkshdef, and check whether it
+// returned a stripped (different-length wordcode) Eprog. When it
+// did, the file is the single-funcdef shape `[function] NAME [()] {
+// INNER }`; running the file source directly through the funcdef
+// pipeline registers NAME via the WC_FUNCDEF opcode at
+// fusevm_bridge.rs:6330, matching C's `shf->funcdef = stripkshdef(
+// prog, name)` semantics (the inner body becomes the function's
+// body). When it didn't strip — single statement that isn't a
+// funcdef, or multiple list nodes (e.g. `function ztm() {...}` +
+// trailing `ztm "$@"` self-call) — we fall back to wrap-and-run so
+// the canonical funcdef opcode still fires and any extra
+// statements run inside the registered body, matching C's
+// behavior of using the whole prog as funcdef in that case.
+fn autoload_register_source(name: &str, body: &str) -> String {
+    let stripped = crate::ported::exec::parse_string(body, 0)
+        .map(|prog| {
+            let original_len = prog.prog.len();
+            // stripkshdef returns the input untouched when the prog
+            // doesn't match the single-`function NAME` shape, and a
+            // shorter (body-only) prog when it does. Compare the
+            // wordcode length to detect the strip without owning the
+            // post-strip Eprog (we only need the yes/no answer here).
+            let prog_box = Box::new(prog);
+            crate::ported::exec::stripkshdef(Some(prog_box), name)
+                .map(|p| p.prog.len() != original_len)
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    if stripped {
+        body.to_string()
+    } else {
+        format!("{name}() {{\n{body}\n}}")
+    }
+}
+
 // Push a label onto the static `zsh_eval_context` (port of C's
 // `Src/exec.c:1251-1266`) AND mirror to the paramtab `zsh_eval_context`
 // array entry + tied `ZSH_EVAL_CONTEXT` scalar so the shell-visible
@@ -2944,8 +2990,26 @@ impl ShellExecutor {
             // the literal and exit 0 instead of erroring like zsh —
             // parity bug #13).
             zerr(&format!("no matches found: {}", pattern)); // c:1877
-            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:1877 (zerr side-effect)
             self.current_command_glob_failed.set(true);
+            // c:Src/glob.c:1876-1880 + Src/exec.c:1390 — NOMATCH zerr
+            // sets ERRFLAG_ERROR (via utils.c:184) so the CURRENT
+            // simple command aborts with status 1, but the SCRIPT
+            // continues to the next sublist. C zsh's execlist loop
+            // at exec.c:1390 (`while … && !errflag`) reads errflag
+            // and would exit too, except NOMATCH's zerr is matched
+            // by a corresponding clear at the sublist boundary
+            // (the precise C site is sublist post-exec cleanup —
+            // empirically: `zsh -fc 'ls /nope_*; echo after'` prints
+            // `after` despite the no-match zerr). zshrs's BUILTIN_
+            // ERREXIT_CHECK at fusevm_bridge.rs:5505 aborts the
+            // script on errflag in non-interactive mode, so leaving
+            // ERRFLAG_ERROR set after a NOMATCH would skip every
+            // subsequent command. Clear ERRFLAG_ERROR here — the
+            // `current_command_glob_failed` cell already aborts
+            // THIS command via the dispatch guard at
+            // fusevm_bridge.rs:299, matching the C-faithful semantic
+            // of "command fails, script continues" for NOMATCH.
+            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
             return Vec::new(); // c:1880 return
         }
         // Pattern has no glob meta — pass through literally.

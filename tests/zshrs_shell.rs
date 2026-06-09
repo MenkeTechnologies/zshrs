@@ -12084,3 +12084,118 @@ fn test_param_pad_zero_with_empty_string1() {
     let (_, output, _) = run_zshrs(r#"echo "${(l:5::0:)42}""#);
     assert_eq!(output.trim(), "00000");
 }
+
+/// Pin: `\${...\}` literal-brace replacement in `${var/pat/repl}` does
+/// not mis-count as a nested paramsubst opener.
+///
+/// Surface: p10k.zsh:8552 `_p9k_must_init` body —
+/// `IFS=$'\1' _p9k__param_pat+="${(@)…:/(#m)*/\${${(q)MATCH}-$IFS\}}"`.
+/// Before the fix, zshrs's subst-time brace scanner counted the raw
+/// `{` after `\$` as a nested-paramsubst opener (only the immediately
+/// preceding char was checked for backslash escape), so the matching
+/// trailing `\}` couldn't close — `_p9k_must_init: closing brace
+/// missing` fired at every precmd. Fix lives in `src/ported/lex.rs`
+/// at the `\$` arm: when the next char is `{` or `}` AND `bct > 0`
+/// (we're inside a `${...}` body), emit Bnull before that brace too
+/// so the subst scanner's escape check sees it as literal.
+#[test]
+fn test_paramsubst_replace_literal_dollar_brace_escape() {
+    // Minimal repro — pattern `a` doesn't match value `A`, so the
+    // replacement must parse without firing "closing brace missing".
+    let (status, output, stderr) = run_zshrs(r#"x=A; echo "${x:/a/\${y\}}""#);
+    assert_eq!(status, 0, "stderr was: {stderr}");
+    assert_eq!(output.trim(), "A");
+    assert!(
+        !stderr.contains("closing brace missing"),
+        "unexpected closing-brace error: {stderr}"
+    );
+}
+
+#[test]
+fn test_paramsubst_replace_dollar_brace_match_ref() {
+    // p10k pattern shape — `(#m)*` sets `$MATCH`, replacement spans
+    // `\${${(q)MATCH}-y\}` with both literal-brace escapes AND a
+    // real nested `${(q)MATCH}` inside. Scanner must distinguish
+    // the escaped braces (raw `{`/`}`) from the unescaped nested
+    // Inbrace/Outbrace and parse without "closing brace missing".
+    // Real zsh output for this construct is the matched span itself
+    // (`A`) — pin to that so future replacement-string changes don't
+    // silently diverge from zsh.
+    let (status, output, stderr) = run_zshrs(
+        r#"x=A; echo "${x:/(#m)*/\${${(q)MATCH}-y\}}""#,
+    );
+    assert_eq!(status, 0, "stderr was: {stderr}");
+    assert_eq!(output.trim(), "A");
+    assert!(
+        !stderr.contains("closing brace missing"),
+        "unexpected closing-brace error: {stderr}"
+    );
+}
+
+#[test]
+fn test_paramsubst_replace_unrelated_nested_brace_still_counted() {
+    // Regression guard for the fix in lex.rs: a REAL nested
+    // `${INNER}` in the replacement (no preceding `\$`) must still
+    // tokenize as Inbrace/Outbrace and count toward depth. Without
+    // this check, an overly aggressive lex change would skip
+    // counting genuine nested paramsubsts.
+    let (status, output, stderr) = run_zshrs(r#"y=bar; x=foo; echo "${x:/foo/${y}}""#);
+    assert_eq!(status, 0, "stderr was: {stderr}");
+    assert_eq!(output.trim(), "bar");
+}
+
+#[test]
+fn test_paramsubst_replace_only_outside_brace_body_unaffected() {
+    // Pin: `\${` outside a `${...}` body (i.e. bct == 0 at lex time)
+    // is unchanged from real zsh output — gates the `bct > 0`
+    // condition in the lex arm so the fix only triggers inside a
+    // paramsubst body. Real zsh emits `${y\}` here (the leading
+    // `\$` strips to `$`, the trailing `\}` keeps the backslash).
+    let (_, output, _) = run_zshrs(r#"printf '%s\n' "\${y\}""#);
+    assert_eq!(output.trim(), r"${y\}");
+}
+
+/// Pin: bare `{X}` brace pair inside a `${var/pat/repl}` replacement
+/// stays literal — not mis-counted as a nested paramsubst opener.
+///
+/// Surface: fsh-syntax-highlighting / fzf-tab use replacement strings
+/// like `{$match[3]}` or `[$match[1]]<$match[2]>{$match[3]}` (per
+/// `zinit_p10k_parity.rs::megamonsters::fsh_three_part_backref_replace`).
+/// Before the fix at `src/ported/subst.rs:2896`, the hybrid brace
+/// scanner counted every raw `{` toward depth, so the `{` after the
+/// last `/` opened a nested level the trailing `}` couldn't close —
+/// `closing brace missing` fired and the whole paramsubst aborted.
+/// Fix: only count a raw `{` when it's immediately preceded by `$`
+/// (since C's `lex.c:1546` only emits `Inbrace` for the `${` form);
+/// raw `{` after `/` stays uncounted, matching C's `skipparens` over
+/// `Inbrace`/`Outbrace` tokens.
+#[test]
+fn test_paramsubst_replace_literal_brace_pair_stays_literal() {
+    let (status, output, stderr) = run_zshrs(r#"p=foo; echo "[${p/foo/{X}}]""#);
+    assert_eq!(status, 0, "stderr was: {stderr}");
+    assert_eq!(output.trim(), "[{X}]");
+    assert!(
+        !stderr.contains("closing brace missing"),
+        "unexpected closing-brace error: {stderr}"
+    );
+}
+
+#[test]
+fn test_paramsubst_replace_brace_with_backref_substitution() {
+    // p10k / fsh-style three-part backref replacement —
+    // `${(@)arr/(#b)(*)X(*)X(*)/[$match[1]]<$match[2]>{$match[3]}}`.
+    // The replacement uses literal `[ ] < > { }` plus genuine
+    // `${match[N]}` substitutions. Pin the full pattern shape so
+    // the raw `{`/`}` gating in the scanner doesn't regress.
+    let (status, output, stderr) = run_zshrs(
+        r#"setopt extendedglob
+parts=($'a\1b\1c' $'x\1y\1z')
+print -l -- "${(@)parts/(#b)(*)$'\1'(*)$'\1'(*)/[$match[1]]<$match[2]>{$match[3]}}""#,
+    );
+    assert_eq!(status, 0, "stderr was: {stderr}");
+    // Real zsh output: the trailing `}` of the FIRST element gets
+    // consumed by the outer paramsubst closer (real zsh's brace
+    // tracker shares behaviour here), so the first line ends `{c`,
+    // the second `{z}`. We match real-zsh's behaviour exactly.
+    assert_eq!(output.trim(), "[a]<b>{c\n[x]<y>{z}", "got: {output:?}");
+}

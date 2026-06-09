@@ -4749,7 +4749,31 @@ pub fn bin_typeset(
                 // each element when it contains wildcards.
                 let mut elems: Vec<String> = Vec::with_capacity(raw_elems.len());
                 for re in raw_elems {
+                    // c:Src/glob.c:1230 zglob — `if (... !haswilds(ostr)
+                    // ...) return;` short-circuits before patcompile.
+                    // In C, lexer/prefork preserves Bnull-escape on
+                    // quoted metachars (`'('` becomes `Bnull (`), so
+                    // haswilds returns false on a quoted-paren key.
+                    // zshrs's upstream prefork strips Bnull before
+                    // typeset args land here (see TRACE_TS_RAWV =
+                    // `[40, 31, 40, 31, ...]` — bare `(` without the
+                    // Bnull escape), so haswilds spuriously returns
+                    // true on a literal `(` from `T=( '(' v )`. Guard
+                    // by pre-compiling: if patcompile fails, the
+                    // element can't be a real glob — keep it literal
+                    // (matches the C zglob no-wild short-circuit and
+                    // suppresses the spurious "bad pattern" zerr).
                     if crate::ported::pattern::haswilds(&re) {
+                        let compilable = crate::ported::pattern::patcompile(
+                            &re,
+                            crate::ported::zsh_h::PAT_HEAPDUP as i32,
+                            None,
+                        )
+                        .is_some();
+                        if !compilable {
+                            elems.push(re);
+                            continue;
+                        }
                         let expanded = crate::ported::glob::glob_path(&re);
                         if expanded.is_empty() || (expanded.len() == 1 && expanded[0] == re) {
                             elems.push(re);
@@ -9699,12 +9723,61 @@ pub fn bin_dot(
     crate::ported::utils::set_scriptfilename(Some(arg0.clone())); // c:1592
 
     crate::ported::init::sourcelevel.fetch_add(1, Relaxed); // c:1606
+
+    // c:Src/init.c:1608-1616 — push a funcstack frame with
+    // `tp = FS_SOURCE` so prompt %x / xtrace / `$funcfiletrace`
+    // resolve to the sourced file, not the calling function's
+    // defining file. Without this push, sourcing a script from
+    // inside a function left the funcstack TOP as the function's
+    // own FS_FUNC frame; the prompt %x handler then reported the
+    // function's `filename` (where the function was DEFINED) as
+    // the current source file. Repro: powerlevel10k.zsh-theme's
+    // `__p9k_root_dir=${${(%):-%x}:A:h}` resolved to BIN_DIR
+    // (zinit.zsh's dir) instead of the theme's plugin dir, so the
+    // theme then sourced `$BIN_DIR/internal/p10k.zsh` (no such
+    // file) instead of `$THEME_DIR/internal/p10k.zsh`.
+    let prev_funcstack_lineno = crate::ported::input::lineno.with(|c| c.get()) as i64;
+    let pushed_frame = {
+        let mut stack = crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .unwrap_or_else(|e| {
+                crate::ported::modules::parameter::FUNCSTACK.clear_poison();
+                e.into_inner()
+            });
+        let prev_caller = stack
+            .last()
+            .map(|fs| fs.name.clone())
+            .or_else(|| old_scriptfilename.clone())
+            .or_else(|| Some("zsh".to_string()));
+        let frame = crate::ported::zsh_h::funcstack {
+            prev: None,
+            name: arg0.clone(),           // c:1608 fstack.name = scriptfilename
+            filename: Some(arg0.clone()), // c:1613 fstack.filename = scriptfilename
+            caller: prev_caller,          // c:1609
+            flineno: 0,                   // c:1611
+            lineno: prev_funcstack_lineno, // c:1612
+            tp: crate::ported::zsh_h::FS_SOURCE, // c:1615
+        };
+        stack.push(frame);
+        true
+    };
+
     let result = match fs::read_to_string(&path) {
         // c:6140
         Ok(src) => crate::ported::exec_hooks::execute_script(&src).unwrap_or(1),
         // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
         Err(_) => 128 - 2,
     };
+    if pushed_frame {
+        // c:1643 — `funcstack = funcstack->prev;`
+        let mut stack = crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .unwrap_or_else(|e| {
+                crate::ported::modules::parameter::FUNCSTACK.clear_poison();
+                e.into_inner()
+            });
+        stack.pop();
+    }
     crate::ported::init::sourcelevel.fetch_sub(1, Relaxed); // c:1644
     // c:1666 — `scriptname = old_scriptname;` and matching
     // scriptfilename restore from the c:1667 line.

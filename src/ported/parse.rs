@@ -1786,8 +1786,68 @@ fn par_case() -> Option<ZshCommand> {
 fn par_if() -> Option<ZshCommand> {
     zshlex(); // skip 'if'
 
-    // Parse condition - stops at 'then' or '{' (zsh allows { instead of then)
-    let cond = Box::new(parse_program_until(Some(&[THEN, INBRACE_TOK])));
+    // Parse condition - stops at 'then' or '{' (zsh allows { instead of then).
+    //
+    // Special-case: when the cond starts with `{` (INBRACE_TOK at
+    // the very first token), the `{` could be either
+    //   (a) the if's brace-form body opener — `if { BODY }`, or
+    //   (b) the first command of a brace-group condition — e.g.
+    //       `if { CMD } || { CMD }; then BODY; fi`
+    // (p10k.zsh:8376 uses (b)). Disambiguate by parsing one sublist
+    // (par_sublist handles `{ … } &&/|| { … }` natively); if after
+    // the sublist tok is THEN (with optional separator), treat it
+    // as cond and proceed to then-form. If tok is INBRACE_TOK (the
+    // sublist was a single brace-group → that `{ … }` was actually
+    // the body), restore by re-entering parse_program_until on an
+    // empty cond and falling through to the brace-form arm.
+    let cond_is_brace_open = tok() == INBRACE_TOK;
+    let cond_special: Option<Box<ZshProgram>> = if cond_is_brace_open {
+        let sub = par_sublist();
+        skip_separators();
+        if tok() == THEN || tok() == INBRACE_TOK {
+            // After the sublist, tok==THEN → then-form with the
+            // sublist as cond; tok==INBRACE_TOK → brace-form (the
+            // sublist we just parsed IS the body, mis-claimed).
+            if tok() == THEN {
+                // then-form: wrap the sublist as the cond program.
+                sub.map(|s| {
+                    Box::new(ZshProgram {
+                        lists: vec![ZshList {
+                            sublist: s,
+                            flags: ListFlags::default(),
+                        }],
+                    })
+                })
+            } else {
+                // INBRACE_TOK after a single sublist that started
+                // with `{`: the sublist parse consumed the BODY
+                // brace-group thinking it was a cond statement.
+                // We can't trivially rewind the lexer; surface as a
+                // sentinel so the brace-form arm below errors with
+                // the proper "expected 'then' or '{'" diagnostic.
+                // This case `if { a } { b }` is brace-form with a
+                // brace-group cond and brace-group body — rare in
+                // real code; deferred.
+                None
+            }
+        } else {
+            // Sublist did NOT terminate at THEN/INBRACE — fall back
+            // to the original parse_program_until path which will
+            // handle whatever follows.
+            sub.map(|s| {
+                Box::new(ZshProgram {
+                    lists: vec![ZshList {
+                        sublist: s,
+                        flags: ListFlags::default(),
+                    }],
+                })
+            })
+        }
+    } else {
+        None
+    };
+    let cond = cond_special
+        .unwrap_or_else(|| Box::new(parse_program_until(Some(&[THEN, INBRACE_TOK]))));
 
     skip_separators();
 
@@ -1902,7 +1962,20 @@ fn par_if() -> Option<ZshCommand> {
                     zshlex();
                     skip_separators();
 
-                    let else_use_brace = tok() == INBRACE_TOK;
+                    // Brace-form `else { … }` is only legal when the
+                    // PARENT IF itself was opened brace-form (`if cond
+                    // { … }`). For a `then`-form if, `else { stmt }`
+                    // is `else` followed by a brace-group STATEMENT
+                    // that's part of the else body's statement list,
+                    // which still terminates at `fi`. p10k.zsh:5575
+                    // hits exactly this shape:
+                    //   else
+                    //     { local v=($(<$file)) } 2>/dev/null
+                    //   fi
+                    // The prior port unconditionally consumed the `{`
+                    // as else-brace-opener, then expected the `fi`
+                    // outside the if construct → "expected `done'".
+                    let else_use_brace = use_brace && tok() == INBRACE_TOK;
                     if else_use_brace {
                         zshlex();
                     }
