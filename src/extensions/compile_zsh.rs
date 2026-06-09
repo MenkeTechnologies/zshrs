@@ -4137,45 +4137,26 @@ impl ZshCompiler {
                         return;
                     }
                 }
-                let name_const = self.builder.add_constant(Value::str(base));
-                let key_const = self.builder.add_constant(Value::str(key));
-                self.builder.emit(Op::LoadConst(name_const), 0);
-                self.builder.emit(Op::LoadConst(key_const), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
-                // c:Src/subst.c — `${(flags)NAME[KEY]}` form. The
-                // post-ARRAY_INDEX value needs flag processing. The
-                // bridge wraps as `${(flags){body}}` and re-enters
-                // paramsubst, so we need a sentinel byte that
-                // paramsubst recognizes as "the body is a
-                // PRE-RESOLVED scalar value, apply the flags to it"
-                // — distinct from `\u{01}` which paramsubst uses to
-                // flag `${(flags)"literal"}` as a parse error (zsh
-                // emits "bad substitution" for that form per
-                // subst.rs:3937).
-                //
-                // Bug #128 in docs/BUGS.md: the previous Rust port
-                // used `\u{01}` for BOTH the error case AND the
-                // pre-resolved-value case. paramsubst couldn't
-                // distinguish them and unconditionally errored,
-                // breaking `${(C)a[N]}` / `${(L)a[N]}` / `${(U)a[N]}`
-                // / etc. Use `\u{08}` for the value-passthru form.
-                //
-                // Routing through BUILTIN_BRIDGE_BRACE_ARRAY directly
-                // skipped paramsubst's flag-then-subscript composition
-                // path on `(r)`/`(R)` subscript flags (paramsubst
-                // returned ALL elements processed by outer (L), not
-                // just the matching one) — so the split-path with
-                // `\u{08}` stays until paramsubst's composition gets
-                // fixed.
-                let sentinel = self.builder.add_constant(Value::str("\u{08}"));
-                self.builder.emit(Op::LoadConst(sentinel), 0);
-                self.builder.emit(Op::Swap, 0);
-                self.builder.emit(Op::Concat, 0);
-                let flags_const = self.builder.add_constant(Value::str(flags));
-                self.builder.emit(Op::LoadConst(flags_const), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 2), 0);
+                // c:Src/subst.c — `${(flags)NAME[KEY]}` form. Route
+                // through BUILTIN_BRIDGE_BRACE_ARRAY with the full
+                // inner so paramsubst's canonical flag parser at
+                // Src/subst.c:2147+ handles flag-then-subscript in
+                // one pass. The composition path (outer (L)/(C)/(U) +
+                // subscript (r)/(R)/(i)/(I)) is fixed at subst.rs:9670
+                // — non-splat-subscript casmod now applies to `value`
+                // directly instead of refetching the source array.
+                if let Some(inner) =
+                    untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
+                {
+                    let body_const = self.builder.add_constant(Value::str(inner));
+                    self.builder.emit(Op::LoadConst(body_const), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                        0,
+                    );
+                    return;
+                }
+                let _ = (base, key, flags);
                 return;
             }
         }

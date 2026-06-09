@@ -4255,28 +4255,13 @@ pub fn paramsubst(
         // compile path injected a `\u{01}` sentinel to short-circuit
         // here; removed because the natural path produces the same
         // error.
-        // c:Src/subst.c — `${(flags)NAME[KEY]}` value-passthru
-        // shape. The compile fast path at compile_zsh.rs pre-resolves
-        // the NAME[KEY] lookup to a scalar value, then re-enters
-        // paramsubst via BUILTIN_PARAM_FLAG to apply the flag chain
-        // to that value. The `\u{08}` sentinel marks "rest of body
-        // IS the scalar value — skip name lookup, skip the literal-
-        // operand error". Bug #128 in docs/BUGS.md.
-        //
-        // Pending fix: paramsubst's flag-then-subscript composition
-        // path doesn't compose outer (L)/(C)/(U) with `(r)`/`(R)`
-        // subscript flags correctly (returns all elements processed
-        // instead of just the match). When that fix lands, the
-        // sentinel + split-path can be replaced with a direct
-        // BRIDGE_BRACE_ARRAY route — same shape as `(@)` / shape-flag
-        // chains. r_flag_then_L_lowercase parity test pins the
-        // composition.
-        let mut prefiltered_value: Option<String> = None;
-        if idx < body_chars.len() && body_chars[idx] == '\u{08}' {
-            let val: String = body_chars[idx + 1..].iter().collect();
-            prefiltered_value = Some(val);
-            idx = body_chars.len();
-        }
+        // c:Src/subst.c — `${(flags)NAME[KEY]}` now routes through
+        // BUILTIN_BRIDGE_BRACE_ARRAY at the compile path. paramsubst's
+        // canonical flag parser handles flag-then-subscript composition
+        // inline (composition fix at subst.rs:9670 — non-splat-subscript
+        // casmod applies to `value` instead of refetching the array).
+        // The `\u{08}` pre-resolved-value sentinel is gone.
+        let prefiltered_value: Option<String> = None;
         if subexp_value.is_none() {
             while idx < body_chars.len() {
                 let bc = body_chars[idx];
@@ -9667,13 +9652,20 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| transform(s)).collect();
                 value = new_parts.join(" "); // c:3937
                 split_parts = Some(new_parts); // c:3937
-            } else if has_non_splat_subscript && is_subexp_temp {
-                // Subexp temp + non-splat subscript: value already
-                // holds the picked (single or sliced) result; for
-                // slices the value is the joined slice. To preserve
-                // array shape on slice, re-split on whitespace before
-                // transform. For single-slot, len=1 → transform-then-
-                // join is identity.
+            } else if has_non_splat_subscript {
+                // c:Src/subst.c:2915 — a non-splat subscript (`[N]`,
+                // `[N,M]`, `[(r)pat]`, `[(i)pat]`, `[key]`) collapses the
+                // array shape to the picked result. `value` already
+                // holds that picked result; the casmod transforms it
+                // directly without refetching the source array. For
+                // slices the value is the joined slice — split on
+                // whitespace before transform so each slice element is
+                // case-folded individually (then rejoin). For single-
+                // slot the split is len=1 → transform-then-join is the
+                // identity. Bug surface: `${(L)arr[(r)FOO*]}` was
+                // refetching the full array and lowercasing everything
+                // because the `arrays_get` arm below fired before this
+                // branch — pinned by r_flag_then_L_lowercase parity.
                 let parts: Vec<String> = value
                     .split_whitespace()
                     .map(|s| transform(s))
@@ -9682,6 +9674,7 @@ pub fn paramsubst(
                 if subscript.as_deref().map_or(false, |s| s.contains(',')) {
                     split_parts = Some(parts);
                 }
+                let _ = is_subexp_temp;
             } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| transform(s)).collect();
                 value = new_arr.join(" "); // c:3937
