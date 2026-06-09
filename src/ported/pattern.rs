@@ -1638,13 +1638,28 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             open_off as i64
         }
         b'\\' => {
+            // c:Src/pattern.c — raw `\X` reaches this arm when the
+            // input bypassed shtokenize (Src/glob.c:3565), which is
+            // the path taken by paramsubst callers passing singsub-
+            // computed pattern strings. C's faithful path: shtokenize
+            // converts `\X` (special X) to `Bnullkeep X` (case at
+            // pattern.c:1584), and a `\X` with non-special X stays
+            // raw — both bytes survive to pattern.c's literal-run
+            // default arm. Trailing lone `\` also survives shtokenize
+            // (bslash flag stays 1 to end-of-string, no replacement
+            // fires) and reaches the default-arm literal emission.
+            //
+            // Two arms mirror that:
+            //   - `\X` (off2 in range): emit X as literal. Equivalent
+            //     to Bnullkeep X arm in C's pattern.c — the next byte
+            //     is the user-literal payload.
+            //   - trailing lone `\`: emit `\` as literal. Equivalent
+            //     to C's pattern.c default arm receiving a raw `\`
+            //     byte that survived shtokenize.
             patparse_off.fetch_add(1, Ordering::Relaxed);
             let p = patparse.lock().unwrap();
             let off2 = patparse_off.load(Ordering::Relaxed);
             if off2 >= p.len() {
-                // c:Src/pattern.c — trailing `\` with no char to
-                // escape: emit as literal `\` so the pattern stays
-                // valid (real zsh accepts trailing raw `\` patterns).
                 drop(p);
                 *flagp |= P_SIMPLE;
                 let lit_off = patnode(P_EXACTLY);
