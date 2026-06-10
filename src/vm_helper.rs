@@ -1250,7 +1250,18 @@ impl ShellExecutor {
                     // write, so it correctly tracks "ever assigned".
                     // Bug #143 in docs/BUGS.md.
                     let safe_pm_flags = entry.pm_flags & (PM_TIED | PM_DI | PM_UNSET);
-                    let mut bits = safe_pm_flags | PM_SPECIAL;
+                    // c:Src/params.c — IPDEF macros set PM_TYPE bits
+                    // (PM_INTEGER for IPDEF5/6, PM_ARRAY for IPDEF9,
+                    // PM_HASHED for IPDEF-hash) along with PM_SPECIAL.
+                    // zshrs's previous init only ORed PM_SPECIAL +
+                    // tied/di/unset/readonly — never the type bit. If
+                    // setsparam ran BEFORE init_partab_params (it does
+                    // for OPTIND/SHLVL at vm_helper.rs:874/878), the
+                    // param entry stayed PM_SCALAR and `typeset -p
+                    // OPTIND` emitted `typeset OPTIND=1` instead of
+                    // zsh's `typeset -i10 OPTIND=1`. OR the pm_type
+                    // into the bits so the type attribute lands.
+                    let mut bits = safe_pm_flags | PM_SPECIAL | entry.pm_type;
                     // c:Src/params.c — IPDEF4/IPDEF1 set
                     // PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY |
                     // PM_RO_BY_DESIGN. zshrs masks PM_READONLY out
@@ -1271,6 +1282,9 @@ impl ShellExecutor {
                     let _ = PM_SCALAR;
                     let _ = PM_DONTIMPORT;
                     if let Some(pm) = tab.get_mut(entry.name) {
+                        let was_integer = (pm.node.flags as u32
+                            & crate::ported::zsh_h::PM_INTEGER)
+                            != 0;
                         pm.node.flags |= bits as i32;
                         // c:Src/params.c:344 IPDEF4 / c:353 IPDEF5 — the
                         // C struct literal initialises the `base` field
@@ -1286,6 +1300,27 @@ impl ShellExecutor {
                             && pm.base == 0
                         {
                             pm.base = 10;
+                        }
+                        // When OR-ing PM_INTEGER onto a param that
+                        // was previously PM_SCALAR (i.e. setsparam ran
+                        // BEFORE init_partab_params, storing the value
+                        // in u_str), parse the u_str into u_val so the
+                        // integer getter reads the correct value. C
+                        // zsh's setsparam-equivalent path detects the
+                        // pm's PM_TYPE first and routes through
+                        // intsetfn, but zshrs's setsparam at the bin
+                        // entry point predates init_partab_params, so
+                        // it lands as PM_SCALAR storage that the
+                        // type-flip needs to migrate.
+                        if !was_integer
+                            && entry.pm_type
+                                == crate::ported::zsh_h::PM_INTEGER
+                            && pm.u_val == 0
+                        {
+                            if let Some(ref s) = pm.u_str {
+                                pm.u_val = s.parse::<i64>().unwrap_or(0);
+                                pm.u_str = None;
+                            }
                         }
                         // c:Src/zsh.h IPDEF8/IPDEF9 — the third macro
                         // arg is the tied partner name; mapped into
