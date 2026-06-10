@@ -261,62 +261,72 @@ pub fn bin_zselect(
         return 1; // c:181
     }
 
-    // c:189-243 — build the linked-list of ready fds, then convert
+    // c:186-247 — build the linked-list of ready fds, then convert
     // to the array/hash output. Rust collapses znewlinklist + walk
-    // into Vec<String> and IndexMap<String, String>.
+    // into a Vec<String> matching the flat alternating-or-prefixed
+    // shape C uses; setaparam / sethparam consume the same layout.
     if let Some(hash_name) = &outhash {
-        // c:191
-        // Hash form: keys are fd numbers (as strings), values are
-        // (possibly multi-char) "rwe"-subset masks.
+        // c:198 — Hash form: keys are fd numbers (as strings), values
+        // are (possibly multi-char) "rwe"-subset masks. C builds a
+        // single LinkList with alternating [key, val, key, val, ...]
+        // nodes (c:207-208 walks in pairs); the dedup loop at c:209
+        // appends fdchar[i] to an existing key's value when the same
+        // fd appears in multiple sets (e.g. both readable and writable).
         let mut hash: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
         for ii in 0..3 {
-            // c:194
+            // c:193
             for fd in 0..fdmax {
-                // c:196
+                // c:195
                 if unsafe { libc::FD_ISSET(fd, &fdset[ii]) } {
-                    // c:197
-                    let key = fd.to_string();
+                    // c:196
+                    let key = fd.to_string(); // c:206 convbase(buf, fd, 10)
                     let mask_char = fdchar[ii] as char;
-                    hash.entry(key.clone())
+                    hash.entry(key)
                         .and_modify(|v| {
+                            // c:214 — `if (!strchr(data, fdchar[i]))`
                             if !v.contains(mask_char) {
-                                v.push(mask_char);
+                                v.push(mask_char); // c:218
                             }
                         })
-                        .or_insert_with(|| mask_char.to_string());
+                        .or_insert_with(|| mask_char.to_string()); // c:229-231
                 }
             }
         }
-        // c:241 — `sethparam(hashname, ...);` — encode as key=val tab-joined.
-        let pairs: Vec<String> = hash
-            .into_iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect();
-        crate::ported::params::setsparam(hash_name, &pairs.join("\t"));
+        // c:256-257 — `sethparam(outhash, outdata);` — real assoc
+        // array. Flatten the IndexMap into the alternating [k,v,k,v]
+        // shape sethparam consumes (matches C's outdata layout).
+        let mut flat: Vec<String> = Vec::with_capacity(hash.len() * 2);
+        for (k, v) in hash {
+            flat.push(k);
+            flat.push(v);
+        }
+        crate::ported::params::sethparam(hash_name, flat); // c:257
     } else {
-        // Array form: list of fds preceded by `-r`/`-w`/`-e`.
+        // c:233-243 — Array form: list of fds preceded by `-r`/`-w`/`-e`.
         let mut out: Vec<String> = Vec::new();
         for ii in 0..3 {
-            // c:194
-            let mut emitted_flag = false; // c:213 doneit
+            // c:193
+            let mut doneit = false; // c:194
             for fd in 0..fdmax {
-                // c:196
+                // c:195
                 if unsafe { libc::FD_ISSET(fd, &fdset[ii]) } {
-                    // c:197
-                    if !emitted_flag {
-                        // c:215
-                        out.push(format!("-{}", fdchar[ii] as char)); // c:218
-                        emitted_flag = true; // c:219
+                    // c:196
+                    if !doneit {
+                        // c:235
+                        out.push(format!("-{}", fdchar[ii] as char)); // c:236-239
+                        doneit = true; // c:240
                     }
-                    out.push(fd.to_string()); // c:223 zaddlinknode
+                    out.push(fd.to_string()); // c:242-243
                 }
             }
         }
-        // c:243 — `setaparam(outarray, out);` — colon-join through env shim.
-        crate::ported::params::setsparam(&outarray, &out.join(":"));
+        // c:259 — `setaparam(outarray, outdata);` — real indexed array,
+        // not a colon-joined scalar (which prevented `${reply[1]}`
+        // subscripting from working at all).
+        crate::ported::params::setaparam(&outarray, out);
     }
 
-    0 // c:246
+    0 // c:262
 }
 
 // `bintab` — port of `static struct builtin bintab[]` (zselect.c:271).
