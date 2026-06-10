@@ -2415,7 +2415,43 @@ pub fn map_opt_desc(start: Option<Zoptdesc>) -> Option<Zoptdesc> {
         return None;
     }
 
-    Some(map)
+    // c:1633-1637 — set ZOF_CYC on start, recursively resolve map,
+    // clear ZOF_CYC. The recursion follows the alias chain to its
+    // final destination so a 3+-hop `-M` chain (e.g.
+    // `-foo=bar -bar=baz`) resolves the whole way through.
+    //
+    // Prior Rust port stopped after the FIRST hop, so `-M -foo=bar
+    // -bar=baz` left -foo's value parked on -bar instead of -baz.
+    // The ZOF_CYC bit is what makes the recursion cycle-safe — if a
+    // recursive call walks back to `start`, the c:1630-1631 guard
+    // above bails with None.
+    //
+    // The bit-flip is mutated on the IN-MEMORY desc list (OPT_DESCS)
+    // so the recursive call sees ZOF_CYC set when it reaches start.
+    {
+        let mut head = OPT_DESCS.lock().unwrap();
+        let mut cur = head.as_deref_mut();
+        while let Some(p) = cur {
+            if p.name == s.name {
+                p.flags |= ZOF_CYC;
+                break;
+            }
+            cur = p.next.as_deref_mut();
+        }
+    }
+    let resolved = map_opt_desc(Some(map)); // c:1635
+    {
+        let mut head = OPT_DESCS.lock().unwrap();
+        let mut cur = head.as_deref_mut();
+        while let Some(p) = cur {
+            if p.name == s.name {
+                p.flags &= !ZOF_CYC;
+                break;
+            }
+            cur = p.next.as_deref_mut();
+        }
+    }
+    resolved // c:1638
 }
 
 /// Port of `static void add_opt_val(Zoptdesc d, char *arg)` from
