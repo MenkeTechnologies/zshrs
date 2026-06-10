@@ -89,12 +89,32 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {
         // inner block too because mmap(len=0) returns MAP_FAILED.
         return;
     }
+    // c:89-90 — `mmap((caddr_t)0, len, PROT_READ|PROT_WRITE,
+    //                   MMAP_ARGS, fd, (off_t)0)`. MMAP_ARGS at c:56
+    //                   is `MAP_FILE | MAP_VARIABLE | MAP_SHARED |
+    //                   MAP_NORESERVE`. MAP_FILE and MAP_VARIABLE are
+    //                   legacy aliases (`#define ... 0` on most modern
+    //                   platforms per c:47-52). MAP_NORESERVE matters
+    //                   on Linux — tells the kernel not to reserve
+    //                   swap for the mapping, avoiding OOM rejection
+    //                   on large $mapfile assigns. Prior port used
+    //                   only MAP_SHARED, missing MAP_NORESERVE.
+    let map_flags: libc::c_int = {
+        #[cfg(target_os = "linux")]
+        {
+            libc::MAP_SHARED | libc::MAP_NORESERVE
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            libc::MAP_SHARED
+        }
+    };
     let mmptr = unsafe {
         libc::mmap(
             std::ptr::null_mut(),
             len,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_SHARED,
+            map_flags,
             fd,
             0,
         )
