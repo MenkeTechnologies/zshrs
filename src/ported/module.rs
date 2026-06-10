@@ -2448,32 +2448,33 @@ impl modulestab {
     /// bracket so the setsparam doesn't echo errors out.
     /// WARNING: param names don't match C — Rust=(name, module, flags) vs C=(module, pnam, flags)
     pub fn add_autoparam(&mut self, name: &str, module: &str, flags: i32) -> i32 {
-        // c:1202
-        let _ret: i32;
-        // c:1207 noerrs = 2; queue_signals(); checkaddparam clash check
-        crate::ported::signals::queue_signals(); // c:1209
-                                                 // checkaddparam returns 0 ok, 1 hard-fail (already-printed
-                                                 // message), 2 soft-fail with `-i`. Rust ledger: presence in
-                                                 // `autoload_params` is the clash signal.
-        let exists = self.autoload_params.contains_key(name); // c:1210
-        if exists {
-            unqueue_signals(); // c:1211
-                               // c:1213-1219 — 2-vs-0 mapping for `-i`/normal case.
+        // c:1198
+        // Faithful port of c:1198-1228 routes through the free
+        // add_autoparam fn (293c041e2f) which already does the full
+        // checkaddparam + setsparam + PM_AUTOLOAD (+PM_AUTOALL) +
+        // noerrs/queue_signals bracket.
+        //
+        // Prior method was a ledger-only HashMap insert that did the
+        // queue_signals dance without ever calling setsparam — so
+        // PM_AUTOLOAD never landed on the canonical paramtab entry,
+        // and `typeset +` wouldn't see the 'undefined NAME' shape.
+        //
+        // The free fn returns 0 / -1 (vs C's 0 / 1 / -1) — preserve
+        // the existing method-level contract by mapping -1 → 1 below.
+        let r = add_autoparam(module, name, flags); // c:1198
+        if r != 0 {
+            // c:1213-1219 — error: 2 (FEAT_IGNORE soft-fail) maps to
+            // 0 here per the prior method contract.
             if (flags & FEAT_IGNORE) != 0 {
-                return 0; // c:1219 ret==2 → 0
+                return 0;
             }
-            return -1; // c:1219 ret==1 → -1
+            return r; // -1 → -1
         }
-        // c:1222-1227 — noerrs=2; setsparam; PM_AUTOLOAD (+PM_AUTOALL if FEAT_AUTOALL)
+        // c:1218-1221 success: also keep the ledger entry up so the
+        // resolve_autoload_param fast path stays consistent.
         self.autoload_params
-            .insert(name.to_string(), module.to_string()); // c:1223 setsparam
-        let _ = PM_AUTOLOAD; // c:1224 pm->flags |= PM_AUTOLOAD
-        if (flags & FEAT_AUTOALL) != 0 {
-            // c:1225
-            let _ = PM_AUTOALL; // c:1226
-        }
-        unqueue_signals(); // c:1231
-        0 // c:1227,1233 ret=0
+            .insert(name.to_string(), module.to_string());
+        0
     }
 
     /// Port of `static int del_autoparam(const char *modnam, const char *pnam,
@@ -2493,49 +2494,23 @@ impl modulestab {
     /// unload", 0 = success. FEAT_IGNORE masks both error returns.
     /// WARNING: param names don't match C — Rust=(name, flags) vs C=(modnam, pnam, flags)
     pub fn del_autoparam(&mut self, name: &str, flags: i32) -> i32 {
-        // c:1240
-        // c:1242 — `gethashnode2(paramtab, pnam)`. Rust paramtab lookup.
-        let pm_flags = paramtab()
-            .read()
-            .ok()
-            .and_then(|t| t.get(name).map(|p| p.node.flags));
-        match pm_flags {
-            None => {
-                // c:1244 if (!pm)
-                // c:1245-1246 — `if (!(flags & FEAT_IGNORE)) return 2;`
-                // Also check autoload_params: a name only in the autoload
-                // ledger (no live Param entry yet) is the same as "not
-                // present" from C's perspective.
-                if !self.autoload_params.contains_key(name) {
-                    if (flags & FEAT_IGNORE as i32) == 0 {
-                        return 2; // c:1246
-                    }
-                    return 0;
-                }
-                // Cleanup the autoload ledger entry.
-                self.autoload_params.remove(name);
-                0 // c:1254
-            }
-            Some(f) if (f as u32 & PM_AUTOLOAD) == 0 => {
-                // c:1247
-                // c:1248-1249 — real param, not just autoload → return 3.
-                if (flags & FEAT_IGNORE as i32) == 0 {
-                    // c:1248
-                    return 3; // c:1249
-                }
-                0 // c:1254
-            }
-            Some(_) => {
-                // c:1252 — `unsetparam_pm(pm, 0, 1);` — the param is
-                // marked PM_AUTOLOAD so just removing it from paramtab
-                // (the Rust analog of unsetparam_pm) is the right move.
-                if let Ok(mut t) = paramtab().write() {
-                    t.remove(name); // c:1252
-                }
-                self.autoload_params.remove(name);
-                0 // c:1254
-            }
+        // c:1234
+        // Faithful port of c:1234-1248 routes through the free
+        // del_autoparam fn (293c041e2f) which does the canonical
+        // paramtab probe + PM_AUTOLOAD gate + unsetparam_pm.
+        //
+        // Prior method walked paramtab directly and emulated the
+        // PM_AUTOLOAD gate inline; routing through the free fn keeps
+        // the logic single-sourced so PM_AUTOLOAD semantics evolve
+        // in one place. Ledger cleanup preserved on the success path.
+        let r = del_autoparam("", name, flags); // c:1234 (modnam unused per UNUSED())
+        if r == 0 {
+            // c:1246 — `unsetparam_pm` already ran via the free fn;
+            // also drop the ledger entry so resolve_autoload_param
+            // stops returning the stale module name.
+            self.autoload_params.remove(name);
         }
+        r
     }
 
     // ------- Feature enable/disable (from module.c features_/enables_) -------
