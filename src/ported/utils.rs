@@ -9396,7 +9396,7 @@ fn posixzero_lock() -> &'static Mutex<Option<String>> {
 }
 
 // WARNING: NOT IN UTILS.C — see scriptname_lock above.
-fn noerrs_lock() -> &'static Mutex<i32> {
+pub fn noerrs_lock() -> &'static Mutex<i32> {
     NOERRS.get_or_init(|| Mutex::new(0))
 }
 

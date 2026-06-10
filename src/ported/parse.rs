@@ -803,7 +803,10 @@ pub fn parse_list() -> Option<eprog> {
     if tok() != ENDINPUT {
         clear_hdocs();
         set_tok(LEXERR);
-        yyerror("syntax error");
+        // c:Src/parse.c:708 — `yyerror(0);`. C-faithful invocation;
+        // the message format ("parse error near `X'") is built
+        // inside yyerror from zshlextext/tokstr().
+        yyerror(0);
         return None;
     }
     Some(bld_eprog(false))
@@ -1500,7 +1503,8 @@ fn par_case() -> Option<ZshCommand> {
         // terminates rc=0 otherwise). Bug #400.
         if tok() == ENDINPUT || tok() == LEXERR {
             set_incasepat(0);
-            yyerror("unmatched `case'");
+            crate::ported::utils::zerr("unmatched `case'");
+            yyerror(0);
             break;
         }
 
@@ -2370,7 +2374,8 @@ pub fn par_dinbrack() -> Option<()> {
     let _ = par_cond(); // c:1817
     if tok() != DOUTBRACK {
         // c:1818
-        yyerror("missing ]]");
+        crate::ported::utils::zerr("missing ]]");
+        yyerror(0);
         return None;
     }
     set_incond(0); // c:1820
@@ -2792,7 +2797,8 @@ pub fn par_cond_2() -> i32 {
             condlex();
         }
         if tok() != OUTPAR_TOK {
-            yyerror("missing )");
+            crate::ported::utils::zerr("missing )");
+            yyerror(0);
             return 0;
         }
         condlex();
@@ -2833,7 +2839,8 @@ pub fn par_cond_2() -> i32 {
             }
             return par_cond_double("-n", &s1);
         }
-        yyerror("condition expected");
+        crate::ported::utils::zerr("condition expected");
+        yyerror(0);
         return 0;
     }
     condlex();
@@ -2848,7 +2855,8 @@ pub fn par_cond_2() -> i32 {
             condlex();
         }
         if tok() != STRING_LEX {
-            yyerror("string expected");
+            crate::ported::utils::zerr("string expected");
+            yyerror(0);
             return 0;
         }
         let s3 = tokstr().unwrap_or_default();
@@ -2874,7 +2882,8 @@ pub fn par_cond_2() -> i32 {
             }
             return par_cond_multi(&s1, &[]);
         }
-        yyerror("syntax error");
+        crate::ported::utils::zerr("syntax error");
+        yyerror(0);
         return 0;
     }
     let s2 = tokstr().unwrap_or_default();
@@ -3122,32 +3131,109 @@ pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {
 /// and sets errflag. zshrs pushes onto errors which the
 /// caller drains via parse()'s Result return.
 /// WARNING: param-name divergence — Rust takes `&str message`, C takes
-/// `int noerr`. The Rust callers pass user-meaningful messages
-/// (`"missing ]]"`, `"condition expected"`); the C body collects the
-/// offending token via `dupstring(zshlextext)` for the error string.
-/// This Rust adapter:
-///   1. Uses the caller-supplied message verbatim if non-empty.
-///   2. Skips the `histdone & HISTFLAG_NOEXEC` and `errflag & ERRFLAG_INT`
-///      gates per c:2746 (printing only when neither is set) — the
-///      ERRFLAG_INT check is the load-bearing guard.
-///   3. Sets ERRFLAG_ERROR per c:2753 (noerr=0 path always taken).
-pub fn yyerror(msg: &str) {
+/// Port of `static void yyerror(int noerr)` from `Src/parse.c:2733`.
+///
+/// Faithful C body (verbatim):
+/// ```c
+/// int t0; char *t;
+/// if ((t = dupstring(zshlextext))) untokenize(t);
+/// for (t0 = 0; t0 != 20; t0++)
+///     if (!t || !t[t0] || t[t0] == '\n') break;
+/// if (!(histdone & HISTFLAG_NOEXEC) && !(errflag & ERRFLAG_INT)) {
+///     if (t0) {
+///         t = metafy(t, t0, META_STATIC);
+///         zwarn("parse error near `%s%s'", t, t0 == 20 ? "..." : "");
+///     } else
+///         zwarn("parse error");
+/// }
+/// if (!noerr && noerrs != 2)
+///     errflag |= ERRFLAG_ERROR;
+/// ```
+///
+/// `zshlextext` is the C lexer's current-token text (`Src/lex.c:170`
+/// `char *tokstr`); zshrs's equivalent is `lex::tokstr()`. The "20"
+/// is C's tail-truncation length for the error message.
+pub fn yyerror(noerr: i32) {
     // c:2733
-    let int_flagged = (errflag.load(Ordering::SeqCst) & crate::ported::zsh_h::ERRFLAG_INT) != 0;
-    if !int_flagged {
-        // c:2746
-        let body = if msg.is_empty() {
-            "parse error".to_string()
+    // c:2738 — `if ((t = dupstring(zshlextext))) untokenize(t);`.
+    // In C, `zshlextext` falls back to `tokstrings[tok]` (lex.c:1965)
+    // for punctuation tokens that didn't capture a tokstr — that's
+    // how "parse error near `)'" gets the `)` for OUTPAR. Mirror by
+    // consulting `lex::tokstring(tok())` when the captured tokstr is
+    // None.
+    let t_opt: Option<String> = match crate::ported::lex::tokstr() {
+        Some(raw) => Some(crate::ported::lex::untokenize(&raw).to_string()),
+        None => {
+            let t = crate::ported::lex::tok();
+            let i = t as usize;
+            if i < crate::ported::lex::tokstrings.len() {
+                crate::ported::lex::tokstrings[i].map(|s| s.to_string())
+            } else {
+                None
+            }
         }
-        // c:2751
-        else {
-            format!("parse error: {msg}")
-        }; // c:2748
-        zwarnnam("zsh", &body);
+    };
+    let t_bytes: Vec<u8> = t_opt
+        .as_ref()
+        .map(|s| s.as_bytes().to_vec())
+        .unwrap_or_default();
+
+    // c:2741-2743 — `for (t0 = 0; t0 != 20; t0++) if (!t || !t[t0]
+    //   || t[t0] == '\n') break;`
+    let mut t0: usize = 0;
+    while t0 != 20 {
+        // c:2741
+        let stop = t_opt.is_none()
+            || t0 >= t_bytes.len()
+            || t_bytes[t0] == 0
+            || t_bytes[t0] == b'\n';
+        if stop {
+            break;
+        }
+        t0 += 1;
     }
-    // c:2753 — `if (!noerr && noerrs != 2) errflag |= ERRFLAG_ERROR;`
-    errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
+
+    // c:2744 — `if (!(histdone & HISTFLAG_NOEXEC) && !(errflag &
+    //   ERRFLAG_INT))`. The HISTFLAG_NOEXEC gate suppresses warnings
+    //   from history-recall paths that aren't actually executing.
+    let histdone_v = crate::ported::hist::histdone.load(Ordering::SeqCst);
+    let hist_noexec =
+        (histdone_v & crate::ported::zsh_h::HISTFLAG_NOEXEC as i32) != 0;
+    let int_flagged =
+        (errflag.load(Ordering::SeqCst) & crate::ported::zsh_h::ERRFLAG_INT) != 0;
+    if !hist_noexec && !int_flagged {
+        // c:2744
+        if t0 != 0 {
+            // c:2745
+            // c:2746 — `t = metafy(t, t0, META_STATIC);` — re-metafy
+            //   the truncated head so embedded Meta bytes display
+            //   correctly. The Rust port already holds an untokenized
+            //   string; use the byte slice [0..t0] directly.
+            let head =
+                std::str::from_utf8(&t_bytes[..t0]).unwrap_or_default();
+            let suffix = if t0 == 20 { "..." } else { "" };
+            crate::ported::utils::zwarn(&format!(
+                "parse error near `{}{}'",
+                head, suffix
+            )); // c:2747
+        } else {
+            // c:2748
+            crate::ported::utils::zwarn("parse error"); // c:2749
+        }
+    }
+    // c:2751 — `if (!noerr && noerrs != 2) errflag |= ERRFLAG_ERROR;`.
+    //   The `noerrs != 2` gate (suppress-only-fatal-errors) is preserved
+    //   for parity with zerr/zwarn's matching check.
+    let noerrs_v = *crate::ported::utils::noerrs_lock().lock().unwrap();
+    if noerr == 0 && noerrs_v != 2 {
+        // c:2751
+        errflag.fetch_or(
+            crate::ported::zsh_h::ERRFLAG_ERROR,
+            Ordering::SeqCst,
+        ); // c:2752
+    }
 }
+
 
 // ============================================================
 // Eprog runtime ops (parse.c:2767-2853)
@@ -7597,7 +7683,9 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
             // empty. Bug #529 in docs/BUGS.md. Emit yyerror
             // mirroring the C behaviour; the broken script then
             // surfaces the parse error to the caller.
-            yyerror("");
+            // c:Src/parse.c — empty-msg yyerror call mapped to the
+            // C-faithful `yyerror(0)` (zshrs's previous shape).
+            yyerror(0);
             break;
         }
 
@@ -7833,7 +7921,57 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                     }
                 }
             }
-            None => break,
+            None => {
+                // c:Src/parse.c:671-680 par_event — when par_list
+                // (the AST-shape par_event for zshrs) fails to parse,
+                // C sets `tok = LEXERR` and calls `yyerror(0)` if
+                // errflag was already set, else `yyerror(1)` followed
+                // by `herrflush()`. Either way the parse error is
+                // emitted with the "near `X'" tail derived from
+                // zshlextext/tokstr().
+                //
+                // c:Src/lex.c:1965 — `zshlextext = tokstrings[tok]`
+                // is set DURING zshlex, before set_tok(LEXERR) here.
+                // zshrs's zshlex doesn't update LEX_TOKSTR for
+                // single-char punctuation tokens (OUTPAR/INPAR/etc.),
+                // so by the time yyerror runs, tokstr() is None and
+                // the tail "near `)'" is lost. Inject the current
+                // tok's canonical text into LEX_TOKSTR here so the
+                // C-faithful yyerror lookup finds it. Mirrors the
+                // visible effect of C's zshlextext fallback.
+                let already_flagged = (errflag.load(Ordering::SeqCst)
+                    & crate::ported::zsh_h::ERRFLAG_ERROR)
+                    != 0;
+                let offending_tok = tok();
+                if crate::ported::lex::tokstr().is_none() {
+                    let i = offending_tok as usize;
+                    if i < crate::ported::lex::tokstrings.len() {
+                        if let Some(s) = crate::ported::lex::tokstrings[i] {
+                            crate::ported::lex::set_tokstr(Some(
+                                s.to_string(),
+                            ));
+                        }
+                    }
+                }
+                set_tok(LEXERR); // c:672
+                yyerror(if already_flagged { 0 } else { 1 });
+                // c:Src/parse.c:679-680 — `if (noerrs != 2) errflag |=
+                // ERRFLAG_ERROR;`. C sets errflag explicitly after the
+                // yyerror(1) print-only branch. Without this, the
+                // caller (`execute_script_zsh_pipeline` here, `bin_eval`
+                // for the parse_string path) can't distinguish "no
+                // parse error" from "parse error already printed", so
+                // $? stays at 0 after `eval ')foo'`.
+                let noerrs_v =
+                    *crate::ported::utils::noerrs_lock().lock().unwrap();
+                if noerrs_v != 2 {
+                    errflag.fetch_or(
+                        crate::ported::zsh_h::ERRFLAG_ERROR,
+                        Ordering::SeqCst,
+                    );
+                }
+                break;
+            }
         }
     }
 
@@ -8613,7 +8751,8 @@ fn parse_cond_not() -> Option<ZshCond> {
         // a parse error so the script aborts cleanly instead of
         // silently swallowing every following command. Bug #538.
         if tok() == OUTPAR_TOK {
-            yyerror("condition expected");
+            crate::ported::utils::zerr("condition expected");
+            yyerror(0);
             return None;
         }
         let inner = parse_cond_expr()?;
