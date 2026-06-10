@@ -77,7 +77,29 @@ pub fn reverse_strftime(
             return 1; // c:68
         }
     };
-    let year = parsed.year.or_else(|| parsed.year_div_100.zip(parsed.year_mod_100).map(|(d, m)| d * 100 + m)).unwrap_or(1970);
+    // c:59-61 — `memset(&tm, 0, sizeof(tm)); tm.tm_isdst = -1; tm.tm_mday = 1;`
+    //
+    // C zero-fills the struct tm and then sets tm_isdst=-1 + tm_mday=1.
+    // tm.tm_year IS LEFT AT 0, which means "year since 1900" → 1900.
+    // mktime() on a 0-year tm with a parsed time-of-day produces an
+    // epoch around 1900-01-01 (a large negative number on 64-bit
+    // systems).
+    //
+    // Prior Rust port defaulted to 1970 — convenient (positive epoch)
+    // but divergent from C. `strftime -r '%H:%M' '14:30'`:
+    //   - C zsh:    -2208988800 + 14*3600 + 30*60 = -2208938400
+    //   - Prior Rust: 50400 (1970-01-01 14:30:00)
+    // For a user pipelining the result to e.g. another strftime call,
+    // the year difference matters.
+    let year = parsed
+        .year
+        .or_else(|| {
+            parsed
+                .year_div_100
+                .zip(parsed.year_mod_100)
+                .map(|(d, m)| d * 100 + m)
+        })
+        .unwrap_or(1900); // c:59 — tm_year=0 means 1900.
     let month = parsed.month.unwrap_or(1);
     let day = parsed.day.unwrap_or(1);
     let hour = parsed.hour_div_12.zip(parsed.hour_mod_12).map(|(d, m)| (d * 12 + m) as u32).unwrap_or(0);
