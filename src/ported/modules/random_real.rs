@@ -76,10 +76,23 @@ pub fn _zclz64(x: u64) -> i32 {
 // random_64bit(void)                                                 c:83
 // =====================================================================
 
+// c:84 — `if (errno)` in random_real() expects random_64bit to set
+// errno on failure. Rust doesn't carry errno through Result types, so
+// mirror via this thread-local flag (per-thread like C's errno).
+// random_64bit clears it on success, sets it on failure. random_real
+// clears at entry and checks after each call.
+thread_local! {
+    pub(super) static RANDOM_ENTROPY_FAILED: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
 /// Port of `random_64bit()` from `Src/Modules/random_real.c:84`.
 ///
 /// C body returns `uint64_t`; failure path returns 1 (NOT 0 — the
-/// `random_real()` zero-detection loop would spin forever on 0).
+/// `random_real()` zero-detection loop would spin forever on 0) AND
+/// sets errno so the random_real caller can disambiguate the
+/// "actually got 1" case from the "entropy failed and we returned the
+/// non-loop-spinning sentinel" case.
 pub fn random_64bit() -> u64 {
     let r: u64; // c:84
     let mut buf = [0u8; 8]; // staging for &r
@@ -87,8 +100,10 @@ pub fn random_64bit() -> u64 {
     // c:87 — `if (getrandom_buffer(&r, sizeof(r)) < 0)`
     if getrandom_buffer(&mut buf).is_err() {
         zwarn("zsh/random: Can't get sufficient random data."); // c:88
+        RANDOM_ENTROPY_FAILED.with(|f| f.set(true)); // c:88-89 errno flag
         return 1; // c:89 0 will cause loop
     }
+    RANDOM_ENTROPY_FAILED.with(|f| f.set(false)); // c:92 errno = 0 implicit
     r = u64::from_ne_bytes(buf);
     r // c:92 return r;
 }
@@ -133,12 +148,20 @@ pub fn random_real() -> f64 {
 
         /* Get random_64bit and check for error */
         // c:161
-        // c:162-165 — errno = 0; significand = random_64bit(); if (errno) return -1;
-        // The Rust `random_64bit()` returns 1 on entropy failure (c:89),
-        // so the loop exits naturally on the sentinel — no explicit
-        // errno probe needed. The `< 0` return path of C maps to our
-        // "no error" success path.
+        // c:162-165 — `errno = 0; significand = random_64bit(); if (errno) return -1;`
+        RANDOM_ENTROPY_FAILED.with(|f| f.set(false)); // c:162 errno = 0
         significand = random_64bit(); // c:163
+        if RANDOM_ENTROPY_FAILED.with(|f| f.get()) {
+            // c:164 — entropy syscall failed; surface via -1 sentinel
+            // matching C exactly. Prior port silently swallowed the
+            // failure: when random_64bit returned the 1-sentinel (the
+            // "got data, continue" signal to break the inner loop),
+            // random_real proceeded into the post-loop ldexp path and
+            // emitted a tiny-but-plausible positive double, so any
+            // caller computing ((rand48())) would think it had a real
+            // sample even when the kernel CSPRNG was wedged.
+            return -1.0; // c:165
+        }
 
         /*
          * If the exponent falls below -1074 = emin + 1 - p,
@@ -166,8 +189,12 @@ pub fn random_real() -> f64 {
     shift = clz64(significand) as u32; // c:185
     if shift != 0 {
         // c:186
-        // c:188-191 — errno = 0; r = random_64bit(); if (errno) return -1;
+        // c:188-191 — `errno = 0; r = random_64bit(); if (errno) return -1;`
+        RANDOM_ENTROPY_FAILED.with(|f| f.set(false)); // c:188 errno = 0
         r = random_64bit(); // c:189
+        if RANDOM_ENTROPY_FAILED.with(|f| f.get()) {
+            return -1.0; // c:191
+        }
 
         exponent -= shift as i32; // c:193
         significand <<= shift; // c:194
