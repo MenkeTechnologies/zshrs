@@ -306,13 +306,37 @@ pub fn get_contents(fname: &str) -> Option<String> {
     }
 
     let fd = file.as_raw_fd();
-    // c:182-183 — mmap(NULL, sbuf.st_size, PROT_READ, MMAP_ARGS, fd, 0)
+    // c:182-183 — `mmap(NULL, sbuf.st_size, PROT_READ, MMAP_ARGS, fd, 0)`.
+    // MMAP_ARGS at c:56 expands to `MAP_FILE | MAP_VARIABLE | MAP_SHARED
+    // | MAP_NORESERVE`. MAP_FILE / MAP_VARIABLE are legacy 0s on modern
+    // platforms; the live bits are MAP_SHARED + MAP_NORESERVE.
+    //
+    // MAP_SHARED vs MAP_PRIVATE: for PROT_READ-only mappings both
+    // behave identically (no writes), but MAP_SHARED matches C
+    // byte-for-byte AND lets the kernel skip COW page-table setup.
+    //
+    // MAP_NORESERVE on Linux is what prevents OOM rejection on large
+    // reads — tells the kernel not to pre-reserve swap for the
+    // mapping. Same fix as setpmmapfile (mapfile.rs:113-115). Prior
+    // port used bare MAP_PRIVATE, so `$mapfile[/some/huge/file]` on a
+    // tight-swap Linux box could fail mmap and silently fall through
+    // to the read_to_end fallback (slower) or return None (data lost).
+    let map_flags: libc::c_int = {
+        #[cfg(target_os = "linux")]
+        {
+            libc::MAP_SHARED | libc::MAP_NORESERVE
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            libc::MAP_SHARED
+        }
+    };
     let mmptr = unsafe {
         libc::mmap(
             std::ptr::null_mut(),
             size,
             libc::PROT_READ,
-            libc::MAP_PRIVATE,
+            map_flags,
             fd,
             0,
         )
