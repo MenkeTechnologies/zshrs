@@ -1563,15 +1563,28 @@ pub fn scanbuiltins(
             crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed);
         let mut emitted: std::collections::HashSet<String> =
             std::collections::HashSet::new();
+        // c:825 — runtime DISABLED tracking lives in
+        // BUILTINS_DISABLED (a HashSet maintained by `disable` /
+        // `enable -r`). The BUILTINS slice's static `flags` field
+        // never carries DISABLED at construction, so the prior
+        // check `b_flags & DISABLED` always read 0. Read the live
+        // set instead so `${(k)dis_builtins}` reflects the user's
+        // `disable` invocations (and `${(k)builtins}` correctly
+        // omits disabled entries).
+        let disabled_set: std::collections::HashSet<String> = crate::ported::builtin::BUILTINS_DISABLED
+            .lock()
+            .ok()
+            .map(|g| g.iter().cloned().collect())
+            .unwrap_or_default();
         for b in BUILTINS.iter() {
             // c:823
-            let b_flags = b.node.flags; // c:825 hn->flags
+            let is_disabled = disabled_set.contains(&b.node.nam); // c:825 hn->flags & DISABLED
             let pass = if dis != 0 {
                 // c:825 dis ? (hn->flags & DISABLED)
-                (b_flags & DISABLED) != 0
+                is_disabled
             } else {
                 // c:825 !(hn->flags & DISABLED)
-                (b_flags & DISABLED) == 0
+                !is_disabled
             };
             if !pass {
                 continue;
