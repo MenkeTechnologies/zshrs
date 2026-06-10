@@ -100,10 +100,28 @@ pub fn reverse_strftime(
     };
     let time = NaiveTime::from_hms_opt(hour, minute, second).unwrap_or_else(|| NaiveTime::from_hms_opt(0, 0, 0).unwrap());
     let dt = NaiveDateTime::new(date, time);
+    // c:71 — `mytime = (zlong)mktime(&tm);`
+    // C uses `tm.tm_isdst = -1` (set at c:60) to ask mktime to
+    // auto-detect DST. For ambiguous times (the fall-back hour that
+    // exists twice — e.g. 1:30 AM on a US fall-back day), mktime
+    // with tm_isdst=-1 returns the LATER (non-DST) variant; the
+    // standard rationale is "after a fall-back, the same wall-clock
+    // time appears twice; the second occurrence (standard time)
+    // wins" matching how `date` and most tools resolve.
+    //
+    // chrono's `from_local_datetime` returns `Ambiguous(earliest,
+    // latest)` for these times. Prior Rust picked .earliest (the
+    // first variant arg) — the DST-active occurrence, which is the
+    // OPPOSITE of C mktime's resolution. Real-world repro:
+    //   $ TZ=America/New_York strftime -r '%Y-%m-%d %H:%M:%S' '2024-11-03 01:30:00'
+    //   # C: emits the second occurrence (EST, after fall-back).
+    //   # Prior Rust: emits the first occurrence (EDT, pre-fall-back).
+    //   # Difference: one hour off — 3600 seconds.
+    // Pick `.latest()` for fall-back-ambiguous matching mktime.
     let secs = match Local.from_local_datetime(&dt) {
-        // c:78 mktime
+        // c:71 mktime
         chrono::LocalResult::Single(d) => d.timestamp(),
-        chrono::LocalResult::Ambiguous(d, _) => d.timestamp(),
+        chrono::LocalResult::Ambiguous(_, latest) => latest.timestamp(),
         chrono::LocalResult::None => {
             if quiet == 0 {
                 zwarnnam(nam, "unable to convert to time");
