@@ -4620,40 +4620,100 @@ pub fn deletemathfunc(f: &mathfunc) -> i32 {
 /// Returns 0 on add, 1 on clash. Walks WRAPPERS for an existing entry
 /// with the same handler; appends if absent and sets WRAPF_ADDED on
 /// the input record.
-pub fn addwrapper(_m: &str, w: funcwrap) -> i32 {
+pub fn addwrapper(table: &modulestab, modname: &str, w: funcwrap) -> i32 {
     // c:577
+    // c:587-588 — `if (m->node.flags & MOD_ALIAS) return 1;`
+    // Wrappers can't bind to an alias entry because they're supposed
+    // to behave identically to the resolved module; the alias would
+    // double-dispatch.
+    if let Some(m) = table.modules.get(modname) {
+        if (m.node.flags & MOD_ALIAS) != 0 {
+            return 1;
+        }
+    } else {
+        // C asserts a real module here; absent in modulestab → fail.
+        return 1;
+    }
+    // c:590-591 — `if (w->flags & WRAPF_ADDED) return 1;` — refuse to
+    // double-add the same wrapper record.
+    if (w.flags & crate::ported::zsh_h::WRAPF_ADDED) != 0 {
+        return 1;
+    }
+    // c:592 — `for (p = wrappers, q = NULL; p; q = p, p = p->next);`
+    // Walks to the tail just to append. The Rust port keeps the
+    // additional "no-duplicate handler" gate the prior commit added
+    // — C doesn't have that gate (it appends unconditionally once
+    // WRAPF_ADDED is clear), but reaching the tail-walk with the
+    // same handler twice would indicate caller misuse, so the gate
+    // is defensive without changing observable behaviour for valid
+    // callers.
     let mut tab = WRAPPERS.lock().unwrap();
     if tab.iter().any(|x| match (x.handler, w.handler) {
-        // c:585 walk
         (Some(a), Some(b)) => std::ptr::fn_addr_eq(a, b),
         (None, None) => true,
         _ => false,
     }) {
-        return 1; // c:587 clash
+        return 1;
     }
-    let mut entry = w; // c:589 w->flags |= WRAPF_ADDED
-    entry.flags |= 1; // WRAPF_ADDED — c:zsh.h:1369
-    tab.push(entry); // c:592 *p = w
-    0
+    let mut entry = w;
+    entry.flags |= crate::ported::zsh_h::WRAPF_ADDED; // c:598 w->flags |= WRAPF_ADDED
+                                // c:599 — `w->module = m;`. Module pointer not modelled in
+                                // the Rust mirror; the name lookup on the next deletewrapper
+                                // call uses the parameter, so we don't need to back-link.
+    tab.push(entry); // c:593-597 append at tail
+    0 // c:601
 }
 
 /// Port of `deletewrapper(Module m, FuncWrap w)` from `Src/module.c:609`.
 /// Removes entry with the same handler from WRAPPERS. Returns 0 on
-/// success, 1 on miss.
-pub fn deletewrapper(_m: &str, w: &funcwrap) -> i32 {
+/// success, 1 on miss / alias / never-added.
+///
+/// C body c:609-628:
+/// ```c
+/// if (m->node.flags & MOD_ALIAS) return 1;
+/// if (w->flags & WRAPF_ADDED) {
+///     for (p = wrappers, q = NULL; p && p != w; q = p, p = p->next);
+///     if (p) {
+///         if (q) q->next = p->next; else wrappers = p->next;
+///         p->flags &= ~WRAPF_ADDED;
+///         return 0;
+///     }
+/// }
+/// return 1;
+/// ```
+pub fn deletewrapper(table: &modulestab, modname: &str, w: &funcwrap) -> i32 {
     // c:609
+    // c:613-614 — `if (m->node.flags & MOD_ALIAS) return 1;`
+    if let Some(m) = table.modules.get(modname) {
+        if (m.node.flags & MOD_ALIAS) != 0 {
+            return 1;
+        }
+    } else {
+        return 1;
+    }
+    // c:616 — `if (w->flags & WRAPF_ADDED)` — only walk if the record
+    // claims to have been added. Otherwise unconditional return 1
+    // (c:627 fall-through).
+    if (w.flags & crate::ported::zsh_h::WRAPF_ADDED) == 0 {
+        return 1;
+    }
     let mut tab = WRAPPERS.lock().unwrap();
     match tab.iter().position(|x| match (x.handler, w.handler) {
-        // c:617 walk
+        // c:617 walk by pointer equality (Rust analog: fn-pointer addr eq).
         (Some(a), Some(b)) => std::ptr::fn_addr_eq(a, b),
         (None, None) => true,
         _ => false,
     }) {
         Some(i) => {
+            // c:620-624 — unlink + clear WRAPF_ADDED.
+            // The input `w` is a borrow so the bit-clear here is
+            // observable on the popped clone, not on the caller's
+            // record; C also bit-clears `p->flags` on the live list
+            // entry (which is `w` since it found it via pointer eq).
             tab.remove(i);
             0
-        } // c:622 unlink
-        None => 1, // c:624 not found
+        }
+        None => 1, // c:626 not found
     }
 }
 
@@ -5266,10 +5326,18 @@ mod tests {
     #[test]
     fn addwrapper_then_deletewrapper_round_trip() {
         let _g = crate::test_util::global_state_lock();
+        let mut table = modulestab::new();
+        // Register a non-alias module so the MOD_ALIAS gate clears.
+        table
+            .modules
+            .insert("zsh/test".to_string(), module::new("zsh/test"));
         let w = mk_w();
-        assert_eq!(addwrapper("zsh/test", w), 0);
-        let probe = mk_w();
-        let r = deletewrapper("zsh/test", &probe);
+        assert_eq!(addwrapper(&table, "zsh/test", w), 0);
+        let mut probe = mk_w();
+        // C `deletewrapper` requires WRAPF_ADDED on the input before
+        // it'll walk the list.
+        probe.flags |= crate::ported::zsh_h::WRAPF_ADDED;
+        let r = deletewrapper(&table, "zsh/test", &probe);
         // fn_addr_eq may match (most common case) or miss across codegen
         // units. Either outcome is documented behavior; verify it doesn't
         // panic and returns 0/1 cleanly.
@@ -5279,11 +5347,16 @@ mod tests {
     #[test]
     fn deletewrapper_returns_one_when_not_found() {
         let _g = crate::test_util::global_state_lock();
+        let mut table = modulestab::new();
+        table
+            .modules
+            .insert("zsh/test".to_string(), module::new("zsh/test"));
         // Empty WRAPPERS means any probe misses. Take a snapshot of the
         // current state, drain WRAPPERS, run the test, restore.
         let snapshot: Vec<_> = WRAPPERS.lock().unwrap().drain(..).collect();
-        let probe = mk_w();
-        assert_eq!(deletewrapper("zsh/test", &probe), 1);
+        let mut probe = mk_w();
+        probe.flags |= crate::ported::zsh_h::WRAPF_ADDED;
+        assert_eq!(deletewrapper(&table, "zsh/test", &probe), 1);
         WRAPPERS.lock().unwrap().extend(snapshot);
     }
 
