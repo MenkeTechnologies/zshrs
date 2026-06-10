@@ -2157,15 +2157,28 @@ pub fn zfgetinfo(prompt: &str, noecho: i32) -> Option<String> {
     if unsafe { libc::isatty(0) } != 0 {
         // c:2013
         if noecho != 0 {
-            // c:2014
-            // c:2024-2032 — copy current termios, clear ECHO, install.
-            let mut ti: libc::termios = unsafe { std::mem::zeroed() };
-            if unsafe { libc::tcgetattr(0, &mut ti) } == 0 {
-                saved_termios = Some(ti);
+            // c:2014-2033 — `ti = shttyinfo; ti.tio.c_lflag &= ~ECHO;
+            //                settyinfo(&ti); resettty = 1;`
+            //
+            // C reads the saved shell-tty state (shttyinfo global) so
+            // the SHTTY fd (which may differ from stdin if the shell
+            // re-dup'd) is used consistently. shttyinfo isn't ported
+            // as a singleton yet, so use gettyinfo() which reads
+            // SHTTY's current termios via fdgettyinfo(SHTTY) — the
+            // canonical port at utils.rs:1926. settyinfo() at
+            // utils.rs:1964 writes back via fdsettyinfo(SHTTY, ti)
+            // with TCSADRAIN and EINTR-retry.
+            //
+            // Prior port used raw tcgetattr(0) + tcsetattr(0, TCSANOW)
+            // which (a) read/wrote stdin instead of SHTTY (wrong when
+            // SHTTY was re-dup'd, e.g. `zsh < /dev/tty &`), and (b)
+            // used TCSANOW instead of TCSADRAIN, dropping any pending
+            // output before the mode change — visible as cut-off
+            // prompts on slow terminals.
+            if let Some(mut ti) = crate::ported::utils::gettyinfo() {
+                saved_termios = Some(ti); // c:2026 ti = shttyinfo (save for restore)
                 ti.c_lflag &= !libc::ECHO; // c:2028
-                unsafe {
-                    libc::tcsetattr(0, libc::TCSANOW, &ti);
-                } // c:2032
+                let _ = crate::ported::utils::settyinfo(&ti); // c:2032
                 resettty = 1; // c:2033
             } else {
                 saved_termios = None;
@@ -2204,10 +2217,10 @@ pub fn zfgetinfo(prompt: &str, noecho: i32) -> Option<String> {
         println!(); // c:2049 '\n' didn't echo
         let _ = io::stdout().flush(); // c:2050
         if let Some(ti) = saved_termios {
-            // c:2051
-            unsafe {
-                libc::tcsetattr(0, libc::TCSANOW, &ti);
-            }
+            // c:2051 — `settyinfo(&shttyinfo);` — restore via the
+            // canonical helper so the SHTTY fd + TCSADRAIN + EINTR
+            // retry match C exactly.
+            let _ = crate::ported::utils::settyinfo(&ti);
         }
     }
 
