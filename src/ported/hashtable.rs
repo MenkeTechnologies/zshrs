@@ -1802,13 +1802,33 @@ pub fn printshfuncexpand(hn: &shfunc, printflags: i32, expand: i32) {
 
 /// Port of `getshfuncfile(shfunc shf)` from `Src/hashtable.c:1059`.
 ///
-/// C body returns `shf->filename`, the path to the file that
-/// defined the function (used by `functions -T` and `whence -v`
-/// to show the source location).
+/// C body (verbatim):
+///   if (shf->node.flags & PM_LOADDIR) {
+///       return zhtricat(shf->filename, "/", shf->node.nam);
+///   } else if (shf->filename) {
+///       return dupstring(shf->filename);
+///   } else {
+///       return NULL;
+///   }
+///
+/// PM_LOADDIR is set when zsh loaded the function via fpath
+/// directory autoload (the common `autoload -Uz` path): in that
+/// case `filename` is the DIRECTORY and we must append `/name` to
+/// produce the actual source file. Prior Rust port skipped the
+/// PM_LOADDIR branch, so `${functions_source[my_autoload]}`
+/// returned the fpath dir (e.g. `/usr/share/zsh/5.9/functions`)
+/// instead of the real path (`.../functions/my_autoload`).
 pub fn getshfuncfile(shf: &str) -> Option<String> {
     let tab = shfunctab_lock().read().expect("shfunctab poisoned");
-    tab.get_including_disabled(shf)
-        .and_then(|f| f.filename.clone())
+    let f = tab.get_including_disabled(shf)?;
+    let filename = f.filename.as_ref()?;
+    // c:1061 — PM_LOADDIR: `zhtricat(shf->filename, "/", shf->node.nam)`
+    if (f.node.flags as u32 & crate::ported::zsh_h::PM_LOADDIR) != 0 {
+        Some(format!("{}/{}", filename, f.node.nam))
+    } else {
+        // c:1063 — `dupstring(shf->filename)`
+        Some(filename.clone())
+    }
 }
 
 /// Port of `createreswdtable()` from `Src/hashtable.c:1120`.
