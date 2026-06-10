@@ -54,18 +54,29 @@ pub fn reverse_strftime(
     // partial input, so route through `Parsed` which holds
     // any subset of fields then fill missing pieces with
     // defaults to mirror strptime + mktime semantics. Bug #324.
+    // c:62 — `endp = strptime(argv[1], argv[0], &tm);` — strptime returns
+    // the FIRST unconsumed character (NUL if entire string was consumed).
+    // chrono's `parse_and_remainder` returns the remainder slice on
+    // success, which is the equivalent of `endp`.
     let mut parsed = Parsed::new();
-    if chrono::format::parse(&mut parsed, input, StrftimeItems::new(format)).is_err() {
-        // c:64-69 — `if (!endp) { if (!quiet) zwarnnam(nam,
-        //                          'format not matched'); return 1; }`
-        // C emits the bare 'format not matched' string with no
-        // input echo; prior Rust port appended ': {input}' which
-        // diverged from zsh -fc parity.
-        if quiet == 0 {
-            zwarnnam(nam, "format not matched"); // c:67
+    let remainder = match chrono::format::parse_and_remainder(
+        &mut parsed,
+        input,
+        StrftimeItems::new(format),
+    ) {
+        Ok(rem) => rem,
+        Err(_) => {
+            // c:64-69 — `if (!endp) { if (!quiet) zwarnnam(nam,
+            //                          'format not matched'); return 1; }`
+            // C emits the bare 'format not matched' string with no
+            // input echo; prior Rust port appended ': {input}' which
+            // diverged from zsh -fc parity.
+            if quiet == 0 {
+                zwarnnam(nam, "format not matched"); // c:67
+            }
+            return 1; // c:68
         }
-        return 1; // c:68
-    }
+    };
     let year = parsed.year.or_else(|| parsed.year_div_100.zip(parsed.year_mod_100).map(|(d, m)| d * 100 + m)).unwrap_or(1970);
     let month = parsed.month.unwrap_or(1);
     let day = parsed.day.unwrap_or(1);
@@ -101,13 +112,25 @@ pub fn reverse_strftime(
         }
     };
     if let Some(name) = scalar {
-        // c:90 scalar
-        setiparam(name, secs); // c:91 setiparam
+        // c:73-74 — `if (scalar) setiparam(scalar, mytime);`
+        setiparam(name, secs); // c:74 setiparam
     } else {
-        // c:93
-        println!("{}", secs); // c:94 printf("%ld\n", ...)
+        // c:75-79 — print as decimal.
+        println!("{}", secs); // c:78 printf("%ld\n", ...)
     }
-    0 // c:99
+    // c:81-88 — `if (*endp && !quiet) zwarnnam(nam,
+    //              "warning: input string not completely matched");`
+    // strptime can succeed yet leave trailing input unconsumed; the
+    // format was satisfied but more bytes remained. C emits a soft
+    // warning (still returns 0) so the user can spot accidental
+    // truncation. Prior Rust port didn't have this — silent
+    // partial-parse meant scripts feeding malformed input through
+    // `strftime -r '%Y-%m-%d' 'extra2024-01-15'` got `secs=0` (the
+    // post-strptime defaults applied) without diagnostic.
+    if !remainder.is_empty() && quiet == 0 {
+        zwarnnam(nam, "warning: input string not completely matched"); // c:87
+    }
+    0 // c:90
 }
 
 /// Port of `output_strftime(char *nam, char **argv, Options ops, UNUSED(int func))` from `Src/Modules/datetime.c:99`.
