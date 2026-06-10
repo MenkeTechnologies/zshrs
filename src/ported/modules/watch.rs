@@ -742,11 +742,30 @@ pub fn boot_(m: *const module) -> i32 {
     // when no env value pre-exists — preserves the `${WATCHFMT-unset}`
     // distinction zsh makes between "unset" (no zmodload) and "set
     // to default" (after zmodload).
-    if crate::ported::params::getsparam("WATCHFMT").is_none() {
-        crate::ported::params::setsparam("WATCHFMT", DEFAULT_WATCHFMT); // c:757
-    }
-    if crate::ported::params::getsparam("LOGCHECK").is_none() {
-        crate::ported::params::setsparam("LOGCHECK", "60"); // c:759
+    //
+    // c:Src/Modules/watch.c:756-759 — the comment above the C source
+    // setsparam("WATCHFMT", DEFAULT_WATCHFMT) reads: "These two
+    // parameters are only set to defaults if not set. So setting
+    // them in .zshrc will not be enough to load the module. It's
+    // useless until the watch array is set anyway." The seeding
+    // fires inside the C `boot_` which only runs at `zmodload`
+    // time. zsh -fc never zmodload's zsh/watch, so $WATCHFMT
+    // stays empty there.
+    //
+    // zshrs's `init_bltinmods` (module.rs) auto-runs `boot_` for
+    // statically-linked default-loaded modules so `${(t)watch}`
+    // reads as `array-special` straight from the prompt — a QoL
+    // win in default mode but a parity divergence in --zsh mode.
+    // Gate the value-seeding on `!IS_ZSH_MODE` so `--zsh` matches
+    // zsh's "declared but empty until zmodload" behaviour while
+    // default mode keeps the auto-loaded defaults.
+    if !crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+        if crate::ported::params::getsparam("WATCHFMT").is_none() {
+            crate::ported::params::setsparam("WATCHFMT", DEFAULT_WATCHFMT); // c:757
+        }
+        if crate::ported::params::getsparam("LOGCHECK").is_none() {
+            crate::ported::params::setsparam("LOGCHECK", "60"); // c:759
+        }
     }
     // c:Src/Modules/watch.c:697-699 — register `watch` (PM_ARRAY |
     // PM_SPECIAL) and `WATCH` (PM_SCALAR | PM_SPECIAL) in paramtab
