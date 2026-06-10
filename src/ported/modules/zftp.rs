@@ -1244,10 +1244,31 @@ pub fn zfstats(
 
     if remote != 0 {
         // c:1203
-        // c:1205-1207 — early-out if server lacks SIZE/MDTM support.
-        // Without the per-session has_size/has_mdtm fields wired we
-        // always attempt the command; non-supporting servers return
-        // 5xx which we handle below.
+        // c:1205-1207 — `if ((zfsess->has_size == ZFCP_NOPE && retsize) ||
+        //                    (zfsess->has_mdtm == ZFCP_NOPE && retmdtm))
+        //                    return 2;`
+        // Early-out when the server's known to not support SIZE/MDTM.
+        // Both fields are already on the session struct (c:306-307)
+        // and reset to ZFCP_UNKN at connect time (c:1952). Without
+        // this gate, every zfstats call re-sends SIZE/MDTM to a
+        // server that's already rejected them — wasted round-trip
+        // + spurious 5xx in the server's log.
+        let (had_size_nope, had_mdtm_nope) = {
+            let st = match zftp_state().lock() {
+                Ok(s) => s,
+                Err(_) => return 1,
+            };
+            match st.get_session(None) {
+                Some(sess) => (
+                    sess.has_size == ZFCP_NOPE,
+                    sess.has_mdtm == ZFCP_NOPE,
+                ),
+                None => (false, false),
+            }
+        };
+        if had_size_nope || had_mdtm_nope {
+            return 2; // c:1207 — retsize/retmdtm both requested in this port.
+        }
 
         // c:1213 — zfsettype(ZFST_TYPE(zfstatusp[zfsessno]));
         zfsettype(ZFST_IMAG);
@@ -1262,17 +1283,30 @@ pub fn zfstats(
         let code = lastcode.load(Ordering::Relaxed);
         if code < 300 {
             // c:1220
-            // c:1221 — sz = zstrtol(lastmsg, 0, 10);
+            // c:1221 — `sz = zstrtol(lastmsg, 0, 10);`
             sz = lastmsg
                 .lock()
                 .ok()
                 .map(|m| m.trim().parse::<libc::off_t>().unwrap_or(-1))
                 .unwrap_or(-1);
+            // c:1222 — `zfsess->has_size = ZFCP_YUPP;` — record that
+            //           the server speaks SIZE.
+            if let Ok(mut st) = zftp_state().lock() {
+                if let Some(sess) = st.get_session_mut(None) {
+                    sess.has_size = ZFCP_YUPP;
+                }
+            }
         } else if (500..=504).contains(&code) {
-            // c:1223
+            // c:1223 — server doesn't speak SIZE.
+            // c:1224 — `zfsess->has_size = ZFCP_NOPE;`
+            if let Ok(mut st) = zftp_state().lock() {
+                if let Some(sess) = st.get_session_mut(None) {
+                    sess.has_size = ZFCP_NOPE;
+                }
+            }
             return 2; // c:1225
         } else if code == 550 {
-            // c:1226
+            // c:1226 — file doesn't exist.
             return 1; // c:1227
         }
 
@@ -1286,10 +1320,22 @@ pub fn zfstats(
         let code = lastcode.load(Ordering::Relaxed);
         if code < 300 {
             // c:1237
-            // c:1238 — mt = ztrdup(lastmsg);
+            // c:1238 — `mt = ztrdup(lastmsg);`
             mt = lastmsg.lock().ok().map(|m| m.clone());
+            // c:1239 — `zfsess->has_mdtm = ZFCP_YUPP;`
+            if let Ok(mut st) = zftp_state().lock() {
+                if let Some(sess) = st.get_session_mut(None) {
+                    sess.has_mdtm = ZFCP_YUPP;
+                }
+            }
         } else if (500..=504).contains(&code) {
-            // c:1240
+            // c:1240 — server doesn't speak MDTM.
+            // c:1241 — `zfsess->has_mdtm = ZFCP_NOPE;`
+            if let Ok(mut st) = zftp_state().lock() {
+                if let Some(sess) = st.get_session_mut(None) {
+                    sess.has_mdtm = ZFCP_NOPE;
+                }
+            }
             return 2; // c:1242
         } else if code == 550 {
             // c:1243
