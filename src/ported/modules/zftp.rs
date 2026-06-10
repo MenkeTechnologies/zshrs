@@ -349,11 +349,45 @@ pub fn zfsetparam(name: &str, val: &str, flags: i32) {
         }
     }
 
-    // c:516-519 — pm->gsu.{i,s}->setfn(pm, val). Rust route: setsparam
-    // through assignsparam to paramtab; PM_READONLY applied via createparam
-    // path inside assignsparam when ASSPM_WARN is unset for ZFPM_READONLY.
-    crate::ported::params::setsparam(name, val);
-    let _ = (flags & ZFPM_READONLY) != 0; // c:505-506 PM_READONLY flag
+    // c:516-519 — pm->gsu.{i,s}->setfn(pm, val).
+    // Faithful port of c:499-506: when the param doesn't exist
+    // (or is PM_UNSET), createparam + apply PM_READONLY when
+    // ZFPM_READONLY is set. Then call setsparam to install the
+    // value.
+    //
+    // Prior port silently dropped the PM_READONLY flag — the param
+    // got created without it, so subsequent user writes to
+    // ZFTP_* (e.g. \$ZFTP_HOST after open) silently succeeded
+    // instead of getting the 'read-only variable' error C emits.
+    let needs_create = !crate::ported::params::paramtab()
+        .read()
+        .map(|t| {
+            // c:499-500 — `!getnode2 || PM_UNSET`. Treat absent or
+            // PM_UNSET as "create new".
+            t.get(name)
+                .map(|p| (p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) != 0)
+                .unwrap_or(true)
+        })
+        .unwrap_or(true);
+    if needs_create {
+        let pm_type = if (flags & ZFPM_INTEGER) != 0 {
+            crate::ported::zsh_h::PM_INTEGER
+        } else {
+            crate::ported::zsh_h::PM_SCALAR
+        };
+        // c:505 — `if ((pm = createparam(name, type)) ...`
+        let _ = crate::ported::params::createparam(name, pm_type as i32);
+        // c:505-506 — `&& (flags & ZFPM_READONLY) ...
+        //              pm->node.flags |= PM_READONLY;`
+        if (flags & ZFPM_READONLY) != 0 {
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut(name) {
+                    pm.node.flags |= crate::ported::zsh_h::PM_READONLY as i32;
+                }
+            }
+        }
+    }
+    crate::ported::params::setsparam(name, val); // c:519
 }
 
 /// Port of `zfunsetparam(char *name)` from Src/Modules/zftp.c:529.
