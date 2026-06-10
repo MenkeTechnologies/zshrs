@@ -1401,17 +1401,39 @@ pub fn zfwrite(fd: i32, bf: &[u8], sz: i64, tmout: i32) -> i32 {
             libc::write(fd, bf.as_ptr() as *const _, sz as usize) as i32 // c:1336
         };
     }
-    // c:1338-1342 — setjmp(zfalrmbuf) timeout path. Without setjmp in
-    // safe Rust we fall through to a simple write under the alarm; a
-    // future refactor should plumb a real timeout via select(2)/poll(2).
-    zfalarm(tmout); // c:1343
+    // c:1339-1342 — `if (setjmp(zfalrmbuf)) { alarm(0); zwarnnam(...,
+    //                "timeout on network write"); return -1; }`.
+    // Same setjmp pattern as zfread (c:1314-1318) — see the
+    // accompanying zfread fix (cfe7560f58) for the ZFDRRRRING
+    // adapter rationale. Two check sites:
+    //   1. Before alarm install — stale alarm from before this call.
+    //   2. After write returns — alarm fired during THIS write.
+    // Prior port had neither: the "future refactor should plumb a
+    // real timeout via select(2)/poll(2)" comment papered over the
+    // missing semantic. ZFDRRRRING was zeroed inside zfalarm at
+    // line 212; if non-zero post-write, zfhandler set it during the
+    // blocked write.
+    if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
+        // Stale alarm from earlier call.
+        unsafe {
+            libc::alarm(0);
+        }
+        zwarnnam("zftp", "timeout on network write");
+        return -1;
+    }
+    zfalarm(tmout); // c:1344
     let ret = unsafe {
-        libc::write(fd, bf.as_ptr() as *const _, sz as usize) as i32 // c:1345
+        libc::write(fd, bf.as_ptr() as *const _, sz as usize) as i32 // c:1346
     };
     unsafe {
         libc::alarm(0);
     } // c:1349
-    ret // c:1351
+    // Post-write check matching the zfread fix.
+    if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
+        zwarnnam("zftp", "timeout on network write"); // c:1341
+        return -1; // c:1342
+    }
+    ret // c:1350
 }
 
 /// Port of `static int zfread_eof` file-static from
