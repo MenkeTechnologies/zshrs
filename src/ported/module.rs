@@ -2714,19 +2714,49 @@ pub fn getmathfunc(table: &mut modulestab, name: &str, autol: i32) -> Option<Str
 /// WARNING: param names don't match C — Rust=(table, module, fnam, flags) vs C=(module, fnam, flags)
 pub fn add_automathfunc(table: &mut modulestab, module: &str, fnam: &str, flags: i32) -> i32 {
     // c:1410
-    // c:1410-1418 — alloc + populate MathFunc
-    if table.autoload_mathfuncs.contains_key(fnam) {
-        // c:1420 addmathfunc clash
+    // Faithful port of c:1410-1429:
+    //   MathFunc f = zalloc(sizeof(*f));
+    //   f->name = ztrdup(fnam);
+    //   f->module = ztrdup(module);
+    //   f->flags = 0;
+    //   if (addmathfunc(f)) {
+    //       zsfree(f->name); zsfree(f->module); zfree(f, sizeof(*f));
+    //       if (!(flags & FEAT_IGNORE)) return 1;
+    //   }
+    //   return 0;
+    //
+    // Prior port did ledger-only autoload_mathfuncs.insert without
+    // ever touching the canonical MATHFUNCS table. Now constructs
+    // the mathfunc struct and routes through the free addmathfunc
+    // (c:1313) which walks MATHFUNCS for clashes and replaces
+    // autoloadable entries.
+    let f = mathfunc {
+        next: None,
+        name: fnam.to_string(),
+        flags: 0, // c:1417 — autoload entries don't carry MFF_ADDED
+        nfunc: None,
+        sfunc: None,
+        module: Some(module.to_string()),
+        minargs: 0,
+        maxargs: 0,
+        funcid: 0,
+    };
+    // c:1420 — `if (addmathfunc(f))` clash gate.
+    if addmathfunc(f) != 0 {
+        // c:1421-1424 — free happens via Rust drop on the returned-
+        // by-value f going out of scope.
         if (flags & FEAT_IGNORE) == 0 {
-            // c:1425
             return 1; // c:1426
         }
-    } else {
-        table
-            .autoload_mathfuncs
-            .insert(fnam.to_string(), module.to_string());
+        // c:1427 — FEAT_IGNORE: fall through to success but skip
+        // the ledger insert (the canonical table already has this).
+        return 0;
     }
-    0 // c:1429
+    // c:1429 success path: register in the autoload ledger.
+    table
+        .autoload_mathfuncs
+        .insert(fnam.to_string(), module.to_string());
+    0
 }
 
 /// Port of `del_automathfunc(UNUSED(const char *modnam), const char *fnam, int flags)` from `Src/module.c:1436`.
@@ -2749,17 +2779,60 @@ pub fn add_automathfunc(table: &mut modulestab, module: &str, fnam: &str, flags:
 /// WARNING: param names don't match C — Rust=(table, _modnam, fnam, flags) vs C=(modnam, fnam, flags)
 pub fn del_automathfunc(table: &mut modulestab, _modnam: &str, fnam: &str, flags: i32) -> i32 {
     // c:1436
-    if !table.autoload_mathfuncs.contains_key(fnam) {
-        // c:1436 if (!f)
-        if (flags & FEAT_IGNORE) == 0 {
-            // c:1441
-            return 2; // c:1442
+    // Faithful port of c:1436-1449:
+    //   MathFunc f = getmathfunc(fnam, 0);
+    //   if (!f) { if (!(flags & FEAT_IGNORE)) return 2; }
+    //   else if (f->flags & MFF_ADDED) {
+    //       if (!(flags & FEAT_IGNORE)) return 3;
+    //   } else deletemathfunc(f);
+    //   return 0;
+    //
+    // Prior port skipped the MFF_ADDED gate at c:1444 entirely.
+    // That meant `zmodload -ufd` on a real (module-registered)
+    // math function silently succeeded instead of returning 3 like
+    // C does, dropping the user's actual function out from under
+    // them. Now uses getmathfunc (fd1ec84bab) to find the entry
+    // and checks MFF_ADDED before removal.
+
+    // c:1440 — `getmathfunc(fnam, 0)`. autol=0 since we don't want
+    // the autoload trigger to fire during a deletion query.
+    let entry = getmathfunc(table, fnam, 0);
+    match entry {
+        None => {
+            // c:1441-1442 — `if (!f) { if (!FEAT_IGNORE) return 2; }`
+            if (flags & FEAT_IGNORE) == 0 {
+                return 2;
+            }
+            0
         }
-    } else {
-        // c:1447 — deletemathfunc(f)
-        table.autoload_mathfuncs.remove(fnam);
+        Some(_) => {
+            // c:1443 — `else if (f->flags & MFF_ADDED)`.
+            // Look up the entry in MATHFUNCS to read its flags
+            // (getmathfunc returns the module string, not the
+            // mathfunc struct).
+            let added = {
+                let tab = MATHFUNCS.lock().unwrap();
+                tab.iter()
+                    .find(|m| m.name == fnam)
+                    .map(|m| (m.flags & MFF_ADDED) != 0)
+                    .unwrap_or(false)
+            };
+            if added {
+                // c:1444-1445 — real registered, can't unload via
+                // del_auto*. Return 3 unless FEAT_IGNORE.
+                if (flags & FEAT_IGNORE) == 0 {
+                    return 3;
+                }
+                return 0;
+            }
+            // c:1447 — deletemathfunc(f). Use removemathfunc
+            // (which deletemathfunc delegates to in the autoload
+            // path) + drop the ledger entry.
+            removemathfunc(fnam);
+            table.autoload_mathfuncs.remove(fnam);
+            0
+        }
     }
-    0 // c:1449
 }
 
 /// Port of `load_and_bind(const char *fn)` from `Src/module.c:1468`.
