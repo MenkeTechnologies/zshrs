@@ -577,7 +577,18 @@ pub fn dowatch() {
     }
     // c:630 — `queue_signals();` + WATCHFMT fallback.
     crate::ported::signals_h::queue_signals();
-    let fmt = crate::ported::params::getsparam("WATCHFMT")
+    // c:631-632 — `if (!(fmt = getsparam_u("WATCHFMT"))) fmt = DEFAULT_WATCHFMT;`
+    //   — the `_u` variant strips Meta-escape encoding from the
+    //     returned value. WATCHFMT is then fed through the
+    //     `watchlog2`/`watch3ary` format-string parser which expects
+    //     raw bytes (the `%n %a %l %m` directives are byte-tokenized,
+    //     not metafy-aware). Prior port used `getsparam` which
+    //     returns the metafied form; a user's WATCHFMT containing
+    //     literal NUL or 0x83-byte sequences (rare but legal via
+    //     `$'\x00'` syntax) would survive into the formatter as
+    //     Meta-escaped bytes instead of the intended payload.
+    //   Same fix shape as newuser ZDOTDIR (3d9aa55117).
+    let fmt = crate::ported::params::getsparam_u("WATCHFMT")
         .unwrap_or_else(|| DEFAULT_WATCHFMT.to_string());
     // c:633-640 — merge-walk uptr/wptr by ucmp.
     while uct > 0 || wct > 0 {
