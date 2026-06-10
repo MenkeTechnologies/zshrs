@@ -10383,11 +10383,27 @@ pub fn bin_read(
     }
 
     // c:6453-6455 — `return compctlreadptr(name, args, ops, reply)`.
-    // The compctlreadptr function pointer is set by the zsh/compctl
-    // module's load hook; Rust dispatches to the static
-    // compctlread port (zle/compctl.rs:1235).
+    // The compctlreadptr function pointer defaults to
+    // `fallback_compctlread` (init.c:1834) and gets reassigned to the
+    // real `compctlread` when zsh/compctl loads via the module's
+    // boot_ hook. zshrs auto-loads zsh/compctl in default mode so the
+    // direct call to `compctlread` is correct there. In --zsh parity
+    // mode zsh/compctl isn't loaded until explicit `zmodload`, so
+    // route through `fallback_compctlread` instead — matching
+    // `zsh -fc 'getln -c x'` which emits "no loaded module provides
+    // read for completion context".
     if OPT_ISSET(ops, b'l') || OPT_ISSET(ops, b'c') {
         // c:6453
+        let zsh_mode =
+            crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed);
+        if zsh_mode
+            && !crate::ported::module::MODULESTAB
+                .lock()
+                .map(|t| t.is_loaded("zsh/compctl"))
+                .unwrap_or(false)
+        {
+            return crate::ported::init::fallback_compctlread(name);
+        }
         return compctlread(name, &args[argi..]);
     }
 
