@@ -369,14 +369,15 @@ pub fn zfsetparam(name: &str, val: &str, flags: i32) {
                 .unwrap_or(true)
         })
         .unwrap_or(true);
+    // c:497 — `int type = (flags & ZFPM_INTEGER) ? PM_INTEGER : PM_SCALAR;`
+    let want_type: u32 = if (flags & ZFPM_INTEGER) != 0 {
+        crate::ported::zsh_h::PM_INTEGER
+    } else {
+        crate::ported::zsh_h::PM_SCALAR
+    };
     if needs_create {
-        let pm_type = if (flags & ZFPM_INTEGER) != 0 {
-            crate::ported::zsh_h::PM_INTEGER
-        } else {
-            crate::ported::zsh_h::PM_SCALAR
-        };
         // c:505 — `if ((pm = createparam(name, type)) ...`
-        let _ = crate::ported::params::createparam(name, pm_type as i32);
+        let _ = crate::ported::params::createparam(name, want_type as i32);
         // c:505-506 — `&& (flags & ZFPM_READONLY) ...
         //              pm->node.flags |= PM_READONLY;`
         if (flags & ZFPM_READONLY) != 0 {
@@ -386,6 +387,28 @@ pub fn zfsetparam(name: &str, val: &str, flags: i32) {
                 }
             }
         }
+    }
+    // c:510-514 — `if (!pm || PM_TYPE(pm->node.flags) != type) {
+    //                  if (type == PM_SCALAR) zsfree((char *)val);
+    //                  return;
+    //              }`
+    //
+    // Type-mismatch guard. After createparam (or the IFUNSET skip), the
+    // resolved param may have a different PM_TYPE than `want_type` — for
+    // example, the user did `typeset -i ZFTP_HOST=42` before connecting,
+    // so the existing param is PM_INTEGER while zfsetparam wants
+    // PM_SCALAR. C silently bails to avoid forcing a type conversion;
+    // prior Rust port skipped the guard and let setsparam re-assign
+    // regardless, clobbering the user's typed override.
+    let actual_type = match crate::ported::params::paramtab().read() {
+        Ok(t) => t
+            .get(name)
+            .map(|p| crate::ported::zsh_h::PM_TYPE(p.node.flags as u32)),
+        Err(_) => None,
+    };
+    match actual_type {
+        Some(t) if t == want_type => {} // proceed
+        Some(_) | None => return,       // c:514 — wrong type or no param
     }
     crate::ported::params::setsparam(name, val); // c:519
 }
