@@ -2736,14 +2736,63 @@ pub fn enables_module(
 /// }
 /// ```
 ///
-/// Static-link path: modules are MOD_LINKED, so dispatch to the
-/// per-module `boot_(m)` callback. zshrs's static dispatch is via
-/// the modules-table feature lookup (see `register_module` /
-/// `enable_module`); both branches collapse to 0 success.
-/// WARNING: param names don't match C — Rust=(_table, _name) vs C=(m)
-pub fn boot_module(_table: &mut modulestab, _name: &str) -> i32 {
+/// Static-link path: every modulestab entry is MOD_LINKED, so the
+/// branch collapses to `(m->u.linked->boot)(m)`. The Rust analog
+/// of C's `m->u.linked->boot` function-pointer is the per-module
+/// `boot_(m)` defined in `src/ported/modules/<name>.rs`. Dispatch
+/// via a static name → fn-pointer table.
+///
+/// Modules not in the dispatch table (because their per-module
+/// boot_ isn't ported yet) fall through to 0 — same observable
+/// outcome as a no-op boot, matching pre-port behaviour.
+/// WARNING: param names don't match C — Rust=(_table, name) vs C=(m)
+pub fn boot_module(_table: &mut modulestab, name: &str) -> i32 {
     // c:1910
-    0 // c:1910 (boot)(m) success
+    // c:1912 — `(m->u.linked->boot)(m)` for MOD_LINKED.
+    // The per-module boot_ entry points carry the partab/bintab
+    // dispatch that addparamdef/addbuiltins would otherwise run
+    // for a dlopen'd module (e.g. watch.rs::boot_ seeds
+    // WATCH/watch in paramtab + installs the checksched preprompt
+    // hook). NULL module pointer is fine — every per-module boot_
+    // either ignores the arg or null-checks before deref.
+    match name {
+        "zsh/attr" => crate::ported::modules::attr::boot_(std::ptr::null()),
+        "zsh/cap" => crate::ported::modules::cap::boot_(std::ptr::null()),
+        "zsh/clone" => crate::ported::modules::clone::boot_(std::ptr::null()),
+        "zsh/curses" => crate::ported::modules::curses::boot_(std::ptr::null()),
+        "zsh/datetime" => crate::ported::modules::datetime::boot_(std::ptr::null()),
+        "zsh/db/gdbm" => crate::ported::modules::db_gdbm::boot_(std::ptr::null()),
+        "zsh/example" => crate::ported::modules::example::boot_(std::ptr::null()),
+        "zsh/files" => crate::ported::modules::files::boot_(std::ptr::null()),
+        "zsh/hlgroup" => crate::ported::modules::hlgroup::boot_(std::ptr::null()),
+        "zsh/ksh93" => crate::ported::modules::ksh93::boot_(std::ptr::null()),
+        "zsh/langinfo" => crate::ported::modules::langinfo::boot_(std::ptr::null()),
+        "zsh/mapfile" => crate::ported::modules::mapfile::boot_(std::ptr::null()),
+        "zsh/mathfunc" => crate::ported::modules::mathfunc::boot_(std::ptr::null()),
+        "zsh/nearcolor" => crate::ported::modules::nearcolor::boot_(std::ptr::null()),
+        "zsh/newuser" => crate::ported::modules::newuser::boot_(std::ptr::null()),
+        "zsh/parameter" => crate::ported::modules::parameter::boot_(std::ptr::null()),
+        "zsh/param/private" => crate::ported::modules::param_private::boot_(std::ptr::null()),
+        "zsh/pcre" => crate::ported::modules::pcre::boot_(std::ptr::null()),
+        "zsh/random" => crate::ported::modules::random::boot_(std::ptr::null()),
+        "zsh/regex" => crate::ported::modules::regex::boot_(std::ptr::null()),
+        "zsh/net/socket" => crate::ported::modules::socket::boot_(std::ptr::null()),
+        "zsh/stat" => crate::ported::modules::stat::boot_(std::ptr::null()),
+        "zsh/system" => crate::ported::modules::system::boot_(std::ptr::null()),
+        "zsh/net/tcp" => crate::ported::modules::tcp::boot_(std::ptr::null()),
+        "zsh/termcap" => crate::ported::modules::termcap::boot_(std::ptr::null()),
+        "zsh/terminfo" => crate::ported::modules::terminfo::boot_(std::ptr::null()),
+        "zsh/watch" => crate::ported::modules::watch::boot_(std::ptr::null()),
+        "zsh/zftp" => crate::ported::modules::zftp::boot_(std::ptr::null()),
+        "zsh/zprof" => crate::ported::modules::zprof::boot_(std::ptr::null()),
+        "zsh/zpty" => crate::ported::modules::zpty::boot_(std::ptr::null()),
+        "zsh/zselect" => crate::ported::modules::zselect::boot_(std::ptr::null()),
+        "zsh/zutil" => crate::ported::modules::zutil::boot_(std::ptr::null()),
+        // Modules without a ported per-module boot_ (e.g. zsh/main,
+        // zsh/complete — purely-static modules with no setup hook):
+        // 0 == success no-op, matching the pre-port behaviour.
+        _ => 0,
+    }
 }
 
 /// Port of `cleanup_module(Module m)` from `Src/module.c:1918`.
