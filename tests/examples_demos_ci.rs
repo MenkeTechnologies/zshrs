@@ -526,6 +526,14 @@ demo_test!(d364_csv_rfc4180, "364_csv_rfc4180.zsh");
 demo_test!(d365_mini_lisp, "365_mini_lisp.zsh");
 demo_test!(d366_sudoku_solver_bt, "366_sudoku_solver_bt.zsh");
 demo_test!(d367_banner_v8, "367_banner_v8.zsh");
+demo_test!(d368_bencode_roundtrip, "368_bencode_roundtrip.zsh");
+demo_test!(d369_hamming_7_4, "369_hamming_7_4.zsh");
+demo_test!(d370_skyline, "370_skyline.zsh");
+demo_test!(d371_brainfuck_interp, "371_brainfuck_interp.zsh");
+demo_test!(d372_ackermann, "372_ackermann.zsh");
+demo_test!(d373_lzw_codec, "373_lzw_codec.zsh");
+demo_test!(d374_elias_gamma, "374_elias_gamma.zsh");
+demo_test!(d375_banner_v9, "375_banner_v9.zsh");
 
 /// Coverage pin — the directory listing must match the test list
 /// 1:1. If a new demo is added without registering it here, this
@@ -900,6 +908,14 @@ fn every_demo_in_dir_has_a_test() {
         "365_mini_lisp.zsh",
         "366_sudoku_solver_bt.zsh",
         "367_banner_v8.zsh",
+        "368_bencode_roundtrip.zsh",
+        "369_hamming_7_4.zsh",
+        "370_skyline.zsh",
+        "371_brainfuck_interp.zsh",
+        "372_ackermann.zsh",
+        "373_lzw_codec.zsh",
+        "374_elias_gamma.zsh",
+        "375_banner_v9.zsh",
     ];
     let dir = demos_dir();
     let mut on_disk: Vec<String> = match std::fs::read_dir(&dir) {
