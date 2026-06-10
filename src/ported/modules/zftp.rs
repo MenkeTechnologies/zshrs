@@ -165,8 +165,16 @@ pub struct zftp_session {
     pub pwd: Option<String>,  // C: params[ZFPM_PASSWORD]
     pub connected: bool,      // C: cin != NULL
     pub logged_in: bool,      // C: derived from greeting parse
-    /// `transfer_type` field.
+    /// `transfer_type` field. Mirrors the ZFST_TYPE bits of
+    /// `zfstatusp[zfsessno]` (c:267 `#define ZFST_TYPE(x) (x & ZFST_TMSK)`).
+    /// This is the "next transfer type" the user has requested.
     pub transfer_type: i32,
+    /// `current_type` field. Mirrors the ZFST_CTYP bits of
+    /// `zfstatusp[zfsessno]` (c:272 `#define ZFST_CTYP(x) ((x >> ZFST_TBIT)
+    /// & ZFST_TMSK)`). This is the type currently negotiated with the
+    /// server. zfsettype (c:2405) sends TYPE only when transfer_type !=
+    /// current_type and updates current_type after a successful response.
+    pub current_type: i32,
     /// `transfer_mode` field.
     pub transfer_mode: i32,
     /// `passive` field.
@@ -2952,16 +2960,43 @@ pub fn zfgetcwd() -> i32 {
     cwd_ret
 }
 
-/// Port of `zfsettype(int type)` from `Src/Modules/zftp.c:2405`.
-/// C: `int zfsettype(int type)` — sends TYPE I or TYPE A.
+/// Port of `zfsettype(int type)` from `Src/Modules/zftp.c:2404-2417`.
+/// C: `static int zfsettype(int type)` — when the requested type differs
+/// from the server's current type (ZFST_CTYP), send `TYPE A` or `TYPE I`
+/// and on >2 response return 1 leaving CTYP unchanged; on success clear
+/// the CTYP bits in `zfstatusp[zfsessno]` then set them from `type`.
+/// `type` is renamed `typ` in Rust because `type` is a keyword.
 #[allow(non_snake_case)]
-/// WARNING: param names don't match C — Rust=(typ) vs C=(type)
 pub fn zfsettype(typ: i32) -> i32 {
-    // c:2405-2425 — `if ((typ & ZFST_TMSK) == ZFST_IMAG) "I" else "A"`,
-    // send TYPE cmd, return zfgetmsg status.
-    let typ_letter = if (typ & ZFST_IMAG) != 0 { "I" } else { "A" };
-    let _ = zfsendcmd(&format!("TYPE {}\r\n", typ_letter));
-    zfgetmsg()
+    // c:2407 — char buf[] = "TYPE X\r\n";
+    let mut buf: [u8; 8] = *b"TYPE X\r\n";
+    // c:2408 — already at this type? return 0.
+    let cur_ctyp = zftp_state()
+        .lock()
+        .ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.current_type))
+        .unwrap_or(ZFST_CASC);
+    if ZFST_TYPE(typ) == cur_ctyp {
+        return 0; // c:2409
+    }
+    // c:2410 — buf[5] = (ZFST_TYPE(type) == ZFST_ASCI) ? 'A' : 'I';
+    buf[5] = if ZFST_TYPE(typ) == ZFST_ASCI { b'A' } else { b'I' };
+    let cmd = std::str::from_utf8(&buf).unwrap_or("TYPE A\r\n");
+    // c:2411 — if (zfsendcmd(buf) > 2) return 1;
+    if zfsendcmd(cmd) > 2 {
+        return 1; // c:2412
+    }
+    // c:2413-2415 — clear current-type bits, then set from `type`.
+    if let Ok(mut state) = zftp_state().lock() {
+        if let Some(sess) = state.get_session_mut(None) {
+            // C: zfstatusp[zfsessno] &= ~(ZFST_TMSK << ZFST_TBIT);
+            //    zfstatusp[zfsessno] |=  type        << ZFST_TBIT;
+            // Rust models the CTYP slot as a dedicated field rather than
+            // a bit slice, so the equivalent is `current_type = ZFST_TYPE(typ)`.
+            sess.current_type = ZFST_TYPE(typ); // c:2413-2415
+        }
+    }
+    0 // c:2416
 }
 
 /// Port of `zftp_type(char *name, char **args, int flags)` from `Src/Modules/zftp.c:2426`.
@@ -4145,6 +4180,9 @@ impl zftp_session {
             connected: false,
             logged_in: false,
             transfer_type: ZFST_IMAG,
+            // c:2226 — initial current_type is ZFST_CASC (0); the SYST probe
+            // in zftp_login sends the first TYPE I when it detects UNIX L8.
+            current_type: ZFST_CASC,
             transfer_mode: ZFST_STRE,
             passive: true,
             syst_probed: false,
