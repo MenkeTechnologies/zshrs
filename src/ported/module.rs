@@ -1162,6 +1162,13 @@ impl modulestab {
         // their MOD_LINKED-without-MOD_INIT_B initial state so the
         // `zmodload` (no-args) listing — gated on MOD_INIT_B per
         // bug #76 — still shows only `zsh/main`.
+        //
+        // boot_ honours --zsh parity mode internally — the
+        // partab registration always runs (so `$+WATCH`/`$+watch`/
+        // `${(t)WATCHFMT}` report the same shape as zsh -fc) but
+        // the WATCHFMT/LOGCHECK default-value seeding is skipped
+        // when IS_ZSH_MODE is set, matching zsh -fc where the
+        // names are declared but empty until `zmodload zsh/watch`.
         for name in zsh_default_loaded {
             #[allow(clippy::single_match)]
             match *name {
