@@ -3606,11 +3606,17 @@ pub fn getpmgalias(ht: *mut HashTable, name: &str) -> Option<Param> {
 
 /// Port of `getpmdisgalias(HashTable ht, const char *name)` from Src/Modules/parameter.c:1944.
 /// C: `static HashNode getpmdisgalias(HashTable ht, const char *name)` →
-///   `return getalias(galiastab, ht, name, DISABLED);`
+///   `return getalias(aliastab, ht, name, ALIAS_GLOBAL|DISABLED);`
 #[allow(non_snake_case)]
 pub fn getpmdisgalias(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1944
-    getalias(std::ptr::null_mut(), ht, name, DISABLED) // c:1930
+    // Prior port passed `DISABLED` only — matched disabled REGULAR
+    // aliases (collision with getpmdisralias). C's c:1946 actually
+    // passes `ALIAS_GLOBAL|DISABLED`; getalias's strict-equality
+    // check at c:1912 means the wrong constant returned None for
+    // every disabled global alias since they carry the full
+    // ALIAS_GLOBAL|DISABLED flag combination.
+    getalias(std::ptr::null_mut(), ht, name, ALIAS_GLOBAL | DISABLED) // c:1946
 }
 
 /// Port of `getpmsalias(HashTable ht, const char *name)` from Src/Modules/parameter.c:1951.
