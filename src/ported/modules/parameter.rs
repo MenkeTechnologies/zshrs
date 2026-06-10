@@ -147,7 +147,45 @@ pub fn getpmparameter(ht: *mut HashTable, name: &str) -> Option<Param> {
     //   zshrs (before): scalar        zsh: scalar-export
     let value = {
         let tab = crate::ported::params::paramtab().read().unwrap();
-        tab.get(name).map(|pm| paramtypestr(pm)).unwrap_or_default()
+        // c:107-114 — initial getnode2 returns the bare param (the
+        // nameref itself, not its target). After computing its type
+        // string, if the param is a nameref with a non-empty target
+        // u.str, re-resolve via getnode (which follows the nameref)
+        // and append "-{target_type}" with a hyphen separator.
+        //
+        // Prior Rust port stopped after the first paramtypestr call so
+        // `${parameters[my_nameref]}` returned "nameref" instead of
+        // C's "nameref-scalar" / "nameref-array" / etc. — the second
+        // hop tells the user what kind of param the reference points
+        // to, which is the whole reason to use ${parameters[X]} on a
+        // nameref in the first place.
+        if let Some(pm) = tab.get(name) {
+            let base = paramtypestr(pm);
+            // c:110 — `(rpm->node.flags & PM_NAMEREF) && rpm->u.str && *(rpm->u.str)`
+            let is_nameref = (pm.node.flags as u32 & PM_NAMEREF) != 0;
+            let target_name: Option<&str> = if is_nameref {
+                pm.u_str.as_deref().filter(|s| !s.is_empty())
+            } else {
+                None
+            };
+            if let Some(tn) = target_name {
+                // c:111-112 — getnode (resolves the nameref) → check PM_UNSET.
+                if let Some(target_pm) = tab.get(tn) {
+                    if (target_pm.node.flags as u32 & PM_UNSET) == 0 {
+                        // c:113 — `zhtricat(pm->u.str, "-", paramtypestr(rpm))`.
+                        format!("{}-{}", base, paramtypestr(target_pm))
+                    } else {
+                        base
+                    }
+                } else {
+                    base
+                }
+            } else {
+                base
+            }
+        } else {
+            String::new()
+        }
     };
     let found = !value.is_empty();
     let pm = Box::new(param {
