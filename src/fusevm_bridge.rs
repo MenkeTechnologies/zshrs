@@ -301,6 +301,33 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
         let _ = args;
         return 127;
     }
+    // c:Src/Modules/files.c:806-824 — zsh/files registers `chmod`,
+    // `chown`, `chgrp`, `ln`, `mkdir`, `mv`, `rm`, `rmdir`, `sync`
+    // (plus their `zf_*` aliases) into builtintab on module load.
+    // Without an explicit `zmodload zsh/files`, zsh resolves the
+    // names through PATH lookup — `zsh -fc 'chmod +x f'` runs
+    // `/bin/chmod`, whose argv-parser accepts symbolic modes like
+    // `+x` that bin_chmod's octal-only parser rejects with
+    // "invalid mode `+x'". The shadow-aware wrapper at
+    // `dispatch_builtin` (line 438) already has this gate, but the
+    // direct `dispatch_builtin_raw` path used by fusevm's
+    // CallBuiltin opcode bypasses it. Mirror the gate here so the
+    // low-level dispatch matches C's PATH-fall-through behavior.
+    if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+        && module_gated_files_builtin(name)
+        && !crate::ported::module::MODULESTAB
+            .lock()
+            .map(|t| t.is_loaded("zsh/files"))
+            .unwrap_or(false)
+    {
+        // Strip the `zf_` prefix when routing to PATH (Src/Modules/
+        // files.c:816-824 — `zf_*` aliases point at the same handler
+        // as the bare name; PATH only has `/bin/rm`, not `/bin/zf_rm`).
+        let path_name = name.strip_prefix("zf_").unwrap_or(name);
+        let status = with_executor(|exec| exec.execute_external(path_name, &args, &[]))
+            .unwrap_or(127);
+        return status;
+    }
     // c:Src/exec.c:3050-3068 — builtin lookup hits `builtintab` (the
     // merged table containing module-provided builtins). The previous
     // port walked only the core `BUILTINS` slice, so per-module
