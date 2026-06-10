@@ -6517,18 +6517,7 @@ pub fn paramsubst(
                         names
                     }),
                     _ => crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
-                        // c:Src/Modules/parameter.c — the scanfn yields
-                        // entries in the underlying table's iteration
-                        // order. For most magic-assocs we sort for
-                        // deterministic output; `builtins` skips sort
-                        // because the unsorted order keeps the bare-`-`
-                        // prefix entry mid-stream, matching zsh's hash
-                        // order and avoiding `print -l ${(k)builtins}`
-                        // consuming `-` as end-of-options (which
-                        // dropped the entry from the wc-c count).
-                        if var_name != "builtins" {
-                            keys.sort();
-                        }
+                        keys.sort();
                         keys
                     }),
                 })
@@ -6586,9 +6575,7 @@ pub fn paramsubst(
                         // consumers (`zinit ls $functions`, plugin
                         // sanity checks) don't care about hash order.
                         _ => crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
-                            if var_name != "builtins" {
-                                keys.sort();
-                            }
+                            keys.sort();
                             keys.join(" ")
                         }),
                     } // c:2247

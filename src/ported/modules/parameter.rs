@@ -1516,26 +1516,7 @@ pub fn scanbuiltins(
             crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed);
         let mut emitted: std::collections::HashSet<String> =
             std::collections::HashSet::new();
-        // c:Src/Modules/parameter.c:823 — `builtintab` is a real hash
-        // table; iteration order depends on hash bucket placement, NOT
-        // declaration order. Brew's libc hashing puts the `-` prefix
-        // builtin at row ~58, so `print -l ${(k)builtins}` sees it
-        // mid-stream, not first. zshrs's BUILTINS Vec has the `-` /
-        // builtin / command / exec / noglob prefix entries at the
-        // HEAD; an unquoted `print -l ${(k)builtins}` passes `-` as
-        // the FIRST positional, where `print`'s option parser
-        // consumes it as end-of-options — so `-` never reached
-        // stdout, dropping 2 bytes vs zsh's wc -c (bug #N).
-        //
-        // Defer BINF_PREFIX entries to after the regular builtins so
-        // declaration-order iteration matches what zsh's hash
-        // placement would have produced for this particular test.
-        // (Real C zsh's order varies per platform; zshrs picks one
-        // that matches /opt/homebrew/bin/zsh's observed output.)
-        use crate::ported::zsh_h::{builtin, BINF_PREFIX};
-        let (prefix_entries, regular_entries): (Vec<&builtin>, Vec<&builtin>) =
-            BUILTINS.iter().partition(|b| (b.node.flags as u32 & BINF_PREFIX) != 0);
-        for b in regular_entries.iter().chain(prefix_entries.iter()).copied() {
+        for b in BUILTINS.iter() {
             // c:823
             let b_flags = b.node.flags; // c:825 hn->flags
             let pass = if dis != 0 {
