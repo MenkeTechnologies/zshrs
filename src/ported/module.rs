@@ -4025,21 +4025,45 @@ pub fn bin_zmodload_alias(
      * kettle of fish best left unwormed.
      */                                                                  // c:2517-2529
 
-    // c:2532-2541 — no args: list aliases
+    // c:2532-2541 — no args: list aliases.
+    // C body:
+    //   if (!*args) {
+    //       if (OPT_ISSET(ops,'R')) {
+    //           zwarnnam(nam, "no module alias to remove");
+    //           return 1;
+    //       }
+    //       scanhashtable(modulestab, 1, MOD_ALIAS, 0,
+    //                     modulestab->printnode,
+    //                     OPT_ISSET(ops,'L') ? PRINTMOD_LIST : 0);
+    //       return 0;
+    //   }
+    //
+    // scanhashtable args: sorted=1, INCLUDE=MOD_ALIAS, EXCLUDE=0.
+    // Only MOD_ALIAS entries pass, walked in name order. Each entry
+    // dispatched through printmodulenode (the alias-emit arm).
     if args.is_empty() {
         if OPT_ISSET(ops, b'R') {
             // c:2533
             zwarnnam(nam, "no module alias to remove"); // c:2534
             return 1; // c:2535
         }
-        // c:2537-2539 — scanhashtable filtered by MOD_ALIAS, printnode
-        for (name, m) in &table.modules {
-            if (m.node.flags & MOD_ALIAS) != 0 {
-                if OPT_ISSET(ops, b'L') {
-                    println!("zmodload -A {}={}", name, m.alias.as_deref().unwrap_or(""));
-                } else {
-                    println!("{} -> {}", name, m.alias.as_deref().unwrap_or(""));
-                }
+        let listflags = if OPT_ISSET(ops, b'L') {
+            PRINTMOD_LIST
+        } else {
+            0
+        };
+        let mut names: Vec<&String> = table
+            .modules
+            .iter()
+            .filter(|(_, m)| (m.node.flags & MOD_ALIAS) != 0) // c:2537 INCLUDE
+            .map(|(n, _)| n)
+            .collect();
+        names.sort(); // c:2537 sorted=1
+        for name in names {
+            let m = &table.modules[name];
+            let line = printmodulenode(name, m, listflags);
+            if !line.is_empty() {
+                println!("{}", line);
             }
         }
         return 0; // c:2540
@@ -4128,13 +4152,26 @@ pub fn bin_zmodload_alias(
                     table.modules.insert(lhs.to_string(), m); // c:2595
                 }
             } else {
-                // c:2599-2611 — list one alias
+                // c:2599-2611 — list one alias.
+                // C body:
+                //   if ((m = find_module(*args, 0, NULL))) {
+                //       if (m->node.flags & MOD_ALIAS)
+                //           modulestab->printnode(&m->node,
+                //                                 OPT_ISSET(ops,'L')
+                //                                     ? PRINTMOD_LIST : 0);
+                //       else { zwarnnam(...); return 1; }
+                //   } else { zwarnnam(...); return 1; }
                 match table.modules.get(lhs) {
                     Some(m) if (m.node.flags & MOD_ALIAS) != 0 => {
-                        if OPT_ISSET(ops, b'L') {
-                            println!("zmodload -A {}={}", lhs, m.alias.as_deref().unwrap_or(""));
+                        // c:2601-2603 — printnode dispatch
+                        let listflags = if OPT_ISSET(ops, b'L') {
+                            PRINTMOD_LIST
                         } else {
-                            println!("{} -> {}", lhs, m.alias.as_deref().unwrap_or(""));
+                            0
+                        };
+                        let line = printmodulenode(lhs, m, listflags);
+                        if !line.is_empty() {
+                            println!("{}", line);
                         }
                     }
                     Some(_) => {
