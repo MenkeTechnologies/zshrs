@@ -4002,15 +4002,27 @@ pub fn bin_typeset(
             let a = argv[1].as_str();
             if let Some(eq_idx) = a.find("=(") {
                 let aname = &a[..eq_idx];
-                // Strip `=(` prefix and `)` suffix; split inner on
-                // whitespace. Matches the splitting C's getasg would
-                // have done on a single concatenated argv element.
+                // Strip `=(` prefix and `)` suffix. The parser emits
+                // array elements separated by REJOIN_SEP (`\u{1f}`)
+                // sentinels — see parse.rs:2444 commentary. Empty
+                // strings between sentinels are intentional (zsh's
+                // assoc paren-init relies on them, bug #93).
                 let rest = &a[eq_idx + 2..];
                 let inner = rest.trim_end_matches(')');
-                let parts: Vec<String> = inner
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect();
+                let parts: Vec<String> = if inner.contains('\u{1f}') {
+                    inner
+                        .split('\u{1f}')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect()
+                } else {
+                    // Fallback: whitespace split for synthetic args
+                    // that didn't pass through the REJOIN_SEP emitter.
+                    inner
+                        .split_whitespace()
+                        .map(|s| s.to_string())
+                        .collect()
+                };
                 (aname, Some(parts))
             } else if let Some(eq_idx) = a.find('=') {
                 // `arr=val` (scalar form for array slot) — reject per
