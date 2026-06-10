@@ -166,9 +166,15 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     }
 
     if bashre {
-        // c:115
-        // c:116 — `assignaparam("BASH_REMATCH", arr, 0);`
-        setsparam("BASH_REMATCH", &arr.join(":"));
+        // c:113-114 — `if (isset(BASHREMATCH)) assignaparam("BASH_REMATCH", arr, 0);`
+        // — ARRAY assignment so `${BASH_REMATCH[0]}` is the full match,
+        // `${BASH_REMATCH[1]}` the first group, etc. Prior port used
+        // setsparam(":".join(arr)), which made BASH_REMATCH a single
+        // scalar — `${BASH_REMATCH[0]}` returned the first BYTE of the
+        // joined string instead of the full match, and any group that
+        // contained a literal `:` would split incorrectly. Same fix
+        // shape as the match/mbegin/mend array conversion below.
+        setaparam("BASH_REMATCH", arr);
         return return_value;
     }
 
