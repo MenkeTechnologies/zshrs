@@ -175,6 +175,11 @@ pub struct zftp_session {
     /// Set after a successful SYST probe so re-login on the same
     /// session doesn't re-issue SYST.
     pub syst_probed: bool,
+    /// Mirrors the ZFST_NOPS bit of `zfstatusp[zfsessno]` (c:240).
+    /// Set after the server returns 5xx for PASV so subsequent
+    /// `zfopendata` calls skip PASV and go directly to PORT mode.
+    /// Reset to false on session re-open.
+    pub nops_probed: bool,
 }
 
 /// `zfprefs` — file-scope `static int zfprefs;` from
@@ -958,8 +963,15 @@ pub fn zfopendata(name: &str) -> (i32, bool) {
         zwarnnam(name, "Must set preference S or P to transfer data"); // c:864
         return (1, false); // c:865
     }
-    // c:871 — try PASV when the bit is set and ZFST_NOPS isn't.
-    let try_pasv: bool = (prefs & ZFPF_PASV) != 0; // c:871
+    // c:871 — `if (!(zfstatusp[zfsessno] & ZFST_NOPS) && (zfprefs & ZFPF_PASV))`
+    //   — try PASV only when the bit is set AND the server hasn't
+    //     already 5xx'd PASV in this session.
+    let nops_known = zftp_state()
+        .lock()
+        .ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.nops_probed))
+        .unwrap_or(false);
+    let try_pasv: bool = !nops_known && (prefs & ZFPF_PASV) != 0; // c:871
 
     if try_pasv {
         // c:879 — psv_cmd = "PASV\r\n"; (EPSV unsupported in Rust port).
@@ -969,9 +981,23 @@ pub fn zfopendata(name: &str) -> (i32, bool) {
         }
         let code = lastcode.load(Ordering::Relaxed);
         if (500..=504).contains(&code) {
-            // c:884 PASV unsupported
-            zfclosedata(); // c:888
-                           // c:889 — fall through to PORT mode.
+            // c:884 — PASV unsupported by server.
+            // c:888 — `zfstatusp[zfsessno] |= ZFST_NOPS;` — record so
+            //         subsequent zfopendata calls skip PASV entirely.
+            //         Prior port skipped this — every subsequent data
+            //         transfer in the same session re-sent PASV to a
+            //         server that had already 502'd it, wasting one
+            //         round-trip per transfer.
+            if let Ok(mut st) = zftp_state().lock() {
+                if let Some(sess) = st.get_session_mut(None) {
+                    sess.nops_probed = true; // c:888
+                }
+            }
+            zfclosedata(); // c:889
+                           // c:890 — `return zfopendata(...);` — C recurses.
+                           // Rust falls through to the PORT-mode code below;
+                           // same end-state since try_pasv was the only
+                           // PASV-specific gate.
         } else {
             // c:899 — parse the PASV reply.
             let last = lastmsg.lock().ok().map(|m| m.clone()).unwrap_or_default();
@@ -4076,6 +4102,7 @@ impl zftp_session {
             transfer_mode: ZFST_STRE,
             passive: true,
             syst_probed: false,
+            nops_probed: false,
         }
     }
 
