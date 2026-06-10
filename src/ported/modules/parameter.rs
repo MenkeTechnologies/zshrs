@@ -884,15 +884,40 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {
     // pending sticky-emulation snapshot onto the new function.
     crate::ported::exec::shfunc_set_sticky(&mut shf);
 
-    // c:305-313 — TRAP* handling.
+    // c:305-313 — TRAP* handling: a function named TRAPINT / TRAPHUP /
+    // TRAPCHLD / etc. is also installed as the signal trap for the
+    // matching signal. settrap(sn, NULL, ZSIG_FUNC) tells the signal
+    // subsystem "the handler is the same-named shell function — look
+    // it up by name at delivery time," so we don't pass the Eprog.
+    //
+    // C body (verbatim):
+    //   if (!strncmp(name, "TRAP", 4) &&
+    //       (sn = getsigidx(name + 4)) != -1) {
+    //       if (settrap(sn, NULL, ZSIG_FUNC)) {
+    //           freeeprog(shf->funcdef);
+    //           zfree(shf, sizeof(*shf));
+    //           zsfree(val);
+    //           return;
+    //       }
+    //   }
+    //
+    // settrap returns non-zero on rejection (invalid sig, MONITOR
+    // can't-trap, etc.); on rejection C frees the half-built shfunc
+    // and returns WITHOUT calling shfunctab->addnode — i.e. defining
+    // TRAPTTOU under `setopt MONITOR` is a no-op that doesn't
+    // register the function either. Prior Rust port just commented
+    // the dispatch out, so TRAP* functions were never wired as
+    // signal handlers — `TRAPINT() { ... }` defined via
+    // `functions[TRAPINT]=...` never fired on SIGINT.
     if name.len() >= 4 && &name[..4] == "TRAP" {
         // c:305
-        if let Some(_sn) = crate::ported::signals::getsigidx(&name[4..]) { // c:306 sn = getsigidx
-             // c:307-312 — settrap(sn, NULL, ZSIG_FUNC) failure path.
-             // EXTERN: settrap signature in signals.rs:1035 takes
-             // TrapAction enum, not the C `(int sn, Eprog list, int
-             // type)` triple. Skip the early-return until the ZSIG_FUNC
-             // overload lands.
+        if let Some(sn) = crate::ported::signals::getsigidx(&name[4..]) {
+            // c:306 sn = getsigidx(name + 4)
+            if crate::ported::signals::settrap(sn, None, crate::ported::zsh_h::ZSIG_FUNC) != 0 {
+                // c:307-312 — settrap rejected the install; don't
+                // register the function either.
+                return; // c:311
+            }
         }
     }
 
