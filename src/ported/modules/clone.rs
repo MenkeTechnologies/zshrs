@@ -79,14 +79,16 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
     pid = unsafe { libc::fork() };
     if pid == 0 {
         // c:55 if (!pid)
-        // c:56 — clearjobtab(0); clear the inherited JOBTAB so the
-        // child starts fresh. Inlined lock+clear matches the C
-        // clearjobtab loop body (Src/jobs.c:1780).
-        if let Some(tab) = crate::ported::jobs::JOBTAB.get() {
-            if let Ok(mut jobs) = tab.lock() {
-                jobs.clear();
-            }
-        }
+        // c:56 — `clearjobtab(0);` — route through the canonical
+        // free-fn port at Src/jobs.c:1780 (jobs.rs:1778) instead of
+        // inlining a JOBTAB-clear. The canonical fn does more than
+        // `Vec::clear()`: it honors POSIXJOBS to zero `oldmaxjob`
+        // (c:1786-1787) and walks the table per-slot — inlining
+        // skipped both. The `table` param is the executor-side
+        // legacy handle and is unused inside clearjobtab's body
+        // (see the `let _ = table;` line at jobs.rs:1780).
+        let mut dummy = crate::exec_jobs::JobTable::new();
+        crate::ported::jobs::clearjobtab(&mut dummy, 0);
         // c:57-58 — ppid = getppid(); mypid = getpid();
         // ppid / mypid are zsh-globals from Src/exec.c — Rust port
         // reads them on demand via libc; assignments here are
