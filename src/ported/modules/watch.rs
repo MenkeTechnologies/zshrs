@@ -625,25 +625,31 @@ pub fn dowatch() {
 /// ```
 pub fn checksched() {
     // c:650
-    // c:650 — `if (watch && difftime(...) > getiparam("LOGCHECK"))`
+    // c:653 — `if (watch && (int) difftime(time(NULL), lastwatch) > getiparam("LOGCHECK")) dowatch();`
+    //
+    // C does NOT fall back when LOGCHECK is 0. Prior Rust port added a
+    // `raw > 0 ? raw : 60` fallback that papered over the case where
+    // `--zsh` mode skips boot_'s LOGCHECK=60 seeding (gated on
+    // !IS_ZSH_MODE at boot_:771). The fallback was diagnostic-shaped:
+    // it hid the missing init from `--zsh` mode but introduced a
+    // parity divergence — in C zsh's `zsh -fc` (no zmodload watch),
+    // LOGCHECK is unset → getiparam returns 0 → `diff > 0` fires on
+    // every prompt → expensive but always-current watch.
+    //
+    // Drop the fallback. zmodload-time boot_ seeds LOGCHECK=60 (port
+    // of c:759 at boot_:776), so the post-zmodload behavior is
+    // identical to C; the `--zsh -fc` no-zmodload path now also
+    // matches C (fires every prompt when LOGCHECK unset).
     let watch_set = WATCH.with(|w| !w.borrow().is_empty());
     if !watch_set {
         return;
     }
-    let now = unsafe { libc::time(std::ptr::null_mut()) as i64 }; // c:654 time(NULL)
-    let last = LASTWATCH.with(|t| t.get()); // c:654 lastwatch
-                                            // c:654 — `getiparam("LOGCHECK")`. Read paramtab; fall back to 60.
-    let logcheck: i64 = {
-        let raw = crate::ported::params::getiparam("LOGCHECK");
-        if raw > 0 {
-            raw
-        } else {
-            60
-        }
-    };
+    let now = unsafe { libc::time(std::ptr::null_mut()) as i64 }; // c:653 time(NULL)
+    let last = LASTWATCH.with(|t| t.get()); // c:653 lastwatch
+    let logcheck = crate::ported::params::getiparam("LOGCHECK"); // c:653 getiparam("LOGCHECK")
     if (now - last) > logcheck {
-        // c:654 difftime > LOGCHECK
-        dowatch(); // c:655 dowatch();
+        // c:653 difftime > LOGCHECK
+        dowatch(); // c:654 dowatch();
     }
 }
 
