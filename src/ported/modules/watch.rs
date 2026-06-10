@@ -44,44 +44,74 @@ pub const DEFAULT_WATCHFMT: &str = "%n has %a %l from %m.";
 pub fn getlogtime(u: &libc::utmpx, inout: i32) -> i64 {
     // c:161
     if inout != 0 {
-        // c:161
+        // c:168
         return u.ut_tv.tv_sec as i64; // c:169 return u->ut_time
     }
     // c:170 — `if (!(in = fopen(WATCH_WTMP_FILE, "r"))) return time(NULL);`
-    // c:172-198 — `fseek(in, 0, SEEK_END); while (sz >= sizeof(...))
-    //               { fseek; fread; if (matches our line && type
-    //               is login) return uu.ut_time; sz -= sizeof; }`
     let wtmp_path = wtmp_file_path();
-    let target_line = utmp_line(u);
-    if let Ok(file) = std::fs::File::open(wtmp_path) {
-        use std::io::{Read, Seek, SeekFrom};
-        let mut f = file;
-        let rec_size = size_of::<libc::utmpx>() as i64;
-        if let Ok(end) = f.seek(SeekFrom::End(0)) {
-            let mut pos = end as i64 - rec_size;
-            while pos >= 0 {
-                if f.seek(SeekFrom::Start(pos as u64)).is_err() {
-                    break;
-                }
-                let mut buf = vec![0u8; rec_size as usize];
-                if f.read_exact(&mut buf).is_err() {
-                    break;
-                }
-                // c:183-185 — `if (uu.ut_type == USER_PROCESS &&
-                //               !strncmp(u->ut_line, uu.ut_line, ...))
-                //               return uu.ut_time;`. Reinterpret the
-                // raw bytes as utmpx (best-effort — wtmp format
-                // matches utmpx on macOS/Linux glibc).
-                let rec = unsafe { std::ptr::read(buf.as_ptr() as *const libc::utmpx) };
-                if rec.ut_type == libc::USER_PROCESS && utmp_line(&rec) == target_line {
-                    return rec.ut_tv.tv_sec as i64; // c:184 return uu.ut_time
-                }
-                pos -= rec_size;
-            }
+    let mut f = match std::fs::File::open(wtmp_path) {
+        Ok(f) => f,
+        Err(_) => return unsafe { libc::time(std::ptr::null_mut()) as i64 },
+    };
+    use std::io::{Read, Seek, SeekFrom};
+    let rec_size = size_of::<libc::utmpx>() as i64;
+    // c:172 — `fseek(in, 0, SEEK_END);`
+    if f.seek(SeekFrom::End(0)).is_err() {
+        return unsafe { libc::time(std::ptr::null_mut()) as i64 };
+    }
+    let mut first = true; // c:165
+    let mut srchlimit = 50i32; // c:166
+    let last = LASTWATCH.with(|t| t.get()); // c:183 lastwatch read
+                                            // c:173-188 — backwards walk to find the matching logout record.
+                                            //   do {
+                                            //       fseek(in, (first ? -1 : -2) * sizeof, SEEK_CUR);
+                                            //       fread(&uu, sizeof, 1, in);
+                                            //       if (uu.ut_time < lastwatch || !srchlimit--) → return time(NULL);
+                                            //   } while (memcmp(&uu, u, sizeof(uu)));
+    let mut uu: libc::utmpx = unsafe { std::mem::zeroed() };
+    loop {
+        let offset = if first { -rec_size } else { -2 * rec_size }; // c:174
+        first = false; // c:178
+        if f.seek(SeekFrom::Current(offset)).is_err() {
+            return unsafe { libc::time(std::ptr::null_mut()) as i64 }; // c:175-176
+        }
+        let mut buf = vec![0u8; rec_size as usize];
+        if f.read_exact(&mut buf).is_err() {
+            return unsafe { libc::time(std::ptr::null_mut()) as i64 }; // c:180-181
+        }
+        uu = unsafe { std::ptr::read(buf.as_ptr() as *const libc::utmpx) };
+        if (uu.ut_tv.tv_sec as i64) < last || {
+            srchlimit -= 1;
+            srchlimit < 0
+        } {
+            return unsafe { libc::time(std::ptr::null_mut()) as i64 }; // c:184-185
+        }
+        // c:188 — `} while (memcmp(&uu, u, sizeof(uu)));` — loop continues
+        //         while NOT matched. Compare raw bytes.
+        let uu_bytes =
+            unsafe { std::slice::from_raw_parts(&uu as *const _ as *const u8, rec_size as usize) };
+        let u_bytes =
+            unsafe { std::slice::from_raw_parts(u as *const _ as *const u8, rec_size as usize) };
+        if uu_bytes == u_bytes {
+            break;
         }
     }
-    // c:175/181/186 — `fclose(in); return time(NULL);` fallthrough.
-    unsafe { libc::time(std::ptr::null_mut()) as i64 }
+    // c:190-195 — forward walk for next entry with matching ut_line.
+    //   do { fread(&uu, sizeof, 1, in); } while (strncmp(uu.ut_line, u->ut_line, ...));
+    let target_line = utmp_line(u);
+    loop {
+        let mut buf = vec![0u8; rec_size as usize];
+        if f.read_exact(&mut buf).is_err() {
+            return unsafe { libc::time(std::ptr::null_mut()) as i64 }; // c:192-193
+        }
+        uu = unsafe { std::ptr::read(buf.as_ptr() as *const libc::utmpx) };
+        if utmp_line(&uu) == target_line {
+            // c:195 — strncmp returns 0 when matching → exit loop.
+            break;
+        }
+    }
+    // c:197 — `return uu.ut_time;`
+    uu.ut_tv.tv_sec as i64
 }
 
 /// Port of `watch3ary(int inout, WATCH_STRUCT_UTMP *u, char *fmt,
