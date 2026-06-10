@@ -2026,6 +2026,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // canonical sethparam (Src/params.c:3602) which parses the
             // flat (k,v) pair list internally.
             if exec.assoc(&name).is_some() {
+                // c:Src/subst.c:49-79 `keyvalpairelement` — recognise
+                // `[k]=v` / `[k]+=v` syntax in array literals and split
+                // into separate key/value entries before passing to
+                // sethparam. C zsh's prefork(PREFORK_ASSIGN) drives this
+                // at exec.c::addvars time (c:2547 `prefork(vl, ...,
+                // PREFORK_ASSIGN)`), but the fusevm SET_ARRAY path
+                // bypasses prefork — process the elements here so
+                // `a=([k]=v)` and `a+=([k]=v)` write the assoc instead
+                // of erroring "no matches found: [k]=v".
+                let mut flat: Vec<String> = Vec::with_capacity(values.len() * 2);
+                for elem in &values {
+                    if let Some((k, v)) = parse_kv_pair_element(elem) {
+                        flat.push(k);
+                        flat.push(v);
+                    } else {
+                        flat.push(elem.clone());
+                    }
+                }
+                let values = flat;
                 if !values.len().is_multiple_of(2) {
                     eprintln!(
                         "{}:1: bad set of key/value pairs for associative array",
@@ -2114,8 +2133,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // lands, do the augment + write here so the storage
             // actually mutates.
             if exec.assoc(&name).is_some() {
+                // c:Src/subst.c:49-79 keyvalpairelement — recognise
+                // `[k]=v` / `[k]+=v` in array elements (the C source
+                // applies via prefork(PREFORK_ASSIGN) before
+                // assignaparam; the fusevm path bypasses prefork so
+                // run the same kv-pair detection inline here).
+                let mut flat: Vec<String> = Vec::with_capacity(values.len() * 2);
+                for elem in &values {
+                    if let Some((k, v)) = parse_kv_pair_element(elem) {
+                        flat.push(k);
+                        flat.push(v);
+                    } else {
+                        flat.push(elem.clone());
+                    }
+                }
                 let mut map = exec.assoc(&name).unwrap_or_default();
-                let mut it = values.into_iter();
+                let mut it = flat.into_iter();
                 while let Some(k) = it.next() {
                     if let Some(v) = it.next() {
                         map.insert(k, v);
@@ -6560,6 +6593,52 @@ fn nodes_to_value(nodes: Vec<String>) -> Value {
     } else {
         Value::Array(stripped.into_iter().map(Value::str).collect())
     }
+}
+
+/// Detect `[key]=value` / `[key]+=value` shapes in a single string and
+/// split into the (key, value) pair. Returns `None` when the shape
+/// doesn't match (caller treats the element as a singleton word).
+///
+/// Mirrors the visible behavior of `Src/subst.c:49-79
+/// keyvalpairelement`, which is called by `prefork(PREFORK_ASSIGN)` on
+/// each word in an assignment array literal. The fusevm SET_ARRAY path
+/// bypasses prefork, so this helper runs the same check at the
+/// SET_ARRAY entry point for PM_HASHED targets.
+///
+/// Accepts both literal `[`/`]`/`=` and the lexer's `Inbrack`/`Outbrack`/
+/// `Equals` token forms — array elements can arrive in either
+/// representation depending on the compile_zsh entry path.
+fn parse_kv_pair_element(s: &str) -> Option<(String, String)> {
+    use crate::ported::zsh_h::{Equals, Inbrack, Outbrack};
+    let chars: Vec<char> = s.chars().collect();
+    if chars.is_empty() || (chars[0] != '[' && chars[0] != Inbrack) {
+        return None;
+    }
+    // Find matching `]` (or Outbrack TOKEN). c:subst.c:55 — first match
+    // wins (no nesting handled in keyvalpairelement).
+    let end = chars
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, &c)| c == ']' || c == Outbrack)
+        .map(|(i, _)| i)?;
+    if end + 1 >= chars.len() {
+        return None;
+    }
+    // c:subst.c:57-60 — `]=...` (assign) or `]+=...` (append). The
+    // value side starts after the `=` token.
+    let is_equals_char = |c: Option<&char>| -> bool {
+        matches!(c, Some(&'=')) || matches!(c, Some(&ch) if ch == Equals)
+    };
+    let is_append = chars.get(end + 1) == Some(&'+') && is_equals_char(chars.get(end + 2));
+    let is_assign = !is_append && is_equals_char(chars.get(end + 1));
+    if !is_assign && !is_append {
+        return None;
+    }
+    let key: String = chars[1..end].iter().collect();
+    let value_start = if is_append { end + 3 } else { end + 2 };
+    let value: String = chars[value_start..].iter().collect();
+    Some((key, value))
 }
 
 fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
