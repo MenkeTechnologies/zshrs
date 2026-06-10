@@ -3051,7 +3051,41 @@ impl ZshCompiler {
         // both encodings as glob metas. Without the META branch,
         // `echo *.toml` saw `\u{87}.toml` (no literal `*`) and
         // skipped expand_glob entirely → literal pattern emitted.
-        let trigger_glob = unquoted(s, '*')
+        // c:Src/subst.c:111-112 `prefork` invokes `keyvalpairelement`
+        // BEFORE the globlist pass when the word is in PREFORK_ASSIGN
+        // context and matches `[key]=value` / `[key]+=value` shape. The
+        // Marker / key / value triple it produces is NOT globbed (the
+        // Marker entry signals "leave as assoc pair"). In zshrs's fusevm
+        // compile path the array elements run through BUILTIN_GLOB_EXPAND
+        // before reaching BUILTIN_SET_ARRAY's keyvalpairelement check —
+        // so `a=([k]=v)` triggered a NOMATCH glob error on the `[k]=v`
+        // pattern instead of routing the kv pair through. Suppress glob
+        // when we're in assign context AND the word matches the kv-pair
+        // shape (literal `[`, then a `]`, then `=` or `+=`).
+        let in_assign = self.assign_context_depth > 0;
+        let looks_like_kv_pair = in_assign
+            && (untoked.starts_with('[') || untoked.starts_with('\u{91}' /* Inbrack */))
+            && {
+                // Find first `]` (or Outbrack TOKEN) and check that
+                // immediate follower is `=` (or `+=`).
+                let chars: Vec<char> = untoked.chars().collect();
+                let end = chars
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .find(|(_, &c)| c == ']' || c == '\u{92}' /* Outbrack */)
+                    .map(|(i, _)| i);
+                end.is_some_and(|e| {
+                    let after = chars.get(e + 1);
+                    matches!(after, Some('=') | Some('\u{8d}' /* Equals */))
+                        || (after == Some(&'+')
+                            && matches!(
+                                chars.get(e + 2),
+                                Some('=') | Some('\u{8d}' /* Equals */)
+                            ))
+                })
+            };
+        let trigger_glob = !looks_like_kv_pair && (unquoted(s, '*')
             || unquoted(s, '\u{87}')   // Star (parse/tokens.rs:14)
             || unquoted(s, '?')
             || unquoted(s, '\u{97}')   // Quest (parse/tokens.rs:30)
@@ -3127,7 +3161,7 @@ impl ZshCompiler {
                 && (unquoted(s, ')') || unquoted(s, '\u{8a}')))
             // zsh numeric range glob `<N-M>`: any `<…-…>` shape with
             // optional digits on either side outside a bracket-class.
-            || has_numeric_range_glob(&untoked);
+            || has_numeric_range_glob(&untoked));
         let trigger_tilde = untoked.starts_with('~') || untoked.contains(":~") || untoked.contains("=~")
             // c:Src/subst.c:715 — `=cmd` (EQUALS option) routes
             // through filesubstr's equalsubstr arm. Route the word
