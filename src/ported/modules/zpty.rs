@@ -289,25 +289,47 @@ pub fn newptycmd(
                 1
             }
             0 => {
-                // c:386-435 — child-side reset (setsid, dup2, etc.).
+                // c:380-411 — child-side reset.
                 unsafe {
                     libc::close(master);
                     libc::setsid();
+                }
+                // c:381-396 — `if (!echo) { struct ttyinfo info; if (!ptygettyinfo(slave,
+                //              &info)) { info.tio.c_lflag &= ~ECHO; ptysettyinfo(slave, &info); } }`
+                //
+                // Echo handling runs on the SLAVE fd BEFORE the dup2 so the
+                // termios state lives on the pty-slave handle independent
+                // of fd-table churn. Prior port flipped the order — set
+                // echo on fd 0 AFTER dup2 — which works because dup2 shares
+                // the underlying file description, but reads as a different
+                // operation when matched against the C source.
+                if !echo {
+                    let mut info: libc::termios = unsafe { std::mem::zeroed() };
+                    if ptygettyinfo(slave, &mut info) == 0 {
+                        // c:386 (HAVE_TERMIOS_H branch) — `info.tio.c_lflag &= ~ECHO;`
+                        info.c_lflag &= !libc::ECHO;
+                        // c:394 — `ptysettyinfo(slave, &info);`
+                        ptysettyinfo(slave, &info);
+                    }
+                }
+                // c:398-400 — `ioctl(slave, TIOCSCTTY, 0);` — assign the
+                // slave as the child's controlling terminal so that
+                // ioctl(0, TIOC*) and tcgetpgrp/tcsetpgrp address it.
+                // Without TIOCSCTTY, signals like SIGINT from the master
+                // side via `kill -INT $(pgid)` would not reach the child.
+                unsafe {
+                    libc::ioctl(slave, libc::TIOCSCTTY.into(), 0);
+                }
+                // c:402-408 — `close(0); close(1); close(2); dup2(slave, 0..2);`
+                unsafe {
+                    libc::close(0);
+                    libc::close(1);
+                    libc::close(2);
                     libc::dup2(slave, 0);
                     libc::dup2(slave, 1);
                     libc::dup2(slave, 2);
                     if slave > 2 {
-                        libc::close(slave);
-                    }
-                }
-                if !echo {
-                    // c:124 — `ptysettyinfo` — disable echo on slave-side termios.
-                    unsafe {
-                        let mut termios: libc::termios = std::mem::zeroed();
-                        if libc::tcgetattr(0, &mut termios) >= 0 {
-                            termios.c_lflag &= !libc::ECHO;
-                            let _ = libc::tcsetattr(0, libc::TCSADRAIN, &termios);
-                        }
+                        libc::close(slave); // c:411
                     }
                 }
                 let cmd = match CString::new(args[0].as_str()) {
