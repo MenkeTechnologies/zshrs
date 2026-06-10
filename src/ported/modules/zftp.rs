@@ -415,7 +415,28 @@ pub fn zfsetparam(name: &str, val: &str, flags: i32) {
         Some(t) if t == want_type => {} // proceed
         Some(_) | None => return,       // c:514 — wrong type or no param
     }
-    crate::ported::params::setsparam(name, val); // c:519
+    // c:516-519 — `if (type == PM_INTEGER)
+    //                  pm->gsu.i->setfn(pm, *(off_t *)val);
+    //              else
+    //                  pm->gsu.s->setfn(pm, (char *)val);`
+    //
+    // Dispatch per the resolved param type. For ZFPM_INTEGER, route
+    // through setiparam so the integer is stored in `u_val` directly
+    // instead of as a string parsed back to int through assignsparam.
+    // Prior port always called setsparam regardless of want_type —
+    // for ZFPM_INTEGER params (ZFTP_PORT, ZFTP_PID, ZFTP_SIZE, etc.)
+    // the value got stored as a String in `u_str`, and `${ZFTP_PORT}`
+    // reads went through the scalar getter producing the decimal
+    // representation. Functionally equivalent for the read side, but
+    // diverged from C's storage shape: a downstream PM_INTEGER-aware
+    // consumer querying `pm->u.val` directly would see 0 instead of
+    // the actual port number.
+    if (flags & ZFPM_INTEGER) != 0 {
+        let n = val.parse::<i64>().unwrap_or(0);
+        let _ = crate::ported::params::setiparam(name, n); // c:517
+    } else {
+        crate::ported::params::setsparam(name, val); // c:519
+    }
 }
 
 /// Port of `zfunsetparam(char *name)` from Src/Modules/zftp.c:529.
