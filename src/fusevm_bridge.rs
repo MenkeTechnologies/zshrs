@@ -1352,8 +1352,50 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     reg_passthru!(vm, BUILTIN_HISTORY, "history");
     reg_passthru!(vm, BUILTIN_R, "r");
 
-    // Aliases
-    reg_passthru!(vm, BUILTIN_ALIAS, "alias");
+    // Aliases — alias is `BINF_MAGICEQUALS` per Src/builtin.c:50.
+    // c:Src/exec.c:3298-3304 — when a builtin has BINF_MAGICEQUALS,
+    // execcmd_exec sets esprefork = PREFORK_TYPESET and calls
+    // `prefork(args, esprefork, NULL)` on the argv. prefork (subst.c:
+    // 100) drives `filesub` on each word (c:133), which (c:677-686)
+    // looks for the assignment Equals and runs `filesubstr` on the
+    // VALUE side. That's how `alias bad===` triggers equalsubstr's
+    // "= not found" via the inner Equals after the first `=`.
+    //
+    // The fusevm dispatch path doesn't go through execcmd_exec, so
+    // BUILTIN_ALIAS previously passed args straight to bin_alias with
+    // no expansion — `alias x=~/foo` stored literal `~/foo` (no tilde
+    // expand), `alias bad===` stored a broken entry without firing
+    // the "= not found" diagnostic. Run prefork(PREFORK_TYPESET) here
+    // before dispatch_builtin so the C-faithful expansion chain fires.
+    vm.register_builtin(BUILTIN_ALIAS, |vm, argc| {
+        let args = pop_args(vm, argc);
+        // c:Src/exec.c:3304 — `prefork(args, esprefork, NULL)`. prefork's
+        // filesub trigger (subst.c:678 `strchr(*namptr+1, Equals)`)
+        // looks for the EQUALS TOKEN, not literal `=`. The fusevm
+        // path delivers args already-untokenized, so re-tokenize each
+        // arg via `shtokenize` (the same call C's lexer makes implicitly
+        // when assembling the word) so prefork sees Equals tokens at
+        // `=` boundaries and Tilde tokens at `~` starts. After prefork
+        // expands, untokenize for storage.
+        let mut as_linklist: crate::ported::linklist::LinkList<String> =
+            Default::default();
+        for s in &args {
+            let mut tokd = s.clone();
+            crate::ported::glob::shtokenize(&mut tokd);
+            as_linklist.push_back(tokd);
+        }
+        let mut rf = 0i32;
+        crate::ported::subst::prefork(
+            &mut as_linklist,
+            crate::ported::zsh_h::PREFORK_TYPESET,
+            &mut rf,
+        );
+        let mut expanded: Vec<String> = Vec::with_capacity(args.len());
+        while let Some(s) = as_linklist.pop_front() {
+            expanded.push(crate::ported::lex::untokenize(&s).to_string());
+        }
+        Value::Status(dispatch_builtin("alias", expanded))
+    });
 
     // Options. `setopt` (BIN_SETOPT=0) / `unsetopt` (BIN_UNSETOPT=1)
     // share bin_setopt (options.c:580) — funcid bit discriminates

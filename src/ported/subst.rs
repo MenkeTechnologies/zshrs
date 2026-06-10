@@ -1631,35 +1631,74 @@ fn filesub(namptr: &str, assign: i32) -> String {
     // recurse filesubstr on the RHS.
     if assign & PREFORK_TYPESET != 0 {
         // c:677
-        // C: `(*namptr)[1] && (eql = sub = strchr(*namptr + 1, Equals))`
+        // C: `(*namptr)[1] && (eql = sub = strchr(*namptr + 1, Equals))`.
+        // C searches for the Equals TOKEN (subst.c:678). zshrs's
+        // pipeline can deliver the arg in either form:
+        //   - Tokenized (lexer-emitted assignment word, fusevm
+        //     compile_zsh re-tokenized words): `=` chars come in as
+        //     `Equals` (\u{8d}) and `~` as `Tilde` (\u{98}).
+        //   - Untokenized (some entry sites): literal ASCII `=`/`~`.
+        // Accept both forms so the magic-equals filesub trigger fires
+        // regardless of which entry path delivered the arg. C's
+        // strict-Equals-only behavior is preserved by checking the
+        // token form first.
         if namptr.len() >= 2 {
             // c:678
-            // strchr from index 1 onward
-            if let Some(sub) = namptr[1..].find('=').map(|p| p + 1) {
-                // c:678
-                eql = Some(sub); // c:678
-                let str_start = sub + 1; // c:679
-                if str_start < namptr.len()                 // c:680
-                    && (namptr.as_bytes()[str_start] == b'~'
-                        || namptr.as_bytes()[str_start] == b'=')
-                {
-                    // c:680
-                    let rhs = &namptr[str_start..]; // c:679
-                    if let Some(expanded) = filesubstr(rhs, true) {
-                        // c:680
-                        // C: `sub[1] = '\0'; *namptr = dyncat(*namptr, str);`
-                        namptr = format!("{}{}", &namptr[..str_start], expanded);
-                        // c:682
-                    } // c:682
-                } // c:680
+            // c:678 — `strchr(*namptr + 1, Equals)`. Look for Equals
+            // TOKEN first; fall back to literal `=` for untokenized
+            // arrival paths.
+            let chars: Vec<char> = namptr.chars().collect();
+            let eql_pos = chars
+                .iter()
+                .skip(1)
+                .position(|&c| c == Equals)
+                .map(|p| p + 1)
+                .or_else(|| {
+                    chars.iter().skip(1).position(|&c| c == '=').map(|p| p + 1)
+                });
+            if let Some(sub_char_idx) = eql_pos {
+                // c:678 — `sub` points at the Equals position.
+                // sub_char_idx is the CHAR offset; convert to byte
+                // offset for namptr slicing.
+                let mut byte_off = 0;
+                for c in chars.iter().take(sub_char_idx) {
+                    byte_off += c.len_utf8();
+                }
+                let sub_byte = byte_off; // c:678 sub
+                eql = Some(sub_byte);
+                // c:679 — `str = sub + 1` (byte after the Equals).
+                let str_start = sub_byte + chars[sub_char_idx].len_utf8();
+                if str_start < namptr.len() {
+                    // c:680 — `sub[1] == Tilde || sub[1] == Equals`.
+                    //   Accept token AND ASCII for both.
+                    let next_char = namptr[str_start..]
+                        .chars()
+                        .next()
+                        .unwrap_or('\0');
+                    let trigger = matches!(
+                        next_char,
+                        '~' | '=' | '\u{98}' /* Tilde */ | '\u{8d}' /* Equals */
+                    );
+                    if trigger {
+                        // c:680 — `filesubstr(&str, assign)`.
+                        let rhs = &namptr[str_start..];
+                        if let Some(expanded) = filesubstr(rhs, true) {
+                            // c:681-682 — `sub[1] = '\0'; *namptr =
+                            // dyncat(*namptr, str);`. Splice the
+                            // expanded text in place of the trailing
+                            // part.
+                            namptr = format!("{}{}", &namptr[..str_start], expanded);
+                        }
+                    }
+                }
             } else {
-                // c:684
+                // c:684 — no Equals in arg → bail.
                 return namptr; // c:685
-            } // c:686
+            }
         } else {
             // c:684
             return namptr; // c:685
-        } // c:686
+        }
     }
 
     // C: `ptr = *namptr; while ((sub = strchr(ptr, ':'))) { … }`
