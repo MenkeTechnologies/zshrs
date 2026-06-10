@@ -138,9 +138,16 @@ private class ZshrsReflectionPanel(private val project: Project) : SimpleToolWin
         else -> name.replaceFirstChar { it.titlecase() }
     }
 
-    private inner class RefreshAction : AnAction("Refresh", "Re-run `zshrs --dump-reflection` and reload", AllIcons.Actions.Refresh) {
+    private inner class RefreshAction : AnAction("Refresh", "Re-run `zshrs --dump-reflection` and `zshrs --dump-plugins`, reload tabs and External Libraries", AllIcons.Actions.Refresh) {
         override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
-        override fun actionPerformed(e: AnActionEvent) = reload()
+        override fun actionPerformed(e: AnActionEvent) {
+            reload()
+            // Also re-fetch the plugin list so External Libraries picks
+            // up newly-sourced zsh plugins without an IDE restart.
+            com.menketechnologies.zshrs.library.ZshrsPluginRegistry
+                .getInstance(project)
+                .refreshAsync()
+        }
     }
 
     private inner class OpenSettingsAction : AnAction("Settings", "Open zshrs settings", AllIcons.General.Settings) {

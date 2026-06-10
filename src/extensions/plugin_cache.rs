@@ -750,6 +750,27 @@ impl PluginCache {
         insecure
     }
 
+    /// Enumerate every plugin currently in the `plugins` table.
+    /// Returns `(path, mtime_secs)` tuples in insertion order.
+    /// Used by `zshrs --dump-plugins` to feed the IntelliJ
+    /// External Libraries view.
+    pub fn list_plugin_paths(&self) -> Vec<(String, i64)> {
+        let mut stmt = match self
+            .conn
+            .prepare("SELECT path, mtime_secs FROM plugins ORDER BY id")
+        {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = match stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        }) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        rows.flatten().collect()
+    }
+
     /// Check if a directory's permissions are secure.
     /// Insecure = world-writable or group-writable AND not owned by root or EUID.
     fn check_dir_security(meta: &std::fs::Metadata, euid: u32) -> bool {
@@ -773,6 +794,216 @@ impl PluginCache {
 pub fn file_mtime(path: &Path) -> Option<(i64, i64)> {
     let meta = std::fs::metadata(path).ok()?;
     Some((meta.mtime(), meta.mtime_nsec()))
+}
+
+/// One plugin entry as exposed to the IntelliJ External Libraries view.
+/// `manager` is the inferred plugin manager (zinit / oh-my-zsh / prezto /
+/// antidote / antigen / zplug / zsh-more-completions / zpwr / loose).
+/// `name` is the human-readable plugin identifier (`zsh-users/zsh-autosuggestions`,
+/// `git`, etc.). `root` is the absolute directory that holds the plugin's files.
+#[derive(Debug, Clone)]
+pub struct PluginEntry {
+    pub manager: String,
+    pub name: String,
+    pub root: PathBuf,
+}
+
+/// Classify a sourced plugin file path into `(manager, name, root_dir)`.
+/// The match order matters — first hit wins so `~/.oh-my-zsh/custom/plugins/foo`
+/// is "oh-my-zsh" not "loose".
+fn classify_plugin_path(path: &Path) -> PluginEntry {
+    let s = path.to_string_lossy();
+
+    // zinit: `<root>/plugins/<user>---<repo>/<file>` where root is either
+    // `~/.zinit` (legacy) or `$XDG_DATA_HOME/zinit` / `~/.local/share/zinit`.
+    for marker in ["/.zinit/plugins/", "/zinit/plugins/"] {
+        if let Some(start) = s.find(marker) {
+            let after = &s[start + marker.len()..];
+            if let Some(end) = after.find('/') {
+                let dir = &after[..end];
+                let name = dir.replacen("---", "/", 1);
+                let root: PathBuf = s[..start + marker.len() + end].into();
+                return PluginEntry { manager: "zinit".into(), name, root };
+            }
+        }
+    }
+
+    // oh-my-zsh: `~/.oh-my-zsh/{plugins,custom/plugins,themes,custom/themes}/<name>/<file>`
+    for (marker, kind) in [
+        ("/.oh-my-zsh/custom/plugins/", "plugin"),
+        ("/.oh-my-zsh/plugins/", "plugin"),
+        ("/.oh-my-zsh/custom/themes/", "theme"),
+        ("/.oh-my-zsh/themes/", "theme"),
+    ] {
+        if let Some(start) = s.find(marker) {
+            let after = &s[start + marker.len()..];
+            let end = after.find('/').unwrap_or(after.len());
+            let leaf = &after[..end];
+            let name = if kind == "theme" { format!("{}.theme", leaf) } else { leaf.to_string() };
+            let root: PathBuf = s[..start + marker.len() + end].into();
+            return PluginEntry { manager: "oh-my-zsh".into(), name, root };
+        }
+    }
+
+    // prezto: `~/.zprezto/modules/<name>/init.zsh`.
+    if let Some(start) = s.find("/.zprezto/modules/") {
+        let after = &s[start + "/.zprezto/modules/".len()..];
+        let end = after.find('/').unwrap_or(after.len());
+        let name = after[..end].to_string();
+        let root: PathBuf = s[..start + "/.zprezto/modules/".len() + end].into();
+        return PluginEntry { manager: "prezto".into(), name, root };
+    }
+
+    // antidote: `~/.cache/antidote/<user>/<repo>/<file>` or
+    // `~/.local/share/antidote/repos/<user>/<repo>/<file>`.
+    for marker in ["/antidote/repos/", "/.cache/antidote/"] {
+        if let Some(start) = s.find(marker) {
+            let after = &s[start + marker.len()..];
+            // user/repo — two path components.
+            let mut split = after.splitn(3, '/');
+            if let (Some(user), Some(repo), _) = (split.next(), split.next(), split.next()) {
+                let name = format!("{}/{}", user, repo);
+                let root: PathBuf = format!(
+                    "{}{}/{}",
+                    &s[..start + marker.len()],
+                    user,
+                    repo
+                )
+                .into();
+                return PluginEntry { manager: "antidote".into(), name, root };
+            }
+        }
+    }
+
+    // antigen: `~/.antigen/bundles/<user>/<repo>/<file>`.
+    if let Some(start) = s.find("/.antigen/bundles/") {
+        let after = &s[start + "/.antigen/bundles/".len()..];
+        let mut split = after.splitn(3, '/');
+        if let (Some(user), Some(repo), _) = (split.next(), split.next(), split.next()) {
+            let name = format!("{}/{}", user, repo);
+            let root: PathBuf = format!(
+                "{}/{}/{}",
+                &s[..start + "/.antigen/bundles".len()],
+                user,
+                repo
+            )
+            .into();
+            return PluginEntry { manager: "antigen".into(), name, root };
+        }
+    }
+
+    // zplug: `~/.zplug/repos/<user>/<repo>/<file>`.
+    if let Some(start) = s.find("/.zplug/repos/") {
+        let after = &s[start + "/.zplug/repos/".len()..];
+        let mut split = after.splitn(3, '/');
+        if let (Some(user), Some(repo), _) = (split.next(), split.next(), split.next()) {
+            let name = format!("{}/{}", user, repo);
+            let root: PathBuf = format!(
+                "{}/{}/{}",
+                &s[..start + "/.zplug/repos".len()],
+                user,
+                repo
+            )
+            .into();
+            return PluginEntry { manager: "zplug".into(), name, root };
+        }
+    }
+
+    // zsh-more-completions: the user's own 16k-file corpus. Group every
+    // file under one logical library so the IDE doesn't render 16k leaves.
+    if let Some(start) = s.find("/zsh-more-completions/") {
+        let root: PathBuf = s[..start + "/zsh-more-completions".len()].into();
+        return PluginEntry {
+            manager: "zsh-more-completions".into(),
+            name: "zsh-more-completions".into(),
+            root,
+        };
+    }
+
+    // zpwr: the user's CLI suite. One library, root = `$ZPWR` or `~/.zpwr`.
+    for marker in ["/.zpwr/", "/zpwr/"] {
+        if let Some(start) = s.find(marker) {
+            let root: PathBuf = s[..start + marker.len() - 1].into();
+            return PluginEntry {
+                manager: "zpwr".into(),
+                name: "zpwr".into(),
+                root,
+            };
+        }
+    }
+
+    // Loose: the file's parent directory is the root, basename is the name.
+    let root = path.parent().map(PathBuf::from).unwrap_or_else(|| path.into());
+    let name = root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "(loose)".into());
+    PluginEntry { manager: "loose".into(), name, root }
+}
+
+/// Read every entry in `plugins` and group by `(manager, name, root)`.
+/// Returns one `PluginEntry` per unique plugin (de-duplicated across the
+/// many files a single plugin typically sources).
+pub fn list_plugins(cache_path: &Path) -> Vec<PluginEntry> {
+    let cache = match PluginCache::open(cache_path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let mut seen: std::collections::BTreeMap<(String, String, PathBuf), PluginEntry> =
+        std::collections::BTreeMap::new();
+    for (path, _mtime) in cache.list_plugin_paths() {
+        let entry = classify_plugin_path(Path::new(&path));
+        seen.entry((entry.manager.clone(), entry.name.clone(), entry.root.clone()))
+            .or_insert(entry);
+    }
+    seen.into_values().collect()
+}
+
+/// JSON consumed by the IntelliJ `AdditionalLibraryRootsProvider`.
+/// Schema:
+/// ```json
+/// {
+///   "schema": 1,
+///   "plugins": [
+///     {"manager": "zinit", "name": "zsh-users/zsh-autosuggestions",
+///      "root": "/Users/wizard/.zinit/plugins/zsh-users---zsh-autosuggestions"}
+///   ]
+/// }
+/// ```
+/// Manager+name uniquely identify a plugin; root is the directory to
+/// expose as a synthetic library root.
+pub fn dump_plugins_json() -> String {
+    let entries = list_plugins(&default_cache_path());
+    let mut s = String::from("{\"schema\":1,\"plugins\":[");
+    for (i, e) in entries.iter().enumerate() {
+        if i > 0 { s.push(','); }
+        s.push_str(&format!(
+            "{{\"manager\":{},\"name\":{},\"root\":{}}}",
+            json_str(&e.manager),
+            json_str(&e.name),
+            json_str(&e.root.to_string_lossy())
+        ));
+    }
+    s.push_str("]}");
+    s
+}
+
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Default path for the plugin cache db. Honors $ZSHRS_HOME so the
@@ -974,6 +1205,122 @@ mod migration_tests {
             // override branch and joins "" + "plugins.db" = "plugins.db".
             assert_eq!(default_cache_path(), PathBuf::from("plugins.db"));
         });
+    }
+}
+
+#[cfg(test)]
+mod classify_tests {
+    use super::*;
+    use std::path::Path;
+
+    fn classify(p: &str) -> (String, String, String) {
+        let e = classify_plugin_path(Path::new(p));
+        (e.manager, e.name, e.root.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn zinit_legacy_dir_user_repo() {
+        let (m, n, r) = classify(
+            "/Users/wizard/.zinit/plugins/zsh-users---zsh-autosuggestions/zsh-autosuggestions.plugin.zsh",
+        );
+        assert_eq!(m, "zinit");
+        assert_eq!(n, "zsh-users/zsh-autosuggestions");
+        assert_eq!(
+            r,
+            "/Users/wizard/.zinit/plugins/zsh-users---zsh-autosuggestions"
+        );
+    }
+
+    #[test]
+    fn zinit_xdg_dir_user_repo() {
+        let (m, n, _) = classify(
+            "/home/u/.local/share/zinit/plugins/romkatv---powerlevel10k/p10k.zsh",
+        );
+        assert_eq!(m, "zinit");
+        assert_eq!(n, "romkatv/powerlevel10k");
+    }
+
+    #[test]
+    fn oh_my_zsh_core_plugin() {
+        let (m, n, r) = classify("/Users/wizard/.oh-my-zsh/plugins/git/git.plugin.zsh");
+        assert_eq!(m, "oh-my-zsh");
+        assert_eq!(n, "git");
+        assert_eq!(r, "/Users/wizard/.oh-my-zsh/plugins/git");
+    }
+
+    #[test]
+    fn oh_my_zsh_custom_plugin() {
+        let (m, n, _) = classify(
+            "/Users/wizard/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh",
+        );
+        assert_eq!(m, "oh-my-zsh");
+        assert_eq!(n, "zsh-syntax-highlighting");
+    }
+
+    #[test]
+    fn oh_my_zsh_theme_tagged_with_theme_suffix() {
+        let (m, n, _) =
+            classify("/Users/wizard/.oh-my-zsh/themes/agnoster.zsh-theme");
+        assert_eq!(m, "oh-my-zsh");
+        assert_eq!(n, "agnoster.zsh-theme.theme");
+    }
+
+    #[test]
+    fn prezto_module() {
+        let (m, n, _) = classify("/Users/wizard/.zprezto/modules/git/init.zsh");
+        assert_eq!(m, "prezto");
+        assert_eq!(n, "git");
+    }
+
+    #[test]
+    fn antidote_repo() {
+        let (m, n, _) = classify(
+            "/Users/wizard/.cache/antidote/zsh-users/zsh-autosuggestions/zsh-autosuggestions.zsh",
+        );
+        assert_eq!(m, "antidote");
+        assert_eq!(n, "zsh-users/zsh-autosuggestions");
+    }
+
+    #[test]
+    fn antigen_bundle() {
+        let (m, n, _) = classify(
+            "/Users/wizard/.antigen/bundles/zsh-users/zsh-completions/zsh-completions.plugin.zsh",
+        );
+        assert_eq!(m, "antigen");
+        assert_eq!(n, "zsh-users/zsh-completions");
+    }
+
+    #[test]
+    fn zplug_repo() {
+        let (m, n, _) = classify(
+            "/Users/wizard/.zplug/repos/zsh-users/zsh-history-substring-search/zsh-history-substring-search.zsh",
+        );
+        assert_eq!(m, "zplug");
+        assert_eq!(n, "zsh-users/zsh-history-substring-search");
+    }
+
+    #[test]
+    fn zsh_more_completions_groups_into_one() {
+        let (m, n, _) = classify(
+            "/Users/wizard/forkedRepos/zsh-more-completions/src/_some_long_completion",
+        );
+        assert_eq!(m, "zsh-more-completions");
+        assert_eq!(n, "zsh-more-completions");
+    }
+
+    #[test]
+    fn zpwr_root_recognized() {
+        let (m, n, _) = classify("/Users/wizard/.zpwr/local/.aliases.sh");
+        assert_eq!(m, "zpwr");
+        assert_eq!(n, "zpwr");
+    }
+
+    #[test]
+    fn loose_plugin_uses_parent_dir_as_name() {
+        let (m, n, r) = classify("/opt/local/share/zsh/something/init.zsh");
+        assert_eq!(m, "loose");
+        assert_eq!(n, "something");
+        assert_eq!(r, "/opt/local/share/zsh/something");
     }
 }
 
