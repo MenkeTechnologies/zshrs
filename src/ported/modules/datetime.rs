@@ -287,25 +287,41 @@ pub fn bin_strftime(
     ops: &options,
     func: i32,
 ) -> i32 {
-    // c:191 — `char *tz = getsparam("TZ");`. Read TZ from paramtab
-    // (canonical shell var storage); previous port read
-    // `env::var("TZ")` which diverges from shell-internal TZ values
-    // not yet exported. Same env-vs-paramtab family as recent fixes.
-    let tz_saved = getsparam("TZ"); // c:191
-                                    // c:193-198 — `startparamscope(); createparam("TZ", PM_LOCAL);
-                                    //              setsparam("TZ", tz);`. The Rust port mirrors via
-                                    // env::set_var so libc's strftime sees the locale-active TZ —
-                                    // setsparam alone doesn't propagate to the libc-level zone.
+    // c:190-191 — `int result = 1; char *tz = getsparam("TZ");`
+    let tz_saved = getsparam("TZ"); // c:190
+                                    // c:192-198 — `startparamscope();
+                                    //              if (tz) {
+                                    //                  Param pm = createparam("TZ", PM_LOCAL|...);
+                                    //                  if (pm) pm->level = locallevel;
+                                    //                  setsparam("TZ", ztrdup(tz));
+                                    //              }`
+                                    //
+                                    // C's PM_LOCAL gives the TZ override function-scope so
+                                    // endparamscope at c:200 automatically restores the prior TZ.
+                                    // Rust port pushes via env::set_var so libc's strftime sees
+                                    // the new zone — paramtab setsparam alone doesn't propagate
+                                    // to the libc-level zone (libc reads $TZ from getenv at
+                                    // strftime time, not from zsh's paramtab).
+                                    //
+                                    // Capture the ORIGINAL env::TZ here so we can restore it on
+                                    // exit. Prior port re-set env::TZ to the same value on exit
+                                    // instead of restoring — leaving a stale env::TZ override
+                                    // after bin_strftime returned. Real-world: user has env::TZ
+                                    // = "UTC" but $TZ paramtab = "America/Chicago"; after
+                                    // strftime returns, env::TZ silently became "America/Chicago"
+                                    // and stayed there for the rest of the session.
+    let env_tz_saved = std::env::var_os("TZ"); // capture before overwrite
     if let Some(ref tz) = tz_saved {
-        std::env::set_var("TZ", tz); // c:198 setsparam
+        std::env::set_var("TZ", tz); // c:197 setsparam
     }
     // Convert &[String] → &[&str] for the internal helper which
     // takes the narrower view.
     let argv_views: Vec<&str> = argv.iter().map(String::as_str).collect();
     let result = output_strftime(nam, &argv_views, ops, func); // c:199
-                                                               // c:200 — `endparamscope();`. Restore the saved TZ.
-    if let Some(ref tz) = tz_saved {
-        std::env::set_var("TZ", tz);
+                                                               // c:200 — `endparamscope();` — restore prior env::TZ.
+    match env_tz_saved {
+        Some(prev) => std::env::set_var("TZ", prev),
+        None => std::env::remove_var("TZ"),
     }
     result // c:202
 }
