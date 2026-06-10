@@ -4178,60 +4178,95 @@ pub fn bin_zmodload_exist(
 pub fn bin_zmodload_dep(table: &mut modulestab, _nam: &str, args: &[String], ops: &options) -> i32 {
     // c:2649
     if OPT_ISSET(ops, b'u') {
-        // c:2649
-        // c:2654 — const char *tnam = *args++;
+        // c:2652
+        // c:2654 — `const char *tnam = *args++;`
         if args.is_empty() {
             return 0;
         }
         let tnam = &args[0];
         let rest = &args[1..];
-        // c:2655 — find_module(tnam, FINDMOD_ALIASP, &tnam)
+        // c:2655 — `find_module(tnam, FINDMOD_ALIASP, &tnam)`
         let canon = match find_module(table, tnam, FINDMOD_ALIASP) {
             Some(n) => n,
-            None => return 0, // c:2657
+            None => return 0, // c:2656-2657
         };
         if let Some(m) = table.modules.get_mut(&canon) {
-            if let Some(deps) = m.deps.as_mut() {
-                // c:2658
-                if !rest.is_empty() {
-                    // c:2659-2667 — remove specific deps
-                    for to_remove in rest {
-                        if let Some(pos) = deps.iter().position(|d| d == to_remove) {
-                            deps.delete_node(pos); // c:2664 remnode
-                        }
+            if !rest.is_empty() && m.deps.is_some() {
+                // c:2658-2671 — remove specific deps.
+                // C body c:2659-2667 walks args, finds each in deps,
+                // removes the matched node; the inner break ends the
+                // current arg's search but the outer while continues
+                // to the next arg. Mirrors with a for-loop.
+                let deps = m.deps.as_mut().unwrap();
+                for to_remove in rest {
+                    // c:2659 do { ... } while(*++args)
+                    if let Some(pos) = deps.iter().position(|d| d == to_remove) {
+                        deps.delete_node(pos); // c:2664 remnode
                     }
-                } else {
-                    // c:2673-2676 — remove all deps
-                    deps.clear();
                 }
+                // c:2668-2671 — if deps now empty, free the list.
+                if deps.is_empty() {
+                    m.deps = None;
+                }
+            } else if m.deps.is_some() {
+                // c:2672-2676 — no specific deps given: clear all.
+                m.deps = None;
             }
-            // c:2678-2679 — if no deps and no handle, delete module
-            let no_deps_no_handle = m.deps.as_ref().map_or(true, |d| d.is_empty());
-            if no_deps_no_handle {
-                table.modules.remove(&canon);
+            // c:2678-2679 — `if (!m->deps && !m->u.handle) delete_module(m);`
+            // Static-link analog of `!u.handle` is `!MOD_INIT_B` (boot
+            // hasn't run = no loaded handle). Without the MOD_INIT_B
+            // gate, the prior port deleted any module whose deps got
+            // cleared, dropping the modulestab entries for already-
+            // loaded modules (zsh/main, zsh/watch, etc.) the moment
+            // their dep list went empty.
+            let no_deps = m.deps.is_none();
+            let no_handle = (m.node.flags & MOD_INIT_B) == 0;
+            if no_deps && no_handle {
+                table.modules.remove(&canon); // c:2679 delete_module
             }
         }
         return 0; // c:2680
     }
-    // c:2681 — list-mode or add-mode
-    if args.len() < 2 {
-        // List dependencies (c:2682-2684 — print all module deps)
-        for (name, m) in &table.modules {
-            if let Some(deps) = m.deps.as_ref() {
-                if !deps.is_empty() {
-                    let joined: Vec<&str> = deps.iter().map(|s| s.as_str()).collect();
-                    println!("zmodload -d {} {}", name, joined.join(" "));
+    // c:2681 — `else if (!args[0] || !args[1])`: list-mode (one or all).
+    if args.is_empty() || args.len() == 1 {
+        // c:2682-2691 — `int depflags = OPT_ISSET(ops,'L')
+        //                  ? PRINTMOD_DEPS|PRINTMOD_LIST : PRINTMOD_DEPS;`
+        let depflags = if OPT_ISSET(ops, b'L') {
+            PRINTMOD_DEPS | PRINTMOD_LIST
+        } else {
+            PRINTMOD_DEPS
+        };
+        if !args.is_empty() {
+            // c:2685-2687 — single-name list:
+            //   if ((m = modulestab->getnode2(modulestab, args[0])))
+            //       modulestab->printnode(&m->node, depflags);
+            if let Some(m) = table.modules.get(&args[0]) {
+                let line = printmodulenode(&args[0], m, depflags);
+                if !line.is_empty() {
+                    println!("{}", line);
+                }
+            }
+        } else {
+            // c:2688-2691 — full sorted scan.
+            //   scanhashtable(modulestab, 1, 0, 0, printnode, depflags);
+            let mut names: Vec<&String> = table.modules.keys().collect();
+            names.sort(); // c:2689 sorted=1
+            for name in names {
+                let m = &table.modules[name];
+                let line = printmodulenode(name, m, depflags);
+                if !line.is_empty() {
+                    println!("{}", line);
                 }
             }
         }
-        return 0;
+        return 0; // c:2692
     }
-    // Add deps: args[0] is target, args[1..] are deps to add.
+    // c:2693-2701 — add deps: args[0] target, args[1..] deps to add.
     let target = &args[0];
     for dep in &args[1..] {
-        add_dep(table, target, dep); // dispatch to add_dep
+        add_dep(table, target, dep); // c:2699
     }
-    0
+    0 // c:2700 (ret stays 0)
 }
 
 /// Port of `printautoparams(HashNode hn, int lon)` from `Src/module.c:2710`.
