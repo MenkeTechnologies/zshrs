@@ -233,12 +233,16 @@ pub fn bin_zsocket(
                         std::io::Error::last_os_error()
                     ),
                 ); // c:209
-                unsafe {
-                    libc::close(rfd);
-                } // c:210
-                return 1; // c:211
+                // c:214 — `zclose(rfd);` — rfd was registered as
+                // FDT_EXTERNAL at c:208 above (addmodulefd call).
+                // Raw libc::close would leave the marker stale on
+                // the freed fd (same leak shape as the init_io
+                // SHTTY fix ff15efec5f and the tcp_close fix
+                // 9b4dae375a).
+                let _ = crate::ported::utils::zclose(rfd);
+                return 1; // c:215
             }
-            fdtable_set(sfd, FDT_EXTERNAL); // c:213
+            fdtable_set(sfd, FDT_EXTERNAL); // c:217
         } else {
             sfd = rfd; // c:217
         }
@@ -311,13 +315,16 @@ pub fn bin_zsocket(
                         targetfd,
                         std::io::Error::last_os_error()
                     ),
-                ); // c:255
-                unsafe {
-                    libc::close(sfd);
-                } // c:256
-                return 1; // c:257
+                ); // c:256
+                // c:257 — `zclose(sfd);` — sfd was just registered as
+                // FDT_EXTERNAL at c:252 above; raw libc::close would
+                // leave the marker stale (same fix shape as the c:214
+                // case earlier in this builtin and the init_io fix
+                // ff15efec5f).
+                let _ = crate::ported::utils::zclose(sfd);
+                return 1; // c:258
             }
-            sfd = targetfd; // c:259
+            sfd = targetfd; // c:260
             fdtable_set(sfd, FDT_EXTERNAL); // c:260
         }
         setiparam("REPLY", sfd as i64); // c:263 setiparam_no_convert
