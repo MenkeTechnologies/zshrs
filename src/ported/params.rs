@@ -11001,6 +11001,30 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             }
             Some("cat".to_string()) // c:Src/init.c:1214
         }
+        // c:Src/init.c:1215 — `readnullcmd = ztrdup(DEFAULT_READNULLCMD);`.
+        // DEFAULT_READNULLCMD upstream default is "more" (configure.ac:413,
+        // 417). Apple's distribution and Homebrew zsh both ship with
+        // `--enable-readnullcmd=less` per the OS pager. Match the host
+        // build so /opt/homebrew/bin/zsh and zshrs print the same value.
+        "READNULLCMD" => {
+            let tab_val = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get("READNULLCMD").and_then(|pm| pm.u_str.clone()));
+            if let Some(v) = tab_val {
+                if !v.is_empty() {
+                    return Some(v);
+                }
+            }
+            #[cfg(target_os = "macos")]
+            {
+                Some("less".to_string())
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Some("more".to_string())
+            }
+        }
         // $0 routes through utils::argzero.
         "0" => argzero(),
         // POSIX shell-special scalars. C dispatches these through

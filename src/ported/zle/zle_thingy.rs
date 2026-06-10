@@ -1841,13 +1841,20 @@ pub fn init_thingies() -> i32 {
             .find(|(n, _)| *n == *nam)
             .map(|(_, f)| *f)
             .unwrap_or(0);
-        let w = fn_ptr.map(|f| {
-            Arc::new(widget {
-                flags: WIDGET_INT | extra_flags,
-                first: None,
-                u: WidgetImpl::Internal(f),
-            })
-        });
+        // C zsh registers every iwidgets.list entry into thingytab
+        // even when the dispatch fn is a no-op shim (e.g. `bracketed-
+        // paste` ties to `bracketedstring`/`bracketedend`). zshrs's
+        // iwidget_lookup only has dispatch ports for the actively-used
+        // subset; widgets without a dedicated handler still need to
+        // appear in `$widgets` so `${#widgets}` matches zsh. Fall
+        // back to `undefinedkey` (the C "do nothing, beep" handler)
+        // for unimplemented names so the registration goes through.
+        let f = fn_ptr.unwrap_or(|_| crate::ported::zle::zle_misc::undefinedkey());
+        let w = Some(Arc::new(widget {
+            flags: WIDGET_INT | extra_flags,
+            first: None,
+            u: WidgetImpl::Internal(f),
+        }));
 
         // Bare `name` thingy — mortal.
         if !tab.contains_key(*nam) {
