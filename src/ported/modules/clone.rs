@@ -114,12 +114,23 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
         if ttyfd > 2 {
             unsafe { libc::close(ttyfd) };
         }
-        // c:72 — closem(FDT_UNUSED, 0); closes all FD-table-tracked fds
-        // above the cutoff. Pending the real port at utils.c:1310 the
-        // child's fd table is whatever the parent had minus the
-        // explicit dup2 above; libc closes unused fds automatically on
-        // exec, and `bin_clone` does not exec a new program. No-op
-        // matches the C behaviour for the static-link path.
+        // c:72 — `closem(FDT_UNUSED, 0);` — close every fdtable-tracked
+        // internal fd above the cutoff EXCEPT FDT_PROC_SUBST and
+        // FDT_EXTERNAL (the `all == 0` arg gates those off). After the
+        // dup2(ttyfd, 0/1/2) above the child still inherits every
+        // internal fd the parent had open — coprocess pipes from prior
+        // sessions, autoload module fds, opened-via-exec fds, etc.
+        // Without this call the cloned shell carries the parent's
+        // entire internal fd table forward, leaking file descriptors
+        // until the child happens to close them via builtin use.
+        //
+        // Prior port commented "no-op matches C behaviour" and skipped
+        // the call — that read was wrong: bin_clone does NOT exec, so
+        // the kernel's exec-time auto-close on FD_CLOEXEC never fires,
+        // and there's no other path that closes inherited internal
+        // fds in the child. Route through the canonical closem at
+        // exec.rs:2871 (port of Src/exec.c:4546).
+        crate::ported::exec::closem(crate::ported::zsh_h::FDT_UNUSED, 0);
         // c:73-74 — close(coprocin); close(coprocout);
         unsafe { libc::close(coprocin.load(Ordering::Relaxed)) }; // c:73
         unsafe { libc::close(coprocout.load(Ordering::Relaxed)) }; // c:74
