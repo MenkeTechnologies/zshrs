@@ -8118,6 +8118,23 @@ pub fn exectry(state: &mut estate, _do_exec: i32) -> i32 {
     let saved_err = errflag.load(Ordering::Relaxed);
     let save_try_err = (saved_err & ERRFLAG_ERROR) != 0;
     let save_try_int = (saved_err & ERRFLAG_INT) != 0;
+    // c:Src/loop.c:763-766 — save the canonical globals AND update
+    // them to reflect the just-finished try body's exit state before
+    // running the always-arm. `$TRY_BLOCK_ERROR` / `$TRY_BLOCK_INTERRUPT`
+    // read these globals directly (lookup_special_var arms), so the
+    // always body must see "errflag at try-end" not "-1 sentinel".
+    let saved_try_errflag = crate::ported::r#loop::try_errflag
+        .load(Ordering::Relaxed);
+    let saved_try_interrupt = crate::ported::r#loop::try_interrupt
+        .load(Ordering::Relaxed);
+    crate::ported::r#loop::try_errflag.store(
+        (saved_err & ERRFLAG_ERROR) as i64,
+        Ordering::Relaxed,
+    ); // c:765
+    crate::ported::r#loop::try_interrupt.store(
+        if (saved_err & ERRFLAG_INT) != 0 { 1 } else { 0 },
+        Ordering::Relaxed,
+    ); // c:766
     // c:768 — `errflag = 0;` (clear both bits).
     errflag.fetch_and(!(ERRFLAG_ERROR | ERRFLAG_INT), Ordering::Relaxed);
     // c:769-774 — save retflag/breaks/contflag.
@@ -8137,6 +8154,10 @@ pub fn exectry(state: &mut estate, _do_exec: i32) -> i32 {
     } else {
         errflag.fetch_and(!ERRFLAG_INT, Ordering::Relaxed);
     }
+    // c:Src/loop.c:787-788 — restore the canonical globals.
+    crate::ported::r#loop::try_errflag.store(saved_try_errflag, Ordering::Relaxed);
+    crate::ported::r#loop::try_interrupt
+        .store(saved_try_interrupt, Ordering::Relaxed);
     // c:789-794 — re-arm retflag/breaks/contflag only if always didn't override.
     if RETFLAG.load(Ordering::SeqCst) == 0 {
         RETFLAG.store(save_retflag, Ordering::SeqCst);

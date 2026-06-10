@@ -3873,23 +3873,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 "__zshrs_try_block_saved_status".to_string(),
                 vm_status.to_string(),
             );
-            // c:Src/exec.c WC_TRYBLOCK — TRY_BLOCK_ERROR reflects
-            // the errflag state at try-block exit. zsh leaves it
-            // at -1 (sentinel) when the block completed normally,
-            // and sets to last_status when errflag triggered the
-            // unwind. The always-arm can reset it to 0 to
-            // SWALLOW the error.
+            // c:Src/loop.c:765-766 — `try_errflag = errflag &
+            // ERRFLAG_ERROR; try_interrupt = (errflag & ERRFLAG_INT) ?
+            // 1 : 0`. Updates the canonical loop.c globals that
+            // `$TRY_BLOCK_ERROR` / `$TRY_BLOCK_INTERRUPT` read from
+            // (port at src/ported/loop.rs::try_errflag etc.).
+            // Mirror into paramtab too via set_scalar so
+            // `${parameters[TRY_BLOCK_ERROR]}` and direct assignment
+            // shapes stay in sync.
+            let try_err = if errored { vm_status as i64 } else { 0 };
+            crate::ported::r#loop::try_errflag.store(try_err, Ordering::Relaxed);
+            crate::ported::r#loop::try_interrupt.store(0, Ordering::Relaxed);
             if errored {
-                exec.set_scalar("TRY_BLOCK_ERROR".to_string(), vm_status.to_string());
-                // Clear errflag so always-arm runs cleanly.
-                crate::ported::utils::errflag
-                    .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+                exec.set_scalar(
+                    "TRY_BLOCK_ERROR".to_string(),
+                    vm_status.to_string(),
+                );
+                // Clear errflag so always-arm runs cleanly. c:768.
+                crate::ported::utils::errflag.fetch_and(
+                    !crate::ported::zsh_h::ERRFLAG_ERROR,
+                    Ordering::Relaxed,
+                );
             } else {
-                // c:Src/Modules/parameter.c — TRY_BLOCK_ERROR reads
-                // as 0 inside an always-arm when no error fired
-                // (per zsh's PM_INTEGER default-zero). The previous
-                // port set -1 (the C internal "no try yet" sentinel)
-                // which leaked to user-visible reads.
                 exec.set_scalar("TRY_BLOCK_ERROR".to_string(), "0".to_string());
             }
         });
