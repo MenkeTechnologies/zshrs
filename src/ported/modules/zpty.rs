@@ -928,6 +928,37 @@ pub fn bin_zpty(
     let (status, output): (i32, String) = (|| {
         let mut output = String::new();
 
+        // c:775-790 — illegal-option-combination gate. C rejects:
+        //   -r AND -w                       (can't read and write simultaneously)
+        //   (-r OR -w) AND (-d|-e|-b|-L)    (rw is for an EXISTING pty; create-only flags don't apply)
+        //   -w AND (-t OR -m)               (-t/-m are read-side only)
+        //   -n AND (-b|-e|-r|-t|-d|-L|-m)   (-n is the write-side suppress-newline; combined with read/list/create makes no sense)
+        //   -d AND (-b|-e|-L|-t|-m)         (-d only deletes; the others belong to other modes)
+        //   -L AND (-b|-e|-m)               (-L lists; -b/-e/-m are create-time / read-side)
+        //
+        // Prior Rust dispatch fell through to the first matching arm
+        // for any combo, so `zpty -r -w foo` would silently take the
+        // -w path and `zpty -d -e foo` would just delete. C rejects
+        // both with "illegal option combination".
+        let r = OPT_ISSET(ops, b'r');
+        let w = OPT_ISSET(ops, b'w');
+        let d = OPT_ISSET(ops, b'd');
+        let e = OPT_ISSET(ops, b'e');
+        let b = OPT_ISSET(ops, b'b');
+        let l = OPT_ISSET(ops, b'L');
+        let t = OPT_ISSET(ops, b't');
+        let n = OPT_ISSET(ops, b'n');
+        let m = OPT_ISSET(ops, b'm');
+        if (r && w)
+            || ((r || w) && (d || e || b || l))
+            || (w && (t || m))
+            || (n && (b || e || r || t || d || l || m))
+            || (d && (b || e || l || t || m))
+            || (l && (b || e || m))
+        {
+            return (1, "zpty: illegal option combination\n".to_string()); // c:789-790
+        }
+
         if OPT_ISSET(ops, b'd') {
             // c:809-824 — `-d` arm:
             //   Ptycmd p; int ret = 0;
