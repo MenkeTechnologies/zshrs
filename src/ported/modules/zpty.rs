@@ -614,24 +614,25 @@ pub fn bin_zpty(
         }
 
         if OPT_ISSET(ops, b'w') {
-            if args.len() < 2 {
-                return (1, "zpty: -w requires a pty name and data\n".to_string());
+            // c:795 — `if (!*args) { zwarnnam(nam, "missing pty command name"); return 1; }`
+            if args.is_empty() {
+                return (1, "zpty: missing pty command name\n".to_string());
             }
-
             let name = args[0];
-            let data: String = args[1..].join(" ");
-
-            if let Some(cmd) = cmds.get_mut(name) {
-                let bytes = data.as_bytes();
-                let r = ptywritestr(cmd, bytes);
-                if r == 0 {
-                    (0, output)
-                } else {
-                    (1, format!("zpty: write failed\n"))
-                }
-            } else {
-                (1, format!("zpty: no such pty command: {}\n", name))
+            // c:798 — `else if (!(p = getptycmd(*args))) { zwarnnam(...); return 1; }`
+            let cmd = match cmds.get_mut(name) {
+                Some(c) => c,
+                None => return (1, format!("zpty: no such pty command: {}\n", name)),
+            };
+            // c:802-803 — `if (p->fin) return 2;`
+            if cmd.finished {
+                return (2, output);
             }
+            // c:808 — `ptywrite(p, args + 1, OPT_ISSET(ops,'n'))`
+            let tail: Vec<&str> = args[1..].to_vec();
+            let nonl = if OPT_ISSET(ops, b'n') { 1 } else { 0 };
+            let r = ptywrite(cmd, &tail, nonl);
+            (r, output)
         } else if OPT_ISSET(ops, b'r') {
             if args.is_empty() {
                 return (1, "zpty: -r requires a pty name\n".to_string());
