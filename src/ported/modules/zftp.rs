@@ -728,7 +728,18 @@ pub fn zfgetmsg() -> i32 {
     let mut stopit = stopit_initial;
 
     // c:733-744 — verbose check + initial-line printing.
-    let verbose = crate::ported::params::getsparam("ZFTP_VERBOSE").unwrap_or_default(); // c:734
+    // c:734 — `if (!(verbose = getsparam_u("ZFTP_VERBOSE"))) verbose = "";`
+    //   — the `_u` variant strips Meta-escape encoding. ZFTP_VERBOSE
+    //   is a string of digit characters (e.g. "045") that gets fed
+    //   to strchr against `lastcodestr[0]` at c:736 and against '0'
+    //   at c:740 — strchr operates on raw bytes, not metafied form.
+    //   Prior port used non-_u getsparam — for any ZFTP_VERBOSE
+    //   value containing a Meta-escaped byte (rare but possible
+    //   via `$'\xfd'` etc.), the metafied byte pairs would survive
+    //   into the strchr-equivalent `.contains()` calls below and
+    //   miss matches.
+    let verbose =
+        crate::ported::params::getsparam_u("ZFTP_VERBOSE").unwrap_or_default(); // c:734
     if verbose.contains(line[0] as char) {
         // c:736
         printing = 1; // c:738
