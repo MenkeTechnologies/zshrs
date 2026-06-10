@@ -4210,6 +4210,29 @@ pub fn bin_zftp(
         }
     })();
     drop(zftp_guard);
+
+    // c:3109-3115 — post-dispatch tidy-up. Sub-commands that opened a
+    // SIGALRM via zfalarm() expect bin_zftp to disarm it after dispatch
+    // (the alarm survives the subcommand returning normally). If
+    // ZFDRRRRING was set (timeout fired mid-syscall, signal flag bumped
+    // by zfhandler) we tear down the connection, suppressing QUIT via
+    // zcfinish=2 so zfclose doesn't sit on a doomed socket waiting for
+    // a goodbye reply. zfclose acquires the state lock so it MUST come
+    // after `drop(zftp_guard)` above.
+    if ZFALARMED.load(Ordering::Relaxed) != 0 {
+        // c:3109
+        zfunalarm(); // c:3110
+    }
+    if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
+        // c:3111
+        ZCFINISH.store(2, Ordering::Relaxed); // c:3113 — skip QUIT
+        zfclose(0); // c:3114
+    }
+    // c:3116-3123 — zfstatfd shared-status fd-write for sibling subshells.
+    // The shared-status fd substrate isn't ported; the per-session
+    // status fields on zftp_session already survive across subcommands
+    // since they live on the in-process zftp_state singleton.
+
     if !output.is_empty() {
         if status == 0 {
             print!("{}", output);
