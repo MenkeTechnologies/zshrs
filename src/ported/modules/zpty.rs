@@ -1017,16 +1017,18 @@ pub fn bin_zpty(
     status
 }
 
-/// Port of `ptyhook(UNUSED(Hookdef d), UNUSED(void *dummy))` from `Src/Modules/zpty.c:874`. The cleanup
-/// hook installed at `boot_()` time — runs `deleteallptycmds()`
-/// when the shell is exiting (via the `before_trap` hook).
+/// Port of `ptyhook(UNUSED(Hookdef d), UNUSED(void *dummy))` from
+/// `Src/Modules/zpty.c:874-878`. Registered against the "exit" hook
+/// by `boot_` so that all live pty sessions get torn down (master
+/// fd closed, child pgrp SIGHUP'd) when the shell exits.
 ///
 /// C signature: `static int ptyhook(Hookdef d, void *dummy)`.
-/// WARNING: param names don't match C — Rust=(cmds) vs C=(d, dummy)
-pub fn ptyhook(cmds: &mut HashMap<String, ptycmd>) -> i32 {
+pub fn ptyhook(_d: *mut crate::ported::zsh_h::hookdef, _dummy: *mut std::ffi::c_void) -> i32 {
     // c:874
-    deleteallptycmds(cmds); // c:874
-    0 // c:879
+    // c:876 — `deleteallptycmds();`
+    let mut cmds = ptycmds().lock().unwrap_or_else(|e| e.into_inner());
+    deleteallptycmds(&mut cmds);
+    0 // c:877
 }
 
 // `bintab` — port of `static struct builtin bintab[]` (zpty.c).
@@ -1055,24 +1057,30 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/zpty.c:918`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/zpty.c:918-924`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {
     // c:918
-    // C body c:921-922 — `ptycmds = NULL; addhookfunc("exit", ptyhook)`.
-    *ptycmds().lock().unwrap() = HashMap::<String, ptycmd>::new();
-    let _ = ptyhook(&mut ptycmds().lock().unwrap()); // c:928 (hook handle)
-    0
+    // c:920 — `ptycmds = NULL;` (zero the global registry).
+    *ptycmds().lock().unwrap_or_else(|e| e.into_inner()) =
+        HashMap::<String, ptycmd>::new();
+    // c:922 — `addhookfunc("exit", ptyhook);` — register the
+    // shell-exit teardown callback so deleteallptycmds runs even
+    // when the user `exit`s without a prior `zpty -d`.
+    let _ = crate::ported::module::addhookfunc("exit", ptyhook);
+    0 // c:923
 }
 
-/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/zpty.c:928`.
+/// Port of `cleanup_(Module m)` from `Src/Modules/zpty.c:928-933`.
 pub fn cleanup_(m: *const module) -> i32 {
     // c:928
-    // c:937 — `deletehookfunc("exit", ptyhook)`. We have no live hook
-    //          registry, so this is a no-op.
-    // c:937 — `deleteallptycmds()`.
-    deleteallptycmds(&mut ptycmds().lock().unwrap());
-    // c:937 — `return setfeatureenables(m, &module_features, NULL)`.
+    // c:930 — `deletehookfunc("exit", ptyhook);` — unregister before
+    // the module is unloaded so the exit hook doesn't fire into a
+    // freed module image.
+    let _ = crate::ported::module::deletehookfunc("exit", ptyhook);
+    // c:931 — `deleteallptycmds();`
+    deleteallptycmds(&mut ptycmds().lock().unwrap_or_else(|e| e.into_inner()));
+    // c:932 — `return setfeatureenables(m, &module_features, NULL);`
     setfeatureenables(m, module_features(), None)
 }
 
@@ -1533,12 +1541,16 @@ mod tests {
         assert!(cmds.is_empty(), "still empty");
     }
 
-    /// c:748 — `ptyhook` on empty cmds map returns 0 (no jobs to clean).
+    /// c:874-877 — `ptyhook` on an empty registry returns 0.
     #[test]
     fn ptyhook_empty_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        let mut cmds = HashMap::new();
-        assert_eq!(ptyhook(&mut cmds), 0, "empty cmds map → 0");
+        *ptycmds().lock().unwrap_or_else(|e| e.into_inner()) = HashMap::new();
+        assert_eq!(
+            ptyhook(std::ptr::null_mut(), std::ptr::null_mut()),
+            0,
+            "empty registry → 0"
+        );
     }
 
     /// c:761-803 — full lifecycle setup→features→enables→boot→cleanup→finish.
@@ -1619,12 +1631,11 @@ mod tests {
         let _: Option<&ptycmd> = getptycmd(&cmds, "anything");
     }
 
-    /// c:748 — `ptyhook` returns i32 (compile-time type pin).
+    /// c:874-877 — `ptyhook` returns i32 (compile-time type pin).
     #[test]
     fn ptyhook_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
-        let mut cmds = HashMap::new();
-        let _: i32 = ptyhook(&mut cmds);
+        let _: i32 = ptyhook(std::ptr::null_mut(), std::ptr::null_mut());
     }
 
     /// c:761 — `setup_` returns i32 (compile-time type pin).
@@ -1708,17 +1719,17 @@ mod tests {
         }
     }
 
-    /// c:748 — `ptyhook` is deterministic on empty cmds map.
+    /// c:874-877 — `ptyhook` is deterministic on empty registry.
     #[test]
     fn ptyhook_empty_cmds_is_deterministic() {
         let _g = crate::test_util::global_state_lock();
-        let mut cmds = HashMap::new();
-        let first = ptyhook(&mut cmds);
+        *ptycmds().lock().unwrap_or_else(|e| e.into_inner()) = HashMap::new();
+        let first = ptyhook(std::ptr::null_mut(), std::ptr::null_mut());
         for _ in 0..3 {
             assert_eq!(
-                ptyhook(&mut cmds),
+                ptyhook(std::ptr::null_mut(), std::ptr::null_mut()),
                 first,
-                "ptyhook on empty cmds must be deterministic"
+                "ptyhook on empty registry must be deterministic"
             );
         }
     }
@@ -1835,11 +1846,10 @@ mod tests {
         }
     }
 
-    /// c:748 — `ptyhook` returns i32 (compile-time pin, alt).
+    /// c:874-877 — `ptyhook` returns i32 (compile-time pin, alt).
     #[test]
     fn ptyhook_returns_i32_type_alt() {
-        let mut cmds = HashMap::new();
-        let _: i32 = ptyhook(&mut cmds);
+        let _: i32 = ptyhook(std::ptr::null_mut(), std::ptr::null_mut());
     }
 
     /// c:768 — `features_` is deterministic.
