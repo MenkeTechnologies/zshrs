@@ -1122,18 +1122,30 @@ pub fn errnosgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> {
 /// WARNING: param names don't match C — Rust=(name) vs C=(pm, name)
 pub fn fillpmsysparams(name: &str) -> Option<String> {
     // c:846
-    // c:846-862 — name dispatch.
+    // Faithful port of c:854-867:
+    //   if (!strcmp(name, 'pid')) num = (int)getpid();
+    //   else if (!strcmp(name, 'ppid')) num = (int)getppid();
+    //   else if (!strcmp(name, 'procsubstpid')) num = (int)procsubstpid;
+    //   else { pm->u.str = ''; pm->node.flags |= PM_UNSET; return; }
+    //   sprintf(buf, '%d', num); pm->u.str = dupstring(buf);
+    //
+    // Prior port hardcoded procsubstpid=0 — \$sysparams[procsubstpid]
+    // always read 0 even after a process substitution fired. The
+    // canonical procsubstpid lives in exec.rs as an AtomicI32 (c:220
+    // port) and gets stamped at every <(...) / >(...) invocation
+    // (c:5092 / c:5143). Read it directly.
     let num: i32 = match name {
         "pid" => unsafe { libc::getpid() },   // c:854-855
         "ppid" => unsafe { libc::getppid() }, // c:856-857
-        // c:858-859 — `procsubstpid` is the static `procsubstpid`
-        // global from exec.c; not yet wired in zshrs's process-
-        // substitution path. Returns 0 as the documented "no proc
-        // subst active" sentinel matching C's initial value.
-        "procsubstpid" => 0,
-        _ => return None, // c:873-863 PM_UNSET
+        // c:858-859 — `procsubstpid` from the live atomic so the
+        // value matches what was last assigned by the exec-side
+        // process-substitution code.
+        "procsubstpid" => {
+            crate::ported::exec::procsubstpid.load(std::sync::atomic::Ordering::Relaxed)
+        }
+        _ => return None, // c:861-863 PM_UNSET
     };
-    Some(format!("{}", num)) // c:873 sprintf %d
+    Some(format!("{}", num)) // c:866-867 sprintf %d
 }
 
 /// Port of `static HashNode getpmsysparams(UNUSED(HashTable ht), const char *name)`
