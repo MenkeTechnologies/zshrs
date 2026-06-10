@@ -4228,27 +4228,154 @@ pub fn bin_zmodload_auto(
     0 // c:2805
 }
 
-/// Port of `unload_named_module(char *modname, char *nam, int silent)` from Src/module.c:2924. zshrs links
-/// modules statically; this entry is a name-parity shim.
-/// WARNING: param names don't match C — Rust=(table, name, _nam, _silent) vs C=(modname, nam, silent)
+/// Port of `unload_named_module(char *modname, char *nam, int silent)`
+/// from `Src/module.c:2923-2965`.
+///
+/// C body:
+/// ```c
+/// int
+/// unload_named_module(char *modname, char *nam, int silent)
+/// {
+///     const char *mname;
+///     Module m;
+///     int ret = 0;
+///     m = find_module(modname, FINDMOD_ALIASP, &mname);
+///     if (m) {
+///         int i, del = 0;
+///         Module dm;
+///         for (i = 0; i < modulestab->hsize; i++) {
+///             for (dm = (Module)modulestab->nodes[i]; dm;
+///                  dm = (Module)dm->node.next) {
+///                 LinkNode dn;
+///                 if (!dm->deps || !dm->u.handle)
+///                     continue;
+///                 for (dn = firstnode(dm->deps); dn; incnode(dn)) {
+///                     if (!strcmp((char *) getdata(dn), mname)) {
+///                         if (dm->node.flags & MOD_UNLOAD)
+///                             del = 1;
+///                         else {
+///                             zwarnnam(nam, "module %s is in use ...");
+///                             return 1;
+///                         }
+///                     }
+///                 }
+///             }
+///         }
+///         if (del) m->wrapper++;
+///         if (unload_module(m)) ret = 1;
+///         if (del) m->wrapper--;
+///     } else if (!silent) {
+///         zwarnnam(nam, "no such module %s", modname);
+///         ret = 1;
+///     }
+///     return ret;
+/// }
+/// ```
+///
+/// Now that unload_module is faithfully ported (2b986c9e8b), this
+/// wraps it with the C dep-walk that gates the unload on whether
+/// any other loaded module depends on the target. If a dependent
+/// is already tagged MOD_UNLOAD, set del=1 to bracket the unload
+/// with `m->wrapper++` / `m->wrapper--` so unload_module's wrapper
+/// branch (c:2839-2842) defers correctly.
+/// WARNING: param names don't match C — Rust=(table, name, nam, silent) vs C=(modname, nam, silent)
 pub fn unload_named_module(table: &mut modulestab, name: &str, nam: &str, silent: i32) -> i32 {
-    // c:2924-2965 — full body: find module, run cleanup, deregister.
-    // Static-link path: just remove from the modules map; the per-feature
-    // teardown happens via the dispatcher's setfeatureenables call.
-    if table.modules.remove(name).is_some() {
-        0
-    } else if silent == 0 {
-        // c:2959-2961 — `else if (!silent) zwarnnam(nam, "no such
-        // module %s", modname); ret = 1;`. When `-i` (silent) is
-        // set the missing module is not an error: no diagnostic
-        // AND ret stays 0. Without this gate `zmodload -u
-        // zsh/nonexistent` silently returned 1 with no diagnostic;
-        // with `-i`, it should return 0 silently. Bug #471.
-        crate::ported::utils::zwarnnam(nam, &format!("no such module {}", name));
-        1
-    } else {
-        0
+    // c:2924
+    // c:2930 — `m = find_module(modname, FINDMOD_ALIASP, &mname);`
+    // Returns the canonical (alias-resolved) name; we drive
+    // unload_module against that, matching C's `m` pointer.
+    let mname = match find_module(table, name, FINDMOD_ALIASP) {
+        Some(n) => n,
+        None => {
+            // c:2959-2961 — !m branch: silent gate.
+            if silent == 0 {
+                crate::ported::utils::zwarnnam(nam, &format!("no such module {}", name));
+                return 1;
+            }
+            return 0;
+        }
+    };
+
+    // c:2932 — `int del = 0;`
+    let mut del = 0;
+
+    // c:2935-2952 — scan every module's deps for `mname`.
+    // Snapshot first so we don't double-borrow the modules HashMap
+    // when we mutate via unload_module below.
+    let candidates: Vec<(String, i32, bool, Vec<String>)> = table
+        .modules
+        .iter()
+        .filter_map(|(other_name, other)| {
+            // c:2939 — `if (!dm->deps || !dm->u.handle) continue;`
+            // Static-link analog of `u.handle`: MOD_LINKED && !MOD_UNLOAD.
+            // Actually C's gate is `u.handle` (loaded) — the MOD_UNLOAD
+            // check happens INSIDE the inner loop. So here we only skip
+            // modules with no deps or no handle (= not loaded).
+            let deps = other.deps.as_ref()?;
+            if (other.node.flags & MOD_LINKED) == 0 {
+                return None;
+            }
+            // Note: C checks `u.handle` (loaded handle) not
+            // `!MOD_UNLOAD` here — MOD_UNLOAD-flagged modules still
+            // get scanned because the inner branch needs to see them
+            // to set `del = 1`.
+            Some((
+                other_name.clone(),
+                other.node.flags,
+                (other.node.flags & MOD_UNLOAD) != 0,
+                deps.iter().cloned().collect(),
+            ))
+        })
+        .collect();
+
+    for (_other_name, _other_flags, other_unloading, other_deps) in candidates {
+        for dep in &other_deps {
+            if dep != &mname {
+                continue; // c:2942
+            }
+            if other_unloading {
+                // c:2943-2944 — dependent already marked MOD_UNLOAD →
+                // we'll be cascade-unloading it after the target.
+                del = 1;
+            } else {
+                // c:2945-2948 — live dependent: refuse the unload.
+                crate::ported::utils::zwarnnam(
+                    nam,
+                    &format!(
+                        "module {} is in use by another module and cannot be unloaded",
+                        mname
+                    ),
+                );
+                return 1;
+            }
+        }
     }
+
+    // c:2953-2954 — `if (del) m->wrapper++;`. The wrapper++/--
+    // bracket gates unload_module's wrapper branch (c:2839-2842):
+    // with wrapper > 0, unload_module sets MOD_UNLOAD and returns
+    // rather than running finish. The actual cascade fires via the
+    // recursive deferred-dep walk inside unload_module.
+    if del != 0 {
+        if let Some(m) = table.modules.get_mut(&mname) {
+            m.wrapper += 1;
+        }
+    }
+
+    // c:2955-2956 — `if (unload_module(m)) ret = 1;`. Rust's
+    // unload_module returns bool (true=success). Map to C ret:
+    // false → 1, true → 0.
+    let mut ret = if !table.unload_module(&mname) { 1 } else { 0 };
+
+    // c:2957-2958 — `if (del) m->wrapper--;`
+    if del != 0 {
+        if let Some(m) = table.modules.get_mut(&mname) {
+            m.wrapper -= 1;
+        }
+    }
+    let _ = silent;
+    let _ = &mut ret;
+    ret // c:2964
 }
 
 /// Port of `bin_zmodload_load(char *nam, char **args, Options ops)` from `Src/module.c:2971`.
