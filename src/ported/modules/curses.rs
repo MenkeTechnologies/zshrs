@@ -1435,14 +1435,15 @@ pub fn zcurses_attrgetfn() -> Vec<String> {
 /// already enumerates via keypad_name.
 pub fn zcurses_keycodesgetfn() -> Vec<String> {
     // c:1661
-    [
-        KEY_DOWN, KEY_UP, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END, KEY_DC, KEY_IC, KEY_NPAGE,
-        KEY_PPAGE,
-    ]
-    .into_iter()
-    .chain((1..=64).map(|f| KEY_F0 + f)) // F-keys
-    .filter_map(keypad_name)
-    .collect()
+    // Walk the full canonical KEY_* range mirroring C's
+    // `zcurses_pairs_to_array(keypad_names)` over the awk-generated
+    // table. keypad_name returns None for unrecognized codes so the
+    // filter_map prunes any gaps (KEY_F0+1..KEY_F0+63 are F-keys per
+    // the inline range in keypad_name; codes outside the named
+    // ranges are silently dropped).
+    let base = (0o401..=0o407).chain(0o510..=0o633);
+    let fkeys = (0..64).map(|n| KEY_F0 + n);
+    base.chain(fkeys).filter_map(keypad_name).collect()
 }
 
 /// Direct port of `zcurses_windowsgetfn()` from `Src/Modules/
@@ -2040,18 +2041,115 @@ fn csi_to_keypad(seq: &[u8]) -> Option<i32> {
 // `curses_keys.h`; Rust port hardcodes the most common keys to
 // keep the table compact.
 fn keypad_name(code: i32) -> Option<String> {
+    // Direct value-to-name table mirroring what C's awk-generated
+    // keypad_names[] in curses_keys.h carries — every KEY_* define
+    // from the system curses.h except MIN, MAX, CODE_YES (per the
+    // awk filter at curses_keys.awk:8). Values match the canonical
+    // ncurses octal-coded ranges:
+    //   0o401-0o407: base set (BREAK..BACKSPACE)
+    //   0o410-0o467: F-keys (F0..F63, handled inline below)
+    //   0o510+:      extended set (DL..MOUSE)
+    // Octal literals match the curses.h #defines exactly so a side-
+    // by-side review against the original macros stays trivially
+    // verifiable.
     let name = match code {
-        KEY_DOWN => "DOWN",
-        KEY_UP => "UP",
-        KEY_LEFT => "LEFT",
-        KEY_RIGHT => "RIGHT",
-        KEY_HOME => "HOME",
-        KEY_END => "END",
-        KEY_DC => "DC",
-        KEY_IC => "IC",
-        KEY_NPAGE => "NPAGE",
-        KEY_PPAGE => "PPAGE",
-        c if c > KEY_F0 => return Some(format!("F{}", c - KEY_F0)),
+        // c:base set
+        0o401 => "BREAK",
+        KEY_DOWN => "DOWN",     // 0o402
+        KEY_UP => "UP",         // 0o403
+        KEY_LEFT => "LEFT",     // 0o404
+        KEY_RIGHT => "RIGHT",   // 0o405
+        KEY_HOME => "HOME",     // 0o406
+        0o407 => "BACKSPACE",
+        // c:extended set
+        0o510 => "DL",
+        0o511 => "IL",
+        KEY_DC => "DC",         // 0o512
+        KEY_IC => "IC",         // 0o513
+        0o514 => "EIC",
+        0o515 => "CLEAR",
+        0o516 => "EOS",
+        0o517 => "EOL",
+        0o520 => "SF",
+        0o521 => "SR",
+        KEY_NPAGE => "NPAGE",   // 0o522
+        KEY_PPAGE => "PPAGE",   // 0o523
+        0o524 => "STAB",
+        0o525 => "CTAB",
+        0o526 => "CATAB",
+        0o527 => "ENTER",
+        0o530 => "SRESET",
+        0o531 => "RESET",
+        0o532 => "PRINT",
+        0o533 => "LL",
+        0o534 => "A1",
+        0o535 => "A3",
+        0o536 => "B2",
+        0o537 => "C1",
+        0o540 => "C3",
+        0o541 => "BTAB",
+        0o542 => "BEG",
+        0o543 => "CANCEL",
+        0o544 => "CLOSE",
+        0o545 => "COMMAND",
+        0o546 => "COPY",
+        0o547 => "CREATE",
+        KEY_END => "END",       // 0o550
+        0o551 => "EXIT",
+        0o552 => "FIND",
+        0o553 => "HELP",
+        0o554 => "MARK",
+        0o555 => "MESSAGE",
+        0o556 => "MOVE",
+        0o557 => "NEXT",
+        0o560 => "OPEN",
+        0o561 => "OPTIONS",
+        0o562 => "PREVIOUS",
+        0o563 => "REDO",
+        0o564 => "REFERENCE",
+        0o565 => "REFRESH",
+        0o566 => "REPLACE",
+        0o567 => "RESTART",
+        0o570 => "RESUME",
+        0o571 => "SAVE",
+        0o572 => "SBEG",
+        0o573 => "SCANCEL",
+        0o574 => "SCOMMAND",
+        0o575 => "SCOPY",
+        0o576 => "SCREATE",
+        0o577 => "SDC",
+        0o600 => "SDL",
+        0o601 => "SELECT",
+        0o602 => "SEND",
+        0o603 => "SEOL",
+        0o604 => "SEXIT",
+        0o605 => "SFIND",
+        0o606 => "SHELP",
+        0o607 => "SHOME",
+        0o610 => "SIC",
+        0o611 => "SLEFT",
+        0o612 => "SMESSAGE",
+        0o613 => "SMOVE",
+        0o614 => "SNEXT",
+        0o615 => "SOPTIONS",
+        0o616 => "SPREVIOUS",
+        0o617 => "SPRINT",
+        0o620 => "SREDO",
+        0o621 => "SREPLACE",
+        0o622 => "SRIGHT",
+        0o623 => "SRSUME",
+        0o624 => "SSAVE",
+        0o625 => "SSUSPEND",
+        0o626 => "SUNDO",
+        0o627 => "SUSPEND",
+        0o630 => "UNDO",
+        0o631 => "MOUSE",
+        0o632 => "RESIZE",
+        0o633 => "EVENT", // KEY_EVENT — may not be defined on all platforms
+        // F-keys: F0..F63 at KEY_F0 + n.
+        c if c >= KEY_F0 && c < KEY_F0 + 64 => {
+            return Some(format!("F{}", c - KEY_F0));
+        }
         _ => return None,
     };
     Some(name.to_string())
