@@ -291,14 +291,47 @@ pub fn watchlog2(inout: i32, u: &libc::utmpx, fmt: &str, prnt: i32, fini: i32) -
 /// WARNING: param names don't match C — Rust=(pattern, value) vs C=(teststr, actual, buflen)
 pub fn watchlog_match(pattern: &str, value: &str) -> bool {
     // c:434
-    if pattern == value {
-        return true;
-    }
-
-    if pattern.contains('*') || pattern.contains('?') {
-        crate::glob::matchpat(pattern, value, false, true)
-    } else {
-        false
+    // c:438-451 — `char *str = dupstring(teststr); tokenize(str);
+    //               if ((pprog = patcompile(str, PAT_STATIC, 0))) {
+    //                   queue_signals();
+    //                   if (pattry(pprog, user)) ret = 1;
+    //                   unqueue_signals();
+    //               } else if (!strcmp(user, teststr)) ret = 1;`
+    //
+    // C always tries patcompile first (handles globs, character
+    // classes [...], extended-glob qualifiers, alternation |, etc.).
+    // Only falls back to strcmp when patcompile rejects the pattern
+    // as syntactically invalid.
+    //
+    // Prior Rust port used a `contains('*') || contains('?')`
+    // heuristic to decide whether to engage globbing — missed:
+    //   - `[abc]` character classes
+    //   - `[a-z]` character ranges
+    //   - `<1-100>` numeric ranges
+    //   - `(foo|bar)` alternation
+    //   - `**` recursive glob
+    // A `watch=("user[12]")` entry would NOT match "user1" because
+    // the heuristic saw no `*` or `?` and fell through to strcmp.
+    // Route through patcompile/pattry directly like C does.
+    //
+    // c:443 — `tokenize(str)` — Rust patcompile handles its own
+    // tokenization internally per Src/pattern.c:547.
+    // c:445 — PAT_STATIC = 0x80 per zsh.h.
+    use crate::ported::pattern::{patcompile, pattry};
+    match patcompile(pattern, 0x80, None) {
+        Some(prog) => {
+            // c:446-449 — queue_signals + pattry + unqueue_signals.
+            // pattry doesn't actually touch the signal queue from the
+            // Rust port's perspective; the C queue_signals guards
+            // against the Patprog's PAT_ZDUP-style heap allocations
+            // being clobbered by signal handlers. Skip the queue
+            // ceremony — Rust's Patprog is owned + dropped explicitly.
+            pattry(&prog, value)
+        }
+        None => {
+            // c:450 — `else if (!strcmp(user, teststr)) ret = 1;`
+            pattern == value
+        }
     }
 }
 
