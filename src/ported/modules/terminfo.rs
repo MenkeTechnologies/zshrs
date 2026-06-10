@@ -62,7 +62,13 @@ pub fn bin_echoti(
     _ops: &crate::ported::zsh_h::options,
     _func: i32,
 ) -> i32 {
-    const TERM_BAD: i32 = 1 << 1;
+    // c:Src/zsh.h:1985 — `#define TERM_BAD 0x01`. The local
+    // `const TERM_BAD: i32 = 1 << 1` shadow used 0x02 which
+    // collides with TERM_UNKNOWN; bin_echoti would short-circuit
+    // when only TERM_UNKNOWN was set, returning 1 silently before
+    // setupterm could attempt the terminfo lookup. Use the canonical
+    // const from zsh_h.rs.
+    use crate::ported::zsh_h::TERM_BAD;
 
     if argv.is_empty() {
         crate::ported::utils::zwarnnam(name, "missing capability name");
