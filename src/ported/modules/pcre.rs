@@ -5,8 +5,8 @@
 
 use crate::ported::utils::{metafy, zstrtol, zwarnnam};
 use crate::ported::zsh_h::{
-    features, isset, module, options, KSHARRAYS, MAX_OPS, MB_CHARLEN, OPT_ARG, OPT_HASARG,
-    OPT_ISSET,
+    features, isset, module, options, BASHREMATCH, KSHARRAYS, MAX_OPS, MB_CHARLEN, OPT_ARG,
+    OPT_HASARG, OPT_ISSET,
 };
 use regex::Regex;
 
@@ -672,6 +672,25 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
     let _rhs_len = crate::ported::utils::unmetafy(&mut rhs_buf); // c:443
     let rhs_plain = String::from_utf8_lossy(&rhs_buf).into_owned();
 
+    // c:445-451 — BASHREMATCH option selects the output-variable shape:
+    //   if (isset(BASHREMATCH)) { svar = NULL; avar = "BASH_REMATCH"; }
+    //   else                    { svar = "MATCH"; avar = "match"; }
+    //
+    // BASHREMATCH mode (POSIX/bash-compat): a single array `BASH_REMATCH`
+    // whose [0] element is the full match and [1..] are the captures;
+    // no scalar MATCH variable is set (svar = NULL → zpcre_get_substrings
+    // skips the setsparam call).
+    //
+    // Default zsh mode: scalar `MATCH` holds the full match, array
+    // `match` holds the captures (indices 1..n).
+    //
+    // Prior Rust cond_pcre_match hardcoded MATCH/match and silently
+    // dropped the BASHREMATCH option — `[[ $value -pcre-match $pat ]]`
+    // under `setopt BASHREMATCH` left BASH_REMATCH undefined and a
+    // bash-compat script reading `${BASH_REMATCH[1]}` would see the
+    // empty string.
+    let bashre = isset(BASHREMATCH);
+
     // c:455 — `pcre2_compile(rhre_plain, ...)`. Rust regex crate
     // substitutes for libpcre2 — same regex semantics for the common
     // subset.
@@ -682,27 +701,43 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                 Some(caps) => {
                     // c:490-491 — match succeeded.
                     let full = caps.get(0).map(|m| m.as_str().to_string());
-                    // c:510-520 — `setsparam("MATCH", matched_portion);
-                    //                setaparam("match", captures);`.
-                    // These are the standard zsh $MATCH / $match vars
-                    // that `[[ str -pcre-match pat ]]` populates.
-                    if let Some(m) = full {
-                        crate::ported::params::setsparam("MATCH", &m); // c:510
+                    if bashre {
+                        // c:445-447 — assemble BASH_REMATCH array:
+                        // [0]=full match, [1..n]=captures.
+                        let mut arr: Vec<String> = Vec::with_capacity(caps.len());
+                        for i in 0..caps.len() {
+                            arr.push(
+                                caps.get(i)
+                                    .map(|m| m.as_str().to_string())
+                                    .unwrap_or_default(),
+                            );
+                        }
+                        crate::ported::params::setaparam("BASH_REMATCH", arr); // c:447
+                    } else {
+                        // c:448-450 — `MATCH` scalar + `match` capture array.
+                        if let Some(m) = full {
+                            crate::ported::params::setsparam("MATCH", &m); // c:510
+                        }
+                        let subs: Vec<String> = (1..caps.len())
+                            .map(|i| {
+                                caps.get(i)
+                                    .map(|m| m.as_str().to_string())
+                                    .unwrap_or_default()
+                            })
+                            .collect();
+                        crate::ported::params::setaparam("match", subs); // c:520
                     }
-                    let subs: Vec<String> = (1..caps.len())
-                        .map(|i| {
-                            caps.get(i)
-                                .map(|m| m.as_str().to_string())
-                                .unwrap_or_default()
-                        })
-                        .collect();
-                    crate::ported::params::setaparam("match", subs); // c:520
                     1 // c:485 return_value = 1
                 }
                 None => {
-                    // c:483 — no-match: clear $MATCH/$match.
-                    crate::ported::params::setsparam("MATCH", "");
-                    crate::ported::params::setaparam("match", Vec::new());
+                    // c:483 — no-match: clear whichever variable family
+                    // BASHREMATCH selected.
+                    if bashre {
+                        crate::ported::params::setaparam("BASH_REMATCH", Vec::new());
+                    } else {
+                        crate::ported::params::setsparam("MATCH", "");
+                        crate::ported::params::setaparam("match", Vec::new());
+                    }
                     0
                 }
             }
