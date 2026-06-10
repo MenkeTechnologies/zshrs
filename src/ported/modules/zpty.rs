@@ -570,35 +570,32 @@ pub fn bin_zpty(
         let mut output = String::new();
 
         if OPT_ISSET(ops, b'd') {
-            if args.is_empty() {
-                let names: Vec<String> = cmds.keys().cloned().collect();
-                for name in names {
-                    if let Some(cmd) = cmds.remove(&name) {
-                        unsafe {
-                            libc::kill(cmd.pid, libc::SIGTERM);
-                        }
-                        unsafe {
-                            libc::close(cmd.master_fd);
-                        }
+            // c:809-824 — `-d` arm:
+            //   Ptycmd p; int ret = 0;
+            //   if (*args) {
+            //       while (*args)
+            //           if ((p = getptycmd(*args++))) deleteptycmd(p);
+            //           else { zwarnnam(nam, "no such pty command: %s", args[-1]); ret = 1; }
+            //   } else deleteallptycmds();
+            //   return ret;
+            let mut ret: i32 = 0; // c:811
+            if !args.is_empty() {
+                // c:813 — iterate; missing entries log + ret=1 but loop continues.
+                for name in args {
+                    if cmds.contains_key(*name) {
+                        // c:815 — `deleteptycmd(p)` (SIGHUP to pgrp, not SIGTERM to leader).
+                        deleteptycmd(cmds, name);
+                    } else {
+                        // c:818 — `zwarnnam(nam, "no such pty command: %s", args[-1])`.
+                        output.push_str(&format!("zpty: no such pty command: {}\n", name));
+                        ret = 1; // c:819
                     }
                 }
-                return (0, output);
+            } else {
+                // c:822 — `deleteallptycmds()`.
+                deleteallptycmds(cmds);
             }
-
-            for name in args {
-                if let Some(cmd) = cmds.remove(*name) {
-                    unsafe {
-                        libc::kill(cmd.pid, libc::SIGTERM);
-                    }
-                    unsafe {
-                        libc::close(cmd.master_fd);
-                    }
-                } else {
-                    output.push_str(&format!("zpty: no such pty command: {}\n", name));
-                    return (1, output);
-                }
-            }
-            return (0, output);
+            return (ret, output); // c:824
         }
 
         if OPT_ISSET(ops, b'L') {
