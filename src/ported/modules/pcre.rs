@@ -583,31 +583,45 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
 
     // c:370-396 — pcre2_match path (use_dfa branch elided since the
     // Rust regex crate has no DFA equivalent).
-    let (full_match, captures) = PCRE_PATTERN.with(|r| -> (Option<String>, Vec<Option<String>>) {
-        let guard = r.borrow();
-        let re = match guard.as_ref() {
-            Some(re) => re,
-            None => return (None, Vec::new()),
-        };
-        let search_text: &str = if offset_start > 0 && (offset_start as usize) <= plaintext.len() {
-            &plaintext[offset_start as usize..]
-        } else if (offset_start as usize) > plaintext.len() {
-            return (None, Vec::new());
+    let search_base_offset: usize =
+        if offset_start > 0 && (offset_start as usize) <= plaintext.len() {
+            offset_start as usize
         } else {
-            &plaintext
+            0
         };
-        let caps = match re.captures(search_text) {
-            Some(c) => c,
-            None => return (None, Vec::new()),
-        };
-        let full = caps.get(0).map(|m| m.as_str().to_string()); // c:401 matched_portion
-        let mut subs = Vec::new();
-        for i in 1..caps.len() {
-            // c:401 ovector capture loop
-            subs.push(caps.get(i).map(|m| m.as_str().to_string()));
-        }
-        (full, subs)
-    });
+    let (full_match, full_range, captures) = PCRE_PATTERN.with(
+        |r| -> (Option<String>, Option<(usize, usize)>, Vec<Option<String>>) {
+            let guard = r.borrow();
+            let re = match guard.as_ref() {
+                Some(re) => re,
+                None => return (None, None, Vec::new()),
+            };
+            let search_text: &str =
+                if offset_start > 0 && (offset_start as usize) <= plaintext.len() {
+                    &plaintext[offset_start as usize..]
+                } else if (offset_start as usize) > plaintext.len() {
+                    return (None, None, Vec::new());
+                } else {
+                    &plaintext
+                };
+            let caps = match re.captures(search_text) {
+                Some(c) => c,
+                None => return (None, None, Vec::new()),
+            };
+            let full_m = caps.get(0); // c:401 matched_portion
+            let full = full_m.map(|m| m.as_str().to_string());
+            // c:180-181 — `sprintf(offset_all, "%ld %ld", ovec[0], ovec[1])`.
+            // ovec is RELATIVE TO THE WHOLE SUBJECT, so add back the -n
+            // offset the regex was started from (search_base_offset).
+            let range = full_m.map(|m| (m.start(), m.end()));
+            let mut subs = Vec::new();
+            for i in 1..caps.len() {
+                // c:401 ovector capture loop
+                subs.push(caps.get(i).map(|m| m.as_str().to_string()));
+            }
+            (full, range, subs)
+        },
+    );
 
     if full_match.is_some() {
         // c:400 ret > 0
@@ -615,6 +629,19 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
                           // c:405-414 — install $MATCH (or -v target) + $match (or -a
                           // receptacle). C uses zpcre_get_substrings which calls
                           // setsparam / setaparam directly; Rust mirrors that.
+        // c:179-182 — -b: write the match start/end byte offsets to
+        // $ZPCRE_OP as "start end" (relative to the whole subject,
+        // honoring the -n start offset). Prior port read the
+        // want_offset_pair flag but discarded it (`let _ = ...`), so
+        // `pcre_match -b` left $ZPCRE_OP unset and downstream scripts
+        // (zsh-syntax-highlighting + zsh-autosuggestions both consume
+        // this) saw stale values from prior invocations.
+        if want_offset_pair != 0 {
+            if let Some((s, e)) = full_range {
+                let zop = format!("{} {}", s + search_base_offset, e + search_base_offset);
+                crate::ported::params::setsparam("ZPCRE_OP", &zop); // c:181
+            }
+        }
         if let Some(m) = full_match.as_deref() {
             // c:Src/Modules/pcre.c:405 — `setsparam(matched_portion, ztrdup(m))`.
             crate::ported::params::setsparam(matched_portion.unwrap_or("MATCH"), m);
@@ -638,7 +665,6 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
     ret = if full_match.is_some() { 1 } else { 0 }; // c:398/c:399 sentinel
     let _ = ret;
     let _ = use_dfa;
-    let _ = want_offset_pair;
     let _ = subject_len;
 
     // c:422-415 — free match_data + context, zsfree(plaintext) — Rust Drop.
