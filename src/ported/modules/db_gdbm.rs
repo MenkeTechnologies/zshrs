@@ -601,11 +601,41 @@ impl Datum {
 /// `tied_gdbm_param::set` → `gdbm_database::set` → `gdbm_store`.
 pub fn gdbmhashsetfn(pm: &str, ht: &[(String, String)]) {
     // c:476
-    // c:476 — for ((Param) (he = ht->nodes[i]); he; he = he->next)
     let param = match TIED_PARAMS.lock().ok().and_then(|m| m.get(pm).cloned()) {
         Some(p) => p,
         None => return,
     };
+    // c:489-496 — `key = gdbm_firstkey(dbf); while (key.dptr) {
+    //                   queue_signals();
+    //                   (void)gdbm_delete(dbf, key);
+    //                   free(key.dptr);
+    //                   unqueue_signals();
+    //                   key = gdbm_firstkey(dbf);
+    //               }`
+    //
+    // C wipes EVERY existing entry before storing the new set. This
+    // is the "replace whole hash" semantic that `myhash=(k v)` users
+    // depend on:
+    //   ztie -d db/gdbm -f db.gdbm myhash
+    //   myhash=(k1 v1 k2 v2)
+    //   myhash=(k3 v3)            # ← C: db now has only {k3=>v3}.
+    //                              #   Prior Rust: db has {k1=>v1, k2=>v2, k3=>v3}.
+    //
+    // Without the delete-loop, hash assignment was append-only — the
+    // user lost the ability to remove entries via reassignment, the
+    // only documented mechanism for "wipe and replace".
+    let existing_keys = param.db.keys();
+    for k in &existing_keys {
+        let _ = param.delete(k); // c:492 gdbm_delete
+    }
+    // c:500-502 — `if (!ht || ht->hsize == 0) (void)gdbm_reorganize(dbf);`
+    // Skip: gdbm_reorganize compacts the on-disk file after large
+    // deletions; the Rust port doesn't yet expose reorganize via the
+    // gdbm_database wrapper. Pending — entries are correctly deleted
+    // even without reorganize.
+
+    // c:514-545 — `for (i = 0; i < ht->hsize; i++) for (hn = ht->nodes[i]; ...)
+    //                  gdbm_store(dbf, key, content, GDBM_REPLACE);`
     for (key, value) in ht {
         let _ = param.set(key, value); // c:530 gdbm_store
     }
