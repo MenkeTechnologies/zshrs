@@ -505,6 +505,20 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
         mv.val
     };
 
+    // c:Src/math.c:425-444 — `if (errflag) { ret = 0; }` and the
+    // caller checks `errflag` externally to detect failure. The Rust
+    // port carries the error in the Result instead of a side-channel
+    // errflag, so any m_error_set inside getmathparam (e.g. the
+    // recursive-eval arm at math.rs:384 for `a="/usr/bin"; (( a ))`)
+    // must surface as Err here rather than being swallowed by the
+    // unconditional Ok(result) below. Without this check, scalar
+    // params whose values fail recursive math parsing silently
+    // resolved to 0, breaking `${(t)assoc[NAME]}` parity where C's
+    // bracket-eval relies on the substituted name's value to
+    // trigger "bad math expression".
+    if let Some(err) = m_error_take() {
+        return Err(err);
+    }
     Ok(result)
 }
 

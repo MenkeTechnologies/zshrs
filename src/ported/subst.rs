@@ -9634,6 +9634,48 @@ pub fn paramsubst(
             isarr = 0; // c:2883
             split_parts = None; // c:2883 aval is implicit-cleared by v=NULL
         }
+        // c:Src/subst.c:2867-2900 — after the wantt arm cleared
+        // v=NULL/isarr=0, C re-enters the `while (v || ((inbrace ||
+        // ...) && isbrack(*s)))` loop. With a trailing `[subscript]`,
+        // it createparam(nulstring, PM_SCALAR) holding val (the type
+        // tag) and calls `getindex(&s, v, qt ? SCANPM_DQUOTED : 0)`.
+        // getindex → getarg → mathevali on the subscript text. For
+        // `${(t)parameters[PATH]}` mathevali("PATH") substitutes
+        // $PATH (long colon-list) and fails to parse it as math,
+        // calling zerr("bad math expression: …") + setting errflag.
+        // The print never fires, exit is 1.
+        //
+        // Approximation: run mathevali on the subscript text when
+        // wantt fired with a literal subscript present (skipping
+        // `*`/`@`/flag-prefixed forms, which getindex handles via
+        // separate getarg branches). Numeric / unset-name subscripts
+        // succeed (and the existing downstream scalar-slice path
+        // applies the index); names whose math value can't be
+        // parsed (e.g. PATH expanded to a non-numeric string)
+        // trigger the same zerr + errflag as C zsh.
+        if wantt && !used_subexp {
+            if let Some(sub) = subscript.as_deref() {
+                let s_trim = sub.trim();
+                if !s_trim.is_empty()
+                    && s_trim != "*"
+                    && s_trim != "@"
+                    && !s_trim.starts_with('(')
+                {
+                    let parts: Vec<&str> = s_trim.splitn(2, ',').collect();
+                    for p in &parts {
+                        if let Err(msg) = crate::ported::math::mathevali(p.trim()) {
+                            zerr(&msg);
+                            errflag.fetch_or(
+                                crate::ported::zsh_h::ERRFLAG_ERROR,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            value = String::new();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         // Case mods operate per-element when array-shaped (so
         // \${(@U)arr} uppercases each element, preserving shape).
         // Direct port of subst.c:3937 casmod arm which iterates aval

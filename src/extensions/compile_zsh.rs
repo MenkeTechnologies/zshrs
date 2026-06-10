@@ -1921,6 +1921,16 @@ impl ZshCompiler {
         // pushes and emit BUILTIN_MULTIOS_REDIRECT once at the LAST
         // write to that fd (preserving the script order of
         // intervening non-multios redirects).
+        //
+        // Store the RAW redir.name (still carrying lexer tokens) per
+        // target, not the untokenized literal — at emit time we call
+        // `compile_word_str` so `$var`/`$(cmd)`/`${…}` targets expand
+        // at runtime. Previous version pushed `untokenize(name)` as
+        // a LoadConst constant, which sent `$ga` to the open(2) path
+        // verbatim and created literal files like `$ga` / `$gb` in
+        // CWD instead of `/tmp/gap_mo_a_PID` etc. (mirrors C
+        // `Src/exec.c:2418 mfds` setup where each addfd target runs
+        // through full word expansion before open).
         let mut pending_multios: std::collections::HashMap<
             u8,
             Vec<(String, u8)>,
@@ -1946,11 +1956,15 @@ impl ZshCompiler {
                 && redir.varid.is_none()
                 && reads_per_fd.get(&fd).copied().unwrap_or(0) >= 2;
             if is_multios_read_candidate {
-                let name_clean = crate::lex::untokenize(&redir.name);
+                // Stash the RAW token-bearing redir.name so emit-time
+                // `compile_word_str` runs full word expansion (var +
+                // cmd-subst + arith) on the read source. Mirrors the
+                // single-redir path at `compile_redir` which already
+                // routes redir.name through compile_word_str.
                 pending_multios_read
                     .entry(fd)
                     .or_default()
-                    .push(name_clean);
+                    .push(redir.name.clone());
                 let bag_now = pending_multios_read
                     .get(&fd)
                     .map(|v| v.len())
@@ -1960,10 +1974,7 @@ impl ZshCompiler {
                     if let Some(sources) = pending_multios_read.remove(&fd) {
                         let n = sources.len();
                         for source in &sources {
-                            let s_const = self
-                                .builder
-                                .add_constant(Value::str(source.as_str()));
-                            self.builder.emit(Op::LoadConst(s_const), 0);
+                            self.compile_word_str(source.as_str());
                         }
                         self.builder.emit(Op::LoadInt(fd as i64), 0);
                         let argc = (n + 1) as u8;
@@ -1993,11 +2004,15 @@ impl ZshCompiler {
                     continue;
                 }
             };
-            let name_clean = crate::lex::untokenize(&redir.name);
+            // Same fix as the multios_read arm above: store the raw
+            // token-bearing redir.name and run it through
+            // `compile_word_str` at emit time so `>$var` / `>$(cmd)`
+            // targets expand at runtime instead of opening files
+            // literally named "$var" / "$(cmd)" in CWD.
             pending_multios
                 .entry(fd)
                 .or_default()
-                .push((name_clean, op_byte));
+                .push((redir.name.clone(), op_byte));
             // When the bag for this fd is now complete (we've seen
             // every multios entry counted in pass 1), emit the
             // coalesced op.
@@ -2008,9 +2023,7 @@ impl ZshCompiler {
                     let n = pairs.len();
                     // Push (target, op_byte) pairs in compile order.
                     for (target, op_byte) in &pairs {
-                        let t_const =
-                            self.builder.add_constant(Value::str(target.as_str()));
-                        self.builder.emit(Op::LoadConst(t_const), 0);
+                        self.compile_word_str(target.as_str());
                         self.builder.emit(Op::LoadInt(*op_byte as i64), 0);
                     }
                     // Then push fd.
@@ -3905,10 +3918,47 @@ impl ZshCompiler {
                             c == '_' || c.is_ascii_alphanumeric()
                         });
                     if key_looks_like_assoc_lit {
-                        // Assoc-style key — zsh `${(t)h[k]}` returns
-                        // empty. Direct LoadConst skips the bridge.
-                        let idx = self.builder.add_constant(Value::str(""));
-                        self.builder.emit(Op::LoadConst(idx), 0);
+                        // c:Src/subst.c:2867-2900 — the assoc-key case
+                        // is NOT a simple empty: zsh runs the post-
+                        // wantt while-loop that createparam(nulstring,
+                        // PM_SCALAR) on `val` (the type tag) and calls
+                        // getindex(&s, v, 0) → getarg → mathevali on
+                        // the key. If the key NAME resolves to a non-
+                        // numeric value (e.g. `[PATH]` substitutes
+                        // /usr/bin:… and fails to parse), zerr fires
+                        // and errflag aborts the print with exit 1.
+                        // If the key name is unset, mathevali yields
+                        // 0 → empty slice (`val[-1:-1]` per
+                        // VALFLAG_EMPTY) → "" + exit 0.
+                        //
+                        // The compile-time LoadConst("") short-cut
+                        // collapsed both into "" + exit 0, losing the
+                        // math-error arm that 73 bulk parity probes
+                        // (`print -r ${(t)parameters[PATH]}` shape)
+                        // depend on. Route through paramsubst via
+                        // BUILTIN_BRIDGE_BRACE_ARRAY so the wantt arm
+                        // (which carries the mathevali port at
+                        // subst.rs:9580+) runs the same math eval as
+                        // C zsh.
+                        if let Some(inner) = untoked
+                            .strip_prefix("${")
+                            .and_then(|s| s.strip_suffix('}'))
+                        {
+                            let body_const = self
+                                .builder
+                                .add_constant(Value::str(inner));
+                            self.builder.emit(Op::LoadConst(body_const), 0);
+                            self.builder.emit(
+                                Op::CallBuiltin(
+                                    crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY,
+                                    1,
+                                ),
+                                0,
+                            );
+                        } else {
+                            let idx = self.builder.add_constant(Value::str(""));
+                            self.builder.emit(Op::LoadConst(idx), 0);
+                        }
                     } else {
                         let body =
                             format!("${{(t){}}}:$(({}-1)):1", base, key);
