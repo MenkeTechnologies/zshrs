@@ -2239,15 +2239,46 @@ pub fn scanpmmodules(
             flags: pm_flags,
         }
     };
-    // c:1088-1100 — modulestab walk, emit each loaded module.
-    let modules: Vec<String> = {
+    // c:1088-1099 — modulestab walk, emit each LOADED module.
+    // C gate at c:1091:
+    //   if (m->u.handle && !(m->node.flags & MOD_UNLOAD))
+    // Static-link analog of `m->u.handle`: MOD_INIT_B (boot ran).
+    // Same gate module_loaded uses post-6435a0dca2.
+    //
+    // c:1093 emit: `(m->node.flags & MOD_ALIAS)
+    //              ? dyncat('alias:', m->u.alias) : 'loaded'`.
+    //
+    // Prior port iterated every modulestab entry — emitted entries
+    // for register_builtin_modules-registered-but-not-loaded modules
+    // (zsh/files, zsh/system, zsh/zftp, etc. that carry MOD_UNLOAD
+    // at register time). \${(k)modules} listed ALL of them as
+    // 'loaded' — diverging from \`zsh -fc\` which only reports
+    // \`zsh/main\` until something fires explicit zmodload.
+    let modules: Vec<(String, String)> = {
         let tab = MODULESTAB.lock().unwrap();
-        tab.modules.keys().cloned().collect() // c:1088
+        tab.modules
+            .iter()
+            .filter_map(|(name, m)| {
+                let loaded = (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0
+                    && (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) == 0;
+                if !loaded {
+                    return None; // c:1091 gate
+                }
+                // c:1093 — alias entries get 'alias:<target>', others
+                // get 'loaded'.
+                let val = if (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) != 0 {
+                    format!("alias:{}", m.alias.as_deref().unwrap_or(""))
+                } else {
+                    "loaded".to_string()
+                };
+                Some((name.clone(), val))
+            })
+            .collect()
     };
-    for name in modules {
+    for (name, val) in modules {
         // c:1090
         done.insert(name.clone()); // c:1095 addlinknode(done, ...)
-        let node = emit(&name, "loaded"); // c:1093 dyncat or "loaded"
+        let node = emit(&name, &val); // c:1093 emit value-side
         func(&Box::new(node), flags); // c:1096
     }
     // c:1102-1110 — builtintab autoloaded (BINF_ADDED clear with optstr → module).
