@@ -671,8 +671,15 @@ pub fn math_systell(name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber
         d: 0.0,
     };
     // c:474-477 — `if (fd < 0) { zerr("file descriptor out of range"); return ret; }`
+    //
+    // C uses zerr (not zwarn) — the difference matters: zerr sets the
+    // shell's errflag so the failure propagates through `set -e`
+    // (errexit) and lastval, while zwarn just prints to stderr without
+    // touching error state. Prior Rust port called zwarn so
+    // `set -e; : $((systell(-1)))` silently continued instead of
+    // aborting the script as C does.
     if fd < 0 {
-        crate::ported::utils::zwarn("file descriptor out of range");
+        crate::ported::utils::zerr("file descriptor out of range"); // c:475
         return ret;
     }
     // c:478 — `ret.u.l = lseek(fd, 0, SEEK_CUR);`
