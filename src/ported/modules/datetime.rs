@@ -129,10 +129,28 @@ pub fn output_strftime(
         }
     }
 
-    // c:115 — `if (OPT_ISSET(ops, 'r'))` reverse path.
+    // c:113-119 — `if (OPT_ISSET(ops, 'r'))` reverse path.
+    // C body:
+    //   if (OPT_ISSET(ops, 'r')) {
+    //       if (!argv[1]) {
+    //           zwarnnam(nam, "timestring expected");
+    //           return 1;
+    //       }
+    //       return reverse_strftime(nam, argv, scalar,
+    //                               OPT_ISSET(ops, 'q'));
+    //   }
+    //
+    // Prior port skipped the !argv[1] guard so `strftime -r %s`
+    // (format with no timestring) fell through to reverse_strftime
+    // which would either crash or emit a non-canonical diagnostic.
     if OPT_ISSET(ops, b'r') {
+        if argv.len() < 2 {
+            // c:114-117 — `if (!argv[1])` then 'timestring expected'.
+            zwarnnam(nam, "timestring expected"); // c:115
+            return 1; // c:116
+        }
         let quiet = if OPT_ISSET(ops, b'q') { 1 } else { 0 };
-        return reverse_strftime(nam, argv, scalar, quiet); // c:120
+        return reverse_strftime(nam, argv, scalar, quiet); // c:118
     }
 
     if argv.is_empty() {
