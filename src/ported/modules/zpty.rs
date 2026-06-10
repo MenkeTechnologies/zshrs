@@ -320,7 +320,15 @@ pub fn newptycmd(
                 unsafe {
                     libc::ioctl(slave, libc::TIOCSCTTY.into(), 0);
                 }
-                // c:402-408 — `close(0); close(1); close(2); dup2(slave, 0..2);`
+                // c:402-414 — close stdio, dup slave to 0/1/2, close
+                // all leftover internal fds (so the child doesn't
+                // inherit the parent shell's pipe/coproc/module fds).
+                //   close(0); close(1); close(2);
+                //   dup2(slave, 0..2);
+                //   closem(FDT_UNUSED, 0);
+                //   close(slave);
+                //   close(master);  ← already done earlier (line 294)
+                //   close(coprocin); close(coprocout);
                 unsafe {
                     libc::close(0);
                     libc::close(1);
@@ -328,9 +336,30 @@ pub fn newptycmd(
                     libc::dup2(slave, 0);
                     libc::dup2(slave, 1);
                     libc::dup2(slave, 2);
-                    if slave > 2 {
-                        libc::close(slave); // c:411
+                }
+                // c:410 — closem(FDT_UNUSED, 0). Without this, the
+                // child inherits every fdtable-tracked internal fd the
+                // parent had open (coproc pipes, autoload module fds,
+                // opened-via-exec fds, ZFTP_CTRL, etc.) — same fd-
+                // leak the clone module's bin_clone port plugged at
+                // clone.rs:117-133. Prior zpty port skipped this step
+                // so a long-running `zpty -b name cmd` would slowly
+                // accumulate dead fd references on every spawn.
+                crate::ported::exec::closem(crate::ported::zsh_h::FDT_UNUSED, 0);
+                // c:411 — close(slave) AFTER dup2 so the underlying
+                // open file description retains the right refcount.
+                if slave > 2 {
+                    unsafe {
+                        libc::close(slave);
                     }
+                }
+                // c:413-414 — close(coprocin); close(coprocout). The
+                // parent's coproc pipe is irrelevant to the spawned
+                // pty-isolated child; same shape as clone.rs:135-136.
+                use std::sync::atomic::Ordering;
+                unsafe {
+                    libc::close(crate::ported::modules::clone::coprocin.load(Ordering::Relaxed));
+                    libc::close(crate::ported::modules::clone::coprocout.load(Ordering::Relaxed));
                 }
                 let cmd = match CString::new(args[0].as_str()) {
                     Ok(c) => c,
