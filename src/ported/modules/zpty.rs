@@ -414,25 +414,79 @@ pub fn ptyread(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io:
 }
 
 /// Write a string to a pty's master end.
-/// Port of `ptywritestr(Ptycmd cmd, char *s, int len)` from Src/Modules/zpty.c:714 (which
-/// `ptywrite()` line 743 wraps with `-n` newline handling).
-/// WARNING: param names don't match C — Rust=(fd, data) vs C=(cmd, s, len)
-pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {
-    // c:714
-    #[cfg(unix)]
+/// Port of `ptywritestr(Ptycmd cmd, char *s, int len)` from Src/Modules/zpty.c:713-740.
+/// Walks the buffer with a control-flow-aware retry loop that bails
+/// on `errflag`, `breaks`, `retflag`, `contflag`; in `cmd->nblock`
+/// mode an `EWOULDBLOCK`/`EAGAIN` short-write returns `!all` so
+/// the caller can stash the unwritten tail (mirrors C c:720-729).
+/// On a non-nonblock write error, `checkptycmd` updates `cmd->fin`
+/// (the pty died); if still alive, the byte count is set to 0 and
+/// the loop continues (c:730-735). Returns `0` if any bytes
+/// landed; otherwise `cmd->fin + 1` (c:739) — `1` for "child
+/// alive, nothing written", `2` for "child dead".
+pub fn ptywritestr(cmd: &mut ptycmd, s: &[u8]) -> i32 {
+    // c:716
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut all: usize = 0;
+    let mut off: usize = 0;
+    let mut len: usize = s.len();
+    // c:718 — `for (; !errflag && !breaks && !retflag && !contflag && len; ...)`
+    while crate::ported::utils::errflag.load(Relaxed) == 0
+        && crate::ported::builtin::BREAKS.load(Relaxed) == 0
+        && crate::ported::exec::retflag.load(Relaxed) == 0
+        && crate::ported::builtin::CONTFLAG.load(Relaxed) == 0
+        && len > 0
     {
-        let bytes = data.as_bytes();
-        let n = unsafe { libc::write(fd, bytes.as_ptr() as *const libc::c_void, bytes.len()) };
-
-        if n < 0 {
-            return Err(io::Error::last_os_error());
+        // c:720 — `written = write(cmd->fd, s, len)`.
+        let written = unsafe {
+            libc::write(
+                cmd.master_fd,
+                s.as_ptr().add(off) as *const libc::c_void,
+                len,
+            )
+        };
+        if written < 0 && cmd.nonblock {
+            // c:720-729 — nblock + (EWOULDBLOCK || EAGAIN) → return `!all`.
+            let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            #[allow(unused_mut)]
+            let mut wouldblock = false;
+            #[cfg(target_os = "linux")]
+            {
+                wouldblock = eno == libc::EWOULDBLOCK || eno == libc::EAGAIN;
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                wouldblock = eno == libc::EWOULDBLOCK || eno == libc::EAGAIN;
+            }
+            if wouldblock {
+                return if all == 0 { 1 } else { 0 }; // c:729 — `return !all`
+            }
         }
-        Ok(n as usize)
+        let written = if written < 0 {
+            // c:730-735 — `checkptycmd(cmd); if (cmd->fin) break; written = 0;`
+            checkptycmd(cmd);
+            if cmd.finished {
+                break;
+            }
+            0
+        } else {
+            written as usize
+        };
+        if written > 0 {
+            // c:736-737 — `all += written;`
+            all += written;
+        }
+        // c:719 — `len -= written, s += written`
+        len = len.saturating_sub(written);
+        off += written;
     }
-
-    #[cfg(not(unix))]
-    {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "not supported"))
+    // c:739 — `return (all ? 0 : cmd->fin + 1);`
+    if all > 0 {
+        0
+    } else if cmd.finished {
+        2
+    } else {
+        1
     }
 }
 
@@ -565,10 +619,13 @@ pub fn bin_zpty(
             let name = args[0];
             let data: String = args[1..].join(" ");
 
-            if let Some(cmd) = cmds.get(name) {
-                match ptywritestr(cmd.master_fd, &data) {
-                    Ok(_) => (0, output),
-                    Err(e) => (1, format!("zpty: write failed: {}\n", e)),
+            if let Some(cmd) = cmds.get_mut(name) {
+                let bytes = data.as_bytes();
+                let r = ptywritestr(cmd, bytes);
+                if r == 0 {
+                    (0, output)
+                } else {
+                    (1, format!("zpty: write failed\n"))
                 }
             } else {
                 (1, format!("zpty: no such pty command: {}\n", name))
@@ -1164,12 +1221,17 @@ mod tests {
         assert_ne!(r, 0, "invalid fd → nonzero error");
     }
 
-    /// c:420 — `ptywritestr(-1, "x")` returns Err.
+    /// c:713 — `ptywritestr(cmd, "x", 1)` with closed master_fd → write(2)
+    /// returns -1 with EBADF; checkptycmd's `kill(pid, 0)` fails (pid=0
+    /// is invalid signal target on most platforms), so `cmd->fin` flips
+    /// true and the loop breaks. Final return: `all == 0 && fin == 1`
+    /// → `cmd->fin + 1 == 2` per c:739.
     #[test]
-    fn ptywritestr_invalid_fd_returns_err() {
+    fn ptywritestr_invalid_fd_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
-        let r = ptywritestr(-1, "data");
-        assert!(r.is_err());
+        let mut cmd = ptycmd::new("dummy", vec![], -1, 0, false, false);
+        let r = ptywritestr(&mut cmd, b"data");
+        assert_ne!(r, 0, "closed fd → nonzero per c:739");
     }
 
     /// c:358 — `ptyread(-1, _, timeout=0)` with zero-ms timeout returns
