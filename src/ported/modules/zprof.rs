@@ -218,7 +218,7 @@ pub fn bin_zprof(
     // and a VARARR Parc as[narcs+1] with NULL sentinels; Rust uses
     // index arrays. `total` is the sum of self-times across all funcs.
     let mut fs: Vec<usize> = (0..calls.len()).collect(); // c:149-159
-    let as_arcs: Vec<usize> = (0..arcs.len()).collect(); // c:151-163
+    let mut as_arcs: Vec<usize> = (0..arcs.len()).collect(); // c:151-163
     let mut total: f64 = 0.0; // c:154
     for &i in &fs {
         total += calls[i].self_time; // c:158 total += f->self;
@@ -226,6 +226,13 @@ pub fn bin_zprof(
 
     // c:165-166 — `qsort(fs, ncalls, sizeof(f), cmpsfuncs);`
     fs.sort_by(|&a, &b| cmpsfuncs(&calls[a], &calls[b]));
+    // c:167-168 — `qsort(as, narcs, sizeof(a), cmpparcs);`
+    //   Prior port skipped this sort, so the per-function caller/callee
+    //   blocks at c:184-211 listed arcs in chronological insertion order
+    //   instead of descending-time order. With many callers, the listing
+    //   buried the dominant time consumers under low-cost arcs, defeating
+    //   zprof's "find the hot edges" purpose.
+    as_arcs.sort_by(|&a, &b| cmpparcs(&arcs[a], &arcs[b]));
 
     // c:170 — header.
     println!("num  calls                time                       self            name");
