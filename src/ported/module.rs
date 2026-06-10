@@ -4983,18 +4983,60 @@ pub fn bin_zmodload_features(
         &args[1..]
     };
 
-    // c:3010-3024 — no-module-name listing branch
+    // c:3010-3030 — no-module-name listing branch.
+    // C body:
+    //   if (modname)
+    //       args++;
+    //   else if (OPT_ISSET(ops,'L')) {
+    //       int printflags = PRINTMOD_LIST|PRINTMOD_FEATURES;
+    //       if (OPT_ISSET(ops,'P')) {
+    //           zwarnnam(nam, "-P is only allowed with a module name");
+    //           return 1;
+    //       }
+    //       if (OPT_ISSET(ops,'l')) printflags |= PRINTMOD_LISTALL;
+    //       if (OPT_ISSET(ops,'a')) printflags |= PRINTMOD_AUTO;
+    //       scanhashtable(modulestab, 1, 0, MOD_ALIAS,
+    //                     modulestab->printnode, printflags);
+    //       return 0;
+    //   }
+    //   if (!modname) {
+    //       zwarnnam(nam, "-F requires a module name");
+    //       return 1;
+    //   }
     if modname.is_none() {
         if OPT_ISSET(ops, b'L') {
             // c:3012
+            // c:3014-3016 — `-P` check must fire BEFORE the listing
+            // dispatch. Without modname, -P is illegal.
             if OPT_ISSET(ops, b'P') {
-                // c:3014
                 zwarnnam(nam, "-P is only allowed with a module name"); // c:3015
                 return 1; // c:3016
             }
-            // c:3022-3023 — scanhashtable + printnode
-            for (name, _m) in &table.modules {
-                println!("zmodload -F {}", name);
+            // c:3013 / c:3018-3021 — assemble PRINTMOD_LIST|PRINTMOD_FEATURES
+            //                       [|PRINTMOD_LISTALL][|PRINTMOD_AUTO]
+            let mut printflags = PRINTMOD_LIST | PRINTMOD_FEATURES;
+            if OPT_ISSET(ops, b'l') {
+                printflags |= PRINTMOD_LISTALL; // c:3019
+            }
+            if OPT_ISSET(ops, b'a') {
+                printflags |= PRINTMOD_AUTO; // c:3021
+            }
+            // c:3022-3023 — `scanhashtable(modulestab, 1, 0, MOD_ALIAS,
+            //                              printnode, printflags);`
+            // sorted=1, INCLUDE=0 (all), EXCLUDE=MOD_ALIAS (skip aliases).
+            let mut names: Vec<&String> = table
+                .modules
+                .iter()
+                .filter(|(_, m)| (m.node.flags & MOD_ALIAS) == 0) // c:3022 EXCLUDE
+                .map(|(n, _)| n)
+                .collect();
+            names.sort(); // c:3022 sorted=1
+            for name in names {
+                let m = &table.modules[name];
+                let line = printmodulenode(name, m, printflags);
+                if !line.is_empty() {
+                    println!("{}", line);
+                }
             }
             return 0; // c:3024
         }
