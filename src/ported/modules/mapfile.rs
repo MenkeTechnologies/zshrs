@@ -66,12 +66,22 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {
         return; // c:87 readonly skip
     }
 
-    // c:88 — `(fd = open(name, O_RDWR|O_CREAT|O_NOCTTY, 0666)) >= 0`
+    // c:88 — `(fd = open(name, O_RDWR|O_CREAT|O_NOCTTY, 0666)) >= 0`.
+    // O_NOCTTY matters when `name` happens to be a terminal device
+    // (`$mapfile[/dev/tty]=...` — unusual but legal). Without it,
+    // the open() call acquires /dev/tty as the process's controlling
+    // terminal if no controlling tty is currently set, which is
+    // never the intended effect of a mapfile assign. Prior port
+    // skipped the flag because std::fs::OpenOptions doesn't expose
+    // O_NOCTTY directly — but the OpenOptionsExt::custom_flags trait
+    // on Unix does.
+    use std::os::unix::fs::OpenOptionsExt;
     let file = match OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
+        .custom_flags(libc::O_NOCTTY)
         .open(&name_unmeta)
     {
         Ok(f) => f,
@@ -261,8 +271,18 @@ pub fn get_contents(fname: &str) -> Option<String> {
     // c:177 — `unmetafy(fname = ztrdup(fname), &fd);`
     let fname_unmeta = unmeta(fname);
 
-    // c:180 — `(fd = open(fname, O_RDONLY | O_NOCTTY)) < 0`
-    let file = match OpenOptions::new().read(true).open(&fname_unmeta) {
+    // c:180 — `(fd = open(fname, O_RDONLY | O_NOCTTY)) < 0`.
+    // O_NOCTTY prevents `$mapfile[/dev/tty]` reads from acquiring
+    // /dev/tty as the controlling terminal — same fix as the
+    // setpmmapfile (write) path above. Prior port omitted the flag
+    // because std::fs::OpenOptions doesn't expose it directly;
+    // OpenOptionsExt::custom_flags adds it.
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOCTTY)
+        .open(&fname_unmeta)
+    {
         Ok(f) => f,            // c:180 open ok
         Err(_) => return None, // c:184-187 NULL return
     };
