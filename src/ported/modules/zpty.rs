@@ -447,8 +447,20 @@ pub fn deleteallptycmds(cmds: &mut HashMap<String, ptycmd>) {
 /// C signature: `static void checkptycmd(Ptycmd cmd)`.
 pub fn checkptycmd(cmd: &mut ptycmd) {
     // c:530
-    if cmd.finished {
-        // c:530 cmd->fin
+    // c:535 — `if (cmd->read != -1 || cmd->fin) return;`
+    //
+    // C bails when EITHER (a) a byte is already stashed in cmd->read
+    // (a prior checkptycmd call buffered it), OR (b) the cmd has
+    // already finished. Prior Rust port only checked finished,
+    // missing the "already buffered" guard — back-to-back
+    // checkptycmd calls would re-issue read(2) and overwrite the
+    // stashed byte, dropping it before ptyread had a chance to
+    // consume it at c:583-588.
+    //
+    // `read_buf: Option<u8>` mirrors C's `read: int` where -1 = unset.
+    // Some(_) ↔ cmd->read != -1.
+    if cmd.read_buf.is_some() || cmd.finished {
+        // c:535
         return;
     }
     let mut c: u8 = 0;
