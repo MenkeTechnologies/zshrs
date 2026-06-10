@@ -576,10 +576,13 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
 ///
 /// `getfn` for the `$zsh_scheduled_events` array parameter. C signature
 /// mirrored: `static char ** schedgetfn(UNUSED(Param pm))`. `Param` is
-/// `struct param *` (zsh.h:539); ported as `*const param` to keep the
-/// pointer shape (the param is UNUSED in C — pointer is never dereffed).
+/// `struct param *` (zsh.h:539 typedef) which is a non-const pointer;
+/// pub so the modules/parameter.rs PARTAB_ARRAY entry can reference
+/// it (Src/Builtins/sched.c:382 `SPECIALPMDEF("zsh_scheduled_events",
+/// ..., &sched_gsu, ...)` wires this fn as the getfn through
+/// `addparamdef` at module-load time).
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub(crate) fn schedgetfn(_pm: *const param) -> Vec<String> {
+pub fn schedgetfn(_pm: *mut param) -> Vec<String> {
     let mut i: usize; // c:341
                       // C: int i; struct schedcmd *sch; char **ret, **aptr;
                       // for (i = 0, sch = schedcmds; sch; sch = sch->next, i++);          // c:347-348
