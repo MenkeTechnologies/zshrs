@@ -154,7 +154,11 @@ pub fn bin_sysread(
         } else {
             (1000 * to_mn.l) as i32 // c:143
         };
-        // c:145-148 — `while ((ret = poll(...)) < 0) { if (errno != EINTR ...) break; }`
+        // c:145-148 — `while ((ret = poll(...)) < 0) { if (errno !=
+        //              EINTR || errflag || retflag || breaks ||
+        //              contflag) break; }`. Same shell-control-flow
+        //              flag bail as bin_syswrite (a4fd96ac0e).
+        use std::sync::atomic::Ordering::Relaxed;
         let mut ret;
         loop {
             let mut pfd = libc::pollfd {
@@ -168,8 +172,12 @@ pub fn bin_sysread(
                 break;
             }
             let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            if eno != libc::EINTR {
-                break; // c:146 EINTR retry
+            let interrupted = crate::ported::utils::errflag.load(Relaxed) != 0
+                || crate::ported::exec::retflag.load(Relaxed) != 0
+                || crate::ported::builtin::BREAKS.load(Relaxed) != 0
+                || crate::ported::builtin::CONTFLAG.load(Relaxed) != 0;
+            if eno != libc::EINTR || interrupted {
+                break; // c:177
             }
         }
         // c:149-151 — `if (ret <= 0) return ret ? 2 : 4;`
@@ -178,7 +186,11 @@ pub fn bin_sysread(
         }
     }
 
-    // c:188-191 — `while ((count = read(infd, inbuf, bufsize)) < 0) ...`
+    // c:188-191 — `while ((count = read(infd, inbuf, bufsize)) < 0)
+    //                  { if (errno != EINTR || errflag || retflag
+    //                       || breaks || contflag) break; }`.
+    // Same control-flow flag bail as bin_syswrite (a4fd96ac0e).
+    use std::sync::atomic::Ordering::Relaxed;
     let mut count: isize;
     loop {
         count = unsafe { libc::read(infd, inbuf.as_mut_ptr() as *mut libc::c_void, bufsize) };
@@ -186,9 +198,13 @@ pub fn bin_sysread(
             break;
         }
         let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        if eno != libc::EINTR {
-            break;
-        } // c:189
+        let interrupted = crate::ported::utils::errflag.load(Relaxed) != 0
+            || crate::ported::exec::retflag.load(Relaxed) != 0
+            || crate::ported::builtin::BREAKS.load(Relaxed) != 0
+            || crate::ported::builtin::CONTFLAG.load(Relaxed) != 0;
+        if eno != libc::EINTR || interrupted {
+            break; // c:189
+        }
     }
     // c:192-193 — `if (countvar) setiparam(countvar, count);`
     if let Some(ref cv) = countvar {
@@ -215,12 +231,22 @@ pub fn bin_sysread(
             };
             if ret < 0 {
                 // c:204
+                // c:205-206 — `if (errno == EINTR && !errflag &&
+                //               !retflag && !breaks && !contflag) continue;`
+                // C only retries when ALL FOUR control-flow flags are
+                // clear AND errno is EINTR. Prior port retried on any
+                // EINTR regardless of shell state.
+                use std::sync::atomic::Ordering::Relaxed;
                 let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                if eno == libc::EINTR {
-                    // c:205-207
+                let interrupted = crate::ported::utils::errflag.load(Relaxed) != 0
+                    || crate::ported::exec::retflag.load(Relaxed) != 0
+                    || crate::ported::builtin::BREAKS.load(Relaxed) != 0
+                    || crate::ported::builtin::CONTFLAG.load(Relaxed) != 0;
+                if eno == libc::EINTR && !interrupted {
+                    // c:205-207 — clean EINTR, retry.
                     continue;
                 }
-                // c:208-211 — stash residue + remaining count.
+                // c:208-212 — stash residue + remaining count.
                 if let Some(ref ov) = outvar {
                     let buf_remaining = String::from_utf8_lossy(&inbuf[p..p + remaining]);
                     let m = metafy(&buf_remaining);
