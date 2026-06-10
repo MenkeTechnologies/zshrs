@@ -1286,15 +1286,20 @@ pub fn getfunction_source(_ht: *mut HashTable, name: &str, dis: i32) -> Option<P
         let is_disabled = (shf.node.flags & DISABLED as i32) != 0;
         let dis_match = if dis != 0 { is_disabled } else { !is_disabled }; // c:548
         if dis_match {
-            // c:549-551 — `pm->u.str = getshfuncfile(shf); if (!pm->u.str)
-            // pm->u.str = dupstring("");`. The canonical
-            // `getshfuncfile` (Src/hashtable.c:1059) does NOT append a
-            // lineno suffix — it returns either `filename` (or
-            // `filename/name` for PM_LOADDIR autoloaders). Bug #261 in
-            // docs/BUGS.md: the previous Rust port concatenated `":0"`
-            // unconditionally, so `${functions_source[f]}` returned `zsh:0`
-            // where zsh returns `zsh`.
-            let fname = shf.filename.clone().unwrap_or_default();
+            // c:549-551 — `pm->u.str = getshfuncfile(shf);
+            //              if (!pm->u.str) pm->u.str = dupstring("");`
+            //
+            // Route through the canonical hashtable::getshfuncfile so
+            // the PM_LOADDIR `filename/name` join lands here (matches
+            // the c:1061 branch of getshfuncfile at hashtable.c:1059).
+            // Previously this inlined `shf.filename.clone()` and
+            // skipped the LOADDIR join, so autoloads loaded via fpath
+            // dir match had `${functions_source[name]}` reporting the
+            // dir instead of the source file path.
+            drop(g); // release shfunctab lock before getshfuncfile re-acquires.
+            let fname = crate::ported::hashtable::getshfuncfile(name).unwrap_or_default();
+            // Re-acquire for the post-block path that needs `g`
+            // again (none currently, but keep the structure clean).
             (fname, true)
         } else {
             // c:552 — wrong DISABLED parity: pm->u.str stays NULL,
