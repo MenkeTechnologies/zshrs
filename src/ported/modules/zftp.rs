@@ -621,6 +621,17 @@ pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {
     if pcur < ln.len() {
         ln[pcur] = 0; // c:702 *pcur = '\0'
     }
+    // c:583 setjmp counterpart — alarm fired during the read loop.
+    // ZFDRRRRING was zeroed inside zfalarm; non-zero now means
+    // zfhandler set it during the blocked fgetc. Mirrors the
+    // post-syscall fix added to zfread (cfe7560f58) and zfwrite
+    // (00c1c36dc9). Without it, a SIGALRM during line read drained
+    // through to ZCFINISH unaffected — the caller saw a partial
+    // line with the timeout signal silently lost.
+    if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
+        zwarnnam("zftp", "timeout getting response"); // c:585
+        return 6; // c:586
+    }
     // c:702 — return (zcfinish & 2);
     ZCFINISH.load(Ordering::Relaxed) & 2
 }
