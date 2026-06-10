@@ -4221,14 +4221,25 @@ pub fn ztrftimebuf(bufsizeptr: &mut i32, decr: i32) -> i32 {
 // strftime extension support — Rust delegates to libc::strftime via
 // the strftime crate equivalent inline.
 /// `ztrftime` — see implementation.
-pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
+///
+/// `use_gmt` controls whether time fields are interpreted as UTC (true,
+/// libc::gmtime) or local time (false, libc::localtime). C's ztrftime
+/// takes a `struct tm *` produced by the caller via gmtime/localtime
+/// (e.g. Src/Modules/stat.c:201 picks between them based on STF_GMT);
+/// since the Rust signature takes `SystemTime` we hoist that choice into
+/// this bool param.
+pub fn ztrftime(fmt: &str, time: std::time::SystemTime, use_gmt: bool) -> String {
     let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
     let secs = duration.as_secs() as i64;
     let nsec = duration.subsec_nanos() as u64;
 
     #[cfg(unix)]
     unsafe {
-        let tm = libc::localtime(&secs);
+        let tm = if use_gmt {
+            libc::gmtime(&secs)
+        } else {
+            libc::localtime(&secs)
+        };
         if tm.is_null() {
             return String::new();
         }
@@ -12691,8 +12702,8 @@ mod tests {
         let t = UNIX_EPOCH + Duration::new(1704445662, 123_456_789);
         // %H gives leading zero "09"; %K should give "9" (in some TZ
         // hour will be different but the digit-count rule still holds).
-        let h_padded = ztrftime("%H", t);
-        let k_unpadded = ztrftime("%K", t);
+        let h_padded = ztrftime("%H", t, false);
+        let k_unpadded = ztrftime("%K", t, false);
         // Both represent the same hour. If h_padded starts with `0`,
         // k_unpadded must be 1-char and not start with `0`.
         if h_padded.starts_with('0') && h_padded.len() == 2 {
@@ -12710,8 +12721,8 @@ mod tests {
         }
         // %f for day-of-month: t is Jan 5 → in any reasonable TZ
         // day is between 4 and 6; format should be 1 digit when day < 10.
-        let d_padded = ztrftime("%d", t);
-        let f_unpadded = ztrftime("%f", t);
+        let d_padded = ztrftime("%d", t, false);
+        let f_unpadded = ztrftime("%f", t, false);
         if d_padded.starts_with('0') && d_padded.len() == 2 {
             assert!(!f_unpadded.starts_with('0'));
             assert_eq!(
@@ -12723,13 +12734,13 @@ mod tests {
         // %3. fractional seconds: input nsec is 123456789 → first 3
         // digits should be 123. Note zsh's syntax is `%N.` where N is
         // the digit count (c:3374-3384 + c:3409).
-        let frac = ztrftime("%3.", t);
+        let frac = ztrftime("%3.", t, false);
         assert_eq!(
             frac, "123",
             "c:3409-3438 — %3. must emit first 3 digits of nsec"
         );
         // %. with no digit prefix defaults to 3 digits per c:3409.
-        let frac_default = ztrftime("%.", t);
+        let frac_default = ztrftime("%.", t, false);
         assert_eq!(frac_default, "123", "c:3409 — %. defaults to 3 digits");
     }
 

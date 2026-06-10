@@ -1439,7 +1439,9 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     // routes through `utils::ztrftime` which already wraps
                     // strftime + format quirks.
                     let now = std::time::SystemTime::now();
-                    let rendered = crate::ported::utils::ztrftime(&tmfmt, now);
+                    // c:765 — `ztrftime(buf, ..., localtime(&secs), nsec)`,
+                    // so use_gmt = false.
+                    let rendered = crate::ported::utils::ztrftime(&tmfmt, now, false);
                     stradd(bv, &rendered);
                 }
                 // c:923-929 — `%i` reads the global `lineno`. The Rust
