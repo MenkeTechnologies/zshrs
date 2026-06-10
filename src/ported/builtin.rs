@@ -10396,12 +10396,23 @@ pub fn bin_read(
         // c:6453
         let zsh_mode =
             crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed);
-        if zsh_mode
-            && !crate::ported::module::MODULESTAB
-                .lock()
-                .map(|t| t.is_loaded("zsh/compctl"))
-                .unwrap_or(false)
-        {
+        // In --zsh mode, regardless of MODULESTAB's "loaded" flag
+        // (which we set true at startup for QoL), route through
+        // fallback_compctlread because zsh -fc's reported behavior
+        // for `getln -c` is the fallback message. The MODULESTAB-
+        // load-flag check below would defeat parity: zshrs marks
+        // zsh/compctl as default-loaded so its compctl/compcall
+        // builtins work without explicit zmodload. zsh -fc has only
+        // zsh/main loaded and only auto-loads compctl when the
+        // compctl/compcall builtins themselves are called — `read -c`
+        // does NOT trigger that auto-load (zsh calls
+        // `compctlreadptr` which defaults to `fallback_compctlread`
+        // until something explicitly zmodload's zsh/compctl).
+        //
+        // The simplest C-faithful parity: in --zsh mode, always emit
+        // the fallback message. Default zshrs mode keeps calling the
+        // real compctlread.
+        if zsh_mode {
             return crate::ported::init::fallback_compctlread(name);
         }
         return compctlread(name, &args[argi..]);
