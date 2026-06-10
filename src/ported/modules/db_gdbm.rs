@@ -320,27 +320,45 @@ pub fn bin_zgdbmpath(nam: &str, args: &[String], ops: &options, func: i32) -> i3
         }
     };
 
-    // c:248 — `pm = (Param) paramtab->getnode(paramtab, pmname);`
+    // c:248-252 — `pm = paramtab->getnode(paramtab, pmname); if (!pm) return 1;`
+    //   — paramtab lookup distinguishes "name doesn't exist anywhere"
+    //     from "name exists but isn't gdbm-tied".
+    let exists_in_paramtab = match crate::ported::params::paramtab().read() {
+        Ok(t) => t.contains_key(pmname),
+        Err(_) => false,
+    };
     let path = match TIED_PARAMS.lock() {
         Ok(p) => match p.get(pmname) {
             Some(tied) => tied.db.path().to_string_lossy().to_string(),
             None => {
-                // c:249-251 — "no such parameter"
-                zwarnnam(nam, &format!("no such parameter: {}", pmname));
+                if exists_in_paramtab {
+                    // c:254-256 — `if (pm->gsu.h != &gdbm_hash_gsu) {
+                    //                  zwarnnam(nam, "not a tied gdbm parameter: %s", pmname);
+                    //                  return 1; }`
+                    zwarnnam(nam, &format!("not a tied gdbm parameter: {}", pmname));
+                } else {
+                    // c:249-251 — `zwarnnam(nam, "no such parameter: %s", pmname);`
+                    zwarnnam(nam, &format!("no such parameter: {}", pmname));
+                }
                 return 1;
             }
         },
         Err(_) => return 1,
     };
 
-    // c:254-257 — `if (pm->gsu.h != &gdbm_hash_gsu)` skipped; TIED_PARAMS
-    // only ever holds gdbm-backed entries.
-
-    // c:260-264 — `setsparam("REPLY", ztrdup(dbfile_path));`
-    // Static-link path: the params global-state isn't yet wired through;
-    // emit to stdout as a degraded equivalent until params.c globalizes.
-    println!("{}", path);
-    0 // c:265
+    // c:260-264 — `if (((struct gsu_scalar_ext *)pm->u.hash->tmpdata)->dbfile_path)
+    //                  setsparam("REPLY", ztrdup(path));
+    //              else setsparam("REPLY", ztrdup(""));`
+    //
+    // Route through the canonical setsparam at params.rs:2253. Prior
+    // port `println!`'d to stdout, which is a different observable: C
+    // sets the $REPLY shell variable that consumers read after the
+    // command (`zgdbmpath myhash; echo $REPLY`); Rust's stdout-print
+    // only worked through command substitution (`$(zgdbmpath myhash)`).
+    // Scripts written for C zsh that read $REPLY would get an empty
+    // string from prior zshrs ports.
+    let _ = crate::ported::params::setsparam("REPLY", &path);
+    0 // c:266
 }
 
 /// Port of `gdbmgetfn(Param pm)` from `Src/Modules/db_gdbm.c:282`.
