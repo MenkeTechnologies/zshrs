@@ -67,23 +67,32 @@ pub fn savematch(m: &mut MatchData) {
 /// set after restorematch — the OPPOSITE of the documented contract.
 pub fn restorematch(m: &MatchData) {
     // c:55
-    // c:57-60 — `$match`.
+    // c:57-68 — C uses `setaparam` which routes through `assignaparam`
+    // with `ASSPM_WARN` (params.c:3766). The warn flag tells
+    // assignaparam to emit "scalar parameter X created globally in
+    // function" / "read-only variable" diagnostics on write attempts.
+    //
+    // Prior Rust port called `assignaparam` directly with `flags = 0`,
+    // dropping the WARN bit — a user who pinned `typeset -r match`
+    // upstream would see the readonly assignment silently swallowed,
+    // where C zsh prints `zsh: read-only variable: match` and bails.
+    // Route through `setaparam` (port at params.rs:6023 already does
+    // the `assignaparam(name, val, ASSPM_WARN)` wrap) so the
+    // diagnostic surface matches C bit-for-bit.
     if let Some(v) = m.r#match.as_ref() {
-        assignaparam("match", v.clone(), 0);
+        setaparam("match", v.clone()); // c:58
     } else {
-        unsetparam("match");
+        unsetparam("match"); // c:60
     }
-    // c:61-64 — `$mbegin`.
     if let Some(v) = m.mbegin.as_ref() {
-        assignaparam("mbegin", v.clone(), 0);
+        setaparam("mbegin", v.clone()); // c:62
     } else {
-        unsetparam("mbegin");
+        unsetparam("mbegin"); // c:64
     }
-    // c:65-68 — `$mend`.
     if let Some(v) = m.mend.as_ref() {
-        assignaparam("mend", v.clone(), 0);
+        setaparam("mend", v.clone()); // c:66
     } else {
-        unsetparam("mend");
+        unsetparam("mend"); // c:68
     }
 }
 
