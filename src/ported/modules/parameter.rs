@@ -29,7 +29,7 @@ use crate::ported::zsh_h::{
     Param, ScanFunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, FS_EVAL, FS_SOURCE, INTERACTIVE,
     ND_USERNAME, PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE,
     PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z,
-    PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER,
+    PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNIQUE, PM_UNSET, PM_UPPER,
     SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, SP_RUNNING, STAT_DONE, STAT_NOPRINT,
     STAT_STOPPED,
 };
@@ -1076,13 +1076,43 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
         let is_disabled = (shf.node.flags & DISABLED as i32) != 0;
         let dis_match = if dis != 0 { is_disabled } else { !is_disabled };
         if dis_match {
-            // c:401-407 — PM_UNDEFINED autoload form: `builtin autoload -X[Ut]`.
-            // Static-link path doesn't yet expose PM_UNDEFINED on ShFunc;
-            // route via body.is_none() as the autoload signal.
+            // c:401-407 — PM_UNDEFINED autoload form. C builds the
+            // suffix from PM_UNALIASED + PM_TAGGED:
+            //   pm->u.str = dyncat("builtin autoload -X",
+            //       ((shf->node.flags & PM_UNALIASED) ?
+            //        ((shf->node.flags & PM_TAGGED) ? "Ut" : "U") :
+            //        ((shf->node.flags & PM_TAGGED) ? "t" : "")));
+            //
+            // So autoload -X with the four-state suffix tells the user
+            // (via ${functions[NAME]}) which `autoload` flags were
+            // used: "U" = `autoload -U` (no alias expansion),
+            // "t" = `autoload -t` (tracing on entry), "Ut" = both.
+            // Prior Rust port always emitted bare "builtin autoload -X"
+            // — `${functions[my_autoload_U]}` returned the same string
+            // whether the function was loaded with `autoload -U` or
+            // `autoload`, dropping the metaprogramming signal that
+            // many prompt frameworks (powerlevel10k, starship)
+            // consult when deciding whether to re-source.
+            //
+            // Static-link path also doesn't yet expose PM_UNDEFINED on
+            // ShFunc; route via body.is_none() as the autoload signal,
+            // then inspect node.flags for the U/t letters.
             let body = shf.body.as_deref();
             let v = match body {
-                None => "builtin autoload -X".to_string(), // c:402-407
-                Some(text) => format!("\t{}", text),       // c:409-431 getpermtext
+                None => {
+                    let f = shf.node.flags as u32;
+                    let unaliased = (f & PM_UNALIASED) != 0;
+                    let tagged = (f & PM_TAGGED) != 0;
+                    let suffix = match (unaliased, tagged) {
+                        // c:402-405
+                        (true, true) => "Ut",
+                        (true, false) => "U",
+                        (false, true) => "t",
+                        (false, false) => "",
+                    };
+                    format!("builtin autoload -X{}", suffix)
+                }
+                Some(text) => format!("\t{}", text), // c:409-431 getpermtext
             };
             (v, true)
         } else {
