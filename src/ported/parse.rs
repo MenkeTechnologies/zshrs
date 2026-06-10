@@ -2112,7 +2112,17 @@ fn par_repeat() -> Option<ZshCommand> {
 /// fork-isolates execution in the executor.
 fn par_subsh() -> Option<ZshCommand> {
     zshlex(); // skip (
-    let prog = parse_program();
+    // c:Src/parse.c:par_subsh — `parse_event(OUTPAR)` parses until
+    // the matching `)`. zshrs's previous port called bare
+    // `parse_program()` (parse_program_until(None)) which has no
+    // way to know it should stop at OUTPAR_TOK — at top-level
+    // that's fine (the outer loop just sees an extra OUTPAR after
+    // the inner body), but the parse_event-equivalent's new
+    // yyerror-on-unconsumed-token behavior at parse_program_until's
+    // None arm now reports a spurious "parse error near `)'" when
+    // the construct ends. Pass OUTPAR_TOK so parse_program_until
+    // stops cleanly at the closing paren.
+    let prog = parse_program_until(Some(&[OUTPAR_TOK]));
     if tok() == OUTPAR_TOK {
         zshlex();
     }
@@ -7922,13 +7932,22 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                 }
             }
             None => {
-                // c:Src/parse.c:671-680 par_event — when par_list
-                // (the AST-shape par_event for zshrs) fails to parse,
-                // C sets `tok = LEXERR` and calls `yyerror(0)` if
-                // errflag was already set, else `yyerror(1)` followed
-                // by `herrflush()`. Either way the parse error is
-                // emitted with the "near `X'" tail derived from
-                // zshlextext/tokstr().
+                // c:Src/parse.c:644-645 par_event — `if (tok ==
+                // ENDINPUT) return 0;`. End-of-input is NORMAL — no
+                // diagnostic. The yyerror path at c:670-682 fires only
+                // when par_sublist actually failed (the C `!r` branch).
+                //
+                // zshrs's previous fix here unconditionally called
+                // yyerror on every None return, breaking legitimate
+                // end-of-input scenarios like `(echo sub)` (par_list
+                // returns None after the subshell parser consumes the
+                // whole construct, leaving tok at ENDINPUT).
+                if tok() == ENDINPUT {
+                    break;
+                }
+                // c:Src/parse.c:671-680 par_event — par_sublist failed:
+                // emit the canonical yyerror with the "near `X'" tail
+                // derived from zshlextext/tokstr().
                 //
                 // c:Src/lex.c:1965 — `zshlextext = tokstrings[tok]`
                 // is set DURING zshlex, before set_tok(LEXERR) here.
