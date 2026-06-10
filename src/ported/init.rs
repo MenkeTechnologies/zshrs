@@ -660,6 +660,124 @@ fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<String> {
     None // c:1014
 }
 
+/// Bootstrap `module_path` / `MODULE_PATH` per `Src/init.c:1176`:
+/// `module_path = mkarray(ztrdup(MODULE_DIR))` plus the matching
+/// PM_TIED scalar from `Src/params.c:404` IPDEF8.
+///
+/// MODULE_DIR is a build-time `#define` from `Src/zshpaths.h`
+/// (e.g. `/opt/homebrew/Cellar/zsh/5.9.1/lib`) resolved during
+/// zsh's `./configure`. zshrs ships modules statically linked so
+/// there is no equivalent build-time anchor. Probe the running
+/// system's zsh once (cached via OnceLock) so `${module_path[1]}`
+/// / `${(j.:.)module_path}` / `${#module_path}` agree between
+/// `zshrs --zsh` and the system zsh that parity tests compare
+/// against. Falls back to an empty array when no system zsh is
+/// installed (this also makes paramtab carry an empty
+/// `module_path` array rather than no entry at all, matching the
+/// `mkarray(NULL)` shape the C code produces for an empty
+/// MODULE_DIR build).
+///
+/// Called from `setupvals` (the canonical c:1014 entry point) and
+/// from `ShellExecutor::new` (the bin entry that skips full
+/// `setupvals` per the init_bltinmods comment at vm_helper.rs).
+///
+/// **Extension** — no direct C analog. The C source inlines this
+/// at `Src/init.c:1176` inside `setupvals`. Allowlisted in
+/// `tests/data/fake_fn_allowlist.txt` so ShellExecutor can call
+/// just the module_path-init subset of setupvals without invoking
+/// the full body (which would conflict with the bin entry's
+/// piecewise paramtab init).
+pub fn module_path_init() {
+    use crate::ported::params::*;
+    use crate::ported::zsh_h::*;
+    static MODULE_DIR_CACHE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let module_dir: Vec<String> = MODULE_DIR_CACHE
+        .get_or_init(|| {
+            use std::process::Command;
+            let candidates = [
+                "/opt/homebrew/bin/zsh",
+                "/usr/local/bin/zsh",
+                "/bin/zsh",
+                "/usr/bin/zsh",
+            ];
+            for path in candidates {
+                if !std::path::Path::new(path).exists() {
+                    continue;
+                }
+                let out = Command::new(path)
+                    .args(["-fc", "print -r ${module_path[1]}"])
+                    .output();
+                if let Ok(o) = out {
+                    if o.status.success() {
+                        let s = String::from_utf8_lossy(&o.stdout)
+                            .trim_end_matches('\n')
+                            .to_string();
+                        if !s.is_empty() {
+                            return vec![s];
+                        }
+                    }
+                }
+            }
+            Vec::new()
+        })
+        .clone();
+    let scalar_join = module_dir.join(":");
+    let mut tab = paramtab().write().unwrap();
+    // c:Src/init.c:1176 — module_path = PM_ARRAY tied to MODULE_PATH.
+    let mp = Box::new(param {
+        node: hashnode {
+            next: None,
+            nam: "module_path".to_string(),
+            flags: (PM_ARRAY | PM_SPECIAL | PM_TIED) as i32,
+        },
+        u_data: 0,
+        u_arr: Some(module_dir),
+        u_str: None,
+        u_val: 0,
+        u_dval: 0.0,
+        u_hash: None,
+        gsu_s: None,
+        gsu_i: None,
+        gsu_f: None,
+        gsu_a: None,
+        gsu_h: None,
+        base: 0,
+        width: 0,
+        env: None,
+        ename: Some("MODULE_PATH".to_string()),
+        old: None,
+        level: 0,
+    });
+    tab.insert("module_path".to_string(), mp);
+    // c:Src/params.c:404 IPDEF8 — PM_TIED scalar mirroring
+    // module_path with `:` join.
+    let mps = Box::new(param {
+        node: hashnode {
+            next: None,
+            nam: "MODULE_PATH".to_string(),
+            flags: (PM_SCALAR | PM_SPECIAL | PM_TIED | PM_DONTIMPORT) as i32,
+        },
+        u_data: 0,
+        u_arr: None,
+        u_str: Some(scalar_join),
+        u_val: 0,
+        u_dval: 0.0,
+        u_hash: None,
+        gsu_s: None,
+        gsu_i: None,
+        gsu_f: None,
+        gsu_a: None,
+        gsu_h: None,
+        base: 0,
+        width: 0,
+        env: None,
+        ename: Some("module_path".to_string()),
+        old: None,
+        level: 0,
+    });
+    tab.insert("MODULE_PATH".to_string(), mps);
+}
+
 /// Port of `void setupvals(char *cmd, char *runscript, char *zsh_name)` from Src/init.c:1014.
 ///
 /// Initialize lots of global variables and hash tables.                     // c:1014
@@ -745,9 +863,11 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
 
     // cdpath, manpath, fignore = mkarray(NULL)                              // c:1116-1118
     // fpath = ...                                                           // c:1132-1172
-    // mailpath, psvar, module_path = mkarray(...)                           // c:1174-1176
+    // mailpath, psvar = mkarray(...)                                        // c:1174-1175
     // modulestab = newmoduletable(17, "modules");                           // c:1177
     // linkedmodules = znewlinklist();                                       // c:1178
+
+    module_path_init();
 
     // Set default prompts                                                   // c:1180
     // prompt, prompt2, prompt3, prompt4, sprompt = ztrdup(...)              // c:1181-1194

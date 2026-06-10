@@ -1725,3 +1725,18 @@ mathevali_noeval
 # stat.rs, system.rs etc. This helper centralises the dance so future
 # sites don't drift back to last_os_error().to_string(). Bug #112.
 last_errstr
+
+# init.rs module_path_init — Rust-only callable wrapper for the
+# `module_path = mkarray(ztrdup(MODULE_DIR))` statement at C
+# Src/init.c:1176 (inside setupvals). MODULE_DIR is a C `#define` from
+# Src/zshpaths.h resolved at zsh `./configure` time (e.g.
+# /opt/homebrew/Cellar/zsh/5.9.1/lib); zshrs has no equivalent build-
+# time anchor since modules are statically linked. The bin entry path
+# (bins/zshrs.rs → ShellExecutor::new) skips full setupvals init for
+# the same reasons HOST/LOGNAME are seeded piecewise there (full
+# setupvals port pending), so this helper exposes JUST the c:1176
+# module_path init so ShellExecutor can call it without invoking the
+# whole setupvals body. Approved by maintainer 2026-06-09 with the
+# specific instruction "put that in init.rs, call from shell
+# executor".
+module_path_init
