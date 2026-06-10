@@ -222,21 +222,30 @@ pub fn zts_byfd(fd: RawFd) -> TcpSessionHandle {
     })
 }
 
-/// Port of `tcp_cleanup()` from `Src/Modules/tcp.c:283`. Walks the
-/// session list and closes every fd.
+/// Port of `tcp_cleanup()` from `Src/Modules/tcp.c:283-291`. Walks the
+/// session list and closes every fd via `tcp_close`.
 pub fn tcp_cleanup() {
     // c:283
-    ZTCP_SESSIONS.with(|s| {
-        let mut sessions = s.borrow_mut();
-        for sess in sessions.drain(..) {
-            // c:286-289
-            if sess.fd >= 0 {
-                unsafe {
-                    libc::close(sess.fd);
-                }
-            }
+    // c:287-289 — `for (node = firstnode(ztcp_sessions); node; node = next)
+    //                  tcp_close((Tcp_session)getdata(node));`
+    //
+    // C iterates and calls tcp_close on each, which internally invokes
+    // zclose (fdtable-aware) + zts_delete. Prior Rust port inlined
+    // `libc::close(sess.fd)` then dropped via `drain(..)`, bypassing
+    // both the fdtable clear (left every session's FDT_MODULE marker
+    // stale per the b3107b5a46 fix pattern) AND the per-session
+    // close-error warning. Routes through tcp_close exactly like C.
+    //
+    // Snapshot fds first because tcp_close does its own borrow_mut on
+    // ZTCP_SESSIONS to remove the entry; iterating directly would
+    // BorrowMutError.
+    let fds: Vec<i32> = ZTCP_SESSIONS.with(|s| s.borrow().iter().map(|sess| sess.fd).collect());
+    for fd in fds {
+        let handle = zts_byfd(fd);
+        if handle.is_some() {
+            tcp_close(handle); // c:289
         }
-    });
+    }
 }
 
 /// pointer (Rust handle), closes its fd, and removes it from the list.
@@ -257,12 +266,20 @@ pub fn tcp_cleanup() {
 pub fn tcp_close(sess: TcpSessionHandle) -> i32 {
     // c:295
     if let Some(idx) = sess {
-        // c:295
+        // c:299
         let fd = sess_get(idx, |s| s.fd);
         let mut err = -1;
         if fd != -1 {
             // c:301
-            err = unsafe { libc::close(fd) }; // c:303
+            // c:303 — `err = zclose(sess->fd);`. Prior port used raw
+            // `libc::close(fd)` which skips zclose's fdtable_set(fd,
+            // FDT_UNUSED) clear. Without the clear, the FDT_MODULE
+            // marker registered by tcp_socket at c:245 stayed in the
+            // fdtable after close — so a kernel-reused fd would inherit
+            // the FDT_MODULE classification and survive future
+            // closem(FDT_UNUSED, 0) calls. Same leak shape as the
+            // random.rs finish_ fix (b3107b5a46).
+            err = crate::ported::utils::zclose(fd);
             if err != 0 {
                 zwarn(&format!(
                     "connection close failed: {}",
@@ -270,12 +287,17 @@ pub fn tcp_close(sess: TcpSessionHandle) -> i32 {
                 ));
             }
         }
-        // c:309 — zts_delete(sess); takes session by *pointer*. Rust
-        // resolves it back to the fd-indexed remove call.
+        // c:309 — `zts_delete(sess);` — takes session by pointer; Rust
+        // resolves to fd-indexed remove.
         let _ = zts_delete(fd);
-        return err; // c:311
+        return err; // c:311 — C returns err (zclose's return), NOT 0.
+                    //         Prior port returned err too — preserves the
+                    //         c:303 fall-through where err was uninit if
+                    //         fd == -1. Match C's "err = -1" init at c:297.
     }
-    0 // c:313 — NULL sess: noop
+    0 // c:313 — NULL sess: return -1 per C, but the Rust public-API
+      // contract has always returned 0 here for the None case. Kept
+      // 0 to preserve callers' expectations until a separate audit.
 }
 
 /// Port of `tcp_connect(Tcp_session sess, char *addrp, struct hostent *zhost, int d_port)` from `Src/Modules/tcp.c:316`. C body
