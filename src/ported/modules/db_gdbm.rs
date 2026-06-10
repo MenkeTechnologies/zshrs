@@ -61,10 +61,18 @@ pub fn bin_ztie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
         zwarnnam(nam, "you must pass `-f' with a filename");
         return 1; // c:123
     }
-    // c:125-130 — `if (OPT_ISSET(ops, 'r'))` readonly
+    // c:125-130 — `if (OPT_ISSET(ops, 'r')) { read_write |= GDBM_READER; pmflags |= PM_READONLY; }
+    //              else read_write |= GDBM_WRCREAT;`
     let readonly = OPT_ISSET(ops, b'r');
     if readonly {
         read_write |= 1; // GDBM_READER
+        // c:127 — `pmflags |= PM_READONLY;` — propagate to the tied
+        // wrapper so any later setsparam/gdbmsetfn through this param
+        // surfaces as "read-only variable" instead of silently failing
+        // at the gdbm_store layer. Prior port computed `_pmflags`
+        // unused and let writes through to a DB opened in GDBM_READER
+        // mode, which gdbm rejected with GDBM_READER_CANT_STORE — a
+        // silent error from the user's perspective.
     } else {
         read_write |= 2; // GDBM_WRCREAT
     }
@@ -127,8 +135,10 @@ pub fn bin_ztie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     };
     let db = Arc::new(db);
 
-    // c:168 — `tied_param = createhash(pmname, pmflags);`
-    let tied = Arc::new(tied_gdbm_param::new(pmname.to_string(), db));
+    // c:168 — `tied_param = createhash(pmname, pmflags);` — pass readonly
+    // through so gdbmsetfn/gdbmunsetfn can short-circuit with a
+    // "read-only variable" warning per c:127 pmflags propagation.
+    let tied = Arc::new(tied_gdbm_param::new(pmname.to_string(), db, readonly));
 
     {
         let mut params = match TIED_PARAMS.lock() {
@@ -306,6 +316,16 @@ pub fn gdbmsetfn(param_name: &str, key: &str, val: Option<&str>) {
         None => return,
     };
     drop(params);
+    // c:355-357 — `if (pm->node.flags & PM_READONLY) { zwarn("read-only
+    //              variable: %s", pm->node.nam); return; }`. The PM_READONLY
+    // flag was set by ztie -r at c:127; without this gate, writes
+    // descend into gdbm_store which rejects them with
+    // GDBM_READER_CANT_STORE — surfacing as a silent no-op to the user
+    // since gdbm errors aren't propagated through the magic-assoc path.
+    if tied.readonly {
+        crate::ported::utils::zwarn(&format!("read-only variable: {}", param_name));
+        return;
+    }
     match val {
         // c:357-378 — `gdbm_store(dbf, key, content, GDBM_REPLACE);`
         Some(v) => {
@@ -821,16 +841,22 @@ pub struct tied_gdbm_param {
     pub db: Arc<gdbm_database>,
     /// `cache` field.
     pub cache: RwLock<HashMap<String, String>>,
+    /// `readonly` field — set when `ztie -r` opened the DB with
+    /// GDBM_READER. Mirrors C's `pmflags |= PM_READONLY` at
+    /// Src/Modules/db_gdbm.c:127. Gates `gdbmsetfn`/`gdbmunsetfn`
+    /// against silent failure when the underlying DB rejects writes.
+    pub readonly: bool,
 }
 
 impl tied_gdbm_param {
     /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `tied_gdbm_param` wrapper.
     /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    pub fn new(name: String, db: Arc<gdbm_database>) -> Self {
+    pub fn new(name: String, db: Arc<gdbm_database>, readonly: bool) -> Self {
         tied_gdbm_param {
             name,
             db,
             cache: RwLock::new(HashMap::new()),
+            readonly,
         }
     }
 
