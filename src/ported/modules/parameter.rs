@@ -1696,15 +1696,31 @@ pub fn disreswordsgetfn(pm: *mut param) -> Vec<String> {
 fn getpatchars(dis: i32) -> Vec<String> {
     // c:894
     let mut ret: Vec<String> = Vec::new();
-    // c:898-902 — for i in 0..ZPC_COUNT { if zpc_strings[i] && !dis == !zpc_disables[i] }
+    // c:898-902 — `for (i = 0; i < ZPC_COUNT; i++) if (zpc_strings[i]
+    //   && !dis == !zpc_disables[i]) *p++ = dupstring(zpc_strings[i]);`
+    // Walks the canonical ZPC_STRINGS table (port at pattern.rs:3065)
+    // in lockstep with the per-slot zpc_disables byte vector
+    // (pattern.rs:3506). dis=0 emits enabled tokens (zpc_disables[i]
+    // == 0); dis=1 emits the disabled set ("disable -p NAME" added
+    // them). Skips NULL-marked slots (ZPC_NULL / ZPC_BNULLKEEP /
+    // ZPC_INPAR_PIPE / ZPC_KSHCHAR) per the `zpc_strings[i] &&` gate.
     let zpc_count = crate::ported::zsh_h::ZPC_COUNT as usize;
+    let strings = crate::ported::pattern::ZPC_STRINGS;
+    let disables = crate::ported::pattern::zpc_disables.lock().unwrap();
     for i in 0..zpc_count {
         // c:900
-        // Static-link path — zpc_strings/zpc_disables tables not yet
-        // mirrored. Emit empty matching the C shape (length ZPC_COUNT).
-        let _ = i;
+        if let Some(s) = strings[i] {
+            // c:902 — `if (zpc_strings[i] && !dis == !zpc_disables[i])`
+            //         The C-style boolean equality compares the LOGICAL
+            //         truth of both sides: !dis == !disables[i] means
+            //         "both zero" or "both non-zero".
+            let dis_b = dis != 0;
+            let dis_slot_b = disables[i] != 0;
+            if dis_b == dis_slot_b {
+                ret.push(s.to_string()); // c:903 dupstring
+            }
+        }
     }
-    let _ = dis;
     ret.shrink_to_fit();
     ret
 }
@@ -4060,6 +4076,18 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "keymaps",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // zleparameter.c:132
         getfn: crate::ported::zle::zleparameter::keymapsgetfn,
+    },
+    // Src/Builtins/sched.c:382 SPECIALPMDEF("zsh_scheduled_events",
+    // PM_ARRAY|PM_READONLY, &sched_gsu, NULL, NULL). Registered into
+    // paramtab by zsh/sched's handlefeatures (via partab[] at c:381).
+    // zshrs auto-loads zsh/sched and lists it in zsh_default_loaded
+    // (module.rs:1134), so `$+zsh_scheduled_events` should read 1.
+    // schedgetfn at sched.rs:582 walks the schedcmds linked list and
+    // emits `<time>:<flags>:<cmd>` per entry.
+    PartabArrayEntry {
+        name: "zsh_scheduled_events",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // sched.c:382
+        getfn: crate::ported::builtins::sched::schedgetfn,
     },
 ];
 
