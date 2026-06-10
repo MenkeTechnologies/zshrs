@@ -424,7 +424,7 @@ impl style_table {
 /// C: `static void printstylenode(HashNode hn, int printflags)` — emit
 /// `zstyle -L` / basic-list output for one style entry.
 #[allow(non_snake_case)]
-pub fn printstylenode(hn: HashNode, printflags: i32) {
+pub fn printstylenode(hn: &hashnode, printflags: i32) {
     // c:184
     // c:186-211 — Two distinct output formats based on `printflags`:
     //
@@ -967,66 +967,52 @@ pub fn bin_zstyle(
         return 1;
     }
     if args.is_empty() && !OPT_ISSET(ops, b'L') && !OPT_ISSET(ops, b'l') {
-        // c:Src/Modules/zutil.c:184-216 printstylenode in ZSLIST_BASIC
-        // mode: emit one block per style — first the style name on its
-        // own line, then `      <pat> <val>...` (or `(eval) <pat> ...`)
-        // indented for each pattern bound to that style. zshrs's bare-
-        // list previously emitted flat `pat style val` triples; this
-        // matches C's grouped format used by `zstyle` with no args.
-        use crate::ported::utils::quotedzputs;
-        let t = match zstyletab.lock() {
-            Ok(g) => g,
+        // c:491-492 + c:580-581 — bare `zstyle` invocation:
+        // `list = ZSLIST_BASIC; scanhashtable(zstyletab, ..., printstylenode, list);`
+        //
+        // Route through printstylenode (zutil.rs:184 port) so the
+        // (eval) prefix per pattern lands consistently. Prior bare-list
+        // implementation duplicated the format inline with the eval-bit
+        // hardcoded off — eval styles printed identical to literal
+        // styles under bare `zstyle`.
+        let names: Vec<String> = match zstyletab.lock() {
+            Ok(t) => t.styles.keys().cloned().collect(),
             Err(_) => return 1,
         };
-        let mut by_style: std::collections::BTreeMap<String, Vec<(String, Vec<String>)>> =
-            std::collections::BTreeMap::new();
-        for (pat, style, vals) in t.list(None) {
-            by_style
-                .entry(style)
-                .or_insert_with(Vec::new)
-                .push((pat, vals));
+        let mut sorted = names;
+        sorted.sort();
+        for nam in sorted {
+            // c:580 — scanhashtable callback dispatch per style.
+            let hn = hashnode {
+                next: None,
+                nam,
+                flags: 0,
+            };
+            printstylenode(&hn, 1); // c:580-581 — ZSLIST_BASIC
         }
-        let mut out = std::io::stdout().lock();
-        for (style, patterns) in &by_style {
-            let _ = write!(out, "{}", quotedzputs(style)); // c:191
-            let _ = writeln!(out); // c:192
-            for (pat, vals) in patterns {
-                // c:195 — non-eval indent is six spaces; eval marker
-                // not threaded through zshrs's style storage yet, so
-                // always emit the plain indent.
-                let _ = write!(out, "        {}", pat); // c:195
-                for v in vals {
-                    let _ = write!(out, " {}", quotedzputs(v)); // c:208
-                }
-                let _ = writeln!(out); // c:211
-            }
-        }
-        return 0; // c:497
+        return 0; // c:585
     }
     if OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'l') {
-        // c:511
-        // -L: emit as replayable `zstyle` commands. C uses quotedzputs
-        // (Src/Modules/zutil.c:201-209) for the pattern, style name, and
-        // each value so the result round-trips through eval as a literal
-        // zstyle invocation. Previous Rust port emitted bare strings:
-        //
-        //   zshrs (before): :completion:* menu select
-        //   zsh:            zstyle ':completion:*' menu select
-        use crate::ported::utils::quotedzputs;
-        let t = match zstyletab.lock() {
-            Ok(g) => g,
+        // c:501-503 + c:580-581 — `zstyle -L`: list = ZSLIST_SYNTAX.
+        // Route through printstylenode for the same eval-aware emit as
+        // the bare-list arm. ZSLIST_SYNTAX = 2 per c:180 enum;
+        // printstylenode dispatches everything ≠ 1 as the re-feedable
+        // form, which is what we want here.
+        let names: Vec<String> = match zstyletab.lock() {
+            Ok(t) => t.styles.keys().cloned().collect(),
             Err(_) => return 1,
         };
-        let mut out = std::io::stdout().lock();
-        for (pat, style, vals) in t.list(None) {
-            // c:511
-            let _ = write!(out, "zstyle {} {}", quotedzputs(&pat), quotedzputs(&style)); // c:201-204
-            for v in &vals {
-                let _ = write!(out, " {}", quotedzputs(v)); // c:206-209
-            }
-            let _ = writeln!(out); // c:210
+        let mut sorted = names;
+        sorted.sort();
+        for nam in sorted {
+            let hn = hashnode {
+                next: None,
+                nam,
+                flags: 0,
+            };
+            printstylenode(&hn, 2); // c:501 — ZSLIST_SYNTAX
         }
-        return 0; // c:514
+        return 0; // c:585
     }
     if OPT_ISSET(ops, b'd') {
         // c:520
