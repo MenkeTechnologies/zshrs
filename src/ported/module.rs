@@ -3413,18 +3413,63 @@ pub fn bin_zmodload_auto(
     let fchar: char; // c:2726
     let _flags: i32 = if OPT_ISSET(ops, b'i') { FEAT_IGNORE } else { 0 }; // c:2728
 
-    // c:2731-2773 — conditions branch (-c)
+    // c:2731-2753 — conditions branch (-c).
+    // C body:
+    //   if (!*args) {
+    //       Conddef p;
+    //       for (p = condtab; p; p = p->next) {
+    //           if (p->module) {
+    //               if (OPT_ISSET(ops,'L')) {
+    //                   fputs("zmodload -ac", stdout);
+    //                   if (p->flags & CONDF_INFIX) putchar('I');
+    //                   printf(" %s %s\n", p->module, p->name);
+    //               } else {
+    //                   if (p->flags & CONDF_INFIX) fputs("infix ", stdout);
+    //                   else fputs("post ", stdout);
+    //                   printf("%s (%s)\n", p->name, p->module);
+    //               }
+    //           }
+    //       }
+    //       return 0;
+    //   }
+    // C walks condtab in registration order (linked-list head→tail).
+    // The Rust port walks CONDTAB (same shape, Vec instead of list).
     if OPT_ISSET(ops, b'c') {
         fchar = if OPT_ISSET(ops, b'I') { 'C' } else { 'c' };
         let _ = fchar;
         if args.is_empty() {
-            // c:2732 — same sorted=1 dispatch as the builtins arm
-            // below (Bug #222).
-            let mut entries: Vec<(&String, &String)> =
-                table.autoload_conditions.iter().collect();
-            entries.sort_by(|a, b| a.0.cmp(b.0));
-            for (name, module) in entries {
-                println!("{} {}", module, name);
+            let snap: Vec<(String, i32, String)> = {
+                let tab = CONDTAB.lock().unwrap();
+                tab.iter()
+                    // c:2737 — `if (p->module)` skips entries without
+                    // an owning module (built-in cond defs use NULL).
+                    .filter_map(|p| {
+                        p.module
+                            .as_ref()
+                            .map(|m| (p.name.clone(), p.flags, m.clone()))
+                    })
+                    .collect()
+            };
+            let l_flag = OPT_ISSET(ops, b'L');
+            for (name, flags, module) in snap {
+                if l_flag {
+                    // c:2738-2742 — `zmodload -ac[I] MODULE NAME`.
+                    if (flags & CONDF_INFIX) != 0 {
+                        // c:2740
+                        println!("zmodload -acI {} {}", module, name);
+                    } else {
+                        println!("zmodload -ac {} {}", module, name);
+                    }
+                } else {
+                    // c:2743-2748 — `infix NAME (MODULE)` /
+                    //                `post NAME (MODULE)`.
+                    let kind = if (flags & CONDF_INFIX) != 0 {
+                        "infix"
+                    } else {
+                        "post"
+                    };
+                    println!("{} {} ({})", kind, name, module);
+                }
             }
             return 0;
         }
@@ -3471,13 +3516,46 @@ pub fn bin_zmodload_auto(
             return 0;
         }
     } else if OPT_ISSET(ops, b'f') {
-        // mathfns branch
+        // c:2763-2778 — math-function branch (-f).
+        // C body:
+        //   if (!*args) {
+        //       MathFunc p;
+        //       for (p = mathfuncs; p; p = p->next) {
+        //           if (!(p->flags & MFF_USERFUNC) && p->module) {
+        //               if (OPT_ISSET(ops,'L')) {
+        //                   fputs("zmodload -af", stdout);
+        //                   printf(" %s %s\n", p->module, p->name);
+        //               } else
+        //                   printf("%s (%s)\n", p->name, p->module);
+        //           }
+        //       }
+        //       return 0;
+        //   }
+        // C walks `mathfuncs` (file-static linked list). Rust port
+        // walks MATHFUNCS (same shape, Vec). The MFF_USERFUNC filter
+        // excludes `functions -M` user math from the autoload list.
         if args.is_empty() {
-            let mut entries: Vec<(&String, &String)> =
-                table.autoload_mathfuncs.iter().collect();
-            entries.sort_by(|a, b| a.0.cmp(b.0));
-            for (name, module) in entries {
-                println!("{} {}", module, name);
+            let snap: Vec<(String, String)> = {
+                let tab = MATHFUNCS.lock().unwrap();
+                tab.iter()
+                    // c:2769 — `!(p->flags & MFF_USERFUNC) && p->module`.
+                    .filter_map(|p| {
+                        if (p.flags & MFF_USERFUNC) != 0 {
+                            return None;
+                        }
+                        p.module.as_ref().map(|m| (p.name.clone(), m.clone()))
+                    })
+                    .collect()
+            };
+            let l_flag = OPT_ISSET(ops, b'L');
+            for (name, module) in snap {
+                if l_flag {
+                    // c:2770-2772 — `zmodload -af MODULE NAME`.
+                    println!("zmodload -af {} {}", module, name);
+                } else {
+                    // c:2774 — `NAME (MODULE)`.
+                    println!("{} ({})", name, module);
+                }
             }
             return 0;
         }
