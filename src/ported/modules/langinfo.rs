@@ -125,17 +125,27 @@ pub fn getlanginfo(name: &str) -> Option<String> {
     // c:411-415 — `if (name) elem = liitem(name); else elem = NULL;`
     let elem = liitem(nameu)?; // c:412
     unsafe {
-        // c:416 — `listr = nl_langinfo(*elem)`.
+        // c:416 — `listr = nl_langinfo(*elem)`. C only sets PM_UNSET
+        // when `elem` is NULL or `listr` is NULL — an empty result
+        // string is treated as a valid (present) value, NOT unset:
+        //
+        //   if (elem && (listr = nl_langinfo(*elem))) {
+        //       pm->u.str = dupstring(listr);
+        //   } else {
+        //       pm->u.str = dupstring("");
+        //       pm->node.flags |= PM_UNSET;
+        //   }
+        //
+        // Prior Rust port conflated `""` with PM_UNSET by mapping
+        // empty results to None, which (a) made `${+langinfo[X]}`
+        // return 0 for legitimately-empty fields, and (b) caused
+        // scanlanginfo to silently drop them from `${(kv)langinfo}`.
         let ptr = libc::nl_langinfo(elem); // c:416
         if ptr.is_null() {
-            return None; // c:421 PM_UNSET
+            return None; // c:421-423 PM_UNSET
         }
         let s = CStr::from_ptr(ptr).to_string_lossy().into_owned();
-        if s.is_empty() {
-            // c:421 — empty result also flags PM_UNSET.
-            return None;
-        }
-        Some(s) // c:417 dupstring (no metafy — C uses dupstring not metafy here)
+        Some(s) // c:417 dupstring — empty string is a valid value
     }
 }
 
