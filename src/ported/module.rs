@@ -1583,29 +1583,167 @@ impl modulestab {
     /// that were tagged `MOD_UNLOAD` when the last dependent dies.
     /// WARNING: param names don't match C — Rust=(name) vs C=(m)
     pub fn unload_module(&mut self, name: &str) -> bool {
-        // c:2817
-        // c:2824 — resolve alias chain (skipped: no per-module alias
-        // tracking in the static registry).
-        let _ = MOD_ALIAS;
-        // c:2836-2839 — do_cleanup_module path is a no-op for static
-        // modules (cleanup handlers run at process exit).
-        if let Some(m) = self.modules.get_mut(name) {
-            // c:2840 — clear MOD_INIT_B|MOD_INIT_S
-            m.node.flags &= !(MOD_INIT_B | MOD_INIT_S);
-            // c:2844-2847 — wrapper deferred unload (no wrappers in zshrs).
-            // c:2848 — clear MOD_UNLOAD (entering active-unload).
-            // c:2854-2864 — finish_module / linked->finish: in zshrs all
-            // modules are statically linked, no DSO handle to release.
-            // Mark the module as fully unloaded for the static-link
-            // `is_loaded()` check (`MOD_LINKED && !MOD_UNLOAD`) — the
-            // C path would `delete_module(m)` after finish; we set
-            // MOD_UNLOAD as the static-link analog.
-            let _ = MOD_LINKED;
-            m.node.flags |= MOD_UNLOAD; // c:2890 delete_module analog
-            true // c:2904 return 0
-        } else {
-            false // c:2826-2827 !m → return 1
+        // c:2812 — faithful port of the static-link control flow.
+        // C body c:2818-2913:
+        //   if (m->flags & MOD_ALIAS) { resolve via find_module }
+        //   if (MOD_INIT_S && !MOD_UNLOAD && do_cleanup_module(m))
+        //       return 1;
+        //   m->flags &= ~(MOD_INIT_B | MOD_INIT_S);
+        //   del = m->flags & MOD_UNLOAD;
+        //   if (m->wrapper) { m->flags |= MOD_UNLOAD; return 0; }
+        //   m->flags &= ~MOD_UNLOAD;
+        //   if (MOD_LINKED) { if (u.linked) { u.linked->finish(m);
+        //                                     u.linked = NULL; } }
+        //   else { if (u.handle) { finish_module(m);
+        //                          u.handle = NULL; } }
+        //   if (del && m->deps) { /* deferred dep walk */ }
+        //   if (m->autoloads && firstnode(m->autoloads))
+        //       autofeatures("zsh", name, hlinklist2array(autoloads),
+        //                    0, FEAT_IGNORE);
+        //   else if (!m->deps) delete_module(m);
+        //   return 0;
+
+        // c:2819-2823 — alias resolve. Mutate the lookup name, not
+        // the live record (alias chases the target).
+        let mut target_name = name.to_string();
+        let needs_alias_chase = self
+            .modules
+            .get(&target_name)
+            .map(|m| (m.node.flags & MOD_ALIAS) != 0)
+            .unwrap_or(false);
+        if needs_alias_chase {
+            target_name = match self
+                .modules
+                .get(name)
+                .and_then(|m| m.alias.clone())
+            {
+                Some(a) => a,
+                None => return false, // c:2821-2822 — alias target gone.
+            };
         }
+
+        // c:2831-2834 — cleanup if booted.
+        let (init_s, unload_flag) = match self.modules.get(&target_name) {
+            Some(m) => (
+                (m.node.flags & MOD_INIT_S) != 0,
+                (m.node.flags & MOD_UNLOAD) != 0,
+            ),
+            None => return false, // c:2820-2822 fall-through to !m
+        };
+        if init_s && !unload_flag {
+            // c:2833 — `do_cleanup_module` is `cleanup_module` for the
+            // MOD_LINKED branch (static-link path always).
+            if cleanup_module(self, &target_name) != 0 {
+                return false; // c:2834 cleanup error
+            }
+        }
+
+        // c:2835 — `m->flags &= ~(MOD_INIT_B | MOD_INIT_S);`
+        if let Some(m) = self.modules.get_mut(&target_name) {
+            m.node.flags &= !(MOD_INIT_B | MOD_INIT_S);
+        }
+
+        // c:2837 — `del = m->flags & MOD_UNLOAD;`
+        let del = unload_flag;
+
+        // c:2839-2842 — wrapper deferred-unload path.
+        let has_wrapper = self
+            .modules
+            .get(&target_name)
+            .map(|m| m.wrapper != 0)
+            .unwrap_or(false);
+        if has_wrapper {
+            if let Some(m) = self.modules.get_mut(&target_name) {
+                m.node.flags |= MOD_UNLOAD; // c:2840
+            }
+            return true; // c:2841
+        }
+
+        // c:2843 — `m->flags &= ~MOD_UNLOAD;`
+        if let Some(m) = self.modules.get_mut(&target_name) {
+            m.node.flags &= !MOD_UNLOAD;
+        }
+
+        // c:2849-2859 — finish hook. Static-link branch (MOD_LINKED set)
+        // routes through finish_module which dispatches to the
+        // per-module finish_(m) (839f32249b). C clears u.linked after
+        // the call; the Rust mirror has no u.linked field to null.
+        let _ = finish_module(self, &target_name);
+
+        // c:2861-2902 — deferred dep walk: when del was set, find every
+        // dep that has MOD_UNLOAD and check no other live module
+        // depends on it, then recursively unload.
+        if del {
+            let deps_snapshot: Vec<String> = self
+                .modules
+                .get(&target_name)
+                .and_then(|m| m.deps.as_ref())
+                .map(|d| d.iter().cloned().collect())
+                .unwrap_or_default();
+            for dep_name in deps_snapshot {
+                let dm_target = match find_module(self, &dep_name, FINDMOD_ALIASP) {
+                    Some(n) => n,
+                    None => continue, // c:2867 dm == NULL
+                };
+                let dm_unloading = self
+                    .modules
+                    .get(&dm_target)
+                    .map(|m| (m.node.flags & MOD_UNLOAD) != 0)
+                    .unwrap_or(false);
+                if !dm_unloading {
+                    continue; // c:2870-2871
+                }
+                // c:2872-2897 — scan every other module's deps for
+                // dm_target.nam; bail if any live module still
+                // depends on it.
+                let still_depended = self.modules.iter().any(|(other_name, other)| {
+                    if other_name == &target_name {
+                        return false; // c:2884 don't scan ourselves
+                    }
+                    let other_deps = match other.deps.as_ref() {
+                        Some(d) => d,
+                        None => return false, // c:2884 no deps to scan
+                    };
+                    // c:2887-2889 — only scan live modules (MOD_LINKED
+                    // set + !MOD_UNLOAD in zshrs's static-link path).
+                    if (other.node.flags & MOD_LINKED) == 0
+                        || (other.node.flags & MOD_UNLOAD) != 0
+                    {
+                        return false;
+                    }
+                    other_deps.iter().any(|d| d == &dm_target)
+                });
+                if !still_depended {
+                    // c:2898-2899 — `unload_module(dm)` recursive.
+                    self.unload_module(&dm_target);
+                }
+            }
+        }
+
+        // c:2903-2912 — autoload restore OR delete_module.
+        let (has_autoloads, has_deps, autoloads) = match self.modules.get(&target_name) {
+            Some(m) => (
+                m.autoloads
+                    .as_ref()
+                    .map(|a| !a.is_empty())
+                    .unwrap_or(false),
+                m.deps.is_some(),
+                m.autoloads
+                    .as_ref()
+                    .map(|a| a.iter().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default(),
+            ),
+            None => (false, false, Vec::new()),
+        };
+        if has_autoloads {
+            // c:2908-2909 — autofeatures("zsh", m->nam, ..., 0, FEAT_IGNORE)
+            autofeatures(self, "zsh", Some(&target_name), &autoloads, 0, FEAT_IGNORE);
+        } else if !has_deps {
+            // c:2910-2911 — delete_module(m). Inline since the free fn
+            // also calls remove + drop.
+            self.modules.remove(&target_name);
+        }
+        true // c:2913 return 0
     }
 
     /// Check if module is loaded
