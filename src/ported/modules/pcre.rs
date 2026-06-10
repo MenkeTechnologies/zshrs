@@ -5,8 +5,8 @@
 
 use crate::ported::utils::{metafy, zstrtol, zwarnnam};
 use crate::ported::zsh_h::{
-    features, isset, module, options, BASHREMATCH, KSHARRAYS, MAX_OPS, MB_CHARLEN, OPT_ARG,
-    OPT_HASARG, OPT_ISSET,
+    features, isset, module, options, BASHREMATCH, CASEMATCH, KSHARRAYS, MAX_OPS, MB_CHARLEN,
+    OPT_ARG, OPT_HASARG, OPT_ISSET, REMATCHPCRE,
 };
 use regex::Regex;
 
@@ -672,6 +672,27 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
     let _rhs_len = crate::ported::utils::unmetafy(&mut rhs_buf); // c:443
     let rhs_plain = String::from_utf8_lossy(&rhs_buf).into_owned();
 
+    // c:433-436 — compile-time PCRE option bits:
+    //   if (zpcre_utf8_enabled())                 pcre_opts |= PCRE2_UTF;
+    //   if (isset(REMATCHPCRE) && !isset(CASEMATCH)) pcre_opts |= PCRE2_CASELESS;
+    //
+    // Rust regex crate has no compile-time option struct exposed via
+    // Regex::new; we synthesize the equivalent via inline flag groups
+    // at the head of the pattern (matches bin_pcre_compile's approach
+    // at pcre.rs:127-141). UTF mode is the regex crate's default so
+    // no inline flag is needed for it. REMATCHPCRE+!CASEMATCH ⇒
+    // prepend `(?i)` so the compiled pattern is case-insensitive.
+    //
+    // Prior cond_pcre_match passed `Regex::new(&rhs_plain)` directly
+    // — the caseless setting from `setopt REMATCHPCRE` was silently
+    // discarded so `[[ ABC -pcre-match abc ]]` returned false under
+    // the option, against documented behavior.
+    let pcre_compile_pat = if isset(REMATCHPCRE) && !isset(CASEMATCH) {
+        format!("(?i){}", rhs_plain) // c:436
+    } else {
+        rhs_plain.clone()
+    };
+
     // c:445-451 — BASHREMATCH option selects the output-variable shape:
     //   if (isset(BASHREMATCH)) { svar = NULL; avar = "BASH_REMATCH"; }
     //   else                    { svar = "MATCH"; avar = "match"; }
@@ -694,7 +715,7 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
     // c:455 — `pcre2_compile(rhre_plain, ...)`. Rust regex crate
     // substitutes for libpcre2 — same regex semantics for the common
     // subset.
-    match Regex::new(&rhs_plain) {
+    match Regex::new(&pcre_compile_pat) {
         Ok(re) => {
             // c:465 — `pcre2_match(pcre_pat, lhstr_plain, ...)`.
             match re.captures(&lhs_plain) {
