@@ -3162,14 +3162,34 @@ pub fn setalias(
     value: String, // c:1699
     flags: i32,
 ) {
-    // c:1701-1702 — `ht->addnode(ht, ztrdup(pm->node.nam), createaliasnode(value, flags));`
+    // c:1701-1702 — `ht->addnode(ht, ztrdup(pm->node.nam),
+    //                            createaliasnode(value, flags));`
+    //
+    // C callers:
+    //   setpmralias    → ht=aliastab,    flags=0
+    //   setpmdisralias → ht=aliastab,    flags=DISABLED
+    //   setpmgalias    → ht=aliastab,    flags=ALIAS_GLOBAL
+    //   setpmdisgalias → ht=aliastab,    flags=ALIAS_GLOBAL|DISABLED
+    //   setpmsalias    → ht=sufaliastab, flags=ALIAS_SUFFIX
+    //   setpmdissalias → ht=sufaliastab, flags=ALIAS_SUFFIX|DISABLED
+    //
+    // Rust callers pass a null ht so the dispatch reads the
+    // ALIAS_SUFFIX bit out of flags — same shape as getalias,
+    // scanaliases (2d2cdbaa5a), setaliases (e01ed226f0).
+    //
+    // Prior port always wrote to aliastab_lock(). That meant
+    // \$saliases[X]=Y / \$dis_saliases[X]=Y silently landed in
+    // aliastab with an ALIAS_SUFFIX flag (impossible combo for
+    // that table) and sufaliastab stayed untouched.
     let name = (*pm).node.nam.clone();
-    let mut tab = aliastab_lock().write().expect("aliastab poisoned");
-    tab.add(crate::ported::hashtable::createaliasnode(
-        &name,
-        &value,
-        flags as u32,
-    ));
+    let node = crate::ported::hashtable::createaliasnode(&name, &value, flags as u32);
+    if (flags & ALIAS_SUFFIX) != 0 {
+        let mut tab = sufaliastab_lock().write().expect("sufaliastab poisoned");
+        tab.add(node);
+    } else {
+        let mut tab = aliastab_lock().write().expect("aliastab poisoned");
+        tab.add(node);
+    }
 }
 
 /// Port of `setpmralias(Param pm, char *value)` from Src/Modules/parameter.c:1707.
