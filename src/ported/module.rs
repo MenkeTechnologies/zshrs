@@ -3429,13 +3429,44 @@ pub fn bin_zmodload_auto(
             return 0;
         }
     } else if OPT_ISSET(ops, b'p') {
-        // c:2774 — params branch
+        // c:2755-2761 — params branch.
+        // C body:
+        //   if (!*args) {
+        //       /* list autoloaded parameters */
+        //       scanhashtable(paramtab, 1, 0, 0, printautoparams,
+        //                     OPT_ISSET(ops,'L'));
+        //       return 0;
+        //   }
+        // The `sorted=1` (2nd arg) walks the table in name order.
+        // `printautoparams` (c:2710) checks `pm->flags & PM_AUTOLOAD`
+        // and emits either `zmodload -ap MODULE NAME` (under `-L`)
+        // or `NAME (MODULE)` form. Module name is read from
+        // `pm->u.str`, which `add_autoparam` (c:1218) sets to the
+        // module that registered the autoload stub.
         if args.is_empty() {
-            let mut entries: Vec<(&String, &String)> =
-                table.autoload_params.iter().collect();
-            entries.sort_by(|a, b| a.0.cmp(b.0));
-            for (name, module) in entries {
-                println!("{} {}", module, name);
+            let lon = if OPT_ISSET(ops, b'L') { 1 } else { 0 };
+            let entries: Vec<(String, u32, String)> = {
+                let tab = crate::ported::params::paramtab()
+                    .read()
+                    .expect("paramtab poisoned");
+                let mut v: Vec<(String, u32, String)> = tab
+                    .iter()
+                    .filter(|(_, p)| {
+                        (p.node.flags as u32 & crate::ported::zsh_h::PM_AUTOLOAD) != 0
+                    })
+                    .map(|(name, p)| {
+                        (
+                            name.clone(),
+                            p.node.flags as u32,
+                            p.u_str.clone().unwrap_or_default(),
+                        )
+                    })
+                    .collect();
+                v.sort_by(|a, b| a.0.cmp(&b.0)); // c:2758 sorted=1
+                v
+            };
+            for (name, flags, module) in entries {
+                printautoparams(&name, &module, flags, lon); // c:2758
             }
             return 0;
         }
