@@ -1169,20 +1169,45 @@ pub fn scanpmdisfunctions(
 ///     const char *name, int dis)` — synth a Param naming the source file.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=() vs C=(ht, name, dis)
-pub fn getfunction_source(_ht: *mut HashTable, name: &str, _dis: i32) -> Option<Param> {
+pub fn getfunction_source(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
+    // c:537
+    // Faithful port of c:547-552:
+    //   if ((shf = shfunctab->getnode2(shfunctab, name)) &&
+    //       (dis ? (shf->node.flags & DISABLED)
+    //            : !(shf->node.flags & DISABLED))) {
+    //       pm->u.str = getshfuncfile(shf);
+    //       if (!pm->u.str) pm->u.str = dupstring('');
+    //   }
+    //
+    // Prior port had two bugs:
+    //   1. shfunctab.get(name) filters out DISABLED entries
+    //      automatically (hashtable.rs:404 .filter()), so disabled
+    //      functions were invisible to both lookups.
+    //   2. Ignored the dis parameter entirely.
+    //
+    // Use get_including_disabled and check DISABLED parity, matching
+    // the getfunction fix in 615e408fc4.
     let g = shfunctab_lock().read().ok()?;
-    let entry = g.get(name);
+    let entry = g.get_including_disabled(name); // c:547 getnode2 — no DISABLED filter
     let (value, found) = if let Some(shf) = entry {
-        // c:547-551 — `pm->u.str = getshfuncfile(shf); if (!pm->u.str)
-        // pm->u.str = dupstring("");`. The canonical
-        // `getshfuncfile` (Src/hashtable.c:1059) does NOT append a
-        // lineno suffix — it returns either `filename` (or
-        // `filename/name` for PM_LOADDIR autoloaders). Bug #261 in
-        // docs/BUGS.md: the previous Rust port concatenated `":0"`
-        // unconditionally, so `${functions_source[f]}` returned `zsh:0`
-        // where zsh returns `zsh`.
-        let fname = shf.filename.clone().unwrap_or_default();
-        (fname, true)
+        let is_disabled = (shf.node.flags & DISABLED as i32) != 0;
+        let dis_match = if dis != 0 { is_disabled } else { !is_disabled }; // c:548
+        if dis_match {
+            // c:549-551 — `pm->u.str = getshfuncfile(shf); if (!pm->u.str)
+            // pm->u.str = dupstring("");`. The canonical
+            // `getshfuncfile` (Src/hashtable.c:1059) does NOT append a
+            // lineno suffix — it returns either `filename` (or
+            // `filename/name` for PM_LOADDIR autoloaders). Bug #261 in
+            // docs/BUGS.md: the previous Rust port concatenated `":0"`
+            // unconditionally, so `${functions_source[f]}` returned `zsh:0`
+            // where zsh returns `zsh`.
+            let fname = shf.filename.clone().unwrap_or_default();
+            (fname, true)
+        } else {
+            // c:552 — wrong DISABLED parity: pm->u.str stays NULL,
+            // then c:553 caller emits PM_UNSET|PM_SPECIAL.
+            (String::new(), false)
+        }
     } else {
         (String::new(), false) // c:586
     };
@@ -1229,14 +1254,38 @@ pub fn scanfunctions_source(
     _ht: *mut HashTable,
     func: Option<ScanFunc>, // c:560
     flags: i32,
-    _dis: i32,
+    dis: i32,
 ) {
-    // C body (c:563-606): loop through shfunctab nodes filtered by
-    // DISABLED; for each non-counting func, emit "filename:lineno"
-    // via getpmhashtable. Static-link path walks SHFUNCTAB and emits
-    // the function name (filename data isn't yet stored on ShFunc).
+    // c:560
+    // Faithful port of c:570-584:
+    //   for (i = 0; i < shfunctab->hsize; i++) {
+    //       for (hn = shfunctab->nodes[i]; hn; hn = hn->next) {
+    //           if (dis ? (hn->flags & DISABLED)
+    //                   : !(hn->flags & DISABLED)) {
+    //               pm.node.nam = hn->nam;
+    //               ... pm.u.str = getshfuncfile(...); ...
+    //               func(&pm.node, flags);
+    //           }
+    //       }
+    //   }
+    //
+    // Same fix pattern as scanfunctions (da3bce77e6): the dis
+    // parameter wasn't read and the DISABLED bit wasn't checked.
+    // \${(k)dis_functions_source} returned every fn, including
+    // enabled ones (wrong). Now filters per C's c:572 gate using
+    // the live shfunctab entry's node.flags.
     let names: Vec<String> = if let Ok(g) = shfunctab_lock().read() {
-        g.iter().map(|(n, _)| n.clone()).collect() // c:570
+        g.iter()
+            .filter_map(|(n, shf)| {
+                let is_disabled = (shf.node.flags & DISABLED as i32) != 0;
+                let pass = if dis != 0 { is_disabled } else { !is_disabled };
+                if pass {
+                    Some(n.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     } else {
         Vec::new()
     };
