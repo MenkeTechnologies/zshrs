@@ -188,21 +188,50 @@ pub fn printmodulenode(hn: &str, m: &module, flags: i32) -> String {
     let auto = flags & PRINTMOD_AUTO != 0;
     if loaded || auto {
         if flags & PRINTMOD_LIST != 0 {
-            out.push_str("zmodload ");
+            // c:229-237 — `PRINTMOD_AUTO`: skip when no autoloads set.
+            // C `firstnode(m->autoloads)` returns the first node — if
+            // the linklist is empty the early-return fires.
             if auto {
-                out.push_str("-Fa ");
+                let has_autoloads = m
+                    .autoloads
+                    .as_ref()
+                    .map(|al| !al.is_empty())
+                    .unwrap_or(false);
+                if !has_autoloads {
+                    return out; // c:231 return early
+                }
+            }
+            out.push_str("zmodload "); // c:238
+            if auto {
+                out.push_str("-Fa "); // c:240
             } else if flags & PRINTMOD_FEATURES != 0 {
-                out.push_str("-F ");
+                out.push_str("-F "); // c:242
             }
             if modname.starts_with('-') {
-                out.push_str("-- ");
+                out.push_str("-- "); // c:244
             }
-            out.push_str(modname);
+            out.push_str(modname); // c:245 quotedzputs(modname)
+                                   // c:246-251 — PRINTMOD_AUTO: emit each autoload as
+                                   //             ` quotedzputs(al)`.
+            if auto {
+                if let Some(al_list) = m.autoloads.as_ref() {
+                    for al in al_list.iter() {
+                        out.push(' '); // c:249
+                        out.push_str(al); // c:250 quotedzputs(al)
+                    }
+                }
+            }
+            // c:252-263 — PRINTMOD_FEATURES list path needs features_module
+            // + enables_module which require the modulestab; not
+            // dispatched here because printmodulenode has no &table
+            // handle. Caller (bin_zmodload_features -l/-L path) does
+            // the dispatch directly when PRINTMOD_FEATURES is set.
         } else {
+            // c:266 — `else /* -l */ nicezputs(modname, stdout);`
             out.push_str(modname);
         }
     }
-    out
+    out // c:268 putchar('\n') handled by caller's println!
 }
 
 /// Create new module table (from module.c newmoduletable)
