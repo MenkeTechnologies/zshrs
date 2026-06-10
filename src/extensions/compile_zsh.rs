@@ -1172,11 +1172,28 @@ impl ZshCompiler {
         // a `$()` in any RHS overwrote it. Mirror by leaving last_status
         // untouched per-assign and resetting once at the end.
         let mut chain_had_cmd_subst = false;
+        // c:Src/exec.c:3963-3976 — when a "simple command" has no
+        // command word (nullexec=2 case), the addvars (assignment)
+        // walk runs AFTER all addfd/fixfds redirections are in
+        // place. The bare-assign-with-redir form `foo=bar 2>&1`
+        // applies `2>&1` first, so any zerr emitted by the assignment
+        // (e.g. "read-only variable" when `foo` is readonly) writes
+        // to the redirected fd2 (= stdout) — matching zsh's behavior.
+        //
+        // Previous Rust port emitted compile_assign BEFORE
+        // WithRedirectsBegin (below), so the error went to the
+        // un-redirected stderr and the test's `2>&1` capture missed
+        // it. Defer the assign-compile when we're about to enter
+        // the bare-assign + redir branch so the assigns land inside
+        // the redirect scope.
         // Inline-env case: defer compile_assign until after the word
         // push so the args are evaluated against the pre-assign state.
-        // The bare-assign-only path (words empty) still runs the
-        // assigns inline below.
-        if !has_inline_env_scope {
+        // The bare-assign + redir case (words empty + redirs non-empty)
+        // also defers — assigns must run AFTER WithRedirectsBegin per
+        // exec.c:3963.
+        let defer_assigns_to_redir_scope =
+            simple.words.is_empty() && !simple.redirs.is_empty();
+        if !has_inline_env_scope && !defer_assigns_to_redir_scope {
             for assign in &simple.assigns {
                 self.last_assign_had_cmd_subst = false;
                 self.compile_assign(assign);
@@ -1199,6 +1216,19 @@ impl ZshCompiler {
                 self.builder
                     .emit(Op::WithRedirectsBegin(simple.redirs.len() as u8), 0);
                 self.compile_redirs_multios(&simple.redirs);
+                // c:Src/exec.c:3963-3976 — addvars under nullexec=2
+                // fires INSIDE the redir scope. Emit the deferred
+                // assigns here so a readonly-reassignment zerr writes
+                // through the redirected stderr.
+                if defer_assigns_to_redir_scope {
+                    for assign in &simple.assigns {
+                        self.last_assign_had_cmd_subst = false;
+                        self.compile_assign(assign);
+                        if self.last_assign_had_cmd_subst {
+                            chain_had_cmd_subst = true;
+                        }
+                    }
+                }
                 if simple.assigns.is_empty() {
                     // c:3340-3364 — invoke NULLCMD/READNULLCMD.
                     let is_single_read = simple.redirs.len() == 1

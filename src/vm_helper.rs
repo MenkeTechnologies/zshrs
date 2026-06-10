@@ -1553,6 +1553,17 @@ impl ShellExecutor {
                                                                 // populated by `inittyptab` → `get_username`), no setter
                                                                 // call needed.
         }
+
+        // c:Src/init.c:1176 — `module_path = mkarray(MODULE_DIR)`.
+        // The canonical init lives in `init::setupvals` (port of
+        // `Src/init.c:setupvals`); the bin entry skips setupvals (per
+        // the init_bltinmods comment above), so call the lightweight
+        // module_path bootstrap exposed by init.rs from here. This
+        // mirrors the HOST gethostname seeding pattern above:
+        // duplicated init that should collapse into a full setupvals
+        // call once that port is complete.
+        crate::ported::init::module_path_init();
+
         exec
     }
 
