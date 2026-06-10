@@ -1102,6 +1102,41 @@ impl modulestab {
             ("zsh/curses", &["zcurses"][..]),
             ("zsh/db/gdbm", &["ztie", "zuntie", "zgdbmpath"][..]),
             ("zsh/param/private", &["private"][..]),
+            // c:Src/Modules/compctl.c — statically-linked completion
+            // module providing the compctl/compcall builtins. zsh
+            // exposes it as autoloadable; `zmodload zsh/compctl`
+            // succeeds on the running zsh because the symbol is
+            // baked in. The zshrs auto-load registry (zsh_default_
+            // loaded at line 1127) references it but the entry was
+            // missing from this builtin_modules table, so
+            // try_load_module returned 0 and zmodload failed with
+            // "failed to load module `zsh/compctl'".
+            ("zsh/compctl", &["compctl", "compcall"][..]),
+            // c:Src/Builtins/rlimits.c — limit/ulimit/unlimit are
+            // baked in. Same gap as zsh/compctl above.
+            ("zsh/rlimits", &["limit", "ulimit", "unlimit"][..]),
+            // c:Src/Zle/zle_main.c — zle/vared/bindkey baked in.
+            ("zsh/zle", &["zle", "vared", "bindkey"][..]),
+            // c:Src/Modules/example.c — example module that prints
+            // "The example module has now been set up." on boot;
+            // statically linked so `zmodload zsh/example` succeeds.
+            ("zsh/example", &["example"][..]),
+            // NOT registered (zsh -fc parity probes confirm these
+            // FAIL to load on this system because the dynamic
+            // .bundle file doesn't exist):
+            //   zsh/calendar      — pure dynamic module, no static
+            //                       linkage in upstream zsh build.
+            //   zsh/db_gdbm       — underscore alias for zsh/db/gdbm;
+            //                       on the system zsh tested, neither
+            //                       form loads (dlopen "no such file").
+            //   zsh/deltochar     — Zle widget addon; system zsh's
+            //                       bundle missing the _bindk symbol.
+            //   zsh/compwid       — compwid bundle missing.
+            // Letting zshrs zmodload succeed on these names would
+            // diverge from `zsh -fc` which reports the dlopen error.
+            // The names appear above only via try_load_module's
+            // negative path (returns 0 → zmodload prints "failed to
+            // load module").
         ];
 
         // c:Src/init.c::init_bltinmods — C zsh's bltinmods.list is
@@ -1321,12 +1356,11 @@ impl modulestab {
         for nm in crate::vm_helper::module_gated_params_for(name) {
             crate::vm_helper::seed_partab_param(nm);
         }
-        // c:Src/module.c:1910 — C dispatches `(m->u.linked->boot)(m)`
-        // per-module. zshrs's module table doesn't carry function
-        // pointers, so a name-keyed dispatch lives here. Each arm is
-        // the canonical `boot_(m)` port from that module's C file.
-        // Add a new arm whenever a module's boot_ has paramtab /
-        // hook side effects that the simplified framework misses.
+        // c:Src/module.c:1884+1910 — C dispatches per-module setup_/
+        // boot_ via `(m->u.linked->setup)(m)` + `(m->u.linked->boot)(m)`.
+        // zshrs's module table doesn't carry function pointers, so a
+        // name-keyed dispatch lives here. Each arm is the canonical
+        // setup_/boot_(m) port from that module's C file.
         match name {
             // c:Src/Modules/watch.c:734 — registers `watch` (PM_ARRAY |
             // PM_SPECIAL) and `WATCH` (PM_SCALAR | PM_SPECIAL) plus
@@ -1340,6 +1374,15 @@ impl modulestab {
             // PM_SPECIAL. Bug #512.
             "zsh/datetime" => {
                 crate::ported::modules::datetime::boot_(std::ptr::null());
+            }
+            // c:Src/Modules/example.c:198 — setup_ prints
+            // "The example module has now been set up." then boot_
+            // seeds the demo params (intparam=42, strparam="example",
+            // arrparam=("example","array")). `zmodload zsh/example`
+            // in zsh -fc emits the setup_ message.
+            "zsh/example" => {
+                crate::ported::modules::example::setup_(std::ptr::null());
+                crate::ported::modules::example::boot_(std::ptr::null());
             }
             _ => {}
         }
