@@ -2904,8 +2904,10 @@ pub fn add_dep(table: &mut modulestab, name: &str, from: &str) -> i32 {
 /// WARNING: param names don't match C — Rust=(name, optstr, flags, printflags) vs C=(hn, printflags)
 pub fn autoloadscan(name: &str, optstr: &str, flags: u32, printflags: i32) {
     // c:2403
+    use crate::ported::utils::{nicezputs, quotedzputs};
+    let mut stdout = std::io::stdout();
     if (flags & BINF_ADDED) != 0 {
-        // c:2403
+        // c:2407
         return; // c:2408
     }
     if (printflags & PRINT_LIST) != 0 {
@@ -2916,23 +2918,25 @@ pub fn autoloadscan(name: &str, optstr: &str, flags: u32, printflags: i32) {
             // c:2411
             print!("-- "); // c:2412
         }
-        print!("{}", optstr); // c:2413 quotedzputs
+        // c:2413 — `quotedzputs(bn->optstr, stdout);`
+        print!("{}", quotedzputs(optstr));
         if name != optstr {
-            // c:2414
-            print!(" "); // c:2415
-            print!("{}", name); // c:2416
+            // c:2414 — `if(strcmp(bn->node.nam, bn->optstr))`
+            print!(" "); // c:2415 putchar(' ')
+                         // c:2416 — `quotedzputs(bn->node.nam, stdout);`
+            print!("{}", quotedzputs(name));
         }
     } else {
-        // c:2419-2424 — short form `NAME (MOD)`
-        print!("{}", name); // c:2419
+        // c:2418-2424 — short form `NAME (MOD)`
+        let _ = nicezputs(name, &mut stdout); // c:2419
         if name != optstr {
-            // c:2420
+            // c:2420 — `if(strcmp(bn->node.nam, bn->optstr))`
             print!(" ("); // c:2421
-            print!("{}", optstr); // c:2422
+            let _ = nicezputs(optstr, &mut stdout); // c:2422
             print!(")"); // c:2423
         }
     }
-    println!(); // c:2426
+    println!(); // c:2426 putchar('\n')
 }
 
 /// Direct port of `bin_zmodload(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/module.c:2440`.
