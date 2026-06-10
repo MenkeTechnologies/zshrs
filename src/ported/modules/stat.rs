@@ -206,7 +206,7 @@ static TIMEFMT: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceL
 /// a Unix timestamp + nsec offset: raw form is integer seconds;
 /// string form is `ctime(3)` (or strftime via the timefmt global).
 /// WARNING: param names don't match C — Rust=(tim, _nsecs, flags) vs C=(tim, nsecs, outbuf, flags)
-pub fn stattimeprint(tim: i64, _nsecs: i64, flags: i32) -> String {
+pub fn stattimeprint(tim: i64, nsecs: i64, flags: i32) -> String {
     // c:191
     let mut out = String::new();
     if (flags & STF_RAW) != 0 {
@@ -224,7 +224,12 @@ pub fn stattimeprint(tim: i64, _nsecs: i64, flags: i32) -> String {
         // C reads the module-static `timefmt` here (initialized to the
         // ctime default at bin_stat entry, possibly overwritten by -F).
         // The GMT vs local choice comes from the STF_GMT flag (`stat -g`).
-        let st = std::time::UNIX_EPOCH + std::time::Duration::from_secs(tim.max(0) as u64);
+        // c:201 — `nsecs` is the sub-second component (GET_ST_*_NSEC);
+        // pack into Duration::new(secs, nsec) so ztrftime sees the
+        // fractional digits for the `%.` / `%N.` zsh-extension.
+        let nsec_u32 = nsecs.clamp(0, 999_999_999) as u32;
+        let st = std::time::UNIX_EPOCH
+            + std::time::Duration::new(tim.max(0) as u64, nsec_u32);
         let fmt: String = TIMEFMT
             .get_or_init(|| std::sync::Mutex::new(TIMEFMT_DEFAULT.to_string()))
             .lock()
@@ -297,9 +302,18 @@ pub fn statprint(meta: &fs::Metadata, fname: &str, iwhich: i32, flags: i32) -> S
         ST_GID => statgidprint(meta.gid(), flags),        // c:245
         ST_RDEV => format!("{}", meta.rdev()),            // c:246
         ST_SIZE => statulprint(meta.size()),              // c:247
-        ST_ATIM => stattimeprint(meta.atime(), 0, flags), // c:248
-        ST_MTIM => stattimeprint(meta.mtime(), 0, flags), // c:249
-        ST_CTIM => stattimeprint(meta.ctime(), 0, flags), // c:250
+        // c:290-296 — GET_ST_ATIME_NSEC(*sbuf): the per-platform macro
+        // pulls the sub-second component out of struct stat
+        // (st_atim.tv_nsec on POSIX 2008, st_atimespec.tv_nsec on
+        // BSD-derived systems, etc.). std::fs::Metadata's MetadataExt
+        // exposes the same value via atime_nsec() / mtime_nsec() /
+        // ctime_nsec(). Passing zero (as the prior port did) broke the
+        // ztrftime `%.` / `%N.` fractional-seconds specifier — every
+        // formatted timestamp printed `000` regardless of the actual
+        // sub-second value.
+        ST_ATIM => stattimeprint(meta.atime(), meta.atime_nsec(), flags), // c:292
+        ST_MTIM => stattimeprint(meta.mtime(), meta.mtime_nsec(), flags), // c:300
+        ST_CTIM => stattimeprint(meta.ctime(), meta.ctime_nsec(), flags), // c:308
         ST_BLKSIZE => statulprint(meta.blksize()),        // c:251
         ST_BLOCKS => statulprint(meta.blocks()),          // c:252
         ST_READLINK => statlinkprint(meta.mode(), fname), // c:253
