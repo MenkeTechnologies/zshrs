@@ -358,6 +358,8 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
                 // c:214
                 "%a %b %e %k:%M:%S",
                 std::time::UNIX_EPOCH + std::time::Duration::from_secs(t_local as u64),
+                // c:213 tmp = localtime(&t); so use_gmt = false.
+                false,
             );
             let flagstr = if (sch.flags & SCHEDFLAG_TRASH_ZLE) != 0 {
                 // c:215

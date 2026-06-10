@@ -219,16 +219,19 @@ pub fn stattimeprint(tim: i64, _nsecs: i64, flags: i32) -> String {
     }
     if (flags & STF_STRING) != 0 {
         // c:199
-        // c:201 — `ztrftime(oend, 40, timefmt, localtime(&tim), nsecs);`
+        // c:201 — `ztrftime(oend, 40, timefmt,
+        //     (flags & STF_GMT) ? gmtime(&tim) : localtime(&tim), nsecs);`
         // C reads the module-static `timefmt` here (initialized to the
         // ctime default at bin_stat entry, possibly overwritten by -F).
+        // The GMT vs local choice comes from the STF_GMT flag (`stat -g`).
         let st = std::time::UNIX_EPOCH + std::time::Duration::from_secs(tim.max(0) as u64);
         let fmt: String = TIMEFMT
             .get_or_init(|| std::sync::Mutex::new(TIMEFMT_DEFAULT.to_string()))
             .lock()
             .map(|g| g.clone())
             .unwrap_or_else(|_| TIMEFMT_DEFAULT.to_string());
-        let formatted = ztrftime(&fmt, st);
+        let use_gmt = (flags & STF_GMT) != 0; // c:201 — picks gmtime(&tim)
+        let formatted = ztrftime(&fmt, st, use_gmt);
         out.push_str(&formatted);
         if (flags & STF_RAW) != 0 {
             // c:211
