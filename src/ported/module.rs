@@ -3860,7 +3860,7 @@ pub fn ensurefeature(
 /// WARNING: param names don't match C — Rust=(table, _cmdnam, module, features, prefchar, defflags) vs C=(cmdnam, module, features, prefchar, defflags)
 pub fn autofeatures(
     table: &mut modulestab,
-    _cmdnam: &str,
+    cmdnam: &str,
     module: Option<&str>,
     features: &[String],
     prefchar: u8,
@@ -3868,43 +3868,125 @@ pub fn autofeatures(
 ) -> i32 {
     // c:3437
     let mut ret: i32 = 0;
-    let _ = defflags;
 
     for feature in features {
-        let mut s = feature.as_str();
-        let mut add: bool = true; // c:3466 add = 1
-                                  // c:3461-3491 — parse `+`/`-` add/remove prefix.
-        if let Some(rest) = s.strip_prefix('-') {
-            add = false;
-            s = rest;
-        } else if let Some(rest) = s.strip_prefix('+') {
-            add = true;
-            s = rest;
-        }
+        let s = feature.as_str();
+        let mut add: bool = true; // c:3466 / c:3477 default `add = 1`
+        let mut flags = defflags; // c:3458 `flags = defflags`
 
         let (fchar, fnam): (u8, &str) = if prefchar != 0 {
-            // c:3461
+            // c:3461-3470 — `prefchar` mode: feature is bare name with
+            // no `+`/`-` / `b:` prefix; fchar comes from the arg.
             (prefchar, s) // c:3467-3468
         } else {
-            // c:3491-3520 — parse `b:`/`c:`/`C:`/`p:`/`f:` type prefix.
-            let bytes = s.as_bytes();
-            if bytes.len() >= 2 && bytes[1] == b':' {
-                (bytes[0], &s[2..])
-            } else {
-                (b'b', s) // default: builtin
+            // c:3471-3490 — parse `+`/`-` then the `b:`/`c:`/`C:`/`p:`/`f:`
+            // type prefix.
+            let mut t = s;
+            if let Some(rest) = t.strip_prefix('-') {
+                // c:3473
+                add = false;
+                t = rest;
+            } else if let Some(rest) = t.strip_prefix('+') {
+                // c:3478
+                t = rest;
+            }
+            // c:3482-3487 — bad format check: `!*feature || feature[1] != ':'`
+            let bytes = t.as_bytes();
+            if bytes.is_empty() || bytes.len() < 2 || bytes[1] != b':' {
+                // c:3483-3486 — zwarnnam + ret=1 + continue.
+                crate::ported::utils::zwarnnam(
+                    cmdnam,
+                    &format!("bad format for autoloadable feature: `{}'", t),
+                );
+                ret = 1; // c:3485
+                continue; // c:3486
+            }
+            // c:3488-3489 — `fnam = feature + 2; fchar = feature[0];`
+            (bytes[0], &t[2..])
+        };
+
+        // c:3491-3492 — `if (flags & FEAT_REMOVE) add = 0;`
+        if (flags & FEAT_REMOVE) != 0 {
+            add = false;
+        }
+
+        let typnam: &str; // c:3457
+        let _ = typnam; // referenced below for fnam validation
+        let typnam = match fchar {
+            // c:3494-3522 — switch (fchar): map each type-letter to
+            // the typnam used in the diagnostic + add/del fn dispatch.
+            b'b' => "builtin",        // c:3495-3498
+            b'c' | b'C' => {
+                if fchar == b'C' {
+                    flags |= FEAT_INFIX; // c:3501
+                }
+                "condition" // c:3505
+            }
+            b'f' => "math function", // c:3508-3511
+            b'p' => "parameter",     // c:3513-3516
+            _ => {
+                // c:3518-3522 — `zwarnnam(cmdnam, "bad autoloadable
+                // feature type: `%c'", fchar); ret = 1; continue;`
+                crate::ported::utils::zwarnnam(
+                    cmdnam,
+                    &format!("bad autoloadable feature type: `{}'", fchar as char),
+                );
+                ret = 1; // c:3521
+                continue; // c:3522
             }
         };
 
-        let modname = match module {
-            Some(m) => m,
+        // c:3525-3529 — reject `/` in the feature name.
+        if fnam.contains('/') {
+            crate::ported::utils::zwarnnam(
+                cmdnam,
+                &format!("{}: `/' is illegal in a {}", fnam, typnam),
+            );
+            ret = 1;
+            continue;
+        }
+
+        // c:3531-3553 — resolve module: if `module` arg is None,
+        // walk every module's `m->autoloads` list looking for the
+        // feature; if found, that's the owning module. C's
+        // `m->autoloads` per-module list isn't modelled in the Rust
+        // port — the autoload_* HashMaps store `feature → module`
+        // directly, so we can derive the owning module from those.
+        // When `module` arg IS set, use it (c:3553 `m = defm;`).
+        let modname_owned: String = match module {
+            Some(m) => m.to_string(), // c:3553
             None => {
-                ret = 1;
-                continue;
+                // c:3537-3551 — search for the owning module across all
+                // autoload maps; fall back to error if not found.
+                let map = match fchar {
+                    b'b' => &table.autoload_builtins,
+                    b'c' | b'C' => &table.autoload_conditions,
+                    b'p' => &table.autoload_params,
+                    b'f' => &table.autoload_mathfuncs,
+                    _ => unreachable!(),
+                };
+                match map.get(fnam).cloned() {
+                    Some(m) => m,
+                    None => {
+                        if (flags & FEAT_IGNORE) == 0 {
+                            // c:3546-3549
+                            ret = 1;
+                            crate::ported::utils::zwarnnam(
+                                cmdnam,
+                                &format!("{}: no such {}", fnam, typnam),
+                            );
+                        }
+                        continue; // c:3550
+                    }
+                }
             }
         };
+        let modname = modname_owned.as_str();
 
+        // c:3556-3616 — m->autoloads insert/remove in lexical order;
+        // the linked-list shape is replaced by the autoload_* maps,
+        // so a HashMap insert/remove is the structural equivalent.
         if add {
-            // Insert into the matching autoload map.
             match fchar {
                 b'b' => {
                     table
@@ -3926,28 +4008,78 @@ pub fn autofeatures(
                         .autoload_mathfuncs
                         .insert(fnam.to_string(), modname.to_string());
                 }
-                _ => {
-                    ret = 1;
-                }
+                _ => unreachable!(),
             }
         } else {
-            // Remove from the matching autoload map.
+            // c:3605-3615 — `else if (m->autoloads) { ... remnode ... }`.
+            // FEAT_IGNORE masks the "not present" case (c:3614).
+            let present = match fchar {
+                b'b' => table.autoload_builtins.remove(fnam).is_some(),
+                b'c' | b'C' => table.autoload_conditions.remove(fnam).is_some(),
+                b'p' => table.autoload_params.remove(fnam).is_some(),
+                b'f' => table.autoload_mathfuncs.remove(fnam).is_some(),
+                _ => unreachable!(),
+            };
+            if !present && (flags & FEAT_IGNORE) == 0 {
+                // c:3614 — `subret = (flags & FEAT_IGNORE) ? -2 : 2;`
+                // → diagnostic at c:3631 "NAME: no such TYPNAM".
+                ret = 1;
+                crate::ported::utils::zwarnnam(
+                    cmdnam,
+                    &format!("{}: no such {}", fnam, typnam),
+                );
+            }
+        }
+
+        // c:3618-3619 — `if (subret == 0) subret = fn(module, fnam, flags);`
+        // Dispatch through the per-type add/del fn so the canonical
+        // tables (paramtab for `p:`, condtab for `c:`, etc.) carry the
+        // PM_AUTOLOAD / CONDF flag bits expected by downstream code
+        // (e.g. paramtypestr's `undefined NAME` listing).
+        let subret = if add {
             match fchar {
-                b'b' => {
-                    table.autoload_builtins.remove(fnam);
+                b'p' => add_autoparam(modname, fnam, flags),
+                b'f' => add_automathfunc(table, modname, fnam, flags),
+                b'b' => table.add_autobin(fnam, modname, flags),
+                b'c' | b'C' => table.add_autocond(fnam, modname, flags),
+                _ => unreachable!(),
+            }
+        } else {
+            match fchar {
+                b'p' => del_autoparam(modname, fnam, flags),
+                b'f' => del_automathfunc(table, modname, fnam, flags),
+                b'b' => table.del_autobin(fnam, flags),
+                b'c' | b'C' => table.del_autocond(fnam, flags),
+                _ => unreachable!(),
+            }
+        };
+
+        // c:3621-3642 — per-error-code diagnostic.
+        if subret != 0 && subret != -2 {
+            ret = 1; // c:3624
+            match subret {
+                1 => {
+                    // c:3627
+                    crate::ported::utils::zwarnnam(
+                        cmdnam,
+                        &format!("failed to add {} `{}'", typnam, fnam),
+                    );
                 }
-                b'c' | b'C' => {
-                    table.autoload_conditions.remove(fnam);
+                2 => {
+                    // c:3631
+                    crate::ported::utils::zwarnnam(
+                        cmdnam,
+                        &format!("{}: no such {}", fnam, typnam),
+                    );
                 }
-                b'p' => {
-                    table.autoload_params.remove(fnam);
+                3 => {
+                    // c:3635
+                    crate::ported::utils::zwarnnam(
+                        cmdnam,
+                        &format!("{}: {} is already defined", fnam, typnam),
+                    );
                 }
-                b'f' => {
-                    table.autoload_mathfuncs.remove(fnam);
-                }
-                _ => {
-                    ret = 1;
-                }
+                _ => { /* c:3638 no further message */ }
             }
         }
     }
