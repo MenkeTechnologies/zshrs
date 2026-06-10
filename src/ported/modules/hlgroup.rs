@@ -280,15 +280,52 @@ pub fn getgroup(name: &str, sgr: bool) -> Option<String> {
 /// param table). See `TODO.md`.
 /// Port of `scangroup(ScanFunc func, int flags, int sgr)` from `Src/Modules/hlgroup.c:113`.
 /// WARNING: param names don't match C — Rust=(_sgr) vs C=(func, flags, sgr)
-pub fn scangroup(_sgr: bool) -> Vec<(String, String)> {
+pub fn scangroup(sgr: bool) -> Vec<(String, String)> {
     // c:113
-    // c:113-125 — `if (!(v = getvalue(...)) || ... PM_HASHED) return;`
-    // c:141 — hlg = v->pm->gsu.h->getfn(v->pm)
-    // c:141-130 — `pm` setup + PM_SCALAR + pmesc_gsu
-    // c:141-137 — for each hashnode: `pm.u.str = convertattr(...,sgr);
-    //                                   pm.node.nam = hn->nam;
-    //                                   func(&pm.node, flags);`
-    Vec::new() // c:141-125 empty exit
+    // c:123-125 — `if (!(v = getvalue(&vbuf, &var, 0)) ||
+    //                   PM_TYPE(v->pm->node.flags) != PM_HASHED) return;`
+    let var = GROUPVAR;
+    let tab = crate::ported::params::paramtab();
+    let table = match tab.read() {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+    let pm = match table.get(var) {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+    if crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) != crate::ported::zsh_h::PM_HASHED {
+        return Vec::new();
+    }
+    drop(table);
+    // c:126 — `hlg = v->pm->gsu.h->getfn(v->pm);` — fetch the typed
+    // hashed-storage view (zshrs maintains a parallel IndexMap mirror).
+    let store = match crate::ported::params::paramtab_hashed_storage().lock() {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let hlg = match store.get(var) {
+        Some(m) => m.clone(),
+        None => return Vec::new(),
+    };
+    drop(store);
+    // c:128-130 — `memset(&pm, 0); pm.node.flags = PM_SCALAR; pm.gsu.s = &pmesc_gsu;`
+    //              The Rust-side return-Vec model collapses the per-iteration
+    //              Param construction; magic-assoc dispatch reads (name, value)
+    //              tuples directly.
+    // c:132-137 — `for (i = 0; i < hlg->hsize; i++)
+    //                for (hn = hlg->nodes[i]; hn; hn = hn->next) {
+    //                    pm.u.str = convertattr(((Param) hn)->u.str, sgr);
+    //                    pm.node.nam = hn->nam;
+    //                    func(&pm.node, flags);
+    //                }`
+    let mut out: Vec<(String, String)> = Vec::with_capacity(hlg.len());
+    for (k, v) in hlg.iter() {
+        // c:134 — `convertattr(value, sgr)`
+        let converted = convertattr(v, sgr);
+        out.push((k.clone(), converted));
+    }
+    out
 }
 
 /// Port of `getpmesc(UNUSED(HashTable ht), const char *name)` from `Src/Modules/hlgroup.c:141`.
