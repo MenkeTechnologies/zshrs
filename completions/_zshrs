@@ -53,9 +53,9 @@ _arguments -S -s : \
   '--no-rcs[do not source startup files]' \
   '-f[equivalent to --no-rcs]' \
   '-i[force interactive mode]' \
-  '-l[force login shell mode]' \
-  '-v[verbose (equivalent to --verbose)]' \
-  '-x[xtrace (equivalent to --xtrace)]' \
+  '(-l --login)'{-l,--login}'[force login shell mode]' \
+  '(-v --verbose)'{-v,--verbose}'[verbose (log every command before execution)]' \
+  '(-x --xtrace)'{-x,--xtrace}'[xtrace (print expanded commands to stderr)]' \
   '--dump-zwc[dump .zwc file info]:zwc file:_files -g "*.zwc"' \
   '--dump-tokens[dump lexer tokens for a script]:script:_files' \
   '--dump-ast[dump parser AST as S-expression]:script:_files' \
