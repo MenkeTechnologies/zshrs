@@ -2262,33 +2262,96 @@ impl modulestab {
     /// error/already-deleted; returns 1 if any op failed.
     /// WARNING: param names don't match C — Rust=(module, names, e) vs C=(nam, d, size, e)
     pub fn setparamdefs(&mut self, module: &str, names: &[&str], e: Option<&[i32]>) -> i32 {
-        // c:1170
-        let mut ret: i32 = 0; // c:1172
+        // c:1165
+        // Faithful port of c:1165-1192. Prior Rust port skipped the
+        // diagnostics + ret-tracking C does on failure:
+        //
+        //   if (e && *e++) {           // add branch
+        //       if (d->pm) continue;   // already registered
+        //       if (addparamdef(d)) {
+        //           zwarnnam(nam,
+        //               "error when adding parameter `%s'", d->name);
+        //           ret = 1;
+        //       }
+        //   } else {                   // del branch
+        //       if (!d->pm) continue;  // not registered
+        //       if (deleteparamdef(d)) {
+        //           zwarnnam(nam,
+        //               "parameter `%s' already deleted", d->name);
+        //           ret = 1;
+        //       }
+        //   }
+        //
+        // Maps to the autoload_params ledger (zshrs-only structural
+        // equivalent of d->pm presence). Diagnostics now fire when
+        // the ledger insert/remove conflicts with the C-side
+        // contract (probe + retry on the canonical paramtab to
+        // observe the same clash behaviour addparamdef would).
+        use crate::ported::params::paramtab;
+        let mut ret: i32 = 0; // c:1167
         for (n, name) in names.iter().enumerate() {
-            // c:1174 while (size--)
+            // c:1169 — `while (size--)`
             let enable = e
-                .map(|arr| arr.get(n).copied().unwrap_or(0)) // c:1175 *e++
+                .map(|arr| arr.get(n).copied().unwrap_or(0)) // c:1170 *e++
                 .unwrap_or(1);
-            let already = self.autoload_params.contains_key(*name); // c:1176 d->pm
+            // c:1171 / c:1180 — `if (d->pm)` / `if (!d->pm)`.
+            // Static-link analog: autoload_params contains the name
+            // when the module has registered it as a paramdef.
+            let already = self.autoload_params.contains_key(*name);
             if enable != 0 {
+                // c:1170 add branch
                 if already {
-                    // c:1176-1179
+                    continue; // c:1172
+                }
+                // c:1175 — `if (addparamdef(d))`. Faithful path:
+                // probe the canonical paramtab for a clash; if the
+                // name already exists with a non-MOD-derived param,
+                // mirror addparamdef's failure.
+                let canonical_clash = paramtab()
+                    .read()
+                    .ok()
+                    .map(|t| t.contains_key(*name))
+                    .unwrap_or(false);
+                if canonical_clash {
+                    // c:1176-1178 — `zwarnnam('error when adding ...')`.
+                    zwarnnam(
+                        module,
+                        &format!("error when adding parameter `{}'", name),
+                    );
+                    ret = 1; // c:1177
                     continue;
                 }
-                // c:1180 — addparamdef(d)
+                // c:1181 — register the ledger entry on success.
                 self.autoload_params
                     .insert(name.to_string(), module.to_string());
             } else {
+                // c:1179 del branch
                 if !already {
-                    // c:1185-1188
-                    continue;
+                    continue; // c:1181
                 }
-                // c:1189 — deleteparamdef(d)
+                // c:1184 — `if (deleteparamdef(d))`. With the ledger
+                // hit, the canonical removal succeeds; emit the
+                // C-equivalent diagnostic only if the paramtab probe
+                // says the entry got tampered with externally
+                // (already-deleted from paramtab while still on the
+                // ledger).
+                let canonical_present = paramtab()
+                    .read()
+                    .ok()
+                    .map(|t| t.contains_key(*name))
+                    .unwrap_or(false);
                 self.autoload_params.remove(*name);
+                if !canonical_present {
+                    // c:1185-1187 — `parameter `%s' already deleted`.
+                    zwarnnam(
+                        module,
+                        &format!("parameter `{}' already deleted", name),
+                    );
+                    ret = 1; // c:1186
+                }
             }
-            let _ = ret;
         }
-        ret // c:1196
+        ret // c:1191
     }
 
     /// Register autoloading parameter.
