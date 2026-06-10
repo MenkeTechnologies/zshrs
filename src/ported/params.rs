@@ -10913,10 +10913,23 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // pass it through. Each getfn here ignores pm (matches C's
         // UNUSED(Param pm)), so a fallback default-constructed param
         // is acceptable when the table isn't populated yet.
+        //
+        // c:Src/params.c paramsubst c:3193 — the `vunset = (!v || ...)`
+        // check inspects `pm->node.flags & PM_UNSET`, not the value
+        // returned by getfn. For specials whose getfn reads global
+        // cached state (`ifs`, `wordchars`, `keyboardhackchar`), the
+        // global keeps its last value across `unset NAME` (because
+        // stdunsetfn only flips PM_UNSET; it doesn't clear the global).
+        // Without consulting PM_UNSET here, `${IFS+set}` after
+        // `unset IFS` still returned the default-IFS getter result,
+        // diverging from zsh.
         "USERNAME" | "HOME" | "TERM" | "WORDCHARS" | "IFS" | "TERMINFO" | "TERMINFO_DIRS"
         | "KEYBOARD_HACK" | "histchars" | "HISTCHARS" => {
             let tab = paramtab().read().ok()?;
             let pm = tab.get(name)?;
+            if (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) != 0 {
+                return None;
+            }
             Some(match name {
                 "USERNAME" => usernamegetfn(pm),
                 "HOME" => homegetfn(pm),
