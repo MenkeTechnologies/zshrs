@@ -569,8 +569,16 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
     let _ = use_dfa;
 
     // c:364-365 — plaintext = ztrdup(*args); unmetafy(plaintext, &subject_len);
-    plaintext = args.first().cloned().unwrap_or_default();
-    subject_len = plaintext.len() as i32;
+    // The subject can carry Meta-escaped bytes (NUL / 0x80-range bytes
+    // round-tripped through zsh's metafied internal-string store);
+    // PCRE2 needs the raw bytes the user wrote, not the encoded pair.
+    // Prior port skipped this so `pcre_match $value_with_meta_bytes`
+    // searched the encoded form against a non-encoded compiled
+    // pattern, silently failing to match.
+    let raw = args.first().cloned().unwrap_or_default();
+    let mut buf = raw.into_bytes();
+    subject_len = crate::ported::utils::unmetafy(&mut buf) as i32; // c:365
+    plaintext = String::from_utf8_lossy(&buf).into_owned();
     let _ = subject_len;
 
     // c:370-396 — pcre2_match path (use_dfa branch elided since the
