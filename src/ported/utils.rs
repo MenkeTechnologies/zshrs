@@ -9026,6 +9026,13 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
                 }
                 if let Ok(val) = u8::from_str_radix(&hex, 16) {
                     result.push(val as char);
+                    // c:utils.c:7172-7173 — under GETKEY_PRINTF_PERCENT
+                    // a numeric escape producing `%` gets a second `%`.
+                    if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0
+                        && val == b'%'
+                    {
+                        result.push('%');
+                    }
                 }
             }
             // c:utils.c:7072-7138 — `\u` (4-hex) / `\U` (8-hex)
@@ -9106,6 +9113,13 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
                     u8::from_str_radix(&oct, 8).unwrap_or(0)
                 };
                 result.push(val as char);
+                // c:utils.c:7172-7173 — same `%` doubling under
+                // GETKEY_PRINTF_PERCENT as the hex/octal arms.
+                if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0
+                    && val == b'%'
+                {
+                    result.push('%');
+                }
             }
             // Octal escape: \NNN (1-3 octal digits). Gated on
             // GETKEY_OCTAL_ESC per c:utils.c:7156-7178.
@@ -9124,6 +9138,13 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
                 }
                 if let Ok(val) = u8::from_str_radix(&oct, 8) {
                     result.push(val as char);
+                    // c:utils.c:7172-7173 — `%` doubling under
+                    // GETKEY_PRINTF_PERCENT (the printf format path).
+                    if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0
+                        && val == b'%'
+                    {
+                        result.push('%');
+                    }
                 }
             }
             // c:utils.c:7180-7184 — default arm. With GETKEY_EMACS
