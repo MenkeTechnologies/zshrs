@@ -361,6 +361,34 @@ pub fn newptycmd(
                     libc::close(crate::ported::modules::clone::coprocin.load(Ordering::Relaxed));
                     libc::close(crate::ported::modules::clone::coprocout.load(Ordering::Relaxed));
                 }
+                // c:420-431 — child-side sync handshake. Write a single
+                // NUL byte to fd 1 (now the slave) so the parent, which
+                // blocks on read(master) at c:472-482, can confirm the
+                // child finished its tty setup before zpty returns
+                // control to the caller. Without this, tests that send
+                // input immediately after `zpty -b name cmd` can race
+                // the child's session/pgrp setup and the early input
+                // is lost to the still-being-configured pty.
+                //
+                // EWOULDBLOCK/EAGAIN/EINTR retry mirrors C's loop —
+                // the slave fd is nonblocking on some platforms after
+                // pty allocation.
+                let sync_byte: u8 = 0;
+                loop {
+                    let r = unsafe {
+                        libc::write(1, &sync_byte as *const u8 as *const _, 1)
+                    };
+                    if r == 1 {
+                        break;
+                    }
+                    let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                    if eno != libc::EWOULDBLOCK
+                        && eno != libc::EAGAIN
+                        && eno != libc::EINTR
+                    {
+                        break;
+                    }
+                }
                 let cmd = match CString::new(args[0].as_str()) {
                     Ok(c) => c,
                     Err(_) => unsafe { libc::_exit(1) },
@@ -407,6 +435,33 @@ pub fn newptycmd(
                 if nblock {
                     let _ = ptynonblock(master);
                 }
+                // c:472-482 — parent-side sync handshake. Read the
+                // single byte the child writes from its end of the pty
+                // before returning, so the caller can't start sending
+                // data to a still-being-configured pty. EWOULDBLOCK /
+                // EAGAIN / EINTR retry mirror C; on a clean read the
+                // child has confirmed its tty setup completed.
+                let mut sync_buf: u8 = 0;
+                loop {
+                    let r = unsafe {
+                        libc::read(master, &mut sync_buf as *mut u8 as *mut _, 1)
+                    };
+                    if r == 1 {
+                        break;
+                    }
+                    let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                    if eno != libc::EWOULDBLOCK
+                        && eno != libc::EAGAIN
+                        && eno != libc::EINTR
+                    {
+                        break;
+                    }
+                }
+                // c:484 — `setiparam_no_convert("REPLY", (zlong)master);`.
+                // The user-facing `$REPLY` carries the master fd so
+                // shell-level reads/writes can address the pty
+                // alongside the zpty-name registry.
+                let _ = crate::ported::params::setiparam_no_convert("REPLY", master as i64);
                 // c:455-458 — `p = (Ptycmd) zalloc(...); p->name = ztrdup(pname);
                 //              p->args = args; p->fd = master; p->pid = pid;
                 //              p->echo = echo; p->nblock = nblock;`
