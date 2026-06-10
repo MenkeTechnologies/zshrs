@@ -2336,12 +2336,65 @@ pub fn dirsgetfn(pm: *mut param) -> Vec<String> {
 #[allow(unused_variables)]
 pub fn getpmhistory(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1156
-    let num: i64 = name.parse().ok()?; // c:1159 quietgetn
-    let value = crate::ported::hist::quietgethist(num) // c:1184
-        .map(|e| e.node.nam.clone());
+    // Faithful port of c:1168-1182:
+    //   int ok = 1;
+    //   if (*name != '0' || name[1]) {
+    //       if (*name == '0') ok = 0;          ← leading-zero with more chars
+    //       else {
+    //           for (p = name; *p && idigit(*p); p++);
+    //           if (*p) ok = 0;                ← non-digit suffix
+    //       }
+    //   }
+    //   if (ok && (he = quietgethist(atoi(name))))
+    //       pm->u.str = dupstring(he->node.nam);
+    //   else {
+    //       pm->u.str = dupstring('');
+    //       pm->node.flags |= (PM_UNSET|PM_SPECIAL);
+    //   }
+    //
+    // Prior port did `name.parse::<i64>().ok()?` which early-returned
+    // None on parse failure — but C returns a valid Param with
+    // PM_UNSET|PM_SPECIAL set, never NULL. The two paths differ:
+    //
+    //   - Rust None: caller sees 'no such param'
+    //   - C valid Param + PM_UNSET: caller sees 'param exists but
+    //     is unset'
+    //
+    // \${history[bogus]} should match C's 'exists but unset'
+    // semantic so \${+history[bogus]} returns 1 (param exists).
+    let bytes = name.as_bytes();
+    let mut ok = true;
+    // c:1168 — `if (*name != '0' || name[1])`.
+    if bytes.first() != Some(&b'0') || bytes.len() > 1 {
+        // c:1169 — `if (*name == '0') ok = 0;`
+        if bytes.first() == Some(&b'0') {
+            ok = false; // leading zero with more chars
+        } else {
+            // c:1171-1174 — walk digits; if non-digit hit, ok = 0.
+            for b in bytes {
+                if !b.is_ascii_digit() {
+                    ok = false;
+                    break;
+                }
+            }
+            // Empty name also fails — for loop didn't break but
+            // no digits means atoi(name)=0 which would match h0
+            // wrongly. Treat empty as invalid.
+            if bytes.is_empty() {
+                ok = false;
+            }
+        }
+    }
+    // c:1177 — `if (ok && (he = quietgethist(atoi(name))))`.
+    let value = if ok {
+        let num: i64 = name.parse().unwrap_or(0);
+        crate::ported::hist::quietgethist(num).map(|e| e.node.nam.clone())
+    } else {
+        None
+    };
     let (val, found) = match value {
-        Some(v) => (v, true),
-        None => (String::new(), false), // c:1204
+        Some(v) => (v, true),       // c:1178
+        None => (String::new(), false), // c:1180-1181
     };
     let pm = Box::new(param {
         // c:1162 hcalloc
