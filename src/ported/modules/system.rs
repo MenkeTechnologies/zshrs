@@ -306,13 +306,34 @@ pub fn bin_syswrite(
     let mut p = 0usize;
 
     // c:263-275 — write loop with EINTR retry and partial residue.
+    // C body:
+    //   while ((count = write(outfd, *args, len)) < 0) {
+    //       if (errno != EINTR || errflag || retflag || breaks || contflag)
+    //       {
+    //           if (countvar) setiparam(countvar, totcount);
+    //           return 2;
+    //       }
+    //   }
+    //
+    // Prior Rust port only checked `errno != EINTR` — ignored
+    // errflag / retflag / breaks / contflag. That meant the EINTR
+    // retry loop would keep spinning even after Ctrl-C (which
+    // sets errflag via the SIGINT trap) or a `return` from an
+    // enclosing function body. Now matches C: any of the four
+    // shell control-flow flags bails out the retry the same as
+    // a non-EINTR errno.
+    use std::sync::atomic::Ordering::Relaxed;
     while len > 0 {
         // c:263
         let count = unsafe { libc::write(outfd, bytes[p..].as_ptr() as *const libc::c_void, len) };
         if count < 0 {
             // c:264
             let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            if eno != libc::EINTR {
+            let interrupted = crate::ported::utils::errflag.load(Relaxed) != 0
+                || crate::ported::exec::retflag.load(Relaxed) != 0
+                || crate::ported::builtin::BREAKS.load(Relaxed) != 0
+                || crate::ported::builtin::CONTFLAG.load(Relaxed) != 0;
+            if eno != libc::EINTR || interrupted {
                 // c:265
                 if let Some(ref cv) = countvar {
                     // c:267-268
