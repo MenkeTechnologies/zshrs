@@ -3298,13 +3298,31 @@ pub fn setaliases(
     }
 
     // c:1777-1789 — drop every alias currently in `alht` whose flags
-    // exactly match the target flag-class. Rust's `alias_table` is
-    // the typed twin of C's `aliastab` HashTable; iterate via
-    // `iter_sorted` (snapshot to avoid borrow conflict with the
-    // removal write) then drop matches.
+    // exactly match the target flag-class.
+    //
+    // C callers select aliastab/sufaliastab via the alht arg:
+    //   setpmraliases    → alht=aliastab,    flags=0
+    //   setpmdisraliases → alht=aliastab,    flags=DISABLED
+    //   setpmgaliases    → alht=aliastab,    flags=ALIAS_GLOBAL
+    //   setpmdisgaliases → alht=aliastab,    flags=ALIAS_GLOBAL|DISABLED
+    //   setpmsaliases    → alht=sufaliastab, flags=ALIAS_SUFFIX
+    //   setpmdissaliases → alht=sufaliastab, flags=ALIAS_SUFFIX|DISABLED
+    //
+    // Rust callers pass null `alht`; dispatch on the ALIAS_SUFFIX
+    // bit (mirrors getalias c:1901 + the scanaliases fix at
+    // 2d2cdbaa5a). Prior port always operated on aliastab — every
+    // suffix-alias bulk assignment (\$saliases=(...) etc.) silently
+    // wrote to the wrong table.
+    let suffix_table = (flags & ALIAS_SUFFIX) != 0;
     let mut keys_to_drop: Vec<String> = Vec::new(); // c:1772 hn iteration
     {
-        let tab = aliastab_lock().read().expect("aliastab poisoned");
+        let tab = if suffix_table {
+            sufaliastab_lock()
+        } else {
+            aliastab_lock()
+        }
+        .read()
+        .expect("aliastab poisoned");
         for (name, alias) in tab.iter() {
             // c:1777-1778
             if (alias.node.flags as i32) == flags {
@@ -3314,7 +3332,13 @@ pub fn setaliases(
         }
     }
     if !keys_to_drop.is_empty() {
-        let mut tab = aliastab_lock().write().expect("aliastab poisoned");
+        let mut tab = if suffix_table {
+            sufaliastab_lock()
+        } else {
+            aliastab_lock()
+        }
+        .write()
+        .expect("aliastab poisoned");
         for name in keys_to_drop {
             let _ = tab.remove(&name); // c:1788 freenode(hd)
         }
