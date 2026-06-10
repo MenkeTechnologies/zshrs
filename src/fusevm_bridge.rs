@@ -238,6 +238,10 @@ fn module_bound_builtin_module(name: &str) -> Option<&'static str> {
         "example" => Some("zsh/example"),
         "cap" | "getcap" | "setcap" => Some("zsh/cap"),
         "zgetattr" | "zsetattr" | "zdelattr" | "zlistattr" => Some("zsh/attr"),
+        // c:Src/Modules/datetime.c — `strftime` is registered via
+        // partab[] when zsh/datetime loads. Verified by
+        // `zsh -fc 'strftime -s s %Y 0'` → 127 "command not found".
+        "strftime" => Some("zsh/datetime"),
         _ => None,
     }
 }

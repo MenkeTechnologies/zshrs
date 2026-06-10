@@ -10804,11 +10804,30 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
     // Only applies to regenerator-style specials (RANDOM, SECONDS,
     // EPOCHSECONDS, TTYIDLE, ERRNO) — identity specials like UID, GID,
     // PPID stay live since they're not user-clearable in zsh either.
+    //
+    // Two sources of "is unset" — the side-set populated by
+    // `mark_unset_special` from explicit `unset NAME`, and the
+    // initial PM_UNSET flag set by `Src/params.c:298 IPDEF1(...,
+    // PM_UNSET)`. ERRNO is the only IPDEF1-special with the initial
+    // PM_UNSET flag (params.c:298) — zsh -fc reports `$ERRNO` as
+    // empty because nothing has set errno since startup. Mirror by
+    // also consulting the paramtab pm flags. Without this, `$ERRNO`
+    // returned the live errno value instead of empty.
     if matches!(
         name,
         "RANDOM" | "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME" | "TTYIDLE" | "ERRNO"
-    ) && is_unset_special(name)
-    {
+    ) && (is_unset_special(name) || {
+        // c:Src/params.c — paramtab PM_UNSET check. ERRNO carries
+        // this flag from IPDEF1 initialization (params.c:298); reads
+        // route through getsparam → paramtab pm.flags check at
+        // line 4356-4358 normally, but ERRNO/RANDOM/etc. short-
+        // circuit through lookup_special_var BEFORE that check.
+        paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(name).map(|pm| (pm.node.flags as u32 & PM_UNSET) != 0))
+            .unwrap_or(false)
+    }) {
         return None;
     }
     // All-digit positional: $1..$N from canonical PPARAMS.
