@@ -656,15 +656,29 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
     if a.len() < 2 {
         return 0;
     }
-    let lhs = &a[0]; // c:427 lhstr
-    let rhs = &a[1]; // c:427 rhre
+    let lhstr = &a[0]; // c:438 lhstr = cond_str(a,0,0)
+    let rhre = &a[1]; // c:439 rhre = cond_str(a,1,0)
 
-    // c:441 — `pcre2_compile(rhre, ...)`. Rust regex crate substitutes
-    // for libpcre2 — same regex semantics for the common subset.
-    match Regex::new(rhs) {
+    // c:440-443 — both sides arrive metafied (Meta + (byte^32) for any
+    // byte the internal-string store mangles); strip before handing to
+    // the regex engine. Same fix as bin_pcre_compile/bin_pcre_match
+    // (fa17866c48 / 1dbd7eecc1). Prior cond_pcre_match used the
+    // metafied strings directly, so `[[ $value -pcre-match $pat ]]`
+    // silently no-matched whenever either side carried Meta bytes.
+    let mut lhs_buf = lhstr.as_bytes().to_vec();
+    let _lhs_len = crate::ported::utils::unmetafy(&mut lhs_buf); // c:442
+    let lhs_plain = String::from_utf8_lossy(&lhs_buf).into_owned();
+    let mut rhs_buf = rhre.as_bytes().to_vec();
+    let _rhs_len = crate::ported::utils::unmetafy(&mut rhs_buf); // c:443
+    let rhs_plain = String::from_utf8_lossy(&rhs_buf).into_owned();
+
+    // c:455 — `pcre2_compile(rhre_plain, ...)`. Rust regex crate
+    // substitutes for libpcre2 — same regex semantics for the common
+    // subset.
+    match Regex::new(&rhs_plain) {
         Ok(re) => {
-            // c:476 — `pcre2_match(pcre_pat, lhstr_plain, ...)`.
-            match re.captures(lhs) {
+            // c:465 — `pcre2_match(pcre_pat, lhstr_plain, ...)`.
+            match re.captures(&lhs_plain) {
                 Some(caps) => {
                     // c:490-491 — match succeeded.
                     let full = caps.get(0).map(|m| m.as_str().to_string());
