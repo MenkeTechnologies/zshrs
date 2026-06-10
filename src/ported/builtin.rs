@@ -13735,8 +13735,16 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<String, (String, char)> {
     // c:Src/builtin.c:4711 — `fmt = getkeystring(fmt, &flen, ...,
     // GETKEYS_PRINTF_FMT, ...);`. The format string is first run
     // through getkeystring to interpret backslash escapes (`\n`,
-    // `\t`, `\xNN`, etc.) before %-format substitution.
-    let (fmt, _) = getkeystring(fmt); // c:builtin.c:4711
+    // `\t`, `\xNN`, etc.) before %-format substitution. The shim
+    // `getkeystring(s)` defaults flags to 0, which (a) drops the
+    // backslash on `\'`/`\"` (wrong for printf — zsh keeps unknown
+    // `\<c>` literal because PRINTF_FMT excludes GETKEY_EMACS) and
+    // (b) treats `\c` as a control-char escape rather than the
+    // truncation marker. Route through `_with(GETKEYS_PRINTF_FMT)`
+    // to match C exactly. `_with` takes a u32 `how` mask; the
+    // canonical i32 const lives in `zsh_h` (Src/zsh.h:3180-3181).
+    let (fmt, _) =
+        getkeystring_with(fmt, crate::ported::zsh_h::GETKEYS_PRINTF_FMT as u32); // c:builtin.c:4711
     let mut out = String::new();
     let mut arg_i: usize = 0;
     // c:Src/builtin.c:4914-4923 — printf reapplies the format string
