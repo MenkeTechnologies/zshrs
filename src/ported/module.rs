@@ -1957,16 +1957,56 @@ impl modulestab {
     ///
     /// In C, this inserts the builtin into the canonical `builtintab`
     /// hashtable (Src/builtin.c). The real builtin registration lives
-    /// in `cmd.rs::BUILTINTAB`.
-    pub fn addbuiltin(&mut self, _name: &str, _module: &str) { // c:409
+    /// in `cmd.rs::BUILTINTAB` and the routing fn here delegates to
+    /// the free `addbuiltin` (c:303 port) so the canonical BINF_ADDED
+    /// clash gate fires.
+    ///
+    /// Returns 0 on success, 1 on clash (per C's signature).
+    pub fn addbuiltin(&mut self, name: &str, module: &str) -> i32 {
+        // c:409
+        // Construct a probe builtin matching what add_autobin /
+        // setbuiltins build; route through the free addbuiltin which
+        // probes createbuiltintable() for BINF_ADDED.
+        let mut bn = builtin {
+            node: hashnode {
+                next: None,
+                nam: name.to_string(),
+                flags: 0,
+            },
+            handlerfunc: None,
+            minargs: 0,
+            maxargs: 0,
+            funcid: 0,
+            optstr: Some(module.to_string()),
+            defopts: None,
+        };
+        if addbuiltin(&mut bn) != 0 {
+            return 1; // c:417 clash
+        }
+        // On success: record in added_builtins ledger so the
+        // module's setbuiltins delete path can find this entry.
+        self.added_builtins
+            .insert(name.to_string(), BINF_ADDED);
+        0 // c:417 OK
     }
 
     /// Unregister a builtin (from module.c deletebuiltin)
     /// Port of `deletebuiltin(const char *nam)` from `Src/module.c:449`.
+    /// Returns 0 on success (entry found + removed from ledger), -1
+    /// on miss — matching the canonical free fn (00e6a9ce7e) and
+    /// C's deletebuiltin return contract.
     /// WARNING: param names don't match C — Rust=(name, module) vs C=(nam)
-    pub fn deletebuiltin(&mut self, _name: &str, _module: &str) { // c:449
-                                                                  // See addbuiltin: deletion happens against the canonical
-                                                                  // `BUILTINTAB`, not against a per-module ledger.
+    pub fn deletebuiltin(&mut self, name: &str, _module: &str) -> i32 {
+        // c:449
+        // Route through the free deletebuiltin for the canonical
+        // present/absent probe.
+        let r = deletebuiltin(name);
+        if r == 0 {
+            // Drop the ledger entry so setbuiltins's `already_added`
+            // probe sees this name as removed.
+            self.added_builtins.remove(name);
+        }
+        r
     }
 
     /// Register autoloading builtin.
