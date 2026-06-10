@@ -696,17 +696,7 @@ pub fn ptywritestr(cmd: &mut ptycmd, s: &[u8]) -> i32 {
         if written < 0 && cmd.nonblock {
             // c:720-729 — nblock + (EWOULDBLOCK || EAGAIN) → return `!all`.
             let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            #[allow(unused_mut)]
-            let mut wouldblock = false;
-            #[cfg(target_os = "linux")]
-            {
-                wouldblock = eno == libc::EWOULDBLOCK || eno == libc::EAGAIN;
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                wouldblock = eno == libc::EWOULDBLOCK || eno == libc::EAGAIN;
-            }
-            if wouldblock {
+            if eno == libc::EWOULDBLOCK || eno == libc::EAGAIN {
                 return if all == 0 { 1 } else { 0 }; // c:729 — `return !all`
             }
         }
