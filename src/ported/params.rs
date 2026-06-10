@@ -2479,26 +2479,54 @@ pub fn isident(s: &str) -> bool {
             // returns to 0. Without this, `h[]=val` was accepted as a
             // valid assoc element write — but zsh errors
             // `not an identifier: h[]` (bug #288 in docs/BUGS.md).
+            //
+            // c:Src/params.c parse_subscript (params.c:1480+) also
+            // recognises backslash-escaped brackets: `A[\[k\]]` is a
+            // single subscript with key `[k]`. The `\[` doesn't count
+            // toward bracket depth and `\]` doesn't close. Track a
+            // bslash flag so the depth walk matches C semantics.
             let mut saw_content = false;
-            let saw_close = s.split('[').skip(1).next().is_some_and(|tail| {
-                for ch in tail.chars() {
-                    match ch {
-                        '[' => {
-                            depth += 1;
+            // Bug fix: `s.split('[').skip(1).next()` only returned
+            // the segment between the first and second `[`, dropping
+            // everything after. Use find()+slice to get the entire
+            // tail starting after the first `[`.
+            let tail_start = s
+                .char_indices()
+                .find(|(_, c)| *c == '[')
+                .map(|(i, _)| i + 1);
+            let saw_close = tail_start
+                .map(|start| &s[start..])
+                .is_some_and(|tail| {
+                    let mut bslash = false;
+                    for ch in tail.chars() {
+                        if bslash {
+                            // c:parse_subscript — escaped char is
+                            // content, doesn't affect depth.
                             saw_content = true;
+                            bslash = false;
+                            continue;
                         }
-                        ']' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                return true;
+                        match ch {
+                            '\\' => {
+                                bslash = true;
+                                saw_content = true;
                             }
-                            saw_content = true;
+                            '[' => {
+                                depth += 1;
+                                saw_content = true;
+                            }
+                            ']' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    return true;
+                                }
+                                saw_content = true;
+                            }
+                            _ => saw_content = true,
                         }
-                        _ => saw_content = true,
                     }
-                }
-                false
-            });
+                    false
+                });
             if !saw_content {
                 return false; // c:1334 empty subscript rejected
             }
@@ -4827,14 +4855,71 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // restore semantics: the Rust port works on `&str` slices so
     // there's no in-place null-terminator dance, but the parse
     // shape is identical.
+    // c:Src/params.c:3210 — `strchr(s, '[')` finds the subscript
+    // opener; C's parse_subscript (params.c:1480+) then walks to the
+    // matching `]` respecting backslash-escapes and nesting. zshrs's
+    // previous `s.rfind(']')` picked the LAST `]` which works for
+    // simple `name[key]` but mis-bounds `A[\[k\]]` (where the key
+    // contains escaped brackets).
     let (name, subscript) = match s.find('[') {
         Some(i) => {
-            let close = s.rfind(']').unwrap_or(s.len());
+            // Walk forward from `i + 1` matching brackets with
+            // escape-awareness per parse_subscript semantics.
+            let mut depth = 1i32;
+            let mut close_byte: Option<usize> = None;
+            let mut bslash = false;
+            let mut byte_off = i + 1;
+            for ch in s[i + 1..].chars() {
+                if bslash {
+                    bslash = false;
+                    byte_off += ch.len_utf8();
+                    continue;
+                }
+                match ch {
+                    '\\' => bslash = true,
+                    '[' => depth += 1,
+                    ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close_byte = Some(byte_off);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                byte_off += ch.len_utf8();
+            }
+            let close = close_byte.unwrap_or(s.len());
             let key_end = if close > i { close } else { s.len() };
             (&s[..i], Some(&s[i + 1..key_end]))
         }
         None => (s, None),
     };
+    // c:Src/params.c parse_subscript — backslash-escapes in the
+    // subscript body (`\[`, `\]`, `\\`) are stripped to their literal
+    // form for the actual key value. `A[\[k\]]=v` stores under key
+    // `[k]`. zshrs's subscript extractor above preserved the escapes
+    // verbatim, so the stored key was `\[k\]` and the matching lookup
+    // `${A[[k]]}` couldn't find it.
+    let subscript_owned: Option<String> = subscript.map(|key| {
+        let mut out = String::with_capacity(key.len());
+        let mut bslash = false;
+        for ch in key.chars() {
+            if bslash {
+                out.push(ch);
+                bslash = false;
+            } else if ch == '\\' {
+                bslash = true;
+            } else {
+                out.push(ch);
+            }
+        }
+        if bslash {
+            out.push('\\');
+        }
+        out
+    });
+    let subscript: Option<&str> = subscript_owned.as_deref();
 
     // c:Src/Modules/parameter.c — magic associative-array assignment
     // forms: `functions[name]=body`, `aliases[name]=value`,
