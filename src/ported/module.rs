@@ -2177,31 +2177,56 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name, module, flags) vs C=(module, cnam, flags)
     pub fn add_autocond(&mut self, name: &str, module: &str, flags: i32) -> i32 {
         // c:792
-        // c:796 — c = zalloc(sizeof(*c))
+        // Faithful port of c:792-810:
+        //   Conddef c = zshcalloc(sizeof(*c));
+        //   c->name = ztrdup(cnam);
+        //   c->module = ztrdup(module);
+        //   c->flags = (flags & FEAT_INFIX) ? CONDF_INFIX : 0;
+        //   if (flags & FEAT_AUTOALL) c->flags |= CONDF_AUTOALL;
+        //   if (addconddef(c)) {
+        //       zsfree(c->name); zsfree(c->module); zfree(c, sizeof(*c));
+        //       if (!(flags & FEAT_IGNORE)) return 1;
+        //   }
+        //   return 0;
+        //
+        // Prior port did a ledger-only insert into autoload_conditions
+        // without ever touching the canonical CONDTAB. Now constructs
+        // the conddef struct and routes through the free addconddef
+        // (1395acf3a7 dependency) which walks CONDTAB for clashes,
+        // replaces autoload entries, and prepends on success.
         let mut cflags: i32 = if (flags & FEAT_INFIX) != 0 {
-            // c:799
-            CONDF_INFIX
+            CONDF_INFIX // c:799
         } else {
             0
         };
         if (flags & FEAT_AUTOALL) != 0 {
-            // c:800
             cflags |= CONDF_AUTOALL; // c:801
         }
-        let _ = cflags; // c->flags
-                        // c:804 — addconddef(c). Rust ledger: insert into
-                        // autoload_conditions; conflict if key already present.
-        let prior = self
-            .autoload_conditions
-            .insert(name.to_string(), module.to_string());
-        if prior.is_some() {
-            // c:804 addconddef != 0
-            // c:805-807 — zsfree(name/module); zfree(c)
+        // c:796-803 — populate the conddef record. `handler` is None
+        // because autoload stubs don't carry the dispatch fn until
+        // the module loads and addconddef replaces the entry.
+        let cd = conddef {
+            next: None,
+            name: name.to_string(),
+            flags: cflags,
+            handler: None,
+            min: 0,
+            max: 0,
+            condid: 0,
+            module: Some(module.to_string()),
+        };
+        // c:804 — addconddef(c).
+        if addconddef(cd) != 0 {
+            // c:805-807 — zsfree/zfree happen via Rust drop.
             if (flags & FEAT_IGNORE) == 0 {
-                // c:809
                 return 1; // c:810
             }
         }
+        // Keep the ledger entry too so resolve_autoload_condition()
+        // and del_autocond's fast path can find it without re-scanning
+        // CONDTAB.
+        self.autoload_conditions
+            .insert(name.to_string(), module.to_string());
         0 // c:812
     }
 
@@ -2223,22 +2248,48 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name, flags) vs C=(modnam, cnam, flags)
     pub fn del_autocond(&mut self, name: &str, flags: i32) -> i32 {
         // c:819
-        // c:821 — `getconddef((flags & FEAT_INFIX) ? 1 : 0, cnam, 0);`.
-        // The Rust ledger holds only the autoload entry; the live
-        // CONDF_ADDED registry isn't separately materialised, so any
-        // entry we find is the autoload form (analog of !CONDF_ADDED).
-        if self.autoload_conditions.contains_key(name) {
-            // c:823
-            // c:831-832 — `deleteconddef(cd);` Rust drop autoload entry.
-            self.autoload_conditions.remove(name); // c:832
-            return 0; // c:834
+        // Faithful port of c:819-835:
+        //   Conddef cd = getconddef((flags & FEAT_INFIX) ? 1 : 0,
+        //                           cnam, 0);
+        //   if (!cd) {
+        //       if (!(flags & FEAT_IGNORE)) return 2;
+        //   } else if (cd->flags & CONDF_ADDED) {
+        //       if (!(flags & FEAT_IGNORE)) return 3;
+        //   } else
+        //       deleteconddef(cd);
+        //   return 0;
+        //
+        // Prior port skipped CONDTAB entirely; checked the ledger
+        // only. Now routes through getconddef (1395acf3a7) which
+        // walks CONDTAB filtered by infix-flag, then deleteconddef
+        // (free fn) which removes the matched entry.
+        let inf = if (flags & FEAT_INFIX) != 0 { 1 } else { 0 };
+        // c:821 — `getconddef(inf, cnam, 0)`.
+        let cd = getconddef(inf, name, 0, self);
+        match cd {
+            None => {
+                // c:823-825 — !cd: return 2 unless FEAT_IGNORE.
+                if (flags & FEAT_IGNORE) == 0 {
+                    return 2; // c:825
+                }
+                0 // c:834
+            }
+            Some(ref entry) if (entry.flags & CONDF_ADDED) != 0 => {
+                // c:826-828 — CONDF_ADDED set: real registered
+                // condition, can't unload via del_auto*. Return 3
+                // unless FEAT_IGNORE.
+                if (flags & FEAT_IGNORE) == 0 {
+                    return 3; // c:828
+                }
+                0
+            }
+            Some(ref entry) => {
+                // c:831-832 — deleteconddef(cd); drop ledger too.
+                let _ = deleteconddef(entry);
+                self.autoload_conditions.remove(name);
+                0 // c:834
+            }
         }
-        // c:823-826 — `if (!cd) { if (!(flags & FEAT_IGNORE)) return 2; }`.
-        if (flags & FEAT_IGNORE as i32) == 0 {
-            // c:824
-            return 2; // c:825
-        }
-        0 // c:834
     }
 
     // ------- Hook management lives in the file-static free ported above ------
