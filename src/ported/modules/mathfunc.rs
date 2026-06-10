@@ -57,27 +57,146 @@ extern "C" {
 #[allow(unused_variables)]
 pub fn math_string(name: &str, arg: &str, id: i32) -> mnumber {
     // c:439
-    let trimmed = arg.trim_matches(|c: char| c == ' ' || c == '\t'); // c:439-451 iblank
+    // c:441 — `mnumber ret = zero_mnumber;`
+    let zero_mnumber = mnumber {
+        l: 0,
+        d: 0.0,
+        type_: MN_INTEGER,
+    };
+    // c:448-453 — strip iblank from both ends, then NUL-terminate.
+    // Rust slice form: skip leading iblank, then truncate trailing.
+    let bytes = arg.as_bytes();
+    let mut start = 0;
+    while start < bytes.len() && crate::ported::ztype_h::iblank(bytes[start]) {
+        start += 1;
+    }
+    let mut end = bytes.len();
+    while end > start && crate::ported::ztype_h::iblank(bytes[end - 1]) {
+        end -= 1;
+    }
+    let arg_trim = std::str::from_utf8(&bytes[start..end]).unwrap_or("");
     match id {
         MS_RAND48 => {
-            // c:457
-            // C decodes optional 12-hex seedstr from $seedvar then
-            // calls erand48(). zshrs uses `random_real()` which
-            // already produces uniform doubles via the OS-entropy
-            // path; the seed-from-param wiring is pending param-
-            // table integration.
-            let _ = trimmed;
+            // c:457-530 — MS_RAND48 arm.
+            // c:460-461 — `static unsigned short seedbuf[3]; static int seedbuf_init;`
+            //             — the lifetime-of-process seed state.
+            static SEEDBUF: std::sync::OnceLock<std::sync::Mutex<[u16; 3]>> =
+                std::sync::OnceLock::new();
+            static SEEDBUF_INIT: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            let seedbuf_mtx = SEEDBUF.get_or_init(|| std::sync::Mutex::new([0u16; 3]));
+            let mut seedbuf = seedbuf_mtx.lock().unwrap_or_else(|e| e.into_inner());
+            // c:462-463 — `unsigned short tmp_seedbuf[3], *seedbufptr; int do_init = 1;`
+            let mut tmp_seedbuf: [u16; 3] = [0; 3];
+            let mut do_init: bool = true; // c:463
+            // c:464-506 — choose seedbufptr (tmp from param vs static) and
+            // decide do_init.
+            //
+            // Two-step ptr selection: in C `seedbufptr` is either `&tmp_seedbuf`
+            // or `&seedbuf`. In Rust we mirror via a bool — `use_static` —
+            // since `&mut [u16; 3]` can't switch between the two without
+            // borrow gymnastics; copy in/out of tmp_seedbuf instead.
+            let use_static: bool;
+            if !arg_trim.is_empty() {
+                // c:465 — `if (*arg) { ... }`
+                use_static = false; // c:468 seedbufptr = tmp_seedbuf
+                if let Some(seedstr) = crate::ported::params::getsparam(arg_trim) {
+                    // c:469 — `(seedstr = getsparam(arg)) && strlen(seedstr) >= 12`
+                    let sbytes = seedstr.as_bytes();
+                    if sbytes.len() >= 12 {
+                        do_init = false; // c:471
+                        // c:476-493 — decode 3 sets of 4 hex chars into tmp_seedbuf.
+                        let mut cursor = 0;
+                        'outer: for i in 0..3 {
+                            let mut acc: u16 = 0;
+                            for j in 0..4 {
+                                let c = sbytes[cursor];
+                                cursor += 1;
+                                let lower = c.to_ascii_lowercase();
+                                let nib: u16 = if c.is_ascii_digit() {
+                                    (c - b'0') as u16
+                                } else if (b'a'..=b'f').contains(&lower) {
+                                    (lower - b'a' + 10) as u16
+                                } else {
+                                    do_init = true; // c:486
+                                    break 'outer;
+                                };
+                                acc += nib;
+                                if j < 3 {
+                                    acc *= 16; // c:491
+                                }
+                            }
+                            tmp_seedbuf[i] = acc; // c:478 *seedptr = ...
+                        }
+                    }
+                } else if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                    != 0
+                {
+                    // c:495-496 — `else if (errflag) break;` — bail with zero_mnumber.
+                    return zero_mnumber;
+                }
+            } else {
+                // c:499-506 — `else { seedbufptr = seedbuf; ... }`.
+                use_static = true; // c:501
+                                   // c:502-505 — the C source as written assigns `do_init = 1`
+                                   //             in the else branch, leaving the if-branch as a
+                                   //             pure seedbuf_init flip. Net effect: do_init
+                                   //             stays 1 in both branches (it was 1 from c:463),
+                                   //             so the static seedbuf is re-seeded every call
+                                   //             when arg is empty. Preserved verbatim — quirk
+                                   //             is in the C source, not the port.
+                if !SEEDBUF_INIT.load(std::sync::atomic::Ordering::Relaxed) {
+                    SEEDBUF_INIT.store(true, std::sync::atomic::Ordering::Relaxed); // c:503
+                } else {
+                    do_init = true; // c:505
+                }
+            }
+            // c:507-518 — fresh seed via rand() + seed48().
+            if do_init {
+                let s0 = unsafe { libc::rand() } as u16;
+                let s1 = unsafe { libc::rand() } as u16;
+                let s2 = unsafe { libc::rand() } as u16;
+                if use_static {
+                    seedbuf[0] = s0;
+                    seedbuf[1] = s1;
+                    seedbuf[2] = s2;
+                } else {
+                    tmp_seedbuf[0] = s0;
+                    tmp_seedbuf[1] = s1;
+                    tmp_seedbuf[2] = s2;
+                }
+                // c:517 — `(void)seed48(seedbufptr);`
+                let ptr = if use_static {
+                    seedbuf.as_mut_ptr()
+                } else {
+                    tmp_seedbuf.as_mut_ptr()
+                };
+                unsafe {
+                    libc::seed48(ptr);
+                }
+            }
+            // c:519-520 — `ret.type = MN_FLOAT; ret.u.d = erand48(seedbufptr);`
+            let ret_d = unsafe {
+                let ptr = if use_static {
+                    seedbuf.as_mut_ptr()
+                } else {
+                    tmp_seedbuf.as_mut_ptr()
+                };
+                libc::erand48(ptr)
+            };
+            // c:522-528 — if arg present, encode new seedbuf → $arg (3×4 hex).
+            if !arg_trim.is_empty() {
+                let s = if use_static { &*seedbuf } else { &tmp_seedbuf };
+                let outbuf = format!("{:04x}{:04x}{:04x}", s[0], s[1], s[2]);
+                let _ = crate::ported::params::setsparam(arg_trim, &outbuf);
+            }
             mnumber {
                 l: 0,
-                d: random_real(),
+                d: ret_d,
                 type_: MN_FLOAT,
             }
         }
-        _ => mnumber {
-            l: 0,
-            d: 0.0,
-            type_: MN_INTEGER,
-        }, // zero_mnumber
+        _ => zero_mnumber, // c:441 default
     }
 }
 
