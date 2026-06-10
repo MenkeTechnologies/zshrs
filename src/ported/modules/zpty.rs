@@ -354,6 +354,26 @@ pub fn newptycmd(
                 unsafe {
                     libc::close(slave); // c:451
                 }
+                // c:438-445 — `master = movefd(master);` (non-cygwin path).
+                // movefd relocates the master fd to a high number (>= 10)
+                // and registers it in fdtable as FDT_INTERNAL (utils.rs
+                // :2243). Prior port stored the raw master fd directly,
+                // which:
+                //   1. Could collide with shell-side fd 3-9 use the same
+                //      way the random.rs urandom fd did (fixed at
+                //      b3107b5a46).
+                //   2. Left the fd unregistered in fdtable, so closem
+                //      (FDT_UNUSED, 0) could close it from another
+                //      builtin's child fork.
+                let master = crate::ported::utils::movefd(master);
+                if master == -1 {
+                    // c:441 — `zerrnam(nam, "cannot duplicate fd %d: ...", master, errno);`
+                    crate::ported::utils::zerrnam(
+                        _nam,
+                        &format!("cannot duplicate fd: {}", std::io::Error::last_os_error()),
+                    );
+                    return 1; // c:444
+                }
                 // c:466-467 — `if (nblock) ptynonblock(master);`
                 if nblock {
                     let _ = ptynonblock(master);
@@ -389,11 +409,15 @@ pub fn deleteptycmd(cmds: &mut HashMap<String, ptycmd>, name: &str) {
         // c:505 — `zsfree(p->name)` + c:506 `freearray(p->args)` —
         // Rust drops String/Vec automatically on `cmd` going out
         // of scope.
-        // c:508 — `zclose(cmd->fd)`.
-        unsafe {
-            libc::close(cmd.master_fd);
-        }
-        // c:517 — `kill(-(p->pid), SIGHUP);` — kill the process group.
+        // c:507 — `zclose(cmd->fd);` — fdtable-aware close. The master
+        // fd was registered as FDT_INTERNAL by movefd in newptycmd
+        // (utils.rs:2243 sets the entry after the dup-to-high-fd). Raw
+        // libc::close skips the fdtable_set(fd, FDT_UNUSED) clear that
+        // zclose performs, leaving the FDT_INTERNAL marker stale on
+        // the freed fd. Same leak shape as the tcp_close fix
+        // (9b4dae375a) and the random.rs finish_ fix (b3107b5a46).
+        crate::ported::utils::zclose(cmd.master_fd);
+        // c:511 — `kill(-(p->pid), SIGHUP);` — kill the process group.
         unsafe {
             libc::kill(-cmd.pid, libc::SIGHUP);
         }
@@ -430,13 +454,14 @@ pub fn checkptycmd(cmd: &mut ptycmd) {
     let mut c: u8 = 0;
     let r = unsafe { libc::read(cmd.master_fd, &mut c as *mut u8 as *mut _, 1) };
     if r <= 0 {
-        // c:538
-        // c:539 — `if (kill(cmd->pid, 0) < 0)` — process gone.
+        // c:537
+        // c:538 — `if (kill(cmd->pid, 0) < 0)` — process gone.
         if unsafe { libc::kill(cmd.pid, 0) } < 0 {
-            cmd.finished = true; // c:540 cmd->fin = 1
-            unsafe {
-                libc::close(cmd.master_fd);
-            } // c:541 zclose
+            cmd.finished = true; // c:539 cmd->fin = 1
+            // c:540 — `zclose(cmd->fd);`. Was raw libc::close; same
+            // FDT_INTERNAL stale-marker leak as the deleteptycmd fix
+            // immediately above (both teardown paths must use zclose).
+            crate::ported::utils::zclose(cmd.master_fd);
         }
         return;
     }
