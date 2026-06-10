@@ -13894,11 +13894,23 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<String, (String, char)> {
                     ));
                     arg_i += 1;
                 }
-                // c:builtin.c:4810 %b — interpret backslash escapes
-                // with GETKEY_EMACS arm (drop unknown backslashes).
+                // c:builtin.c:5332-5336 — `%b` uses GETKEYS_PRINTF_ARG
+                // (Src/zsh.h:3183 = GETKEY_BACKSLASH_C alone), NOT
+                // GETKEYS_PRINT. The distinction:
+                //   GETKEYS_PRINT      = OCTAL_ESC | EMACS | BACKSLASH_C
+                //     `\NNN` → octal, `\<c>` → drop backslash.
+                //   GETKEYS_PRINTF_ARG = BACKSLASH_C
+                //     `\NNN` → literal, `\0NNN` → octal, `\<c>` → keep both.
+                // Bourne-style `printf '%b' '\141'` keeps `\141` literal
+                // (only `\0NNN` is octal in the arg interpretation),
+                // matching zsh. Previous Rust port used GETKEYS_PRINT,
+                // so `\141` was octal-eval'd to `a` — diverged.
                 Some('b') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let (s, _) = getkeystring_with(&a, GETKEYS_PRINT);
+                    let (s, _) = getkeystring_with(
+                        &a,
+                        crate::ported::zsh_h::GETKEYS_PRINTF_ARG as u32,
+                    );
                     out.push_str(&s);
                     arg_i += 1;
                 }
