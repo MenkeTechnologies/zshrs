@@ -3554,15 +3554,66 @@ pub fn savesession() {
     }
 }
 
-/// Port of `switchsession(char *nm)` from `Src/Modules/zftp.c:2856`.
-/// C: `static void switchsession(char *nm)`.
+/// Port of `switchsession(char *nm)` from `Src/Modules/zftp.c:2856-2870`.
+/// C body (verbatim):
+///   newsession(nm);
+///   for (ps = zfparams, pd = zfsess->params; *ps; ps++, pd++) {
+///       if (*pd) {
+///           zfsetparam(*ps, *pd, ZFPM_READONLY);
+///           *pd = NULL;
+///       } else
+///           zfunsetparam(*ps);
+///   }
 #[allow(non_snake_case)]
 pub fn switchsession(nm: &str) {
+    // c:2860 — newsession(nm); creates the session if missing AND
+    // sets zfsess + zfsessno. The Rust two-step (create then
+    // set_current) is the same effect.
     if let Ok(mut state) = zftp_state().lock() {
-        // C: walks zfsessions list for matching `nm`; if missing,
-        // creates one. Static-link path: register-or-create on the zftp_globals wrapper.
         let _ = state.create_session(nm);
         state.set_current(nm);
+    }
+    // c:2862-2869 — walk the new session's saved-params slot. For each
+    // zfparams[i], if the saved slot has a value restore the shell
+    // param (readonly) and clear the slot; otherwise unset. Prior Rust
+    // port skipped this loop entirely, leaving stale ZFTP_* params
+    // from the prior session visible after `zftp session NEWSESS`.
+    let saved: Vec<Option<String>> = if let Ok(mut state) = zftp_state().lock() {
+        match state.get_session_mut(None) {
+            Some(sess) => {
+                let copy: Vec<Option<String>> = ZFPARAMS
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| {
+                        sess.params
+                            .get(i)
+                            .filter(|v| !v.is_empty())
+                            .cloned()
+                    })
+                    .collect();
+                // c:2866 — `*pd = NULL;` after restoring; clear the
+                // saved slot so a re-switch back to this session
+                // doesn't double-restore stale values.
+                sess.params.clear();
+                copy
+            }
+            None => return,
+        }
+    } else {
+        return;
+    };
+    for (i, ps) in ZFPARAMS.iter().enumerate() {
+        // c:2862
+        match saved.get(i).cloned().flatten() {
+            Some(val) => {
+                // c:2864 — zfsetparam(*ps, *pd, ZFPM_READONLY);
+                zfsetparam(ps, &val, ZFPM_READONLY);
+            }
+            None => {
+                // c:2867 — zfunsetparam(*ps);
+                zfunsetparam(ps);
+            }
+        }
     }
 }
 
