@@ -2065,30 +2065,58 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name, flags) vs C=(module, bnam, flags)
     pub fn del_autobin(&mut self, name: &str, flags: i32) -> i32 {
         // c:464
+        // Faithful port of c:464-478:
+        //   Builtin bn = (Builtin) builtintab->getnode2(builtintab, bnam);
+        //   if (!bn) {
+        //       if(!(flags & FEAT_IGNORE)) return 2;
+        //   } else if (bn->node.flags & BINF_ADDED) {
+        //       if (!(flags & FEAT_IGNORE)) return 3;
+        //   } else
+        //       deletebuiltin(bnam);
+        //   return 0;
+        //
+        // Three distinct return codes: 2 = no such builtin (autoload
+        // ledger absent), 3 = real registered (BINF_ADDED set — can't
+        // unload via del_auto*), 0 = success.
+        //
+        // zshrs's createbuiltintable() entries are all BINF_ADDED by
+        // construction (the static-linked canonical table), so a hit
+        // there always means "real registered" → return 3. The
+        // autoload stubs live in self.autoload_builtins; a hit there
+        // is the c:475 deletebuiltin path.
+        //
+        // Now routes through the free deletebuiltin (00e6a9ce7e) for
+        // the canonical-table probe so the present/absent contract
+        // matches C exactly. Prior port did the probe inline.
+
         // c:466 — `builtintab->getnode2(builtintab, bnam)`.
-        let bn = createbuiltintable().get(name);
-        if bn.is_none() {
-            // c:467
-            // c:468-469 — `if(!(flags & FEAT_IGNORE)) return 2;`
-            // Static-linked entries always count as the builtintab — but
-            // a name that's neither there nor in autoload IS "no such".
+        // Use the free deletebuiltin's probe path — it returns 0 if
+        // the name exists in createbuiltintable(), -1 if absent.
+        // (The static-link path skips the removenode side effect; the
+        // present/absent return is what we need.)
+        let canonical_present = deletebuiltin(name) == 0;
+        if !canonical_present {
+            // c:467 — `if (!bn)`.
+            // c:468-469 — `if(!(flags & FEAT_IGNORE)) return 2;`.
+            // Also check autoload_builtins: a name only in the
+            // autoload ledger (no live builtintab entry) IS the
+            // c:475 deletebuiltin path.
             if !self.autoload_builtins.contains_key(name) {
                 if (flags & FEAT_IGNORE as i32) == 0 {
-                    // c:468
                     return 2; // c:469
                 }
                 return 0;
             }
-            // c:475 — `deletebuiltin(bnam);` Rust path: drop autoload entry.
-            self.autoload_builtins.remove(name); // c:475
+            // c:475 — `deletebuiltin(bnam);` — drop the autoload
+            // ledger entry. The static-link path can't removenode
+            // from the canonical immutable table, but the autoload
+            // ledger is what holds the stub.
+            self.autoload_builtins.remove(name);
             return 0; // c:477
         }
-        // c:470-473 — `if (bn->node.flags & BINF_ADDED) { if (!FEAT_IGNORE)
-        //               return 3; }` else deletebuiltin. zshrs's
-        // `builtintab` is static-linked so every entry there is
-        // semantically BINF_ADDED — can't unload a built-in builtin.
+        // c:470-473 — `if (bn->node.flags & BINF_ADDED)`. zshrs's
+        // canonical entries are always BINF_ADDED.
         if (flags & FEAT_IGNORE as i32) == 0 {
-            // c:471
             return 3; // c:472
         }
         0 // c:477
