@@ -2904,24 +2904,38 @@ pub fn bin_zparseopts(
             // (`-foo=f` redirects --foo into spec f's array). zshrs
             // pushes inline at each match site; replicate the redirect
             // here so the value lands in the mapped target spec.
-            // Without this, `-M f=optf -foo=f` left $optf empty
-            // because the --foo match pushed into spec `-foo`'s own
-            // array `f` instead of following the alias to `optf`.
+            //
+            // C's map_opt_desc recurses through the chain (c:1635) so
+            // multi-hop aliases (`-foo=bar -bar=baz`) resolve all the
+            // way through. Prior Rust port stopped after the FIRST
+            // hop. Re-walk iteratively here with a visited-set guard
+            // so a cycle (a→b→a) returns the original raw_idx instead
+            // of looping forever.
             let idx = {
-                let cur = &descs[raw_idx];
-                if cur.flags & ZOF_MAP != 0 {
-                    let arr_name = cur.arr_name.clone().unwrap_or_default();
-                    if arr_name != cur.name {
-                        descs
-                            .iter()
-                            .position(|d| d.name == arr_name)
-                            .unwrap_or(raw_idx)
-                    } else {
-                        raw_idx
+                let mut cur_idx = raw_idx;
+                let mut visited: std::collections::HashSet<usize> =
+                    std::collections::HashSet::new();
+                loop {
+                    if !visited.insert(cur_idx) {
+                        // c:1631 cycle: fall back to raw_idx.
+                        cur_idx = raw_idx;
+                        break;
                     }
-                } else {
-                    raw_idx
+                    let cur = &descs[cur_idx];
+                    if cur.flags & ZOF_MAP == 0 {
+                        break;
+                    }
+                    let arr_name = cur.arr_name.clone().unwrap_or_default();
+                    if arr_name == cur.name {
+                        break;
+                    }
+                    let next = descs.iter().position(|d| d.name == arr_name);
+                    match next {
+                        Some(n) => cur_idx = n,
+                        None => break, // c:1622-1623 dead-end alias
+                    }
                 }
+                cur_idx
             };
             let dflags = descs[idx].flags;
             let dname = descs[idx].name.clone();
