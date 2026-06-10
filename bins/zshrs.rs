@@ -1237,10 +1237,14 @@ pub fn zshrs_main() {
     }
 
     if parity_mode_selected {
-        unsafe {
-            std::env::set_var("ZSHRS_CACHE", "0");
-        }
-        tracing::info!(mode = ?shell_mode(), "parity mode: ZSHRS_CACHE=0, daemon disabled, plugin_cache replay disabled");
+        // Use the process-local AtomicBool override instead of
+        // exporting `ZSHRS_CACHE=0` in env. The env-var approach
+        // imported `ZSHRS_CACHE` into paramtab during the c:893
+        // env scan, leaking into `${(k)parameters}` and inflating
+        // the count vs reference zsh by 1.
+        zsh::extensions::script_cache::CACHE_DISABLED
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!(mode = ?shell_mode(), "parity mode: cache disabled via override, daemon disabled, plugin_cache replay disabled");
     }
     tracing::info!(mode = ?shell_mode(), "shell mode selected");
 

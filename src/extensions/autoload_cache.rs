@@ -431,8 +431,16 @@ pub fn default_cache_path() -> PathBuf {
     };
     root.join("autoloads.rkyv")
 }
-/// `cache_enabled` — see implementation.
+/// `cache_enabled` — see implementation. Honors the process-local
+/// `script_cache::CACHE_DISABLED` AtomicBool first so parity-mode
+/// init can disable caches without exporting `ZSHRS_CACHE=0` (which
+/// would otherwise leak into `${(k)parameters}`).
 pub fn cache_enabled() -> bool {
+    if crate::extensions::script_cache::CACHE_DISABLED
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return false;
+    }
     !matches!(
         std::env::var("ZSHRS_CACHE").as_deref(),
         Ok("0") | Ok("false") | Ok("no")

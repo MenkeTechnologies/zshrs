@@ -429,8 +429,19 @@ pub fn default_cache_path() -> PathBuf {
         .join(".zshrs/scripts.rkyv")
 }
 
-/// `ZSHRS_CACHE=0|false|no` disables the cache entirely.
+/// Process-local disable flag set by parity-mode flags (`--zsh` etc.)
+/// in bins/zshrs.rs. Preferred over `ZSHRS_CACHE=0` in env so the
+/// env var doesn't leak into `${(k)parameters}` and inflate the
+/// param count vs reference zsh.
+pub static CACHE_DISABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// `ZSHRS_CACHE=0|false|no` (env) or `CACHE_DISABLED=true` (process-
+/// local) disables the cache entirely.
 pub fn cache_enabled() -> bool {
+    if CACHE_DISABLED.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
     !matches!(
         std::env::var("ZSHRS_CACHE").as_deref(),
         Ok("0") | Ok("false") | Ok("no")
