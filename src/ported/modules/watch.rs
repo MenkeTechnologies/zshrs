@@ -295,12 +295,34 @@ pub fn watchlog(inout: i32, u: &libc::utmpx, w: &[String], fmt: &str) {
         emit_event(inout, u, fmt);
         return;
     }
-    // c:469-477 — `"notme"` handling: emit when entry user != current.
+    // c:470-481 — `"notme"` handling: emit when entry user != current.
+    //   if (*w && !strcmp(*w, "notme")) {
+    //       char *username = metafy(u->ut_name, len, META_USEHEAP);
+    //       if (strcmp(username, get_username())) {
+    //           watchlog2(inout, u, fmt, 1, 0);
+    //           return;
+    //       }
+    //       w++;
+    //   }
+    //
+    // C uses `get_username()` — the cached `getpwuid(getuid())` shell
+    // helper that returns the real OS user (utils.c:1075 / Rust port
+    // at utils.rs:1258). Prior port read `$USERNAME` / `$USER` from
+    // paramtab. Three differences:
+    //   1. Security: a script that sets `USERNAME=fake` before the
+    //      watch hook fires would bypass the "notme" filter. C reads
+    //      the real uid → real user name → can't be spoofed.
+    //   2. Correctness: `$USERNAME` and `$USER` may not match the
+    //      real user across su / sudo / chsh boundaries. Only
+    //      getpwuid(getuid()) tracks the actual effective user.
+    //   3. Init order: paramtab is populated after shell init; if
+    //      watch fires before the prompt fully initializes (unusual
+    //      but possible via `-c 'log'`), paramtab may be missing
+    //      USERNAME entirely, defaulting to empty string and
+    //      reporting every login as "notme".
     let mut idx = 0;
     if w.first().map(|s| s.as_str()) == Some("notme") {
-        let current = crate::ported::params::getsparam("USERNAME")
-            .or_else(|| crate::ported::params::getsparam("USER"))
-            .unwrap_or_default();
+        let current = crate::ported::utils::get_username();
         if user_name != current {
             emit_event(inout, u, fmt);
             return;
