@@ -73,7 +73,13 @@ pub fn bin_echotc(
     _func: i32,
 ) -> i32 {
     // c:80
-    const TERM_BAD: i32 = 1 << 1;
+    // c:Src/zsh.h:1985 — `#define TERM_BAD 0x01`. The previous local
+    // shadow `const TERM_BAD: i32 = 1 << 1` was 0x02 — colliding with
+    // TERM_UNKNOWN's 0x02 from zsh_h.rs. When TERMFLAGS carried only
+    // TERM_UNKNOWN, the `& TERM_BAD` check at line 86 false-positived
+    // and `echotc co` returned 1 silently before ensure_termcap_loaded
+    // could attempt the libtermcap lookup. Use the canonical const.
+    use crate::ported::zsh_h::TERM_BAD;
     if argv.is_empty() {
         // c:85
         zwarnnam(name, "missing argument");
