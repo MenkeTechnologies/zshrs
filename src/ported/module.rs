@@ -2508,19 +2508,71 @@ pub fn delete_module(table: &mut modulestab, name: &str) -> i32 {
 /// ```
 ///
 /// Returns true (non-zero) if the named module is currently loaded.
-/// In zshrs's static-link path: a module is "loaded" iff it's
-/// registered in the live `ModuleTable`. The `MOD_UNLOAD` flag check
-/// is skipped because static-link modules cannot be unloaded.
+///
+/// Faithful port of c:1702-1710:
+/// ```c
+/// mod_export int
+/// module_loaded(const char *name)
+/// {
+///     Module m;
+///     return ((m = find_module(name, FINDMOD_ALIASP, NULL)) &&
+///             m->u.handle &&
+///             !(m->node.flags & MOD_UNLOAD));
+/// }
+/// ```
+///
+/// All three gates matter in zshrs's static-link path:
+///   1. `find_module(FINDMOD_ALIASP)` — resolves aliases, returns the
+///      target's modulestab entry (or None on miss).
+///   2. `m->u.handle` — non-null when the module's setup has run; in
+///      the Rust mirror, MOD_INIT_S being set is the structural
+///      equivalent (no dlopen handle to test).
+///   3. `!(m->node.flags & MOD_UNLOAD)` — MOD_UNLOAD is the
+///      "registered + autoload-only" sentinel set by
+///      register_builtin_modules for entries OUTSIDE
+///      zsh_default_loaded (e.g. zsh/files, zsh/system, zsh/zftp).
+///      Without this gate, `${modules[zsh/files]}` reads as "loaded"
+///      from initial register even though no `zmodload zsh/files` has
+///      run — diverging from `zsh -fc` which reports the names as
+///      autoload-pending.
 /// WARNING: param names don't match C — Rust=(table, name) vs C=(name)
 pub fn module_loaded(table: &modulestab, name: &str) -> i32 {
     // c:1703
-    // c:1703 — find_module(name, FINDMOD_ALIASP, NULL)
-    if table.modules.contains_key(name) {
-        // m && m->u.handle
-        1 // c:1709 (loaded, not unloading)
-    } else {
-        0
+    // c:1707 — `find_module(name, FINDMOD_ALIASP, NULL)`: resolve
+    // alias chains via the existing free-fn port (c:1659).
+    // The Rust port returns Option<String> — Some(target) on hit.
+    // Inline the resolution here so we can read the target's flags
+    // without re-locking.
+    let target = match table.modules.get(name) {
+        Some(m) if (m.node.flags & MOD_ALIAS) != 0 => {
+            // c:FINDMOD_ALIASP — chase alias.
+            // m->u.alias is the alias target; the Rust mirror stores
+            // it on `module::aliased` (set by zmodload -A). Probe.
+            match m.alias.as_ref().and_then(|a| table.modules.get(a)) {
+                Some(t) => t,
+                None => return 0, // alias points nowhere → not loaded
+            }
+        }
+        Some(m) => m,
+        None => return 0, // c:1707-1709 — find_module miss.
+    };
+    // c:1708 — `m->u.handle` — non-null on a fully-loaded module.
+    // Static-link analog: MOD_LINKED set + module entry exists in
+    // modulestab means register_module fired (= setup ran). The
+    // dlopen `u.handle` check translates to MOD_LINKED here because
+    // every modulestab entry is a statically-linked module in
+    // zshrs's compile-time-only loader.
+    if (target.node.flags & MOD_LINKED) == 0 {
+        return 0;
     }
+    // c:1709 — `!(m->node.flags & MOD_UNLOAD)`. MOD_UNLOAD is set by
+    // register_builtin_modules on the autoload-only subset
+    // (zsh/files, zsh/system, zsh/zftp, …); cleared by an explicit
+    // `zmodload NAME` once the user wants the module live.
+    if (target.node.flags & MOD_UNLOAD) != 0 {
+        return 0;
+    }
+    1
 }
 
 /// Port of `dyn_setup_module(Module m)` from `Src/module.c:1726`.
