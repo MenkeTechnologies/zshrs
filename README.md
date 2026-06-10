@@ -554,11 +554,16 @@ binary, plus a **JetBrains IDE plugin** that drives both.
 zshrs --lsp                  # LSP server over stdio
 zshrs --dap HOST:PORT        # DAP debugger; connect-back to IDE listener
 zshrs --dump-reflection      # JSON dump of builtins / keywords / options
+zshrs --dump-plugins         # JSON dump of every sourced plugin grouped
+                             # by manager (zinit / oh-my-zsh / prezto /
+                             # antidote / antigen / zplug / loose);
+                             # feeds the IDE's External Libraries view
 zshrs --docs <name>          # render the LSP hover card for <name>
 ```
 
-All four flags dispatch from `bins/zshrs.rs` into `src/extensions/lsp.rs`
-and `src/extensions/dap.rs`. Both modules are dependency-free additions
+All five flags dispatch from `bins/zshrs.rs` into `src/extensions/lsp.rs`,
+`src/extensions/dap.rs`, and `src/extensions/plugin_cache.rs`. The LSP and
+DAP modules are dependency-free additions
 (no `lsp-server` / `lsp-types` / `dap-types` crates) — Content-Length
 framing + JSON-RPC are hand-rolled on top of `serde_json` to keep the
 default build lean.

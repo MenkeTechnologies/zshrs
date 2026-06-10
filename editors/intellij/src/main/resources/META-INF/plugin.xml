@@ -197,6 +197,23 @@
             secondary="false"
             icon="com.menketechnologies.zshrs.ZshrsIcons.FILE"
             factoryClass="com.menketechnologies.zshrs.toolwindow.ZshrsReflectionToolWindowFactory"/>
+
+        <!-- External Libraries: one synthetic library per zsh plugin
+             that zshrs has sourced. Reads
+             `~/.zshrs/plugins.db::plugins` (or `$ZSHRS_HOME/plugins.db`)
+             via the `zshrs ‑‑dump‑plugins` flag and groups by detected
+             plugin manager (zinit, oh-my-zsh, prezto, antidote, antigen,
+             zplug, zsh-more-completions, zpwr, or loose). Each entry
+             shows up under the project's External Libraries node so
+             everything indexable, cmd-clickable, and find-usages-able. -->
+        <additionalLibraryRootsProvider
+            implementation="com.menketechnologies.zshrs.library.ZshrsLibraryRootProvider"/>
+
+        <!-- Kick off the first plugin-cache fetch at project open so the
+             External Libraries node is populated before the user
+             expands it. -->
+        <postStartupActivity
+            implementation="com.menketechnologies.zshrs.library.ZshrsPluginStartupActivity"/>
     </extensions>
 
     <actions>

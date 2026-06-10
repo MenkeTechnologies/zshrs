@@ -25,15 +25,16 @@ A JetBrains-platform plugin that drives the LSP and DAP servers compiled into th
 - [\[0x03\] LSP](#0x03-lsp)
 - [\[0x04\] Code Actions](#0x04-code-actions)
 - [\[0x05\] Reflection Tool Window](#0x05-reflection-tool-window)
-- [\[0x06\] Run / Debug](#0x06-run--debug)
-- [\[0x07\] DAP Protocol](#0x07-dap-protocol)
-- [\[0x08\] Refactor / Rename](#0x08-refactor--rename)
-- [\[0x09\] Configuration](#0x09-configuration)
-- [\[0x0A\] Logs](#0x0a-logs)
-- [\[0x0B\] Building](#0x0b-building)
-- [\[0x0C\] Plugin Architecture](#0x0c-plugin-architecture)
-- [\[0x0D\] Version Compatibility](#0x0d-version-compatibility)
-- [\[0x0E\] Limitations](#0x0e-limitations)
+- [\[0x06\] External Libraries](#0x06-external-libraries)
+- [\[0x07\] Run / Debug](#0x07-run--debug)
+- [\[0x08\] DAP Protocol](#0x08-dap-protocol)
+- [\[0x09\] Refactor / Rename](#0x09-refactor--rename)
+- [\[0x0A\] Configuration](#0x0a-configuration)
+- [\[0x0B\] Logs](#0x0b-logs)
+- [\[0x0C\] Building](#0x0c-building)
+- [\[0x0D\] Plugin Architecture](#0x0d-plugin-architecture)
+- [\[0x0E\] Version Compatibility](#0x0e-version-compatibility)
+- [\[0x0F\] Limitations](#0x0f-limitations)
 - [\[0xFF\] License](#0xff-license)
 
 ---
@@ -68,7 +69,7 @@ The `zshrs` binary must be on `$PATH`, or configured under *Settings → Tools �
 
 | Surface | Behavior |
 |---------|----------|
-| File association | `.zsh`, `.zshrc`, `.zshenv`, `.zlogin`, `.zlogout`, `.zprofile`, `.zpreztorc` (configurable; see [§0x09](#0x09-configuration)) |
+| File association | `.zsh`, `.zshrc`, `.zshenv`, `.zlogin`, `.zlogout`, `.zprofile`, `.zpreztorc` (configurable; see [§0x0A](#0x0a-configuration)) |
 | Lexer | Hand-rolled in `ZshrsLexer.kt` — instant first-paint highlighting before the LSP semantic-tokens response lands |
 | Color slots | **41** stable `ZSHRS_*` `TextAttributesKey`s under *Settings → Editor → Color Scheme → zshrs* |
 | Brace matching | `{` / `}`, `(` / `)`, `[` / `]` via `ZshrsBraceMatcher.kt` — also pairs `[[` / `]]` and `((` / `))` conditional/arithmetic forms |
@@ -110,7 +111,7 @@ The LSP server is in-process inside the `zshrs` binary — `zshrs --lsp` spawns 
 | `documentHighlight` | same scan as references |
 | `documentSymbol` | `function foo`, `foo()`, `alias`, `local`/`typeset`/`export` decls |
 | `foldingRange` | `{ … }`, `do … done`, `case … esac` blocks + ≥3 consecutive `#` comment runs |
-| `rename` (with `prepareRename`) | scalars / arrays / hashes / function / alias names; cross-file for package symbols (see [§0x08](#0x08-refactor--rename)) |
+| `rename` (with `prepareRename`) | scalars / arrays / hashes / function / alias names; cross-file for package symbols (see [§0x09](#0x09-refactor--rename)) |
 | `semanticTokens/full` | token classes mirroring the lexer; LSP overlay refines what the hand lexer approximates |
 | `codeAction` | Extract Variable / Constant / Function — see [§0x04](#0x04-code-actions) |
 | `formatting` | trailing-whitespace strip, indent normalize, final-newline guarantee — Cmd/Ctrl-Opt-`L` |
@@ -134,7 +135,7 @@ Coverage is **gated by `tests/doc_coverage_audit.rs`** — 7 tests, every canoni
 
 - **Stdio**, Content-Length-framed JSON-RPC. Hand-rolled framer on top of `serde_json` — no `lsp-server` / `lsp-types` crates.
 - Optional `ZSHRS_LSP_LOG=<path>` env var dumps every request/response to a file for debugging.
-- Server log lives at `~/.zshrs/zshrs.log` (see [§0x0A](#0x0a-logs)).
+- Server log lives at `~/.zshrs/zshrs.log` (see [§0x0B](#0x0b-logs)).
 
 ---
 
@@ -188,7 +189,62 @@ The "Extensions" tab includes daemon-backed `z*` builtins (`zd`, `zcache`, `zls`
 
 ---
 
-## [0x06] RUN / DEBUG
+## [0x06] EXTERNAL LIBRARIES
+
+Every zsh plugin that zshrs has sourced appears under **External Libraries** in the Project view — indexable, cmd-clickable, find-usages-able, and renamable across plugin boundaries.
+
+### Data source
+
+The Rust side exposes `zshrs --dump-plugins` (added alongside `--dump-reflection`). It reads the `plugins` table in `~/.zshrs/plugins.db` (or `$ZSHRS_HOME/plugins.db`) — the same SQLite cache that backs sub-millisecond `source` replays in `src/extensions/plugin_cache.rs` — and groups every file path by inferred plugin manager:
+
+| Manager | Path shape | Library name shape |
+|---------|-----------|-------------------|
+| `zinit` | `…/.zinit/plugins/<user>---<repo>/…` or `…/zinit/plugins/<user>---<repo>/…` | `<user>/<repo>` |
+| `oh-my-zsh` | `…/.oh-my-zsh/{plugins,custom/plugins,themes,custom/themes}/<name>/…` | `<name>` (themes get a `.theme` suffix) |
+| `prezto` | `…/.zprezto/modules/<name>/…` | `<name>` |
+| `antidote` | `…/.cache/antidote/<user>/<repo>/…` or `…/antidote/repos/<user>/<repo>/…` | `<user>/<repo>` |
+| `antigen` | `…/.antigen/bundles/<user>/<repo>/…` | `<user>/<repo>` |
+| `zplug` | `…/.zplug/repos/<user>/<repo>/…` | `<user>/<repo>` |
+| `zsh-more-completions` | `…/zsh-more-completions/…` | `zsh-more-completions` |
+| `zpwr` | `…/.zpwr/…` or `…/zpwr/…` | `zpwr` |
+| `loose` | anything else | parent-dir basename |
+
+### JSON shape
+
+```json
+{
+  "schema": 1,
+  "plugins": [
+    {"manager": "zinit",
+     "name": "zsh-users/zsh-autosuggestions",
+     "root": "/Users/wizard/.zinit/plugins/zsh-users---zsh-autosuggestions"},
+    {"manager": "oh-my-zsh", "name": "git",
+     "root": "/Users/wizard/.oh-my-zsh/plugins/git"}
+  ]
+}
+```
+
+### Plugin-side wiring
+
+`com.menketechnologies.zshrs.library.ZshrsLibraryRootProvider` extends `AdditionalLibraryRootsProvider` and returns one `SyntheticLibrary` per plugin entry, with a stable `comparisonId` of `zshrs:<manager>:<name>` so the platform caches library roots across IDE restarts. The Project view tree node label is `<name> (<manager>)`, the location is the absolute root directory, and the icon matches the zshrs file-type icon.
+
+`ZshrsPluginRegistry` (project-scoped service) runs `zshrs --dump-plugins` on `AppExecutorUtil` — never on the indexer thread, which would block the read action. First call returns an empty snapshot and triggers an async fetch; once the fetch lands, `AdditionalLibraryRootsListener.libraryRootsChanged` fires and the platform re-queries the provider.
+
+A `postStartupActivity` (`ZshrsPluginStartupActivity`) kicks off the first fetch at project open so the External Libraries node is populated before the user expands it.
+
+### Refresh
+
+The **Refresh** toolbar button on the **zshrs** tool window (right edge of the IDE) re-runs both `--dump-reflection` (for the tool-window tabs) and `--dump-plugins` (for the External Libraries node). Newly-sourced plugins show up without an IDE restart.
+
+### Empty state
+
+If the user has never run `.zshrc` under zshrs, the `plugins` table is empty and External Libraries shows nothing. The first interactive zshrs session populates the cache; the next IDE Refresh picks it up.
+
+Pinned by `ZshrsPluginDumpParserTest` — 5 tests covering canonical input, missing keys, malformed JSON, and degraded-row dropping.
+
+---
+
+## [0x07] RUN / DEBUG
 
 ### Run
 
@@ -215,7 +271,7 @@ DAP-backed, over a loopback TCP socket. Plugin spawns `zshrs --dap 127.0.0.1:<po
 
 ---
 
-## [0x07] DAP PROTOCOL
+## [0x08] DAP PROTOCOL
 
 Plugin side (`com.menketechnologies.zshrs.dap`):
 
@@ -234,7 +290,7 @@ DAP requests handled: `initialize`, `launch`, `setBreakpoints`, `configurationDo
 
 ---
 
-## [0x08] REFACTOR / RENAME
+## [0x09] REFACTOR / RENAME
 
 **Shift-F6** on any of these identifiers renames it across the workspace via `textDocument/rename`:
 
@@ -251,7 +307,7 @@ Implementation: plugin handler in `ZshrsRenameHandler.kt`; server-side rename in
 
 ---
 
-## [0x09] CONFIGURATION
+## [0x0A] CONFIGURATION
 
 *Settings → Tools → zshrs*:
 
@@ -272,7 +328,7 @@ Color scheme entries: *Settings → Editor → Color Scheme → zshrs* (**41 sub
 
 ---
 
-## [0x0A] LOGS
+## [0x0B] LOGS
 
 Two append-only logs, both under `~/.zshrs/` (or `$ZSHRS_HOME/` when that env var is set):
 
@@ -301,7 +357,7 @@ Persistent setting (no env var needed each session): set `[log] level = "debug"`
 
 ---
 
-## [0x0B] BUILDING
+## [0x0C] BUILDING
 
 ```sh
 cd editors/intellij
@@ -318,7 +374,7 @@ First build downloads the IntelliJ Platform SDK (~1 GB), takes a few minutes, an
 
 ---
 
-## [0x0C] PLUGIN ARCHITECTURE
+## [0x0D] PLUGIN ARCHITECTURE
 
 ```
 editors/intellij/
@@ -369,6 +425,11 @@ editors/intellij/
     │   │   └── ZshrsEvaluator.kt             # Evaluate dialog backend
     │   ├── toolwindow/
     │   │   └── ZshrsReflectionToolWindow.kt
+    │   ├── library/
+    │   │   ├── PluginEntry.kt                # (manager, name, root) record
+    │   │   ├── ZshrsPluginRegistry.kt        # project-scoped cache; runs `zshrs --dump-plugins`
+    │   │   ├── ZshrsLibraryRootProvider.kt   # AdditionalLibraryRootsProvider → External Libraries
+    │   │   └── ZshrsPluginStartupActivity.kt # postStartupActivity: kick off first fetch
     │   └── actions/
     │       └── RunZshrsFileAction.kt
     └── resources/
@@ -382,6 +443,7 @@ The Rust side lives in:
 |--------|---------|
 | `src/extensions/lsp.rs` | LSP server (`zshrs --lsp`) — hover, completion, codeAction, rename, semanticTokens, foldingRange, diagnostics, formatting |
 | `src/extensions/dap.rs` | DAP server (`zshrs --dap HOST:PORT`) — breakpoints, stepping, scopes, variables, evaluate |
+| `src/extensions/plugin_cache.rs` | `plugins` SQLite table + classification helpers + `dump_plugins_json()` (consumed by the IntelliJ External Libraries view) |
 | `src/extensions/zsh_*_docs.rs` | Yodl-derived hover bodies (4 files, ~1900 lines total) — `zsh_builtin_docs.rs`, `zsh_option_docs.rs`, `zsh_keyword_docs.rs`, `zsh_special_var_docs.rs` |
 | `src/extensions/ext_builtins.rs` | `EXT_BUILTIN_NAMES` const (74) — every in-process zshrs-only builtin |
 | `daemon/builtins.rs` | `ZSHRS_BUILTIN_NAMES` const (23) — daemon-backed `z*` builtins |
@@ -393,13 +455,13 @@ The Rust side lives in:
 
 ---
 
-## [0x0D] VERSION COMPATIBILITY
+## [0x0E] VERSION COMPATIBILITY
 
 Plugin version tracks the zshrs Cargo workspace version. `gradle.properties` controls the supported IDE range via `pluginSinceBuild` / `pluginUntilBuild`. Currently targets `2024.2.4` SDK against builds `242..261.*` — every paid JetBrains IDE on **2024.2 +** loads it (RustRover, IDEA Ultimate, GoLand, PyCharm Pro, WebStorm, RubyMine, PhpStorm, CLion, Rider, DataGrip, Aqua). Community editions don't have the LSP API, so the plugin won't load there.
 
 ---
 
-## [0x0E] LIMITATIONS
+## [0x0F] LIMITATIONS
 
 - **No PSI tree** — every symbol-navigation feature (Cmd-click, Cmd-B, Find Usages, rename) routes through the LSP server. Disabling the LSP under Settings disables them all.
 - **Debugger v1**: no conditional breakpoints, no hit-count breakpoints, no exception breakpoints, no watch expressions, no Set Value, single-thread only.

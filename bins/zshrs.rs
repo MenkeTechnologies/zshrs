@@ -563,6 +563,10 @@ and other LSP/DAP clients — Helix, Neovim, VS Code, …):
   --dump-reflection      emit the JSON consumed by the IntelliJ "zshrs"
                          reflection tool window (builtins / keywords / options
                          / special_vars, each tagged by category)
+  --dump-plugins         emit the JSON consumed by the IntelliJ External
+                         Libraries view: every sourced plugin grouped by
+                         manager (zinit / oh-my-zsh / prezto / antidote /
+                         antigen / zplug / zsh-more-completions / zpwr / loose)
   --docs NAME            render the hover card the LSP would return for NAME
                          (used by the IntelliJ tool window's docs popup)
 
@@ -1393,6 +1397,16 @@ pub fn zshrs_main() {
     // reflection tool window. One top-level key per category.
     if args.iter().any(|a| a == "--dump-reflection") {
         println!("{}", zsh::lsp::dump_reflection_json());
+        return;
+    }
+
+    // --dump-plugins: emit the JSON consumed by the IntelliJ External
+    // Libraries view. Groups every entry in the plugin_cache SQLite
+    // by inferred plugin manager (zinit / oh-my-zsh / prezto / antidote /
+    // antigen / zplug / zsh-more-completions / zpwr / loose). Empty array
+    // when the cache is empty (first run before any plugin is sourced).
+    if args.iter().any(|a| a == "--dump-plugins") {
+        println!("{}", zsh::plugin_cache::dump_plugins_json());
         return;
     }
 
