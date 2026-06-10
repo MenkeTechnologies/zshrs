@@ -414,67 +414,184 @@ pub fn checkptycmd(cmd: &mut ptycmd) {
     cmd.buffer.push(c);
 }
 
-/// Read from a pty, optionally matching a pattern.
-/// Port of `ptyread(char *nam, Ptycmd cmd, char **args, int noblock, int mustmatch)` from Src/Modules/zpty.c:548 — `poll(2)` +
-/// `read(2)` loop that bails when `pattern` is found in the
-/// accumulated buffer or when EOF/timeout fires.
-/// WARNING: param names don't match C — Rust=(fd, pattern, timeout_ms) vs C=(nam, cmd, args, noblock, mustmatch)
-pub fn ptyread(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io::Result<String> {
-    // c:548
-    let mut buffer = vec![0u8; 4096];
-    let mut result = Vec::new();
+/// Port of `ptyread(char *nam, Ptycmd cmd, char **args, int noblock, int mustmatch)`
+/// from Src/Modules/zpty.c:548-710. Reads 1 byte at a time from the
+/// pty master, metafies imeta bytes (c:642-646), pauses on each
+/// iteration to honor `errflag/breaks/retflag/contflag` (c:678),
+/// flushes to stdout in chunks when no setparam target is given
+/// (c:649-653), and bails as soon as `pattern` matches via
+/// `pattry` (c:680). Final disposition: setsparam(args[0], buf)
+/// if args[0] is set; otherwise write the accumulated buffer to
+/// stdout (c:696-701). Returns `0` on success-with-data,
+/// `cmd->fin + 1` (1/2) otherwise (c:704).
+///
+/// Deferred (separate port iteration): the `cmd->old` / `cmd->read`
+/// pre-buffer machinery at c:572-588, c:683-694 — these fields
+/// don't exist on the Rust `ptycmd` struct yet; without them the
+/// nblock-EWOULDBLOCK-stash path at c:682-694 falls through to
+/// the standard exit (still correct return value, just slower
+/// next-call because the unmatched prefix isn't carried).
+pub fn ptyread(
+    nam: &str,
+    cmd: &mut ptycmd,
+    args: &[&str],
+    noblock: bool,
+    mustmatch: bool,
+) -> i32 {
+    // c:550
+    let mut used: usize = 0;
+    let mut seen: bool = false;
+    let mut matchok: bool = false;
+    let mut ret: isize = 0;
+    let mut prog: Option<crate::ported::pattern::Patprog> = None; // c:552
 
-    #[cfg(unix)]
-    {
-        if let Some(timeout) = timeout_ms {
+    // c:554-568 — pattern compile from args[1] if present.
+    if !args.is_empty() && args.len() >= 2 {
+        if args.len() > 2 {
+            // c:557-559
+            eprintln!("{}: too many arguments", nam);
+            return 1;
+        }
+        let p = args[1];
+        // c:565 — `patcompile(p, PAT_ZDUP, NULL)` — PAT_ZDUP = 0x100 per zsh.h.
+        match crate::ported::pattern::patcompile(p, 0x100, None) {
+            Some(pp) => prog = Some(pp),
+            None => {
+                // c:566
+                eprintln!("{}: bad pattern: {}", nam, p);
+                return 1;
+            }
+        }
+    } else {
+        // c:569-570 — `fflush(stdout)` before any unbuffered emit.
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+    }
+
+    // c:579-582 — `buf = zhalloc(256 + 1)` (no cmd->old machinery yet).
+    let mut buf: Vec<u8> = Vec::with_capacity(257);
+
+    // c:589 — `do { ... } while ();` loop.
+    use std::sync::atomic::Ordering::Relaxed;
+    let setparam_target = args.first().copied(); // None ⇔ C's `!*args` (stdout).
+
+    loop {
+        // c:590-628 — noblock poll branch. Probe via poll(2) (Rust
+        // doesn't need the HAVE_SELECT/FIONREAD ifdef split — poll is
+        // universally available on the supported targets).
+        if noblock {
             let mut pfd = libc::pollfd {
-                fd,
+                fd: cmd.master_fd,
                 events: libc::POLLIN,
                 revents: 0,
             };
-
-            let ret = unsafe { libc::poll(&mut pfd, 1, timeout) };
-            if ret < 0 {
-                return Err(io::Error::last_os_error());
+            let pollret = unsafe { libc::poll(&mut pfd, 1, 0) };
+            // c:626 — `if (pollret == 0) break;`
+            if pollret == 0 {
+                break;
             }
-            if ret == 0 {
-                return Ok(String::new());
+            // c:612-625 — set-nonblock + read-1 fallback omitted: the
+            // Rust port doesn't carry `cmd->read` yet (see header).
+        }
+        // c:629-633 — refresh fin-state on every loop iteration when
+        // we haven't read anything yet this round.
+        if ret == 0 {
+            checkptycmd(cmd);
+            if cmd.finished {
+                break; // c:632
             }
         }
-
-        loop {
-            let n =
-                unsafe { libc::read(fd, buffer.as_mut_ptr() as *mut libc::c_void, buffer.len()) };
-
-            if n < 0 {
-                let err = io::Error::last_os_error();
-                if err.kind() == io::ErrorKind::WouldBlock {
+        // c:634 — `read(cmd->fd, buf + used, 1)` single-byte read.
+        let mut byte: u8 = 0;
+        ret = unsafe { libc::read(cmd.master_fd, &mut byte as *mut u8 as *mut _, 1) } as isize;
+        if ret == 1 {
+            // c:642-646 — `if (imeta(c)) { buf[used++] = Meta; buf[used++] = c ^ 32; } else buf[used++] = c;`
+            if crate::ported::ztype_h::imeta(byte) {
+                buf.push(crate::ported::zsh_h::Meta);
+                buf.push(byte ^ 32);
+                used += 2;
+            } else {
+                buf.push(byte);
+                used += 1;
+            }
+            seen = true; // c:647
+            // c:648-658 — when buf grows and no setparam target, flush
+            // to stdout and reset; else grow the buffer.
+            if used >= 255 && setparam_target.is_none() {
+                let mut flush = std::mem::take(&mut buf);
+                let len = crate::ported::utils::unmetafy(&mut flush);
+                flush.truncate(len);
+                use std::io::Write;
+                let _ = std::io::stdout().write_all(&flush);
+                used = 0;
+            }
+        }
+        // c:662-677 — without a pattern: break on EOF or trailing-newline
+        // when args[0] is set; with a pattern: break only on hard read error.
+        if prog.is_none() {
+            if ret <= 0 {
+                break; // c:663 — EOF or hard error
+            }
+            // c:663-664 — `*args && buf[used-1] == '\n' && (used < 2 || buf[used-2] != Meta)`
+            if setparam_target.is_some()
+                && used > 0
+                && buf[used - 1] == b'\n'
+                && (used < 2 || buf[used - 2] != crate::ported::zsh_h::Meta)
+            {
+                break;
+            }
+        } else if ret < 0 {
+            // c:667-676 — with pattern: break on read error UNLESS EWOULDBLOCK/EAGAIN.
+            let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if eno != libc::EWOULDBLOCK && eno != libc::EAGAIN {
+                break;
+            }
+        }
+        // c:678 — `while (!(errflag || breaks || retflag || contflag) && used < READ_MAX && ...)`
+        if crate::ported::utils::errflag.load(Relaxed) != 0
+            || crate::ported::builtin::BREAKS.load(Relaxed) != 0
+            || crate::ported::exec::retflag.load(Relaxed) != 0
+            || crate::ported::builtin::CONTFLAG.load(Relaxed) != 0
+        {
+            break;
+        }
+        if used >= READ_MAX {
+            break;
+        }
+        // c:680 — `prog && ret && (matchok = pattry(prog, buf))` early-exit.
+        if let Some(ref pp) = prog {
+            if ret > 0 {
+                let s = String::from_utf8_lossy(&buf);
+                if crate::ported::pattern::pattry(pp, &s) {
+                    matchok = true;
                     break;
-                }
-                return Err(err);
-            }
-
-            if n == 0 {
-                break;
-            }
-
-            result.extend_from_slice(&buffer[..n as usize]);
-
-            if result.len() >= READ_MAX {
-                break;
-            }
-
-            if let Some(pat) = pattern {
-                if let Ok(s) = String::from_utf8(result.clone()) {
-                    if s.contains(pat) {
-                        break;
-                    }
                 }
             }
         }
     }
 
-    String::from_utf8(result).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    // c:696-701 — output disposition: setsparam(target, buf) or
+    // write the unwritten tail to stdout.
+    if let Some(target) = setparam_target {
+        let s = String::from_utf8_lossy(&buf).to_string();
+        let _ = crate::ported::params::setsparam(target, &s);
+    } else if used > 0 {
+        let mut flush = buf;
+        let len = crate::ported::utils::unmetafy(&mut flush);
+        flush.truncate(len);
+        use std::io::Write;
+        let _ = std::io::stdout().write_all(&flush);
+    }
+
+    // c:703-709 — final return.
+    //   int r = cmd->fin + 1;
+    //   if (seen && (!prog || matchok || !mustmatch)) r = 0;
+    //   return r;
+    let mut r: i32 = if cmd.finished { 2 } else { 1 };
+    if seen && (prog.is_none() || matchok || !mustmatch) {
+        r = 0;
+    }
+    r
 }
 
 /// Write a string to a pty's master end.
@@ -683,25 +800,29 @@ pub fn bin_zpty(
             let r = ptywrite(cmd, &tail, nonl);
             (r, output)
         } else if OPT_ISSET(ops, b'r') {
+            // c:792-808 — symmetric `-r` arm: same prelude as `-w`,
+            // then dispatch:
+            //   ptyread(nam, p, args+1, OPT_ISSET(ops,'t'), OPT_ISSET(ops,'m'))
+            // c:795
             if args.is_empty() {
-                return (1, "zpty: -r requires a pty name\n".to_string());
+                return (1, "zpty: missing pty command name\n".to_string());
             }
-
             let name = args[0];
-            let pattern = OPT_ARG(ops, b'm');
-            let timeout: Option<i32> = OPT_ARG(ops, b'T').and_then(|s| s.parse().ok());
-
-            if let Some(cmd) = cmds.get(name) {
-                match ptyread(cmd.master_fd, pattern, timeout) {
-                    Ok(data) => {
-                        output.push_str(&data);
-                        (0, output)
-                    }
-                    Err(e) => (1, format!("zpty: read failed: {}\n", e)),
-                }
-            } else {
-                (1, format!("zpty: no such pty command: {}\n", name))
+            // c:798
+            let cmd = match cmds.get_mut(name) {
+                Some(c) => c,
+                None => return (1, format!("zpty: no such pty command: {}\n", name)),
+            };
+            // c:802-803 — `if (p->fin) return 2;`
+            if cmd.finished {
+                return (2, output);
             }
+            // c:805-807
+            let tail: Vec<&str> = args[1..].to_vec();
+            let noblock = OPT_ISSET(ops, b't');
+            let mustmatch = OPT_ISSET(ops, b'm');
+            let r = ptyread(_nam, cmd, &tail, noblock, mustmatch);
+            (r, output)
         } else if OPT_ISSET(ops, b't') {
             // c:825-836 — `-t` arm: "is the child still running?"
             //   if (!*args) { zwarnnam(nam, "missing pty command name"); return 1; }
@@ -1267,18 +1388,17 @@ mod tests {
         assert_ne!(r, 0, "closed fd → nonzero per c:739");
     }
 
-    /// c:358 — `ptyread(-1, _, timeout=0)` with zero-ms timeout returns
-    /// Ok empty or Err. Pin no-panic + safe handling (port may swallow
-    /// EBADF as immediate EOF / empty string).
+    /// c:548 — `ptyread(nam, cmd, [], noblock=true, mustmatch=false)`
+    /// on a closed master_fd: noblock poll returns 0 (no readable fd
+    /// → no data ready) so the loop breaks immediately with `seen=0`.
+    /// Final return: `cmd->fin + 1` (1 if checkptycmd hasn't flagged
+    /// the child yet, 2 if it has) per c:704. Pin nonzero + no panic.
     #[test]
     fn ptyread_invalid_fd_no_panic() {
         let _g = crate::test_util::global_state_lock();
-        let r = ptyread(-1, None, Some(0));
-        // Either Err (read fails) or Ok("") (immediate EOF) — pin no panic.
-        match r {
-            Ok(s) => assert!(s.is_empty() || !s.is_empty(), "Ok variant accepted"),
-            Err(_) => {}
-        }
+        let mut cmd = ptycmd::new("dummy", vec![], -1, 0, false, false);
+        let r = ptyread("zpty", &mut cmd, &[], true, false);
+        assert_ne!(r, 0, "no data + no pattern + noblock → nonzero per c:704");
     }
 
     /// c:761-782 — module setup_ / boot_ return 0.
