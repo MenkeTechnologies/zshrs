@@ -505,11 +505,20 @@ pub fn bin_stat(
     let mut array_out: Vec<String> = Vec::new();
     let show_type = ops[b't' as usize]; // c: -t
     let mut local_flags = flags;
-    // c:513 — `if (OPT_ISSET(ops,'s') || !OPT_ISSET(ops,'r'))` STF_STRING.
-    if ops[b's' as usize] {
+    // c:510-513 — `if (OPT_ISSET(ops,'g')) { flags |= STF_GMT;
+    //                                        ops->ind['s'] = 1; }`
+    // -g picks gmtime over localtime (consumed by stattimeprint at c:201)
+    // AND auto-enables string formatting since raw epoch seconds carry
+    // no timezone semantics.
+    if ops[b'g' as usize] {
+        local_flags |= STF_GMT; // c:511
+        ops[b's' as usize] = true; // c:512
+    }
+    // c:514-515 — `if (OPT_ISSET(ops,'s') || OPT_ISSET(ops,'r'))` STF_STRING.
+    if ops[b's' as usize] || ops[b'r' as usize] {
         local_flags |= STF_STRING;
-    } // c:514
-      // c:516 — `if (OPT_ISSET(ops,'r') || !OPT_ISSET(ops,'s'))` STF_RAW.
+    }
+    // c:516 — `if (OPT_ISSET(ops,'r') || !OPT_ISSET(ops,'s'))` STF_RAW.
     if ops[b'r' as usize] || !ops[b's' as usize] {
         // c:516
         local_flags |= STF_RAW;
