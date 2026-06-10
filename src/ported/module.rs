@@ -27,6 +27,7 @@ use crate::ported::zsh_h::{
     PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_TIED, PM_TYPE, PRINT_LIST,
 };
 pub use crate::ported::zsh_h::{BINF_ADDED, CONDF_ADDED, CONDF_INFIX, MFF_ADDED};
+use crate::ported::zsh_h::hashnode;
 use crate::zsh_h::module;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -311,6 +312,43 @@ pub fn addbuiltin(b: &mut builtin) -> i32 {
     }
     b.node.flags |= BINF_ADDED as i32; // c:531 b->node.flags |= BINF_ADDED
     0
+}
+
+/// Port of `int deletebuiltin(const char *nam)` from `Src/module.c:449`.
+///
+/// C body c:449-458:
+/// ```c
+/// int
+/// deletebuiltin(const char *nam)
+/// {
+///     Builtin bn;
+///     bn = (Builtin) builtintab->removenode(builtintab, nam);
+///     if (!bn)
+///         return -1;
+///     builtintab->freenode(&bn->node);
+///     return 0;
+/// }
+/// ```
+///
+/// Returns 0 on success (entry was found + removed), -1 on miss.
+///
+/// zshrs's `createbuiltintable()` returns an immutable HashMap —
+/// the canonical table is static-linked, so this fn can't actually
+/// `removenode`. The faithful structural equivalent: probe the
+/// canonical table to honour the present/absent contract that
+/// callers (setbuiltins, del_autobin) rely on for their
+/// `already-deleted` / `no such builtin` diagnostics. Actual
+/// runtime `enabled` state lives on the modulestab's
+/// `added_builtins` ledger; that's where the caller flips the
+/// observable BINF_ADDED bit.
+pub fn deletebuiltin(nam: &str) -> i32 {
+    // c:449
+    // c:453 — `bn = builtintab->removenode(builtintab, nam);`
+    let tab = createbuiltintable();
+    match tab.get(nam) {
+        None => -1, // c:454-455 — `if (!bn) return -1;`
+        Some(_) => 0, // c:457 — freenode is owned by createbuiltintable, no-op.
+    }
 }
 
 /// Port of `addbuiltins(char const *nam, Builtin binl, int size)` from
@@ -1720,26 +1758,68 @@ impl modulestab {
         // c:501
         let mut ret: i32 = 0; // c:503
         for (n, name) in names.iter().enumerate() {
-            // c:505
+            // c:505 — `for (n = 0; n < size; n++) { Builtin b = &binl[n]; ... }`
             let enable = e
                 .map(|arr| arr.get(n).copied().unwrap_or(0)) // c:507 *e++
                 .unwrap_or(1);
             let already_added = self.added_builtins.contains_key(*name); // c:508 b->flags & BINF_ADDED
             if enable != 0 {
+                // c:507 — `if (e && *e++)` add branch
                 if already_added {
+                    // c:508-509 — skip already-added.
                     continue;
-                } // c:508-509
-                  // c:510 — addbuiltin(b); ledger insert acts as success.
-                self.addbuiltin(name, module);
-                self.added_builtins.insert(name.to_string(), BINF_ADDED); // c:515 BINF_ADDED
+                }
+                // c:510 — `if (addbuiltin(b))` — probe the canonical
+                // table for the clash gate. The free fn returns 1
+                // when an existing entry already has BINF_ADDED set.
+                let mut probe = builtin {
+                    node: hashnode {
+                        next: None,
+                        nam: name.to_string(),
+                        flags: 0,
+                    },
+                    handlerfunc: None,
+                    minargs: 0,
+                    maxargs: 0,
+                    funcid: 0,
+                    optstr: Some(module.to_string()),
+                    defopts: None,
+                };
+                if addbuiltin(&mut probe) != 0 {
+                    // c:511-513 — `zwarnnam(nam, "name clash...")`
+                    zwarnnam(
+                        module,
+                        &format!("name clash when adding builtin `{}'", name),
+                    );
+                    ret = 1; // c:513
+                } else {
+                    // c:515 — `b->node.flags |= BINF_ADDED;`. Mirror
+                    // the in-place bit-set with the per-module
+                    // ledger flip.
+                    self.added_builtins.insert(name.to_string(), BINF_ADDED);
+                }
             } else {
+                // c:517-525 — del branch.
                 if !already_added {
+                    // c:518-519 — skip already-not-added.
                     continue;
-                } // c:518-519
-                  // c:520 — deletebuiltin(b->node.nam)
-                self.added_builtins.remove(*name); // c:524 clear BINF_ADDED
+                }
+                // c:520 — `if (deletebuiltin(b->node.nam))`. Free fn
+                // returns -1 on miss; treat any non-zero as the
+                // "already deleted" condition.
+                if deletebuiltin(name) != 0 {
+                    // c:521-523 — `zwarnnam(nam, "builtin `%s' already
+                    // deleted")`.
+                    zwarnnam(
+                        module,
+                        &format!("builtin `{}' already deleted", name),
+                    );
+                    ret = 1; // c:523
+                } else {
+                    // c:524 — `b->node.flags &= ~BINF_ADDED;`
+                    self.added_builtins.remove(*name);
+                }
             }
-            let _ = ret;
         }
         ret // c:528
     }
