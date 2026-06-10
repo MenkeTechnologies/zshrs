@@ -231,16 +231,38 @@ impl style_table {
         }
         // c:344-385 — Calculate weight: high 32 bits = colon-component
         // count, low 32 bits = sum of per-component specificity (0/1/2).
+        //
+        // Scoring per component:
+        //   `*` (alone in component, must be followed by NUL or `:`) → 0
+        //   contains a pattern metachar (`( | * [ < ? # ^`) → 1
+        //   plain literal → 2
+        //
+        // Prior Rust port omitted the c:365 lookahead `(!str[1] ||
+        // str[1] == ':')` on the wildcard-component check, so patterns
+        // like `*foo:bar` mis-scored their first component as a bare
+        // wildcard (0) instead of a metachar-containing pattern (1).
+        // The miscount produced incorrect zstyle ordering — more-
+        // specific patterns lost out to less-specific siblings.
         let mut weight: u64 = 0;
         let mut tmp: u64 = 2;
         let mut first = true;
-        for ch in pattern.chars() {
-            if first && ch == '*' {
-                // c:365
+        let bytes = pattern.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            let next: Option<u8> = bytes.get(i + 1).copied();
+            // c:365 — `if (first && *str == '*' && (!str[1] || str[1] == ':'))`
+            //   "alone-star component": star is the first char AND the
+            //   next char ends the component (NUL or `:`).
+            if first
+                && ch == '*'
+                && (next.is_none() || next == Some(b':'))
+            {
                 tmp = 0;
+                i += 1;
                 continue;
             }
-            first = false;
+            first = false; // c:370
             if matches!(ch, '(' | '|' | '*' | '[' | '<' | '?' | '#' | '^') {
                 // c:372
                 tmp = 1;
@@ -248,10 +270,11 @@ impl style_table {
             if ch == ':' {
                 // c:377
                 weight += 1u64 << 32; // c:379
-                first = true;
-                weight += tmp;
-                tmp = 2;
+                first = true; // c:381
+                weight += tmp; // c:382
+                tmp = 2; // c:383
             }
+            i += 1;
         }
         weight += tmp; // c:386
                        // c:337-342 — New pattern: build stypat.
